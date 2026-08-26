@@ -1,0 +1,36 @@
+{
+  "name": "saaa",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Situation-Aware Ambient Agent Runtime",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "test:frontend": "bun test tests",
+    "test": "bun run test:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check": "bun run typecheck && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && bun run test",
+    "desktop:smoke": "bun scripts/desktop-smoke.ts",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "codex:smoke": "bun scripts/codex-sdk-smoke.ts"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.144.4",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "@tauri-apps/cli": "^2"
+  }
+}

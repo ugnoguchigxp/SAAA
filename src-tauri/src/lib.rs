@@ -1,0 +1,4716 @@
+use futures_util::StreamExt;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    env, fs,
+    io::{BufRead, BufReader, Write},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    },
+    thread,
+    time::Duration,
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tauri::Manager;
+
+mod meeting;
+mod situation;
+
+static BUNDLED_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+struct AppState {
+    connection: Arc<Mutex<Connection>>,
+    active_runs: Mutex<HashMap<String, Arc<RunCancellation>>>,
+    tts_process: Mutex<Option<ActiveTts>>,
+    situation: Arc<situation::SituationRuntime>,
+    meeting: Arc<meeting::MeetingRuntime>,
+}
+
+struct ActiveTts {
+    run_id: String,
+    child: Child,
+}
+
+struct ProcessGuard {
+    child: Child,
+}
+
+impl ProcessGuard {
+    fn new(child: Child) -> Self {
+        Self { child }
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
+}
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[derive(Default)]
+struct RunCancellation {
+    cancelled: AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl RunCancellation {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsDocument {
+    namespace: String,
+    key: String,
+    schema_version: i64,
+    value_json: Value,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveSettingsDocumentInput {
+    namespace: String,
+    key: String,
+    schema_version: i64,
+    value_json: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveSettingsDocumentsInput {
+    documents: Vec<SaveSettingsDocumentInput>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Conversation {
+    id: String,
+    title: Option<String>,
+    task_mode: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateConversationInput {
+    title: Option<String>,
+    task_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMessage {
+    id: String,
+    conversation_id: String,
+    role: String,
+    content: String,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppendMessageInput {
+    conversation_id: String,
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSnapshot {
+    settings: Vec<SettingsDocument>,
+    conversations: Vec<Conversation>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexReasoningEffort {
+    reasoning_effort: String,
+    description: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModelOption {
+    id: String,
+    model: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    hidden: bool,
+    #[serde(default)]
+    default_reasoning_effort: Option<String>,
+    #[serde(default)]
+    supported_reasoning_efforts: Vec<CodexReasoningEffort>,
+    #[serde(default = "default_codex_input_modalities")]
+    input_modalities: Vec<String>,
+    #[serde(default)]
+    supports_personality: bool,
+    #[serde(default)]
+    is_default: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModelPage {
+    data: Vec<CodexModelOption>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexRuntimeStatus {
+    installed: bool,
+    authenticated: bool,
+    runtime: String,
+    account_type: Option<String>,
+    message: String,
+}
+
+struct CodexTurnOutcome {
+    thread_id: String,
+    content: String,
+}
+
+#[derive(Debug)]
+struct CodexTurnFailure {
+    thread_id: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct ModelProviderSettings {
+    id: String,
+    enabled: bool,
+    label: String,
+    location: String,
+    endpoint: String,
+    model: String,
+    credential_status: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ModelProvidersSettings {
+    providers: Vec<ModelProviderSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct ConversationRouteSettings {
+    primary_provider_id: String,
+    fallback_provider_ids: Vec<String>,
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct CodingRouteSettings {
+    provider_id: String,
+    timeout_ms: u64,
+    read_only: bool,
+    network_enabled: bool,
+    web_search_enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct RoutingSettings {
+    conversation_respond: ConversationRouteSettings,
+    coding_assist: CodingRouteSettings,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct CodexAgentRuntimeSettings {
+    enabled: bool,
+    provider: String,
+    model: String,
+    runtime_mode: String,
+    health: String,
+    sandbox_mode: String,
+    approval_policy: String,
+    network_enabled: bool,
+    web_search_enabled: bool,
+    workspace_policy: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct VoiceRuntimeSettings {
+    input_device_id: String,
+    output_device_id: String,
+    capture_mode: String,
+    stt_provider_id: String,
+    stt_model: String,
+    tts_provider_id: String,
+    tts_voice: String,
+    auto_speak: bool,
+    cloud_fallback_enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct SecurityRuntimeSettings {
+    credential_storage: String,
+    local_only_when_selected: bool,
+    diagnostics_redaction: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartTurnInput {
+    run_id: String,
+    conversation_id: String,
+    content: String,
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TestProviderInput {
+    provider: ModelProviderSettings,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderTestResult {
+    provider_id: String,
+    ok: bool,
+    message: String,
+    latency_ms: u128,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalArtifactResult {
+    path: String,
+    created_at: String,
+}
+
+#[tauri::command]
+fn frontend_ready() -> Result<(), String> {
+    let Some(marker_id) = env::var("SAAA_SMOKE_MARKER_ID")
+        .ok()
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    validate_identifier(&marker_id, "smoke marker id")?;
+    fs::write(
+        env::temp_dir().join(format!("saaa-frontend-{marker_id}.ready")),
+        "ready",
+    )
+    .map_err(|error| format!("Could not write the frontend smoke marker: {error}"))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscribeAudioInput {
+    run_id: String,
+    conversation_id: String,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    model_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeakTextInput {
+    run_id: String,
+    conversation_id: String,
+    text: String,
+    voice: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum VoiceEvent {
+    Transcribing {
+        run_id: String,
+    },
+    TranscriptDelta {
+        run_id: String,
+        text: String,
+    },
+    TranscriptFinal {
+        run_id: String,
+        text: String,
+    },
+    Cancelled {
+        run_id: String,
+    },
+    Failed {
+        run_id: String,
+        message: String,
+        recovery: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum RuntimeEvent {
+    Started {
+        run_id: String,
+        route: String,
+        provider_id: String,
+    },
+    Delta {
+        run_id: String,
+        text: String,
+    },
+    Activity {
+        run_id: String,
+        kind: String,
+        summary: String,
+    },
+    ProviderFailed {
+        run_id: String,
+        provider_id: String,
+        reason: String,
+    },
+    MessageCompleted {
+        run_id: String,
+        message: ConversationMessage,
+    },
+    Cancelled {
+        run_id: String,
+    },
+    Failed {
+        run_id: String,
+        code: String,
+        message: String,
+        recovery: String,
+    },
+}
+
+#[tauri::command]
+fn get_app_snapshot(state: tauri::State<'_, AppState>) -> Result<AppSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    Ok(AppSnapshot {
+        settings: list_settings_documents(&connection)?,
+        conversations: list_conversations_from_connection(&connection)?,
+    })
+}
+
+#[tauri::command]
+fn get_situation_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Result<situation::contracts::SituationSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    state.situation.snapshot(&connection)
+}
+
+#[tauri::command]
+fn set_situation_monitoring(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<situation::contracts::SituationSnapshot, String> {
+    let settings = {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        situation::repository::save_enabled(&connection, enabled)?
+    };
+    state.situation.configure(settings)?;
+    if enabled {
+        spawn_situation_monitor(state.connection.clone(), state.situation.clone());
+    }
+    get_situation_snapshot(state)
+}
+
+#[tauri::command]
+fn report_owned_signal(
+    state: tauri::State<'_, AppState>,
+    input: situation::contracts::OwnedSignalInput,
+) -> Result<(), String> {
+    state.situation.report_owned(input)
+}
+
+#[tauri::command]
+fn submit_situation_feedback(
+    state: tauri::State<'_, AppState>,
+    input: situation::contracts::SituationFeedbackInput,
+) -> Result<situation::contracts::SituationSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    situation::repository::submit_feedback(&connection, &input)?;
+    state.situation.snapshot(&connection)
+}
+
+#[tauri::command]
+fn clear_situation_history(
+    state: tauri::State<'_, AppState>,
+) -> Result<situation::contracts::SituationSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    situation::repository::clear_history(&connection)?;
+    state.situation.snapshot(&connection)
+}
+
+#[tauri::command]
+fn get_situation_review_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Result<situation::contracts::SituationReviewSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    Ok(situation::contracts::SituationReviewSnapshot {
+        active_profile: situation::calibration::active_profile(&connection)?,
+        quality: json!({"sampleCount": 0, "flappingRate": null, "staleRate": null}),
+        feedback_queue: situation::repository::list_history(&connection)?
+            .into_iter()
+            .filter(|entry| entry.feedback.is_none())
+            .take(50)
+            .collect(),
+        latest_run: situation::calibration::latest_run(&connection)?,
+        candidates: situation::calibration::candidates(&connection)?,
+    })
+}
+
+#[tauri::command]
+fn create_situation_calibration_candidate(
+    state: tauri::State<'_, AppState>,
+    parameters: situation::contracts::CalibrationParameters,
+) -> Result<situation::calibration::CalibrationProfile, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    situation::calibration::create_candidate(&connection, parameters)
+}
+
+#[tauri::command]
+fn run_situation_calibration(
+    state: tauri::State<'_, AppState>,
+    profile_id: String,
+) -> Result<situation::calibration::CalibrationRun, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let profile = situation::calibration::profile_by_id(&connection, &profile_id)?;
+    let metrics = situation::calibration::replay_metrics(&profile)?;
+    situation::calibration::save_run(&connection, &profile_id, "completed", Some(metrics), None)
+}
+
+#[tauri::command]
+fn decide_situation_calibration(
+    state: tauri::State<'_, AppState>,
+    profile_id: String,
+    decision: String,
+    reason_code: String,
+) -> Result<situation::contracts::SituationReviewSnapshot, String> {
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let active =
+        situation::calibration::decide(&mut connection, &profile_id, &decision, &reason_code)?;
+    state
+        .situation
+        .set_calibration_parameters(active.parameters)?;
+    drop(connection);
+    get_situation_review_snapshot(state)
+}
+
+fn spawn_situation_monitor(
+    connection: Arc<Mutex<Connection>>,
+    runtime: Arc<situation::SituationRuntime>,
+) {
+    if !runtime.enabled() || !runtime.begin_worker() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        while runtime.enabled() {
+            let result = runtime.sample_platform().and_then(|sample| {
+                connection
+                    .lock()
+                    .map_err(|_| "Database lock unavailable".to_string())
+                    .and_then(|connection| runtime.tick_sampled(&connection, sample))
+            });
+            if let Err(error) = result {
+                runtime.record_failure(error);
+            }
+            runtime.wait_for_next_sample().await;
+        }
+        runtime.finish_worker();
+        if runtime.enabled() {
+            spawn_situation_monitor(connection, runtime);
+        }
+    });
+}
+
+#[tauri::command]
+fn export_diagnostics(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalArtifactResult, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let settings = list_settings_documents(&connection)?
+        .into_iter()
+        .map(|document| {
+            json!({
+                "namespace": document.namespace,
+                "key": document.key,
+                "schemaVersion": document.schema_version,
+                "updatedAt": document.updated_at
+            })
+        })
+        .collect::<Vec<_>>();
+    let conversation_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
+        .map_err(database_error)?;
+    let message_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM conversation_messages", [], |row| {
+            row.get(0)
+        })
+        .map_err(database_error)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT route_kind, COALESCE(provider_id, ''), status, COALESCE(error_message, '')
+             FROM runtime_runs ORDER BY started_at DESC LIMIT 20",
+        )
+        .map_err(database_error)?;
+    let recent_runs = statement
+        .query_map([], |row| {
+            Ok(json!({
+                "route": row.get::<_, String>(0)?,
+                "providerId": row.get::<_, String>(1)?,
+                "status": row.get::<_, String>(2)?,
+                "error": redact_runtime_text(&row.get::<_, String>(3)?)
+            }))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    drop(statement);
+    let situation_evaluation = situation::repository::evaluation_summary(&connection)?;
+    let situation_settings = situation::repository::load_settings(&connection)?;
+    drop(connection);
+
+    let created_at = now_iso();
+    let payload = json!({
+        "format": "saaa-diagnostics-v1",
+        "createdAt": created_at,
+        "redacted": true,
+        "application": { "version": env!("CARGO_PKG_VERSION"), "platform": env::consts::OS, "arch": env::consts::ARCH },
+        "database": { "settingsDocuments": settings, "conversationCount": conversation_count, "messageCount": message_count },
+        "situation": {
+            "monitoringEnabled": situation_settings.enabled,
+            "calendarEnabled": situation_settings.calendar_enabled,
+            "totalEntries": situation_evaluation.total_entries,
+            "feedback": {
+                "accurate": situation_evaluation.accurate,
+                "inaccurate": situation_evaluation.inaccurate,
+                "unsure": situation_evaluation.unsure
+            }
+        },
+        "recentRuns": recent_runs
+    });
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not resolve the diagnostics directory: {error}"))?
+        .join("diagnostics");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create the diagnostics directory: {error}"))?;
+    let path = directory.join(format!("saaa-diagnostics-{created_at}.json"));
+    let contents = serde_json::to_vec_pretty(&payload)
+        .map_err(|error| format!("Could not encode diagnostics: {error}"))?;
+    fs::write(&path, contents).map_err(|error| format!("Could not write diagnostics: {error}"))?;
+    Ok(LocalArtifactResult {
+        path: path.to_string_lossy().into_owned(),
+        created_at,
+    })
+}
+
+#[tauri::command]
+fn backup_database(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalArtifactResult, String> {
+    let created_at = now_iso();
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not resolve the backup directory: {error}"))?
+        .join("backups");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create the backup directory: {error}"))?;
+    let path = directory.join(format!("saaa-{created_at}.sqlite3"));
+    let source = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    backup_connection_to(&source, &path)?;
+    Ok(LocalArtifactResult {
+        path: path.to_string_lossy().into_owned(),
+        created_at,
+    })
+}
+
+#[tauri::command]
+async fn start_turn(
+    state: tauri::State<'_, AppState>,
+    input: StartTurnInput,
+    on_event: tauri::ipc::Channel<RuntimeEvent>,
+) -> Result<(), String> {
+    validate_start_turn(&input)?;
+    let cancellation = Arc::new(RunCancellation::default());
+    register_active_run(&state, &input.run_id, cancellation.clone())?;
+
+    let result = execute_turn(&state, &input, &on_event, cancellation.clone()).await;
+    if let Ok(mut active) = state.active_runs.lock() {
+        active.remove(&input.run_id);
+    }
+    if !cancellation.is_cancelled() {
+        if let Err(error) = &result {
+            let _ = on_event.send(RuntimeEvent::Failed {
+                run_id: input.run_id.clone(),
+                code: "runtime_error".to_string(),
+                message: redact_runtime_text(error),
+                recovery: "Review the selected provider and runtime settings, then retry."
+                    .to_string(),
+            });
+        }
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
+    validate_identifier(&run_id, "run id")?;
+    let active = state
+        .active_runs
+        .lock()
+        .map_err(|_| "Runtime run lock unavailable".to_string())?;
+    if let Some(cancellation) = active.get(&run_id) {
+        cancellation.cancel();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn test_model_provider(
+    _state: tauri::State<'_, AppState>,
+    input: TestProviderInput,
+) -> Result<ProviderTestResult, String> {
+    let mut provider = input.provider;
+    provider.enabled = true;
+    validate_identifier(&provider.id, "provider id")?;
+    validate_model_providers(&ModelProvidersSettings {
+        providers: vec![provider.clone()],
+    })?;
+    let started = std::time::Instant::now();
+    let result = probe_model_provider(&provider).await;
+    Ok(ProviderTestResult {
+        provider_id: provider.id,
+        ok: result.is_ok(),
+        message: result.unwrap_or_else(|error| redact_runtime_text(&error)),
+        latency_ms: started.elapsed().as_millis(),
+    })
+}
+
+#[tauri::command]
+async fn transcribe_audio(
+    state: tauri::State<'_, AppState>,
+    input: TranscribeAudioInput,
+    on_event: tauri::ipc::Channel<VoiceEvent>,
+) -> Result<String, String> {
+    validate_identifier(&input.run_id, "run id")?;
+    validate_identifier(&input.conversation_id, "conversation id")?;
+    if !(8_000..=192_000).contains(&input.sample_rate) || input.samples.is_empty() {
+        return Err("Recorded audio is empty or has an unsupported sample rate".to_string());
+    }
+    if input.samples.len() > input.sample_rate as usize * 300 {
+        return Err("Recording exceeds the five minute MVP limit".to_string());
+    }
+    let model = fs::canonicalize(&input.model_path).map_err(|_| {
+        "Local whisper model is missing. Select an existing model file in Voice settings."
+            .to_string()
+    })?;
+    if !model.is_file() {
+        return Err("The selected whisper model is not a file".to_string());
+    }
+    let cancellation = Arc::new(RunCancellation::default());
+    register_active_run(&state, &input.run_id, cancellation.clone())?;
+    if let Err(error) = begin_simple_runtime_run(
+        &state,
+        &input.run_id,
+        &input.conversation_id,
+        "voice.transcribe",
+        "local-whisper",
+    ) {
+        remove_active_run(&state, &input.run_id);
+        state
+            .situation
+            .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
+        return Err(error);
+    }
+    let _ = on_event.send(VoiceEvent::Transcribing {
+        run_id: input.run_id.clone(),
+    });
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::SaaaTranscribing);
+    let run_id = input.run_id.clone();
+    let samples = input.samples;
+    let sample_rate = input.sample_rate;
+    let on_event_for_worker = on_event.clone();
+    let cancellation_for_worker = cancellation.clone();
+    let result = match tauri::async_runtime::spawn_blocking(move || {
+        run_whisper_transcription(
+            &run_id,
+            &samples,
+            sample_rate,
+            &model,
+            &on_event_for_worker,
+            &cancellation_for_worker,
+        )
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(format!("Transcription task failed: {error}")),
+    };
+    remove_active_run(&state, &input.run_id);
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
+    match result {
+        Ok(transcript) => {
+            finish_runtime_run(&state, &input.run_id, "completed", None)?;
+            let _ = on_event.send(VoiceEvent::TranscriptFinal {
+                run_id: input.run_id,
+                text: transcript.clone(),
+            });
+            Ok(transcript)
+        }
+        Err(error) if cancellation.is_cancelled() => {
+            finish_runtime_run(
+                &state,
+                &input.run_id,
+                "cancelled",
+                Some("Cancelled by user"),
+            )?;
+            let _ = on_event.send(VoiceEvent::Cancelled {
+                run_id: input.run_id,
+            });
+            Err("Transcription cancelled".to_string())
+        }
+        Err(error) => {
+            let error = redact_runtime_text(&error);
+            finish_runtime_run(&state, &input.run_id, "failed", Some(&error))?;
+            let _ = on_event.send(VoiceEvent::Failed {
+                run_id: input.run_id,
+                message: error.clone(),
+                recovery: "Set SAAA_WHISPER_PATH and select a compatible local model file."
+                    .to_string(),
+            });
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+async fn speak_text(
+    state: tauri::State<'_, AppState>,
+    input: SpeakTextInput,
+) -> Result<(), String> {
+    if state.meeting.blocks_tts() {
+        return Err("MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string());
+    }
+    validate_identifier(&input.run_id, "run id")?;
+    validate_identifier(&input.conversation_id, "conversation id")?;
+    if input.text.trim().is_empty() || input.text.chars().count() > 16_000 {
+        return Err("Speech text must contain between 1 and 16,000 characters".to_string());
+    }
+    if input.voice.len() > 160 {
+        return Err("TTS voice is too long".to_string());
+    }
+    let cancellation = Arc::new(RunCancellation::default());
+    register_active_run(&state, &input.run_id, cancellation.clone())?;
+    if let Err(error) = begin_simple_runtime_run(
+        &state,
+        &input.run_id,
+        &input.conversation_id,
+        "voice.speak",
+        "system-tts",
+    ) {
+        remove_active_run(&state, &input.run_id);
+        return Err(error);
+    }
+
+    let spawn_result = (|| {
+        let mut process = state
+            .tts_process
+            .lock()
+            .map_err(|_| "TTS process lock unavailable".to_string())?;
+        if process.is_some() {
+            return Err("Another speech run is already active".to_string());
+        }
+        *process = Some(ActiveTts {
+            run_id: input.run_id.clone(),
+            child: spawn_tts_process(&input.text, &input.voice)?,
+        });
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = spawn_result {
+        remove_active_run(&state, &input.run_id);
+        finish_runtime_run(&state, &input.run_id, "failed", Some(&error))?;
+        return Err(error);
+    }
+    state
+        .situation
+        .set_audio_state(situation::contracts::AudioState::SaaaSpeaking);
+
+    let result: Result<(), String> = async {
+        loop {
+            if cancellation.is_cancelled() {
+                break Err("Speech cancelled".to_string());
+            }
+            let status = {
+                let mut process = state
+                    .tts_process
+                    .lock()
+                    .map_err(|_| "TTS process lock unavailable".to_string())?;
+                let active = process
+                    .as_mut()
+                    .filter(|active| active.run_id == input.run_id)
+                    .ok_or_else(|| "Speech process ownership was lost".to_string())?;
+                active
+                    .child
+                    .try_wait()
+                    .map_err(|error| format!("Could not inspect TTS process: {error}"))?
+            };
+            if let Some(status) = status {
+                if status.success() {
+                    break Ok(());
+                }
+                break Err(format!("System TTS exited with {status}"));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    .await;
+
+    if let Ok(mut process) = state.tts_process.lock() {
+        if process
+            .as_ref()
+            .is_some_and(|active| active.run_id == input.run_id)
+        {
+            let mut active = process.take().expect("matching TTS process exists");
+            if cancellation.is_cancelled() {
+                let _ = active.child.kill();
+            }
+            let _ = active.child.wait();
+            state
+                .situation
+                .set_audio_state(situation::contracts::AudioState::Silent);
+        }
+    }
+    remove_active_run(&state, &input.run_id);
+    match result {
+        Ok(()) => finish_runtime_run(&state, &input.run_id, "completed", None),
+        Err(error) if cancellation.is_cancelled() => {
+            finish_runtime_run(&state, &input.run_id, "cancelled", Some(&error))?;
+            Err(error)
+        }
+        Err(error) => {
+            finish_runtime_run(&state, &input.run_id, "failed", Some(&error))?;
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn stop_tts(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
+    validate_identifier(&run_id, "run id")?;
+    let mut process = state
+        .tts_process
+        .lock()
+        .map_err(|_| "TTS process lock unavailable".to_string())?;
+    if process
+        .as_ref()
+        .is_none_or(|active| active.run_id != run_id)
+    {
+        return Ok(());
+    }
+    {
+        let active_runs = state
+            .active_runs
+            .lock()
+            .map_err(|_| "Runtime run lock unavailable".to_string())?;
+        if let Some(cancellation) = active_runs.get(&run_id) {
+            cancellation.cancel();
+        }
+    }
+    if let Some(mut active) = process.take() {
+        let _ = active.child.kill();
+        let _ = active.child.wait();
+    }
+    state
+        .situation
+        .set_audio_state(situation::contracts::AudioState::Silent);
+    Ok(())
+}
+
+#[tauri::command]
+fn meeting_preflight(
+    state: tauri::State<'_, AppState>,
+    input: meeting::PreflightInput,
+) -> Result<meeting::PreflightResult, String> {
+    state.meeting.preflight(&input)
+}
+
+#[tauri::command]
+fn start_meeting(
+    state: tauri::State<'_, AppState>,
+    input: meeting::StartInput,
+) -> Result<meeting::MeetingSnapshot, String> {
+    let tts_active = state
+        .tts_process
+        .lock()
+        .map_err(|_| "TTS process lock unavailable".to_string())?
+        .is_some();
+    state.meeting.start(&input, tts_active, &state.connection)
+}
+
+#[tauri::command]
+fn get_meeting_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Result<meeting::MeetingSnapshot, String> {
+    state.meeting.snapshot()
+}
+
+#[tauri::command]
+fn watch_meeting(
+    state: tauri::State<'_, AppState>,
+    on_event: tauri::ipc::Channel<meeting::MeetingEvent>,
+) -> Result<(), String> {
+    let snapshot = state.meeting.snapshot()?;
+    let _ = on_event.send(meeting::MeetingEvent::StateChanged {
+        session_id: snapshot.session_id,
+        state: snapshot.state,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn pause_meeting(
+    state: tauri::State<'_, AppState>,
+    input: meeting::SessionInput,
+) -> Result<meeting::MeetingSnapshot, String> {
+    state.meeting.pause(&input.session_id)
+}
+
+#[tauri::command]
+fn resume_meeting(
+    state: tauri::State<'_, AppState>,
+    input: meeting::SessionInput,
+) -> Result<meeting::MeetingSnapshot, String> {
+    state.meeting.resume(&input.session_id)
+}
+
+#[tauri::command]
+fn stop_meeting(
+    state: tauri::State<'_, AppState>,
+    input: meeting::SessionInput,
+) -> Result<meeting::MeetingSnapshot, String> {
+    state.meeting.stop(&input.session_id, &state.connection)
+}
+
+#[tauri::command]
+async fn append_meeting_audio_segment(
+    state: tauri::State<'_, AppState>,
+    input: meeting::SegmentInput,
+) -> Result<meeting::SegmentResult, String> {
+    let cancellation = Arc::new(RunCancellation::default());
+    let (model, samples) = state.meeting.append(&input, &cancellation)?;
+    let worker_cancellation = cancellation.clone();
+    let sample_rate = input.sample_rate;
+    let transcription = tauri::async_runtime::spawn_blocking(move || {
+        meeting::transcribe_segment(model, samples, sample_rate, &worker_cancellation)
+    })
+    .await
+    .map_err(|e| format!("MEETING_STT_FAILED: {e}"))??;
+    state.meeting.finish_segment(&input, transcription)
+}
+
+#[tauri::command]
+fn save_meeting_transcript(
+    state: tauri::State<'_, AppState>,
+    input: meeting::SessionInput,
+) -> Result<meeting::MeetingSnapshot, String> {
+    state.meeting.save(&input.session_id, &state.connection)
+}
+
+#[tauri::command]
+fn discard_meeting(
+    state: tauri::State<'_, AppState>,
+    input: meeting::SessionInput,
+) -> Result<(), String> {
+    state.meeting.discard(&input.session_id, &state.connection)
+}
+
+fn register_active_run(
+    state: &AppState,
+    run_id: &str,
+    cancellation: Arc<RunCancellation>,
+) -> Result<(), String> {
+    let mut active = state
+        .active_runs
+        .lock()
+        .map_err(|_| "Runtime run lock unavailable".to_string())?;
+    match active.entry(run_id.to_string()) {
+        Entry::Vacant(entry) => {
+            entry.insert(cancellation);
+        }
+        Entry::Occupied(_) => return Err("A run with this id is already active".to_string()),
+    }
+    Ok(())
+}
+
+fn remove_active_run(state: &AppState, run_id: &str) {
+    if let Ok(mut active) = state.active_runs.lock() {
+        active.remove(run_id);
+    }
+}
+
+fn begin_simple_runtime_run(
+    state: &AppState,
+    run_id: &str,
+    conversation_id: &str,
+    route_kind: &str,
+    provider_id: &str,
+) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let conversation_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+            params![conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    if !conversation_exists {
+        return Err("Conversation does not exist".to_string());
+    }
+    connection
+        .execute(
+            "INSERT INTO runtime_runs(id, conversation_id, route_kind, provider_id, status, started_at)
+             VALUES (?1, ?2, ?3, ?4, 'running', ?5)",
+            params![run_id, conversation_id, route_kind, provider_id, now_iso()],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+fn run_whisper_transcription(
+    run_id: &str,
+    samples: &[f32],
+    sample_rate: u32,
+    model: &std::path::Path,
+    on_event: &tauri::ipc::Channel<VoiceEvent>,
+    cancellation: &RunCancellation,
+) -> Result<String, String> {
+    let directory = tempfile::tempdir()
+        .map_err(|error| format!("Could not create audio workspace: {error}"))?;
+    let wav_path = directory.path().join("input.wav");
+    let output_base = directory.path().join("transcript");
+    write_whisper_wav(&wav_path, samples, sample_rate)?;
+    let executable = whisper_executable()?;
+    let mut child = ProcessGuard::new(
+        Command::new(executable)
+            .arg("-m")
+            .arg(model)
+            .arg("-f")
+            .arg(&wav_path)
+            .arg("-otxt")
+            .arg("-of")
+            .arg(&output_base)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Could not start local whisper: {error}"))?,
+    );
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .ok_or_else(|| "Whisper stdout is unavailable".to_string())?;
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = sender.send(line);
+        }
+    });
+    let mut partials = Vec::new();
+    loop {
+        if cancellation.is_cancelled() {
+            return Err("Transcription cancelled".to_string());
+        }
+        while let Ok(line) = receiver.try_recv() {
+            if let Some(delta) = whisper_transcript_line(&line) {
+                partials.push(delta.clone());
+                let _ = on_event.send(VoiceEvent::TranscriptDelta {
+                    run_id: run_id.to_string(),
+                    text: delta,
+                });
+            }
+        }
+        if let Some(status) = child
+            .child_mut()
+            .try_wait()
+            .map_err(|error| format!("Could not inspect whisper process: {error}"))?
+        {
+            if !status.success() {
+                return Err(format!("Local whisper exited with {status}"));
+            }
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let output_path = output_base.with_extension("txt");
+    let transcript = fs::read_to_string(&output_path)
+        .unwrap_or_else(|_| partials.join(" "))
+        .trim()
+        .to_string();
+    if transcript.is_empty() {
+        return Err("Local whisper completed without a transcript".to_string());
+    }
+    Ok(bounded_text(&transcript, 16_000))
+}
+
+pub(crate) fn write_whisper_wav(
+    path: &std::path::Path,
+    samples: &[f32],
+    sample_rate: u32,
+) -> Result<(), String> {
+    let resampled = resample_pcm(samples, sample_rate, 16_000);
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)
+        .map_err(|error| format!("Could not create local audio file: {error}"))?;
+    for sample in resampled {
+        let value = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        writer
+            .write_sample(value)
+            .map_err(|error| format!("Could not write local audio: {error}"))?;
+    }
+    writer
+        .finalize()
+        .map_err(|error| format!("Could not finalize local audio: {error}"))
+}
+
+fn resample_pcm(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
+    if source_rate == target_rate {
+        return samples.to_vec();
+    }
+    let ratio = source_rate as f64 / target_rate as f64;
+    let target_len = ((samples.len() as f64) / ratio).floor() as usize;
+    (0..target_len)
+        .map(|index| {
+            let position = index as f64 * ratio;
+            let left = position.floor() as usize;
+            let right = (left + 1).min(samples.len().saturating_sub(1));
+            let fraction = (position - left as f64) as f32;
+            samples[left] * (1.0 - fraction) + samples[right] * fraction
+        })
+        .collect()
+}
+
+fn whisper_transcript_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("whisper_") || trimmed.starts_with("system_info") {
+        return None;
+    }
+    let text = trimmed
+        .rsplit_once(']')
+        .map_or(trimmed, |(_, text)| text)
+        .trim();
+    (!text.is_empty()).then(|| bounded_text(text, 1_000))
+}
+
+pub(crate) fn whisper_executable() -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("SAAA_WHISPER_PATH").filter(|value| !value.is_empty()) {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.extend([
+        PathBuf::from("whisper-cli"),
+        PathBuf::from("whisper.cpp"),
+        PathBuf::from("main"),
+    ]);
+    for candidate in candidates {
+        if candidate.is_absolute() && !candidate.is_file() {
+            continue;
+        }
+        if Command::new(&candidate)
+            .arg("--help")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return Ok(candidate);
+        }
+    }
+    Err("Local whisper executable was not found. Set SAAA_WHISPER_PATH to whisper-cli.".to_string())
+}
+
+fn spawn_tts_process(text: &str, voice: &str) -> Result<Child, String> {
+    let mut command = match env::consts::OS {
+        "macos" => {
+            let mut command = Command::new("say");
+            if voice != "default" {
+                command.arg("-v").arg(voice);
+            }
+            command.arg(text);
+            command
+        }
+        "linux" => {
+            let mut command = Command::new("espeak-ng");
+            if voice != "default" {
+                command.arg("-v").arg(voice);
+            }
+            command.arg(text);
+            command
+        }
+        "windows" => {
+            let escaped = text.replace('\\', "\\\\").replace('\'', "''");
+            let mut command = Command::new("powershell.exe");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{escaped}')"),
+            ]);
+            command
+        }
+        _ => return Err("System TTS is not supported on this platform".to_string()),
+    };
+    command.stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| {
+        format!("Could not start local system TTS: {error}. Install the platform speech runtime and retry.")
+    })
+}
+
+fn validate_start_turn(input: &StartTurnInput) -> Result<(), String> {
+    validate_identifier(&input.run_id, "run id")?;
+    validate_identifier(&input.conversation_id, "conversation id")?;
+    let content = input.content.trim();
+    if content.is_empty() || content.chars().count() > 16_000 {
+        return Err("Message must contain between 1 and 16,000 characters".to_string());
+    }
+    if let Some(workspace) = &input.workspace_path {
+        if workspace.len() > 4_096 {
+            return Err("Workspace path is too long".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 160
+        || !value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err(format!("Invalid {label}"));
+    }
+    Ok(())
+}
+
+async fn execute_turn(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+) -> Result<(), String> {
+    let task_mode = prepare_runtime_run(state, input)?;
+    state
+        .situation
+        .set_conversation_state(if task_mode == "coding" {
+            situation::contracts::ConversationState::AgentRunning
+        } else {
+            situation::contracts::ConversationState::ModelRunning
+        });
+    let result = if task_mode == "coding" {
+        execute_codex_turn(state, input, on_event, cancellation.clone()).await
+    } else {
+        execute_conversation_turn(state, input, on_event, cancellation.clone()).await
+    };
+    let finalization = match &result {
+        Ok(()) => finish_runtime_run(state, &input.run_id, "completed", None),
+        Err(_error) if cancellation.is_cancelled() => {
+            let finalization =
+                finish_runtime_run(state, &input.run_id, "cancelled", Some("Cancelled by user"));
+            let _ = on_event.send(RuntimeEvent::Cancelled {
+                run_id: input.run_id.clone(),
+            });
+            finalization
+        }
+        Err(error) => finish_runtime_run(state, &input.run_id, "failed", Some(error)),
+    };
+    state
+        .situation
+        .set_conversation_state(situation::contracts::ConversationState::Idle);
+    finalization?;
+    result
+}
+
+fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<String, String> {
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    let task_mode: String = transaction
+        .query_row(
+            "SELECT task_mode FROM conversations WHERE id = ?1",
+            params![input.conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Conversation does not exist".to_string())?;
+    let route_kind = if task_mode == "coding" {
+        "coding.assist"
+    } else {
+        "conversation.respond"
+    };
+    let now = now_iso();
+    transaction
+        .execute(
+            "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+             VALUES (?1, ?2, 'user', ?3, ?4)",
+            params![
+                new_id("message"),
+                input.conversation_id,
+                input.content.trim(),
+                now
+            ],
+        )
+        .map_err(database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO runtime_runs(id, conversation_id, route_kind, status, started_at)
+             VALUES (?1, ?2, ?3, 'running', ?4)",
+            params![input.run_id, input.conversation_id, route_kind, now],
+        )
+        .map_err(database_error)?;
+    transaction
+        .execute(
+            "UPDATE conversations SET updated_at = ?1, title = COALESCE(title, ?2) WHERE id = ?3",
+            params![
+                now,
+                bounded_text(input.content.trim(), 60),
+                input.conversation_id
+            ],
+        )
+        .map_err(database_error)?;
+    transaction.commit().map_err(database_error)?;
+    Ok(task_mode)
+}
+
+fn finish_runtime_run(
+    state: &AppState,
+    run_id: &str,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    connection
+        .execute(
+            "UPDATE runtime_runs SET status = ?1, error_message = ?2, completed_at = ?3 WHERE id = ?4",
+            params![status, error.map(redact_runtime_text), now_iso(), run_id],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+async fn execute_conversation_turn(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+) -> Result<(), String> {
+    let (providers, route, security, history) = {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        (
+            load_model_providers(&connection)?,
+            load_routing_settings(&connection)?.conversation_respond,
+            load_security_settings(&connection)?,
+            list_messages_from_connection(&connection, &input.conversation_id)?,
+        )
+    };
+    let route_ids = effective_conversation_route_ids(&providers, &route, &security);
+    let mut failures = Vec::new();
+
+    for provider_id in route_ids {
+        if cancellation.is_cancelled() {
+            return Err("Cancelled by user".to_string());
+        }
+        let Some(provider) = providers
+            .providers
+            .iter()
+            .find(|provider| provider.id == provider_id && provider.enabled)
+            .cloned()
+        else {
+            failures.push(format!("{provider_id}: provider is disabled or missing"));
+            continue;
+        };
+        update_runtime_provider(state, &input.run_id, &provider.id)?;
+        let session_id = begin_provider_session(state, &provider.id)?;
+        let _ = on_event.send(RuntimeEvent::Started {
+            run_id: input.run_id.clone(),
+            route: "conversation.respond".to_string(),
+            provider_id: provider.id.clone(),
+        });
+        match stream_model_provider(
+            &provider,
+            &history,
+            route.timeout_ms,
+            input,
+            on_event,
+            cancellation.clone(),
+        )
+        .await
+        {
+            Ok(content) => {
+                finish_provider_session(state, &session_id, "completed", None)?;
+                let message = persist_assistant_message(state, &input.conversation_id, &content)?;
+                let _ = on_event.send(RuntimeEvent::MessageCompleted {
+                    run_id: input.run_id.clone(),
+                    message,
+                });
+                return Ok(());
+            }
+            Err(ProviderAttemptError::Cancelled) => {
+                finish_provider_session(
+                    state,
+                    &session_id,
+                    "cancelled",
+                    Some("Cancelled by user"),
+                )?;
+                return Err("Cancelled by user".to_string());
+            }
+            Err(ProviderAttemptError::Failed(reason)) => {
+                let reason = redact_runtime_text(&reason);
+                finish_provider_session(state, &session_id, "failed", Some(&reason))?;
+                let _ = on_event.send(RuntimeEvent::ProviderFailed {
+                    run_id: input.run_id.clone(),
+                    provider_id: provider.id.clone(),
+                    reason: reason.clone(),
+                });
+                failures.push(format!("{}: {reason}", provider.id));
+            }
+        }
+    }
+    Err(format!(
+        "All configured providers failed. {}",
+        failures.join("; ")
+    ))
+}
+
+async fn execute_codex_turn(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+) -> Result<(), String> {
+    let workspace = input
+        .workspace_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Select a workspace before starting a Codex turn".to_string())?;
+    let workspace = fs::canonicalize(workspace)
+        .map_err(|_| "The selected Codex workspace does not exist".to_string())?;
+    if !workspace.is_dir() {
+        return Err("The selected Codex workspace is not a directory".to_string());
+    }
+    let (settings, timeout_ms, existing_thread_id) = {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        let settings = load_codex_settings(&connection)?;
+        let routing = load_routing_settings(&connection)?;
+        let thread_id = connection
+            .query_row(
+                "SELECT thread_id FROM codex_threads WHERE conversation_id = ?1 AND workspace_path = ?2",
+                params![input.conversation_id, workspace.to_string_lossy()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(database_error)?;
+        (settings, routing.coding_assist.timeout_ms, thread_id)
+    };
+    if !settings.enabled {
+        return Err("Codex is disabled in Settings".to_string());
+    }
+    update_runtime_provider(state, &input.run_id, "codex-sdk")?;
+    let _ = on_event.send(RuntimeEvent::Started {
+        run_id: input.run_id.clone(),
+        route: "coding.assist".to_string(),
+        provider_id: "codex-sdk".to_string(),
+    });
+    let run_id = input.run_id.clone();
+    let prompt = input.content.clone();
+    let model = settings.model.clone();
+    let workspace_for_worker = workspace.clone();
+    let on_event_for_worker = on_event.clone();
+    let cancellation_for_worker = cancellation.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        run_codex_turn_process(
+            &run_id,
+            &prompt,
+            &workspace_for_worker,
+            &model,
+            existing_thread_id.as_deref(),
+            timeout_ms,
+            &on_event_for_worker,
+            &cancellation_for_worker,
+        )
+    })
+    .await
+    .map_err(|error| format!("Codex runtime task failed: {error}"))?;
+
+    match outcome {
+        Ok(outcome) => {
+            persist_codex_thread(
+                state,
+                &input.conversation_id,
+                &outcome.thread_id,
+                &settings.model,
+                &workspace,
+            )?;
+            let message =
+                persist_assistant_message(state, &input.conversation_id, &outcome.content)?;
+            let _ = on_event.send(RuntimeEvent::MessageCompleted {
+                run_id: input.run_id.clone(),
+                message,
+            });
+            Ok(())
+        }
+        Err(failure) => {
+            if let Some(thread_id) = failure.thread_id {
+                persist_codex_thread(
+                    state,
+                    &input.conversation_id,
+                    &thread_id,
+                    &settings.model,
+                    &workspace,
+                )?;
+            }
+            Err(failure.message)
+        }
+    }
+}
+
+fn load_codex_settings(connection: &Connection) -> Result<CodexAgentRuntimeSettings, String> {
+    let document = read_settings_document(connection, "providers.agent", "codex-sdk")?;
+    let settings = serde_json::from_value(document.value_json)
+        .map_err(|error| format!("Could not decode Codex settings: {error}"))?;
+    validate_codex_settings(&settings)?;
+    Ok(settings)
+}
+
+fn persist_codex_thread(
+    state: &AppState,
+    conversation_id: &str,
+    thread_id: &str,
+    model: &str,
+    workspace: &std::path::Path,
+) -> Result<(), String> {
+    let workspace = workspace
+        .to_str()
+        .ok_or_else(|| "Codex workspace path is not valid UTF-8".to_string())?;
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    connection
+        .execute(
+            "INSERT INTO codex_threads(conversation_id, thread_id, model, workspace_path, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(conversation_id) DO UPDATE SET
+               thread_id = excluded.thread_id,
+               model = excluded.model,
+               workspace_path = excluded.workspace_path,
+               updated_at = excluded.updated_at",
+            params![conversation_id, thread_id, model, workspace, now_iso()],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_codex_turn_process(
+    run_id: &str,
+    prompt: &str,
+    workspace: &std::path::Path,
+    model: &str,
+    existing_thread_id: Option<&str>,
+    timeout_ms: u64,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: &RunCancellation,
+) -> Result<CodexTurnOutcome, CodexTurnFailure> {
+    let mut child =
+        ProcessGuard::new(
+            spawn_codex_app_server().map_err(|message| CodexTurnFailure {
+                thread_id: existing_thread_id.map(str::to_string),
+                message,
+            })?,
+        );
+    let mut stdin = child
+        .child_mut()
+        .stdin
+        .take()
+        .ok_or_else(|| CodexTurnFailure {
+            thread_id: existing_thread_id.map(str::to_string),
+            message: "Codex app-server stdin is unavailable".to_string(),
+        })?;
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .ok_or_else(|| CodexTurnFailure {
+            thread_id: existing_thread_id.map(str::to_string),
+            message: "Codex app-server stdout is unavailable".to_string(),
+        })?;
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let message = serde_json::from_str::<Value>(&line)
+                .map_err(|error| format!("Codex app-server returned invalid JSON: {error}"));
+            if sender.send(message).is_err() {
+                break;
+            }
+        }
+    });
+    let mut thread_id = existing_thread_id.map(str::to_string);
+    let result = (|| {
+        write_codex_handshake(&mut stdin).map_err(|message| CodexTurnFailure {
+            thread_id: thread_id.clone(),
+            message,
+        })?;
+        let workspace_text = workspace.to_str().ok_or_else(|| CodexTurnFailure {
+            thread_id: thread_id.clone(),
+            message: "Codex workspace path is not valid UTF-8".to_string(),
+        })?;
+        let mut params = json!({
+            "cwd": workspace_text,
+            "approvalPolicy": "never",
+            "sandbox": "read-only",
+            "config": {
+                "web_search": "disabled",
+                "mcp_servers": {},
+                "sandbox_workspace_write": { "network_access": false }
+            },
+            "developerInstructions": "Operate read-only. Do not modify files, use network access, use web search, or call MCP tools. If asked to write, explain that this route is read-only."
+        });
+        if !model.is_empty() {
+            params["model"] = Value::String(model.to_string());
+        }
+        let method = if let Some(existing) = &thread_id {
+            params["threadId"] = Value::String(existing.clone());
+            "thread/resume"
+        } else {
+            params["ephemeral"] = Value::Bool(false);
+            "thread/start"
+        };
+        write_codex_message(
+            &mut stdin,
+            json!({ "method": method, "id": 2, "params": params }),
+        )
+        .map_err(|message| CodexTurnFailure {
+            thread_id: thread_id.clone(),
+            message,
+        })?;
+        let thread_response =
+            receive_codex_result(&receiver, 2, Duration::from_secs(20)).map_err(|message| {
+                CodexTurnFailure {
+                    thread_id: thread_id.clone(),
+                    message,
+                }
+            })?;
+        let resolved_thread_id = thread_response
+            .pointer("/result/thread/id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| thread_id.clone())
+            .ok_or_else(|| CodexTurnFailure {
+                thread_id: None,
+                message: "Codex thread response did not include a thread id".to_string(),
+            })?;
+        thread_id = Some(resolved_thread_id.clone());
+        let thread_id = resolved_thread_id;
+        write_codex_message(
+            &mut stdin,
+            json!({
+                "method": "turn/start",
+                "id": 3,
+                "params": {
+                    "threadId": thread_id,
+                    "input": [{ "type": "text", "text": prompt, "text_elements": [] }],
+                    "cwd": workspace_text,
+                    "approvalPolicy": "never"
+                }
+            }),
+        )
+        .map_err(|message| CodexTurnFailure {
+            thread_id: Some(thread_id.clone()),
+            message,
+        })?;
+        let turn_response =
+            receive_codex_result(&receiver, 3, Duration::from_secs(20)).map_err(|message| {
+                CodexTurnFailure {
+                    thread_id: Some(thread_id.clone()),
+                    message,
+                }
+            })?;
+        let turn_id = turn_response
+            .pointer("/result/turn/id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CodexTurnFailure {
+                thread_id: Some(thread_id.clone()),
+                message: "Codex turn response did not include a turn id".to_string(),
+            })?
+            .to_string();
+        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+        let mut content = String::new();
+        let mut interrupt_sent = false;
+        loop {
+            if cancellation.is_cancelled() && !interrupt_sent {
+                write_codex_message(
+                    &mut stdin,
+                    json!({
+                        "method": "turn/interrupt",
+                        "id": 4,
+                        "params": { "threadId": thread_id, "turnId": turn_id }
+                    }),
+                )
+                .map_err(|message| CodexTurnFailure {
+                    thread_id: Some(thread_id.clone()),
+                    message,
+                })?;
+                interrupt_sent = true;
+            }
+            if std::time::Instant::now() >= deadline {
+                if !interrupt_sent {
+                    let _ = write_codex_message(
+                        &mut stdin,
+                        json!({
+                            "method": "turn/interrupt",
+                            "id": 4,
+                            "params": { "threadId": thread_id, "turnId": turn_id }
+                        }),
+                    );
+                }
+                return Err(CodexTurnFailure {
+                    thread_id: Some(thread_id.clone()),
+                    message: "Codex turn timed out and was interrupted".to_string(),
+                });
+            }
+            let message = match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(Ok(message)) => message,
+                Ok(Err(message)) => {
+                    return Err(CodexTurnFailure {
+                        thread_id: Some(thread_id.clone()),
+                        message,
+                    });
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(CodexTurnFailure {
+                        thread_id: Some(thread_id.clone()),
+                        message: "Codex app-server stopped during the turn".to_string(),
+                    });
+                }
+            };
+            if message.get("id").is_some() && message.get("method").is_some() {
+                return Err(CodexTurnFailure {
+                    thread_id: Some(thread_id.clone()),
+                    message: "Codex requested an approval on a never-approval route".to_string(),
+                });
+            }
+            match message.get("method").and_then(Value::as_str) {
+                Some("item/agentMessage/delta") => {
+                    if let Some(delta) = message.pointer("/params/delta").and_then(Value::as_str) {
+                        content.push_str(delta);
+                        let _ = on_event.send(RuntimeEvent::Delta {
+                            run_id: run_id.to_string(),
+                            text: delta.to_string(),
+                        });
+                    }
+                }
+                Some("item/started") | Some("item/completed") => {
+                    match project_codex_activity(&message) {
+                        Ok(Some((kind, summary))) => {
+                            let _ = on_event.send(RuntimeEvent::Activity {
+                                run_id: run_id.to_string(),
+                                kind,
+                                summary,
+                            });
+                        }
+                        Ok(None) => {}
+                        Err(message) => {
+                            let _ = write_codex_message(
+                                &mut stdin,
+                                json!({
+                                    "method": "turn/interrupt",
+                                    "id": 4,
+                                    "params": { "threadId": thread_id, "turnId": turn_id }
+                                }),
+                            );
+                            return Err(CodexTurnFailure {
+                                thread_id: Some(thread_id.clone()),
+                                message,
+                            });
+                        }
+                    }
+                    if content.is_empty() {
+                        if let Some(text) = message
+                            .pointer("/params/item/text")
+                            .and_then(Value::as_str)
+                            .filter(|_| {
+                                message.pointer("/params/item/type").and_then(Value::as_str)
+                                    == Some("agentMessage")
+                            })
+                        {
+                            content = text.to_string();
+                        }
+                    }
+                }
+                Some("turn/completed") => {
+                    let status = message
+                        .pointer("/params/turn/status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("failed");
+                    if status == "completed" && !content.trim().is_empty() {
+                        return Ok(CodexTurnOutcome {
+                            thread_id: thread_id.clone(),
+                            content: bounded_text(&content, 64_000),
+                        });
+                    }
+                    let detail = message
+                        .pointer("/params/turn/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or(if status == "interrupted" {
+                            "Codex turn interrupted"
+                        } else {
+                            "Codex turn failed"
+                        });
+                    return Err(CodexTurnFailure {
+                        thread_id: Some(thread_id.clone()),
+                        message: detail.to_string(),
+                    });
+                }
+                Some("error") => {
+                    let detail = message
+                        .pointer("/params/error/message")
+                        .or_else(|| message.pointer("/params/message"));
+                    return Err(CodexTurnFailure {
+                        thread_id: Some(thread_id.clone()),
+                        message: detail
+                            .and_then(Value::as_str)
+                            .unwrap_or("Codex runtime error")
+                            .to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    })();
+    drop(stdin);
+    result
+}
+
+fn receive_codex_result(
+    receiver: &mpsc::Receiver<Result<Value, String>>,
+    request_id: u64,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("Timed out waiting for Codex app-server".to_string());
+        }
+        let message = receiver
+            .recv_timeout(remaining)
+            .map_err(|_| "Codex app-server stopped before responding".to_string())??;
+        if message.get("id").and_then(Value::as_u64) != Some(request_id) {
+            continue;
+        }
+        if let Some(error) = message.get("error") {
+            return Err(format!(
+                "Codex app-server error: {}",
+                error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown error")
+            ));
+        }
+        return Ok(message);
+    }
+}
+
+fn project_codex_activity(message: &Value) -> Result<Option<(String, String)>, String> {
+    let item = message.pointer("/params/item").unwrap_or(&Value::Null);
+    let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+    match item_type {
+        "commandExecution" => Ok(Some((
+            "command".to_string(),
+            redact_runtime_text(
+                item.get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Command"),
+            ),
+        ))),
+        "reasoning" => Ok(Some((
+            "reasoning".to_string(),
+            "Codex is reasoning".to_string(),
+        ))),
+        "agentMessage" | "userMessage" => Ok(None),
+        "fileChange" => Err(
+            "Security policy violation: Codex attempted a file change on a read-only route"
+                .to_string(),
+        ),
+        "mcpToolCall" | "dynamicToolCall" => Err(
+            "Security policy violation: Codex attempted to call a disabled external tool"
+                .to_string(),
+        ),
+        "webSearch" => {
+            Err("Security policy violation: Codex attempted disabled Web Search".to_string())
+        }
+        "plan" => Ok(Some((
+            "plan".to_string(),
+            "Codex updated its plan".to_string(),
+        ))),
+        value if !value.is_empty() => Ok(Some(("activity".to_string(), bounded_text(value, 80)))),
+        _ => Ok(None),
+    }
+}
+
+fn load_model_providers(connection: &Connection) -> Result<ModelProvidersSettings, String> {
+    let document = read_settings_document(connection, "providers.model", "default")?;
+    let settings = serde_json::from_value(document.value_json)
+        .map_err(|error| format!("Could not decode provider settings: {error}"))?;
+    validate_model_providers(&settings)?;
+    Ok(settings)
+}
+
+fn load_routing_settings(connection: &Connection) -> Result<RoutingSettings, String> {
+    let document = read_settings_document(connection, "routing.tasks", "default")?;
+    let settings = serde_json::from_value(document.value_json)
+        .map_err(|error| format!("Could not decode route settings: {error}"))?;
+    validate_routing_settings(&settings)?;
+    Ok(settings)
+}
+
+fn load_security_settings(connection: &Connection) -> Result<SecurityRuntimeSettings, String> {
+    let document = read_settings_document(connection, "security.runtime", "default")?;
+    let settings = serde_json::from_value(document.value_json)
+        .map_err(|error| format!("Could not decode security settings: {error}"))?;
+    validate_security_settings(&settings)?;
+    Ok(settings)
+}
+
+fn effective_conversation_route_ids(
+    providers: &ModelProvidersSettings,
+    route: &ConversationRouteSettings,
+    security: &SecurityRuntimeSettings,
+) -> Vec<String> {
+    let primary_is_local = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == route.primary_provider_id)
+        .is_some_and(|provider| provider.location == "local");
+    std::iter::once(route.primary_provider_id.clone())
+        .chain(route.fallback_provider_ids.iter().cloned())
+        .filter(|provider_id| {
+            !(security.local_only_when_selected && primary_is_local)
+                || providers
+                    .providers
+                    .iter()
+                    .find(|provider| provider.id == *provider_id)
+                    .is_none_or(|provider| provider.location == "local")
+        })
+        .collect()
+}
+
+fn list_messages_from_connection(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Vec<ConversationMessage>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, conversation_id, role, content, created_at
+             FROM (
+               SELECT rowid AS ordinal, id, conversation_id, role, content, created_at
+               FROM conversation_messages
+               WHERE conversation_id = ?1
+               ORDER BY CAST(created_at AS INTEGER) DESC, rowid DESC
+               LIMIT 100
+             )
+             ORDER BY CAST(created_at AS INTEGER) ASC, ordinal ASC",
+        )
+        .map_err(database_error)?;
+    let messages = statement
+        .query_map(params![conversation_id], |row| {
+            Ok(ConversationMessage {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                role: row.get(2)?,
+                content: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    Ok(messages)
+}
+
+fn update_runtime_provider(
+    state: &AppState,
+    run_id: &str,
+    provider_id: &str,
+) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    connection
+        .execute(
+            "UPDATE runtime_runs SET provider_id = ?1 WHERE id = ?2",
+            params![provider_id, run_id],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+fn begin_provider_session(state: &AppState, provider_id: &str) -> Result<String, String> {
+    let session_id = new_id("provider-session");
+    let now = now_iso();
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    connection
+        .execute(
+            "INSERT INTO provider_sessions(id, provider_id, status, started_at, updated_at)
+             VALUES (?1, ?2, 'running', ?3, ?3)",
+            params![session_id, provider_id, now],
+        )
+        .map_err(database_error)?;
+    Ok(session_id)
+}
+
+fn finish_provider_session(
+    state: &AppState,
+    session_id: &str,
+    status: &str,
+    failure_reason: Option<&str>,
+) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    connection
+        .execute(
+            "UPDATE provider_sessions SET status = ?1, failure_reason = ?2, updated_at = ?3 WHERE id = ?4",
+            params![status, failure_reason.map(redact_runtime_text), now_iso(), session_id],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+fn persist_assistant_message(
+    state: &AppState,
+    conversation_id: &str,
+    content: &str,
+) -> Result<ConversationMessage, String> {
+    let message = ConversationMessage {
+        id: new_id("message"),
+        conversation_id: conversation_id.to_string(),
+        role: "assistant".to_string(),
+        content: content.to_string(),
+        created_at: now_iso(),
+    };
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    connection
+        .execute(
+            "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                message.id,
+                message.conversation_id,
+                message.role,
+                message.content,
+                message.created_at
+            ],
+        )
+        .map_err(database_error)?;
+    Ok(message)
+}
+
+enum ProviderAttemptError {
+    Cancelled,
+    Failed(String),
+}
+
+async fn stream_model_provider(
+    provider: &ModelProviderSettings,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+) -> Result<String, ProviderAttemptError> {
+    if cancellation.is_cancelled() {
+        return Err(ProviderAttemptError::Cancelled);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|error| {
+            ProviderAttemptError::Failed(format!("Could not initialize HTTP client: {error}"))
+        })?;
+    let messages = history
+        .iter()
+        .filter_map(|message| {
+            let role = match message.role.as_str() {
+                "system" => "system",
+                "assistant" => "assistant",
+                "user" | "transcript" => "user",
+                _ => return None,
+            };
+            Some(json!({ "role": role, "content": message.content }))
+        })
+        .collect::<Vec<_>>();
+    let mut request = client
+        .post(provider_chat_url(&provider.endpoint).map_err(ProviderAttemptError::Failed)?)
+        .json(&json!({ "model": provider.model, "messages": messages, "stream": true }));
+    if let Some(api_key) = provider_api_key(provider) {
+        request = request.bearer_auth(api_key);
+    }
+    let response = tokio::select! {
+        _ = cancellation.notify.notified() => return Err(ProviderAttemptError::Cancelled),
+        response = request.send() => response.map_err(|error| {
+            ProviderAttemptError::Failed(format!("Provider request failed: {error}"))
+        })?,
+    };
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ProviderAttemptError::Failed(format!(
+            "Provider returned {status}: {}",
+            bounded_text(&body, 800)
+        )));
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    if content_type.contains("application/json") {
+        let body = tokio::select! {
+            _ = cancellation.notify.notified() => return Err(ProviderAttemptError::Cancelled),
+            body = response.bytes() => body.map_err(|error| {
+                ProviderAttemptError::Failed(format!("Could not read provider JSON: {error}"))
+            })?,
+        };
+        if body.len() > 1_048_576 {
+            return Err(ProviderAttemptError::Failed(
+                "Provider JSON exceeded the 1 MiB limit".to_string(),
+            ));
+        }
+        let response: Value = serde_json::from_slice(&body).map_err(|error| {
+            ProviderAttemptError::Failed(format!("Invalid provider JSON: {error}"))
+        })?;
+        let content = response
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                ProviderAttemptError::Failed(
+                    "Provider response did not contain message content".to_string(),
+                )
+            })?
+            .chars()
+            .take(64_000)
+            .collect::<String>();
+        let _ = on_event.send(RuntimeEvent::Delta {
+            run_id: input.run_id.clone(),
+            text: content.clone(),
+        });
+        return Ok(content);
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::new();
+    let mut content = String::new();
+    loop {
+        if cancellation.is_cancelled() {
+            return Err(ProviderAttemptError::Cancelled);
+        }
+        let next = tokio::select! {
+            _ = cancellation.notify.notified() => return Err(ProviderAttemptError::Cancelled),
+            next = stream.next() => next,
+        };
+        let Some(chunk) = next else {
+            if !buffer.is_empty() {
+                buffer.extend_from_slice(b"\n\n");
+                let _ = project_sse_events(
+                    drain_sse_events(&mut buffer).map_err(ProviderAttemptError::Failed)?,
+                    &mut content,
+                    input,
+                    on_event,
+                )?;
+            }
+            break;
+        };
+        let chunk = chunk.map_err(|error| {
+            ProviderAttemptError::Failed(format!("Provider stream failed: {error}"))
+        })?;
+        buffer.extend_from_slice(&chunk);
+        if buffer.len() > 1_048_576 {
+            return Err(ProviderAttemptError::Failed(
+                "Provider stream event exceeded the 1 MiB limit".to_string(),
+            ));
+        }
+        let stream_done = project_sse_events(
+            drain_sse_events(&mut buffer).map_err(ProviderAttemptError::Failed)?,
+            &mut content,
+            input,
+            on_event,
+        )?;
+        if stream_done {
+            break;
+        }
+    }
+    if content.trim().is_empty() {
+        return Err(ProviderAttemptError::Failed(
+            "Provider stream completed without text".to_string(),
+        ));
+    }
+    Ok(content)
+}
+
+fn drain_sse_events(buffer: &mut Vec<u8>) -> Result<Vec<String>, String> {
+    let mut events = Vec::new();
+    loop {
+        let lf = buffer.windows(2).position(|window| window == b"\n\n");
+        let crlf = buffer.windows(4).position(|window| window == b"\r\n\r\n");
+        let boundary = match (lf, crlf) {
+            (Some(lf), Some(crlf)) if lf < crlf => Some((lf, 2)),
+            (Some(_), Some(crlf)) => Some((crlf, 4)),
+            (Some(lf), None) => Some((lf, 2)),
+            (None, Some(crlf)) => Some((crlf, 4)),
+            (None, None) => None,
+        };
+        let Some((index, delimiter_length)) = boundary else {
+            break;
+        };
+        let drained = buffer.drain(..index + delimiter_length).collect::<Vec<_>>();
+        events.push(
+            String::from_utf8(drained[..index].to_vec())
+                .map_err(|_| "Provider stream event was not valid UTF-8".to_string())?,
+        );
+    }
+    Ok(events)
+}
+
+fn project_sse_events(
+    events: Vec<String>,
+    content: &mut String,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+) -> Result<bool, ProviderAttemptError> {
+    for event in events {
+        for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
+            let data = line.trim();
+            if data == "[DONE]" {
+                return Ok(true);
+            }
+            let value: Value = serde_json::from_str(data).map_err(|error| {
+                ProviderAttemptError::Failed(format!("Invalid provider stream event: {error}"))
+            })?;
+            if let Some(delta) = value
+                .pointer("/choices/0/delta/content")
+                .and_then(Value::as_str)
+            {
+                let remaining = 64_000usize.saturating_sub(content.chars().count());
+                if remaining == 0 {
+                    return Err(ProviderAttemptError::Failed(
+                        "Provider response exceeded the 64,000 character limit".to_string(),
+                    ));
+                }
+                let bounded_delta = bounded_text(delta, remaining);
+                content.push_str(&bounded_delta);
+                let _ = on_event.send(RuntimeEvent::Delta {
+                    run_id: input.run_id.clone(),
+                    text: bounded_delta,
+                });
+            }
+        }
+    }
+    Ok(false)
+}
+
+async fn probe_model_provider(provider: &ModelProviderSettings) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|error| format!("Could not initialize HTTP client: {error}"))?;
+    let mut request = client.get(provider_models_url(&provider.endpoint)?);
+    if let Some(api_key) = provider_api_key(provider) {
+        request = request.bearer_auth(api_key);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Provider returned HTTP {}", response.status()));
+    }
+    Ok("Connection succeeded".to_string())
+}
+
+fn provider_chat_url(endpoint: &str) -> Result<String, String> {
+    provider_operation_url(endpoint, "chat/completions")
+}
+
+fn provider_models_url(endpoint: &str) -> Result<String, String> {
+    provider_operation_url(endpoint, "models")
+}
+
+fn provider_operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
+    let mut url =
+        url::Url::parse(endpoint).map_err(|_| "Provider endpoint is invalid".to_string())?;
+    let mut path = url.path().trim_end_matches('/').to_string();
+    if path.ends_with("/chat/completions") {
+        path.truncate(path.len() - "/chat/completions".len());
+    } else if path.ends_with("/models") {
+        path.truncate(path.len() - "/models".len());
+    }
+    if !path.ends_with("/v1") {
+        path.push_str("/v1");
+    }
+    path.push('/');
+    path.push_str(operation);
+    url.set_path(&path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
+fn provider_api_key(provider: &ModelProviderSettings) -> Option<String> {
+    let suffix = provider
+        .id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    env::var(format!("SAAA_PROVIDER_{suffix}_API_KEY"))
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            (provider.location == "cloud")
+                .then(|| env::var("OPENAI_API_KEY").ok())
+                .flatten()
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn bounded_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn redact_runtime_text(value: &str) -> String {
+    let mut redacted = bounded_text(value, 2_000);
+    for (key, secret) in env::vars().filter(|(key, value)| {
+        (key.ends_with("_API_KEY") || key.ends_with("_TOKEN")) && !value.is_empty()
+    }) {
+        let _ = key;
+        redacted = redacted.replace(&secret, "[REDACTED]");
+    }
+    redacted
+}
+
+#[tauri::command]
+async fn list_codex_models() -> Result<Vec<CodexModelOption>, String> {
+    tauri::async_runtime::spawn_blocking(fetch_codex_models)
+        .await
+        .map_err(|error| format!("Codex model lookup task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn get_codex_status() -> CodexRuntimeStatus {
+    match tauri::async_runtime::spawn_blocking(fetch_codex_status).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => CodexRuntimeStatus {
+            installed: false,
+            authenticated: false,
+            runtime: "unavailable".to_string(),
+            account_type: None,
+            message: redact_runtime_text(&error),
+        },
+        Err(error) => CodexRuntimeStatus {
+            installed: false,
+            authenticated: false,
+            runtime: "unavailable".to_string(),
+            account_type: None,
+            message: format!("Codex health check failed: {error}"),
+        },
+    }
+}
+
+fn fetch_codex_status() -> Result<CodexRuntimeStatus, String> {
+    let mut child = ProcessGuard::new(spawn_codex_app_server()?);
+    let mut stdin = child
+        .child_mut()
+        .stdin
+        .take()
+        .ok_or_else(|| "Codex app-server stdin is unavailable".to_string())?;
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .ok_or_else(|| "Codex app-server stdout is unavailable".to_string())?;
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                if sender.send(message).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    let result = (|| {
+        write_codex_handshake(&mut stdin)?;
+        write_codex_message(
+            &mut stdin,
+            json!({ "method": "account/read", "id": 2, "params": { "refreshToken": false } }),
+        )?;
+        let response = receive_codex_response(&receiver, 2, Duration::from_secs(15))?;
+        let account = response.pointer("/result/account");
+        let account_type = account
+            .and_then(|account| account.get("type"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let authenticated = account.is_some_and(|value| !value.is_null());
+        Ok(CodexRuntimeStatus {
+            installed: true,
+            authenticated,
+            runtime: "app-server".to_string(),
+            account_type,
+            message: if authenticated {
+                "Codex is ready".to_string()
+            } else {
+                "Codex is installed but not authenticated. Run codex login.".to_string()
+            },
+        })
+    })();
+    drop(stdin);
+    result
+}
+
+fn fetch_codex_models() -> Result<Vec<CodexModelOption>, String> {
+    let mut child = ProcessGuard::new(spawn_codex_app_server()?);
+    let mut stdin = child
+        .child_mut()
+        .stdin
+        .take()
+        .ok_or_else(|| "Codex app-server stdin is unavailable".to_string())?;
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .ok_or_else(|| "Codex app-server stdout is unavailable".to_string())?;
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let message = line
+                .map_err(|error| format!("Could not read Codex app-server response: {error}"))
+                .and_then(|line| {
+                    serde_json::from_str::<Value>(&line)
+                        .map_err(|error| format!("Codex app-server returned invalid JSON: {error}"))
+                });
+            if sender.send(message).is_err() {
+                break;
+            }
+        }
+    });
+
+    let result = (|| {
+        write_codex_message(
+            &mut stdin,
+            json!({
+                "method": "initialize",
+                "id": 1,
+                "params": {
+                    "clientInfo": {
+                        "name": "saaa",
+                        "title": "SAAA",
+                        "version": env!("CARGO_PKG_VERSION")
+                    }
+                }
+            }),
+        )?;
+        write_codex_message(&mut stdin, json!({ "method": "initialized", "params": {} }))?;
+
+        let mut request_id = 2_u64;
+        let mut cursor: Option<String> = None;
+        let mut models = Vec::new();
+
+        loop {
+            let mut params = json!({ "limit": 100, "includeHidden": false });
+            if let Some(value) = &cursor {
+                params["cursor"] = Value::String(value.clone());
+            }
+            write_codex_message(
+                &mut stdin,
+                json!({ "method": "model/list", "id": request_id, "params": params }),
+            )?;
+
+            let page = loop {
+                let message = receiver.recv_timeout(Duration::from_secs(20)).map_err(
+                    |error| match error {
+                        mpsc::RecvTimeoutError::Timeout => {
+                            "Timed out while loading models from Codex".to_string()
+                        }
+                        mpsc::RecvTimeoutError::Disconnected => {
+                            "Codex app-server stopped before returning models".to_string()
+                        }
+                    },
+                )??;
+                if message.get("id").and_then(Value::as_u64) != Some(request_id) {
+                    continue;
+                }
+                if let Some(error) = message.get("error") {
+                    let detail = error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Unknown Codex app-server error");
+                    return Err(format!("Could not load Codex models: {detail}"));
+                }
+                let result = message
+                    .get("result")
+                    .cloned()
+                    .ok_or_else(|| "Codex model response did not include a result".to_string())?;
+                break serde_json::from_value::<CodexModelPage>(result)
+                    .map_err(|error| format!("Could not decode Codex models: {error}"))?;
+            };
+
+            models.extend(page.data.into_iter().filter(|model| !model.hidden));
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+            request_id += 1;
+        }
+
+        Ok(models)
+    })();
+
+    drop(stdin);
+    result
+}
+
+fn write_codex_message(stdin: &mut impl Write, message: Value) -> Result<(), String> {
+    writeln!(stdin, "{message}")
+        .and_then(|_| stdin.flush())
+        .map_err(|error| format!("Could not write to Codex app-server: {error}"))
+}
+
+fn write_codex_handshake(stdin: &mut impl Write) -> Result<(), String> {
+    write_codex_message(
+        stdin,
+        json!({
+            "method": "initialize",
+            "id": 1,
+            "params": {
+                "clientInfo": {
+                    "name": "saaa",
+                    "title": "SAAA",
+                    "version": env!("CARGO_PKG_VERSION")
+                },
+                "capabilities": null
+            }
+        }),
+    )?;
+    write_codex_message(stdin, json!({ "method": "initialized", "params": {} }))
+}
+
+fn receive_codex_response(
+    receiver: &mpsc::Receiver<Value>,
+    request_id: u64,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("Timed out waiting for Codex app-server".to_string());
+        }
+        let message = receiver
+            .recv_timeout(remaining)
+            .map_err(|_| "Codex app-server stopped before responding".to_string())?;
+        if message.get("id").and_then(Value::as_u64) != Some(request_id) {
+            continue;
+        }
+        if let Some(error) = message.get("error") {
+            return Err(format!(
+                "Codex app-server error: {}",
+                error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown error")
+            ));
+        }
+        return Ok(message);
+    }
+}
+
+fn spawn_codex_app_server() -> Result<Child, String> {
+    let mut errors = Vec::new();
+    for executable in codex_executable_candidates() {
+        if executable.is_absolute() && !executable.exists() {
+            continue;
+        }
+        let mut command = Command::new(&executable);
+        configure_codex_environment(&mut command);
+        match command
+            .args([
+                "--config",
+                "mcp_servers={}",
+                "--config",
+                "web_search=\"disabled\"",
+                "--config",
+                "sandbox_workspace_write.network_access=false",
+                "app-server",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => return Ok(child),
+            Err(error) => errors.push(format!("{}: {error}", executable.display())),
+        }
+    }
+    Err(format!(
+        "Could not start the Codex runtime. Install @openai/codex-sdk or set SAAA_CODEX_PATH. {}",
+        errors.join("; ")
+    ))
+}
+
+fn configure_codex_environment(command: &mut Command) {
+    command.env_clear();
+    for key in [
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "CODEX_HOME",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NO_PROXY",
+    ] {
+        if let Some(value) = env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+}
+
+fn codex_executable_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("SAAA_CODEX_PATH").filter(|value| !value.is_empty()) {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(path) = BUNDLED_CODEX_PATH.get() {
+        candidates.push(path.clone());
+    }
+
+    if let Some((package, target, executable)) = codex_platform_package() {
+        candidates.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("node_modules")
+                .join("@openai")
+                .join(package)
+                .join("vendor")
+                .join(target)
+                .join("bin")
+                .join(executable),
+        );
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("node_modules")
+            .join(".bin")
+            .join(if cfg!(windows) { "codex.cmd" } else { "codex" }),
+    );
+    candidates.push(PathBuf::from("codex"));
+    candidates
+}
+
+fn codex_platform_package() -> Option<(&'static str, &'static str, &'static str)> {
+    match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "aarch64") => Some(("codex-darwin-arm64", "aarch64-apple-darwin", "codex")),
+        ("macos", "x86_64") => Some(("codex-darwin-x64", "x86_64-apple-darwin", "codex")),
+        ("linux", "aarch64") => Some(("codex-linux-arm64", "aarch64-unknown-linux-musl", "codex")),
+        ("linux", "x86_64") => Some(("codex-linux-x64", "x86_64-unknown-linux-musl", "codex")),
+        ("windows", "aarch64") => {
+            Some(("codex-win32-arm64", "aarch64-pc-windows-msvc", "codex.exe"))
+        }
+        ("windows", "x86_64") => Some(("codex-win32-x64", "x86_64-pc-windows-msvc", "codex.exe")),
+        _ => None,
+    }
+}
+
+fn default_codex_input_modalities() -> Vec<String> {
+    vec!["text".to_string(), "image".to_string()]
+}
+
+#[tauri::command]
+fn save_settings_documents(
+    state: tauri::State<'_, AppState>,
+    input: SaveSettingsDocumentsInput,
+) -> Result<Vec<SettingsDocument>, String> {
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let saved = save_settings_documents_to_connection(&mut connection, &input.documents)?;
+    let situation_settings = input
+        .documents
+        .iter()
+        .find(|document| document.namespace == "situation.runtime" && document.key == "default")
+        .ok_or_else(|| "Situation settings are required".to_string())
+        .and_then(|document| {
+            serde_json::from_value::<situation::contracts::SituationRuntimeSettings>(
+                document.value_json.clone(),
+            )
+            .map_err(|error| format!("Invalid Situation settings: {error}"))
+        })?;
+    drop(connection);
+    let enabled = situation_settings.enabled;
+    state.situation.configure(situation_settings)?;
+    if enabled {
+        spawn_situation_monitor(state.connection.clone(), state.situation.clone());
+    }
+    Ok(saved)
+}
+
+fn save_settings_documents_to_connection(
+    connection: &mut Connection,
+    documents: &[SaveSettingsDocumentInput],
+) -> Result<Vec<SettingsDocument>, String> {
+    if documents.is_empty() {
+        return Err("No settings documents to save".to_string());
+    }
+    for document in documents {
+        validate_settings_document(document)?;
+    }
+    validate_settings_batch(documents)?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    for document in documents {
+        let value_text = serde_json::to_string(&document.value_json)
+            .map_err(|error| format!("Could not encode settings: {error}"))?;
+        transaction
+            .execute(
+                "INSERT INTO settings_documents(namespace, key, schema_version, value_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(namespace, key) DO UPDATE SET
+                   schema_version = excluded.schema_version,
+                   value_json = excluded.value_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    document.namespace,
+                    document.key,
+                    document.schema_version,
+                    value_text,
+                    now_iso()
+                ],
+            )
+            .map_err(database_error)?;
+    }
+    transaction.commit().map_err(database_error)?;
+
+    let saved = documents
+        .iter()
+        .map(|document| read_settings_document(connection, &document.namespace, &document.key))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(saved)
+}
+
+#[tauri::command]
+fn create_conversation(
+    state: tauri::State<'_, AppState>,
+    input: CreateConversationInput,
+) -> Result<Conversation, String> {
+    if !matches!(input.task_mode.as_str(), "conversation" | "coding") {
+        return Err("Unsupported task mode".to_string());
+    }
+    let title = input
+        .title
+        .map(|title| title.trim().to_string())
+        .filter(|title| !title.is_empty());
+    if title
+        .as_ref()
+        .is_some_and(|title| title.chars().count() > 120)
+    {
+        return Err("Conversation title exceeds the 120 character limit".to_string());
+    }
+    let now = now_iso();
+    let conversation = Conversation {
+        id: new_id("conversation"),
+        title,
+        task_mode: input.task_mode,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    connection
+        .execute(
+            "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                conversation.id,
+                conversation.title,
+                conversation.task_mode,
+                conversation.created_at,
+                conversation.updated_at,
+            ],
+        )
+        .map_err(database_error)?;
+    Ok(conversation)
+}
+
+#[tauri::command]
+fn list_messages(
+    state: tauri::State<'_, AppState>,
+    conversation_id: String,
+) -> Result<Vec<ConversationMessage>, String> {
+    validate_identifier(&conversation_id, "conversation id")?;
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    list_messages_from_connection(&connection, &conversation_id)
+}
+
+#[tauri::command]
+fn append_message(
+    state: tauri::State<'_, AppState>,
+    input: AppendMessageInput,
+) -> Result<ConversationMessage, String> {
+    validate_identifier(&input.conversation_id, "conversation id")?;
+    let content = input.content.trim();
+    if content.is_empty() {
+        return Err("Message cannot be empty".to_string());
+    }
+    if content.chars().count() > 16_000 {
+        return Err("Message exceeds the 16,000 character limit".to_string());
+    }
+    if !matches!(
+        input.role.as_str(),
+        "user" | "assistant" | "system" | "transcript"
+    ) {
+        return Err("Unsupported message role".to_string());
+    }
+
+    let message = ConversationMessage {
+        id: new_id("message"),
+        conversation_id: input.conversation_id,
+        role: input.role,
+        content: content.to_string(),
+        created_at: now_iso(),
+    };
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    let exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+            params![message.conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    if !exists {
+        return Err("Conversation does not exist".to_string());
+    }
+    transaction
+        .execute(
+            "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                message.id,
+                message.conversation_id,
+                message.role,
+                message.content,
+                message.created_at,
+            ],
+        )
+        .map_err(database_error)?;
+    transaction
+        .execute(
+            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+            params![message.created_at, message.conversation_id],
+        )
+        .map_err(database_error)?;
+    transaction.commit().map_err(database_error)?;
+    Ok(message)
+}
+
+fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode = WAL;
+         PRAGMA busy_timeout = 5000;
+         CREATE TABLE IF NOT EXISTS settings_documents (
+           namespace TEXT NOT NULL,
+           key TEXT NOT NULL,
+           schema_version INTEGER NOT NULL,
+           value_json TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           PRIMARY KEY(namespace, key)
+         );
+         CREATE TABLE IF NOT EXISTS conversations (
+           id TEXT PRIMARY KEY,
+           title TEXT,
+           task_mode TEXT NOT NULL CHECK(task_mode IN ('conversation', 'coding')),
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS conversation_messages (
+           id TEXT PRIMARY KEY,
+           conversation_id TEXT NOT NULL,
+           role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system', 'transcript')),
+           content TEXT NOT NULL,
+           created_at TEXT NOT NULL,
+           FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_created
+           ON conversation_messages(conversation_id, created_at);
+         CREATE TABLE IF NOT EXISTS provider_sessions (
+           id TEXT PRIMARY KEY,
+           provider_id TEXT NOT NULL,
+           status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')),
+           failure_reason TEXT,
+           started_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS runtime_runs (
+           id TEXT PRIMARY KEY,
+           conversation_id TEXT NOT NULL,
+           route_kind TEXT NOT NULL CHECK(route_kind IN ('conversation.respond', 'coding.assist', 'voice.transcribe', 'voice.speak')),
+           provider_id TEXT,
+           status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')),
+           error_message TEXT,
+           started_at TEXT NOT NULL,
+           completed_at TEXT,
+           FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_runtime_runs_conversation_started
+           ON runtime_runs(conversation_id, started_at);
+         CREATE TABLE IF NOT EXISTS codex_threads (
+           conversation_id TEXT PRIMARY KEY,
+           thread_id TEXT NOT NULL UNIQUE,
+           model TEXT NOT NULL,
+           workspace_path TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS situation_ledger (
+           id TEXT PRIMARY KEY,
+           observed_at TEXT NOT NULL,
+           scene TEXT NOT NULL,
+           confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 100),
+           user_attention TEXT NOT NULL CHECK(user_attention IN ('available', 'busy', 'unknown')),
+           audio_environment TEXT NOT NULL CHECK(audio_environment IN ('silence', 'speech', 'multi-speaker', 'media', 'unknown')),
+           proposed_attention TEXT NOT NULL CHECK(proposed_attention IN ('IGNORE', 'OBSERVE', 'SUGGEST', 'RESPOND')),
+           actual_execution TEXT NOT NULL CHECK(actual_execution = 'NONE'),
+           actual_presentation TEXT NOT NULL CHECK(actual_presentation = 'SILENT'),
+           evidence_json TEXT NOT NULL,
+           signal_health_json TEXT NOT NULL,
+           decision_reasons_json TEXT NOT NULL,
+           rule_version TEXT NOT NULL,
+           policy_version TEXT NOT NULL,
+           entry_kind TEXT NOT NULL CHECK(entry_kind IN ('transition', 'decision', 'heartbeat'))
+         );
+         CREATE INDEX IF NOT EXISTS idx_situation_ledger_observed
+           ON situation_ledger(observed_at DESC);
+         CREATE TABLE IF NOT EXISTS situation_feedback (
+           ledger_id TEXT PRIMARY KEY,
+           verdict TEXT NOT NULL CHECK(verdict IN ('accurate', 'inaccurate', 'unsure')),
+           corrected_scene TEXT,
+           created_at TEXT NOT NULL,
+           FOREIGN KEY(ledger_id) REFERENCES situation_ledger(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS meeting_sessions (
+           id TEXT PRIMARY KEY,
+           status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
+           microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0,1)),
+           system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0,1)),
+           stt_provider_id TEXT NOT NULL CHECK(stt_provider_id = 'local-whisper'),
+           stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) <= 256),
+           translation_provider_id TEXT,
+           persistence_mode TEXT NOT NULL CHECK(persistence_mode IN ('discard','explicit-save')),
+           started_at TEXT NOT NULL, ended_at TEXT, saved_at TEXT, error_code TEXT
+         );
+         CREATE INDEX IF NOT EXISTS idx_meeting_sessions_started ON meeting_sessions(started_at DESC);
+         CREATE TABLE IF NOT EXISTS meeting_transcript_entries (
+           id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+           lane TEXT NOT NULL CHECK(lane IN ('microphone','system-audio')),
+           sequence INTEGER NOT NULL CHECK(sequence >= 0),
+           original_text TEXT NOT NULL CHECK(length(original_text) BETWEEN 1 AND 8000),
+           original_language TEXT, translated_text TEXT CHECK(translated_text IS NULL OR length(translated_text) <= 8000), translated_language TEXT,
+           started_at_ms INTEGER NOT NULL CHECK(started_at_ms >= 0), ended_at_ms INTEGER NOT NULL CHECK(ended_at_ms >= started_at_ms), created_at TEXT NOT NULL,
+           FOREIGN KEY(session_id) REFERENCES meeting_sessions(id) ON DELETE CASCADE, UNIQUE(session_id,lane,sequence)
+         );
+         CREATE INDEX IF NOT EXISTS idx_meeting_transcript_session_sequence ON meeting_transcript_entries(session_id,lane,sequence);",
+    )?;
+
+    let transaction = connection.unchecked_transaction()?;
+    migrate_legacy_settings_documents(&transaction)?;
+    migrate_v4_to_v5(&transaction)?;
+    transaction.execute("UPDATE settings_documents SET schema_version = 6, updated_at = ?1 WHERE schema_version < 6", params![now_iso()])?;
+    reconcile_interrupted_runs(&transaction)?;
+    meeting::reconcile(&transaction)?;
+
+    for (namespace, key, schema_version, value) in default_settings_documents() {
+        transaction.execute(
+            "INSERT OR IGNORE INTO settings_documents(namespace, key, schema_version, value_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![namespace, key, schema_version, value.to_string(), now_iso()],
+        )?;
+    }
+    transaction.pragma_update(None, "user_version", 6)?;
+    transaction.commit()
+}
+
+fn migrate_v4_to_v5(connection: &Connection) -> rusqlite::Result<()> {
+    let has_impact: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('situation_feedback') WHERE name='impact')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_impact {
+        connection.execute_batch("ALTER TABLE situation_feedback ADD COLUMN impact TEXT NOT NULL DEFAULT 'none' CHECK(impact IN ('none','no-effect','harmful')); ALTER TABLE situation_feedback ADD COLUMN reason_code TEXT CHECK(reason_code IS NULL OR reason_code IN ('wrong-scene','stale-signal','unstable-transition','unwanted-suggestion','missed-meeting-candidate','insufficient-evidence')); ")?;
+    }
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS situation_quality_windows (id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT NOT NULL, rule_version TEXT NOT NULL, counters_json TEXT NOT NULL CHECK(length(counters_json)<=4096), created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_situation_quality_windows_ended ON situation_quality_windows(CAST(ended_at AS INTEGER) DESC); CREATE TABLE IF NOT EXISTS situation_calibration_profiles (id TEXT PRIMARY KEY, rule_version TEXT NOT NULL UNIQUE, base_rule_version TEXT, status TEXT NOT NULL CHECK(status IN ('candidate','active','superseded','rejected','rolled-back')), parameters_json TEXT NOT NULL CHECK(length(parameters_json)<=2048), created_at TEXT NOT NULL, decided_at TEXT, decision_reason_code TEXT); CREATE UNIQUE INDEX IF NOT EXISTS idx_situation_calibration_one_active ON situation_calibration_profiles(status) WHERE status='active'; CREATE TABLE IF NOT EXISTS situation_calibration_runs (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, fixture_set_version TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('completed','failed')), metrics_json TEXT CHECK(metrics_json IS NULL OR length(metrics_json)<=8192), error_code TEXT, started_at TEXT NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(profile_id) REFERENCES situation_calibration_profiles(id) ON DELETE CASCADE); CREATE INDEX IF NOT EXISTS idx_situation_calibration_runs_completed ON situation_calibration_runs(completed_at DESC);")?;
+    let parameters =
+        serde_json::to_string(&situation::contracts::CalibrationParameters::default()).unwrap();
+    connection.execute("INSERT OR IGNORE INTO situation_calibration_profiles(id,rule_version,status,parameters_json,created_at,decided_at) VALUES('profile_mvp1_default','mvp1-rules-v1','active',?1,?2,?2)", params![parameters, now_iso()])?;
+    Ok(())
+}
+
+fn backup_connection_to(source: &Connection, path: &std::path::Path) -> Result<(), String> {
+    let mut destination = Connection::open(path)
+        .map_err(|error| format!("Could not create the database backup: {error}"))?;
+    let backup = rusqlite::backup::Backup::new(source, &mut destination)
+        .map_err(|error| format!("Could not initialize the database backup: {error}"))?;
+    backup
+        .run_to_completion(32, Duration::from_millis(20), None)
+        .map_err(|error| format!("Database backup failed: {error}"))
+}
+
+fn backup_before_migration(
+    connection: &Connection,
+    database_path: &std::path::Path,
+) -> Result<Option<PathBuf>, String> {
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(database_error)?;
+    let has_data = fs::metadata(database_path)
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false);
+    if !has_data || version >= 6 {
+        return Ok(None);
+    }
+    let directory = database_path
+        .parent()
+        .ok_or_else(|| "Database path has no parent directory".to_string())?
+        .join("backups");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create the migration backup directory: {error}"))?;
+    let path = directory.join(format!("pre-migration-{}.sqlite3", now_iso()));
+    backup_connection_to(connection, &path)?;
+    Ok(Some(path))
+}
+
+fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)> {
+    vec![
+        (
+            "providers.model",
+            "default",
+            6,
+            json!({
+                "providers": [{
+                    "id": "local-openai-compatible",
+                    "enabled": false,
+                    "label": "Local OpenAI-compatible",
+                    "location": "local",
+                    "endpoint": "",
+                    "model": "",
+                    "credentialStatus": "not-configured"
+                }]
+            }),
+        ),
+        (
+            "providers.agent",
+            "codex-sdk",
+            6,
+            json!({
+                "enabled": false,
+                "provider": "codex-sdk",
+                "model": "",
+                "runtimeMode": "app-server",
+                "health": "unchecked",
+                "sandboxMode": "read-only",
+                "approvalPolicy": "never",
+                "networkEnabled": false,
+                "webSearchEnabled": false,
+                "workspacePolicy": "select-per-conversation"
+            }),
+        ),
+        (
+            "routing.tasks",
+            "default",
+            6,
+            json!({
+                "conversationRespond": {
+                    "primaryProviderId": "local-openai-compatible",
+                    "fallbackProviderIds": [],
+                    "timeoutMs": 30000
+                },
+                "codingAssist": {
+                    "providerId": "codex-sdk",
+                    "timeoutMs": 120000,
+                    "readOnly": true,
+                    "networkEnabled": false,
+                    "webSearchEnabled": false
+                }
+            }),
+        ),
+        (
+            "voice.runtime",
+            "default",
+            6,
+            json!({
+                "inputDeviceId": "default",
+                "outputDeviceId": "default",
+                "captureMode": "push-to-talk",
+                    "sttProviderId": "local-whisper",
+                "sttModel": "",
+                    "ttsProviderId": "system-tts",
+                "ttsVoice": "default",
+                "autoSpeak": true,
+                "cloudFallbackEnabled": false
+            }),
+        ),
+        (
+            "security.runtime",
+            "default",
+            6,
+            json!({
+                "credentialStorage": "environment",
+                "localOnlyWhenSelected": true,
+                "diagnosticsRedaction": true
+            }),
+        ),
+        (
+            "situation.runtime",
+            "default",
+            6,
+            serde_json::to_value(situation::contracts::SituationRuntimeSettings::default())
+                .expect("default Situation settings serialize"),
+        ),
+    ]
+}
+
+fn migrate_legacy_settings_documents(connection: &Connection) -> rusqlite::Result<()> {
+    migrate_document(connection, "providers.model", "default", |legacy| {
+        let provider = json!({
+            "id": legacy.get("id").and_then(Value::as_str).unwrap_or("local-openai-compatible"),
+            "enabled": legacy.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+            "label": legacy.get("label").and_then(Value::as_str).unwrap_or("Local OpenAI-compatible"),
+            "location": legacy.get("location").and_then(Value::as_str).unwrap_or("local"),
+            "endpoint": legacy.get("endpoint").and_then(Value::as_str).unwrap_or(""),
+            "model": legacy.get("model").and_then(Value::as_str).unwrap_or(""),
+            "credentialStatus": legacy.get("credentialStatus").and_then(Value::as_str).unwrap_or("not-configured")
+        });
+        json!({ "providers": [provider] })
+    })?;
+    migrate_document(connection, "providers.agent", "codex-sdk", |legacy| {
+        json!({
+            "enabled": legacy.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+            "provider": "codex-sdk",
+            "model": legacy.get("model").and_then(Value::as_str).unwrap_or(""),
+            "runtimeMode": "app-server",
+            "health": legacy.get("health").and_then(Value::as_str).unwrap_or("unchecked"),
+            "sandboxMode": "read-only",
+            "approvalPolicy": "never",
+            "networkEnabled": false,
+            "webSearchEnabled": false,
+            "workspacePolicy": "select-per-conversation"
+        })
+    })?;
+    migrate_document(connection, "routing.tasks", "default", |legacy| {
+        json!({
+            "conversationRespond": legacy.get("conversationRespond").cloned().unwrap_or_else(|| json!({
+                "primaryProviderId": "local-openai-compatible", "fallbackProviderIds": [], "timeoutMs": 30000
+            })),
+            "codingAssist": {
+                "providerId": "codex-sdk",
+                "timeoutMs": legacy.pointer("/codingAssist/timeoutMs").and_then(Value::as_u64).unwrap_or(120000),
+                "readOnly": true,
+                "networkEnabled": false,
+                "webSearchEnabled": false
+            }
+        })
+    })?;
+    migrate_document(connection, "voice.runtime", "default", |legacy| {
+        json!({
+            "inputDeviceId": legacy.get("inputDeviceId").and_then(Value::as_str).unwrap_or("default"),
+            "outputDeviceId": legacy.get("outputDeviceId").and_then(Value::as_str).unwrap_or("default"),
+            "captureMode": "push-to-talk",
+            "sttProviderId": "local-whisper",
+            "sttModel": legacy.get("sttModel").and_then(Value::as_str).unwrap_or(""),
+            "ttsProviderId": "system-tts",
+            "ttsVoice": legacy.get("ttsVoice").and_then(Value::as_str).unwrap_or("default"),
+            "autoSpeak": legacy.get("autoSpeak").and_then(Value::as_bool).unwrap_or(true),
+            "cloudFallbackEnabled": false
+        })
+    })?;
+    migrate_document(connection, "security.runtime", "default", |legacy| {
+        json!({
+            "credentialStorage": "environment",
+            "localOnlyWhenSelected": legacy.get("localOnlyWhenSelected").and_then(Value::as_bool).unwrap_or(true),
+            "diagnosticsRedaction": true
+        })
+    })?;
+    Ok(())
+}
+
+fn migrate_document(
+    connection: &Connection,
+    namespace: &str,
+    key: &str,
+    transform: impl FnOnce(Value) -> Value,
+) -> rusqlite::Result<()> {
+    let legacy: Option<(i64, String)> = connection
+        .query_row(
+            "SELECT schema_version, value_json FROM settings_documents WHERE namespace = ?1 AND key = ?2",
+            params![namespace, key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((schema_version, value_text)) = legacy else {
+        return Ok(());
+    };
+    if schema_version >= 3 {
+        return Ok(());
+    }
+    let legacy_value = serde_json::from_str(&value_text).unwrap_or_else(|_| json!({}));
+    connection.execute(
+        "UPDATE settings_documents SET schema_version = 3, value_json = ?1, updated_at = ?2
+         WHERE namespace = ?3 AND key = ?4",
+        params![
+            transform(legacy_value).to_string(),
+            now_iso(),
+            namespace,
+            key
+        ],
+    )?;
+    Ok(())
+}
+
+fn validate_settings_document(input: &SaveSettingsDocumentInput) -> Result<(), String> {
+    let allowed = matches!(
+        (input.namespace.as_str(), input.key.as_str()),
+        ("providers.model", "default")
+            | ("providers.agent", "codex-sdk")
+            | ("routing.tasks", "default")
+            | ("voice.runtime", "default")
+            | ("security.runtime", "default")
+            | ("situation.runtime", "default")
+    );
+    if !allowed {
+        return Err("Unsupported settings document".to_string());
+    }
+    if input.schema_version != 6 || !input.value_json.is_object() {
+        return Err("Invalid settings schema".to_string());
+    }
+    match (input.namespace.as_str(), input.key.as_str()) {
+        ("providers.model", "default") => {
+            let settings =
+                serde_json::from_value::<ModelProvidersSettings>(input.value_json.clone())
+                    .map_err(|error| format!("Invalid model provider settings: {error}"))?;
+            validate_model_providers(&settings)
+        }
+        ("providers.agent", "codex-sdk") => {
+            let settings =
+                serde_json::from_value::<CodexAgentRuntimeSettings>(input.value_json.clone())
+                    .map_err(|error| format!("Invalid Codex settings: {error}"))?;
+            validate_codex_settings(&settings)
+        }
+        ("routing.tasks", "default") => {
+            let settings = serde_json::from_value::<RoutingSettings>(input.value_json.clone())
+                .map_err(|error| format!("Invalid routing settings: {error}"))?;
+            validate_routing_settings(&settings)
+        }
+        ("voice.runtime", "default") => {
+            let settings = serde_json::from_value::<VoiceRuntimeSettings>(input.value_json.clone())
+                .map_err(|error| format!("Invalid voice settings: {error}"))?;
+            validate_voice_settings(&settings)
+        }
+        ("security.runtime", "default") => {
+            let settings =
+                serde_json::from_value::<SecurityRuntimeSettings>(input.value_json.clone())
+                    .map_err(|error| format!("Invalid security settings: {error}"))?;
+            validate_security_settings(&settings)
+        }
+        ("situation.runtime", "default") => {
+            let settings =
+                serde_json::from_value::<situation::contracts::SituationRuntimeSettings>(
+                    input.value_json.clone(),
+                )
+                .map_err(|error| format!("Invalid Situation settings: {error}"))?;
+            situation::validate_settings(&settings)
+        }
+        _ => Err("Unsupported settings document".to_string()),
+    }
+}
+
+fn validate_settings_batch(documents: &[SaveSettingsDocumentInput]) -> Result<(), String> {
+    if documents.len() != 6 {
+        return Err("A complete six-document settings snapshot is required".to_string());
+    }
+    let unique = documents
+        .iter()
+        .map(|document| (document.namespace.as_str(), document.key.as_str()))
+        .collect::<std::collections::HashSet<_>>();
+    if unique.len() != 6 {
+        return Err("Each settings document must appear exactly once".to_string());
+    }
+    let providers = documents
+        .iter()
+        .find(|document| document.namespace == "providers.model" && document.key == "default")
+        .ok_or_else(|| "Model provider settings are required".to_string())?;
+    let routing = documents
+        .iter()
+        .find(|document| document.namespace == "routing.tasks" && document.key == "default")
+        .ok_or_else(|| "Routing settings are required".to_string())?;
+    let security = documents
+        .iter()
+        .find(|document| document.namespace == "security.runtime" && document.key == "default")
+        .ok_or_else(|| "Security settings are required".to_string())?;
+    let providers = serde_json::from_value::<ModelProvidersSettings>(providers.value_json.clone())
+        .map_err(|error| format!("Invalid model provider settings: {error}"))?;
+    let routing = serde_json::from_value::<RoutingSettings>(routing.value_json.clone())
+        .map_err(|error| format!("Invalid routing settings: {error}"))?;
+    let security = serde_json::from_value::<SecurityRuntimeSettings>(security.value_json.clone())
+        .map_err(|error| format!("Invalid security settings: {error}"))?;
+    let enabled_ids = providers
+        .providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .map(|provider| provider.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if !enabled_ids.is_empty()
+        && !enabled_ids.contains(routing.conversation_respond.primary_provider_id.as_str())
+    {
+        return Err("The primary conversation provider must be enabled".to_string());
+    }
+    let mut route_ids = std::collections::HashSet::new();
+    route_ids.insert(routing.conversation_respond.primary_provider_id.as_str());
+    for provider_id in &routing.conversation_respond.fallback_provider_ids {
+        if !enabled_ids.contains(provider_id.as_str()) {
+            return Err(format!("Fallback provider is not enabled: {provider_id}"));
+        }
+        if !route_ids.insert(provider_id) {
+            return Err(format!("Duplicate provider in route: {provider_id}"));
+        }
+        let primary_is_local = providers.providers.iter().any(|provider| {
+            provider.id == routing.conversation_respond.primary_provider_id
+                && provider.location == "local"
+        });
+        let fallback_is_cloud = providers
+            .providers
+            .iter()
+            .any(|provider| provider.id == *provider_id && provider.location == "cloud");
+        if security.local_only_when_selected && primary_is_local && fallback_is_cloud {
+            return Err(format!(
+                "Cloud fallback is blocked while the local-only policy is active: {provider_id}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), String> {
+    if settings.providers.is_empty() {
+        return Err("At least one model provider is required".to_string());
+    }
+    let mut ids = std::collections::HashSet::new();
+    for provider in &settings.providers {
+        if provider.id.trim().is_empty() || provider.id.len() > 80 || !ids.insert(&provider.id) {
+            return Err(format!("Invalid or duplicate provider id: {}", provider.id));
+        }
+        if provider.label.trim().is_empty() || provider.label.len() > 120 {
+            return Err(format!("Invalid provider label: {}", provider.id));
+        }
+        if !matches!(provider.location.as_str(), "local" | "cloud") {
+            return Err(format!("Invalid provider location: {}", provider.id));
+        }
+        if !matches!(
+            provider.credential_status.as_str(),
+            "not-configured" | "configured"
+        ) {
+            return Err(format!("Invalid credential status: {}", provider.id));
+        }
+        if provider.enabled {
+            if provider.endpoint.trim().is_empty() || provider.model.trim().is_empty() {
+                return Err(format!(
+                    "Enabled provider requires endpoint and model: {}",
+                    provider.id
+                ));
+            }
+            let endpoint = url::Url::parse(&provider.endpoint)
+                .map_err(|_| format!("Invalid provider endpoint: {}", provider.id))?;
+            if !endpoint.username().is_empty() || endpoint.password().is_some() {
+                return Err(format!(
+                    "Provider credentials must not be embedded in the endpoint: {}",
+                    provider.id
+                ));
+            }
+            if !matches!(endpoint.scheme(), "http" | "https") {
+                return Err(format!(
+                    "Provider endpoint must use HTTP or HTTPS: {}",
+                    provider.id
+                ));
+            }
+            if provider.location == "local" {
+                let host = endpoint.host_str().unwrap_or_default();
+                if endpoint.scheme() != "http" || !matches!(host, "localhost" | "127.0.0.1" | "::1")
+                {
+                    return Err(format!(
+                        "Local provider must use an HTTP loopback endpoint: {}",
+                        provider.id
+                    ));
+                }
+            } else if endpoint.scheme() != "https" {
+                return Err(format!("Cloud provider must use HTTPS: {}", provider.id));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_codex_settings(settings: &CodexAgentRuntimeSettings) -> Result<(), String> {
+    if settings.provider != "codex-sdk"
+        || !matches!(
+            settings.runtime_mode.as_str(),
+            "pending-compatibility-check" | "bun" | "node-sidecar" | "app-server"
+        )
+        || !matches!(
+            settings.health.as_str(),
+            "unchecked" | "ready" | "unavailable"
+        )
+        || settings.sandbox_mode != "read-only"
+        || settings.approval_policy != "never"
+        || settings.network_enabled
+        || settings.web_search_enabled
+        || settings.workspace_policy != "select-per-conversation"
+        || settings.model.len() > 160
+    {
+        return Err("Codex settings violate the fixed read-only policy".to_string());
+    }
+    Ok(())
+}
+
+fn validate_routing_settings(settings: &RoutingSettings) -> Result<(), String> {
+    let conversation = &settings.conversation_respond;
+    let coding = &settings.coding_assist;
+    if conversation.primary_provider_id.trim().is_empty()
+        || !(1_000..=300_000).contains(&conversation.timeout_ms)
+        || coding.provider_id != "codex-sdk"
+        || !(1_000..=300_000).contains(&coding.timeout_ms)
+        || !coding.read_only
+        || coding.network_enabled
+        || coding.web_search_enabled
+    {
+        return Err("Invalid task routing settings".to_string());
+    }
+    Ok(())
+}
+
+fn validate_voice_settings(settings: &VoiceRuntimeSettings) -> Result<(), String> {
+    if settings.input_device_id.trim().is_empty()
+        || settings.output_device_id.trim().is_empty()
+        || settings.capture_mode != "push-to-talk"
+        || settings.stt_provider_id != "local-whisper"
+        || settings.stt_model.len() > 1_024
+        || settings.tts_provider_id != "system-tts"
+        || settings.tts_voice.trim().is_empty()
+        || settings.cloud_fallback_enabled
+    {
+        return Err("Invalid local voice settings".to_string());
+    }
+    Ok(())
+}
+
+fn validate_security_settings(settings: &SecurityRuntimeSettings) -> Result<(), String> {
+    if settings.credential_storage != "environment" || !settings.diagnostics_redaction {
+        return Err(
+            "Secrets must remain outside SQLite and diagnostics must be redacted".to_string(),
+        );
+    }
+    let _ = settings.local_only_when_selected;
+    Ok(())
+}
+
+fn reconcile_interrupted_runs(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute(
+        "UPDATE runtime_runs
+         SET status = 'interrupted', error_message = COALESCE(error_message, 'Application restarted'), completed_at = ?1
+         WHERE status = 'running'",
+        params![now_iso()],
+    )?;
+    connection.execute(
+        "UPDATE provider_sessions
+         SET status = 'interrupted', failure_reason = COALESCE(failure_reason, 'Application restarted'), updated_at = ?1
+         WHERE status = 'running'",
+        params![now_iso()],
+    )?;
+    Ok(())
+}
+
+fn read_settings_document(
+    connection: &Connection,
+    namespace: &str,
+    key: &str,
+) -> Result<SettingsDocument, String> {
+    connection
+        .query_row(
+            "SELECT namespace, key, schema_version, value_json, updated_at
+             FROM settings_documents WHERE namespace = ?1 AND key = ?2",
+            params![namespace, key],
+            settings_document_from_row,
+        )
+        .map_err(database_error)
+}
+
+fn list_settings_documents(connection: &Connection) -> Result<Vec<SettingsDocument>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT namespace, key, schema_version, value_json, updated_at
+             FROM settings_documents ORDER BY namespace, key",
+        )
+        .map_err(database_error)?;
+    let documents = statement
+        .query_map([], settings_document_from_row)
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    Ok(documents)
+}
+
+fn settings_document_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SettingsDocument> {
+    let value_text: String = row.get(3)?;
+    let value_json = serde_json::from_str(&value_text).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(SettingsDocument {
+        namespace: row.get(0)?,
+        key: row.get(1)?,
+        schema_version: row.get(2)?,
+        value_json,
+        updated_at: row.get(4)?,
+    })
+}
+
+fn list_conversations_from_connection(
+    connection: &Connection,
+) -> Result<Vec<Conversation>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, title, task_mode, created_at, updated_at
+             FROM conversations ORDER BY updated_at DESC LIMIT 30",
+        )
+        .map_err(database_error)?;
+    let conversations = statement
+        .query_map([], |row| {
+            Ok(Conversation {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                task_mode: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    Ok(conversations)
+}
+
+fn application_database_path(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let directory = app.path().app_data_dir()?;
+    fs::create_dir_all(&directory)?;
+    Ok(directory.join("saaa.sqlite3"))
+}
+
+fn now_iso() -> String {
+    let milliseconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("{milliseconds}")
+}
+
+fn new_id(prefix: &str) -> String {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    let nanoseconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{nanoseconds}_{sequence}")
+}
+
+fn database_error(error: rusqlite::Error) -> String {
+    format!("SQLite operation failed: {error}")
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let database_path = application_database_path(app)?;
+            let bundled_codex = app.path().resolve(
+                if cfg!(windows) {
+                    "bin/codex.exe"
+                } else {
+                    "bin/codex"
+                },
+                tauri::path::BaseDirectory::Resource,
+            )?;
+            if bundled_codex.is_file() {
+                let _ = BUNDLED_CODEX_PATH.set(bundled_codex);
+            }
+            let connection = Connection::open(&database_path)?;
+            backup_before_migration(&connection, &database_path).map_err(std::io::Error::other)?;
+            initialize_database(&connection)?;
+            let situation_settings =
+                situation::repository::load_settings(&connection).map_err(std::io::Error::other)?;
+            let latest_situation =
+                situation::repository::latest_entry(&connection).map_err(std::io::Error::other)?;
+            let active_profile = situation::calibration::active_profile(&connection)
+                .map_err(std::io::Error::other)?;
+            let connection = Arc::new(Mutex::new(connection));
+            let situation = Arc::new(
+                situation::SituationRuntime::new(
+                    situation_settings.clone(),
+                    latest_situation.as_ref(),
+                )
+                .map_err(std::io::Error::other)?,
+            );
+            situation
+                .set_calibration_parameters(active_profile.parameters)
+                .map_err(std::io::Error::other)?;
+            if situation_settings.enabled {
+                spawn_situation_monitor(connection.clone(), situation.clone());
+            }
+            app.manage(AppState {
+                connection,
+                active_runs: Mutex::new(HashMap::new()),
+                tts_process: Mutex::new(None),
+                situation,
+                meeting: Arc::new(meeting::MeetingRuntime::new()),
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_app_snapshot,
+            frontend_ready,
+            export_diagnostics,
+            backup_database,
+            get_situation_snapshot,
+            get_situation_review_snapshot,
+            set_situation_monitoring,
+            report_owned_signal,
+            submit_situation_feedback,
+            create_situation_calibration_candidate,
+            run_situation_calibration,
+            decide_situation_calibration,
+            clear_situation_history,
+            list_codex_models,
+            get_codex_status,
+            start_turn,
+            cancel_run,
+            test_model_provider,
+            transcribe_audio,
+            speak_text,
+            stop_tts,
+            meeting_preflight,
+            start_meeting,
+            get_meeting_snapshot,
+            watch_meeting,
+            pause_meeting,
+            resume_meeting,
+            stop_meeting,
+            append_meeting_audio_segment,
+            save_meeting_transcript,
+            discard_meeting,
+            save_settings_documents,
+            create_conversation,
+            list_messages,
+            append_message
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running SAAA");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app_state(connection: Connection) -> AppState {
+        let settings =
+            situation::repository::load_settings(&connection).expect("Situation settings load");
+        AppState {
+            connection: Arc::new(Mutex::new(connection)),
+            active_runs: Mutex::new(HashMap::new()),
+            tts_process: Mutex::new(None),
+            situation: Arc::new(
+                situation::SituationRuntime::new(settings, None)
+                    .expect("Situation runtime initializes"),
+            ),
+            meeting: Arc::new(meeting::MeetingRuntime::new()),
+        }
+    }
+
+    fn provider(id: &str, location: &str) -> ModelProviderSettings {
+        ModelProviderSettings {
+            id: id.to_string(),
+            enabled: true,
+            label: id.to_string(),
+            location: location.to_string(),
+            endpoint: if location == "local" {
+                "http://127.0.0.1:11434/v1".to_string()
+            } else {
+                "https://example.invalid/v1".to_string()
+            },
+            model: "test-model".to_string(),
+            credential_status: "not-configured".to_string(),
+        }
+    }
+
+    #[test]
+    fn duplicate_run_registration_preserves_the_original_cancellation_handle() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let state = app_state(connection);
+        let original = Arc::new(RunCancellation::default());
+        register_active_run(&state, "run_duplicate", original.clone())
+            .expect("first run registers");
+        let replacement = Arc::new(RunCancellation::default());
+        assert!(register_active_run(&state, "run_duplicate", replacement).is_err());
+        let active = state.active_runs.lock().expect("active run lock");
+        assert!(Arc::ptr_eq(
+            active.get("run_duplicate").expect("original run remains"),
+            &original
+        ));
+    }
+
+    #[test]
+    fn conversation_context_keeps_the_latest_hundred_messages_in_order() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, task_mode, created_at, updated_at)
+                 VALUES ('conversation_history', 'conversation', '0', '0')",
+                [],
+            )
+            .expect("conversation inserts");
+        for index in 0..105 {
+            connection
+                .execute(
+                    "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                     VALUES (?1, 'conversation_history', 'user', ?2, ?3)",
+                    params![format!("message_{index}"), index.to_string(), index.to_string()],
+                )
+                .expect("message inserts");
+        }
+        let messages = list_messages_from_connection(&connection, "conversation_history")
+            .expect("messages load");
+        assert_eq!(messages.len(), 100);
+        assert_eq!(messages.first().expect("first message").content, "5");
+        assert_eq!(messages.last().expect("last message").content, "104");
+    }
+
+    #[test]
+    fn migration_creates_default_documents() {
+        let connection = Connection::open_in_memory().expect("in-memory sqlite");
+        initialize_database(&connection).expect("migration succeeds");
+        let documents = list_settings_documents(&connection).expect("documents load");
+        assert_eq!(documents.len(), 6);
+        assert!(documents
+            .iter()
+            .all(|document| document.schema_version == 6));
+    }
+
+    #[test]
+    fn settings_survive_reopen_and_invalid_batch_does_not_replace_snapshot() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("settings.sqlite3");
+        let mut connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut documents = default_settings_input();
+        let security = documents
+            .iter_mut()
+            .find(|document| document.namespace == "security.runtime")
+            .expect("security document");
+        security.value_json["localOnlyWhenSelected"] = Value::Bool(false);
+        save_settings_documents_to_connection(&mut connection, &documents)
+            .expect("valid settings save");
+        drop(connection);
+
+        let mut reopened = Connection::open(&path).expect("database reopens");
+        initialize_database(&reopened).expect("database reinitializes");
+        let loaded = list_settings_documents(&reopened).expect("settings reload");
+        let security = loaded
+            .iter()
+            .find(|document| document.namespace == "security.runtime")
+            .expect("security settings reload");
+        assert_eq!(security.value_json["localOnlyWhenSelected"], false);
+
+        let mut invalid = default_settings_input();
+        invalid
+            .iter_mut()
+            .find(|document| document.namespace == "security.runtime")
+            .expect("security document")
+            .value_json["credentialStorage"] = Value::String("plaintext".to_string());
+        assert!(save_settings_documents_to_connection(&mut reopened, &invalid).is_err());
+        let unchanged = read_settings_document(&reopened, "security.runtime", "default")
+            .expect("previous snapshot remains");
+        assert_eq!(unchanged.value_json["localOnlyWhenSelected"], false);
+    }
+
+    #[test]
+    fn version_three_database_migrates_to_four_without_losing_mvp_zero_state() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("v3.sqlite3");
+        let connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("initial schema creates");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('kept-conversation', 'Keep me', 'coding', '1', '1')",
+                [],
+            )
+            .expect("conversation inserts");
+        connection
+            .execute(
+                "INSERT INTO codex_threads(conversation_id, thread_id, model, workspace_path, updated_at)
+                 VALUES ('kept-conversation', 'kept-thread', 'kept-model', '/tmp/kept', '1')",
+                [],
+            )
+            .expect("thread inserts");
+        connection
+            .execute(
+                "DELETE FROM settings_documents WHERE namespace = 'situation.runtime'",
+                [],
+            )
+            .expect("v4 document removes");
+        connection
+            .execute("UPDATE settings_documents SET schema_version = 3", [])
+            .expect("settings downgrade fixture");
+        connection
+            .pragma_update(None, "user_version", 3)
+            .expect("fixture version sets");
+        drop(connection);
+
+        let reopened = Connection::open(&path).expect("database reopens");
+        initialize_database(&reopened).expect("v4 migration succeeds");
+        let version: i64 = reopened
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("version reads");
+        assert_eq!(version, 6);
+        let documents = list_settings_documents(&reopened).expect("settings load");
+        assert_eq!(documents.len(), 6);
+        assert!(documents
+            .iter()
+            .all(|document| document.schema_version == 6));
+        let thread: String = reopened
+            .query_row(
+                "SELECT thread_id FROM codex_threads WHERE conversation_id = 'kept-conversation'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("thread remains");
+        assert_eq!(thread, "kept-thread");
+    }
+
+    #[test]
+    fn startup_reconciles_running_work() {
+        let connection = Connection::open_in_memory().expect("in-memory sqlite");
+        initialize_database(&connection).expect("migration succeeds");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('conversation-1', NULL, 'conversation', 'now', 'now')",
+                [],
+            )
+            .expect("conversation inserts");
+        connection
+            .execute(
+                "INSERT INTO runtime_runs(id, conversation_id, route_kind, status, started_at)
+                 VALUES ('run-1', 'conversation-1', 'conversation.respond', 'running', 'before-restart')",
+                [],
+            )
+            .expect("running work inserts");
+
+        reconcile_interrupted_runs(&connection).expect("startup reconciliation succeeds");
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM runtime_runs WHERE id = 'run-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("run status loads");
+        assert_eq!(status, "interrupted");
+    }
+
+    #[test]
+    fn local_only_route_excludes_cloud_fallback() {
+        let providers = ModelProvidersSettings {
+            providers: vec![
+                provider("local-primary", "local"),
+                provider("cloud-fallback", "cloud"),
+                provider("local-fallback", "local"),
+            ],
+        };
+        let route = ConversationRouteSettings {
+            primary_provider_id: "local-primary".to_string(),
+            fallback_provider_ids: vec!["cloud-fallback".to_string(), "local-fallback".to_string()],
+            timeout_ms: 30_000,
+        };
+        let security = SecurityRuntimeSettings {
+            credential_storage: "environment".to_string(),
+            local_only_when_selected: true,
+            diagnostics_redaction: true,
+        };
+
+        assert_eq!(
+            effective_conversation_route_ids(&providers, &route, &security),
+            ["local-primary", "local-fallback"]
+        );
+    }
+
+    #[test]
+    fn settings_reject_embedded_credentials_and_cloud_fallback_on_local_route() {
+        let with_credentials = ModelProvidersSettings {
+            providers: vec![ModelProviderSettings {
+                endpoint: "https://user:secret@example.invalid/v1".to_string(),
+                ..provider("cloud", "cloud")
+            }],
+        };
+        assert!(validate_model_providers(&with_credentials).is_err());
+
+        let mut documents = default_settings_input();
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.model")
+            .expect("provider settings")
+            .value_json = json!({ "providers": [
+            provider("local", "local"),
+            provider("cloud", "cloud")
+        ]});
+        let routing = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing settings");
+        routing.value_json["conversationRespond"]["primaryProviderId"] = json!("local");
+        routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["cloud"]);
+        assert!(validate_settings_batch(&documents).is_err());
+    }
+
+    #[test]
+    fn sse_parser_handles_lf_crlf_and_partial_events() {
+        let mut buffer = b"data: {\"a\":1}\r\n\r\ndata: {\"b\":2}\n\ndata: partial".to_vec();
+        let events = drain_sse_events(&mut buffer).expect("SSE events parse");
+        assert_eq!(events, ["data: {\"a\":1}", "data: {\"b\":2}"]);
+        assert_eq!(buffer, b"data: partial");
+    }
+
+    #[test]
+    fn sse_parser_preserves_utf8_split_across_network_chunks() {
+        let event = "data: {\"choices\":[{\"delta\":{\"content\":\"こんにちは\"}}]}\n\n";
+        let bytes = event.as_bytes();
+        let split = bytes
+            .windows("こ".len())
+            .position(|window| window == "こ".as_bytes())
+            .expect("multibyte character exists")
+            + 1;
+        let mut buffer = bytes[..split].to_vec();
+        assert!(drain_sse_events(&mut buffer)
+            .expect("partial UTF-8 remains buffered")
+            .is_empty());
+        buffer.extend_from_slice(&bytes[split..]);
+        assert_eq!(
+            drain_sse_events(&mut buffer).expect("complete UTF-8 event parses"),
+            [event.trim_end()]
+        );
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_stream_fixture_projects_deltas() {
+        use std::io::{Read, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let request_body = Arc::new(Mutex::new(String::new()));
+        let request_body_for_server = request_body.clone();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("fixture accepts request");
+            let mut request = vec![0; 16_384];
+            let size = socket.read(&mut request).expect("fixture reads request");
+            *request_body_for_server.lock().expect("request lock") =
+                String::from_utf8_lossy(&request[..size]).into_owned();
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/event-stream\r\n",
+                "Connection: close\r\n\r\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"hello \"}}]}\r\n\r\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            socket
+                .write_all(response.as_bytes())
+                .expect("fixture writes response");
+        });
+        let provider = ModelProviderSettings {
+            endpoint: format!("http://{address}/v1"),
+            ..provider("stream-fixture", "local")
+        };
+        let input = StartTurnInput {
+            run_id: "run-stream-fixture".to_string(),
+            conversation_id: "conversation-fixture".to_string(),
+            content: "hello".to_string(),
+            workspace_path: None,
+        };
+        let history = vec![ConversationMessage {
+            id: "message-fixture".to_string(),
+            conversation_id: input.conversation_id.clone(),
+            role: "user".to_string(),
+            content: input.content.clone(),
+            created_at: "now".to_string(),
+        }];
+        let projected = Arc::new(Mutex::new(Vec::<String>::new()));
+        let projected_for_channel = projected.clone();
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                projected_for_channel
+                    .lock()
+                    .expect("projection lock")
+                    .push(value);
+            }
+            Ok(())
+        });
+        let content = stream_model_provider(
+            &provider,
+            &history,
+            5_000,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+        )
+        .await
+        .map_err(|error| match error {
+            ProviderAttemptError::Cancelled => "cancelled".to_string(),
+            ProviderAttemptError::Failed(message) => message,
+        })
+        .expect("provider stream succeeds");
+        server.join().expect("fixture server joins");
+        assert_eq!(content, "hello world");
+        assert!(request_body
+            .lock()
+            .expect("request lock")
+            .contains("POST /v1/chat/completions"));
+        assert_eq!(
+            projected
+                .lock()
+                .expect("projection lock")
+                .iter()
+                .filter(|event| event.contains("\"type\":\"delta\""))
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_route_falls_back_and_persists_completed_message() {
+        use std::io::{Read, Write as _};
+        use std::net::TcpListener;
+
+        fn fixture_server(
+            response: &'static str,
+        ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+            let address = listener.local_addr().expect("fixture address");
+            let handle = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().expect("fixture accepts request");
+                let mut request = [0; 16_384];
+                let _ = socket.read(&mut request).expect("fixture reads request");
+                socket
+                    .write_all(response.as_bytes())
+                    .expect("fixture writes response");
+            });
+            (address, handle)
+        }
+
+        let (primary_address, primary_server) = fixture_server(concat!(
+            "HTTP/1.1 503 Service Unavailable\r\n",
+            "Content-Type: text/plain\r\n",
+            "Content-Length: 15\r\n",
+            "Connection: close\r\n\r\n",
+            "primary is down"
+        ));
+        let (fallback_address, fallback_server) = fixture_server(concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: text/event-stream\r\n",
+            "Connection: close\r\n\r\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"fallback ok\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        ));
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let state = app_state(connection);
+        let conversation = Conversation {
+            id: "conversation-fallback".to_string(),
+            title: None,
+            task_mode: "conversation".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        state
+            .connection
+            .lock()
+            .expect("database lock")
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES (?1, NULL, 'conversation', 'now', 'now')",
+                params![conversation.id],
+            )
+            .expect("conversation inserts");
+        let mut documents = default_settings_input();
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.model")
+            .expect("provider settings")
+            .value_json = json!({ "providers": [{
+            "id": "primary", "enabled": true, "label": "Primary", "location": "local",
+            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "credentialStatus": "not-configured"
+        }, {
+            "id": "fallback", "enabled": true, "label": "Fallback", "location": "local",
+            "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "credentialStatus": "not-configured"
+        }]});
+        let route = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("route settings");
+        route.value_json["conversationRespond"]["primaryProviderId"] = json!("primary");
+        route.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["fallback"]);
+        save_settings_documents_to_connection(
+            &mut state.connection.lock().expect("database lock"),
+            &documents,
+        )
+        .expect("settings save");
+        let input = StartTurnInput {
+            run_id: "run-fallback".to_string(),
+            conversation_id: conversation.id,
+            content: "test fallback".to_string(),
+            workspace_path: None,
+        };
+        prepare_runtime_run(&state, &input).expect("runtime run prepares");
+        let events = Arc::new(Mutex::new(Vec::<String>::new()));
+        let events_for_channel = events.clone();
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                events_for_channel.lock().expect("event lock").push(value);
+            }
+            Ok(())
+        });
+        execute_conversation_turn(
+            &state,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+        )
+        .await
+        .expect("fallback completes");
+        primary_server.join().expect("primary server joins");
+        fallback_server.join().expect("fallback server joins");
+        let messages = list_messages_from_connection(
+            &state.connection.lock().expect("database lock"),
+            &input.conversation_id,
+        )
+        .expect("messages load");
+        assert_eq!(
+            messages.last().expect("assistant message").content,
+            "fallback ok"
+        );
+        let projected = events.lock().expect("event lock").join("\n");
+        assert!(projected.contains("providerFailed"));
+        assert!(projected.contains("messageCompleted"));
+    }
+
+    #[test]
+    fn database_backup_is_reopenable_and_preserves_data() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source_path = directory.path().join("source.sqlite3");
+        let backup_path = directory.path().join("backup.sqlite3");
+        let source = Connection::open(&source_path).expect("source opens");
+        initialize_database(&source).expect("source initializes");
+        source
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('backup-conversation', NULL, 'conversation', 'now', 'now')",
+                [],
+            )
+            .expect("conversation inserts");
+        backup_connection_to(&source, &backup_path).expect("backup succeeds");
+        let backup = Connection::open(backup_path).expect("backup reopens");
+        let count: i64 = backup
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE id = 'backup-conversation'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("backup data loads");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn codex_thread_mapping_survives_database_reopen() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("threads.sqlite3");
+        let connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('coding-conversation', NULL, 'coding', 'now', 'now')",
+                [],
+            )
+            .expect("conversation inserts");
+        let state = app_state(connection);
+        persist_codex_thread(
+            &state,
+            "coding-conversation",
+            "thread-persisted",
+            "gpt-test",
+            directory.path(),
+        )
+        .expect("thread persists");
+        drop(state);
+
+        let reopened = Connection::open(path).expect("database reopens");
+        initialize_database(&reopened).expect("database reinitializes");
+        let thread_id: String = reopened
+            .query_row(
+                "SELECT thread_id FROM codex_threads WHERE conversation_id = 'coding-conversation'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("thread reloads");
+        assert_eq!(thread_id, "thread-persisted");
+    }
+
+    #[test]
+    fn runtime_errors_are_redacted_and_bounded() {
+        env::set_var("SAAA_TEST_API_KEY", "super-secret-test-value");
+        let redacted = redact_runtime_text(&format!(
+            "token=super-secret-test-value {}",
+            "x".repeat(4_000)
+        ));
+        env::remove_var("SAAA_TEST_API_KEY");
+        assert!(!redacted.contains("super-secret-test-value"));
+        assert!(redacted.contains("[REDACTED]"));
+        assert!(redacted.chars().count() <= 2_000);
+    }
+
+    #[test]
+    fn audio_resampling_and_cancellation_are_bounded_and_idempotent() {
+        let input = (0..48_000)
+            .map(|index| (index as f32 / 48_000.0) * 2.0 - 1.0)
+            .collect::<Vec<_>>();
+        let output = resample_pcm(&input, 48_000, 16_000);
+        assert_eq!(output.len(), 16_000);
+        assert!(output.iter().all(|sample| (-1.0..=1.0).contains(sample)));
+        let cancellation = RunCancellation::default();
+        cancellation.cancel();
+        cancellation.cancel();
+        assert!(cancellation.is_cancelled());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_whisper_fixture_emits_delta_and_final_text() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let executable = directory.path().join("whisper-fixture.sh");
+        let model = directory.path().join("model.bin");
+        fs::write(&model, b"fixture model").expect("model fixture writes");
+        fs::write(
+            &executable,
+            r#"#!/bin/sh
+if [ "$1" = "--help" ]; then exit 0; fi
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-of" ]; then shift; output="$1"; fi
+  shift
+done
+printf '[00:00:00.000 --> 00:00:00.500] fixture delta\n'
+printf 'fixture transcript' > "${output}.txt"
+"#,
+        )
+        .expect("whisper fixture writes");
+        let mut permissions = fs::metadata(&executable)
+            .expect("fixture metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("fixture becomes executable");
+        let previous = env::var_os("SAAA_WHISPER_PATH");
+        env::set_var("SAAA_WHISPER_PATH", &executable);
+        let projected = Arc::new(Mutex::new(Vec::<String>::new()));
+        let projected_for_channel = projected.clone();
+        let channel: tauri::ipc::Channel<VoiceEvent> = tauri::ipc::Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                projected_for_channel
+                    .lock()
+                    .expect("projection lock")
+                    .push(value);
+            }
+            Ok(())
+        });
+        let result = run_whisper_transcription(
+            "voice-fixture",
+            &[0.0; 16_000],
+            16_000,
+            &model,
+            &channel,
+            &RunCancellation::default(),
+        );
+        if let Some(value) = previous {
+            env::set_var("SAAA_WHISPER_PATH", value);
+        } else {
+            env::remove_var("SAAA_WHISPER_PATH");
+        }
+        assert_eq!(
+            result.expect("transcription succeeds"),
+            "fixture transcript"
+        );
+        assert!(projected
+            .lock()
+            .expect("projection lock")
+            .iter()
+            .any(|event| event.contains("fixture delta")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_system_tts_runtime_is_available() {
+        assert!(Command::new("say")
+            .args(["-v", "?"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("system say command starts")
+            .success());
+    }
+
+    fn default_settings_input() -> Vec<SaveSettingsDocumentInput> {
+        default_settings_documents()
+            .into_iter()
+            .map(
+                |(namespace, key, schema_version, value_json)| SaveSettingsDocumentInput {
+                    namespace: namespace.to_string(),
+                    key: key.to_string(),
+                    schema_version,
+                    value_json,
+                },
+            )
+            .collect()
+    }
+
+    #[test]
+    fn codex_model_page_uses_backward_compatible_modalities() {
+        let page: CodexModelPage = serde_json::from_value(json!({
+            "data": [{
+                "id": "gpt-test",
+                "model": "gpt-test",
+                "displayName": "GPT Test",
+                "description": "Test model",
+                "hidden": false,
+                "defaultReasoningEffort": "medium",
+                "supportedReasoningEfforts": [],
+                "supportsPersonality": true,
+                "isDefault": true
+            }],
+            "nextCursor": null
+        }))
+        .expect("model page decodes");
+
+        assert_eq!(page.data.len(), 1);
+        assert_eq!(page.data[0].input_modalities, ["text", "image"]);
+        assert!(page.data[0].is_default);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_app_server_contract_covers_start_stream_resume_and_cancel() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let executable = directory.path().join("codex-fixture.py");
+        let log_path = directory.path().join("requests.jsonl");
+        let quoted_log_path =
+            serde_json::to_string(&log_path.to_string_lossy()).expect("fixture log path encodes");
+        let fixture = format!(
+            r#"#!/usr/bin/env python3
+import json, sys
+log_path = {quoted_log_path}
+with open(log_path, "a", encoding="utf-8") as log:
+    log.write(json.dumps({{"argv": sys.argv[1:]}}) + "\n")
+for line in sys.stdin:
+    message = json.loads(line)
+    with open(log_path, "a", encoding="utf-8") as log:
+        log.write(json.dumps(message) + "\n")
+    request_id = message.get("id")
+    method = message.get("method")
+    if request_id == 1:
+        print(json.dumps({{"id": 1, "result": {{}}}}), flush=True)
+    elif request_id == 2:
+        print(json.dumps({{"id": 2, "result": {{"thread": {{"id": "fixture-thread"}}}}}}), flush=True)
+    elif request_id == 3:
+        text = message.get("params", {{}}).get("input", [{{}}])[0].get("text", "")
+        print(json.dumps({{"id": 3, "result": {{"turn": {{"id": "fixture-turn"}}}}}}), flush=True)
+        if "CANCEL" not in text:
+            reply = "SAAA_RESUMED" if method == "turn/start" and "RESUME" in text else "SAAA_OK"
+            print(json.dumps({{"method": "item/agentMessage/delta", "params": {{"delta": reply}}}}), flush=True)
+            print(json.dumps({{"method": "turn/completed", "params": {{"turn": {{"status": "completed"}}}}}}), flush=True)
+    elif method == "turn/interrupt":
+        print(json.dumps({{"id": request_id, "result": {{}}}}), flush=True)
+        print(json.dumps({{"method": "turn/completed", "params": {{"turn": {{"status": "interrupted"}}}}}}), flush=True)
+"#,
+        );
+        fs::write(&executable, fixture).expect("fixture writes");
+        let mut permissions = fs::metadata(&executable)
+            .expect("fixture metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("fixture becomes executable");
+
+        let previous = env::var_os("SAAA_CODEX_PATH");
+        env::set_var("SAAA_CODEX_PATH", &executable);
+        let received = Arc::new(Mutex::new(Vec::<String>::new()));
+        let received_for_channel = received.clone();
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                received_for_channel.lock().expect("event lock").push(value);
+            }
+            Ok(())
+        });
+        let cancellation = RunCancellation::default();
+        let first = run_codex_turn_process(
+            "run-start",
+            "START",
+            directory.path(),
+            "gpt-fixture",
+            None,
+            10_000,
+            &channel,
+            &cancellation,
+        )
+        .expect("start turn succeeds");
+        assert_eq!(first.thread_id, "fixture-thread");
+        assert_eq!(first.content, "SAAA_OK");
+        let resumed = run_codex_turn_process(
+            "run-resume",
+            "RESUME",
+            directory.path(),
+            "gpt-fixture",
+            Some(&first.thread_id),
+            10_000,
+            &channel,
+            &cancellation,
+        )
+        .expect("resume turn succeeds");
+        assert_eq!(resumed.content, "SAAA_RESUMED");
+        let cancelled = RunCancellation::default();
+        cancelled.cancel();
+        let cancellation_result = run_codex_turn_process(
+            "run-cancel",
+            "CANCEL",
+            directory.path(),
+            "gpt-fixture",
+            Some(&first.thread_id),
+            10_000,
+            &channel,
+            &cancelled,
+        );
+        if let Some(value) = previous {
+            env::set_var("SAAA_CODEX_PATH", value);
+        } else {
+            env::remove_var("SAAA_CODEX_PATH");
+        }
+        assert!(cancellation_result.is_err());
+        let log = fs::read_to_string(log_path).expect("fixture log loads");
+        assert!(log.contains("thread/start"));
+        assert!(log.contains("thread/resume"));
+        assert!(log.contains("turn/interrupt"));
+        assert!(log.contains("read-only"));
+        assert!(log.contains("\"approvalPolicy\": \"never\""));
+        assert!(log.contains("\"network_access\": false"));
+        assert!(received
+            .lock()
+            .expect("event lock")
+            .iter()
+            .any(|event| { event.contains("SAAA_OK") && event.contains("\"type\":\"delta\"") }));
+    }
+
+    #[test]
+    #[ignore = "requires a local Codex runtime and authentication"]
+    fn codex_model_lookup_returns_visible_models() {
+        let models = fetch_codex_models().expect("Codex models load");
+
+        assert!(!models.is_empty());
+        assert!(models.iter().all(|model| !model.hidden));
+        assert!(models.iter().any(|model| model.is_default));
+    }
+
+    #[test]
+    #[ignore = "requires a local Codex runtime, authentication, and network access"]
+    fn codex_live_read_only_turn_completes() {
+        let status = fetch_codex_status().expect("Codex status loads");
+        assert!(status.installed);
+        assert!(status.authenticated, "{}", status.message);
+        let workspace = tempfile::tempdir().expect("temporary workspace");
+        let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+        let outcome = run_codex_turn_process(
+            "run-live-smoke",
+            "Reply with exactly SAAA_LIVE_OK. Do not use tools.",
+            workspace.path(),
+            "",
+            None,
+            120_000,
+            &events,
+            &RunCancellation::default(),
+        )
+        .expect("live Codex turn succeeds");
+        assert!(outcome.content.contains("SAAA_LIVE_OK"));
+        assert_eq!(
+            fs::read_dir(workspace.path())
+                .expect("workspace remains readable")
+                .count(),
+            0,
+            "read-only Codex turn must not create workspace files"
+        );
+    }
+}

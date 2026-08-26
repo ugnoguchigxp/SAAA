@@ -1,0 +1,156 @@
+import { z } from "zod";
+
+const providerSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  enabled: z.boolean(),
+  label: z.string().trim().min(1).max(120),
+  location: z.enum(["local", "cloud"]),
+  endpoint: z.union([z.literal(""), z.url().refine((value) => value.startsWith("http://") || value.startsWith("https://"), "Endpoint must use HTTP or HTTPS")]),
+  model: z.string().trim().max(160),
+  credentialStatus: z.enum(["not-configured", "configured"]),
+});
+
+export const modelProvidersSettingsSchema = z.object({
+  providers: z.array(providerSchema).min(1).superRefine((providers, context) => {
+    const ids = new Set<string>();
+    providers.forEach((provider, index) => {
+      if (ids.has(provider.id)) {
+        context.addIssue({ code: "custom", message: `Duplicate provider id: ${provider.id}`, path: [index, "id"] });
+      }
+      ids.add(provider.id);
+      if (provider.enabled && (!provider.endpoint || !provider.model)) {
+        context.addIssue({ code: "custom", message: "Enabled providers require an endpoint and model", path: [index] });
+      }
+      if (provider.endpoint) {
+        const endpoint = new URL(provider.endpoint);
+        if (endpoint.username || endpoint.password) {
+          context.addIssue({ code: "custom", message: "Credentials must not be embedded in endpoints", path: [index, "endpoint"] });
+        }
+        if (provider.location === "local" && (endpoint.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname))) {
+          context.addIssue({ code: "custom", message: "Local providers must use an http:// loopback endpoint", path: [index, "endpoint"] });
+        }
+        if (provider.location === "cloud" && endpoint.protocol !== "https:") {
+          context.addIssue({ code: "custom", message: "Cloud providers must use HTTPS", path: [index, "endpoint"] });
+        }
+      }
+    });
+  }),
+});
+
+export const codexAgentSettingsSchema = z.object({
+  enabled: z.boolean(),
+  provider: z.literal("codex-sdk"),
+  model: z.string().trim().max(160),
+  runtimeMode: z.enum(["pending-compatibility-check", "bun", "node-sidecar", "app-server"]),
+  health: z.enum(["unchecked", "ready", "unavailable"]),
+  sandboxMode: z.literal("read-only"),
+  approvalPolicy: z.literal("never"),
+  networkEnabled: z.literal(false),
+  webSearchEnabled: z.literal(false),
+  workspacePolicy: z.literal("select-per-conversation"),
+});
+
+export const routingSettingsSchema = z.object({
+  conversationRespond: z.object({
+    primaryProviderId: z.string().trim().min(1),
+    fallbackProviderIds: z.array(z.string().trim().min(1)),
+    timeoutMs: z.number().int().min(1_000).max(300_000),
+  }),
+  codingAssist: z.object({
+    providerId: z.literal("codex-sdk"),
+    timeoutMs: z.number().int().min(1_000).max(300_000),
+    readOnly: z.literal(true),
+    networkEnabled: z.literal(false),
+    webSearchEnabled: z.literal(false),
+  }),
+});
+
+export const voiceSettingsSchema = z.object({
+  inputDeviceId: z.string().trim().min(1).max(300),
+  outputDeviceId: z.string().trim().min(1).max(300),
+  captureMode: z.literal("push-to-talk"),
+  sttProviderId: z.literal("local-whisper"),
+  sttModel: z.string().trim().max(1_024),
+  ttsProviderId: z.literal("system-tts"),
+  ttsVoice: z.string().trim().min(1).max(160),
+  autoSpeak: z.boolean(),
+  cloudFallbackEnabled: z.literal(false),
+});
+
+export const securitySettingsSchema = z.object({
+  credentialStorage: z.literal("environment"),
+  localOnlyWhenSelected: z.boolean(),
+  diagnosticsRedaction: z.literal(true),
+});
+
+export const situationSettingsSchema = z.object({
+  enabled: z.boolean(),
+  sampleIntervalMs: z.number().int().min(500).max(60_000),
+  calendarEnabled: z.boolean(),
+  retentionDays: z.number().int().min(1).max(30),
+  maxLedgerEntries: z.number().int().min(100).max(10_000),
+  heartbeatIntervalMs: z.number().int().min(60_000).max(3_600_000),
+  sensitiveApplicationCategories: z.literal(true),
+});
+
+const settingsDocumentBaseSchema = z.object({
+  namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
+  key: z.enum(["default", "codex-sdk"]),
+  schemaVersion: z.literal(6),
+  valueJson: z.record(z.string(), z.unknown()),
+});
+
+export function validateSettingsDocuments(documents: unknown[]): void {
+  const parsed = z.array(settingsDocumentBaseSchema).length(6).parse(documents);
+  const expectedDocuments = new Set([
+    "providers.model:default",
+    "providers.agent:codex-sdk",
+    "routing.tasks:default",
+    "voice.runtime:default",
+    "security.runtime:default",
+    "situation.runtime:default",
+  ]);
+  const namespaces = new Set(parsed.map((document) => `${document.namespace}:${document.key}`));
+  if (namespaces.size !== expectedDocuments.size || [...namespaces].some((value) => !expectedDocuments.has(value))) {
+    throw new Error("Each supported settings document must appear exactly once");
+  }
+  parsed.forEach((document) => {
+    switch (document.namespace) {
+      case "providers.model":
+        modelProvidersSettingsSchema.parse(document.valueJson);
+        break;
+      case "providers.agent":
+        codexAgentSettingsSchema.parse(document.valueJson);
+        break;
+      case "routing.tasks":
+        routingSettingsSchema.parse(document.valueJson);
+        break;
+      case "voice.runtime":
+        voiceSettingsSchema.parse(document.valueJson);
+        break;
+      case "security.runtime":
+        securitySettingsSchema.parse(document.valueJson);
+        break;
+      case "situation.runtime":
+        situationSettingsSchema.parse(document.valueJson);
+        break;
+    }
+  });
+  const providersDocument = parsed.find((document) => document.namespace === "providers.model");
+  const routingDocument = parsed.find((document) => document.namespace === "routing.tasks");
+  const securityDocument = parsed.find((document) => document.namespace === "security.runtime");
+  const providers = modelProvidersSettingsSchema.parse(providersDocument?.valueJson).providers;
+  const routing = routingSettingsSchema.parse(routingDocument?.valueJson);
+  const security = securitySettingsSchema.parse(securityDocument?.valueJson);
+  const enabled = new Map(providers.filter((provider) => provider.enabled).map((provider) => [provider.id, provider]));
+  const primary = enabled.get(routing.conversationRespond.primaryProviderId);
+  if (enabled.size > 0 && !primary) throw new Error("The primary conversation provider must be enabled");
+  for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
+    const fallback = enabled.get(fallbackId);
+    if (!fallback) throw new Error(`Fallback provider is not enabled: ${fallbackId}`);
+    if (fallbackId === routing.conversationRespond.primaryProviderId) throw new Error(`Duplicate provider in route: ${fallbackId}`);
+    if (security.localOnlyWhenSelected && primary?.location === "local" && fallback.location === "cloud") {
+      throw new Error(`Cloud fallback is blocked while the local-only policy is active: ${fallbackId}`);
+    }
+  }
+}
