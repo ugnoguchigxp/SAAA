@@ -19,6 +19,7 @@ use std::{
 use tauri::Manager;
 
 mod meeting;
+mod providers;
 mod runtime;
 mod situation;
 mod voice;
@@ -3136,8 +3137,9 @@ fn begin_provider_session(
     connection
         .execute(
             "INSERT INTO provider_sessions(
-               id, runtime_run_id, provider_id, provider_kind, status, started_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, 'running', ?5, ?5)",
+               id, runtime_run_id, provider_id, provider_kind, fallback_used, output_started,
+               status, started_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, 0, 0, 'running', ?5, ?5)",
             params![session_id, runtime_run_id, provider_id, provider_kind, now],
         )
         .map_err(database_error)?;
@@ -4447,20 +4449,21 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS provider_sessions (
            id TEXT PRIMARY KEY,
            provider_id TEXT NOT NULL,
-           runtime_run_id TEXT CHECK(runtime_run_id IS NULL OR length(runtime_run_id) BETWEEN 1 AND 160),
+           runtime_run_id TEXT CHECK(runtime_run_id IS NULL OR (length(runtime_run_id) BETWEEN 1 AND 160 AND runtime_run_id NOT GLOB '*[^A-Za-z0-9_-]*')),
            provider_kind TEXT CHECK(provider_kind IS NULL OR provider_kind IN ('openai-compatible', 'larm')),
-           route_id TEXT CHECK(route_id IS NULL OR length(route_id) BETWEEN 1 AND 160),
-           allocation_id TEXT CHECK(allocation_id IS NULL OR length(allocation_id) BETWEEN 1 AND 256),
-           selected_runtime_id TEXT CHECK(selected_runtime_id IS NULL OR length(selected_runtime_id) BETWEEN 1 AND 256),
-           fallback_used INTEGER NOT NULL DEFAULT 0 CHECK(fallback_used IN (0,1)),
-           selection_reason TEXT CHECK(selection_reason IS NULL OR selection_reason IN ('primary', 'fallback')),
-           request_id TEXT CHECK(request_id IS NULL OR length(request_id) BETWEEN 1 AND 256),
-           output_started INTEGER NOT NULL DEFAULT 0 CHECK(output_started IN (0,1)),
+           route_id TEXT CHECK(route_id IS NULL OR (length(route_id) BETWEEN 1 AND 80 AND route_id NOT GLOB '*[^A-Za-z0-9._-]*')),
+           allocation_id TEXT CHECK(allocation_id IS NULL OR (length(allocation_id) BETWEEN 1 AND 160 AND allocation_id NOT GLOB '*[^A-Za-z0-9_-]*')),
+           selected_runtime_id TEXT CHECK(selected_runtime_id IS NULL OR (length(selected_runtime_id) BETWEEN 1 AND 160 AND selected_runtime_id NOT GLOB '*[^A-Za-z0-9_-]*')),
+           fallback_used INTEGER CHECK(fallback_used IS NULL OR fallback_used IN (0,1)),
+           selection_reason TEXT CHECK(selection_reason IS NULL OR selection_reason IN ('primary', 'other')),
+           request_id TEXT CHECK(request_id IS NULL OR (length(request_id) BETWEEN 1 AND 160 AND request_id NOT GLOB '*[^A-Za-z0-9_-]*')),
+           output_started INTEGER CHECK(output_started IS NULL OR output_started IN (0,1)),
            failure_kind TEXT CHECK(failure_kind IS NULL OR failure_kind IN (
-             'authentication','capacity','unavailable','upstream','network','timeout','contract',
-             'protocol','request-too-large','client-disconnected','allocation-expired','lease-invalid','internal'
+             'authentication','contract','protocol','request-too-large','internal','client-disconnected',
+             'cancelled','partial-output','policy','capacity','unavailable','draining','upstream','network',
+             'timeout','allocation-lost','allocation-outcome-unknown','not-ready'
            )),
-           release_status TEXT NOT NULL DEFAULT 'not-applicable' CHECK(release_status IN ('not-applicable','pending','released','failed')),
+           release_status TEXT NOT NULL DEFAULT 'not-applicable' CHECK(release_status IN ('not-applicable','not-started','pending','released','failed','deferred-to-ttl')),
            release_failure_kind TEXT CHECK(release_failure_kind IS NULL OR release_failure_kind IN ('network','timeout','authentication','protocol','upstream','internal')),
            status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')),
            failure_reason TEXT,
@@ -4672,7 +4675,7 @@ fn migrate_v7_to_v8(connection: &Connection) -> rusqlite::Result<()> {
     for (column, definition) in [
         (
             "runtime_run_id",
-            "TEXT CHECK(runtime_run_id IS NULL OR length(runtime_run_id) BETWEEN 1 AND 160)",
+            "TEXT CHECK(runtime_run_id IS NULL OR (length(runtime_run_id) BETWEEN 1 AND 160 AND runtime_run_id NOT GLOB '*[^A-Za-z0-9_-]*'))",
         ),
         (
             "provider_kind",
@@ -4680,39 +4683,39 @@ fn migrate_v7_to_v8(connection: &Connection) -> rusqlite::Result<()> {
         ),
         (
             "route_id",
-            "TEXT CHECK(route_id IS NULL OR length(route_id) BETWEEN 1 AND 160)",
+            "TEXT CHECK(route_id IS NULL OR (length(route_id) BETWEEN 1 AND 80 AND route_id NOT GLOB '*[^A-Za-z0-9._-]*'))",
         ),
         (
             "allocation_id",
-            "TEXT CHECK(allocation_id IS NULL OR length(allocation_id) BETWEEN 1 AND 256)",
+            "TEXT CHECK(allocation_id IS NULL OR (length(allocation_id) BETWEEN 1 AND 160 AND allocation_id NOT GLOB '*[^A-Za-z0-9_-]*'))",
         ),
         (
             "selected_runtime_id",
-            "TEXT CHECK(selected_runtime_id IS NULL OR length(selected_runtime_id) BETWEEN 1 AND 256)",
+            "TEXT CHECK(selected_runtime_id IS NULL OR (length(selected_runtime_id) BETWEEN 1 AND 160 AND selected_runtime_id NOT GLOB '*[^A-Za-z0-9_-]*'))",
         ),
         (
             "fallback_used",
-            "INTEGER NOT NULL DEFAULT 0 CHECK(fallback_used IN (0,1))",
+            "INTEGER CHECK(fallback_used IS NULL OR fallback_used IN (0,1))",
         ),
         (
             "selection_reason",
-            "TEXT CHECK(selection_reason IS NULL OR selection_reason IN ('primary', 'fallback'))",
+            "TEXT CHECK(selection_reason IS NULL OR selection_reason IN ('primary', 'other'))",
         ),
         (
             "request_id",
-            "TEXT CHECK(request_id IS NULL OR length(request_id) BETWEEN 1 AND 256)",
+            "TEXT CHECK(request_id IS NULL OR (length(request_id) BETWEEN 1 AND 160 AND request_id NOT GLOB '*[^A-Za-z0-9_-]*'))",
         ),
         (
             "output_started",
-            "INTEGER NOT NULL DEFAULT 0 CHECK(output_started IN (0,1))",
+            "INTEGER CHECK(output_started IS NULL OR output_started IN (0,1))",
         ),
         (
             "failure_kind",
-            "TEXT CHECK(failure_kind IS NULL OR failure_kind IN ('authentication','capacity','unavailable','upstream','network','timeout','contract','protocol','request-too-large','client-disconnected','allocation-expired','lease-invalid','internal'))",
+            "TEXT CHECK(failure_kind IS NULL OR failure_kind IN ('authentication','contract','protocol','request-too-large','internal','client-disconnected','cancelled','partial-output','policy','capacity','unavailable','draining','upstream','network','timeout','allocation-lost','allocation-outcome-unknown','not-ready'))",
         ),
         (
             "release_status",
-            "TEXT NOT NULL DEFAULT 'not-applicable' CHECK(release_status IN ('not-applicable','pending','released','failed'))",
+            "TEXT NOT NULL DEFAULT 'not-applicable' CHECK(release_status IN ('not-applicable','not-started','pending','released','failed','deferred-to-ttl'))",
         ),
         (
             "release_failure_kind",
@@ -6046,21 +6049,44 @@ mod tests {
     fn version_seven_settings_and_provider_sessions_migrate_to_v8() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
+        let v7_providers = json!({
+            "providers": [{
+                "id": "provider-a", "enabled": true, "label": "Provider A", "location": "local",
+                "endpoint": "http://127.0.0.1:11434/v1", "model": "kept-model", "credentialStatus": "not-configured"
+            }, {
+                "id": "provider-b", "enabled": true, "label": "Provider B", "location": "local",
+                "endpoint": "http://127.0.0.1:11435/v1", "model": "model-b", "credentialStatus": "not-configured"
+            }, {
+                "id": "provider-c", "enabled": true, "label": "Provider C", "location": "local",
+                "endpoint": "http://127.0.0.1:11436/v1", "model": "model-c", "credentialStatus": "not-configured"
+            }]
+        });
         connection
             .execute(
                 "UPDATE settings_documents
-                 SET schema_version=7,
-                     value_json=json_remove(
-                       json_set(value_json,
-                         '$.providers[0].endpoint', 'http://127.0.0.1:11434/v1',
-                         '$.providers[0].model', 'kept-model'
-                       ),
-                       '$.providers[0].kind'
-                     )
-                 WHERE namespace='providers.model'",
-                [],
+                 SET schema_version=7, value_json=?1
+                 WHERE namespace='providers.model' AND key='default'",
+                [v7_providers.to_string()],
             )
             .expect("v7 provider fixture writes");
+        let v7_routing = json!({
+            "conversationRespond": {
+                "primaryProviderId": "provider-a",
+                "fallbackProviderIds": ["provider-b", "provider-c"],
+                "timeoutMs": 30_000
+            },
+            "codingAssist": {
+                "providerId": "codex-sdk", "timeoutMs": 120_000, "readOnly": true,
+                "networkEnabled": false, "webSearchEnabled": false
+            }
+        });
+        connection
+            .execute(
+                "UPDATE settings_documents SET schema_version=7, value_json=?1
+                 WHERE namespace='routing.tasks' AND key='default'",
+                [v7_routing.to_string()],
+            )
+            .expect("v7 routing fixture writes");
         connection
             .execute("UPDATE settings_documents SET schema_version=7", [])
             .expect("v7 settings fixture writes");
@@ -6081,6 +6107,14 @@ mod tests {
                  ALTER TABLE provider_sessions DROP COLUMN release_failure_kind;",
             )
             .expect("v7 provider session shape restores");
+        connection
+            .execute(
+                "INSERT INTO provider_sessions(
+                   id, provider_id, status, started_at, updated_at
+                 ) VALUES('legacy-session', 'legacy-provider', 'completed', '1', '1')",
+                [],
+            )
+            .expect("v7 provider session row writes");
         connection
             .pragma_update(None, "user_version", 7)
             .expect("v7 fixture");
@@ -6108,6 +6142,31 @@ mod tests {
             provider_value.pointer("/providers/0/model"),
             Some(&json!("kept-model"))
         );
+        let provider_ids = provider_value["providers"]
+            .as_array()
+            .expect("provider list remains an array")
+            .iter()
+            .map(|provider| {
+                provider["id"]
+                    .as_str()
+                    .expect("provider id remains a string")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(provider_ids, ["provider-a", "provider-b", "provider-c"]);
+        let routing_value: String = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents
+                 WHERE namespace='routing.tasks' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("routing settings read");
+        let routing_value: Value =
+            serde_json::from_str(&routing_value).expect("routing settings decode");
+        assert_eq!(
+            routing_value.pointer("/conversationRespond/fallbackProviderIds"),
+            Some(&json!(["provider-b", "provider-c"]))
+        );
         for column in [
             "runtime_run_id",
             "provider_kind",
@@ -6125,6 +6184,43 @@ mod tests {
                 .expect("provider session column check succeeds");
             assert!(exists, "missing provider session column: {column}");
         }
+        let (runtime_run_id, fallback_used, output_started, release_status): (
+            Option<String>,
+            Option<bool>,
+            Option<bool>,
+            String,
+        ) = connection
+            .query_row(
+                "SELECT runtime_run_id, fallback_used, output_started, release_status
+                 FROM provider_sessions WHERE id='legacy-session'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("legacy provider session reads");
+        assert!(runtime_run_id.is_none());
+        assert!(fallback_used.is_none());
+        assert!(output_started.is_none());
+        assert_eq!(release_status, "not-applicable");
+        assert!(connection
+            .execute(
+                "INSERT INTO provider_sessions(
+                   id, provider_id, runtime_run_id, provider_kind, status, started_at, updated_at
+                 ) VALUES('invalid-session', 'provider', 'invalid run id', 'larm', 'failed', '1', '1')",
+                [],
+            )
+            .is_err());
+        connection
+            .execute(
+                "INSERT INTO provider_sessions(
+                   id, provider_id, runtime_run_id, provider_kind, route_id, selection_reason,
+                   release_status, status, started_at, updated_at
+                 ) VALUES(
+                   'bounded-session', 'provider', 'run_1', 'larm', 'llm-default', 'other',
+                   'deferred-to-ttl', 'completed', '1', '1'
+                 )",
+                [],
+            )
+            .expect("bounded v8 provider session row writes");
         initialize_database(&connection).expect("v8 migration is idempotent");
     }
 
@@ -6209,6 +6305,21 @@ mod tests {
             .expect("backup provider settings read");
         assert_eq!(backup_version, 7);
         assert!(backup_provider_kind.is_none());
+        drop(backup_connection);
+        drop(connection);
+
+        let reopened = Connection::open(&path).expect("migrated database reopens");
+        initialize_database(&reopened).expect("reopened v8 database validates");
+        let migrated_provider_kind: String = reopened
+            .query_row(
+                "SELECT json_extract(value_json, '$.providers[0].kind')
+                 FROM settings_documents
+                 WHERE namespace='providers.model' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("migrated provider settings read");
+        assert_eq!(migrated_provider_kind, "openai-compatible");
     }
 
     #[test]
