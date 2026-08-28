@@ -3,7 +3,7 @@
 ## 0. 文書の役割
 
 - Status: Proposed
-- 実装前提: [`mvp-1.5-implementation-plan.md`](./mvp-1.5-implementation-plan.md) の受け入れ完了
+- 実装前提: [`mvp-1.5-implementation-plan.html`](./.archived/mvp-1.5-implementation-plan.html) の受け入れ完了
 - 対象: macOS desktopを最初のshipping platformとする
 - この文書の読者: 実装担当、レビュー担当、QA担当
 - 完了の定義: `M2-00`〜`M2-11`を順に完了し、P0 gateで確定したshipping scopeの受け入れ条件を満たすこと
@@ -590,9 +590,9 @@ Frontend test:
 
 ### Optional（capability=trueでshipする場合のみ）
 
-13. system audioは明示opt-in、permission-gated、audio-onlyで、lane単独停止できる。
-14. floating overlayはdefault offで、focusを奪わず、終了時に破棄される。
-15. translationは明示enable、確定済みlocal route、fallbackなしである。
+1. system audioは明示opt-in、permission-gated、audio-onlyで、lane単独停止できる。
+2. floating overlayはdefault offで、focusを奪わず、終了時に破棄される。
+3. translationは明示enable、確定済みlocal route、fallbackなしである。
 
 ## 15. 実装中にADRが必要な条件
 

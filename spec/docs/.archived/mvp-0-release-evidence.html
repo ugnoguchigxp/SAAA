@@ -1,0 +1,159 @@
+<article lang="ja">
+  <h1 id="mvp-0-release-evidence">MVP 0 Release Evidence</h1>
+  <ul>
+    <li>Date: 2026-08-26</li>
+    <li>Target: macOS arm64 debug application bundle</li>
+    <li>Result: Accepted</li>
+  </ul>
+  <h2 id="reproduction">Reproduction</h2>
+  <pre><code class="language-sh">bun install
+bun run check
+bun run codex:smoke
+bun run desktop:smoke
+SAAA_CODEX_PATH=&quot;$PWD/src-tauri/target/debug/bundle/macos/SAAA.app/Contents/Resources/bin/codex&quot; \
+  cargo test --manifest-path src-tauri/Cargo.toml codex_live_read_only_turn_completes -- --ignored --nocapture
+</code></pre>
+  <p>Observed result:</p>
+  <ul>
+    <li>Frontend Settings contract tests: 3 passed.</li>
+    <li>
+      Rust unit/integration/fixture tests: 16 passed, 2 environment-dependent tests ignored by the
+      default suite.
+    </li>
+    <li>Codex SDK Bun import and constructor smoke: passed.</li>
+    <li>Packaged frontend readiness smoke with CSP enabled: passed.</li>
+    <li>
+      Bundled native Codex authenticated read-only live turn: passed; the selected empty workspace
+      remained unchanged.
+    </li>
+    <li>
+      macOS <code>.app</code> generated at
+      <code>src-tauri/target/debug/bundle/macos/SAAA.app</code>; its Resources directory contains the pinned
+      native Codex executable.
+    </li>
+  </ul>
+  <h2 id="acceptance-mapping">Acceptance mapping</h2>
+  <table>
+    <caption>
+      Acceptance mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col" class="markdown-align-right">#</th>
+        <th scope="col">Acceptance</th>
+        <th scope="col">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="markdown-align-right">1</td>
+        <td>Provider, model, endpoint, route editing</td>
+        <td>Settings Surface and Zod/Rust validation; frontend contract tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">2</td>
+        <td>SQLite save/restart/restore</td>
+        <td>reopen/rollback integration test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">3</td>
+        <td>Shared Effective Route</td>
+        <td>saved routing document drives both banner and Rust resolver</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">4</td>
+        <td>Primary and fallback</td>
+        <td>real loopback HTTP 503 → SSE fallback integration test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">5</td>
+        <td>Text stream/cancel/retry/history</td>
+        <td>Runtime channels, cancellation token, Retry UI, persisted message restore</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">6</td>
+        <td>Push-to-talk partial/final text</td>
+        <td>MediaRecorder/Web Audio path and local whisper fixture delta/final test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">7</td>
+        <td>Transcript response and local TTS</td>
+        <td>
+          transcript enters the same <code>start_turn</code> path; macOS
+          <code>say</code> native smoke passed
+        </td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">8</td>
+        <td>Stop recording/generation/agent/speech</td>
+        <td>explicit controls and idempotent cancellation/process cleanup tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">9</td>
+        <td>Codex installed/auth/health</td>
+        <td>app-server <code>account/read</code> plus Settings status UI</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">10</td>
+        <td>Explicit read-only coding route</td>
+        <td>Coding mode, workspace picker, live read-only turn</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">11</td>
+        <td>Codex response and bounded activity stream</td>
+        <td>fixture contract and 64,000/80 character bounds</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">12</td>
+        <td>Thread persistence/resume</td>
+        <td>SQLite reopen test and app-server start/resume fixture</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">13</td>
+        <td>No workspace write/network/search/write MCP</td>
+        <td>
+          read-only sandbox, approval <code>never</code>,
+          network/search/MCP config, policy-violation projection, unchanged live workspace
+        </td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">14</td>
+        <td>Optional feature isolation</td>
+        <td>normal Chat boot does not wait for Codex/STT/TTS; recoverable feature errors</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">15</td>
+        <td>Local-only prompt/audio</td>
+        <td>
+          loopback validation, Cloud fallback rejection and runtime filtering; local STT/TTS only
+        </td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">16</td>
+        <td>No deferred server/RAG stack</td>
+        <td>
+          dependency and package inspection: no Hono, RAG, PostgreSQL, pgvector, or embedding
+          runtime
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="operational-notes">Operational notes</h2>
+  <ul>
+    <li>
+      The debug <code>.app</code> is intentionally not a notarized
+      distribution artifact. Release signing/notarization uses the normal downstream release
+      identity process.
+    </li>
+    <li>
+      Microphone permission, acoustic quality, and the user&#39;s chosen whisper model are
+      hardware/model-dependent operator checks; the capture-to-STT contract and native adapter are
+      covered by deterministic fixtures.
+    </li>
+    <li>
+      The SQLite database and automatic/manual backups live under the SAAA OS application-data
+      directory. Diagnostics omit messages, workspace paths, Codex thread IDs, and settings values,
+      and redact bounded runtime errors again on export.
+    </li>
+  </ul>
+</article>

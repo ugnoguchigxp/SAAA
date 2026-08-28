@@ -1,0 +1,73 @@
+<article lang="ja">
+  <h1 id="internal-design-documents">Internal Design Documents</h1>
+  <p>
+    このdirectoryには、進行中のimplementation plan、現行実装のrelease evidence、
+    恒久contract、shared conceptだけを置く。
+  </p>
+  <p>
+    内部設計書はSpec HTML fragmentで管理する。<code>bun run spec:view</code>で閲覧し、
+    編集後は<code>bun run spec:fix</code>と<code>bun run spec:check</code>を実行する。
+  </p>
+  <p>
+    実装と検証が完了した計画およびそのrelease evidenceは、ViewerのArchive操作で
+    <code>.archived/</code>へ移す。単なるファイル移動ではなく、
+    <a href="./.archived/ARCHIVE.html">archive rule</a>に従う。
+  </p>
+  <table>
+    <caption>
+      Table: Active Internal Design Documents
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Document</th>
+        <th scope="col">Role</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><a href="./plan.html">Situation-Aware Ambient Agent Runtime</a></td>
+        <td>製品全体のshared conceptと長期構想</td>
+      </tr>
+      <tr>
+        <td><a href="./mvp-2-implementation-plan.html">MVP 2 Implementation Plan</a></td>
+        <td>進行中のMeeting実装計画</td>
+      </tr>
+      <tr>
+        <td><a href="./mvp-2-release-evidence.html">MVP 2 Release Evidence</a></td>
+        <td>MVP 2の検証記録</td>
+      </tr>
+      <tr>
+        <td><a href="./mvp-2.5-implementation-plan.html">MVP 2.5 Implementation Plan</a></td>
+        <td>Agent Run SupervisorとInput Activityの実装済み計画。manual acceptance待ち</td>
+      </tr>
+      <tr>
+        <td><a href="./mvp-2.5-release-evidence.html">MVP 2.5 Release Evidence</a></td>
+        <td>MVP 2.5の自動検証と未完了のmanual acceptance記録</td>
+      </tr>
+      <tr>
+        <td><a href="./adr/0001-mvp-runtime-boundaries.html">ADR 0001</a></td>
+        <td>MVP runtime boundaryの恒久contract</td>
+      </tr>
+      <tr>
+        <td><a href="./adr/0002-situation-signal-privacy.html">ADR 0002</a></td>
+        <td>Situation signal privacyの恒久contract</td>
+      </tr>
+      <tr>
+        <td><a href="./adr/0003-input-activity-signal-privacy.html">ADR 0003</a></td>
+        <td>Input Activity signal privacyの恒久contract</td>
+      </tr>
+      <tr>
+        <td><a href="./spikes/mvp-2-macos-system-audio.html">MVP 2 macOS System Audio Spike</a></td>
+        <td>system audio capability判断の技術記録</td>
+      </tr>
+      <tr>
+        <td>
+          <a href="./spikes/mvp-2.5-macos-input-activity.html"
+            >MVP 2.5 macOS Input Activity Spike</a
+          >
+        </td>
+        <td>Input Activity adapterの技術記録とmanual lifecycle gate</td>
+      </tr>
+    </tbody>
+  </table>
+</article>

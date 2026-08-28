@@ -1,6 +1,6 @@
-# SAAA MVP 1
+# SAAA MVP 2.5
 
-SAAA is a local-first Tauri desktop runtime for persistent text chat, push-to-talk voice, OpenAI-compatible model routing, an explicit read-only Codex coding route, and privacy-minimized Situation Shadow Mode.
+SAAA is a local-first Tauri desktop runtime for persistent text chat, push-to-talk voice, OpenAI-compatible model routing, a supervised read-only Codex coding route, privacy-minimized Situation calibration with bounded Input Activity categories, and explicitly started microphone Meeting sessions.
 
 ## Run locally
 
@@ -13,17 +13,20 @@ bun run tauri dev
 
 Configure model endpoints in Settings. Credentials are read only from `SAAA_PROVIDER_<PROVIDER_ID>_API_KEY`; `OPENAI_API_KEY` is also accepted for Cloud providers. Run `codex login` before enabling the Codex route. Voice transcription requires a local whisper.cpp-compatible executable (`SAAA_WHISPER_PATH`) and a model selected in Settings → Voice. TTS uses the OS speech runtime.
 
-Situation monitoring is off by default. Enable it in Settings → Situation or from the Situation surface. MVP 1 records only bounded categories, evidence codes, signal health, and counterfactual `would observe / suggest / respond / stay silent` decisions. It never performs automatic Model, TTS, notification, or application actions.
+Situation monitoring is off by default. Enable it in Settings → Situation or from the Situation surface. It records only bounded categories, evidence codes, signal health, aggregate quality counters, and counterfactual `would observe / suggest / respond / stay silent` decisions. Calibration candidates use repository fixtures and become active only after an explicit Replay and Accept. Situation never performs automatic Model, TTS, notification, Meeting start, or application actions.
+
+Meeting capture also starts only after an explicit user action. This build supports microphone-only local Whisper transcription. System audio, translation, and a floating overlay remain unavailable. Transcript text stays in bounded memory and is discarded unless the user stops the session and then chooses Save. TTS is blocked while a Meeting session is active or paused.
 
 ## Verify and package
 
 ```sh
 bun run check
+bun run build
 bun run codex:smoke
 bun run desktop:smoke
 ```
 
-`desktop:smoke` builds a debug desktop artifact, launches it, and waits for an IPC readiness signal. On macOS it verifies the generated `.app`, including the exact native Codex runtime staged from `@openai/codex-sdk`'s pinned dependency.
+`desktop:smoke` builds a debug desktop artifact, launches it with an isolated temporary data directory, and waits for an IPC readiness signal. On macOS it verifies the generated `.app`, including the native Codex runtime staged from `@openai/codex-sdk`'s pinned dependency.
 
 ## Local data and recovery
 
@@ -31,4 +34,4 @@ SAAA owns one SQLite database under the OS application-data directory for `com.s
 
 Use Settings → Privacy & Security to create a consistent database backup or a redacted diagnostics JSON. A pre-migration backup is created automatically before opening an older schema. Whisper models are user-owned files and are not part of the SAAA database backup.
 
-See [MVP 1 release evidence](spec/docs/mvp-1-release-evidence.md), [Situation privacy ADR](spec/docs/adr/0002-situation-signal-privacy.md), and [runtime boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.md).
+See [MVP 2.5 release evidence](spec/docs/mvp-2.5-release-evidence.html), [MVP 2 release evidence](spec/docs/mvp-2-release-evidence.html), [Input Activity privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html), [Situation privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html), and [runtime boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.html).

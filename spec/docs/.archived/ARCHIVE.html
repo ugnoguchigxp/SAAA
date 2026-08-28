@@ -1,0 +1,32 @@
+<article lang="ja">
+  <h1 id="archived-internal-design-documents">Archived Internal Design Documents</h1>
+  <p>
+    このdirectoryは、実装と受け入れが完了した計画、または後続計画で置換済みの内部文書を保持する。
+  </p>
+  <ul>
+    <li>現在の要件、未完了作業、実装順序の入口として扱わない。</li>
+    <li>
+      現行挙動はcode、tests、および<code>spec/docs/</code>のactive
+      documentsを優先する。
+    </li>
+    <li>
+      Archive対象は、計画のStatusがCompleteで、対応するrelease evidenceがAcceptedである文書とする。
+      後続文書で置換する場合は、置換先または理由を本文に記録する。
+    </li>
+    <li>恒久contractであるADRと、未完了・提案中の計画はArchiveしない。</li>
+    <li>
+      文書はactive documentと同じSpec HTML fragment形式を保ち、
+      <code>bun run spec:view</code>のArchived表示から参照する。
+    </li>
+    <li>
+      ArchiveはSpec HTML ViewerのArchive操作で行う。移動後に
+      <code>bun run spec:fix</code
+      >と<code>bun run spec:check</code>を実行する。
+    </li>
+    <li>
+      このhidden directoryは、通常のfile discoveryで完了済み計画がactive
+      contextへ混入することを防ぐ。
+    </li>
+  </ul>
+  <p>Archive policy adopted on 2026-08-27.</p>
+</article>

@@ -12,6 +12,10 @@
     "test": "bun run test:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
     "check": "bun run typecheck && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && bun run test",
     "desktop:smoke": "bun scripts/desktop-smoke.ts",
+    "spec:view": "bunx --bun spec-html ./spec/docs --markdown-lang ja",
+    "spec:convert": "bunx --bun spec-html convert",
+    "spec:check": "bunx --bun spec-html check ./spec/docs --warnings-as-errors && bunx --bun spec-html check ./spec/docs/.archived --fixer --format",
+    "spec:fix": "bunx --bun spec-html check ./spec/docs --fix --warnings-as-errors && bunx --bun spec-html check ./spec/docs/.archived --fixer --format --fix",
     "preview": "vite preview",
     "tauri": "tauri",
     "codex:smoke": "bun scripts/codex-sdk-smoke.ts"
@@ -20,17 +24,17 @@
     "@openai/codex-sdk": "0.144.4",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-opener": "^2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "spec-html": "0.1.6",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "@tauri-apps/cli": "^2"
+    "vite": "^7.0.4"
   }
 }

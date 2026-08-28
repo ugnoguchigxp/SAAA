@@ -1,0 +1,65 @@
+<article lang="ja">
+  <h1 id="adr-0003-input-activity-signal-privacy">ADR 0003 — Input Activity Signal Privacy</h1>
+  <dl>
+    <dt>Status</dt>
+    <dd>Proposed — manual permission check pending</dd>
+    <dt>Date</dt>
+    <dd>2026-08-27</dd>
+    <dt>Supersedes</dt>
+    <dd>なし。<a href="./0002-situation-signal-privacy.html">ADR 0002</a>を継承する</dd>
+  </dl>
+
+  <h2 id="context">Context</h2>
+  <p>
+    SituationのShadow policyは、提案を控える弱い根拠として入力活動の有無を必要とする。
+    一方、正確なidle時間、最終入力時刻、key、button、cursor位置は行動履歴になり得るため、
+    application層、永続層、診断、UIへ渡してはならない。
+  </p>
+
+  <h2 id="decision">Decision</h2>
+  <ul>
+    <li>
+      macOSでは<code>CGEventSourceSecondsSinceLastEventType</code>と<code>kCGAnyInputEventType</code>だけを使用し、event
+      tapを作らない。
+    </li>
+    <li>
+      取得した秒数は同じRust call
+      stack内で<code>active | recent | idle | unknown</code>へ変換し、raw値をreturnしない。
+    </li>
+    <li>外部contractはcategoryと<code>ready | disabled | unsupported | degraded</code>のhealthだけとする。</li>
+    <li>monitoring無効時はOS APIを呼ばず、<code>unknown + disabled</code>を返す。</li>
+    <li>
+      Input
+      Activityはscene、confidence、evidence、userAttentionを変更しない。<code>idle + ready</code>のときだけShadowの<code>SUGGEST</code>を<code>OBSERVE</code>へ抑制する。
+    </li>
+    <li>
+      permission拒否を推測しない。非finite、負値、overflowは<code>unknown + degraded</code>、非macOSは<code>unknown + unsupported</code>とする。
+    </li>
+  </ul>
+
+  <h2 id="privacy-boundary">Privacy boundary</h2>
+  <p>
+    保存または表示してよい値はcategory、health、bounded reason code
+    <code>input-idle</code>だけである。
+  </p>
+  <p>
+    exact idle seconds/milliseconds、last input timestamp、raw
+    <code>CGEvent</code>、keyboard/mouse/tabletの内訳、
+    cursor位置をSQLite、diagnostics、console、Tauri event、React stateへ追加しない。
+  </p>
+
+  <h2 id="consequences">Consequences</h2>
+  <ul>
+    <li>Input Activityから人物の在席、離席、安全な割り込み可否を推定できない。</li>
+    <li>OS APIの挙動が将来変わった場合も、bounded fallbackで既存policyへ戻せる。</li>
+    <li>
+      予期しないAccessibility/Input Monitoring
+      promptが出た場合はshippingを止め、adapterを再評価する。
+    </li>
+    <li>
+      development buildと署名済みpackaged buildで予期しないpermission promptが出ないことを
+      実機確認し、release
+      evidenceへ記録した後にStatusを<code>Accepted</code>へ変更する。
+    </li>
+  </ul>
+</article>

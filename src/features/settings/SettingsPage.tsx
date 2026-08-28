@@ -371,5 +371,5 @@ function documentsFromDraft(draft: SettingsDraft): Array<Omit<SettingsDocument, 
 }
 
 function document(namespace: SettingsNamespace, key: "default" | "codex-sdk", valueJson: Record<string, unknown>): Omit<SettingsDocument, "updatedAt"> {
-  return { namespace, key, schemaVersion: 6, valueJson };
+  return { namespace, key, schemaVersion: 7, valueJson };
 }

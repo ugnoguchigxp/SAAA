@@ -1,5 +1,6 @@
 use super::contracts::{
-    CalendarSignal, CalendarState, ForegroundCategory, ForegroundSignal, SignalHealth, TimeBucket,
+    CalendarSignal, CalendarState, CalibrationParameters, ForegroundCategory, ForegroundSignal,
+    InputActivitySignal, SignalHealth, TimeBucket,
 };
 
 #[cfg(target_os = "macos")]
@@ -27,6 +28,41 @@ pub fn calendar_signal(enabled: bool) -> CalendarSignal {
         } else {
             SignalHealth::Disabled
         },
+    }
+}
+
+pub fn input_activity_signal(parameters: &CalibrationParameters) -> InputActivitySignal {
+    #[cfg(target_os = "macos")]
+    {
+        macos::input_activity_signal(parameters)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        unsupported::input_activity_signal(parameters)
+    }
+}
+
+fn classify_input_activity_seconds(
+    seconds: f64,
+    parameters: &CalibrationParameters,
+) -> InputActivitySignal {
+    if !seconds.is_finite() || seconds < 0.0 || seconds > u64::MAX as f64 / 1_000.0 {
+        return InputActivitySignal {
+            state: super::contracts::InputActivityState::Unknown,
+            health: SignalHealth::Degraded,
+        };
+    }
+    let elapsed_ms = (seconds * 1_000.0).floor() as u64;
+    let state = if elapsed_ms <= parameters.input_active_max_ms {
+        super::contracts::InputActivityState::Active
+    } else if elapsed_ms <= parameters.input_recent_max_ms {
+        super::contracts::InputActivityState::Recent
+    } else {
+        super::contracts::InputActivityState::Idle
+    };
+    InputActivitySignal {
+        state,
+        health: SignalHealth::Ready,
     }
 }
 
@@ -112,5 +148,37 @@ mod tests {
             classify_bundle_id("com.example.private-name"),
             ForegroundCategory::Other
         );
+    }
+
+    #[test]
+    fn input_activity_boundaries_and_invalid_values_are_fixed() {
+        use super::super::contracts::InputActivityState;
+
+        let parameters = CalibrationParameters::default();
+        for seconds in [0.0, 30.0, 30.0009] {
+            assert_eq!(
+                classify_input_activity_seconds(seconds, &parameters).state,
+                InputActivityState::Active
+            );
+        }
+        for seconds in [30.001, 300.0] {
+            assert_eq!(
+                classify_input_activity_seconds(seconds, &parameters).state,
+                InputActivityState::Recent
+            );
+        }
+        assert_eq!(
+            classify_input_activity_seconds(300.001, &parameters).state,
+            InputActivityState::Idle
+        );
+        for seconds in [f64::NAN, f64::INFINITY, -1.0, f64::MAX] {
+            assert_eq!(
+                classify_input_activity_seconds(seconds, &parameters),
+                InputActivitySignal {
+                    state: InputActivityState::Unknown,
+                    health: SignalHealth::Degraded,
+                }
+            );
+        }
     }
 }

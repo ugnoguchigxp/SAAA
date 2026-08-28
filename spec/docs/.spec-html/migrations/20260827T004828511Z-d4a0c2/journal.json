@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "id": "20260827T004828511Z-d4a0c2",
+  "state": "finalized",
+  "createdAt": "2026-08-27T00:48:28.511Z",
+  "language": "ja",
+  "sources": [
+    {
+      "path": "adr/0001-mvp-runtime-boundaries.md",
+      "outputPath": "adr/0001-mvp-runtime-boundaries.html",
+      "digest": "b9a52f80da6a5d0e70f2087f54f5cfa61a53091898f98ad575eb84593f2aec46",
+      "outputDigest": "bb151e11b9c5fbf4eb440fc3f3bef4de8fb216e15e0f57ff981e9b374f4230a3",
+      "archived": true
+    },
+    {
+      "path": "adr/0002-situation-signal-privacy.md",
+      "outputPath": "adr/0002-situation-signal-privacy.html",
+      "digest": "38ac2477aee3a6ac70474a4bd97b1b484abf1e83b9b5a6319e8e7d07b1341e32",
+      "outputDigest": "cb808de7f5cec9d5c16df2a1e50fe3d6a4aff98c84b1786836ac12023f2dfdd2",
+      "archived": true
+    },
+    {
+      "path": "mvp-0-implementation-plan.md",
+      "outputPath": "mvp-0-implementation-plan.html",
+      "digest": "d9f34d2bb1eae5d8177423c786ad4869179b729a0baf646c3d70943b16e19cbd",
+      "outputDigest": "5fc445325f47e02f60bcc68dd81adba491e4a2563778733741040de3f78aa857",
+      "archived": true
+    },
+    {
+      "path": "mvp-0-release-evidence.md",
+      "outputPath": "mvp-0-release-evidence.html",
+      "digest": "41f5ee2caf6d998c19e8f4a93fcdca3f4e286a0fe7b677372cfb986967b900f1",
+      "outputDigest": "d036f3f31023642222c54254da82519f5b1498d79187c98e49b5729fd58316e2",
+      "archived": true
+    },
+    {
+      "path": "mvp-1-implementation-plan.md",
+      "outputPath": "mvp-1-implementation-plan.html",
+      "digest": "332e7680a52f319f7f9fd3b94f2da9d7870182962e1fd453b229e7c50f1f5bc2",
+      "outputDigest": "8eb5e9630dbc50b6002fe0d305c0ee94761c3cba825a083c170276c242e1ffce",
+      "archived": true
+    },
+    {
+      "path": "mvp-1-release-evidence.md",
+      "outputPath": "mvp-1-release-evidence.html",
+      "digest": "70992cfcef97bb90f306b31d4749a6eafad0b9dc61bc3aca35e7a68aed0a8d8a",
+      "outputDigest": "baba7ce35644d4e7f7847ef0f8134c390a7e63129be5a2c12e05e895f85d01dc",
+      "archived": true
+    },
+    {
+      "path": "mvp-2-implementation-plan.md",
+      "outputPath": "mvp-2-implementation-plan.html",
+      "digest": "843ec9937e34ae0605d99f039f7109fc2edd1e3b5bc2626dd01ac2b171d740ee",
+      "outputDigest": "b351e80d78f18fd0e50b996f501ed204b513bcb4b746d01574778dc01b39c663",
+      "archived": true
+    },
+    {
+      "path": "mvp-2-release-evidence.md",
+      "outputPath": "mvp-2-release-evidence.html",
+      "digest": "831365fa847268171d79957400be52a8d03f74cfc691324010fe45a51ab00fed",
+      "outputDigest": "c472828736aa461754a45f0f70c22d197a3118e6e6a4f58ea4deb2a9bf7a69da",
+      "archived": true
+    },
+    {
+      "path": "mvp-2.5-implementation-plan.md",
+      "outputPath": "mvp-2.5-implementation-plan.html",
+      "digest": "641387ec3032558bb79a771ff8ac4642672b4e30460f8c1c9a47de36d5b4fb73",
+      "outputDigest": "8a74b64894b896005aea55e3faf938210f63f1df3a06a0c7f6200e04c4ffcb8a",
+      "archived": true
+    },
+    {
+      "path": "plan.md",
+      "outputPath": "plan.html",
+      "digest": "9e60e761dd77a1e10fb5be475e69c750d49306bacdcbdd22d6dfdd415f345300",
+      "outputDigest": "6581f23211b555cf411a3c625731701b61d8dee6527cd6238faee5b1a8aae9b9",
+      "archived": true
+    },
+    {
+      "path": "spikes/mvp-2-macos-system-audio.md",
+      "outputPath": "spikes/mvp-2-macos-system-audio.html",
+      "digest": "a5ddbab8a2a8cb59d1ad5de3c01dc35162900712a32dfe682dc5e8a87ff01b05",
+      "outputDigest": "2670bf2240da948a59ad813a2c5f7e05ce85014f9e5be18d2a10008bbad89a1a",
+      "archived": true
+    }
+  ],
+  "creates": [
+    {
+      "path": "adr/0001-mvp-runtime-boundaries.html",
+      "digest": "bb151e11b9c5fbf4eb440fc3f3bef4de8fb216e15e0f57ff981e9b374f4230a3",
+      "applied": true
+    },
+    {
+      "path": "adr/0002-situation-signal-privacy.html",
+      "digest": "cb808de7f5cec9d5c16df2a1e50fe3d6a4aff98c84b1786836ac12023f2dfdd2",
+      "applied": true
+    },
+    {
+      "path": "mvp-0-implementation-plan.html",
+      "digest": "5fc445325f47e02f60bcc68dd81adba491e4a2563778733741040de3f78aa857",
+      "applied": true
+    },
+    {
+      "path": "mvp-0-release-evidence.html",
+      "digest": "d036f3f31023642222c54254da82519f5b1498d79187c98e49b5729fd58316e2",
+      "applied": true
+    },
+    {
+      "path": "mvp-1-implementation-plan.html",
+      "digest": "8eb5e9630dbc50b6002fe0d305c0ee94761c3cba825a083c170276c242e1ffce",
+      "applied": true
+    },
+    {
+      "path": "mvp-1-release-evidence.html",
+      "digest": "baba7ce35644d4e7f7847ef0f8134c390a7e63129be5a2c12e05e895f85d01dc",
+      "applied": true
+    },
+    {
+      "path": "mvp-2-implementation-plan.html",
+      "digest": "b351e80d78f18fd0e50b996f501ed204b513bcb4b746d01574778dc01b39c663",
+      "applied": true
+    },
+    {
+      "path": "mvp-2-release-evidence.html",
+      "digest": "c472828736aa461754a45f0f70c22d197a3118e6e6a4f58ea4deb2a9bf7a69da",
+      "applied": true
+    },
+    {
+      "path": "mvp-2.5-implementation-plan.html",
+      "digest": "8a74b64894b896005aea55e3faf938210f63f1df3a06a0c7f6200e04c4ffcb8a",
+      "applied": true
+    },
+    {
+      "path": "plan.html",
+      "digest": "6581f23211b555cf411a3c625731701b61d8dee6527cd6238faee5b1a8aae9b9",
+      "applied": true
+    },
+    {
+      "path": "spikes/mvp-2-macos-system-audio.html",
+      "digest": "2670bf2240da948a59ad813a2c5f7e05ce85014f9e5be18d2a10008bbad89a1a",
+      "applied": true
+    }
+  ],
+  "replacements": []
+}

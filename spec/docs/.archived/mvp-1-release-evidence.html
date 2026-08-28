@@ -1,0 +1,240 @@
+<article lang="ja">
+  <h1 id="mvp-1-release-evidence--situation-shadow-mode">
+    MVP 1 Release Evidence — Situation Shadow Mode
+  </h1>
+  <ul>
+    <li>Date: 2026-08-26</li>
+    <li>Target: macOS arm64 debug application bundle</li>
+    <li>Result: Accepted</li>
+    <li>
+      Plan:
+      <a href="./mvp-1-implementation-plan.html"><code>mvp-1-implementation-plan.md</code></a>
+    </li>
+    <li>
+      Privacy boundary:
+      <a href="../adr/0002-situation-signal-privacy.html"
+        ><code>adr/0002-situation-signal-privacy.md</code></a
+      >
+    </li>
+  </ul>
+  <h2 id="reproduction">Reproduction</h2>
+  <pre><code class="language-sh">bun install
+bun run check
+bun run codex:smoke
+bun run desktop:smoke
+
+/usr/bin/time -l \
+  cargo test --manifest-path src-tauri/Cargo.toml \
+  eight_hour_fixture_replay_and_event_queue_remain_bounded -- --nocapture
+
+SAAA_CODEX_PATH=&quot;$PWD/src-tauri/target/debug/bundle/macos/SAAA.app/Contents/Resources/bin/codex&quot; \
+  cargo test --manifest-path src-tauri/Cargo.toml \
+  codex_live_read_only_turn_completes -- --ignored --nocapture
+</code></pre>
+  <p>Observed result:</p>
+  <ul>
+    <li>Frontend Settings / Situation contract tests: 5 passed.</li>
+    <li>
+      Rust unit / integration / fixture tests: 31 passed after the Shadow call-graph guard was
+      added; 2 environment-dependent tests remain ignored by the default suite.
+    </li>
+    <li>
+      Simulated eight-hour fixture replay: 14,400 samples passed; event queue remained at the fixed
+      64-entry bound. The focused test completed in approximately 0.03 seconds after compilation.
+    </li>
+    <li><code>@openai/codex-sdk</code> Bun import and constructor smoke: passed.</li>
+    <li>Packaged native Codex authenticated read-only live turn: passed.</li>
+    <li>Packaged frontend readiness smoke with CSP enabled: passed.</li>
+    <li>
+      macOS <code>.app</code>:
+      <code>src-tauri/target/debug/bundle/macos/SAAA.app</code>; packaged Codex executable present.
+    </li>
+  </ul>
+  <h2 id="runtime-and-persistence-evidence">Runtime and persistence evidence</h2>
+  <p>
+    The packaged desktop smoke opened the existing application-data database and migrated it from
+    <code>user_version=3</code> to <code>user_version=4</code>.
+  </p>
+  <p>Observed database metadata after launch:</p>
+  <pre><code class="language-text">user_version = 4
+settings documents = 6, all schema_version 4
+situation.runtime/default exists
+situation_ledger exists
+situation_feedback exists
+</code></pre>
+  <p>
+    The automatic pre-migration backup remained reopenable with
+    <code>user_version=3</code>. The observed Conversation and Codex thread counts
+    matched before and after migration. The deterministic migration integration test also preserves
+    Settings, Conversation, and Codex thread mapping.
+  </p>
+  <p>
+    Situation monitoring is default-off. When enabled, the Rust worker samples Foreground category
+    and SAAA-owned lifecycle signals; when paused, the worker exits and subsequent ticks do not
+    write ledger rows. Enablement is stored in <code>situation.runtime/default</code> and
+    survives database reopen.
+  </p>
+  <p>
+    The final packaged-runtime integration check temporarily enabled monitoring on a database whose
+    Situation ledger was confirmed empty, launched the packaged application for approximately seven
+    seconds, and observed:
+  </p>
+  <pre><code class="language-text">heartbeat:  UNKNOWN / 0  / IGNORE  / NONE / SILENT
+transition: SOLO    / 70 / SUGGEST / NONE / SILENT
+evidence:   foreground-app-available (+70)
+health:     foreground ready, microphone ready, audio ready, calendar disabled
+</code></pre>
+  <p>
+    The test then restored monitoring to off and removed the two test-only ledger rows, returning
+    the pre-test state to <code>enabled=false</code>,
+    <code>ledger count=0</code>.
+  </p>
+  <h2 id="privacy-and-no-intervention-evidence">Privacy and no-intervention evidence</h2>
+  <ul>
+    <li>
+      macOS Foreground sampling uses <code>NSWorkspace.frontmostApplication</code> and reads the
+      bundle identifier only inside the adapter. It immediately projects the identifier to a bounded
+      category.
+    </li>
+    <li>
+      No window title, process list, executable path, Calendar details, audio sample, transcript
+      content, prompt, response, workspace path, or Codex thread id exists in the Situation contract
+      or ledger schema.
+    </li>
+    <li>
+      Ledger persistence rejects evidence or decision reason values that are not bounded codes.
+    </li>
+    <li>
+      Calendar opt-in currently reports <code>unsupported / unavailable</code>; this follows
+      the P0 stop condition and does not block Foreground + SAAA lifecycle classification.
+    </li>
+    <li>
+      Permission-denied and unsupported optional-signal fixtures continue classification from
+      available local signals.
+    </li>
+    <li>Diagnostics exports Situation enablement and aggregate counts only.</li>
+    <li>
+      The Shadow call-graph guard rejects outbound or intervention primitives such as
+      <code>reqwest</code>, sockets, child commands, turn execution, TTS,
+      Codex calls, or notifications inside the Situation module.
+    </li>
+    <li>
+      Every Shadow policy branch and every persisted row is constrained to
+      <code>actualExecution=NONE</code> and <code>actualPresentation=SILENT</code>.
+    </li>
+  </ul>
+  <h2 id="acceptance-mapping">Acceptance mapping</h2>
+  <table>
+    <caption>
+      Acceptance mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col" class="markdown-align-right">#</th>
+        <th scope="col">Acceptance</th>
+        <th scope="col">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="markdown-align-right">1</td>
+        <td>Explicit enable / pause and restart persistence</td>
+        <td>Situation Settings/UI commands; reopen integration test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">2</td>
+        <td>Foreground and owned lifecycle normalization</td>
+        <td>macOS adapter projection test; owned lifecycle → runtime → ledger integration test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">3</td>
+        <td>Optional Calendar coarse/degraded behavior</td>
+        <td>
+          <code>unsupported</code> adapter and denied-signal isolation fixtures
+        </td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">4</td>
+        <td>No raw private signal persistence</td>
+        <td>ADR data-flow inventory; bounded-code validation; schema/source inspection</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">5</td>
+        <td>Deterministic candidate, confidence, evidence</td>
+        <td>classifier determinism tests and versioned rules</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">6</td>
+        <td>Hysteresis prevents short signal flapping</td>
+        <td>three-sample enter / five-sample exit fixture tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">7</td>
+        <td>Stale / insufficient signal safe default</td>
+        <td>
+          owned-signal freshness test and <code>UNKNOWN</code> classifier
+          fixtures
+        </td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">8</td>
+        <td>Four counterfactual decisions; actual NONE / SILENT</td>
+        <td>all-four policy test and SQLite CHECK constraints</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">9</td>
+        <td>No automatic Model/TTS/Notification/Application action</td>
+        <td>Shadow call-graph guard and module dependency inspection</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">10</td>
+        <td>Current state, evidence, health, history UI</td>
+        <td>Situation Surface backed by Rust snapshot and SQLite ledger</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">11</td>
+        <td>Structured evaluation feedback survives</td>
+        <td>feedback upsert/query and reopenable SQLite repository</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">12</td>
+        <td>Retention and clear affect Situation data only</td>
+        <td>max-entry/day cleanup and foreign-key cascade tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">13</td>
+        <td>Optional adapter failure does not regress MVP 0</td>
+        <td>failure isolation design, denied/unsupported fixtures, full MVP 0 regression suite</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">14</td>
+        <td>v3 → v4 backup migration preserves state</td>
+        <td>migration integration test and packaged application-data migration</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">15</td>
+        <td>Pause / exit release worker resources</td>
+        <td>
+          worker enable flag, pause exit loop, no-write-after-pause test, desktop process smoke
+        </td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">16</td>
+        <td>No server/RAG/vector dependency</td>
+        <td>package/source inspection; existing SQLite/Tauri stack only</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="known-bounded-degradation">Known bounded degradation</h2>
+  <p>
+    Calendar is intentionally <code>unsupported</code> in the MVP 1 macOS build.
+    Shipping a native EventKit adapter without exposing event details or silently broadening
+    permissions was not proven safe within this milestone. The accepted minimum signal set is
+    Foreground category plus SAAA-owned Conversation / Voice lifecycle, exactly as allowed by the
+    implementation plan&#39;s P0 stop condition.
+  </p>
+  <p>
+    System-wide microphone/audio usage is also deferred. SAAA-owned capture, transcription, and TTS
+    states are included; System Audio capture remains part of MVP 2 Meeting Mode.
+  </p>
+</article>

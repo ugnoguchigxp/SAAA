@@ -1,0 +1,687 @@
+<article lang="ja">
+  <h1 id="mvp-15-実装契約--situation-calibration-and-review">
+    MVP 1.5 実装契約 — Situation Calibration and Review
+  </h1>
+  <h2 id="0-文書の役割">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Complete — M15-01 through M15-09 accepted on 2026-08-27</li>
+    <li>
+      実装前提:
+      <a href="./mvp-1-release-evidence.html"><code>mvp-1-release-evidence.html</code></a>
+      がAcceptedであること
+    </li>
+    <li>
+      次のマイルストーン:
+      <a href="../mvp-2-implementation-plan.html"><code>mvp-2-implementation-plan.html</code></a>
+    </li>
+    <li>この文書の読者: 実装担当、レビュー担当、QA担当</li>
+    <li>
+      完了の定義:
+      本文の<code>M15-01</code>〜<code>M15-09</code>が完了し、受け入れ条件を証跡付きで満たすこと
+    </li>
+  </ul>
+  <p>
+    この文書は方向性だけを示すロードマップではない。実装中に担当者が新たなデータモデルやAPIを考案しなくてよいように、変更場所、契約、移行、テスト、完了条件を固定する。
+  </p>
+  <h2 id="implementation-record">Implementation Record</h2>
+  <p>
+    2026-08-27にM15-01からM15-09を完了した。詳細な再現手順、受け入れ条件ごとの証跡、privacy
+    inventory、既知のbounded degradationは<a href="./mvp-1.5-release-evidence.html"
+      ><code>mvp-1.5-release-evidence.html</code></a
+    >に保存する。
+  </p>
+  <ul>
+    <li>
+      v4 compatibilityを含む段階migration、pre-migration backup、active profile
+      seedを追加した。現行アプリケーションの後続schemaはv6へ進んでいるが、v4→v5のSituation
+      migrationはその中で保持される。
+    </li>
+    <li>
+      Calibration parameters、quality window、feedback v2、静的fixture replay、candidate
+      lifecycle、Review Surface、redacted diagnosticsを実装した。
+    </li>
+    <li>
+      Situationのshadow invariant（<code>NONE</code> /
+      <code>SILENT</code
+      >）を保持し、Reviewを開くことやcandidate操作で外部処理を開始しない。
+    </li>
+  </ul>
+  <h2 id="1-今回達成すること">1. 今回達成すること</h2>
+  <p>
+    MVP
+    1で記録したboundedなSituation判断を、ユーザーが評価し、固定fixtureで再生し、候補パラメータと現行パラメータを比較できるようにする。
+  </p>
+  <p>MVP 1.5は校正機能であり、介入機能ではない。次は全期間を通して不変とする。</p>
+  <pre><code class="language-text">automaticModelCall = false
+automaticTTS = false
+automaticNotification = false
+automaticApplicationAction = false
+actualExecution = NONE
+actualPresentation = SILENT
+</code></pre>
+  <p>
+    校正候補は自動適用しない。ユーザーがReview画面で明示的にAcceptした版だけを、次回tickからShadow分類に使う。Reject、失敗、画面を閉じた操作はactive
+    profileを変更しない。
+  </p>
+  <h2 id="2-コードレビュー結果と設計判断">2. コードレビュー結果と設計判断</h2>
+  <table>
+    <caption>
+      2. コードレビュー結果と設計判断
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">現在の実装</th>
+        <th scope="col">レビュー結果</th>
+        <th scope="col">MVP 1.5での扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <code>src-tauri/src/situation/classifier.rs</code
+          >に閾値<code>45/70/3/5/10000ms</code>が直書き
+        </td>
+        <td>replay対象となるルールを差し替えられない</td>
+        <td><code>CalibrationParameters</code>へ抽出し、現行値をdefaultにする</td>
+      </tr>
+      <tr>
+        <td><code>RULE_VERSION = &quot;mvp1-rules-v1&quot;</code></td>
+        <td>コード定数だけではAccept/Rollback履歴を表せない</td>
+        <td>SQLiteのprofileを正とし、定数は初回seed専用にする</td>
+      </tr>
+      <tr>
+        <td>
+          <code>situation_ledger</code>はtransition/decision/heartbeatだけを保存
+        </td>
+        <td>毎tickのcandidate変化、stale、UNKNOWNをSQLだけでは再構成できない</td>
+        <td>raw sampleを保存せず、heartbeat区間の集約カウンタを追加する</td>
+      </tr>
+      <tr>
+        <td>feedbackは<code>accurate/inaccurate/unsure</code></td>
+        <td>正誤と害・不要を一つのenumへ混ぜると既存意味が壊れる</td>
+        <td>
+          verdictは維持し、<code>impact</code>と<code>reason_code</code>を追加する
+        </td>
+      </tr>
+      <tr>
+        <td>Inaccurate選択時にUIが<code>UNKNOWN</code>を自動保存</td>
+        <td>ユーザーの訂正ではなくUIの推測になる</td>
+        <td>
+          Scene訂正を明示選択にし、未選択は<code>null</code>のまま保存する
+        </td>
+      </tr>
+      <tr>
+        <td>JSON decodeに<code>unwrap_or_default</code>がある</td>
+        <td>壊れた評価データが正常値に見える可能性がある</td>
+        <td>校正用JSONはdecode失敗をエラーとしてUIに表示する</td>
+      </tr>
+      <tr>
+        <td>
+          <code>SituationPage.tsx</code>が取得、監視、表示、feedbackを一ファイルで担当
+        </td>
+        <td>Review追加で責務が過密になる</td>
+        <td><code>review/</code>配下へAPI hookと表示部品を分離する</td>
+      </tr>
+      <tr>
+        <td>settings文書とDBのversionは4</td>
+        <td>新テーブルと契約追加にversion境界が必要</td>
+        <td>settings schemaと<code>PRAGMA user_version</code>を5へ上げる</td>
+      </tr>
+      <tr>
+        <td>8時間fixtureとcall-graph safety testが既にある</td>
+        <td>強い回帰防止策として利用可能</td>
+        <td>削除・弱体化せず、profile/replay対応へ拡張する</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="21-実装中に変更してはいけない判断">2.1 実装中に変更してはいけない判断</h3>
+  <ul>
+    <li>feedbackの正誤軸は<code>accurate | inaccurate | unsure</code>のまま維持する。</li>
+    <li>
+      影響軸は<code>none | no-effect | harmful</code>とする。既存行は<code>none</code>へ移行する。
+    </li>
+    <li>任意コメント欄は作らない。理由はallowlistのreason codeだけとする。</li>
+    <li>実運用の毎tick signal、アプリ名、window title、calendar本文、audioは保存しない。</li>
+    <li>calibrationの対象は閾値とhysteresisだけにする。evidence weightの編集UIは作らない。</li>
+    <li>replay fixtureはリポジトリ同梱の静的JSONとし、ユーザーの履歴をfixtureへ変換しない。</li>
+    <li>Reviewを開いたことを理由に監視を開始しない。</li>
+  </ul>
+  <h2 id="3-モジュール境界">3. モジュール境界</h2>
+  <h3 id="31-rust">3.1 Rust</h3>
+  <pre><code class="language-text">src-tauri/src/situation/
+├── contracts.rs                 # 既存。feedback/snapshotの共有契約を更新
+├── classifier.rs                # 既存。profile引数を受け取る純粋分類器へ変更
+├── mod.rs                       # 既存。active profileとquality accumulatorを保持
+├── repository.rs                # 既存。ledger/feedback/settingsに限定
+└── calibration/
+    ├── mod.rs                   # use caseの公開口
+    ├── contracts.rs             # profile/run/review DTO
+    ├── metrics.rs               # 集約・率・比較。DB/Tauriへ依存しない
+    ├── replay.rs                # fixture読込と決定論的replay
+    └── repository.rs            # profile/run/quality windowのSQLite操作
+
+src-tauri/fixtures/situation/
+├── manifest.json
+└── mvp1-v1.json
+</code></pre>
+  <p>
+    <code>lib.rs</code>にはTauri
+    command、マイグレーション呼び出し、<code>generate_handler!</code>登録だけを置く。metricsやcandidate
+    lifecycleを<code>lib.rs</code>へ実装しない。
+  </p>
+  <h3 id="32-frontend">3.2 Frontend</h3>
+  <pre><code class="language-text">src/features/situation/
+├── SituationPage.tsx            # Overview/Reviewの切替と既存overview
+└── review/
+    ├── SituationReview.tsx       # 画面composition
+    ├── useSituationReview.ts     # load/mutate/error state
+    ├── QualitySummary.tsx
+    ├── FeedbackEditor.tsx
+    ├── ReplayComparison.tsx
+    └── CalibrationHistory.tsx
+
+src/lib/contracts.ts              # Rust DTOと1対1の型
+src/lib/runtime.ts                # invoke wrapper
+src/lib/schemas.ts                # settings schema version 5
+tests/situation-review.test.ts
+</code></pre>
+  <p>
+    CSSは既存の<code>src/App.css</code>とhono-standard由来のdesign
+    tokenを使う。Review専用の別themeは作らない。
+  </p>
+  <h2 id="4-固定する契約">4. 固定する契約</h2>
+  <h3 id="41-sceneとパラメータ">4.1 Sceneとパラメータ</h3>
+  <p>
+    Rustでは校正境界に限り、任意Stringではなくenumを使う。既存ledgerのStringはmigration互換のため、このMVPでは全面置換しない。
+  </p>
+  <pre><code class="language-rust">#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = &quot;SCREAMING_SNAKE_CASE&quot;)]
+pub enum SituationScene {
+    Conversation,
+    Meeting,
+    Coding,
+    Writing,
+    Media,
+    Focus,
+    Solo,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = &quot;camelCase&quot;, deny_unknown_fields)]
+pub struct CalibrationParameters {
+    pub classification_min_confidence: u8, // 50..=95, default 70
+    pub low_confidence_max: u8,             // 0..=60, default 45
+    pub enter_sample_count: u8,             // 1..=10, default 3
+    pub exit_sample_count: u8,              // 1..=20, default 5
+    pub cooldown_ms: u64,                    // 0..=60_000, default 10_000
+}
+</code></pre>
+  <p>追加の相互制約:</p>
+  <pre><code class="language-text">lowConfidenceMax &lt; classificationMinConfidence
+candidate JSON serialized size &lt;= 2 KiB
+</code></pre>
+  <p>
+    <code>classify(signals, parameters)</code
+    >と<code>Hysteresis::update(candidate, parameters, now, now_ms)</code>へ変更する。default profileを渡したとき、MVP
+    1の全classifier testが同じ結果になること。
+  </p>
+  <h3 id="42-feedback">4.2 Feedback</h3>
+  <pre><code class="language-rust">pub struct SituationFeedbackInput {
+    pub ledger_id: String,
+    pub verdict: String,          // accurate | inaccurate | unsure
+    pub impact: String,           // none | no-effect | harmful
+    pub corrected_scene: Option&lt;String&gt;,
+    pub reason_code: Option&lt;String&gt;,
+}
+</code></pre>
+  <p>許可する<code>reason_code</code>:</p>
+  <pre><code class="language-text">wrong-scene
+stale-signal
+unstable-transition
+unwanted-suggestion
+missed-meeting-candidate
+insufficient-evidence
+</code></pre>
+  <p>validation:</p>
+  <ul>
+    <li>
+      <code>verdict=inaccurate</code
+      >では<code>reason_code</code>を必須にする。
+    </li>
+    <li>
+      <code>impact=harmful</code
+      >では<code>reason_code</code>を必須にする。
+    </li>
+    <li>
+      <code>corrected_scene</code
+      >があれば既存<code>validate_scene</code>を通す。
+    </li>
+    <li>
+      <code>impact=no-effect</code
+      >は<code>proposed_attention=SUGGEST</code>のledger行だけ許可する。
+    </li>
+    <li>feedbackは同じ<code>ledger_id</code>へupsert可能とする。</li>
+  </ul>
+  <h3 id="43-quality-window">4.3 Quality window</h3>
+  <p>
+    <code>SituationRuntime::tick</code
+    >内で、永続化前に次のカウンタだけを加算する。生のSignalSnapshotは保持しない。
+  </p>
+  <pre><code class="language-rust">pub struct QualityWindowAccumulator {
+    pub started_at_ms: u128,
+    pub sample_count: u64,
+    pub candidate_change_count: u64,
+    pub stable_transition_count: u64,
+    pub unknown_sample_count: u64,
+    pub stale_owned_signal_count: u64,
+    pub decision_ignore_count: u64,
+    pub decision_observe_count: u64,
+    pub decision_suggest_count: u64,
+    pub decision_respond_count: u64,
+    pub health_ready_count: u64,
+    pub health_disabled_count: u64,
+    pub health_permission_denied_count: u64,
+    pub health_unsupported_count: u64,
+    pub health_degraded_count: u64,
+}
+</code></pre>
+  <ul>
+    <li>heartbeat保存時またはmonitoring停止時にwindowをflushする。</li>
+    <li><code>sample_count=0</code>のwindowは保存しない。</li>
+    <li>1 windowの最大期間は既存<code>heartbeat_interval_ms</code>。</li>
+    <li>
+      flush成功後だけaccumulatorをresetする。DB失敗時は最大2 window分までsaturating
+      addし、それ以上は<code>degraded</code> eventを出してresetする。
+    </li>
+    <li>
+      flappingは<code>candidate_change_count / sample_count</code>、staleは<code>stale_owned_signal_count / sample_count</code>として計算する。
+    </li>
+    <li>
+      分母が20未満の率は<code>null</code>を返し、UIは<code>Insufficient data</code>と表示する。
+    </li>
+  </ul>
+  <h3 id="44-review-snapshot">4.4 Review snapshot</h3>
+  <pre><code class="language-ts">export type SituationReviewSnapshot = {
+  activeProfile: CalibrationProfile;
+  quality: SituationQualityMetrics;
+  feedbackQueue: SituationLedgerEntry[]; // max 50, newest first
+  latestRun: CalibrationRun | null;
+  candidates: CalibrationCandidate[];    // max 20, newest first
+};
+</code></pre>
+  <p>全list APIはlimitをサーバー側で固定する。Frontendから任意limitやSQL filterを渡さない。</p>
+  <h2 id="5-sqlite-v5-migration">5. SQLite v5 migration</h2>
+  <p>
+    <code>initialize_database</code
+    >を段階migrationへ変更する。現行の<code>CREATE TABLE IF NOT EXISTS</code>は維持してよいが、version
+    4→5の変更を<code>migrate_v4_to_v5(&amp;mut Connection)</code>として分離する。起動時backupは<code>version &lt; 5</code>で作る。
+  </p>
+  <h3 id="51-ddl">5.1 DDL</h3>
+  <pre><code class="language-sql">ALTER TABLE situation_feedback
+  ADD COLUMN impact TEXT NOT NULL DEFAULT &#39;none&#39;
+  CHECK(impact IN (&#39;none&#39;, &#39;no-effect&#39;, &#39;harmful&#39;));
+
+ALTER TABLE situation_feedback
+  ADD COLUMN reason_code TEXT
+  CHECK(reason_code IS NULL OR reason_code IN (
+    &#39;wrong-scene&#39;, &#39;stale-signal&#39;, &#39;unstable-transition&#39;,
+    &#39;unwanted-suggestion&#39;, &#39;missed-meeting-candidate&#39;,
+    &#39;insufficient-evidence&#39;
+  ));
+
+CREATE TABLE situation_quality_windows (
+  id TEXT PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  rule_version TEXT NOT NULL,
+  counters_json TEXT NOT NULL CHECK(length(counters_json) &lt;= 4096),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_situation_quality_windows_ended
+  ON situation_quality_windows(CAST(ended_at AS INTEGER) DESC);
+
+CREATE TABLE situation_calibration_profiles (
+  id TEXT PRIMARY KEY,
+  rule_version TEXT NOT NULL UNIQUE,
+  base_rule_version TEXT,
+  status TEXT NOT NULL CHECK(status IN (&#39;candidate&#39;, &#39;active&#39;, &#39;superseded&#39;, &#39;rejected&#39;, &#39;rolled-back&#39;)),
+  parameters_json TEXT NOT NULL CHECK(length(parameters_json) &lt;= 2048),
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  decision_reason_code TEXT,
+  FOREIGN KEY(base_rule_version) REFERENCES situation_calibration_profiles(rule_version)
+);
+CREATE UNIQUE INDEX idx_situation_calibration_one_active
+  ON situation_calibration_profiles(status) WHERE status = &#39;active&#39;;
+
+CREATE TABLE situation_calibration_runs (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  fixture_set_version TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (&#39;completed&#39;, &#39;failed&#39;)),
+  metrics_json TEXT CHECK(metrics_json IS NULL OR length(metrics_json) &lt;= 8192),
+  error_code TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT NOT NULL,
+  FOREIGN KEY(profile_id) REFERENCES situation_calibration_profiles(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_situation_calibration_runs_completed
+  ON situation_calibration_runs(completed_at DESC);
+</code></pre>
+  <h3 id="52-migration手順">5.2 migration手順</h3>
+  <ol>
+    <li><code>user_version</code>を読む。</li>
+    <li><code>&lt; 5</code>なら既存backup機構でDB全体をbackupする。</li>
+    <li>transactionを開始する。</li>
+    <li>上記DDLを実行する。column存在確認を行い再実行可能にする。</li>
+    <li>
+      <code>mvp1-rules-v1</code> profileをdefault
+      parameters、<code>active</code>で<code>INSERT OR IGNORE</code>する。
+    </li>
+    <li>
+      6 settings documentsの<code>schema_version</code>を5へ更新する。value
+      JSONは変更しない。
+    </li>
+    <li><code>PRAGMA user_version = 5</code>を設定してcommitする。</li>
+    <li>
+      startup時にactive profileが0件または2件以上ならSituation
+      monitoringを開始せず、復旧可能なエラーを返す。
+    </li>
+  </ol>
+  <p>
+    既存のConversation、Message、Codex thread、runtime
+    run、ledger、feedbackを再生成しない。migration testでは行数と代表値を比較する。
+  </p>
+  <h2 id="6-tauri-command">6. Tauri command</h2>
+  <table>
+    <caption>
+      6. Tauri command
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Command</th>
+        <th scope="col">Input</th>
+        <th scope="col">Output</th>
+        <th scope="col">Side effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>get_situation_review_snapshot</code></td>
+        <td>なし</td>
+        <td><code>SituationReviewSnapshot</code></td>
+        <td>なし</td>
+      </tr>
+      <tr>
+        <td><code>submit_situation_feedback</code></td>
+        <td>拡張input</td>
+        <td><code>SituationReviewSnapshot</code></td>
+        <td>feedbackをupsert</td>
+      </tr>
+      <tr>
+        <td><code>create_situation_calibration_candidate</code></td>
+        <td><code>CalibrationParameters</code></td>
+        <td><code>CalibrationProfile</code></td>
+        <td><code>candidate</code> profileを作る。activeは変えない</td>
+      </tr>
+      <tr>
+        <td><code>run_situation_calibration</code></td>
+        <td><code>profileId</code></td>
+        <td><code>CalibrationRun</code></td>
+        <td>fixtureを同期replayしrunを保存</td>
+      </tr>
+      <tr>
+        <td><code>decide_situation_calibration</code></td>
+        <td>
+          <code>profileId</code>,
+          <code>decision</code>, <code>reasonCode</code>
+        </td>
+        <td><code>SituationReviewSnapshot</code></td>
+        <td>accept/reject/rollback transaction</td>
+      </tr>
+      <tr>
+        <td><code>clear_situation_history</code></td>
+        <td>なし</td>
+        <td>既存<code>SituationSnapshot</code></td>
+        <td>ledger、feedback、quality window、runを削除。profileは残す</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    候補作成時のstatusは<code>candidate</code>とする。<code>rejected</code>はユーザーが明示的にRejectした後だけ使用する。
+  </p>
+  <p>
+    <code>run_situation_calibration</code>はfixtureが14,400
+    samples以下のためcommand内の<code>spawn_blocking</code>で完了を待つ。進捗ChannelはMVP
+    1.5では作らない。処理が2秒を超える場合だけ別ADRを作り、cancelable jobへ変更する。
+  </p>
+  <p>
+    Acceptは<code>SituationRuntime::activate_profile(connection, profile)</code>へ集約する。command側でDB更新とruntime更新を別々に実行しない。このmethodはruntime
+    lockを取得した後、parametersを検証し、DB transactionをcommitし、同じlock
+    guardへprofileを代入してから解放する。代入自体はfallibleな処理を持たせない。
+  </p>
+  <p>Accept transaction:</p>
+  <ol>
+    <li>
+      対象が<code>candidate</code>で、最新runが<code>completed</code>であることを検証。
+    </li>
+    <li>
+      現在の<code>active</code>を<code>superseded</code>へ更新。
+    </li>
+    <li>対象を<code>active</code>へ更新。</li>
+    <li>transactionをcommitする。</li>
+    <li>保持中のruntime lockへ対象profileを代入してlockを解放する。</li>
+  </ol>
+  <p>
+    Rollbackは直前の<code>superseded</code>をactiveに戻し、現在activeを<code>rolled-back</code>にする。同じmethod、lock順序、transactionとruntime反映順序を使う。全Situation
+    commandのlock順序を<code>runtime → database</code>へ統一し、逆順取得を禁止する。
+  </p>
+  <h2 id="7-fixture-contract">7. Fixture contract</h2>
+  <p><code>manifest.json</code>:</p>
+  <pre><code class="language-json">{
+  &quot;fixtureSetVersion&quot;: &quot;situation-fixtures-v1&quot;,
+  &quot;files&quot;: [&quot;mvp1-v1.json&quot;],
+  &quot;maxSamples&quot;: 14400
+}
+</code></pre>
+  <p>
+    各sampleは既存<code>SignalSnapshot</code>と<code>elapsedMs</code>だけを持つ。expected
+    sceneはmetrics計算用のラベルとしてfixtureに置き、runtime inputへ渡さない。
+  </p>
+  <pre><code class="language-ts">type ReplaySample = {
+  elapsedMs: number;
+  signals: SignalSnapshot;
+  expectedScene: SituationScene;
+};
+</code></pre>
+  <p>必須シナリオ:</p>
+  <ul>
+    <li>explicit conversation開始/終了</li>
+    <li>coding、writing、media、soloの安定区間</li>
+    <li>communication + calendar meeting likely</li>
+    <li>sensitive foregroundによるUNKNOWN safe default</li>
+    <li>permission denied、unsupported、degraded</li>
+    <li>1〜2 sampleだけのnoiseが遷移しないこと</li>
+    <li>5 sample low confidenceでUNKNOWNへ戻ること</li>
+    <li>SUGGEST/RESPONDを含む全shadow policy path</li>
+  </ul>
+  <p>
+    replayはwall clock、乱数、DBを参照しない。同一fixture、同一profileを100回実行してmetrics
+    JSONがbyte-equivalentであること。
+  </p>
+  <h2 id="8-実装チケット">8. 実装チケット</h2>
+  <h3 id="m15-01--v5-migrationとprofile-seed">M15-01 — v5 migrationとprofile seed</h3>
+  <ul>
+    <li>
+      変更: <code>lib.rs</code>のbackup閾値、migration、settings schema
+      versionを5へ更新する。
+    </li>
+    <li>
+      test: v4 DBを作成しmigration後の全既存行、active profile 1件、user_version 5を検証する。
+    </li>
+    <li>Done: migrationを2回呼んでも失敗せず、既存6 settings documentのvalueが変わらない。</li>
+  </ul>
+  <h3 id="m15-02--parameterized-classifier">M15-02 — Parameterized classifier</h3>
+  <ul>
+    <li>
+      変更: <code>CalibrationParameters</code>を追加し、classifier/hysteresisのmagic
+      numberを置換する。
+    </li>
+    <li>test: default parity、各bound、相互制約、cooldown、enter/exit count。</li>
+    <li>Done: 既存Situation unit testが無変更の期待値で通る。</li>
+    <li>Depends on: M15-01。</li>
+  </ul>
+  <h3 id="m15-03--quality-accumulator">M15-03 — Quality accumulator</h3>
+  <ul>
+    <li>
+      変更:
+      <code>RuntimeInner</code
+      >へaccumulatorを追加し、tickで加算、heartbeat/停止でflushする。
+    </li>
+    <li>test: 0 sample非保存、flush後reset、DB失敗時のbounded behavior、率のnull分母。</li>
+    <li>Done: 8時間fixtureでもmemoryとDB row数がbounded。</li>
+    <li>Depends on: M15-01, M15-02。</li>
+  </ul>
+  <h3 id="m15-04--feedback-v2">M15-04 — Feedback v2</h3>
+  <ul>
+    <li>変更: repository DTO、join query、Frontend型、UI editorを更新する。</li>
+    <li>test: 既存feedback互換、invalid combination拒否、upsert、reopen、cascade delete。</li>
+    <li>Done: Inaccurateを選んでもSceneを勝手にUNKNOWNへしない。</li>
+    <li>Depends on: M15-01。</li>
+  </ul>
+  <h3 id="m15-05--deterministic-replay">M15-05 — Deterministic replay</h3>
+  <ul>
+    <li>変更: fixture、parser、metrics、run repository、commandを実装する。</li>
+    <li>
+      test: max sample/unknown field/invalid enum拒否、100回同一結果、failed runがactive
+      profileを変更しない。
+    </li>
+    <li>Done: baseline profileの結果がrelease evidenceへ貼れるJSONとして得られる。</li>
+    <li>Depends on: M15-02, M15-03。</li>
+  </ul>
+  <h3 id="m15-06--candidate-lifecycle">M15-06 — Candidate lifecycle</h3>
+  <ul>
+    <li>変更: create/run/accept/reject/rollbackとruntime profile swapを実装する。</li>
+    <li>
+      test: invalid transition、active unique、transaction rollback、app reopen後のactive復元。
+    </li>
+    <li>Done: Accept前後とRollback後のfixture結果が期待profile versionを示す。</li>
+    <li>Depends on: M15-05。</li>
+  </ul>
+  <h3 id="m15-07--review-ui">M15-07 — Review UI</h3>
+  <ul>
+    <li>
+      変更:
+      Situationに<code>Overview | Review</code>切替を追加し、review部品を実装する。
+    </li>
+    <li>
+      表示: active version、data sufficiency、quality counters、feedback
+      queue、baseline比較、version history。
+    </li>
+    <li>
+      error: command
+      errorを既存<code>error-banner</code>へ表示し、空配列へ握り潰さない。
+    </li>
+    <li>Done: keyboardだけでfeedback、replay、accept/reject/rollbackを操作できる。</li>
+    <li>Depends on: M15-04, M15-06。</li>
+  </ul>
+  <h3 id="m15-08--safetyprivacydiagnostics">M15-08 — Safety、privacy、diagnostics</h3>
+  <ul>
+    <li>変更: diagnosticsへ件数、active rule version、latest calibration statusだけを追加する。</li>
+    <li>禁止: metrics JSON、feedback、transcript、evidenceの本文をexportしない。</li>
+    <li>
+      test: call-graph guardに新moduleを含め、outbound/TTS/notification/application
+      actionが無いこと。
+    </li>
+    <li>
+      Done:
+      <code>actualExecution=NONE</code
+      >、<code>actualPresentation=SILENT</code>の既存testが通る。
+    </li>
+  </ul>
+  <h3 id="m15-09--release-evidence">M15-09 — Release evidence</h3>
+  <ul>
+    <li><code>spec/docs/mvp-1.5-release-evidence.md</code>を作る。</li>
+    <li>
+      version、migration backup path、test件数、fixture hash、baseline metrics、privacy
+      inventory、既知の制限を記録する。
+    </li>
+    <li>Done: 下記acceptanceを証跡へ1対1でリンクする。</li>
+  </ul>
+  <h2 id="9-テストと実行コマンド">9. テストと実行コマンド</h2>
+  <p>実装完了時はrepository rootで次を順に実行する。</p>
+  <pre><code class="language-bash">bun run typecheck
+bun run test:frontend
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+bun run build
+bun run desktop:smoke
+</code></pre>
+  <p>最低限追加するtest名:</p>
+  <pre><code class="language-text">version_four_database_migrates_to_five_without_data_loss
+default_calibration_profile_preserves_mvp_one_classification
+quality_windows_are_bounded_and_flush_on_pause
+calibration_replay_is_deterministic
+failed_or_rejected_candidate_never_changes_active_profile
+accepted_candidate_survives_reopen_and_rolls_back
+feedback_v2_validates_cross_field_rules
+calibration_module_has_no_outbound_or_intervention_calls
+</code></pre>
+  <p>Frontend test:</p>
+  <ul>
+    <li>v5 settings 6-document snapshotを受理し、v4 save payloadを拒否する。</li>
+    <li>feedback cross-field validationをRustと同じ期待値で確認する。</li>
+    <li>Reviewのinsufficient data、loading、empty、errorを確認する。</li>
+    <li>Accept/rollbackのconfirmを確認する。</li>
+  </ul>
+  <h2 id="10-受け入れ条件">10. 受け入れ条件</h2>
+  <ol>
+    <li>
+      v4 DBがbackup後にv5へ移行し、既存の設定、Conversation、Codex
+      thread、ledger、feedbackを失わない。
+    </li>
+    <li>default profileはMVP 1と同じ分類・hysteresis結果を返す。</li>
+    <li>実運用quality metricsはraw sampleを保存せず算出できる。</li>
+    <li>feedbackは正誤、影響、訂正Scene、理由を明示的に保存し、再起動後も復元する。</li>
+    <li>fixture replayは決定論的で、profile間の差を表示できる。</li>
+    <li>candidateはallowlist外のparameterと範囲外の値を受理しない。</li>
+    <li>Acceptしたcandidateだけがactiveになり、Reject/失敗はruntimeへ影響しない。</li>
+    <li>直前profileへRollbackでき、再起動後もその状態を保つ。</li>
+    <li>Reviewはユーザーが開いた時だけ表示され、監視、通知、TTS、Model、外部操作を開始しない。</li>
+    <li>
+      diagnostics、SQLite、fixtureにraw app identity、window title、calendar
+      detail、audio、prompt、responseを保存しない。
+    </li>
+    <li>8時間fixtureでevent queue、quality window、run historyがboundedである。</li>
+    <li>MVP 1のsafety testとdesktop smokeに回帰がない。</li>
+  </ol>
+  <h2 id="11-mvp-2へ進む判定">11. MVP 2へ進む判定</h2>
+  <p>次をすべて満たしたときだけMVP 2へ進む。</p>
+  <ul>
+    <li>privacy inventoryとcall-graph guardがpass。</li>
+    <li>
+      default profileに対して候補profileのharmful
+      feedback率が悪化していない。分母20未満なら改善判定をせずdefaultを維持する。
+    </li>
+    <li>Meeting fixtureでfalse positive数がbaselineを超えない。</li>
+    <li>unsupported/degraded時にUNKNOWNまたはIGNOREへ落ちる。</li>
+    <li>active profileのAccept/Rollbackがreopenを含めて検証済み。</li>
+  </ul>
+  <p>
+    数値が不足している場合はMVP 1.5を失敗扱いにせず、default profileのままMVP
+    2を「明示開始のみ」で実装する。Situation候補をMeeting開始の根拠には使わない。
+  </p>
+  <h2 id="12-stop--adr条件">12. Stop / ADR条件</h2>
+  <p>
+    次の場合は実装者が独自判断でscopeを広げず、<code>spec/docs/adr/</code>へ判断材料を記録する。
+  </p>
+  <ul>
+    <li>評価にraw signal保存が必要になった。</li>
+    <li>fixture replayが2秒を継続的に超え、job/cancel設計が必要になった。</li>
+    <li>SQLite transaction後のruntime profile swapを安全に補償できない。</li>
+    <li>feedback taxonomyへ自由文や新しい個人情報を追加したい。</li>
+    <li>校正対象をevidence weightやLLM分類まで広げたい。</li>
+  </ul>
+</article>

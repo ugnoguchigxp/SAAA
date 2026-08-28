@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{hash_map::Entry, HashMap},
     env, fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
@@ -19,9 +19,12 @@ use std::{
 use tauri::Manager;
 
 mod meeting;
+mod runtime;
 mod situation;
+mod voice;
 
 static BUNDLED_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
+const MAX_CODEX_STDOUT_BYTES: u64 = 4 * 1_024 * 1_024;
 
 struct AppState {
     connection: Arc<Mutex<Connection>>,
@@ -36,24 +39,36 @@ struct ActiveTts {
     child: Child,
 }
 
-struct ProcessGuard {
+pub(crate) struct ProcessGuard {
     child: Child,
+    terminated: bool,
 }
 
 impl ProcessGuard {
-    fn new(child: Child) -> Self {
-        Self { child }
+    pub(crate) fn new(child: Child) -> Self {
+        Self {
+            child,
+            terminated: false,
+        }
     }
 
-    fn child_mut(&mut self) -> &mut Child {
+    pub(crate) fn child_mut(&mut self) -> &mut Child {
         &mut self.child
+    }
+
+    pub(crate) fn terminate(&mut self) {
+        if self.terminated {
+            return;
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.terminated = true;
     }
 }
 
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.terminate();
     }
 }
 
@@ -64,13 +79,22 @@ struct RunCancellation {
 }
 
 impl RunCancellation {
-    fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
-        self.notify.notify_waiters();
+    pub(crate) fn cancel(&self) {
+        if !self.cancelled.swap(true, Ordering::SeqCst) {
+            self.notify.notify_waiters();
+            self.notify.notify_one();
+        }
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+
+    async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        self.notify.notified().await;
     }
 }
 
@@ -85,7 +109,7 @@ struct SettingsDocument {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SaveSettingsDocumentInput {
     namespace: String,
     key: String,
@@ -94,7 +118,7 @@ struct SaveSettingsDocumentInput {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SaveSettingsDocumentsInput {
     documents: Vec<SaveSettingsDocumentInput>,
 }
@@ -110,7 +134,7 @@ struct Conversation {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateConversationInput {
     title: Option<String>,
     task_mode: String,
@@ -127,7 +151,7 @@ struct ConversationMessage {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AppendMessageInput {
     conversation_id: String,
     role: String,
@@ -188,15 +212,65 @@ struct CodexRuntimeStatus {
     message: String,
 }
 
+#[derive(Debug)]
 struct CodexTurnOutcome {
     thread_id: String,
     content: String,
+    last_progress_at: Option<String>,
 }
 
 #[derive(Debug)]
 struct CodexTurnFailure {
     thread_id: Option<String>,
     message: String,
+    code: runtime::contracts::RunFailureCode,
+    last_progress_at: Option<String>,
+}
+
+#[derive(Debug)]
+enum CodexReaderMessage {
+    Message(Value),
+    Failed {
+        code: runtime::contracts::RunFailureCode,
+        message: &'static str,
+    },
+}
+
+#[derive(Debug)]
+struct TurnCompletion;
+
+#[derive(Debug)]
+struct TurnExecutionFailure {
+    code: runtime::contracts::RunFailureCode,
+    message: String,
+    supervisor_version: Option<&'static str>,
+    last_progress_at: Option<String>,
+    finalized: bool,
+}
+
+impl TurnExecutionFailure {
+    fn unsupervised(code: runtime::contracts::RunFailureCode, message: String) -> Self {
+        Self {
+            code,
+            message,
+            supervisor_version: None,
+            last_progress_at: None,
+            finalized: false,
+        }
+    }
+
+    fn configuration(message: impl Into<String>) -> Self {
+        Self::unsupervised(
+            runtime::contracts::RunFailureCode::ConfigurationError,
+            message.into(),
+        )
+    }
+}
+
+impl From<String> for TurnExecutionFailure {
+    fn from(message: String) -> Self {
+        Self::unsupervised(runtime::contracts::RunFailureCode::InternalError, message)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -287,7 +361,7 @@ struct SecurityRuntimeSettings {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StartTurnInput {
     run_id: String,
     conversation_id: String,
@@ -296,7 +370,7 @@ struct StartTurnInput {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TestProviderInput {
     provider: ModelProviderSettings,
 }
@@ -318,7 +392,7 @@ struct LocalArtifactResult {
 }
 
 #[tauri::command]
-fn frontend_ready() -> Result<(), String> {
+fn frontend_ready(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let Some(marker_id) = env::var("SAAA_SMOKE_MARKER_ID")
         .ok()
         .filter(|value| !value.is_empty())
@@ -326,6 +400,12 @@ fn frontend_ready() -> Result<(), String> {
         return Ok(());
     };
     validate_identifier(&marker_id, "smoke marker id")?;
+    if env::var_os("SAAA_SMOKE_EXERCISE_SITUATION").is_some() {
+        state.situation.set_monitoring(&state.connection, true)?;
+        let sample = state.situation.sample_platform()?;
+        state.situation.tick_sampled(&state.connection, sample)?;
+        state.situation.set_monitoring(&state.connection, false)?;
+    }
     fs::write(
         env::temp_dir().join(format!("saaa-frontend-{marker_id}.ready")),
         "ready",
@@ -334,7 +414,7 @@ fn frontend_ready() -> Result<(), String> {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscribeAudioInput {
     run_id: String,
     conversation_id: String,
@@ -344,7 +424,7 @@ struct TranscribeAudioInput {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SpeakTextInput {
     run_id: String,
     conversation_id: String,
@@ -353,7 +433,11 @@ struct SpeakTextInput {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 enum VoiceEvent {
     Transcribing {
         run_id: String,
@@ -377,7 +461,11 @@ enum VoiceEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 enum RuntimeEvent {
     Started {
         run_id: String,
@@ -429,11 +517,7 @@ fn get_app_snapshot(state: tauri::State<'_, AppState>) -> Result<AppSnapshot, St
 fn get_situation_snapshot(
     state: tauri::State<'_, AppState>,
 ) -> Result<situation::contracts::SituationSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    state.situation.snapshot(&connection)
+    state.situation.snapshot_locked(&state.connection)
 }
 
 #[tauri::command]
@@ -441,14 +525,7 @@ fn set_situation_monitoring(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<situation::contracts::SituationSnapshot, String> {
-    let settings = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        situation::repository::save_enabled(&connection, enabled)?
-    };
-    state.situation.configure(settings)?;
+    state.situation.set_monitoring(&state.connection, enabled)?;
     if enabled {
         spawn_situation_monitor(state.connection.clone(), state.situation.clone());
     }
@@ -473,19 +550,16 @@ fn submit_situation_feedback(
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
     situation::repository::submit_feedback(&connection, &input)?;
-    state.situation.snapshot(&connection)
+    drop(connection);
+    state.situation.snapshot_locked(&state.connection)
 }
 
 #[tauri::command]
 fn clear_situation_history(
     state: tauri::State<'_, AppState>,
 ) -> Result<situation::contracts::SituationSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    situation::repository::clear_history(&connection)?;
-    state.situation.snapshot(&connection)
+    state.situation.clear_history(&state.connection)?;
+    state.situation.snapshot_locked(&state.connection)
 }
 
 #[tauri::command]
@@ -498,12 +572,8 @@ fn get_situation_review_snapshot(
         .map_err(|_| "Database lock unavailable".to_string())?;
     Ok(situation::contracts::SituationReviewSnapshot {
         active_profile: situation::calibration::active_profile(&connection)?,
-        quality: json!({"sampleCount": 0, "flappingRate": null, "staleRate": null}),
-        feedback_queue: situation::repository::list_history(&connection)?
-            .into_iter()
-            .filter(|entry| entry.feedback.is_none())
-            .take(50)
-            .collect(),
+        quality: situation::repository::quality_metrics(&connection)?,
+        feedback_queue: situation::repository::feedback_queue(&connection)?,
         latest_run: situation::calibration::latest_run(&connection)?,
         candidates: situation::calibration::candidates(&connection)?,
     })
@@ -522,17 +592,25 @@ fn create_situation_calibration_candidate(
 }
 
 #[tauri::command]
-fn run_situation_calibration(
+async fn run_situation_calibration(
     state: tauri::State<'_, AppState>,
     profile_id: String,
 ) -> Result<situation::calibration::CalibrationRun, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let profile = situation::calibration::profile_by_id(&connection, &profile_id)?;
-    let metrics = situation::calibration::replay_metrics(&profile)?;
-    situation::calibration::save_run(&connection, &profile_id, "completed", Some(metrics), None)
+    validate_identifier(&profile_id, "calibration profile id")?;
+    let connection = state.connection.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        let profile = situation::calibration::profile_by_id(&connection, &profile_id)?;
+        if profile.status != "candidate" {
+            return Err("Only candidate profiles can be replayed".to_string());
+        }
+        let metrics = situation::calibration::replay_metrics(&profile)?;
+        situation::calibration::save_run(&connection, &profile_id, "completed", Some(metrics), None)
+    })
+    .await
+    .map_err(|error| format!("Situation calibration worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -542,16 +620,9 @@ fn decide_situation_calibration(
     decision: String,
     reason_code: String,
 ) -> Result<situation::contracts::SituationReviewSnapshot, String> {
-    let mut connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let active =
-        situation::calibration::decide(&mut connection, &profile_id, &decision, &reason_code)?;
     state
         .situation
-        .set_calibration_parameters(active.parameters)?;
-    drop(connection);
+        .decide_calibration(&state.connection, &profile_id, &decision, &reason_code)?;
     get_situation_review_snapshot(state)
 }
 
@@ -564,12 +635,9 @@ fn spawn_situation_monitor(
     }
     tauri::async_runtime::spawn(async move {
         while runtime.enabled() {
-            let result = runtime.sample_platform().and_then(|sample| {
-                connection
-                    .lock()
-                    .map_err(|_| "Database lock unavailable".to_string())
-                    .and_then(|connection| runtime.tick_sampled(&connection, sample))
-            });
+            let result = runtime
+                .sample_platform()
+                .and_then(|sample| runtime.tick_sampled(&connection, sample));
             if let Err(error) = result {
                 runtime.record_failure(error);
             }
@@ -631,6 +699,8 @@ fn export_diagnostics(
     drop(statement);
     let situation_evaluation = situation::repository::evaluation_summary(&connection)?;
     let situation_settings = situation::repository::load_settings(&connection)?;
+    let situation_profile = situation::calibration::active_profile(&connection)?;
+    let latest_calibration = situation::calibration::latest_run(&connection)?;
     drop(connection);
 
     let created_at = now_iso();
@@ -643,6 +713,8 @@ fn export_diagnostics(
         "situation": {
             "monitoringEnabled": situation_settings.enabled,
             "calendarEnabled": situation_settings.calendar_enabled,
+            "activeRuleVersion": situation_profile.rule_version,
+            "latestCalibrationStatus": latest_calibration.as_ref().map(|run| run.status.as_str()),
             "totalEntries": situation_evaluation.total_entries,
             "feedback": {
                 "accurate": situation_evaluation.accurate,
@@ -704,22 +776,11 @@ async fn start_turn(
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(&state, &input.run_id, cancellation.clone())?;
 
-    let result = execute_turn(&state, &input, &on_event, cancellation.clone()).await;
+    let result = execute_turn(&state, &input, &on_event, cancellation.clone(), None).await;
     if let Ok(mut active) = state.active_runs.lock() {
         active.remove(&input.run_id);
     }
-    if !cancellation.is_cancelled() {
-        if let Err(error) = &result {
-            let _ = on_event.send(RuntimeEvent::Failed {
-                run_id: input.run_id.clone(),
-                code: "runtime_error".to_string(),
-                message: redact_runtime_text(error),
-                recovery: "Review the selected provider and runtime settings, then retry."
-                    .to_string(),
-            });
-        }
-    }
-    result
+    result.map_err(|error| redact_runtime_text(&error.message))
 }
 
 #[tauri::command]
@@ -767,8 +828,14 @@ async fn transcribe_audio(
     if !(8_000..=192_000).contains(&input.sample_rate) || input.samples.is_empty() {
         return Err("Recorded audio is empty or has an unsupported sample rate".to_string());
     }
+    if input.samples.iter().any(|sample| !sample.is_finite()) {
+        return Err("Recorded audio contains invalid samples".to_string());
+    }
     if input.samples.len() > input.sample_rate as usize * 300 {
         return Err("Recording exceeds the five minute MVP limit".to_string());
+    }
+    if input.model_path.len() > 4_096 {
+        return Err("Local whisper model path is too long".to_string());
     }
     let model = fs::canonicalize(&input.model_path).map_err(|_| {
         "Local whisper model is missing. Select an existing model file in Voice settings."
@@ -862,16 +929,13 @@ async fn speak_text(
     state: tauri::State<'_, AppState>,
     input: SpeakTextInput,
 ) -> Result<(), String> {
-    if state.meeting.blocks_tts() {
-        return Err("MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string());
-    }
     validate_identifier(&input.run_id, "run id")?;
     validate_identifier(&input.conversation_id, "conversation id")?;
     if input.text.trim().is_empty() || input.text.chars().count() > 16_000 {
         return Err("Speech text must contain between 1 and 16,000 characters".to_string());
     }
-    if input.voice.len() > 160 {
-        return Err("TTS voice is too long".to_string());
+    if input.voice.trim().is_empty() || input.voice.len() > 160 {
+        return Err("TTS voice must contain between 1 and 160 characters".to_string());
     }
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(&state, &input.run_id, cancellation.clone())?;
@@ -893,6 +957,11 @@ async fn speak_text(
             .map_err(|_| "TTS process lock unavailable".to_string())?;
         if process.is_some() {
             return Err("Another speech run is already active".to_string());
+        }
+        if state.meeting.blocks_tts() {
+            return Err(
+                "MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string(),
+            );
         }
         *process = Some(ActiveTts {
             run_id: input.run_id.clone(),
@@ -944,11 +1013,12 @@ async fn speak_text(
             .as_ref()
             .is_some_and(|active| active.run_id == input.run_id)
         {
-            let mut active = process.take().expect("matching TTS process exists");
-            if cancellation.is_cancelled() {
-                let _ = active.child.kill();
+            if let Some(mut active) = process.take() {
+                if cancellation.is_cancelled() {
+                    let _ = active.child.kill();
+                }
+                let _ = active.child.wait();
             }
-            let _ = active.child.wait();
             state
                 .situation
                 .set_audio_state(situation::contracts::AudioState::Silent);
@@ -1005,7 +1075,12 @@ fn meeting_preflight(
     state: tauri::State<'_, AppState>,
     input: meeting::PreflightInput,
 ) -> Result<meeting::PreflightResult, String> {
-    state.meeting.preflight(&input)
+    let result = state.meeting.preflight(&input)?;
+    state.meeting.emit(meeting::MeetingEvent::StateChanged {
+        session_id: None,
+        state: result.state.clone(),
+    });
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1013,12 +1088,22 @@ fn start_meeting(
     state: tauri::State<'_, AppState>,
     input: meeting::StartInput,
 ) -> Result<meeting::MeetingSnapshot, String> {
-    let tts_active = state
+    let tts_process = state
         .tts_process
         .lock()
-        .map_err(|_| "TTS process lock unavailable".to_string())?
-        .is_some();
-    state.meeting.start(&input, tts_active, &state.connection)
+        .map_err(|_| "TTS process lock unavailable".to_string())?;
+    if tts_process.is_some() {
+        return Err("MEETING_POLICY_TTS_BLOCKED: Stop speech and retry.".to_string());
+    }
+    let snapshot = state.meeting.start(&input, &state.connection)?;
+    state.meeting.emit(meeting::MeetingEvent::StateChanged {
+        session_id: snapshot.session_id.clone(),
+        state: snapshot.state.clone(),
+    });
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::SaaaCapturing);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1031,14 +1116,15 @@ fn get_meeting_snapshot(
 #[tauri::command]
 fn watch_meeting(
     state: tauri::State<'_, AppState>,
+    subscriber_id: String,
     on_event: tauri::ipc::Channel<meeting::MeetingEvent>,
 ) -> Result<(), String> {
-    let snapshot = state.meeting.snapshot()?;
-    let _ = on_event.send(meeting::MeetingEvent::StateChanged {
-        session_id: snapshot.session_id,
-        state: snapshot.state,
-    });
-    Ok(())
+    state.meeting.watch(&subscriber_id, on_event)
+}
+
+#[tauri::command]
+fn unwatch_meeting(state: tauri::State<'_, AppState>, subscriber_id: String) -> Result<(), String> {
+    state.meeting.unwatch(&subscriber_id)
 }
 
 #[tauri::command]
@@ -1046,7 +1132,15 @@ fn pause_meeting(
     state: tauri::State<'_, AppState>,
     input: meeting::SessionInput,
 ) -> Result<meeting::MeetingSnapshot, String> {
-    state.meeting.pause(&input.session_id)
+    let snapshot = state.meeting.pause(&input.session_id, &state.connection)?;
+    state.meeting.emit(meeting::MeetingEvent::StateChanged {
+        session_id: snapshot.session_id.clone(),
+        state: snapshot.state.clone(),
+    });
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1054,7 +1148,15 @@ fn resume_meeting(
     state: tauri::State<'_, AppState>,
     input: meeting::SessionInput,
 ) -> Result<meeting::MeetingSnapshot, String> {
-    state.meeting.resume(&input.session_id)
+    let snapshot = state.meeting.resume(&input.session_id, &state.connection)?;
+    state.meeting.emit(meeting::MeetingEvent::StateChanged {
+        session_id: snapshot.session_id.clone(),
+        state: snapshot.state.clone(),
+    });
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::SaaaCapturing);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1062,7 +1164,15 @@ fn stop_meeting(
     state: tauri::State<'_, AppState>,
     input: meeting::SessionInput,
 ) -> Result<meeting::MeetingSnapshot, String> {
-    state.meeting.stop(&input.session_id, &state.connection)
+    let snapshot = state.meeting.stop(&input.session_id, &state.connection)?;
+    state.meeting.emit(meeting::MeetingEvent::StateChanged {
+        session_id: snapshot.session_id.clone(),
+        state: snapshot.state.clone(),
+    });
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1071,15 +1181,98 @@ async fn append_meeting_audio_segment(
     input: meeting::SegmentInput,
 ) -> Result<meeting::SegmentResult, String> {
     let cancellation = Arc::new(RunCancellation::default());
-    let (model, samples) = state.meeting.append(&input, &cancellation)?;
+    let (model, samples) = state.meeting.append(&input, cancellation.clone())?;
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::SaaaTranscribing);
     let worker_cancellation = cancellation.clone();
+    let meeting_runtime = state.meeting.clone();
+    let partial_session_id = input.session_id.clone();
+    let partial_lane = input.lane.clone();
+    let partial_sequence = input.sequence;
     let sample_rate = input.sample_rate;
     let transcription = tauri::async_runtime::spawn_blocking(move || {
-        meeting::transcribe_segment(model, samples, sample_rate, &worker_cancellation)
+        meeting::transcribe_segment(
+            model,
+            samples,
+            sample_rate,
+            &worker_cancellation,
+            move |text| {
+                meeting_runtime.emit(meeting::MeetingEvent::TranscriptPartial {
+                    session_id: partial_session_id.clone(),
+                    lane: partial_lane.clone(),
+                    sequence: partial_sequence,
+                    text,
+                });
+            },
+        )
     })
-    .await
-    .map_err(|e| format!("MEETING_STT_FAILED: {e}"))??;
-    state.meeting.finish_segment(&input, transcription)
+    .await;
+    let record_failure = |code: &str, message: String| {
+        let message = redact_runtime_text(&message);
+        match state
+            .meeting
+            .fail(&input.session_id, code, &message, &state.connection)
+        {
+            Ok(()) => Err(format!("{code}: {message}")),
+            Err(state_error) => Err(format!("{code}: {message}; {state_error}")),
+        }
+    };
+    let result = match transcription {
+        Ok(Ok(text)) => match state.meeting.finish_segment(&input, text) {
+            Ok(result) => {
+                state.meeting.emit(meeting::MeetingEvent::TranscriptFinal {
+                    session_id: input.session_id.clone(),
+                    lane: input.lane.clone(),
+                    sequence: input.sequence,
+                    text: result.text.clone(),
+                    language: None,
+                });
+                Ok(result)
+            }
+            Err(error) => {
+                state.meeting.abort_segment(&input);
+                if cancellation.is_cancelled() {
+                    Err("Transcription cancelled".to_string())
+                } else {
+                    let code = if error == "MEETING_BACKPRESSURE" {
+                        "MEETING_BACKPRESSURE"
+                    } else {
+                        "MEETING_STT_FAILED"
+                    };
+                    record_failure(code, error)
+                }
+            }
+        },
+        Ok(Err(error)) => {
+            state.meeting.abort_segment(&input);
+            if cancellation.is_cancelled() {
+                Err("Transcription cancelled".to_string())
+            } else {
+                record_failure("MEETING_STT_FAILED", error)
+            }
+        }
+        Err(error) => {
+            state.meeting.abort_segment(&input);
+            if cancellation.is_cancelled() {
+                Err("Transcription cancelled".to_string())
+            } else {
+                record_failure("MEETING_STT_FAILED", error.to_string())
+            }
+        }
+    };
+    state.situation.set_microphone_state(
+        if state
+            .meeting
+            .snapshot()
+            .is_ok_and(|snapshot| snapshot.state == meeting::MeetingState::Active)
+        {
+            situation::contracts::MicrophoneState::SaaaCapturing
+        } else {
+            situation::contracts::MicrophoneState::Inactive
+        },
+    );
+    result
 }
 
 #[tauri::command]
@@ -1087,7 +1280,15 @@ fn save_meeting_transcript(
     state: tauri::State<'_, AppState>,
     input: meeting::SessionInput,
 ) -> Result<meeting::MeetingSnapshot, String> {
-    state.meeting.save(&input.session_id, &state.connection)
+    let snapshot = state.meeting.save(&input.session_id, &state.connection)?;
+    state.meeting.emit(meeting::MeetingEvent::StateChanged {
+        session_id: snapshot.session_id.clone(),
+        state: snapshot.state.clone(),
+    });
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1095,7 +1296,17 @@ fn discard_meeting(
     state: tauri::State<'_, AppState>,
     input: meeting::SessionInput,
 ) -> Result<(), String> {
-    state.meeting.discard(&input.session_id, &state.connection)
+    state
+        .meeting
+        .discard(&input.session_id, &state.connection)?;
+    state.meeting.emit(meeting::MeetingEvent::StateChanged {
+        session_id: None,
+        state: meeting::MeetingState::Idle,
+    });
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
+    Ok(())
 }
 
 fn register_active_run(
@@ -1161,117 +1372,15 @@ fn run_whisper_transcription(
     on_event: &tauri::ipc::Channel<VoiceEvent>,
     cancellation: &RunCancellation,
 ) -> Result<String, String> {
-    let directory = tempfile::tempdir()
-        .map_err(|error| format!("Could not create audio workspace: {error}"))?;
-    let wav_path = directory.path().join("input.wav");
-    let output_base = directory.path().join("transcript");
-    write_whisper_wav(&wav_path, samples, sample_rate)?;
-    let executable = whisper_executable()?;
-    let mut child = ProcessGuard::new(
-        Command::new(executable)
-            .arg("-m")
-            .arg(model)
-            .arg("-f")
-            .arg(&wav_path)
-            .arg("-otxt")
-            .arg("-of")
-            .arg(&output_base)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Could not start local whisper: {error}"))?,
-    );
-    let stdout = child
-        .child_mut()
-        .stdout
-        .take()
-        .ok_or_else(|| "Whisper stdout is unavailable".to_string())?;
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let _ = sender.send(line);
-        }
-    });
-    let mut partials = Vec::new();
-    loop {
-        if cancellation.is_cancelled() {
-            return Err("Transcription cancelled".to_string());
-        }
-        while let Ok(line) = receiver.try_recv() {
-            if let Some(delta) = whisper_transcript_line(&line) {
-                partials.push(delta.clone());
-                let _ = on_event.send(VoiceEvent::TranscriptDelta {
-                    run_id: run_id.to_string(),
-                    text: delta,
-                });
-            }
-        }
-        if let Some(status) = child
-            .child_mut()
-            .try_wait()
-            .map_err(|error| format!("Could not inspect whisper process: {error}"))?
-        {
-            if !status.success() {
-                return Err(format!("Local whisper exited with {status}"));
-            }
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    let output_path = output_base.with_extension("txt");
-    let transcript = fs::read_to_string(&output_path)
-        .unwrap_or_else(|_| partials.join(" "))
-        .trim()
-        .to_string();
-    if transcript.is_empty() {
-        return Err("Local whisper completed without a transcript".to_string());
-    }
-    Ok(bounded_text(&transcript, 16_000))
+    voice::local_whisper::transcribe(samples, sample_rate, model, cancellation, |text| {
+        let _ = on_event.send(VoiceEvent::TranscriptDelta {
+            run_id: run_id.to_string(),
+            text,
+        });
+    })
 }
 
-pub(crate) fn write_whisper_wav(
-    path: &std::path::Path,
-    samples: &[f32],
-    sample_rate: u32,
-) -> Result<(), String> {
-    let resampled = resample_pcm(samples, sample_rate, 16_000);
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: 16_000,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::create(path, spec)
-        .map_err(|error| format!("Could not create local audio file: {error}"))?;
-    for sample in resampled {
-        let value = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-        writer
-            .write_sample(value)
-            .map_err(|error| format!("Could not write local audio: {error}"))?;
-    }
-    writer
-        .finalize()
-        .map_err(|error| format!("Could not finalize local audio: {error}"))
-}
-
-fn resample_pcm(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
-    if source_rate == target_rate {
-        return samples.to_vec();
-    }
-    let ratio = source_rate as f64 / target_rate as f64;
-    let target_len = ((samples.len() as f64) / ratio).floor() as usize;
-    (0..target_len)
-        .map(|index| {
-            let position = index as f64 * ratio;
-            let left = position.floor() as usize;
-            let right = (left + 1).min(samples.len().saturating_sub(1));
-            let fraction = (position - left as f64) as f32;
-            samples[left] * (1.0 - fraction) + samples[right] * fraction
-        })
-        .collect()
-}
-
-fn whisper_transcript_line(line: &str) -> Option<String> {
+pub(crate) fn whisper_transcript_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with("whisper_") || trimmed.starts_with("system_info") {
         return None;
@@ -1281,33 +1390,6 @@ fn whisper_transcript_line(line: &str) -> Option<String> {
         .map_or(trimmed, |(_, text)| text)
         .trim();
     (!text.is_empty()).then(|| bounded_text(text, 1_000))
-}
-
-pub(crate) fn whisper_executable() -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-    if let Some(path) = env::var_os("SAAA_WHISPER_PATH").filter(|value| !value.is_empty()) {
-        candidates.push(PathBuf::from(path));
-    }
-    candidates.extend([
-        PathBuf::from("whisper-cli"),
-        PathBuf::from("whisper.cpp"),
-        PathBuf::from("main"),
-    ]);
-    for candidate in candidates {
-        if candidate.is_absolute() && !candidate.is_file() {
-            continue;
-        }
-        if Command::new(&candidate)
-            .arg("--help")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return Ok(candidate);
-        }
-    }
-    Err("Local whisper executable was not found. Set SAAA_WHISPER_PATH to whisper-cli.".to_string())
 }
 
 fn spawn_tts_process(text: &str, voice: &str) -> Result<Child, String> {
@@ -1378,8 +1460,23 @@ async fn execute_turn(
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
-) -> Result<(), String> {
-    let task_mode = prepare_runtime_run(state, input)?;
+    codex_policy_override: Option<runtime::contracts::RunSupervisionPolicy>,
+) -> Result<(), TurnExecutionFailure> {
+    let task_mode = match prepare_runtime_run(state, input) {
+        Ok(task_mode) => task_mode,
+        Err(message) => {
+            let _ = on_event.send(RuntimeEvent::Failed {
+                run_id: input.run_id.clone(),
+                code: "runtime_error".to_string(),
+                message: redact_runtime_text(&message),
+                recovery: "Review the conversation and runtime state, then retry.".to_string(),
+            });
+            return Err(TurnExecutionFailure::unsupervised(
+                runtime::contracts::RunFailureCode::InternalError,
+                message,
+            ));
+        }
+    };
     state
         .situation
         .set_conversation_state(if task_mode == "coding" {
@@ -1387,28 +1484,169 @@ async fn execute_turn(
         } else {
             situation::contracts::ConversationState::ModelRunning
         });
-    let result = if task_mode == "coding" {
-        execute_codex_turn(state, input, on_event, cancellation.clone()).await
-    } else {
-        execute_conversation_turn(state, input, on_event, cancellation.clone()).await
-    };
+    if task_mode == "coding" {
+        let result = execute_codex_turn(
+            state,
+            input,
+            on_event,
+            cancellation.clone(),
+            codex_policy_override,
+        )
+        .await;
+        if let Err(error) = &result {
+            if !error.finalized {
+                let cancelled = cancellation.is_cancelled()
+                    || error.code == runtime::contracts::RunFailureCode::UserCancelled;
+                finish_supervised_runtime_run(
+                    state,
+                    &input.run_id,
+                    if cancelled { "cancelled" } else { "failed" },
+                    Some(if cancelled {
+                        runtime::contracts::RunFailureCode::UserCancelled
+                    } else {
+                        error.code
+                    }),
+                    error.supervisor_version,
+                    error.last_progress_at.as_deref(),
+                    Some(&error.message),
+                )
+                .map_err(|message| {
+                    TurnExecutionFailure::unsupervised(
+                        runtime::contracts::RunFailureCode::InternalError,
+                        message,
+                    )
+                })?;
+                send_runtime_terminal_event(on_event, &input.run_id, error, cancelled);
+            }
+        }
+        state
+            .situation
+            .set_conversation_state(situation::contracts::ConversationState::Idle);
+        return result.map(|_| ());
+    }
+
+    let result = execute_conversation_turn(state, input, on_event, cancellation.clone())
+        .await
+        .map_err(|message| {
+            TurnExecutionFailure::unsupervised(
+                runtime::contracts::RunFailureCode::ProviderError,
+                message,
+            )
+        });
     let finalization = match &result {
-        Ok(()) => finish_runtime_run(state, &input.run_id, "completed", None),
-        Err(_error) if cancellation.is_cancelled() => {
-            let finalization =
-                finish_runtime_run(state, &input.run_id, "cancelled", Some("Cancelled by user"));
-            let _ = on_event.send(RuntimeEvent::Cancelled {
+        Ok(message) => {
+            let _ = on_event.send(RuntimeEvent::MessageCompleted {
                 run_id: input.run_id.clone(),
+                message: message.clone(),
             });
+            Ok(())
+        }
+        Err(error) if cancellation.is_cancelled() => {
+            let finalization = finish_supervised_runtime_run(
+                state,
+                &input.run_id,
+                "cancelled",
+                Some(runtime::contracts::RunFailureCode::UserCancelled),
+                None,
+                None,
+                Some("Cancelled by user"),
+            );
+            if finalization.is_ok() {
+                let _ = on_event.send(RuntimeEvent::Cancelled {
+                    run_id: input.run_id.clone(),
+                });
+            }
             finalization
         }
-        Err(error) => finish_runtime_run(state, &input.run_id, "failed", Some(error)),
+        Err(error) => {
+            let finalization = finish_supervised_runtime_run(
+                state,
+                &input.run_id,
+                "failed",
+                None,
+                None,
+                None,
+                Some(&error.message),
+            );
+            if finalization.is_ok() {
+                let _ = on_event.send(RuntimeEvent::Failed {
+                    run_id: input.run_id.clone(),
+                    code: "runtime_error".to_string(),
+                    message: redact_runtime_text(&error.message),
+                    recovery: "Review the selected provider and runtime settings, then retry."
+                        .to_string(),
+                });
+            }
+            finalization
+        }
     };
     state
         .situation
         .set_conversation_state(situation::contracts::ConversationState::Idle);
-    finalization?;
-    result
+    finalization.map_err(|message| {
+        TurnExecutionFailure::unsupervised(
+            runtime::contracts::RunFailureCode::InternalError,
+            message,
+        )
+    })?;
+    result.map(|_| ())
+}
+
+fn send_runtime_terminal_event(
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    run_id: &str,
+    error: &TurnExecutionFailure,
+    cancelled: bool,
+) {
+    if cancelled {
+        let _ = on_event.send(RuntimeEvent::Cancelled {
+            run_id: run_id.to_string(),
+        });
+    } else {
+        let _ = on_event.send(RuntimeEvent::Failed {
+            run_id: run_id.to_string(),
+            code: error.code.as_str().to_string(),
+            message: redact_runtime_text(&error.message),
+            recovery: error.code.recovery().to_string(),
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_supervised_runtime_run(
+    state: &AppState,
+    run_id: &str,
+    status: &str,
+    failure_code: Option<runtime::contracts::RunFailureCode>,
+    supervisor_version: Option<&str>,
+    last_progress_at: Option<&str>,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE runtime_runs
+             SET status=?1, error_message=?2, completed_at=?3, failure_code=?4,
+                 supervisor_version=?5, last_progress_at=?6
+             WHERE id=?7 AND status='running'",
+            params![
+                status,
+                error.map(redact_runtime_text),
+                now_iso(),
+                failure_code.map(runtime::contracts::RunFailureCode::as_str),
+                supervisor_version,
+                last_progress_at,
+                run_id
+            ],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run was already finalized".to_string());
+    }
+    Ok(())
 }
 
 fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<String, String> {
@@ -1444,9 +1682,20 @@ fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<Strin
         .map_err(database_error)?;
     transaction
         .execute(
-            "INSERT INTO runtime_runs(id, conversation_id, route_kind, status, started_at)
-             VALUES (?1, ?2, ?3, 'running', ?4)",
-            params![input.run_id, input.conversation_id, route_kind, now],
+            "INSERT INTO runtime_runs(
+               id,conversation_id,route_kind,status,started_at,supervisor_version
+             ) VALUES(?1,?2,?3,'running',?4,?5)",
+            params![
+                input.run_id,
+                input.conversation_id,
+                route_kind,
+                now,
+                if task_mode == "coding" {
+                    Some(runtime::contracts::SUPERVISOR_VERSION)
+                } else {
+                    None
+                }
+            ],
         )
         .map_err(database_error)?;
     transaction
@@ -1473,12 +1722,17 @@ fn finish_runtime_run(
         .connection
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
-    connection
+    let changed = connection
         .execute(
-            "UPDATE runtime_runs SET status = ?1, error_message = ?2, completed_at = ?3 WHERE id = ?4",
+            "UPDATE runtime_runs
+             SET status = ?1, error_message = ?2, completed_at = ?3
+             WHERE id = ?4 AND status = 'running'",
             params![status, error.map(redact_runtime_text), now_iso(), run_id],
         )
         .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run was already finalized".to_string());
+    }
     Ok(())
 }
 
@@ -1487,7 +1741,7 @@ async fn execute_conversation_turn(
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
-) -> Result<(), String> {
+) -> Result<ConversationMessage, String> {
     let (providers, route, security, history) = {
         let connection = state
             .connection
@@ -1535,12 +1789,7 @@ async fn execute_conversation_turn(
         {
             Ok(content) => {
                 finish_provider_session(state, &session_id, "completed", None)?;
-                let message = persist_assistant_message(state, &input.conversation_id, &content)?;
-                let _ = on_event.send(RuntimeEvent::MessageCompleted {
-                    run_id: input.run_id.clone(),
-                    message,
-                });
-                return Ok(());
+                return persist_conversation_success(state, input, &content);
             }
             Err(ProviderAttemptError::Cancelled) => {
                 finish_provider_session(
@@ -1574,16 +1823,22 @@ async fn execute_codex_turn(
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
-) -> Result<(), String> {
+    policy_override: Option<runtime::contracts::RunSupervisionPolicy>,
+) -> Result<TurnCompletion, TurnExecutionFailure> {
     let workspace = input
         .workspace_path
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Select a workspace before starting a Codex turn".to_string())?;
-    let workspace = fs::canonicalize(workspace)
-        .map_err(|_| "The selected Codex workspace does not exist".to_string())?;
+        .ok_or_else(|| {
+            TurnExecutionFailure::configuration("Select a workspace before starting a Codex turn")
+        })?;
+    let workspace = fs::canonicalize(workspace).map_err(|_| {
+        TurnExecutionFailure::configuration("The selected Codex workspace does not exist")
+    })?;
     if !workspace.is_dir() {
-        return Err("The selected Codex workspace is not a directory".to_string());
+        return Err(TurnExecutionFailure::configuration(
+            "The selected Codex workspace is not a directory",
+        ));
     }
     let (settings, timeout_ms, existing_thread_id) = {
         let connection = state
@@ -1603,14 +1858,11 @@ async fn execute_codex_turn(
         (settings, routing.coding_assist.timeout_ms, thread_id)
     };
     if !settings.enabled {
-        return Err("Codex is disabled in Settings".to_string());
+        return Err(TurnExecutionFailure::configuration(
+            "Codex is disabled in Settings",
+        ));
     }
     update_runtime_provider(state, &input.run_id, "codex-sdk")?;
-    let _ = on_event.send(RuntimeEvent::Started {
-        run_id: input.run_id.clone(),
-        route: "coding.assist".to_string(),
-        provider_id: "codex-sdk".to_string(),
-    });
     let run_id = input.run_id.clone();
     let prompt = input.content.clone();
     let model = settings.model.clone();
@@ -1618,48 +1870,64 @@ async fn execute_codex_turn(
     let on_event_for_worker = on_event.clone();
     let cancellation_for_worker = cancellation.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        run_codex_turn_process(
-            &run_id,
-            &prompt,
-            &workspace_for_worker,
-            &model,
-            existing_thread_id.as_deref(),
-            timeout_ms,
-            &on_event_for_worker,
-            &cancellation_for_worker,
-        )
+        if let Some(policy) = policy_override {
+            run_codex_turn_process_with_policy(
+                &run_id,
+                &prompt,
+                &workspace_for_worker,
+                &model,
+                existing_thread_id.as_deref(),
+                policy,
+                &on_event_for_worker,
+                &cancellation_for_worker,
+            )
+        } else {
+            run_codex_turn_process(
+                &run_id,
+                &prompt,
+                &workspace_for_worker,
+                &model,
+                existing_thread_id.as_deref(),
+                timeout_ms,
+                &on_event_for_worker,
+                &cancellation_for_worker,
+            )
+        }
     })
     .await
     .map_err(|error| format!("Codex runtime task failed: {error}"))?;
 
     match outcome {
         Ok(outcome) => {
-            persist_codex_thread(
-                state,
-                &input.conversation_id,
-                &outcome.thread_id,
-                &settings.model,
-                &workspace,
-            )?;
             let message =
-                persist_assistant_message(state, &input.conversation_id, &outcome.content)?;
+                persist_codex_success(state, input, &outcome, &settings.model, &workspace)?;
             let _ = on_event.send(RuntimeEvent::MessageCompleted {
                 run_id: input.run_id.clone(),
                 message,
             });
-            Ok(())
+            Ok(TurnCompletion)
         }
         Err(failure) => {
-            if let Some(thread_id) = failure.thread_id {
-                persist_codex_thread(
-                    state,
-                    &input.conversation_id,
-                    &thread_id,
-                    &settings.model,
-                    &workspace,
-                )?;
-            }
-            Err(failure.message)
+            let cancelled = failure.code == runtime::contracts::RunFailureCode::UserCancelled;
+            let mut error = TurnExecutionFailure {
+                code: failure.code,
+                message: failure.message,
+                supervisor_version: Some(runtime::contracts::SUPERVISOR_VERSION),
+                last_progress_at: failure.last_progress_at,
+                finalized: false,
+            };
+            persist_codex_failure(
+                state,
+                input,
+                failure.thread_id.as_deref(),
+                &settings.model,
+                &workspace,
+                &error,
+                cancelled,
+            )?;
+            error.finalized = true;
+            send_runtime_terminal_event(on_event, &input.run_id, &error, cancelled);
+            Err(error)
         }
     }
 }
@@ -1672,21 +1940,14 @@ fn load_codex_settings(connection: &Connection) -> Result<CodexAgentRuntimeSetti
     Ok(settings)
 }
 
-fn persist_codex_thread(
-    state: &AppState,
+fn upsert_codex_thread(
+    transaction: &rusqlite::Transaction<'_>,
     conversation_id: &str,
     thread_id: &str,
     model: &str,
-    workspace: &std::path::Path,
+    workspace: &str,
 ) -> Result<(), String> {
-    let workspace = workspace
-        .to_str()
-        .ok_or_else(|| "Codex workspace path is not valid UTF-8".to_string())?;
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    connection
+    transaction
         .execute(
             "INSERT INTO codex_threads(conversation_id, thread_id, model, workspace_path, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -1701,6 +1962,143 @@ fn persist_codex_thread(
     Ok(())
 }
 
+#[cfg(test)]
+fn persist_codex_thread(
+    state: &AppState,
+    conversation_id: &str,
+    thread_id: &str,
+    model: &str,
+    workspace: &std::path::Path,
+) -> Result<(), String> {
+    let workspace = workspace
+        .to_str()
+        .ok_or_else(|| "Codex workspace path is not valid UTF-8".to_string())?;
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    upsert_codex_thread(&transaction, conversation_id, thread_id, model, workspace)?;
+    transaction.commit().map_err(database_error)
+}
+
+fn persist_codex_success(
+    state: &AppState,
+    input: &StartTurnInput,
+    outcome: &CodexTurnOutcome,
+    model: &str,
+    workspace: &std::path::Path,
+) -> Result<ConversationMessage, String> {
+    let workspace = workspace
+        .to_str()
+        .ok_or_else(|| "Codex workspace path is not valid UTF-8".to_string())?;
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    upsert_codex_thread(
+        &transaction,
+        &input.conversation_id,
+        &outcome.thread_id,
+        model,
+        workspace,
+    )?;
+    let message = ConversationMessage {
+        id: new_id("message"),
+        conversation_id: input.conversation_id.clone(),
+        role: "assistant".to_string(),
+        content: outcome.content.clone(),
+        created_at: now_iso(),
+    };
+    transaction
+        .execute(
+            "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
+             VALUES(?1,?2,'assistant',?3,?4)",
+            params![
+                message.id,
+                message.conversation_id,
+                message.content,
+                message.created_at
+            ],
+        )
+        .map_err(database_error)?;
+    transaction
+        .execute(
+            "UPDATE conversations SET updated_at=?1 WHERE id=?2",
+            params![message.created_at, input.conversation_id],
+        )
+        .map_err(database_error)?;
+    let changed = transaction
+        .execute(
+            "UPDATE runtime_runs
+             SET status='completed',error_message=NULL,completed_at=?1,failure_code=NULL,
+                 supervisor_version=?2,last_progress_at=?3
+             WHERE id=?4 AND status='running'",
+            params![
+                now_iso(),
+                runtime::contracts::SUPERVISOR_VERSION,
+                outcome.last_progress_at,
+                input.run_id
+            ],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run was already finalized".to_string());
+    }
+    transaction.commit().map_err(database_error)?;
+    Ok(message)
+}
+
+fn persist_codex_failure(
+    state: &AppState,
+    input: &StartTurnInput,
+    thread_id: Option<&str>,
+    model: &str,
+    workspace: &std::path::Path,
+    error: &TurnExecutionFailure,
+    cancelled: bool,
+) -> Result<(), String> {
+    let workspace = workspace
+        .to_str()
+        .ok_or_else(|| "Codex workspace path is not valid UTF-8".to_string())?;
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    if let Some(thread_id) = thread_id {
+        upsert_codex_thread(
+            &transaction,
+            &input.conversation_id,
+            thread_id,
+            model,
+            workspace,
+        )?;
+    }
+    let changed = transaction
+        .execute(
+            "UPDATE runtime_runs
+             SET status=?1,error_message=?2,completed_at=?3,failure_code=?4,
+                 supervisor_version=?5,last_progress_at=?6
+             WHERE id=?7 AND status='running'",
+            params![
+                if cancelled { "cancelled" } else { "failed" },
+                redact_runtime_text(&error.message),
+                now_iso(),
+                error.code.as_str(),
+                runtime::contracts::SUPERVISOR_VERSION,
+                error.last_progress_at,
+                input.run_id
+            ],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run was already finalized".to_string());
+    }
+    transaction.commit().map_err(database_error)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_codex_turn_process(
     run_id: &str,
@@ -1712,11 +2110,51 @@ fn run_codex_turn_process(
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: &RunCancellation,
 ) -> Result<CodexTurnOutcome, CodexTurnFailure> {
+    let policy =
+        runtime::contracts::RunSupervisionPolicy::for_route(timeout_ms).map_err(|message| {
+            CodexTurnFailure {
+                thread_id: existing_thread_id.map(str::to_string),
+                message,
+                code: runtime::contracts::RunFailureCode::ConfigurationError,
+                last_progress_at: None,
+            }
+        })?;
+    run_codex_turn_process_with_policy(
+        run_id,
+        prompt,
+        workspace,
+        model,
+        existing_thread_id,
+        policy,
+        on_event,
+        cancellation,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_codex_turn_process_with_policy(
+    run_id: &str,
+    prompt: &str,
+    workspace: &std::path::Path,
+    model: &str,
+    existing_thread_id: Option<&str>,
+    policy: runtime::contracts::RunSupervisionPolicy,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: &RunCancellation,
+) -> Result<CodexTurnOutcome, CodexTurnFailure> {
+    use runtime::codex_app_server::{CodexEventProjector, ProjectedCodexEvent};
+    use runtime::contracts::{RunFailureCode, RunOutcome, RunSignal, TerminalStatus};
+    use runtime::supervisor::RunSupervisor;
+
+    let process_started = std::time::Instant::now();
+    let mut supervisor = RunSupervisor::new(policy, 0);
     let mut child =
         ProcessGuard::new(
             spawn_codex_app_server().map_err(|message| CodexTurnFailure {
                 thread_id: existing_thread_id.map(str::to_string),
                 message,
+                code: RunFailureCode::ChildStartFailed,
+                last_progress_at: None,
             })?,
         );
     let mut stdin = child
@@ -1726,6 +2164,8 @@ fn run_codex_turn_process(
         .ok_or_else(|| CodexTurnFailure {
             thread_id: existing_thread_id.map(str::to_string),
             message: "Codex app-server stdin is unavailable".to_string(),
+            code: RunFailureCode::ChildStartFailed,
+            last_progress_at: None,
         })?;
     let stdout = child
         .child_mut()
@@ -1734,26 +2174,75 @@ fn run_codex_turn_process(
         .ok_or_else(|| CodexTurnFailure {
             thread_id: existing_thread_id.map(str::to_string),
             message: "Codex app-server stdout is unavailable".to_string(),
+            code: RunFailureCode::ChildStartFailed,
+            last_progress_at: None,
         })?;
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let message = serde_json::from_str::<Value>(&line)
-                .map_err(|error| format!("Codex app-server returned invalid JSON: {error}"));
-            if sender.send(message).is_err() {
+    let (sender, receiver) = mpsc::sync_channel(256);
+    let stdout_reader = thread::spawn(move || {
+        let mut reader = BufReader::new(stdout.take(MAX_CODEX_STDOUT_BYTES + 1));
+        let mut bytes_read = 0_u64;
+        loop {
+            let mut line = String::new();
+            let count = match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(_) => {
+                    let _ = sender.send(CodexReaderMessage::Failed {
+                        code: RunFailureCode::ProtocolError,
+                        message: "Could not read Codex app-server output",
+                    });
+                    break;
+                }
+            };
+            bytes_read = bytes_read.saturating_add(count as u64);
+            if bytes_read > MAX_CODEX_STDOUT_BYTES {
+                let _ = sender.send(CodexReaderMessage::Failed {
+                    code: RunFailureCode::ResponseTooLarge,
+                    message: "Codex app-server output exceeded the bounded stream limit",
+                });
                 break;
+            }
+            match serde_json::from_str::<Value>(line.trim_end()) {
+                Ok(message) => {
+                    if sender.send(CodexReaderMessage::Message(message)).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    let _ = sender.send(CodexReaderMessage::Failed {
+                        code: RunFailureCode::ProtocolError,
+                        message: "Codex app-server returned invalid JSON",
+                    });
+                    break;
+                }
             }
         }
     });
     let mut thread_id = existing_thread_id.map(str::to_string);
+    let mut last_progress_at = None;
     let result = (|| {
+        if thread_id
+            .as_deref()
+            .is_some_and(|id| validate_identifier(id, "Codex thread id").is_err())
+        {
+            return Err(CodexTurnFailure {
+                thread_id: None,
+                message: "Persisted Codex thread id is invalid".to_string(),
+                code: RunFailureCode::ProtocolError,
+                last_progress_at: None,
+            });
+        }
         write_codex_handshake(&mut stdin).map_err(|message| CodexTurnFailure {
             thread_id: thread_id.clone(),
+            code: RunFailureCode::ChildExited,
             message,
+            last_progress_at: None,
         })?;
         let workspace_text = workspace.to_str().ok_or_else(|| CodexTurnFailure {
             thread_id: thread_id.clone(),
             message: "Codex workspace path is not valid UTF-8".to_string(),
+            code: RunFailureCode::ConfigurationError,
+            last_progress_at: None,
         })?;
         let mut params = json!({
             "cwd": workspace_text,
@@ -1782,15 +2271,23 @@ fn run_codex_turn_process(
         )
         .map_err(|message| CodexTurnFailure {
             thread_id: thread_id.clone(),
+            code: RunFailureCode::ChildExited,
             message,
+            last_progress_at: None,
         })?;
-        let thread_response =
-            receive_codex_result(&receiver, 2, Duration::from_secs(20)).map_err(|message| {
-                CodexTurnFailure {
-                    thread_id: thread_id.clone(),
-                    message,
-                }
-            })?;
+        let thread_response = receive_supervised_codex_result(
+            &receiver,
+            2,
+            &mut supervisor,
+            process_started,
+            cancellation,
+        )
+        .map_err(|code| CodexTurnFailure {
+            thread_id: thread_id.clone(),
+            message: request_failure_message(code).to_string(),
+            code,
+            last_progress_at: None,
+        })?;
         let resolved_thread_id = thread_response
             .pointer("/result/thread/id")
             .and_then(Value::as_str)
@@ -1799,7 +2296,17 @@ fn run_codex_turn_process(
             .ok_or_else(|| CodexTurnFailure {
                 thread_id: None,
                 message: "Codex thread response did not include a thread id".to_string(),
+                code: RunFailureCode::ProtocolError,
+                last_progress_at: None,
             })?;
+        if validate_identifier(&resolved_thread_id, "Codex thread id").is_err() {
+            return Err(CodexTurnFailure {
+                thread_id: None,
+                message: "Codex thread response included an invalid thread id".to_string(),
+                code: RunFailureCode::ProtocolError,
+                last_progress_at: None,
+            });
+        }
         thread_id = Some(resolved_thread_id.clone());
         let thread_id = resolved_thread_id;
         write_codex_message(
@@ -1817,236 +2324,585 @@ fn run_codex_turn_process(
         )
         .map_err(|message| CodexTurnFailure {
             thread_id: Some(thread_id.clone()),
+            code: RunFailureCode::ChildExited,
             message,
+            last_progress_at: None,
         })?;
-        let turn_response =
-            receive_codex_result(&receiver, 3, Duration::from_secs(20)).map_err(|message| {
-                CodexTurnFailure {
-                    thread_id: Some(thread_id.clone()),
-                    message,
-                }
-            })?;
+        let turn_response = receive_supervised_codex_result(
+            &receiver,
+            3,
+            &mut supervisor,
+            process_started,
+            cancellation,
+        )
+        .map_err(|code| CodexTurnFailure {
+            thread_id: Some(thread_id.clone()),
+            message: request_failure_message(code).to_string(),
+            code,
+            last_progress_at: None,
+        })?;
         let turn_id = turn_response
             .pointer("/result/turn/id")
             .and_then(Value::as_str)
             .ok_or_else(|| CodexTurnFailure {
                 thread_id: Some(thread_id.clone()),
                 message: "Codex turn response did not include a turn id".to_string(),
+                code: RunFailureCode::ProtocolError,
+                last_progress_at: None,
             })?
             .to_string();
-        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+        if validate_identifier(&turn_id, "Codex turn id").is_err() {
+            return Err(CodexTurnFailure {
+                thread_id: Some(thread_id.clone()),
+                message: "Codex turn response included an invalid turn id".to_string(),
+                code: RunFailureCode::ProtocolError,
+                last_progress_at: None,
+            });
+        }
+        let elapsed_ms = elapsed_millis(process_started);
+        supervisor.apply(elapsed_ms, RunSignal::TurnStarted);
+        let _ = on_event.send(RuntimeEvent::Started {
+            run_id: run_id.to_string(),
+            route: "coding.assist".to_string(),
+            provider_id: "codex-sdk".to_string(),
+        });
+        let mut projector = CodexEventProjector::new(&thread_id, &turn_id);
+        last_progress_at = Some(now_iso());
         let mut content = String::new();
-        let mut interrupt_sent = false;
+        let mut content_chars = 0_usize;
+        let mut failure_detail: Option<String> = None;
+        let mut cancellation_observed = false;
         loop {
-            if cancellation.is_cancelled() && !interrupt_sent {
-                write_codex_message(
+            let now_ms = elapsed_millis(process_started);
+            let actions = if cancellation.is_cancelled() && !cancellation_observed {
+                cancellation_observed = true;
+                supervisor.apply(now_ms, RunSignal::CancelRequested)
+            } else {
+                Vec::new()
+            };
+            if let Some(outcome) = apply_supervisor_actions(
+                &actions,
+                &mut child,
+                &mut stdin,
+                &thread_id,
+                &turn_id,
+                supervisor.pending_outcome(),
+            ) {
+                return supervisor_outcome(
+                    outcome,
+                    &thread_id,
+                    &content,
+                    failure_detail,
+                    last_progress_at.clone(),
+                );
+            }
+            let message = match receiver.recv_timeout(supervisor_wait_duration(&supervisor, now_ms))
+            {
+                Ok(CodexReaderMessage::Message(message)) => message,
+                Ok(CodexReaderMessage::Failed { code, message }) => {
+                    failure_detail = Some(message.to_string());
+                    let observed_at_ms = elapsed_millis(process_started);
+                    let actions =
+                        supervisor.apply(observed_at_ms, RunSignal::FailureDetected { code });
+                    if let Some(outcome) = apply_supervisor_actions(
+                        &actions,
+                        &mut child,
+                        &mut stdin,
+                        &thread_id,
+                        &turn_id,
+                        supervisor.pending_outcome(),
+                    ) {
+                        return supervisor_outcome(
+                            outcome,
+                            &thread_id,
+                            &content,
+                            failure_detail,
+                            last_progress_at.clone(),
+                        );
+                    }
+                    let watch_actions = supervisor.tick(elapsed_millis(process_started));
+                    if let Some(outcome) = apply_supervisor_actions(
+                        &watch_actions,
+                        &mut child,
+                        &mut stdin,
+                        &thread_id,
+                        &turn_id,
+                        supervisor.pending_outcome(),
+                    ) {
+                        return supervisor_outcome(
+                            outcome,
+                            &thread_id,
+                            &content,
+                            failure_detail,
+                            last_progress_at.clone(),
+                        );
+                    }
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let now_ms = elapsed_millis(process_started);
+                    let actions = if cancellation.is_cancelled() && !cancellation_observed {
+                        cancellation_observed = true;
+                        supervisor.apply(now_ms, RunSignal::CancelRequested)
+                    } else {
+                        supervisor.tick(now_ms)
+                    };
+                    if let Some(outcome) = apply_supervisor_actions(
+                        &actions,
+                        &mut child,
+                        &mut stdin,
+                        &thread_id,
+                        &turn_id,
+                        supervisor.pending_outcome(),
+                    ) {
+                        return supervisor_outcome(
+                            outcome,
+                            &thread_id,
+                            &content,
+                            failure_detail,
+                            last_progress_at.clone(),
+                        );
+                    }
+                    if child.child_mut().try_wait().ok().flatten().is_some() {
+                        let actions = supervisor.apply(now_ms, RunSignal::ChildExited);
+                        if let Some(outcome) = apply_supervisor_actions(
+                            &actions,
+                            &mut child,
+                            &mut stdin,
+                            &thread_id,
+                            &turn_id,
+                            supervisor.pending_outcome(),
+                        ) {
+                            return supervisor_outcome(
+                                outcome,
+                                &thread_id,
+                                &content,
+                                failure_detail,
+                                last_progress_at.clone(),
+                            );
+                        }
+                    }
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    failure_detail = Some("Codex app-server stopped during the turn".to_string());
+                    let actions = supervisor.apply(now_ms, RunSignal::ChildExited);
+                    let outcome = apply_supervisor_actions(
+                        &actions,
+                        &mut child,
+                        &mut stdin,
+                        &thread_id,
+                        &turn_id,
+                        supervisor.pending_outcome(),
+                    )
+                    .unwrap_or(RunOutcome::Failed(RunFailureCode::ChildExited));
+                    return supervisor_outcome(
+                        outcome,
+                        &thread_id,
+                        &content,
+                        failure_detail,
+                        last_progress_at.clone(),
+                    );
+                }
+            };
+            let now_ms = elapsed_millis(process_started);
+            if cancellation.is_cancelled() && !cancellation_observed {
+                cancellation_observed = true;
+                let actions = supervisor.apply(now_ms, RunSignal::CancelRequested);
+                if let Some(outcome) = apply_supervisor_actions(
+                    &actions,
+                    &mut child,
                     &mut stdin,
+                    &thread_id,
+                    &turn_id,
+                    supervisor.pending_outcome(),
+                ) {
+                    return supervisor_outcome(
+                        outcome,
+                        &thread_id,
+                        &content,
+                        failure_detail,
+                        last_progress_at.clone(),
+                    );
+                }
+            }
+            let projected = match projector.project(&message) {
+                Ok(projected) => projected,
+                Err(()) => {
+                    failure_detail =
+                        Some("Codex app-server violated the event contract".to_string());
+                    ProjectedCodexEvent::ProviderError
+                }
+            };
+            let before_progress = supervisor.last_progress_at_ms();
+            let actions = match projected {
+                ProjectedCodexEvent::AssistantDelta(delta) => {
+                    let delta_chars = delta.chars().count();
+                    let remaining = 64_000usize.saturating_sub(content_chars);
+                    if delta_chars > remaining {
+                        failure_detail =
+                            Some("Codex response exceeded the 64,000 character limit".to_string());
+                        supervisor.apply(
+                            now_ms,
+                            RunSignal::FailureDetected {
+                                code: RunFailureCode::ResponseTooLarge,
+                            },
+                        )
+                    } else {
+                        content.push_str(&delta);
+                        content_chars += delta_chars;
+                        let _ = on_event.send(RuntimeEvent::Delta {
+                            run_id: run_id.to_string(),
+                            text: delta,
+                        });
+                        supervisor.apply(now_ms, RunSignal::AssistantDelta { non_empty: true })
+                    }
+                }
+                ProjectedCodexEvent::Activity {
+                    kind,
+                    label,
+                    summary,
+                    started,
+                    meaningful,
+                    arms_terminal_gap,
+                } => {
+                    let _ = on_event.send(RuntimeEvent::Activity {
+                        run_id: run_id.to_string(),
+                        kind: label,
+                        summary,
+                    });
+                    if arms_terminal_gap {
+                        supervisor.apply(now_ms, RunSignal::AssistantOutputCompleted)
+                    } else if meaningful {
+                        supervisor.apply(
+                            now_ms,
+                            if started {
+                                RunSignal::ItemStarted { kind }
+                            } else {
+                                RunSignal::ItemCompleted { kind }
+                            },
+                        )
+                    } else {
+                        Vec::new()
+                    }
+                }
+                ProjectedCodexEvent::AssistantOutputCompleted {
+                    text,
+                    arms_terminal_gap,
+                } => {
+                    if content.is_empty() {
+                        if let Some(text) = text {
+                            if text.chars().count() > 64_000 {
+                                failure_detail = Some(
+                                    "Codex response exceeded the 64,000 character limit"
+                                        .to_string(),
+                                );
+                                supervisor.apply(
+                                    now_ms,
+                                    RunSignal::FailureDetected {
+                                        code: RunFailureCode::ResponseTooLarge,
+                                    },
+                                )
+                            } else {
+                                content_chars = text.chars().count();
+                                content = text;
+                                if arms_terminal_gap {
+                                    supervisor.apply(now_ms, RunSignal::AssistantOutputCompleted)
+                                } else {
+                                    Vec::new()
+                                }
+                            }
+                        } else if arms_terminal_gap {
+                            supervisor.apply(now_ms, RunSignal::AssistantOutputCompleted)
+                        } else {
+                            Vec::new()
+                        }
+                    } else if arms_terminal_gap {
+                        supervisor.apply(now_ms, RunSignal::AssistantOutputCompleted)
+                    } else {
+                        Vec::new()
+                    }
+                }
+                ProjectedCodexEvent::Progress(kind) => {
+                    supervisor.apply(now_ms, RunSignal::ItemStarted { kind })
+                }
+                ProjectedCodexEvent::Terminal(status) => {
+                    if status != TerminalStatus::Completed {
+                        failure_detail = Some(if status == TerminalStatus::Interrupted {
+                            "Codex turn was interrupted".to_string()
+                        } else {
+                            "Codex turn failed".to_string()
+                        });
+                    }
+                    let effective_status =
+                        if status == TerminalStatus::Completed && content.trim().is_empty() {
+                            failure_detail =
+                                Some("Codex completed without an assistant response".to_string());
+                            TerminalStatus::Failed
+                        } else {
+                            status
+                        };
+                    supervisor.apply(
+                        now_ms,
+                        RunSignal::Terminal {
+                            status: effective_status,
+                        },
+                    )
+                }
+                ProjectedCodexEvent::PolicyViolation => {
+                    failure_detail = Some(
+                        "Codex attempted an operation forbidden by the read-only route".to_string(),
+                    );
+                    supervisor.apply(now_ms, RunSignal::PolicyViolated)
+                }
+                ProjectedCodexEvent::ProviderError => {
+                    failure_detail.get_or_insert_with(|| "Codex turn failed".to_string());
+                    supervisor.apply(
+                        now_ms,
+                        RunSignal::Terminal {
+                            status: TerminalStatus::Failed,
+                        },
+                    )
+                }
+                ProjectedCodexEvent::Ignore => Vec::new(),
+            };
+            if supervisor.last_progress_at_ms() != before_progress {
+                last_progress_at = Some(now_iso());
+            }
+            if let Some(outcome) = apply_supervisor_actions(
+                &actions,
+                &mut child,
+                &mut stdin,
+                &thread_id,
+                &turn_id,
+                supervisor.pending_outcome(),
+            ) {
+                return supervisor_outcome(
+                    outcome,
+                    &thread_id,
+                    &content,
+                    failure_detail,
+                    last_progress_at.clone(),
+                );
+            }
+            let watch_actions = supervisor.tick(elapsed_millis(process_started));
+            if let Some(outcome) = apply_supervisor_actions(
+                &watch_actions,
+                &mut child,
+                &mut stdin,
+                &thread_id,
+                &turn_id,
+                supervisor.pending_outcome(),
+            ) {
+                return supervisor_outcome(
+                    outcome,
+                    &thread_id,
+                    &content,
+                    failure_detail,
+                    last_progress_at.clone(),
+                );
+            }
+        }
+    })();
+    drop(stdin);
+    drop(receiver);
+    child.terminate();
+    if stdout_reader.join().is_err() && result.is_ok() {
+        return Err(CodexTurnFailure {
+            thread_id,
+            message: "Codex output reader stopped unexpectedly".to_string(),
+            code: RunFailureCode::InternalError,
+            last_progress_at,
+        });
+    }
+    result
+}
+
+fn elapsed_millis(started: std::time::Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn supervisor_wait_duration(
+    supervisor: &runtime::supervisor::RunSupervisor,
+    now_ms: u64,
+) -> Duration {
+    let remaining_ms = supervisor
+        .next_deadline_ms()
+        .map(|deadline| deadline.saturating_sub(now_ms))
+        .unwrap_or(100);
+    Duration::from_millis(remaining_ms.clamp(1, 100))
+}
+
+fn apply_supervisor_actions(
+    actions: &[runtime::contracts::SupervisorAction],
+    child: &mut ProcessGuard,
+    stdin: &mut impl Write,
+    thread_id: &str,
+    turn_id: &str,
+    pending_outcome: Option<runtime::contracts::RunOutcome>,
+) -> Option<runtime::contracts::RunOutcome> {
+    use runtime::contracts::SupervisorAction;
+    let mut outcome = None;
+    for action in actions {
+        match action {
+            SupervisorAction::SendInterrupt => {
+                if write_codex_message(
+                    stdin,
                     json!({
                         "method": "turn/interrupt",
                         "id": 4,
                         "params": { "threadId": thread_id, "turnId": turn_id }
                     }),
                 )
-                .map_err(|message| CodexTurnFailure {
-                    thread_id: Some(thread_id.clone()),
-                    message,
-                })?;
-                interrupt_sent = true;
+                .is_err()
+                {
+                    outcome = pending_outcome.or(Some(runtime::contracts::RunOutcome::Failed(
+                        runtime::contracts::RunFailureCode::InternalError,
+                    )));
+                }
             }
-            if std::time::Instant::now() >= deadline {
-                if !interrupt_sent {
-                    let _ = write_codex_message(
-                        &mut stdin,
-                        json!({
-                            "method": "turn/interrupt",
-                            "id": 4,
-                            "params": { "threadId": thread_id, "turnId": turn_id }
-                        }),
-                    );
-                }
-                return Err(CodexTurnFailure {
-                    thread_id: Some(thread_id.clone()),
-                    message: "Codex turn timed out and was interrupted".to_string(),
-                });
+            SupervisorAction::ForceKill => {
+                child.terminate();
             }
-            let message = match receiver.recv_timeout(Duration::from_millis(100)) {
-                Ok(Ok(message)) => message,
-                Ok(Err(message)) => {
-                    return Err(CodexTurnFailure {
-                        thread_id: Some(thread_id.clone()),
-                        message,
-                    });
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(CodexTurnFailure {
-                        thread_id: Some(thread_id.clone()),
-                        message: "Codex app-server stopped during the turn".to_string(),
-                    });
-                }
-            };
-            if message.get("id").is_some() && message.get("method").is_some() {
-                return Err(CodexTurnFailure {
-                    thread_id: Some(thread_id.clone()),
-                    message: "Codex requested an approval on a never-approval route".to_string(),
-                });
-            }
-            match message.get("method").and_then(Value::as_str) {
-                Some("item/agentMessage/delta") => {
-                    if let Some(delta) = message.pointer("/params/delta").and_then(Value::as_str) {
-                        content.push_str(delta);
-                        let _ = on_event.send(RuntimeEvent::Delta {
-                            run_id: run_id.to_string(),
-                            text: delta.to_string(),
-                        });
-                    }
-                }
-                Some("item/started") | Some("item/completed") => {
-                    match project_codex_activity(&message) {
-                        Ok(Some((kind, summary))) => {
-                            let _ = on_event.send(RuntimeEvent::Activity {
-                                run_id: run_id.to_string(),
-                                kind,
-                                summary,
-                            });
-                        }
-                        Ok(None) => {}
-                        Err(message) => {
-                            let _ = write_codex_message(
-                                &mut stdin,
-                                json!({
-                                    "method": "turn/interrupt",
-                                    "id": 4,
-                                    "params": { "threadId": thread_id, "turnId": turn_id }
-                                }),
-                            );
-                            return Err(CodexTurnFailure {
-                                thread_id: Some(thread_id.clone()),
-                                message,
-                            });
-                        }
-                    }
-                    if content.is_empty() {
-                        if let Some(text) = message
-                            .pointer("/params/item/text")
-                            .and_then(Value::as_str)
-                            .filter(|_| {
-                                message.pointer("/params/item/type").and_then(Value::as_str)
-                                    == Some("agentMessage")
-                            })
-                        {
-                            content = text.to_string();
-                        }
-                    }
-                }
-                Some("turn/completed") => {
-                    let status = message
-                        .pointer("/params/turn/status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("failed");
-                    if status == "completed" && !content.trim().is_empty() {
-                        return Ok(CodexTurnOutcome {
-                            thread_id: thread_id.clone(),
-                            content: bounded_text(&content, 64_000),
-                        });
-                    }
-                    let detail = message
-                        .pointer("/params/turn/error/message")
-                        .and_then(Value::as_str)
-                        .unwrap_or(if status == "interrupted" {
-                            "Codex turn interrupted"
-                        } else {
-                            "Codex turn failed"
-                        });
-                    return Err(CodexTurnFailure {
-                        thread_id: Some(thread_id.clone()),
-                        message: detail.to_string(),
-                    });
-                }
-                Some("error") => {
-                    let detail = message
-                        .pointer("/params/error/message")
-                        .or_else(|| message.pointer("/params/message"));
-                    return Err(CodexTurnFailure {
-                        thread_id: Some(thread_id.clone()),
-                        message: detail
-                            .and_then(Value::as_str)
-                            .unwrap_or("Codex runtime error")
-                            .to_string(),
-                    });
-                }
-                _ => {}
-            }
+            SupervisorAction::Finish(value) => outcome = Some(*value),
         }
-    })();
-    drop(stdin);
-    result
+    }
+    outcome
 }
 
-fn receive_codex_result(
-    receiver: &mpsc::Receiver<Result<Value, String>>,
+fn supervisor_outcome(
+    outcome: runtime::contracts::RunOutcome,
+    thread_id: &str,
+    content: &str,
+    failure_detail: Option<String>,
+    last_progress_at: Option<String>,
+) -> Result<CodexTurnOutcome, CodexTurnFailure> {
+    use runtime::contracts::{RunFailureCode, RunOutcome};
+    match outcome {
+        RunOutcome::Completed => Ok(CodexTurnOutcome {
+            thread_id: thread_id.to_string(),
+            content: bounded_text(content, 64_000),
+            last_progress_at,
+        }),
+        RunOutcome::Cancelled => Err(CodexTurnFailure {
+            thread_id: Some(thread_id.to_string()),
+            message: "Codex turn cancelled by user".to_string(),
+            code: RunFailureCode::UserCancelled,
+            last_progress_at,
+        }),
+        RunOutcome::Failed(code) => Err(CodexTurnFailure {
+            thread_id: Some(thread_id.to_string()),
+            message: redact_runtime_text(&failure_detail.unwrap_or_else(|| {
+                match code {
+                    RunFailureCode::RequestTimeout => "Codex request timed out",
+                    RunFailureCode::ProgressTimeout => "Codex progress stopped",
+                    RunFailureCode::TerminalTimeout => "Codex terminal event was not received",
+                    RunFailureCode::HardTimeout => "Codex route reached its hard timeout",
+                    RunFailureCode::ChildExited => "Codex app-server exited unexpectedly",
+                    RunFailureCode::ProtocolError => "Codex app-server protocol error",
+                    RunFailureCode::PolicyViolation => "Codex read-only policy violation",
+                    RunFailureCode::ProviderError => "Codex turn failed",
+                    RunFailureCode::ConfigurationError => "Codex configuration is invalid",
+                    RunFailureCode::ChildStartFailed => "Codex app-server could not start",
+                    RunFailureCode::ResponseTooLarge => "Codex response was too large",
+                    RunFailureCode::InternalError => "Codex runtime internal error",
+                    RunFailureCode::UserCancelled => "Codex turn cancelled by user",
+                    RunFailureCode::AppRestarted => "Application restarted during the run",
+                }
+                .to_string()
+            })),
+            code,
+            last_progress_at,
+        }),
+    }
+}
+
+fn receive_supervised_codex_result(
+    receiver: &mpsc::Receiver<CodexReaderMessage>,
     request_id: u64,
-    timeout: Duration,
-) -> Result<Value, String> {
-    let deadline = std::time::Instant::now() + timeout;
+    supervisor: &mut runtime::supervisor::RunSupervisor,
+    origin: std::time::Instant,
+    cancellation: &RunCancellation,
+) -> Result<Value, runtime::contracts::RunFailureCode> {
+    use runtime::contracts::{RunFailureCode, RunOutcome, RunSignal, SupervisorAction};
+
+    supervisor.begin_request(elapsed_millis(origin));
     loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err("Timed out waiting for Codex app-server".to_string());
+        if cancellation.is_cancelled() {
+            supervisor.apply(elapsed_millis(origin), RunSignal::CancelRequested);
+            return Err(RunFailureCode::UserCancelled);
         }
-        let message = receiver
-            .recv_timeout(remaining)
-            .map_err(|_| "Codex app-server stopped before responding".to_string())??;
+        let now_ms = elapsed_millis(origin);
+        if let Some(code) = supervisor
+            .tick(now_ms)
+            .into_iter()
+            .find_map(|action| match action {
+                SupervisorAction::Finish(RunOutcome::Failed(code)) => Some(code),
+                _ => None,
+            })
+        {
+            return Err(code);
+        }
+        let message = match receiver.recv_timeout(supervisor_wait_duration(supervisor, now_ms)) {
+            Ok(CodexReaderMessage::Message(message)) => message,
+            Ok(CodexReaderMessage::Failed { code, .. }) => return Err(code),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancellation.is_cancelled() {
+                    supervisor.apply(elapsed_millis(origin), RunSignal::CancelRequested);
+                    return Err(RunFailureCode::UserCancelled);
+                }
+                let now_ms = elapsed_millis(origin);
+                if let Some(code) =
+                    supervisor
+                        .tick(now_ms)
+                        .into_iter()
+                        .find_map(|action| match action {
+                            SupervisorAction::Finish(RunOutcome::Failed(code)) => Some(code),
+                            _ => None,
+                        })
+                {
+                    return Err(code);
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(RunFailureCode::ChildExited),
+        };
+        if message.get("id").is_some() && message.get("method").is_some() {
+            return Err(RunFailureCode::PolicyViolation);
+        }
         if message.get("id").and_then(Value::as_u64) != Some(request_id) {
+            let now_ms = elapsed_millis(origin);
+            if let Some(code) =
+                supervisor
+                    .tick(now_ms)
+                    .into_iter()
+                    .find_map(|action| match action {
+                        SupervisorAction::Finish(RunOutcome::Failed(code)) => Some(code),
+                        _ => None,
+                    })
+            {
+                return Err(code);
+            }
             continue;
         }
-        if let Some(error) = message.get("error") {
-            return Err(format!(
-                "Codex app-server error: {}",
-                error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown error")
-            ));
+        supervisor.complete_request();
+        if message.get("error").is_some() {
+            return Err(RunFailureCode::ProviderError);
         }
         return Ok(message);
     }
 }
 
-fn project_codex_activity(message: &Value) -> Result<Option<(String, String)>, String> {
-    let item = message.pointer("/params/item").unwrap_or(&Value::Null);
-    let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
-    match item_type {
-        "commandExecution" => Ok(Some((
-            "command".to_string(),
-            redact_runtime_text(
-                item.get("command")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Command"),
-            ),
-        ))),
-        "reasoning" => Ok(Some((
-            "reasoning".to_string(),
-            "Codex is reasoning".to_string(),
-        ))),
-        "agentMessage" | "userMessage" => Ok(None),
-        "fileChange" => Err(
-            "Security policy violation: Codex attempted a file change on a read-only route"
-                .to_string(),
-        ),
-        "mcpToolCall" | "dynamicToolCall" => Err(
-            "Security policy violation: Codex attempted to call a disabled external tool"
-                .to_string(),
-        ),
-        "webSearch" => {
-            Err("Security policy violation: Codex attempted disabled Web Search".to_string())
-        }
-        "plan" => Ok(Some((
-            "plan".to_string(),
-            "Codex updated its plan".to_string(),
-        ))),
-        value if !value.is_empty() => Ok(Some(("activity".to_string(), bounded_text(value, 80)))),
-        _ => Ok(None),
+fn request_failure_message(code: runtime::contracts::RunFailureCode) -> &'static str {
+    use runtime::contracts::RunFailureCode;
+    match code {
+        RunFailureCode::UserCancelled => "Codex request was cancelled",
+        RunFailureCode::RequestTimeout => "Codex request timed out",
+        RunFailureCode::ChildExited => "Codex app-server stopped before responding",
+        RunFailureCode::ProtocolError => "Codex app-server returned invalid output",
+        RunFailureCode::PolicyViolation => "Codex requested a forbidden approval",
+        RunFailureCode::ProviderError => "Codex app-server rejected the request",
+        _ => "Codex request failed",
     }
 }
 
@@ -2127,6 +2983,26 @@ fn list_messages_from_connection(
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
+    for message in &messages {
+        validate_identifier(&message.id, "message id")?;
+        validate_identifier(&message.conversation_id, "conversation id")?;
+        if message.conversation_id != conversation_id
+            || !matches!(
+                message.role.as_str(),
+                "user" | "assistant" | "system" | "transcript"
+            )
+            || message.content.is_empty()
+            || message.content.chars().count()
+                > if message.role == "assistant" {
+                    64_000
+                } else {
+                    16_000
+                }
+            || message.created_at.parse::<u128>().is_err()
+        {
+            return Err("Invalid persisted conversation message".to_string());
+        }
+    }
     Ok(messages)
 }
 
@@ -2139,12 +3015,15 @@ fn update_runtime_provider(
         .connection
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
-    connection
+    let changed = connection
         .execute(
-            "UPDATE runtime_runs SET provider_id = ?1 WHERE id = ?2",
+            "UPDATE runtime_runs SET provider_id = ?1 WHERE id = ?2 AND status = 'running'",
             params![provider_id, run_id],
         )
         .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run is not active".to_string());
+    }
     Ok(())
 }
 
@@ -2175,32 +3054,47 @@ fn finish_provider_session(
         .connection
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
-    connection
+    let changed = connection
         .execute(
-            "UPDATE provider_sessions SET status = ?1, failure_reason = ?2, updated_at = ?3 WHERE id = ?4",
-            params![status, failure_reason.map(redact_runtime_text), now_iso(), session_id],
+            "UPDATE provider_sessions
+             SET status = ?1, failure_reason = ?2, updated_at = ?3
+             WHERE id = ?4 AND status = 'running'",
+            params![
+                status,
+                failure_reason.map(redact_runtime_text),
+                now_iso(),
+                session_id
+            ],
         )
         .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Provider session was already finalized".to_string());
+    }
     Ok(())
 }
 
-fn persist_assistant_message(
+fn persist_conversation_success(
     state: &AppState,
-    conversation_id: &str,
+    input: &StartTurnInput,
     content: &str,
 ) -> Result<ConversationMessage, String> {
+    let content = bounded_text(content.trim(), 64_000);
+    if content.is_empty() {
+        return Err("Assistant message cannot be empty".to_string());
+    }
     let message = ConversationMessage {
         id: new_id("message"),
-        conversation_id: conversation_id.to_string(),
+        conversation_id: input.conversation_id.clone(),
         role: "assistant".to_string(),
-        content: content.to_string(),
+        content,
         created_at: now_iso(),
     };
-    let connection = state
+    let mut connection = state
         .connection
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
-    connection
+    let transaction = connection.transaction().map_err(database_error)?;
+    transaction
         .execute(
             "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -2213,12 +3107,58 @@ fn persist_assistant_message(
             ],
         )
         .map_err(database_error)?;
+    transaction
+        .execute(
+            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+            params![message.created_at, input.conversation_id],
+        )
+        .map_err(database_error)?;
+    let changed = transaction
+        .execute(
+            "UPDATE runtime_runs
+             SET status = 'completed', error_message = NULL, completed_at = ?1
+             WHERE id = ?2 AND status = 'running'",
+            params![now_iso(), input.run_id],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run was already finalized".to_string());
+    }
+    transaction.commit().map_err(database_error)?;
     Ok(message)
 }
 
+#[derive(Debug)]
 enum ProviderAttemptError {
     Cancelled,
     Failed(String),
+}
+
+async fn read_provider_body_limited(
+    response: reqwest::Response,
+    limit: usize,
+    cancellation: &RunCancellation,
+) -> Result<Vec<u8>, ProviderAttemptError> {
+    let mut stream = response.bytes_stream();
+    let mut body = Vec::new();
+    loop {
+        let next = tokio::select! {
+            _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled),
+            next = stream.next() => next,
+        };
+        let Some(chunk) = next else {
+            return Ok(body);
+        };
+        let chunk = chunk.map_err(|error| {
+            ProviderAttemptError::Failed(format!("Could not read provider response: {error}"))
+        })?;
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(ProviderAttemptError::Failed(format!(
+                "Provider response exceeded the {limit} byte limit"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
 }
 
 async fn stream_model_provider(
@@ -2232,12 +3172,15 @@ async fn stream_model_provider(
     if cancellation.is_cancelled() {
         return Err(ProviderAttemptError::Cancelled);
     }
-    let client = reqwest::Client::builder()
+    let mut client = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
-        .build()
-        .map_err(|error| {
-            ProviderAttemptError::Failed(format!("Could not initialize HTTP client: {error}"))
-        })?;
+        .redirect(reqwest::redirect::Policy::none());
+    if provider.location == "local" {
+        client = client.no_proxy();
+    }
+    let client = client.build().map_err(|error| {
+        ProviderAttemptError::Failed(format!("Could not initialize HTTP client: {error}"))
+    })?;
     let messages = history
         .iter()
         .filter_map(|message| {
@@ -2257,14 +3200,18 @@ async fn stream_model_provider(
         request = request.bearer_auth(api_key);
     }
     let response = tokio::select! {
-        _ = cancellation.notify.notified() => return Err(ProviderAttemptError::Cancelled),
+        _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled),
         response = request.send() => response.map_err(|error| {
             ProviderAttemptError::Failed(format!("Provider request failed: {error}"))
         })?,
     };
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = match read_provider_body_limited(response, 8_192, &cancellation).await {
+            Ok(body) => String::from_utf8_lossy(&body).into_owned(),
+            Err(ProviderAttemptError::Cancelled) => return Err(ProviderAttemptError::Cancelled),
+            Err(ProviderAttemptError::Failed(error)) => format!("<{error}>"),
+        };
         return Err(ProviderAttemptError::Failed(format!(
             "Provider returned {status}: {}",
             bounded_text(&body, 800)
@@ -2277,17 +3224,7 @@ async fn stream_model_provider(
         .unwrap_or_default()
         .to_string();
     if content_type.contains("application/json") {
-        let body = tokio::select! {
-            _ = cancellation.notify.notified() => return Err(ProviderAttemptError::Cancelled),
-            body = response.bytes() => body.map_err(|error| {
-                ProviderAttemptError::Failed(format!("Could not read provider JSON: {error}"))
-            })?,
-        };
-        if body.len() > 1_048_576 {
-            return Err(ProviderAttemptError::Failed(
-                "Provider JSON exceeded the 1 MiB limit".to_string(),
-            ));
-        }
+        let body = read_provider_body_limited(response, 1_048_576, &cancellation).await?;
         let response: Value = serde_json::from_slice(&body).map_err(|error| {
             ProviderAttemptError::Failed(format!("Invalid provider JSON: {error}"))
         })?;
@@ -2298,10 +3235,13 @@ async fn stream_model_provider(
                 ProviderAttemptError::Failed(
                     "Provider response did not contain message content".to_string(),
                 )
-            })?
-            .chars()
-            .take(64_000)
-            .collect::<String>();
+            })?;
+        if content.chars().count() > 64_000 {
+            return Err(ProviderAttemptError::Failed(
+                "Provider response exceeded the 64,000 character limit".to_string(),
+            ));
+        }
+        let content = content.to_string();
         let _ = on_event.send(RuntimeEvent::Delta {
             run_id: input.run_id.clone(),
             text: content.clone(),
@@ -2312,12 +3252,13 @@ async fn stream_model_provider(
     let mut stream = response.bytes_stream();
     let mut buffer = Vec::new();
     let mut content = String::new();
+    let mut content_chars = 0_usize;
     loop {
         if cancellation.is_cancelled() {
             return Err(ProviderAttemptError::Cancelled);
         }
         let next = tokio::select! {
-            _ = cancellation.notify.notified() => return Err(ProviderAttemptError::Cancelled),
+            _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled),
             next = stream.next() => next,
         };
         let Some(chunk) = next else {
@@ -2326,6 +3267,7 @@ async fn stream_model_provider(
                 let _ = project_sse_events(
                     drain_sse_events(&mut buffer).map_err(ProviderAttemptError::Failed)?,
                     &mut content,
+                    &mut content_chars,
                     input,
                     on_event,
                 )?;
@@ -2344,6 +3286,7 @@ async fn stream_model_provider(
         let stream_done = project_sse_events(
             drain_sse_events(&mut buffer).map_err(ProviderAttemptError::Failed)?,
             &mut content,
+            &mut content_chars,
             input,
             on_event,
         )?;
@@ -2386,6 +3329,7 @@ fn drain_sse_events(buffer: &mut Vec<u8>) -> Result<Vec<String>, String> {
 fn project_sse_events(
     events: Vec<String>,
     content: &mut String,
+    content_chars: &mut usize,
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
 ) -> Result<bool, ProviderAttemptError> {
@@ -2402,17 +3346,18 @@ fn project_sse_events(
                 .pointer("/choices/0/delta/content")
                 .and_then(Value::as_str)
             {
-                let remaining = 64_000usize.saturating_sub(content.chars().count());
-                if remaining == 0 {
+                let delta_chars = delta.chars().count();
+                let remaining = 64_000usize.saturating_sub(*content_chars);
+                if remaining == 0 || delta_chars > remaining {
                     return Err(ProviderAttemptError::Failed(
                         "Provider response exceeded the 64,000 character limit".to_string(),
                     ));
                 }
-                let bounded_delta = bounded_text(delta, remaining);
-                content.push_str(&bounded_delta);
+                content.push_str(delta);
+                *content_chars += delta_chars;
                 let _ = on_event.send(RuntimeEvent::Delta {
                     run_id: input.run_id.clone(),
-                    text: bounded_delta,
+                    text: delta.to_string(),
                 });
             }
         }
@@ -2421,8 +3366,13 @@ fn project_sse_events(
 }
 
 async fn probe_model_provider(provider: &ModelProviderSettings) -> Result<String, String> {
-    let client = reqwest::Client::builder()
+    let mut client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none());
+    if provider.location == "local" {
+        client = client.no_proxy();
+    }
+    let client = client
         .build()
         .map_err(|error| format!("Could not initialize HTTP client: {error}"))?;
     let mut request = client.get(provider_models_url(&provider.endpoint)?);
@@ -2468,17 +3418,7 @@ fn provider_operation_url(endpoint: &str, operation: &str) -> Result<String, Str
 }
 
 fn provider_api_key(provider: &ModelProviderSettings) -> Option<String> {
-    let suffix = provider
-        .id
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
+    let suffix = provider_environment_suffix(&provider.id);
     env::var(format!("SAAA_PROVIDER_{suffix}_API_KEY"))
         .ok()
         .filter(|value| !value.is_empty())
@@ -2490,26 +3430,42 @@ fn provider_api_key(provider: &ModelProviderSettings) -> Option<String> {
         })
 }
 
+fn provider_environment_suffix(provider_id: &str) -> String {
+    provider_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn bounded_text(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
 }
 
 fn redact_runtime_text(value: &str) -> String {
-    let mut redacted = bounded_text(value, 2_000);
+    let mut redacted = value.to_string();
     for (key, secret) in env::vars().filter(|(key, value)| {
         (key.ends_with("_API_KEY") || key.ends_with("_TOKEN")) && !value.is_empty()
     }) {
         let _ = key;
         redacted = redacted.replace(&secret, "[REDACTED]");
     }
-    redacted
+    bounded_text(&redacted, 2_000)
 }
 
 #[tauri::command]
 async fn list_codex_models() -> Result<Vec<CodexModelOption>, String> {
-    tauri::async_runtime::spawn_blocking(fetch_codex_models)
-        .await
-        .map_err(|error| format!("Codex model lookup task failed: {error}"))?
+    match tauri::async_runtime::spawn_blocking(fetch_codex_models).await {
+        Ok(result) => result.map_err(|error| redact_runtime_text(&error)),
+        Err(error) => Err(redact_runtime_text(&format!(
+            "Codex model lookup task failed: {error}"
+        ))),
+    }
 }
 
 #[tauri::command]
@@ -2528,9 +3484,51 @@ async fn get_codex_status() -> CodexRuntimeStatus {
             authenticated: false,
             runtime: "unavailable".to_string(),
             account_type: None,
-            message: format!("Codex health check failed: {error}"),
+            message: redact_runtime_text(&format!("Codex health check failed: {error}")),
         },
     }
+}
+
+fn spawn_bounded_codex_reader<R>(
+    stdout: R,
+) -> (
+    mpsc::Receiver<Result<Value, String>>,
+    thread::JoinHandle<()>,
+)
+where
+    R: Read + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(256);
+    let reader = thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout.take(MAX_CODEX_STDOUT_BYTES + 1));
+        let mut bytes_read = 0_u64;
+        loop {
+            let mut line = String::new();
+            let count = match stdout.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(error) => {
+                    let _ = sender.send(Err(format!(
+                        "Could not read Codex app-server response: {error}"
+                    )));
+                    break;
+                }
+            };
+            bytes_read = bytes_read.saturating_add(count as u64);
+            if bytes_read > MAX_CODEX_STDOUT_BYTES {
+                let _ = sender.send(Err(
+                    "Codex app-server output exceeded the 4 MiB limit".to_string()
+                ));
+                break;
+            }
+            let message = serde_json::from_str::<Value>(line.trim_end())
+                .map_err(|error| format!("Codex app-server returned invalid JSON: {error}"));
+            if sender.send(message).is_err() {
+                break;
+            }
+        }
+    });
+    (receiver, reader)
 }
 
 fn fetch_codex_status() -> Result<CodexRuntimeStatus, String> {
@@ -2545,16 +3543,7 @@ fn fetch_codex_status() -> Result<CodexRuntimeStatus, String> {
         .stdout
         .take()
         .ok_or_else(|| "Codex app-server stdout is unavailable".to_string())?;
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if let Ok(message) = serde_json::from_str::<Value>(&line) {
-                if sender.send(message).is_err() {
-                    break;
-                }
-            }
-        }
-    });
+    let (receiver, stdout_reader) = spawn_bounded_codex_reader(stdout);
     let result = (|| {
         write_codex_handshake(&mut stdin)?;
         write_codex_message(
@@ -2566,6 +3555,7 @@ fn fetch_codex_status() -> Result<CodexRuntimeStatus, String> {
         let account_type = account
             .and_then(|account| account.get("type"))
             .and_then(Value::as_str)
+            .filter(|value| value.chars().count() <= 80 && !value.chars().any(char::is_control))
             .map(str::to_string);
         let authenticated = account.is_some_and(|value| !value.is_null());
         Ok(CodexRuntimeStatus {
@@ -2581,6 +3571,11 @@ fn fetch_codex_status() -> Result<CodexRuntimeStatus, String> {
         })
     })();
     drop(stdin);
+    drop(receiver);
+    child.terminate();
+    if stdout_reader.join().is_err() && result.is_ok() {
+        return Err("Codex output reader stopped unexpectedly".to_string());
+    }
     result
 }
 
@@ -2596,21 +3591,7 @@ fn fetch_codex_models() -> Result<Vec<CodexModelOption>, String> {
         .stdout
         .take()
         .ok_or_else(|| "Codex app-server stdout is unavailable".to_string())?;
-    let (sender, receiver) = mpsc::channel();
-
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let message = line
-                .map_err(|error| format!("Could not read Codex app-server response: {error}"))
-                .and_then(|line| {
-                    serde_json::from_str::<Value>(&line)
-                        .map_err(|error| format!("Codex app-server returned invalid JSON: {error}"))
-                });
-            if sender.send(message).is_err() {
-                break;
-            }
-        }
-    });
+    let (receiver, stdout_reader) = spawn_bounded_codex_reader(stdout);
 
     let result = (|| {
         write_codex_message(
@@ -2631,9 +3612,17 @@ fn fetch_codex_models() -> Result<Vec<CodexModelOption>, String> {
 
         let mut request_id = 2_u64;
         let mut cursor: Option<String> = None;
+        let mut seen_cursors = std::collections::HashSet::new();
+        let mut seen_model_ids = std::collections::HashSet::new();
         let mut models = Vec::new();
+        let mut page_count = 0_usize;
+        let lookup_deadline = std::time::Instant::now() + Duration::from_secs(60);
 
         loop {
+            if page_count >= 20 {
+                return Err("Codex model pagination exceeded the 20-page limit".to_string());
+            }
+            page_count += 1;
             let mut params = json!({ "limit": 100, "includeHidden": false });
             if let Some(value) = &cursor {
                 params["cursor"] = Value::String(value.clone());
@@ -2643,17 +3632,23 @@ fn fetch_codex_models() -> Result<Vec<CodexModelOption>, String> {
                 json!({ "method": "model/list", "id": request_id, "params": params }),
             )?;
 
+            let page_deadline =
+                (std::time::Instant::now() + Duration::from_secs(20)).min(lookup_deadline);
             let page = loop {
-                let message = receiver.recv_timeout(Duration::from_secs(20)).map_err(
-                    |error| match error {
+                let remaining = page_deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err("Timed out while loading models from Codex".to_string());
+                }
+                let message = receiver
+                    .recv_timeout(remaining)
+                    .map_err(|error| match error {
                         mpsc::RecvTimeoutError::Timeout => {
                             "Timed out while loading models from Codex".to_string()
                         }
                         mpsc::RecvTimeoutError::Disconnected => {
                             "Codex app-server stopped before returning models".to_string()
                         }
-                    },
-                )??;
+                    })??;
                 if message.get("id").and_then(Value::as_u64) != Some(request_id) {
                     continue;
                 }
@@ -2662,29 +3657,87 @@ fn fetch_codex_models() -> Result<Vec<CodexModelOption>, String> {
                         .get("message")
                         .and_then(Value::as_str)
                         .unwrap_or("Unknown Codex app-server error");
-                    return Err(format!("Could not load Codex models: {detail}"));
+                    return Err(format!(
+                        "Could not load Codex models: {}",
+                        redact_runtime_text(detail)
+                    ));
                 }
                 let result = message
                     .get("result")
                     .cloned()
                     .ok_or_else(|| "Codex model response did not include a result".to_string())?;
-                break serde_json::from_value::<CodexModelPage>(result)
+                let page = serde_json::from_value::<CodexModelPage>(result)
                     .map_err(|error| format!("Could not decode Codex models: {error}"))?;
+                for model in &page.data {
+                    validate_codex_model_option(model)?;
+                    if !seen_model_ids.insert(model.id.clone()) {
+                        return Err("Codex model list contained a duplicate id".to_string());
+                    }
+                }
+                break page;
             };
 
+            if models.len().saturating_add(page.data.len()) > 2_000 {
+                return Err("Codex model list exceeded the 2,000-item limit".to_string());
+            }
             models.extend(page.data.into_iter().filter(|model| !model.hidden));
-            cursor = page.next_cursor;
+            cursor = match page.next_cursor {
+                Some(next) if next.is_empty() || next.len() > 1_024 => {
+                    return Err("Codex model cursor is invalid".to_string())
+                }
+                Some(next) if !seen_cursors.insert(next.clone()) => {
+                    return Err("Codex model pagination repeated a cursor".to_string())
+                }
+                next => next,
+            };
             if cursor.is_none() {
                 break;
             }
-            request_id += 1;
+            request_id = request_id
+                .checked_add(1)
+                .ok_or_else(|| "Codex model request id overflowed".to_string())?;
         }
 
         Ok(models)
     })();
 
     drop(stdin);
+    drop(receiver);
+    child.terminate();
+    if stdout_reader.join().is_err() && result.is_ok() {
+        return Err("Codex output reader stopped unexpectedly".to_string());
+    }
     result
+}
+
+fn validate_codex_model_option(model: &CodexModelOption) -> Result<(), String> {
+    fn valid(value: &str, max_chars: usize, allow_empty: bool) -> bool {
+        (allow_empty || !value.is_empty())
+            && value.chars().count() <= max_chars
+            && !value.chars().any(char::is_control)
+    }
+
+    if !valid(&model.id, 160, false)
+        || !valid(&model.model, 160, false)
+        || !valid(&model.display_name, 200, true)
+        || !valid(&model.description, 2_000, true)
+        || model
+            .default_reasoning_effort
+            .as_deref()
+            .is_some_and(|value| !valid(value, 80, false))
+        || model.supported_reasoning_efforts.len() > 16
+        || model.supported_reasoning_efforts.iter().any(|effort| {
+            !valid(&effort.reasoning_effort, 80, false) || !valid(&effort.description, 500, true)
+        })
+        || model.input_modalities.len() > 16
+        || model
+            .input_modalities
+            .iter()
+            .any(|modality| !valid(modality, 80, false))
+    {
+        return Err("Codex model response contained invalid bounded fields".to_string());
+    }
+    Ok(())
 }
 
 fn write_codex_message(stdin: &mut impl Write, message: Value) -> Result<(), String> {
@@ -2713,7 +3766,7 @@ fn write_codex_handshake(stdin: &mut impl Write) -> Result<(), String> {
 }
 
 fn receive_codex_response(
-    receiver: &mpsc::Receiver<Value>,
+    receiver: &mpsc::Receiver<Result<Value, String>>,
     request_id: u64,
     timeout: Duration,
 ) -> Result<Value, String> {
@@ -2725,7 +3778,14 @@ fn receive_codex_response(
         }
         let message = receiver
             .recv_timeout(remaining)
-            .map_err(|_| "Codex app-server stopped before responding".to_string())?;
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    "Timed out waiting for Codex app-server".to_string()
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "Codex app-server stopped before responding".to_string()
+                }
+            })??;
         if message.get("id").and_then(Value::as_u64) != Some(request_id) {
             continue;
         }
@@ -2858,11 +3918,10 @@ fn save_settings_documents(
     state: tauri::State<'_, AppState>,
     input: SaveSettingsDocumentsInput,
 ) -> Result<Vec<SettingsDocument>, String> {
-    let mut connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let saved = save_settings_documents_to_connection(&mut connection, &input.documents)?;
+    for document in &input.documents {
+        validate_settings_document(document)?;
+    }
+    validate_settings_batch(&input.documents)?;
     let situation_settings = input
         .documents
         .iter()
@@ -2874,9 +3933,12 @@ fn save_settings_documents(
             )
             .map_err(|error| format!("Invalid Situation settings: {error}"))
         })?;
-    drop(connection);
     let enabled = situation_settings.enabled;
-    state.situation.configure(situation_settings)?;
+    let saved = state.situation.configure_and_persist(
+        &state.connection,
+        situation_settings,
+        |connection| save_settings_documents_to_connection(connection, &input.documents),
+    )?;
     if enabled {
         spawn_situation_monitor(state.connection.clone(), state.situation.clone());
     }
@@ -3094,6 +4156,14 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
            provider_id TEXT,
            status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')),
            error_message TEXT,
+           failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN (
+             'user-cancelled','app-restarted','configuration-error','child-start-failed',
+             'request-timeout','progress-timeout',
+             'terminal-timeout','hard-timeout','child-exited','protocol-error',
+             'policy-violation','provider-error','response-too-large','internal-error'
+           )),
+           supervisor_version TEXT CHECK(supervisor_version IS NULL OR length(supervisor_version) BETWEEN 1 AND 64),
+           last_progress_at TEXT CHECK(last_progress_at IS NULL OR length(last_progress_at) BETWEEN 1 AND 32),
            started_at TEXT NOT NULL,
            completed_at TEXT,
            FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
@@ -3161,9 +4231,8 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let transaction = connection.unchecked_transaction()?;
     migrate_legacy_settings_documents(&transaction)?;
     migrate_v4_to_v5(&transaction)?;
-    transaction.execute("UPDATE settings_documents SET schema_version = 6, updated_at = ?1 WHERE schema_version < 6", params![now_iso()])?;
-    reconcile_interrupted_runs(&transaction)?;
-    meeting::reconcile(&transaction)?;
+    migrate_v6_to_v7(&transaction)?;
+    transaction.execute("UPDATE settings_documents SET schema_version = 7, updated_at = ?1 WHERE schema_version < 7", params![now_iso()])?;
 
     for (namespace, key, schema_version, value) in default_settings_documents() {
         transaction.execute(
@@ -3172,7 +4241,9 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
             params![namespace, key, schema_version, value.to_string(), now_iso()],
         )?;
     }
-    transaction.pragma_update(None, "user_version", 6)?;
+    reconcile_interrupted_runs(&transaction)?;
+    meeting::reconcile(&transaction)?;
+    transaction.pragma_update(None, "user_version", 7)?;
     transaction.commit()
 }
 
@@ -3183,13 +4254,105 @@ fn migrate_v4_to_v5(connection: &Connection) -> rusqlite::Result<()> {
         |r| r.get(0),
     )?;
     if !has_impact {
-        connection.execute_batch("ALTER TABLE situation_feedback ADD COLUMN impact TEXT NOT NULL DEFAULT 'none' CHECK(impact IN ('none','no-effect','harmful')); ALTER TABLE situation_feedback ADD COLUMN reason_code TEXT CHECK(reason_code IS NULL OR reason_code IN ('wrong-scene','stale-signal','unstable-transition','unwanted-suggestion','missed-meeting-candidate','insufficient-evidence')); ")?;
+        connection.execute_batch("ALTER TABLE situation_feedback ADD COLUMN impact TEXT NOT NULL DEFAULT 'none' CHECK(impact IN ('none','no-effect','harmful'));")?;
     }
-    connection.execute_batch("CREATE TABLE IF NOT EXISTS situation_quality_windows (id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT NOT NULL, rule_version TEXT NOT NULL, counters_json TEXT NOT NULL CHECK(length(counters_json)<=4096), created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_situation_quality_windows_ended ON situation_quality_windows(CAST(ended_at AS INTEGER) DESC); CREATE TABLE IF NOT EXISTS situation_calibration_profiles (id TEXT PRIMARY KEY, rule_version TEXT NOT NULL UNIQUE, base_rule_version TEXT, status TEXT NOT NULL CHECK(status IN ('candidate','active','superseded','rejected','rolled-back')), parameters_json TEXT NOT NULL CHECK(length(parameters_json)<=2048), created_at TEXT NOT NULL, decided_at TEXT, decision_reason_code TEXT); CREATE UNIQUE INDEX IF NOT EXISTS idx_situation_calibration_one_active ON situation_calibration_profiles(status) WHERE status='active'; CREATE TABLE IF NOT EXISTS situation_calibration_runs (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, fixture_set_version TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('completed','failed')), metrics_json TEXT CHECK(metrics_json IS NULL OR length(metrics_json)<=8192), error_code TEXT, started_at TEXT NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(profile_id) REFERENCES situation_calibration_profiles(id) ON DELETE CASCADE); CREATE INDEX IF NOT EXISTS idx_situation_calibration_runs_completed ON situation_calibration_runs(completed_at DESC);")?;
-    let parameters =
-        serde_json::to_string(&situation::contracts::CalibrationParameters::default()).unwrap();
+    let has_reason: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('situation_feedback') WHERE name='reason_code')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_reason {
+        connection.execute_batch("ALTER TABLE situation_feedback ADD COLUMN reason_code TEXT CHECK(reason_code IS NULL OR reason_code IN ('wrong-scene','stale-signal','unstable-transition','unwanted-suggestion','missed-meeting-candidate','insufficient-evidence'));")?;
+    }
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS situation_quality_windows (id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT NOT NULL, rule_version TEXT NOT NULL, counters_json TEXT NOT NULL CHECK(length(counters_json)<=4096), created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_situation_quality_windows_ended ON situation_quality_windows(CAST(ended_at AS INTEGER) DESC); CREATE TABLE IF NOT EXISTS situation_calibration_profiles (id TEXT PRIMARY KEY, rule_version TEXT NOT NULL UNIQUE, base_rule_version TEXT, status TEXT NOT NULL CHECK(status IN ('candidate','active','superseded','rejected','rolled-back')), parameters_json TEXT NOT NULL CHECK(length(parameters_json)<=2048), created_at TEXT NOT NULL, decided_at TEXT, decision_reason_code TEXT CHECK(decision_reason_code IS NULL OR decision_reason_code IN ('wrong-scene','stale-signal','unstable-transition','unwanted-suggestion','missed-meeting-candidate','insufficient-evidence')), FOREIGN KEY(base_rule_version) REFERENCES situation_calibration_profiles(rule_version)); CREATE UNIQUE INDEX IF NOT EXISTS idx_situation_calibration_one_active ON situation_calibration_profiles(status) WHERE status='active'; CREATE TABLE IF NOT EXISTS situation_calibration_runs (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, fixture_set_version TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('completed','failed')), metrics_json TEXT CHECK(metrics_json IS NULL OR length(metrics_json)<=8192), error_code TEXT, started_at TEXT NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(profile_id) REFERENCES situation_calibration_profiles(id) ON DELETE CASCADE); CREATE INDEX IF NOT EXISTS idx_situation_calibration_runs_completed ON situation_calibration_runs(completed_at DESC);")?;
+    let parameters = serde_json::to_string(&situation::contracts::CalibrationParameters::default())
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     connection.execute("INSERT OR IGNORE INTO situation_calibration_profiles(id,rule_version,status,parameters_json,created_at,decided_at) VALUES('profile_mvp1_default','mvp1-rules-v1','active',?1,?2,?2)", params![parameters, now_iso()])?;
     Ok(())
+}
+
+fn migrate_v6_to_v7(connection: &Connection) -> rusqlite::Result<()> {
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= 7 {
+        return Ok(());
+    }
+    for (column, definition) in [
+        (
+            "failure_code",
+            "TEXT CHECK(failure_code IS NULL OR failure_code IN ('user-cancelled','app-restarted','configuration-error','child-start-failed','request-timeout','progress-timeout','terminal-timeout','hard-timeout','child-exited','protocol-error','policy-violation','provider-error','response-too-large','internal-error'))",
+        ),
+        (
+            "supervisor_version",
+            "TEXT CHECK(supervisor_version IS NULL OR length(supervisor_version) BETWEEN 1 AND 64)",
+        ),
+        (
+            "last_progress_at",
+            "TEXT CHECK(last_progress_at IS NULL OR length(last_progress_at) BETWEEN 1 AND 32)",
+        ),
+    ] {
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('runtime_runs') WHERE name=?1)",
+            [column],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            connection.execute_batch(&format!(
+                "ALTER TABLE runtime_runs ADD COLUMN {column} {definition};"
+            ))?;
+        }
+    }
+    for (namespace, key, _, template) in default_settings_documents() {
+        let legacy: Option<String> = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents
+                 WHERE namespace=?1 AND key=?2 AND schema_version < 7",
+                params![namespace, key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(legacy) = legacy else {
+            continue;
+        };
+        let value: Value = serde_json::from_str(&legacy).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        let normalized = normalize_json_to_template(&value, &template);
+        connection.execute(
+            "UPDATE settings_documents
+             SET schema_version=7, value_json=?1, updated_at=?2
+             WHERE namespace=?3 AND key=?4",
+            params![normalized.to_string(), now_iso(), namespace, key],
+        )?;
+    }
+    Ok(())
+}
+
+fn normalize_json_to_template(value: &Value, template: &Value) -> Value {
+    match (value, template) {
+        (Value::Object(value), Value::Object(template)) => Value::Object(
+            template
+                .iter()
+                .map(|(key, template_value)| {
+                    let normalized = value
+                        .get(key)
+                        .map(|value| normalize_json_to_template(value, template_value))
+                        .unwrap_or_else(|| template_value.clone());
+                    (key.clone(), normalized)
+                })
+                .collect(),
+        ),
+        (Value::Array(value), Value::Array(template)) if template.len() == 1 => Value::Array(
+            value
+                .iter()
+                .map(|value| normalize_json_to_template(value, &template[0]))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
 }
 
 fn backup_connection_to(source: &Connection, path: &std::path::Path) -> Result<(), String> {
@@ -3212,7 +4375,7 @@ fn backup_before_migration(
     let has_data = fs::metadata(database_path)
         .map(|metadata| metadata.len() > 0)
         .unwrap_or(false);
-    if !has_data || version >= 6 {
+    if !has_data || version >= 7 {
         return Ok(None);
     }
     let directory = database_path
@@ -3231,7 +4394,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "providers.model",
             "default",
-            6,
+            7,
             json!({
                 "providers": [{
                     "id": "local-openai-compatible",
@@ -3247,7 +4410,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "providers.agent",
             "codex-sdk",
-            6,
+            7,
             json!({
                 "enabled": false,
                 "provider": "codex-sdk",
@@ -3264,7 +4427,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "routing.tasks",
             "default",
-            6,
+            7,
             json!({
                 "conversationRespond": {
                     "primaryProviderId": "local-openai-compatible",
@@ -3283,7 +4446,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "voice.runtime",
             "default",
-            6,
+            7,
             json!({
                 "inputDeviceId": "default",
                 "outputDeviceId": "default",
@@ -3299,7 +4462,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "security.runtime",
             "default",
-            6,
+            7,
             json!({
                 "credentialStorage": "environment",
                 "localOnlyWhenSelected": true,
@@ -3309,7 +4472,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "situation.runtime",
             "default",
-            6,
+            7,
             serde_json::to_value(situation::contracts::SituationRuntimeSettings::default())
                 .expect("default Situation settings serialize"),
         ),
@@ -3399,7 +4562,9 @@ fn migrate_document(
     if schema_version >= 3 {
         return Ok(());
     }
-    let legacy_value = serde_json::from_str(&value_text).unwrap_or_else(|_| json!({}));
+    let legacy_value = serde_json::from_str(&value_text).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
     connection.execute(
         "UPDATE settings_documents SET schema_version = 3, value_json = ?1, updated_at = ?2
          WHERE namespace = ?3 AND key = ?4",
@@ -3426,7 +4591,7 @@ fn validate_settings_document(input: &SaveSettingsDocumentInput) -> Result<(), S
     if !allowed {
         return Err("Unsupported settings document".to_string());
     }
-    if input.schema_version != 6 || !input.value_json.is_object() {
+    if input.schema_version != 7 || !input.value_json.is_object() {
         return Err("Invalid settings schema".to_string());
     }
     match (input.namespace.as_str(), input.key.as_str()) {
@@ -3537,15 +4702,26 @@ fn validate_settings_batch(documents: &[SaveSettingsDocumentInput]) -> Result<()
 }
 
 fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), String> {
-    if settings.providers.is_empty() {
-        return Err("At least one model provider is required".to_string());
+    if settings.providers.is_empty() || settings.providers.len() > 20 {
+        return Err("Between 1 and 20 model providers are required".to_string());
     }
     let mut ids = std::collections::HashSet::new();
+    let mut credential_suffixes = std::collections::HashSet::new();
     for provider in &settings.providers {
-        if provider.id.trim().is_empty() || provider.id.len() > 80 || !ids.insert(&provider.id) {
-            return Err(format!("Invalid or duplicate provider id: {}", provider.id));
+        if provider.id.is_empty()
+            || provider.id.len() > 80
+            || !provider.id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+            || !ids.insert(&provider.id)
+            || !credential_suffixes.insert(provider_environment_suffix(&provider.id))
+        {
+            return Err("Invalid, duplicate, or credential-ambiguous provider id".to_string());
         }
-        if provider.label.trim().is_empty() || provider.label.len() > 120 {
+        if provider.label.trim().is_empty()
+            || provider.label.len() > 120
+            || provider.label.chars().any(char::is_control)
+        {
             return Err(format!("Invalid provider label: {}", provider.id));
         }
         if !matches!(provider.location.as_str(), "local" | "cloud") {
@@ -3556,6 +4732,15 @@ fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), Str
             "not-configured" | "configured"
         ) {
             return Err(format!("Invalid credential status: {}", provider.id));
+        }
+        if provider.endpoint.len() > 2_048
+            || provider.model.len() > 160
+            || provider.model.chars().any(char::is_control)
+        {
+            return Err(format!(
+                "Provider endpoint or model is too long: {}",
+                provider.id
+            ));
         }
         if provider.enabled {
             if provider.endpoint.trim().is_empty() || provider.model.trim().is_empty() {
@@ -3611,6 +4796,7 @@ fn validate_codex_settings(settings: &CodexAgentRuntimeSettings) -> Result<(), S
         || settings.web_search_enabled
         || settings.workspace_policy != "select-per-conversation"
         || settings.model.len() > 160
+        || settings.model.chars().any(char::is_control)
     {
         return Err("Codex settings violate the fixed read-only policy".to_string());
     }
@@ -3620,7 +4806,23 @@ fn validate_codex_settings(settings: &CodexAgentRuntimeSettings) -> Result<(), S
 fn validate_routing_settings(settings: &RoutingSettings) -> Result<(), String> {
     let conversation = &settings.conversation_respond;
     let coding = &settings.coding_assist;
-    if conversation.primary_provider_id.trim().is_empty()
+    if conversation.primary_provider_id.is_empty()
+        || conversation.primary_provider_id.len() > 80
+        || !conversation
+            .primary_provider_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        || conversation.fallback_provider_ids.len() > 20
+        || conversation
+            .fallback_provider_ids
+            .iter()
+            .any(|provider_id| {
+                provider_id.is_empty()
+                    || provider_id.len() > 80
+                    || !provider_id.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                    })
+            })
         || !(1_000..=300_000).contains(&conversation.timeout_ms)
         || coding.provider_id != "codex-sdk"
         || !(1_000..=300_000).contains(&coding.timeout_ms)
@@ -3636,11 +4838,14 @@ fn validate_routing_settings(settings: &RoutingSettings) -> Result<(), String> {
 fn validate_voice_settings(settings: &VoiceRuntimeSettings) -> Result<(), String> {
     if settings.input_device_id.trim().is_empty()
         || settings.output_device_id.trim().is_empty()
+        || settings.input_device_id.len() > 300
+        || settings.output_device_id.len() > 300
         || settings.capture_mode != "push-to-talk"
         || settings.stt_provider_id != "local-whisper"
         || settings.stt_model.len() > 1_024
         || settings.tts_provider_id != "system-tts"
         || settings.tts_voice.trim().is_empty()
+        || settings.tts_voice.len() > 160
         || settings.cloud_fallback_enabled
     {
         return Err("Invalid local voice settings".to_string());
@@ -3661,9 +4866,14 @@ fn validate_security_settings(settings: &SecurityRuntimeSettings) -> Result<(), 
 fn reconcile_interrupted_runs(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute(
         "UPDATE runtime_runs
-         SET status = 'interrupted', error_message = COALESCE(error_message, 'Application restarted'), completed_at = ?1
+         SET status = 'interrupted', error_message = COALESCE(error_message, 'Application restarted'),
+             failure_code = ?2,
+             completed_at = ?1
          WHERE status = 'running'",
-        params![now_iso()],
+        params![
+            now_iso(),
+            runtime::contracts::RunFailureCode::AppRestarted.as_str()
+        ],
     )?;
     connection.execute(
         "UPDATE provider_sessions
@@ -3679,14 +4889,16 @@ fn read_settings_document(
     namespace: &str,
     key: &str,
 ) -> Result<SettingsDocument, String> {
-    connection
+    let document = connection
         .query_row(
             "SELECT namespace, key, schema_version, value_json, updated_at
              FROM settings_documents WHERE namespace = ?1 AND key = ?2",
             params![namespace, key],
             settings_document_from_row,
         )
-        .map_err(database_error)
+        .map_err(database_error)?;
+    validate_stored_settings_document(&document)?;
+    Ok(document)
 }
 
 fn list_settings_documents(connection: &Connection) -> Result<Vec<SettingsDocument>, String> {
@@ -3701,7 +4913,29 @@ fn list_settings_documents(connection: &Connection) -> Result<Vec<SettingsDocume
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
+    let inputs = documents
+        .iter()
+        .map(|document| SaveSettingsDocumentInput {
+            namespace: document.namespace.clone(),
+            key: document.key.clone(),
+            schema_version: document.schema_version,
+            value_json: document.value_json.clone(),
+        })
+        .collect::<Vec<_>>();
+    for input in &inputs {
+        validate_settings_document(input)?;
+    }
+    validate_settings_batch(&inputs)?;
     Ok(documents)
+}
+
+fn validate_stored_settings_document(document: &SettingsDocument) -> Result<(), String> {
+    validate_settings_document(&SaveSettingsDocumentInput {
+        namespace: document.namespace.clone(),
+        key: document.key.clone(),
+        schema_version: document.schema_version,
+        value_json: document.value_json.clone(),
+    })
 }
 
 fn settings_document_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SettingsDocument> {
@@ -3740,10 +4974,32 @@ fn list_conversations_from_connection(
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
+    for conversation in &conversations {
+        validate_identifier(&conversation.id, "conversation id")?;
+        if !matches!(conversation.task_mode.as_str(), "conversation" | "coding")
+            || conversation
+                .title
+                .as_ref()
+                .is_some_and(|title| title.chars().count() > 120)
+            || conversation.created_at.parse::<u128>().is_err()
+            || conversation.updated_at.parse::<u128>().is_err()
+        {
+            return Err("Invalid persisted conversation".to_string());
+        }
+    }
     Ok(conversations)
 }
 
 fn application_database_path(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if env::var_os("SAAA_SMOKE_MARKER_ID").is_some() {
+        if let Some(directory) = env::var_os("SAAA_SMOKE_DATA_DIR").map(PathBuf::from) {
+            if !directory.is_absolute() {
+                return Err("SAAA_SMOKE_DATA_DIR must be absolute".into());
+            }
+            fs::create_dir_all(&directory)?;
+            return Ok(directory.join("saaa.sqlite3"));
+        }
+    }
     let directory = app.path().app_data_dir()?;
     fs::create_dir_all(&directory)?;
     Ok(directory.join("saaa.sqlite3"))
@@ -3771,10 +5027,31 @@ fn database_error(error: rusqlite::Error) -> String {
     format!("SQLite operation failed: {error}")
 }
 
+fn shutdown_app_state(state: &AppState) {
+    if let Ok(mut process) = state.tts_process.lock() {
+        if let Some(mut active) = process.take() {
+            let _ = active.child.kill();
+            let _ = active.child.wait();
+        }
+    }
+    if let Ok(active_runs) = state.active_runs.lock() {
+        for cancellation in active_runs.values() {
+            cancellation.cancel();
+        }
+    }
+    state.meeting.shutdown(&state.connection);
+    let _ = state.situation.flush_quality(&state.connection);
+    state
+        .situation
+        .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
+    state
+        .situation
+        .set_audio_state(situation::contracts::AudioState::Silent);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let database_path = application_database_path(app)?;
@@ -3807,7 +5084,7 @@ pub fn run() {
                 .map_err(std::io::Error::other)?,
             );
             situation
-                .set_calibration_parameters(active_profile.parameters)
+                .set_calibration_profile(active_profile)
                 .map_err(std::io::Error::other)?;
             if situation_settings.enabled {
                 spawn_situation_monitor(connection.clone(), situation.clone());
@@ -3820,6 +5097,12 @@ pub fn run() {
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let state = window.state::<AppState>();
+                shutdown_app_state(&state);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
@@ -3847,6 +5130,7 @@ pub fn run() {
             start_meeting,
             get_meeting_snapshot,
             watch_meeting,
+            unwatch_meeting,
             pause_meeting,
             resume_meeting,
             stop_meeting,
@@ -3915,6 +5199,195 @@ mod tests {
     }
 
     #[test]
+    fn app_shutdown_cancels_every_active_run_and_resets_situation_to_safe_state() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let state = app_state(connection);
+        let first = Arc::new(RunCancellation::default());
+        let second = Arc::new(RunCancellation::default());
+        register_active_run(&state, "run-close-first", first.clone()).expect("first run registers");
+        register_active_run(&state, "run-close-second", second.clone())
+            .expect("second run registers");
+
+        state
+            .situation
+            .set_microphone_state(situation::contracts::MicrophoneState::SaaaCapturing);
+        state
+            .situation
+            .set_audio_state(situation::contracts::AudioState::SaaaSpeaking);
+        shutdown_app_state(&state);
+
+        assert!(first.is_cancelled());
+        assert!(second.is_cancelled());
+        let snapshot = state
+            .situation
+            .snapshot_locked(&state.connection)
+            .expect("situation snapshot");
+        assert_eq!(
+            snapshot.signals.microphone.state,
+            situation::contracts::MicrophoneState::Inactive
+        );
+        assert_eq!(
+            snapshot.signals.audio.state,
+            situation::contracts::AudioState::Silent
+        );
+    }
+
+    #[test]
+    fn runtime_and_provider_session_finalization_is_one_shot() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, task_mode, created_at, updated_at)
+                 VALUES('conversation-finalize', 'conversation', '1', '1')",
+                [],
+            )
+            .expect("conversation inserts");
+        let state = app_state(connection);
+
+        begin_simple_runtime_run(
+            &state,
+            "run-finalize",
+            "conversation-finalize",
+            "voice.speak",
+            "provider-initial",
+        )
+        .expect("runtime starts");
+        update_runtime_provider(&state, "run-finalize", "provider-selected")
+            .expect("active runtime provider updates");
+        finish_runtime_run(&state, "run-finalize", "completed", None).expect("runtime finalizes");
+        assert!(
+            finish_runtime_run(&state, "run-finalize", "failed", Some("late failure")).is_err()
+        );
+        assert!(update_runtime_provider(&state, "run-finalize", "provider-late").is_err());
+
+        let session_id =
+            begin_provider_session(&state, "provider-selected").expect("provider session starts");
+        finish_provider_session(&state, &session_id, "completed", None)
+            .expect("provider session finalizes");
+        assert!(
+            finish_provider_session(&state, &session_id, "failed", Some("late failure")).is_err()
+        );
+
+        let connection = state.connection.lock().expect("database lock");
+        let (status, provider_id): (String, String) = connection
+            .query_row(
+                "SELECT status, provider_id FROM runtime_runs WHERE id='run-finalize'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("runtime reads");
+        assert_eq!(status, "completed");
+        assert_eq!(provider_id, "provider-selected");
+        let session_status: String = connection
+            .query_row(
+                "SELECT status FROM provider_sessions WHERE id=?1",
+                [&session_id],
+                |row| row.get(0),
+            )
+            .expect("provider session reads");
+        assert_eq!(session_status, "completed");
+    }
+
+    #[tokio::test]
+    async fn cancellation_notification_remains_observable_for_late_waiters() {
+        let cancellation = RunCancellation::default();
+        cancellation.cancel();
+
+        tokio::time::timeout(Duration::from_millis(50), cancellation.cancelled())
+            .await
+            .expect("a cancellation sent before waiting remains observable");
+    }
+
+    #[test]
+    fn auxiliary_codex_reader_bounds_and_decodes_stdout() {
+        let (receiver, reader) = spawn_bounded_codex_reader(std::io::Cursor::new(
+            b"{\"id\":2,\"result\":{}}\n".to_vec(),
+        ));
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_millis(50))
+                .expect("reader returns a message")
+                .expect("message decodes")["id"],
+            2
+        );
+        drop(receiver);
+        reader.join().expect("reader joins");
+
+        let oversized = vec![b'x'; MAX_CODEX_STDOUT_BYTES as usize + 1];
+        let (receiver, reader) = spawn_bounded_codex_reader(std::io::Cursor::new(oversized));
+        assert!(receiver
+            .recv_timeout(Duration::from_millis(250))
+            .expect("reader returns a bounded failure")
+            .expect_err("oversized output is rejected")
+            .contains("4 MiB"));
+        drop(receiver);
+        reader.join().expect("oversized reader joins");
+    }
+
+    #[test]
+    fn runtime_and_voice_events_serialize_camel_case_fields() {
+        let runtime = serde_json::to_value(RuntimeEvent::Started {
+            run_id: "run_contract".to_string(),
+            route: "coding.assist".to_string(),
+            provider_id: "codex-sdk".to_string(),
+        })
+        .expect("runtime event serializes");
+        assert_eq!(runtime["type"], "started");
+        assert_eq!(runtime["runId"], "run_contract");
+        assert_eq!(runtime["providerId"], "codex-sdk");
+        assert!(runtime.get("run_id").is_none());
+        assert!(runtime.get("provider_id").is_none());
+
+        let voice = serde_json::to_value(VoiceEvent::TranscriptDelta {
+            run_id: "voice_contract".to_string(),
+            text: "delta".to_string(),
+        })
+        .expect("voice event serializes");
+        assert_eq!(voice["type"], "transcriptDelta");
+        assert_eq!(voice["runId"], "voice_contract");
+        assert!(voice.get("run_id").is_none());
+    }
+
+    #[test]
+    fn foreign_message_flood_cannot_starve_a_request_deadline() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let producer = thread::spawn(move || {
+            while sender
+                .send(CodexReaderMessage::Message(json!({
+                    "id": 999,
+                    "result": {}
+                })))
+                .is_ok()
+            {}
+        });
+        let origin = std::time::Instant::now();
+        let mut supervisor = runtime::supervisor::RunSupervisor::new(
+            runtime::contracts::RunSupervisionPolicy {
+                request_timeout_ms: 20,
+                progress_idle_timeout_ms: 60,
+                terminal_gap_timeout_ms: 10,
+                interrupt_grace_ms: 3,
+                hard_timeout_ms: 300,
+            },
+            0,
+        );
+        let failure = receive_supervised_codex_result(
+            &receiver,
+            2,
+            &mut supervisor,
+            origin,
+            &RunCancellation::default(),
+        )
+        .expect_err("foreign responses must not keep the request alive");
+        drop(receiver);
+        producer.join().expect("foreign response producer joins");
+        assert_eq!(failure, runtime::contracts::RunFailureCode::RequestTimeout);
+        assert!(origin.elapsed() < Duration::from_millis(250));
+    }
+
+    #[test]
     fn conversation_context_keeps_the_latest_hundred_messages_in_order() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
@@ -3949,7 +5422,222 @@ mod tests {
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 6));
+            .all(|document| document.schema_version == 7));
+        let (version, active_profile): (i64, String) = (
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .expect("version reads"),
+            connection
+                .query_row(
+                    "SELECT id FROM situation_calibration_profiles WHERE status='active'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("active profile reads"),
+        );
+        assert_eq!(version, 7);
+        assert_eq!(active_profile, "profile_mvp1_default");
+    }
+
+    #[test]
+    fn version_five_database_migrates_to_seven_without_losing_existing_data() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection.execute("INSERT INTO conversations(id,title,task_mode,created_at,updated_at) VALUES('kept','Keep','conversation','1','1')", []).expect("conversation persists");
+        connection
+            .execute("UPDATE settings_documents SET schema_version=5", [])
+            .expect("v5 settings fixture");
+        connection
+            .pragma_update(None, "user_version", 5)
+            .expect("v5 fixture");
+        initialize_database(&connection).expect("v7 migration");
+        let conversation: String = connection
+            .query_row(
+                "SELECT title FROM conversations WHERE id='kept'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("conversation retained");
+        assert_eq!(conversation, "Keep");
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("version reads");
+        assert_eq!(version, 7);
+        assert!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table exists"));
+        initialize_database(&connection).expect("migration idempotent");
+    }
+
+    #[test]
+    fn version_six_calibration_is_inherited_with_new_input_defaults() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        let legacy_json = r#"{"classificationMinConfidence":75,"lowConfidenceMax":40,"enterSampleCount":4,"exitSampleCount":6,"cooldownMs":12000}"#;
+        connection
+            .execute(
+                "UPDATE situation_calibration_profiles
+                 SET parameters_json=?1
+                 WHERE id='profile_mvp1_default'",
+                [legacy_json],
+            )
+            .expect("legacy profile writes");
+        connection
+            .pragma_update(None, "user_version", 6)
+            .expect("v6 fixture");
+
+        initialize_database(&connection).expect("v7 migration");
+        let (rule_version, parameters_json): (String, String) = connection
+            .query_row(
+                "SELECT rule_version,parameters_json
+                 FROM situation_calibration_profiles
+                 WHERE id='profile_mvp1_default' AND status='active'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("migrated profile reads");
+        let parameters: situation::contracts::CalibrationParameters =
+            serde_json::from_str(&parameters_json).expect("parameters decode");
+        assert_eq!(rule_version, "mvp1-rules-v1");
+        assert_eq!(parameters_json, legacy_json);
+        assert_eq!(parameters.classification_min_confidence, 75);
+        assert_eq!(parameters.enter_sample_count, 4);
+        assert_eq!(parameters.input_active_max_ms, 30_000);
+        assert_eq!(parameters.input_recent_max_ms, 300_000);
+        initialize_database(&connection).expect("legacy profile remains readable after reopen");
+    }
+
+    #[test]
+    fn version_six_settings_are_normalized_to_the_strict_v7_shape() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET schema_version=6,
+                     value_json=json_set(value_json, '$.legacyField', 'ignored')",
+                [],
+            )
+            .expect("legacy top-level fields write");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json=json_set(value_json, '$.providers[0].legacyProviderField', 1)
+                 WHERE namespace='providers.model'",
+                [],
+            )
+            .expect("legacy nested field writes");
+        connection
+            .pragma_update(None, "user_version", 6)
+            .expect("v6 fixture");
+
+        initialize_database(&connection).expect("v7 migration");
+        let documents = list_settings_documents(&connection).expect("strict settings load");
+        assert_eq!(documents.len(), 6);
+        assert!(documents.iter().all(|document| {
+            document.schema_version == 7 && document.value_json.get("legacyField").is_none()
+        }));
+        let providers = documents
+            .iter()
+            .find(|document| document.namespace == "providers.model")
+            .and_then(|document| document.value_json.pointer("/providers/0"))
+            .expect("provider remains");
+        assert!(providers.get("legacyProviderField").is_none());
+    }
+
+    #[test]
+    fn version_six_database_is_backed_up_before_v7() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("v6.sqlite3");
+        let connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("schema initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id,title,task_mode,created_at,updated_at)
+                 VALUES('backup-kept','Keep','coding','1','1')",
+                [],
+            )
+            .expect("fixture inserts");
+        connection
+            .pragma_update(None, "user_version", 6)
+            .expect("v6 fixture");
+        drop(connection);
+
+        let connection = Connection::open(&path).expect("database reopens");
+        let backup = backup_before_migration(&connection, &path)
+            .expect("backup succeeds")
+            .expect("v6 backup is created");
+        initialize_database(&connection).expect("v7 migration succeeds");
+        let backup_connection = Connection::open(backup).expect("backup reopens");
+        let title: String = backup_connection
+            .query_row(
+                "SELECT title FROM conversations WHERE id='backup-kept'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("backup data remains");
+        let backup_version: i64 = backup_connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("backup version reads");
+        assert_eq!(title, "Keep");
+        assert_eq!(backup_version, 6);
+    }
+
+    #[test]
+    fn version_six_runtime_rows_gain_nullable_supervisor_columns() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("schema initializes");
+        connection
+            .execute_batch(
+                "ALTER TABLE runtime_runs DROP COLUMN failure_code;
+                 ALTER TABLE runtime_runs DROP COLUMN supervisor_version;
+                 ALTER TABLE runtime_runs DROP COLUMN last_progress_at;",
+            )
+            .expect("v6 columns remove");
+        connection
+            .pragma_update(None, "user_version", 6)
+            .expect("v6 fixture");
+        initialize_database(&connection).expect("v7 migration succeeds");
+        for column in ["failure_code", "supervisor_version", "last_progress_at"] {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('runtime_runs') WHERE name=?1)",
+                    [column],
+                    |row| row.get(0),
+                )
+                .expect("column check succeeds");
+            assert!(exists, "missing column: {column}");
+        }
+        connection
+            .execute(
+                "INSERT INTO conversations(id,task_mode,created_at,updated_at)
+                 VALUES('nullable','coding','1','1')",
+                [],
+            )
+            .expect("conversation inserts");
+        connection
+            .execute(
+                "INSERT INTO runtime_runs(id,conversation_id,route_kind,status,started_at)
+                 VALUES('nullable-run','nullable','coding.assist','running','1')",
+                [],
+            )
+            .expect("nullable migrated columns accept old rows");
+    }
+
+    #[test]
+    fn startup_reconciles_unfinished_meeting_without_persisted_transcript() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("schema initializes");
+        connection.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('meeting_recover','active',1,0,'local-whisper','model.bin','discard','1')", []).expect("meeting fixture");
+        initialize_database(&connection).expect("startup reconciliation");
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM meeting_sessions WHERE id='meeting_recover'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("status reads");
+        let transcript_count: i64 = connection.query_row("SELECT COUNT(*) FROM meeting_transcript_entries WHERE session_id='meeting_recover'", [], |row| row.get(0)).expect("transcript count");
+        assert_eq!(status, "interrupted");
+        assert_eq!(transcript_count, 0);
     }
 
     #[test]
@@ -4028,12 +5716,12 @@ mod tests {
         let version: i64 = reopened
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let documents = list_settings_documents(&reopened).expect("settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 6));
+            .all(|document| document.schema_version == 7));
         let thread: String = reopened
             .query_row(
                 "SELECT thread_id FROM codex_threads WHERE conversation_id = 'kept-conversation'",
@@ -4064,14 +5752,18 @@ mod tests {
             .expect("running work inserts");
 
         reconcile_interrupted_runs(&connection).expect("startup reconciliation succeeds");
-        let status: String = connection
-            .query_row(
-                "SELECT status FROM runtime_runs WHERE id = 'run-1'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("run status loads");
+        let (status, failure_code, supervisor_version): (String, String, Option<String>) =
+            connection
+                .query_row(
+                    "SELECT status,failure_code,supervisor_version
+                 FROM runtime_runs WHERE id = 'run-1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("run status loads");
         assert_eq!(status, "interrupted");
+        assert_eq!(failure_code, "app-restarted");
+        assert_eq!(supervisor_version, None);
     }
 
     #[test]
@@ -4110,6 +5802,15 @@ mod tests {
         };
         assert!(validate_model_providers(&with_credentials).is_err());
 
+        let unsafe_id = ModelProvidersSettings {
+            providers: vec![provider("local provider", "local")],
+        };
+        assert!(validate_model_providers(&unsafe_id).is_err());
+        let ambiguous_ids = ModelProvidersSettings {
+            providers: vec![provider("local-a", "local"), provider("local_a", "local")],
+        };
+        assert!(validate_model_providers(&ambiguous_ids).is_err());
+
         let mut documents = default_settings_input();
         documents
             .iter_mut()
@@ -4126,6 +5827,28 @@ mod tests {
         routing.value_json["conversationRespond"]["primaryProviderId"] = json!("local");
         routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["cloud"]);
         assert!(validate_settings_batch(&documents).is_err());
+    }
+
+    #[test]
+    fn legacy_provider_ids_and_default_codex_model_remain_valid() {
+        let providers = ModelProvidersSettings {
+            providers: vec![provider("Local_Custom", "local")],
+        };
+        assert!(validate_model_providers(&providers).is_ok());
+
+        let codex = CodexAgentRuntimeSettings {
+            enabled: true,
+            provider: "codex-sdk".to_string(),
+            model: String::new(),
+            runtime_mode: "app-server".to_string(),
+            health: "unchecked".to_string(),
+            sandbox_mode: "read-only".to_string(),
+            approval_policy: "never".to_string(),
+            network_enabled: false,
+            web_search_enabled: false,
+            workspace_policy: "select-per-conversation".to_string(),
+        };
+        assert!(validate_codex_settings(&codex).is_ok());
     }
 
     #[test]
@@ -4243,6 +5966,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn model_provider_redirects_are_not_followed() {
+        use std::io::{ErrorKind, Read, Write as _};
+        use std::net::TcpListener;
+
+        let redirect_target = TcpListener::bind("127.0.0.1:0").expect("target binds");
+        let target_address = redirect_target.local_addr().expect("target address");
+        redirect_target
+            .set_nonblocking(true)
+            .expect("target becomes nonblocking");
+        let target_hit = Arc::new(AtomicBool::new(false));
+        let target_hit_for_server = target_hit.clone();
+        let target_server = thread::spawn(move || {
+            let started = std::time::Instant::now();
+            while started.elapsed() < Duration::from_millis(500) {
+                match redirect_target.accept() {
+                    Ok(_) => {
+                        target_hit_for_server.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+
+        let source = TcpListener::bind("127.0.0.1:0").expect("source binds");
+        let source_address = source.local_addr().expect("source address");
+        let source_server = thread::spawn(move || {
+            let (mut socket, _) = source.accept().expect("source accepts request");
+            let mut request = [0; 4_096];
+            let _ = socket.read(&mut request).expect("source reads request");
+            let response = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{target_address}/v1/chat/completions\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            socket
+                .write_all(response.as_bytes())
+                .expect("source writes redirect");
+        });
+        let provider = ModelProviderSettings {
+            endpoint: format!("http://{source_address}/v1"),
+            ..provider("redirect-fixture", "local")
+        };
+        let input = StartTurnInput {
+            run_id: "run-redirect-fixture".to_string(),
+            conversation_id: "conversation-fixture".to_string(),
+            content: "hello".to_string(),
+            workspace_path: None,
+        };
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+        let error = stream_model_provider(
+            &provider,
+            &[],
+            2_000,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+        )
+        .await
+        .expect_err("redirect response is rejected");
+        source_server.join().expect("source server joins");
+        target_server.join().expect("target server joins");
+        assert!(matches!(
+            error,
+            ProviderAttemptError::Failed(message) if message.contains("307")
+        ));
+        assert!(!target_hit.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
     async fn conversation_route_falls_back_and_persists_completed_message() {
         use std::io::{Read, Write as _};
         use std::net::TcpListener;
@@ -4326,20 +6120,38 @@ mod tests {
             content: "test fallback".to_string(),
             workspace_path: None,
         };
-        prepare_runtime_run(&state, &input).expect("runtime run prepares");
         let events = Arc::new(Mutex::new(Vec::<String>::new()));
         let events_for_channel = events.clone();
+        let completed_states = Arc::new(Mutex::new(Vec::<String>::new()));
+        let completed_states_for_channel = completed_states.clone();
+        let database_for_channel = state.connection.clone();
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
             if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                if value.contains("\"type\":\"messageCompleted\"") {
+                    let status = database_for_channel
+                        .lock()
+                        .expect("database lock")
+                        .query_row(
+                            "SELECT status FROM runtime_runs WHERE id='run-fallback'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .expect("committed run is readable from callback");
+                    completed_states_for_channel
+                        .lock()
+                        .expect("completed state lock")
+                        .push(status);
+                }
                 events_for_channel.lock().expect("event lock").push(value);
             }
             Ok(())
         });
-        execute_conversation_turn(
+        execute_turn(
             &state,
             &input,
             &channel,
             Arc::new(RunCancellation::default()),
+            None,
         )
         .await
         .expect("fallback completes");
@@ -4357,6 +6169,10 @@ mod tests {
         let projected = events.lock().expect("event lock").join("\n");
         assert!(projected.contains("providerFailed"));
         assert!(projected.contains("messageCompleted"));
+        assert_eq!(
+            *completed_states.lock().expect("completed state lock"),
+            vec!["completed"]
+        );
     }
 
     #[test]
@@ -4439,7 +6255,7 @@ mod tests {
         let input = (0..48_000)
             .map(|index| (index as f32 / 48_000.0) * 2.0 - 1.0)
             .collect::<Vec<_>>();
-        let output = resample_pcm(&input, 48_000, 16_000);
+        let output = voice::local_whisper::resample_pcm(&input, 48_000, 16_000);
         assert_eq!(output.len(), 16_000);
         assert!(output.iter().all(|sample| (-1.0..=1.0).contains(sample)));
         let cancellation = RunCancellation::default();
@@ -4466,7 +6282,11 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = "-of" ]; then shift; output="$1"; fi
   shift
 done
-printf '[00:00:00.000 --> 00:00:00.500] fixture delta\n'
+index=0
+while [ "$index" -lt 80 ]; do
+  printf '[00:00:00.000 --> 00:00:00.500] fixture delta\n'
+  index=$((index + 1))
+done
 printf 'fixture transcript' > "${output}.txt"
 "#,
         )
@@ -4541,7 +6361,7 @@ printf 'fixture transcript' > "${output}.txt"
 
     #[test]
     fn codex_model_page_uses_backward_compatible_modalities() {
-        let page: CodexModelPage = serde_json::from_value(json!({
+        let mut page: CodexModelPage = serde_json::from_value(json!({
             "data": [{
                 "id": "gpt-test",
                 "model": "gpt-test",
@@ -4560,6 +6380,9 @@ printf 'fixture transcript' > "${output}.txt"
         assert_eq!(page.data.len(), 1);
         assert_eq!(page.data[0].input_modalities, ["text", "image"]);
         assert!(page.data[0].is_default);
+        validate_codex_model_option(&page.data[0]).expect("bounded model is valid");
+        page.data[0].description = "x".repeat(2_001);
+        assert!(validate_codex_model_option(&page.data[0]).is_err());
     }
 
     #[cfg(unix)]
@@ -4576,6 +6399,7 @@ printf 'fixture transcript' > "${output}.txt"
             r#"#!/usr/bin/env python3
 import json, sys
 log_path = {quoted_log_path}
+scenario = "normal"
 with open(log_path, "a", encoding="utf-8") as log:
     log.write(json.dumps({{"argv": sys.argv[1:]}}) + "\n")
 for line in sys.stdin:
@@ -4587,17 +6411,53 @@ for line in sys.stdin:
     if request_id == 1:
         print(json.dumps({{"id": 1, "result": {{}}}}), flush=True)
     elif request_id == 2:
-        print(json.dumps({{"id": 2, "result": {{"thread": {{"id": "fixture-thread"}}}}}}), flush=True)
+        scenario = message.get("params", {{}}).get("model", "normal")
+        if scenario != "thread-hang":
+            thread_id = "x" * 161 if scenario == "invalid-thread-id" else "fixture-thread"
+            print(json.dumps({{"id": 2, "result": {{"thread": {{"id": thread_id}}}}}}), flush=True)
     elif request_id == 3:
         text = message.get("params", {{}}).get("input", [{{}}])[0].get("text", "")
-        print(json.dumps({{"id": 3, "result": {{"turn": {{"id": "fixture-turn"}}}}}}), flush=True)
-        if "CANCEL" not in text:
+        if scenario != "turn-hang":
+            turn_id = "x" * 161 if scenario == "invalid-turn-id" else "fixture-turn"
+            print(json.dumps({{"id": 3, "result": {{"turn": {{"id": turn_id}}}}}}), flush=True)
+        if scenario == "malformed":
+            print("{{not-json", flush=True)
+        elif scenario == "provider-error":
+            print(json.dumps({{"method": "error", "params": {{"message": "SAAA_PRIVATE_PROVIDER_DETAIL"}}}}), flush=True)
+        elif scenario == "terminal-failed":
+            print(json.dumps({{"method": "turn/completed", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "turn": {{"id": "fixture-turn", "threadId": "fixture-thread", "status": "failed", "error": {{"message": "SAAA_PRIVATE_TERMINAL_DETAIL"}}}}}}}}), flush=True)
+        elif scenario == "approval":
+            print(json.dumps({{"id": 99, "method": "item/requestApproval", "params": {{}}}}), flush=True)
+        elif scenario in ["fileChange", "mcpToolCall", "dynamicToolCall", "webSearch"]:
+            print(json.dumps({{"method": "item/started", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "item": {{"id": "forbidden_1", "type": scenario}}}}}}), flush=True)
+        elif scenario == "terminal-hang":
+            print(json.dumps({{"method": "item/started", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "item": {{"id": "message_1", "type": "agentMessage"}}}}}}), flush=True)
+            print(json.dumps({{"method": "item/completed", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "item": {{"id": "message_1", "type": "agentMessage", "text": "SAAA_TERMINAL_WAIT"}}}}}}), flush=True)
+        elif scenario == "foreign":
+            print(json.dumps({{"method": "item/agentMessage/delta", "params": {{"threadId": "other", "turnId": "other", "delta": "foreign"}}}}), flush=True)
+            print(json.dumps({{"method": "item/agentMessage/delta", "params": {{"delta": "unscoped"}}}}), flush=True)
+        elif scenario == "duplicate":
+            started = {{"method": "item/started", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "item": {{"id": "message_1", "type": "agentMessage"}}}}}}
+            completed = {{"method": "item/completed", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "item": {{"id": "message_1", "type": "agentMessage", "text": "SAAA_DUPLICATE_OK"}}}}}}
+            print(json.dumps(started), flush=True)
+            print(json.dumps(started), flush=True)
+            print(json.dumps(completed), flush=True)
+            print(json.dumps(completed), flush=True)
+            print(json.dumps({{"method": "turn/completed", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "turn": {{"id": "fixture-turn", "threadId": "fixture-thread", "status": "completed"}}}}}}), flush=True)
+        elif scenario == "response-too-large":
+            print(json.dumps({{"method": "item/agentMessage/delta", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "delta": "x" * 64001}}}}), flush=True)
+        elif scenario == "stream-too-large":
+            print(json.dumps({{"method": "unknown", "params": {{"blob": "x" * (4 * 1024 * 1024)}}}}), flush=True)
+        elif scenario == "child-exit":
+            sys.exit(3)
+        elif scenario not in ["progress-hang", "hard-hang", "cancel-no-response"] and "CANCEL" not in text:
             reply = "SAAA_RESUMED" if method == "turn/start" and "RESUME" in text else "SAAA_OK"
-            print(json.dumps({{"method": "item/agentMessage/delta", "params": {{"delta": reply}}}}), flush=True)
-            print(json.dumps({{"method": "turn/completed", "params": {{"turn": {{"status": "completed"}}}}}}), flush=True)
+            print(json.dumps({{"method": "item/agentMessage/delta", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "delta": reply}}}}), flush=True)
+            print(json.dumps({{"method": "turn/completed", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "turn": {{"id": "fixture-turn", "threadId": "fixture-thread", "status": "completed"}}}}}}), flush=True)
     elif method == "turn/interrupt":
-        print(json.dumps({{"id": request_id, "result": {{}}}}), flush=True)
-        print(json.dumps({{"method": "turn/completed", "params": {{"turn": {{"status": "interrupted"}}}}}}), flush=True)
+        if scenario != "cancel-no-response":
+            print(json.dumps({{"id": request_id, "result": {{}}}}), flush=True)
+            print(json.dumps({{"method": "turn/completed", "params": {{"threadId": "fixture-thread", "turnId": "fixture-turn", "turn": {{"id": "fixture-turn", "threadId": "fixture-thread", "status": "interrupted"}}}}}}), flush=True)
 "#,
         );
         fs::write(&executable, fixture).expect("fixture writes");
@@ -4643,8 +6503,27 @@ for line in sys.stdin:
         )
         .expect("resume turn succeeds");
         assert_eq!(resumed.content, "SAAA_RESUMED");
-        let cancelled = RunCancellation::default();
-        cancelled.cancel();
+        assert_eq!(
+            run_codex_turn_process(
+                "run-invalid-resume",
+                "RESUME",
+                directory.path(),
+                "gpt-fixture",
+                Some(&"x".repeat(161)),
+                10_000,
+                &channel,
+                &cancellation,
+            )
+            .expect_err("invalid persisted thread id fails closed")
+            .code,
+            runtime::contracts::RunFailureCode::ProtocolError
+        );
+        let cancelled = Arc::new(RunCancellation::default());
+        let cancel_trigger = cancelled.clone();
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            cancel_trigger.cancel();
+        });
         let cancellation_result = run_codex_turn_process(
             "run-cancel",
             "CANCEL",
@@ -4655,6 +6534,347 @@ for line in sys.stdin:
             &channel,
             &cancelled,
         );
+        cancel_thread.join().expect("cancel trigger joins");
+
+        let policy = runtime::contracts::RunSupervisionPolicy {
+            request_timeout_ms: 200,
+            progress_idle_timeout_ms: 40,
+            terminal_gap_timeout_ms: 30,
+            interrupt_grace_ms: 20,
+            hard_timeout_ms: 200,
+        };
+        let interrupt_count = || {
+            fs::read_to_string(&log_path)
+                .expect("fixture log loads")
+                .matches("\"method\": \"turn/interrupt\"")
+                .count()
+        };
+        let run_scenario = |scenario: &str,
+                            scenario_policy: runtime::contracts::RunSupervisionPolicy,
+                            cancellation: &RunCancellation| {
+            let before = interrupt_count();
+            let result = run_codex_turn_process_with_policy(
+                "run-scenario",
+                scenario,
+                directory.path(),
+                scenario,
+                None,
+                scenario_policy,
+                &channel,
+                cancellation,
+            );
+            assert!(
+                interrupt_count().saturating_sub(before) <= 1,
+                "scenario sent more than one interrupt: {scenario}"
+            );
+            result
+        };
+        for (scenario, expected) in [
+            (
+                "thread-hang",
+                runtime::contracts::RunFailureCode::RequestTimeout,
+            ),
+            (
+                "turn-hang",
+                runtime::contracts::RunFailureCode::RequestTimeout,
+            ),
+            (
+                "invalid-thread-id",
+                runtime::contracts::RunFailureCode::ProtocolError,
+            ),
+            (
+                "invalid-turn-id",
+                runtime::contracts::RunFailureCode::ProtocolError,
+            ),
+            (
+                "progress-hang",
+                runtime::contracts::RunFailureCode::ProgressTimeout,
+            ),
+            (
+                "terminal-hang",
+                runtime::contracts::RunFailureCode::TerminalTimeout,
+            ),
+            (
+                "malformed",
+                runtime::contracts::RunFailureCode::ProtocolError,
+            ),
+            (
+                "provider-error",
+                runtime::contracts::RunFailureCode::ProviderError,
+            ),
+            (
+                "terminal-failed",
+                runtime::contracts::RunFailureCode::ProviderError,
+            ),
+            (
+                "approval",
+                runtime::contracts::RunFailureCode::PolicyViolation,
+            ),
+            (
+                "child-exit",
+                runtime::contracts::RunFailureCode::ChildExited,
+            ),
+            (
+                "foreign",
+                runtime::contracts::RunFailureCode::ProgressTimeout,
+            ),
+            (
+                "response-too-large",
+                runtime::contracts::RunFailureCode::ResponseTooLarge,
+            ),
+            (
+                "stream-too-large",
+                runtime::contracts::RunFailureCode::ResponseTooLarge,
+            ),
+        ] {
+            let failure = run_scenario(scenario, policy, &RunCancellation::default())
+                .expect_err("scenario must fail");
+            assert_eq!(failure.code, expected, "scenario: {scenario}");
+            assert!(!failure.message.contains("SAAA_PRIVATE_"));
+        }
+        let hard_policy = runtime::contracts::RunSupervisionPolicy {
+            progress_idle_timeout_ms: 200,
+            hard_timeout_ms: 30,
+            ..policy
+        };
+        assert_eq!(
+            run_scenario("hard-hang", hard_policy, &RunCancellation::default())
+                .expect_err("hard timeout must fail")
+                .code,
+            runtime::contracts::RunFailureCode::HardTimeout
+        );
+        for forbidden in ["fileChange", "mcpToolCall", "dynamicToolCall", "webSearch"] {
+            assert_eq!(
+                run_scenario(forbidden, policy, &RunCancellation::default())
+                    .expect_err("forbidden item must fail")
+                    .code,
+                runtime::contracts::RunFailureCode::PolicyViolation
+            );
+        }
+        let duplicate = run_scenario("duplicate", policy, &RunCancellation::default())
+            .expect("duplicate notifications must not break completion");
+        assert_eq!(duplicate.content, "SAAA_DUPLICATE_OK");
+
+        let unresponsive_cancel = Arc::new(RunCancellation::default());
+        let cancel_trigger = unresponsive_cancel.clone();
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            cancel_trigger.cancel();
+        });
+        let unresponsive = run_scenario("cancel-no-response", policy, &unresponsive_cancel)
+            .expect_err("unresponsive cancellation must finish");
+        cancel_thread.join().expect("cancel trigger joins");
+        assert_eq!(
+            unresponsive.code,
+            runtime::contracts::RunFailureCode::UserCancelled
+        );
+        let interrupts_before_atomic = interrupt_count();
+
+        let mut connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id,title,task_mode,created_at,updated_at)
+                 VALUES('coding-atomic','Atomic','coding','1','1')",
+                [],
+            )
+            .expect("coding conversation inserts");
+        let mut documents = default_settings_input();
+        let codex = documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.agent")
+            .expect("Codex settings exist");
+        codex.value_json["enabled"] = Value::Bool(true);
+        codex.value_json["model"] = Value::String("normal".to_string());
+        save_settings_documents_to_connection(&mut connection, &documents)
+            .expect("Codex settings save");
+        let state = app_state(connection);
+        let committed_terminal_states =
+            Arc::new(Mutex::new(
+                Vec::<(String, String, String, Option<String>)>::new(),
+            ));
+        let committed_terminal_states_for_channel = committed_terminal_states.clone();
+        let database_for_channel = state.connection.clone();
+        let atomic_channel: tauri::ipc::Channel<RuntimeEvent> =
+            tauri::ipc::Channel::new(move |body| {
+                if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                    let event: Value = serde_json::from_str(&value).expect("runtime event decodes");
+                    let event_type = event
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if matches!(event_type, "messageCompleted" | "cancelled" | "failed") {
+                        let run_id = event
+                            .get("runId")
+                            .and_then(Value::as_str)
+                            .expect("terminal event has run id");
+                        let database = database_for_channel.lock().expect("database lock");
+                        let (status, failure_code): (String, Option<String>) = database
+                            .query_row(
+                                "SELECT status,failure_code FROM runtime_runs WHERE id=?1",
+                                [run_id],
+                                |row| Ok((row.get(0)?, row.get(1)?)),
+                            )
+                            .expect("committed run reads from terminal callback");
+                        committed_terminal_states_for_channel
+                            .lock()
+                            .expect("terminal state lock")
+                            .push((
+                                run_id.to_string(),
+                                event_type.to_string(),
+                                status,
+                                failure_code,
+                            ));
+                    }
+                }
+                Ok(())
+            });
+        let atomic_input = StartTurnInput {
+            run_id: "run-atomic".to_string(),
+            conversation_id: "coding-atomic".to_string(),
+            content: "ATOMIC".to_string(),
+            workspace_path: Some(directory.path().to_string_lossy().into_owned()),
+        };
+        tauri::async_runtime::block_on(execute_turn(
+            &state,
+            &atomic_input,
+            &atomic_channel,
+            Arc::new(RunCancellation::default()),
+            Some(policy),
+        ))
+        .expect("atomic Codex turn succeeds");
+        assert_eq!(interrupt_count(), interrupts_before_atomic);
+        assert_eq!(
+            committed_terminal_states
+                .lock()
+                .expect("terminal state lock")
+                .as_slice(),
+            [(
+                "run-atomic".to_string(),
+                "messageCompleted".to_string(),
+                "completed".to_string(),
+                None
+            )]
+        );
+        let database = state.connection.lock().expect("database lock");
+        let (status, supervisor_version, assistant_count): (String, String, i64) = database
+            .query_row(
+                "SELECT r.status,r.supervisor_version,
+                        (SELECT COUNT(*) FROM conversation_messages
+                         WHERE conversation_id='coding-atomic' AND role='assistant')
+                 FROM runtime_runs r WHERE r.id='run-atomic'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("atomic state reads");
+        assert_eq!(status, "completed");
+        assert_eq!(supervisor_version, runtime::contracts::SUPERVISOR_VERSION);
+        assert_eq!(assistant_count, 1);
+        drop(database);
+
+        let run_atomic_scenario =
+            |run_id: &str, scenario: &str, cancellation: Arc<RunCancellation>| {
+                {
+                    let mut database = state.connection.lock().expect("database lock");
+                    let mut documents = default_settings_input();
+                    let codex = documents
+                        .iter_mut()
+                        .find(|document| document.namespace == "providers.agent")
+                        .expect("Codex settings exist");
+                    codex.value_json["enabled"] = Value::Bool(true);
+                    codex.value_json["model"] = Value::String(scenario.to_string());
+                    save_settings_documents_to_connection(&mut database, &documents)
+                        .expect("scenario Codex settings save");
+                }
+                let input = StartTurnInput {
+                    run_id: run_id.to_string(),
+                    conversation_id: "coding-atomic".to_string(),
+                    content: scenario.to_string(),
+                    workspace_path: Some(directory.path().to_string_lossy().into_owned()),
+                };
+                tauri::async_runtime::block_on(execute_turn(
+                    &state,
+                    &input,
+                    &atomic_channel,
+                    cancellation,
+                    Some(policy),
+                ))
+            };
+
+        let cancellation = Arc::new(RunCancellation::default());
+        let cancel_trigger = cancellation.clone();
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(25));
+            cancel_trigger.cancel();
+        });
+        let interrupts_before_cancel = interrupt_count();
+        let cancelled =
+            run_atomic_scenario("run-atomic-cancel", "cancel-no-response", cancellation)
+                .expect_err("cancel scenario must cancel");
+        cancel_thread.join().expect("atomic cancel trigger joins");
+        assert!(interrupt_count().saturating_sub(interrupts_before_cancel) <= 1);
+        assert_eq!(
+            cancelled.code,
+            runtime::contracts::RunFailureCode::UserCancelled
+        );
+        let interrupts_before_progress = interrupt_count();
+        let progress = run_atomic_scenario(
+            "run-atomic-progress",
+            "progress-hang",
+            Arc::new(RunCancellation::default()),
+        )
+        .expect_err("progress scenario must time out");
+        assert_eq!(
+            progress.code,
+            runtime::contracts::RunFailureCode::ProgressTimeout
+        );
+        assert_eq!(interrupt_count() - interrupts_before_progress, 1);
+        let interrupts_before_policy = interrupt_count();
+        let policy_violation = run_atomic_scenario(
+            "run-atomic-policy",
+            "fileChange",
+            Arc::new(RunCancellation::default()),
+        )
+        .expect_err("policy scenario must fail");
+        assert_eq!(
+            policy_violation.code,
+            runtime::contracts::RunFailureCode::PolicyViolation
+        );
+        assert_eq!(interrupt_count() - interrupts_before_policy, 1);
+
+        let terminal_states = committed_terminal_states
+            .lock()
+            .expect("terminal state lock");
+        for expected in [
+            (
+                "run-atomic-cancel",
+                "cancelled",
+                "cancelled",
+                Some("user-cancelled"),
+            ),
+            (
+                "run-atomic-progress",
+                "failed",
+                "failed",
+                Some("progress-timeout"),
+            ),
+            (
+                "run-atomic-policy",
+                "failed",
+                "failed",
+                Some("policy-violation"),
+            ),
+        ] {
+            let matching = terminal_states
+                .iter()
+                .filter(|entry| entry.0 == expected.0)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), 1, "one terminal event for {}", expected.0);
+            assert_eq!(matching[0].1, expected.1);
+            assert_eq!(matching[0].2, expected.2);
+            assert_eq!(matching[0].3.as_deref(), expected.3);
+        }
+        drop(terminal_states);
         if let Some(value) = previous {
             env::set_var("SAAA_CODEX_PATH", value);
         } else {
@@ -4711,6 +6931,43 @@ for line in sys.stdin:
                 .count(),
             0,
             "read-only Codex turn must not create workspace files"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a local Codex runtime, authentication, and network access"]
+    fn codex_live_read_only_turn_cancels_after_turn_start() {
+        let status = fetch_codex_status().expect("Codex status loads");
+        assert!(status.installed);
+        assert!(status.authenticated, "{}", status.message);
+        let workspace = tempfile::tempdir().expect("temporary workspace");
+        let cancellation = Arc::new(RunCancellation::default());
+        let cancellation_for_events = cancellation.clone();
+        let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |_| {
+            cancellation_for_events.cancel();
+            Ok(())
+        });
+        let failure = run_codex_turn_process(
+            "run-live-cancel",
+            "Explain the read-only runtime lifecycle in detail. Do not use tools.",
+            workspace.path(),
+            "",
+            None,
+            120_000,
+            &events,
+            &cancellation,
+        )
+        .expect_err("live Codex turn is cancelled after turn/start");
+        assert_eq!(
+            failure.code,
+            runtime::contracts::RunFailureCode::UserCancelled
+        );
+        assert_eq!(
+            fs::read_dir(workspace.path())
+                .expect("workspace remains readable")
+                .count(),
+            0,
+            "cancelled read-only Codex turn must not create workspace files"
         );
     }
 }

@@ -76,7 +76,7 @@ Chat UIへ表示し、必要な応答は音声でも返す
 
 ---
 
-# 2. Fundamental Model
+## 2. Fundamental Model
 
 従来型AI:
 
@@ -120,7 +120,7 @@ Presentation
 
 ---
 
-# 3. Local-first Principle
+## 3. Local-first Principle
 
 AI処理は原則としてローカルで実行する。
 
@@ -193,7 +193,7 @@ Sensitive ContextについてはCloud送信を禁止できること。
 
 ---
 
-# 4. Runtime Responsibility
+## 4. Runtime Responsibility
 
 本プロジェクトが所有する中核機能は以下とする。
 
@@ -219,7 +219,7 @@ Observability
 
 ---
 
-# 5. External Responsibility — contextStill
+## 5. External Responsibility — contextStill
 
 再利用可能なKnowledgeとTask固有ContextのCompilationは **contextStill** に委譲する。
 
@@ -284,7 +284,7 @@ Temporary Working Context
 
 ---
 
-# 6. External Responsibility — NightWorkers
+## 6. External Responsibility — NightWorkers
 
 Software Engineering実行は **NightWorkers** に委譲する。
 
@@ -358,7 +358,7 @@ Presentation Manager
 
 ---
 
-# 7. Self-Extending Capability Model
+## 7. Self-Extending Capability Model
 
 本プロジェクトの重要な長期目標の一つ。
 
@@ -428,7 +428,7 @@ Capabilityのinstallとactivateを分離し、Core更新や高権限Capability�
 
 ---
 
-# 8. Core Must Not Self-Modify
+## 8. Core Must Not Self-Modify
 
 自己拡張は、
 
@@ -468,7 +468,7 @@ providers/
 
 ---
 
-# 9. Capability vs Skill
+## 9. Capability vs Skill
 
 CapabilityとSkillは区別する。
 
@@ -512,7 +512,7 @@ Capability Routerは状況に応じて最適なSkillを選択する。
 
 ---
 
-# 10. Capability Levels
+## 10. Capability Levels
 
 新しい要求をすべてコード生成へ送らない。
 
@@ -572,7 +572,7 @@ Mouse / Keyboard
 
 ---
 
-# 11. Capability Definition
+## 11. Capability Definition
 
 Capabilityには機械可読なManifestを持たせる。
 
@@ -617,7 +617,7 @@ health_check:
 
 ---
 
-# 12. Capability Factory
+## 12. Capability Factory
 
 不足能力を生成するSubsystem。
 
@@ -660,7 +660,7 @@ Local-first requirements
 
 ---
 
-# 13. Capability Installation Gate
+## 13. Capability Installation Gate
 
 NightWorkersのテスト成功だけで即インストールしない。
 
@@ -702,7 +702,7 @@ v1.3 ACTIVE
 
 ---
 
-# 14. Situation Manager
+## 14. Situation Manager
 
 最重要コンポーネント。
 
@@ -766,7 +766,7 @@ interface SituationState {
 
 ---
 
-# 15. Situation Classification
+## 15. Situation Classification
 
 巨大LLMを24時間呼ばない。
 
@@ -808,7 +808,7 @@ Situation = MEETING
 
 ---
 
-# 16. Interaction Policy
+## 16. Interaction Policy
 
 Situationと「実行してよいこと」を分離する。
 
@@ -844,7 +844,7 @@ canSpeak = false
 
 ---
 
-# 17. Intervention Levels
+## 17. Intervention Levels
 
 Assist Plannerの判断を、一つのLevelへ押し込めない。
 
@@ -910,7 +910,7 @@ Presentation  = CHAT + NOTIFICATION
 
 ---
 
-# 18. Example — Meeting
+## 18. Example — Meeting
 
 会議開始:
 
@@ -971,7 +971,7 @@ Follow-ups
 
 ---
 
-# 19. Example — Writing / Email
+## 19. Example — Writing / Email
 
 メール作成中:
 
@@ -1003,7 +1003,7 @@ Overlay
 
 ---
 
-# 20. Example — Coding
+## 20. Example — Coding
 
 Coding Situationを検出しても、本体でCoding Agentを実装しない。
 
@@ -1034,7 +1034,7 @@ Result Presentation
 
 ---
 
-# 21. Voice Architecture
+## 21. Voice Architecture
 
 Alexa型Wake Wordを必須にしない。
 
@@ -1056,7 +1056,7 @@ RAW AudioをCloudへ常時streamしない。
 
 ---
 
-# 22. Local STT
+## 22. Local STT
 
 原則ローカル。
 
@@ -1088,7 +1088,7 @@ other local STT
 
 ---
 
-# 23. Local TTS
+## 23. Local TTS
 
 原則ローカル。
 
@@ -1117,7 +1117,7 @@ Cloud TTSはFallbackのみ。
 
 ---
 
-# 24. Audio Lifecycle
+## 24. Audio Lifecycle
 
 常時音声処理は、
 
@@ -1160,7 +1160,7 @@ Relevant?
 
 ---
 
-# 25. Context Broker
+## 25. Context Broker
 
 Application固有データをAgentへ直接渡さない。
 
@@ -1201,7 +1201,7 @@ interface ContextFrame {
 
 ---
 
-# 26. Application Adapters
+## 26. Application Adapters
 
 アプリ統合をAdapter化する。
 
@@ -1235,7 +1235,7 @@ Native API、MCP、Extension、CLIなどの明示的な統合手段が使えな�
 
 ---
 
-# 27. Presentation Manager
+## 27. Presentation Manager
 
 AIは、
 
@@ -1282,7 +1282,7 @@ Meeting中
 
 ---
 
-# 28. UI Architecture
+## 28. UI Architecture
 
 基本思想:
 
@@ -1355,7 +1355,7 @@ RAG variantがPostgreSQL / pgvectorを利用していても、そのstorage構�
 
 ---
 
-# 29. Generative Surface
+## 29. Generative Surface
 
 AgentにReactコードを書かせない。
 
@@ -1407,7 +1407,7 @@ A2UI / AG-UI的な設計思想を参考にしてよい。
 
 ---
 
-# 30. Runtime Communication
+## 30. Runtime Communication
 
 REST API中心に設計しない。
 
@@ -1451,7 +1451,7 @@ Tauri UIとRuntimeの通信は、version付きのCommand / Event / Stream contra
 
 ---
 
-# 31. Technology Stack
+## 31. Technology Stack
 
 初期案:
 
@@ -1619,7 +1619,7 @@ contextStill側の設定実装は設計の参照元であり、SAAA Runtime設�
 
 ---
 
-# 32. TypeScript Responsibility
+## 32. TypeScript Responsibility
 
 TypeScript / Bun側:
 
@@ -1640,7 +1640,7 @@ External Project Integration
 
 ---
 
-# 33. Rust Responsibility
+## 33. Rust Responsibility
 
 Native I/O中心。
 
@@ -1664,7 +1664,7 @@ Native OS APIs
 
 ---
 
-# 34. Daemon Architecture
+## 34. Daemon Architecture
 
 UIとCore Runtimeを分離する。
 
@@ -1707,7 +1707,7 @@ Subsystem単位でrestart可能にする。
 
 ---
 
-# 35. No Persona Names in Architecture
+## 35. No Persona Names in Architecture
 
 AI人格名とプロジェクト実装を完全に分離する。
 
@@ -1747,7 +1747,7 @@ capability-runtime
 
 ---
 
-# 36. Security & Permission Model
+## 36. Security & Permission Model
 
 Capabilityには必ず必要権限を宣言させる。
 
@@ -1804,7 +1804,7 @@ Delete data / payment / credentials
 
 ---
 
-# 37. Privacy
+## 37. Privacy
 
 Ambient RuntimeであるためPrivacyは最重要。
 
@@ -1823,7 +1823,7 @@ Ambient RuntimeであるためPrivacyは最重要。
 
 ---
 
-# 38. Observability
+## 38. Observability
 
 24/7 daemonでは自己監視を必須とする。
 
@@ -1868,7 +1868,7 @@ Core全体の再起動を極力避ける。
 
 ---
 
-# 39. Initial Repository Structure
+## 39. Initial Repository Structure
 
 初期案:
 
@@ -1922,7 +1922,7 @@ Coreから外部製品固有実装へ直接依存させない。
 
 ---
 
-# 40. MVP Roadmap
+## 40. MVP Roadmap
 
 ## MVP 0 — Configurable Local Voice Chat
 
@@ -2102,7 +2102,7 @@ Versioned shadow policy
 Next MVPの明示開始Meeting Modeへ
 ```
 
-詳細な実装順序、評価指標、Privacy境界は[`mvp-1.5-implementation-plan.md`](./mvp-1.5-implementation-plan.md)に定義する。
+詳細な実装順序、評価指標、Privacy境界は[`mvp-1.5-implementation-plan.html`](./.archived/mvp-1.5-implementation-plan.html)に定義する。
 
 ---
 
@@ -2152,7 +2152,7 @@ Coding要求をNightWorkersのTask / Run lifecycleへ委譲し、進捗、承認
 
 ---
 
-# 41. Explicit Non-Goals
+## 41. Explicit Non-Goals
 
 初期段階では以下を目標にしない。
 
@@ -2185,7 +2185,7 @@ Coreの自動書き換え
 
 ---
 
-# 42. Engineering Principles
+## 42. Engineering Principles
 
 ## Local-first
 
@@ -2270,7 +2270,7 @@ Software EngineeringはNightWorkers。
 
 ---
 
-# 43. Architectural North Star
+## 43. Architectural North Star
 
 このプロジェクトの判断基準を以下とする。
 

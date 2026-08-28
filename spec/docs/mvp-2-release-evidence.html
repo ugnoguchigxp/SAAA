@@ -1,0 +1,62 @@
+<article lang="ja">
+  <h1 id="mvp-2-release-evidence">MVP 2 release evidence</h1>
+  <h2 id="shipping-capabilities">Shipping capabilities</h2>
+  <ul>
+    <li>Microphone Meeting Session: implemented.</li>
+    <li>
+      System audio, floating overlay, translation: unavailable in this build (P0 gates not passed).
+    </li>
+  </ul>
+  <h2 id="verified-automated-evidence">Verified automated evidence</h2>
+  <ul>
+    <li>
+      SQLite migration creates the v6 meeting metadata and transcript tables, preserves a v5
+      fixture, and reconciles unfinished metadata to
+      <code>interrupted</code> with zero persisted transcript entries.
+    </li>
+    <li>
+      Explicit Save writes final in-memory entries transactionally; Discard leaves no transcript
+      body for its session.
+    </li>
+    <li>
+      Temporary audio workspaces are drop-cleaned on success and failure paths; cancellation uses
+      the same scoped workspace and process guard.
+    </li>
+    <li>
+      Frontend queue tests cover two-item backpressure and PCM frame boundaries. Rust covers
+      preflight, token entropy, segment validation, pause cancellation, TTS policy, Save/Discard,
+      and migration/reconcile.
+    </li>
+    <li>
+      The final suite reports 10 frontend tests passed and 61 Rust tests passed, with 2 external
+      Codex runtime tests intentionally ignored.
+    </li>
+    <li>
+      <code>bun run check</code>, <code>bun run build</code>, and
+      <code>bun run desktop:smoke</code> passed on macOS. The packaged application starts
+      successfully with an isolated smoke-test data directory.
+    </li>
+  </ul>
+  <h2 id="manual-desktop-evidence-still-required-before-a-production-release">
+    Manual desktop evidence still required before a production release
+  </h2>
+  <ul>
+    <li>
+      Test a real local Whisper model with microphone permission grant, denial, and revocation.
+    </li>
+    <li>
+      Run 30-minute and 2-hour resource soak tests; verify pause/stop/unmount release the microphone
+      indicator.
+    </li>
+    <li>Verify temporary WAV deletion during a real cancelled Whisper process.</li>
+    <li>
+      Verify Save-before/after database entry counts, Discard, app-close cleanup, and TTS blocking
+      on macOS.
+    </li>
+  </ul>
+  <p>
+    Known limitation: Whisper processes fixed five-second microphone segments. Segment boundaries
+    can omit a word; no LLM correction, speaker attribution, cloud fallback, notification, or
+    automatic action is performed.
+  </p>
+</article>

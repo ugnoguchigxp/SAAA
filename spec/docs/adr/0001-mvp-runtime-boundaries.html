@@ -1,0 +1,71 @@
+<article lang="ja">
+  <h1 id="adr-0001-mvp-runtime-boundaries">ADR 0001: MVP runtime boundaries</h1>
+  <ul>
+    <li>Status: Accepted</li>
+    <li>Date: 2026-08-26</li>
+  </ul>
+  <h2 id="decision">Decision</h2>
+  <p>SAAA MVP 0 uses these runtime boundaries:</p>
+  <ul>
+    <li>Desktop shell: Tauri 2 with React and TypeScript.</li>
+    <li>
+      Persistence: SAAA-owned SQLite through <code>rusqlite</code> with the
+      bundled SQLite library.
+    </li>
+    <li>
+      Model provider: OpenAI-compatible Chat Completions over HTTPS, or HTTP only for loopback local
+      endpoints.
+    </li>
+    <li>
+      Codex: a Tauri-managed Codex app-server child process. The native executable installed
+      transitively with the exact <code>@openai/codex-sdk</code> version is staged into
+      the desktop bundle; <code>SAAA_CODEX_PATH</code>, the development dependency
+      path, and a globally installed <code>codex</code> are fallbacks.
+    </li>
+    <li>
+      Microphone: browser <code>getUserMedia</code> and Web Audio capture in the
+      Tauri webview.
+    </li>
+    <li>
+      STT: local <code>whisper.cpp</code> CLI selected with
+      <code>SAAA_WHISPER_PATH</code>; the model is an explicit local filesystem setting
+      and is never downloaded implicitly.
+    </li>
+    <li>
+      TTS: the local operating-system speech process (<code>say</code>,
+      <code>espeak-ng</code>, or Windows SpeechSynthesizer).
+    </li>
+  </ul>
+  <h2 id="safety-and-lifecycle">Safety and lifecycle</h2>
+  <p>
+    Codex threads always use a read-only sandbox, approval policy
+    <code>never</code>, disabled web search, and no configured
+    write-capable MCP servers. SAAA stores only the Codex thread id and bounded redacted activity.
+    Child processes are interrupted and terminated on cancel or command completion.
+  </p>
+  <p>
+    Voice capture never leaves the webview-to-Tauri IPC boundary. STT accepts PCM samples and
+    executes a local process. Cloud fallback is not implemented. Recording, transcription,
+    generation, Codex, and TTS each have an explicit stop path.
+  </p>
+  <h2 id="packaging">Packaging</h2>
+  <p>
+    The package includes the target platform&#39;s pinned Codex executable but can start without
+    Codex authentication, whisper, or a model file. Missing optional runtimes degrade only their
+    corresponding feature and are reported with recovery instructions. The application has no Hono,
+    RAG, PostgreSQL, pgvector, or embedding runtime dependency.
+  </p>
+  <p>
+    SQLite uses <code>rusqlite</code> with bundled SQLite. SAAA creates a
+    consistent user-requested backup and automatically backs up an older database before migration.
+    The database file, its backups, and redacted diagnostics are owned by SAAA&#39;s OS
+    application-data directory; user-selected whisper models and workspaces remain outside that
+    ownership boundary.
+  </p>
+  <h2 id="ui-inventory">UI inventory</h2>
+  <p>
+    The MVP reuses only layout and interaction concepts from the referenced UI: sidebar navigation,
+    conversation list, route banner, message surface, composer, settings section menu, cards, status
+    badges, and sticky save controls. No Hono client or RAG data contract is imported.
+  </p>
+</article>

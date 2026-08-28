@@ -12,6 +12,7 @@ import {
   type AppSnapshot,
   type CodexRuntimeStatus,
   type ConversationMessage,
+  type MeetingState,
   type RuntimeEvent,
   type SettingsDocument,
   type TaskMode,
@@ -53,7 +54,7 @@ function App() {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [activeVoiceRunId, setActiveVoiceRunId] = useState<string | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
-  const [meetingActive, setMeetingActive] = useState(false);
+  const [meetingState, setMeetingState] = useState<MeetingState>("idle");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderChunksRef = useRef<Blob[]>([]);
   const recorderStreamRef = useRef<MediaStream | null>(null);
@@ -61,7 +62,9 @@ function App() {
   const messagesRequestRef = useRef(0);
   const activeRunIdRef = useRef<string | null>(null);
   const activeTtsRunIdRef = useRef<string | null>(null);
+  const meetingStateRef = useRef<MeetingState>("idle");
   selectedConversationIdRef.current = selectedConversationId;
+  meetingStateRef.current = meetingState;
 
   const selectedConversation = snapshot.conversations.find(
     (conversation) => conversation.id === selectedConversationId,
@@ -80,6 +83,7 @@ function App() {
     const document = findSettingsDocument(snapshot.settings, "providers.agent", "codex-sdk");
     return document && isCodexAgentSettings(document.valueJson) ? document.valueJson : null;
   }, [snapshot.settings]);
+  const meetingActive = isMeetingBlocking(meetingState);
 
   useEffect(() => { void reportFrontendReady(); void initialize(); }, []);
   useEffect(() => { void getCodexStatus().then(setCodexStatus).catch((cause) => setCodexStatus({ installed: false, authenticated: false, runtime: "unavailable", accountType: null, message: toMessage(cause) })); }, []);
@@ -115,14 +119,14 @@ function App() {
   useEffect(() => {
     const input = {
       conversationState: activeRunId ? (activeRunMode === "coding" ? "agent-running" : "model-running") : composer.trim() ? "user-input" : "idle",
-      microphoneState: voiceState === "recording" ? "saaa-capturing" : voiceState === "transcribing" ? "saaa-transcribing" : "inactive",
+      microphoneState: meetingState === "active" ? "saaa-capturing" : voiceState === "recording" ? "saaa-capturing" : voiceState === "transcribing" ? "saaa-transcribing" : "inactive",
       audioState: activeTtsRunId ? "saaa-speaking" : "silent",
     } as const;
     void reportOwnedSignal(input).catch(() => undefined);
     if (input.conversationState === "idle" && input.microphoneState === "inactive" && input.audioState === "silent") return;
     const heartbeat = window.setInterval(() => { void reportOwnedSignal(input).catch(() => undefined); }, 2_000);
     return () => window.clearInterval(heartbeat);
-  }, [activeRunId, activeRunMode, activeTtsRunId, composer, voiceState]);
+  }, [activeRunId, activeRunMode, activeTtsRunId, composer, meetingState, voiceState]);
 
   async function initialize() {
     try {
@@ -221,7 +225,10 @@ function App() {
   }
 
   function handleRuntimeEvent(event: RuntimeEvent, conversationId: string) {
-    if (selectedConversationIdRef.current !== conversationId) return;
+    if (
+      selectedConversationIdRef.current !== conversationId ||
+      activeRunIdRef.current !== event.runId
+    ) return;
     switch (event.type) {
       case "started":
         setRuntimeActivity((current) => [...current, `${event.route} → ${event.providerId}`].slice(-8));
@@ -263,6 +270,10 @@ function App() {
     }
     if (voiceState === "transcribing" && activeVoiceRunId) {
       await cancelRun(activeVoiceRunId);
+      return;
+    }
+    if (isMeetingBlocking(meetingStateRef.current)) {
+      setError("Chat voice capture is disabled while a meeting is active or paused.");
       return;
     }
     if (!selectedConversationId || !voiceSettings) {
@@ -320,6 +331,7 @@ function App() {
         sampleRate: buffer.sampleRate,
         modelPath: voiceSettings.sttModel,
       }, (event) => {
+        if (event.runId !== runId) return;
         if (event.type === "transcriptDelta") setInterimTranscript((current) => `${current} ${event.text}`.trim());
         if (event.type === "transcriptFinal") setInterimTranscript(event.text);
         if (event.type === "failed") setError(`${event.message} ${event.recovery}`);
@@ -336,7 +348,7 @@ function App() {
   }
 
   async function startSpeech(text: string, conversationId = selectedConversationId) {
-    if (!conversationId || !voiceSettings || activeTtsRunIdRef.current) return;
+    if (!conversationId || !voiceSettings || activeTtsRunIdRef.current || isMeetingBlocking(meetingStateRef.current)) return;
     const runId = `speech_${crypto.randomUUID()}`;
     activeTtsRunIdRef.current = runId;
     setActiveTtsRunId(runId);
@@ -373,13 +385,14 @@ function App() {
       <div className="sidebar-status"><span className="status-dot" />SQLite local state</div>
     </aside>
 
-    {surface === "settings" ? <SettingsPage documents={snapshot.settings} onSaved={(settings) => setSnapshot((current) => ({ ...current, settings }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "meeting" ? <MeetingPage voiceSettings={voiceSettings} onActiveChanged={setMeetingActive} /> : <section className="chat-panel">
+    <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} chatVoiceBusy={voiceState !== "idle"} onStateChanged={setMeetingState} /></div>
+    {surface === "settings" ? <SettingsPage documents={snapshot.settings} onSaved={(settings) => setSnapshot((current) => ({ ...current, settings }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <section className="chat-panel">
       <header className="topbar"><div><p className="eyebrow">{taskMode === "coding" ? "READ-ONLY AGENT" : "CONVERSATION"}</p><h1>{taskMode === "coding" ? "Coding assist" : "Local voice chat"}</h1></div><button className="secondary-button" onClick={() => setSurface("settings")}>Settings</button></header>
       <div className="route-banner"><span className="route-label">Effective route</span><strong>{taskMode === "coding" ? "coding.assist → codex-sdk" : `conversation.respond → ${modelProviderLabel}`}</strong><span className={taskMode === "coding" ? `badge ${codexStatus?.authenticated && codexSettings?.enabled ? "safe" : "warning"}` : "badge local"}>{taskMode === "coding" ? (codexStatus?.authenticated && codexSettings?.enabled ? "ready · read-only" : "unavailable") : "configured route"}</span></div>
       <div className="message-area" aria-live="polite">{messages.length === 0 && !streamingText ? <div className="empty-state"><p className="eyebrow">MVP 0 RUNTIME</p><h2>保存済みRouteで会話を実行します。</h2><p>Settingsで有効なProviderを登録してからメッセージを送信してください。</p></div> : messages.map((message) => <article className={`message ${message.role}`} key={message.id}><span className="message-role">{message.role === "user" ? "You" : message.role}</span><p>{message.content}</p></article>)}{streamingText && <article className="message assistant streaming"><span className="message-role">assistant · streaming</span><p>{streamingText}</p></article>}{interimTranscript && voiceState !== "idle" && <article className="message transcript streaming"><span className="message-role">transcript · {voiceState}</span><p>{interimTranscript}</p></article>}{runtimeActivity.length > 0 && <details className="activity-panel"><summary>Runtime activity</summary>{runtimeActivity.map((activity, index) => <p key={`${index}-${activity}`}>{activity}</p>)}</details>}</div>
-      <form className="composer" onSubmit={handleSubmit}><div className="mode-switch" role="group" aria-label="Task mode"><button className={taskMode === "conversation" ? "selected" : ""} type="button" onClick={() => taskMode !== "conversation" && void handleNewConversation("conversation")}>Chat</button><button className={taskMode === "coding" ? "selected" : ""} type="button" onClick={() => taskMode !== "coding" && void handleNewConversation("coding")}>Coding</button></div>{taskMode === "coding" && <div className="workspace-picker"><input className="workspace-input" aria-label="Codex workspace" value={workspacePath} onChange={(event) => setWorkspacePath(event.currentTarget.value)} placeholder="Read-only workspace path" /><button className="secondary-button" type="button" onClick={() => void chooseWorkspace()}>Choose…</button></div>}<textarea aria-label="Message" onChange={(event) => setComposer(event.currentTarget.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); }} placeholder={taskMode === "coding" ? "Ask Codex to inspect or explain…" : "Message SAAA…"} value={composer} disabled={Boolean(activeRunId)} /><div className="composer-actions"><button className={voiceState === "recording" ? "voice-button recording" : "voice-button"} type="button" onClick={() => void toggleVoiceCapture()} disabled={Boolean(activeRunId) || taskMode === "coding"}>{voiceState === "recording" ? "■ Stop recording" : voiceState === "transcribing" ? "■ Stop transcription" : "◉ Voice"}</button><div className="composer-primary-actions">{activeTtsRunId && <button className="stop-button" type="button" onClick={() => void stopSpeech()}>Stop speech</button>}{error && lastPrompt && !activeRunId && <button className="secondary-button" type="button" onClick={() => void submitPrompt(lastPrompt)}>Retry</button>}{activeRunId ? <button className="stop-button" type="button" onClick={() => void stopActiveRun()}>Stop</button> : <button className="send-button" type="submit" disabled={!composer.trim() || !selectedConversation || voiceState !== "idle" || (taskMode === "coding" && (!workspacePath.trim() || !codexSettings?.enabled || !codexStatus?.authenticated))}>Send ↑</button>}</div></div>{taskMode === "coding" && (!codexSettings?.enabled || !codexStatus?.authenticated) && <p className="composer-hint">{codexStatus?.message ?? "Codex runtimeを確認しています…"} Settings → Codex SDKで有効化してください。</p>}</form>
+      <form className="composer" onSubmit={handleSubmit}><div className="mode-switch" role="group" aria-label="Task mode"><button className={taskMode === "conversation" ? "selected" : ""} type="button" onClick={() => taskMode !== "conversation" && void handleNewConversation("conversation")}>Chat</button><button className={taskMode === "coding" ? "selected" : ""} type="button" onClick={() => taskMode !== "coding" && void handleNewConversation("coding")}>Coding</button></div>{taskMode === "coding" && <div className="workspace-picker"><input className="workspace-input" aria-label="Codex workspace" value={workspacePath} onChange={(event) => setWorkspacePath(event.currentTarget.value)} placeholder="Read-only workspace path" /><button className="secondary-button" type="button" onClick={() => void chooseWorkspace()}>Choose…</button></div>}<textarea aria-label="Message" onChange={(event) => setComposer(event.currentTarget.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); }} placeholder={taskMode === "coding" ? "Ask Codex to inspect or explain…" : "Message SAAA…"} value={composer} disabled={Boolean(activeRunId)} /><div className="composer-actions"><button className={voiceState === "recording" ? "voice-button recording" : "voice-button"} type="button" onClick={() => void toggleVoiceCapture()} disabled={Boolean(activeRunId) || taskMode === "coding" || meetingActive}>{voiceState === "recording" ? "■ Stop recording" : voiceState === "transcribing" ? "■ Stop transcription" : "◉ Voice"}</button><div className="composer-primary-actions">{activeTtsRunId && <button className="stop-button" type="button" onClick={() => void stopSpeech()}>Stop speech</button>}{error && lastPrompt && !activeRunId && <button className="secondary-button" type="button" onClick={() => void submitPrompt(lastPrompt)}>Retry</button>}{activeRunId ? <button className="stop-button" type="button" onClick={() => void stopActiveRun()}>Stop</button> : <button className="send-button" type="submit" disabled={!composer.trim() || !selectedConversation || voiceState !== "idle" || (taskMode === "coding" && (!workspacePath.trim() || !codexSettings?.enabled || !codexStatus?.authenticated))}>Send ↑</button>}</div></div>{taskMode === "coding" && (!codexSettings?.enabled || !codexStatus?.authenticated) && <p className="composer-hint">{codexStatus?.message ?? "Codex runtimeを確認しています…"} Settings → Codex SDKで有効化してください。</p>}</form>
       {error && <p className="error-banner" role="alert">{error}</p>}
-    </section>}
+    </section> : null}
   </main>;
 }
 
@@ -399,6 +412,10 @@ function updateConversationTimestamp(snapshot: AppSnapshot, conversationId: stri
 }
 
 function toMessage(cause: unknown): string { return cause instanceof Error ? cause.message : String(cause); }
+
+function isMeetingBlocking(state: MeetingState): boolean {
+  return state === "active" || state === "paused" || state === "stopping";
+}
 
 function mixAudioChannels(buffer: AudioBuffer): Float32Array {
   const mixed = new Float32Array(buffer.length);

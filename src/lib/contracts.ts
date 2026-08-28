@@ -13,7 +13,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 6;
+  schemaVersion: 7;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };
@@ -39,6 +39,21 @@ export type AppSnapshot = {
   conversations: Conversation[];
 };
 
+export type RuntimeFailureCode =
+  | "runtime_error"
+  | "configuration-error"
+  | "child-start-failed"
+  | "request-timeout"
+  | "progress-timeout"
+  | "terminal-timeout"
+  | "hard-timeout"
+  | "child-exited"
+  | "protocol-error"
+  | "policy-violation"
+  | "provider-error"
+  | "response-too-large"
+  | "internal-error";
+
 export type RuntimeEvent =
   | { type: "started"; runId: string; route: string; providerId: string }
   | { type: "delta"; runId: string; text: string }
@@ -46,7 +61,7 @@ export type RuntimeEvent =
   | { type: "providerFailed"; runId: string; providerId: string; reason: string }
   | { type: "messageCompleted"; runId: string; message: ConversationMessage }
   | { type: "cancelled"; runId: string }
-  | { type: "failed"; runId: string; code: string; message: string; recovery: string };
+  | { type: "failed"; runId: string; code: RuntimeFailureCode; message: string; recovery: string };
 
 export type ProviderTestResult = {
   providerId: string;
@@ -166,6 +181,7 @@ export type ForegroundCategory = "communication" | "coding" | "writing" | "brows
 export type ConversationSignalState = "idle" | "user-input" | "model-running" | "agent-running";
 export type MicrophoneSignalState = "inactive" | "saaa-capturing" | "saaa-transcribing" | "external-active" | "unknown";
 export type AudioSignalState = "silent" | "saaa-speaking" | "external-media" | "unknown";
+export type InputActivityState = "active" | "recent" | "idle" | "unknown";
 
 export type SignalSnapshot = {
   sequence: number;
@@ -179,6 +195,7 @@ export type SignalSnapshot = {
     timeBucket: "now" | "within-15m" | "later" | "none";
     health: SignalHealth;
   };
+  inputActivity: { state: InputActivityState; health: SignalHealth };
 };
 
 export type SituationState = {
@@ -211,7 +228,7 @@ export type SituationFeedback = {
   createdAt: string;
 };
 
-export type CalibrationParameters = { classificationMinConfidence: number; lowConfidenceMax: number; enterSampleCount: number; exitSampleCount: number; cooldownMs: number };
+export type CalibrationParameters = { classificationMinConfidence: number; lowConfidenceMax: number; enterSampleCount: number; exitSampleCount: number; cooldownMs: number; inputActiveMaxMs: number; inputRecentMaxMs: number };
 export type CalibrationProfile = { id: string; ruleVersion: string; baseRuleVersion: string | null; status: "candidate" | "active" | "superseded" | "rejected" | "rolled-back"; parameters: CalibrationParameters; createdAt: string; decidedAt: string | null; decisionReasonCode: string | null };
 export type CalibrationRun = { id: string; profileId: string; fixtureSetVersion: string; status: "completed" | "failed"; metricsJson: string | null; errorCode: string | null; startedAt: string; completedAt: string };
 export type SituationReviewSnapshot = { activeProfile: CalibrationProfile; quality: { sampleCount: number; flappingRate: number | null; staleRate: number | null }; feedbackQueue: SituationLedgerEntry[]; latestRun: CalibrationRun | null; candidates: CalibrationProfile[] };
@@ -252,6 +269,11 @@ export type MeetingError = { code: string; message: string; recovery: string };
 export type MeetingSnapshot = { sessionId: string | null; state: MeetingState; captureToken: string | null; entries: number; capabilities: MeetingCapabilities; error: MeetingError | null };
 export type MeetingPreflightResult = { state: MeetingState; microphone: { status: string; message: string }; systemAudio: { status: string; message: string }; stt: { status: string; message: string }; translation: { status: string; message: string }; shippingCapabilities: MeetingCapabilities; blockingErrors: MeetingError[] };
 export type MeetingSegmentResult = { accepted: boolean; text: string };
+export type MeetingEvent =
+  | { type: "stateChanged"; sessionId: string | null; state: MeetingState }
+  | { type: "transcriptPartial"; sessionId: string; lane: MeetingLane; sequence: number; text: string }
+  | { type: "transcriptFinal"; sessionId: string; lane: MeetingLane; sequence: number; text: string; language: string | null }
+  | { type: "failed"; sessionId: string | null; code: string; message: string; recovery: string };
 
 export function findSettingsDocument(
   documents: SettingsDocument[],

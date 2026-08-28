@@ -1,0 +1,893 @@
+<article lang="ja">
+  <h1 id="mvp-1-implementation-plan--situation-shadow-mode">
+    MVP 1 Implementation Plan — Situation Shadow Mode
+  </h1>
+  <h2 id="status">Status</h2>
+  <ul>
+    <li>Status: Complete — P0 through P6 accepted on 2026-08-26</li>
+    <li>Target: first evaluable Situation runtime</li>
+    <li>Prerequisite: MVP 0 accepted on 2026-08-26</li>
+    <li>
+      Concept: <a href="../plan.html"><code>plan.html</code></a>
+    </li>
+    <li>
+      Previous milestone:
+      <a href="./mvp-0-implementation-plan.html"><code>mvp-0-implementation-plan.md</code></a>
+    </li>
+  </ul>
+  <p>
+    この文書は、MVP 0で成立したSettings、SQLite、Conversation Event、Voice Runtime、Model / Agent
+    Routeの上に、最初のSituation Runtimeを追加するための実装計画である。
+  </p>
+  <p>
+    MVP
+    1ではSituation候補と介入方針を評価可能にするが、自動介入は行わない。Situation判定を既存Chat、TTS、Notification、外部操作の実行条件へ接続するのは後続MVPの責務とする。
+  </p>
+  <h2 id="implementation-record">Implementation Record</h2>
+  <p>2026-08-26にP0からP6までを実装し、MVP Acceptanceを完了した。</p>
+  <ul>
+    <li>
+      contract / database versionを4へ更新し、<code>situation.runtime</code>、bounded
+      ledger、structured feedbackを追加した。
+    </li>
+    <li>
+      macOS <code>NSWorkspace</code> foreground adapter、SAAA-owned Conversation
+      / Voice lifecycle bridge、signal healthとsafe degradationを実装した。
+    </li>
+    <li>
+      deterministic classifier、freshness、enter / exit hysteresis、4種類のcounterfactual attention
+      decisionを実装した。
+    </li>
+    <li>
+      Shadow invariantをSQLite CHECK、runtime validation、call-graph
+      guardで固定し、自動実行経路を追加しなかった。
+    </li>
+    <li>
+      Situation Surface、Settings、timeline、feedback、pause、retention、history clearをSQLite
+      source of truthへ接続した。
+    </li>
+    <li>
+      migration、privacy、fixture replay、MVP 0 regression、packaging、packaged Codex live
+      turnを検証した。
+    </li>
+  </ul>
+  <p>
+    再現手順と結果は<a href="./mvp-1-release-evidence.html"
+      ><code>mvp-1-release-evidence.md</code></a
+    >、signalとprivacyの判断は<a href="../adr/0002-situation-signal-privacy.html"
+      ><code>adr/0002-situation-signal-privacy.md</code></a
+    >に保存する。
+  </p>
+  <h2 id="1-outcome">1. Outcome</h2>
+  <p>MVP 1で成立させるループは次のとおり。</p>
+  <pre><code class="language-text">Local hard signals
+        ↓
+Normalized SignalSnapshot
+        ↓
+Deterministic scoring + hysteresis
+        ↓
+Stable SituationState + evidence
+        ↓
+Shadow Interaction Decision
+        ↓
+Bounded SQLite ledger + Situation UI + user feedback
+</code></pre>
+  <p>
+    ユーザーは、現在のSituation候補、信頼度、根拠、Signalの取得状態、実行されなかった介入案を確認できる。Runtimeは<code>would observe / would suggest / would respond / stay silent</code>を記録するだけで、Situationを理由にProvider、TTS、Notification、Application
+    Adapterを自動実行しない。
+  </p>
+  <h2 id="2-scope-and-safety-invariant">2. Scope and Safety Invariant</h2>
+  <h3 id="in-scope">In scope</h3>
+  <ul>
+    <li>Foreground Applicationの分類済みHard Signal</li>
+    <li>
+      SAAA自身のConversation、Generation、Agent、Push-to-talk、Transcription、TTS lifecycle signal
+    </li>
+    <li>ユーザーが明示的に有効化したCalendarの粗いbusy / meeting signal</li>
+    <li>Signal health、permission、unsupported状態</li>
+    <li>決定論的なSituation scoring</li>
+    <li>enter / exit hysteresisによる安定した状態遷移</li>
+    <li>Shadow Interaction Decision</li>
+    <li>boundedなSituation ledgerとユーザー評価</li>
+    <li>Situation SurfaceとSettingsの観測制御</li>
+  </ul>
+  <h3 id="safety-invariant">Safety invariant</h3>
+  <p>MVP 1では次を常に満たす。</p>
+  <pre><code class="language-text">shadowMode          = true
+actualExecution     = NONE
+actualPresentation  = SILENT
+automaticModelCall  = false
+automaticTTS        = false
+automaticNotify     = false
+automaticAppAction  = false
+</code></pre>
+  <p>
+    Shadow decisionは既存の明示的なChat、Push-to-talk、Codex
+    routeを停止または変更しない。ユーザーが開始したMVP
+    0の処理は従来どおり動作し、そのlifecycleだけがSituation判定の入力になる。
+  </p>
+  <h3 id="explicitly-out-of-scope">Explicitly out of scope</h3>
+  <pre><code class="language-text">実際の自動介入
+Always-on listening / Wake Word
+System Audio capture
+音声、画面、Window title、Calendar本文の保存
+Screen / Accessibility observation
+LLMによるSituation分類
+Meeting transcription / Translation / Overlay
+Notification配信
+Application automation / Computer Use
+contextStill / NightWorkers integration
+24/7 background daemon
+Cloud telemetry / analytics
+</code></pre>
+  <h2 id="3-fixed-decisions">3. Fixed Decisions</h2>
+  <h3 id="runtime-boundary">Runtime boundary</h3>
+  <ul>
+    <li>
+      ClassificationとPolicyはRust側のSituation moduleへ置き、React stateをsource of truthにしない。
+    </li>
+    <li>
+      現在の単一Tauri application lifetime内だけで観測する。OS login itemや常駐daemonは追加しない。
+    </li>
+    <li>
+      <code>src-tauri/src/lib.rs</code
+      >全体の再構成は行わず、新規実装を<code>src-tauri/src/situation/</code>へ分離してcommand
+      registrationだけを既存entryへ追加する。
+    </li>
+    <li>UIとの通信はversion付きCommand、Snapshot、Event contractにする。</li>
+    <li>MVP 1のclassifierは決定論ルールだけを使い、Model ProviderとNetworkを呼ばない。</li>
+  </ul>
+  <h3 id="platform-boundary">Platform boundary</h3>
+  <ul>
+    <li>
+      macOSを最初の実装対象とする。Foreground Applicationはpermission不要のread-only
+      APIを優先し、Accessibility permissionを要求しない。
+    </li>
+    <li>platform固有処理は<code>SignalProvider</code> adapterへ閉じ込める。</li>
+    <li>
+      未実装OSやpermission拒否時は起動失敗にせず、Signal
+      healthを<code>unsupported</code>または<code>permission-denied</code>にする。
+    </li>
+    <li>
+      Calendarは既定で無効とし、ユーザーのopt-in後だけ読み取る。MVP
+      1で保持するのは<code>free | busy | meeting-likely | unavailable</code>と粗い時間bucketだけで、件名、参加者、場所、メモ、URLはRuntimeへ渡さない。
+    </li>
+    <li>
+      System-wide microphone / audio usageは安全で安定したread-only
+      APIをP0で確認できた場合だけ補助Signalにする。必須入力はSAAA自身のcapture / transcription /
+      speech lifecycleとし、System Audio captureへ拡張しない。
+    </li>
+  </ul>
+  <h3 id="source-of-truth-and-retention">Source of truth and retention</h3>
+  <ul>
+    <li>liveな直近Signalはmemory上のbounded snapshotをsource of truthにする。</li>
+    <li>
+      状態遷移、周期heartbeat、Shadow decision、rule versionはSQLiteのSituation ledgerをsource of
+      truthにする。
+    </li>
+    <li>
+      生のsampleをsampling intervalごとに保存しない。stable
+      stateまたはdecisionが変化した時と、設定したheartbeat時だけ追記する。
+    </li>
+    <li>既定retentionは7日、上限は10,000 entriesとし、古いentryはtransaction内で削除する。</li>
+    <li>
+      diagnosticsには件数、health、scene集計だけを含め、時系列、Application
+      identity、Calendar由来情報は含めない。
+    </li>
+  </ul>
+  <h3 id="privacy-defaults">Privacy defaults</h3>
+  <ul>
+    <li>Situation monitoringは既定で無効とする。</li>
+    <li>
+      Foreground Applicationのraw bundle id、process name、window
+      titleは永続化しない。adapter内で<code>communication | coding | writing | browser | media | sensitive | other | unknown</code>へ分類し、raw値を破棄する。
+    </li>
+    <li>
+      Sensitive categoryではCalendar以外の補助Contextを使用せず、Shadow
+      decisionを<code>IGNORE / NONE / SILENT</code>へ固定する。
+    </li>
+    <li>
+      SettingsとSituation Surfaceの両方にPauseを置き、停止時はpollerとsubscriptionを終了する。
+    </li>
+    <li>
+      History削除はSituation ledgerとfeedbackだけを対象にし、Conversation
+      historyやSettingsを削除しない。
+    </li>
+  </ul>
+  <h2 id="4-core-contracts">4. Core Contracts</h2>
+  <p>
+    TypeScriptのZod schemaとRustのSerde type / validationを同時に更新し、IPCとSQLite
+    JSONを両側で検証する。
+  </p>
+  <h3 id="signal-snapshot">Signal snapshot</h3>
+  <pre><code class="language-ts">type SignalHealth =
+  | &quot;ready&quot;
+  | &quot;disabled&quot;
+  | &quot;permission-denied&quot;
+  | &quot;unsupported&quot;
+  | &quot;degraded&quot;;
+
+type SignalSnapshot = {
+  sequence: number;
+  observedAt: string;
+  foreground: {
+    category:
+      | &quot;communication&quot;
+      | &quot;coding&quot;
+      | &quot;writing&quot;
+      | &quot;browser&quot;
+      | &quot;media&quot;
+      | &quot;sensitive&quot;
+      | &quot;other&quot;
+      | &quot;unknown&quot;;
+    health: SignalHealth;
+  };
+  conversation: {
+    state: &quot;idle&quot; | &quot;user-input&quot; | &quot;model-running&quot; | &quot;agent-running&quot;;
+  };
+  microphone: {
+    state: &quot;inactive&quot; | &quot;saaa-capturing&quot; | &quot;saaa-transcribing&quot; | &quot;external-active&quot; | &quot;unknown&quot;;
+    health: SignalHealth;
+  };
+  audio: {
+    state: &quot;silent&quot; | &quot;saaa-speaking&quot; | &quot;external-media&quot; | &quot;unknown&quot;;
+    health: SignalHealth;
+  };
+  calendar: {
+    state: &quot;free&quot; | &quot;busy&quot; | &quot;meeting-likely&quot; | &quot;unavailable&quot;;
+    timeBucket: &quot;now&quot; | &quot;within-15m&quot; | &quot;later&quot; | &quot;none&quot;;
+    health: SignalHealth;
+  };
+};
+</code></pre>
+  <p>
+    <code>sequence</code
+    >はprocess内で単調増加させ、古いsampleが新しい状態を上書きしないようにする。文字列、配列、event
+    queueには上限を設ける。
+  </p>
+  <h3 id="situation-state">Situation state</h3>
+  <pre><code class="language-ts">type SituationState = {
+  scene: string;
+  confidence: number;
+  userAttention: &quot;available&quot; | &quot;busy&quot; | &quot;unknown&quot;;
+  audioEnvironment: &quot;silence&quot; | &quot;speech&quot; | &quot;multi-speaker&quot; | &quot;media&quot; | &quot;unknown&quot;;
+  evidence: Array&lt;{
+    code: string;
+    weight: number;
+  }&gt;;
+  candidateSince: string;
+  stableSince: string;
+  updatedAt: string;
+  ruleVersion: string;
+};
+</code></pre>
+  <p>
+    <code>scene</code>は将来拡張できるbounded identifierとし、MVP
+    1のbuilt-in valueは<code>SOLO | MEETING | CONVERSATION | WRITING | CODING | FOCUS | MEDIA | UNKNOWN</code>とする。UIへraw
+    signalを理由文として渡さず、boundedな<code>evidence.code</code>を表示文へ変換する。
+  </p>
+  <h3 id="shadow-decision">Shadow decision</h3>
+  <pre><code class="language-ts">type ShadowDecision = {
+  mode: &quot;shadow&quot;;
+  proposedAttention: &quot;IGNORE&quot; | &quot;OBSERVE&quot; | &quot;SUGGEST&quot; | &quot;RESPOND&quot;;
+  actualExecution: &quot;NONE&quot;;
+  actualPresentation: &quot;SILENT&quot;;
+  reasonCodes: string[];
+  decidedAt: string;
+  policyVersion: string;
+};
+</code></pre>
+  <p>UI表示は次の対応にする。</p>
+  <table>
+    <caption>
+      Shadow decision
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col"><code>proposedAttention</code></th>
+        <th scope="col">UI label</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>IGNORE</code></td>
+        <td>Stay silent</td>
+      </tr>
+      <tr>
+        <td><code>OBSERVE</code></td>
+        <td>Would observe</td>
+      </tr>
+      <tr>
+        <td><code>SUGGEST</code></td>
+        <td>Would suggest</td>
+      </tr>
+      <tr>
+        <td><code>RESPOND</code></td>
+        <td>Would respond</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="commands-and-events">Commands and events</h3>
+  <pre><code class="language-text">get_situation_snapshot
+set_situation_monitoring
+watch_situation
+report_owned_signal
+submit_situation_feedback
+clear_situation_history
+</code></pre>
+  <pre><code class="language-ts">type SituationEvent =
+  | { type: &quot;signalHealthChanged&quot;; source: string; health: SignalHealth }
+  | { type: &quot;candidateChanged&quot;; state: SituationState }
+  | { type: &quot;stableStateChanged&quot;; entry: SituationLedgerEntry }
+  | { type: &quot;shadowDecisionChanged&quot;; entry: SituationLedgerEntry }
+  | { type: &quot;monitoringStopped&quot;; reason: string }
+  | { type: &quot;failed&quot;; code: string; message: string; recovery: string };
+</code></pre>
+  <p>
+    <code>watch_situation</code>はbounded
+    channelを使用する。遅いconsumerに全sampleを配送せず、最新snapshotを優先し、stable
+    transitionは欠落させない。
+  </p>
+  <h2 id="5-classification-and-policy-rules">5. Classification and Policy Rules</h2>
+  <h3 id="evaluation-order">Evaluation order</h3>
+  <pre><code class="language-text">Hard Signal
+    ↓
+Signal normalization and freshness check
+    ↓
+Deterministic weighted rules
+    ↓
+Candidate Situation
+    ↓
+Enter / exit hysteresis
+    ↓
+Stable Situation
+    ↓
+Shadow Interaction Policy
+</code></pre>
+  <p>
+    staleまたはunavailableなSignalは負の意味として扱わず、scoreから除外する。Signal不足時は<code>UNKNOWN</code>、判断不能時は<code>IGNORE / NONE / SILENT</code>を選ぶ。
+  </p>
+  <h3 id="initial-rule-set">Initial rule set</h3>
+  <p>最初のweightは仮説としてversion管理し、user feedbackとfixture評価によって調整する。</p>
+  <table>
+    <caption>
+      Initial rule set
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Situation</th>
+        <th scope="col">Positive evidence</th>
+        <th scope="col">Inhibitor</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CONVERSATION</code></td>
+        <td>explicit Chat、SAAA capture / transcription、model run</td>
+        <td>none</td>
+      </tr>
+      <tr>
+        <td><code>MEETING</code></td>
+        <td>communication app、Calendar meeting-likely、external mic if available</td>
+        <td>sensitive app、stale Calendar</td>
+      </tr>
+      <tr>
+        <td><code>CODING</code></td>
+        <td>coding app、active <code>coding.assist</code></td>
+        <td>communication app + meeting evidence</td>
+      </tr>
+      <tr>
+        <td><code>WRITING</code></td>
+        <td>writing app</td>
+        <td>active conversation / meeting evidence</td>
+      </tr>
+      <tr>
+        <td><code>MEDIA</code></td>
+        <td>media app、external media if available</td>
+        <td>active conversation</td>
+      </tr>
+      <tr>
+        <td><code>FOCUS</code></td>
+        <td>coding / writing + Calendar busy</td>
+        <td>active conversation / meeting evidence</td>
+      </tr>
+      <tr>
+        <td><code>SOLO</code></td>
+        <td>app available、no active audio / conversation / busy event</td>
+        <td>conflicting evidence</td>
+      </tr>
+      <tr>
+        <td><code>UNKNOWN</code></td>
+        <td>insufficient or contradictory signals</td>
+        <td>none</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    同点時は<code>CONVERSATION &gt; MEETING &gt; CODING &gt; WRITING &gt; MEDIA &gt; FOCUS &gt; SOLO &gt; UNKNOWN</code>の固定優先順を使い、rule
+    versionへ含める。明示的なSAAA操作を受動Signalより優先する。
+  </p>
+  <h3 id="hysteresis">Hysteresis</h3>
+  <ul>
+    <li>sampling default: 2 seconds</li>
+    <li>enter threshold: 70 / 100</li>
+    <li>exit threshold: 45 / 100</li>
+    <li>candidate hold: 3 consecutive fresh samples</li>
+    <li>exit hold: 5 consecutive fresh samples</li>
+    <li>stale threshold: sampling intervalの3倍</li>
+    <li>transition cool-down: 10 seconds。ただし明示的なSAAA操作は即時反映してよい</li>
+  </ul>
+  <p>
+    閾値は<code>SituationRuntimeSettings</code>へ保存するが、UIから編集できるのはMonitoring、Calendar
+    opt-in、retention、privacy
+    controlに限定する。weightやthresholdを一般ユーザー向けUIへ露出させない。
+  </p>
+  <h3 id="shadow-policy">Shadow policy</h3>
+  <ul>
+    <li>explicit SAAA input / active run: <code>RESPOND</code></li>
+    <li>
+      meetingまたはuserAttention=<code>busy</code>:
+      <code>OBSERVE</code>または<code>IGNORE</code>
+    </li>
+    <li>availableかつ高confidenceの補助候補: <code>SUGGEST</code></li>
+    <li>
+      sensitive、unknown、低confidence、stale signal: <code>IGNORE</code>
+    </li>
+    <li>すべてのcaseでactual resultは<code>NONE / SILENT</code></li>
+  </ul>
+  <p>
+    MVP 1のPolicyは既存の明示操作をguardしない。後続MVPで実行Policyへ昇格させる前に、false
+    suggestion rateとpermission behaviorを評価する。
+  </p>
+  <h2 id="6-persistence-and-settings">6. Persistence and Settings</h2>
+  <p>
+    database <code>user_version</code>とapplication contract
+    versionを4へ上げ、起動前backupを既存migration flowで作成する。
+  </p>
+  <h3 id="settings-document">Settings document</h3>
+  <pre><code class="language-text">namespace: situation.runtime
+key: default
+schemaVersion: 4
+</code></pre>
+  <pre><code class="language-json">{
+  &quot;enabled&quot;: false,
+  &quot;sampleIntervalMs&quot;: 2000,
+  &quot;calendarEnabled&quot;: false,
+  &quot;retentionDays&quot;: 7,
+  &quot;maxLedgerEntries&quot;: 10000,
+  &quot;heartbeatIntervalMs&quot;: 300000,
+  &quot;sensitiveApplicationCategories&quot;: true
+}
+</code></pre>
+  <p>
+    既存documentもcontract version 4へ機械的に移行し、値は変更しない。validation failure時はversion
+    3 snapshotを破損させず、MVP 0機能を起動できるrecoverable migration errorを返す。
+  </p>
+  <h3 id="situation-ledger">Situation ledger</h3>
+  <pre><code class="language-sql">situation_ledger(
+  id TEXT PRIMARY KEY,
+  observed_at TEXT NOT NULL,
+  scene TEXT NOT NULL,
+  confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 100),
+  user_attention TEXT NOT NULL,
+  audio_environment TEXT NOT NULL,
+  proposed_attention TEXT NOT NULL,
+  actual_execution TEXT NOT NULL CHECK(actual_execution = &#39;NONE&#39;),
+  actual_presentation TEXT NOT NULL CHECK(actual_presentation = &#39;SILENT&#39;),
+  evidence_json TEXT NOT NULL,
+  signal_health_json TEXT NOT NULL,
+  rule_version TEXT NOT NULL,
+  policy_version TEXT NOT NULL,
+  entry_kind TEXT NOT NULL CHECK(entry_kind IN (&#39;transition&#39;, &#39;decision&#39;, &#39;heartbeat&#39;))
+)
+
+situation_feedback(
+  ledger_id TEXT PRIMARY KEY,
+  verdict TEXT NOT NULL CHECK(verdict IN (&#39;accurate&#39;, &#39;inaccurate&#39;, &#39;unsure&#39;)),
+  corrected_scene TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(ledger_id) REFERENCES situation_ledger(id) ON DELETE CASCADE
+)
+</code></pre>
+  <p>
+    <code>evidence_json</code
+    >はcodeとweightだけ、<code>signal_health_json</code>はsourceとhealthだけに制限する。free-text
+    feedbackは保存しない。
+  </p>
+  <h3 id="retention">Retention</h3>
+  <ul>
+    <li>monitoring開始時、heartbeat追記後、manual cleanup時にretentionを適用する。</li>
+    <li>日数とentry上限の厳しい方を採用する。</li>
+    <li>ledger削除時はfeedbackをforeign key cascadeで削除する。</li>
+    <li>
+      cleanup
+      failureはmonitoring全体を停止させず、healthを<code>degraded</code>にしてUIへ復旧方法を表示する。
+    </li>
+  </ul>
+  <h2 id="7-ui-slice">7. UI Slice</h2>
+  <p>Primary navigationへ<code>Situation</code> Surfaceを追加する。</p>
+  <pre><code class="language-text">Situation
+├─ Monitoring on / paused
+├─ Current stable scene + confidence
+├─ Would observe / suggest / respond / stay silent
+├─ &quot;No automatic actions&quot; safety badge
+├─ Evidence codes and signal freshness
+├─ Signal health / permission recovery
+├─ Bounded transition timeline
+├─ Accurate / inaccurate / unsure feedback
+└─ Clear Situation history
+</code></pre>
+  <p>Settingsへ<code>Situation</code> sectionを追加する。</p>
+  <pre><code class="language-text">Situation Settings
+├─ Enable monitoring
+├─ Calendar opt-in and permission status
+├─ Sampling summary
+├─ Retention days
+├─ Privacy summary
+└─ Clear history
+</code></pre>
+  <p>
+    raw application identity、window title、Calendar details、audio
+    contentをUIにも表示しない。Situation Surfaceを閉じてもmonitoring設定がenabledならRust
+    runtimeは継続し、Pause時は即時停止する。
+  </p>
+  <h2 id="8-repository-changes">8. Repository Changes</h2>
+  <pre><code class="language-text">src/
+  features/
+    situation/
+      SituationPage.tsx
+      SituationTimeline.tsx
+  lib/
+    contracts.ts          # Situation contract追加
+    schemas.ts            # v4 / situation validation
+    runtime.ts            # Situation commands / channel
+
+src-tauri/src/
+  lib.rs                  # stateとcommand wiringのみ
+  situation/
+    mod.rs                # lifecycle / orchestration
+    contracts.rs          # validated native types
+    signals.rs            # normalization / freshness
+    classifier.rs         # scoring / hysteresis
+    policy.rs             # shadow decision
+    repository.rs         # ledger / retention / feedback
+    platform/
+      mod.rs
+      macos.rs
+      unsupported.rs
+
+tests/
+  situation.test.ts
+
+spec/docs/
+  adr/0002-situation-signal-privacy.md
+  mvp-1-implementation-plan.md
+  mvp-1-release-evidence.md
+</code></pre>
+  <p>
+    MVP 0の型やcommandをSituation
+    moduleへ移す大規模refactorは行わない。新規境界が安定してから別作業として判断する。
+  </p>
+  <h2 id="9-delivery-order">9. Delivery Order</h2>
+  <h3 id="p0--baseline-and-platform-feasibility">P0 — Baseline and Platform Feasibility</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>
+      <code>bun run check</code
+      >と<code>bun run desktop:smoke</code>のbaseline
+    </li>
+    <li>macOS Foreground Application adapter spike</li>
+    <li>Calendar permission / coarse projection spike</li>
+    <li>System mic / audio read-only signal feasibility record</li>
+    <li>signalごとのprivacy data-flow表</li>
+    <li>ADR 0002</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>permission不要でforeground categoryを取得できるか、明確なfallbackを決定する</li>
+    <li>Calendar detailsをRust contractへ入れずにbusy stateへprojectionできる</li>
+    <li>unsupported / denied状態でapplication全体が起動する</li>
+    <li>raw title、Calendar本文、audio contentを保存しない設計がレビュー可能である</li>
+  </ul>
+  <p>Stop condition:</p>
+  <ul>
+    <li>
+      Foreground取得がAccessibility / screen capture
+      permissionを必須とする場合は、その方式を採用しない
+    </li>
+    <li>
+      System mic / audio signalがprivate API、process scraping、captureを必要とする場合はMVP
+      1から外す
+    </li>
+    <li>
+      Calendar adapterを安全にbundleできない場合は<code>unavailable</code>
+      adapterを出荷し、Foreground + SAAA lifecycleをMVP 1のminimum signal setとする
+    </li>
+  </ul>
+  <h3 id="p1--contract-v4-and-sqlite-migration">P1 — Contract v4 and SQLite Migration</h3>
+  <p>Depends on: P0 privacy decisions</p>
+  <p>Deliverables:</p>
+  <ul>
+    <li>Zod / TypeScript / Rust Situation contracts</li>
+    <li>Settings namespace追加とversion 3 → 4 migration</li>
+    <li>
+      <code>situation_ledger</code>、<code>situation_feedback</code>
+      migration
+    </li>
+    <li>repository、retention、startup load</li>
+    <li>pre-migration backup coverage</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>fresh / version 3 / version 4 database testが通る</li>
+    <li>invalid Situation settingsで既存SettingsとConversationを破損しない</li>
+    <li>ledger rowへraw signalを保存できないvalidationがある</li>
+    <li>deleteとretentionがSituation dataだけへ作用する</li>
+  </ul>
+  <h3 id="p2--signal-providers-and-lifecycle">P2 — Signal Providers and Lifecycle</h3>
+  <p>Depends on: P1 contracts</p>
+  <p>Deliverables:</p>
+  <ul>
+    <li><code>SituationRuntime.start / stop / dispose / health</code></li>
+    <li>foreground adapter</li>
+    <li>Calendar opt-in adapterまたは明示的<code>unavailable</code></li>
+    <li>existing runtime run、capture、transcription、speech lifecycle bridge</li>
+    <li>freshness、sequence、bounded channel</li>
+    <li>pause / resume command</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>monitoring disabled時にplatform pollerが起動しない</li>
+    <li>enable / pause / app exitでresourceが確実に解放される</li>
+    <li>permission denied / adapter failureが他のSignalとMVP 0機能を止めない</li>
+    <li>stale eventが最新snapshotを上書きしない</li>
+  </ul>
+  <h3 id="p3--deterministic-classifier-and-hysteresis">
+    P3 — Deterministic Classifier and Hysteresis
+  </h3>
+  <p>Depends on: P2 normalized snapshots</p>
+  <p>Deliverables:</p>
+  <ul>
+    <li>versioned rule table</li>
+    <li>score、tie-break、freshness filtering</li>
+    <li>candidate / stable state machine</li>
+    <li>enter / exit hysteresis</li>
+    <li>fixture replay harness</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>同じSignal列から常に同じ結果が得られる</li>
+    <li>noisy foreground切替でstable sceneが連続反転しない</li>
+    <li>
+      insufficient / conflicting / stale
+      signalsが<code>UNKNOWN</code>へ落ちる
+    </li>
+    <li>
+      explicit SAAA
+      interactionが規定時間内に<code>CONVERSATION</code>へ反映される
+    </li>
+  </ul>
+  <h3 id="p4--shadow-policy-and-evaluation-ledger">P4 — Shadow Policy and Evaluation Ledger</h3>
+  <p>Depends on: P3 stable state</p>
+  <p>Deliverables:</p>
+  <ul>
+    <li>versioned Shadow policy</li>
+    <li>transition / decision / heartbeat persistence</li>
+    <li>retention cleanup</li>
+    <li>accurate / inaccurate / unsure feedback</li>
+    <li>aggregate evaluation query</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>すべてのdecisionが<code>NONE / SILENT</code>を保持する</li>
+    <li>
+      Shadow decisionからProvider、TTS、Notification、Application commandへ到達するcode pathがない
+    </li>
+    <li>restart後にbounded historyとfeedbackを復元できる</li>
+    <li>diagnosticsはaggregateだけを出力する</li>
+  </ul>
+  <h3 id="p5--situation-and-settings-surfaces">P5 — Situation and Settings Surfaces</h3>
+  <p>Depends on: P2 health、P4 ledger</p>
+  <p>Deliverables:</p>
+  <ul>
+    <li>Situation Surface</li>
+    <li>current state、evidence、health、timeline</li>
+    <li>feedback controls</li>
+    <li>monitoring / Calendar / retention Settings</li>
+    <li>permission recoveryとclear history UX</li>
+    <li>keyboard / screen reader labels</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>UI表示がmemory-only React stateではなくRust snapshot / SQLite ledgerと一致する</li>
+    <li>Pauseが表示更新だけでなくpollerを停止する</li>
+    <li>denied / unsupported / staleの違いと復旧方法を確認できる</li>
+    <li>Situationを無効化してもChat、Voice、Codexが従来どおり動く</li>
+  </ul>
+  <h3 id="p6--acceptance-and-packaging">P6 — Acceptance and Packaging</h3>
+  <p>Depends on: P0–P5</p>
+  <p>Deliverables:</p>
+  <ul>
+    <li>unit / integration / fixture replay / desktop smoke</li>
+    <li>resource soak test</li>
+    <li>privacy inspection</li>
+    <li>migration / backup / restore evidence</li>
+    <li><code>mvp-1-release-evidence.md</code></li>
+    <li><code>plan.md</code> Current Milestoneの完了更新</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>Section 11を再現可能な手順で通す</li>
+    <li>packaged macOS applicationでmonitoring enable / pause / restartを確認する</li>
+    <li>Calendar permission拒否とadapter failureの双方でMVP 0機能が継続する</li>
+    <li>
+      network captureまたはtest doubleでSituation Runtimeからoutbound requestがないことを確認する
+    </li>
+  </ul>
+  <h2 id="10-verification-strategy">10. Verification Strategy</h2>
+  <h3 id="unit-tests">Unit tests</h3>
+  <ul>
+    <li>Signal validation、freshness、sequence ordering</li>
+    <li>app category projectionとsensitive override</li>
+    <li>rule score、tie-break、confidence bound</li>
+    <li>candidate / stable hysteresis</li>
+    <li>Shadow policy全分岐の<code>NONE / SILENT</code> invariant</li>
+    <li>retentionのdays / max entries境界</li>
+    <li>evidence / health JSONのsizeとfield allowlist</li>
+  </ul>
+  <h3 id="integration-tests">Integration tests</h3>
+  <ul>
+    <li>version 3 database → backup → version 4 migration</li>
+    <li>monitoring settings save → restart → runtime start condition</li>
+    <li>platform adapter fixture → classifier → ledger → UI snapshot contract</li>
+    <li>transition / heartbeat deduplication</li>
+    <li>feedback upsert、restore、cascade delete</li>
+    <li>permission denied / unsupported / adapter crash isolation</li>
+    <li>existing runtime run → owned signal → Situation projection</li>
+  </ul>
+  <h3 id="fixture-replay-scenarios">Fixture replay scenarios</h3>
+  <ol>
+    <li>
+      idle desktop → coding app → short app switch → coding
+      appで<code>CODING</code>が安定する。
+    </li>
+    <li>
+      communication app + Calendar
+      meeting-likelyで<code>MEETING</code>候補になり、busy
+      policyが<code>OBSERVE</code>または<code>IGNORE</code>になる。
+    </li>
+    <li>
+      SAAA
+      Push-to-talk開始で<code>CONVERSATION</code>が優先され、停止後にhysteresisを経て元のsceneへ戻る。
+    </li>
+    <li>
+      sensitive categoryで他の根拠にかかわらず<code>IGNORE / NONE / SILENT</code>になる。
+    </li>
+    <li>Calendar permission拒否後もforeground + owned lifecycleで判定を続ける。</li>
+    <li>stale / out-of-order sampleでstable stateが巻き戻らない。</li>
+    <li>noisyなapp切替でledgerがsample数と同じ速度で増えない。</li>
+    <li>monitoring pause後に新規poll / ledger writeが発生しない。</li>
+  </ol>
+  <h3 id="resource-and-privacy-checks">Resource and privacy checks</h3>
+  <ul>
+    <li>8時間fixture soakでevent queue、thread、file descriptor、ledger sizeがboundedである</li>
+    <li>idle時pollingのCPU duty cycleをbaselineと比較する</li>
+    <li>app exit / pause後にplatform observerとtimerが残らない</li>
+    <li>
+      SQLite、backup、diagnosticsにwindow title、Calendar title / attendee /
+      URL、audio、prompt、workspace pathがない
+    </li>
+    <li>Situation RuntimeがModel Provider、Codex、Cloud endpointへrequestを出さない</li>
+  </ul>
+  <h2 id="11-mvp-acceptance">11. MVP Acceptance</h2>
+  <p>MVP 1は次がすべて満たされたとき完了とする。</p>
+  <ol>
+    <li>Situation monitoringを明示的にenable / pauseでき、設定が再起動後も復元される。</li>
+    <li>
+      Foreground categoryとSAAA所有のConversation / Voice lifecycleをnormalized
+      Signalとして取得できる。
+    </li>
+    <li>
+      Calendar opt-inが利用可能な場合はcoarse
+      stateだけを取得し、拒否または未対応時はdegraded動作する。
+    </li>
+    <li>
+      raw window title、Calendar details、audio content、process
+      listをSQLite、log、diagnosticsへ保存しない。
+    </li>
+    <li>決定論ルールがSituation候補、confidence、bounded evidenceを返す。</li>
+    <li>hysteresisが短時間のSignal変動によるscene反転を抑止する。</li>
+    <li>
+      stale、insufficient、conflicting
+      signalでは<code>UNKNOWN</code>またはsafe defaultになる。
+    </li>
+    <li>
+      Shadow
+      decisionが4種類の介入案を記録し、実際のExecutionとPresentationは常に<code>NONE / SILENT</code>である。
+    </li>
+    <li>Shadow modeから自動Model call、TTS、Notification、Application actionを実行できない。</li>
+    <li>Situation Surfaceでcurrent state、根拠、Signal health、bounded historyを確認できる。</li>
+    <li>ユーザーがaccurate / inaccurate / unsureを記録し、再起動後も復元できる。</li>
+    <li>retentionとClear historyがSituation dataだけに作用する。</li>
+    <li>
+      adapter failure、permission拒否、Situation無効化のいずれでもMVP 0のChat、Voice、Codexが動く。
+    </li>
+    <li>
+      version 3 databaseがbackup後にversion 4へ移行し、既存Settings、Conversation、Codex
+      threadを保持する。
+    </li>
+    <li>monitoring pause / application exitでpoller、timer、subscriptionを解放する。</li>
+    <li>
+      Situation RuntimeはCloud service、Hono、RAG、PostgreSQL、pgvector、Embedding
+      modelへ依存しない。
+    </li>
+  </ol>
+  <h2 id="12-suggested-pr-slices">12. Suggested PR Slices</h2>
+  <table>
+    <caption>
+      12. Suggested PR Slices
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">PR</th>
+        <th scope="col">Scope</th>
+        <th scope="col">Depends on</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>P0 feasibility、privacy ADR、fixture contract</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>contract v4、migration、repository</td>
+        <td>PR 1</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>Signal providers、lifecycle、health</td>
+        <td>PR 2</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>classifier、hysteresis、fixture replay</td>
+        <td>PR 3</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>Shadow policy、ledger、feedback、retention</td>
+        <td>PR 4</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Situation / Settings UI</td>
+        <td>PR 3, PR 5</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>packaging、soak、privacy、release evidence</td>
+        <td>PR 1–6</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    各PRは対応するunit / integration testを同時に含める。PR 3とPR 4の間でrule
+    parameterを固定し、UI実装中に判定ロジックを調整しない。
+  </p>
+  <h2 id="13-definition-of-done">13. Definition of Done</h2>
+  <ul>
+    <li>MVP Acceptanceと再現手順がrelease evidenceに保存されている。</li>
+    <li>classifier / policy / privacy projectionにversionとfixtureがある。</li>
+    <li>Monitoringのstart / stop / dispose / healthが実装されている。</li>
+    <li>すべてのqueue、history、payload、retentionに上限がある。</li>
+    <li>Permission拒否とunsupported platformが通常状態として扱われる。</li>
+    <li>Situationを無効化したMVP 0 regression suiteが通る。</li>
+    <li>実データを含まないfixtureで判定を再現できる。</li>
+    <li>
+      <code>plan.md</code>の責務境界と次のMVP 2 Meeting
+      Modeを先取りしていない。
+    </li>
+  </ul>
+</article>

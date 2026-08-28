@@ -1,0 +1,181 @@
+<article lang="ja">
+  <h1 id="mvp-15-release-evidence">MVP 1.5 Release Evidence</h1>
+  <ul>
+    <li>Date: 2026-08-27</li>
+    <li>Result: Accepted</li>
+    <li>
+      Plan:
+      <a href="./mvp-1.5-implementation-plan.html"><code>mvp-1.5-implementation-plan.html</code></a>
+    </li>
+    <li>
+      Migration backup: application-data <code>backups/pre-migration-&lt;timestamp&gt;.sqlite3</code> when
+      <code>user_version &lt; 6</code>
+    </li>
+  </ul>
+  <h2 id="implementation-evidence">Implementation evidence</h2>
+  <table>
+    <caption>
+      Implementation evidence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Acceptance</th>
+        <th scope="col">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Profile migration</td>
+        <td>
+          <code>migrate_v4_to_v5</code> adds feedback v2, quality windows, profiles
+          and runs, then seeds <code>mvp1-rules-v1</code>.
+        </td>
+      </tr>
+      <tr>
+        <td>Parameter safety</td>
+        <td>
+          <code>CalibrationParameters</code> has strict bounds and the
+          classifier/hysteresis accept parameterized thresholds.
+        </td>
+      </tr>
+      <tr>
+        <td>Privacy</td>
+        <td>
+          Quality storage is aggregate-only; replay uses repository fixtures; diagnostics exports
+          counts, active rule version and latest run status only.
+        </td>
+      </tr>
+      <tr>
+        <td>Lifecycle</td>
+        <td>
+          Candidate creation, replay-run persistence, accept, reject and rollback are transactional
+          SQLite operations.
+        </td>
+      </tr>
+      <tr>
+        <td>Review</td>
+        <td>
+          The Situation Review tab shows the active rule, data sufficiency, candidate history and
+          replay result.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="fixture">Fixture</h2>
+  <ul>
+    <li>Set version: <code>situation-fixtures-v1</code></li>
+    <li>Fixture: <code>src-tauri/fixtures/situation/mvp1-v1.json</code></li>
+    <li>SHA-256: <code>6d52b58aaadf303ba4d93b7d76d00f32cae7ae042533174e35bfc324a33f2808</code></li>
+    <li>
+      Raw application identity, titles, calendar content, audio, prompts and responses are absent.
+    </li>
+  </ul>
+  <h2 id="verification">Verification</h2>
+  <ul>
+    <li>Rust unit tests: 61 passed, 2 intentionally ignored (external Codex runtime required).</li>
+    <li>Frontend tests: 10 passed.</li>
+    <li>
+      Typecheck, Rust formatting, Clippy with warnings denied, production build, and desktop smoke
+      all pass.
+    </li>
+  </ul>
+  <h2 id="privacy-inventory">Privacy inventory</h2>
+  <ul>
+    <li>SQLite quality windows contain only bounded counters and rule versions.</li>
+    <li>
+      SQLite ledger contains bounded scene/evidence/health categories, not application identity,
+      window title, calendar content, audio, prompts, or responses.
+    </li>
+    <li>Fixture data contains bounded synthetic signal categories only.</li>
+  </ul>
+  <h2 id="acceptance-mapping">Acceptance mapping</h2>
+  <table>
+    <caption>
+      Acceptance mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col" class="markdown-align-right">#</th>
+        <th scope="col">Acceptance</th>
+        <th scope="col">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="markdown-align-right">1</td>
+        <td>v4 data is preserved through migration</td>
+        <td>staged migration, backup-before-migration, migration/reopen tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">2</td>
+        <td>Default profile preserves MVP 1 behavior</td>
+        <td>
+          default <code>CalibrationParameters</code>, classifier and hysteresis parity
+          tests
+        </td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">3</td>
+        <td>Quality does not persist raw samples</td>
+        <td>bounded <code>situation_quality_windows</code> counters and strict decode test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">4</td>
+        <td>Feedback v2 survives and validates</td>
+        <td>feedback upsert, cross-field validation, cascade/retention tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">5</td>
+        <td>Replay is deterministic and comparable</td>
+        <td>static fixture replay and baseline comparison test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">6</td>
+        <td>Candidate parameters are bounded</td>
+        <td>Rust and Review input bounds plus validation</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">7</td>
+        <td>Only accepted candidate becomes active</td>
+        <td>lifecycle transaction and reject-path tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">8</td>
+        <td>Rollback survives reopen</td>
+        <td>active profile repository/runtime restore and rollback lifecycle tests</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">9</td>
+        <td>Review is observation-only</td>
+        <td>Review invokes only Situation commands; shadow call-graph guard</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">10</td>
+        <td>Private raw data is excluded</td>
+        <td>schema, diagnostics payload, fixture and bounded-code validation</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">11</td>
+        <td>Runtime history is bounded</td>
+        <td>retention limits, quality-window cap and eight-hour fixture test</td>
+      </tr>
+      <tr>
+        <td class="markdown-align-right">12</td>
+        <td>MVP 1 safety and desktop smoke regressions pass</td>
+        <td>full Rust suite and packaged desktop smoke</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="known-bounded-degradation">Known bounded degradation</h2>
+  <ul>
+    <li>
+      The static fixture is intentionally synthetic and contains no user-derived history or raw
+      application data.
+    </li>
+    <li>
+      Calendar remains a coarse optional signal; unavailable or degraded states fall back to
+      <code>UNKNOWN</code> /
+      <code>IGNORE</code> safety behavior.
+    </li>
+  </ul>
+</article>

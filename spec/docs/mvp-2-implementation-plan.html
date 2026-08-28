@@ -1,0 +1,890 @@
+<article lang="ja">
+  <h1 id="mvp-2-実装契約--explicit-meeting-mode">MVP 2 実装契約 — Explicit Meeting Mode</h1>
+  <h2 id="0-文書の役割">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Proposed</li>
+    <li>
+      実装前提:
+      <a href="./.archived/mvp-1.5-implementation-plan.html"
+        ><code>mvp-1.5-implementation-plan.html</code></a
+      >
+      の受け入れ完了
+    </li>
+    <li>対象: macOS desktopを最初のshipping platformとする</li>
+    <li>この文書の読者: 実装担当、レビュー担当、QA担当</li>
+    <li>
+      完了の定義:
+      <code>M2-00</code
+      >〜<code>M2-11</code>を順に完了し、P0 gateで確定したshipping
+      scopeの受け入れ条件を満たすこと
+    </li>
+  </ul>
+  <p>
+    この文書では、未検証のsystem audioを前提に全体を組まない。まずmicrophone-onlyのMeeting
+    Sessionを縦に完成させ、system audioは独立したfeasibility gateを通過した場合だけ同じlane
+    contractへ追加する。
+  </p>
+  <h2 id="1-今回達成すること">1. 今回達成すること</h2>
+  <p>
+    ユーザーが明示的に開始し、pause/resume/stopできるMeeting
+    Sessionを追加する。会議中の音声はローカルで文字起こしし、non-modalなMeeting画面へpartial/final
+    transcriptを反映する。終了後の既定動作はDiscardであり、ユーザーがSaveを押した場合だけfinal
+    transcriptをSQLiteへ保存する。
+  </p>
+  <p>固定する安全境界:</p>
+  <pre><code class="language-text">automaticMeetingStart = false
+autoJoin = false
+rawAudioPersistence = false
+cloudSttFallback = false
+automaticTTS = false
+automaticNotification = false
+automaticAgentOrCodexRun = false
+automaticApplicationAction = false
+defaultTranscriptPersistence = discard
+</code></pre>
+  <p>
+    MVP 1.5のMeeting
+    candidateは、開始画面へ参考情報として表示してよい。ただしcandidateの有無はsession
+    stateを変更せず、Start操作を代行しない。
+  </p>
+  <h2 id="2-現行コードのレビュー結果">2. 現行コードのレビュー結果</h2>
+  <table>
+    <caption>
+      2. 現行コードのレビュー結果
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">現在の実装</th>
+        <th scope="col">制約・問題</th>
+        <th scope="col">MVP 2での判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <code>App.tsx</code
+          >が<code>getUserMedia</code>、<code>MediaRecorder</code>、Blob
+          decode、STT、Chat送信を一括管理
+        </td>
+        <td>Meetingへ流用するとChatと長時間captureが密結合する</td>
+        <td>
+          captureを<code>features/meeting/audio/</code>へ分離し、Chat
+          push-to-talkは既存のまま維持
+        </td>
+      </tr>
+      <tr>
+        <td><code>transcribe_audio</code>は最大5分の全samplesを一括受信</td>
+        <td>長時間会議、低遅延partial、bounded memoryに適さない</td>
+        <td>共通のWhisper実行部を抽出し、Meetingは短いsegment単位でcommandを呼ぶ</td>
+      </tr>
+      <tr>
+        <td>
+          <code>run_whisper_transcription</code
+          >は一時WAVを<code>tempdir</code>へ書く
+        </td>
+        <td>「fileを一切作らない」という旧計画と矛盾</td>
+        <td>
+          MVP
+          2では暗号化永続保存ではなく一時fileを許容するが、成功/失敗/取消時の削除をtestする。完全in-memory化は別ADR
+        </td>
+      </tr>
+      <tr>
+        <td><code>VoiceEvent</code>はconversation/run中心</td>
+        <td>session/lane/sequenceを識別できない</td>
+        <td>Meeting専用eventを追加し、VoiceEventを無理に拡張しない</td>
+      </tr>
+      <tr>
+        <td><code>runtime_runs.route_kind</code>はCHECK制約</td>
+        <td>meeting routeを追加するとtable recreationが必要</td>
+        <td>
+          Meeting
+          segmentは<code>runtime_runs</code>へ入れず、<code>meeting_sessions</code>とin-memory
+          jobで管理
+        </td>
+      </tr>
+      <tr>
+        <td><code>AppState.active_runs</code>はrun cancellationを保持</td>
+        <td>stop時のsegment取消に再利用可能だがsession全体の状態は表せない</td>
+        <td>
+          独立した<code>MeetingRuntime</code>を<code>AppState</code>へ追加する
+        </td>
+      </tr>
+      <tr>
+        <td>TTSはMeeting状態を知らない</td>
+        <td>Meeting中にChatのautoSpeakが走り得る</td>
+        <td>
+          <code>speak_text</code>の先頭でMeeting policy guardを必須化する
+        </td>
+      </tr>
+      <tr>
+        <td>system audio用dependencyがCargoに無い</td>
+        <td>permission、capture、bundle、停止が未検証</td>
+        <td>P0 spikeに隔離し、gate失敗時はmicrophone-onlyでship</td>
+      </tr>
+      <tr>
+        <td>main windowしか存在しない</td>
+        <td>別overlay windowはTauri capabilityとlifecycleの追加が必要</td>
+        <td>最初はmain window内のMeeting surfaceをshipし、floating overlayはP1 gate通過後に追加</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="3-shipping-scopeの決め方">3. Shipping scopeの決め方</h2>
+  <h3 id="31-必ずshipするcore">3.1 必ずshipするCore</h3>
+  <ul>
+    <li>microphone lane 1本</li>
+    <li>明示Start、Pause、Resume、Stop</li>
+    <li>bounded segment capture</li>
+    <li>local Whisper transcript</li>
+    <li>original transcriptのpartial表示とfinal確定</li>
+    <li>input/provider/privacy health表示</li>
+    <li>終了後のSave/Discard</li>
+    <li>Meeting中のTTS、notification、agent/application action抑止</li>
+    <li>app終了、permission revoke、STT失敗時のcleanup</li>
+  </ul>
+  <h3 id="32-gate通過時だけshipするoptional">3.2 Gate通過時だけshipするOptional</h3>
+  <ul>
+    <li>macOS system audio lane</li>
+    <li>microphone + system audioの2 lane同時実行</li>
+    <li>floating always-on-top overlay window</li>
+    <li>local translation</li>
+  </ul>
+  <p>
+    Optionalが一つも通らなくても、Coreの受け入れ条件を満たせばMVP
+    2は完成とする。UIは未対応機能を壊れたtoggleとして出さず、<code>Unavailable in this build</code>と理由を表示する。
+  </p>
+  <h2 id="4-state-machine">4. State machine</h2>
+  <p>
+    Rustの<code>MeetingRuntime</code>だけをsession stateの正とする。React
+    stateやwindow visibilityを正にしない。
+  </p>
+  <pre><code class="language-rust">pub enum MeetingState {
+    Idle,
+    Preflight,
+    Ready,
+    Active,
+    Paused,
+    Stopping,
+    Completed,
+    Failed,
+}
+</code></pre>
+  <p>許可遷移:</p>
+  <table>
+    <caption>
+      4. State machine
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">From</th>
+        <th scope="col">Command/Event</th>
+        <th scope="col">To</th>
+        <th scope="col">必須処理</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Idle</td>
+        <td><code>meeting_preflight</code></td>
+        <td>Preflight→Ready</td>
+        <td>provider/model/device/permissionを検査。captureしない</td>
+      </tr>
+      <tr>
+        <td>Ready</td>
+        <td><code>start_meeting</code></td>
+        <td>Active</td>
+        <td>session生成、capture token発行、policy lock取得</td>
+      </tr>
+      <tr>
+        <td>Active</td>
+        <td><code>append_meeting_audio_segment</code></td>
+        <td>Active</td>
+        <td>segmentをSTTへ渡しeventを返す</td>
+      </tr>
+      <tr>
+        <td>Active</td>
+        <td><code>pause_meeting</code></td>
+        <td>Paused</td>
+        <td>capture token無効化、active segment取消、buffer破棄</td>
+      </tr>
+      <tr>
+        <td>Paused</td>
+        <td><code>resume_meeting</code></td>
+        <td>Active</td>
+        <td>新capture tokenを発行</td>
+      </tr>
+      <tr>
+        <td>Active/Paused</td>
+        <td><code>stop_meeting</code></td>
+        <td>Stopping→Completed</td>
+        <td>segment取消、final確定、resource解放</td>
+      </tr>
+      <tr>
+        <td>Completed</td>
+        <td><code>save_meeting_transcript</code></td>
+        <td>Idle</td>
+        <td>finalだけtransaction保存、session memory破棄</td>
+      </tr>
+      <tr>
+        <td>Completed</td>
+        <td><code>discard_meeting</code></td>
+        <td>Idle</td>
+        <td>transcript memory破棄、DBへ本文を書かない</td>
+      </tr>
+      <tr>
+        <td>非Idle</td>
+        <td>unrecoverable error</td>
+        <td>Failed</td>
+        <td>capture停止、token無効化、bounded error保持</td>
+      </tr>
+      <tr>
+        <td>Failed</td>
+        <td><code>discard_meeting</code></td>
+        <td>Idle</td>
+        <td>resourceとmemoryを破棄</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    禁止遷移は<code>MEETING_INVALID_STATE</code>を返し、現在stateを変えない。<code>pause</code>、<code>stop</code>、<code>discard</code>は同じsession
+    idで再送されても安全なidempotent操作にする。
+  </p>
+  <h3 id="41-app終了と再起動">4.1 app終了と再起動</h3>
+  <ul>
+    <li>Active/Paused/StoppingのsessionはSQLiteへ本文保存しないため復元しない。</li>
+    <li>
+      app close hookで<code>MeetingRuntime::shutdown()</code>を呼び、capture
+      tokenとworkerを停止する。
+    </li>
+    <li>
+      <code>meeting_sessions</code
+      >にmetadataを作成済みなら<code>interrupted</code>として終了時刻を記録する。ただしtranscript
+      entryは明示Save前には存在してはならない。
+    </li>
+    <li>
+      次回起動時に<code>active/paused/stopping</code>
+      metadataが残っていれば<code>interrupted</code>へreconcileする。
+    </li>
+  </ul>
+  <h2 id="5-モジュールと変更ファイル">5. モジュールと変更ファイル</h2>
+  <h3 id="51-rust">5.1 Rust</h3>
+  <pre><code class="language-text">src-tauri/src/meeting/
+├── mod.rs                    # MeetingRuntimeとuse case
+├── contracts.rs              # command input/output/event/error code
+├── state_machine.rs          # 遷移表。DB/Tauri非依存
+├── repository.rs             # metadataと明示保存transcript
+├── policy.rs                 # TTS/agent/action guard
+└── stt/
+    ├── mod.rs                # MeetingStt traitとsegment validation
+    └── local_whisper.rs      # 既存Whisper coreのadapter
+
+src-tauri/src/situation/
+└── ...                       # owned microphone stateの更新だけ。Meetingロジックを入れない
+
+src-tauri/src/lib.rs          # AppState、command、migration v6、handler登録
+</code></pre>
+  <p>
+    <code>run_whisper_transcription</code
+    >、<code>write_whisper_wav</code>、<code>resample_pcm</code>、<code>whisper_transcript_line</code>はMeeting固有moduleへコピーしない。<code>src-tauri/src/voice/local_whisper.rs</code>へ共通coreとして抽出し、既存<code>transcribe_audio</code>とMeeting
+    adapterの両方から呼ぶ。抽出後も既存Chat voice testの期待値を変えない。
+  </p>
+  <h3 id="52-frontend">5.2 Frontend</h3>
+  <pre><code class="language-text">src/features/meeting/
+├── MeetingPage.tsx
+├── MeetingPreflight.tsx
+├── MeetingSession.tsx
+├── MeetingCompleted.tsx
+├── useMeetingSession.ts
+└── audio/
+    ├── microphoneCapture.ts
+    ├── pcm.ts
+    └── segmentQueue.ts
+
+src/lib/contracts.ts
+src/lib/runtime.ts
+src/lib/schemas.ts
+src/App.tsx
+src/App.css
+tests/meeting-contracts.test.ts
+tests/meeting-segment-queue.test.ts
+</code></pre>
+  <p>
+    <code>App.tsx</code
+    >の<code>Surface</code>へ<code>meeting</code>を追加し、primary
+    menuに<code>Meeting</code>を追加する。Meetingのcapture
+    stateを<code>App.tsx</code>へ持ち上げない。
+  </p>
+  <h2 id="6-commanddto-contract">6. Command/DTO contract</h2>
+  <h3 id="61-preflight">6.1 Preflight</h3>
+  <pre><code class="language-rust">pub struct MeetingPreflightInput {
+    pub microphone_device_id: String, // max 256; &quot;default&quot;可
+    pub system_audio_enabled: bool,
+    pub stt_model_path: String,        // canonicalizeしfileを検証
+    pub translation_enabled: bool,
+}
+
+pub struct MeetingPreflightResult {
+    pub state: MeetingState,           // Readyのみ成功
+    pub microphone: LaneHealth,
+    pub system_audio: LaneHealth,
+    pub stt: ProviderHealth,
+    pub translation: ProviderHealth,
+    pub shipping_capabilities: MeetingCapabilities,
+    pub blocking_errors: Vec&lt;MeetingError&gt;,
+}
+</code></pre>
+  <p>
+    Frontendは<code>navigator.mediaDevices.getUserMedia</code>を実行してpermission/deviceを確認し、取得した全trackを結果確定直後に<code>stop()</code>してから<code>meeting_preflight</code>へ渡す。preflight用streamをcomponent
+    stateへ残さない。Rust側はFrontend申告だけを信用せず、model pathとbuild
+    capabilityを検証する。preflight中にMediaRecorderやAudioWorkletを開始しない。
+  </p>
+  <h3 id="62-start">6.2 Start</h3>
+  <pre><code class="language-rust">pub struct StartMeetingInput {
+    pub session_id: String,
+    pub microphone_device_id: String,
+    pub microphone_enabled: bool,
+    pub system_audio_enabled: bool,
+    pub stt_model_path: String,
+    pub translation_enabled: bool,
+    pub persistence_mode: PersistenceMode, // MVP 2開始時はDiscardのみ受理
+}
+</code></pre>
+  <p>
+    Start成功時に返す<code>capture_token</code>はランダム128bit相当のopaque
+    Stringとする。audio segment commandはsession
+    idとtokenの両方を必要とし、pause/stopでtokenを即時無効化する。tokenをSQLite、log、diagnosticsへ書かない。
+  </p>
+  <h3 id="63-segment">6.3 Segment</h3>
+  <pre><code class="language-rust">pub struct MeetingAudioSegmentInput {
+    pub session_id: String,
+    pub capture_token: String,
+    pub lane: MeetingLane,           // Microphone | SystemAudio
+    pub sequence: u64,
+    pub samples: Vec&lt;f32&gt;,
+    pub sample_rate: u32,
+    pub started_at_ms: u64,          // session相対時刻
+    pub duration_ms: u32,
+}
+</code></pre>
+  <p>Server-side bounds:</p>
+  <pre><code class="language-text">sampleRate: 8_000..=96_000
+durationMs: 1_000..=15_000
+samples: &lt;= sampleRate * 15
+sequence: laneごとに厳密単調増加
+queued segments: laneごとに最大2
+session transcript chars in memory: 最大200_000
+single final segment text: 最大8_000 chars
+</code></pre>
+  <p>
+    queueが上限なら古いsegmentを黙って捨てない。<code>MEETING_BACKPRESSURE</code>を返し、Frontendはcaptureをpauseして復旧案を表示する。
+  </p>
+  <h3 id="64-event">6.4 Event</h3>
+  <pre><code class="language-rust">#[serde(tag = &quot;type&quot;, rename_all = &quot;camelCase&quot;)]
+pub enum MeetingEvent {
+    StateChanged { session_id: String, state: MeetingState },
+    TranscriptPartial { session_id: String, lane: MeetingLane, sequence: u64, text: String },
+    TranscriptFinal { session_id: String, lane: MeetingLane, sequence: u64, text: String, language: Option&lt;String&gt; },
+    TranslationFinal { session_id: String, source_sequence: u64, text: String, language: String },
+    LaneHealthChanged { session_id: String, lane: MeetingLane, health: LaneHealth },
+    Failed { session_id: String, code: String, message: String, recovery: String },
+}
+</code></pre>
+  <p>
+    <code>watch_meeting</code
+    >は既存<code>watch_situation</code>と同じChannel patternを使うが、event
+    queueは最大128件。partialは同じlane/sequenceの最新値で置換し、final/state/errorは捨てない。finalでqueueが満杯ならsessionをpauseし<code>MEETING_BACKPRESSURE</code>を送る。
+  </p>
+  <h3 id="65-command一覧">6.5 Command一覧</h3>
+  <table>
+    <caption>
+      6.5 Command一覧
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Command</th>
+        <th scope="col">Output</th>
+        <th scope="col">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>meeting_preflight</code></td>
+        <td><code>MeetingPreflightResult</code></td>
+        <td>captureなし</td>
+      </tr>
+      <tr>
+        <td><code>start_meeting</code></td>
+        <td><code>MeetingSnapshot</code></td>
+        <td>Readyからのみ</td>
+      </tr>
+      <tr>
+        <td><code>append_meeting_audio_segment</code></td>
+        <td><code>MeetingSegmentResult</code></td>
+        <td><code>spawn_blocking</code>でlocal STT</td>
+      </tr>
+      <tr>
+        <td><code>pause_meeting</code></td>
+        <td><code>MeetingSnapshot</code></td>
+        <td>idempotent</td>
+      </tr>
+      <tr>
+        <td><code>resume_meeting</code></td>
+        <td><code>MeetingSnapshot</code></td>
+        <td>新tokenを返す</td>
+      </tr>
+      <tr>
+        <td><code>stop_meeting</code></td>
+        <td><code>MeetingSnapshot</code></td>
+        <td>idempotent、Completedまで待つ</td>
+      </tr>
+      <tr>
+        <td><code>get_meeting_snapshot</code></td>
+        <td><code>MeetingSnapshot</code></td>
+        <td>memory上のcurrent session</td>
+      </tr>
+      <tr>
+        <td><code>watch_meeting</code></td>
+        <td><code>void + Channel&lt;MeetingEvent&gt;</code></td>
+        <td>queue max 128</td>
+      </tr>
+      <tr>
+        <td><code>save_meeting_transcript</code></td>
+        <td><code>SavedMeeting</code></td>
+        <td>Completedからのみ</td>
+      </tr>
+      <tr>
+        <td><code>discard_meeting</code></td>
+        <td><code>void</code></td>
+        <td>memory本文を破棄</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="7-frontend-capture-contract">7. Frontend capture contract</h2>
+  <h3 id="71-microphone-segmenter">7.1 Microphone segmenter</h3>
+  <p>
+    Core shipping pathはWebViewの<code>getUserMedia</code>とWeb Audio
+    APIを使う。<code>MediaRecorder</code>のcompressed Blobを長時間蓄積しない。
+  </p>
+  <p>実装順:</p>
+  <ol>
+    <li><code>getUserMedia({audio: device constraint})</code>でstreamを取得。</li>
+    <li>
+      <code>AudioContext</code
+      >と<code>MediaStreamAudioSourceNode</code>を作る。
+    </li>
+    <li>
+      <code>AudioWorkletNode</code>を優先し、利用不可ならScriptProcessor
+      fallbackは採用せずunsupportedを表示する。
+    </li>
+    <li>Float32 PCMを5秒単位に区切る。</li>
+    <li>lane queueへ入れ、同時送信は1件に限定する。</li>
+    <li>command完了後に対象ArrayBufferへの参照を破棄する。</li>
+    <li>
+      pause/stop/unmountでtrack.stop、node.disconnect、context.close、queue.clearを必ず実行する。
+    </li>
+  </ol>
+  <p>
+    <code>public/audio/meeting-processor.js</code
+    >をworkletとして追加する。workletはnetwork、storage、DOMへアクセスせず、PCM
+    frameをpostMessageするだけとする。
+  </p>
+  <h3 id="72-partialの意味">7.2 Partialの意味</h3>
+  <p>
+    既存Whisper CLIは真のstreaming APIではない。MVP 2
+    Coreの<code>partial</code>は「直近5秒segmentの処理中に得たCLI出力」、<code>final</code>はそのsegmentの確定結果であり、session全文の再推論ではない。segment境界で単語が欠ける可能性を既知制限として表示する。
+  </p>
+  <p>重複除去は次の限定ルールだけを使う。</p>
+  <ul>
+    <li>前segment末尾32文字と次segment先頭32文字の最大一致を除く。</li>
+    <li>一致が8文字未満なら除去しない。</li>
+    <li>LLMによる修正、要約、話者推定をしない。</li>
+  </ul>
+  <h3 id="73-ui-state">7.3 UI state</h3>
+  <p>Meeting画面は次を必ず表示する。</p>
+  <pre><code class="language-text">state / elapsed time
+microphone selected device and health
+system audio capability and health
+STT provider = local-whisper / model filename
+translation = disabled or explicit route
+persistence = Discard unless user presses Save after stop
+original transcript window
+Pause / Resume / Stop
+Completed時のSave / Discard
+</code></pre>
+  <p>
+    Stopはprimary destructive actionとして常に同じ位置へ表示する。error
+    bannerでStopを覆わない。Meeting active中に別Surfaceへ移動してもsessionは継続するが、primary
+    navへ赤いActive indicatorとStop導線を出す。
+  </p>
+  <h2 id="8-sqlite-v6">8. SQLite v6</h2>
+  <p>
+    MVP 2のschema versionは6。MVP 1.5と同様、backup後にtransaction migrationする。settings
+    documentは6へ上げるが、Meeting設定documentはこのMVPでは増やさない。Voice
+    settingsの<code>sttModel</code>と<code>inputDeviceId</code>をpreflight初期値として使う。
+  </p>
+  <pre><code class="language-sql">CREATE TABLE meeting_sessions (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK(status IN (
+    &#39;active&#39;, &#39;paused&#39;, &#39;completed&#39;, &#39;saved&#39;, &#39;discarded&#39;, &#39;failed&#39;, &#39;interrupted&#39;
+  )),
+  microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0, 1)),
+  system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0, 1)),
+  stt_provider_id TEXT NOT NULL CHECK(stt_provider_id = &#39;local-whisper&#39;),
+  stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) &lt;= 256),
+  translation_provider_id TEXT,
+  persistence_mode TEXT NOT NULL CHECK(persistence_mode IN (&#39;discard&#39;, &#39;explicit-save&#39;)),
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  saved_at TEXT,
+  error_code TEXT
+);
+CREATE INDEX idx_meeting_sessions_started
+  ON meeting_sessions(started_at DESC);
+
+CREATE TABLE meeting_transcript_entries (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  lane TEXT NOT NULL CHECK(lane IN (&#39;microphone&#39;, &#39;system-audio&#39;)),
+  sequence INTEGER NOT NULL CHECK(sequence &gt;= 0),
+  original_text TEXT NOT NULL CHECK(length(original_text) BETWEEN 1 AND 8000),
+  original_language TEXT,
+  translated_text TEXT CHECK(translated_text IS NULL OR length(translated_text) &lt;= 8000),
+  translated_language TEXT,
+  started_at_ms INTEGER NOT NULL CHECK(started_at_ms &gt;= 0),
+  ended_at_ms INTEGER NOT NULL CHECK(ended_at_ms &gt;= started_at_ms),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES meeting_sessions(id) ON DELETE CASCADE,
+  UNIQUE(session_id, lane, sequence)
+);
+CREATE INDEX idx_meeting_transcript_session_sequence
+  ON meeting_transcript_entries(session_id, lane, sequence);
+</code></pre>
+  <h3 id="81-保存境界">8.1 保存境界</h3>
+  <ul>
+    <li>
+      Start時に<code>meeting_sessions</code>
+      metadataを<code>persistence_mode=discard</code>で作成してよい。
+    </li>
+    <li>
+      Active/Paused中、<code>meeting_transcript_entries</code>は常に0件でなければならない。
+    </li>
+    <li>
+      Save commandはmemory上の全final
+      entryを一つのtransactionでinsertし、sessionを<code>saved</code>へ更新する。
+    </li>
+    <li>
+      1 session最大2,000 entries、合計1 MiB相当のUTF-8
+      textを上限とする。超過時はSaveを拒否し、範囲選択機能はMVP 2に追加しない。
+    </li>
+    <li>
+      Discardはsession
+      metadataを<code>discarded</code>に更新し、memory本文を破棄する。metadataも残したくない場合の削除操作はSettingsのPrivacy
+      controlsで別途提供する。
+    </li>
+    <li>
+      diagnosticsへ本文、model path、device id、capture tokenを出さない。件数とstatusだけを出す。
+    </li>
+  </ul>
+  <h2 id="9-meeting-policy-guard">9. Meeting policy guard</h2>
+  <p><code>MeetingPolicy</code>は最低限次の問い合わせを持つ。</p>
+  <pre><code class="language-rust">pub fn blocks_tts(&amp;self) -&gt; bool;
+pub fn blocks_automatic_agent_run(&amp;self) -&gt; bool;
+pub fn blocks_notification(&amp;self) -&gt; bool;
+pub fn blocks_application_action(&amp;self) -&gt; bool;
+</code></pre>
+  <p>MVP 2で実在する実行経路には必ずguardを置く。</p>
+  <ul>
+    <li>
+      <code>speak_text</code>:
+      Active/Paused/Stoppingなら<code>MEETING_POLICY_TTS_BLOCKED</code>。
+    </li>
+    <li>
+      Chat response完了後の<code>autoSpeak</code>:
+      Frontendでも抑止するが、Rust guardを正とする。
+    </li>
+    <li>
+      CodexはユーザーがChatから明示開始する既存経路まで禁止しない。ただしMeetingから自動起動するコードを作らない。
+    </li>
+    <li>
+      notification/application actionは現行未実装。Meeting moduleのcall-graph
+      testで将来の混入を検出する。
+    </li>
+  </ul>
+  <p>
+    Meeting開始前にTTSが動作中ならStartを拒否し、ユーザーへ<code>Stop speech and retry</code>を返す。勝手に既存TTSを停止しない。
+  </p>
+  <h2 id="10-p0-feasibility-gates">10. P0 feasibility gates</h2>
+  <h3 id="m2-00a--microphone-worklet-spike">M2-00A — Microphone worklet spike</h3>
+  <p>検証項目:</p>
+  <ul>
+    <li>Tauri WebViewでAudioWorkletがbundleからloadできる。</li>
+    <li>30分fixture captureで5秒segment、queue最大2、heapが継続増加しない。</li>
+    <li>pause/stop/unmount後にOSのmicrophone indicatorが消える。</li>
+    <li>permission拒否と途中revokeが復旧可能なerrorになる。</li>
+  </ul>
+  <p>
+    PassならCore実装へ進む。Failならnative microphone
+    captureのADRを作り、実装方式を決めるまでM2-03以降を開始しない。
+  </p>
+  <h3 id="m2-00b--macos-system-audio-spike">M2-00B — macOS system audio spike</h3>
+  <p>spike専用branch/moduleで次を検証する。</p>
+  <ul>
+    <li>ScreenCaptureKit等の採用候補、最小macOS version、必要entitlement、permission文言。</li>
+    <li>app/system audioをPCM frameとして得られる。</li>
+    <li>画面frameを取得・保存せずaudioだけに限定できる。</li>
+    <li>pause/stop/revoke/app closeでcapture objectを解放できる。</li>
+    <li>signed app bundleで動作する。</li>
+  </ul>
+  <p>
+    成果物は<code>spec/docs/spikes/mvp-2-macos-system-audio.md</code>。採用crate/framework、サンプルコード、entitlement、実測cleanup、既知リスクを書く。
+  </p>
+  <p>Gate:</p>
+  <ul>
+    <li>全項目Pass: Optional laneをM2-08で実装。</li>
+    <li>一つでも未確認: build capabilityをfalseにしてmicrophone-onlyでship。</li>
+    <li>workaroundとしてvirtual audio deviceの導入をユーザーへ要求しない。</li>
+  </ul>
+  <h3 id="m2-00c--floating-overlay-spike">M2-00C — Floating overlay spike</h3>
+  <p>
+    別Tauri windowが必要な場合だけ実施する。window create/destroy、always-on-top
+    opt-in、focusを奪わない、session終了で閉じる、capability設定を確認する。Failならmain window
+    Meeting surfaceをshipする。
+  </p>
+  <h2 id="11-実装チケット">11. 実装チケット</h2>
+  <h3 id="m2-01--v6-migrationとreconcile">M2-01 — v6 migrationとreconcile</h3>
+  <ul>
+    <li>DDL、backup閾値、settings schema version 6を実装する。</li>
+    <li>startupでunfinished sessionを<code>interrupted</code>へする。</li>
+    <li>test: v5→v6 data preservation、migration idempotency、transcript 0件。</li>
+    <li>Done: MVP 0〜1.5の全table/setting/profileが保持される。</li>
+  </ul>
+  <h3 id="m2-02--state-machineとpolicy">M2-02 — State machineとpolicy</h3>
+  <ul>
+    <li>
+      <code>meeting/state_machine.rs</code
+      >と<code>policy.rs</code>を純粋Rustで実装する。
+    </li>
+    <li>test: 全許可遷移、全禁止遷移、idempotent stop、TTS block。</li>
+    <li>Done: Tauri/DBなしで遷移表を網羅できる。</li>
+    <li>Depends on: M2-01。</li>
+  </ul>
+  <h3 id="m2-03--whisper-core抽出">M2-03 — Whisper core抽出</h3>
+  <ul>
+    <li>既存voice関数を<code>voice/local_whisper.rs</code>へ移動する。</li>
+    <li>一時WAV cleanupを成功/失敗/取消でtestする。</li>
+    <li>existing <code>transcribe_audio</code> command signatureは変更しない。</li>
+    <li>Done: 既存voice fixture、resampling、cancellation testが同じ期待値でpass。</li>
+  </ul>
+  <h3 id="m2-04--meetingruntimeとcommands">M2-04 — MeetingRuntimeとcommands</h3>
+  <ul>
+    <li>Runtime、event queue、capture token、segment validation、commandを実装する。</li>
+    <li>token comparisonとsequence validationを先に行い、不正inputをworkerへ渡さない。</li>
+    <li>test: queue bound、invalid token、duplicate/out-of-order sequence、pause中segment拒否。</li>
+    <li>Depends on: M2-02, M2-03。</li>
+  </ul>
+  <h3 id="m2-05--microphone-capture">M2-05 — Microphone capture</h3>
+  <ul>
+    <li>AudioWorklet、PCM segmenter、queue、cleanupを実装する。</li>
+    <li><code>useMeetingSession</code>だけがstream/node/contextを所有する。</li>
+    <li>test: PCM chunk boundary、queue backpressure、cleanupのunit testと手動permission test。</li>
+    <li>Depends on: M2-00A, M2-04。</li>
+  </ul>
+  <h3 id="m2-06--meeting-ui">M2-06 — Meeting UI</h3>
+  <ul>
+    <li>nav、preflight、active、paused、completed、failedの各状態を実装する。</li>
+    <li>Stopは常時表示、SaveはCompletedだけ、StartはReadyかつblocking error 0件だけ有効。</li>
+    <li>Situation candidateは補助labelのみ。</li>
+    <li>test: stateごとのbutton enablement、error recovery、Surface移動中indicator。</li>
+    <li>Depends on: M2-05。</li>
+  </ul>
+  <h3 id="m2-07--explicit-savediscard">M2-07 — Explicit Save/Discard</h3>
+  <ul>
+    <li>repositoryとcommandsを実装する。</li>
+    <li>
+      Save前DB本文0件、transaction failure時0件、Save後reopen、Discard後memory破棄をtestする。
+    </li>
+    <li>UIで保存対象、件数、言語、削除場所をconfirmする。</li>
+    <li>Depends on: M2-04, M2-06。</li>
+  </ul>
+  <h3 id="m2-08--system-audio-lanegate通過時のみ">M2-08 — System audio lane（Gate通過時のみ）</h3>
+  <ul>
+    <li>M2-00Bで確定したnative adapterを<code>meeting/audio/system/macos.rs</code>へ実装する。</li>
+    <li>microphoneと同じsegment DTOへ正規化する。</li>
+    <li>lane別sequence、health、stopをtestする。</li>
+    <li>Gate未通過時: 実装せずcapability falseのtestを追加してDoneとする。</li>
+  </ul>
+  <h3 id="m2-09--translationproviderが確定した場合のみ">
+    M2-09 — Translation（providerが確定した場合のみ）
+  </h3>
+  <ul>
+    <li>settingsにlocal translation providerが存在する場合だけADR後に実装する。</li>
+    <li>
+      routing keyは<code>meeting.translate</code>。fallbackなし。final
+      segmentだけを対象にする。
+    </li>
+    <li>provider未確定時: UIをdisabled、commandを未登録としてDoneとする。</li>
+    <li>Cloud consent UIはMVP 2 Coreに入れない。</li>
+  </ul>
+  <h3 id="m2-10--overlaygate通過時のみ">M2-10 — Overlay（Gate通過時のみ）</h3>
+  <ul>
+    <li>M2-00C Passなら別window、Failならmain window surfaceを完成形とする。</li>
+    <li>always-on-topはsessionごとのopt-in、default false。</li>
+    <li>overlayが閉じてもcaptureを暗黙stopしない。primary windowへ状態を残す。</li>
+  </ul>
+  <h3 id="m2-11--release-evidence">M2-11 — Release evidence</h3>
+  <p><code>spec/docs/mvp-2-release-evidence.md</code>を作る。</p>
+  <p>記録内容:</p>
+  <ul>
+    <li>shipping capabilities（microphone/system audio/overlay/translation）</li>
+    <li>migration backupとreopen結果</li>
+    <li>30分、2時間のresource soak結果</li>
+    <li>permission denied/revoke、pause/resume、stop、app closeの結果</li>
+    <li>Save前DB本文0件、Save後件数、Discard結果</li>
+    <li>raw audio temporary file cleanupの確認</li>
+    <li>TTS/notification/agent/application action guard</li>
+    <li>test件数、desktop smoke、既知制限</li>
+  </ul>
+  <h2 id="12-エラーコード">12. エラーコード</h2>
+  <p>UIで文字列matchingをしない。最低限次を固定する。</p>
+  <pre><code class="language-text">MEETING_INVALID_STATE
+MEETING_PERMISSION_DENIED
+MEETING_DEVICE_UNAVAILABLE
+MEETING_STT_MODEL_MISSING
+MEETING_STT_FAILED
+MEETING_INVALID_CAPTURE_TOKEN
+MEETING_OUT_OF_ORDER_SEGMENT
+MEETING_BACKPRESSURE
+MEETING_POLICY_TTS_BLOCKED
+MEETING_SYSTEM_AUDIO_UNAVAILABLE
+MEETING_TRANSLATION_UNAVAILABLE
+MEETING_SAVE_LIMIT_EXCEEDED
+MEETING_INTERRUPTED
+</code></pre>
+  <p>
+    <code>message</code
+    >と<code>recovery</code>は既存<code>redact_runtime_text</code>相当を通し、各最大500文字。path、device
+    id、transcript、CLI stdout全文を含めない。
+  </p>
+  <h2 id="13-テストと検証コマンド">13. テストと検証コマンド</h2>
+  <pre><code class="language-bash">bun run typecheck
+bun run test:frontend
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+bun run build
+bun run desktop:smoke
+</code></pre>
+  <p>最低限追加するRust test:</p>
+  <pre><code class="language-text">version_five_database_migrates_to_six_without_data_loss
+startup_reconciles_unfinished_meeting_without_transcript_persistence
+meeting_state_machine_rejects_every_undefined_transition
+meeting_stop_pause_and_discard_are_idempotent
+meeting_segment_queue_is_bounded_and_ordered
+invalid_capture_token_never_reaches_stt
+meeting_policy_blocks_tts_while_active_or_paused
+meeting_save_is_atomic_and_discard_writes_no_transcript
+meeting_temp_audio_is_removed_on_success_failure_and_cancel
+meeting_module_has_no_notification_agent_or_application_action_calls
+</code></pre>
+  <p>Frontend test:</p>
+  <ul>
+    <li>segmentは5秒で切られ、同時送信1、queue最大2。</li>
+    <li>pause/stop/unmountで全track、AudioContext、queueをcleanup。</li>
+    <li>preflight error中はStart disabled。</li>
+    <li>Active/PausedではSave hidden、CompletedだけSave/Discard表示。</li>
+    <li>Surface移動後もActive indicatorとStop導線が残る。</li>
+    <li>v6 settings snapshotを受理し、v5 save payloadを拒否。</li>
+  </ul>
+  <p>手動desktop matrix:</p>
+  <table>
+    <caption>
+      13. テストと検証コマンド
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Case</th>
+        <th scope="col">Expected</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>permission初回許可</td>
+        <td>preflight確認中だけindicatorが点灯し、track停止後からStart操作までは消灯する</td>
+      </tr>
+      <tr>
+        <td>permission拒否</td>
+        <td>captureなし、recovery表示、Start disabled</td>
+      </tr>
+      <tr>
+        <td>途中revoke</td>
+        <td>FailedまたはPaused、track停止、buffer破棄</td>
+      </tr>
+      <tr>
+        <td>30分active</td>
+        <td>bounded queue、継続的heap増加なし</td>
+      </tr>
+      <tr>
+        <td>pause 5分</td>
+        <td>transcript増加なし、microphone indicator消灯</td>
+      </tr>
+      <tr>
+        <td>resume</td>
+        <td>新token、新sequence streamで再開</td>
+      </tr>
+      <tr>
+        <td>stop連打</td>
+        <td>crashせず同じCompleted snapshot</td>
+      </tr>
+      <tr>
+        <td>Save</td>
+        <td>reopen後にfinalだけ復元</td>
+      </tr>
+      <tr>
+        <td>Discard</td>
+        <td>transcript tableへ本文0件</td>
+      </tr>
+      <tr>
+        <td>active中Chat TTS</td>
+        <td>policy error、音声再生なし</td>
+      </tr>
+      <tr>
+        <td>app close</td>
+        <td>capture停止、次回metadata interrupted</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="14-受け入れ条件">14. 受け入れ条件</h2>
+  <h3 id="core必須">Core（必須）</h3>
+  <ol>
+    <li>ユーザー操作なしにMeeting、microphone、STTが開始しない。</li>
+    <li>microphone-only sessionをStart/Pause/Resume/Stopできる。</li>
+    <li>5秒segment処理でqueueとmemoryがboundedである。</li>
+    <li>partial/final transcriptがlaneとsequenceを保って表示される。</li>
+    <li>pause、stop、permission revoke、app closeでcapture resourceと一時audioを解放する。</li>
+    <li>Active/Paused中はSQLiteにtranscript本文が0件である。</li>
+    <li>Completed後の明示Saveだけがfinal transcriptをtransaction保存する。</li>
+    <li>Discard後にmemory本文が消え、SQLiteへ本文を保存しない。</li>
+    <li>Meeting中にTTS、notification、自動Model/Codex、application actionが起動しない。</li>
+    <li>Cloud STT fallbackが存在せず、model/device/path/transcriptをdiagnosticsへ出さない。</li>
+    <li>v5→v6 migrationでMVP 0〜1.5データを失わない。</li>
+    <li>既存Chat voice、Settings、Codex、Situationのtestとdesktop smokeに回帰がない。</li>
+  </ol>
+  <h3 id="optionalcapabilitytrueでshipする場合のみ">
+    Optional（capability=trueでshipする場合のみ）
+  </h3>
+  <ol>
+    <li>system audioは明示opt-in、permission-gated、audio-onlyで、lane単独停止できる。</li>
+    <li>floating overlayはdefault offで、focusを奪わず、終了時に破棄される。</li>
+    <li>translationは明示enable、確定済みlocal route、fallbackなしである。</li>
+  </ol>
+  <h2 id="15-実装中にadrが必要な条件">15. 実装中にADRが必要な条件</h2>
+  <ul>
+    <li>AudioWorkletが対象Tauri WebViewで安定せずnative microphone captureへ変更する。</li>
+    <li>Whisperのsegment境界品質を上げるためoverlap audioを保持したい。</li>
+    <li>一時WAVも禁止し、Whisper libraryのin-process利用へ変更する。</li>
+    <li>system audioのframework、entitlement、最小macOS versionを決める。</li>
+    <li>別window overlayへ新しいTauri capabilityを追加する。</li>
+    <li>translation providerまたはCloud consentを追加する。</li>
+    <li>transcript上限を超えた会議の部分保存・exportを追加する。</li>
+  </ul>
+  <p>ADRが必要な項目は、判断が確定するまでOptional扱いとし、担当者の推測でCoreへ混ぜない。</p>
+</article>

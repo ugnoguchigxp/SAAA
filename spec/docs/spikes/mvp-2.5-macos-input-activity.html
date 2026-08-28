@@ -1,0 +1,54 @@
+<article lang="ja">
+  <h1 id="mvp-25-macos-input-activity-spike">MVP 2.5 macOS Input Activity Spike</h1>
+  <dl>
+    <dt>Status</dt>
+    <dd>Implemented; manual lifecycle checks pending</dd>
+    <dt>Date</dt>
+    <dd>2026-08-27</dd>
+    <dt>Host</dt>
+    <dd>macOS 26.5.2 (25F84), arm64</dd>
+    <dt>Toolchain</dt>
+    <dd>rustc 1.92.0, cargo 1.92.0</dd>
+  </dl>
+
+  <h2 id="question">Question</h2>
+  <p>
+    <code>objc2-core-graphics 0.3.2</code>の固定featureで、event tapやraw event収集を行わず、
+    shipping targetからlast-input durationを取得して同一call stack内でbounded
+    categoryへ変換できるか。
+  </p>
+
+  <h2 id="implementation">Implementation</h2>
+  <pre><code>objc2-core-graphics = { version = "0.3.2", default-features = false,
+  features = ["std", "CGEventSource", "CGEventTypes"] }</code></pre>
+  <p>
+    <code>CGEventSource::seconds_since_last_event_type(CombinedSessionState, CGEventType(u32::MAX))</code>
+    を使用した。finite、non-negative、overflowを検査し、floor後に30秒/5分のcategory境界へ変換する。
+  </p>
+
+  <h2 id="automated-results">Automated results</h2>
+  <ul>
+    <li>boundary、fraction、NaN、Infinity、negative、overflowのpure testが成功。</li>
+    <li>macOS live CoreGraphics callがbounded categoryだけを返すtestが成功。</li>
+    <li>monitoring disabled pathはplatform adapterを呼ばず、disabled signalを返す。</li>
+    <li>debug packaged desktop smokeはmonitoring onで1 sampleを取得し、offへ戻す。</li>
+    <li>
+      30分・2秒間隔のlive sampling soakは1801.54秒で成功し、890 sample以上とRSS増加32
+      MiB以下のassertを満たした。
+    </li>
+  </ul>
+
+  <h2 id="manual-results">Manual results still required</h2>
+  <ul>
+    <li>keyboard、mouse、trackpad後のActive resetと、Recent、Idleへの実時間遷移。</li>
+    <li>screen lock/unlock、sleep/resume。</li>
+    <li>development buildと署名済みpackaged buildでpermission promptが出ないこと。</li>
+    <li>Debugger symbolic breakpointによるmonitoring off時のAPI call 0回確認。</li>
+  </ul>
+
+  <h2 id="conclusion">Conclusion</h2>
+  <p>
+    dependency、symbol、link、bounded projectionは採用可能である。releaseおよび計画archiveは、
+    上記manual lifecycle evidenceが記録されるまで保留する。
+  </p>
+</article>

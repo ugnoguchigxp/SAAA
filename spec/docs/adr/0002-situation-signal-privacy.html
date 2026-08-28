@@ -1,0 +1,149 @@
+<article lang="ja">
+  <h1 id="adr-0002-situation-signal-and-privacy-boundary">
+    ADR 0002: Situation signal and privacy boundary
+  </h1>
+  <ul>
+    <li>Status: Accepted</li>
+    <li>Date: 2026-08-26</li>
+    <li>Milestone: MVP 1 — Situation Shadow Mode</li>
+  </ul>
+  <h2 id="decision">Decision</h2>
+  <p>
+    MVP 1は、ユーザーが明示的に有効化した場合だけ、次のread-only Hard SignalをSituation
+    Runtimeへ入力する。
+  </p>
+  <table>
+    <caption>
+      Decision
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Signal</th>
+        <th scope="col">Source</th>
+        <th scope="col">Runtimeへ渡す値</th>
+        <th scope="col">Persisted value</th>
+        <th scope="col">Health / fallback</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Foreground Application</td>
+        <td>macOS <code>NSWorkspace.frontmostApplication</code></td>
+        <td>bounded category</td>
+        <td>category由来のevidence codeのみ</td>
+        <td>
+          <code>unsupported</code> / <code>degraded</code>
+        </td>
+      </tr>
+      <tr>
+        <td>Conversation</td>
+        <td>SAAA runtime lifecycle</td>
+        <td>idle / user-input / model-running / agent-running</td>
+        <td>stable stateとreason code</td>
+        <td>always local</td>
+      </tr>
+      <tr>
+        <td>Microphone</td>
+        <td>SAAA Push-to-talk / STT lifecycle</td>
+        <td>inactive / SAAA capturing / SAAA transcribing</td>
+        <td>stable stateとreason code</td>
+        <td>always local</td>
+      </tr>
+      <tr>
+        <td>Audio</td>
+        <td>SAAA TTS lifecycle</td>
+        <td>silent / SAAA speaking</td>
+        <td>stable stateとreason code</td>
+        <td>always local</td>
+      </tr>
+      <tr>
+        <td>Calendar</td>
+        <td>optional platform adapter</td>
+        <td>free / busy / meeting-likely / unavailable</td>
+        <td>healthとcoarse reason codeのみ</td>
+        <td>MVP 1 macOS buildは<code>unsupported</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Foreground adapterはbundle
+    identifierをadapter内部だけで参照し、<code>communication | coding | writing | browser | media | sensitive | other | unknown</code>へ変換した直後にraw
+    valueを破棄する。Window title、process list、executable path、document nameは取得しない。
+  </p>
+  <p>
+    Calendar adapterは既定で無効とする。現在のnative dependencyとpermission
+    boundaryのまま、EventKitの件名・参加者・場所・URLをRust
+    contractへ入れずに安全にbundleする経路を確証できなかったため、MVP 1では明示的な<code
+      >unsupported</code
+    >
+    adapterを採用した。Calendar opt-in時もApplication全体を失敗させず、Foreground
+    categoryとSAAA所有lifecycleだけでdegraded動作する。
+  </p>
+  <p>
+    System-wide microphone / audio activityは、private API、process scraping、Accessibility、Screen
+    Recording、audio captureを使わずに安定して取得する経路を確証できなかったため、MVP
+    1へ含めない。MVP 2でSystem Audioを扱う場合も、別のpermission reviewとADRを必要とする。
+  </p>
+  <h2 id="data-minimization">Data minimization</h2>
+  <p>SQLiteへ保存できるSituation payloadを次に限定する。</p>
+  <pre><code class="language-text">scene
+confidence
+user attention class
+audio environment class
+bounded evidence code + weight
+signal source + health
+shadow attention decision
+fixed actual execution NONE
+fixed actual presentation SILENT
+rule / policy version
+timestamp and entry kind
+structured user verdict
+</code></pre>
+  <p>次はSQLite、backup、diagnostics、log、UIへ保存・転送しない。</p>
+  <pre><code class="language-text">raw bundle identifier
+process name / process list
+window title
+screen pixels
+Calendar title / attendee / location / note / URL
+audio sample / transcript content
+conversation prompt / response
+workspace path / Codex thread id
+</code></pre>
+  <p>
+    <code>evidence_json</code
+    >と<code>decision_reasons_json</code>は英数字とhyphenだけのbounded
+    codeにvalidationし、free textを拒否する。user
+    feedbackは<code>accurate | inaccurate | unsure</code>とoptional corrected sceneだけで、free-text
+    noteを持たない。
+  </p>
+  <h2 id="lifecycle-and-retention">Lifecycle and retention</h2>
+  <ul>
+    <li>Monitoringはdefault off。</li>
+    <li>offまたはpause時はplatform pollerを起動しない。</li>
+    <li>enable時もsampling intervalは最低500ms、既定2秒。</li>
+    <li>
+      SQLiteへはtransition、decision変更、既定5分heartbeatだけを保存し、raw sampleを保存しない。
+    </li>
+    <li>retentionは既定7日、最大30日、entry上限は10,000。</li>
+    <li>event queueは64件、UI historyは直近100件。</li>
+    <li>Situation adapter failureはMVP 0のChat、Voice、Codexを停止しない。</li>
+  </ul>
+  <h2 id="shadow-safety">Shadow safety</h2>
+  <p>MVP 1のPolicy出力はすべて次を満たす。</p>
+  <pre><code class="language-text">mode                shadow
+actualExecution     NONE
+actualPresentation  SILENT
+</code></pre>
+  <p>
+    Situation moduleからModel Provider、Codex、TTS、Notification、Application
+    Adapterへの呼び出し経路を作らない。既存の明示的なChat、Voice、Codex操作はSituation
+    decisionでguardしない。
+  </p>
+  <h2 id="consequences">Consequences</h2>
+  <ul>
+    <li>macOSではAccessibility permissionなしにForeground categoryを利用できる。</li>
+    <li>Calendarと外部mic/audioが利用できない環境でもMVP 1のminimum signal setが成立する。</li>
+    <li>Meeting推定の精度は限定されるが、false interventionは発生しない。</li>
+    <li>後続MVPは、評価台帳の結果を確認してから実行Policyへ昇格させる必要がある。</li>
+  </ul>
+</article>

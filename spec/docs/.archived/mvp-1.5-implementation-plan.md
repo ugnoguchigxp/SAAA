@@ -2,13 +2,21 @@
 
 ## 0. 文書の役割
 
-- Status: Proposed
+- Status: Complete — M15-01 through M15-09 accepted on 2026-08-27
 - 実装前提: [`mvp-1-release-evidence.md`](./mvp-1-release-evidence.md) がAcceptedであること
 - 次のマイルストーン: [`mvp-2-implementation-plan.md`](./mvp-2-implementation-plan.md)
 - この文書の読者: 実装担当、レビュー担当、QA担当
 - 完了の定義: 本文の`M15-01`〜`M15-09`が完了し、受け入れ条件を証跡付きで満たすこと
 
 この文書は方向性だけを示すロードマップではない。実装中に担当者が新たなデータモデルやAPIを考案しなくてよいように、変更場所、契約、移行、テスト、完了条件を固定する。
+
+## Implementation Record
+
+2026-08-27にM15-01からM15-09を完了した。詳細な再現手順、受け入れ条件ごとの証跡、privacy inventory、既知のbounded degradationは[`mvp-1.5-release-evidence.md`](./mvp-1.5-release-evidence.md)に保存する。
+
+- v4 compatibilityを含む段階migration、pre-migration backup、active profile seedを追加した。現行アプリケーションの後続schemaはv6へ進んでいるが、v4→v5のSituation migrationはその中で保持される。
+- Calibration parameters、quality window、feedback v2、静的fixture replay、candidate lifecycle、Review Surface、redacted diagnosticsを実装した。
+- Situationのshadow invariant（`NONE` / `SILENT`）を保持し、Reviewを開くことやcandidate操作で外部処理を開始しない。
 
 ## 1. 今回達成すること
 

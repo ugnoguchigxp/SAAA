@@ -1,0 +1,2557 @@
+<article lang="ja">
+  <h1 id="mvp-25-実装契約--agent-run-supervisor-and-input-activity-signal">
+    MVP 2.5 実装契約 — Agent Run Supervisor and Input Activity Signal
+  </h1>
+  <h2 id="0-文書の役割">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Implementation complete; manual acceptance pending</li>
+    <li>Reviewed: 2026-08-27</li>
+    <li>
+      実装前提:
+      <a href="./mvp-2-implementation-plan.html"><code>mvp-2-implementation-plan.md</code></a>
+      のCore実装が完了していること
+    </li>
+    <li>
+      引き継ぐ未完了事項:
+      <a href="./mvp-2-release-evidence.html"><code>mvp-2-release-evidence.md</code></a>
+      のmanual desktop evidence。MVP 2.5はこれを完了扱いにしない
+    </li>
+    <li>shipping platform: macOS desktop</li>
+    <li>読者: 実装担当、レビュー担当、QA担当</li>
+    <li>
+      完了の定義:
+      <code>M25-00</code
+      >〜<code>M25-10</code>を順に完了し、本文の受け入れ条件を証跡付きで満たすこと
+    </li>
+  </ul>
+  <h3 id="01-implementation-closeout-amendments">0.1 Implementation closeout amendments</h3>
+  <p>
+    実装レビューで、Section 5/6の単一file案は責務境界を保った3 module構成へ改訂した。
+    以降のbehavior、timeout、persistence、privacy acceptanceは変更しない。
+  </p>
+  <ul>
+    <li>
+      <code>runtime/contracts.rs</code>: bounded
+      enum、policy、effect。Tauri、SQLite、process、JSONへ依存しない。
+    </li>
+    <li>
+      <code>runtime/supervisor.rs</code>: monotonic timeをcallerから受けるpure state
+      machine。
+    </li>
+    <li>
+      <code>runtime/codex_app_server.rs</code>: JSON correlation、active item set、bounded
+      projection。
+    </li>
+    <li>
+      process killをpure
+      module外へ明示するため、grace満了時は<code>ForceKill</code>とterminal
+      outcomeを順に返す。callerだけが<code>ProcessGuard</code>を操作する。
+    </li>
+  </ul>
+  <p>
+    <code>active_runs: HashMap&lt;String, Arc&lt;RunCancellation&gt;&gt;</code>、Codex route限定、 one-shot
+    interrupt、3秒grace、transaction/event orderingは本文どおり維持する。
+  </p>
+  <p>
+    このcloseout amendmentは、Section 5.1およびSection 6.1〜6.4のfile path・型名に優先する。
+    実装の正本は<code>src-tauri/src/runtime/contracts.rs</code>、
+    <code>src-tauri/src/runtime/supervisor.rs</code>、
+    <code>src-tauri/src/runtime/codex_app_server.rs</code>であり、
+    <code>RunSignal</code
+    >と<code>RunOutcome</code>を介して同じtimeout、one-shot
+    interrupt、terminal semanticsを表現する。
+  </p>
+  <p>
+    この文書はロードマップではなく実装契約である。本文に選択肢が書かれていない限り、実装担当は別方式を選ばない。契約どおり実装できない場合は推測で進めず、Section
+    16のStop conditionとして計画を改訂する。
+  </p>
+  <p>
+    MVP 2.5は新しい自律機能を増やさない。MVP 0〜2のAgent
+    Runを確実に停止・回収できるようにし、Situationへprivacy-boundedな弱い入力活動信号を一つ追加する。
+  </p>
+  <p>参照するOpenClaw実装:</p>
+  <ul>
+    <li>Agent Run Supervisorの概念: <code>../openclaw/extensions/codex/src/app-server/attempt-turn-watches.ts</code></li>
+    <li>Input Activity APIの概念: <code>../openclaw/apps/macos/Sources/OpenClaw/SystemPresenceInfo.swift</code></li>
+  </ul>
+  <p>
+    OpenClawのコード、型、event名は移植しない。SAAAの既存route、SQLite lifecycle、Shadow
+    policyに合わせて実装する。
+  </p>
+  <h2 id="1-レビュー結果と確定した修正">1. レビュー結果と確定した修正</h2>
+  <p>初版には実装担当の判断が必要な箇所が残っていた。レビュー後は次のように固定する。</p>
+  <table>
+    <caption>
+      1. レビュー結果と確定した修正
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">初版の問題</th>
+        <th scope="col">確定した修正</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>OpenClaw linkが存在しない<code>../open-claw</code>を指していた</td>
+        <td>実在する<code>../openclaw</code>へ修正した</td>
+      </tr>
+      <tr>
+        <td>macOS bindingをP0で選ぶことになっていた</td>
+        <td><code>objc2-core-graphics 0.3.2</code>とfeatureを固定した</td>
+      </tr>
+      <tr>
+        <td>Input Activityがshipping adapterかunsupported fallbackか未決定だった</td>
+        <td>
+          macOS adapterを実装する。予期しないpermission promptが出た場合だけStop conditionとする
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>active_runs</code
+          >を<code>ActiveRunHandle</code>へ置換し、全routeへ影響する案だった
+        </td>
+        <td>
+          <code>active_runs: HashMap&lt;String, Arc&lt;RunCancellation&gt;&gt;</code>を維持し、SupervisorはCodex
+          worker内だけに置く
+        </td>
+      </tr>
+      <tr>
+        <td>
+          成功時の<code>MessageCompleted</code>が<code>runtime_runs</code>確定前に送られる現行フローとの不整合があった
+        </td>
+        <td>Codex success/failureはSQLite transaction commit後にterminal eventを送る</td>
+      </tr>
+      <tr>
+        <td><code>turn/completed</code>以外のcompletion監視条件が曖昧だった</td>
+        <td>
+          <code>agentMessage</code>完了かつactive item 0件のときだけterminal-gap
+          watchを開始する
+        </td>
+      </tr>
+      <tr>
+        <td>active item/requestの扱いが未定義だった</td>
+        <td>
+          item idをadapter内の<code>HashSet</code>で追跡する。server
+          requestはapproval policy違反として即時失敗させる
+        </td>
+      </tr>
+      <tr>
+        <td>新しいactive calibration profileを自動生成する案はrollback semanticsを壊す</td>
+        <td>
+          profile rowと<code>RULE_VERSION</code>を変更しない。新fieldはserde
+          defaultで補い、policy versionだけを上げる
+        </td>
+      </tr>
+      <tr>
+        <td>
+          Input Activityを<code>user_attention</code>へ反映する案はscene
+          stateを変え得た
+        </td>
+        <td>
+          state、scene、confidence、evidence、user_attentionを一切変えず、Shadow
+          policyだけを変更する
+        </td>
+      </tr>
+      <tr>
+        <td>Calibration UIでは新thresholdを編集しない記述だった</td>
+        <td>現行のcandidate editorへ2 fieldを追加する。新しいSettings画面は作らない</td>
+      </tr>
+      <tr>
+        <td>
+          Shadow policyがactive calibrationのconfidence
+          thresholdを使わず<code>45</code>/<code>70</code>をhardcodeしていた
+        </td>
+        <td>
+          <code>shadow_policy</code>へparametersを渡し、既存fieldをsource of
+          truthにする
+        </td>
+      </tr>
+      <tr>
+        <td>request timeoutとhard timeoutの起点が曖昧だった</td>
+        <td>
+          thread start/resumeとturn startは各20秒。hard timeoutはturn/start
+          response受信時から開始する
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="2-変更前baseline">2. 変更前baseline</h2>
+  <p>
+    実装前に次をbaselineとして記録する。挙動を変更すると本文に明記した箇所以外は、このbaselineを維持する。
+  </p>
+  <table>
+    <caption>
+      2. 変更前baseline
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">現在のsource of truth</th>
+        <th scope="col">維持条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>active run</td>
+        <td><code>AppState.active_runs: Mutex&lt;HashMap&lt;String, Arc&lt;RunCancellation&gt;&gt;&gt;</code></td>
+        <td>map型、重複run id拒否、window close時の全cancelを維持</td>
+      </tr>
+      <tr>
+        <td>Codex process</td>
+        <td>
+          <code>run_codex_turn_process</code>と<code
+            >ProcessGuard</code
+          >
+        </td>
+        <td>process-per-run、read-only config、Drop時kill/waitを維持</td>
+      </tr>
+      <tr>
+        <td>Codex success</td>
+        <td>non-empty assistant textを伴う<code>turn/completed: completed</code></td>
+        <td>成功条件を緩めない</td>
+      </tr>
+      <tr>
+        <td>Codex RPC</td>
+        <td>initialize送信、thread start/resume response、turn start response</td>
+        <td>method、request id <code>1/2/3</code>、20秒上限を維持</td>
+      </tr>
+      <tr>
+        <td>Codex cancellation</td>
+        <td><code>RunCancellation</code>のatomic flag</td>
+        <td><code>cancel_run</code>をidempotentなまま維持</td>
+      </tr>
+      <tr>
+        <td>runtime persistence</td>
+        <td><code>runtime_runs</code></td>
+        <td>statusのCHECK値を増やさない</td>
+      </tr>
+      <tr>
+        <td>restart recovery</td>
+        <td><code>running -&gt; interrupted</code></td>
+        <td>起動時reconcileを維持</td>
+      </tr>
+      <tr>
+        <td>Situation runtime</td>
+        <td>Rustの<code>SituationRuntime</code></td>
+        <td>React stateをsource of truthにしない</td>
+      </tr>
+      <tr>
+        <td>Situation sample</td>
+        <td>既存2秒tick</td>
+        <td>sample intervalとworker lifecycleを維持</td>
+      </tr>
+      <tr>
+        <td>Situation persistence</td>
+        <td>transition/decision/heartbeatだけ</td>
+        <td>毎tickのsnapshotをSQLiteへ保存しない</td>
+      </tr>
+      <tr>
+        <td>Situation classification</td>
+        <td>foreground/conversation/microphone/audio/calendar</td>
+        <td>Input Activityでscene scoreを変更しない</td>
+      </tr>
+      <tr>
+        <td>Shadow safety</td>
+        <td>
+          <code>actualExecution = NONE</code>,
+          <code>actualPresentation = SILENT</code>
+        </td>
+        <td>自動介入を追加しない</td>
+      </tr>
+      <tr>
+        <td>calibration</td>
+        <td>active <code>CalibrationProfile</code>のparameters</td>
+        <td>既存profile rowとrule versionを自動書換えしない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>実装開始時に次を実行し、結果をM25-10のrelease evidenceへ転記する。</p>
+  <pre><code class="language-bash">git status --short
+bun run typecheck
+cargo test --manifest-path src-tauri/Cargo.toml
+</code></pre>
+  <p>
+    baselineが失敗する場合は、MVP
+    2.5と無関係な失敗かを切り分けて記録する。無関係な既存変更を修正しない。
+  </p>
+  <h2 id="3-今回達成すること">3. 今回達成すること</h2>
+  <h3 id="31-agent-run-supervisor">3.1 Agent Run Supervisor</h3>
+  <p>
+    Codex app-serverによる1回のAgent Runについて、request待機、進捗、assistant出力完了、terminal
+    event、取消、child終了を一つのstate machineで監督する。
+  </p>
+  <p>保証すること:</p>
+  <ul>
+    <li>thread start/resumeとturn startのrequestが各20秒を超えない</li>
+    <li>turn開始後、meaningful progressが60秒止まったrunを回収する</li>
+    <li>
+      assistant item完了後、<code>turn/completed</code>が10秒来ないrunを回収する
+    </li>
+    <li>routing hard timeoutを超えたrunを回収する</li>
+    <li>
+      cancel/timeout/policy
+      violationで<code>turn/interrupt</code>を最大1回だけ送る
+    </li>
+    <li>interrupt後3秒でterminal eventが来なければchildをkill/waitする</li>
+    <li>terminal reasonをbounded codeで永続化する</li>
+    <li>prompt、tool argument、raw app-server eventをSupervisor diagnosticsへ複製しない</li>
+  </ul>
+  <h3 id="32-input-activity-signal">3.2 Input Activity Signal</h3>
+  <p>
+    macOSのCoreGraphics APIから「最後のkeyboard/mouse/tablet入力からの経過時間」を取得し、同じRust
+    call stack内で<code>active | recent | idle | unknown</code>へ変換する。
+  </p>
+  <p>使用目的は次だけである。</p>
+  <ul>
+    <li>Situation Snapshotへcategoryとhealthを追加する</li>
+    <li>
+      <code>idle</code>かつ明示SAAA
+      interactionがないとき、Shadowの<code>SUGGEST</code>を<code>OBSERVE</code>へ抑制する
+    </li>
+    <li>calibration candidateでcategory境界を比較する</li>
+    <li>replay fixtureでpolicy回帰を検証する</li>
+  </ul>
+  <h3 id="33-不変の安全境界">3.3 不変の安全境界</h3>
+  <pre><code class="language-text">automaticModelCallFromSituation = false
+automaticMeetingStart = false
+automaticTTSFromSituation = false
+automaticNotification = false
+automaticApplicationAction = false
+rawInputEventCollection = false
+rawInputIdleDurationPersistence = false
+inputActivityMeansSafeToInterrupt = false
+actualExecution = NONE
+actualPresentation = SILENT
+</code></pre>
+  <p>
+    Codex routeはread-only、approval <code>never</code>、network/Web
+    Search/write-capable MCP無効を維持する。
+  </p>
+  <h2 id="4-scope">4. Scope</h2>
+  <h3 id="41-必ずshipする">4.1 必ずshipする</h3>
+  <ul>
+    <li>
+      Codex <code>coding.assist</code> routeだけにAgent Run Supervisorを導入
+    </li>
+    <li>request/progress/terminal-gap/hard timeout</li>
+    <li>idempotent Cancel、one-shot interrupt、3秒drain、kill/wait</li>
+    <li>structured failure code、Supervisor version、last progress timestamp</li>
+    <li>macOS Input Activity adapter</li>
+    <li>Input Activity DTO、Situation Snapshot、health、UI、calibration、replay</li>
+    <li>idleによるShadow <code>SUGGEST</code>抑制</li>
+    <li>SQLite/settings schema v7</li>
+    <li>pure unit test、fake app-server test、migration test、privacy test</li>
+  </ul>
+  <h3 id="42-行わない">4.2 行わない</h3>
+  <ul>
+    <li>conversation provider、voice STT/TTS、Meeting segmentのSupervisor移行</li>
+    <li><code>active_runs</code> mapの型変更</li>
+    <li>Agent Runの自動retryまたはprovider fallback追加</li>
+    <li>timeout値のSettings UI</li>
+    <li>adaptive timeout</li>
+    <li>
+      exact idle seconds、last input timestamp、key、button、cursor positionの保存・送信・表示
+    </li>
+    <li>人物の在席・離席推定</li>
+    <li>idleを根拠にしたMeeting、通知、TTS、model call、application action</li>
+    <li>Accessibility/Input Monitoring permission要求UI</li>
+    <li>Windows/Linux Input Activity実装</li>
+    <li>OpenClaw/HermesAgent互換層</li>
+    <li>Situation scene scoreまたはevidence weightの変更</li>
+  </ul>
+  <h2 id="5-変更ファイル一覧">5. 変更ファイル一覧</h2>
+  <h3 id="51-新規作成">5.1 新規作成</h3>
+  <pre><code class="language-text">src-tauri/src/runtime/mod.rs
+src-tauri/src/runtime/contracts.rs
+src-tauri/src/runtime/supervisor.rs
+src-tauri/src/runtime/codex_app_server.rs
+src-tauri/fixtures/situation/mvp2.5-v2.json
+spec/docs/spikes/mvp-2.5-macos-input-activity.md
+spec/docs/adr/0003-input-activity-signal-privacy.md
+spec/docs/mvp-2.5-release-evidence.md
+</code></pre>
+  <h3 id="52-更新">5.2 更新</h3>
+  <pre><code class="language-text">src-tauri/Cargo.toml
+src-tauri/Cargo.lock
+src-tauri/src/lib.rs
+src-tauri/src/situation/contracts.rs
+src-tauri/src/situation/classifier.rs
+src-tauri/src/situation/mod.rs
+src-tauri/src/situation/calibration.rs
+src-tauri/src/situation/platform/mod.rs
+src-tauri/src/situation/platform/macos.rs
+src-tauri/src/situation/platform/unsupported.rs
+src/lib/contracts.ts
+src/lib/schemas.ts
+src/features/settings/SettingsPage.tsx
+src/features/situation/SituationPage.tsx
+src/features/situation/review/SituationReview.tsx
+src/lib/runtime.ts
+tests/settings.test.ts
+tests/runtime-supervisor-contracts.test.ts
+tests/situation-input-activity.test.ts
+</code></pre>
+  <p>
+    <code>src/lib/runtime.ts</code
+    >、<code>src/App.css</code>、Meeting
+    filesは契約変更が不要なので変更しない。Situationの既存<code>signal-health-grid</code>をそのまま使い、新しいCSS
+    classは作らない。
+  </p>
+  <h2 id="6-agent-run-supervisor--rust-contract">6. Agent Run Supervisor — Rust contract</h2>
+  <h3 id="61-モジュール境界">6.1 モジュール境界</h3>
+  <p>新規fileは一つだけとする。</p>
+  <pre><code class="language-text">src-tauri/src/run_supervisor.rs
+</code></pre>
+  <p>責務:</p>
+  <ul>
+    <li>phaseとwatch timestampの保持</li>
+    <li>signalを受けた決定論的遷移</li>
+    <li>
+      <code>SendInterrupt</code>または<code
+        >Finish</code
+      >
+      effectの返却
+    </li>
+    <li>failure code、status、last progress metadataの生成</li>
+  </ul>
+  <p>禁止する依存:</p>
+  <ul>
+    <li>Tauri</li>
+    <li>SQLite/rusqlite</li>
+    <li><code>std::process::Child</code></li>
+    <li>JSON/serde_json</li>
+    <li>wall clock取得</li>
+    <li>sleep/timer生成</li>
+  </ul>
+  <p>
+    時刻は<code>u64</code>のmonotonic
+    millisecondsをcallerから受ける。<code>lib.rs</code>側では<code>Instant</code>をrun開始時に一つ作り、<code>origin.elapsed().as_millis()</code>を<code>u64</code>へsaturating変換して渡す。
+  </p>
+  <p>
+    Codex JSON-RPC、process、Tauri Channel、SQLite
+    orchestrationは現行どおり<code>lib.rs</code>に残す。MVP 2.5でCodex
+    helper全体のfile移動は行わない。
+  </p>
+  <h3 id="62-固定する型">6.2 固定する型</h3>
+  <p>
+    <code>run_supervisor.rs</code
+    >へ次のshapeで定義する。field名とenum値を変更しない。
+  </p>
+  <pre><code class="language-rust">pub(crate) const SUPERVISOR_VERSION: &amp;str = &quot;mvp2.5-supervisor-v1&quot;;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunPhase {
+    Starting,
+    Running,
+    Draining,
+    Interrupting,
+    Terminal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunFailureCode {
+    UserCancelled,
+    AppRestarted,
+    ConfigurationError,
+    ChildStartFailed,
+    RequestTimeout,
+    ProgressTimeout,
+    TerminalTimeout,
+    HardTimeout,
+    ChildExited,
+    ProtocolError,
+    PolicyViolation,
+    ProviderError,
+    ResponseTooLarge,
+    InternalError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunTerminalStatus {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunTerminal {
+    pub status: RunTerminalStatus,
+    pub failure_code: Option&lt;RunFailureCode&gt;,
+    pub last_progress_elapsed_ms: Option&lt;u64&gt;,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SupervisorEffect {
+    SendInterrupt,
+    Finish(RunTerminal),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunSupervisionPolicy {
+    pub request_timeout_ms: u64,
+    pub progress_idle_timeout_ms: u64,
+    pub terminal_gap_timeout_ms: u64,
+    pub interrupt_grace_ms: u64,
+    pub hard_timeout_ms: u64,
+}
+</code></pre>
+  <p><code>RunFailureCode::as_str()</code>は次を返す。</p>
+  <pre><code class="language-text">user-cancelled
+app-restarted
+configuration-error
+child-start-failed
+request-timeout
+progress-timeout
+terminal-timeout
+hard-timeout
+child-exited
+protocol-error
+policy-violation
+provider-error
+response-too-large
+internal-error
+</code></pre>
+  <p>production policy:</p>
+  <pre><code class="language-rust">RunSupervisionPolicy {
+    request_timeout_ms: 20_000,
+    progress_idle_timeout_ms: 60_000,
+    terminal_gap_timeout_ms: 10_000,
+    interrupt_grace_ms: 3_000,
+    hard_timeout_ms: routing.coding_assist.timeout_ms,
+}
+</code></pre>
+  <p>testは同じ型へ短い値を渡す。production constantをtest都合で変更しない。</p>
+  <h3 id="63-supervisor内部field">6.3 Supervisor内部field</h3>
+  <pre><code class="language-rust">pub(crate) struct RunSupervisor {
+    policy: RunSupervisionPolicy,
+    phase: RunPhase,
+    request_deadline_ms: Option&lt;u64&gt;,
+    hard_deadline_ms: Option&lt;u64&gt;,
+    last_progress_ms: Option&lt;u64&gt;,
+    terminal_gap_started_ms: Option&lt;u64&gt;,
+    interrupt_started_ms: Option&lt;u64&gt;,
+    pending_failure: Option&lt;RunFailureCode&gt;,
+    interrupt_sent: bool,
+    terminal: Option&lt;RunTerminal&gt;,
+}
+</code></pre>
+  <p>
+    timestamp加算は全て<code>saturating_add</code>を使う。deadline比較は<code>now_ms &gt;= deadline_ms</code>とする。
+  </p>
+  <h3 id="64-公開methodと意味">6.4 公開methodと意味</h3>
+  <pre><code class="language-rust">pub(crate) fn new(policy: RunSupervisionPolicy) -&gt; Self;
+pub(crate) fn begin_request(&amp;mut self, now_ms: u64);
+pub(crate) fn complete_request(&amp;mut self);
+pub(crate) fn mark_turn_started(&amp;mut self, now_ms: u64);
+pub(crate) fn record_progress(&amp;mut self, now_ms: u64);
+pub(crate) fn record_assistant_output_completed(&amp;mut self, now_ms: u64);
+pub(crate) fn cancel(&amp;mut self, now_ms: u64, interruptable: bool) -&gt; Option&lt;SupervisorEffect&gt;;
+pub(crate) fn fail(
+    &amp;mut self,
+    now_ms: u64,
+    code: RunFailureCode,
+    interruptable: bool,
+) -&gt; Option&lt;SupervisorEffect&gt;;
+pub(crate) fn terminal(
+    &amp;mut self,
+    provider_status: &amp;str,
+    has_nonempty_content: bool,
+) -&gt; Option&lt;SupervisorEffect&gt;;
+pub(crate) fn next_deadline_ms(&amp;self) -&gt; Option&lt;u64&gt;;
+pub(crate) fn finish_pending(&amp;mut self) -&gt; Option&lt;SupervisorEffect&gt;;
+pub(crate) fn tick(&amp;mut self, now_ms: u64) -&gt; Option&lt;SupervisorEffect&gt;;
+</code></pre>
+  <p>method contract:</p>
+  <ul>
+    <li>
+      <code>begin_request</code>:
+      phaseをStartingに維持し、<code>request_deadline = now + 20_000</code>にする。
+    </li>
+    <li><code>complete_request</code>: request deadlineをclearする。</li>
+    <li>
+      <code>mark_turn_started</code>: request
+      deadlineをclearし、phaseをRunning、<code>last_progress = now</code>、<code>hard_deadline = now + hard_timeout</code>にする。
+    </li>
+    <li>
+      <code>record_progress</code>:
+      Running/Drainingだけで有効。phaseをRunningへ戻し、terminal-gapをclearし、last
+      progressを更新する。Starting/Interrupting/Terminalではno-op。
+    </li>
+    <li>
+      <code>record_assistant_output_completed</code>:
+      RunningのときだけphaseをDrainingにし、terminal-gap開始時刻とlast progressをnowへ更新する。
+    </li>
+    <li>
+      <code>cancel</code>:
+      Terminalならno-op。<code>pending_failure = UserCancelled</code>。interruptable=falseなら即<code>Finish(Cancelled)</code>、trueならInterruptingへ移り<code>SendInterrupt</code>を一度だけ返す。
+    </li>
+    <li>
+      <code>fail</code>: Terminalならno-op。通常はfailure
+      codeを保持し、interruptable=falseなら即<code>Finish(Failed)</code>、trueならInterruptingへ移り<code>SendInterrupt</code>を一度だけ返す。既にInterruptingならreasonを上書きせず、interruptable=falseのときだけ<code>finish_pending()</code>と同じeffectを返す。
+    </li>
+    <li>
+      <code>terminal</code>: pending failureがあればprovider
+      statusよりpending failureを優先する。pendingがなければSection 6.8の表で確定する。
+    </li>
+    <li>
+      <code>next_deadline_ms</code>:
+      現phaseで有効なdeadlineの最小値を返す。deadlineが無ければ<code>None</code>。
+    </li>
+    <li>
+      <code>finish_pending</code>: Interruptingのときだけpending
+      failureをterminalへ確定して<code>Finish</code>を返す。interrupt
+      write失敗とchild
+      exitで使う。pendingが無い状態では<code>InternalError</code>として確定する。
+    </li>
+    <li><code>tick</code>: Section 6.6の優先順でwatchを評価する。</li>
+  </ul>
+  <p>
+    <code>Finish</code
+    >を返すと同時にphaseをTerminalへ変更し、同じ<code>RunTerminal</code>を保持する。その後のmethod
+    callは全て<code>None</code>を返す。
+  </p>
+  <p>
+    最初に確定した終了理由を上書きしない。Interrupting中の<code>cancel</code>/<code>fail</code>は<code>pending_failure</code>を変更しない。Interrupting中にchild
+    exitまたはinterrupt
+    write失敗が起きた場合は<code>finish_pending()</code>で最初の理由を確定する。
+  </p>
+  <p><code>next_deadline_ms</code>のphase別計算:</p>
+  <table>
+    <caption>
+      6.4 公開methodと意味
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">phase</th>
+        <th scope="col">deadline</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Starting</td>
+        <td><code>request_deadline_ms</code></td>
+      </tr>
+      <tr>
+        <td>Running</td>
+        <td><code>min(hard_deadline_ms, last_progress_ms + progress_idle_timeout_ms)</code></td>
+      </tr>
+      <tr>
+        <td>Draining</td>
+        <td><code>min(hard_deadline_ms, terminal_gap_started_ms + terminal_gap_timeout_ms)</code></td>
+      </tr>
+      <tr>
+        <td>Interrupting</td>
+        <td><code>interrupt_started_ms + interrupt_grace_ms</code></td>
+      </tr>
+      <tr>
+        <td>Terminal</td>
+        <td><code>None</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    表の<code>Option</code>値が無い項目はmin候補から除く。加算は<code>saturating_add</code>を使う。
+  </p>
+  <h3 id="65-状態遷移">6.5 状態遷移</h3>
+  <table>
+    <caption>
+      6.5 状態遷移
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">From</th>
+        <th scope="col">Input</th>
+        <th scope="col">To</th>
+        <th scope="col">Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Starting</td>
+        <td>request response</td>
+        <td>Starting</td>
+        <td>deadline clear</td>
+      </tr>
+      <tr>
+        <td>Starting</td>
+        <td>turn/start response</td>
+        <td>Running</td>
+        <td>hard/progress clock開始</td>
+      </tr>
+      <tr>
+        <td>Starting</td>
+        <td>request timeout</td>
+        <td>Terminal</td>
+        <td>Failed/request-timeout。turn idがないためinterruptしない</td>
+      </tr>
+      <tr>
+        <td>Starting</td>
+        <td>Cancel</td>
+        <td>Terminal</td>
+        <td>Cancelled/user-cancelled。childはcallerがkill</td>
+      </tr>
+      <tr>
+        <td>Running</td>
+        <td>meaningful progress</td>
+        <td>Running</td>
+        <td>last progress更新</td>
+      </tr>
+      <tr>
+        <td>Running</td>
+        <td>agentMessage completed、active item 0</td>
+        <td>Draining</td>
+        <td>terminal-gap開始</td>
+      </tr>
+      <tr>
+        <td>Draining</td>
+        <td>meaningful progress</td>
+        <td>Running</td>
+        <td>terminal-gap解除</td>
+      </tr>
+      <tr>
+        <td>Running/Draining</td>
+        <td>Cancel</td>
+        <td>Interrupting</td>
+        <td>SendInterrupt</td>
+      </tr>
+      <tr>
+        <td>Running</td>
+        <td>progress timeout</td>
+        <td>Interrupting</td>
+        <td>SendInterrupt、pending progress-timeout</td>
+      </tr>
+      <tr>
+        <td>Draining</td>
+        <td>terminal timeout</td>
+        <td>Interrupting</td>
+        <td>SendInterrupt、pending terminal-timeout</td>
+      </tr>
+      <tr>
+        <td>Running/Draining</td>
+        <td>hard timeout</td>
+        <td>Interrupting</td>
+        <td>SendInterrupt、pending hard-timeout</td>
+      </tr>
+      <tr>
+        <td>非Terminal</td>
+        <td>policy violation</td>
+        <td>Interrupting</td>
+        <td>turn idがあればSendInterrupt、なければ即Failed</td>
+      </tr>
+      <tr>
+        <td>Interrupting</td>
+        <td>provider terminal</td>
+        <td>Terminal</td>
+        <td>pending resultを維持</td>
+      </tr>
+      <tr>
+        <td>Interrupting</td>
+        <td>3秒経過</td>
+        <td>Terminal</td>
+        <td>pending resultを維持。callerがkill</td>
+      </tr>
+      <tr>
+        <td>Running/Draining</td>
+        <td>provider terminal</td>
+        <td>Terminal</td>
+        <td>provider statusから確定</td>
+      </tr>
+      <tr>
+        <td>Starting/Running/Draining</td>
+        <td>stdout disconnect/child exit</td>
+        <td>Terminal</td>
+        <td>Failed/child-exited</td>
+      </tr>
+      <tr>
+        <td>Interrupting</td>
+        <td>stdout disconnect/child exit</td>
+        <td>Terminal</td>
+        <td>pending resultを維持</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="66-watch評価順">6.6 watch評価順</h3>
+  <p>Codex loopでは次の順を守る。</p>
+  <ol>
+    <li>
+      cancellation
+      flagを確認する。まだ受理していなければ<code>cancel()</code>する。
+    </li>
+    <li>receiverを「次に到達するdeadlineまで、最大100ms」で待つ。</li>
+    <li>messageを受信した場合はmessageを先に処理する。</li>
+    <li>
+      message処理後にTerminalでなければ、必ず<code>tick(now)</code>を一度呼ぶ。recv
+      timeout時も<code>tick(now)</code>を呼ぶ。これによりforeign/unknown
+      messageの連続投入でwatchが飢餓しない。
+    </li>
+    <li>
+      disconnect時は<code>fail(ChildExited, interruptable = false)</code>を適用する。既にInterruptingなら最初のreasonが維持される。
+    </li>
+    <li>
+      <code>tick</code>内部では次の順に判定する。
+      <ol>
+        <li>既存Interruptingの3秒grace</li>
+        <li>Startingのrequest deadline</li>
+        <li>hard deadline</li>
+        <li>Drainingのterminal-gap deadline</li>
+        <li>Runningのprogress-idle deadline</li>
+      </ol>
+    </li>
+  </ol>
+  <p>
+    deadlineと同時刻にreceiver
+    queueへ既に入っていた<code>turn/completed</code>は、step
+    3によりterminalとして先に処理する。cancel
+    flagが同じiterationで立っていた場合はcancelが優先される。message処理と<code>tick</code>の両方がeffectを返した場合、message側effectを先に適用し、Terminalへ入った後の<code>tick</code>は<code>None</code>になる。
+  </p>
+  <h3 id="67-meaningful-progress">6.7 meaningful progress</h3>
+  <p>progress clockを更新するnotification:</p>
+  <table>
+    <caption>
+      6.7 meaningful progress
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">notification</th>
+        <th scope="col">条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>turn/started</code></td>
+        <td>current thread/turnと一致</td>
+      </tr>
+      <tr>
+        <td><code>item/agentMessage/delta</code></td>
+        <td>current thread/turnと一致し、deltaが空でない</td>
+      </tr>
+      <tr>
+        <td><code>item/started</code></td>
+        <td>current thread/turnと一致し、item typeが`commandExecution</td>
+      </tr>
+      <tr>
+        <td><code>item/completed</code></td>
+        <td>current thread/turnと一致し、item typeが上記allowlist</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>更新しないもの:</p>
+  <ul>
+    <li>100ms poll</li>
+    <li>empty delta</li>
+    <li>unknown method</li>
+    <li><code>userMessage</code></li>
+    <li>current thread/turnと一致しないnotification</li>
+    <li>JSON parse error</li>
+    <li>同じitem idのduplicate start/completion</li>
+  </ul>
+  <p>forbidden item:</p>
+  <pre><code class="language-text">fileChange
+mcpToolCall
+dynamicToolCall
+webSearch
+</code></pre>
+  <p>
+    forbidden
+    itemを受けたら<code>policy-violation</code>としてinterruptする。unknown item
+    typeは既存のbounded Activity表示を維持してよいが、progress clockを更新しない。
+  </p>
+  <h3 id="68-provider-terminal-mapping">6.8 provider terminal mapping</h3>
+  <p>
+    <code>turn/completed</code>はcurrent thread/turnと一致する場合だけ処理する。
+  </p>
+  <table>
+    <caption>
+      6.8 provider terminal mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">provider status/content</th>
+        <th scope="col">terminal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>completed</code>かつtrim後contentあり</td>
+        <td>Completed、failure codeなし</td>
+      </tr>
+      <tr>
+        <td><code>completed</code>かつcontent空</td>
+        <td>Failed/<code>provider-error</code></td>
+      </tr>
+      <tr>
+        <td><code>interrupted</code>かつpending UserCancelled</td>
+        <td>Cancelled/<code>user-cancelled</code></td>
+      </tr>
+      <tr>
+        <td><code>interrupted</code>かつpending timeout/policy</td>
+        <td>pending Failedを維持</td>
+      </tr>
+      <tr>
+        <td><code>interrupted</code>かつpendingなし</td>
+        <td>Failed/<code>provider-error</code></td>
+      </tr>
+      <tr>
+        <td><code>failed</code>またはunknown status</td>
+        <td>Failed/<code>provider-error</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>method = error</code>は、thread/turn
+    idが現在と一致するか、idが全く無いprocess-global
+    errorの場合だけFailed/<code>provider-error</code>とする。明示的に別thread/turnを指すerrorは無視する。
+  </p>
+  <h3 id="69-notification-correlationとactive-item-tracking">
+    6.9 notification correlationとactive item tracking
+  </h3>
+  <p><code>lib.rs</code>のCodex adapter内に次を追加する。</p>
+  <pre><code class="language-rust">let mut active_item_ids = HashSet::&lt;String&gt;::new();
+let mut assistant_output_completed = false;
+</code></pre>
+  <p>correlation path:</p>
+  <pre><code class="language-text">/params/threadId
+/params/turnId
+</code></pre>
+  <p>terminal payloadで上記が無い場合だけ次も確認する。</p>
+  <pre><code class="language-text">/params/turn/threadId
+/params/turn/id
+</code></pre>
+  <p>
+    現在の<code>thread_id</code>と<code>turn_id</code>の両方が一致したnotificationだけをcurrentとする。どちらかが存在して不一致ならforeignとして無視する。両方とも無いdelta/item/terminalはprotocol
+    progressとして扱わず無視する。
+  </p>
+  <p>
+    item
+    idは<code>/params/item/id</code>から読み、既存identifierと同じ文字allowlist、最大160文字で検証する。
+  </p>
+  <ul>
+    <li>
+      valid <code>item/started</code>:
+      setへinsert。既存idならduplicateとしてprogress更新しない。
+    </li>
+    <li>
+      valid <code>item/completed</code>:
+      setからremove。存在しなければduplicate/out-of-orderとしてprogress更新しない。
+    </li>
+    <li>
+      valid
+      <code>agentMessage</code>
+      startでは<code>assistant_output_completed = false</code>。
+    </li>
+    <li>
+      valid
+      <code>agentMessage</code>
+      completionでは<code>assistant_output_completed = true</code>。
+    </li>
+    <li>
+      valid
+      completion後、<code>assistant_output_completed == true</code>かつsetが空なら<code>record_assistant_output_completed</code>を呼ぶ。agentMessageより後に別itemが完了する順序でもterminal-gapを開始できる。
+    </li>
+    <li>
+      Draining中に新しいvalid
+      itemが始まったら<code>record_progress</code>によりRunningへ戻る。
+    </li>
+    <li>missing/invalid item idはUI projectionだけ行い、active setとwatchを変更しない。</li>
+  </ul>
+  <p>
+    assistant contentは既存どおりdeltaを連結し、deltaが一件も無い場合だけcompleted
+    agentMessageの<code>text</code>をfallbackに使う。いずれも合計64,000文字を超える前に<code>response-too-large</code>で失敗させる。
+  </p>
+  <p>
+    serverから<code>id</code>と<code>method</code>を持つrequestが来た場合は、現在と同じくnever-approval
+    routeへの要求とみなし<code>policy-violation</code>にする。MVP 2.5ではactive
+    request countを持たない。
+  </p>
+  <h3 id="610-request-waitの置換">6.10 request waitの置換</h3>
+  <p>
+    既存<code>receive_codex_result</code>を次の責務へ拡張し、thread response id=2とturn
+    response id=3だけに使う。
+  </p>
+  <pre><code class="language-rust">fn receive_supervised_codex_result(
+    receiver: &amp;mpsc::Receiver&lt;CodexReaderMessage&gt;,
+    request_id: u64,
+    supervisor: &amp;mut RunSupervisor,
+    origin: &amp;Instant,
+    cancellation: &amp;RunCancellation,
+) -&gt; Result&lt;Value, RuntimeFailure&gt;;
+</code></pre>
+  <p>処理:</p>
+  <ol>
+    <li><code>begin_request(elapsed_ms)</code>。</li>
+    <li>最大100msごとにcancellationとrequest deadlineを確認。</li>
+    <li>cancellation時はStarting/interruptable=falseでCancelledを返す。</li>
+    <li>
+      受信JSONが<code>id</code>と<code>method</code>を両方持つ場合は、response
+      idを判定する前にserver requestとして<code>policy-violation</code>にする。
+    </li>
+    <li>expected response受信時に<code>complete_request</code>。</li>
+    <li>response errorは<code>provider-error</code>。</li>
+    <li>invalid JSONは<code>protocol-error</code>。</li>
+    <li>channel disconnectは<code>child-exited</code>。</li>
+    <li>request deadline到達は<code>request-timeout</code>。</li>
+    <li>expected id以外のresponse/notificationは捨てる。</li>
+  </ol>
+  <p>
+    initialize request
+    id=1は現行どおりresponseを待たず、<code>initialized</code>を送る。request
+    timeout watchの対象はid=2とid=3だけである。
+  </p>
+  <p>readerとreceiverの型は次に固定する。</p>
+  <pre><code class="language-rust">const MAX_CODEX_STDOUT_BYTES: u64 = 4 * 1_024 * 1_024;
+
+enum CodexReaderMessage {
+    Message(Value),
+    Failed {
+        code: RunFailureCode,
+        message: &amp;&#39;static str,
+    },
+}
+</code></pre>
+  <p>
+    stdout
+    readerは<code>stdout.take(MAX_CODEX_STDOUT_BYTES + 1)</code>を<code>BufReader</code>で読み、改行単位でJSONをdecodeする。総read
+    byteが4 MiBを超えた場合は<code>ResponseTooLarge</code>、I/O errorまたはJSON
+    decode errorは<code>ProtocolError</code>を一度送って終了する。error
+    messageは固定文字列とし、raw lineやparser
+    inputを含めない。<code>receive_supervised_codex_result</code>とturn loopは同じtyped
+    messageを処理する。
+  </p>
+  <h3 id="611-run_codex_turn_process-loop疑似コード">
+    6.11 <code>run_codex_turn_process</code> loop疑似コード
+  </h3>
+  <pre><code class="language-rust">spawn child or ChildStartFailed
+take stdin/stdout or ChildStartFailed
+create sync_channel with capacity 256
+spawn stdout_reader JoinHandle that sends CodexReaderMessage
+let origin = Instant::now()
+let supervisor = RunSupervisor::new(production_policy)
+
+write initialize + initialized
+write thread/start or thread/resume
+receive_supervised_codex_result(id=2)
+resolve thread_id
+
+write turn/start
+receive_supervised_codex_result(id=3)
+resolve turn_id
+supervisor.mark_turn_started(elapsed_ms)
+last_progress_at = Some(now_iso())
+
+loop {
+    if cancellation newly observed:
+        apply supervisor.cancel(interruptable=true)
+
+    recv up to min(100ms, next supervisor deadline)
+
+    on current non-empty delta:
+        enforce total 64_000 chars
+        assistant_output_completed = false
+        supervisor.record_progress(elapsed_ms)
+        last_progress_at = Some(now_iso())
+        send RuntimeEvent::Delta
+
+    on current valid item start/completion:
+        update active_item_ids
+        if started agentMessage: assistant_output_completed = false
+        if completed agentMessage: assistant_output_completed = true
+        supervisor.record_progress(elapsed_ms)
+        last_progress_at = Some(now_iso())
+        project existing bounded Activity
+        if assistant_output_completed and active_item_ids empty:
+            supervisor.record_assistant_output_completed(elapsed_ms)
+
+    on current turn/completed:
+        apply supervisor.terminal(status, has_content)
+
+    on forbidden item/server request:
+        apply supervisor.fail(PolicyViolation, interruptable=true)
+
+    on recv timeout:
+        apply supervisor.tick(elapsed_ms)
+
+    after any non-terminal received message:
+        apply supervisor.tick(elapsed_ms)
+
+    on recv disconnect after queue is empty:
+        apply supervisor.fail(ChildExited, interruptable=false)
+
+    on SendInterrupt:
+        write turn/interrupt with request id=4 exactly once
+        if write fails, apply supervisor.finish_pending()
+
+    on Finish:
+        break with typed outcome
+}
+
+drop stdin
+drop receiver
+kill/wait child through ProcessGuard::terminate()
+join stdout_reader
+return typed outcome with thread_id/content/last_progress_at
+</code></pre>
+  <p>
+    reader
+    joinがpanicした場合、予定outcomeがCompletedならFailed/<code>internal-error</code>へ置換する。予定outcomeが既にFailedまたはCancelledなら最初の終了理由を維持する。
+  </p>
+  <p>
+    <code>turn/interrupt</code> response id=4は待たない。terminal
+    notificationだけを待つ。
+  </p>
+  <h3 id="612-process-cleanup">6.12 process cleanup</h3>
+  <p>
+    <code>ProcessGuard</code
+    >へidempotentなmethodを追加する。<code>terminated</code>はconstructorで<code>false</code>にする。
+  </p>
+  <pre><code class="language-rust">struct ProcessGuard {
+    child: Child,
+    terminated: bool,
+}
+
+pub(crate) fn terminate(&amp;mut self) {
+    if self.terminated {
+        return;
+    }
+    let _ = self.child.kill();
+    let _ = self.child.wait();
+    self.terminated = true;
+}
+</code></pre>
+  <p>
+    <code>Drop</code
+    >も<code>terminate()</code>を呼ぶ。二重呼出しを安全にする。stdout
+    readerは<code>map_while(Result::ok)</code>をやめ、read
+    errorを<code>CodexReaderMessage::Failed</code>として一度送って終了する。
+  </p>
+  <p>cleanup順序:</p>
+  <pre><code class="language-text">Supervisor terminal確定
+  -&gt; 新しいUI delta/activityを停止
+  -&gt; stdin close
+  -&gt; receiver drop
+  -&gt; child kill/wait
+  -&gt; stdout reader join
+  -&gt; SQLite transaction commit
+  -&gt; terminal Tauri event
+  -&gt; `execute_turn` return
+  -&gt; active_runsからremove
+</code></pre>
+  <p>
+    <code>start_turn</code
+    >のfinally相当で行う<code>active_runs.remove</code>は維持する。process
+    cleanupは<code>execute_codex_turn</code>がreturnする前に完了していること。
+  </p>
+  <h2 id="7-runtime-persistence-and-event-ordering">7. Runtime persistence and event ordering</h2>
+  <h3 id="71-typed-result">7.1 typed result</h3>
+  <p><code>lib.rs</code>へ次を追加する。</p>
+  <pre><code class="language-rust">struct RunSupervisionMetadata {
+    supervisor_version: &amp;&#39;static str,
+    last_progress_at: Option&lt;String&gt;,
+}
+
+struct RuntimeFailure {
+    code: RunFailureCode,
+    message: String,
+    recovery: String,
+    supervision: RunSupervisionMetadata,
+}
+
+struct CodexTurnOutcome {
+    thread_id: String,
+    content: String,
+    supervision: RunSupervisionMetadata,
+}
+
+struct CodexTurnFailure {
+    thread_id: Option&lt;String&gt;,
+    failure: RuntimeFailure,
+}
+</code></pre>
+  <p>
+    <code>RuntimeFailure</code>はCodex
+    route内だけで使う。全messageは<code>redact_runtime_text</code>を通す。<code>recovery</code>は固定文字列だけを使い、provider
+    errorを連結しない。thread/turn request前のconfiguration/child
+    start失敗も<code>last_progress_at = None</code>を持つ同じ型へ変換する。
+  </p>
+  <h3 id="72-coding-runのtransaction">7.2 coding runのtransaction</h3>
+  <p>
+    <code>execute_codex_turn</code
+    >はprocess結果だけでreturnしない。次のtransactionをcommitしてからcallerへ返す。
+  </p>
+  <p>success transaction:</p>
+  <ol>
+    <li><code>codex_threads</code>をupsert。</li>
+    <li>assistant <code>conversation_messages</code>をinsert。</li>
+    <li><code>conversations.updated_at</code>を更新。</li>
+    <li>
+      <code>runtime_runs</code
+      >を<code>completed</code>へ更新し、failure codeをNULL、Supervisor
+      metadataを保存。
+    </li>
+    <li>update対象runtime rowが1件であることを確認。</li>
+    <li>commit。</li>
+    <li>commit後に<code>ConversationMessage</code>をreturn。</li>
+  </ol>
+  <p>failure/cancel transaction:</p>
+  <ol>
+    <li>thread idが確定済みなら<code>codex_threads</code>をupsert。</li>
+    <li>
+      <code>runtime_runs</code
+      >を<code>failed</code>または<code>cancelled</code>へ更新。
+    </li>
+    <li>failure code、redacted error、Supervisor metadata、completed_atを保存。</li>
+    <li>update対象が1件であることを確認。</li>
+    <li>commit。</li>
+    <li>commit後にtyped failureをreturn。</li>
+  </ol>
+  <p>
+    <code>persist_codex_thread</code
+    >と<code>persist_assistant_message</code>を順番に個別commitする実装は使わない。新しいtransaction
+    helperを作る。
+  </p>
+  <h3 id="73-tauri-terminal-event">7.3 Tauri terminal event</h3>
+  <p>Codex route:</p>
+  <ul>
+    <li>success commit後に<code>RuntimeEvent::MessageCompleted</code></li>
+    <li>cancel commit後に<code>RuntimeEvent::Cancelled</code></li>
+    <li>failure commit後に<code>RuntimeEvent::Failed</code></li>
+  </ul>
+  <p>
+    terminal eventはrunごとに1件だけ送る。<code>start_turn</code>にあるgeneric
+    <code>runtime_error</code
+    >の送信を削除し、<code>execute_turn</code>が全terminal
+    eventを送る。<code>prepare_runtime_run</code>自体が失敗した場合も、<code>execute_turn</code>がredacted
+    <code>runtime_error</code>を1件送ってからerrorを返す。この場合はruntime
+    rowが作成されていないため永続化は行わない。
+  </p>
+  <p>
+    conversation
+    routeはSupervisor対象外であり、既存streaming/persistence順序を変更しない。conversation
+    failure/cancel eventも既存<code>execute_turn</code>内の処理を維持する。
+  </p>
+  <p>
+    frontend-onlyなrun status storeは追加しない。UI eventはcommit済みSQLite
+    stateの通知であり、永続source of truthは<code>runtime_runs</code>である。
+  </p>
+  <p>
+    finalize
+    transactionが失敗した場合は<code>MessageCompleted</code>を送らない。別transactionで同じruntime
+    rowをFailed/<code>internal-error</code>へ確定できた場合だけ<code
+      >Failed</code
+    >
+    eventを送る。fallback transactionも失敗した場合はterminal eventを送らずcommand
+    errorを返し、rowは次回起動時の<code>app-restarted</code>
+    reconcile対象にする。Channel send失敗はcommit済みDBを巻き戻さず、event retryもしない。
+  </p>
+  <h3 id="74-failure-codeとrecovery">7.4 failure codeとrecovery</h3>
+  <table>
+    <caption>
+      7.4 failure codeとrecovery
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">code</th>
+        <th scope="col">status</th>
+        <th scope="col">固定recovery</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>configuration-error</code></td>
+        <td>failed</td>
+        <td>Check the Codex workspace and Settings, then retry.</td>
+      </tr>
+      <tr>
+        <td><code>child-start-failed</code></td>
+        <td>failed</td>
+        <td>Check the Codex installation and bundled runtime, then retry.</td>
+      </tr>
+      <tr>
+        <td><code>request-timeout</code></td>
+        <td>failed</td>
+        <td>Restart the Codex runtime and retry.</td>
+      </tr>
+      <tr>
+        <td><code>progress-timeout</code></td>
+        <td>failed</td>
+        <td>Retry the run. If the task is expected to be long, review the coding timeout.</td>
+      </tr>
+      <tr>
+        <td><code>terminal-timeout</code></td>
+        <td>failed</td>
+        <td>Restart the Codex runtime and retry.</td>
+      </tr>
+      <tr>
+        <td><code>hard-timeout</code></td>
+        <td>failed</td>
+        <td>Increase the coding timeout only if the task requires it, then retry.</td>
+      </tr>
+      <tr>
+        <td><code>child-exited</code></td>
+        <td>failed</td>
+        <td>Check the Codex runtime status and retry.</td>
+      </tr>
+      <tr>
+        <td><code>protocol-error</code></td>
+        <td>failed</td>
+        <td>Update or reinstall the Codex runtime, then retry.</td>
+      </tr>
+      <tr>
+        <td><code>policy-violation</code></td>
+        <td>failed</td>
+        <td>This read-only route cannot perform the requested operation.</td>
+      </tr>
+      <tr>
+        <td><code>provider-error</code></td>
+        <td>failed</td>
+        <td>Review the bounded error and retry.</td>
+      </tr>
+      <tr>
+        <td><code>response-too-large</code></td>
+        <td>failed</td>
+        <td>Ask for a shorter response and retry.</td>
+      </tr>
+      <tr>
+        <td><code>internal-error</code></td>
+        <td>failed</td>
+        <td>Restart SAAA and retry.</td>
+      </tr>
+      <tr>
+        <td><code>user-cancelled</code></td>
+        <td>cancelled</td>
+        <td>なし。Failed eventを出さない</td>
+      </tr>
+      <tr>
+        <td><code>app-restarted</code></td>
+        <td>interrupted</td>
+        <td>次回起動時eventを出さない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>非Codex routeの既存<code>runtime_error</code>はTypeScript unionへ残す。</p>
+  <h2 id="8-input-activity-signal--rust-contract">8. Input Activity Signal — Rust contract</h2>
+  <h3 id="81-dto">8.1 DTO</h3>
+  <p><code>situation/contracts.rs</code>へ追加する。</p>
+  <pre><code class="language-rust">#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = &quot;kebab-case&quot;)]
+pub enum InputActivityState {
+    Active,
+    Recent,
+    Idle,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct InputActivitySignal {
+    pub state: InputActivityState,
+    pub health: SignalHealth,
+}
+
+pub fn unsupported_input_activity() -&gt; InputActivitySignal {
+    InputActivitySignal {
+        state: InputActivityState::Unknown,
+        health: SignalHealth::Unsupported,
+    }
+}
+</code></pre>
+  <p><code>SignalSnapshot</code>へ次を追加する。</p>
+  <pre><code class="language-rust">#[serde(default = &quot;unsupported_input_activity&quot;)]
+pub input_activity: InputActivitySignal,
+</code></pre>
+  <p>
+    field位置は<code>foreground</code>の直後とする。JSON名は<code>inputActivity</code>。
+  </p>
+  <p>
+    <code>initial_signals</code
+    >ではdefaultを使わず、monitoring停止を表す次を明示する。
+  </p>
+  <pre><code class="language-rust">InputActivitySignal {
+    state: InputActivityState::Unknown,
+    health: SignalHealth::Disabled,
+}
+</code></pre>
+  <h3 id="82-calibrationparameters">8.2 CalibrationParameters</h3>
+  <p>既存struct末尾へ追加する。</p>
+  <pre><code class="language-rust">#[serde(default = &quot;default_input_active_max_ms&quot;)]
+pub input_active_max_ms: u64,
+
+#[serde(default = &quot;default_input_recent_max_ms&quot;)]
+pub input_recent_max_ms: u64,
+</code></pre>
+  <p>default function:</p>
+  <pre><code class="language-rust">const fn default_input_active_max_ms() -&gt; u64 { 30_000 }
+const fn default_input_recent_max_ms() -&gt; u64 { 300_000 }
+</code></pre>
+  <p>validation:</p>
+  <pre><code class="language-text">5_000 &lt;= inputActiveMaxMs &lt;= 120_000
+60_000 &lt;= inputRecentMaxMs &lt;= 1_800_000
+inputActiveMaxMs &lt; inputRecentMaxMs
+</code></pre>
+  <p>
+    既存profile JSONはfield欠落をserde defaultで読む。profile row、rule version、status、parameters
+    JSONをmigrationで書き換えない。
+  </p>
+  <h3 id="83-macos-dependency">8.3 macOS dependency</h3>
+  <p><code>src-tauri/Cargo.toml</code>のmacOS target dependencyへ次を追加する。</p>
+  <pre><code class="language-toml">objc2-core-graphics = { version = &quot;0.3.2&quot;, default-features = false, features = [&quot;std&quot;, &quot;CGEventSource&quot;, &quot;CGEventTypes&quot;] }
+</code></pre>
+  <p>既存<code>objc2-app-kit 0.3.2</code>とversionを合わせる。</p>
+  <p>
+    Appleは<code>CGEventSourceSecondsSinceLastEventType</code>に<code>kCGAnyInputEventType</code>を渡すとkeyboard、mouse、tabletを含む直前のinput
+    eventからの経過秒数を返すと定義している。実装はこのAPIだけを使い、event tapを作らない。<a
+      href="https://developer.apple.com/documentation/coregraphics/cgeventsource/secondssincelasteventtype%28_%3Aeventtype%3A%29?language=objc"
+      >Apple API</a
+    >
+  </p>
+  <p>
+    <code>objc2-core-graphics 0.3.2</code
+    >には<code>CGEventSource::seconds_since_last_event_type</code>があり、<code>CGEventSource</code>と<code
+      >CGEventTypes</code
+    >
+    featureで利用できる。<a
+      href="https://docs.rs/objc2-core-graphics/0.3.2/objc2_core_graphics/struct.CGEventSource.html#method.seconds_since_last_event_type"
+      >Rust API</a
+    >
+  </p>
+  <h3 id="84-macos実装">8.4 macOS実装</h3>
+  <p>新しいfileを増やさず、<code>situation/platform/macos.rs</code>へ追加する。</p>
+  <pre><code class="language-rust">use super::{CalibrationParameters, InputActivitySignal};
+use objc2_core_graphics::{CGEventSource, CGEventSourceStateID, CGEventType};
+
+pub fn input_activity_signal(parameters: &amp;CalibrationParameters) -&gt; InputActivitySignal {
+    let seconds = CGEventSource::seconds_since_last_event_type(
+        CGEventSourceStateID::CombinedSessionState,
+        CGEventType(u32::MAX), // kCGAnyInputEventType
+    );
+    super::classify_input_activity_seconds(seconds, parameters)
+}
+</code></pre>
+  <p>
+    <code>classify_input_activity_seconds</code
+    >は<code>platform/mod.rs</code>のpure
+    functionとし、visibilityを<code>pub(super)</code>にせずprivateのままにする。child
+    moduleの<code>macos.rs</code>から<code>super::classify_input_activity_seconds</code>で参照し、<code
+      >platform</code
+    >
+    module外へ公開しない。
+  </p>
+  <pre><code class="language-rust">fn classify_input_activity_seconds(
+    seconds: f64,
+    parameters: &amp;CalibrationParameters,
+) -&gt; InputActivitySignal
+</code></pre>
+  <p>処理順:</p>
+  <ol>
+    <li><code>seconds.is_finite()</code>を確認。</li>
+    <li><code>seconds &gt;= 0.0</code>を確認。</li>
+    <li><code>seconds &lt;= u64::MAX as f64 / 1000.0</code>を確認。</li>
+    <li>invalidなら<code>Unknown + Degraded</code>。</li>
+    <li><code>(seconds * 1000.0).floor() as u64</code>でms化。</li>
+    <li>Section 8.6の境界でcategory化。</li>
+    <li>validならhealthはReady。</li>
+  </ol>
+  <p>
+    raw <code>f64</code>はこのfunction callからreturnしない。raw
+    observation用structは作らない。<code>Serialize</code>可能な型、error
+    message、log、eventへraw値を入れない。
+  </p>
+  <h3 id="85-unsupported実装">8.5 unsupported実装</h3>
+  <p><code>situation/platform/unsupported.rs</code>へ追加する。</p>
+  <pre><code class="language-rust">pub fn input_activity_signal(_: &amp;CalibrationParameters) -&gt; InputActivitySignal {
+    unsupported_input_activity()
+}
+</code></pre>
+  <p><code>platform/mod.rs</code>はcfgでmacOS/unsupportedへdispatchする。</p>
+  <pre><code class="language-rust">pub fn input_activity_signal(
+    parameters: &amp;CalibrationParameters,
+) -&gt; InputActivitySignal
+</code></pre>
+  <h3 id="86-category境界">8.6 category境界</h3>
+  <table>
+    <caption>
+      8.6 category境界
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">elapsed ms</th>
+        <th scope="col">state</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>0 &lt;= elapsed &lt;= inputActiveMaxMs</code></td>
+        <td>active</td>
+      </tr>
+      <tr>
+        <td><code>inputActiveMaxMs &lt; elapsed &lt;= inputRecentMaxMs</code></td>
+        <td>recent</td>
+      </tr>
+      <tr>
+        <td><code>inputRecentMaxMs &lt; elapsed</code></td>
+        <td>idle</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>境界値はinclusive/exclusiveを変更しない。roundではなくfloorを使う。</p>
+  <h3 id="87-health-mapping">8.7 health mapping</h3>
+  <table>
+    <caption>
+      8.7 health mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">condition</th>
+        <th scope="col">state</th>
+        <th scope="col">health</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>macOS APIがfinite non-negativeを返す</td>
+        <td>thresholdで分類</td>
+        <td>ready</td>
+      </tr>
+      <tr>
+        <td>NaN、Infinity、負値、overflow</td>
+        <td>unknown</td>
+        <td>degraded</td>
+      </tr>
+      <tr>
+        <td>non-macOS</td>
+        <td>unknown</td>
+        <td>unsupported</td>
+      </tr>
+      <tr>
+        <td>monitoring disabledのinitial snapshot</td>
+        <td>unknown</td>
+        <td>disabled</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Input
+    Activityでは<code>permission-denied</code>を生成しない。使用APIからpermission拒否を判別するcontractがないためである。実機で予期しないpermission
+    promptが出た場合はdegradedへ推測せずStop conditionとする。
+  </p>
+  <h2 id="9-situation-integration">9. Situation integration</h2>
+  <h3 id="91-sampling">9.1 sampling</h3>
+  <p><code>SituationSample</code>へ追加する。</p>
+  <pre><code class="language-rust">input_activity: InputActivitySignal,
+</code></pre>
+  <p>
+    <code>situation/mod.rs</code>の<code>contracts</code>
+    importへ<code>ForegroundCategory</code>、<code>ForegroundSignal</code>、<code>InputActivitySignal</code>、<code>InputActivityState</code>、<code>TimeBucket</code>を追加する。以下のdisabled
+    returnが未修飾名でcompileできる状態にする。
+  </p>
+  <p><code>sample_platform</code>は一度のlockで次をcloneする。</p>
+  <pre><code class="language-rust">let (enabled, calendar_enabled, parameters) = {
+    let inner = self.inner.lock()?;
+    (
+        inner.settings.enabled,
+        inner.settings.calendar_enabled,
+        inner.calibration_parameters.clone(),
+    )
+};
+</code></pre>
+  <p>
+    <code>enabled == false</code>ならplatform APIを呼ばず、次をreturnする。worker
+    loopから通常このpathへ来ないが、直接呼出しでもOS APIを呼ばないこと。
+  </p>
+  <pre><code class="language-rust">return Ok(SituationSample {
+    foreground: ForegroundSignal {
+        category: ForegroundCategory::Unknown,
+        health: SignalHealth::Disabled,
+    },
+    input_activity: InputActivitySignal {
+        state: InputActivityState::Unknown,
+        health: SignalHealth::Disabled,
+    },
+    calendar: CalendarSignal {
+        state: CalendarState::Unavailable,
+        time_bucket: TimeBucket::None,
+        health: SignalHealth::Disabled,
+    },
+    observed_at: crate::now_iso(),
+    observed_ms: epoch_millis(),
+});
+</code></pre>
+  <p>enabled時だけ次を取得する。</p>
+  <pre><code class="language-rust">input_activity: platform::input_activity_signal(&amp;parameters)
+</code></pre>
+  <p>
+    <code>tick_sampled</code
+    >はsample値を<code>SignalSnapshot.input_activity</code>へコピーする。SQLiteへraw
+    snapshotを追加しない。
+  </p>
+  <h3 id="92-signal-health">9.2 signal health</h3>
+  <p><code>signal_health()</code>へ次を追加する。</p>
+  <pre><code class="language-rust">SignalHealthEntry {
+    source: &quot;input-activity&quot;.to_string(),
+    health: signals.input_activity.health.clone(),
+}
+</code></pre>
+  <p>
+    既存repositoryの最大8
+    entries制約内である。health変化eventは他signalと同じ差分検出を使い、重複発行しない。
+  </p>
+  <h3 id="93-classifier">9.3 classifier</h3>
+  <p>
+    <code>classify_with_parameters</code
+    >のscore、scene、confidence、evidence、user_attention、audio environmentをInput
+    Activityで変更しない。Input Activity参照をclassifierのscore計算へ追加しない。
+  </p>
+  <p>
+    これにより同じ既存signalでInput
+    Activityだけを変えた場合、<code>Candidate</code>は完全一致する。
+  </p>
+  <h3 id="94-shadow-policy">9.4 Shadow policy</h3>
+  <p>signatureを次へ変更する。</p>
+  <pre><code class="language-rust">pub fn shadow_policy(
+    state: &amp;SituationState,
+    signals: &amp;SignalSnapshot,
+    parameters: &amp;CalibrationParameters,
+    now: &amp;str,
+) -&gt; ShadowDecision
+</code></pre>
+  <p>
+    既存hardcode
+    <code>45</code
+    >と<code>70</code>は、それぞれ<code>parameters.low_confidence_max</code>と<code>parameters.classification_min_confidence</code>へ置換する。全caller、replay、testを更新する。
+  </p>
+  <p>policy priority:</p>
+  <pre><code class="language-text">1. foreground = Sensitive
+   -&gt; IGNORE / sensitive-safe-default
+
+2. conversation != Idle
+   または microphone = SaaaCapturing | SaaaTranscribing
+   -&gt; RESPOND / explicit-saaa-interaction
+
+3. scene = UNKNOWN
+   または confidence &lt; lowConfidenceMax
+   -&gt; IGNORE / insufficient-signal
+
+4. inputActivity.health = Ready
+   かつ inputActivity.state = Idle
+   -&gt; OBSERVE / input-idle
+
+5. scene = MEETING
+   または userAttention = busy
+   -&gt; OBSERVE / user-busy
+
+6. confidence &gt;= classificationMinConfidence
+   かつ userAttention = available
+   -&gt; SUGGEST / high-confidence-available
+
+7. その他
+   -&gt; OBSERVE / passive-observation
+</code></pre>
+  <p>
+    <code>POLICY_VERSION</code
+    >を<code>mvp2.5-shadow-v1</code>へ変更する。<code>RULE_VERSION</code>とactive
+    profileのrule versionは変更しない。
+  </p>
+  <p>重要な結果:</p>
+  <ul>
+    <li>idleでもexplicit SAAA interactionはRESPOND。</li>
+    <li>sensitiveは常にIGNORE。</li>
+    <li>unknown/degraded/unsupported/disabledはInput Activity導入前のpolicyへfall back。</li>
+    <li>
+      idleはstateやledger evidenceを変更せず、decision
+      reasonだけを<code>input-idle</code>にする。
+    </li>
+    <li>Situationからmodel、TTS、notification、Meeting、application actionを開始しない。</li>
+  </ul>
+  <h2 id="10-sqlite-and-settings-migration-v7">10. SQLite and settings migration v7</h2>
+  <h3 id="101-runtime_runs-schema">10.1 <code>runtime_runs</code> schema</h3>
+  <p>新規DBのCREATE TABLEへ次を直接含める。</p>
+  <pre><code class="language-sql">failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN (
+  &#39;user-cancelled&#39;,&#39;app-restarted&#39;,&#39;configuration-error&#39;,&#39;child-start-failed&#39;,
+  &#39;request-timeout&#39;,&#39;progress-timeout&#39;,&#39;terminal-timeout&#39;,&#39;hard-timeout&#39;,
+  &#39;child-exited&#39;,&#39;protocol-error&#39;,&#39;policy-violation&#39;,&#39;provider-error&#39;,
+  &#39;response-too-large&#39;,&#39;internal-error&#39;
+)),
+supervisor_version TEXT CHECK(
+  supervisor_version IS NULL OR length(supervisor_version) BETWEEN 1 AND 64
+),
+last_progress_at TEXT CHECK(
+  last_progress_at IS NULL OR length(last_progress_at) BETWEEN 1 AND 32
+),
+</code></pre>
+  <p>既存status CHECKは変更しない。</p>
+  <h3 id="102-migration-function">10.2 migration function</h3>
+  <p><code>migrate_v6_to_v7(connection: &amp;Connection)</code>を追加する。</p>
+  <p>処理:</p>
+  <ol>
+    <li><code>PRAGMA user_version</code>が7以上ならreturn。</li>
+    <li><code>pragma_table_info(&#39;runtime_runs&#39;)</code>で各column存在を確認。</li>
+    <li>欠けているcolumnだけ<code>ALTER TABLE ... ADD COLUMN</code>する。</li>
+    <li>calibration profile rowは変更しない。</li>
+    <li><code>settings_documents.schema_version &lt; 7</code>を7へ更新。</li>
+    <li>caller transaction内で<code>PRAGMA user_version = 7</code>。</li>
+  </ol>
+  <p>同じmigrationを2回呼んでもcolumn追加やdata変更が起きないこと。</p>
+  <p>column追加SQLは次で固定する。SQLiteでは後付けCHECKをtable-levelへ追加しない。</p>
+  <pre><code class="language-sql">ALTER TABLE runtime_runs ADD COLUMN failure_code TEXT
+  CHECK(failure_code IS NULL OR failure_code IN (
+    &#39;user-cancelled&#39;,&#39;app-restarted&#39;,&#39;configuration-error&#39;,&#39;child-start-failed&#39;,
+    &#39;request-timeout&#39;,&#39;progress-timeout&#39;,&#39;terminal-timeout&#39;,&#39;hard-timeout&#39;,
+    &#39;child-exited&#39;,&#39;protocol-error&#39;,&#39;policy-violation&#39;,&#39;provider-error&#39;,
+    &#39;response-too-large&#39;,&#39;internal-error&#39;
+  ));
+ALTER TABLE runtime_runs ADD COLUMN supervisor_version TEXT
+  CHECK(supervisor_version IS NULL OR length(supervisor_version) BETWEEN 1 AND 64);
+ALTER TABLE runtime_runs ADD COLUMN last_progress_at TEXT
+  CHECK(last_progress_at IS NULL OR length(last_progress_at) BETWEEN 1 AND 32);
+</code></pre>
+  <h3 id="103-initialize-order">10.3 initialize order</h3>
+  <p><code>initialize_database</code>のtransaction順序を次へ固定する。</p>
+  <pre><code class="language-text">CREATE TABLE IF NOT EXISTS（v7形状）
+  -&gt; migrate_legacy_settings_documents
+  -&gt; migrate_v4_to_v5
+  -&gt; migrate_v6_to_v7
+  -&gt; default settings INSERT OR IGNORE（schema 7）
+  -&gt; reconcile_interrupted_runs
+  -&gt; meeting::reconcile
+  -&gt; PRAGMA user_version = 7
+  -&gt; commit
+</code></pre>
+  <p>
+    <code>backup_before_migration</code
+    >は<code>version &gt;= 7</code>のときだけskipする。v6実データはmigration前に一度backupされる。
+  </p>
+  <h3 id="104-coding-run-write">10.4 coding run write</h3>
+  <p>
+    <code>prepare_runtime_run</code>でcoding
+    routeをinsertするとき、最初から次を保存する。
+  </p>
+  <pre><code class="language-text">supervisor_version = mvp2.5-supervisor-v1
+failure_code = NULL
+last_progress_at = NULL
+</code></pre>
+  <p>conversation routeとvoice routeは3 fieldをNULLにする。</p>
+  <p>
+    terminal
+    finalizeでのみ<code>last_progress_at</code>を一度保存する。deltaごとにSQLite
+    UPDATEしない。
+  </p>
+  <h3 id="105-restart-reconcile">10.5 restart reconcile</h3>
+  <p>
+    <code>runtime_runs.status = running</code
+    >の全rowを既存どおり<code>interrupted</code>へする。同時に:
+  </p>
+  <pre><code class="language-text">failure_code = app-restarted
+completed_at = now
+error_message = COALESCE(error_message, &#39;Application restarted&#39;)
+</code></pre>
+  <p>
+    既存<code>supervisor_version</code>は変更しない。v6からmigrationした古いrunning
+    rowはNULLのままでよい。
+  </p>
+  <h3 id="106-settings-versionの更新箇所">10.6 settings versionの更新箇所</h3>
+  <p>全て6から7へ同じcommitで更新する。</p>
+  <pre><code class="language-text">src-tauri/src/lib.rs
+  default_settings_documents
+  validate_settings_document
+  initialize_database settings UPDATE
+  backup_before_migration threshold
+
+src/lib/contracts.ts
+  SettingsDocument.schemaVersion
+
+src/lib/schemas.ts
+  z.literal(7)
+
+src/features/settings/SettingsPage.tsx
+  save payload schemaVersion
+
+tests/settings.test.ts
+  fixture schemaVersion
+</code></pre>
+  <p>settings JSON shapeは変更しない。</p>
+  <h2 id="11-frontend-contract">11. Frontend contract</h2>
+  <h3 id="111-runtime-failure-type">11.1 runtime failure type</h3>
+  <p><code>src/lib/contracts.ts</code>へ追加する。</p>
+  <pre><code class="language-ts">export type RuntimeFailureCode =
+  | &quot;runtime_error&quot;
+  | &quot;configuration-error&quot;
+  | &quot;child-start-failed&quot;
+  | &quot;request-timeout&quot;
+  | &quot;progress-timeout&quot;
+  | &quot;terminal-timeout&quot;
+  | &quot;hard-timeout&quot;
+  | &quot;child-exited&quot;
+  | &quot;protocol-error&quot;
+  | &quot;policy-violation&quot;
+  | &quot;provider-error&quot;
+  | &quot;response-too-large&quot;
+  | &quot;internal-error&quot;;
+</code></pre>
+  <p>
+    <code>RuntimeEvent</code>のfailed
+    codeを<code>RuntimeFailureCode</code>へ変更する。cancelledは別eventなので<code>user-cancelled</code>をunionへ含めない。frontendでrecoveryを再生成せず、backendの固定<code>message</code>と<code>recovery</code>を現行どおり表示する。
+  </p>
+  <p><code>src/lib/runtime.ts</code>のinvoke signatureは変わらない。</p>
+  <h3 id="112-input-activity-type">11.2 Input Activity type</h3>
+  <pre><code class="language-ts">export type InputActivityState = &quot;active&quot; | &quot;recent&quot; | &quot;idle&quot; | &quot;unknown&quot;;
+
+export type SignalSnapshot = {
+  // existing
+  inputActivity: {
+    state: InputActivityState;
+    health: SignalHealth;
+  };
+};
+</code></pre>
+  <p>
+    <code>as any</code>、optional field、frontend defaultは使わない。Rust
+    snapshotが常にfieldを返す。
+  </p>
+  <h3 id="113-situation-overview">11.3 Situation Overview</h3>
+  <p>
+    <code>SituationPage.tsx</code>のSignal health gridでForeground直後に追加する。
+  </p>
+  <pre><code class="language-tsx">&lt;Signal
+  label=&quot;Input activity&quot;
+  value={`${snapshot.signals.inputActivity.state} · ${snapshot.signals.inputActivity.health}`}
+/&gt;
+</code></pre>
+  <p>privacy helpを次へ更新する。</p>
+  <pre><code class="language-text">Raw application identity、window title、Calendar details、audio content、exact input idle timeは保存しません。
+</code></pre>
+  <p>exact seconds、last input time、keyboard/mouse内訳を表示しない。</p>
+  <h3 id="114-calibration-candidate-editor">11.4 Calibration candidate editor</h3>
+  <p><code>CalibrationParameters</code>へ追加する。</p>
+  <pre><code class="language-ts">inputActiveMaxMs: number;
+inputRecentMaxMs: number;
+</code></pre>
+  <p><code>defaultParameters</code>:</p>
+  <pre><code class="language-text">inputActiveMaxMs = 30000
+inputRecentMaxMs = 300000
+</code></pre>
+  <p>既存form末尾へ追加する。</p>
+  <table>
+    <caption>
+      11.4 Calibration candidate editor
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">label</th>
+        <th scope="col" class="markdown-align-right">min</th>
+        <th scope="col" class="markdown-align-right">max</th>
+        <th scope="col" class="markdown-align-right">step</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Input active max (ms)</td>
+        <td class="markdown-align-right">5000</td>
+        <td class="markdown-align-right">120000</td>
+        <td class="markdown-align-right">5000</td>
+      </tr>
+      <tr>
+        <td>Input recent max (ms)</td>
+        <td class="markdown-align-right">60000</td>
+        <td class="markdown-align-right">1800000</td>
+        <td class="markdown-align-right">30000</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>parametersValid</code
+    >へ<code>inputActiveMaxMs &lt; inputRecentMaxMs</code>を追加する。invalid時は次を表示する。
+  </p>
+  <pre><code class="language-text">Input active maximum must be lower than input recent maximum.
+</code></pre>
+  <p>新しいSettings UIは作らない。変更は既存candidate creation flowだけである。</p>
+  <h2 id="12-replay-fixture-contract">12. Replay fixture contract</h2>
+  <h3 id="121-fixture-version">12.1 fixture version</h3>
+  <pre><code class="language-rust">pub const FIXTURE_SET_VERSION: &amp;str = &quot;situation-fixtures-v2&quot;;
+</code></pre>
+  <p>
+    既存<code>mvp1-v1.json</code>は変更しない。<code>SignalSnapshot.input_activity</code>のserde
+    defaultにより<code>Unknown + Unsupported</code>としてdecodeする。
+  </p>
+  <p>新規<code>mvp2.5-v2.json</code>は次のshapeとする。</p>
+  <pre><code class="language-json">{
+  &quot;version&quot;: &quot;situation-fixtures-v2&quot;,
+  &quot;scenarios&quot;: [
+    {
+      &quot;id&quot;: &quot;explicit-input-wins-idle&quot;,
+      &quot;samples&quot;: [
+        {
+          &quot;elapsedMs&quot;: 0,
+          &quot;signals&quot;: {
+            &quot;sequence&quot;: 1,
+            &quot;observedAt&quot;: &quot;0&quot;,
+            &quot;foreground&quot;: { &quot;category&quot;: &quot;coding&quot;, &quot;health&quot;: &quot;ready&quot; },
+            &quot;conversation&quot;: { &quot;state&quot;: &quot;user-input&quot; },
+            &quot;microphone&quot;: { &quot;state&quot;: &quot;inactive&quot;, &quot;health&quot;: &quot;ready&quot; },
+            &quot;audio&quot;: { &quot;state&quot;: &quot;silent&quot;, &quot;health&quot;: &quot;ready&quot; },
+            &quot;calendar&quot;: { &quot;state&quot;: &quot;free&quot;, &quot;timeBucket&quot;: &quot;none&quot;, &quot;health&quot;: &quot;ready&quot; },
+            &quot;inputActivity&quot;: { &quot;state&quot;: &quot;idle&quot;, &quot;health&quot;: &quot;ready&quot; }
+          },
+          &quot;expectedScene&quot;: &quot;CONVERSATION&quot;,
+          &quot;expectedAttention&quot;: &quot;RESPOND&quot;
+        }
+      ]
+    }
+  ]
+}
+</code></pre>
+  <p>
+    実際の<code>signals</code>は全fieldを省略せず記述する。Input
+    Activityにraw secondsを入れない。
+  </p>
+  <h3 id="122-必須scenario">12.2 必須scenario</h3>
+  <table>
+    <caption>
+      12.2 必須scenario
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">scenario id</th>
+        <th scope="col">内容</th>
+        <th scope="col">必須期待値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>coding-active-to-idle</code></td>
+        <td>sample 1〜3をactive codingで安定化し、sample 4〜6をactive→recent→idle</td>
+        <td>sample 3〜6はscene CODING。sample 4〜6はSUGGEST→SUGGEST→OBSERVE</td>
+      </tr>
+      <tr>
+        <td><code>explicit-input-wins-idle</code></td>
+        <td>conversation UserInput + input idle</td>
+        <td>CONVERSATION / RESPOND</td>
+      </tr>
+      <tr>
+        <td><code>sensitive-wins-idle</code></td>
+        <td>Sensitive foreground + input idle</td>
+        <td>IGNORE</td>
+      </tr>
+      <tr>
+        <td><code>unsupported-parity</code></td>
+        <td>input Unknown/Unsupportedで既存coding sample</td>
+        <td>MVP 1 baselineと同じscene/attention</td>
+      </tr>
+      <tr>
+        <td><code>degraded-parity</code></td>
+        <td>input Unknown/Degraded</td>
+        <td>Input Activityを無視</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    各scenarioで<code>elapsedMs</code>は0から単調増加し、scenario間でHysteresisをresetする。
+  </p>
+  <h3 id="123-replay-code">12.3 replay code</h3>
+  <p><code>calibration.rs</code>にv2用structを追加する。</p>
+  <pre><code class="language-rust">struct ReplayFixtureSet {
+    version: String,
+    scenarios: Vec&lt;ReplayScenario&gt;,
+}
+
+struct ReplayScenario {
+    id: String,
+    samples: Vec&lt;ReplaySampleV2&gt;,
+}
+
+struct ReplaySampleV2 {
+    elapsed_ms: u64,
+    signals: SignalSnapshot,
+    expected_scene: SituationScene,
+    expected_attention: String,
+}
+</code></pre>
+  <p>
+    全structに<code>rename_all = camelCase</code>と<code>deny_unknown_fields</code>を付ける。scenario
+    idは既存identifier rule、最大160文字で検証する。scenario数1〜20、各sample
+    1〜14,400、合計14,400以下。
+  </p>
+  <p>
+    <code>expectedAttention</code
+    >は<code>IGNORE | OBSERVE | SUGGEST | RESPOND</code>の4値だけを受理し、それ以外はfixture
+    decode後のvalidation errorにする。v2
+    fixtureの各<code>signals</code>は全field必須であり、serde
+    defaultへ依存させない。
+  </p>
+  <p><code>replay_metrics</code>は:</p>
+  <ol>
+    <li>既存v1 fixtureを従来どおりreplayする。</li>
+    <li>v2の各scenarioをfresh Hysteresisでreplayする。</li>
+    <li>
+      candidate
+      parametersを<code>classify_with_parameters</code>と<code>shadow_policy(..., parameters, ...)</code>へ渡す。
+    </li>
+    <li>default parametersでも同じ2 fixture群をreplayする。</li>
+    <li>次のmetricsを返す。</li>
+  </ol>
+  <pre><code class="language-json">{
+  &quot;fixtureSetVersion&quot;: &quot;situation-fixtures-v2&quot;,
+  &quot;profileRuleVersion&quot;: &quot;...&quot;,
+  &quot;sampleCount&quot;: 0,
+  &quot;expectedSceneMatches&quot;: 0,
+  &quot;baselineExpectedSceneMatches&quot;: 0,
+  &quot;expectedAttentionSamples&quot;: 0,
+  &quot;expectedAttentionMatches&quot;: 0,
+  &quot;baselineExpectedAttentionMatches&quot;: 0,
+  &quot;shadowPolicyCounts&quot;: {},
+  &quot;deterministic&quot;: true
+}
+</code></pre>
+  <p>
+    frontendの<code>ReplayMetrics</code>とdecoderへ3つのattention
+    fieldを追加し、Latest replayへ<code>Attention matches</code>を表示する。
+  </p>
+  <p>metric semanticsは次で固定する。</p>
+  <ul>
+    <li><code>sampleCount</code>: v1とv2の全sample合計。</li>
+    <li>
+      <code>expectedSceneMatches</code>: candidate
+      parametersでv1/v2の<code>expectedScene</code>に一致した数。
+    </li>
+    <li>
+      <code>baselineExpectedSceneMatches</code>: default parametersで同じ期待値に一致した数。
+    </li>
+    <li>
+      <code>expectedAttentionSamples</code>:
+      <code>expectedAttention</code>を持つv2 sample数。v1は数えない。
+    </li>
+    <li>
+      <code>expectedAttentionMatches</code>: candidate parametersのShadow
+      decisionがv2期待値に一致した数。
+    </li>
+    <li>
+      <code>baselineExpectedAttentionMatches</code>: default parametersで同じ期待値に一致した数。
+    </li>
+    <li>
+      <code>shadowPolicyCounts</code>: candidate parametersで全v1/v2
+      sampleを評価した<code>IGNORE/OBSERVE/SUGGEST/RESPOND</code>別件数。4 keyを0件でも出す。
+    </li>
+    <li>
+      <code>deterministic</code>: 同じfixture/profileをfresh
+      Hysteresisで2回実行し、scene、attention、全countが完全一致した場合だけ<code>true</code>。
+    </li>
+  </ul>
+  <h2 id="13-privacy-and-diagnostics">13. Privacy and diagnostics</h2>
+  <p>
+    M25-00で<a href="./adr/0002-situation-signal-privacy.html"
+      ><code>adr/0002-situation-signal-privacy.md</code></a
+    >を継承する<code>0003-input-activity-signal-privacy.md</code>を作る。
+  </p>
+  <p>保存・表示してよいもの:</p>
+  <ul>
+    <li>Input Activity category</li>
+    <li>Input Activity health</li>
+    <li>bounded reason code <code>input-idle</code></li>
+    <li>Supervisor version</li>
+    <li>failure code</li>
+    <li>meaningful progressの最終timestamp</li>
+  </ul>
+  <p>禁止するもの:</p>
+  <ul>
+    <li>exact idle seconds/milliseconds</li>
+    <li>last input timestamp</li>
+    <li>key/button/cursor/window title</li>
+    <li>raw <code>CGEvent</code></li>
+    <li>raw app-server event</li>
+    <li>Supervisor用に複製したprompt、assistant text、command、tool args</li>
+  </ul>
+  <p>
+    assistant message本文は既存conversation messageとしてのみ保存する。Supervisor
+    diagnosticsへ複製しない。
+  </p>
+  <p>
+    <code>export_diagnostics</code>は現在のbounded counts/statusだけを維持する。Input
+    Activity exact値やraw app-server dataを追加しない。
+  </p>
+  <p>privacy verification:</p>
+  <pre><code class="language-bash">rg -n &quot;seconds_since_last_event|last_input|idle_seconds|RawInputActivity|raw.*event&quot; src src-tauri
+rg -n &quot;println!|dbg!|tracing::|log::&quot; src-tauri/src
+</code></pre>
+  <p>
+    検索hitはmacOS adapterのAPI call、pure
+    mapper、testだけであること。serializer、repository、diagnostics、UIにhitしたら受け入れ不可。
+  </p>
+  <h2 id="14-実装ticket">14. 実装ticket</h2>
+  <p>
+    ticketは番号順に実装する。各ticketの完了時に、そのticketで追加・変更した自動testを通してから次へ進む。
+  </p>
+  <table>
+    <caption>
+      14. 実装ticket
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Ticket</th>
+        <th scope="col">Depends on</th>
+        <th scope="col">主な完了物</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>M25-00</td>
+        <td>MVP 2 baseline</td>
+        <td>spike、privacy ADR、baseline記録</td>
+      </tr>
+      <tr>
+        <td>M25-01</td>
+        <td>M25-00</td>
+        <td>pure Supervisor</td>
+      </tr>
+      <tr>
+        <td>M25-02</td>
+        <td>M25-01</td>
+        <td>Codex request/event adapter</td>
+      </tr>
+      <tr>
+        <td>M25-03</td>
+        <td>M25-02</td>
+        <td>cancel/cleanup統合</td>
+      </tr>
+      <tr>
+        <td>M25-04</td>
+        <td>M25-03</td>
+        <td>v7 persistence、terminal ordering</td>
+      </tr>
+      <tr>
+        <td>M25-05</td>
+        <td>M25-00</td>
+        <td>Input Activity DTO/macOS adapter</td>
+      </tr>
+      <tr>
+        <td>M25-06</td>
+        <td>M25-05</td>
+        <td>Shadow policy統合</td>
+      </tr>
+      <tr>
+        <td>M25-07</td>
+        <td>M25-06</td>
+        <td>calibration/replay</td>
+      </tr>
+      <tr>
+        <td>M25-08</td>
+        <td>M25-04、M25-07</td>
+        <td>frontend contract/UI</td>
+      </tr>
+      <tr>
+        <td>M25-09</td>
+        <td>M25-08</td>
+        <td>integration、manual、soak</td>
+      </tr>
+      <tr>
+        <td>M25-10</td>
+        <td>M25-09</td>
+        <td>release evidence</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="m25-00--baseline-macos-spike-privacy-adr">M25-00 — Baseline, macOS spike, privacy ADR</h3>
+  <p>変更:</p>
+  <ul>
+    <li>baseline commandを記録</li>
+    <li>
+      <code>mktemp -d</code>配下の破棄可能な最小Rust crateでdependencyとAPI
+      symbolが現在のmacOS host targetでcompileすることを確認
+    </li>
+    <li>spikeには実行command、macOS version、CPU architecture、結果を記録</li>
+    <li>spike/ADR作成</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>dependencyとAPI signatureがSection 8.3/8.4どおりcompileする</li>
+    <li>計画変更を要する結果がない</li>
+    <li>repositoryへspike用source/binaryを残さない</li>
+    <li>ADR Status Proposed。実機確認後のAccepted化はM25-05で行う</li>
+  </ul>
+  <h3 id="m25-01--pure-supervisor">M25-01 — Pure Supervisor</h3>
+  <p>変更:</p>
+  <ul>
+    <li><code>mod run_supervisor;</code></li>
+    <li>Section 6.2〜6.6の型、method、state machine</li>
+    <li>sleep無しtable-driven test</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>全遷移とwatch precedenceをmonotonic integerだけでtest</li>
+    <li>terminal idempotency</li>
+    <li>one-shot interrupt</li>
+  </ul>
+  <h3 id="m25-02--codex-request-wait-and-event-projection">
+    M25-02 — Codex request wait and event projection
+  </h3>
+  <p>変更:</p>
+  <ul>
+    <li>supervised request wait</li>
+    <li>notification correlation</li>
+    <li>active item set</li>
+    <li>meaningful progress/forbidden item mapping</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>foreign/unscoped/duplicate eventがwatchを延命しない</li>
+    <li>request wait中のCancelが20秒を待たず終了</li>
+    <li>read-only policy test維持</li>
+  </ul>
+  <h3 id="m25-03--cancellation-and-process-cleanup">M25-03 — Cancellation and process cleanup</h3>
+  <p>変更:</p>
+  <ul>
+    <li>Codex loopへSupervisor effect適用</li>
+    <li>interrupt id=4 one-shot</li>
+    <li>3秒grace</li>
+    <li><code>ProcessGuard::terminate</code></li>
+    <li>stdout reader error forwarding/join</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>Cancel連打でもinterrupt 1回</li>
+    <li>unresponsive childがgrace後にreap</li>
+    <li>reader threadが残らない</li>
+  </ul>
+  <h3 id="m25-04--v7-persistence-and-terminal-ordering">
+    M25-04 — v7 persistence and terminal ordering
+  </h3>
+  <p>変更:</p>
+  <ul>
+    <li>runtime columns/migration/settings version</li>
+    <li>Codex success/failure transaction helper</li>
+    <li>terminal event ordering</li>
+    <li>restart reconcile</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>DB commit後にterminal event</li>
+    <li>failure code表どおり</li>
+    <li>v6 backup/migration/reopen成功</li>
+  </ul>
+  <h3 id="m25-05--input-activity-dtoplatform-integration">
+    M25-05 — Input Activity DTO/platform integration
+  </h3>
+  <p>変更:</p>
+  <ul>
+    <li>DTO、serde default、calibration field</li>
+    <li>Cargo dependency</li>
+    <li>macOS/unsupported adapter</li>
+    <li>Situation sample/health</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>boundary/invalid/unsupported/disabled test</li>
+    <li>raw durationがplatform module外へ出ない</li>
+    <li>development/packaged buildでSection 16.1を実施</li>
+    <li>permission promptが出ず、ADR StatusをAcceptedへ変更</li>
+  </ul>
+  <h3 id="m25-06--shadow-policy-integration">M25-06 — Shadow policy integration</h3>
+  <p>変更:</p>
+  <ul>
+    <li>parameterized <code>shadow_policy</code></li>
+    <li>idle suppression</li>
+    <li>policy version</li>
+    <li>classifier parity test</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>scene/state/evidence parity</li>
+    <li>explicit/sensitive precedence</li>
+    <li>non-ready fallback</li>
+  </ul>
+  <h3 id="m25-07--calibrationreplay">M25-07 — Calibration/replay</h3>
+  <p>変更:</p>
+  <ul>
+    <li>frontend/Rust parameter fields</li>
+    <li>candidate validation</li>
+    <li>v1 compatibility</li>
+    <li>v2 fixture/scenario replay</li>
+    <li>metrics decoder</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>old profile JSON decode成功</li>
+    <li>active profile row不変</li>
+    <li>v1 baseline parity</li>
+    <li>v2 attention expectations一致</li>
+  </ul>
+  <h3 id="m25-08--frontend-uicontracts">M25-08 — Frontend UI/contracts</h3>
+  <p>変更:</p>
+  <ul>
+    <li>RuntimeFailureCode union</li>
+    <li>Input Activity Signal表示</li>
+    <li>calibration editor field</li>
+    <li>privacy text</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li><code>as any</code>なし</li>
+    <li>exact duration表示なし</li>
+    <li>unsupported/degraded表示可能</li>
+  </ul>
+  <h3 id="m25-09--integration-and-soak">M25-09 — Integration and soak</h3>
+  <p>変更:</p>
+  <ul>
+    <li>fake app-server scenario拡張</li>
+    <li>desktop smoke拡張</li>
+    <li>30分soak</li>
+    <li>privacy search</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>process/thread/task leakなし</li>
+    <li>SQLite rowがrunningのまま残らない</li>
+    <li>Situation monitor offでAPI callなし</li>
+  </ul>
+  <h3 id="m25-10--release-evidence">M25-10 — Release evidence</h3>
+  <p>変更:</p>
+  <ul>
+    <li>release evidence作成</li>
+    <li>本文StatusをCompleteへ変更</li>
+    <li>manual/unsupported/未完了item記録</li>
+  </ul>
+  <p>完了条件:</p>
+  <ul>
+    <li>全acceptance criteriaへ証跡linkあり</li>
+    <li>MVP 2 manual evidenceを隠していない</li>
+  </ul>
+  <h2 id="15-test-plan">15. Test plan</h2>
+  <h3 id="151-supervisor-unit-tests">15.1 Supervisor unit tests</h3>
+  <p>production sleepを使わず、次のtest名で実装する。</p>
+  <pre><code class="language-text">request_deadline_is_twenty_seconds
+request_completion_clears_deadline
+cancel_before_turn_id_finishes_without_interrupt
+cancel_after_turn_id_emits_one_interrupt
+duplicate_cancel_is_noop
+nonempty_delta_resets_progress_deadline
+empty_or_foreign_event_does_not_reset_progress
+assistant_completion_arms_terminal_gap
+new_item_after_assistant_completion_returns_to_running
+terminal_gap_timeout_preserves_failure_code
+hard_timeout_precedes_terminal_and_progress_timeout
+interrupt_grace_finishes_pending_outcome
+late_terminal_after_finish_is_ignored
+provider_completed_requires_nonempty_content
+provider_interrupted_maps_to_cancel_only_after_user_cancel
+</code></pre>
+  <h3 id="152-fake-app-server-tests">15.2 fake app-server tests</h3>
+  <p>
+    既存fixture
+    notificationへ<code>threadId</code>と<code>turnId</code>を追加する。policyをtest
+    injectionできるprivate helperを作る。
+  </p>
+  <pre><code class="language-rust">fn run_codex_turn_process_with_policy(..., policy: RunSupervisionPolicy)
+</code></pre>
+  <p>production wrapperだけがproduction policyを渡す。</p>
+  <p>
+    既存<code>SAAA_CODEX_PATH</code>差替えtestを拡張する。環境変数はprocess-globalなので、test
+    moduleに<code>static CODEX_FIXTURE_LOCK: Mutex&lt;()&gt;</code>を置き、lock取得から環境変数restoreまでを直列化する。restoreはDrop
+    guardで行い、test panic時にも元の値へ戻す。fixture
+    scriptは各testの<code>tempfile::TempDir</code>へ生成し、scenario名をscriptへ埋め込む。repositoryへfixture
+    executableを追加しない。
+  </p>
+  <p>
+    pure Supervisor testは仮想時刻だけを使う。fake process
+    testだけは次のpolicyを使い、production値を待たない。
+  </p>
+  <pre><code class="language-rust">RunSupervisionPolicy {
+    request_timeout_ms: 1_000,
+    progress_idle_timeout_ms: 1_500,
+    terminal_gap_timeout_ms: 750,
+    interrupt_grace_ms: 500,
+    hard_timeout_ms: 4_000,
+}
+</code></pre>
+  <p>scenario:</p>
+  <ol>
+    <li>normal start/stream/terminal</li>
+    <li>resume</li>
+    <li>cancel responseあり</li>
+    <li>cancel無応答</li>
+    <li>thread response hang</li>
+    <li>turn response hang</li>
+    <li>progress hang</li>
+    <li>agentMessage完了後terminal無し</li>
+    <li>hard timeout</li>
+    <li>malformed JSON</li>
+    <li>approval request</li>
+    <li>forbidden fileChange/MCP/Web Search</li>
+    <li>stdout close/non-zero exit</li>
+    <li>foreign thread/turn notification</li>
+    <li>duplicate item start/completion</li>
+    <li>response 64,001 chars</li>
+  </ol>
+  <p>process-level scenarioでは次をassertする。</p>
+  <ul>
+    <li>interrupt送信回数</li>
+    <li>
+      functionが期限内にreturnすること。return前にchild reapとstdout reader
+      joinが完了するcontractである
+    </li>
+    <li>typed outcome/failure code</li>
+    <li>raw payloadがerror/diagnosticsへ無い</li>
+  </ul>
+  <p>
+    M25-04ではnormal、cancel、progress timeout、policy violationの4
+    scenarioを<code>execute_turn</code>まで通すtemp SQLite integration
+    testも追加し、terminal event 1件、runtime status/failure code、Supervisor version/last
+    progress、event受信時点のDB stateをassertする。
+  </p>
+  <h3 id="153-input-activity-tests">15.3 Input Activity tests</h3>
+  <pre><code class="language-text">zero_is_active
+active_max_is_active
+active_max_plus_one_is_recent
+recent_max_is_recent
+recent_max_plus_one_is_idle
+fractional_seconds_are_floored
+nan_is_degraded_unknown
+infinity_is_degraded_unknown
+negative_is_degraded_unknown
+overflow_is_degraded_unknown
+unsupported_platform_is_unknown_unsupported
+initial_disabled_signal_is_unknown_disabled
+</code></pre>
+  <h3 id="154-situation-tests">15.4 Situation tests</h3>
+  <pre><code class="language-text">input_activity_does_not_change_candidate
+idle_ready_suppresses_suggest
+idle_does_not_override_explicit_interaction
+sensitive_precedes_input_activity
+idle_unknown_scene_remains_ignore
+degraded_activity_falls_back_to_existing_policy
+unsupported_activity_falls_back_to_existing_policy
+health_change_is_emitted_once
+</code></pre>
+  <h3 id="155-migration-tests">15.5 Migration tests</h3>
+  <pre><code class="language-text">clean_database_is_v7
+v6_database_is_backed_up_before_v7
+v6_runtime_rows_gain_nullable_columns
+v7_migration_is_idempotent
+settings_documents_are_v7_without_json_shape_change
+running_rows_reconcile_to_interrupted_app_restarted
+old_calibration_json_uses_input_activity_defaults
+old_calibration_profile_row_is_not_rewritten
+</code></pre>
+  <h3 id="156-frontend-verification">15.6 Frontend verification</h3>
+  <p>
+    新しいUI test frameworkは追加しない。既存Bun testとTypeScript
+    compilerで自動検証し、renderingはdesktop smokeで確認する。
+  </p>
+  <ul>
+    <li><code>tests/settings.test.ts</code>: Settings schema 7を受理し6を拒否</li>
+    <li>
+      <code>bun run typecheck</code>:
+      <code>RuntimeFailureCode</code
+      >、必須<code>inputActivity</code>、candidate payloadを型検証
+    </li>
+    <li>
+      <code>cargo test</code>: Rust serde testで旧/new snapshot、calibration
+      parameters、replay attention metricsをdecode
+    </li>
+    <li>
+      <code>bun run desktop:smoke</code>: Input Activity表示、candidate validation、exact
+      duration非表示を確認
+    </li>
+  </ul>
+  <h3 id="157-verification-command">15.7 verification command</h3>
+  <pre><code class="language-bash">bun run typecheck
+bun run test:frontend
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+bun run build
+bun run desktop:smoke
+</code></pre>
+  <h2 id="16-manual-verification-and-stop-conditions">
+    16. Manual verification and Stop conditions
+  </h2>
+  <h3 id="161-macos-input-activity-manual-verification">
+    16.1 macOS Input Activity manual verification
+  </h3>
+  <p>development buildと署名済みpackaged buildの両方で実施する。</p>
+  <ol>
+    <li>Situation monitoringをoffにし、Input Activity APIが呼ばれないことを確認。</li>
+    <li>monitoringをonにし、Input activityが表示されることを確認。</li>
+    <li>keyboard、mouse、trackpad操作後30秒以内にActiveになることを確認。</li>
+    <li>30秒超〜5分以内にRecentになることを確認。</li>
+    <li>5分超でIdleになることを確認。</li>
+    <li>screen lock、unlock、sleep、resume後にpanicしないことを確認。</li>
+    <li>Accessibility/Input Monitoring permission promptが出ないことを確認。</li>
+    <li>30分samplingし、CPU/memoryが増加し続けないことを確認。</li>
+    <li>SQLite、diagnostics、consoleにexact durationが無いことを確認。</li>
+  </ol>
+  <p>
+    step 1/2ではDebuggerに<code>CGEventSourceSecondsSinceLastEventType</code>のsymbolic
+    breakpointを設定する。monitoring offで10秒待ってhit
+    0回、onでsampling開始後にhitすることを証跡へ記録する。
+  </p>
+  <h3 id="162-agent-run-manual-verification">16.2 Agent Run manual verification</h3>
+  <ol>
+    <li>normal coding turn。</li>
+    <li>long reasoning中のprogress継続。</li>
+    <li>Cancel一回と連打。</li>
+    <li>fixture child hang。</li>
+    <li>app close中のactive run。</li>
+    <li>restart後のinterrupted reconcile。</li>
+    <li>read-only policy violation。</li>
+  </ol>
+  <h3 id="163-stop-conditions">16.3 Stop conditions</h3>
+  <p>次の場合は実装を止め、この文書またはADRを改訂する。</p>
+  <ul>
+    <li>CoreGraphics callだけでAccessibility/Input Monitoring permission promptが出る</li>
+    <li><code>objc2-core-graphics 0.3.2</code>がshipping targetでlink/bundleできない</li>
+    <li>raw durationを保存しないと要件を満たせない</li>
+    <li>current notificationにthreadId/turnIdがなく安全にcorrelateできない</li>
+    <li><code>turn/completed</code>以外を成功terminalにする必要がある</li>
+    <li>hard timeoutを超えるunbounded graceが必要</li>
+    <li>Supervisor導入にCodex routeの権限拡大が必要</li>
+    <li>Input Activityがscene score/state変更を必要とする</li>
+    <li>Meeting/STT/TTSも同時移行しないとCodex Supervisorをshipできない</li>
+    <li>v7 migrationが既存dataを保持できない</li>
+  </ul>
+  <h2 id="17-acceptance-criteria">17. Acceptance criteria</h2>
+  <h3 id="agent-run-supervisor">Agent Run Supervisor</h3>
+  <ol>
+    <li>thread/turn requestは各20秒以内にterminal failureとなる。</li>
+    <li>progress、terminal-gap、hard timeoutを異なるcodeで識別できる。</li>
+    <li>Cancel/timeout/policy violationのinterruptは最大1回。</li>
+    <li>interrupt無応答childは3秒grace後にkill/waitされる。</li>
+    <li>stdout reader threadがrun後に残らない。</li>
+    <li>foreign/duplicate/unscoped notificationはwatchを延命しない。</li>
+    <li>成功はnon-empty contentを伴うcurrent <code>turn/completed: completed</code>だけ。</li>
+    <li>Codex terminal eventはSQLite commit後に1件だけ送られる。</li>
+    <li>restartでrunning rowがinterrupted/app-restartedになる。</li>
+    <li>prompt/tool args/raw provider eventがSupervisor persistenceへ追加されない。</li>
+    <li>既存read-only security testが通る。</li>
+  </ol>
+  <h3 id="input-activity-signal">Input Activity Signal</h3>
+  <ol>
+    <li>macOS adapterは固定dependency/APIで実装される。</li>
+    <li>valid observationは固定境界でactive/recent/idleへ分類される。</li>
+    <li>raw durationとlast input timestampはplatform adapter外へ出ない。</li>
+    <li>monitoring off中はOS APIを呼ばない。</li>
+    <li>
+      Input
+      Activityだけを変えてもCandidate/state/scene/confidence/evidence/userAttentionは変わらない。
+    </li>
+    <li>idle Readyはexplicit interactionがない場合のSUGGESTだけをOBSERVEへ抑制する。</li>
+    <li>explicit interactionとSensitive safe defaultがidleより優先される。</li>
+    <li>non-ready healthはMVP 2 policyへfall backする。</li>
+    <li>idleを根拠に自動actionを開始しない。</li>
+    <li>v1 fixtureと旧profile JSONをdata rewriteなしで読める。</li>
+  </ol>
+  <h3 id="release-quality">Release quality</h3>
+  <ol>
+    <li>SQLite/settings schemaはv7で、v6 backup/migration/reopenが成功する。</li>
+    <li>全verification commandが成功する。</li>
+    <li>fake app-server全scenarioと30分soakでleakがない。</li>
+    <li>privacy/manual packaged evidenceがrelease evidenceへ記録される。</li>
+    <li>MVP 2から引き継いだmanual evidenceの未完了項目が明記される。</li>
+  </ol>
+  <h2 id="18-mvp-25完了後の候補">18. MVP 2.5完了後の候補</h2>
+  <p>次はMVP 2.5に含めない。</p>
+  <ul>
+    <li>Supervisorをconversation provider、voice、Meetingへ段階適用</li>
+    <li>watch値の実測に基づく調整</li>
+    <li>user-visible run diagnostics history</li>
+    <li>Input Activity専用Settings UI</li>
+    <li>Windows/Linux adapter</li>
+    <li>Situation提案のfalse-positive分析</li>
+  </ul>
+</article>

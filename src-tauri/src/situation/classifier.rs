@@ -1,7 +1,7 @@
 use super::contracts::{
     AudioState, CalendarState, CalibrationParameters, ConversationState, Evidence,
-    ForegroundCategory, MicrophoneState, ShadowDecision, SignalSnapshot, SituationState,
-    POLICY_VERSION, RULE_VERSION,
+    ForegroundCategory, InputActivityState, MicrophoneState, ShadowDecision, SignalHealth,
+    SignalSnapshot, SituationState, POLICY_VERSION, RULE_VERSION,
 };
 
 #[derive(Debug, Clone)]
@@ -344,6 +344,7 @@ pub fn shadow_policy(
     state: &SituationState,
     signals: &SignalSnapshot,
     now: &str,
+    parameters: &CalibrationParameters,
 ) -> ShadowDecision {
     let active_input = signals.conversation.state != ConversationState::Idle
         || matches!(
@@ -354,12 +355,20 @@ pub fn shadow_policy(
         ("IGNORE", "sensitive-safe-default")
     } else if active_input {
         ("RESPOND", "explicit-saaa-interaction")
-    } else if state.scene == "UNKNOWN" || state.confidence < 45 {
+    } else if state.scene == "UNKNOWN" || state.confidence < parameters.low_confidence_max {
         ("IGNORE", "insufficient-signal")
     } else if state.scene == "MEETING" || state.user_attention == "busy" {
         ("OBSERVE", "user-busy")
-    } else if state.confidence >= 70 && state.user_attention == "available" {
-        ("SUGGEST", "high-confidence-available")
+    } else if state.confidence >= parameters.classification_min_confidence
+        && state.user_attention == "available"
+    {
+        if signals.input_activity.health == SignalHealth::Ready
+            && signals.input_activity.state == InputActivityState::Idle
+        {
+            ("OBSERVE", "input-idle")
+        } else {
+            ("SUGGEST", "high-confidence-available")
+        }
     } else {
         ("OBSERVE", "passive-observation")
     };

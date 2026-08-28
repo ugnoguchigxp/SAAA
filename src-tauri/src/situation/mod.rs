@@ -9,10 +9,12 @@ use classifier::classify;
 use classifier::{classify_with_parameters, shadow_policy, Hysteresis};
 use contracts::{
     initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
-    CalibrationParameters, ConversationSignal, ConversationState, MicrophoneSignal,
-    MicrophoneState, OwnedSignalInput, ShadowDecision, SignalHealth, SignalHealthEntry,
-    SignalSnapshot, SituationEvent, SituationLedgerEntry, SituationRuntimeFailure,
-    SituationRuntimeSettings, SituationSnapshot, SituationState,
+    CalendarState, CalibrationParameters, ConversationSignal, ConversationState,
+    ForegroundCategory, ForegroundSignal, InputActivitySignal, InputActivityState,
+    MicrophoneSignal, MicrophoneState, OwnedSignalInput, QualityWindowCounters, ShadowDecision,
+    SignalHealth, SignalHealthEntry, SignalSnapshot, SituationEvent, SituationLedgerEntry,
+    SituationRuntimeFailure, SituationRuntimeSettings, SituationSnapshot, SituationState,
+    TimeBucket,
 };
 use rusqlite::Connection;
 use std::{
@@ -36,6 +38,7 @@ pub struct SituationRuntime {
 pub(crate) struct SituationSample {
     foreground: contracts::ForegroundSignal,
     calendar: CalendarSignal,
+    input_activity: contracts::InputActivitySignal,
     observed_at: String,
     observed_ms: u128,
 }
@@ -43,6 +46,9 @@ pub(crate) struct SituationSample {
 struct RuntimeInner {
     settings: SituationRuntimeSettings,
     calibration_parameters: CalibrationParameters,
+    calibration_rule_version: String,
+    quality: QualityWindowCounters,
+    quality_started_ms: u128,
     owned: OwnedSignalInput,
     owned_updated_ms: u128,
     signals: SignalSnapshot,
@@ -73,6 +79,9 @@ impl SituationRuntime {
             inner: Mutex::new(RuntimeInner {
                 settings,
                 calibration_parameters: CalibrationParameters::default(),
+                calibration_rule_version: contracts::RULE_VERSION.to_string(),
+                quality: QualityWindowCounters::default(),
+                quality_started_ms: 0,
                 owned: OwnedSignalInput {
                     conversation_state: ConversationState::Idle,
                     microphone_state: MicrophoneState::Inactive,
@@ -94,6 +103,7 @@ impl SituationRuntime {
         })
     }
 
+    #[cfg(test)]
     pub fn configure(&self, settings: SituationRuntimeSettings) -> Result<(), String> {
         validate_settings(&settings)?;
         let mut inner = self
@@ -115,17 +125,175 @@ impl SituationRuntime {
         Ok(())
     }
 
-    pub fn set_calibration_parameters(
+    pub fn set_monitoring(
         &self,
-        parameters: CalibrationParameters,
+        connection: &Mutex<Connection>,
+        enabled: bool,
     ) -> Result<(), String> {
-        contracts::validate_calibration_parameters(&parameters)?;
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| "Situation runtime lock unavailable".to_string())?;
-        inner.calibration_parameters = parameters;
+        let database = connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        if inner.settings.enabled && !enabled && inner.quality.sample_count > 0 {
+            repository::persist_quality_window(
+                &database,
+                inner.quality_started_ms,
+                epoch_millis(),
+                &inner.calibration_rule_version,
+                &inner.quality,
+                &inner.settings,
+            )?;
+            inner.quality = QualityWindowCounters::default();
+            inner.quality_started_ms = 0;
+        }
+        let settings = repository::save_enabled(&database, enabled)?;
+        let stopped = inner.settings.enabled && !settings.enabled;
+        inner.settings = settings.clone();
+        if stopped {
+            push_event(
+                &mut inner,
+                SituationEvent::MonitoringStopped {
+                    reason: "Paused by user".to_string(),
+                },
+            );
+        }
+        drop(database);
+        drop(inner);
+        self.worker_wake.notify_one();
         Ok(())
+    }
+
+    pub fn configure_and_persist<T>(
+        &self,
+        connection: &Mutex<Connection>,
+        settings: SituationRuntimeSettings,
+        persist: impl FnOnce(&mut Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        validate_settings(&settings)?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Situation runtime lock unavailable".to_string())?;
+        let mut database = connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        if inner.settings.enabled && inner.quality.sample_count > 0 {
+            repository::persist_quality_window(
+                &database,
+                inner.quality_started_ms,
+                epoch_millis(),
+                &inner.calibration_rule_version,
+                &inner.quality,
+                &inner.settings,
+            )?;
+            inner.quality = QualityWindowCounters::default();
+            inner.quality_started_ms = 0;
+        }
+        let result = persist(&mut database)?;
+        let stopped = inner.settings.enabled && !settings.enabled;
+        inner.settings = settings;
+        if stopped {
+            push_event(
+                &mut inner,
+                SituationEvent::MonitoringStopped {
+                    reason: "Paused by user".to_string(),
+                },
+            );
+        }
+        drop(database);
+        drop(inner);
+        self.worker_wake.notify_one();
+        Ok(result)
+    }
+
+    pub fn clear_history(&self, connection: &Mutex<Connection>) -> Result<(), String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Situation runtime lock unavailable".to_string())?;
+        let database = connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        repository::clear_history(&database)?;
+        inner.quality = QualityWindowCounters::default();
+        inner.quality_started_ms = 0;
+        Ok(())
+    }
+
+    pub fn flush_quality(&self, connection: &Mutex<Connection>) -> Result<(), String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Situation runtime lock unavailable".to_string())?;
+        if inner.quality.sample_count == 0 {
+            return Ok(());
+        }
+        let ended_at_ms = epoch_millis();
+        let database = connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        repository::persist_quality_window(
+            &database,
+            inner.quality_started_ms,
+            ended_at_ms,
+            &inner.calibration_rule_version,
+            &inner.quality,
+            &inner.settings,
+        )?;
+        inner.quality = QualityWindowCounters::default();
+        inner.quality_started_ms = 0;
+        Ok(())
+    }
+
+    pub fn set_calibration_profile(
+        &self,
+        profile: calibration::CalibrationProfile,
+    ) -> Result<(), String> {
+        contracts::validate_calibration_parameters(&profile.parameters)?;
+        validate_rule_version(&profile.rule_version)?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Situation runtime lock unavailable".to_string())?;
+        inner.calibration_parameters = profile.parameters;
+        inner.calibration_rule_version = profile.rule_version;
+        Ok(())
+    }
+
+    pub fn decide_calibration(
+        &self,
+        connection: &Mutex<Connection>,
+        profile_id: &str,
+        decision: &str,
+        reason_code: &str,
+    ) -> Result<calibration::CalibrationProfile, String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Situation runtime lock unavailable".to_string())?;
+        let mut database = connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        if inner.quality.sample_count > 0 {
+            let ended_at_ms = epoch_millis();
+            repository::persist_quality_window(
+                &database,
+                inner.quality_started_ms,
+                ended_at_ms,
+                &inner.calibration_rule_version,
+                &inner.quality,
+                &inner.settings,
+            )?;
+            inner.quality = QualityWindowCounters::default();
+            inner.quality_started_ms = 0;
+        }
+        let active = calibration::decide(&mut database, profile_id, decision, reason_code)?;
+        inner.calibration_parameters = active.parameters.clone();
+        inner.calibration_rule_version = active.rule_version.clone();
+        Ok(active)
     }
 
     pub fn report_owned(&self, input: OwnedSignalInput) -> Result<(), String> {
@@ -214,34 +382,60 @@ impl SituationRuntime {
     }
 
     pub(crate) fn sample_platform(&self) -> Result<SituationSample, String> {
-        let calendar_enabled = self
-            .inner
-            .lock()
-            .map_err(|_| "Situation runtime lock unavailable".to_string())?
-            .settings
-            .calendar_enabled;
+        let (enabled, calendar_enabled, calibration_parameters) = {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| "Situation runtime lock unavailable".to_string())?;
+            (
+                inner.settings.enabled,
+                inner.settings.calendar_enabled,
+                inner.calibration_parameters.clone(),
+            )
+        };
+        if !enabled {
+            return Ok(SituationSample {
+                foreground: ForegroundSignal {
+                    category: ForegroundCategory::Unknown,
+                    health: SignalHealth::Disabled,
+                },
+                calendar: CalendarSignal {
+                    state: CalendarState::Unavailable,
+                    time_bucket: TimeBucket::None,
+                    health: SignalHealth::Disabled,
+                },
+                input_activity: InputActivitySignal {
+                    state: InputActivityState::Unknown,
+                    health: SignalHealth::Disabled,
+                },
+                observed_at: crate::now_iso(),
+                observed_ms: epoch_millis(),
+            });
+        }
         Ok(SituationSample {
             foreground: platform::foreground_signal(),
             calendar: platform::calendar_signal(calendar_enabled),
+            input_activity: platform::input_activity_signal(&calibration_parameters),
             observed_at: crate::now_iso(),
             observed_ms: epoch_millis(),
         })
     }
 
     #[cfg(test)]
-    pub fn tick(&self, connection: &Connection) -> Result<(), String> {
+    pub fn tick(&self, connection: &Mutex<Connection>) -> Result<(), String> {
         let sample = self.sample_platform()?;
         self.tick_sampled(connection, sample)
     }
 
     pub(crate) fn tick_sampled(
         &self,
-        connection: &Connection,
+        connection: &Mutex<Connection>,
         sample: SituationSample,
     ) -> Result<(), String> {
         let SituationSample {
             foreground,
             calendar,
+            input_activity,
             observed_at: now,
             observed_ms: now_ms,
         } = sample;
@@ -255,6 +449,9 @@ impl SituationRuntime {
 
         let previous_health = signal_health(&inner.signals);
         let sequence = inner.signals.sequence.saturating_add(1);
+        let owned_is_stale = inner.owned_updated_ms == 0
+            || now_ms.saturating_sub(inner.owned_updated_ms)
+                > u128::from(inner.settings.sample_interval_ms).saturating_mul(3);
         let owned = fresh_owned(
             &inner.owned,
             inner.owned_updated_ms,
@@ -277,6 +474,7 @@ impl SituationRuntime {
                 health: SignalHealth::Ready,
             },
             calendar,
+            input_activity,
         };
         let next_health = signal_health(&signals);
         let mut pending_events = Vec::new();
@@ -289,7 +487,7 @@ impl SituationRuntime {
             {
                 pending_events.push(SituationEvent::SignalHealthChanged {
                     source: item.source.clone(),
-                    health: item.health.clone(),
+                    health: item.health,
                 });
             }
         }
@@ -311,14 +509,34 @@ impl SituationRuntime {
             pending_events.push(SituationEvent::CandidateChanged { state: projected });
         }
         let mut hysteresis = inner.hysteresis.clone();
-        let (state, transitioned) = hysteresis.update_with_parameters(
+        let (mut state, transitioned) = hysteresis.update_with_parameters(
             &candidate,
             &now,
             now_ms,
             &inner.calibration_parameters,
         );
-        let decision = shadow_policy(&state, &signals, &now);
+        state
+            .rule_version
+            .clone_from(&inner.calibration_rule_version);
+        let decision = shadow_policy(&state, &signals, &now, &inner.calibration_parameters);
         let decision_changed = decision.proposed_attention != inner.decision.proposed_attention;
+        let mut quality = inner.quality.clone();
+        let quality_started_ms = if quality.sample_count == 0 {
+            now_ms
+        } else {
+            inner.quality_started_ms
+        };
+        accumulate_quality(
+            &mut quality,
+            candidate.scene != inner.last_candidate_scene,
+            transitioned,
+            state.scene == "UNKNOWN",
+            owned_is_stale,
+            &decision.proposed_attention,
+            &next_health,
+        );
+        let quality_due = now_ms.saturating_sub(quality_started_ms)
+            >= u128::from(inner.settings.heartbeat_interval_ms);
         let heartbeat_due = inner.last_persisted_ms == 0
             || now_ms.saturating_sub(inner.last_persisted_ms)
                 >= u128::from(inner.settings.heartbeat_interval_ms);
@@ -326,7 +544,7 @@ impl SituationRuntime {
             Some("transition")
         } else if decision_changed {
             Some("decision")
-        } else if heartbeat_due {
+        } else if heartbeat_due || quality_due {
             Some("heartbeat")
         } else {
             None
@@ -341,7 +559,32 @@ impl SituationRuntime {
             feedback: None,
         });
         if let Some(entry) = &entry {
-            repository::persist_entry_with_retention(connection, entry, &inner.settings, now_ms)?;
+            let quality_window = quality_due.then_some((
+                quality_started_ms,
+                inner.calibration_rule_version.as_str(),
+                &quality,
+            ));
+            let database = connection
+                .lock()
+                .map_err(|_| "Database lock unavailable".to_string())?;
+            if let Err(error) = repository::persist_entry_with_retention(
+                &database,
+                entry,
+                &inner.settings,
+                now_ms,
+                quality_window,
+            ) {
+                if now_ms.saturating_sub(quality_started_ms)
+                    >= u128::from(inner.settings.heartbeat_interval_ms).saturating_mul(2)
+                {
+                    inner.quality = QualityWindowCounters::default();
+                    inner.quality_started_ms = 0;
+                } else {
+                    inner.quality = quality;
+                    inner.quality_started_ms = quality_started_ms;
+                }
+                return Err(error);
+            }
         }
 
         inner.last_candidate_scene.clone_from(&candidate.scene);
@@ -349,6 +592,13 @@ impl SituationRuntime {
         inner.signals = signals;
         inner.state = state;
         inner.decision = decision;
+        if quality_due {
+            inner.quality = QualityWindowCounters::default();
+            inner.quality_started_ms = 0;
+        } else {
+            inner.quality = quality;
+            inner.quality_started_ms = quality_started_ms;
+        }
         inner.last_failure = None;
         for event in pending_events {
             push_event(&mut inner, event);
@@ -370,20 +620,9 @@ impl SituationRuntime {
         Ok(())
     }
 
+    #[allow(dead_code)] // Used by database-isolated runtime tests; app commands use snapshot_locked.
     pub fn snapshot(&self, connection: &Connection) -> Result<SituationSnapshot, String> {
-        let (monitoring_enabled, signals, state, decision, last_failure) = {
-            let inner = self
-                .inner
-                .lock()
-                .map_err(|_| "Situation runtime lock unavailable".to_string())?;
-            (
-                inner.settings.enabled,
-                inner.signals.clone(),
-                inner.state.clone(),
-                inner.decision.clone(),
-                inner.last_failure.clone(),
-            )
-        };
+        let (monitoring_enabled, signals, state, decision, last_failure) = self.snapshot_state()?;
         Ok(SituationSnapshot {
             monitoring_enabled,
             monitoring_active: self.is_worker_running(),
@@ -394,6 +633,51 @@ impl SituationRuntime {
             history: repository::list_history(connection)?,
             evaluation: repository::evaluation_summary(connection)?,
         })
+    }
+
+    pub fn snapshot_locked(
+        &self,
+        connection: &Mutex<Connection>,
+    ) -> Result<SituationSnapshot, String> {
+        let (monitoring_enabled, signals, state, decision, last_failure) = self.snapshot_state()?;
+        let database = connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        Ok(SituationSnapshot {
+            monitoring_enabled,
+            monitoring_active: self.is_worker_running(),
+            signals,
+            state,
+            decision,
+            last_failure,
+            history: repository::list_history(&database)?,
+            evaluation: repository::evaluation_summary(&database)?,
+        })
+    }
+
+    fn snapshot_state(
+        &self,
+    ) -> Result<
+        (
+            bool,
+            SignalSnapshot,
+            SituationState,
+            ShadowDecision,
+            Option<SituationRuntimeFailure>,
+        ),
+        String,
+    > {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Situation runtime lock unavailable".to_string())?;
+        Ok((
+            inner.settings.enabled,
+            inner.signals.clone(),
+            inner.state.clone(),
+            inner.decision.clone(),
+            inner.last_failure.clone(),
+        ))
     }
 
     #[cfg(test)]
@@ -409,6 +693,66 @@ impl SituationRuntime {
             .map(|(_, event)| event.clone())
             .collect();
         Ok((inner.next_revision.saturating_sub(1), events))
+    }
+}
+
+fn accumulate_quality(
+    counters: &mut QualityWindowCounters,
+    candidate_changed: bool,
+    transitioned: bool,
+    unknown: bool,
+    owned_is_stale: bool,
+    proposed_attention: &str,
+    health: &[SignalHealthEntry],
+) {
+    counters.sample_count = counters.sample_count.saturating_add(1);
+    counters.candidate_change_count = counters
+        .candidate_change_count
+        .saturating_add(u64::from(candidate_changed));
+    counters.stable_transition_count = counters
+        .stable_transition_count
+        .saturating_add(u64::from(transitioned));
+    counters.unknown_sample_count = counters
+        .unknown_sample_count
+        .saturating_add(u64::from(unknown));
+    counters.stale_owned_signal_count = counters
+        .stale_owned_signal_count
+        .saturating_add(u64::from(owned_is_stale));
+    match proposed_attention {
+        "IGNORE" => {
+            counters.decision_ignore_count = counters.decision_ignore_count.saturating_add(1)
+        }
+        "OBSERVE" => {
+            counters.decision_observe_count = counters.decision_observe_count.saturating_add(1)
+        }
+        "SUGGEST" => {
+            counters.decision_suggest_count = counters.decision_suggest_count.saturating_add(1)
+        }
+        "RESPOND" => {
+            counters.decision_respond_count = counters.decision_respond_count.saturating_add(1)
+        }
+        _ => {}
+    }
+    for item in health {
+        match item.health {
+            SignalHealth::Ready => {
+                counters.health_ready_count = counters.health_ready_count.saturating_add(1)
+            }
+            SignalHealth::Disabled => {
+                counters.health_disabled_count = counters.health_disabled_count.saturating_add(1)
+            }
+            SignalHealth::PermissionDenied => {
+                counters.health_permission_denied_count =
+                    counters.health_permission_denied_count.saturating_add(1)
+            }
+            SignalHealth::Unsupported => {
+                counters.health_unsupported_count =
+                    counters.health_unsupported_count.saturating_add(1)
+            }
+            SignalHealth::Degraded => {
+                counters.health_degraded_count = counters.health_degraded_count.saturating_add(1)
+            }
+        }
     }
 }
 
@@ -438,23 +782,39 @@ pub fn validate_scene(scene: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_rule_version(version: &str) -> Result<(), String> {
+    if version.is_empty()
+        || version.len() > 160
+        || !version.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return Err("Invalid Situation rule version".to_string());
+    }
+    Ok(())
+}
+
 fn signal_health(signals: &SignalSnapshot) -> Vec<SignalHealthEntry> {
     vec![
         SignalHealthEntry {
             source: "foreground".to_string(),
-            health: signals.foreground.health.clone(),
+            health: signals.foreground.health,
         },
         SignalHealthEntry {
             source: "microphone".to_string(),
-            health: signals.microphone.health.clone(),
+            health: signals.microphone.health,
         },
         SignalHealthEntry {
             source: "audio".to_string(),
-            health: signals.audio.health.clone(),
+            health: signals.audio.health,
         },
         SignalHealthEntry {
             source: "calendar".to_string(),
-            health: signals.calendar.health.clone(),
+            health: signals.calendar.health,
+        },
+        SignalHealthEntry {
+            source: "input-activity".to_string(),
+            health: signals.input_activity.health,
         },
     ]
 }
@@ -496,7 +856,10 @@ fn fresh_owned(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use contracts::{CalendarState, ForegroundCategory, ForegroundSignal, TimeBucket};
+    use contracts::{
+        CalendarState, ForegroundCategory, ForegroundSignal, InputActivitySignal,
+        InputActivityState, TimeBucket,
+    };
 
     fn signals(category: ForegroundCategory) -> SignalSnapshot {
         let now = crate::now_iso();
@@ -523,6 +886,10 @@ mod tests {
                 time_bucket: TimeBucket::None,
                 health: SignalHealth::Ready,
             },
+            input_activity: InputActivitySignal {
+                state: InputActivityState::Unknown,
+                health: SignalHealth::Unsupported,
+            },
         }
     }
 
@@ -535,7 +902,12 @@ mod tests {
         let candidate = classify(&sensitive);
         assert_eq!(candidate.scene, "UNKNOWN");
         let state = initial_state(&crate::now_iso());
-        let decision = shadow_policy(&state, &sensitive, &crate::now_iso());
+        let decision = shadow_policy(
+            &state,
+            &sensitive,
+            &crate::now_iso(),
+            &CalibrationParameters::default(),
+        );
         assert_eq!(decision.proposed_attention, "IGNORE");
         assert_eq!(decision.actual_execution, "NONE");
         assert_eq!(decision.actual_presentation, "SILENT");
@@ -579,7 +951,12 @@ mod tests {
                 updated_at: crate::now_iso(),
                 rule_version: contracts::RULE_VERSION.to_string(),
             };
-            let decision = shadow_policy(&state, &snapshot, &crate::now_iso());
+            let decision = shadow_policy(
+                &state,
+                &snapshot,
+                &crate::now_iso(),
+                &CalibrationParameters::default(),
+            );
             assert_eq!(decision.actual_execution, "NONE");
             assert_eq!(decision.actual_presentation, "SILENT");
         }
@@ -601,29 +978,195 @@ mod tests {
             rule_version: contracts::RULE_VERSION.to_string(),
         };
         assert_eq!(
-            shadow_policy(&state, &snapshot, &now).proposed_attention,
+            shadow_policy(&state, &snapshot, &now, &CalibrationParameters::default(),)
+                .proposed_attention,
             "SUGGEST"
         );
 
         state.scene = "MEETING".to_string();
         state.user_attention = "busy".to_string();
         assert_eq!(
-            shadow_policy(&state, &snapshot, &now).proposed_attention,
+            shadow_policy(&state, &snapshot, &now, &CalibrationParameters::default(),)
+                .proposed_attention,
             "OBSERVE"
         );
 
         snapshot.conversation.state = ConversationState::UserInput;
         assert_eq!(
-            shadow_policy(&state, &snapshot, &now).proposed_attention,
+            shadow_policy(&state, &snapshot, &now, &CalibrationParameters::default(),)
+                .proposed_attention,
             "RESPOND"
         );
 
         snapshot.conversation.state = ConversationState::Idle;
         snapshot.foreground.category = ForegroundCategory::Sensitive;
         assert_eq!(
-            shadow_policy(&state, &snapshot, &now).proposed_attention,
+            shadow_policy(&state, &snapshot, &now, &CalibrationParameters::default(),)
+                .proposed_attention,
             "IGNORE"
         );
+    }
+
+    #[test]
+    fn idle_activity_suppresses_only_suggestions_and_never_explicit_or_sensitive_safety() {
+        let now = crate::now_iso();
+        let parameters = CalibrationParameters::default();
+        let mut snapshot = signals(ForegroundCategory::Coding);
+        let baseline = classify(&snapshot);
+        snapshot.input_activity = InputActivitySignal {
+            state: InputActivityState::Idle,
+            health: SignalHealth::Ready,
+        };
+        let idle = classify(&snapshot);
+        assert_eq!(idle.scene, baseline.scene);
+        assert_eq!(idle.confidence, baseline.confidence);
+        assert_eq!(idle.user_attention, baseline.user_attention);
+        assert_eq!(idle.audio_environment, baseline.audio_environment);
+        assert_eq!(idle.evidence, baseline.evidence);
+        let state = SituationState {
+            scene: idle.scene,
+            confidence: idle.confidence,
+            user_attention: idle.user_attention,
+            audio_environment: idle.audio_environment,
+            evidence: idle.evidence,
+            candidate_since: now.clone(),
+            stable_since: now.clone(),
+            updated_at: now.clone(),
+            rule_version: contracts::RULE_VERSION.to_string(),
+        };
+        let decision = shadow_policy(&state, &snapshot, &now, &parameters);
+        assert_eq!(decision.proposed_attention, "OBSERVE");
+        assert_eq!(decision.reason_codes, ["input-idle"]);
+
+        let mut busy_state = state.clone();
+        busy_state.scene = "MEETING".to_string();
+        busy_state.user_attention = "busy".to_string();
+        let busy_decision = shadow_policy(&busy_state, &snapshot, &now, &parameters);
+        assert_eq!(busy_decision.proposed_attention, "OBSERVE");
+        assert_eq!(busy_decision.reason_codes, ["user-busy"]);
+
+        let mut passive_state = state.clone();
+        passive_state.confidence = parameters.classification_min_confidence - 1;
+        let passive_decision = shadow_policy(&passive_state, &snapshot, &now, &parameters);
+        assert_eq!(passive_decision.proposed_attention, "OBSERVE");
+        assert_eq!(passive_decision.reason_codes, ["passive-observation"]);
+
+        snapshot.conversation.state = ConversationState::UserInput;
+        assert_eq!(
+            shadow_policy(&state, &snapshot, &now, &parameters).proposed_attention,
+            "RESPOND"
+        );
+        snapshot.conversation.state = ConversationState::Idle;
+        snapshot.foreground.category = ForegroundCategory::Sensitive;
+        assert_eq!(
+            shadow_policy(&state, &snapshot, &now, &parameters).proposed_attention,
+            "IGNORE"
+        );
+    }
+
+    #[test]
+    fn idle_unknown_and_non_ready_activity_preserve_existing_policy() {
+        let now = crate::now_iso();
+        let parameters = CalibrationParameters::default();
+        let mut snapshot = signals(ForegroundCategory::Unknown);
+        snapshot.input_activity = InputActivitySignal {
+            state: InputActivityState::Idle,
+            health: SignalHealth::Ready,
+        };
+        let unknown = classify(&snapshot);
+        let unknown_state = SituationState {
+            scene: unknown.scene,
+            confidence: unknown.confidence,
+            user_attention: unknown.user_attention,
+            audio_environment: unknown.audio_environment,
+            evidence: unknown.evidence,
+            candidate_since: now.clone(),
+            stable_since: now.clone(),
+            updated_at: now.clone(),
+            rule_version: contracts::RULE_VERSION.to_string(),
+        };
+        assert_eq!(
+            shadow_policy(&unknown_state, &snapshot, &now, &parameters).proposed_attention,
+            "IGNORE"
+        );
+
+        snapshot.foreground.category = ForegroundCategory::Coding;
+        let coding = classify(&snapshot);
+        let coding_state = SituationState {
+            scene: coding.scene,
+            confidence: coding.confidence,
+            user_attention: coding.user_attention,
+            audio_environment: coding.audio_environment,
+            evidence: coding.evidence,
+            candidate_since: now.clone(),
+            stable_since: now.clone(),
+            updated_at: now.clone(),
+            rule_version: contracts::RULE_VERSION.to_string(),
+        };
+        for health in [SignalHealth::Degraded, SignalHealth::Unsupported] {
+            snapshot.input_activity.health = health;
+            assert_eq!(
+                shadow_policy(&coding_state, &snapshot, &now, &parameters).proposed_attention,
+                "SUGGEST"
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_runtime_returns_disabled_signals_without_platform_sampling() {
+        let runtime = SituationRuntime::new(SituationRuntimeSettings::default(), None)
+            .expect("runtime initializes");
+        let sample = runtime.sample_platform().expect("disabled sample projects");
+        assert_eq!(sample.foreground.health, SignalHealth::Disabled);
+        assert_eq!(sample.calendar.health, SignalHealth::Disabled);
+        assert_eq!(sample.input_activity.health, SignalHealth::Disabled);
+        assert_eq!(sample.input_activity.state, InputActivityState::Unknown);
+    }
+
+    #[test]
+    fn input_activity_health_change_is_emitted_once() {
+        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        crate::initialize_database(&connection.lock().expect("database lock"))
+            .expect("database initializes");
+        let runtime = SituationRuntime::new(
+            SituationRuntimeSettings {
+                enabled: true,
+                ..SituationRuntimeSettings::default()
+            },
+            None,
+        )
+        .expect("runtime initializes");
+        let snapshot = signals(ForegroundCategory::Coding);
+        for observed_ms in [1_000_u128, 3_000] {
+            runtime
+                .tick_sampled(
+                    &connection,
+                    SituationSample {
+                        foreground: snapshot.foreground.clone(),
+                        calendar: snapshot.calendar.clone(),
+                        input_activity: InputActivitySignal {
+                            state: InputActivityState::Active,
+                            health: SignalHealth::Ready,
+                        },
+                        observed_at: observed_ms.to_string(),
+                        observed_ms,
+                    },
+                )
+                .expect("sample succeeds");
+        }
+        let inner = runtime.inner.lock().expect("runtime lock");
+        let changes = inner
+            .events
+            .iter()
+            .filter(|(_, event)| {
+                matches!(
+                    event,
+                    SituationEvent::SignalHealthChanged { source, .. }
+                        if source == "input-activity"
+                )
+            })
+            .count();
+        assert_eq!(changes, 1);
     }
 
     #[test]
@@ -639,8 +1182,9 @@ mod tests {
 
     #[test]
     fn owned_lifecycle_flows_through_runtime_to_ledger_and_pause_stops_writes() {
-        let connection = Connection::open_in_memory().expect("database opens");
-        crate::initialize_database(&connection).expect("database initializes");
+        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        crate::initialize_database(&connection.lock().expect("database lock"))
+            .expect("database initializes");
         let settings = SituationRuntimeSettings {
             enabled: true,
             ..SituationRuntimeSettings::default()
@@ -654,7 +1198,9 @@ mod tests {
             })
             .expect("owned signal reports");
         runtime.tick(&connection).expect("runtime ticks");
-        let snapshot = runtime.snapshot(&connection).expect("snapshot loads");
+        let snapshot = runtime
+            .snapshot(&connection.lock().expect("database lock"))
+            .expect("snapshot loads");
         assert_eq!(snapshot.state.scene, "CONVERSATION");
         assert_eq!(snapshot.decision.proposed_attention, "RESPOND");
         assert_eq!(snapshot.decision.actual_execution, "NONE");
@@ -666,7 +1212,7 @@ mod tests {
             .expect("runtime pauses");
         runtime.tick(&connection).expect("paused tick is harmless");
         let paused = runtime
-            .snapshot(&connection)
+            .snapshot(&connection.lock().expect("database lock"))
             .expect("paused snapshot loads");
         assert_eq!(paused.history.len(), 1);
         assert!(!paused.monitoring_enabled);
@@ -674,8 +1220,9 @@ mod tests {
 
     #[test]
     fn failed_ledger_write_does_not_advance_runtime_state() {
-        let connection = Connection::open_in_memory().expect("database opens");
-        crate::initialize_database(&connection).expect("database initializes");
+        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        crate::initialize_database(&connection.lock().expect("database lock"))
+            .expect("database initializes");
         let runtime = SituationRuntime::new(
             SituationRuntimeSettings {
                 enabled: true,
@@ -692,6 +1239,8 @@ mod tests {
             })
             .expect("owned signal reports");
         connection
+            .lock()
+            .expect("database lock")
             .execute("DROP TABLE situation_ledger", [])
             .expect("fixture removes ledger");
 
@@ -700,6 +1249,46 @@ mod tests {
         assert_eq!(inner.signals.sequence, 0);
         assert_eq!(inner.state.scene, "UNKNOWN");
         assert_eq!(inner.last_persisted_ms, 0);
+    }
+
+    #[test]
+    fn failed_quality_window_is_bounded_to_two_intervals() {
+        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        crate::initialize_database(&connection.lock().expect("database lock"))
+            .expect("database initializes");
+        connection
+            .lock()
+            .expect("database lock")
+            .execute("DROP TABLE situation_ledger", [])
+            .expect("fixture removes ledger");
+        let runtime = SituationRuntime::new(
+            SituationRuntimeSettings {
+                enabled: true,
+                heartbeat_interval_ms: 60_000,
+                ..SituationRuntimeSettings::default()
+            },
+            None,
+        )
+        .expect("runtime initializes");
+        let snapshot = signals(ForegroundCategory::Coding);
+        let sample = |observed_ms: u128| SituationSample {
+            foreground: snapshot.foreground.clone(),
+            calendar: snapshot.calendar.clone(),
+            input_activity: snapshot.input_activity.clone(),
+            observed_at: observed_ms.to_string(),
+            observed_ms,
+        };
+
+        assert!(runtime.tick_sampled(&connection, sample(1_000)).is_err());
+        {
+            let inner = runtime.inner.lock().expect("runtime lock");
+            assert_eq!(inner.quality.sample_count, 1);
+            assert_eq!(inner.quality_started_ms, 1_000);
+        }
+        assert!(runtime.tick_sampled(&connection, sample(121_000)).is_err());
+        let inner = runtime.inner.lock().expect("runtime lock");
+        assert_eq!(inner.quality.sample_count, 0);
+        assert_eq!(inner.quality_started_ms, 0);
     }
 
     #[test]
@@ -760,6 +1349,7 @@ mod tests {
     #[test]
     fn shadow_module_has_no_outbound_or_intervention_calls() {
         let source = [
+            include_str!("calibration.rs"),
             include_str!("classifier.rs"),
             include_str!("contracts.rs"),
             include_str!("repository.rs"),

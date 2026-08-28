@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const RULE_VERSION: &str = "mvp1-rules-v1";
-pub const POLICY_VERSION: &str = "mvp1-shadow-v1";
+pub const POLICY_VERSION: &str = "mvp2.5-shadow-v1";
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SituationScene {
@@ -17,6 +16,21 @@ pub enum SituationScene {
     Unknown,
 }
 
+impl SituationScene {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Conversation => "CONVERSATION",
+            Self::Meeting => "MEETING",
+            Self::Coding => "CODING",
+            Self::Writing => "WRITING",
+            Self::Media => "MEDIA",
+            Self::Focus => "FOCUS",
+            Self::Solo => "SOLO",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CalibrationParameters {
@@ -25,6 +39,10 @@ pub struct CalibrationParameters {
     pub enter_sample_count: u8,
     pub exit_sample_count: u8,
     pub cooldown_ms: u64,
+    #[serde(default = "default_input_active_max_ms")]
+    pub input_active_max_ms: u64,
+    #[serde(default = "default_input_recent_max_ms")]
+    pub input_recent_max_ms: u64,
 }
 
 impl Default for CalibrationParameters {
@@ -35,6 +53,8 @@ impl Default for CalibrationParameters {
             enter_sample_count: 3,
             exit_sample_count: 5,
             cooldown_ms: 10_000,
+            input_active_max_ms: default_input_active_max_ms(),
+            input_recent_max_ms: default_input_recent_max_ms(),
         }
     }
 }
@@ -47,11 +67,22 @@ pub fn validate_calibration_parameters(value: &CalibrationParameters) -> Result<
         || value.exit_sample_count == 0
         || value.exit_sample_count > 20
         || value.cooldown_ms > 60_000
+        || !(5_000..=120_000).contains(&value.input_active_max_ms)
+        || !(60_000..=1_800_000).contains(&value.input_recent_max_ms)
+        || value.input_active_max_ms >= value.input_recent_max_ms
         || value.low_confidence_max >= value.classification_min_confidence
     {
         return Err("Invalid calibration parameters".to_string());
     }
     Ok(())
+}
+
+pub const fn default_input_active_max_ms() -> u64 {
+    30_000
+}
+
+pub const fn default_input_recent_max_ms() -> u64 {
+    300_000
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -80,7 +111,7 @@ impl Default for SituationRuntimeSettings {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SignalHealth {
     Ready,
@@ -149,6 +180,35 @@ pub enum TimeBucket {
     None,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum InputActivityState {
+    Active,
+    Recent,
+    Idle,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InputActivitySignal {
+    pub state: InputActivityState,
+    pub health: SignalHealth,
+}
+
+impl Default for InputActivitySignal {
+    fn default() -> Self {
+        unsupported_input_activity()
+    }
+}
+
+pub fn unsupported_input_activity() -> InputActivitySignal {
+    InputActivitySignal {
+        state: InputActivityState::Unknown,
+        health: SignalHealth::Unsupported,
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ForegroundSignal {
@@ -190,6 +250,8 @@ pub struct SignalSnapshot {
     pub sequence: u64,
     pub observed_at: String,
     pub foreground: ForegroundSignal,
+    #[serde(default = "unsupported_input_activity")]
+    pub input_activity: InputActivitySignal,
     pub conversation: ConversationSignal,
     pub microphone: MicrophoneSignal,
     pub audio: AudioSignal,
@@ -267,6 +329,33 @@ pub struct SituationEvaluationSummary {
     pub unsure: u64,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QualityWindowCounters {
+    pub sample_count: u64,
+    pub candidate_change_count: u64,
+    pub stable_transition_count: u64,
+    pub unknown_sample_count: u64,
+    pub stale_owned_signal_count: u64,
+    pub decision_ignore_count: u64,
+    pub decision_observe_count: u64,
+    pub decision_suggest_count: u64,
+    pub decision_respond_count: u64,
+    pub health_ready_count: u64,
+    pub health_disabled_count: u64,
+    pub health_permission_denied_count: u64,
+    pub health_unsupported_count: u64,
+    pub health_degraded_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SituationQualityMetrics {
+    pub sample_count: u64,
+    pub flapping_rate: Option<f64>,
+    pub stale_rate: Option<f64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SituationRuntimeFailure {
@@ -292,7 +381,7 @@ pub struct SituationSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct SituationReviewSnapshot {
     pub active_profile: super::calibration::CalibrationProfile,
-    pub quality: serde_json::Value,
+    pub quality: SituationQualityMetrics,
     pub feedback_queue: Vec<SituationLedgerEntry>,
     pub latest_run: Option<super::calibration::CalibrationRun>,
     pub candidates: Vec<super::calibration::CalibrationProfile>,
@@ -364,6 +453,10 @@ pub fn initial_signals(now: &str) -> SignalSnapshot {
         calendar: CalendarSignal {
             state: CalendarState::Unavailable,
             time_bucket: TimeBucket::None,
+            health: SignalHealth::Disabled,
+        },
+        input_activity: InputActivitySignal {
+            state: InputActivityState::Unknown,
             health: SignalHealth::Disabled,
         },
     }

@@ -1,0 +1,44 @@
+{
+  "version": "situation-fixtures-v2",
+  "scenarios": [
+    {
+      "id": "coding-active-to-idle",
+      "samples": [
+        {"elapsedMs":0,"signals":{"sequence":1,"observedAt":"0","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"active","health":"ready"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"UNKNOWN","expectedAttention":"IGNORE"},
+        {"elapsedMs":2000,"signals":{"sequence":2,"observedAt":"2000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"active","health":"ready"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"UNKNOWN","expectedAttention":"IGNORE"},
+        {"elapsedMs":4000,"signals":{"sequence":3,"observedAt":"4000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"active","health":"ready"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"CODING","expectedAttention":"SUGGEST"},
+        {"elapsedMs":6000,"signals":{"sequence":4,"observedAt":"6000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"active","health":"ready"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"CODING","expectedAttention":"SUGGEST"},
+        {"elapsedMs":8000,"signals":{"sequence":5,"observedAt":"8000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"recent","health":"ready"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"CODING","expectedAttention":"SUGGEST"},
+        {"elapsedMs":10000,"signals":{"sequence":6,"observedAt":"10000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"idle","health":"ready"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"CODING","expectedAttention":"OBSERVE"}
+      ]
+    },
+    {
+      "id": "explicit-input-wins-idle",
+      "samples": [
+        {"elapsedMs":0,"signals":{"sequence":1,"observedAt":"0","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"idle","health":"ready"},"conversation":{"state":"user-input"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"CONVERSATION","expectedAttention":"RESPOND"}
+      ]
+    },
+    {
+      "id": "sensitive-wins-idle",
+      "samples": [
+        {"elapsedMs":0,"signals":{"sequence":1,"observedAt":"0","foreground":{"category":"sensitive","health":"ready"},"inputActivity":{"state":"idle","health":"ready"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"UNKNOWN","expectedAttention":"IGNORE"}
+      ]
+    },
+    {
+      "id": "unsupported-parity",
+      "samples": [
+        {"elapsedMs":0,"signals":{"sequence":1,"observedAt":"0","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"unknown","health":"unsupported"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"UNKNOWN","expectedAttention":"IGNORE"},
+        {"elapsedMs":2000,"signals":{"sequence":2,"observedAt":"2000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"unknown","health":"unsupported"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"UNKNOWN","expectedAttention":"IGNORE"},
+        {"elapsedMs":4000,"signals":{"sequence":3,"observedAt":"4000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"unknown","health":"unsupported"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"CODING","expectedAttention":"SUGGEST"}
+      ]
+    },
+    {
+      "id": "degraded-parity",
+      "samples": [
+        {"elapsedMs":0,"signals":{"sequence":1,"observedAt":"0","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"unknown","health":"degraded"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"UNKNOWN","expectedAttention":"IGNORE"},
+        {"elapsedMs":2000,"signals":{"sequence":2,"observedAt":"2000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"unknown","health":"degraded"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"UNKNOWN","expectedAttention":"IGNORE"},
+        {"elapsedMs":4000,"signals":{"sequence":3,"observedAt":"4000","foreground":{"category":"coding","health":"ready"},"inputActivity":{"state":"unknown","health":"degraded"},"conversation":{"state":"idle"},"microphone":{"state":"inactive","health":"ready"},"audio":{"state":"silent","health":"ready"},"calendar":{"state":"free","timeBucket":"none","health":"ready"}},"expectedScene":"CODING","expectedAttention":"SUGGEST"}
+      ]
+    }
+  ]
+}

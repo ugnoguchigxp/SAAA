@@ -1,0 +1,1869 @@
+<article lang="ja">
+  <h1 id="situation-aware-ambient-agent-runtime">Situation-Aware Ambient Agent Runtime</h1>
+  <h2 id="project-concept--direction">Project Concept &amp; Direction</h2>
+  <p>この文書は、最終的な製品像と、その方向へ進むための責務境界を示すコンセプト文書である。</p>
+  <p>
+    すべての機能を最初から実装するための固定仕様ではない。特に、Situationの自動推定、Application
+    Automation、NightWorkers連携、Capability Factoryは長期方向として保持し、最初のMVPでは扱わない。
+  </p>
+  <p>最初のMVPは、次の一本の体験を成立させることに集中する。</p>
+  <pre><code class="language-text">LLM / Agent ProviderとTask Routingを設定する
+        ↓
+文字または音声で話しかける
+        ↓
+文字起こしがChat UIへ反映される
+        ↓
+選択されたTask RouteでLLMまたはCodex SDKを実行する
+        ↓
+Chat UIへ表示し、必要な応答は音声でも返す
+</code></pre>
+  <p>
+    この最小ループを、後続のSituation、Policy、Context、Capabilityへ拡張できるRuntimeの最初の縦切りとする。
+  </p>
+  <h2 id="1-vision">1. Vision</h2>
+  <p>ユーザーのPC環境に常駐し、</p>
+  <ul>
+    <li>音声</li>
+    <li>画面</li>
+    <li>アプリケーション</li>
+    <li>会話</li>
+    <li>作業状態</li>
+    <li>カレンダー</li>
+    <li>OS状態</li>
+    <li>外部ツール</li>
+  </ul>
+  <p>などから現在の状況を理解し、</p>
+  <blockquote>
+    <p><strong>今、このAIは何をするべきか。あるいは、何もしないべきか。</strong></p>
+  </blockquote>
+  <p>を継続的に判断するPersonal AI RuntimeをOSSとして構築する。</p>
+  <p>本プロジェクトは単なるChat Assistantではない。</p>
+  <p>また、</p>
+  <ul>
+    <li>Alexa型Wake Word Assistant</li>
+    <li>Coding Agent</li>
+    <li>Memory Engine</li>
+    <li>Computer Use専用Agent</li>
+    <li>Meeting Assistant</li>
+    <li>Email Copilot</li>
+  </ul>
+  <p>のいずれか一つでもない。</p>
+  <p>それらを必要な状況で適切に利用する、</p>
+  <blockquote>
+    <p><strong>Local-first, Situation-aware Ambient Agent Runtime</strong></p>
+  </blockquote>
+  <p>を目指す。</p>
+  <p>ただし、最初のMVPが証明するのはAmbient Intelligence全体ではない。</p>
+  <p>最初に証明するのは、</p>
+  <ol>
+    <li>Local / Cloudを選択できるLLM Runtime設定</li>
+    <li>Taskごとの明示的なModel Routing</li>
+    <li>Codex SDKを通常LLMとは異なるAgent Providerとして安全に選択できること</li>
+    <li>音声と文字が同じConversationへ入ること</li>
+    <li>UI、音声Runtime、LLM / Agent Runtime、永続設定を後からSituation-awareへ拡張できること</li>
+  </ol>
+  <p>である。</p>
+  <p>長期Visionと最初のMVPを混同しない。</p>
+  <hr />
+  <h2 id="2-fundamental-model">2. Fundamental Model</h2>
+  <p>従来型AI:</p>
+  <pre><code class="language-text">User Input
+    ↓
+LLM
+    ↓
+Response
+</code></pre>
+  <p>本プロジェクト:</p>
+  <pre><code class="language-text">Perception
+    ↓
+Situation
+    ↓
+Interaction Policy
+    ↓
+Assist Planning
+    ↓
+Capability Resolution
+    ↓
+Execution
+    ↓
+Presentation
+</code></pre>
+  <p>重要なのは、LLMそのものではない。</p>
+  <p>本プロジェクトの中核価値は、</p>
+  <ol>
+    <li>現在の状況を理解する</li>
+    <li>介入すべきか判断する</li>
+    <li>必要なCapabilityを選択する</li>
+    <li>必要なら新しいCapabilityを獲得する</li>
+    <li>最も邪魔にならない方法で結果を提示する</li>
+  </ol>
+  <p>ことにある。</p>
+  <hr />
+  <h2 id="3-local-first-principle">3. Local-first Principle</h2>
+  <p>AI処理は原則としてローカルで実行する。</p>
+  <p>対象には以下を含む。</p>
+  <pre><code class="language-text">LLM
+STT
+TTS
+Translation
+Embedding
+Classification
+Intent Detection
+Situation Classification
+Summarization
+Simple Vision Processing
+</code></pre>
+  <p>Cloud AIは主処理系ではない。</p>
+  <p>基本ルーティング:</p>
+  <pre><code class="language-text">Task
+ ↓
+Deterministic local processing possible?
+ ├─ YES
+ │   ↓
+ │  Local processing
+ │
+ └─ NO
+      ↓
+Local model available?
+ ├─ YES
+ │   ↓
+ │  Local model
+ │
+ └─ NO
+      ↓
+Alternate local model available?
+ ├─ YES
+ │   ↓
+ │  Local fallback
+ │
+ └─ NO
+      ↓
+Cloud fallback permitted?
+ ├─ YES → Cloud
+ └─ NO  → Graceful failure
+</code></pre>
+  <p>デフォルト:</p>
+  <pre><code class="language-text">Local Preferred
+</code></pre>
+  <p>ユーザー設定として最低限、</p>
+  <pre><code class="language-text">Local Only
+Local Preferred
+Cloud Allowed
+Cloud Preferred
+</code></pre>
+  <p>を持てるようにする。</p>
+  <p>Sensitive ContextについてはCloud送信を禁止できること。</p>
+  <hr />
+  <h2 id="4-runtime-responsibility">4. Runtime Responsibility</h2>
+  <p>本プロジェクトが所有する中核機能は以下とする。</p>
+  <pre><code class="language-text">Perception
+Situation Manager
+Interaction Policy
+Assist Planner
+Capability Registry
+Capability Router
+Capability Factory
+Model Router
+Context Broker
+Presentation Manager
+Application Adapters
+Local Voice Runtime integration
+Permission / Security
+Runtime Lifecycle
+Observability
+</code></pre>
+  <p>逆に、既存の別プロジェクトで担当する領域は本体へ再実装しない。</p>
+  <hr />
+  <h2 id="5-external-responsibility--contextstill">5. External Responsibility — contextStill</h2>
+  <p>
+    再利用可能なKnowledgeとTask固有ContextのCompilationは <strong>contextStill</strong> に委譲する。
+  </p>
+  <p>
+    contextStillは現時点では、AIコーディングエージェント向けのrule / procedure / lesson / agent
+    logを扱うKnowledge Control
+    Planeである。会議、人物、予定、メールなどを無条件に保存する汎用Personal Memoryとしては扱わない。
+  </p>
+  <p>
+    本プロジェクト内ではcontextStillと競合するKnowledge Distillation
+    Engineを構築しない。一方、現在のSituation、Conversation、音声文字起こしなど、Ambient
+    Runtime固有の短命Contextは本体が所有する。
+  </p>
+  <h2 id="本プロジェクト側の責務">本プロジェクト側の責務</h2>
+  <pre><code class="language-text">Situation
+ ↓
+必要なContextを判断
+ ↓
+contextStill query
+ ↓
+Relevant Context
+ ↓
+Current Taskへ利用
+</code></pre>
+  <p>
+    また、再利用可能なrule / procedure / lessonとして一般化でき、保存価値があるObservationだけを、
+  </p>
+  <pre><code class="language-text">Observation Candidate
+ ↓
+contextStill
+</code></pre>
+  <p>へ渡す。</p>
+  <p>
+    単なる会話履歴、音声文字起こし、画面内容、個人情報をObservation Candidateとして自動送信しない。
+  </p>
+  <h2 id="contextstill側の責務">contextStill側の責務</h2>
+  <pre><code class="language-text">Knowledge persistence
+Long-lived rule / procedure / episode memory
+Semantic Search
+Vector Search
+Full-text Search
+Knowledge Distillation
+Deduplication
+Scoring
+Staleness
+Context Compilation
+Knowledge Lifecycle
+</code></pre>
+  <p>本体内部に保持してよいMemoryは短命なものに限定する。</p>
+  <pre><code class="language-text">Current Situation
+Recent Utterances
+Current UI State
+Current Task State
+Temporary Meeting Context
+Temporary Working Context
+</code></pre>
+  <p>
+    最初のMVPではcontextStill Retrieval / Candidate
+    Registrationを実行経路へ含めない。設定画面とRouting設計はcontextStillの実装を参照するが、SAAA自身の設定はSAAA所有のSQLiteへ保存し、contextStillのDBを直接共有しない。
+  </p>
+  <hr />
+  <h2 id="6-external-responsibility--nightworkers">6. External Responsibility — NightWorkers</h2>
+  <p>Software Engineering実行は <strong>NightWorkers</strong> に委譲する。</p>
+  <p>本プロジェクト自身ではCoding Agentを実装しない。</p>
+  <p>以下も本体の責務外とする。</p>
+  <pre><code class="language-text">Repository Investigation
+Architecture Planning for implementation
+Code Generation
+Implementation
+Test execution
+Code Review
+Security Review
+Coding Mission execution
+Software Engineering Task Graph
+</code></pre>
+  <p>Coding関連の要求はCapability Routerを通じてNightWorkersへ渡す。</p>
+  <p>
+    NightWorkersは単純なCode Generation APIではない。Task、明示的な実行権限、Plan Review、専用Git
+    Workspace、Implementation Queue、Test、Review、Security、Git Closeoutを所有するHuman-governed
+    Development Control Planeとして扱う。
+  </p>
+  <p>
+    本プロジェクトは、NightWorkers内部のMission
+    Pilot、Planning、Review、Completion判断を再実装しない。
+  </p>
+  <p>本プロジェクトがNightWorkersへ渡すもの:</p>
+  <pre><code class="language-text">Goal
+Capability Contract
+Inputs / Outputs
+Permissions
+Integration Points
+Acceptance Criteria
+Presentation Requirements
+Local-first Constraints
+</code></pre>
+  <p>NightWorkersから受け取るもの:</p>
+  <pre><code class="language-text">Task / Run Reference
+Current Lifecycle State
+User Attention Required
+Artifact / Diff Reference
+Verification / Review Result
+Closeout Result
+</code></pre>
+  <p>NightWorkersの承認やReview GateをAmbient Runtimeが迂回してはならない。</p>
+  <pre><code class="language-text">User
+ ↓
+「このバグを直して」
+ ↓
+Ambient Runtime
+ ↓
+Situation = CODING
+ ↓
+Capability Router
+ ↓
+NightWorkers
+ ↓
+Implement / Test / Review
+ ↓
+Result
+ ↓
+Presentation Manager
+</code></pre>
+  <hr />
+  <h2 id="7-self-extending-capability-model">7. Self-Extending Capability Model</h2>
+  <p>本プロジェクトの重要な長期目標の一つ。</p>
+  <p>最初のMVPの完了条件には含めない。</p>
+  <p>ユーザーが、</p>
+  <blockquote>
+    <p>「こういうことができるようにしたい」</p>
+  </blockquote>
+  <p>と要求したとき、そのCapabilityが存在しなければ、</p>
+  <p><strong>不足している能力を新しく実装できるようにする。</strong></p>
+  <p>基本フロー:</p>
+  <pre><code class="language-text">User Requirement
+      ↓
+Assist Planner
+      ↓
+Capability Registry
+      ↓
+Capability exists?
+   ┌───────┴────────┐
+  YES              NO
+   │                │
+Execute       Capability Gap
+                    ↓
+              Capability Spec
+                    ↓
+                Plan Draft
+                    ↓
+              NightWorkers
+                    ↓
+          Implement / Test / Review
+                    ↓
+           Capability Artifact
+                    ↓
+             Validation Gate
+                    ↓
+             Capability Registry
+                    ↓
+                 ACTIVE
+</code></pre>
+  <p>これにより、本システムは固定機能の集合ではなく、</p>
+  <blockquote>
+    <p><strong>ユーザーの要求によって能力を増やしていくRuntime</strong></p>
+  </blockquote>
+  <p>となる。</p>
+  <p>初期段階では、生成済みCapabilityを自動でACTIVEにしない。</p>
+  <pre><code class="language-text">Build
+ ↓
+Validate
+ ↓
+STAGED
+ ↓
+User Review / Approval
+ ↓
+ACTIVE
+</code></pre>
+  <p>Capabilityのinstallとactivateを分離し、Core更新や高権限Capabilityの暗黙有効化を禁止する。</p>
+  <hr />
+  <h2 id="8-core-must-not-self-modify">8. Core Must Not Self-Modify</h2>
+  <p>自己拡張は、</p>
+  <pre><code class="language-text">core source codeを書き換える
+</code></pre>
+  <p>ことを意味しない。</p>
+  <p>Core Runtimeは安定したKernelとして維持する。</p>
+  <pre><code class="language-text">Stable Core
+├─ Situation
+├─ Policy
+├─ Routing
+├─ Capability Registry
+├─ Capability Factory
+├─ Presentation
+└─ Security
+</code></pre>
+  <p>新機能は、</p>
+  <pre><code class="language-text">skills/
+plugins/
+adapters/
+providers/
+</code></pre>
+  <p>として追加する。</p>
+  <p>原則:</p>
+  <blockquote>
+    <p><strong>Kernelは小さく安定させ、能力は外付けする。</strong></p>
+  </blockquote>
+  <hr />
+  <h2 id="9-capability-vs-skill">9. Capability vs Skill</h2>
+  <p>CapabilityとSkillは区別する。</p>
+  <h2 id="capability">Capability</h2>
+  <p>AIができることを表す論理的な能力。</p>
+  <p>例:</p>
+  <pre><code class="language-text">mail.rewrite
+meeting.translate
+excel.detect_anomaly
+browser.research
+desktop.capture_screen
+</code></pre>
+  <h2 id="skill">Skill</h2>
+  <p>Capabilityを実現する具体的な実装。</p>
+  <p>例:</p>
+  <pre><code class="language-text">mail.rewrite
+ ├─ local-llm-rewrite
+ └─ cloud-rewrite-fallback
+</code></pre>
+  <p>あるいは、</p>
+  <pre><code class="language-text">mail.read_current
+ ├─ outlook-addin
+ ├─ microsoft-api
+ ├─ accessibility
+ └─ computer-use
+</code></pre>
+  <p>Capability Routerは状況に応じて最適なSkillを選択する。</p>
+  <hr />
+  <h2 id="10-capability-levels">10. Capability Levels</h2>
+  <p>新しい要求をすべてコード生成へ送らない。</p>
+  <p>最も軽い方法でCapabilityを実現する。</p>
+  <h2 id="level-1--declarative-skill">Level 1 — Declarative Skill</h2>
+  <p>コード不要。</p>
+  <pre><code class="language-text">Existing Tool
++
+Prompt
++
+Procedure
++
+Policy
+</code></pre>
+  <h2 id="level-2--composite-skill">Level 2 — Composite Skill</h2>
+  <p>既存Capabilityを組み合わせる。</p>
+  <pre><code class="language-text">STT
++
+Translation
++
+contextStill Retrieval
++
+Overlay
+</code></pre>
+  <h2 id="level-3--script-skill">Level 3 — Script Skill</h2>
+  <p>TypeScript等による軽量実装。</p>
+  <p>NightWorkersへ実装を依頼する。</p>
+  <h2 id="level-4--application-adapter">Level 4 — Application Adapter</h2>
+  <p>Outlook、Excel、Zoom、Browserなどへの専用統合。</p>
+  <h2 id="level-5--native-capability">Level 5 — Native Capability</h2>
+  <p>Rust / OS APIを必要とする。</p>
+  <pre><code class="language-text">Audio Capture
+Screen Capture
+Accessibility
+System Audio
+Mouse / Keyboard
+</code></pre>
+  <p>高い権限を必要とするため厳格に扱う。</p>
+  <hr />
+  <h2 id="11-capability-definition">11. Capability Definition</h2>
+  <p>Capabilityには機械可読なManifestを持たせる。</p>
+  <p>例:</p>
+  <pre><code class="language-yaml">id: meeting.translate
+version: 1.0.0
+
+description: &gt;
+  Translate detected foreign-language meeting speech
+  into the user&#39;s preferred language.
+
+inputs:
+  - transcript_stream
+
+outputs:
+  - translated_stream
+
+permissions:
+  - audio.read
+  - overlay.write
+
+risk:
+  level: 0
+
+runtime:
+  type: local
+
+providers:
+  preferred:
+    - local-translation-model
+
+presentation:
+  - overlay
+
+health_check:
+  enabled: true
+</code></pre>
+  <p>新規Capability生成時もこの形式のSpecを最初に作る。</p>
+  <hr />
+  <h2 id="12-capability-factory">12. Capability Factory</h2>
+  <p>不足能力を生成するSubsystem。</p>
+  <pre><code class="language-text">Capability Gap Analyzer
+        ↓
+Capability Spec Compiler
+        ↓
+Implementation Request
+        ↓
+NightWorkers
+        ↓
+Artifact Validator
+        ↓
+Staging
+        ↓
+Capability Installer
+        ↓
+Capability Registry
+</code></pre>
+  <p>NightWorkersへ自然言語だけを投げない。</p>
+  <p>可能な限り、</p>
+  <pre><code class="language-text">Goal
+Inputs
+Outputs
+Permissions
+Constraints
+Integration points
+Acceptance criteria
+Tests
+Presentation requirements
+Local-first requirements
+</code></pre>
+  <p>を含むCapability Specへ変換する。</p>
+  <hr />
+  <h2 id="13-capability-installation-gate">13. Capability Installation Gate</h2>
+  <p>NightWorkersのテスト成功だけで即インストールしない。</p>
+  <pre><code class="language-text">Artifact
+ ↓
+Contract Test
+ ↓
+Permission Validation
+ ↓
+Security Validation
+ ↓
+Resource Limit Validation
+ ↓
+Integration Test
+ ↓
+STAGED
+ ↓
+Smoke Test
+ ↓
+User / Policy Approval
+ ↓
+ACTIVE
+</code></pre>
+  <p>更新時にはRollback可能にする。</p>
+  <pre><code class="language-text">Capability v1.3 ACTIVE
+ ↓
+v1.4 install
+ ↓
+failure
+ ↓
+rollback
+ ↓
+v1.3 ACTIVE
+</code></pre>
+  <hr />
+  <h2 id="14-situation-manager">14. Situation Manager</h2>
+  <p>最重要コンポーネント。</p>
+  <p>以下のシグナルを利用する。</p>
+  <pre><code class="language-text">Foreground Application
+Active Window
+Running Processes
+Audio State
+Microphone Usage
+Camera Usage
+System Audio
+Calendar
+Keyboard / Mouse Activity
+Screen Context
+Conversation State
+Agent Activity
+Application-specific signals
+</code></pre>
+  <p>Situation例:</p>
+  <pre><code class="language-text">SOLO
+MEETING
+CONVERSATION
+WRITING
+CODING
+FOCUS
+MEDIA
+UNKNOWN
+</code></pre>
+  <p>ただし固定enumだけで世界を表現しようとしない。</p>
+  <p>状態は複数の属性を持てるようにする。</p>
+  <pre><code class="language-ts">interface SituationState {
+  scene: string;
+
+  confidence: number;
+
+  application?: string;
+
+  userAttention:
+    | &quot;available&quot;
+    | &quot;busy&quot;
+    | &quot;unknown&quot;;
+
+  audioEnvironment:
+    | &quot;silence&quot;
+    | &quot;speech&quot;
+    | &quot;multi_speaker&quot;
+    | &quot;media&quot;;
+
+  updatedAt: number;
+}
+</code></pre>
+  <hr />
+  <h2 id="15-situation-classification">15. Situation Classification</h2>
+  <p>巨大LLMを24時間呼ばない。</p>
+  <p>優先順位:</p>
+  <pre><code class="language-text">Hard Signal
+ ↓
+Deterministic Rule
+ ↓
+Statistical / Small Local Model
+ ↓
+Local LLM only when needed
+</code></pre>
+  <p>例:</p>
+  <pre><code class="language-text">Video meeting app active       +40
+Microphone active              +20
+Calendar event                 +15
+Multiple speakers              +15
+Meeting window foreground      +10
+</code></pre>
+  <p>閾値以上:</p>
+  <pre><code class="language-text">Situation = MEETING
+</code></pre>
+  <p>状態遷移にはヒステリシスを導入する。</p>
+  <p>不明な場合:</p>
+  <blockquote>
+    <p><strong>Do nothing</strong></p>
+  </blockquote>
+  <p>を基本とする。</p>
+  <hr />
+  <h2 id="16-interaction-policy">16. Interaction Policy</h2>
+  <p>Situationと「実行してよいこと」を分離する。</p>
+  <p>例:</p>
+  <pre><code class="language-text">MEETING
+</code></pre>
+  <p>なら、</p>
+  <pre><code class="language-text">canSpeak             = false
+canInterrupt         = false
+canTranscribe        = true
+canTranslate         = true
+canRetrieveContext   = true
+canNotifyVoice       = false
+canActExternally     = restricted
+</code></pre>
+  <p>モデルが発話を望んでも、</p>
+  <pre><code class="language-text">canSpeak = false
+</code></pre>
+  <p>ならTTSを実行してはいけない。</p>
+  <p>原則:</p>
+  <blockquote>
+    <p><strong>AIが状況を推定し、Policyが境界を強制する。</strong></p>
+  </blockquote>
+  <hr />
+  <h2 id="17-intervention-levels">17. Intervention Levels</h2>
+  <p>Assist Plannerの判断を、一つのLevelへ押し込めない。</p>
+  <p>最低でも、次の3軸を分離する。</p>
+  <h2 id="attention-decision">Attention Decision</h2>
+  <p>ユーザーとの関わり方。</p>
+  <pre><code class="language-text">IGNORE
+OBSERVE
+SUGGEST
+RESPOND
+REQUEST_APPROVAL
+</code></pre>
+  <h2 id="execution-decision">Execution Decision</h2>
+  <p>処理をどこで行うか。</p>
+  <pre><code class="language-text">NONE
+LOCAL
+EXTERNAL
+DELEGATE
+BUILD
+</code></pre>
+  <h2 id="presentation-decision">Presentation Decision</h2>
+  <p>結果をどう提示するか。</p>
+  <pre><code class="language-text">SILENT
+INLINE
+CHAT
+OVERLAY
+VOICE
+NOTIFICATION
+WINDOW
+</code></pre>
+  <p>例:</p>
+  <pre><code class="language-text">Meeting Translation
+
+Attention     = OBSERVE
+Execution     = LOCAL
+Presentation  = OVERLAY
+</code></pre>
+  <pre><code class="language-text">User asks to fix a bug
+
+Attention     = RESPOND
+Execution     = DELEGATE to NightWorkers
+Presentation  = CHAT + NOTIFICATION
+</code></pre>
+  <p>判断不能な場合は、<code>IGNORE / NONE / SILENT</code>を基本とする。</p>
+  <hr />
+  <h2 id="18-example--meeting">18. Example — Meeting</h2>
+  <p>会議開始:</p>
+  <pre><code class="language-text">SOLO
+ ↓
+MEETING
+</code></pre>
+  <p>Policy:</p>
+  <pre><code class="language-text">TTS                OFF
+STT                ON
+Translation        AUTO
+Notes              ON
+Context Retrieval  ON
+</code></pre>
+  <p>英語会議:</p>
+  <pre><code class="language-text">System Audio
+ ↓
+Local Streaming STT
+ ↓
+Language Detection
+ ↓
+Local Translation
+ ↓
+Overlay
+</code></pre>
+  <p>さらに、</p>
+  <pre><code class="language-text">Topic / Entity Detection
+ ↓
+contextStill
+ ↓
+Relevant Documents
+ ↓
+Reference Cards
+</code></pre>
+  <p>を表示できる。</p>
+  <p>会議終了後:</p>
+  <pre><code class="language-text">Summary
+Decisions
+Action Items
+Follow-ups
+</code></pre>
+  <p>を生成。</p>
+  <hr />
+  <h2 id="19-example--writing--email">19. Example — Writing / Email</h2>
+  <p>メール作成中:</p>
+  <pre><code class="language-text">Situation = WRITING
+Application = Outlook
+</code></pre>
+  <p>Capability:</p>
+  <pre><code class="language-text">Proofread
+Rewrite
+Tone Adjustment
+Fact Check
+Reference Retrieval
+Previous Context Retrieval
+</code></pre>
+  <p>AIは原則として音声で割り込まない。</p>
+  <pre><code class="language-text">Inline Suggestion
+Host UI
+Overlay
+</code></pre>
+  <p>などを利用する。</p>
+  <hr />
+  <h2 id="20-example--coding">20. Example — Coding</h2>
+  <p>Coding Situationを検出しても、本体でCoding Agentを実装しない。</p>
+  <pre><code class="language-text">IDE
+ ↓
+Current Context
+ ↓
+Ambient Runtime
+ ↓
+Coding Assistance Required
+ ↓
+NightWorkers
+</code></pre>
+  <p>本体の役割:</p>
+  <pre><code class="language-text">Current Application Detection
+Repository Context Acquisition
+User Intent Understanding
+Delegation
+Progress Presentation
+Result Presentation
+</code></pre>
+  <p>のみ。</p>
+  <hr />
+  <h2 id="21-voice-architecture">21. Voice Architecture</h2>
+  <p>Alexa型Wake Wordを必須にしない。</p>
+  <p>音声は常時利用可能なSensorとして扱う。</p>
+  <pre><code class="language-text">Microphone
+ ↓
+Local VAD
+ ↓
+Local Streaming STT
+ ↓
+Utterance
+ ↓
+Situation / Intent
+</code></pre>
+  <p>RAW AudioをCloudへ常時streamしない。</p>
+  <hr />
+  <h2 id="22-local-stt">22. Local STT</h2>
+  <p>原則ローカル。</p>
+  <p>Provider abstractionを利用する。</p>
+  <pre><code class="language-ts">interface SpeechToTextProvider {
+  id: string;
+  location: &quot;local&quot; | &quot;cloud&quot;;
+
+  available(): Promise&lt;boolean&gt;;
+
+  transcribe(
+    audio: AsyncIterable&lt;AudioChunk&gt;
+  ): AsyncIterable&lt;TranscriptEvent&gt;;
+}
+</code></pre>
+  <p>候補実装は交換可能にする。</p>
+  <p>例:</p>
+  <pre><code class="language-text">sherpa-onnx
+whisper.cpp
+faster-whisper compatible runtime
+other local STT
+</code></pre>
+  <hr />
+  <h2 id="23-local-tts">23. Local TTS</h2>
+  <p>原則ローカル。</p>
+  <pre><code class="language-text">Text
+ ↓
+Local TTS
+ ↓
+Audio
+</code></pre>
+  <p>Provider abstraction:</p>
+  <pre><code class="language-ts">interface TextToSpeechProvider {
+  id: string;
+  location: &quot;local&quot; | &quot;cloud&quot;;
+
+  synthesize(
+    request: SpeechRequest
+  ): AsyncIterable&lt;AudioChunk&gt;;
+}
+</code></pre>
+  <p>Cloud TTSはFallbackのみ。</p>
+  <hr />
+  <h2 id="24-audio-lifecycle">24. Audio Lifecycle</h2>
+  <p>常時音声処理は、</p>
+  <pre><code class="language-text">fixed ring buffer
+bounded queue
+backpressure
+explicit lifecycle
+</code></pre>
+  <p>を必須とする。</p>
+  <p>禁止:</p>
+  <pre><code class="language-ts">const chunks = [];
+
+mic.on(&quot;data&quot;, chunk =&gt; {
+  chunks.push(chunk);
+});
+</code></pre>
+  <p>RAW Audioは原則保存しない。</p>
+  <pre><code class="language-text">RAW AUDIO
+  数秒
+ ↓
+STT
+ ↓
+TRANSCRIPT
+  短命
+ ↓
+Relevant?
+ ├─ NO → DELETE
+ └─ YES
+      ↓
+ Working Context
+</code></pre>
+  <hr />
+  <h2 id="25-context-broker">25. Context Broker</h2>
+  <p>Application固有データをAgentへ直接渡さない。</p>
+  <p>共通形式へ正規化する。</p>
+  <pre><code class="language-ts">interface ContextFrame {
+  id: string;
+  source: string;
+
+  kind:
+    | &quot;conversation&quot;
+    | &quot;document&quot;
+    | &quot;code&quot;
+    | &quot;application&quot;
+    | &quot;system&quot;;
+
+  application?: string;
+
+  contentRef?: string;
+  preview?: string;
+
+  sensitivity:
+    | &quot;public&quot;
+    | &quot;internal&quot;
+    | &quot;personal&quot;
+    | &quot;sensitive&quot;;
+
+  expiresAt: number;
+
+  availableActions: string[];
+
+  timestamp: number;
+}
+</code></pre>
+  <p>
+    本文の無条件コピーではなく、必要な時だけ解決できる短命な<code>contentRef</code>を基本とする。Contextには取得元、機微度、期限を持たせ、保存やCloud送信は別のPolicy判定を通す。
+  </p>
+  <hr />
+  <h2 id="26-application-adapters">26. Application Adapters</h2>
+  <p>アプリ統合をAdapter化する。</p>
+  <pre><code class="language-text">OutlookAdapter
+ZoomAdapter
+TeamsAdapter
+BrowserAdapter
+VSCodeAdapter
+TerminalAdapter
+GenericDesktopAdapter
+</code></pre>
+  <p>統合手段はアプリごとに異なってよい。</p>
+  <p>優先順位:</p>
+  <pre><code class="language-text">1. Native Application API
+2. MCP
+3. Extension / Add-in
+4. CLI
+5. Playwright / CDP
+6. Accessibility API
+7. Computer Use
+</code></pre>
+  <p>Computer UseはUniversal Fallbackにしない。</p>
+  <p>
+    Native
+    API、MCP、Extension、CLIなどの明示的な統合手段が使えない場合は、原則として<code>unsupported</code>またはユーザー確認へ移る。Computer
+    Useは、対象Application、操作範囲、権限、停止条件が明示されたCapabilityとしてのみ利用する。
+  </p>
+  <hr />
+  <h2 id="27-presentation-manager">27. Presentation Manager</h2>
+  <p>AIは、</p>
+  <blockquote>
+    <p>何を伝えるか</p>
+  </blockquote>
+  <p>だけでなく、</p>
+  <blockquote>
+    <p>どう伝えるか</p>
+  </blockquote>
+  <p>を判断する。</p>
+  <p>Channels:</p>
+  <pre><code class="language-text">VOICE
+HOST_UI
+OVERLAY
+WINDOW
+NOTIFICATION
+SILENT
+</code></pre>
+  <p>例:</p>
+  <pre><code class="language-text">Simple question
+→ Voice
+
+Meeting translation
+→ Overlay
+
+Email typo
+→ Host UI
+
+Large document
+→ Window
+
+Background completion
+→ Notification
+
+Meeting中
+→ Silent
+</code></pre>
+  <hr />
+  <h2 id="28-ui-architecture">28. UI Architecture</h2>
+  <p>基本思想:</p>
+  <blockquote>
+    <p><strong>Voice-first + UI-on-demand</strong></p>
+  </blockquote>
+  <p>
+    これは長期方向である。最初のMVPでは、音声処理を確認・停止・修正できることを優先し、Chat
+    UIを常設の操作面として使う。Voice-onlyにはしない。
+  </p>
+  <p>常設Dashboardを中心にしない。</p>
+  <p>必要になったときのみSurfaceを出す。</p>
+  <p>React側は固定画面の集合ではなく、</p>
+  <blockquote>
+    <p><strong>Declarative Surface Renderer</strong></p>
+  </blockquote>
+  <p>として扱う。</p>
+  <h2 id="first-mvp-ui">First MVP UI</h2>
+  <p>最初のMVPではGenerative Surface全体を先に作らず、ChatとSettingsの2 Surfaceに絞る。</p>
+  <pre><code class="language-text">Chat
+├─ Typed message
+├─ Live / Final transcript
+├─ Assistant response
+├─ Conversation / Coding task mode
+├─ Agent activity and cancellation
+├─ Recording / Generating / Speaking status
+├─ Cancel / Stop
+└─ Minimal conversation history
+
+Settings
+├─ LLM Providers
+├─ Agent Providers
+├─ Models / Endpoints
+├─ Task Routing
+├─ Primary / Fallback
+├─ Connection Test
+└─ Effective Route
+</code></pre>
+  <p>
+    UIとDesign
+    Systemは<code>../hono-standard</code>の<code>variant/rag</code>を参照し、次を再利用する。
+  </p>
+  <pre><code class="language-text">Chat layout and conversation presentation
+Message composer patterns
+Button / IconButton / Input / Select / TextArea
+Color / spacing / radius tokens
+Panel / status / loading / error presentation
+Responsive layout and accessibility patterns
+</code></pre>
+  <p>
+    ただし、source codeを無条件にコピーして固定化しない。SAAAのConversation Event、音声状態、Task
+    Route contractへ合わせて、必要なUI部品とtokenだけを移植または抽出する。
+  </p>
+  <p>次は継承しない。</p>
+  <pre><code class="language-text">Hono backend
+RAG retrieval implementation
+PostgreSQL / pgvector
+Markdown source ingestion
+RAG-specific authentication and routes
+Agentic Search backend
+</code></pre>
+  <p>
+    <code>hono-standard</code>はUI / Design
+    Systemの出発点であり、本プロジェクトのBackend Architectureではない。
+  </p>
+  <p>
+    RAG variantがPostgreSQL / pgvectorを利用していても、そのstorage構成は持ち込まない。将来Vector
+    Searchが必要になった場合もSAAA所有のSQLite Vectorを使う。
+  </p>
+  <hr />
+  <h2 id="29-generative-surface">29. Generative Surface</h2>
+  <p>AgentにReactコードを書かせない。</p>
+  <p>安全なComponent Catalogを用意する。</p>
+  <pre><code class="language-text">Text
+Markdown
+Transcript
+Translation
+ReferenceCard
+DocumentCard
+Code
+Diff
+Table
+Chart
+Timeline
+TaskList
+Progress
+Approval
+AgentStatus
+</code></pre>
+  <p>Runtimeは宣言的なSurface Definitionを出す。</p>
+  <pre><code class="language-json">{
+  &quot;surface&quot;: &quot;meeting&quot;,
+  &quot;children&quot;: [
+    {
+      &quot;component&quot;: &quot;Transcript&quot;,
+      &quot;source&quot;: &quot;meeting.transcript&quot;
+    },
+    {
+      &quot;component&quot;: &quot;Translation&quot;,
+      &quot;source&quot;: &quot;meeting.translation&quot;
+    },
+    {
+      &quot;component&quot;: &quot;ReferenceCards&quot;,
+      &quot;source&quot;: &quot;meeting.references&quot;
+    }
+  ]
+}
+</code></pre>
+  <p>Reactはこれを描画するだけ。</p>
+  <p>A2UI / AG-UI的な設計思想を参考にしてよい。</p>
+  <hr />
+  <h2 id="30-runtime-communication">30. Runtime Communication</h2>
+  <p>REST API中心に設計しない。</p>
+  <p>中心概念:</p>
+  <pre><code class="language-text">Command
+Event
+State Patch
+Stream
+UI Intent
+</code></pre>
+  <p>イベント例:</p>
+  <pre><code class="language-text">situation.changed
+
+transcript.delta
+transcript.final
+
+translation.delta
+
+context.found
+
+capability.missing
+capability.installing
+capability.installed
+
+agent.started
+agent.completed
+
+surface.create
+surface.update
+surface.close
+</code></pre>
+  <p>最初のMVPでは<code>hono-standard</code>のHono backendを継承しない。</p>
+  <p>
+    Tauri UIとRuntimeの通信は、version付きのCommand / Event / Stream
+    contractとして新規に定義する。TransportはTauri IPC、local
+    socket、WebSocketなどへ差し替え可能にし、Core Domainを特定のHTTP frameworkへ依存させない。
+  </p>
+  <hr />
+  <h2 id="31-technology-stack">31. Technology Stack</h2>
+  <p>初期案:</p>
+  <pre><code class="language-text">Primary Language
+  TypeScript
+
+Runtime
+  Bun
+
+Desktop Shell
+  Tauri 2
+
+UI
+  React
+  Vite
+  Tailwind
+  SAAA Design System
+    based on hono-standard variant/rag UI tokens and primitives
+
+Native Runtime
+  Rust
+
+Schema
+  Zod
+
+Local State
+  SQLite only
+
+Optional Vector Search
+  SQLite Vector
+  enabled only when an Embedding model is configured
+
+Browser Automation
+  Playwright
+
+Protocols
+  MCP
+  Event Stream
+
+AI
+  Local-first Model / Agent Provider Architecture
+  Codex SDK for explicit coding.assist tasks
+</code></pre>
+  <p>SAAAの永続化はSQLiteへ統一する。PostgreSQL / pgvectorは対象にしない。</p>
+  <p>
+    SQLiteはSettings、Runtime State、必要最小限のConversation metadataに使用し、独自のLong-term
+    Memory Engineとしては利用しない。
+  </p>
+  <h2 id="sqlite-and-vector-policy">SQLite and Vector Policy</h2>
+  <p>Embeddingを使わない機能は、Vector extensionなしで成立させる。</p>
+  <p>
+    Embedding Modelを利用する機能を追加する場合は、同じSQLite ownershipの中でSQLite
+    Vectorを使用する。
+  </p>
+  <pre><code class="language-text">Embedding disabled / unavailable
+  → Text / Voice Chatは継続
+  → Vector Searchを使う機能だけdegradedまたはdisabled
+
+Embedding enabled
+  → Embedding dimensionとmodel identityを記録
+  → SQLite Vector indexを使用
+  → model / dimension変更時は明示的にrebuild
+</code></pre>
+  <p>禁止:</p>
+  <pre><code class="language-text">PostgreSQLをSAAAの必須dependencyにする
+pgvectorをSAAAへ導入する
+Embedding未設定をChat起動のblockerにする
+異なるEmbedding dimensionを同じindexへ混在させる
+contextStillのSQLite / Vector tableを直接共有する
+</code></pre>
+  <h2 id="llm--agent-settings-and-task-routing">LLM / Agent Settings and Task Routing</h2>
+  <p>
+    最初のMVPでは、<code>../contextStill</code>のSettings画面とRuntime Settings
+    contractを参照し、SAAA専用のLLM Settingsを実装する。
+  </p>
+  <p>再利用する考え方:</p>
+  <pre><code class="language-text">Provider Definition
+├─ enabled
+├─ endpoint
+├─ model
+├─ provider-specific options
+└─ connection health
+
+Task Route
+├─ task id
+├─ primary provider / model
+├─ fallback providers
+├─ timeout
+└─ token / resource limits
+
+Effective Route
+└─ 実際に選択されるProvider / Modelを確認できる
+</code></pre>
+  <p>最初に必要なLLM Task Route:</p>
+  <pre><code class="language-text">conversation.respond
+</code></pre>
+  <p>
+    Codex SDKはChat Completions互換のLLM Providerとして扱わない。Coding Agent固有のthread、streaming
+    event、cancel、sandboxを持つ<code>AgentProvider</code>として接続する。
+  </p>
+  <p>最初のMVPで追加するAgent Task Route:</p>
+  <pre><code class="language-text">coding.assist
+  provider: codex-sdk
+  selection: explicit
+  sandbox: read-only
+  approval: never
+  network: disabled
+  web search: disabled
+</code></pre>
+  <p>
+    <code>conversation.respond</code
+    >と<code>coding.assist</code>は同じChat Surfaceへ結果を返してよいが、Route
+    contractとProvider capabilityを混同しない。Codex SDK
+    routeはユーザーが明示的に選択したときだけ実行し、MVPではrepositoryの変更、workspace-write、外部Network
+    accessを許可しない。
+  </p>
+  <p>
+    Codex SDKのthread
+    idはSAAAのSQLiteに保存し、同一Conversationを再開できるようにする。Codexの認証情報そのものはコピーせず、認証状態と参照方法だけを扱う。
+  </p>
+  <p>
+    Codex SDKはServer-side
+    Node.jsを公式実行環境とするため、Bun互換性を実装開始時に検証する。互換性を確認できない場合は、Codex
+    SDK部分だけを境界の明確なNode.js sidecarとして動かし、SAAA Runtime全体をNodeへ寄せない。
+  </p>
+  <p>将来は同じRouting contractへ次を追加できる。</p>
+  <pre><code class="language-text">situation.classify
+conversation.summarize
+context.compose
+capability.plan
+</code></pre>
+  <p>
+    STT / TTSはLLM Task
+    Routeと混同せず、それぞれ<code>SpeechToTextProvider</code>と<code>TextToSpeechProvider</code>として設定する。最初のMVPでは各1つのLocal
+    Providerから開始してよい。
+  </p>
+  <h2 id="settings-ownership">Settings Ownership</h2>
+  <p>SAAAの設定のSource of TruthはSAAA所有のSQLiteとする。</p>
+  <pre><code class="language-text">SAAA Settings UI
+ ↓
+Validated Settings Command
+ ↓
+SAAA SQLite
+ ↓
+Runtime Settings Cache
+ ↓
+Model / Agent / STT / TTS Router
+</code></pre>
+  <p>必須条件:</p>
+  <ol>
+    <li>UIで保存したProvider、Model、Task Routeが再起動後も残る</li>
+    <li>保存値ではなくEffective RouteをRuntimeが実際に使用する</li>
+    <li>設定変更はschema validationを通る</li>
+    <li>API keyなどのsecretは画面やlogへ再表示しない</li>
+    <li>Provider接続テストと失敗理由をSettings UIで確認できる</li>
+    <li>contextStillのSQLite fileやprivate schemaを直接参照しない</li>
+  </ol>
+  <p>contextStill側の設定実装は設計の参照元であり、SAAA Runtime設定の所有者ではない。</p>
+  <hr />
+  <h2 id="32-typescript-responsibility">32. TypeScript Responsibility</h2>
+  <p>TypeScript / Bun側:</p>
+  <pre><code class="language-text">Situation Manager
+Interaction Policy
+Assist Planner
+Capability Registry
+Capability Router
+Capability Factory
+Model Router
+Context Broker
+Presentation Manager
+Application Adapters
+Runtime State
+External Project Integration
+</code></pre>
+  <hr />
+  <h2 id="33-rust-responsibility">33. Rust Responsibility</h2>
+  <p>Native I/O中心。</p>
+  <pre><code class="language-text">Audio Capture
+System Audio
+Screen Capture
+Accessibility
+Window Detection
+Process Detection
+Mouse
+Keyboard
+Global Hotkey
+Camera
+Native OS APIs
+</code></pre>
+  <p>原則:</p>
+  <blockquote>
+    <p><strong>判断はTypeScript、Native I/OはRust。</strong></p>
+  </blockquote>
+  <hr />
+  <h2 id="34-daemon-architecture">34. Daemon Architecture</h2>
+  <p>UIとCore Runtimeを分離する。</p>
+  <pre><code class="language-text">OS
+ ↓
+Ambient Agent Daemon
+Bun / TypeScript
+ ↓
+24/7
+
+├─ Tauri UI
+├─ Native Runtime
+├─ Local Model Runtime
+├─ contextStill
+├─ NightWorkers
+└─ Application Adapters
+</code></pre>
+  <p>必須:</p>
+  <pre><code class="language-text">UI crash
+→ Core survives
+
+Model crash
+→ Core survives
+
+Native runtime crash
+→ Core survives
+
+NightWorkers crash
+→ Core survives
+
+contextStill unavailable
+→ Core survives
+</code></pre>
+  <p>Subsystem単位でrestart可能にする。</p>
+  <hr />
+  <h2 id="35-no-persona-names-in-architecture">35. No Persona Names in Architecture</h2>
+  <p>AI人格名とプロジェクト実装を完全に分離する。</p>
+  <p>ユーザーは好きな名前を設定できる。</p>
+  <pre><code class="language-text">assistant.name = &quot;Cipher&quot;
+</code></pre>
+  <p>ただし以下へ人格名を使用してはいけない。</p>
+  <pre><code class="language-text">daemon name
+process name
+package name
+database name
+protocol name
+class name
+environment variables
+IPC identifiers
+directory names
+</code></pre>
+  <p>内部名称は中立的な技術名称にする。</p>
+  <p>例:</p>
+  <pre><code class="language-text">ambient-agent-core
+ambient-agent-ui
+native-runtime
+audio-runtime
+capability-runtime
+</code></pre>
+  <p>正式なプロジェクト名決定後もPersonaとの分離を維持する。</p>
+  <hr />
+  <h2 id="36-security--permission-model">36. Security &amp; Permission Model</h2>
+  <p>Capabilityには必ず必要権限を宣言させる。</p>
+  <p>権限を一つのLevelだけで表現しない。最低でも、次の軸を分離する。</p>
+  <pre><code class="language-text">Data Sensitivity
+  Public
+  Internal
+  Personal
+  Sensitive
+
+Data Destination
+  Same Process
+  Local Subsystem
+  Local External Tool
+  Cloud
+
+Action Effect
+  Observe
+  Local Reversible
+  External Reversible
+  External Irreversible
+  Destructive / Regulated
+
+Attention Cost
+  Silent
+  Passive
+  Interruptive
+</code></pre>
+  <p>例:</p>
+  <pre><code class="language-text">Read current document
+→ Observeだが、文書内容に応じてPersonal / Sensitiveになり得る
+
+Create local file
+→ Local Reversible
+
+Create email draft
+→ External Reversible
+
+Send email
+→ External Irreversible
+
+Delete data / payment / credentials
+→ Destructive / Regulated
+</code></pre>
+  <p>自己生成Capabilityにも同じPolicyを適用する。</p>
+  <p>
+    新しいSkillの初回有効化、Cloud送信、External Action、Sensitive Data
+    accessはユーザー承認を必要とする。
+  </p>
+  <hr />
+  <h2 id="37-privacy">37. Privacy</h2>
+  <p>Ambient RuntimeであるためPrivacyは最重要。</p>
+  <p>原則:</p>
+  <ol>
+    <li>Raw audioを原則保存しない</li>
+    <li>Screen recordingを原則保存しない</li>
+    <li>不要Contextは即時破棄</li>
+    <li>Local processingを第一選択</li>
+    <li>Cloud送信はFallback</li>
+    <li>Cloud送信前にContextを最小化</li>
+    <li>Sensitive Applicationを除外可能</li>
+    <li>Cloudを完全無効化可能</li>
+    <li>現在何を観測しているか確認可能</li>
+    <li>どのProviderで処理したか監査可能</li>
+  </ol>
+  <hr />
+  <h2 id="38-observability">38. Observability</h2>
+  <p>24/7 daemonでは自己監視を必須とする。</p>
+  <p>監視対象:</p>
+  <pre><code class="language-text">RSS
+JS Heap
+Native Memory
+VRAM
+CPU Duty Cycle
+Battery / Thermal Pressure
+Model Processes
+Audio Queue
+Event Queue
+WebSockets
+File Descriptors
+Active Sessions
+Capability Processes
+External Integration Health
+Provider / Route / Model used per turn
+Transcription / Generation / Speech latency
+</code></pre>
+  <p>failureを通常状態として扱う。</p>
+  <pre><code class="language-text">Local Model OOM
+ ↓
+Alternate Local Model
+ ↓
+Cloud fallback if allowed
+</code></pre>
+  <p>Subsystem leak:</p>
+  <pre><code class="language-text">Subsystem restart
+</code></pre>
+  <p>Core全体の再起動を極力避ける。</p>
+  <hr />
+  <h2 id="39-initial-repository-structure">39. Initial Repository Structure</h2>
+  <p>初期案:</p>
+  <pre><code class="language-text">apps/
+  desktop/
+    React + Tauri
+
+  daemon/
+    Bun entrypoint
+
+packages/
+  core/
+  events/
+  settings/
+  conversation/
+  speech/
+  model-routing/
+  ui-design-system/
+  situation/
+  policy/
+  assist/
+  capabilities/
+  capability-factory/
+  context/
+  presentation/
+  providers/
+  applications/
+  protocol/
+  security/
+  observability/
+
+integrations/
+  contextstill/
+  nightworkers/
+
+native/
+  runtime/
+    Rust
+
+skills/
+  builtin/
+
+docs/
+  architecture/
+  concepts/
+  adr/
+</code></pre>
+  <p>Coreから外部製品固有実装へ直接依存させない。</p>
+  <hr />
+  <h2 id="40-mvp-roadmap">40. MVP Roadmap</h2>
+  <h2 id="mvp-0--configurable-local-voice-chat">MVP 0 — Configurable Local Voice Chat</h2>
+  <p>
+    最初のMVPは、Ambient Agent全体ではなく、将来のSituation-aware
+    Runtimeを載せられる最小のConversation Runtimeを作る。
+  </p>
+  <h3 id="scope-a--settings-and-routing">Scope A — Settings and Routing</h3>
+  <p>
+    <code>../contextStill</code
+    >のSettings画面と設定contractを参考に、SAAA専用のSettings UIとSQLite永続化を実装する。
+  </p>
+  <pre><code class="language-text">LLM Provider
+Model / Endpoint
+Agent Provider / Codex SDK status
+Local / Cloud classification
+Primary Route
+Fallback Route
+Timeout / Token limits
+Provider Connection Test
+Effective Route display
+</code></pre>
+  <p>
+    最初に有効化するTask
+    Routeは<code>conversation.respond</code>と<code>coding.assist</code>とする。前者は通常のModel
+    Provider、後者はCodex SDK Agent Providerへ接続する。
+  </p>
+  <p>
+    設定は保存できるだけでは不十分である。Chat Runtimeが実際に保存済みEffective
+    Routeを使用することをMVPの条件とする。
+  </p>
+  <h3 id="scope-b--text-and-voice-conversation">Scope B — Text and Voice Conversation</h3>
+  <p>文字入力と音声入力を同じConversation Eventへ合流させる。</p>
+  <pre><code class="language-text">Typed Text ───────────────────────────────┐
+                                         ↓
+Microphone                               Conversation
+ ↓                                       ↓
+Local Audio Capture                      Model Router
+ ↓                                       ↓
+Local STT                           Assistant Response
+ ↓                                  ┌──────┴──────┐
+transcript.delta / final            ↓             ↓
+ ↓                               Chat UI       Local TTS
+ └───────────────────────────────────┘
+</code></pre>
+  <p>
+    最初のMVPではPush-to-talkまたは明示的な録音開始でよい。常時音声監視、Wake
+    Word、話者分離、会議検出は後続とする。
+  </p>
+  <h3 id="scope-c--simple-chat-ui">Scope C — Simple Chat UI</h3>
+  <p>
+    <code>../hono-standard</code
+    >の<code>variant/rag</code>から、Chat UIとDesign
+    Systemの必要部分を持ってくる。
+  </p>
+  <pre><code class="language-text">Reuse
+  Chat layout
+  Message presentation
+  Composer
+  Form controls
+  Theme tokens
+  Status / loading / error patterns
+
+Do not inherit
+  Hono backend
+  RAG backend
+  PostgreSQL / pgvector
+  Source ingestion
+  Agentic Search
+  RAG-specific authentication
+</code></pre>
+  <p>Chat UIには最低限、次を表示する。</p>
+  <pre><code class="language-text">User text message
+Live transcript
+Final transcript
+Assistant response
+Conversation / Coding task mode
+Codex agent activity
+Recording state
+Generating state
+Speaking state
+Error / Retry
+Stop
+</code></pre>
+  <h3 id="runtime-components">Runtime Components</h3>
+  <pre><code class="language-text">SAAA Desktop UI
+├─ Chat Surface
+└─ Settings Surface
+
+SAAA Runtime
+├─ Settings Repository
+├─ Runtime Settings Cache
+├─ Conversation Service
+├─ Model Router
+├─ Agent Router
+├─ Codex SDK Adapter
+├─ Provider Session Repository
+├─ STT Provider
+├─ TTS Provider
+├─ Event Stream
+└─ SQLite
+
+Native Runtime
+├─ Microphone Capture
+└─ Audio Playback
+</code></pre>
+  <h3 id="acceptance">Acceptance</h3>
+  <ol>
+    <li>LLM Provider、Model、Task RouteをUIで設定し、SQLiteへ保存できる</li>
+    <li>Application再起動後も設定が復元される</li>
+    <li>Provider接続テストの成功・失敗理由をUIで確認できる</li>
+    <li>
+      <code>conversation.respond</code>が保存済みのPrimary / Fallback
+      Routeを実際に使用する
+    </li>
+    <li>文字入力に対するLLM応答がChat UIへ表示される</li>
+    <li>音声入力の途中結果と確定文字起こしが同じChat UIへ反映される</li>
+    <li>確定文字起こしからLLM応答を生成し、文字と音声で返答できる</li>
+    <li>Recording、Generation、Speechをユーザーが停止できる</li>
+    <li>Local Route選択時はCloudへ送信せずに基本対話が成立する</li>
+    <li><code>hono-standard</code>のHono / RAG backendへruntime依存しない</li>
+    <li>PostgreSQL / pgvectorを起動・設定しなくても全MVP Acceptanceを満たす</li>
+    <li>Codex SDKの利用可否と認証状態をSettings UIで確認できる</li>
+    <li>
+      ユーザーが<code>coding.assist</code>を明示的に選び、read-onlyのCodex
+      threadを開始できる
+    </li>
+    <li>Codex SDKの応答と実行状態がChat UIへstreamされ、ユーザーが停止できる</li>
+    <li>Application再起動後、SQLiteに保存したthread idからCodex conversationを再開できる</li>
+    <li>Codex SDK routeからrepository変更、workspace-write、Network、Web Searchを実行できない</li>
+  </ol>
+  <h3 id="explicitly-out-of-scope">Explicitly Out of Scope</h3>
+  <pre><code class="language-text">Automatic Situation Classification
+Always-on Listening
+Wake Word
+Meeting Detection / Translation
+Screen / Accessibility Observation
+Calendar Integration
+Application Automation
+Long-term Personal Memory
+PostgreSQL / pgvector support
+RAG / Embedding ingestion
+contextStill Runtime Integration
+NightWorkers Integration
+Codex SDKによるrepository変更 / workspace-write
+Codex SDKへのwrite-capable MCP tools接続
+Capability Factory
+Computer Use
+Generative Surface Catalog全体
+</code></pre>
+  <hr />
+  <h2 id="mvp-1--situation-shadow-mode">MVP 1 — Situation Shadow Mode</h2>
+  <p>
+    Foreground Application、Microphone、Audio、CalendarなどのHard
+    SignalからSituation候補を生成する。
+  </p>
+  <p>この段階では自動介入せず、<code>would observe / suggest / respond / stay silent</code>を記録して評価する。</p>
+  <hr />
+  <h2 id="mvp-15--situation-calibration-and-review">MVP 1.5 — Situation Calibration and Review</h2>
+  <p>
+    MVP 1のShadow
+    Modeから得た状態遷移、根拠、ユーザーfeedbackを使い、SituationとPolicyの品質を校正する。
+  </p>
+  <p>
+    この段階でも自動実行は解禁しない。表示する場合もユーザーがSituation
+    Surfaceを明示的に開いたreview-onlyな一覧に限定し、通知、TTS、Chatへの割り込み、Provider呼び出しは行わない。
+  </p>
+  <pre><code class="language-text">Situation ledger / feedback
+        ↓
+Replay and quality metrics
+        ↓
+Rule / threshold candidate
+        ↓
+User review and correction
+        ↓
+Versioned shadow policy
+        ↓
+Next MVPの明示開始Meeting Modeへ
+</code></pre>
+  <p>
+    詳細な実装順序、評価指標、Privacy境界は<a href="./.archived/mvp-1.5-implementation-plan.html"
+      ><code>mvp-1.5-implementation-plan.html</code></a
+    >に定義する。
+  </p>
+  <hr />
+  <h2 id="mvp-2--meeting-mode">MVP 2 — Meeting Mode</h2>
+  <p>
+    明示開始のMeeting Session、Microphone、Local STT、Transcript
+    Surfaceを最初のCoreとして接続する。System Audio、Translation、Floating Overlayはplatform /
+    providerのfeasibility gateを通過した機能だけを追加する。
+  </p>
+  <p>Meeting中はPolicyによりTTSとInterruptive Notificationを禁止する。</p>
+  <p>
+    Meeting ModeはMVP 1.5の評価済みPolicyを前提とするが、開始はユーザーの明示操作を必須とする。raw
+    audioはmemory上のbounded bufferだけで扱い、既定ではtranscript /
+    translationもsession終了時に破棄する。保存やCloud routeは個別の明示選択を必要とする。
+  </p>
+  <p>
+    詳細なSession lifecycle、Audio permission、STT / Translation / Overlayの分割、検証条件は<a
+      href="./.archived/mvp-1-implementation-plan.html"
+      ><code>mvp-2-implementation-plan.md</code></a
+    >に定義する。
+  </p>
+  <hr />
+  <h2 id="mvp-3--contextstill-integration">MVP 3 — contextStill Integration</h2>
+  <p>
+    SituationとTaskから必要なKnowledge Contextを問い合わせ、Relevant ContextをPresentation /
+    Reasoningへ利用する。
+  </p>
+  <p>保存候補はrule / procedure / lessonへ一般化できるものに限定する。</p>
+  <hr />
+  <h2 id="mvp-4--application-adapters">MVP 4 — Application Adapters</h2>
+  <p>Writing、Browser、VSCodeなど、明示的なApplication Adapterから段階的に追加する。</p>
+  <hr />
+  <h2 id="mvp-5--nightworkers-integration">MVP 5 — NightWorkers Integration</h2>
+  <p>
+    Coding要求をNightWorkersのTask / Run
+    lifecycleへ委譲し、進捗、承認待ち、検証結果、closeoutをPresentation Managerへ反映する。
+  </p>
+  <p>本プロジェクト内にはCoding EngineやMission Pilot相当機能を実装しない。</p>
+  <hr />
+  <h2 id="mvp-6--capability-factory">MVP 6 — Capability Factory</h2>
+  <p>不足CapabilityをContract化し、NightWorkersで実装・検証し、STAGED Artifactとして受け取る。</p>
+  <p>ユーザー承認、Runtime Validation、Rollbackを経てACTIVEにすることで、</p>
+  <blockquote>
+    <p><strong>「できない」から「安全に、できるようになる」</strong></p>
+  </blockquote>
+  <p>という自己拡張ループを完成させる。</p>
+  <hr />
+  <h2 id="41-explicit-non-goals">41. Explicit Non-Goals</h2>
+  <p>初期段階では以下を目標にしない。</p>
+  <pre><code class="language-text">AGIそのもの
+Cloud-first architecture
+24時間Cloud STT
+全画面永久保存
+全音声永久保存
+独自Long-term Memory Engine
+独自Coding Agent
+Codex SDKを通常LLM Providerとして偽装すること
+Codex SDKの認証情報をSQLiteへ複製すること
+Codex SDKによる無承認のworkspace変更
+NightWorkersの再実装
+contextStillの再実装
+contextStill private DBの直接共有
+hono-standard backendの継承
+RAGを最初のChatへ必須化
+PostgreSQL / pgvectorの導入
+巨大Knowledge Graph
+全Application対応
+無制限Computer Use
+Agent生成Reactコード
+無制限自己改変
+Coreの自動書き換え
+生成Capabilityの無承認ACTIVE化
+大規模Multi-Agent Swarm
+</code></pre>
+  <hr />
+  <h2 id="42-engineering-principles">42. Engineering Principles</h2>
+  <h2 id="local-first">Local-first</h2>
+  <p>Cloudなしでも基本機能を成立させる。</p>
+  <h2 id="sqlite-first">SQLite-first</h2>
+  <p>
+    SAAAの永続化はSQLiteへ統一する。Vector Searchが必要な場合もSQLite Vectorを使い、PostgreSQL /
+    pgvectorを別経路として追加しない。
+  </p>
+  <h2 id="thin-core">Thin Core</h2>
+  <p>Situation / Policy / Routing / Presentationへ集中する。</p>
+  <h2 id="adapter-first">Adapter-first</h2>
+  <p>外部依存を抽象化する。</p>
+  <pre><code class="language-text">ModelProvider
+STTProvider
+TTSProvider
+TranslationProvider
+ApplicationAdapter
+AgentAdapter
+ContextProvider
+ComputerAdapter
+</code></pre>
+  <h2 id="event-driven">Event-driven</h2>
+  <p>Streaming / long-running処理を前提とする。</p>
+  <h2 id="bounded-everything">Bounded Everything</h2>
+  <p>Queue、Buffer、Historyに上限を持たせる。</p>
+  <h2 id="explicit-lifecycle">Explicit Lifecycle</h2>
+  <p>重要Subsystemには、</p>
+  <pre><code class="language-text">start()
+stop()
+dispose()
+restart()
+health()
+</code></pre>
+  <p>を持たせる。</p>
+  <h2 id="safe-default">Safe Default</h2>
+  <p>判断不能なら、</p>
+  <pre><code class="language-text">IGNORE
+</code></pre>
+  <p>または、</p>
+  <pre><code class="language-text">SILENT
+</code></pre>
+  <p>を選ぶ。</p>
+  <h2 id="persona-independent">Persona-independent</h2>
+  <p>ユーザーが設定した人格名をArchitectureへ漏らさない。</p>
+  <h2 id="self-extension-via-plugins">Self-extension via Plugins</h2>
+  <p>Coreを自己書換えせず、Capabilityを追加する。</p>
+  <h2 id="reuse-existing-projects">Reuse Existing Projects</h2>
+  <p>Reusable coding knowledgeとContext CompilationはcontextStill。</p>
+  <p>Software EngineeringはNightWorkers。</p>
+  <p>同じ問題を本プロジェクト内で再実装しない。</p>
+  <hr />
+  <h2 id="43-architectural-north-star">43. Architectural North Star</h2>
+  <p>このプロジェクトの判断基準を以下とする。</p>
+  <blockquote>
+    <p>
+      <strong
+        >A local-first, situation-aware ambient agent runtime that continuously understands the
+        user&#39;s working context, decides whether and how to assist, routes work to the
+        appropriate capabilities or external agents, and can acquire missing capabilities as tested,
+        permission-scoped plugins without modifying its core.</strong
+      >
+    </p>
+  </blockquote>
+  <p>日本語:</p>
+  <blockquote>
+    <p>
+      <strong
+        >ユーザーの作業状況を継続的に理解し、介入するべきか、何をするべきか、どの能力へ任せるべきか、どの方法で提示するべきかを判断し、不足する能力についてはCoreを書き換えることなく検証済みPluginとして獲得していく、Local-firstの常駐型AI
+        Runtime。</strong
+      >
+    </p>
+  </blockquote>
+  <p>この定義に合わない機能は、Coreへ追加する前に本当に本プロジェクトの責務かを再検討すること。</p>
+  <h2 id="current-milestone">Current Milestone</h2>
+  <p>現在の判断基準は次とする。</p>
+  <blockquote>
+    <p>
+      <strong
+        >MVP 1のSituation StateとShadow Policyを、まずMVP 1.5で評価・校正し、明示開始のMeeting
+        Modeへ接続する。Meeting中はLocal STTをCoreとし、Translation / Floating
+        Overlayはfeasibility確認後に追加する。TTSとinterruptive
+        presentationはPolicyで禁止する。</strong
+      >
+    </p>
+  </blockquote>
+  <p>
+    MVP 1 Situation Shadow Modeは完了した。実装順序と検証結果は<a
+      href="./mvp-2-implementation-plan.html"
+      ><code>mvp-1-implementation-plan.md</code></a
+    >と<a href="./.archived/mvp-1-release-evidence.html"
+      ><code>mvp-1-release-evidence.md</code></a
+    >に保存する。次のMVP 1.5では、ledgerとfeedbackを使った校正・replay・品質基準を固定する。MVP
+    2ではその後、明示開始のMicrophone Meeting SessionをCoreとして実装し、System
+    Audio、Translation、Floating Overlayは個別のfeasibility gateを通過した場合だけ追加する。
+  </p>
+</article>

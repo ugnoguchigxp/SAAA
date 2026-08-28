@@ -1,25 +1,447 @@
 import { useEffect, useRef, useState } from "react";
-import type { MeetingSnapshot, VoiceSettings } from "../../lib/contracts";
-import { appendMeetingAudioSegment, discardMeeting, meetingPreflight, pauseMeeting, resumeMeeting, saveMeetingTranscript, startMeeting, stopMeeting } from "../../lib/runtime";
+import type { MeetingSnapshot, MeetingState, VoiceSettings } from "../../lib/contracts";
+import {
+  appendMeetingAudioSegment,
+  discardMeeting,
+  getMeetingSnapshot,
+  meetingPreflight,
+  pauseMeeting,
+  resumeMeeting,
+  saveMeetingTranscript,
+  startMeeting,
+  stopMeeting,
+  unwatchMeeting,
+  watchMeeting,
+} from "../../lib/runtime";
 import { appendFrames } from "./audio/pcm";
+import { SegmentQueue } from "./audio/segmentQueue";
 
-const idle: MeetingSnapshot = { sessionId: null, state: "idle", captureToken: null, entries: 0, capabilities: { microphone: true, systemAudio: false, overlay: false, translation: false }, error: null };
-type Line = { sequence: number; text: string };
+const idle: MeetingSnapshot = {
+  sessionId: null,
+  state: "idle",
+  captureToken: null,
+  entries: 0,
+  capabilities: { microphone: true, systemAudio: false, overlay: false, translation: false },
+  error: null,
+};
 
-export function useMeetingSession(voice: VoiceSettings | null, onActiveChanged: (active: boolean) => void, setError: (value: string | null) => void) {
-  const [snapshot, setSnapshot] = useState<MeetingSnapshot>(idle); const [transcript, setTranscript] = useState<Line[]>([]); const [elapsed, setElapsed] = useState(0); const [health, setHealth] = useState("idle");
-  const snapshotRef = useRef(snapshot); const stream = useRef<MediaStream | null>(null); const context = useRef<AudioContext | null>(null); const source = useRef<MediaStreamAudioSourceNode | null>(null); const node = useRef<AudioWorkletNode | null>(null); const silentGain = useRef<GainNode | null>(null); const frames = useRef<Float32Array[]>([]); const bufferedSamples = useRef(0); const sequence = useRef(0); const started = useRef(0); const sending = useRef(false);
-  function applySnapshot(next: MeetingSnapshot) { snapshotRef.current = next; setSnapshot(next); }
-  async function cleanup() { node.current?.disconnect(); source.current?.disconnect(); silentGain.current?.disconnect(); stream.current?.getTracks().forEach((track) => track.stop()); stream.current = null; node.current = null; source.current = null; silentGain.current = null; if (context.current) await context.current.close().catch(() => undefined); context.current = null; frames.current = []; bufferedSamples.current = 0; sending.current = false; onActiveChanged(false); }
-  useEffect(() => () => { void cleanup(); }, []);
-  useEffect(() => { if (snapshot.state !== "active") return; const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - started.current) / 1_000)), 1_000); return () => window.clearInterval(timer); }, [snapshot.state]);
-  async function flush(sampleRate: number) { const current = snapshotRef.current; if (sending.current || bufferedSamples.current < sampleRate * 5 || !current.sessionId || !current.captureToken) return; const samples = appendFrames(new Float32Array(), frames.current); frames.current = []; bufferedSamples.current = 0; sending.current = true; const currentSequence = sequence.current++; try { const result = await appendMeetingAudioSegment({ sessionId: current.sessionId, captureToken: current.captureToken, lane: "microphone", sequence: currentSequence, samples: Array.from(samples), sampleRate, startedAtMs: Date.now() - started.current, durationMs: Math.round(samples.length / sampleRate * 1_000) }); setTranscript((lines) => [...lines, { sequence: currentSequence, text: result.text }]); } catch (cause) { setHealth("degraded"); setError(String(cause)); await pause(); } finally { sending.current = false; void flush(sampleRate); } }
-  async function attachCapture() { const device = voice?.inputDeviceId === "default" ? true : { deviceId: { exact: voice?.inputDeviceId } }; const nextStream = await navigator.mediaDevices.getUserMedia({ audio: device }); const nextContext = new AudioContext(); try { await nextContext.audioWorklet.addModule("/audio/meeting-processor.js"); const nextSource = nextContext.createMediaStreamSource(nextStream); const nextNode = new AudioWorkletNode(nextContext, "meeting-processor"); const gain = nextContext.createGain(); gain.gain.value = 0; nextNode.port.onmessage = (event: MessageEvent<Float32Array>) => { frames.current.push(event.data); bufferedSamples.current += event.data.length; if (bufferedSamples.current > nextContext.sampleRate * 15) { setError("MEETING_BACKPRESSURE: Capture paused before unbounded audio buffering."); void pause(); return; } void flush(nextContext.sampleRate); }; nextSource.connect(nextNode); nextNode.connect(gain); gain.connect(nextContext.destination); stream.current = nextStream; context.current = nextContext; source.current = nextSource; node.current = nextNode; silentGain.current = gain; setHealth("ready"); } catch (cause) { nextStream.getTracks().forEach((track) => track.stop()); await nextContext.close().catch(() => undefined); throw cause; } }
-  async function start() { if (!voice) return; setError(null); try { const check = await navigator.mediaDevices.getUserMedia({ audio: voice.inputDeviceId === "default" ? true : { deviceId: { exact: voice.inputDeviceId } } }); check.getTracks().forEach((track) => track.stop()); const preflight = await meetingPreflight({ microphoneDeviceId: voice.inputDeviceId, systemAudioEnabled: false, sttModelPath: voice.sttModel, translationEnabled: false }); if (preflight.blockingErrors.length) throw new Error(preflight.blockingErrors.map((error) => error.message).join(" ")); const next = await startMeeting({ sessionId: `meeting_${crypto.randomUUID().replace(/-/g, "")}`, microphoneDeviceId: voice.inputDeviceId, microphoneEnabled: true, systemAudioEnabled: false, sttModelPath: voice.sttModel, translationEnabled: false, persistenceMode: "discard" }); applySnapshot(next); started.current = Date.now(); sequence.current = 0; setElapsed(0); try { await attachCapture(); onActiveChanged(true); } catch (cause) { await stopMeeting(next.sessionId!); await discardMeeting(next.sessionId!); applySnapshot(idle); throw cause; } } catch (cause) { await cleanup(); setError(`Microphone unavailable: ${String(cause)}`); } }
-  async function pause() { const sessionId = snapshotRef.current.sessionId; if (!sessionId) return; try { applySnapshot(await pauseMeeting(sessionId)); } finally { await cleanup(); } }
-  async function resume() { const sessionId = snapshotRef.current.sessionId; if (!sessionId) return; const next = await resumeMeeting(sessionId); applySnapshot(next); try { await attachCapture(); onActiveChanged(true); } catch (cause) { applySnapshot(await pauseMeeting(sessionId)); await cleanup(); setError(`Microphone unavailable: ${String(cause)}`); } }
-  async function stop() { const sessionId = snapshotRef.current.sessionId; if (!sessionId) return; try { applySnapshot(await stopMeeting(sessionId)); } finally { await cleanup(); } }
-  async function save() { const sessionId = snapshotRef.current.sessionId; if (!sessionId) return; applySnapshot(await saveMeetingTranscript(sessionId)); setTranscript([]); }
-  async function discard() { const sessionId = snapshotRef.current.sessionId; if (!sessionId) return; await discardMeeting(sessionId); applySnapshot(idle); setTranscript([]); }
-  return { snapshot, transcript, elapsed, health, start, pause, resume, stop, save, discard };
+type Line = { sequence: number; text: string; partial?: boolean };
+type PendingSegment = {
+  samples: Float32Array;
+  sampleRate: number;
+  startedAtMs: number;
+  durationMs: number;
+};
+
+export function useMeetingSession(
+  voice: VoiceSettings | null,
+  onStateChanged: (state: MeetingState) => void,
+  setError: (value: string | null) => void,
+) {
+  const [snapshot, setSnapshot] = useState<MeetingSnapshot>(idle);
+  const [transcript, setTranscript] = useState<Line[]>([]);
+  const [elapsed, setElapsed] = useState(0);
+  const [health, setHealth] = useState("idle");
+  const [working, setWorking] = useState(false);
+  const snapshotRef = useRef<MeetingSnapshot>(idle);
+  const snapshotRevision = useRef(0);
+  const stream = useRef<MediaStream | null>(null);
+  const context = useRef<AudioContext | null>(null);
+  const source = useRef<MediaStreamAudioSourceNode | null>(null);
+  const node = useRef<AudioWorkletNode | null>(null);
+  const flushResolver = useRef<(() => void) | null>(null);
+  const frames = useRef<Float32Array[]>([]);
+  const frameSamples = useRef(0);
+  const frameStartedAtMs = useRef<number | null>(null);
+  const queue = useRef(new SegmentQueue<PendingSegment>());
+  const processing = useRef<Promise<void> | null>(null);
+  const sequence = useRef(0);
+  const started = useRef(0);
+  const operation = useRef(false);
+
+  function commitSnapshot(next: MeetingSnapshot) {
+    snapshotRef.current = next;
+    setSnapshot(next);
+  }
+
+  function applySnapshot(next: MeetingSnapshot) {
+    snapshotRevision.current += 1;
+    commitSnapshot(next);
+  }
+
+  async function refreshSnapshot(): Promise<MeetingSnapshot | null> {
+    const revision = ++snapshotRevision.current;
+    const next = await getMeetingSnapshot();
+    if (revision !== snapshotRevision.current) return null;
+    commitSnapshot(next);
+    return next;
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const subscriberId = `meeting_subscriber_${crypto.randomUUID().replace(/-/g, "")}`;
+    void refreshSnapshot()
+      .then((next) => {
+        if (cancelled || !next) return;
+        if (next.state === "active") setHealth("capture disconnected — pause or stop to recover");
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(toMessage(cause));
+      });
+    const watchRegistration = watchMeeting(subscriberId, (event) => {
+      if (cancelled) return;
+      if (event.type === "stateChanged") {
+        void refreshSnapshot().catch((cause) => setError(toMessage(cause)));
+      } else if (event.type === "transcriptPartial" || event.type === "transcriptFinal") {
+        if (event.sessionId !== snapshotRef.current.sessionId) return;
+        setTranscript((lines) => {
+          const index = lines.findIndex((line) => line.sequence === event.sequence);
+          const next = { sequence: event.sequence, text: event.text, partial: event.type === "transcriptPartial" };
+          return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
+        });
+      } else if (event.type === "failed") {
+        if (event.sessionId && event.sessionId !== snapshotRef.current.sessionId) return;
+        setError(`${event.code}: ${event.message} ${event.recovery}`);
+        void refreshSnapshot().catch(() => undefined);
+      }
+    }).catch((cause) => { if (!cancelled) setError(toMessage(cause)); });
+    return () => {
+      cancelled = true;
+      snapshotRevision.current += 1;
+      void watchRegistration.then(() => unwatchMeeting(subscriberId)).catch(() => undefined);
+      void detachCapture(true);
+      onStateChanged("idle");
+    };
+  }, []);
+
+  useEffect(() => {
+    onStateChanged(snapshot.state);
+  }, [onStateChanged, snapshot.state]);
+
+  useEffect(() => {
+    if (snapshot.state !== "active") return;
+    const timer = window.setInterval(
+      () => setElapsed(Math.floor((Date.now() - started.current) / 1_000)),
+      1_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [snapshot.state]);
+
+  async function detachCapture(clearPending: boolean) {
+    if (clearPending) flushResolver.current?.();
+    if (!clearPending && node.current) {
+      await new Promise<void>((resolve) => {
+        let completed = false;
+        const finish = () => {
+          if (completed) return;
+          completed = true;
+          flushResolver.current = null;
+          window.clearTimeout(timeout);
+          resolve();
+        };
+        const timeout = window.setTimeout(finish, 250);
+        flushResolver.current = finish;
+        node.current?.port.postMessage({ type: "flush" });
+      });
+    }
+    node.current?.disconnect();
+    source.current?.disconnect();
+    stream.current?.getTracks().forEach((track) => track.stop());
+    stream.current = null;
+    node.current = null;
+    source.current = null;
+    if (context.current) await context.current.close().catch(() => undefined);
+    context.current = null;
+    if (clearPending) {
+      frames.current = [];
+      frameSamples.current = 0;
+      frameStartedAtMs.current = null;
+      queue.current.clear();
+    }
+  }
+
+  function enqueueBuffered(sampleRate: number, minimumDurationMs: number): boolean {
+    if (frameSamples.current === 0) return false;
+    const samples = appendFrames(new Float32Array(), frames.current);
+    const durationMs = Math.round((samples.length / sampleRate) * 1_000);
+    if (durationMs < minimumDurationMs) {
+      frames.current = [];
+      frameSamples.current = 0;
+      frameStartedAtMs.current = null;
+      return false;
+    }
+    const segment: PendingSegment = {
+      samples,
+      sampleRate,
+      startedAtMs: frameStartedAtMs.current ?? Math.max(0, Date.now() - started.current - durationMs),
+      durationMs,
+    };
+    frames.current = [];
+    frameSamples.current = 0;
+    frameStartedAtMs.current = null;
+    if (!queue.current.push(segment)) {
+      setHealth("degraded");
+      setError("Meeting transcription cannot keep up. Capture was paused without evicting queued audio.");
+      void pauseAfterFailure();
+      return false;
+    }
+    void drainQueue().catch(() => undefined);
+    return true;
+  }
+
+  function drainQueue(): Promise<void> {
+    if (processing.current) return processing.current;
+    const task = (async () => {
+      let segment: PendingSegment | undefined;
+      while ((segment = queue.current.shift())) {
+        const currentSnapshot = snapshotRef.current;
+        if (
+          currentSnapshot.state !== "active" ||
+          !currentSnapshot.sessionId ||
+          !currentSnapshot.captureToken
+        ) {
+          throw new Error("Meeting capture is no longer active.");
+        }
+        const currentSequence = sequence.current;
+        sequence.current += 1;
+        try {
+          const result = await appendMeetingAudioSegment({
+            sessionId: currentSnapshot.sessionId,
+            captureToken: currentSnapshot.captureToken,
+            lane: "microphone",
+            sequence: currentSequence,
+            samples: Array.from(segment.samples),
+            sampleRate: segment.sampleRate,
+            startedAtMs: segment.startedAtMs,
+            durationMs: segment.durationMs,
+          });
+          setTranscript((lines) => {
+            const next = { sequence: currentSequence, text: result.text, partial: false };
+            const index = lines.findIndex((line) => line.sequence === currentSequence);
+            return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
+          });
+        } catch (cause) {
+          const latest = await getMeetingSnapshot().catch(() => null);
+          if (latest && ["idle", "paused", "completed"].includes(latest.state)) {
+            applySnapshot(latest);
+            throw cause;
+          }
+          setHealth("degraded");
+          setError(toMessage(cause));
+          await pauseAfterFailure();
+          throw cause;
+        }
+      }
+    })();
+    const tracked = task.finally(() => {
+      if (processing.current === tracked) processing.current = null;
+      if (queue.current.length > 0) void drainQueue().catch(() => undefined);
+    });
+    processing.current = tracked;
+    return tracked;
+  }
+
+  async function pauseAfterFailure() {
+    await detachCapture(true);
+    try {
+      const current = await getMeetingSnapshot();
+      applySnapshot(current);
+      if (current.state === "active" && current.sessionId) {
+        applySnapshot(await pauseMeeting(current.sessionId));
+      }
+    } catch (cause) {
+      setError(toMessage(cause));
+    }
+  }
+
+  async function attachCapture() {
+    if (!voice) throw new Error("Voice settings are unavailable.");
+    const device =
+      voice.inputDeviceId === "default"
+        ? true
+        : { deviceId: { exact: voice.inputDeviceId } };
+    const nextStream = await navigator.mediaDevices.getUserMedia({ audio: device });
+    const nextContext = new AudioContext();
+    stream.current = nextStream;
+    context.current = nextContext;
+    try {
+      await nextContext.audioWorklet.addModule("/audio/meeting-processor.js");
+      const nextSource = nextContext.createMediaStreamSource(nextStream);
+      const nextNode = new AudioWorkletNode(nextContext, "meeting-processor");
+      source.current = nextSource;
+      node.current = nextNode;
+      nextNode.port.onmessage = (event: MessageEvent<Float32Array | { type: "flushed" }>) => {
+        if (!(event.data instanceof Float32Array)) {
+          if (event.data.type === "flushed") flushResolver.current?.();
+          return;
+        }
+        if (frameSamples.current === 0) {
+          frameStartedAtMs.current = Math.max(0, Date.now() - started.current);
+        }
+        frames.current.push(event.data);
+        frameSamples.current += event.data.length;
+        if (frameSamples.current >= nextContext.sampleRate * 5) {
+          enqueueBuffered(nextContext.sampleRate, 5_000);
+        }
+      };
+      nextSource.connect(nextNode);
+      nextNode.connect(nextContext.destination);
+      setHealth("ready");
+    } catch (cause) {
+      await detachCapture(true);
+      throw cause;
+    }
+  }
+
+  function beginOperation(): boolean {
+    if (operation.current) return false;
+    operation.current = true;
+    setWorking(true);
+    return true;
+  }
+
+  function endOperation() {
+    operation.current = false;
+    setWorking(false);
+  }
+
+  async function start() {
+    if (!voice || !beginOperation()) return;
+    setError(null);
+    let startedSession: string | null = null;
+    try {
+      const check = await navigator.mediaDevices.getUserMedia({
+        audio:
+          voice.inputDeviceId === "default"
+            ? true
+            : { deviceId: { exact: voice.inputDeviceId } },
+      });
+      check.getTracks().forEach((track) => track.stop());
+      const preflight = await meetingPreflight({
+        microphoneDeviceId: voice.inputDeviceId,
+        systemAudioEnabled: false,
+        sttModelPath: voice.sttModel,
+        translationEnabled: false,
+      });
+      if (preflight.blockingErrors.length) {
+        throw new Error(preflight.blockingErrors.map((entry) => entry.message).join(" "));
+      }
+      const next = await startMeeting({
+        sessionId: `meeting_${crypto.randomUUID().replace(/-/g, "")}`,
+        microphoneDeviceId: voice.inputDeviceId,
+        microphoneEnabled: true,
+        systemAudioEnabled: false,
+        sttModelPath: voice.sttModel,
+        translationEnabled: false,
+        persistenceMode: "discard",
+      });
+      startedSession = next.sessionId;
+      applySnapshot(next);
+      started.current = Date.now();
+      sequence.current = 0;
+      setElapsed(0);
+      setTranscript([]);
+      await attachCapture();
+    } catch (cause) {
+      await detachCapture(true);
+      if (startedSession) {
+        await stopMeeting(startedSession).catch(() => undefined);
+        await discardMeeting(startedSession).catch(() => undefined);
+        applySnapshot(idle);
+      } else {
+        await getMeetingSnapshot().then(applySnapshot).catch(() => undefined);
+      }
+      setError(`Meeting start failed: ${toMessage(cause)}`);
+    } finally {
+      endOperation();
+    }
+  }
+
+  async function pause() {
+    const current = snapshotRef.current;
+    if (!current.sessionId || !beginOperation()) return;
+    try {
+      await detachCapture(true);
+      applySnapshot(await pauseMeeting(current.sessionId));
+      await processing.current?.catch(() => undefined);
+    } catch (cause) {
+      setError(toMessage(cause));
+    } finally {
+      endOperation();
+    }
+  }
+
+  async function resume() {
+    const current = snapshotRef.current;
+    if (!current.sessionId || !beginOperation()) return;
+    try {
+      const next = await resumeMeeting(current.sessionId);
+      applySnapshot(next);
+      try {
+        await attachCapture();
+      } catch (cause) {
+        applySnapshot(await pauseMeeting(current.sessionId));
+        throw cause;
+      }
+    } catch (cause) {
+      setError(`Microphone unavailable: ${toMessage(cause)}`);
+    } finally {
+      endOperation();
+    }
+  }
+
+  async function stop() {
+    const current = snapshotRef.current;
+    if (!current.sessionId || !beginOperation()) return;
+    try {
+      const sampleRate = context.current?.sampleRate;
+      setHealth("stopping");
+      await detachCapture(false);
+      if (sampleRate) enqueueBuffered(sampleRate, 1_000);
+      await drainQueue().catch(() => undefined);
+      queue.current.clear();
+      applySnapshot(await stopMeeting(current.sessionId));
+      setHealth("stopped");
+    } catch (cause) {
+      setError(toMessage(cause));
+    } finally {
+      endOperation();
+    }
+  }
+
+  async function save() {
+    const current = snapshotRef.current;
+    if (!current.sessionId || !beginOperation()) return;
+    try {
+      applySnapshot(await saveMeetingTranscript(current.sessionId));
+      setTranscript([]);
+      setHealth("idle");
+    } catch (cause) {
+      setError(toMessage(cause));
+    } finally {
+      endOperation();
+    }
+  }
+
+  async function discard() {
+    const current = snapshotRef.current;
+    if (!current.sessionId || !beginOperation()) return;
+    try {
+      await detachCapture(true);
+      await discardMeeting(current.sessionId);
+      applySnapshot(idle);
+      setTranscript([]);
+      setHealth("idle");
+    } catch (cause) {
+      setError(toMessage(cause));
+    } finally {
+      endOperation();
+    }
+  }
+
+  return { snapshot, transcript, elapsed, health, working, start, pause, resume, stop, save, discard };
+}
+
+function toMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }

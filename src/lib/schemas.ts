@@ -1,23 +1,79 @@
 import { z } from "zod";
 
+export const runtimeFailureCodeSchema = z.enum([
+  "runtime_error",
+  "configuration-error",
+  "child-start-failed",
+  "request-timeout",
+  "progress-timeout",
+  "terminal-timeout",
+  "hard-timeout",
+  "child-exited",
+  "protocol-error",
+  "policy-violation",
+  "provider-error",
+  "response-too-large",
+  "internal-error",
+]);
+
+export const signalHealthSchema = z.enum([
+  "ready",
+  "disabled",
+  "permission-denied",
+  "unsupported",
+  "degraded",
+]);
+
+export const inputActivitySignalSchema = z.object({
+  state: z.enum(["active", "recent", "idle", "unknown"]),
+  health: signalHealthSchema,
+}).strict();
+
+export const calibrationParametersSchema = z.object({
+  classificationMinConfidence: z.number().int().min(50).max(95),
+  lowConfidenceMax: z.number().int().min(0).max(60),
+  enterSampleCount: z.number().int().min(1).max(10),
+  exitSampleCount: z.number().int().min(1).max(20),
+  cooldownMs: z.number().int().min(0).max(60_000),
+  inputActiveMaxMs: z.number().int().min(5_000).max(120_000),
+  inputRecentMaxMs: z.number().int().min(60_000).max(1_800_000),
+}).strict().refine(
+  (value) => value.lowConfidenceMax < value.classificationMinConfidence,
+  { message: "Low-confidence maximum must be lower than classification confidence" },
+).refine(
+  (value) => value.inputActiveMaxMs < value.inputRecentMaxMs,
+  { message: "Input active boundary must be lower than input recent boundary" },
+);
+
+const providerIdSchema = z.string().min(1).max(80).regex(
+  /^[A-Za-z0-9_-]+$/,
+  "Provider ids may contain only ASCII letters, numbers, hyphens, and underscores",
+);
+
 const providerSchema = z.object({
-  id: z.string().trim().min(1).max(80),
+  id: providerIdSchema,
   enabled: z.boolean(),
   label: z.string().trim().min(1).max(120),
   location: z.enum(["local", "cloud"]),
-  endpoint: z.union([z.literal(""), z.url().refine((value) => value.startsWith("http://") || value.startsWith("https://"), "Endpoint must use HTTP or HTTPS")]),
+  endpoint: z.union([z.literal(""), z.string().url().max(2_048).refine((value) => value.startsWith("http://") || value.startsWith("https://"), "Endpoint must use HTTP or HTTPS")]),
   model: z.string().trim().max(160),
   credentialStatus: z.enum(["not-configured", "configured"]),
-});
+}).strict();
 
 export const modelProvidersSettingsSchema = z.object({
-  providers: z.array(providerSchema).min(1).superRefine((providers, context) => {
+  providers: z.array(providerSchema).min(1).max(20).superRefine((providers, context) => {
     const ids = new Set<string>();
+    const credentialSuffixes = new Set<string>();
     providers.forEach((provider, index) => {
       if (ids.has(provider.id)) {
         context.addIssue({ code: "custom", message: `Duplicate provider id: ${provider.id}`, path: [index, "id"] });
       }
       ids.add(provider.id);
+      const credentialSuffix = provider.id.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+      if (credentialSuffixes.has(credentialSuffix)) {
+        context.addIssue({ code: "custom", message: "Provider id maps to an existing credential environment variable", path: [index, "id"] });
+      }
+      credentialSuffixes.add(credentialSuffix);
       if (provider.enabled && (!provider.endpoint || !provider.model)) {
         context.addIssue({ code: "custom", message: "Enabled providers require an endpoint and model", path: [index] });
       }
@@ -35,7 +91,7 @@ export const modelProvidersSettingsSchema = z.object({
       }
     });
   }),
-});
+}).strict();
 
 export const codexAgentSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -48,22 +104,22 @@ export const codexAgentSettingsSchema = z.object({
   networkEnabled: z.literal(false),
   webSearchEnabled: z.literal(false),
   workspacePolicy: z.literal("select-per-conversation"),
-});
+}).strict();
 
 export const routingSettingsSchema = z.object({
   conversationRespond: z.object({
-    primaryProviderId: z.string().trim().min(1),
-    fallbackProviderIds: z.array(z.string().trim().min(1)),
+    primaryProviderId: providerIdSchema,
+    fallbackProviderIds: z.array(providerIdSchema).max(20),
     timeoutMs: z.number().int().min(1_000).max(300_000),
-  }),
+  }).strict(),
   codingAssist: z.object({
     providerId: z.literal("codex-sdk"),
     timeoutMs: z.number().int().min(1_000).max(300_000),
     readOnly: z.literal(true),
     networkEnabled: z.literal(false),
     webSearchEnabled: z.literal(false),
-  }),
-});
+  }).strict(),
+}).strict();
 
 export const voiceSettingsSchema = z.object({
   inputDeviceId: z.string().trim().min(1).max(300),
@@ -75,13 +131,13 @@ export const voiceSettingsSchema = z.object({
   ttsVoice: z.string().trim().min(1).max(160),
   autoSpeak: z.boolean(),
   cloudFallbackEnabled: z.literal(false),
-});
+}).strict();
 
 export const securitySettingsSchema = z.object({
   credentialStorage: z.literal("environment"),
   localOnlyWhenSelected: z.boolean(),
   diagnosticsRedaction: z.literal(true),
-});
+}).strict();
 
 export const situationSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -91,14 +147,14 @@ export const situationSettingsSchema = z.object({
   maxLedgerEntries: z.number().int().min(100).max(10_000),
   heartbeatIntervalMs: z.number().int().min(60_000).max(3_600_000),
   sensitiveApplicationCategories: z.literal(true),
-});
+}).strict();
 
 const settingsDocumentBaseSchema = z.object({
   namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
-  schemaVersion: z.literal(6),
+  schemaVersion: z.literal(7),
   valueJson: z.record(z.string(), z.unknown()),
-});
+}).strict();
 
 export function validateSettingsDocuments(documents: unknown[]): void {
   const parsed = z.array(settingsDocumentBaseSchema).length(6).parse(documents);

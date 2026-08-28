@@ -17,6 +17,7 @@ import type {
   MeetingPreflightResult,
   MeetingSegmentResult,
   MeetingSnapshot,
+  MeetingEvent,
 } from "./contracts";
 import { validateSettingsDocuments } from "./schemas";
 
@@ -148,6 +149,8 @@ export async function clearSituationHistory(): Promise<SituationSnapshot> {
 export async function meetingPreflight(input: { microphoneDeviceId: string; systemAudioEnabled: boolean; sttModelPath: string; translationEnabled: boolean }): Promise<MeetingPreflightResult> { return invoke("meeting_preflight", { input }); }
 export async function startMeeting(input: { sessionId: string; microphoneDeviceId: string; microphoneEnabled: boolean; systemAudioEnabled: boolean; sttModelPath: string; translationEnabled: boolean; persistenceMode: "discard" }): Promise<MeetingSnapshot> { return invoke("start_meeting", { input }); }
 export async function getMeetingSnapshot(): Promise<MeetingSnapshot> { return invoke("get_meeting_snapshot"); }
+export async function watchMeeting(subscriberId: string, onEvent: (event: MeetingEvent) => void): Promise<void> { const channel = new Channel<MeetingEvent>(); channel.onmessage = onEvent; return invoke("watch_meeting", { subscriberId, onEvent: channel }); }
+export async function unwatchMeeting(subscriberId: string): Promise<void> { return invoke("unwatch_meeting", { subscriberId }); }
 export async function pauseMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("pause_meeting", { input: { sessionId } }); }
 export async function resumeMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("resume_meeting", { input: { sessionId } }); }
 export async function stopMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("stop_meeting", { input: { sessionId } }); }

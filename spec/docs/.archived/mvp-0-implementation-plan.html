@@ -1,0 +1,926 @@
+<article lang="ja">
+  <h1 id="mvp-0-implementation-plan">MVP 0 Implementation Plan</h1>
+  <h2 id="status">Status</h2>
+  <ul>
+    <li>Status: Complete — P0 through P6 accepted on 2026-08-26</li>
+    <li>Target: first runnable desktop MVP</li>
+    <li>
+      Concept: <a href="../plan.html"><code>plan.html</code></a>
+    </li>
+    <li>Storage: SQLite only</li>
+    <li>
+      UI reference: <code>../../../hono-standard</code>
+      <code>variant/rag</code>
+    </li>
+    <li>Settings reference: <code>../../../contextStill</code></li>
+    <li>Codex runtime reference: <code>../../../nightWorkers</code></li>
+  </ul>
+  <p>
+    この文書は、コンセプトを最初の実装へ変換するための計画である。長期のSituation-aware機能は設計上の拡張先として保持するが、MVP
+    0の実装対象には含めない。
+  </p>
+  <h2 id="implementation-record">Implementation Record</h2>
+  <p>2026-08-26にP0からP6までを実装し、MVP Acceptanceを完了した。</p>
+  <ul>
+    <li>Tauri 2 + React + TypeScript workspaceを作成した。</li>
+    <li>
+      Rust側にSQLiteのmigration、settings document、conversation、messageの永続化commandを実装した。
+    </li>
+    <li>UIからSettings、Conversation、MessageをTauri IPC経由でSQLiteへ保存できるようにした。</li>
+    <li>
+      <code>@openai/codex-sdk</code>をexact versionで固定し、Bun import、app-server
+      model/status、read-only thread start/resume/stream/cancel、native bundle stagingを実装した。
+    </li>
+    <li>
+      <code>bun run check</code
+      >、<code>bun run codex:smoke</code>、packaged Codex live
+      turn、<code>bun run desktop:smoke</code>を実行した。
+    </li>
+  </ul>
+  <p>同日にSettings SurfaceをContextStillの操作モデルへ合わせて更新した。</p>
+  <ul>
+    <li>Chat右ペインの簡易フォームを廃止し、独立したSettings画面へ分離した。</li>
+    <li>
+      <code>General</code
+      >、<code>LLM Providers</code>、<code>Task Routing</code>、<code>Voice</code>、<code>Codex SDK</code>、<code>Privacy &amp; Security</code>のsection
+      menuを追加した。
+    </li>
+    <li>LLM Providerは複数のOpenAI-compatible endpointを登録できる。</li>
+    <li>
+      Settings画面はSQLite snapshotからdraftを作り、未保存差分、Discard、Save
+      Settings、保存成功・失敗表示を持つ。
+    </li>
+    <li>
+      Save Settingsはdocument群を一つのSQLite transactionで保存し、成功後にRuntime
+      UIを保存済みの返却値へ同期する。
+    </li>
+  </ul>
+  <p>
+    P1/P2ではZod/Rust二重validation、transactional Settings、OpenAI-compatible
+    SSE、Primary/fallback、Connection Test、local-only destination制約を実装した。P3ではpersistent
+    Chat、stream/cancel/retry/reconcileを、P4ではPush-to-talk、local whisper.cpp、system
+    TTSと各停止経路を実装した。P5ではCodex app-serverの安全なread-only routeを、P6ではmigration
+    backup、diagnostics redaction、keyboard/accessibility、CSP、native packaging
+    smokeを完了した。再現手順と結果は<a href="./mvp-0-release-evidence.html"
+      ><code>mvp-0-release-evidence.md</code></a
+    >に保存する。
+  </p>
+  <h2 id="1-outcome">1. Outcome</h2>
+  <p>MVP 0で成立させる体験は次のとおり。</p>
+  <pre><code class="language-text">SettingsでProviderとTask Routeを保存する
+        ↓
+ChatでTextまたはPush-to-talkを入力する
+        ↓
+conversation.respondまたはcoding.assistを明示的に選ぶ
+        ↓
+保存済みEffective Routeで処理する
+        ↓
+途中状態と結果を同じChatへstreamする
+        ↓
+通常応答はLocal TTSでも再生できる
+</code></pre>
+  <p>
+    MVP
+    0は「設定画面の試作品」ではない。Settings、SQLite、Route解決、Provider実行、Conversation、Voice、UIを一本につないだ最小の縦切りとする。
+  </p>
+  <h2 id="2-fixed-decisions">2. Fixed Decisions</h2>
+  <h3 id="runtime-and-ui">Runtime and UI</h3>
+  <ul>
+    <li>Desktop shellはTauri 2とする。</li>
+    <li>UIはReact、Vite、Tailwindを使用する。</li>
+    <li>
+      Application runtimeはTypeScriptを中心とし、native audioとcredential accessはRustへ分離する。
+    </li>
+    <li>Hono backendは導入しない。</li>
+    <li>
+      UIとDesign
+      Systemは<code>hono-standard</code>の<code>variant/rag</code>から必要部分だけを抽出する。
+    </li>
+    <li>Core DomainはTauri IPCの具体APIへ直接依存させない。</li>
+  </ul>
+  <h3 id="persistence">Persistence</h3>
+  <ul>
+    <li>永続データベースはSAAA所有のSQLiteだけを使う。</li>
+    <li>PostgreSQLとpgvectorは依存関係、開発環境、テスト環境へ入れない。</li>
+    <li>MVP 0はEmbeddingを必要としないため、SQLite Vectorも起動条件にしない。</li>
+    <li>将来Embedding Providerを有効化した場合だけ、別migrationでSQLite Vectorを追加する。</li>
+    <li>
+      Provider、Model、Endpoint、Task Route、Conversation、Turn、Codex thread idはSQLiteへ保存する。
+    </li>
+    <li>
+      API keyの実値はOS credential storeに保存し、SQLiteにはcredential referenceとmasked
+      statusだけを保存する。
+    </li>
+    <li>Codexの既存認証ファイルをSQLiteへコピーしない。</li>
+  </ul>
+  <h3 id="provider-boundary">Provider Boundary</h3>
+  <p>Providerは用途と能力で分ける。</p>
+  <table>
+    <caption>
+      Provider Boundary
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Task Route</th>
+        <th scope="col">Provider kind</th>
+        <th scope="col">MVP target</th>
+        <th scope="col">Selection</th>
+        <th scope="col">Side effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>conversation.respond</code></td>
+        <td><code>model</code></td>
+        <td>OpenAI-compatible local/cloud adapter</td>
+        <td>Primary + fallback</td>
+        <td>none</td>
+      </tr>
+      <tr>
+        <td><code>coding.assist</code></td>
+        <td><code>agent</code></td>
+        <td>Codex SDK</td>
+        <td>explicit only</td>
+        <td>read-only</td>
+      </tr>
+      <tr>
+        <td><code>speech.transcribe</code></td>
+        <td><code>stt</code></td>
+        <td>one local adapter</td>
+        <td>configured</td>
+        <td>microphone read</td>
+      </tr>
+      <tr>
+        <td><code>speech.synthesize</code></td>
+        <td><code>tts</code></td>
+        <td>one local adapter</td>
+        <td>configured</td>
+        <td>audio output</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Codex SDKはLLM completion adapterへ偽装しない。SDK固有のthread、event、cancel、sandboxを<code
+      >AgentProvider</code
+    >
+    contractに閉じ込める。
+  </p>
+  <h3 id="codex-sdk-safety-profile">Codex SDK Safety Profile</h3>
+  <p>MVP 0のCodex routeは次を固定値にする。</p>
+  <pre><code class="language-text">sandboxMode       read-only
+approvalPolicy    never
+networkAccess     disabled
+webSearch         disabled
+write-capable MCP disabled
+route selection   explicit
+</code></pre>
+  <p>
+    Workspaceを使う場合は、ユーザーがdirectory
+    pickerで明示的に選択した単一rootだけを読み取り対象とする。root未選択時はSAAA管理の空workspaceを使う。<code>/</code>、home
+    directory全体、解決前のsymlink、存在しないpathは受け付けない。
+  </p>
+  <p>Repositoryを変更するCoding TaskはMVP 0では実行しない。将来NightWorkersへ委譲する。</p>
+  <h2 id="3-runtime-shape">3. Runtime Shape</h2>
+  <pre><code class="language-text">React UI
+├─ Chat Surface
+└─ Settings Surface
+        │ versioned commands/events
+        ▼
+Application Runtime
+├─ Settings Service ─────────────── SQLite
+├─ Conversation Service ────────── SQLite
+├─ Task Router
+│  ├─ Model Provider Adapter
+│  └─ Agent Provider Adapter ───── Codex SDK process boundary
+├─ Speech Service
+│  ├─ STT Provider
+│  └─ TTS Provider
+└─ Event Stream
+        │ native commands/events
+        ▼
+Rust Native Runtime
+├─ Microphone capture
+├─ Audio playback
+└─ OS credential store
+</code></pre>
+  <p>
+    UIはProvider SDK、SQLite、audio
+    deviceを直接呼ばない。すべての操作はversion付きCommand、State、EventとしてApplication
+    Runtimeを通す。
+  </p>
+  <h2 id="4-repository-layout">4. Repository Layout</h2>
+  <p>最初に次の境界でscaffoldする。実装中に名称を調整してよいが、依存方向は維持する。</p>
+  <pre><code class="language-text">apps/
+  desktop/
+    src/
+      features/chat/
+      features/settings/
+      design-system/
+    src-tauri/
+
+packages/
+  contracts/
+    src/commands/
+    src/events/
+    src/settings/
+  domain/
+    src/conversation/
+    src/routing/
+    src/providers/
+    src/speech/
+  runtime/
+    src/application/
+    src/providers/model/
+    src/providers/codex/
+    src/providers/stt/
+    src/providers/tts/
+  persistence/
+    src/sqlite/
+    migrations/
+
+spec/docs/
+  plan.md
+  mvp-0-implementation-plan.md
+</code></pre>
+  <p>依存方向:</p>
+  <pre><code class="language-text">UI / Native / Provider adapters
+              ↓
+       Application services
+              ↓
+       Domain + Contracts
+</code></pre>
+  <p>
+    <code>domain</code>からReact、Tauri、SQLite、Codex SDK、特定STT/TTS
+    engineをimportしない。
+  </p>
+  <h2 id="5-core-contracts">5. Core Contracts</h2>
+  <p>
+    実装前にZod schemaとTypeScript typeを同じsourceから定義する。IPC boundaryとSQLite JSON
+    columnから取得した値は必ずschema validationを通す。
+  </p>
+  <h3 id="task-and-provider">Task and Provider</h3>
+  <pre><code class="language-ts">type TaskRouteId =
+  | &quot;conversation.respond&quot;
+  | &quot;coding.assist&quot;
+  | &quot;speech.transcribe&quot;
+  | &quot;speech.synthesize&quot;;
+
+type ProviderKind = &quot;model&quot; | &quot;agent&quot; | &quot;stt&quot; | &quot;tts&quot; | &quot;embedding&quot;;
+type ProviderLocation = &quot;local&quot; | &quot;cloud&quot;;
+
+type ProviderCapabilities = {
+  streaming: boolean;
+  threadResume: boolean;
+  audioInput: boolean;
+  audioOutput: boolean;
+  workspaceRead: boolean;
+  workspaceWrite: boolean;
+  network: boolean;
+};
+</code></pre>
+  <p>
+    Route validationはTaskが要求するcapabilityとProvider
+    kindの一致を検証する。<code>coding.assist</code>へModel
+    Provider、<code>conversation.respond</code>へAgent Providerを保存できないようにする。
+  </p>
+  <h3 id="effective-route">Effective Route</h3>
+  <pre><code class="language-ts">type EffectiveRoute = {
+  taskId: TaskRouteId;
+  primary: ResolvedProviderTarget;
+  fallbacks: ResolvedProviderTarget[];
+  timeoutMs: number;
+  source: &quot;saved&quot; | &quot;safe-default&quot;;
+};
+</code></pre>
+  <p>
+    Chat実行時はeditable settingsを再解釈せず、Settings
+    Serviceがvalidation済みsnapshotから生成した<code>EffectiveRoute</code>だけを使う。Settings
+    UIにも同じ結果を表示する。
+  </p>
+  <p>
+    Local-only routeではCloud
+    Providerを暗黙fallbackに追加しない。Cloudへの遷移は保存済みrouteに明示されている場合だけ許可する。
+  </p>
+  <h3 id="conversation-event">Conversation Event</h3>
+  <pre><code class="language-ts">type ConversationEvent =
+  | { type: &quot;turn.started&quot;; turnId: string; route: EffectiveRouteSummary }
+  | { type: &quot;transcript.delta&quot;; turnId: string; text: string }
+  | { type: &quot;transcript.final&quot;; turnId: string; text: string }
+  | { type: &quot;assistant.delta&quot;; turnId: string; text: string }
+  | { type: &quot;assistant.final&quot;; turnId: string; text: string }
+  | { type: &quot;agent.activity&quot;; turnId: string; activity: AgentActivity }
+  | { type: &quot;speech.started&quot; | &quot;speech.completed&quot;; turnId: string }
+  | { type: &quot;turn.cancelled&quot;; turnId: string; reason: string }
+  | { type: &quot;turn.failed&quot;; turnId: string; error: PublicRuntimeError };
+</code></pre>
+  <p>
+    Provider固有payloadをそのままUIへ渡さない。Codex
+    eventはbounded、redactedな<code>AgentActivity</code>へ変換する。
+  </p>
+  <h3 id="lifecycle">Lifecycle</h3>
+  <p>Model、Agent、STT、TTS adapterは共通して次を提供する。</p>
+  <pre><code class="language-text">available / health
+start or execute
+cancel through AbortSignal
+dispose
+</code></pre>
+  <p>同一turnでGenerationとSpeechを個別に停止できるよう、AbortControllerを処理単位で所有する。</p>
+  <h2 id="6-sqlite-design">6. SQLite Design</h2>
+  <p>
+    SQLiteはWAL、foreign key、busy
+    timeoutを有効にし、migrationをApplication起動時にtransaction内で適用する。schema
+    version不一致時に無言で再作成しない。
+  </p>
+  <h3 id="initial-tables">Initial Tables</h3>
+  <pre><code class="language-sql">settings_documents(
+  namespace TEXT NOT NULL,
+  key TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(namespace, key)
+)
+
+credential_references(
+  provider_id TEXT PRIMARY KEY,
+  credential_ref TEXT NOT NULL,
+  source TEXT NOT NULL,
+  masked_value TEXT,
+  updated_at TEXT NOT NULL
+)
+
+workspaces(
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  canonical_path TEXT NOT NULL UNIQUE,
+  read_only INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT
+)
+
+conversations(
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  task_mode TEXT NOT NULL,
+  workspace_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+)
+
+conversation_turns(
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  provider_id TEXT NOT NULL,
+  model TEXT,
+  input_text TEXT NOT NULL,
+  output_text TEXT,
+  error_code TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+)
+
+provider_sessions(
+  conversation_id TEXT NOT NULL,
+  provider_id TEXT NOT NULL,
+  provider_thread_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(conversation_id, provider_id),
+  FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+)
+</code></pre>
+  <p>
+    <code>conversation_turns.status</code
+    >は<code>queued | running | completed | cancelled | failed</code>に限定する。Applicationが異常終了した場合、次回起動時に<code>running</code>を<code>failed</code>へreconcileし、UIへ中断理由を表示する。
+  </p>
+  <p>
+    Streaming deltaは永続化しない。確定transcript、最終応答、turn
+    lifecycleだけをtransactionで保存し、SQLite write amplificationを避ける。
+  </p>
+  <h3 id="settings-documents">Settings Documents</h3>
+  <p>MVP 0では次のnamespaceを持つ。</p>
+  <pre><code class="language-text">providers.model
+providers.agent
+providers.stt
+providers.tts
+routing.tasks
+speech.capture
+speech.playback
+ui.preferences
+</code></pre>
+  <p>
+    JSONを使っても無型にはしない。namespaceごとのZod schema、schema version、migrationを必須にする。
+  </p>
+  <h3 id="vector-policy">Vector Policy</h3>
+  <p>
+    MVP 0 migrationにはvector tableを入れない。Embedding
+    modelが実際に導入される時点で次を一組として追加する。
+  </p>
+  <ul>
+    <li>extension availability check</li>
+    <li>embedding provider/model identity</li>
+    <li>dimension</li>
+    <li>vector table/index</li>
+    <li>rebuild command</li>
+    <li>degraded state</li>
+  </ul>
+  <p>Embedding未設定やextension未導入はText Chat、Voice Chat、Codex routeを停止させない。</p>
+  <h2 id="7-settings-and-routing-slice">7. Settings and Routing Slice</h2>
+  <h3 id="settings-ui">Settings UI</h3>
+  <p>Settings Surfaceは次のsectionに絞る。</p>
+  <pre><code class="language-text">Model Providers
+  enabled, label, local/cloud, endpoint, model, credential status
+
+Codex SDK
+  enabled, installed, authenticated, model, runtime mode, health result
+
+Speech
+  input device, STT model, output device, TTS voice, test buttons
+
+Task Routing
+  conversation.respond primary/fallback
+  coding.assist codex-sdk
+  timeout/resource limits
+  effective route preview
+</code></pre>
+  <p>
+    保存操作は<code>validate → write transaction → rebuild effective snapshot → publish settings.changed</code>の順とする。validation
+    failure時は既存snapshotを維持する。
+  </p>
+  <h3 id="first-model-adapter">First Model Adapter</h3>
+  <p>
+    通常会話はOpenAI-compatible HTTP adapterを最初に実装する。endpoint、model、optional
+    credential、locationを設定できるため、local serverとcompatible cloud
+    endpointの双方を同じtransport contractで扱える。
+  </p>
+  <p>
+    ただし、Provider IDとlocationは設定上明示し、local endpointをCloudへ自動置換しない。request
+    timeout、stream parse error、HTTP status、rate limitをpublic error codeへ正規化する。
+  </p>
+  <h3 id="connection-test">Connection Test</h3>
+  <p>Connection testはChat turnを作らず、短いtimeoutで以下を返す。</p>
+  <pre><code class="language-ts">type ProviderHealth = {
+  status: &quot;ready&quot; | &quot;degraded&quot; | &quot;unavailable&quot;;
+  checkedAt: string;
+  latencyMs?: number;
+  code?: string;
+  message: string;
+};
+</code></pre>
+  <p>API key、Authorization header、Codex auth file内容、local filesystem pathをlogへ含めない。</p>
+  <h2 id="8-text-conversation-slice">8. Text Conversation Slice</h2>
+  <ol>
+    <li>User messageをSQLiteへ<code>running</code> turnとして保存する。</li>
+    <li><code>conversation.respond</code>のEffective Routeをsnapshotから解決する。</li>
+    <li>Primary Providerをstreaming実行する。</li>
+    <li>retry可能なProvider failureだけ、保存済みfallbackを順に試す。</li>
+    <li>UIへ<code>assistant.delta</code>を送る。</li>
+    <li>
+      <code>assistant.final</code
+      >で最終文を保存し、turnを<code>completed</code>にする。
+    </li>
+    <li>
+      cancel時はAbortSignalを伝播し、turnを<code>cancelled</code>にする。
+    </li>
+    <li>failure時はsecretを除いたerror codeと短い理由を保存する。</li>
+  </ol>
+  <p>
+    Fallback前に途中出力が表示された場合は自動fallbackしない。二重応答を避け、失敗として明示する。
+  </p>
+  <p>Chat Surfaceの最小要素:</p>
+  <ul>
+    <li>Conversation listは直近分だけをbounded表示</li>
+    <li>Task mode selector</li>
+    <li>Workspace selectorはCoding mode時だけ表示</li>
+    <li>Message list</li>
+    <li>Typed composer</li>
+    <li>Push-to-talk</li>
+    <li>Live/final transcript</li>
+    <li>Provider/model badge</li>
+    <li>Recording、Generating、Agent working、Speaking status</li>
+    <li>Stop、Retry</li>
+    <li>Codex activityの折りたたみ表示</li>
+  </ul>
+  <h2 id="9-voice-slice">9. Voice Slice</h2>
+  <p>
+    MVP 0はPush-to-talkだけを実装する。Always-on、wake word、system audio、speaker
+    diarizationは実装しない。
+  </p>
+  <h3 id="audio-lifecycle">Audio Lifecycle</h3>
+  <pre><code class="language-text">Idle
+ → Capturing
+ → Transcribing
+ → Finalized
+ → Generating
+ → Speaking
+ → Idle
+</code></pre>
+  <p>
+    どの状態からもStopで<code>Idle</code>へ戻れる。audio buffer、event
+    queue、conversation historyには上限を設ける。
+  </p>
+  <h3 id="stt">STT</h3>
+  <p>
+    P0
+    spikeで<code>sherpa-onnx</code>と<code>whisper.cpp</code>系のうち、対象OSで次を満たす一つを固定する。
+  </p>
+  <ul>
+    <li>offline execution</li>
+    <li>distributable model/license</li>
+    <li>partialまたは短周期のinterim transcript</li>
+    <li>AbortSignal相当の停止</li>
+    <li>Tauri packageから起動可能</li>
+  </ul>
+  <p>
+    partialは<code>transcript.delta</code>、確定結果は一度だけ<code>transcript.final</code>として発行する。確定文字列はtyped
+    messageと同じConversation commandへ渡す。
+  </p>
+  <h3 id="tts">TTS</h3>
+  <p>
+    対象OSでoffline利用できる一つのadapterを固定し、voiceとspeedをSettingsへ保存する。応答テキスト確定後に再生し、生成途中の細切れ音声合成はMVP
+    0では行わない。
+  </p>
+  <p>
+    <code>coding.assist</code
+    >はactivityやcodeを含むため、既定ではTTSを無効にする。ユーザーが明示的に有効化した場合も最終summaryだけを読み上げる。
+  </p>
+  <h2 id="10-codex-sdk-slice">10. Codex SDK Slice</h2>
+  <p>
+    Codex SDKはlocal Codex agentのthreadを開始・継続・再開するserver-side TypeScript
+    libraryである。実装は公式SDK contractを基準とし、NightWorkersの実装からthread resume、stream
+    event projection、secret redactionの考え方だけを参照する。NightWorkersのMission
+    lifecycleは持ち込まない。
+  </p>
+  <p>公式情報: <a href="https://learn.chatgpt.com/docs/codex-sdk">Codex SDK documentation</a></p>
+  <h3 id="p0-compatibility-gate">P0 Compatibility Gate</h3>
+  <p>公式要件はNode.js 18以上であるため、最初にisolated smokeを実行する。</p>
+  <ol>
+    <li>SDK versionをexact pinする。</li>
+    <li>
+      Bun processからimport、<code>startThread</code>、stream、cancelを試す。
+    </li>
+    <li>auth、child process、event stream、shutdownを確認する。</li>
+    <li>すべて通ればin-process adapterを採用する。</li>
+    <li>一つでもruntime incompatibilityがあればNode.js 20 sidecarを採用する。</li>
+  </ol>
+  <p>
+    互換性問題をSDK
+    wrapper内の<code>any</code>や無検証castで隠さない。判定結果をADRへ残す。
+  </p>
+  <p>
+    Node sidecar採用時のprotocolはstdin/stdoutのlength-bounded JSON Linesとし、request id、schema
+    version、cancel commandを持たせる。sidecarはloopback portを公開せず、SAAAのchild
+    processとして明示的に終了させる。
+  </p>
+  <h3 id="thread-lifecycle">Thread Lifecycle</h3>
+  <pre><code class="language-text">No session
+  → startThread
+  → thread.started event
+  → provider thread idをSQLiteへ保存
+
+Existing session
+  → resumeThread(saved id)
+  → runStreamed
+  → resume不能なら理由を表示
+  → ユーザー確認なしのsilent fallbackはしない
+</code></pre>
+  <p>
+    新規threadへの切替はUI上の「New coding thread」で明示する。別Conversationのthread
+    idを共有しない。
+  </p>
+  <h3 id="event-mapping">Event Mapping</h3>
+  <p>最低限、次を共通eventへ写像する。</p>
+  <table>
+    <caption>
+      Event Mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">SDK event family</th>
+        <th scope="col">SAAA event</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>thread/turn start</td>
+        <td>
+          <code>turn.started</code>, <code>agent.activity</code>
+        </td>
+      </tr>
+      <tr>
+        <td>agent message delta/final</td>
+        <td>
+          <code>assistant.delta</code>, <code>assistant.final</code>
+        </td>
+      </tr>
+      <tr>
+        <td>command execution</td>
+        <td>redacted <code>agent.activity</code></td>
+      </tr>
+      <tr>
+        <td>MCP call</td>
+        <td>redacted <code>agent.activity</code></td>
+      </tr>
+      <tr>
+        <td>file change</td>
+        <td>policy violation + <code>turn.failed</code> in MVP 0</td>
+      </tr>
+      <tr>
+        <td>turn completed</td>
+        <td>persisted <code>completed</code></td>
+      </tr>
+      <tr>
+        <td>turn failed/error</td>
+        <td>normalized <code>turn.failed</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Raw command outputやMCP resultはサイズ上限を設け、secret patternをredactする。SDK event
+    object全体をlogまたはSQLiteへ保存しない。
+  </p>
+  <h3 id="authentication">Authentication</h3>
+  <ul>
+    <li>Codex login/authの有無をhealth checkで確認する。</li>
+    <li>認証ファイルの本文やtokenは読んでUIへ返さない。</li>
+    <li>Settingsには<code>configured/source/checkedAt</code>だけを保存する。</li>
+    <li>
+      認証不足時は<code>coding.assist</code>だけをdisabledにし、通常ChatとVoiceは継続する。
+    </li>
+  </ul>
+  <h2 id="11-design-system-import">11. Design System Import</h2>
+  <p>
+    <code>hono-standard</code>の<code>variant/rag</code>をUI
+    referenceとして、以下をcomponent単位で棚卸しする。
+  </p>
+  <pre><code class="language-text">Import or adapt
+  token definitions
+  Button / IconButton
+  Input / TextArea / Select
+  message presentation
+  composer
+  panel / status / loading / error patterns
+
+Rebuild for SAAA
+  Chat state machine
+  transcript presentation
+  task mode selector
+  Provider settings forms
+  Codex activity panel
+  Tauri command/event hooks
+
+Do not import
+  Hono routes or client
+  RAG hooks and source ingestion
+  PostgreSQL / pgvector client
+  RAG authentication
+  Agentic Search backend
+</code></pre>
+  <p>
+    移植したcomponentはSAAA namespaceへ置き、upstream repositoryをruntime
+    dependencyにしない。tokenとprimitiveの由来はfile headerまたはdocsに記録する。
+  </p>
+  <h2 id="12-delivery-order">12. Delivery Order</h2>
+  <h3 id="p0--bootstrap-and-risk-spikes">P0 — Bootstrap and Risk Spikes</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>workspace、package manager、Tauri/React shell</li>
+    <li>lint、typecheck、unit test、desktop smoke commands</li>
+    <li>SQLite driverとmigration runnerの選定</li>
+    <li>Codex SDK Bun/Node compatibility ADR</li>
+    <li>local STT/TTS adapter selection record</li>
+    <li><code>hono-standard</code> UI inventory</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>empty desktop appが起動する</li>
+    <li>temporary DBへmigrationを適用できる</li>
+    <li>Codex SDK runtime boundaryをin-processかNode sidecarのどちらかへ確定する</li>
+    <li>STT/TTSの配布可能性と停止方法を確認する</li>
+  </ul>
+  <h3 id="p1--contracts-and-sqlite">P1 — Contracts and SQLite</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>Zod command/event/settings schema</li>
+    <li>SQLite migrations</li>
+    <li>Settings Repository</li>
+    <li>Conversation Repository</li>
+    <li>Provider Session Repository</li>
+    <li>startup reconciliation</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>save/restart/loadのintegration testが通る</li>
+    <li>invalid settingsで既存snapshotが破損しない</li>
+    <li>raw secretがSQLiteとlogに存在しない</li>
+  </ul>
+  <h3 id="p2--settings-and-model-routing">P2 — Settings and Model Routing</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>Settings Surface</li>
+    <li>OpenAI-compatible Model Provider</li>
+    <li><code>conversation.respond</code> resolver</li>
+    <li>Primary/fallback execution</li>
+    <li>connection testとEffective Route preview</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>UIで保存したrouteをRuntimeが実際に使う</li>
+    <li>local-only routeのnetwork destination testが通る</li>
+    <li>Provider failure reasonがUIへ表示される</li>
+  </ul>
+  <h3 id="p3--persistent-text-chat">P3 — Persistent Text Chat</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>Conversation Service</li>
+    <li>Chat Surface</li>
+    <li>typed message streaming</li>
+    <li>cancel、retry、history restore</li>
+    <li>bounded event projection</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>app再起動後にconversationと完了済みturnを復元できる</li>
+    <li>running turnを中断済みとしてreconcileできる</li>
+    <li>cancel後にbackground generationが残らない</li>
+  </ul>
+  <h3 id="p4--voice-loop">P4 — Voice Loop</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>microphone device selection</li>
+    <li>Push-to-talk capture</li>
+    <li>local STT delta/final</li>
+    <li>local TTS playback</li>
+    <li>recording/transcribing/speaking stop</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>音声入力が同じConversationへ文字として残る</li>
+    <li>local routeで音声がCloudへ送られない</li>
+    <li>device errorとmodel missingを復帰可能な状態で表示する</li>
+  </ul>
+  <h3 id="p5--codex-agent-route">P5 — Codex Agent Route</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>Codex SDK adapterまたはNode sidecar</li>
+    <li>health/auth status</li>
+    <li><code>coding.assist</code> explicit route</li>
+    <li>read-only workspace selection</li>
+    <li>streamed event mapping</li>
+    <li>thread id persistence/resume</li>
+    <li>cancelとprocess cleanup</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>start、stream、cancel、resumeのcontract testが通る</li>
+    <li>repositoryに変更を作れない</li>
+    <li>Network、Web Search、write-capable MCPが無効である</li>
+    <li>Codex利用不能でも通常ChatとVoiceが動く</li>
+  </ul>
+  <h3 id="p6--packaging-and-mvp-acceptance">P6 — Packaging and MVP Acceptance</h3>
+  <p>Deliverables:</p>
+  <ul>
+    <li>clean-machine package smoke</li>
+    <li>database migration/backup failure handling</li>
+    <li>provider/model missing UX</li>
+    <li>keyboard and basic accessibility pass</li>
+    <li>diagnostics export with secret redaction</li>
+    <li>acceptance evidence</li>
+  </ul>
+  <p>Exit gate:</p>
+  <ul>
+    <li>Section 14の全Acceptanceを再現可能な手順で通す</li>
+    <li>PostgreSQL、pgvector、Hono serviceなしでdesktop packageが起動する</li>
+  </ul>
+  <h2 id="13-verification-strategy">13. Verification Strategy</h2>
+  <h3 id="unit-tests">Unit Tests</h3>
+  <ul>
+    <li>settings schemaとversion migration</li>
+    <li>Provider capabilityとTask Routeの不一致拒否</li>
+    <li>Effective Routeとfallback順序</li>
+    <li>local-only routeのCloud拒否</li>
+    <li>Conversation state transition</li>
+    <li>Codex event mapping、redaction、size limit</li>
+    <li>audio state transitionとcancel idempotency</li>
+  </ul>
+  <h3 id="integration-tests">Integration Tests</h3>
+  <ul>
+    <li>SQLite fresh migration、upgrade、transaction rollback</li>
+    <li>Settings save → cache rebuild → route execution</li>
+    <li>app restart → settings/history/thread id restore</li>
+    <li>OpenAI-compatible streaming fixture</li>
+    <li>Primary failure → fallback</li>
+    <li>Codex start/resume/stream/cancel fixture</li>
+    <li>Node sidecar crash/restart。ただしsidecar採用時のみ</li>
+    <li>STT/TTS fixtureとnative smoke</li>
+  </ul>
+  <h3 id="end-to-end-scenarios">End-to-End Scenarios</h3>
+  <ol>
+    <li>Local modelを登録し、<code>conversation.respond</code>へ設定して再起動する。</li>
+    <li>Text messageを送り、保存済みmodel名と応答をChatで確認する。</li>
+    <li>Push-to-talkし、delta、final、assistant response、TTSを確認する。</li>
+    <li>GenerationとSpeechをそれぞれ停止する。</li>
+    <li>Primaryを失敗させ、明示済みfallbackだけが使われることを確認する。</li>
+    <li>Codex authなしでCoding modeだけがdisabledになることを確認する。</li>
+    <li>Codex authありでread-only threadを開始し、streamとcancelを確認する。</li>
+    <li>Applicationを再起動し、同じCodex threadを再開する。</li>
+    <li>workspaceへwriteを要求し、変更されずに拒否されることを確認する。</li>
+    <li>PostgreSQL、Hono、Embedding serviceなしで全シナリオを実行する。</li>
+  </ol>
+  <h3 id="security-checks">Security Checks</h3>
+  <ul>
+    <li>DB、log、diagnostics snapshotにAPI key/tokenがない</li>
+    <li>Provider endpointはschemeとhostをvalidationする</li>
+    <li>local-only routeのoutbound destinationを記録・検証する</li>
+    <li>selected workspace rootをcanonicalizeする</li>
+    <li>Codex child environmentはallowlist方式で構築する</li>
+    <li>stdout/stderrとevent payloadにsize limitを持つ</li>
+    <li>cancel/exit時にchild processとaudio deviceを解放する</li>
+  </ul>
+  <h2 id="14-mvp-acceptance">14. MVP Acceptance</h2>
+  <p>MVP 0は次がすべて満たされたとき完了とする。</p>
+  <ol>
+    <li>Model Provider、Model、Endpoint、Task RouteをSettings UIで編集できる。</li>
+    <li>設定がSQLiteへ保存され、再起動後に復元される。</li>
+    <li>保存済み設定から生成したEffective RouteをUIとRuntimeが共有する。</li>
+    <li><code>conversation.respond</code>でPrimaryと明示的fallbackが動く。</li>
+    <li>Text Chatのstream、cancel、retry、history restoreが動く。</li>
+    <li>Push-to-talkの途中文字起こしと確定文字起こしが同じChatへ出る。</li>
+    <li>確定文字起こしから応答を生成し、local TTSで再生できる。</li>
+    <li>Recording、Generation、Agent、Speechを停止できる。</li>
+    <li>Codex SDKのinstalled/auth/health状態を確認できる。</li>
+    <li>
+      <code>coding.assist</code>を明示選択してread-only Codex threadを実行できる。
+    </li>
+    <li>Codexの応答とbounded activityをChatへstreamできる。</li>
+    <li>Codex thread idをSQLiteへ保存し、再起動後にresumeできる。</li>
+    <li>Codex routeからworkspace変更、Network、Web Search、write-capable MCPを実行できない。</li>
+    <li>Codex、STT、TTSの一つが利用不能でも、影響しない機能は起動できる。</li>
+    <li>local-only routeで会話音声とpromptをCloudへ送らない。</li>
+    <li>Hono、RAG、PostgreSQL、pgvector、Embedding modelなしでMVPが動く。</li>
+  </ol>
+  <h2 id="15-explicit-deferrals">15. Explicit Deferrals</h2>
+  <pre><code class="language-text">Automatic task classification
+Automatic Situation Classification
+Always-on listening / Wake Word
+Meeting detection / system audio / diarization
+Screen and Accessibility observation
+RAG / ingestion / Embedding / SQLite Vector
+contextStill runtime integration
+NightWorkers task execution
+Codex workspace-write
+Codex write-capable MCP
+Computer Use
+Application automation
+Long-term personal memory
+Generative Surface catalog
+Cloud STT as the default path
+</code></pre>
+  <h2 id="16-implementation-risks-and-stop-conditions">
+    16. Implementation Risks and Stop Conditions
+  </h2>
+  <h3 id="codex-sdk-runtime-compatibility">Codex SDK runtime compatibility</h3>
+  <p>
+    Bun上で公式supportを仮定しない。P0で確証を得られなければNode sidecarへ切り替える。SDK
+    versionを曖昧なrangeで追従しない。
+  </p>
+  <h3 id="local-voice-packaging">Local voice packaging</h3>
+  <p>
+    精度だけでengineを選ばない。model size、license、CPU負荷、初回setup、cancel、Tauri
+    packagingがExit gateを満たさなければ別adapterへ切り替える。
+  </p>
+  <h3 id="ui-source-coupling">UI source coupling</h3>
+  <p>
+    <code>hono-standard</code>のRAG data modelやHono
+    clientを移植し始めた場合は作業を止め、token/primitive/message UIへ範囲を戻す。
+  </p>
+  <h3 id="secret-storage">Secret storage</h3>
+  <p>
+    OS credential storeを安定して利用できない場合、Cloud
+    credentialのDB平文保存へ退行しない。Environment-only
+    credentialを暫定laneとし、制約をUIに表示する。
+  </p>
+  <h3 id="scope-growth">Scope growth</h3>
+  <p>
+    MVP
+    Acceptanceに不要なSituation、RAG、automation、workspace-writeは次のmilestoneへ送る。先行してdomain名やempty
+    interfaceだけを大量に作らない。
+  </p>
+  <h2 id="17-definition-of-done">17. Definition of Done</h2>
+  <ul>
+    <li>実装とschemaに対応するunit/integration/E2E testがある。</li>
+    <li>Clean databaseとupgrade databaseの双方で起動する。</li>
+    <li>Settingsが実行経路へ接続され、UIだけのmockで終わっていない。</li>
+    <li>全streaming処理を停止でき、process/audio resource leakがない。</li>
+    <li>Errorは復旧方法を伴ってUIへ表示される。</li>
+    <li>raw secretとunbounded provider payloadを保存・出力しない。</li>
+    <li>SQLite fileのownershipとbackup対象が文書化されている。</li>
+    <li>Codex SDK runtime判定、STT/TTS選定、SQLite driver選定をADRに残す。</li>
+    <li><code>plan.md</code>と実装が矛盾していない。</li>
+    <li>MVP Acceptanceの再現手順と結果をrelease evidenceとして保存する。</li>
+  </ul>
+</article>
