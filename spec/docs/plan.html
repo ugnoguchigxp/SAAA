@@ -1718,6 +1718,20 @@ Next MVPの明示開始Meeting Modeへ
     >に定義する。
   </p>
   <hr />
+  <h2 id="mvp-26--larm-provider-integration">MVP 2.6 — LARM Provider Integration</h2>
+  <p>
+    Local LLM Runtimeのmodel、port、service、起動停止をSAAAから分離し、LARMへ委譲する。 SAAAはTask
+    intentを<code>capability + route</code>へ変換し、allocationの取得、renew、release、
+    Gateway streaming、rollbackを所有する。
+  </p>
+  <p>
+    最初は<code>conversation.respond</code>だけを<code>llm.general + llm-default</code>へ接続し、
+    feature flag付きの非critical clientでcanaryする。STT / TTS、artifact
+    lifecycle、35B、multi-nodeは後続とする。 詳細は<a href="./mvp-2.6-implementation-plan.html"
+      ><code>mvp-2.6-implementation-plan.html</code></a
+    >に定義する。
+  </p>
+  <hr />
   <h2 id="mvp-3--contextstill-integration">MVP 3 — contextStill Integration</h2>
   <p>
     SituationとTaskから必要なKnowledge Contextを問い合わせ、Relevant ContextをPresentation /
@@ -1849,21 +1863,17 @@ health()
   <blockquote>
     <p>
       <strong
-        >MVP 1のSituation StateとShadow Policyを、まずMVP 1.5で評価・校正し、明示開始のMeeting
-        Modeへ接続する。Meeting中はLocal STTをCoreとし、Translation / Floating
-        Overlayはfeasibility確認後に追加する。TTSとinterruptive
-        presentationはPolicyで禁止する。</strong
+        >MVP 2.5のmanual acceptanceを未完了のまま保持しつつ、MVP 2.6でLARMをLocal Runtime allocation
+        Providerとして統合する。AI server停止中はcontract、state machine、fake
+        server、rollbackを実装し、 production contract確定とgnosis復旧後に一つのLLM
+        canaryだけを実行する。</strong
       >
     </p>
   </blockquote>
   <p>
-    MVP 1 Situation Shadow Modeは完了した。実装順序と検証結果は<a
-      href="./mvp-2-implementation-plan.html"
-      ><code>mvp-1-implementation-plan.md</code></a
-    >と<a href="./.archived/mvp-1-release-evidence.html"
-      ><code>mvp-1-release-evidence.md</code></a
-    >に保存する。次のMVP 1.5では、ledgerとfeedbackを使った校正・replay・品質基準を固定する。MVP
-    2ではその後、明示開始のMicrophone Meeting SessionをCoreとして実装し、System
-    Audio、Translation、Floating Overlayは個別のfeasibility gateを通過した場合だけ追加する。
+    MVP 2.5の自動実装と検証は完了しているが、Input Activity、Agent Run、real microphone / Whisper、
+    Meeting lifecycleのmanual evidenceは未完了であり、AcceptedまたはArchiveへ変更しない。MVP
+    2.6はこの状態を baselineとして別milestoneで進め、LARMの未commit WIPをproduction
+    contractにしない。LLM canary完了までは STT / TTSをLARMへ移行しない。
   </p>
 </article>
