@@ -1787,11 +1787,11 @@ async fn execute_conversation_turn(
         )
         .await
         {
-            Ok(content) => {
+            ProviderAttemptOutcome::Completed { content, .. } => {
                 finish_provider_session(state, &session_id, "completed", None)?;
                 return persist_conversation_success(state, input, &content);
             }
-            Err(ProviderAttemptError::Cancelled) => {
+            ProviderAttemptOutcome::Cancelled { .. } => {
                 finish_provider_session(
                     state,
                     &session_id,
@@ -1800,15 +1800,24 @@ async fn execute_conversation_turn(
                 )?;
                 return Err("Cancelled by user".to_string());
             }
-            Err(ProviderAttemptError::Failed(reason)) => {
-                let reason = redact_runtime_text(&reason);
-                finish_provider_session(state, &session_id, "failed", Some(&reason))?;
+            ProviderAttemptOutcome::Failed {
+                kind,
+                public_message,
+                output_started,
+                ..
+            } => {
+                let reason = public_message.as_str();
+                finish_provider_session(state, &session_id, "failed", Some(kind.as_str()))?;
                 let _ = on_event.send(RuntimeEvent::ProviderFailed {
                     run_id: input.run_id.clone(),
                     provider_id: provider.id.clone(),
-                    reason: reason.clone(),
+                    reason: reason.to_string(),
                 });
-                failures.push(format!("{}: {reason}", provider.id));
+                let failure = format!("{}: {reason}", provider.id);
+                if !provider_fallback_allowed(kind, output_started) {
+                    return Err(failure);
+                }
+                failures.push(failure);
             }
         }
     }
@@ -3128,34 +3137,170 @@ fn persist_conversation_success(
     Ok(message)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderFailureKind {
+    Authentication,
+    Contract,
+    Protocol,
+    RequestTooLarge,
+    Capacity,
+    Unavailable,
+    Upstream,
+    Network,
+    Timeout,
+    ClientDisconnected,
+    Internal,
+}
+
+impl ProviderFailureKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Authentication => "authentication",
+            Self::Contract => "contract",
+            Self::Protocol => "protocol",
+            Self::RequestTooLarge => "request-too-large",
+            Self::Capacity => "capacity",
+            Self::Unavailable => "unavailable",
+            Self::Upstream => "upstream",
+            Self::Network => "network",
+            Self::Timeout => "timeout",
+            Self::ClientDisconnected => "client-disconnected",
+            Self::Internal => "internal",
+        }
+    }
+
+    fn public_message(self) -> BoundedProviderMessage {
+        let message = match self {
+            Self::Authentication => {
+                "Provider authentication failed. Check the configured credential."
+            }
+            Self::Contract => "Provider settings or request contract are invalid.",
+            Self::Protocol => "Provider returned an invalid or incomplete response.",
+            Self::RequestTooLarge => "Provider request or response exceeded the configured limit.",
+            Self::Capacity => "Provider capacity is currently exhausted.",
+            Self::Unavailable => "Provider is currently unavailable.",
+            Self::Upstream => "Provider could not complete the upstream request.",
+            Self::Network => "Provider connection ended before the response completed.",
+            Self::Timeout => "Provider request reached its timeout.",
+            Self::ClientDisconnected => "The response consumer disconnected.",
+            Self::Internal => "SAAA could not complete the provider attempt.",
+        };
+        BoundedProviderMessage(message)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BoundedProviderMessage(&'static str);
+
+impl BoundedProviderMessage {
+    fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CleanupOutcome {
+    NotApplicable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ProviderAttemptOutcome {
+    Completed {
+        content: String,
+        cleanup: CleanupOutcome,
+    },
+    Cancelled {
+        output_started: bool,
+        cleanup: CleanupOutcome,
+    },
+    Failed {
+        kind: ProviderFailureKind,
+        public_message: BoundedProviderMessage,
+        output_started: bool,
+        cleanup: CleanupOutcome,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProviderAttemptError {
-    Cancelled,
-    Failed(String),
+    Cancelled {
+        output_started: bool,
+    },
+    Failed {
+        kind: ProviderFailureKind,
+        output_started: bool,
+    },
+}
+
+impl ProviderAttemptError {
+    fn failed(kind: ProviderFailureKind, output_started: bool) -> Self {
+        Self::Failed {
+            kind,
+            output_started,
+        }
+    }
+}
+
+fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {
+    !output_started
+        && matches!(
+            kind,
+            ProviderFailureKind::Capacity
+                | ProviderFailureKind::Unavailable
+                | ProviderFailureKind::Upstream
+                | ProviderFailureKind::Network
+                | ProviderFailureKind::Timeout
+        )
+}
+
+fn classify_reqwest_error(error: &reqwest::Error) -> ProviderFailureKind {
+    if error.is_timeout() {
+        ProviderFailureKind::Timeout
+    } else if error.is_builder() {
+        ProviderFailureKind::Internal
+    } else {
+        ProviderFailureKind::Network
+    }
+}
+
+fn classify_provider_status(status: reqwest::StatusCode) -> ProviderFailureKind {
+    match status.as_u16() {
+        401 | 403 => ProviderFailureKind::Authentication,
+        400 | 404 | 405 | 422 => ProviderFailureKind::Contract,
+        408 | 504 => ProviderFailureKind::Timeout,
+        409 | 429 => ProviderFailureKind::Capacity,
+        413 => ProviderFailureKind::RequestTooLarge,
+        502 => ProviderFailureKind::Upstream,
+        503 => ProviderFailureKind::Unavailable,
+        500..=599 => ProviderFailureKind::Upstream,
+        _ => ProviderFailureKind::Protocol,
+    }
 }
 
 async fn read_provider_body_limited(
     response: reqwest::Response,
     limit: usize,
     cancellation: &RunCancellation,
+    output_started: bool,
 ) -> Result<Vec<u8>, ProviderAttemptError> {
     let mut stream = response.bytes_stream();
     let mut body = Vec::new();
     loop {
         let next = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled),
+            _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled { output_started }),
             next = stream.next() => next,
         };
         let Some(chunk) = next else {
             return Ok(body);
         };
         let chunk = chunk.map_err(|error| {
-            ProviderAttemptError::Failed(format!("Could not read provider response: {error}"))
+            ProviderAttemptError::failed(classify_reqwest_error(&error), output_started)
         })?;
         if body.len().saturating_add(chunk.len()) > limit {
-            return Err(ProviderAttemptError::Failed(format!(
-                "Provider response exceeded the {limit} byte limit"
-            )));
+            return Err(ProviderAttemptError::failed(
+                ProviderFailureKind::RequestTooLarge,
+                output_started,
+            ));
         }
         body.extend_from_slice(&chunk);
     }
@@ -3168,9 +3313,44 @@ async fn stream_model_provider(
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
+) -> ProviderAttemptOutcome {
+    match stream_model_provider_inner(provider, history, timeout_ms, input, on_event, cancellation)
+        .await
+    {
+        Ok(content) => ProviderAttemptOutcome::Completed {
+            content,
+            cleanup: CleanupOutcome::NotApplicable,
+        },
+        Err(ProviderAttemptError::Cancelled { output_started }) => {
+            ProviderAttemptOutcome::Cancelled {
+                output_started,
+                cleanup: CleanupOutcome::NotApplicable,
+            }
+        }
+        Err(ProviderAttemptError::Failed {
+            kind,
+            output_started,
+        }) => ProviderAttemptOutcome::Failed {
+            kind,
+            public_message: kind.public_message(),
+            output_started,
+            cleanup: CleanupOutcome::NotApplicable,
+        },
+    }
+}
+
+async fn stream_model_provider_inner(
+    provider: &ModelProviderSettings,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
 ) -> Result<String, ProviderAttemptError> {
     if cancellation.is_cancelled() {
-        return Err(ProviderAttemptError::Cancelled);
+        return Err(ProviderAttemptError::Cancelled {
+            output_started: false,
+        });
     }
     let mut client = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
@@ -3178,9 +3358,9 @@ async fn stream_model_provider(
     if provider.location == "local" {
         client = client.no_proxy();
     }
-    let client = client.build().map_err(|error| {
-        ProviderAttemptError::Failed(format!("Could not initialize HTTP client: {error}"))
-    })?;
+    let client = client
+        .build()
+        .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Internal, false))?;
     let messages = history
         .iter()
         .filter_map(|message| {
@@ -3194,28 +3374,25 @@ async fn stream_model_provider(
         })
         .collect::<Vec<_>>();
     let mut request = client
-        .post(provider_chat_url(&provider.endpoint).map_err(ProviderAttemptError::Failed)?)
+        .post(
+            provider_chat_url(&provider.endpoint)
+                .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Contract, false))?,
+        )
         .json(&json!({ "model": provider.model, "messages": messages, "stream": true }));
     if let Some(api_key) = provider_api_key(provider) {
         request = request.bearer_auth(api_key);
     }
     let response = tokio::select! {
-        _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled),
+        _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled { output_started: false }),
         response = request.send() => response.map_err(|error| {
-            ProviderAttemptError::Failed(format!("Provider request failed: {error}"))
+            ProviderAttemptError::failed(classify_reqwest_error(&error), false)
         })?,
     };
     if !response.status().is_success() {
-        let status = response.status();
-        let body = match read_provider_body_limited(response, 8_192, &cancellation).await {
-            Ok(body) => String::from_utf8_lossy(&body).into_owned(),
-            Err(ProviderAttemptError::Cancelled) => return Err(ProviderAttemptError::Cancelled),
-            Err(ProviderAttemptError::Failed(error)) => format!("<{error}>"),
-        };
-        return Err(ProviderAttemptError::Failed(format!(
-            "Provider returned {status}: {}",
-            bounded_text(&body, 800)
-        )));
+        return Err(ProviderAttemptError::failed(
+            classify_provider_status(response.status()),
+            false,
+        ));
     }
     let content_type = response
         .headers()
@@ -3224,28 +3401,34 @@ async fn stream_model_provider(
         .unwrap_or_default()
         .to_string();
     if content_type.contains("application/json") {
-        let body = read_provider_body_limited(response, 1_048_576, &cancellation).await?;
-        let response: Value = serde_json::from_slice(&body).map_err(|error| {
-            ProviderAttemptError::Failed(format!("Invalid provider JSON: {error}"))
-        })?;
+        let body = read_provider_body_limited(response, 1_048_576, &cancellation, false).await?;
+        let response: Value = serde_json::from_slice(&body)
+            .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Protocol, false))?;
         let content = response
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                ProviderAttemptError::Failed(
-                    "Provider response did not contain message content".to_string(),
-                )
-            })?;
+            .ok_or_else(|| ProviderAttemptError::failed(ProviderFailureKind::Protocol, false))?;
         if content.chars().count() > 64_000 {
-            return Err(ProviderAttemptError::Failed(
-                "Provider response exceeded the 64,000 character limit".to_string(),
+            return Err(ProviderAttemptError::failed(
+                ProviderFailureKind::RequestTooLarge,
+                false,
             ));
         }
         let content = content.to_string();
-        let _ = on_event.send(RuntimeEvent::Delta {
-            run_id: input.run_id.clone(),
-            text: content.clone(),
-        });
+        if content.trim().is_empty() {
+            return Err(ProviderAttemptError::failed(
+                ProviderFailureKind::Protocol,
+                false,
+            ));
+        }
+        on_event
+            .send(RuntimeEvent::Delta {
+                run_id: input.run_id.clone(),
+                text: content.clone(),
+            })
+            .map_err(|_| {
+                ProviderAttemptError::failed(ProviderFailureKind::ClientDisconnected, true)
+            })?;
         return Ok(content);
     }
 
@@ -3253,21 +3436,26 @@ async fn stream_model_provider(
     let mut buffer = Vec::new();
     let mut content = String::new();
     let mut content_chars = 0_usize;
+    let mut output_started = false;
+    let mut stream_completed = false;
     loop {
         if cancellation.is_cancelled() {
-            return Err(ProviderAttemptError::Cancelled);
+            return Err(ProviderAttemptError::Cancelled { output_started });
         }
         let next = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled),
+            _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled { output_started }),
             next = stream.next() => next,
         };
         let Some(chunk) = next else {
             if !buffer.is_empty() {
                 buffer.extend_from_slice(b"\n\n");
-                let _ = project_sse_events(
-                    drain_sse_events(&mut buffer).map_err(ProviderAttemptError::Failed)?,
+                stream_completed = project_sse_events(
+                    drain_sse_events(&mut buffer).map_err(|_| {
+                        ProviderAttemptError::failed(ProviderFailureKind::Protocol, output_started)
+                    })?,
                     &mut content,
                     &mut content_chars,
+                    &mut output_started,
                     input,
                     on_event,
                 )?;
@@ -3275,28 +3463,40 @@ async fn stream_model_provider(
             break;
         };
         let chunk = chunk.map_err(|error| {
-            ProviderAttemptError::Failed(format!("Provider stream failed: {error}"))
+            ProviderAttemptError::failed(classify_reqwest_error(&error), output_started)
         })?;
         buffer.extend_from_slice(&chunk);
         if buffer.len() > 1_048_576 {
-            return Err(ProviderAttemptError::Failed(
-                "Provider stream event exceeded the 1 MiB limit".to_string(),
+            return Err(ProviderAttemptError::failed(
+                ProviderFailureKind::RequestTooLarge,
+                output_started,
             ));
         }
         let stream_done = project_sse_events(
-            drain_sse_events(&mut buffer).map_err(ProviderAttemptError::Failed)?,
+            drain_sse_events(&mut buffer).map_err(|_| {
+                ProviderAttemptError::failed(ProviderFailureKind::Protocol, output_started)
+            })?,
             &mut content,
             &mut content_chars,
+            &mut output_started,
             input,
             on_event,
         )?;
         if stream_done {
+            stream_completed = true;
             break;
         }
     }
+    if !stream_completed {
+        return Err(ProviderAttemptError::failed(
+            ProviderFailureKind::Network,
+            output_started,
+        ));
+    }
     if content.trim().is_empty() {
-        return Err(ProviderAttemptError::Failed(
-            "Provider stream completed without text".to_string(),
+        return Err(ProviderAttemptError::failed(
+            ProviderFailureKind::Protocol,
+            false,
         ));
     }
     Ok(content)
@@ -3330,6 +3530,7 @@ fn project_sse_events(
     events: Vec<String>,
     content: &mut String,
     content_chars: &mut usize,
+    output_started: &mut bool,
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
 ) -> Result<bool, ProviderAttemptError> {
@@ -3339,26 +3540,35 @@ fn project_sse_events(
             if data == "[DONE]" {
                 return Ok(true);
             }
-            let value: Value = serde_json::from_str(data).map_err(|error| {
-                ProviderAttemptError::Failed(format!("Invalid provider stream event: {error}"))
+            let value: Value = serde_json::from_str(data).map_err(|_| {
+                ProviderAttemptError::failed(ProviderFailureKind::Protocol, *output_started)
             })?;
             if let Some(delta) = value
                 .pointer("/choices/0/delta/content")
                 .and_then(Value::as_str)
             {
                 let delta_chars = delta.chars().count();
+                if delta_chars == 0 {
+                    continue;
+                }
                 let remaining = 64_000usize.saturating_sub(*content_chars);
                 if remaining == 0 || delta_chars > remaining {
-                    return Err(ProviderAttemptError::Failed(
-                        "Provider response exceeded the 64,000 character limit".to_string(),
+                    return Err(ProviderAttemptError::failed(
+                        ProviderFailureKind::RequestTooLarge,
+                        *output_started,
                     ));
                 }
                 content.push_str(delta);
                 *content_chars += delta_chars;
-                let _ = on_event.send(RuntimeEvent::Delta {
-                    run_id: input.run_id.clone(),
-                    text: delta.to_string(),
-                });
+                *output_started = true;
+                on_event
+                    .send(RuntimeEvent::Delta {
+                        run_id: input.run_id.clone(),
+                        text: delta.to_string(),
+                    })
+                    .map_err(|_| {
+                        ProviderAttemptError::failed(ProviderFailureKind::ClientDisconnected, true)
+                    })?;
             }
         }
     }
@@ -5942,12 +6152,10 @@ mod tests {
             &channel,
             Arc::new(RunCancellation::default()),
         )
-        .await
-        .map_err(|error| match error {
-            ProviderAttemptError::Cancelled => "cancelled".to_string(),
-            ProviderAttemptError::Failed(message) => message,
-        })
-        .expect("provider stream succeeds");
+        .await;
+        let ProviderAttemptOutcome::Completed { content, .. } = content else {
+            panic!("provider stream should complete");
+        };
         server.join().expect("fixture server joins");
         assert_eq!(content, "hello world");
         assert!(request_body
@@ -5963,6 +6171,88 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn provider_fallback_policy_is_failure_kind_and_output_aware() {
+        for kind in [
+            ProviderFailureKind::Capacity,
+            ProviderFailureKind::Unavailable,
+            ProviderFailureKind::Upstream,
+            ProviderFailureKind::Network,
+            ProviderFailureKind::Timeout,
+        ] {
+            assert!(provider_fallback_allowed(kind, false), "{}", kind.as_str());
+            assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
+        }
+        for kind in [
+            ProviderFailureKind::Authentication,
+            ProviderFailureKind::Contract,
+            ProviderFailureKind::Protocol,
+            ProviderFailureKind::RequestTooLarge,
+            ProviderFailureKind::ClientDisconnected,
+            ProviderFailureKind::Internal,
+        ] {
+            assert!(!provider_fallback_allowed(kind, false), "{}", kind.as_str());
+            assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_stream_stops_when_the_tauri_consumer_disconnects() {
+        use std::io::{Read, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("fixture accepts request");
+            let mut request = [0; 4_096];
+            let _ = socket.read(&mut request).expect("fixture reads request");
+            socket
+                .write_all(
+                    concat!(
+                        "HTTP/1.1 200 OK\r\n",
+                        "Content-Type: text/event-stream\r\n",
+                        "Connection: close\r\n\r\n",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"ignored\"}}]}\n\n",
+                        "data: [DONE]\n\n"
+                    )
+                    .as_bytes(),
+                )
+                .expect("fixture writes response");
+        });
+        let provider = ModelProviderSettings {
+            endpoint: format!("http://{address}/v1"),
+            ..provider("consumer-disconnect", "local")
+        };
+        let input = StartTurnInput {
+            run_id: "run-consumer-disconnect".to_string(),
+            conversation_id: "conversation-consumer-disconnect".to_string(),
+            content: "hello".to_string(),
+            workspace_path: None,
+        };
+        let channel: tauri::ipc::Channel<RuntimeEvent> =
+            tauri::ipc::Channel::new(|_| Err(tauri::Error::Io(std::io::Error::other("closed"))));
+        let outcome = stream_model_provider(
+            &provider,
+            &[],
+            2_000,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+        )
+        .await;
+        server.join().expect("fixture server joins");
+        assert!(matches!(
+            outcome,
+            ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::ClientDisconnected,
+                output_started: true,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -6017,7 +6307,7 @@ mod tests {
             workspace_path: None,
         };
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
-        let error = stream_model_provider(
+        let outcome = stream_model_provider(
             &provider,
             &[],
             2_000,
@@ -6025,13 +6315,16 @@ mod tests {
             &channel,
             Arc::new(RunCancellation::default()),
         )
-        .await
-        .expect_err("redirect response is rejected");
+        .await;
         source_server.join().expect("source server joins");
         target_server.join().expect("target server joins");
         assert!(matches!(
-            error,
-            ProviderAttemptError::Failed(message) if message.contains("307")
+            outcome,
+            ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::Protocol,
+                output_started: false,
+                ..
+            }
         ));
         assert!(!target_hit.load(Ordering::SeqCst));
     }
@@ -6173,6 +6466,131 @@ mod tests {
             *completed_states.lock().expect("completed state lock"),
             vec!["completed"]
         );
+    }
+
+    #[tokio::test]
+    async fn partial_provider_stream_never_reaches_the_fallback_provider() {
+        use std::io::{ErrorKind, Read, Write as _};
+        use std::net::TcpListener;
+
+        let primary = TcpListener::bind("127.0.0.1:0").expect("primary binds");
+        let primary_address = primary.local_addr().expect("primary address");
+        let primary_server = thread::spawn(move || {
+            let (mut socket, _) = primary.accept().expect("primary accepts request");
+            let mut request = [0; 8_192];
+            let _ = socket.read(&mut request).expect("primary reads request");
+            socket
+                .write_all(
+                    concat!(
+                        "HTTP/1.1 200 OK\r\n",
+                        "Content-Type: text/event-stream\r\n",
+                        "Connection: close\r\n\r\n",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
+                    )
+                    .as_bytes(),
+                )
+                .expect("primary writes partial response");
+        });
+
+        let fallback = TcpListener::bind("127.0.0.1:0").expect("fallback binds");
+        let fallback_address = fallback.local_addr().expect("fallback address");
+        fallback
+            .set_nonblocking(true)
+            .expect("fallback becomes nonblocking");
+        let fallback_hit = Arc::new(AtomicBool::new(false));
+        let fallback_hit_for_server = fallback_hit.clone();
+        let fallback_server = thread::spawn(move || {
+            let started = std::time::Instant::now();
+            while started.elapsed() < Duration::from_millis(500) {
+                match fallback.accept() {
+                    Ok(_) => {
+                        fallback_hit_for_server.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let state = app_state(connection);
+        state
+            .connection
+            .lock()
+            .expect("database lock")
+            .execute(
+                "INSERT INTO conversations(id, task_mode, created_at, updated_at)
+                 VALUES('conversation-partial', 'conversation', '1', '1')",
+                [],
+            )
+            .expect("conversation inserts");
+        let mut documents = default_settings_input();
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.model")
+            .expect("provider settings")
+            .value_json = json!({ "providers": [{
+            "id": "partial-primary", "enabled": true, "label": "Partial primary", "location": "local",
+            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "credentialStatus": "not-configured"
+        }, {
+            "id": "forbidden-fallback", "enabled": true, "label": "Forbidden fallback", "location": "local",
+            "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "credentialStatus": "not-configured"
+        }]});
+        let route = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing settings");
+        route.value_json["conversationRespond"]["primaryProviderId"] = json!("partial-primary");
+        route.value_json["conversationRespond"]["fallbackProviderIds"] =
+            json!(["forbidden-fallback"]);
+        save_settings_documents_to_connection(
+            &mut state.connection.lock().expect("database lock"),
+            &documents,
+        )
+        .expect("settings save");
+        let input = StartTurnInput {
+            run_id: "run-partial".to_string(),
+            conversation_id: "conversation-partial".to_string(),
+            content: "partial test".to_string(),
+            workspace_path: None,
+        };
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+        execute_turn(
+            &state,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+            None,
+        )
+        .await
+        .expect_err("partial stream fails the turn");
+        primary_server.join().expect("primary server joins");
+        fallback_server.join().expect("fallback server joins");
+
+        assert!(!fallback_hit.load(Ordering::SeqCst));
+        let connection = state.connection.lock().expect("database lock");
+        let assistant_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages
+                 WHERE conversation_id='conversation-partial' AND role='assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("assistant count reads");
+        let (session_count, failure_reason): (i64, String) = connection
+            .query_row(
+                "SELECT COUNT(*), MAX(failure_reason) FROM provider_sessions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("provider session reads");
+        assert_eq!(assistant_count, 0);
+        assert_eq!(session_count, 1);
+        assert_eq!(failure_reason, "network");
     }
 
     #[test]
