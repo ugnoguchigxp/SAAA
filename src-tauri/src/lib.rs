@@ -274,9 +274,8 @@ impl From<String> for TurnExecutionFailure {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-struct ModelProviderSettings {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpenAiCompatibleProviderSettings {
     id: String,
     enabled: bool,
     label: String,
@@ -284,6 +283,74 @@ struct ModelProviderSettings {
     endpoint: String,
     model: String,
     credential_status: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LarmProviderSettings {
+    id: String,
+    enabled: bool,
+    label: String,
+    location: String,
+    base_url: String,
+    token_env: String,
+    allocation_ttl_seconds: u32,
+    allocation_startup_timeout_seconds: u32,
+    allow_fallback_by_default: bool,
+    deployment_policy: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+enum ModelProviderSettings {
+    #[serde(rename = "openai-compatible")]
+    OpenAiCompatible(OpenAiCompatibleProviderSettings),
+    #[serde(rename = "larm")]
+    Larm(LarmProviderSettings),
+}
+
+impl ModelProviderSettings {
+    fn id(&self) -> &str {
+        match self {
+            Self::OpenAiCompatible(provider) => &provider.id,
+            Self::Larm(provider) => &provider.id,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        match self {
+            Self::OpenAiCompatible(provider) => provider.enabled,
+            Self::Larm(provider) => provider.enabled,
+        }
+    }
+
+    fn label(&self) -> &str {
+        match self {
+            Self::OpenAiCompatible(provider) => &provider.label,
+            Self::Larm(provider) => &provider.label,
+        }
+    }
+
+    fn location(&self) -> &str {
+        match self {
+            Self::OpenAiCompatible(provider) => &provider.location,
+            Self::Larm(provider) => &provider.location,
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible(_) => "openai-compatible",
+            Self::Larm(_) => "larm",
+        }
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        match self {
+            Self::OpenAiCompatible(provider) => provider.enabled = enabled,
+            Self::Larm(provider) => provider.enabled = enabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -802,15 +869,20 @@ async fn test_model_provider(
     input: TestProviderInput,
 ) -> Result<ProviderTestResult, String> {
     let mut provider = input.provider;
-    provider.enabled = true;
-    validate_identifier(&provider.id, "provider id")?;
+    provider.set_enabled(true);
+    validate_identifier(provider.id(), "provider id")?;
     validate_model_providers(&ModelProvidersSettings {
         providers: vec![provider.clone()],
     })?;
     let started = std::time::Instant::now();
-    let result = probe_model_provider(&provider).await;
+    let result = match &provider {
+        ModelProviderSettings::OpenAiCompatible(provider) => probe_model_provider(provider).await,
+        ModelProviderSettings::Larm(_) => Err(
+            "LARM connection testing is unavailable until the G1 API contract is fixed".to_string(),
+        ),
+    };
     Ok(ProviderTestResult {
-        provider_id: provider.id,
+        provider_id: provider.id().to_string(),
         ok: result.is_ok(),
         message: result.unwrap_or_else(|error| redact_runtime_text(&error)),
         latency_ms: started.elapsed().as_millis(),
@@ -1764,29 +1836,42 @@ async fn execute_conversation_turn(
         let Some(provider) = providers
             .providers
             .iter()
-            .find(|provider| provider.id == provider_id && provider.enabled)
+            .find(|provider| provider.id() == provider_id && provider.enabled())
             .cloned()
         else {
             failures.push(format!("{provider_id}: provider is disabled or missing"));
             continue;
         };
-        update_runtime_provider(state, &input.run_id, &provider.id)?;
-        let session_id = begin_provider_session(state, &provider.id)?;
+        update_runtime_provider(state, &input.run_id, provider.id())?;
+        let session_id =
+            begin_provider_session(state, &input.run_id, provider.id(), provider.kind())?;
         let _ = on_event.send(RuntimeEvent::Started {
             run_id: input.run_id.clone(),
             route: "conversation.respond".to_string(),
-            provider_id: provider.id.clone(),
+            provider_id: provider.id().to_string(),
         });
-        match stream_model_provider(
-            &provider,
-            &history,
-            route.timeout_ms,
-            input,
-            on_event,
-            cancellation.clone(),
-        )
-        .await
-        {
+        let outcome = match &provider {
+            ModelProviderSettings::OpenAiCompatible(provider) => {
+                stream_model_provider(
+                    provider,
+                    &history,
+                    route.timeout_ms,
+                    input,
+                    on_event,
+                    cancellation.clone(),
+                )
+                .await
+            }
+            ModelProviderSettings::Larm(_) => ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::Unavailable,
+                public_message: BoundedProviderMessage(
+                    "LARM is disabled until its production API contract is fixed.",
+                ),
+                output_started: false,
+                cleanup: CleanupOutcome::NotApplicable,
+            },
+        };
+        match outcome {
             ProviderAttemptOutcome::Completed { content, .. } => {
                 finish_provider_session(state, &session_id, "completed", None)?;
                 return persist_conversation_success(state, input, &content);
@@ -1810,10 +1895,10 @@ async fn execute_conversation_turn(
                 finish_provider_session(state, &session_id, "failed", Some(kind.as_str()))?;
                 let _ = on_event.send(RuntimeEvent::ProviderFailed {
                     run_id: input.run_id.clone(),
-                    provider_id: provider.id.clone(),
+                    provider_id: provider.id().to_string(),
                     reason: reason.to_string(),
                 });
-                let failure = format!("{}: {reason}", provider.id);
+                let failure = format!("{}: {reason}", provider.id());
                 if !provider_fallback_allowed(kind, output_started) {
                     return Err(failure);
                 }
@@ -2947,8 +3032,8 @@ fn effective_conversation_route_ids(
     let primary_is_local = providers
         .providers
         .iter()
-        .find(|provider| provider.id == route.primary_provider_id)
-        .is_some_and(|provider| provider.location == "local");
+        .find(|provider| provider.id() == route.primary_provider_id)
+        .is_some_and(|provider| provider.location() == "local");
     std::iter::once(route.primary_provider_id.clone())
         .chain(route.fallback_provider_ids.iter().cloned())
         .filter(|provider_id| {
@@ -2956,8 +3041,8 @@ fn effective_conversation_route_ids(
                 || providers
                     .providers
                     .iter()
-                    .find(|provider| provider.id == *provider_id)
-                    .is_none_or(|provider| provider.location == "local")
+                    .find(|provider| provider.id() == *provider_id)
+                    .is_none_or(|provider| provider.location() == "local")
         })
         .collect()
 }
@@ -3036,7 +3121,12 @@ fn update_runtime_provider(
     Ok(())
 }
 
-fn begin_provider_session(state: &AppState, provider_id: &str) -> Result<String, String> {
+fn begin_provider_session(
+    state: &AppState,
+    runtime_run_id: &str,
+    provider_id: &str,
+    provider_kind: &str,
+) -> Result<String, String> {
     let session_id = new_id("provider-session");
     let now = now_iso();
     let connection = state
@@ -3045,9 +3135,10 @@ fn begin_provider_session(state: &AppState, provider_id: &str) -> Result<String,
         .map_err(|_| "Database lock unavailable".to_string())?;
     connection
         .execute(
-            "INSERT INTO provider_sessions(id, provider_id, status, started_at, updated_at)
-             VALUES (?1, ?2, 'running', ?3, ?3)",
-            params![session_id, provider_id, now],
+            "INSERT INTO provider_sessions(
+               id, runtime_run_id, provider_id, provider_kind, status, started_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, 'running', ?5, ?5)",
+            params![session_id, runtime_run_id, provider_id, provider_kind, now],
         )
         .map_err(database_error)?;
     Ok(session_id)
@@ -3307,7 +3398,7 @@ async fn read_provider_body_limited(
 }
 
 async fn stream_model_provider(
-    provider: &ModelProviderSettings,
+    provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
     timeout_ms: u64,
     input: &StartTurnInput,
@@ -3340,7 +3431,7 @@ async fn stream_model_provider(
 }
 
 async fn stream_model_provider_inner(
-    provider: &ModelProviderSettings,
+    provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
     timeout_ms: u64,
     input: &StartTurnInput,
@@ -3575,7 +3666,9 @@ fn project_sse_events(
     Ok(false)
 }
 
-async fn probe_model_provider(provider: &ModelProviderSettings) -> Result<String, String> {
+async fn probe_model_provider(
+    provider: &OpenAiCompatibleProviderSettings,
+) -> Result<String, String> {
     let mut client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none());
@@ -3627,7 +3720,7 @@ fn provider_operation_url(endpoint: &str, operation: &str) -> Result<String, Str
     Ok(url.to_string())
 }
 
-fn provider_api_key(provider: &ModelProviderSettings) -> Option<String> {
+fn provider_api_key(provider: &OpenAiCompatibleProviderSettings) -> Option<String> {
     let suffix = provider_environment_suffix(&provider.id);
     env::var(format!("SAAA_PROVIDER_{suffix}_API_KEY"))
         .ok()
@@ -4354,6 +4447,21 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS provider_sessions (
            id TEXT PRIMARY KEY,
            provider_id TEXT NOT NULL,
+           runtime_run_id TEXT CHECK(runtime_run_id IS NULL OR length(runtime_run_id) BETWEEN 1 AND 160),
+           provider_kind TEXT CHECK(provider_kind IS NULL OR provider_kind IN ('openai-compatible', 'larm')),
+           route_id TEXT CHECK(route_id IS NULL OR length(route_id) BETWEEN 1 AND 160),
+           allocation_id TEXT CHECK(allocation_id IS NULL OR length(allocation_id) BETWEEN 1 AND 256),
+           selected_runtime_id TEXT CHECK(selected_runtime_id IS NULL OR length(selected_runtime_id) BETWEEN 1 AND 256),
+           fallback_used INTEGER NOT NULL DEFAULT 0 CHECK(fallback_used IN (0,1)),
+           selection_reason TEXT CHECK(selection_reason IS NULL OR selection_reason IN ('primary', 'fallback')),
+           request_id TEXT CHECK(request_id IS NULL OR length(request_id) BETWEEN 1 AND 256),
+           output_started INTEGER NOT NULL DEFAULT 0 CHECK(output_started IN (0,1)),
+           failure_kind TEXT CHECK(failure_kind IS NULL OR failure_kind IN (
+             'authentication','capacity','unavailable','upstream','network','timeout','contract',
+             'protocol','request-too-large','client-disconnected','allocation-expired','lease-invalid','internal'
+           )),
+           release_status TEXT NOT NULL DEFAULT 'not-applicable' CHECK(release_status IN ('not-applicable','pending','released','failed')),
+           release_failure_kind TEXT CHECK(release_failure_kind IS NULL OR release_failure_kind IN ('network','timeout','authentication','protocol','upstream','internal')),
            status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')),
            failure_reason TEXT,
            started_at TEXT NOT NULL,
@@ -4442,7 +4550,8 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     migrate_legacy_settings_documents(&transaction)?;
     migrate_v4_to_v5(&transaction)?;
     migrate_v6_to_v7(&transaction)?;
-    transaction.execute("UPDATE settings_documents SET schema_version = 7, updated_at = ?1 WHERE schema_version < 7", params![now_iso()])?;
+    migrate_v7_to_v8(&transaction)?;
+    transaction.execute("UPDATE settings_documents SET schema_version = 8, updated_at = ?1 WHERE schema_version < 8", params![now_iso()])?;
 
     for (namespace, key, schema_version, value) in default_settings_documents() {
         transaction.execute(
@@ -4453,7 +4562,7 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     }
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
-    transaction.pragma_update(None, "user_version", 7)?;
+    transaction.pragma_update(None, "user_version", 8)?;
     transaction.commit()
 }
 
@@ -4512,6 +4621,7 @@ fn migrate_v6_to_v7(connection: &Connection) -> rusqlite::Result<()> {
         }
     }
     for (namespace, key, _, template) in default_settings_documents() {
+        let template = settings_template_for_v7(namespace, template);
         let legacy: Option<String> = connection
             .query_row(
                 "SELECT value_json FROM settings_documents
@@ -4534,6 +4644,120 @@ fn migrate_v6_to_v7(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute(
             "UPDATE settings_documents
              SET schema_version=7, value_json=?1, updated_at=?2
+             WHERE namespace=?3 AND key=?4",
+            params![normalized.to_string(), now_iso(), namespace, key],
+        )?;
+    }
+    Ok(())
+}
+
+fn settings_template_for_v7(namespace: &str, mut template: Value) -> Value {
+    if namespace == "providers.model" {
+        if let Some(providers) = template.get_mut("providers").and_then(Value::as_array_mut) {
+            for provider in providers {
+                if let Some(provider) = provider.as_object_mut() {
+                    provider.remove("kind");
+                }
+            }
+        }
+    }
+    template
+}
+
+fn migrate_v7_to_v8(connection: &Connection) -> rusqlite::Result<()> {
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= 8 {
+        return Ok(());
+    }
+    for (column, definition) in [
+        (
+            "runtime_run_id",
+            "TEXT CHECK(runtime_run_id IS NULL OR length(runtime_run_id) BETWEEN 1 AND 160)",
+        ),
+        (
+            "provider_kind",
+            "TEXT CHECK(provider_kind IS NULL OR provider_kind IN ('openai-compatible', 'larm'))",
+        ),
+        (
+            "route_id",
+            "TEXT CHECK(route_id IS NULL OR length(route_id) BETWEEN 1 AND 160)",
+        ),
+        (
+            "allocation_id",
+            "TEXT CHECK(allocation_id IS NULL OR length(allocation_id) BETWEEN 1 AND 256)",
+        ),
+        (
+            "selected_runtime_id",
+            "TEXT CHECK(selected_runtime_id IS NULL OR length(selected_runtime_id) BETWEEN 1 AND 256)",
+        ),
+        (
+            "fallback_used",
+            "INTEGER NOT NULL DEFAULT 0 CHECK(fallback_used IN (0,1))",
+        ),
+        (
+            "selection_reason",
+            "TEXT CHECK(selection_reason IS NULL OR selection_reason IN ('primary', 'fallback'))",
+        ),
+        (
+            "request_id",
+            "TEXT CHECK(request_id IS NULL OR length(request_id) BETWEEN 1 AND 256)",
+        ),
+        (
+            "output_started",
+            "INTEGER NOT NULL DEFAULT 0 CHECK(output_started IN (0,1))",
+        ),
+        (
+            "failure_kind",
+            "TEXT CHECK(failure_kind IS NULL OR failure_kind IN ('authentication','capacity','unavailable','upstream','network','timeout','contract','protocol','request-too-large','client-disconnected','allocation-expired','lease-invalid','internal'))",
+        ),
+        (
+            "release_status",
+            "TEXT NOT NULL DEFAULT 'not-applicable' CHECK(release_status IN ('not-applicable','pending','released','failed'))",
+        ),
+        (
+            "release_failure_kind",
+            "TEXT CHECK(release_failure_kind IS NULL OR release_failure_kind IN ('network','timeout','authentication','protocol','upstream','internal'))",
+        ),
+    ] {
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('provider_sessions') WHERE name=?1)",
+            [column],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            connection.execute_batch(&format!(
+                "ALTER TABLE provider_sessions ADD COLUMN {column} {definition};"
+            ))?;
+        }
+    }
+    connection.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_provider_sessions_runtime_run
+         ON provider_sessions(runtime_run_id);",
+    )?;
+
+    for (namespace, key, _, template) in default_settings_documents() {
+        let legacy: Option<String> = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents
+                 WHERE namespace=?1 AND key=?2 AND schema_version < 8",
+                params![namespace, key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(legacy) = legacy else {
+            continue;
+        };
+        let value: Value = serde_json::from_str(&legacy).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        let normalized = normalize_json_to_template(&value, &template);
+        connection.execute(
+            "UPDATE settings_documents
+             SET schema_version=8, value_json=?1, updated_at=?2
              WHERE namespace=?3 AND key=?4",
             params![normalized.to_string(), now_iso(), namespace, key],
         )?;
@@ -4585,7 +4809,7 @@ fn backup_before_migration(
     let has_data = fs::metadata(database_path)
         .map(|metadata| metadata.len() > 0)
         .unwrap_or(false);
-    if !has_data || version >= 7 {
+    if !has_data || version >= 8 {
         return Ok(None);
     }
     let directory = database_path
@@ -4604,9 +4828,10 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "providers.model",
             "default",
-            7,
+            8,
             json!({
                 "providers": [{
+                    "kind": "openai-compatible",
                     "id": "local-openai-compatible",
                     "enabled": false,
                     "label": "Local OpenAI-compatible",
@@ -4620,7 +4845,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "providers.agent",
             "codex-sdk",
-            7,
+            8,
             json!({
                 "enabled": false,
                 "provider": "codex-sdk",
@@ -4637,7 +4862,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "routing.tasks",
             "default",
-            7,
+            8,
             json!({
                 "conversationRespond": {
                     "primaryProviderId": "local-openai-compatible",
@@ -4656,7 +4881,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "voice.runtime",
             "default",
-            7,
+            8,
             json!({
                 "inputDeviceId": "default",
                 "outputDeviceId": "default",
@@ -4672,7 +4897,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "security.runtime",
             "default",
-            7,
+            8,
             json!({
                 "credentialStorage": "environment",
                 "localOnlyWhenSelected": true,
@@ -4682,7 +4907,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "situation.runtime",
             "default",
-            7,
+            8,
             serde_json::to_value(situation::contracts::SituationRuntimeSettings::default())
                 .expect("default Situation settings serialize"),
         ),
@@ -4801,7 +5026,7 @@ fn validate_settings_document(input: &SaveSettingsDocumentInput) -> Result<(), S
     if !allowed {
         return Err("Unsupported settings document".to_string());
     }
-    if input.schema_version != 7 || !input.value_json.is_object() {
+    if input.schema_version != 8 || !input.value_json.is_object() {
         return Err("Invalid settings schema".to_string());
     }
     match (input.namespace.as_str(), input.key.as_str()) {
@@ -4877,8 +5102,8 @@ fn validate_settings_batch(documents: &[SaveSettingsDocumentInput]) -> Result<()
     let enabled_ids = providers
         .providers
         .iter()
-        .filter(|provider| provider.enabled)
-        .map(|provider| provider.id.as_str())
+        .filter(|provider| provider.enabled())
+        .map(ModelProviderSettings::id)
         .collect::<std::collections::HashSet<_>>();
     if !enabled_ids.is_empty()
         && !enabled_ids.contains(routing.conversation_respond.primary_provider_id.as_str())
@@ -4895,13 +5120,13 @@ fn validate_settings_batch(documents: &[SaveSettingsDocumentInput]) -> Result<()
             return Err(format!("Duplicate provider in route: {provider_id}"));
         }
         let primary_is_local = providers.providers.iter().any(|provider| {
-            provider.id == routing.conversation_respond.primary_provider_id
-                && provider.location == "local"
+            provider.id() == routing.conversation_respond.primary_provider_id
+                && provider.location() == "local"
         });
         let fallback_is_cloud = providers
             .providers
             .iter()
-            .any(|provider| provider.id == *provider_id && provider.location == "cloud");
+            .any(|provider| provider.id() == *provider_id && provider.location() == "cloud");
         if security.local_only_when_selected && primary_is_local && fallback_is_cloud {
             return Err(format!(
                 "Cloud fallback is blocked while the local-only policy is active: {provider_id}"
@@ -4917,75 +5142,114 @@ fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), Str
     }
     let mut ids = std::collections::HashSet::new();
     let mut credential_suffixes = std::collections::HashSet::new();
+    let mut enabled_larm_count = 0;
     for provider in &settings.providers {
-        if provider.id.is_empty()
-            || provider.id.len() > 80
-            || !provider.id.chars().all(|character| {
+        let provider_id = provider.id();
+        if provider_id.is_empty()
+            || provider_id.len() > 80
+            || !provider_id.chars().all(|character| {
                 character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
             })
-            || !ids.insert(&provider.id)
-            || !credential_suffixes.insert(provider_environment_suffix(&provider.id))
+            || !ids.insert(provider_id)
+            || !credential_suffixes.insert(provider_environment_suffix(provider_id))
         {
             return Err("Invalid, duplicate, or credential-ambiguous provider id".to_string());
         }
-        if provider.label.trim().is_empty()
-            || provider.label.len() > 120
-            || provider.label.chars().any(char::is_control)
+        if provider.label().trim().is_empty()
+            || provider.label().len() > 120
+            || provider.label().chars().any(char::is_control)
         {
-            return Err(format!("Invalid provider label: {}", provider.id));
+            return Err(format!("Invalid provider label: {provider_id}"));
         }
-        if !matches!(provider.location.as_str(), "local" | "cloud") {
-            return Err(format!("Invalid provider location: {}", provider.id));
+        if !matches!(provider.location(), "local" | "cloud") {
+            return Err(format!("Invalid provider location: {provider_id}"));
         }
-        if !matches!(
-            provider.credential_status.as_str(),
-            "not-configured" | "configured"
-        ) {
-            return Err(format!("Invalid credential status: {}", provider.id));
-        }
-        if provider.endpoint.len() > 2_048
-            || provider.model.len() > 160
-            || provider.model.chars().any(char::is_control)
-        {
-            return Err(format!(
-                "Provider endpoint or model is too long: {}",
-                provider.id
-            ));
-        }
-        if provider.enabled {
-            if provider.endpoint.trim().is_empty() || provider.model.trim().is_empty() {
-                return Err(format!(
-                    "Enabled provider requires endpoint and model: {}",
-                    provider.id
-                ));
-            }
-            let endpoint = url::Url::parse(&provider.endpoint)
-                .map_err(|_| format!("Invalid provider endpoint: {}", provider.id))?;
-            if !endpoint.username().is_empty() || endpoint.password().is_some() {
-                return Err(format!(
-                    "Provider credentials must not be embedded in the endpoint: {}",
-                    provider.id
-                ));
-            }
-            if !matches!(endpoint.scheme(), "http" | "https") {
-                return Err(format!(
-                    "Provider endpoint must use HTTP or HTTPS: {}",
-                    provider.id
-                ));
-            }
-            if provider.location == "local" {
-                let host = endpoint.host_str().unwrap_or_default();
-                if endpoint.scheme() != "http" || !matches!(host, "localhost" | "127.0.0.1" | "::1")
+        match provider {
+            ModelProviderSettings::OpenAiCompatible(provider) => {
+                if !matches!(
+                    provider.credential_status.as_str(),
+                    "not-configured" | "configured"
+                ) {
+                    return Err(format!("Invalid credential status: {provider_id}"));
+                }
+                if provider.endpoint.len() > 2_048
+                    || provider.model.len() > 160
+                    || provider.model.chars().any(char::is_control)
                 {
                     return Err(format!(
-                        "Local provider must use an HTTP loopback endpoint: {}",
-                        provider.id
+                        "Provider endpoint or model is too long: {provider_id}"
                     ));
                 }
-            } else if endpoint.scheme() != "https" {
-                return Err(format!("Cloud provider must use HTTPS: {}", provider.id));
+                if !provider.enabled {
+                    continue;
+                }
+                if provider.endpoint.trim().is_empty() || provider.model.trim().is_empty() {
+                    return Err(format!(
+                        "Enabled provider requires endpoint and model: {provider_id}"
+                    ));
+                }
+                let endpoint = url::Url::parse(&provider.endpoint)
+                    .map_err(|_| format!("Invalid provider endpoint: {provider_id}"))?;
+                if !endpoint.username().is_empty() || endpoint.password().is_some() {
+                    return Err(format!(
+                        "Provider credentials must not be embedded in the endpoint: {provider_id}"
+                    ));
+                }
+                if !matches!(endpoint.scheme(), "http" | "https") {
+                    return Err(format!(
+                        "Provider endpoint must use HTTP or HTTPS: {provider_id}"
+                    ));
+                }
+                if provider.location == "local" {
+                    let host = endpoint.host_str().unwrap_or_default();
+                    if endpoint.scheme() != "http"
+                        || !matches!(host, "localhost" | "127.0.0.1" | "::1")
+                    {
+                        return Err(format!(
+                            "Local provider must use an HTTP loopback endpoint: {provider_id}"
+                        ));
+                    }
+                } else if endpoint.scheme() != "https" {
+                    return Err(format!("Cloud provider must use HTTPS: {provider_id}"));
+                }
+            }
+            ModelProviderSettings::Larm(provider) => {
+                if provider.enabled {
+                    enabled_larm_count += 1;
+                }
+                if provider.location != "local"
+                    || provider.base_url.len() > 2_048
+                    || provider.token_env != "LARM_API_TOKEN"
+                    || !(60..=3_600).contains(&provider.allocation_ttl_seconds)
+                    || !(1..=300).contains(&provider.allocation_startup_timeout_seconds)
+                    || provider.allow_fallback_by_default
+                    || provider.deployment_policy != "existing-only"
+                {
+                    return Err(format!(
+                        "LARM provider violates the fixed security policy: {provider_id}"
+                    ));
+                }
+                let base_url = url::Url::parse(&provider.base_url)
+                    .map_err(|_| format!("Invalid LARM base URL: {provider_id}"))?;
+                let host = base_url.host_str().unwrap_or_default();
+                if base_url.scheme() != "http"
+                    || !matches!(host, "127.0.0.1" | "::1")
+                    || base_url.port().is_none()
+                    || !base_url.username().is_empty()
+                    || base_url.password().is_some()
+                    || base_url.query().is_some()
+                    || base_url.fragment().is_some()
+                    || base_url.path() != "/"
+                {
+                    return Err(format!(
+                        "LARM base URL must be an explicit numeric HTTP loopback origin: {provider_id}"
+                    ));
+                }
             }
         }
+    }
+    if enabled_larm_count > 1 {
+        return Err("Only one LARM provider may be enabled".to_string());
     }
     Ok(())
 }
@@ -5376,7 +5640,11 @@ mod tests {
     }
 
     fn provider(id: &str, location: &str) -> ModelProviderSettings {
-        ModelProviderSettings {
+        ModelProviderSettings::OpenAiCompatible(direct_provider(id, location))
+    }
+
+    fn direct_provider(id: &str, location: &str) -> OpenAiCompatibleProviderSettings {
+        OpenAiCompatibleProviderSettings {
             id: id.to_string(),
             enabled: true,
             label: id.to_string(),
@@ -5389,6 +5657,21 @@ mod tests {
             model: "test-model".to_string(),
             credential_status: "not-configured".to_string(),
         }
+    }
+
+    fn larm_provider(id: &str) -> ModelProviderSettings {
+        ModelProviderSettings::Larm(LarmProviderSettings {
+            id: id.to_string(),
+            enabled: true,
+            label: id.to_string(),
+            location: "local".to_string(),
+            base_url: "http://127.0.0.1:9810/".to_string(),
+            token_env: "LARM_API_TOKEN".to_string(),
+            allocation_ttl_seconds: 300,
+            allocation_startup_timeout_seconds: 300,
+            allow_fallback_by_default: false,
+            deployment_policy: "existing-only".to_string(),
+        })
     }
 
     #[test]
@@ -5472,8 +5755,13 @@ mod tests {
         );
         assert!(update_runtime_provider(&state, "run-finalize", "provider-late").is_err());
 
-        let session_id =
-            begin_provider_session(&state, "provider-selected").expect("provider session starts");
+        let session_id = begin_provider_session(
+            &state,
+            "run-finalize",
+            "provider-selected",
+            "openai-compatible",
+        )
+        .expect("provider session starts");
         finish_provider_session(&state, &session_id, "completed", None)
             .expect("provider session finalizes");
         assert!(
@@ -5632,7 +5920,7 @@ mod tests {
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 7));
+            .all(|document| document.schema_version == 8));
         let (version, active_profile): (i64, String) = (
             connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -5645,12 +5933,12 @@ mod tests {
                 )
                 .expect("active profile reads"),
         );
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert_eq!(active_profile, "profile_mvp1_default");
     }
 
     #[test]
-    fn version_five_database_migrates_to_seven_without_losing_existing_data() {
+    fn version_five_database_migrates_to_eight_without_losing_existing_data() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
         connection.execute("INSERT INTO conversations(id,title,task_mode,created_at,updated_at) VALUES('kept','Keep','conversation','1','1')", []).expect("conversation persists");
@@ -5660,7 +5948,7 @@ mod tests {
         connection
             .pragma_update(None, "user_version", 5)
             .expect("v5 fixture");
-        initialize_database(&connection).expect("v7 migration");
+        initialize_database(&connection).expect("v8 migration");
         let conversation: String = connection
             .query_row(
                 "SELECT title FROM conversations WHERE id='kept'",
@@ -5672,7 +5960,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table exists"));
         initialize_database(&connection).expect("migration idempotent");
     }
@@ -5694,7 +5982,7 @@ mod tests {
             .pragma_update(None, "user_version", 6)
             .expect("v6 fixture");
 
-        initialize_database(&connection).expect("v7 migration");
+        initialize_database(&connection).expect("v8 migration");
         let (rule_version, parameters_json): (String, String) = connection
             .query_row(
                 "SELECT rule_version,parameters_json
@@ -5716,7 +6004,7 @@ mod tests {
     }
 
     #[test]
-    fn version_six_settings_are_normalized_to_the_strict_v7_shape() {
+    fn version_six_settings_are_normalized_to_the_strict_v8_shape() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
         connection
@@ -5739,11 +6027,11 @@ mod tests {
             .pragma_update(None, "user_version", 6)
             .expect("v6 fixture");
 
-        initialize_database(&connection).expect("v7 migration");
+        initialize_database(&connection).expect("v8 migration");
         let documents = list_settings_documents(&connection).expect("strict settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents.iter().all(|document| {
-            document.schema_version == 7 && document.value_json.get("legacyField").is_none()
+            document.schema_version == 8 && document.value_json.get("legacyField").is_none()
         }));
         let providers = documents
             .iter()
@@ -5751,10 +6039,97 @@ mod tests {
             .and_then(|document| document.value_json.pointer("/providers/0"))
             .expect("provider remains");
         assert!(providers.get("legacyProviderField").is_none());
+        assert_eq!(providers.get("kind"), Some(&json!("openai-compatible")));
     }
 
     #[test]
-    fn version_six_database_is_backed_up_before_v7() {
+    fn version_seven_settings_and_provider_sessions_migrate_to_v8() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET schema_version=7,
+                     value_json=json_remove(
+                       json_set(value_json,
+                         '$.providers[0].endpoint', 'http://127.0.0.1:11434/v1',
+                         '$.providers[0].model', 'kept-model'
+                       ),
+                       '$.providers[0].kind'
+                     )
+                 WHERE namespace='providers.model'",
+                [],
+            )
+            .expect("v7 provider fixture writes");
+        connection
+            .execute("UPDATE settings_documents SET schema_version=7", [])
+            .expect("v7 settings fixture writes");
+        connection
+            .execute_batch(
+                "DROP INDEX idx_provider_sessions_runtime_run;
+                 ALTER TABLE provider_sessions DROP COLUMN runtime_run_id;
+                 ALTER TABLE provider_sessions DROP COLUMN provider_kind;
+                 ALTER TABLE provider_sessions DROP COLUMN route_id;
+                 ALTER TABLE provider_sessions DROP COLUMN allocation_id;
+                 ALTER TABLE provider_sessions DROP COLUMN selected_runtime_id;
+                 ALTER TABLE provider_sessions DROP COLUMN fallback_used;
+                 ALTER TABLE provider_sessions DROP COLUMN selection_reason;
+                 ALTER TABLE provider_sessions DROP COLUMN request_id;
+                 ALTER TABLE provider_sessions DROP COLUMN output_started;
+                 ALTER TABLE provider_sessions DROP COLUMN failure_kind;
+                 ALTER TABLE provider_sessions DROP COLUMN release_status;
+                 ALTER TABLE provider_sessions DROP COLUMN release_failure_kind;",
+            )
+            .expect("v7 provider session shape restores");
+        connection
+            .pragma_update(None, "user_version", 7)
+            .expect("v7 fixture");
+
+        initialize_database(&connection).expect("v8 migration succeeds");
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("version reads");
+        let provider_value: String = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents
+                 WHERE namespace='providers.model' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("provider settings read");
+        let provider_value: Value =
+            serde_json::from_str(&provider_value).expect("provider settings decode");
+        assert_eq!(version, 8);
+        assert_eq!(
+            provider_value.pointer("/providers/0/kind"),
+            Some(&json!("openai-compatible"))
+        );
+        assert_eq!(
+            provider_value.pointer("/providers/0/model"),
+            Some(&json!("kept-model"))
+        );
+        for column in [
+            "runtime_run_id",
+            "provider_kind",
+            "allocation_id",
+            "selected_runtime_id",
+            "output_started",
+            "release_status",
+        ] {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('provider_sessions') WHERE name=?1)",
+                    [column],
+                    |row| row.get(0),
+                )
+                .expect("provider session column check succeeds");
+            assert!(exists, "missing provider session column: {column}");
+        }
+        initialize_database(&connection).expect("v8 migration is idempotent");
+    }
+
+    #[test]
+    fn version_six_database_is_backed_up_before_v8() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("v6.sqlite3");
         let connection = Connection::open(&path).expect("database opens");
@@ -5775,7 +6150,7 @@ mod tests {
         let backup = backup_before_migration(&connection, &path)
             .expect("backup succeeds")
             .expect("v6 backup is created");
-        initialize_database(&connection).expect("v7 migration succeeds");
+        initialize_database(&connection).expect("v8 migration succeeds");
         let backup_connection = Connection::open(backup).expect("backup reopens");
         let title: String = backup_connection
             .query_row(
@@ -5792,6 +6167,51 @@ mod tests {
     }
 
     #[test]
+    fn version_seven_database_is_backed_up_before_v8() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("v7.sqlite3");
+        let connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("schema initializes");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET schema_version=7,
+                     value_json=json_remove(value_json, '$.providers[0].kind')
+                 WHERE namespace='providers.model'",
+                [],
+            )
+            .expect("v7 provider fixture writes");
+        connection
+            .execute("UPDATE settings_documents SET schema_version=7", [])
+            .expect("v7 settings fixture writes");
+        connection
+            .pragma_update(None, "user_version", 7)
+            .expect("v7 fixture");
+        drop(connection);
+
+        let connection = Connection::open(&path).expect("database reopens");
+        let backup = backup_before_migration(&connection, &path)
+            .expect("backup succeeds")
+            .expect("v7 backup is created");
+        initialize_database(&connection).expect("v8 migration succeeds");
+        let backup_connection = Connection::open(backup).expect("backup reopens");
+        let backup_version: i64 = backup_connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("backup version reads");
+        let backup_provider_kind: Option<String> = backup_connection
+            .query_row(
+                "SELECT json_extract(value_json, '$.providers[0].kind')
+                 FROM settings_documents
+                 WHERE namespace='providers.model' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("backup provider settings read");
+        assert_eq!(backup_version, 7);
+        assert!(backup_provider_kind.is_none());
+    }
+
+    #[test]
     fn version_six_runtime_rows_gain_nullable_supervisor_columns() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("schema initializes");
@@ -5805,7 +6225,7 @@ mod tests {
         connection
             .pragma_update(None, "user_version", 6)
             .expect("v6 fixture");
-        initialize_database(&connection).expect("v7 migration succeeds");
+        initialize_database(&connection).expect("v8 migration succeeds");
         for column in ["failure_code", "supervisor_version", "last_progress_at"] {
             let exists: bool = connection
                 .query_row(
@@ -5926,12 +6346,12 @@ mod tests {
         let version: i64 = reopened
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         let documents = list_settings_documents(&reopened).expect("settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 7));
+            .all(|document| document.schema_version == 8));
         let thread: String = reopened
             .query_row(
                 "SELECT thread_id FROM codex_threads WHERE conversation_id = 'kept-conversation'",
@@ -6005,10 +6425,12 @@ mod tests {
     #[test]
     fn settings_reject_embedded_credentials_and_cloud_fallback_on_local_route() {
         let with_credentials = ModelProvidersSettings {
-            providers: vec![ModelProviderSettings {
-                endpoint: "https://user:secret@example.invalid/v1".to_string(),
-                ..provider("cloud", "cloud")
-            }],
+            providers: vec![ModelProviderSettings::OpenAiCompatible(
+                OpenAiCompatibleProviderSettings {
+                    endpoint: "https://user:secret@example.invalid/v1".to_string(),
+                    ..direct_provider("cloud", "cloud")
+                },
+            )],
         };
         assert!(validate_model_providers(&with_credentials).is_err());
 
@@ -6037,6 +6459,41 @@ mod tests {
         routing.value_json["conversationRespond"]["primaryProviderId"] = json!("local");
         routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["cloud"]);
         assert!(validate_settings_batch(&documents).is_err());
+    }
+
+    #[test]
+    fn larm_settings_enforce_the_fixed_loopback_security_contract() {
+        let valid = ModelProvidersSettings {
+            providers: vec![larm_provider("larm")],
+        };
+        assert!(validate_model_providers(&valid).is_ok());
+
+        for base_url in [
+            "http://localhost:9810/",
+            "http://192.168.1.20:9810/",
+            "https://127.0.0.1:9810/",
+            "http://127.0.0.1:9810/v1",
+            "http://user:secret@127.0.0.1:9810/",
+            "http://127.0.0.1/",
+        ] {
+            let mut invalid = larm_provider("larm");
+            let ModelProviderSettings::Larm(provider) = &mut invalid else {
+                unreachable!("LARM fixture must remain tagged as LARM");
+            };
+            provider.base_url = base_url.to_string();
+            assert!(
+                validate_model_providers(&ModelProvidersSettings {
+                    providers: vec![invalid]
+                })
+                .is_err(),
+                "invalid LARM URL was accepted: {base_url}"
+            );
+        }
+
+        assert!(validate_model_providers(&ModelProvidersSettings {
+            providers: vec![larm_provider("larm-a"), larm_provider("larm-b")],
+        })
+        .is_err());
     }
 
     #[test]
@@ -6116,9 +6573,9 @@ mod tests {
                 .write_all(response.as_bytes())
                 .expect("fixture writes response");
         });
-        let provider = ModelProviderSettings {
+        let provider = OpenAiCompatibleProviderSettings {
             endpoint: format!("http://{address}/v1"),
-            ..provider("stream-fixture", "local")
+            ..direct_provider("stream-fixture", "local")
         };
         let input = StartTurnInput {
             run_id: "run-stream-fixture".to_string(),
@@ -6223,9 +6680,9 @@ mod tests {
                 )
                 .expect("fixture writes response");
         });
-        let provider = ModelProviderSettings {
+        let provider = OpenAiCompatibleProviderSettings {
             endpoint: format!("http://{address}/v1"),
-            ..provider("consumer-disconnect", "local")
+            ..direct_provider("consumer-disconnect", "local")
         };
         let input = StartTurnInput {
             run_id: "run-consumer-disconnect".to_string(),
@@ -6296,9 +6753,9 @@ mod tests {
                 .write_all(response.as_bytes())
                 .expect("source writes redirect");
         });
-        let provider = ModelProviderSettings {
+        let provider = OpenAiCompatibleProviderSettings {
             endpoint: format!("http://{source_address}/v1"),
-            ..provider("redirect-fixture", "local")
+            ..direct_provider("redirect-fixture", "local")
         };
         let input = StartTurnInput {
             run_id: "run-redirect-fixture".to_string(),
@@ -6390,10 +6847,10 @@ mod tests {
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
             .value_json = json!({ "providers": [{
-            "id": "primary", "enabled": true, "label": "Primary", "location": "local",
+            "kind": "openai-compatible", "id": "primary", "enabled": true, "label": "Primary", "location": "local",
             "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "credentialStatus": "not-configured"
         }, {
-            "id": "fallback", "enabled": true, "label": "Fallback", "location": "local",
+            "kind": "openai-compatible", "id": "fallback", "enabled": true, "label": "Fallback", "location": "local",
             "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "credentialStatus": "not-configured"
         }]});
         let route = documents
@@ -6534,10 +6991,10 @@ mod tests {
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
             .value_json = json!({ "providers": [{
-            "id": "partial-primary", "enabled": true, "label": "Partial primary", "location": "local",
+            "kind": "openai-compatible", "id": "partial-primary", "enabled": true, "label": "Partial primary", "location": "local",
             "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "credentialStatus": "not-configured"
         }, {
-            "id": "forbidden-fallback", "enabled": true, "label": "Forbidden fallback", "location": "local",
+            "kind": "openai-compatible", "id": "forbidden-fallback", "enabled": true, "label": "Forbidden fallback", "location": "local",
             "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "credentialStatus": "not-configured"
         }]});
         let route = documents

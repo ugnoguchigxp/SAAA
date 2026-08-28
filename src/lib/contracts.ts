@@ -13,7 +13,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 7;
+  schemaVersion: 8;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };
@@ -82,7 +82,8 @@ export type VoiceEvent =
   | { type: "cancelled"; runId: string }
   | { type: "failed"; runId: string; message: string; recovery: string };
 
-export type ModelProviderSettings = {
+export type OpenAiCompatibleProviderSettings = {
+  kind: "openai-compatible";
   id: string;
   enabled: boolean;
   label: string;
@@ -91,6 +92,24 @@ export type ModelProviderSettings = {
   model: string;
   credentialStatus: "not-configured" | "configured";
 };
+
+export type LarmProviderSettings = {
+  kind: "larm";
+  id: string;
+  enabled: boolean;
+  label: string;
+  location: "local";
+  baseUrl: string;
+  tokenEnv: "LARM_API_TOKEN";
+  allocationTtlSeconds: number;
+  allocationStartupTimeoutSeconds: number;
+  allowFallbackByDefault: false;
+  deploymentPolicy: "existing-only";
+};
+
+export type ModelProviderSettings =
+  | OpenAiCompatibleProviderSettings
+  | LarmProviderSettings;
 
 export type ModelProvidersSettings = { providers: ModelProviderSettings[] };
 
@@ -295,14 +314,29 @@ export function isModelProvidersSettings(value: Record<string, unknown>): value 
 
 function isModelProviderSettings(value: unknown): value is ModelProviderSettings {
   if (!isRecord(value)) return false;
-  return (
+  const common = (
     typeof value.id === "string" &&
     typeof value.enabled === "boolean" &&
     typeof value.label === "string" &&
-    (value.location === "local" || value.location === "cloud") &&
-    typeof value.endpoint === "string" &&
-    typeof value.model === "string" &&
-    (value.credentialStatus === "not-configured" || value.credentialStatus === "configured")
+    (value.location === "local" || value.location === "cloud")
+  );
+  if (!common) return false;
+  if (value.kind === "openai-compatible") {
+    return (
+      typeof value.endpoint === "string" &&
+      typeof value.model === "string" &&
+      (value.credentialStatus === "not-configured" || value.credentialStatus === "configured")
+    );
+  }
+  return (
+    value.kind === "larm" &&
+    value.location === "local" &&
+    typeof value.baseUrl === "string" &&
+    value.tokenEnv === "LARM_API_TOKEN" &&
+    typeof value.allocationTtlSeconds === "number" &&
+    typeof value.allocationStartupTimeoutSeconds === "number" &&
+    value.allowFallbackByDefault === false &&
+    value.deploymentPolicy === "existing-only"
   );
 }
 

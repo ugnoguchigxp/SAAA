@@ -11,8 +11,10 @@ import {
   type CodexAgentSettings,
   type CodexModelOption,
   type CodexRuntimeStatus,
+  type LarmProviderSettings,
   type ModelProviderSettings,
   type ModelProvidersSettings,
+  type OpenAiCompatibleProviderSettings,
   type RoutingSettings,
   type SecuritySettings,
   type SettingsDocument,
@@ -47,6 +49,7 @@ const tabs: Array<{ id: SettingsTab; label: string; detail: string }> = [
 const defaultDraft: SettingsDraft = {
   providers: {
     providers: [{
+      kind: "openai-compatible",
       id: "local-openai-compatible",
       enabled: false,
       label: "Local OpenAI-compatible",
@@ -213,17 +216,22 @@ function SituationSection({ situation, onChange }: { situation: SituationSetting
 
 function ProvidersSection({ providers, onChange }: { providers: ModelProvidersSettings; onChange: (value: ModelProvidersSettings) => void }) {
   const [tests, setTests] = useState<Record<string, { state: "testing" | "success" | "error"; message: string }>>({});
-  function update(index: number, next: Partial<ModelProviderSettings>) {
-    onChange({ providers: providers.providers.map((provider, providerIndex) => providerIndex === index ? { ...provider, ...next } : provider) });
+  function replace(index: number, next: ModelProviderSettings) {
+    onChange({ providers: providers.providers.map((provider, providerIndex) => providerIndex === index ? next : provider) });
   }
   function remove(index: number) {
     onChange({ providers: providers.providers.filter((_, providerIndex) => providerIndex !== index) });
   }
-  function add() {
+  function addOpenAiCompatible() {
     const number = providers.providers.length + 1;
-    onChange({ providers: [...providers.providers, { id: `provider-${Date.now()}`, enabled: false, label: `Provider ${number}`, location: "local", endpoint: "", model: "", credentialStatus: "not-configured" }] });
+    const provider: OpenAiCompatibleProviderSettings = { kind: "openai-compatible", id: `provider-${Date.now()}`, enabled: false, label: `Provider ${number}`, location: "local", endpoint: "", model: "", credentialStatus: "not-configured" };
+    onChange({ providers: [...providers.providers, provider] });
   }
-  async function test(provider: ModelProviderSettings) {
+  function addLarm() {
+    const provider: LarmProviderSettings = { kind: "larm", id: `larm-${Date.now()}`, enabled: false, label: "LARM", location: "local", baseUrl: "http://127.0.0.1:9810", tokenEnv: "LARM_API_TOKEN", allocationTtlSeconds: 300, allocationStartupTimeoutSeconds: 300, allowFallbackByDefault: false, deploymentPolicy: "existing-only" };
+    onChange({ providers: [...providers.providers, provider] });
+  }
+  async function test(provider: OpenAiCompatibleProviderSettings) {
     setTests((current) => ({ ...current, [provider.id]: { state: "testing", message: "Connecting…" } }));
     try {
       const result = await testModelProvider(provider);
@@ -232,7 +240,8 @@ function ProvidersSection({ providers, onChange }: { providers: ModelProvidersSe
       setTests((current) => ({ ...current, [provider.id]: { state: "error", message: cause instanceof Error ? cause.message : String(cause) } }));
     }
   }
-  return <div className="settings-stack"><p className="settings-help">複数のOpenAI-compatible endpointを登録できます。API keyはSQLiteへ保存せず、`SAAA_PROVIDER_&lt;ID&gt;_API_KEY`または`OPENAI_API_KEY`から読み込みます。</p>{providers.providers.map((provider, index) => <section className="settings-card provider-card" key={provider.id}><div className="card-title-row"><div><h3>{provider.label || `Provider ${index + 1}`}</h3><p className="muted">ID: {provider.id}</p></div><label className="toggle"><input type="checkbox" checked={provider.enabled} onChange={(event) => update(index, { enabled: event.target.checked })} /><span /></label></div><div className="settings-form-grid"><Field label="Display name"><input value={provider.label} onChange={(event) => update(index, { label: event.target.value })} /></Field><Field label="Location"><select value={provider.location} onChange={(event) => update(index, { location: event.target.value as ModelProviderSettings["location"] })}><option value="local">Local</option><option value="cloud">Cloud</option></select></Field><Field label="Endpoint"><input value={provider.endpoint} placeholder="http://localhost:11434/v1" onChange={(event) => update(index, { endpoint: event.target.value })} /></Field><Field label="Model"><input value={provider.model} placeholder="model name" onChange={(event) => update(index, { model: event.target.value })} /></Field></div>{tests[provider.id] && <p className={`provider-test-result ${tests[provider.id].state}`}>{tests[provider.id].message}</p>}<div className="provider-card-footer"><span>Credential: environment</span><div><button className="text-button" type="button" onClick={() => void test(provider)} disabled={!provider.endpoint || !provider.model || tests[provider.id]?.state === "testing"}>Test connection</button><button className="text-button danger" type="button" onClick={() => remove(index)} disabled={providers.providers.length === 1}>Remove provider</button></div></div></section>)}<button className="add-provider-button" onClick={add}>＋ Add provider</button></div>;
+  const hasLarm = providers.providers.some((provider) => provider.kind === "larm");
+  return <div className="settings-stack"><p className="settings-help">OpenAI-compatible ProviderとLARM control-plane Providerは別contractです。credential値はSQLiteへ保存しません。</p>{providers.providers.map((provider, index) => <section className="settings-card provider-card" key={provider.id}><div className="card-title-row"><div><h3>{provider.label || `Provider ${index + 1}`}</h3><p className="muted">ID: {provider.id} · {provider.kind}</p></div><label className="toggle"><input type="checkbox" checked={provider.enabled} onChange={(event) => replace(index, { ...provider, enabled: event.target.checked })} /><span /></label></div>{provider.kind === "openai-compatible" ? <><div className="settings-form-grid"><Field label="Display name"><input value={provider.label} onChange={(event) => replace(index, { ...provider, label: event.target.value })} /></Field><Field label="Location"><select value={provider.location} onChange={(event) => replace(index, { ...provider, location: event.target.value as OpenAiCompatibleProviderSettings["location"] })}><option value="local">Local</option><option value="cloud">Cloud</option></select></Field><Field label="Endpoint"><input value={provider.endpoint} placeholder="http://localhost:11434/v1" onChange={(event) => replace(index, { ...provider, endpoint: event.target.value })} /></Field><Field label="Model"><input value={provider.model} placeholder="model name" onChange={(event) => replace(index, { ...provider, model: event.target.value })} /></Field></div>{tests[provider.id] && <p className={`provider-test-result ${tests[provider.id].state}`}>{tests[provider.id].message}</p>}<div className="provider-card-footer"><span>Credential: environment</span><div><button className="text-button" type="button" onClick={() => void test(provider)} disabled={!provider.endpoint || !provider.model || tests[provider.id]?.state === "testing"}>Test connection</button><button className="text-button danger" type="button" onClick={() => remove(index)} disabled={providers.providers.length === 1}>Remove provider</button></div></div></> : <><div className="settings-form-grid"><Field label="Display name"><input value={provider.label} onChange={(event) => replace(index, { ...provider, label: event.target.value })} /></Field><Field label="Location"><input value="Local" disabled /></Field><Field label="Base URL"><input value={provider.baseUrl} onChange={(event) => replace(index, { ...provider, baseUrl: event.target.value })} /></Field><Field label="Credential source"><input value={provider.tokenEnv} disabled /></Field><Field label="Allocation TTL (seconds)"><input type="number" min="60" max="3600" value={provider.allocationTtlSeconds} onChange={(event) => replace(index, { ...provider, allocationTtlSeconds: Math.max(60, Math.min(3600, Number(event.target.value) || 300)) })} /></Field><Field label="Startup timeout (seconds)"><input type="number" min="1" max="300" value={provider.allocationStartupTimeoutSeconds} onChange={(event) => replace(index, { ...provider, allocationStartupTimeoutSeconds: Math.max(1, Math.min(300, Number(event.target.value) || 300)) })} /></Field></div><div className="locked-policy">Fallback disabled · Existing deployments only · Runtime selection owned by LARM</div><div className="provider-card-footer"><span>Connection test unavailable until the G1 API contract is fixed.</span><button className="text-button danger" type="button" onClick={() => remove(index)} disabled={providers.providers.length === 1}>Remove provider</button></div></>}</section>)}<div className="provider-card-footer"><button className="add-provider-button" type="button" onClick={addOpenAiCompatible}>＋ Add provider</button><button className="add-provider-button" type="button" onClick={addLarm} disabled={hasLarm}>＋ Add LARM provider</button></div></div>;
 }
 
 function RoutingSection({ routing, providers, localOnlyWhenSelected, onChange }: { routing: RoutingSettings; providers: ModelProviderSettings[]; localOnlyWhenSelected: boolean; onChange: (value: RoutingSettings) => void }) {
@@ -371,5 +380,5 @@ function documentsFromDraft(draft: SettingsDraft): Array<Omit<SettingsDocument, 
 }
 
 function document(namespace: SettingsNamespace, key: "default" | "codex-sdk", valueJson: Record<string, unknown>): Omit<SettingsDocument, "updatedAt"> {
-  return { namespace, key, schemaVersion: 7, valueJson };
+  return { namespace, key, schemaVersion: 8, valueJson };
 }

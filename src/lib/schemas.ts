@@ -50,20 +50,41 @@ const providerIdSchema = z.string().min(1).max(80).regex(
   "Provider ids may contain only ASCII letters, numbers, hyphens, and underscores",
 );
 
-const providerSchema = z.object({
+const providerCommonSchema = z.object({
   id: providerIdSchema,
   enabled: z.boolean(),
   label: z.string().trim().min(1).max(120),
+});
+
+const openAiCompatibleProviderSchema = providerCommonSchema.extend({
+  kind: z.literal("openai-compatible"),
   location: z.enum(["local", "cloud"]),
   endpoint: z.union([z.literal(""), z.string().url().max(2_048).refine((value) => value.startsWith("http://") || value.startsWith("https://"), "Endpoint must use HTTP or HTTPS")]),
   model: z.string().trim().max(160),
   credentialStatus: z.enum(["not-configured", "configured"]),
 }).strict();
 
+const larmProviderSchema = providerCommonSchema.extend({
+  kind: z.literal("larm"),
+  location: z.literal("local"),
+  baseUrl: z.string().url().max(2_048),
+  tokenEnv: z.literal("LARM_API_TOKEN"),
+  allocationTtlSeconds: z.number().int().min(60).max(3_600),
+  allocationStartupTimeoutSeconds: z.number().int().min(1).max(300),
+  allowFallbackByDefault: z.literal(false),
+  deploymentPolicy: z.literal("existing-only"),
+}).strict();
+
+const providerSchema = z.discriminatedUnion("kind", [
+  openAiCompatibleProviderSchema,
+  larmProviderSchema,
+]);
+
 export const modelProvidersSettingsSchema = z.object({
   providers: z.array(providerSchema).min(1).max(20).superRefine((providers, context) => {
     const ids = new Set<string>();
     const credentialSuffixes = new Set<string>();
+    let enabledLarmProviders = 0;
     providers.forEach((provider, index) => {
       if (ids.has(provider.id)) {
         context.addIssue({ code: "custom", message: `Duplicate provider id: ${provider.id}`, path: [index, "id"] });
@@ -74,10 +95,11 @@ export const modelProvidersSettingsSchema = z.object({
         context.addIssue({ code: "custom", message: "Provider id maps to an existing credential environment variable", path: [index, "id"] });
       }
       credentialSuffixes.add(credentialSuffix);
-      if (provider.enabled && (!provider.endpoint || !provider.model)) {
+      if (provider.kind === "larm" && provider.enabled) enabledLarmProviders += 1;
+      if (provider.kind === "openai-compatible" && provider.enabled && (!provider.endpoint || !provider.model)) {
         context.addIssue({ code: "custom", message: "Enabled providers require an endpoint and model", path: [index] });
       }
-      if (provider.endpoint) {
+      if (provider.kind === "openai-compatible" && provider.endpoint) {
         const endpoint = new URL(provider.endpoint);
         if (endpoint.username || endpoint.password) {
           context.addIssue({ code: "custom", message: "Credentials must not be embedded in endpoints", path: [index, "endpoint"] });
@@ -89,7 +111,25 @@ export const modelProvidersSettingsSchema = z.object({
           context.addIssue({ code: "custom", message: "Cloud providers must use HTTPS", path: [index, "endpoint"] });
         }
       }
+      if (provider.kind === "larm") {
+        const baseUrl = new URL(provider.baseUrl);
+        if (
+          baseUrl.protocol !== "http:" ||
+          !["127.0.0.1", "[::1]"].includes(baseUrl.hostname) ||
+          !baseUrl.port ||
+          baseUrl.username ||
+          baseUrl.password ||
+          baseUrl.search ||
+          baseUrl.hash ||
+          baseUrl.pathname !== "/"
+        ) {
+          context.addIssue({ code: "custom", message: "LARM must use an explicit HTTP numeric-loopback base URL without credentials, path, query, or fragment", path: [index, "baseUrl"] });
+        }
+      }
     });
+    if (enabledLarmProviders > 1) {
+      context.addIssue({ code: "custom", message: "Only one LARM provider may be enabled", path: [] });
+    }
   }),
 }).strict();
 
@@ -152,7 +192,7 @@ export const situationSettingsSchema = z.object({
 const settingsDocumentBaseSchema = z.object({
   namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
-  schemaVersion: z.literal(7),
+  schemaVersion: z.literal(8),
   valueJson: z.record(z.string(), z.unknown()),
 }).strict();
 
