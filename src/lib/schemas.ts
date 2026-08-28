@@ -241,10 +241,12 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const enabled = new Map(providers.filter((provider) => provider.enabled).map((provider) => [provider.id, provider]));
   const primary = enabled.get(routing.conversationRespond.primaryProviderId);
   if (enabled.size > 0 && !primary) throw new Error("The primary conversation provider must be enabled");
+  const routeIds = new Set([routing.conversationRespond.primaryProviderId]);
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
     const fallback = enabled.get(fallbackId);
     if (!fallback) throw new Error(`Fallback provider is not enabled: ${fallbackId}`);
-    if (fallbackId === routing.conversationRespond.primaryProviderId) throw new Error(`Duplicate provider in route: ${fallbackId}`);
+    if (routeIds.has(fallbackId)) throw new Error(`Duplicate provider in route: ${fallbackId}`);
+    routeIds.add(fallbackId);
     if (security.localOnlyWhenSelected && primary?.location === "local" && fallback.location === "cloud") {
       throw new Error(`Cloud fallback is blocked while the local-only policy is active: ${fallbackId}`);
     }

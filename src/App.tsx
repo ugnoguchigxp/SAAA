@@ -8,6 +8,7 @@ import {
   findSettingsDocument,
   isCodexAgentSettings,
   isModelProvidersSettings,
+  isRoutingSettings,
   isVoiceSettings,
   type AppSnapshot,
   type CodexRuntimeStatus,
@@ -31,7 +32,7 @@ import {
   reportOwnedSignal,
 } from "./lib/runtime";
 
-const initialSnapshot: AppSnapshot = { settings: [], conversations: [] };
+const initialSnapshot: AppSnapshot = { settings: [], conversations: [], larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" } };
 type Surface = "chat" | "meeting" | "situation" | "settings";
 
 function App() {
@@ -72,9 +73,21 @@ function App() {
   const modelProviderLabel = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "providers.model", "default");
     if (!document || !isModelProvidersSettings(document.valueJson)) return "No provider configured";
+    const providers = document.valueJson.providers;
     const primaryId = findPrimaryRoute(snapshot.settings);
-    return document.valueJson.providers.find((provider) => provider.id === primaryId)?.label ?? primaryId;
-  }, [snapshot.settings]);
+    const primary = providers.find((provider) => provider.id === primaryId);
+    if (primary?.kind === "larm" && snapshot.larmRuntime.state !== "ready") {
+      const routing = findSettingsDocument(snapshot.settings, "routing.tasks", "default");
+      const fallbackIds = routing && isRoutingSettings(routing.valueJson)
+        ? routing.valueJson.conversationRespond.fallbackProviderIds
+        : [];
+      const fallback = fallbackIds
+        .map((id) => providers.find((provider) => provider.id === id))
+        .find((provider) => provider?.enabled && provider.kind !== "larm");
+      return `${primary.label || primary.id} ${snapshot.larmRuntime.state} → ${fallback?.label ?? fallback?.id ?? "no rollback provider"}`;
+    }
+    return primary?.label ?? primaryId;
+  }, [snapshot.larmRuntime.state, snapshot.settings]);
   const voiceSettings = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "voice.runtime", "default");
     return document && isVoiceSettings(document.valueJson) ? document.valueJson : null;
@@ -233,6 +246,9 @@ function App() {
       case "started":
         setRuntimeActivity((current) => [...current, `${event.route} → ${event.providerId}`].slice(-8));
         break;
+      case "providerSelected":
+        setRuntimeActivity((current) => [...current, `${event.routeId} → ${event.runtimeId} · ${event.selectionReasonCode}${event.fallbackUsed ? " · fallback" : ""}`].slice(-8));
+        break;
       case "delta":
         setStreamingText((current) => current + event.text);
         break;
@@ -386,7 +402,7 @@ function App() {
     </aside>
 
     <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} chatVoiceBusy={voiceState !== "idle"} onStateChanged={setMeetingState} /></div>
-    {surface === "settings" ? <SettingsPage documents={snapshot.settings} onSaved={(settings) => setSnapshot((current) => ({ ...current, settings }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <section className="chat-panel">
+    {surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} onSaved={(settings) => setSnapshot((current) => ({ ...current, settings }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <section className="chat-panel">
       <header className="topbar"><div><p className="eyebrow">{taskMode === "coding" ? "READ-ONLY AGENT" : "CONVERSATION"}</p><h1>{taskMode === "coding" ? "Coding assist" : "Local voice chat"}</h1></div><button className="secondary-button" onClick={() => setSurface("settings")}>Settings</button></header>
       <div className="route-banner"><span className="route-label">Effective route</span><strong>{taskMode === "coding" ? "coding.assist → codex-sdk" : `conversation.respond → ${modelProviderLabel}`}</strong><span className={taskMode === "coding" ? `badge ${codexStatus?.authenticated && codexSettings?.enabled ? "safe" : "warning"}` : "badge local"}>{taskMode === "coding" ? (codexStatus?.authenticated && codexSettings?.enabled ? "ready · read-only" : "unavailable") : "configured route"}</span></div>
       <div className="message-area" aria-live="polite">{messages.length === 0 && !streamingText ? <div className="empty-state"><p className="eyebrow">MVP 0 RUNTIME</p><h2>保存済みRouteで会話を実行します。</h2><p>Settingsで有効なProviderを登録してからメッセージを送信してください。</p></div> : messages.map((message) => <article className={`message ${message.role}`} key={message.id}><span className="message-role">{message.role === "user" ? "You" : message.role}</span><p>{message.content}</p></article>)}{streamingText && <article className="message assistant streaming"><span className="message-role">assistant · streaming</span><p>{streamingText}</p></article>}{interimTranscript && voiceState !== "idle" && <article className="message transcript streaming"><span className="message-role">transcript · {voiceState}</span><p>{interimTranscript}</p></article>}{runtimeActivity.length > 0 && <details className="activity-panel"><summary>Runtime activity</summary>{runtimeActivity.map((activity, index) => <p key={`${index}-${activity}`}>{activity}</p>)}</details>}</div>

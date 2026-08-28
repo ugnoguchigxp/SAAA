@@ -3,7 +3,9 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>Status: Review complete; G1 LARM production contract and G2 canary transport pending</li>
+    <li>
+      Status: M26-01〜08 implemented; G1 contract deviations and G2/G3 production evidence pending
+    </li>
     <li>Created: 2026-08-28</li>
     <li>Last reviewed: 2026-08-28</li>
     <li>
@@ -13,6 +15,42 @@
     <li>Production node: <code>gnosis</code></li>
     <li>読者: SAAA実装担当、LARM実装担当、レビュー担当、QA担当、運用担当</li>
   </ul>
+  <h3 id="02-implementation-status">0.2 Implementation status</h3>
+  <ul>
+    <li>
+      SAAA implementation baseline: uncommitted working tree after
+      <code>9a307a5</code>。ユーザー承認なしにcommitしない。
+    </li>
+    <li>
+      LARM fixture source:
+      <code>main@7dca7c3</code
+      >（<code>feat: complete dynamic runtime control plane</code>）。
+    </li>
+    <li>
+      M26-01〜03: partial-stream safety、Settings v8 migration、pure allocation sessionを実装済み。
+    </li>
+    <li>
+      M26-04〜08: no-proxy/no-redirect HTTP client、router、bounded telemetry、startup
+      gate、Settings UI、fake LARM integrationを実装済み。
+    </li>
+    <li>
+      自動検証はfake LARMだけを使用し、gnosisへallocationまたはGateway requestを送信していない。
+    </li>
+  </ul>
+  <p>
+    <strong>G1は条件付き未通過である。</strong> LARM <code>7dca7c3</code>は
+    <code>/v1/allocations</code>、operation
+    poll、renew、release、Gateway、Bearer範囲、
+    <code>x-request-id</code>を実装している。一方、Allocation
+    responseには計画が要求する server-confirmed effective
+    TTL専用fieldがなく、<code>createdAt</code>と<code>expiresAt</code>だけがある。
+    また、Gatewayはrequestの<code>model</code>をRuntime選択に使わないが、安定した仮想名とrewrite有無を
+    schemaとして固定していない。Gateway
+    request上限もenvironment設定で、deployment非依存の値ではない。 SAAA offline adapterはvalidated
+    request TTL、仮想名<code>local</code>、4
+    MiB送信上限を保守的に固定するが、 これらの差異を解消するまで M26-09実機canaryとG3
+    production既定化を開始しない。
+  </p>
   <p>
     この文書は、local-LLM-harness（以下LARM）をSAAAのLocal Model Providerとして統合するための
     実装契約である。LARMはmodel、quantization、port、service、Runtime

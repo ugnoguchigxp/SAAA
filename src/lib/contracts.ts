@@ -37,6 +37,13 @@ export type ConversationMessage = {
 export type AppSnapshot = {
   settings: SettingsDocument[];
   conversations: Conversation[];
+  larmRuntime: LarmRuntimeStatus;
+};
+
+export type LarmRuntimeStatus = {
+  state: "disabled" | "ready" | "unavailable";
+  message: string;
+  contractCommit: string;
 };
 
 export type RuntimeFailureCode =
@@ -56,6 +63,7 @@ export type RuntimeFailureCode =
 
 export type RuntimeEvent =
   | { type: "started"; runId: string; route: string; providerId: string }
+  | { type: "providerSelected"; runId: string; providerId: string; providerKind: "larm"; routeId: "llm-default"; runtimeId: string; fallbackUsed: boolean; selectionReasonCode: "primary" | "other" }
   | { type: "delta"; runId: string; text: string }
   | { type: "activity"; runId: string; kind: string; summary: string }
   | { type: "providerFailed"; runId: string; providerId: string; reason: string }

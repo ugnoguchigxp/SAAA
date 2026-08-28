@@ -87,6 +87,14 @@ describe("settings contracts", () => {
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Cloud fallback is blocked");
   });
 
+  test("rejects duplicate fallback providers", () => {
+    const snapshot = documents();
+    const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
+    providers.push({ kind: "openai-compatible", id: "fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://127.0.0.1:11435/v1", model: "local", credentialStatus: "not-configured" });
+    (snapshot[2].valueJson as { conversationRespond: { fallbackProviderIds: string[] } }).conversationRespond.fallbackProviderIds = ["fallback", "fallback"];
+    expect(() => validateSettingsDocuments(snapshot)).toThrow("Duplicate provider in route: fallback");
+  });
+
   test("rejects valid namespaces paired with the wrong settings keys", () => {
     const snapshot = documents();
     snapshot[0].key = "codex-sdk";
@@ -123,6 +131,8 @@ describe("settings contracts", () => {
       allowFallbackByDefault: false,
       deploymentPolicy: "existing-only",
     });
+    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
+    providers[1].baseUrl = "http://[::1]:9810";
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
 
     for (const baseUrl of [

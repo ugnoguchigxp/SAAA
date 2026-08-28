@@ -250,7 +250,7 @@ impl AllocationSession {
                     return Err(SessionError::InvariantViolation);
                 };
                 if !current.same_binding_as(&allocation) {
-                    return self.finish(TerminalOutcome::Failed(SessionFailureKind::Protocol));
+                    return self.renew_failed(now_ms, SessionFailureKind::Protocol);
                 }
                 self.install_ready(now_ms, allocation)?;
                 self.renew_attempts = 0;
@@ -763,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_started_binding_cannot_change_during_renew() {
+    fn stream_started_binding_change_is_rejected_without_stopping_the_existing_stream() {
         let mut session = started_session();
         session
             .transition(SessionSignal::AllocateReady {
@@ -789,7 +789,40 @@ mod tests {
                 now_ms: 48_100,
                 allocation: ready("allocation_1", "runtime_2", "binding_2"),
             })
-            .expect("binding mismatch becomes a bounded terminal outcome");
+            .expect("binding mismatch keeps the existing stream binding");
+        assert!(effects.is_empty());
+        assert_eq!(session.phase(), SessionPhase::Ready);
+        assert_eq!(session.terminal_outcome(), None);
+        assert_eq!(session.renew_at_ms(), None);
+        assert_eq!(
+            session
+                .allocation()
+                .expect("original allocation remains installed")
+                .selected_runtime_id
+                .as_str(),
+            "runtime_1"
+        );
+        assert!(session.stream_started());
+    }
+
+    #[test]
+    fn pre_stream_binding_change_is_a_protocol_terminal() {
+        let mut session = started_session();
+        session
+            .transition(SessionSignal::AllocateReady {
+                now_ms: 0,
+                allocation: ready("allocation_1", "runtime_1", "binding_1"),
+            })
+            .expect("allocation becomes ready");
+        session
+            .transition(SessionSignal::Tick { now_ms: 48_000 })
+            .expect("renew starts");
+        let effects = session
+            .transition(SessionSignal::RenewReady {
+                now_ms: 48_100,
+                allocation: ready("allocation_1", "runtime_2", "binding_2"),
+            })
+            .expect("pre-stream binding mismatch becomes terminal");
         assert!(matches!(
             effects.as_slice(),
             [SessionEffect::Release { .. }]
@@ -798,7 +831,6 @@ mod tests {
             session.terminal_outcome(),
             Some(TerminalOutcome::Failed(SessionFailureKind::Protocol))
         );
-        assert!(session.stream_started());
     }
 
     #[test]

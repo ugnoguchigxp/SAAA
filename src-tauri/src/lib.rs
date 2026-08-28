@@ -26,10 +26,13 @@ mod voice;
 
 static BUNDLED_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
 const MAX_CODEX_STDOUT_BYTES: u64 = 4 * 1_024 * 1_024;
+const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
 struct AppState {
     connection: Arc<Mutex<Connection>>,
     active_runs: Mutex<HashMap<String, Arc<RunCancellation>>>,
+    shutdown_started: AtomicBool,
+    larm_gate: providers::larm::LarmRuntimeGate,
     tts_process: Mutex<Option<ActiveTts>>,
     situation: Arc<situation::SituationRuntime>,
     meeting: Arc<meeting::MeetingRuntime>,
@@ -92,10 +95,13 @@ impl RunCancellation {
     }
 
     async fn cancelled(&self) {
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if self.is_cancelled() {
             return;
         }
-        self.notify.notified().await;
+        notified.await;
     }
 }
 
@@ -164,6 +170,15 @@ struct AppendMessageInput {
 struct AppSnapshot {
     settings: Vec<SettingsDocument>,
     conversations: Vec<Conversation>,
+    larm_runtime: LarmRuntimeStatus,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LarmRuntimeStatus {
+    state: &'static str,
+    message: &'static str,
+    contract_commit: &'static str,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -540,6 +555,15 @@ enum RuntimeEvent {
         route: String,
         provider_id: String,
     },
+    ProviderSelected {
+        run_id: String,
+        provider_id: String,
+        provider_kind: String,
+        route_id: String,
+        runtime_id: String,
+        fallback_used: bool,
+        selection_reason_code: String,
+    },
     Delta {
         run_id: String,
         text: String,
@@ -578,6 +602,11 @@ fn get_app_snapshot(state: tauri::State<'_, AppState>) -> Result<AppSnapshot, St
     Ok(AppSnapshot {
         settings: list_settings_documents(&connection)?,
         conversations: list_conversations_from_connection(&connection)?,
+        larm_runtime: LarmRuntimeStatus {
+            state: state.larm_gate.state(),
+            message: state.larm_gate.public_message(),
+            contract_commit: providers::larm::CONTRACT_COMMIT,
+        },
     })
 }
 
@@ -765,6 +794,7 @@ fn export_diagnostics(
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
     drop(statement);
+    let provider_diagnostics = build_provider_diagnostics(&connection)?;
     let situation_evaluation = situation::repository::evaluation_summary(&connection)?;
     let situation_settings = situation::repository::load_settings(&connection)?;
     let situation_profile = situation::calibration::active_profile(&connection)?;
@@ -790,7 +820,8 @@ fn export_diagnostics(
                 "unsure": situation_evaluation.unsure
             }
         },
-        "recentRuns": recent_runs
+        "recentRuns": recent_runs,
+        "providerSessions": provider_diagnostics
     });
     let directory = app
         .path()
@@ -807,6 +838,63 @@ fn export_diagnostics(
         path: path.to_string_lossy().into_owned(),
         created_at,
     })
+}
+
+fn build_provider_diagnostics(connection: &Connection) -> Result<Value, String> {
+    let mut provider_statement = connection
+        .prepare(
+            "SELECT COALESCE(provider_kind, 'openai-compatible'), COALESCE(route_id, ''),
+                    COALESCE(selected_runtime_id, ''), COALESCE(fallback_used, 0),
+                    COALESCE(selection_reason, ''), status, COALESCE(failure_kind, ''),
+                    release_status, COALESCE(release_failure_kind, '')
+             FROM provider_sessions ORDER BY updated_at DESC LIMIT 20",
+        )
+        .map_err(database_error)?;
+    let recent = provider_statement
+        .query_map([], |row| {
+            Ok(json!({
+                "providerKind": row.get::<_, String>(0)?,
+                "route": row.get::<_, String>(1)?,
+                "runtime": row.get::<_, String>(2)?,
+                "fallbackUsed": row.get::<_, bool>(3)?,
+                "selectionReason": row.get::<_, String>(4)?,
+                "status": row.get::<_, String>(5)?,
+                "failureKind": row.get::<_, String>(6)?,
+                "releaseStatus": row.get::<_, String>(7)?,
+                "releaseFailureKind": row.get::<_, String>(8)?
+            }))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    drop(provider_statement);
+    let mut aggregate_statement = connection
+        .prepare(
+            "SELECT COALESCE(provider_kind, 'openai-compatible'), COALESCE(route_id, ''),
+                    COALESCE(selected_runtime_id, ''), COALESCE(fallback_used, 0),
+                    COALESCE(failure_kind, ''), release_status, COUNT(*)
+             FROM provider_sessions
+             GROUP BY provider_kind, route_id, selected_runtime_id, fallback_used,
+                      failure_kind, release_status
+             ORDER BY COUNT(*) DESC LIMIT 50",
+        )
+        .map_err(database_error)?;
+    let aggregates = aggregate_statement
+        .query_map([], |row| {
+            Ok(json!({
+                "providerKind": row.get::<_, String>(0)?,
+                "route": row.get::<_, String>(1)?,
+                "runtime": row.get::<_, String>(2)?,
+                "fallbackUsed": row.get::<_, bool>(3)?,
+                "failureKind": row.get::<_, String>(4)?,
+                "releaseStatus": row.get::<_, String>(5)?,
+                "count": row.get::<_, i64>(6)?
+            }))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    Ok(json!({ "recent": recent, "aggregates": aggregates }))
 }
 
 #[tauri::command]
@@ -866,7 +954,7 @@ fn cancel_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), S
 
 #[tauri::command]
 async fn test_model_provider(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     input: TestProviderInput,
 ) -> Result<ProviderTestResult, String> {
     let mut provider = input.provider;
@@ -878,9 +966,12 @@ async fn test_model_provider(
     let started = std::time::Instant::now();
     let result = match &provider {
         ModelProviderSettings::OpenAiCompatible(provider) => probe_model_provider(provider).await,
-        ModelProviderSettings::Larm(_) => Err(
-            "LARM connection testing is unavailable until the G1 API contract is fixed".to_string(),
-        ),
+        ModelProviderSettings::Larm(provider) => {
+            providers::larm::LarmProvider::probe(&state.larm_gate, &provider.base_url)
+                .await
+                .map(|_| "LARM health and readiness checks succeeded".to_string())
+                .map_err(|kind| larm_failure_message(kind).to_string())
+        }
     };
     Ok(ProviderTestResult {
         provider_id: provider.id().to_string(),
@@ -1827,7 +1918,14 @@ async fn execute_conversation_turn(
             list_messages_from_connection(&connection, &input.conversation_id)?,
         )
     };
-    let route_ids = effective_conversation_route_ids(&providers, &route, &security);
+    let route_ids = apply_runtime_provider_gates(
+        &providers,
+        effective_conversation_route_ids(&providers, &route, &security),
+        &state.larm_gate,
+    );
+    if route_ids.is_empty() && !state.larm_gate.allows_traffic() {
+        return Err(state.larm_gate.public_message().to_string());
+    }
     let mut failures = Vec::new();
 
     for provider_id in route_ids {
@@ -1846,11 +1944,35 @@ async fn execute_conversation_turn(
         update_runtime_provider(state, &input.run_id, provider.id())?;
         let session_id =
             begin_provider_session(state, &input.run_id, provider.id(), provider.kind())?;
-        let _ = on_event.send(RuntimeEvent::Started {
-            run_id: input.run_id.clone(),
-            route: "conversation.respond".to_string(),
-            provider_id: provider.id().to_string(),
-        });
+        if on_event
+            .send(RuntimeEvent::Started {
+                run_id: input.run_id.clone(),
+                route: "conversation.respond".to_string(),
+                provider_id: provider.id().to_string(),
+            })
+            .is_err()
+        {
+            if provider.kind() == "larm" {
+                finish_larm_provider_session(
+                    state,
+                    &session_id,
+                    "failed",
+                    Some(ProviderFailureKind::ClientDisconnected),
+                    CleanupOutcome::NotStarted,
+                )?;
+            } else {
+                finish_provider_session(
+                    state,
+                    &session_id,
+                    "failed",
+                    Some(ProviderFailureKind::ClientDisconnected),
+                )?;
+            }
+            return Err(ProviderFailureKind::ClientDisconnected
+                .public_message()
+                .as_str()
+                .to_string());
+        }
         let outcome = match &provider {
             ModelProviderSettings::OpenAiCompatible(provider) => {
                 stream_model_provider(
@@ -1860,40 +1982,75 @@ async fn execute_conversation_turn(
                     input,
                     on_event,
                     cancellation.clone(),
+                    Some(ProviderOutputPersistence {
+                        state,
+                        session_id: &session_id,
+                    }),
                 )
                 .await
             }
-            ModelProviderSettings::Larm(_) => ProviderAttemptOutcome::Failed {
-                kind: ProviderFailureKind::Unavailable,
-                public_message: BoundedProviderMessage(
-                    "LARM is disabled until its production API contract is fixed.",
-                ),
-                output_started: false,
-                cleanup: CleanupOutcome::NotApplicable,
-            },
+            ModelProviderSettings::Larm(provider) => {
+                stream_larm_provider(
+                    provider,
+                    &history,
+                    route.timeout_ms,
+                    cancellation.clone(),
+                    LarmStreamContext {
+                        state,
+                        session_id: &session_id,
+                        input,
+                        on_event,
+                    },
+                )
+                .await
+            }
         };
         match outcome {
-            ProviderAttemptOutcome::Completed { content, .. } => {
-                finish_provider_session(state, &session_id, "completed", None)?;
+            ProviderAttemptOutcome::Completed { content, cleanup } => {
+                if provider.kind() == "larm" {
+                    finish_larm_provider_session(state, &session_id, "completed", None, cleanup)?;
+                } else {
+                    finish_provider_session(state, &session_id, "completed", None)?;
+                }
                 return persist_conversation_success(state, input, &content);
             }
-            ProviderAttemptOutcome::Cancelled { .. } => {
-                finish_provider_session(
-                    state,
-                    &session_id,
-                    "cancelled",
-                    Some("Cancelled by user"),
-                )?;
+            ProviderAttemptOutcome::Cancelled { cleanup, .. } => {
+                if provider.kind() == "larm" {
+                    finish_larm_provider_session(
+                        state,
+                        &session_id,
+                        "cancelled",
+                        Some(ProviderFailureKind::Cancelled),
+                        cleanup,
+                    )?;
+                } else {
+                    finish_provider_session(
+                        state,
+                        &session_id,
+                        "cancelled",
+                        Some(ProviderFailureKind::Cancelled),
+                    )?;
+                }
                 return Err("Cancelled by user".to_string());
             }
             ProviderAttemptOutcome::Failed {
                 kind,
                 public_message,
                 output_started,
-                ..
+                cleanup,
             } => {
                 let reason = public_message.as_str();
-                finish_provider_session(state, &session_id, "failed", Some(kind.as_str()))?;
+                if provider.kind() == "larm" {
+                    finish_larm_provider_session(
+                        state,
+                        &session_id,
+                        "failed",
+                        Some(kind),
+                        cleanup,
+                    )?;
+                } else {
+                    finish_provider_session(state, &session_id, "failed", Some(kind))?;
+                }
                 let _ = on_event.send(RuntimeEvent::ProviderFailed {
                     run_id: input.run_id.clone(),
                     provider_id: provider.id().to_string(),
@@ -1911,6 +2068,23 @@ async fn execute_conversation_turn(
         "All configured providers failed. {}",
         failures.join("; ")
     ))
+}
+
+fn apply_runtime_provider_gates(
+    providers: &ModelProvidersSettings,
+    route_ids: Vec<String>,
+    larm_gate: &providers::larm::LarmRuntimeGate,
+) -> Vec<String> {
+    route_ids
+        .into_iter()
+        .filter(|provider_id| {
+            providers
+                .providers
+                .iter()
+                .find(|provider| provider.id() == provider_id)
+                .is_none_or(|provider| provider.kind() != "larm" || larm_gate.allows_traffic())
+        })
+        .collect()
 }
 
 async fn execute_codex_turn(
@@ -3138,19 +3312,173 @@ fn begin_provider_session(
         .execute(
             "INSERT INTO provider_sessions(
                id, runtime_run_id, provider_id, provider_kind, fallback_used, output_started,
-               status, started_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, 0, 0, 'running', ?5, ?5)",
+               release_status, status, started_at, updated_at
+             ) VALUES (
+               ?1, ?2, ?3, ?4, 0, 0,
+               CASE WHEN ?4='larm' THEN 'not-started' ELSE 'not-applicable' END,
+               'running', ?5, ?5
+             )",
             params![session_id, runtime_run_id, provider_id, provider_kind, now],
         )
         .map_err(database_error)?;
     Ok(session_id)
 }
 
+fn persist_larm_selection(
+    state: &AppState,
+    session_id: &str,
+    allocation: &providers::larm::contracts::ReadyAllocation,
+) -> Result<(), String> {
+    let selection_reason = match allocation.selection_reason {
+        providers::larm::contracts::SelectionReason::Primary => "primary",
+        providers::larm::contracts::SelectionReason::Other => "other",
+    };
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE provider_sessions
+             SET route_id='llm-default', allocation_id=?1, selected_runtime_id=?2,
+                 fallback_used=?3, selection_reason=?4, updated_at=?5
+             WHERE id=?6 AND provider_kind='larm' AND status='running' AND allocation_id IS NULL",
+            params![
+                allocation.allocation_id.as_str(),
+                allocation.selected_runtime_id.as_str(),
+                allocation.fallback_used,
+                selection_reason,
+                now_iso(),
+                session_id
+            ],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("LARM provider selection could not be persisted".to_string());
+    }
+    Ok(())
+}
+
+fn mark_provider_output_started(state: &AppState, session_id: &str) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE provider_sessions SET output_started=1, updated_at=?1
+             WHERE id=?2 AND status='running' AND output_started=0",
+            params![now_iso(), session_id],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Provider output state could not be persisted".to_string());
+    }
+    Ok(())
+}
+
+fn mark_larm_release_pending(state: &AppState, session_id: &str) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE provider_sessions SET release_status='pending', updated_at=?1
+             WHERE id=?2 AND provider_kind='larm' AND status='running'
+               AND release_status='not-started'",
+            params![now_iso(), session_id],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("LARM release state could not be persisted".to_string());
+    }
+    Ok(())
+}
+
+fn persist_larm_request_id(
+    state: &AppState,
+    session_id: &str,
+    request_id: Option<&providers::larm::contracts::BoundedIdentifier>,
+) -> Result<(), String> {
+    let Some(request_id) = request_id else {
+        return Ok(());
+    };
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE provider_sessions SET request_id=?1, updated_at=?2
+             WHERE id=?3 AND provider_kind='larm' AND status='running' AND request_id IS NULL",
+            params![request_id.as_str(), now_iso(), session_id],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("LARM request correlation could not be persisted".to_string());
+    }
+    Ok(())
+}
+
+fn finish_larm_provider_session(
+    state: &AppState,
+    session_id: &str,
+    status: &str,
+    failure_kind: Option<ProviderFailureKind>,
+    cleanup: CleanupOutcome,
+) -> Result<(), String> {
+    let (release_status, release_failure_kind) = match cleanup {
+        CleanupOutcome::NotApplicable => ("not-applicable", None),
+        CleanupOutcome::NotStarted => ("not-started", None),
+        CleanupOutcome::Released => ("released", None),
+        CleanupOutcome::DeferredToTtl { kind } => {
+            ("deferred-to-ttl", Some(release_failure_kind_str(kind)))
+        }
+    };
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE provider_sessions
+             SET status=?1, failure_reason=?2, failure_kind=?2, release_status=?3,
+                 release_failure_kind=?4, updated_at=?5
+             WHERE id=?6 AND provider_kind='larm' AND status='running'",
+            params![
+                status,
+                failure_kind.map(ProviderFailureKind::as_str),
+                release_status,
+                release_failure_kind,
+                now_iso(),
+                session_id
+            ],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Provider session was already finalized".to_string());
+    }
+    Ok(())
+}
+
+fn release_failure_kind_str(kind: providers::larm::contracts::ReleaseFailureKind) -> &'static str {
+    use providers::larm::contracts::ReleaseFailureKind as Release;
+    match kind {
+        Release::Authentication => "authentication",
+        Release::Protocol => "protocol",
+        Release::Upstream => "upstream",
+        Release::Network => "network",
+        Release::Timeout => "timeout",
+        Release::Internal => "internal",
+    }
+}
+
 fn finish_provider_session(
     state: &AppState,
     session_id: &str,
     status: &str,
-    failure_reason: Option<&str>,
+    failure_kind: Option<ProviderFailureKind>,
 ) -> Result<(), String> {
     let connection = state
         .connection
@@ -3159,11 +3487,11 @@ fn finish_provider_session(
     let changed = connection
         .execute(
             "UPDATE provider_sessions
-             SET status = ?1, failure_reason = ?2, updated_at = ?3
+             SET status = ?1, failure_reason = ?2, failure_kind = ?2, updated_at = ?3
              WHERE id = ?4 AND status = 'running'",
             params![
                 status,
-                failure_reason.map(redact_runtime_text),
+                failure_kind.map(ProviderFailureKind::as_str),
                 now_iso(),
                 session_id
             ],
@@ -3236,12 +3564,19 @@ enum ProviderFailureKind {
     Contract,
     Protocol,
     RequestTooLarge,
+    Policy,
     Capacity,
     Unavailable,
+    Draining,
     Upstream,
     Network,
     Timeout,
+    AllocationLost,
+    AllocationOutcomeUnknown,
+    NotReady,
+    PartialOutput,
     ClientDisconnected,
+    Cancelled,
     Internal,
 }
 
@@ -3252,12 +3587,19 @@ impl ProviderFailureKind {
             Self::Contract => "contract",
             Self::Protocol => "protocol",
             Self::RequestTooLarge => "request-too-large",
+            Self::Policy => "policy",
             Self::Capacity => "capacity",
             Self::Unavailable => "unavailable",
+            Self::Draining => "draining",
             Self::Upstream => "upstream",
             Self::Network => "network",
             Self::Timeout => "timeout",
+            Self::AllocationLost => "allocation-lost",
+            Self::AllocationOutcomeUnknown => "allocation-outcome-unknown",
+            Self::NotReady => "not-ready",
+            Self::PartialOutput => "partial-output",
             Self::ClientDisconnected => "client-disconnected",
+            Self::Cancelled => "cancelled",
             Self::Internal => "internal",
         }
     }
@@ -3270,12 +3612,19 @@ impl ProviderFailureKind {
             Self::Contract => "Provider settings or request contract are invalid.",
             Self::Protocol => "Provider returned an invalid or incomplete response.",
             Self::RequestTooLarge => "Provider request or response exceeded the configured limit.",
+            Self::Policy => "Provider policy rejected the request.",
             Self::Capacity => "Provider capacity is currently exhausted.",
             Self::Unavailable => "Provider is currently unavailable.",
+            Self::Draining => "Provider is draining and is not accepting new work.",
             Self::Upstream => "Provider could not complete the upstream request.",
             Self::Network => "Provider connection ended before the response completed.",
             Self::Timeout => "Provider request reached its timeout.",
+            Self::AllocationLost => "The selected local runtime allocation is no longer available.",
+            Self::AllocationOutcomeUnknown => "The local runtime allocation outcome is unknown.",
+            Self::NotReady => "The selected local runtime did not become ready in time.",
+            Self::PartialOutput => "Provider output ended after a partial response.",
             Self::ClientDisconnected => "The response consumer disconnected.",
+            Self::Cancelled => "Provider execution was cancelled.",
             Self::Internal => "SAAA could not complete the provider attempt.",
         };
         BoundedProviderMessage(message)
@@ -3294,6 +3643,11 @@ impl BoundedProviderMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CleanupOutcome {
     NotApplicable,
+    NotStarted,
+    Released,
+    DeferredToTtl {
+        kind: providers::larm::contracts::ReleaseFailureKind,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -3339,11 +3693,45 @@ fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) ->
         && matches!(
             kind,
             ProviderFailureKind::Capacity
+                | ProviderFailureKind::Policy
                 | ProviderFailureKind::Unavailable
+                | ProviderFailureKind::Draining
                 | ProviderFailureKind::Upstream
                 | ProviderFailureKind::Network
                 | ProviderFailureKind::Timeout
+                | ProviderFailureKind::AllocationLost
+                | ProviderFailureKind::AllocationOutcomeUnknown
         )
+}
+
+fn provider_failure_from_larm(
+    kind: providers::larm::contracts::SessionFailureKind,
+) -> ProviderFailureKind {
+    use providers::larm::contracts::SessionFailureKind as Larm;
+    match kind {
+        Larm::Authentication => ProviderFailureKind::Authentication,
+        Larm::Contract => ProviderFailureKind::Contract,
+        Larm::Protocol => ProviderFailureKind::Protocol,
+        Larm::RequestTooLarge => ProviderFailureKind::RequestTooLarge,
+        Larm::Internal => ProviderFailureKind::Internal,
+        Larm::ClientDisconnected => ProviderFailureKind::ClientDisconnected,
+        Larm::Cancelled => ProviderFailureKind::Cancelled,
+        Larm::PartialOutput => ProviderFailureKind::PartialOutput,
+        Larm::Policy => ProviderFailureKind::Policy,
+        Larm::Capacity => ProviderFailureKind::Capacity,
+        Larm::Unavailable => ProviderFailureKind::Unavailable,
+        Larm::Draining => ProviderFailureKind::Draining,
+        Larm::Upstream => ProviderFailureKind::Upstream,
+        Larm::Network => ProviderFailureKind::Network,
+        Larm::Timeout => ProviderFailureKind::Timeout,
+        Larm::AllocationLost => ProviderFailureKind::AllocationLost,
+        Larm::AllocationOutcomeUnknown => ProviderFailureKind::AllocationOutcomeUnknown,
+        Larm::NotReady => ProviderFailureKind::NotReady,
+    }
+}
+
+fn larm_failure_message(kind: providers::larm::contracts::SessionFailureKind) -> &'static str {
+    provider_failure_from_larm(kind).public_message().as_str()
 }
 
 fn classify_reqwest_error(error: &reqwest::Error) -> ProviderFailureKind {
@@ -3406,9 +3794,18 @@ async fn stream_model_provider(
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
 ) -> ProviderAttemptOutcome {
-    match stream_model_provider_inner(provider, history, timeout_ms, input, on_event, cancellation)
-        .await
+    match stream_model_provider_inner(
+        provider,
+        history,
+        timeout_ms,
+        input,
+        on_event,
+        cancellation,
+        output_persistence,
+    )
+    .await
     {
         Ok(content) => ProviderAttemptOutcome::Completed {
             content,
@@ -3432,6 +3829,203 @@ async fn stream_model_provider(
     }
 }
 
+struct LarmStreamContext<'a> {
+    state: &'a AppState,
+    session_id: &'a str,
+    input: &'a StartTurnInput,
+    on_event: &'a tauri::ipc::Channel<RuntimeEvent>,
+}
+
+async fn stream_larm_provider(
+    provider: &LarmProviderSettings,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+    context: LarmStreamContext<'_>,
+) -> ProviderAttemptOutcome {
+    use providers::larm::{
+        client::{Cancellation, ChatMessage},
+        AllocationCleanup, LarmProvider,
+    };
+
+    let larm = match LarmProvider::for_attempt(
+        &context.state.larm_gate,
+        &provider.base_url,
+        provider.allocation_ttl_seconds,
+        provider.allocation_startup_timeout_seconds,
+    ) {
+        Ok(larm) => larm,
+        Err(kind) => {
+            let kind = provider_failure_from_larm(kind);
+            return ProviderAttemptOutcome::Failed {
+                kind,
+                public_message: kind.public_message(),
+                output_started: false,
+                cleanup: CleanupOutcome::NotStarted,
+            };
+        }
+    };
+    let cancellation_signal = Cancellation {
+        flag: &cancellation.cancelled,
+        notify: &cancellation.notify,
+    };
+    let allocation = match larm.allocate_ready(cancellation_signal).await {
+        Ok(allocation) => allocation,
+        Err(failure) => {
+            let cleanup = match failure.cleanup {
+                AllocationCleanup::NotStarted => CleanupOutcome::NotStarted,
+                AllocationCleanup::Released => CleanupOutcome::Released,
+                AllocationCleanup::DeferredToTtl(kind) => CleanupOutcome::DeferredToTtl { kind },
+            };
+            let kind = provider_failure_from_larm(failure.kind);
+            if kind == ProviderFailureKind::Cancelled {
+                return ProviderAttemptOutcome::Cancelled {
+                    output_started: false,
+                    cleanup,
+                };
+            }
+            return ProviderAttemptOutcome::Failed {
+                kind,
+                public_message: kind.public_message(),
+                output_started: false,
+                cleanup,
+            };
+        }
+    };
+
+    if persist_larm_selection(context.state, context.session_id, &allocation).is_err() {
+        let cleanup = cleanup_from_larm(larm.release(&allocation.allocation_id).await);
+        return ProviderAttemptOutcome::Failed {
+            kind: ProviderFailureKind::Internal,
+            public_message: ProviderFailureKind::Internal.public_message(),
+            output_started: false,
+            cleanup,
+        };
+    }
+    let selection_reason_code = match allocation.selection_reason {
+        providers::larm::contracts::SelectionReason::Primary => "primary",
+        providers::larm::contracts::SelectionReason::Other => "other",
+    };
+    if context
+        .on_event
+        .send(RuntimeEvent::ProviderSelected {
+            run_id: context.input.run_id.clone(),
+            provider_id: provider.id.clone(),
+            provider_kind: "larm".to_string(),
+            route_id: "llm-default".to_string(),
+            runtime_id: allocation.selected_runtime_id.as_str().to_string(),
+            fallback_used: allocation.fallback_used,
+            selection_reason_code: selection_reason_code.to_string(),
+        })
+        .is_err()
+    {
+        let _ = mark_larm_release_pending(context.state, context.session_id);
+        let cleanup = cleanup_from_larm(larm.release(&allocation.allocation_id).await);
+        return ProviderAttemptOutcome::Failed {
+            kind: ProviderFailureKind::ClientDisconnected,
+            public_message: ProviderFailureKind::ClientDisconnected.public_message(),
+            output_started: false,
+            cleanup,
+        };
+    }
+
+    let messages = history
+        .iter()
+        .filter_map(|message| {
+            let role = match message.role.as_str() {
+                "system" => "system",
+                "assistant" => "assistant",
+                "user" | "transcript" => "user",
+                _ => return None,
+            };
+            Some(ChatMessage {
+                role,
+                content: message.content.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let chat = larm
+        .chat(
+            &allocation,
+            &messages,
+            Duration::from_millis(timeout_ms),
+            cancellation_signal,
+            |delta, first| {
+                if first && mark_provider_output_started(context.state, context.session_id).is_err()
+                {
+                    return Err(providers::larm::contracts::SessionFailureKind::Internal);
+                }
+                context
+                    .on_event
+                    .send(RuntimeEvent::Delta {
+                        run_id: context.input.run_id.clone(),
+                        text: delta.to_string(),
+                    })
+                    .map_err(|_| providers::larm::contracts::SessionFailureKind::ClientDisconnected)
+            },
+        )
+        .await;
+
+    let persistence_failed = match &chat {
+        Ok(completion) => {
+            let request_persistence_failed = persist_larm_request_id(
+                context.state,
+                context.session_id,
+                completion.request_id.as_ref(),
+            )
+            .is_err();
+            let release_persistence_failed =
+                mark_larm_release_pending(context.state, context.session_id).is_err();
+            request_persistence_failed || release_persistence_failed
+        }
+        Err(_) => mark_larm_release_pending(context.state, context.session_id).is_err(),
+    };
+    let cleanup = cleanup_from_larm(larm.release(&allocation.allocation_id).await);
+    if persistence_failed {
+        return ProviderAttemptOutcome::Failed {
+            kind: ProviderFailureKind::Internal,
+            public_message: ProviderFailureKind::Internal.public_message(),
+            output_started: chat
+                .as_ref()
+                .map(|completion| !completion.content.is_empty())
+                .unwrap_or_else(|error| error.output_started),
+            cleanup,
+        };
+    }
+
+    match chat {
+        Ok(completion) => ProviderAttemptOutcome::Completed {
+            content: completion.content,
+            cleanup,
+        },
+        Err(error) => {
+            let kind = provider_failure_from_larm(error.kind);
+            if kind == ProviderFailureKind::Cancelled {
+                ProviderAttemptOutcome::Cancelled {
+                    output_started: error.output_started,
+                    cleanup,
+                }
+            } else {
+                ProviderAttemptOutcome::Failed {
+                    kind,
+                    public_message: kind.public_message(),
+                    output_started: error.output_started,
+                    cleanup,
+                }
+            }
+        }
+    }
+}
+
+fn cleanup_from_larm(cleanup: providers::larm::client::CleanupResult) -> CleanupOutcome {
+    match cleanup {
+        providers::larm::client::CleanupResult::Released => CleanupOutcome::Released,
+        providers::larm::client::CleanupResult::DeferredToTtl(kind) => {
+            CleanupOutcome::DeferredToTtl { kind }
+        }
+    }
+}
+
 async fn stream_model_provider_inner(
     provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
@@ -3439,6 +4033,7 @@ async fn stream_model_provider_inner(
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
 ) -> Result<String, ProviderAttemptError> {
     if cancellation.is_cancelled() {
         return Err(ProviderAttemptError::Cancelled {
@@ -3514,6 +4109,9 @@ async fn stream_model_provider_inner(
                 false,
             ));
         }
+        if let Some(persistence) = output_persistence {
+            persistence.mark_started()?;
+        }
         on_event
             .send(RuntimeEvent::Delta {
                 run_id: input.run_id.clone(),
@@ -3543,14 +4141,14 @@ async fn stream_model_provider_inner(
             if !buffer.is_empty() {
                 buffer.extend_from_slice(b"\n\n");
                 stream_completed = project_sse_events(
-                    drain_sse_events(&mut buffer).map_err(|_| {
-                        ProviderAttemptError::failed(ProviderFailureKind::Protocol, output_started)
-                    })?,
+                    drain_sse_events(&mut buffer, 1_048_576)
+                        .map_err(|error| sse_drain_failure(error, output_started))?,
                     &mut content,
                     &mut content_chars,
                     &mut output_started,
                     input,
                     on_event,
+                    output_persistence,
                 )?;
             }
             break;
@@ -3559,6 +4157,8 @@ async fn stream_model_provider_inner(
             ProviderAttemptError::failed(classify_reqwest_error(&error), output_started)
         })?;
         buffer.extend_from_slice(&chunk);
+        let events = drain_sse_events(&mut buffer, 1_048_576)
+            .map_err(|error| sse_drain_failure(error, output_started))?;
         if buffer.len() > 1_048_576 {
             return Err(ProviderAttemptError::failed(
                 ProviderFailureKind::RequestTooLarge,
@@ -3566,14 +4166,13 @@ async fn stream_model_provider_inner(
             ));
         }
         let stream_done = project_sse_events(
-            drain_sse_events(&mut buffer).map_err(|_| {
-                ProviderAttemptError::failed(ProviderFailureKind::Protocol, output_started)
-            })?,
+            events,
             &mut content,
             &mut content_chars,
             &mut output_started,
             input,
             on_event,
+            output_persistence,
         )?;
         if stream_done {
             stream_completed = true;
@@ -3595,7 +4194,24 @@ async fn stream_model_provider_inner(
     Ok(content)
 }
 
-fn drain_sse_events(buffer: &mut Vec<u8>) -> Result<Vec<String>, String> {
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum SseDrainError {
+    InvalidUtf8,
+    EventTooLarge,
+}
+
+fn sse_drain_failure(error: SseDrainError, output_started: bool) -> ProviderAttemptError {
+    let kind = match error {
+        SseDrainError::InvalidUtf8 => ProviderFailureKind::Protocol,
+        SseDrainError::EventTooLarge => ProviderFailureKind::RequestTooLarge,
+    };
+    ProviderAttemptError::failed(kind, output_started)
+}
+
+fn drain_sse_events(
+    buffer: &mut Vec<u8>,
+    event_limit: usize,
+) -> Result<Vec<String>, SseDrainError> {
     let mut events = Vec::new();
     loop {
         let lf = buffer.windows(2).position(|window| window == b"\n\n");
@@ -3610,10 +4226,12 @@ fn drain_sse_events(buffer: &mut Vec<u8>) -> Result<Vec<String>, String> {
         let Some((index, delimiter_length)) = boundary else {
             break;
         };
+        if index > event_limit {
+            return Err(SseDrainError::EventTooLarge);
+        }
         let drained = buffer.drain(..index + delimiter_length).collect::<Vec<_>>();
         events.push(
-            String::from_utf8(drained[..index].to_vec())
-                .map_err(|_| "Provider stream event was not valid UTF-8".to_string())?,
+            String::from_utf8(drained[..index].to_vec()).map_err(|_| SseDrainError::InvalidUtf8)?,
         );
     }
     Ok(events)
@@ -3626,6 +4244,7 @@ fn project_sse_events(
     output_started: &mut bool,
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
 ) -> Result<bool, ProviderAttemptError> {
     for event in events {
         for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
@@ -3651,6 +4270,11 @@ fn project_sse_events(
                         *output_started,
                     ));
                 }
+                if !*output_started {
+                    if let Some(persistence) = output_persistence {
+                        persistence.mark_started()?;
+                    }
+                }
                 content.push_str(delta);
                 *content_chars += delta_chars;
                 *output_started = true;
@@ -3666,6 +4290,19 @@ fn project_sse_events(
         }
     }
     Ok(false)
+}
+
+#[derive(Clone, Copy)]
+struct ProviderOutputPersistence<'a> {
+    state: &'a AppState,
+    session_id: &'a str,
+}
+
+impl ProviderOutputPersistence<'_> {
+    fn mark_started(self) -> Result<(), ProviderAttemptError> {
+        mark_provider_output_started(self.state, self.session_id)
+            .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Internal, false))
+    }
 }
 
 async fn probe_model_provider(
@@ -5183,13 +5820,15 @@ fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), Str
                         "Provider endpoint or model is too long: {provider_id}"
                     ));
                 }
-                if !provider.enabled {
-                    continue;
-                }
-                if provider.endpoint.trim().is_empty() || provider.model.trim().is_empty() {
+                if provider.enabled
+                    && (provider.endpoint.trim().is_empty() || provider.model.trim().is_empty())
+                {
                     return Err(format!(
                         "Enabled provider requires endpoint and model: {provider_id}"
                     ));
+                }
+                if provider.endpoint.trim().is_empty() {
+                    continue;
                 }
                 let endpoint = url::Url::parse(&provider.endpoint)
                     .map_err(|_| format!("Invalid provider endpoint: {provider_id}"))?;
@@ -5234,9 +5873,17 @@ fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), Str
                 }
                 let base_url = url::Url::parse(&provider.base_url)
                     .map_err(|_| format!("Invalid LARM base URL: {provider_id}"))?;
-                let host = base_url.host_str().unwrap_or_default();
+                let numeric_loopback = matches!(
+                    base_url.host(),
+                    Some(url::Host::Ipv4(address))
+                        if address == std::net::Ipv4Addr::LOCALHOST
+                ) || matches!(
+                    base_url.host(),
+                    Some(url::Host::Ipv6(address))
+                        if address == std::net::Ipv6Addr::LOCALHOST
+                );
                 if base_url.scheme() != "http"
-                    || !matches!(host, "127.0.0.1" | "::1")
+                    || !numeric_loopback
                     || base_url.port().is_none()
                     || !base_url.username().is_empty()
                     || base_url.password().is_some()
@@ -5354,7 +6001,13 @@ fn reconcile_interrupted_runs(connection: &Connection) -> rusqlite::Result<()> {
     )?;
     connection.execute(
         "UPDATE provider_sessions
-         SET status = 'interrupted', failure_reason = COALESCE(failure_reason, 'Application restarted'), updated_at = ?1
+         SET status = 'interrupted', failure_reason = COALESCE(failure_reason, 'Application restarted'),
+             release_status = CASE
+               WHEN provider_kind='larm' AND allocation_id IS NOT NULL
+                    AND release_status IN ('not-started','pending') THEN 'deferred-to-ttl'
+               ELSE release_status
+             END,
+             updated_at = ?1
          WHERE status = 'running'",
         params![now_iso()],
     )?;
@@ -5569,6 +6222,8 @@ pub fn run() {
             app.manage(AppState {
                 connection,
                 active_runs: Mutex::new(HashMap::new()),
+                shutdown_started: AtomicBool::new(false),
+                larm_gate: providers::larm::LarmRuntimeGate::initialize(),
                 tts_process: Mutex::new(None),
                 situation,
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
@@ -5576,10 +6231,32 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                let state = window.state::<AppState>();
-                shutdown_app_state(&state);
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            let state = window.state::<AppState>();
+            if state.shutdown_started.swap(true, Ordering::SeqCst) {
+                return;
             }
+            api.prevent_close();
+            shutdown_app_state(&state);
+            let window = window.clone();
+            tauri::async_runtime::spawn(async move {
+                let deadline = tokio::time::Instant::now() + WINDOW_SHUTDOWN_GRACE;
+                loop {
+                    let no_active_runs = window
+                        .state::<AppState>()
+                        .active_runs
+                        .lock()
+                        .map(|active| active.is_empty())
+                        .unwrap_or(true);
+                    if no_active_runs || tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                let _ = window.close();
+            });
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
@@ -5633,6 +6310,8 @@ mod tests {
         AppState {
             connection: Arc::new(Mutex::new(connection)),
             active_runs: Mutex::new(HashMap::new()),
+            shutdown_started: AtomicBool::new(false),
+            larm_gate: providers::larm::LarmRuntimeGate::Disabled,
             tts_process: Mutex::new(None),
             situation: Arc::new(
                 situation::SituationRuntime::new(settings, None)
@@ -5767,9 +6446,13 @@ mod tests {
         .expect("provider session starts");
         finish_provider_session(&state, &session_id, "completed", None)
             .expect("provider session finalizes");
-        assert!(
-            finish_provider_session(&state, &session_id, "failed", Some("late failure")).is_err()
-        );
+        assert!(finish_provider_session(
+            &state,
+            &session_id,
+            "failed",
+            Some(ProviderFailureKind::Internal),
+        )
+        .is_err());
 
         let connection = state.connection.lock().expect("database lock");
         let (status, provider_id): (String, String) = connection
@@ -5840,6 +6523,22 @@ mod tests {
         assert_eq!(runtime["providerId"], "codex-sdk");
         assert!(runtime.get("run_id").is_none());
         assert!(runtime.get("provider_id").is_none());
+
+        let selected = serde_json::to_value(RuntimeEvent::ProviderSelected {
+            run_id: "run_contract".to_string(),
+            provider_id: "larm-primary".to_string(),
+            provider_kind: "larm".to_string(),
+            route_id: "llm-default".to_string(),
+            runtime_id: "runtime-safe".to_string(),
+            fallback_used: false,
+            selection_reason_code: "primary".to_string(),
+        })
+        .expect("provider selection serializes");
+        assert_eq!(selected["type"], "providerSelected");
+        assert_eq!(selected["routeId"], "llm-default");
+        assert_eq!(selected["selectionReasonCode"], "primary");
+        assert!(selected.get("allocationId").is_none());
+        assert!(selected.get("requestId").is_none());
 
         let voice = serde_json::to_value(VoiceEvent::TranscriptDelta {
             run_id: "voice_contract".to_string(),
@@ -6491,6 +7190,18 @@ mod tests {
                 [],
             )
             .expect("running work inserts");
+        connection
+            .execute(
+                "INSERT INTO provider_sessions(
+                   id, provider_id, runtime_run_id, provider_kind, allocation_id,
+                   fallback_used, output_started, release_status, status, started_at, updated_at
+                 ) VALUES(
+                   'session-1','larm-primary','run-1','larm','alloc_restart',
+                   0,1,'pending','running','before-restart','before-restart'
+                 )",
+                [],
+            )
+            .expect("running provider session inserts");
 
         reconcile_interrupted_runs(&connection).expect("startup reconciliation succeeds");
         let (status, failure_code, supervisor_version): (String, String, Option<String>) =
@@ -6505,6 +7216,44 @@ mod tests {
         assert_eq!(status, "interrupted");
         assert_eq!(failure_code, "app-restarted");
         assert_eq!(supervisor_version, None);
+        let (provider_status, release_status): (String, String) = connection
+            .query_row(
+                "SELECT status,release_status FROM provider_sessions WHERE id='session-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("provider session loads");
+        assert_eq!(provider_status, "interrupted");
+        assert_eq!(release_status, "deferred-to-ttl");
+    }
+
+    #[test]
+    fn provider_diagnostics_exclude_allocation_and_request_identifiers() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO provider_sessions(
+                   id,provider_id,runtime_run_id,provider_kind,route_id,allocation_id,
+                   selected_runtime_id,fallback_used,selection_reason,request_id,output_started,
+                   release_status,status,started_at,updated_at
+                 ) VALUES(
+                   'session_diag','larm-primary','run_diag','larm','llm-default','alloc_secret',
+                   'runtime_safe',0,'primary','req_secret',1,'released','completed','1','2'
+                 )",
+                [],
+            )
+            .expect("diagnostic fixture inserts");
+        let diagnostics = build_provider_diagnostics(&connection).expect("diagnostics build");
+        let encoded = diagnostics.to_string();
+        assert!(encoded.contains("runtime_safe"));
+        assert!(encoded.contains("llm-default"));
+        for forbidden in ["alloc_secret", "req_secret", "allocationId", "requestId"] {
+            assert!(
+                !encoded.contains(forbidden),
+                "diagnostics exposed {forbidden}"
+            );
+        }
     }
 
     #[test]
@@ -6534,6 +7283,32 @@ mod tests {
     }
 
     #[test]
+    fn disabled_larm_gate_removes_only_larm_and_preserves_direct_rollback_order() {
+        let providers = ModelProvidersSettings {
+            providers: vec![
+                larm_provider("larm-primary"),
+                provider("direct-rollback", "local"),
+            ],
+        };
+        let configured = vec!["larm-primary".to_string(), "direct-rollback".to_string()];
+        assert_eq!(
+            apply_runtime_provider_gates(
+                &providers,
+                configured.clone(),
+                &providers::larm::LarmRuntimeGate::Disabled,
+            ),
+            vec!["direct-rollback"]
+        );
+        let ready = providers::larm::LarmRuntimeGate::Ready(Arc::new(
+            providers::larm::client::SharedLarmClient::build().expect("LARM client builds"),
+        ));
+        assert_eq!(
+            apply_runtime_provider_gates(&providers, configured.clone(), &ready),
+            configured
+        );
+    }
+
+    #[test]
     fn settings_reject_embedded_credentials_and_cloud_fallback_on_local_route() {
         let with_credentials = ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(
@@ -6544,6 +7319,14 @@ mod tests {
             )],
         };
         assert!(validate_model_providers(&with_credentials).is_err());
+        let mut disabled_with_credentials = with_credentials;
+        let ModelProviderSettings::OpenAiCompatible(disabled_provider) =
+            &mut disabled_with_credentials.providers[0]
+        else {
+            unreachable!("fixture is direct provider");
+        };
+        disabled_provider.enabled = false;
+        assert!(validate_model_providers(&disabled_with_credentials).is_err());
 
         let unsafe_id = ModelProvidersSettings {
             providers: vec![provider("local provider", "local")],
@@ -6578,6 +7361,15 @@ mod tests {
             providers: vec![larm_provider("larm")],
         };
         assert!(validate_model_providers(&valid).is_ok());
+        let mut ipv6 = larm_provider("larm-ipv6");
+        let ModelProviderSettings::Larm(provider) = &mut ipv6 else {
+            unreachable!("LARM fixture must remain tagged as LARM");
+        };
+        provider.base_url = "http://[::1]:9810/".to_string();
+        assert!(validate_model_providers(&ModelProvidersSettings {
+            providers: vec![ipv6]
+        })
+        .is_ok());
 
         for base_url in [
             "http://localhost:9810/",
@@ -6632,9 +7424,30 @@ mod tests {
     #[test]
     fn sse_parser_handles_lf_crlf_and_partial_events() {
         let mut buffer = b"data: {\"a\":1}\r\n\r\ndata: {\"b\":2}\n\ndata: partial".to_vec();
-        let events = drain_sse_events(&mut buffer).expect("SSE events parse");
+        let events = drain_sse_events(&mut buffer, 1_048_576).expect("SSE events parse");
         assert_eq!(events, ["data: {\"a\":1}", "data: {\"b\":2}"]);
         assert_eq!(buffer, b"data: partial");
+    }
+
+    #[test]
+    fn sse_parser_applies_the_limit_to_each_event() {
+        let event = format!("data: {}\n\n", "x".repeat(600 * 1_024));
+        let mut buffer = [event.as_bytes(), event.as_bytes()].concat();
+        let events = drain_sse_events(&mut buffer, 1_048_576)
+            .expect("two individually bounded events parse");
+        assert_eq!(events.len(), 2);
+        assert!(buffer.is_empty());
+
+        let mut oversized = format!("data: {}\n\n", "x".repeat(1_048_577)).into_bytes();
+        assert_eq!(
+            drain_sse_events(&mut oversized, 1_048_576),
+            Err(SseDrainError::EventTooLarge)
+        );
+        let mut invalid_utf8 = b"data: \xff\n\n".to_vec();
+        assert_eq!(
+            drain_sse_events(&mut invalid_utf8, 1_048_576),
+            Err(SseDrainError::InvalidUtf8)
+        );
     }
 
     #[test]
@@ -6647,12 +7460,12 @@ mod tests {
             .expect("multibyte character exists")
             + 1;
         let mut buffer = bytes[..split].to_vec();
-        assert!(drain_sse_events(&mut buffer)
+        assert!(drain_sse_events(&mut buffer, 1_048_576)
             .expect("partial UTF-8 remains buffered")
             .is_empty());
         buffer.extend_from_slice(&bytes[split..]);
         assert_eq!(
-            drain_sse_events(&mut buffer).expect("complete UTF-8 event parses"),
+            drain_sse_events(&mut buffer, 1_048_576).expect("complete UTF-8 event parses"),
             [event.trim_end()]
         );
     }
@@ -6719,6 +7532,7 @@ mod tests {
             &input,
             &channel,
             Arc::new(RunCancellation::default()),
+            None,
         )
         .await;
         let ProviderAttemptOutcome::Completed { content, .. } = content else {
@@ -6744,11 +7558,15 @@ mod tests {
     #[test]
     fn provider_fallback_policy_is_failure_kind_and_output_aware() {
         for kind in [
+            ProviderFailureKind::Policy,
             ProviderFailureKind::Capacity,
             ProviderFailureKind::Unavailable,
+            ProviderFailureKind::Draining,
             ProviderFailureKind::Upstream,
             ProviderFailureKind::Network,
             ProviderFailureKind::Timeout,
+            ProviderFailureKind::AllocationLost,
+            ProviderFailureKind::AllocationOutcomeUnknown,
         ] {
             assert!(provider_fallback_allowed(kind, false), "{}", kind.as_str());
             assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
@@ -6758,7 +7576,10 @@ mod tests {
             ProviderFailureKind::Contract,
             ProviderFailureKind::Protocol,
             ProviderFailureKind::RequestTooLarge,
+            ProviderFailureKind::NotReady,
+            ProviderFailureKind::PartialOutput,
             ProviderFailureKind::ClientDisconnected,
+            ProviderFailureKind::Cancelled,
             ProviderFailureKind::Internal,
         ] {
             assert!(!provider_fallback_allowed(kind, false), "{}", kind.as_str());
@@ -6810,6 +7631,7 @@ mod tests {
             &input,
             &channel,
             Arc::new(RunCancellation::default()),
+            None,
         )
         .await;
         server.join().expect("fixture server joins");
@@ -6882,6 +7704,7 @@ mod tests {
             &input,
             &channel,
             Arc::new(RunCancellation::default()),
+            None,
         )
         .await;
         source_server.join().expect("source server joins");
@@ -6985,6 +7808,8 @@ mod tests {
         let events_for_channel = events.clone();
         let completed_states = Arc::new(Mutex::new(Vec::<String>::new()));
         let completed_states_for_channel = completed_states.clone();
+        let delta_states = Arc::new(Mutex::new(Vec::<i64>::new()));
+        let delta_states_for_channel = delta_states.clone();
         let database_for_channel = state.connection.clone();
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
             if let tauri::ipc::InvokeResponseBody::Json(value) = body {
@@ -7002,6 +7827,21 @@ mod tests {
                         .lock()
                         .expect("completed state lock")
                         .push(status);
+                } else if value.contains("\"type\":\"delta\"") {
+                    let output_started = database_for_channel
+                        .lock()
+                        .expect("database lock")
+                        .query_row(
+                            "SELECT output_started FROM provider_sessions
+                             WHERE runtime_run_id='run-fallback' AND provider_id='fallback'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .expect("committed output state is readable from callback");
+                    delta_states_for_channel
+                        .lock()
+                        .expect("delta state lock")
+                        .push(output_started);
                 }
                 events_for_channel.lock().expect("event lock").push(value);
             }
@@ -7034,6 +7874,7 @@ mod tests {
             *completed_states.lock().expect("completed state lock"),
             vec!["completed"]
         );
+        assert_eq!(*delta_states.lock().expect("delta state lock"), vec![1]);
     }
 
     #[tokio::test]
@@ -7889,6 +8730,252 @@ for line in sys.stdin:
         assert!(!models.is_empty());
         assert!(models.iter().all(|model| !model.hidden));
         assert!(models.iter().any(|model| model.is_default));
+    }
+
+    #[tokio::test]
+    async fn larm_turn_commits_before_events_and_keeps_success_when_release_fails() {
+        use std::ffi::OsString;
+        use std::io::{Read, Write as _};
+        use std::net::TcpListener;
+
+        struct EnvGuard {
+            key: &'static str,
+            previous: Option<OsString>,
+        }
+        impl EnvGuard {
+            fn set(key: &'static str, value: &str) -> Self {
+                let previous = env::var_os(key);
+                env::set_var(key, value);
+                Self { key, previous }
+            }
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                if let Some(previous) = &self.previous {
+                    env::set_var(self.key, previous);
+                } else {
+                    env::remove_var(self.key);
+                }
+            }
+        }
+
+        static LARM_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        let _environment_lock = LARM_ENV_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _token = EnvGuard::set("LARM_API_TOKEN", "fixture-token");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fake LARM binds");
+        let address = listener.local_addr().expect("fake LARM address");
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let server_requests = requests.clone();
+        let allocation = concat!(
+            "{\"id\":\"alloc_turn\",\"status\":\"ready\",",
+            "\"requirements\":[{\"capability\":\"llm.general\",\"route\":\"llm-default\"}],",
+            "\"bindings\":[{\"capability\":\"llm.general\",\"route\":\"llm-default\",",
+            "\"runtime\":\"runtime_turn\",\"node\":\"gnosis\",\"status\":\"HOT\",",
+            "\"candidateRank\":1,\"fallback\":false,\"selectionReason\":\"primary-live\"}],",
+            "\"allowFallback\":false,\"deploymentPolicy\":\"existing-only\",",
+            "\"createdAt\":\"2026-08-28T00:00:00.000Z\",",
+            "\"expiresAt\":\"2026-08-28T00:05:00.000Z\"}"
+        );
+        let allocate_response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{allocation}",
+            allocation.len()
+        );
+        let stream_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"LARM ok\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let stream_response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Request-ID: req_turn\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{stream_body}",
+            stream_body.len()
+        );
+        let release_error =
+            r#"{"error":{"code":"internal_error","message":"fixture release failure"}}"#;
+        let release_response = format!(
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{release_error}",
+            release_error.len()
+        );
+        let server = thread::spawn(move || {
+            for response in [allocate_response, stream_response, release_response] {
+                let (mut socket, _) = listener.accept().expect("fake LARM accepts");
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .expect("fake LARM read timeout");
+                let mut request = vec![0_u8; 64 * 1_024];
+                let size = socket.read(&mut request).expect("fake LARM reads");
+                server_requests
+                    .lock()
+                    .expect("request lock")
+                    .push(String::from_utf8_lossy(&request[..size]).into_owned());
+                socket
+                    .write_all(response.as_bytes())
+                    .expect("fake LARM writes");
+            }
+        });
+
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut state = app_state(connection);
+        state.larm_gate = providers::larm::LarmRuntimeGate::Ready(Arc::new(
+            providers::larm::client::SharedLarmClient::build().expect("LARM client builds"),
+        ));
+        state
+            .connection
+            .lock()
+            .expect("database lock")
+            .execute(
+                "INSERT INTO conversations(id, task_mode, created_at, updated_at)
+                 VALUES('conversation-larm', 'conversation', '1', '1')",
+                [],
+            )
+            .expect("conversation inserts");
+        let mut documents = default_settings_input();
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.model")
+            .expect("provider settings")
+            .value_json = json!({ "providers": [{
+                "kind": "larm", "id": "larm-primary", "enabled": true, "label": "LARM",
+                "location": "local", "baseUrl": format!("http://{address}"),
+                "tokenEnv": "LARM_API_TOKEN", "allocationTtlSeconds": 300,
+                "allocationStartupTimeoutSeconds": 5, "allowFallbackByDefault": false,
+                "deploymentPolicy": "existing-only"
+            }] });
+        let routing = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing settings");
+        routing.value_json["conversationRespond"]["primaryProviderId"] = json!("larm-primary");
+        routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!([]);
+        save_settings_documents_to_connection(
+            &mut state.connection.lock().expect("database lock"),
+            &documents,
+        )
+        .expect("settings save");
+
+        let event_states = Arc::new(Mutex::new(Vec::<String>::new()));
+        let callback_states = event_states.clone();
+        let callback_database = state.connection.clone();
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
+            let tauri::ipc::InvokeResponseBody::Json(event) = body else {
+                return Ok(());
+            };
+            if event.contains("\"type\":\"providerSelected\"") {
+                let selected: (Option<String>, i64, String) = callback_database
+                    .lock()
+                    .expect("database lock")
+                    .query_row(
+                        "SELECT selected_runtime_id, output_started, status
+                         FROM provider_sessions WHERE runtime_run_id='run-larm'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .expect("selection row");
+                callback_states.lock().expect("state lock").push(format!(
+                    "selected:{:?}:{}:{}",
+                    selected.0, selected.1, selected.2
+                ));
+            } else if event.contains("\"type\":\"delta\"") {
+                let output_started: i64 = callback_database
+                    .lock()
+                    .expect("database lock")
+                    .query_row(
+                        "SELECT output_started FROM provider_sessions WHERE runtime_run_id='run-larm'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .expect("output row");
+                callback_states
+                    .lock()
+                    .expect("state lock")
+                    .push(format!("delta:{output_started}"));
+            } else if event.contains("\"type\":\"messageCompleted\"") {
+                let terminal: (String, String, String) = callback_database
+                    .lock()
+                    .expect("database lock")
+                    .query_row(
+                        "SELECT ps.status, ps.release_status, rr.status
+                         FROM provider_sessions ps JOIN runtime_runs rr ON rr.id=ps.runtime_run_id
+                         WHERE ps.runtime_run_id='run-larm'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .expect("terminal rows");
+                callback_states.lock().expect("state lock").push(format!(
+                    "completed:{}:{}:{}",
+                    terminal.0, terminal.1, terminal.2
+                ));
+            }
+            Ok(())
+        });
+        let input = StartTurnInput {
+            run_id: "run-larm".to_string(),
+            conversation_id: "conversation-larm".to_string(),
+            content: "fixture prompt".to_string(),
+            workspace_path: None,
+        };
+        execute_turn(
+            &state,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+            None,
+        )
+        .await
+        .expect("LARM turn completes");
+        server.join().expect("fake LARM joins");
+
+        assert_eq!(
+            *event_states.lock().expect("state lock"),
+            vec![
+                "selected:Some(\"runtime_turn\"):0:running",
+                "delta:1",
+                "completed:completed:deferred-to-ttl:completed"
+            ]
+        );
+        let captures = requests.lock().expect("request lock");
+        assert_eq!(captures.len(), 3);
+        assert!(captures.iter().all(|request| request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-token")));
+        assert!(captures[1].contains("x-larm-allocation-id: alloc_turn"));
+        let telemetry: (String, String, i64, String, String, Option<String>, String) = state
+            .connection
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT route_id, selected_runtime_id, fallback_used, selection_reason,
+                        release_status, request_id, release_failure_kind
+                 FROM provider_sessions WHERE runtime_run_id='run-larm'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .expect("telemetry row");
+        assert_eq!(
+            telemetry,
+            (
+                "llm-default".to_string(),
+                "runtime_turn".to_string(),
+                0,
+                "primary".to_string(),
+                "deferred-to-ttl".to_string(),
+                Some("req_turn".to_string()),
+                "upstream".to_string()
+            )
+        );
     }
 
     #[test]
