@@ -3,8 +3,9 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>Status: Proposed; LARM production contract pending</li>
+    <li>Status: Review complete; G1 LARM production contract and G2 canary transport pending</li>
     <li>Created: 2026-08-28</li>
+    <li>Last reviewed: 2026-08-28</li>
     <li>
       Baseline: <code>d0ba3fd</code> — MVP 2.5 implementation checkpoint
     </li>
@@ -29,6 +30,60 @@
     2.6のcontract作業は並行できるが、 MVP
     2.5の未完了evidenceを完了扱いにせず、既存計画をarchiveしない。
   </p>
+  <h3 id="01-review-amendments">0.1 Review amendments</h3>
+  <table>
+    <caption>
+      Table: Document review decisions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Review finding</th>
+        <th scope="col">Fixed decision</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>process feature flagと即時rollbackの意味が混在していた</td>
+        <td>Settingsによるnew-turn rollbackと、restartが必要なoperator kill switchへ分離</td>
+      </tr>
+      <tr>
+        <td>任意の<code>tokenEnv</code>は別用途secretの送信を許し得た</td>
+        <td><code>LARM_API_TOKEN</code> literalに固定</td>
+      </tr>
+      <tr>
+        <td>remote HTTPSを許可しながら別ADRを要求していた</td>
+        <td>MVP 2.6はloopback tunnelだけ。remote transportはschemaごと後続</td>
+      </tr>
+      <tr>
+        <td>allocate timeout後のserver-side allocation有無が不明だった</td>
+        <td>blind retry禁止、outcome unknown、TTL回収</td>
+      </tr>
+      <tr>
+        <td>chat成功後のrelease失敗がinference結果を上書きし得た</td>
+        <td>inference statusとcleanup statusを分離</td>
+      </tr>
+      <tr>
+        <td>Provider selection eventと永続化の順序が未定義だった</td>
+        <td>SQLite commit-before-eventを全selection / terminal pathで固定</td>
+      </tr>
+      <tr>
+        <td>Provider sessionをRuntime Runへ相関できなかった</td>
+        <td><code>runtime_run_id</code>を新規attemptで必須化</td>
+      </tr>
+      <tr>
+        <td>一つのcanary clientの境界が曖昧だった</td>
+        <td>isolated app-data、専用environment、単一operatorのSAAA instanceに固定</td>
+      </tr>
+      <tr>
+        <td>LARM API未確定がserver-independent ticketまでblockしていた</td>
+        <td>G0〜G3 delivery gateへ分割</td>
+      </tr>
+      <tr>
+        <td>外部responseのstrict decodeがadditive fieldでも停止し得た</td>
+        <td>required field / stateはstrict、unknown object fieldはforward-compatibleに無視</td>
+      </tr>
+    </tbody>
+  </table>
 
   <h2 id="1-conclusion">1. 結論</h2>
   <p>SAAAはLARMをOpenAI-compatible endpointの別名として登録しない。</p>
@@ -114,7 +169,7 @@ Selected Local Runtime</code></pre>
       <tr>
         <td>Security</td>
         <td>Local HTTPはloopbackだけ、credentialはenvironmentだけ</td>
-        <td>この境界を緩めず、gnosis接続はloopback tunnelまたはHTTPSに限定する</td>
+        <td>この境界を緩めず、gnosis接続はloopback tunnelに限定する</td>
       </tr>
     </tbody>
   </table>
@@ -128,7 +183,7 @@ Selected Local Runtime</code></pre>
     <li>allocationのallocate、pending poll、renew、release、expiry、daemon restartを扱う。</li>
     <li>allocation id付きLARM GatewayでLLM streamingを実行する。</li>
     <li>最初の出力後に別Providerまたは別Runtimeへ透過的retryしない。</li>
-    <li>LARM feature flagを既定OFFにし、direct Providerへ即時rollbackできる。</li>
+    <li>LARM feature flagを既定OFFにし、direct Providerへnew-turn rollbackできる。</li>
     <li>token、prompt、response、resolved endpointをlog、diagnostics、telemetryへ保存しない。</li>
     <li>サーバー停止中にfake LARMでcontract testを完了できる。</li>
     <li>復旧後に一つの非critical clientだけでgnosis canaryを行う。</li>
@@ -216,12 +271,54 @@ Selected Local Runtime</code></pre>
       <code>BUSY</code>をreadyとする意味と推論capacity errorの扱い
     </li>
     <li><code>client</code> labelとcredentialの関係</li>
+    <li>lease開始時点、server-confirmed effective TTL、renew後TTLのresponse field</li>
+    <li>Gateway request、SSE event、error envelopeのbyte上限</li>
   </ol>
   <p>
     LARM側の<code>/v1</code>
     allocation、Gateway、authentication、metrics実装がcommitされ、API schemaと gnosis deployment
     revisionが特定できることをcanary開始条件とする。未commit WIPをproduction contractにしない。
   </p>
+  <h3 id="61-delivery-gates">6.1 Delivery gates</h3>
+  <table>
+    <caption>
+      Table: MVP 2.6 delivery gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">必要条件</th>
+        <th scope="col">通過前に実施できること</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>G0 — SAAA baseline</td>
+        <td>
+          <code>d0ba3fd</code>、既存test成功、MVP 2.5 manual gate記録済み
+        </td>
+        <td>partial-stream safety、tagged settings、pure session設計</td>
+      </tr>
+      <tr>
+        <td>G1 — API contract</td>
+        <td>
+          LARM commit、API schema、Section
+          6の全項目、仮想<code>model</code>名
+        </td>
+        <td>G1前はprovisional fixtureを作れてもHTTP client acceptanceを完了扱いにしない</td>
+      </tr>
+      <tr>
+        <td>G2 — Canary transport</td>
+        <td>gnosis revision、private transport、token、rollback Provider、operator</td>
+        <td>G2前はfake LARM integrationまで。実機requestを送らない</td>
+      </tr>
+      <tr>
+        <td>G3 — Production</td>
+        <td>canary、rollback、security、30分canary、2時間soak、runbook</td>
+        <td>G3前はLARMを既定Providerにしない</td>
+      </tr>
+    </tbody>
+  </table>
 
   <h2 id="7-settings-contract">7. Settings contract and v8 migration</h2>
   <h3 id="71-tagged-provider">7.1 Tagged Provider</h3>
@@ -243,7 +340,7 @@ type LarmProvider = {
   label: string;
   location: "local";
   baseUrl: string;
-  tokenEnv: string;
+  tokenEnv: "LARM_API_TOKEN";
   allocationTtlSeconds: number;
   allocationStartupTimeoutSeconds: number;
   allowFallbackByDefault: false;
@@ -255,15 +352,39 @@ type LarmProvider = {
     <code>kind: openai-compatible</code
     >を追加するだけで、id、route順、endpoint、modelを変更しない。
   </p>
+  <p>
+    settings
+    documentは既存の<code>providers.model:default</code>を維持し、新しいnamespaceまたはkeyを増やさない。
+    Provider idはkindをまたいで一意とし、enabledなLARM ProviderはMVP 2.6で最大一件とする。 LARM
+    credential statusは保存せず、connection
+    test時に<code>LARM_API_TOKEN</code>の存在だけをbounded statusへ投影する。
+  </p>
+  <p>
+    新規LARM
+    Providerは<code>enabled: false</code>、<code>http://127.0.0.1:9810</code>、TTL
+    300秒、startup timeout
+    300秒で作る。追加・enableだけではprimaryやfallback順を変更せず、route変更は別操作で
+    明示保存する。
+  </p>
   <h3 id="72-larm-validation">7.2 LARM validation</h3>
   <ul>
-    <li><code>baseUrl</code>はcredential、query、fragmentを含まない。</li>
     <li>
-      HTTPは<code>localhost</code>、<code>127.0.0.1</code>、<code>[::1]</code>だけを許可する。
+      <code>baseUrl</code
+      >はcredential、query、fragmentを含まず、pathは空または<code>/</code>だけとする。
     </li>
-    <li>remote hostはHTTPSだけを許可する。plain HTTP LANは本計画の対象外とする。</li>
     <li>
-      <code>tokenEnv</code>はASCII英数字とunderscoreだけ、1〜128文字とする。
+      HTTPはDNS解決を伴わない<code>127.0.0.1</code>または<code>[::1]</code>と、明示portだけを許可する。
+      <code>localhost</code>を含むhostnameは拒否する。
+    </li>
+    <li>remote HTTP / HTTPSはMVP 2.6では拒否する。remote transportは別ADRの後に追加する。</li>
+    <li>
+      <code>tokenEnv</code>はliteral
+      <code>LARM_API_TOKEN</code>以外を拒否する。
+    </li>
+    <li>
+      token値はrequest直前に1〜4,096 bytes、ASCII control
+      characterなしを検証する。空、改行を含む値、 HTTP headerへ変換できない値はnetwork
+      access前に<code>authentication</code>で停止し、値を表示しない。
     </li>
     <li>TTLは60〜3,600秒、既定300秒とする。</li>
     <li>startup timeoutは1〜300秒、既定300秒とする。</li>
@@ -276,12 +397,61 @@ type LarmProvider = {
   <h3 id="73-feature-flag">7.3 Feature flag and rollback route</h3>
   <p>
     環境変数<code>SAAA_LARM_ENABLED</code>をprocess-level feature
-    flagとし、既定はfalseとする。 falseの場合、LARM Providerはeffective
-    routeから除外し、明示的に設定済みの次Providerを使う。 feature flag自体をSQLiteへ保存しない。
+    flagとし、既定はfalseとする。
+    値はexactな<code>1</code>だけをtrueとし、未設定、空、その他の値はfalseとする。flagはApp起動時に一度読み、
+    immutable runtime gateとして保持する。falseの場合、LARM Providerはeffective routeから除外し、
+    明示的に設定済みの次Providerを使う。次Providerがなければnetwork accessを行わずconfiguration
+    errorにする。 feature flag自体をSQLiteへ保存しない。変更を反映するにはApp restartを必要とする。
   </p>
   <p>
     LARM内部の<code>allowFallback</code>と、SAAAの<code>fallbackProviderIds</code>は別policyである。
     前者は同一allocation作成時のRuntime候補、後者はLARMとは別のProviderへ移る許可を表す。
+  </p>
+  <p>
+    運用中のrollbackは二段階とする。Settingsでprimary Providerをdirect
+    Providerへ変更する操作は新しいturnから 即時反映し、active
+    turnのBindingは変更しない。process-level flagは全LARM経路を閉じるoperator kill switchであり、
+    App restart後に反映する。active turnを止める場合は、先にuser cancelを実行する。
+  </p>
+  <p>
+    <code>conversation.respond</code
+    >開始時にprimary、fallback順、Provider設定、local-only policy、timeoutを 一つのvalidated route
+    snapshotとして固定する。実行中にSettingsを再読込せず、Providerの追加、削除、並べ替え、
+    enable変更は次turnから反映する。
+  </p>
+  <p>
+    canary用direct Providerは移行期間だけ許可するoperator-owned例外である。LARM
+    Providerの設定へdirect Runtimeのmodel、port、endpointを複製せず、独立した既存<code
+      >openai-compatible</code
+    >
+    Providerとして維持する。
+  </p>
+  <h3 id="74-v8-migration-order">7.4 v8 migration order</h3>
+  <ol>
+    <li>v7 databaseを検出したら、既存のpre-migration backup機構でreopen可能なbackupを作る。</li>
+    <li>
+      fresh schemaの<code>provider_sessions</code>定義へSection
+      15のfieldとCHECKを追加する。
+    </li>
+    <li>
+      <code>migrate_v6_to_v7</code
+      >の後に<code>migrate_v7_to_v8</code>を実行する。
+    </li>
+    <li>
+      既存Provider JSONへ<code>kind: openai-compatible</code>だけを追加し、unknown legacy
+      fieldを残さない。
+    </li>
+    <li>
+      既存provider session rowへnullable
+      fieldと<code>release_status: not-applicable</code>を追加する。
+    </li>
+    <li>6件すべてのsettings documentをschema version 8へ更新し、strict validatorで再読込する。</li>
+    <li>transaction commit後にdatabaseをclose / reopenし、SettingsとConversationを検証する。</li>
+  </ol>
+  <p>
+    migration失敗時はtransactionをrollbackし、v7 databaseを変更しない。旧binaryへのrollbackはv8
+    databaseを直接開かず、 自動作成されたv7 backupを復元する手順で検証する。v3、v5、v6、v7
+    fixtureのすべてが最終的にv8へ到達するtestを持つ。
   </p>
 
   <h2 id="8-module-boundary">8. Rust module boundary</h2>
@@ -315,6 +485,124 @@ type LarmProvider = {
     新しいasync trait dependencyは導入しない。Conversation routerはprovider kindで明示dispatchし、
     direct ProviderとLARM Providerが共通のbounded attempt resultを返す構造にする。
   </p>
+  <pre><code class="language-rust">enum ProviderAttemptOutcome {
+    Completed { content: String, cleanup: CleanupOutcome },
+    Cancelled { output_started: bool, cleanup: CleanupOutcome },
+    Failed {
+        kind: ProviderFailureKind,
+        public_message: BoundedProviderMessage,
+        output_started: bool,
+        cleanup: CleanupOutcome,
+    },
+}
+
+enum CleanupOutcome {
+    NotApplicable,
+    NotStarted,
+    Released,
+    DeferredToTtl { kind: ProviderFailureKind },
+}</code></pre>
+  <p>
+    current implementationの<code>ProviderAttemptError::Failed(String)</code>を上記bounded
+    outcomeへ置換する。direct
+    Providerは<code>cleanup: NotApplicable</code>、allocation作成前のLARM
+    failureは<code>NotStarted</code>、allocate outcome
+    unknownは<code>DeferredToTtl</code>、それ以外のLARM
+    Providerはrelease結果を返す。fallback判定は error
+    textではなく<code>output_started</code>とexplicit route policyだけを使う。
+  </p>
+  <p>
+    <code>BoundedProviderMessage</code
+    >は固定catalogから生成する300文字以下のuser-safe文字列であり、 HTTP
+    body、URL、header、prompt、response、OS errorのraw文字列から構築しない。詳細な分類は
+    <code>ProviderFailureKind</code>で行う。
+  </p>
+  <p>
+    <code>AppState</code>はLARM runtime
+    gateを<code>Disabled</code>、<code>Ready(shared reqwest::Client)</code>、
+    <code>Unavailable(bounded initialization error)</code>のいずれかで所有する。feature flag OFFは
+    <code>Disabled</code
+    >、ONでclient構築成功なら<code>Ready</code>とする。client構築失敗でもSAAA起動、direct
+    Provider、
+    Codex、Voice、Meeting、Situationをblockせず、LARMだけを<code>Unavailable</code>として劣化させる。
+  </p>
+  <p>
+    <code>LarmProvider</code> facadeはvalidated
+    Settingsと共有clientを一回のattemptで借り、Provider id別のclient cacheまたは Settings
+    cacheを新設しない。clientはproxyを使わず、redirectを追従しない。Bearer
+    tokenはclientまたはAppStateへ保持しない。Provider
+    attempt開始時に<code>LARM_API_TOKEN</code>を一度だけ
+    読み、non-Debugのephemeral
+    credentialとしてrelease完了またはattempt終了まで使う。同じallocationの
+    allocate、poll、renew、Gateway、releaseでcredentialを途中変更しない。新しいattemptは環境変数を読み直すため、
+    process内でcredentialを長期cacheしない。
+  </p>
+  <h3 id="81-change-inventory">8.1 Change inventory</h3>
+  <table>
+    <caption>
+      Table: Expected implementation files
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">File</th>
+        <th scope="col">Change</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src-tauri/src/providers/**</code></td>
+        <td>LARM contracts、pure session、HTTP client、facade</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/lib.rs</code></td>
+        <td>AppState、settings v8、migration、router dispatch、event ordering、persistence</td>
+      </tr>
+      <tr>
+        <td><code>src/lib/contracts.ts</code></td>
+        <td>
+          tagged Provider、schema version 8、<code>providerSelected</code> event
+        </td>
+      </tr>
+      <tr>
+        <td><code>src/lib/schemas.ts</code></td>
+        <td>discriminated union、LARM invariant、batch route validation</td>
+      </tr>
+      <tr>
+        <td><code>src/lib/runtime.ts</code></td>
+        <td>tagged Provider connection test contract</td>
+      </tr>
+      <tr>
+        <td><code>src/features/settings/SettingsPage.tsx</code></td>
+        <td>Provider kind別card、startup gate表示、rollback route表示</td>
+      </tr>
+      <tr>
+        <td><code>src/App.tsx</code></td>
+        <td>persisted selection由来のbounded activity表示。新surfaceは作らない</td>
+      </tr>
+      <tr>
+        <td><code>tests/settings.test.ts</code></td>
+        <td>v8 frontend contract、v7 compatibility fixture、security invariants</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/lib.rs</code>内test</td>
+        <td>migration、router、SQLite、diagnostics regression</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/**</code>内test</td>
+        <td>pure session、fake HTTP / SSE、cleanup contract</td>
+      </tr>
+      <tr>
+        <td><code>README.md</code>とrelease evidence</td>
+        <td>environment、tunnel、feature flag、verification、operator evidence</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Cargo
+    dependency追加は予定しない。現行の<code>reqwest</code>、<code>tokio</code>、<code>serde</code>、
+    <code>serde_json</code>を使う。test fixtureのためにproduction
+    dependencyを増やさない。
+  </p>
 
   <h2 id="9-provider-api">9. LarmProvider API</h2>
   <pre><code class="language-rust">impl LarmProvider {
@@ -328,9 +616,75 @@ type LarmProvider = {
     async fn release(&amp;self, id: &amp;str) -&gt; Result&lt;(), LarmError&gt;;
 }</code></pre>
   <p>
-    STT / TTS用の<code>resolve_binding</code> DTOはcontractに定義してよいが、MVP 2.6
-    LLM sliceから呼ばない。 実際に不要なendpointをSAAAへ露出させない。
+    STT / TTS用の<code>resolve_binding</code> DTOはMVP
+    2.6で定義、生成、公開しない。 実際に不要なendpointをSAAAへ露出させず、Voice
+    follow-upで実contractから追加する。
   </p>
+  <p>
+    外部responseは、required field、identifier、state enum、error
+    codeを厳格に検証する一方、objectへ追加された unknown fieldは無視する。additiveなLARM
+    telemetryでSAAAを停止させず、unknown stateまたはrequired field欠落は protocol
+    errorとして拒否する。raw response bodyはerror、SQLite、diagnosticsへ複製しない。
+  </p>
+  <p>
+    selection
+    reasonはG1で対応表を固定し、既知のprimary選択だけを<code>primary</code>、それ以外を
+    <code>other</code>へ正規化する。unknown telemetry
+    codeは成功処理を止めず、LARMのraw文字列は保存・表示しない。
+  </p>
+  <h3 id="91-http-bounds">9.1 HTTP bounds</h3>
+  <table>
+    <caption>
+      Table: LARM HTTP bounds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Operation</th>
+        <th scope="col">Per-request timeout</th>
+        <th scope="col">Request / response limit</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Connect</td>
+        <td>5 seconds</td>
+        <td>該当なし</td>
+      </tr>
+      <tr>
+        <td>health / ready</td>
+        <td>10 seconds</td>
+        <td>64 KiB</td>
+      </tr>
+      <tr>
+        <td>allocate / allocation / operation / renew</td>
+        <td>10 seconds</td>
+        <td>256 KiB</td>
+      </tr>
+      <tr>
+        <td>operation polling全体</td>
+        <td>設定されたstartup deadline</td>
+        <td>各request 256 KiB</td>
+      </tr>
+      <tr>
+        <td>Gateway stream</td>
+        <td>既存<code>conversation.respond.timeoutMs</code></td>
+        <td>
+          requestはG1で固定した上限を送信前にserialized bytesで検証。各SSE event 1 MiB、assistant
+          text 64,000文字
+        </td>
+      </tr>
+      <tr>
+        <td>release</td>
+        <td>2 seconds</td>
+        <td>64 KiB</td>
+      </tr>
+      <tr>
+        <td>error envelope</td>
+        <td>呼出元operationと同じ</td>
+        <td>8 KiB</td>
+      </tr>
+    </tbody>
+  </table>
 
   <h2 id="10-route-mapping">10. Task intent to route mapping</h2>
   <p>mappingはpure functionとし、設定されたRuntime状態やhealthからrouteを変更しない。</p>
@@ -360,6 +714,65 @@ type LarmProvider = {
     >、<code>llm-long-context</code>は、将来Task contractへ明示intent
     fieldを追加するまで 選択しない。Coding modeはCodex Agent
     routeであり、LARMの<code>llm.coding</code>へ暗黙移行しない。
+  </p>
+  <h3 id="101-allocation-request">10.1 Allocation request</h3>
+  <p>LLM sliceのrequest fieldは次の値に固定する。</p>
+  <pre><code class="language-json">{
+  "requirements": [
+    { "capability": "llm.general", "route": "llm-default" }
+  ],
+  "client": "saaa-desktop",
+  "allowFallback": false,
+  "ttlSeconds": 300,
+  "deploymentPolicy": "existing-only"
+}</code></pre>
+  <p>
+    <code>client</code>はSection 6でcredential
+    bindingを固定するまではlabelとしてのみ扱う。
+    <code>ttlSeconds</code>はvalidated
+    Settings値へ置換できるが、他のfieldを通常turnから変更しない。 requestへuser input、Conversation
+    id、workspace path、model名を含めない。
+  </p>
+  <h3 id="102-allocation-response-invariants">10.2 Allocation response invariants</h3>
+  <p>
+    実際のJSON field名とHTTP status別DTOはG1のAPI schemaから生成または転記する。G1前にfield名を
+    推測してproduction contractへ固定しない。一方、SAAAが受理する意味上のinvariantは次に固定する。
+  </p>
+  <ul>
+    <li>
+      allocation、operation、request、selected RuntimeのidentifierはSection 15のboundを満たす。
+    </li>
+    <li>
+      ready allocationは<code>llm.general</code>のBindingを正確に一件だけ持つ。
+    </li>
+    <li>
+      routeがresponseに含まれる場合は<code>llm-default</code>と一致する。
+    </li>
+    <li>
+      ready responseはselected Runtime、fallback結果、selection
+      reasonを含み、fallback結果はfalseである。
+    </li>
+    <li>
+      readyとrenewのresponseはserver-confirmed effective TTLを含み、60〜3,600秒の範囲にある。SAAAは
+      request値ではなくこの値からmonotonic renew scheduleを作る。
+    </li>
+    <li>
+      selected Runtimeとselection reasonはSection
+      15のboundを満たし、次のrequestまたはroute選択へ戻さない。
+    </li>
+    <li>
+      pollとrenewのresponseは同じallocation idとBindingを維持し、別Bindingへの変更を受理しない。
+    </li>
+    <li>
+      required field欠落、重複Binding、capability / route不一致、unknown
+      stateは<code>protocol</code>とする。
+    </li>
+  </ul>
+  <p>
+    invariant違反時はGatewayへ進まない。cleanup可能なallocation idを検証済みの場合だけbounded
+    releaseを一度試行し、Provider
+    attemptを<code>protocol</code>で停止する。未検証文字列をrelease
+    pathへ連結せず、次Providerへfallbackしない。
   </p>
 
   <h2 id="11-allocation-lifecycle">11. Allocation lifecycle</h2>
@@ -393,11 +806,62 @@ Released / Expired / Failed
     </li>
     <li>pollは250 msから開始し、500 ms、1 sへ増やし、以降1 s上限とする。</li>
     <li>pollには20%以下のjitterを加え、全体deadlineを超えたら停止する。</li>
-    <li>renewはallocation TTLの80%到達時に一度開始する。</li>
-    <li>renew失敗後は、stream開始前だけ新allocationを一度取得できる。</li>
+    <li>pollのjitter sourceとmonotonic clockはtestから注入し、unit testを決定的にする。</li>
+    <li>
+      renew scheduleはwall clockの<code>expiresAt</code>ではなく、allocation
+      response受信時のmonotonic timeとserver-confirmed effective TTLから80%地点を計算する。server
+      expiryはtelemetryと整合性確認だけに使う。
+    </li>
+    <li>
+      renewのnetwork、timeout、5xx、allocation-lost後は、stream開始前だけ新allocationを一度取得できる。
+      authentication、contract、protocol、allocation-lost以外の4xxでは再allocateしない。
+    </li>
+    <li>
+      stream開始後のrenewは同じallocationに対して最大2回、1秒間隔かつexpiry前だけ試行する。両方失敗しても
+      Bindingを変更せず、進行中streamを継続する。Gatewayが失敗した場合はpartial output
+      ruleで停止する。
+    </li>
+    <li>
+      renewの二回目を許可するのはnetwork、timeout、5xxだけとする。authentication、contract、protocol、
+      4xxは再試行せず、同じBindingのstreamをexpiryまで継続する。
+    </li>
     <li>stream開始後はBindingを変更しない。</li>
     <li>
-      releaseはsuccess、failure、cancel、deadline、window closeの全terminal pathで一度だけ試行する。
+      検証済みallocation idが分かる場合、releaseはsuccess、failure、cancel、deadline、window closeの
+      全terminal pathで一度だけ試行する。outcome unknownでidがない場合はSection 11.3を適用する。
+    </li>
+  </ul>
+  <h3 id="113-unknown-outcome">11.3 Unknown allocation outcome</h3>
+  <p>
+    allocate request送信後、response受信前にtimeoutまたはconnection
+    lossが起きた場合、server側でallocationが作成されたかを SAAAは判断できない。LARMがidempotency
+    keyをcontract化するまでは同じturn内でallocateをblind retryせず、attemptを
+    <code>allocation-outcome-unknown</code
+    >として失敗させる。server側に残った可能性があるallocationはTTL回収へ委ねる。
+  </p>
+  <p>
+    <code>202</code> responseは、cancel時にcleanupできるallocation
+    idまたは同等のoperation cancel / ownership contractを
+    必須とする。どちらも提供されない場合はG1を通過させない。
+  </p>
+  <h3 id="114-release-semantics">11.4 Release semantics</h3>
+  <ul>
+    <li>
+      releaseの<code>200</code>、<code>204</code>、対象消失を示す<code>404 not_found</code>はcleanup成功とする。
+    </li>
+    <li>release timeoutまたは5xxを同一turnで繰り返さず、一回の2秒attempt後はTTL回収へ委ねる。</li>
+    <li>
+      404以外の4xx、unknown status、invalid responseも再試行せず、bounded failure
+      kindを記録してTTL回収へ委ねる。
+    </li>
+    <li>chat成功後のrelease失敗はassistant messageの成功を失敗へ変更しない。</li>
+    <li>
+      release失敗はseparate cleanup statusへboundedに記録し、userへ本文を含まない非blocking
+      warningを出せる。
+    </li>
+    <li>
+      App shutdownはreleaseをbest
+      effortで試行するが、process終了を無期限に止めない。TTLを最終回収手段とする。
     </li>
   </ul>
 
@@ -415,14 +879,15 @@ Content-Type: application/json</code></pre>
   <h3 id="121-partial-output">12.1 Partial output rule</h3>
   <p>
     最初のnon-empty assistant
-    deltaをTauriへ送った時点で<code>output_started = true</code>とする。
-    以後のtimeout、disconnect、502、capacity error、invalid SSEはpartial
-    failureであり、次のProvider、別allocation、 別Runtimeへ自動retryしない。
+    deltaを受信し、Tauriへ送る直前にSQLiteへcommitした時点で<code>output_started = true</code>とする。
+    その直後にchannel送信が失敗した場合もtrueのままとする。 以後のtimeout、disconnect、502、capacity
+    error、invalid SSEはpartial failureであり、次のProvider、別allocation、
+    別Runtimeへ自動retryしない。
   </p>
-  <pre><code class="language-text">Failure before first delta
+  <pre><code class="language-text">Failure before first non-empty assistant delta
   → explicit SAAA Provider fallback may run
 
-Failure after first delta
+Failure after first non-empty assistant delta
   → stop
   → mark provider session partial-failed
   → release allocation
@@ -431,6 +896,77 @@ Failure after first delta
   <p>
     このruleはLARM Providerだけでなく既存direct Providerにも適用する。現在のConversation
     routerがpartial output後も次Providerへ進み得る挙動を、LARM実装より先に修正する。
+  </p>
+  <p>
+    Tauri channelへのdelta送信が失敗した場合はfrontend consumer消失としてbody readを停止し、
+    <code>client-disconnected</code>
+    failureでcleanupする。channel消失後に推論を継続したり、別Providerへfallbackしたりしない。
+    このruleもdirect ProviderとLARM Providerの両方へ適用する。
+  </p>
+  <h3 id="122-persistence-ordering">12.2 Persistence and event ordering</h3>
+  <ol>
+    <li>
+      Provider attempt開始時に<code>runtime_run_id</code>付きsession
+      rowを作り、commit後に既存<code>started</code>
+      eventを送る。このeventはallocation readyを意味しない。
+    </li>
+    <li>
+      allocation ready後、route、allocation、selection結果をcommitしてからProvider selected
+      eventを送る。
+    </li>
+    <li>
+      最初のnon-empty
+      deltaでは、同じattemptの<code>output_started = 1</code>をcommitしてからdelta
+      eventを送る。
+    </li>
+    <li>
+      stream成功後にbounded release attemptを行い、inference statusとcleanup
+      statusを分離して確定する。
+    </li>
+    <li>
+      assistant
+      message、Conversation更新、<code>runtime_runs</code>完了を既存transactionでcommitしてから
+      <code>messageCompleted</code
+      >を送る。release失敗だけでこのtransactionを失敗させない。
+    </li>
+    <li>
+      partial failureではassistant completed messageを保存せず、provider sessionとruntime
+      runをfailedへ確定してから terminal failure
+      eventを送る。既に表示したdeltaは再送または別Providerで補完しない。
+    </li>
+  </ol>
+  <h3 id="123-persistence-failure">12.3 Persistence failure</h3>
+  <ul>
+    <li>
+      attempt rowの作成失敗時は、LARMを含むProvider network requestを開始せず、eventを送らない。
+    </li>
+    <li>
+      allocation selectionのcommit失敗時はGatewayへ進まず、検証済みallocationをbounded releaseして
+      <code>internal</code>で停止する。
+    </li>
+    <li>
+      <code>output_started</code>のcommit失敗時は受信中bodyを停止し、releaseして
+      <code>internal</code>で停止する。deltaをTauriへ送らない。
+    </li>
+    <li>
+      terminal
+      transactionのcommit失敗時は<code>messageCompleted</code>を送らず、bounded
+      recoveryを表示する。 既に表示済みのdeltaを再送せず、別Providerへfallbackしない。
+    </li>
+  </ul>
+  <p>
+    persistence
+    failureはすべて<code>internal</code>であり、error本文をSQLite、event、diagnosticsへ複製しない。
+    cleanup failureはSection 11.4どおり別結果として扱い、database復旧前にnetwork
+    inferenceを再開しない。
+  </p>
+  <h3 id="124-terminal-race">12.4 Terminal race</h3>
+  <p>
+    cancel、stream EOF、timeout、channel disconnectが競合しても、pure
+    sessionが最初に受理したsignalだけを inference terminal resultとする。stream
+    EOFを先に受理した場合はCompletedを維持し、その後のcancelはcleanupを
+    促進してもassistant結果を破棄しない。cancelを先に受理した場合は残りのbodyを読まず、EOFを成功へ昇格しない。
+    provider sessionとruntime runを一度だけ確定し、terminal eventも一度だけ送る。
   </p>
 
   <h2 id="13-error-mapping">13. Error mapping</h2>
@@ -497,7 +1033,7 @@ Failure after first delta
       <tr>
         <td><code>503 draining</code></td>
         <td><code>draining</code></td>
-        <td>新規要求を止め、次の明示turnで再試行</td>
+        <td>同一LARMへの新規要求を止め、明示済みSAAA Provider policyへ返す。LARM再試行は次turn</td>
       </tr>
       <tr>
         <td><code>502 upstream_unavailable</code></td>
@@ -509,6 +1045,16 @@ Failure after first delta
         <td><code>request-too-large</code></td>
         <td>同じpayloadを再送しない</td>
       </tr>
+      <tr>
+        <td>allocate response受信前のtimeout / disconnect</td>
+        <td><code>allocation-outcome-unknown</code></td>
+        <td>blind retryせずTTL回収へ委ね、明示済みSAAA Provider policyへ返す</td>
+      </tr>
+      <tr>
+        <td>unknown HTTP status / error code / state</td>
+        <td><code>protocol</code></td>
+        <td>raw bodyを表示せず、retryしない</td>
+      </tr>
     </tbody>
   </table>
   <p>
@@ -516,34 +1062,109 @@ Failure after first delta
     <code>provider-error</code>との互換性を維持し、Provider activityのbounded
     reasonとrecoveryを改善する。
   </p>
+  <h3 id="131-provider-fallback-eligibility">13.1 SAAA Provider fallback eligibility</h3>
+  <p>
+    <code>output_started</code
+    >がfalseでも、すべての失敗を次Providerへ渡してはならない。 fallback判定は次のfixed policyをpure
+    functionとして実装し、error message本文から推測しない。
+  </p>
+  <table>
+    <caption>
+      Table: Provider fallback eligibility before first output
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Failure kind</th>
+        <th scope="col">Explicit SAAA Provider fallback</th>
+        <th scope="col">Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>authentication、contract、protocol、request-too-large、internal</td>
+        <td>禁止</td>
+        <td>設定またはpayloadを直すべきで、別Providerへ同じ内容を送らない</td>
+      </tr>
+      <tr>
+        <td>client-disconnected、cancelled、partial-output</td>
+        <td>禁止</td>
+        <td>consumerまたはuserが停止している</td>
+      </tr>
+      <tr>
+        <td>policy</td>
+        <td>明示済みrouteに限り許可</td>
+        <td>LARMの<code>allowFallback</code>を変更せず、上位policyだけを使う</td>
+      </tr>
+      <tr>
+        <td>capacity、unavailable、draining、upstream、network、timeout</td>
+        <td>明示済みrouteに限り許可</td>
+        <td>Provider availability failure</td>
+      </tr>
+      <tr>
+        <td>allocation-lost</td>
+        <td>一回のreallocate失敗後、明示済みrouteに限り許可</td>
+        <td>daemon restartまたはexpiry</td>
+      </tr>
+      <tr>
+        <td>allocation-outcome-unknown</td>
+        <td>明示済みrouteに限り許可</td>
+        <td>LARMへblind retryせず、TTL回収へ委ねる</td>
+      </tr>
+      <tr>
+        <td>not-ready</td>
+        <td>startup deadlineまではpollし、deadline後はtimeout policyを適用</td>
+        <td>202 lifecycleの途中</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    fallback eligibleでも、既存<code>localOnlyWhenSelected</code>がCloud
+    Providerを除外する境界を維持する。 LARM統合を理由にCloud
+    fallbackを追加、有効化、並べ替えしない。
+  </p>
 
   <h2 id="14-security-and-network">14. Security and network topology</h2>
   <h3 id="141-canary-transport">14.1 Canary transport</h3>
   <p>
-    推奨canary transportは、SAAA hostからgnosisへのSSH tunnelまたは同等のprivate tunnelである。
-    SAAAからは<code>http://127.0.0.1:&lt;forwarded-port&gt;</code>として見せ、LARM daemonはgnosisのloopback
-    listenを維持する。
+    MVP 2.6のcanary transportは、SAAA hostからgnosisへのSSH tunnelまたは同等のloopback private
+    tunnelに固定する。 SAAAからは<code>http://127.0.0.1:&lt;forwarded-port&gt;</code>として見せ、LARM
+    daemonはgnosisのloopback listenを維持する。
   </p>
   <p>
-    remote HTTPSをproduction transportとして採用する場合は、certificate、hostname
-    verification、firewall、 trusted subnet、token rotationを別ADRで固定する。plain HTTP
-    LANのために既存local endpoint validationを緩めない。
+    MVP 2.6 Settingsはloopback URLだけを受け入れる。remote
+    HTTPSを将来採用する場合は、certificate、hostname verification、firewall、trusted subnet、token
+    rotationを別ADRで固定してからschemaを拡張する。plain HTTP LANのために既存local endpoint
+    validationを緩めない。
   </p>
   <h3 id="142-secret-handling">14.2 Secret handling</h3>
   <ul>
     <li>token値はenvironmentからだけ読む。</li>
+    <li>
+      attempt用Authorization
+      headerはsensitiveとしてmarkし、Debugを実装しないwrapper内でだけ保持する。
+    </li>
     <li>token値をSQLite、Settings UI、diagnostics、error、test snapshotへ保存しない。</li>
     <li>Authorization headerをdebug printしない。</li>
     <li>401 response bodyをuser-visible errorまたはtelemetryへ複製しない。</li>
     <li>redirectは追従しない。</li>
+    <li>LARM clientはsystem proxyとenvironment proxyを使わない。</li>
+    <li>health / readyへのBearer適用はG1で固定した認証範囲に従い、推測で付与または省略しない。</li>
     <li>resolved endpointはRegistry由来だけを使い、user inputからupstream URLを作らない。</li>
   </ul>
+  <p>
+    environmentはrunning processの外から安全に差し替えられないため、token rotationはactive
+    turnを完了または
+    cancelし、releaseを確認してからSAAAを新しい<code>LARM_API_TOKEN</code>でrestartする。旧tokenはactive
+    allocationが0件になるまでLARM側でoverlapさせ、先に失効させない。この手順をM26-10
+    runbookで実機検証する。
+  </p>
 
   <h2 id="15-persistence-and-telemetry">15. Persistence and telemetry</h2>
   <p>
     SQLite v8で<code>provider_sessions</code>へ次のnullable bounded fieldを追加する。
   </p>
   <ul>
+    <li><code>runtime_run_id</code></li>
     <li><code>provider_kind</code></li>
     <li><code>route_id</code></li>
     <li><code>allocation_id</code></li>
@@ -553,13 +1174,73 @@ Failure after first delta
     <li><code>request_id</code></li>
     <li><code>output_started</code></li>
     <li><code>failure_kind</code></li>
+    <li><code>release_status</code></li>
+    <li><code>release_failure_kind</code></li>
   </ul>
   <p>
     allocation id、Runtime id、request idは運用相関用であり、選択入力として使わない。resolved
-    endpoint、port、model path、 prompt、response、audio、Authorization
-    headerは保存しない。diagnostics exportではallocation idとrequest idを除外し、 route、bounded
-    runtime label、fallback、failure kindのaggregateだけを含める。
+    endpoint、port、model path、 prompt、response、audio、Authorization headerはprovider
+    session、runtime telemetry、error recordへ保存しない。Conversationのuser messageとassistant
+    messageは既存のConversation storeへ従来どおり保存するが、LARM統合用columnへ本文を
+    複製しない。diagnostics exportではallocation idとrequest idを除外し、route、bounded runtime
+    label、fallback、failure kindのaggregateだけを含める。
   </p>
+  <p>
+    <code>runtime_run_id</code>は既存rowでnullable、新規attemptで必須とし、lookup
+    indexを追加する。 inferenceの<code>status</code>とallocation
+    cleanupの<code>release_status</code>を分離し、chat成功・release失敗を
+    Provider失敗として誤表示しない。direct Providerのrelease
+    statusは<code>not-applicable</code>とする。
+  </p>
+  <p>
+    <code>release_status</code
+    >は<code>not-applicable</code>、<code>not-started</code>、<code>pending</code>、
+    <code>released</code
+    >、<code>failed</code>、<code>deferred-to-ttl</code>の固定enumとする。
+    <code>failure_kind</code>はSection 13のinternal
+    kindに<code>network</code>、<code>timeout</code>、
+    <code>partial-output</code
+    >、<code>client-disconnected</code>、<code>internal</code>を加えた固定enumとする。
+  </p>
+  <p>
+    release開始前に<code>pending</code>、成功時に<code>released</code>をcommitする。timeout、network、5xxは
+    <code>deferred-to-ttl</code
+    >とし、<code>release_failure_kind</code>を記録する。<code>failed</code>はLARMが
+    cleanup不能を明示した場合、またはSAAAが起動中にTTL +
+    30秒を超える残存をmetricsで確認した場合だけ使う。
+  </p>
+  <table>
+    <caption>
+      Table: Provider telemetry bounds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Field</th>
+        <th scope="col">Bound</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>run / allocation / Runtime / request identifiers</td>
+        <td>1〜160文字、ASCII英数字、hyphen、underscore</td>
+      </tr>
+      <tr>
+        <td>route id</td>
+        <td>1〜80文字、ASCII英数字、dot、hyphen、underscore</td>
+      </tr>
+      <tr>
+        <td>selection reason</td>
+        <td>
+          <code>primary</code
+          >または<code>other</code>。LARMのraw説明文は保存しない
+        </td>
+      </tr>
+      <tr>
+        <td>status / failure / release kind</td>
+        <td>固定enum以外を拒否</td>
+      </tr>
+    </tbody>
+  </table>
   <p>
     process restart時にrunning provider sessionをinterruptedへreconcileする。allocation
     idを再利用せず、 LARM側のTTL回収を前提に次のturnで新規allocateする。
@@ -586,6 +1267,41 @@ Failure after first delta
     Test
     connectionは<code>health</code>と<code>ready</code>までとし、allocation作成、model起動、推論を開始しない。
   </p>
+  <p>
+    既存の<code>Add provider</code>は引き続き<code>openai-compatible</code>を作る。LARMは別の
+    <code>Add LARM provider</code>操作でdisabled
+    recordを明示追加し、kind変更によるfieldのsilent破棄は行わない。追加・enableとroute変更を
+    一つの操作にまとめない。LARM runtime
+    gateが<code>Unavailable</code>の場合はboundedな初期化失敗と復旧手順を表示するが、raw
+    errorを表示しない。
+  </p>
+  <p>
+    Provider selection activityのsource of truthはSQLiteのprovider sessionである。selection
+    telemetryをcommit後、 boundedな<code>providerSelected</code> Runtime
+    eventを送ってChat route bannerを更新する。frontend-onlyな選択履歴を source of
+    truthにしない。feature flag OFFではConnection Testをdisabledにし、LARM network
+    accessを行わない。
+  </p>
+  <pre><code class="language-ts">type ProviderSelectionReasonCode = "primary" | "other";
+
+type ProviderSelectedEvent = {
+  type: "providerSelected";
+  runId: string;
+  providerId: string;
+  providerKind: "larm";
+  routeId: "llm-default";
+  runtimeId: string;
+  fallbackUsed: boolean;
+  selectionReasonCode: ProviderSelectionReasonCode;
+};</code></pre>
+  <p>
+    eventにallocation id、request id、endpoint、token、model
+    pathを含めない。<code>runtimeId</code>と
+    <code>selectionReasonCode</code
+    >は観測表示専用で、次turnのroute入力に使わない。UI文言はlocal catalogから作り、LARMのraw
+    reasonをeventへ流さない。App再起動後にactivity historyを表示する場合は、 frontend
+    cacheではなくbounded backend queryを追加する。MVP 2.6で履歴surface自体は追加しない。
+  </p>
 
   <h2 id="17-fake-larm">17. Fake LARM contract test</h2>
   <p>
@@ -598,37 +1314,106 @@ Failure after first delta
     <li><code>200</code> allocation ready → streaming完走 → release</li>
     <li><code>202</code> pending → operation poll → ready</li>
     <li>operation deadline超過</li>
+    <li>allocate outcome unknownでblind retryせずTTL回収へ委ねる</li>
     <li>cancel中のpoll停止とrelease</li>
+    <li>cancel / stream EOF / timeout競合で一つのterminal resultとeventだけを確定する</li>
     <li>TTL 80%でrenew</li>
     <li>renew失敗とstream開始前の一回だけ再allocate</li>
+    <li>stream中renewの最大2回制限とBinding不変</li>
     <li>daemon restartを模した<code>404 not_found</code></li>
+    <li>
+      重複Binding、capability / route不一致、fallback済みresponse、renew時のBinding変更を拒否する
+    </li>
     <li><code>fallback_not_allowed</code>を暗黙に再要求しない</li>
+    <li>authentication、contract、protocol、413、internalで次Providerへfallbackしない</li>
+    <li>capacity系失敗は明示済みrouteとlocal-only policyを通過した場合だけfallbackする</li>
     <li><code>resource_exhausted</code>でbounded failure</li>
     <li><code>draining</code>中に新規allocateを反復しない</li>
     <li>Gateway cancelがbody readを停止する</li>
-    <li>最初のdelta後のdisconnectで次Providerへ移らない</li>
-    <li>最初のdelta前の失敗で、明示済みdirect rollback Providerだけを使う</li>
+    <li>Tauri delta channel消失がbody readを停止し、Provider fallbackしない</li>
+    <li>chat成功・release失敗でもassistant messageを成功として一度だけcommitする</li>
+    <li>releaseの404をidempotent cleanup成功として扱う</li>
+    <li>最初のnon-empty assistant delta後のdisconnectで次Providerへ移らない</li>
+    <li>最初のnon-empty assistant delta前の失敗で、明示済みdirect rollback Providerだけを使う</li>
     <li>redirectを追従しない</li>
+    <li>LARM requestがsystem / environment proxyを使わない</li>
     <li>oversized body、SSE event、responseを拒否する</li>
+    <li>oversized Gateway requestをnetwork access前に拒否する</li>
+    <li>
+      unknown selection
+      reasonを<code>other</code>へ正規化し、raw説明文を保存・表示しない
+    </li>
     <li>token、prompt、response、resolved endpointがtelemetryとdiagnosticsへ出ない</li>
     <li>route mappingにRuntime id、port、model名が含まれない</li>
+    <li>
+      selection telemetry commit後にだけ<code>providerSelected</code> eventを送る
+    </li>
+    <li>各commit失敗時に後続network、delta、completion event、fallbackを開始しない</li>
   </ol>
 
   <h2 id="18-implementation-tickets">18. 実装ticket</h2>
   <p>
-    ticketは順番どおりに実施し、各ticket終了時に<code>bun run check</code>を通す。
+    ticketは番号順を基本とし、各ticket終了時に<code>bun run check</code>を通す。M26-01〜03はG0通過後に
+    AI serverなしで実施できる。M26-04開始にはG1、M26-09開始にはG2、LARMの既定化にはG3を必要とする。
+  </p>
+  <h3 id="181-execution-batches">18.1 Execution batches and critical path</h3>
+  <table>
+    <caption>
+      Table: MVP 2.6 execution order
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Batch</th>
+        <th scope="col">Gate / tickets</th>
+        <th scope="col">Exit artifact</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A — Server-independent safety</td>
+        <td>M26-00 → G0 → M26-01、M26-02、M26-03</td>
+        <td>direct Provider regression、v8 migration、pure lifecycle testが成功</td>
+      </tr>
+      <tr>
+        <td>B — Frozen API client</td>
+        <td>G1 → M26-04</td>
+        <td>LARM commit由来fixtureでHTTP / auth / bound / invariant testが成功</td>
+      </tr>
+      <tr>
+        <td>C — Product integration</td>
+        <td>M26-05 → M26-06、M26-07</td>
+        <td>router、SQLite、event、Settings UI、kill switchがfake serverで一貫</td>
+      </tr>
+      <tr>
+        <td>D — Offline acceptance</td>
+        <td>M26-08</td>
+        <td>Section 17全scenarioと既存回帰が成功</td>
+      </tr>
+      <tr>
+        <td>E — Production evidence</td>
+        <td>G2 → M26-09 → M26-10 → G3</td>
+        <td>canary、soak、rollback、security、runbook evidenceが承認済み</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    各ticketはreview可能な単位でcommitし、変更対象、test結果、未解決blockerをrelease
+    evidenceへ追記する。 G1とG2の外部依存が確定するまでcalendar
+    dateを約束せず、gate通過時に残ticketの実施日を更新する。
   </p>
   <h3 id="m26-00">M26-00 — Baseline and contract review</h3>
   <ul>
     <li>MVP 2.5 checkpointと未完了manual gateを確認する。</li>
-    <li>LARMのcommit、API schema、gnosis deployment revisionを記録する。</li>
-    <li>Section 6のproduction contractを両projectで固定する。</li>
-    <li>contract未確定ならfake DTO実装は進められるが実機canaryへ進まない。</li>
+    <li>G0を完了し、LARMのcommit、API schema、gnosis deployment revisionの取得状況を記録する。</li>
+    <li>Section 6の未決定事項をG1 blocker一覧として管理する。</li>
+    <li>G1未通過でもM26-01〜03を進められるが、provisional DTOを確定contractと呼ばない。</li>
   </ul>
   <h3 id="m26-01">M26-01 — Partial-stream safety</h3>
   <ul>
-    <li>Provider attempt resultへ<code>output_started</code>を追加する。</li>
-    <li>direct Providerを含め、最初のdelta後のfallbackを停止する。</li>
+    <li>Provider attempt resultをSection 8のbounded outcomeへ置換する。</li>
+    <li>direct Providerを含め、最初のnon-empty assistant delta後のfallbackを停止する。</li>
+    <li>Tauri delta channel send失敗でbody readを停止し、fallbackしない。</li>
+    <li>Section 13.1のfailure-kind別fallback eligibilityをpure functionとtestで固定する。</li>
     <li>partial failureでassistant completed messageを保存しない。</li>
     <li>LF、CRLF、UTF-8 split、disconnect regression testを追加する。</li>
   </ul>
@@ -650,9 +1435,11 @@ Failure after first delta
   </ul>
   <h3 id="m26-04">M26-04 — LARM HTTP client</h3>
   <ul>
-    <li>Bearer、body limit、no redirect、no proxy for loopback、status mappingを実装する。</li>
-    <li>allocation、operation、renew、release DTOをstrict decodeする。</li>
+    <li>G1のLARM commitとAPI schemaをfixtureのsource of truthにする。</li>
+    <li>Bearer、body limit、no redirect、all LARM trafficのno proxy、status mappingを実装する。</li>
+    <li>required fieldとstateをstrict decodeし、additiveなunknown object fieldは無視する。</li>
     <li>unknown state、unknown error envelope、oversized bodyをprotocol errorにする。</li>
+    <li>Section 9.1のtimeoutとbody limitをtestする。</li>
   </ul>
   <h3 id="m26-05">M26-05 — Conversation router integration</h3>
   <ul>
@@ -661,20 +1448,33 @@ Failure after first delta
       >を<code>llm.general + llm-default</code>へmappingする。
     </li>
     <li>allocation id付きGateway streamingを既存Tauri eventへ接続する。</li>
-    <li>全terminal pathでreleaseを一度だけ試行する。</li>
+    <li>Section 12.2のcommit-before-event orderingを実装する。</li>
+    <li>全terminal pathでreleaseを一度だけ試行し、inference結果とcleanup結果を分離する。</li>
     <li>LARM内部fallbackとSAAA Provider fallbackを分離する。</li>
   </ul>
   <h3 id="m26-06">M26-06 — Persistence, telemetry, and diagnostics</h3>
   <ul>
-    <li>provider session telemetry columnsとrestart reconcileを実装する。</li>
+    <li>
+      <code>runtime_run_id</code>とSection 15のtelemetry / cleanup
+      columnsを実装する。
+    </li>
     <li>allocation selection結果をboundedに記録する。</li>
-    <li>secret、本文、endpointが保存・exportされないtestを追加する。</li>
+    <li>
+      provider session commit後にだけ<code>providerSelected</code> eventを送る。
+    </li>
+    <li>
+      secret、本文、endpointがprovider
+      telemetryへ複製されず、diagnosticsへexportされないtestを追加する。
+    </li>
   </ul>
   <h3 id="m26-07">M26-07 — Settings UI and rollback flag</h3>
   <ul>
     <li>tagged Provider cardとhealth / ready testを追加する。</li>
-    <li><code>SAAA_LARM_ENABLED</code>既定OFFを実装する。</li>
-    <li>flag OFF時にdirect rollback routeが選ばれることを表示・検証する。</li>
+    <li>
+      <code>SAAA_LARM_ENABLED=1</code>だけをtrueとするimmutable startup gateを実装する。
+    </li>
+    <li>flag OFF時にnetwork accessせずdirect rollback routeが選ばれることを表示・検証する。</li>
+    <li>Settingsによるnew-turn rollbackとrestartが必要なoperator kill switchを別々に検証する。</li>
     <li>UIからallocationやRuntime起動を行わない。</li>
   </ul>
   <h3 id="m26-08">M26-08 — Fake LARM integration suite</h3>
@@ -685,24 +1485,41 @@ Failure after first delta
   </ul>
   <h3 id="m26-09">M26-09 — gnosis LLM canary</h3>
   <ul>
-    <li>Section 6 contractとSection 14 transport gateを満たしてから開始する。</li>
-    <li>一つの非critical Conversation clientだけfeature flagをONにする。</li>
+    <li>G1とG2を満たしてから開始する。</li>
+    <li>
+      isolated application-data directoryを使う一つのoperator-owned SAAA instanceだけでfeature
+      flagをONにする。 通常利用profileのglobal routeを変更しない。
+    </li>
     <li>default、cancel、timeout、partial stream、BUSY、restart、capacityを検証する。</li>
-    <li>direct Providerへの即時rollbackを実行して記録する。</li>
+    <li>
+      Settingsでのnew-turn rollbackとprocess flag OFF + restartのkill-switch
+      rollbackを実行して記録する。
+    </li>
   </ul>
   <h3 id="m26-10">M26-10 — Production gate and release evidence</h3>
   <ul>
     <li>canary結果、rollback、security、soak、resource rejectionをrelease evidenceへ記録する。</li>
     <li>LARM停止時のdegraded modeとoperator recoveryを記録する。</li>
+    <li>
+      <code>/ready</code
+      >と<code>/metrics</code>の監視、主要error、token
+      rotation、tunnel復旧のrunbookを記録する。
+    </li>
     <li>全acceptanceを満たすまで既定ProviderをLARMへ変更しない。</li>
   </ul>
 
   <h2 id="19-gnosis-canary">19. gnosis canary and production gate</h2>
+  <p>
+    canary clientとは、isolated application-data
+    directory、専用environment、単一operatorを持つ一つのSAAA
+    instanceを指す。Conversation単位の隠しfrontend
+    flagは追加せず、通常利用profileのSettingsとSQLiteを共有しない。
+  </p>
   <p>実機canaryでは次の順番を変えない。</p>
   <ol>
     <li>
-      tunnelまたはHTTPS
-      transportを確立し、SAAAから<code>health</code>と<code>ready</code>を確認する。
+      gnosisへのloopback
+      tunnelを確立し、SAAAから<code>health</code>と<code>ready</code>を確認する。
     </li>
     <li>Bearerなし、誤token、正tokenの境界を確認する。</li>
     <li>
@@ -710,20 +1527,78 @@ Failure after first delta
       requestを完走する。
     </li>
     <li>通常stream、user cancel、request timeoutを確認する。</li>
-    <li>最初のbyte後のupstream failureで自動retryしないことを確認する。</li>
+    <li>最初のnon-empty assistant delta後のupstream failureで自動retryしないことを確認する。</li>
     <li>LARM daemon restart後に古いallocationを捨て、新規allocateできることを確認する。</li>
     <li>
       <code>resource_exhausted</code
       >と<code>no_candidate_available</code>でretry stormがないことを確認する。
     </li>
     <li>default routeからoptional workerまたは未登録Runtimeへ暗黙切替しないことを確認する。</li>
-    <li>feature flag OFFでdirect Providerへ戻し、SAAA restart後もrollback状態を維持する。</li>
+    <li>Settingsでdirect Providerへ戻し、新しいturnがLARMへ接続しないことを確認する。</li>
+    <li>feature flag OFFでSAAAをrestartし、全LARM経路が閉じることを確認する。</li>
+    <li>
+      <code>/ready</code
+      >と<code>/metrics</code>を監視へ追加し、本文またはsecretがmetric
+      labelにないことを確認する。
+    </li>
     <li>30分canary、2時間soakの順でallocation leakとmemory増加を確認する。</li>
   </ol>
   <p>
     canary中にprompt、response、Authorization header、resolved
     endpointがLARMまたはSAAAの通常logへ出た場合は、 即時停止してsecret rotationとlog
     cleanupの判断を行う。
+  </p>
+  <h3 id="191-canary-thresholds">19.1 Canary thresholds</h3>
+  <table>
+    <caption>
+      Table: Canary and soak success thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">Minimum workload</th>
+        <th scope="col">Pass condition</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Functional canary</td>
+        <td>
+          通常turn 5件、cancel 2件、最初のnon-empty assistant delta後のcontrolled tunnel
+          interruption 1件、restart 1件、capacity rejection 1件
+        </td>
+        <td>重複出力、暗黙fallback、古いallocation再利用、secret露出が0件</td>
+      </tr>
+      <tr>
+        <td>30-minute canary</td>
+        <td>20件以上のshort turn、うち5件以上をuser cancel</td>
+        <td>unexpected failure 0件、release成功時は10秒以内にactive allocationがbaselineへ戻る</td>
+      </tr>
+      <tr>
+        <td>2-hour soak</td>
+        <td>60件以上のturn、10件以上のcancel、1回のLARM restart、1回のSAAA restart</td>
+        <td>
+          10分warm-up後のRSS max − minが64 MiB以下、最後30分のmedianが直前30分のmedian + 16
+          MiB以下。 同時turnが一件ならactive
+          allocationは一件以下、idleかつrelease成功後10秒以内に0件
+        </td>
+      </tr>
+      <tr>
+        <td>TTL recovery</td>
+        <td>release failure fixtureまたはcontrolled network interruption 3件</td>
+        <td>各allocationがTTL + 30秒以内に回収される</td>
+      </tr>
+      <tr>
+        <td>Rollback</td>
+        <td>Settings rollback後3 turn、kill switch restart後3 turn</td>
+        <td>LARM request 0件、direct Provider完走、route表示一致</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    SAAAはLARM metricsでallocation count、selected Runtime、fallback、releaseを観測するが、Runtime
+    stopを要求しない。 Resident停止またはdefault routeからの意図しないoptional
+    Runtime選択を一件でも観測した場合はfailとする。
   </p>
 
   <h2 id="20-verification">20. Verification plan</h2>
@@ -739,27 +1614,31 @@ bun run desktop:smoke</code></pre>
   <h3 id="202-manual">20.2 Manual verification</h3>
   <ul>
     <li>SettingsでLARM cardにmodel、Runtime、port、token値が表示されない。</li>
-    <li>feature flag OFFではLARMへのnetwork accessが発生しない。</li>
     <li>Connection Testでallocationまたはmodel起動が発生しない。</li>
+    <li>flag OFFではConnection Testを含む全LARM network accessが発生しない。</li>
     <li>partial failure後に重複assistant出力が表示されない。</li>
+    <li>selection activityがSQLite commit後に表示され、App内の一時stateだけを根拠にしない。</li>
+    <li>chat成功・release失敗でassistant messageが成功のまま一度だけ保存される。</li>
     <li>cancel後にUIが停止し、allocationがreleaseまたはTTL回収される。</li>
     <li>daemon restart後に古いallocation idが再利用されない。</li>
     <li>diagnostics exportにsecret、本文、allocation id、request idが含まれない。</li>
   </ul>
 
   <h2 id="21-stop-conditions">21. Stop conditions</h2>
-  <p>次のいずれかが発生した場合は次ticketまたはproduction canaryへ進まない。</p>
+  <p>次のいずれかが発生した場合は、関連するdelivery gateより先へ進まない。</p>
   <ul>
     <li>LARM API contractが未commitまたはresponse schemaと実装が不一致</li>
     <li>安定した仮想<code>model</code>名が未決定</li>
     <li>plain HTTP LANを許可しなければ接続できない</li>
     <li>token、prompt、response、audio、endpointがlogまたはdiagnosticsへ出る</li>
-    <li>最初のdelta後にProvider fallbackまたはreallocationが発生する</li>
-    <li>cancel、failure、window closeでallocation leakが発生する</li>
+    <li>最初のnon-empty assistant delta後にProvider fallbackまたはreallocationが発生する</li>
+    <li>cancel、failure、window close後にreleaseもTTL + 許容grace内の回収も行われない</li>
     <li><code>existing-only</code>以外を通常Taskから送る</li>
     <li>default routeからspeed、long-context、35Bへ暗黙切替する</li>
     <li>Resident Runtime停止またはsystemd / llama-swap操作がSAAAから発生する</li>
     <li>v7→v8 migrationで既存Providerまたはroute順が失われる</li>
+    <li>Provider selection eventがSQLite commitより先に送られる</li>
+    <li>chat成功がrelease失敗だけを理由に失敗へ書き換えられる</li>
     <li>既存Codex、Voice、Meeting、Situation contractに回帰がある</li>
   </ul>
 
@@ -776,15 +1655,31 @@ bun run desktop:smoke</code></pre>
       >と<code>existing-only</code>が通常経路で固定される。
     </li>
     <li>200、202、poll、TTL、renew、release、404 restartを扱う。</li>
+    <li>outcome不明のallocateをblind retryせず、release失敗とinference結果を分離する。</li>
     <li>stream開始後にBinding、allocation、Providerを変更しない。</li>
-    <li>cancel、timeout、failure、shutdownでreleaseを一度だけ試行する。</li>
+    <li>
+      cancel、timeout、failureでreleaseを一度だけ試行し、shutdownではbounded best
+      effortとTTL回収を使う。
+    </li>
     <li>feature flagが既定OFFで、direct Provider rollbackが検証済みである。</li>
-    <li>token、prompt、response、resolved endpointがSQLite、log、diagnosticsへ保存されない。</li>
+    <li>
+      token、prompt、response、resolved endpointがprovider
+      telemetry、error、log、diagnosticsへ複製されない。 Conversation本文は既存Conversation
+      storeだけに保存される。
+    </li>
     <li>fake LARM suiteと既存全testが成功する。</li>
     <li>
       gnosis canaryでdefault、cancel、partial failure、restart、capacity、rollbackが成功する。
     </li>
     <li>allocation leak、Resident停止、Preferred stop漏れがsoakで検出されない。</li>
+    <li>
+      isolated canary instanceと通常利用profileのSettings、SQLite、environmentが共有されない。
+    </li>
+    <li>
+      <code>/ready</code
+      >、<code>/metrics</code>、主要error、token、transportのoperator
+      runbookがある。
+    </li>
   </ol>
 
   <h2 id="23-follow-up">23. LLM canary後のfollow-up</h2>
@@ -803,5 +1698,36 @@ bun run desktop:smoke</code></pre>
   <p>
     artifact lifecycle、35B、multi-node、allow-listed deploymentはVoice
     follow-upにも含めず、operator権限を分離した 独立計画とする。
+  </p>
+
+  <h2 id="24-sources">24. Review sources and traceability</h2>
+  <ul>
+    <li>
+      LARM integration handoff dated 2026-08-28。確定baselineはLARM
+      <code>main</code>の<code>1a73607</code>、
+      allocation / Gateway / artifact lifecycleはhandoff作成時点で未commit WIPと記録されている。
+    </li>
+    <li>
+      SAAA baseline <code>d0ba3fd</code>。Model Provider、Conversation
+      router、SSE parser、Settings migration、 provider session、shutdown
+      lifecycleの実装をレビューした。
+    </li>
+    <li>
+      <code>src-tauri/src/lib.rs</code>: runtime、Provider、SQLite、migration、Tauri
+      eventの現行source of truth
+    </li>
+    <li><code>src/lib/contracts.ts</code>: frontend settings / runtime event contract</li>
+    <li>
+      <code>src/lib/schemas.ts</code>: strict settings validationとlocal-only policy
+    </li>
+    <li><code>src/features/settings/SettingsPage.tsx</code>: Provider / Routing / Voice Settings UI</li>
+    <li><code>spec/docs/adr/0001-mvp-runtime-boundaries.html</code>: loopback HTTPとruntime boundary</li>
+    <li><code>spec/docs/mvp-2.5-release-evidence.html</code>: current manual acceptance blockers</li>
+  </ul>
+  <p>
+    LARM source repositoryはSAAA workspaceへvendoringされていない。G1ではhandoffに列挙されたLARMの
+    daemon、controller、route
+    selector、admission実装を実repositoryとcommitで再確認し、handoff本文だけから HTTP
+    pathまたはresponse fieldを推測しない。
   </p>
 </article>
