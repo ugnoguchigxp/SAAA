@@ -1,3 +1,9 @@
+export type {
+  ConversationMessage,
+  RuntimeEvent,
+  RuntimeFailureCode,
+} from "./generated/runtimeEvent";
+
 export type TaskMode = "conversation" | "coding";
 
 export type SettingsNamespace =
@@ -24,14 +30,6 @@ export type Conversation = {
   taskMode: TaskMode;
   createdAt: string;
   updatedAt: string;
-};
-
-export type ConversationMessage = {
-  id: string;
-  conversationId: string;
-  role: "user" | "assistant" | "system" | "transcript";
-  content: string;
-  createdAt: string;
 };
 
 export type AppSnapshot = {
@@ -69,31 +67,6 @@ export type LarmRuntimeStatus = {
   message: string;
   contractCommit: string;
 };
-
-export type RuntimeFailureCode =
-  | "runtime_error"
-  | "configuration-error"
-  | "child-start-failed"
-  | "request-timeout"
-  | "progress-timeout"
-  | "terminal-timeout"
-  | "hard-timeout"
-  | "child-exited"
-  | "protocol-error"
-  | "policy-violation"
-  | "provider-error"
-  | "response-too-large"
-  | "internal-error";
-
-export type RuntimeEvent =
-  | { type: "started"; runId: string; route: string; providerId: string }
-  | { type: "providerSelected"; runId: string; providerId: string; providerKind: "larm"; routeId: "llm-default"; runtimeId: string; fallbackUsed: boolean; selectionReasonCode: "primary" | "other" }
-  | { type: "delta"; runId: string; text: string }
-  | { type: "activity"; runId: string; kind: string; summary: string }
-  | { type: "providerFailed"; runId: string; providerId: string; reason: string }
-  | { type: "messageCompleted"; runId: string; message: ConversationMessage }
-  | { type: "cancelled"; runId: string }
-  | { type: "failed"; runId: string; code: RuntimeFailureCode; message: string; recovery: string };
 
 export type ProviderTestResult = {
   providerId: string;
@@ -139,9 +112,19 @@ export type LarmProviderSettings = {
   deploymentPolicy: "existing-only";
 };
 
+export type GnosisProviderSettings = {
+  kind: "gnosis";
+  id: string;
+  enabled: boolean;
+  label: string;
+  location: "local";
+  host: string;
+};
+
 export type ModelProviderSettings =
   | OpenAiCompatibleProviderSettings
-  | LarmProviderSettings;
+  | LarmProviderSettings
+  | GnosisProviderSettings;
 
 export type ReasoningEffort = "low" | "medium" | "xhigh";
 
@@ -368,6 +351,9 @@ function isModelProviderSettings(value: unknown): value is ModelProviderSettings
       typeof value.model === "string" &&
       (value.credentialStatus === "not-configured" || value.credentialStatus === "configured")
     );
+  }
+  if (value.kind === "gnosis") {
+    return value.location === "local" && typeof value.host === "string";
   }
   return (
     value.kind === "larm" &&

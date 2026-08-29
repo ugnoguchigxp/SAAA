@@ -1,3 +1,4 @@
+pub(crate) mod gnosis;
 #[allow(dead_code)]
 pub(crate) mod larm;
 

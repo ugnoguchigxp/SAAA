@@ -1,0 +1,11 @@
+{
+  "contractVersion": "memory-recall-v1",
+  "memoryType": "rule",
+  "trust": {
+    "trustClass": "untrusted_memory_evidence",
+    "instructionAuthority": "none"
+  },
+  "items": [],
+  "noContent": true,
+  "truncated": false
+}

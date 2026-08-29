@@ -1,20 +1,7 @@
 import { z } from "zod";
+import { runtimeFailureCodes } from "./generated/runtimeEvent";
 
-export const runtimeFailureCodeSchema = z.enum([
-  "runtime_error",
-  "configuration-error",
-  "child-start-failed",
-  "request-timeout",
-  "progress-timeout",
-  "terminal-timeout",
-  "hard-timeout",
-  "child-exited",
-  "protocol-error",
-  "policy-violation",
-  "provider-error",
-  "response-too-large",
-  "internal-error",
-]);
+export const runtimeFailureCodeSchema = z.enum(runtimeFailureCodes);
 
 export const signalHealthSchema = z.enum([
   "ready",
@@ -85,9 +72,30 @@ const larmProviderSchema = providerCommonSchema.extend({
   deploymentPolicy: z.literal("existing-only"),
 }).strict();
 
+function isGnosisHost(value: string): boolean {
+  if (!value || value.length > 253 || /[\s/@?#]/.test(value) || value.includes(":")) return false;
+  const octets = value.split(".").map(Number);
+  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+    return octets[0] === 10
+      || octets[0] === 127
+      || (octets[0] === 169 && octets[1] === 254)
+      || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+      || (octets[0] === 192 && octets[1] === 168);
+  }
+  return /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(value)
+    && (!value.includes(".") || value.endsWith(".local"));
+}
+
+const gnosisProviderSchema = providerCommonSchema.extend({
+  kind: z.literal("gnosis"),
+  location: z.literal("local"),
+  host: z.string().trim().refine(isGnosisHost, "gnosis host must be a private IP, .local name, or single-label hostname without a scheme, port, or path"),
+}).strict();
+
 const providerSchema = z.discriminatedUnion("kind", [
   openAiCompatibleProviderSchema,
   larmProviderSchema,
+  gnosisProviderSchema,
 ]);
 
 export const modelProvidersSettingsSchema = z.object({
@@ -95,6 +103,7 @@ export const modelProvidersSettingsSchema = z.object({
     const ids = new Set<string>();
     const credentialSuffixes = new Set<string>();
     let enabledLarmProviders = 0;
+    let enabledGnosisProviders = 0;
     providers.forEach((provider, index) => {
       if (ids.has(provider.id)) {
         context.addIssue({ code: "custom", message: `Duplicate provider id: ${provider.id}`, path: [index, "id"] });
@@ -106,6 +115,7 @@ export const modelProvidersSettingsSchema = z.object({
       }
       credentialSuffixes.add(credentialSuffix);
       if (provider.kind === "larm" && provider.enabled) enabledLarmProviders += 1;
+      if (provider.kind === "gnosis" && provider.enabled) enabledGnosisProviders += 1;
       if (provider.kind === "openai-compatible" && provider.enabled && (!provider.endpoint || !provider.model)) {
         context.addIssue({ code: "custom", message: "Enabled providers require an endpoint and model", path: [index] });
       }
@@ -139,6 +149,9 @@ export const modelProvidersSettingsSchema = z.object({
     });
     if (enabledLarmProviders > 1) {
       context.addIssue({ code: "custom", message: "Only one LARM provider may be enabled", path: [] });
+    }
+    if (enabledGnosisProviders > 1) {
+      context.addIssue({ code: "custom", message: "Only one gnosis provider may be enabled", path: [] });
     }
   }),
   reasoningEffort: z.enum(["low", "medium", "xhigh"]),
@@ -252,6 +265,9 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const enabled = new Map(providers.filter((provider) => provider.enabled).map((provider) => [provider.id, provider]));
   const primary = enabled.get(routing.conversationRespond.primaryProviderId);
   if (enabled.size > 0 && !primary) throw new Error("The primary conversation provider must be enabled");
+  if (primary?.kind === "gnosis" && routing.conversationRespond.fallbackProviderIds.length > 0) {
+    throw new Error("gnosis routes must not configure fallback providers");
+  }
   const routeIds = new Set([routing.conversationRespond.primaryProviderId]);
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
     const fallback = enabled.get(fallbackId);

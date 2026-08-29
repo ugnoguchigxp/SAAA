@@ -17,16 +17,9 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
-    },
+    // Keep the running desktop app stable. Source changes are picked up the next
+    // time the dev command starts instead of being pushed into the current app.
+    hmr: false,
+    watch: null,
   },
 }));

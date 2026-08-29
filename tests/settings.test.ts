@@ -98,6 +98,37 @@ describe("settings contracts", () => {
     expect(() => validateSettingsDocuments(publicNetwork)).toThrow("loopback or private-network");
   });
 
+  test("accepts a host-only gnosis provider and rejects embedded URLs or ports", () => {
+    const snapshot = documents();
+    (snapshot[0].valueJson as { providers: unknown[] }).providers = [{
+      kind: "gnosis",
+      id: "gnosis-qwen",
+      enabled: true,
+      label: "gnosis · Dynamic LLM",
+      location: "local",
+      host: "192.168.0.65",
+    }];
+    (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string } }).conversationRespond.primaryProviderId = "gnosis-qwen";
+    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
+
+    for (const host of ["http://192.168.0.65", "192.168.0.65:9810", "example.com"]) {
+      const invalid = structuredClone(snapshot);
+      ((invalid[0].valueJson as { providers: Array<{ host: string }> }).providers[0]).host = host;
+      expect(() => validateSettingsDocuments(invalid)).toThrow();
+    }
+  });
+
+  test("rejects every fallback behind a gnosis primary", () => {
+    const snapshot = documents();
+    const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
+    providers[0] = { kind: "gnosis", id: "gnosis-qwen", enabled: true, label: "gnosis", location: "local", host: "192.168.0.65" };
+    providers.push({ kind: "openai-compatible", id: "local-fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://127.0.0.1:11435/v1", model: "test", credentialStatus: "not-configured" });
+    const route = (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string; fallbackProviderIds: string[] } }).conversationRespond;
+    route.primaryProviderId = "gnosis-qwen";
+    route.fallbackProviderIds = ["local-fallback"];
+    expect(() => validateSettingsDocuments(snapshot)).toThrow("must not configure fallback");
+  });
+
   test("rejects unsafe or credential-ambiguous provider ids", () => {
     const unsafe = documents();
     (unsafe[0].valueJson as { providers: Array<{ id: string }> }).providers[0].id = "local provider";

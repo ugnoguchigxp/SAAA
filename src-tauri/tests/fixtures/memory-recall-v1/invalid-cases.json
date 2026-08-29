@@ -1,0 +1,32 @@
+[
+  {
+    "name": "caller-selected-project",
+    "tool": "recall_rule",
+    "arguments": { "query": "release", "projectRef": "other-project" },
+    "expectedErrorCode": -32602
+  },
+  {
+    "name": "unknown-property",
+    "tool": "recall_experience",
+    "arguments": { "query": "release", "includeDraft": true },
+    "expectedErrorCode": -32602
+  },
+  {
+    "name": "too-many-results",
+    "tool": "recall_skill",
+    "arguments": { "query": "release", "limit": 6 },
+    "expectedErrorCode": -32602
+  },
+  {
+    "name": "control-character",
+    "tool": "recall_rule",
+    "arguments": { "query": "release\nnow" },
+    "expectedErrorCode": -32602
+  },
+  {
+    "name": "generic-tool",
+    "tool": "search_knowledge",
+    "arguments": { "query": "release" },
+    "expectedErrorCode": -32602
+  }
+]

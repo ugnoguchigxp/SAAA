@@ -1,0 +1,18 @@
+{
+  "client": "SAAA-compatible-2025-03",
+  "transport": "streamable-http",
+  "protocolVersion": "2025-03-26",
+  "requiredAccept": ["application/json", "text/event-stream"],
+  "initialize": {
+    "method": "initialize",
+    "expectedCapabilities": { "tools": {} },
+    "requiresInitializedNotification": true
+  },
+  "tools": ["recall_experience", "recall_rule", "recall_skill"],
+  "successContent": {
+    "contentBlockCount": 1,
+    "contentType": "text",
+    "textEncoding": "compact-json",
+    "isErrorPresent": false
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "contractVersion": "memory-recall-v1",
+  "memoryType": "experience",
+  "trust": {
+    "trustClass": "untrusted_memory_evidence",
+    "instructionAuthority": "none"
+  },
+  "items": [
+    {
+      "title": "Release health check",
+      "situation": "A local daemon was changed before release.",
+      "action": "Run the focused and full test suites.",
+      "outcome": "The regression was found before release.",
+      "lesson": "Verify both the changed boundary and its default profile.",
+      "outcomeKind": "success"
+    }
+  ],
+  "noContent": false,
+  "truncated": false
+}

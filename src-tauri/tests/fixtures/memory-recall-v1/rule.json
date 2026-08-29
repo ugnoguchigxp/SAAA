@@ -1,0 +1,17 @@
+{
+  "contractVersion": "memory-recall-v1",
+  "memoryType": "rule",
+  "trust": {
+    "trustClass": "untrusted_memory_evidence",
+    "instructionAuthority": "none"
+  },
+  "items": [
+    {
+      "title": "Keep profile boundaries explicit",
+      "rule": "Expose only the tools selected by the instance profile.",
+      "polarity": "positive"
+    }
+  ],
+  "noContent": false,
+  "truncated": false
+}

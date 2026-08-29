@@ -8,10 +8,10 @@ Requirements: Bun, the Rust toolchain, and the native Tauri prerequisites for th
 
 ```sh
 bun install
-bun run tauri dev
+bun start
 ```
 
-The default conversation Provider is the LAN-local `gnosis` server at `http://192.168.0.65:8080/v1`, using `Qwen3.8-27B-ROCmFP4-FAST.gguf`. SAAA verifies the endpoint with `/v1/models`; the current `gnosis` service does not require an API key. Other credentials are read only from `SAAA_PROVIDER_<PROVIDER_ID>_API_KEY`; `OPENAI_API_KEY` is also accepted for Cloud providers. Voice transcription uses the LAN-local gnosis ASR provider at `http://192.168.0.65:8081`, using `qwen3-asr-1.7b`. TTS uses the OS speech runtime.
+The default conversation Provider stores only the `gnosis` host (`192.168.0.65`, or a local hostname). For each turn SAAA calls the Agent Connection API directly over HTTP at `http://<gnosis-host>:9810`, requests the `deep-reasoning-35b` profile with the `saaa-desktop` audience, waits for semantic readiness, then applies the claimed OpenAI-compatible `baseUrl`, model, and short-lived bearer credential in memory. The connection is released after the turn; discovered endpoints, models, audiences, and credentials are never written to SQLite. `LARM_API_TOKEN` must be present in the SAAA process environment, and the control API plus its claimed data-plane endpoint must be reachable on the private network. SAAA does not create or use an SSH tunnel. Existing `gnosis-qwen` direct endpoint/model settings are migrated to this host-only form while preserving the configured host. Other direct-provider credentials are read only from `SAAA_PROVIDER_<PROVIDER_ID>_API_KEY`; `OPENAI_API_KEY` is also accepted for Cloud providers. Voice transcription continues to use the LAN-local gnosis ASR provider at `http://192.168.0.65:8081`, using `qwen3-asr-1.7b`. TTS uses the OS speech runtime.
 
 LARM integration is disabled by default. To run the offline-tested LARM route, start SAAA with `SAAA_LARM_ENABLED=1` and `LARM_API_TOKEN` set, then configure a numeric loopback origin such as `http://127.0.0.1:9810` in Settings. The flag is read once at process startup; turning the operator kill switch off therefore requires a restart. Settings rollback applies to new turns without restarting. Connection Test calls only `/health` and `/ready`; it never allocates a runtime or starts inference. SAAA sends `llm.general` + `llm-default`, `allowFallback: false`, and `existing-only`, and it does not manage models, ports, services, or artifacts.
 
@@ -31,6 +31,10 @@ System contexts are authored under `contexts/` and compiled with S11tnext. After
 run `bun run s11tnext:build`; normal development, build, and test commands reject stale generated
 artifacts.
 
+Runtime event and conversation-message TypeScript contracts are generated from
+`src-tauri/src/ipc_contract.rs`. After changing those Rust IPC types, run
+`bun run ipc:generate`; normal build, test, and check commands reject stale bindings.
+
 ```sh
 bun run check
 bun run build
@@ -40,10 +44,31 @@ bun run desktop:smoke
 
 `desktop:smoke` builds a debug desktop artifact, launches it with an isolated temporary data directory, and waits for an IPC readiness signal. On macOS it verifies the generated `.app`, including the native Codex runtime staged from `@openai/codex-sdk`'s pinned dependency and successful initialization of the checksum-verified speaker runtime. Run `scripts/install-speaker-runtime.sh` only when the pinned voice artifacts need to be restored; the script verifies both downloads before installing them.
 
+MVP 2 / 2.5 desktop acceptance uses the strict `mvp2x` runner. Set
+`SAAA_MVP2X_OPERATOR` to a non-identifying operator label,
+`SAAA_MVP2X_APP_DATA_DIR` to an empty mode-0700 directory,
+`SAAA_MVP2X_WORKSPACE_DIR` to a clean fixture Git repository, and optionally
+`SAAA_MVP2X_BUNDLE_PATH` to the signed packaged app. The report directory must be an empty,
+absolute, mode-0700 directory outside this repository. Run `bun run mvp2x:preflight`, the
+documented `bun run mvp2x:verify` suites, and finally `bun run mvp2x:report`, each with
+`--report-dir`. Run preflight while the dedicated app-data directory is still empty, then launch
+the exact signed bundle executable from the same environment; SAAA uses
+`SAAA_MVP2X_APP_DATA_DIR` instead of normal application data for these runs. Meeting and Input
+Activity soak cases additionally read the running bundle PID from `SAAA_MVP2X_APP_PID` and sample
+RSS externally. Verification refuses a missing dedicated database, a different executable,
+source/bundle identity drift, or fixture workspace drift. Agent Run workspace integrity and soak
+elapsed/RSS observations are populated by the runner rather than operator-entered values.
+For functional and manual cases the runner asks for the current app PID and requires the exact
+debug or signed-bundle executable before the case begins; cases are grouped by build class.
+The CLI accepts no credentials, endpoints, prompts, transcript text, or free-form evidence; reports
+record no local paths or content. The runner refuses dirty sources, ad-hoc signatures, report reuse,
+identity mismatch, missing cases, threshold failures, and forbidden data. The aggregate includes a
+canonical digest of the preflight and suite report set for evidence closeout.
+
 ## Local data and recovery
 
 SAAA owns one SQLite database under the OS application-data directory for `com.saaa.desktop` (macOS: `~/Library/Application Support/com.saaa.desktop/saaa.sqlite3`). Settings, conversations, completed messages, run status, Codex thread IDs, and encrypted voice embeddings are stored there. Encrypted enrollment WAV files are stored alongside it under `voice-profiles/default/`; their key is not. Prompts and audio are not sent to Cloud when the local-only policy applies, and credentials are never stored in SQLite.
 
 Use Settings → Privacy & Security to create a consistent database backup or a redacted diagnostics JSON. A pre-migration backup is created automatically before opening an older schema. Database backups contain encrypted voice embeddings but do not contain enrollment WAV files or the Keychain key, so restoring a backup alone does not restore a usable voice profile. ASR model files remain on gnosis and are not part of the SAAA database backup.
 
-See the archived [MVP 2.6 LARM implementation contract](spec/docs/.archived/mvp-2.6-implementation-plan.html) and [MVP 2.6.1 readiness implementation contract](spec/docs/.archived/mvp-2.6.1-implementation-plan.html), plus the active [LARM operations runbook](spec/docs/mvp-2.6-larm-operations-runbook.html), [MVP 2.6 release evidence](spec/docs/mvp-2.6-release-evidence.html), [MVP 2.5 release evidence](spec/docs/mvp-2.5-release-evidence.html), [MVP 2 release evidence](spec/docs/mvp-2-release-evidence.html), [Input Activity privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html), [Situation privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html), and [runtime boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.html).
+See the archived [MVP 2 / 2.5 completion implementation contract](spec/docs/.archived/mvp-2-2.5-completion-implementation-plan.html), [MVP 2.6 LARM implementation contract](spec/docs/.archived/mvp-2.6-implementation-plan.html), and [MVP 2.6.1 readiness implementation contract](spec/docs/.archived/mvp-2.6.1-implementation-plan.html), plus the active [LARM operations runbook](spec/docs/mvp-2.6-larm-operations-runbook.html), [MVP 2.6 release evidence](spec/docs/mvp-2.6-release-evidence.html), [MVP 2.5 release evidence](spec/docs/mvp-2.5-release-evidence.html), [MVP 2 release evidence](spec/docs/mvp-2-release-evidence.html), [Input Activity privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html), [Situation privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html), and [runtime boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.html).

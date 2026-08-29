@@ -6,7 +6,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     env, fs,
     io::{BufRead, BufReader, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -19,6 +19,7 @@ use std::{
 use tauri::Manager;
 use zeroize::Zeroizing;
 
+pub mod ipc_contract;
 mod meeting;
 mod memory;
 mod providers;
@@ -26,19 +27,23 @@ mod runtime;
 mod situation;
 mod voice;
 
+use ipc_contract::{ConversationMessage, RuntimeEvent, RuntimeFailureCode};
+
 static BUNDLED_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
 const MAX_CODEX_STDOUT_BYTES: u64 = 4 * 1_024 * 1_024;
 const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 const GNOSIS_PROVIDER_ID: &str = "gnosis-qwen";
-const GNOSIS_ENDPOINT: &str = "http://192.168.0.65:8080/v1";
-const GNOSIS_MODEL: &str = "Qwen3.8-27B-ROCmFP4-FAST.gguf";
+const GNOSIS_HOST: &str = "192.168.0.65";
 const PRIMARY_CONVERSATION_ID: &str = "conversation_primary";
 const PRIMARY_CONVERSATION_TITLE: &str = "SAAAとの会話";
 const CODEX_READ_ONLY_SYSTEM_CONTEXT: &str = include_str!("../../.s11tnext/codex-read-only.txt");
 
 struct AppState {
     connection: Arc<Mutex<Connection>>,
+    data_directory: PathBuf,
+    context_still_recall: memory::context_still_recall::ContextStillRecallClient,
     active_runs: Mutex<HashMap<String, Arc<RunCancellation>>>,
+    interaction_policy: Mutex<()>,
     shutdown_started: AtomicBool,
     larm_gate: providers::larm::LarmRuntimeGate,
     tts_process: Mutex<Option<ActiveTts>>,
@@ -154,16 +159,6 @@ struct Conversation {
 struct CreateConversationInput {
     title: Option<String>,
     task_mode: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ConversationMessage {
-    id: String,
-    conversation_id: String,
-    role: String,
-    content: String,
-    created_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,12 +323,24 @@ struct LarmProviderSettings {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GnosisProviderSettings {
+    id: String,
+    enabled: bool,
+    label: String,
+    location: String,
+    host: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 enum ModelProviderSettings {
     #[serde(rename = "openai-compatible")]
     OpenAiCompatible(OpenAiCompatibleProviderSettings),
     #[serde(rename = "larm")]
     Larm(LarmProviderSettings),
+    #[serde(rename = "gnosis")]
+    Gnosis(GnosisProviderSettings),
 }
 
 impl ModelProviderSettings {
@@ -341,6 +348,7 @@ impl ModelProviderSettings {
         match self {
             Self::OpenAiCompatible(provider) => &provider.id,
             Self::Larm(provider) => &provider.id,
+            Self::Gnosis(provider) => &provider.id,
         }
     }
 
@@ -348,6 +356,7 @@ impl ModelProviderSettings {
         match self {
             Self::OpenAiCompatible(provider) => provider.enabled,
             Self::Larm(provider) => provider.enabled,
+            Self::Gnosis(provider) => provider.enabled,
         }
     }
 
@@ -355,6 +364,7 @@ impl ModelProviderSettings {
         match self {
             Self::OpenAiCompatible(provider) => &provider.label,
             Self::Larm(provider) => &provider.label,
+            Self::Gnosis(provider) => &provider.label,
         }
     }
 
@@ -362,6 +372,7 @@ impl ModelProviderSettings {
         match self {
             Self::OpenAiCompatible(provider) => &provider.location,
             Self::Larm(provider) => &provider.location,
+            Self::Gnosis(provider) => &provider.location,
         }
     }
 
@@ -369,6 +380,10 @@ impl ModelProviderSettings {
         match self {
             Self::OpenAiCompatible(_) => "openai-compatible",
             Self::Larm(_) => "larm",
+            // A resolved gnosis descriptor executes through the OpenAI-compatible
+            // data plane; keep the persisted session kind compatible with the
+            // existing provider-session schema.
+            Self::Gnosis(_) => "openai-compatible",
         }
     }
 
@@ -376,6 +391,7 @@ impl ModelProviderSettings {
         match self {
             Self::OpenAiCompatible(provider) => provider.enabled = enabled,
             Self::Larm(provider) => provider.enabled = enabled,
+            Self::Gnosis(provider) => provider.enabled = enabled,
         }
     }
 }
@@ -574,56 +590,6 @@ enum VoiceEvent {
     },
     Failed {
         run_id: String,
-        message: String,
-        recovery: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-enum RuntimeEvent {
-    Started {
-        run_id: String,
-        route: String,
-        provider_id: String,
-    },
-    ProviderSelected {
-        run_id: String,
-        provider_id: String,
-        provider_kind: String,
-        route_id: String,
-        runtime_id: String,
-        fallback_used: bool,
-        selection_reason_code: String,
-    },
-    Delta {
-        run_id: String,
-        text: String,
-    },
-    Activity {
-        run_id: String,
-        kind: String,
-        summary: String,
-    },
-    ProviderFailed {
-        run_id: String,
-        provider_id: String,
-        reason: String,
-    },
-    MessageCompleted {
-        run_id: String,
-        message: ConversationMessage,
-    },
-    Cancelled {
-        run_id: String,
-    },
-    Failed {
-        run_id: String,
-        code: String,
         message: String,
         recovery: String,
     },
@@ -879,10 +845,7 @@ fn spawn_situation_monitor(
 }
 
 #[tauri::command]
-fn export_diagnostics(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<LocalArtifactResult, String> {
+fn export_diagnostics(state: tauri::State<'_, AppState>) -> Result<LocalArtifactResult, String> {
     let connection = state
         .connection
         .lock()
@@ -954,11 +917,7 @@ fn export_diagnostics(
         "recentRuns": recent_runs,
         "providerSessions": provider_diagnostics
     });
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Could not resolve the diagnostics directory: {error}"))?
-        .join("diagnostics");
+    let directory = state.data_directory.join("diagnostics");
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Could not create the diagnostics directory: {error}"))?;
     let path = directory.join(format!("saaa-diagnostics-{created_at}.json"));
@@ -1029,16 +988,9 @@ fn build_provider_diagnostics(connection: &Connection) -> Result<Value, String> 
 }
 
 #[tauri::command]
-fn backup_database(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<LocalArtifactResult, String> {
+fn backup_database(state: tauri::State<'_, AppState>) -> Result<LocalArtifactResult, String> {
     let created_at = now_iso();
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Could not resolve the backup directory: {error}"))?
-        .join("backups");
+    let directory = state.data_directory.join("backups");
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Could not create the backup directory: {error}"))?;
     let path = directory.join(format!("saaa-{created_at}.sqlite3"));
@@ -1103,6 +1055,28 @@ async fn test_model_provider(
                 .await
                 .map(|_| "LARM health and readiness checks succeeded".to_string())
                 .map_err(|kind| larm_failure_message(kind).to_string())
+        }
+        ModelProviderSettings::Gnosis(provider) => {
+            match providers::gnosis::GnosisConnection::resolve(
+                &provider.host,
+                Arc::new(RunCancellation::default()),
+            )
+            .await
+            {
+                Ok(connection) => {
+                    let message = format!(
+                        "gnosis dynamically resolved model {} at {}",
+                        connection.model(),
+                        connection.endpoint()
+                    );
+                    connection
+                        .release()
+                        .await
+                        .map(|_| message)
+                        .map_err(|error| error.public_message().to_string())
+                }
+                Err(error) => Err(error.public_message().to_string()),
+            }
         }
     };
     Ok(ProviderTestResult {
@@ -1442,6 +1416,17 @@ fn start_meeting(
     state: tauri::State<'_, AppState>,
     input: meeting::StartInput,
 ) -> Result<meeting::MeetingSnapshot, String> {
+    start_meeting_inner(&state, &input)
+}
+
+fn start_meeting_inner(
+    state: &AppState,
+    input: &meeting::StartInput,
+) -> Result<meeting::MeetingSnapshot, String> {
+    let _policy = state
+        .interaction_policy
+        .lock()
+        .map_err(|_| "Interaction policy lock unavailable".to_string())?;
     let tts_process = state
         .tts_process
         .lock()
@@ -1449,7 +1434,23 @@ fn start_meeting(
     if tts_process.is_some() {
         return Err("MEETING_POLICY_TTS_BLOCKED: Stop speech and retry.".to_string());
     }
-    let snapshot = state.meeting.start(&input, &state.connection)?;
+    let coding_run_active: bool = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM runtime_runs
+               WHERE route_kind = 'coding.assist' AND status = 'running'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    if coding_run_active {
+        return Err("MEETING_POLICY_AGENT_BLOCKED: Stop the Coding Agent and retry.".to_string());
+    }
+    let snapshot = state.meeting.start(input, &state.connection)?;
     state.meeting.emit(meeting::MeetingEvent::StateChanged {
         session_id: snapshot.session_id.clone(),
         state: snapshot.state.clone(),
@@ -1686,6 +1687,11 @@ fn register_active_run(
     run_id: &str,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(), String> {
+    if memory::control_plane::memory_enabled() {
+        if let Ok(connection) = state.connection.lock() {
+            let _ = memory::control_plane::cancel_running_jobs(&connection, &now_iso());
+        }
+    }
     let mut active = state
         .active_runs
         .lock()
@@ -1811,7 +1817,7 @@ async fn execute_turn(
         Err(message) => {
             let _ = on_event.send(RuntimeEvent::Failed {
                 run_id: input.run_id.clone(),
-                code: "runtime_error".to_string(),
+                code: RuntimeFailureCode::RuntimeError,
                 message: redact_runtime_text(&message),
                 recovery: "Review the conversation and runtime state, then retry.".to_string(),
             });
@@ -1915,7 +1921,7 @@ async fn execute_turn(
             if finalization.is_ok() {
                 let _ = on_event.send(RuntimeEvent::Failed {
                     run_id: input.run_id.clone(),
-                    code: "runtime_error".to_string(),
+                    code: RuntimeFailureCode::RuntimeError,
                     message: redact_runtime_text(&error.message),
                     recovery: "Review the selected provider and runtime settings, then retry."
                         .to_string(),
@@ -1949,7 +1955,44 @@ fn send_runtime_terminal_event(
     } else {
         let _ = on_event.send(RuntimeEvent::Failed {
             run_id: run_id.to_string(),
-            code: error.code.as_str().to_string(),
+            code: match error.code {
+                runtime::contracts::RunFailureCode::ConfigurationError => {
+                    RuntimeFailureCode::ConfigurationError
+                }
+                runtime::contracts::RunFailureCode::ChildStartFailed => {
+                    RuntimeFailureCode::ChildStartFailed
+                }
+                runtime::contracts::RunFailureCode::RequestTimeout => {
+                    RuntimeFailureCode::RequestTimeout
+                }
+                runtime::contracts::RunFailureCode::ProgressTimeout => {
+                    RuntimeFailureCode::ProgressTimeout
+                }
+                runtime::contracts::RunFailureCode::TerminalTimeout => {
+                    RuntimeFailureCode::TerminalTimeout
+                }
+                runtime::contracts::RunFailureCode::HardTimeout => RuntimeFailureCode::HardTimeout,
+                runtime::contracts::RunFailureCode::ChildExited => RuntimeFailureCode::ChildExited,
+                runtime::contracts::RunFailureCode::ProtocolError => {
+                    RuntimeFailureCode::ProtocolError
+                }
+                runtime::contracts::RunFailureCode::PolicyViolation => {
+                    RuntimeFailureCode::PolicyViolation
+                }
+                runtime::contracts::RunFailureCode::ProviderError => {
+                    RuntimeFailureCode::ProviderError
+                }
+                runtime::contracts::RunFailureCode::ResponseTooLarge => {
+                    RuntimeFailureCode::ResponseTooLarge
+                }
+                runtime::contracts::RunFailureCode::InternalError
+                | runtime::contracts::RunFailureCode::AppRestarted => {
+                    RuntimeFailureCode::InternalError
+                }
+                runtime::contracts::RunFailureCode::UserCancelled => {
+                    RuntimeFailureCode::RuntimeError
+                }
+            },
             message: redact_runtime_text(&error.message),
             recovery: error.code.recovery().to_string(),
         });
@@ -1994,12 +2037,14 @@ fn finish_supervised_runtime_run(
 }
 
 fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<String, String> {
-    let mut connection = state
+    let _policy = state
+        .interaction_policy
+        .lock()
+        .map_err(|_| "Interaction policy lock unavailable".to_string())?;
+    let task_mode: String = state
         .connection
         .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let transaction = connection.transaction().map_err(database_error)?;
-    let task_mode: String = transaction
+        .map_err(|_| "Database lock unavailable".to_string())?
         .query_row(
             "SELECT task_mode FROM conversations WHERE id = ?1",
             params![input.conversation_id],
@@ -2007,9 +2052,33 @@ fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<Strin
         )
         .map_err(|_| "Conversation does not exist".to_string())?;
     validate_conversation_write_target(&input.conversation_id, &task_mode)?;
+    if task_mode == "coding" && state.meeting.blocks_tts() {
+        return Err(
+            "MEETING_POLICY_AGENT_BLOCKED: Coding Agent is disabled during a meeting.".to_string(),
+        );
+    }
+    if task_mode == "coding" {
+        let workspace = input
+            .workspace_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Select a workspace before starting a Codex turn".to_string())?;
+        let workspace = fs::canonicalize(workspace)
+            .map_err(|_| "The selected Codex workspace does not exist".to_string())?;
+        if !workspace.is_dir() {
+            return Err("The selected Codex workspace is not a directory".to_string());
+        }
+    } else if input.workspace_path.is_some() {
+        return Err("Normal conversation turns cannot include a workspace".to_string());
+    }
     if task_mode == "conversation" {
         memory::context_window::validate_current_instruction(input.content.trim())?;
     }
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let transaction = connection.transaction().map_err(database_error)?;
     let route_kind = if task_mode == "coding" {
         "coding.assist"
     } else {
@@ -2107,6 +2176,15 @@ async fn execute_conversation_turn(
         let context_window =
             memory::context_window::build(&connection, &input.conversation_id, &input_message_id)?;
         let context_health = context_window.health.clone();
+        let _ = memory::control_plane::record_projection_event(
+            &connection,
+            context_health.status,
+            context_health.projected_bytes,
+            context_health.hard_limit_bytes,
+            context_health.output_reserve_bytes,
+            context_health.repair_count,
+            &now_iso(),
+        );
         let history = context_window
             .messages
             .into_iter()
@@ -2189,15 +2267,22 @@ async fn execute_conversation_turn(
                 run_id: input.run_id.clone(),
                 kind: "context-window".to_string(),
                 summary: format!(
-                    "Context {}: {}/{} bytes, {} recent messages, {} continuity groups, {} loaded source messages omitted{}",
+                    "Context {}: {}/{} input bytes, {} bytes output reserved, {} memory items, {} recent messages, {} continuity groups, {} loaded source messages omitted{}{}",
                     context_health.status,
                     context_health.projected_bytes,
                     context_health.hard_limit_bytes,
+                    context_health.output_reserve_bytes,
+                    context_health.memory_item_count,
                     context_health.recent_source_messages,
                     context_health.continuity_group_count,
                     context_health.omitted_loaded_source_messages,
                     if context_health.source_history_truncated {
                         ", older source history truncated"
+                    } else {
+                        ""
+                    },
+                    if context_health.repair_count > 0 {
+                        ", minimal reconstruction applied"
                     } else {
                         ""
                     },
@@ -2236,6 +2321,25 @@ async fn execute_conversation_turn(
                         session_id: &session_id,
                         input,
                         on_event,
+                    },
+                )
+                .await
+            }
+            ModelProviderSettings::Gnosis(provider) => {
+                stream_gnosis_provider(
+                    provider,
+                    &history,
+                    route.timeout_ms,
+                    cancellation.clone(),
+                    ModelStreamContext {
+                        reasoning_effort: &reasoning_effort,
+                        input,
+                        on_event,
+                        cancellation: cancellation.clone(),
+                        output_persistence: Some(ProviderOutputPersistence {
+                            state,
+                            session_id: &session_id,
+                        }),
                     },
                 )
                 .await
@@ -2293,7 +2397,9 @@ async fn execute_conversation_turn(
                     reason: reason.to_string(),
                 });
                 let failure = format!("{}: {reason}", provider.id());
-                if !provider_fallback_allowed(kind, output_started) {
+                if matches!(provider, ModelProviderSettings::Gnosis(_))
+                    || !provider_fallback_allowed(kind, output_started)
+                {
                     return Err(failure);
                 }
                 failures.push(failure);
@@ -2550,6 +2656,55 @@ fn persist_codex_success(
         .map_err(database_error)?;
     if changed != 1 {
         return Err("Runtime run was already finalized".to_string());
+    }
+    if memory::control_plane::memory_enabled()
+        && transaction
+            .execute_batch("SAVEPOINT memory_turn_enqueue")
+            .is_ok()
+    {
+        let memory_now = now_iso();
+        let memory_result = transaction
+            .query_row(
+                "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
+                params![input.run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(database_error)
+            .and_then(|input_message_id| {
+                memory::control_plane::record_completed_turn(
+                    &transaction,
+                    &input_message_id,
+                    &message.id,
+                    &memory_now,
+                )
+            });
+        match memory_result {
+            Ok(_) => {
+                if transaction
+                    .execute_batch("RELEASE memory_turn_enqueue")
+                    .is_ok()
+                {
+                    let _ = memory::control_plane::record_decision_event(
+                        &transaction,
+                        "turn-enqueue",
+                        "queued",
+                        4,
+                        &memory_now,
+                    );
+                }
+            }
+            Err(_) => {
+                let _ = transaction
+                    .execute_batch("ROLLBACK TO memory_turn_enqueue; RELEASE memory_turn_enqueue");
+                let _ = memory::control_plane::record_decision_event(
+                    &transaction,
+                    "turn-enqueue",
+                    "failed",
+                    0,
+                    &memory_now,
+                );
+            }
+        }
     }
     transaction.commit().map_err(database_error)?;
     Ok(message)
@@ -3440,13 +3595,20 @@ fn effective_conversation_route_ids(
     route: &ConversationRouteSettings,
     security: &SecurityRuntimeSettings,
 ) -> Vec<String> {
-    let primary_is_local = providers
+    let primary = providers
         .providers
         .iter()
-        .find(|provider| provider.id() == route.primary_provider_id)
-        .is_some_and(|provider| provider.location() == "local");
+        .find(|provider| provider.id() == route.primary_provider_id);
+    let primary_is_local = primary.is_some_and(|provider| provider.location() == "local");
+    let primary_is_gnosis =
+        primary.is_some_and(|provider| matches!(provider, ModelProviderSettings::Gnosis(_)));
+    let fallback_ids = if primary_is_gnosis {
+        &[][..]
+    } else {
+        route.fallback_provider_ids.as_slice()
+    };
     std::iter::once(route.primary_provider_id.clone())
-        .chain(route.fallback_provider_ids.iter().cloned())
+        .chain(fallback_ids.iter().cloned())
         .filter(|provider_id| {
             !(security.local_only_when_selected && primary_is_local)
                 || providers
@@ -3966,6 +4128,22 @@ fn provider_failure_from_larm(
     }
 }
 
+fn provider_failure_from_gnosis(kind: providers::gnosis::ErrorKind) -> ProviderFailureKind {
+    use providers::gnosis::ErrorKind as Gnosis;
+    match kind {
+        Gnosis::Authentication => ProviderFailureKind::Authentication,
+        Gnosis::Contract => ProviderFailureKind::Contract,
+        Gnosis::Capacity => ProviderFailureKind::Capacity,
+        Gnosis::Unavailable => ProviderFailureKind::Unavailable,
+        Gnosis::Upstream => ProviderFailureKind::Upstream,
+        Gnosis::Network => ProviderFailureKind::Network,
+        Gnosis::Timeout => ProviderFailureKind::Timeout,
+        Gnosis::StaleConnection => ProviderFailureKind::AllocationLost,
+        Gnosis::Cancelled => ProviderFailureKind::Cancelled,
+        Gnosis::Internal => ProviderFailureKind::Internal,
+    }
+}
+
 fn larm_failure_message(kind: providers::larm::contracts::SessionFailureKind) -> &'static str {
     provider_failure_from_larm(kind).public_message().as_str()
 }
@@ -4037,7 +4215,27 @@ async fn stream_model_provider(
     timeout_ms: u64,
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
-    match stream_model_provider_inner(provider, history, timeout_ms, context).await {
+    stream_model_provider_with_api_key(provider, history, timeout_ms, None, false, context).await
+}
+
+async fn stream_model_provider_with_api_key(
+    provider: &OpenAiCompatibleProviderSettings,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    api_key: Option<&str>,
+    require_event_stream: bool,
+    context: ModelStreamContext<'_>,
+) -> ProviderAttemptOutcome {
+    match stream_model_provider_inner(
+        provider,
+        history,
+        timeout_ms,
+        api_key,
+        require_event_stream,
+        context,
+    )
+    .await
+    {
         Ok(content) => ProviderAttemptOutcome::Completed {
             content,
             cleanup: CleanupOutcome::NotApplicable,
@@ -4058,6 +4256,88 @@ async fn stream_model_provider(
             cleanup: CleanupOutcome::NotApplicable,
         },
     }
+}
+
+async fn stream_gnosis_provider(
+    provider: &GnosisProviderSettings,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+    context: ModelStreamContext<'_>,
+) -> ProviderAttemptOutcome {
+    let connection =
+        match resolve_gnosis_connection_for_request(provider, timeout_ms, cancellation.clone())
+            .await
+        {
+            Ok(connection) => connection,
+            Err(error) => {
+                let kind = provider_failure_from_gnosis(error.kind);
+                return if kind == ProviderFailureKind::Cancelled {
+                    ProviderAttemptOutcome::Cancelled {
+                        output_started: false,
+                        cleanup: CleanupOutcome::NotStarted,
+                    }
+                } else {
+                    ProviderAttemptOutcome::Failed {
+                        kind,
+                        public_message: kind.public_message(),
+                        output_started: false,
+                        cleanup: CleanupOutcome::NotStarted,
+                    }
+                };
+            }
+        };
+    let resolved = OpenAiCompatibleProviderSettings {
+        id: provider.id.clone(),
+        enabled: true,
+        label: provider.label.clone(),
+        location: "local".to_string(),
+        endpoint: connection.endpoint().to_string(),
+        model: connection.model().to_string(),
+        credential_status: "configured".to_string(),
+    };
+    let outcome = stream_model_provider_with_api_key(
+        &resolved,
+        history,
+        timeout_ms,
+        Some(connection.api_key()),
+        true,
+        context,
+    )
+    .await;
+    let _ = connection.release().await;
+    outcome
+}
+
+async fn resolve_gnosis_connection_for_request(
+    provider: &GnosisProviderSettings,
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+) -> Result<providers::gnosis::GnosisConnection, providers::gnosis::GnosisError> {
+    for attempt in 0..2 {
+        let mut connection =
+            providers::gnosis::GnosisConnection::resolve(&provider.host, cancellation.clone())
+                .await?;
+        match connection
+            .ensure_lifetime(Duration::from_millis(timeout_ms), cancellation.clone())
+            .await
+        {
+            Ok(()) => return Ok(connection),
+            Err(error)
+                if error.kind == providers::gnosis::ErrorKind::StaleConnection && attempt == 0 =>
+            {
+                let _ = connection.release().await;
+            }
+            Err(error) => {
+                let _ = connection.release().await;
+                return Err(error);
+            }
+        }
+    }
+    Err(providers::gnosis::GnosisError::new(
+        providers::gnosis::ErrorKind::StaleConnection,
+        "The gnosis provider connection expired before inference started.",
+    ))
 }
 
 struct LarmStreamContext<'a> {
@@ -4190,21 +4470,11 @@ async fn stream_larm_provider(
                 false,
             ));
         };
-        let tools_enabled = context
-            .state
-            .connection
-            .lock()
-            .ok()
-            .and_then(|connection| {
-                memory::recall::remaining_calls(&connection, &context.input.run_id).ok()
-            })
-            .is_some_and(|remaining| remaining > 0)
-            && tool_calls_this_attempt < memory::contracts::MAX_RECALL_CALLS_PER_TURN;
-        let tools = if tools_enabled {
-            vec![runtime::agent_tools::recall_tool_definition()]
-        } else {
-            Vec::new()
-        };
+        let persistence = Some(ProviderOutputPersistence {
+            state: context.state,
+            session_id: context.session_id,
+        });
+        let tools = available_agent_tools(persistence, context.input, tool_calls_this_attempt);
         let round = larm
             .chat_with_tools(
                 &mut allocation,
@@ -4242,21 +4512,30 @@ async fn stream_larm_provider(
                 let Some(call) = completion.tool_call.clone() else {
                     break Ok(completion);
                 };
-                if !tools_enabled {
+                if !tool_was_offered(&tools, &call.name) {
                     break Err(providers::larm::client::LarmError::new(
                         providers::larm::contracts::SessionFailureKind::Protocol,
                         false,
                     ));
                 }
                 tool_calls_this_attempt += 1;
-                let content = execute_recall_tool(
-                    Some(ProviderOutputPersistence {
-                        state: context.state,
-                        session_id: context.session_id,
-                    }),
-                    context.input,
-                    &call,
-                );
+                let Some(tool_timeout) =
+                    chat_deadline.checked_duration_since(tokio::time::Instant::now())
+                else {
+                    break Err(providers::larm::client::LarmError::new(
+                        providers::larm::contracts::SessionFailureKind::Timeout,
+                        false,
+                    ));
+                };
+                let content = tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        break Err(providers::larm::client::LarmError::new(
+                            providers::larm::contracts::SessionFailureKind::Cancelled,
+                            false,
+                        ));
+                    }
+                    content = execute_agent_tool(persistence, context.input, &call, tool_timeout) => content,
+                };
                 runtime::agent_tools::append_tool_exchange(&mut tool_exchanges, &call, content);
             }
             Err(error) => break Err(error),
@@ -4327,6 +4606,8 @@ async fn stream_model_provider_inner(
     provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
     timeout_ms: u64,
+    api_key: Option<&str>,
+    require_event_stream: bool,
     context: ModelStreamContext<'_>,
 ) -> Result<String, ProviderAttemptError> {
     if context.cancellation.is_cancelled() {
@@ -4362,43 +4643,53 @@ async fn stream_model_provider_inner(
             .checked_duration_since(tokio::time::Instant::now())
             .filter(|remaining| !remaining.is_zero())
             .ok_or_else(|| ProviderAttemptError::failed(ProviderFailureKind::Timeout, false))?;
-        let tools_enabled = context.output_persistence.is_some_and(|persistence| {
-            persistence
-                .state
-                .connection
-                .lock()
-                .ok()
-                .and_then(|connection| {
-                    memory::recall::remaining_calls(&connection, &context.input.run_id).ok()
-                })
-                .is_some_and(|remaining| remaining > 0)
-                && tool_calls_this_attempt < memory::contracts::MAX_RECALL_CALLS_PER_TURN
-        });
+        let tools = available_agent_tools(
+            context.output_persistence,
+            context.input,
+            tool_calls_this_attempt,
+        );
         match stream_model_provider_round(
             &client,
             provider,
             &messages,
-            tools_enabled,
+            &tools,
             context.reasoning_effort,
+            api_key,
             context.input,
             context.on_event,
             context.cancellation.clone(),
             context.output_persistence,
             round_timeout,
+            require_event_stream,
         )
         .await?
         {
             ModelProviderCompletion::Content(content) => return Ok(content),
             ModelProviderCompletion::ToolCall(call) => {
-                if !tools_enabled {
+                if !tool_was_offered(&tools, &call.name) {
                     return Err(ProviderAttemptError::failed(
                         ProviderFailureKind::Protocol,
                         false,
                     ));
                 }
                 tool_calls_this_attempt += 1;
-                let tool_content =
-                    execute_recall_tool(context.output_persistence, context.input, &call);
+                let tool_timeout = deadline
+                    .checked_duration_since(tokio::time::Instant::now())
+                    .filter(|remaining| !remaining.is_zero())
+                    .ok_or_else(|| {
+                        ProviderAttemptError::failed(ProviderFailureKind::Timeout, false)
+                    })?;
+                let tool_content = tokio::select! {
+                    _ = context.cancellation.cancelled() => {
+                        return Err(ProviderAttemptError::Cancelled { output_started: false });
+                    }
+                    content = execute_agent_tool(
+                        context.output_persistence,
+                        context.input,
+                        &call,
+                        tool_timeout,
+                    ) => content,
+                };
                 runtime::agent_tools::append_tool_exchange(&mut messages, &call, tool_content);
             }
         }
@@ -4415,13 +4706,15 @@ async fn stream_model_provider_round(
     client: &reqwest::Client,
     provider: &OpenAiCompatibleProviderSettings,
     messages: &[Value],
-    tools_enabled: bool,
+    tools: &[Value],
     reasoning_effort: &str,
+    api_key: Option<&str>,
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     round_timeout: Duration,
+    require_event_stream: bool,
 ) -> Result<ModelProviderCompletion, ProviderAttemptError> {
     let mut body = json!({
         "model": provider.model,
@@ -4429,8 +4722,8 @@ async fn stream_model_provider_round(
         "stream": true,
         "reasoning_effort": reasoning_effort
     });
-    if tools_enabled {
-        body["tools"] = json!([runtime::agent_tools::recall_tool_definition()]);
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools.to_vec());
         body["tool_choice"] = json!("auto");
     }
     let mut request = client
@@ -4440,7 +4733,8 @@ async fn stream_model_provider_round(
         )
         .timeout(round_timeout)
         .json(&body);
-    if let Some(api_key) = provider_api_key(provider) {
+    let configured_api_key = provider_api_key(provider);
+    if let Some(api_key) = api_key.or(configured_api_key.as_deref()) {
         request = request.bearer_auth(api_key);
     }
     let response = tokio::select! {
@@ -4460,7 +4754,13 @@ async fn stream_model_provider_round(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
-        .to_string();
+        .to_ascii_lowercase();
+    if require_event_stream && !content_type.starts_with("text/event-stream") {
+        return Err(ProviderAttemptError::failed(
+            ProviderFailureKind::Protocol,
+            false,
+        ));
+    }
     if content_type.contains("application/json") {
         let body = read_provider_body_limited(response, 1_048_576, &cancellation, false).await?;
         let response: Value = serde_json::from_slice(&body)
@@ -4592,6 +4892,69 @@ async fn stream_model_provider_round(
         ));
     }
     Ok(ModelProviderCompletion::Content(content))
+}
+
+fn available_agent_tools(
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
+    input: &StartTurnInput,
+    calls_this_attempt: usize,
+) -> Vec<Value> {
+    if calls_this_attempt >= memory::contracts::MAX_RECALL_CALLS_PER_TURN {
+        return Vec::new();
+    }
+    let include_conversation = output_persistence.is_some_and(|persistence| {
+        persistence
+            .state
+            .connection
+            .lock()
+            .ok()
+            .and_then(|connection| memory::recall::remaining_calls(&connection, &input.run_id).ok())
+            .is_some_and(|remaining| remaining > 0)
+    });
+    let include_typed_memory = output_persistence
+        .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
+    runtime::agent_tools::agent_tool_definitions(include_conversation, include_typed_memory)
+}
+
+fn tool_was_offered(definitions: &[Value], name: &str) -> bool {
+    definitions.iter().any(|definition| {
+        definition.pointer("/function/name").and_then(Value::as_str) == Some(name)
+    })
+}
+
+async fn execute_agent_tool(
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
+    input: &StartTurnInput,
+    call: &runtime::agent_tools::AgentToolCall,
+    timeout: Duration,
+) -> String {
+    if runtime::agent_tools::is_typed_memory_tool(&call.name) {
+        let Some(persistence) = output_persistence else {
+            return runtime::agent_tools::tool_error_content(
+                "typed-memory-unavailable",
+                "Typed memory recall is temporarily unavailable.",
+            );
+        };
+        return match tokio::time::timeout(
+            timeout,
+            persistence
+                .state
+                .context_still_recall
+                .recall(&call.name, &call.arguments),
+        )
+        .await
+        {
+            Ok(Ok(content)) => content,
+            Ok(Err(error)) => {
+                runtime::agent_tools::tool_error_content(error.tool_code(), error.safe_message())
+            }
+            Err(_) => runtime::agent_tools::tool_error_content(
+                "typed-memory-unavailable",
+                "Typed memory recall is temporarily unavailable.",
+            ),
+        };
+    }
+    execute_recall_tool(output_persistence, input, call)
 }
 
 fn execute_recall_tool(
@@ -5473,6 +5836,8 @@ fn ensure_primary_conversation(connection: &Connection) -> Result<Conversation, 
     if conversation.task_mode != "conversation" {
         return Err("Primary conversation has an invalid task mode".to_string());
     }
+    memory::control_plane::ensure_continuity_state(connection, PRIMARY_CONVERSATION_ID, &now)
+        .map_err(database_error)?;
     Ok(conversation)
 }
 
@@ -5704,6 +6069,7 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     migrate_v8_to_v9(&transaction)?;
     memory::recall::migrate_v9_to_v10(&transaction)?;
     voice::profile::migrate_v10_to_v11(&transaction)?;
+    memory::control_plane::migrate_v11_to_v12(&transaction)?;
     transaction.execute("UPDATE settings_documents SET schema_version = 9, updated_at = ?1 WHERE schema_version < 9", params![now_iso()])?;
 
     for (namespace, key, schema_version, value) in default_settings_documents() {
@@ -5722,11 +6088,23 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
             now_iso()
         ],
     )?;
+    let memory_now = now_iso();
+    memory::control_plane::ensure_continuity_state(
+        &transaction,
+        PRIMARY_CONVERSATION_ID,
+        &memory_now,
+    )?;
+    memory::control_plane::recover_interrupted_jobs(&transaction, &memory_now)?;
     migrate_pristine_provider_defaults_to_gnosis(&transaction)?;
+    migrate_direct_gnosis_provider_to_discovery(&transaction)?;
     migrate_provider_reasoning_effort_default(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
-    transaction.pragma_update(None, "user_version", 11)?;
+    transaction.pragma_update(
+        None,
+        "user_version",
+        memory::control_plane::MEMORY_SCHEMA_VERSION,
+    )?;
     transaction.commit()
 }
 
@@ -5740,6 +6118,60 @@ fn migrate_provider_reasoning_effort_default(connection: &Connection) -> rusqlit
            AND json_type(value_json, '$.reasoningEffort') IS NULL",
         params![providers::DEFAULT_CONVERSATION_REASONING_EFFORT, now_iso()],
     )?;
+    Ok(())
+}
+
+fn migrate_direct_gnosis_provider_to_discovery(connection: &Connection) -> rusqlite::Result<()> {
+    let current: Option<String> = connection
+        .query_row(
+            "SELECT value_json FROM settings_documents
+             WHERE namespace='providers.model' AND key='default'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(current) = current else {
+        return Ok(());
+    };
+    let mut value: Value = serde_json::from_str(&current).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let Some(items) = value.get_mut("providers").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    let mut changed = false;
+    for item in items {
+        if item.get("id").and_then(Value::as_str) != Some(GNOSIS_PROVIDER_ID)
+            || item.get("kind").and_then(Value::as_str) != Some("openai-compatible")
+            || item.get("location").and_then(Value::as_str) != Some("local")
+        {
+            continue;
+        }
+        let host = item
+            .get("endpoint")
+            .and_then(Value::as_str)
+            .and_then(|endpoint| url::Url::parse(endpoint).ok())
+            .and_then(|endpoint| endpoint.host_str().map(str::to_string))
+            .filter(|host| providers::gnosis::control_base_url(host).is_ok())
+            .unwrap_or_else(|| GNOSIS_HOST.to_string());
+        let enabled = item.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        *item = json!({
+            "kind": "gnosis",
+            "id": GNOSIS_PROVIDER_ID,
+            "enabled": enabled,
+            "label": "gnosis · Dynamic LLM",
+            "location": "local",
+            "host": host
+        });
+        changed = true;
+    }
+    if changed {
+        connection.execute(
+            "UPDATE settings_documents SET value_json=?1, updated_at=?2
+             WHERE namespace='providers.model' AND key='default'",
+            params![value.to_string(), now_iso()],
+        )?;
+    }
     Ok(())
 }
 
@@ -5830,13 +6262,31 @@ fn migrate_v6_to_v7(connection: &Connection) -> rusqlite::Result<()> {
 
 fn settings_template_for_v7(namespace: &str, mut template: Value) -> Value {
     if namespace == "providers.model" {
-        if let Some(providers) = template.get_mut("providers").and_then(Value::as_array_mut) {
-            for provider in providers {
-                if let Some(provider) = provider.as_object_mut() {
-                    provider.remove("kind");
-                }
-            }
-        }
+        template["providers"] = json!([{
+            "id": "local-openai-compatible",
+            "enabled": false,
+            "label": "Local OpenAI-compatible",
+            "location": "local",
+            "endpoint": "",
+            "model": "",
+            "credentialStatus": "not-configured"
+        }]);
+    }
+    template
+}
+
+fn settings_template_for_legacy_v8_or_v9(namespace: &str, mut template: Value) -> Value {
+    if namespace == "providers.model" {
+        template["providers"] = json!([{
+            "kind": "openai-compatible",
+            "id": "local-openai-compatible",
+            "enabled": false,
+            "label": "Local OpenAI-compatible",
+            "location": "local",
+            "endpoint": "",
+            "model": "",
+            "credentialStatus": "not-configured"
+        }]);
     }
     template
 }
@@ -5913,6 +6363,7 @@ fn migrate_v7_to_v8(connection: &Connection) -> rusqlite::Result<()> {
     )?;
 
     for (namespace, key, _, template) in default_settings_documents() {
+        let template = settings_template_for_legacy_v8_or_v9(namespace, template);
         let legacy: Option<String> = connection
             .query_row(
                 "SELECT value_json FROM settings_documents
@@ -5995,6 +6446,7 @@ fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> {
     }
 
     for (namespace, key, _, template) in default_settings_documents() {
+        let template = settings_template_for_legacy_v8_or_v9(namespace, template);
         let legacy: Option<String> = connection
             .query_row(
                 "SELECT value_json FROM settings_documents
@@ -6072,7 +6524,7 @@ fn backup_before_migration(
     let has_data = fs::metadata(database_path)
         .map(|metadata| metadata.len() > 0)
         .unwrap_or(false);
-    if !has_data || version >= 11 {
+    if !has_data || version >= memory::control_plane::MEMORY_SCHEMA_VERSION {
         return Ok(None);
     }
     let directory = database_path
@@ -6094,14 +6546,12 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
             9,
             json!({
                 "providers": [{
-                    "kind": "openai-compatible",
+                    "kind": "gnosis",
                     "id": GNOSIS_PROVIDER_ID,
                     "enabled": true,
-                    "label": "gnosis · Qwen3.8 27B",
+                    "label": "gnosis · Dynamic LLM",
                     "location": "local",
-                    "endpoint": GNOSIS_ENDPOINT,
-                    "model": GNOSIS_MODEL,
-                    "credentialStatus": "not-configured"
+                    "host": GNOSIS_HOST
                 }],
                 "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT
             }),
@@ -6436,6 +6886,18 @@ fn validate_settings_batch(documents: &[SaveSettingsDocumentInput]) -> Result<()
     {
         return Err("The primary conversation provider must be enabled".to_string());
     }
+    let primary_is_gnosis = providers.providers.iter().any(|provider| {
+        provider.id() == routing.conversation_respond.primary_provider_id
+            && matches!(provider, ModelProviderSettings::Gnosis(_))
+    });
+    if primary_is_gnosis
+        && !routing
+            .conversation_respond
+            .fallback_provider_ids
+            .is_empty()
+    {
+        return Err("gnosis routes must not configure fallback providers".to_string());
+    }
     let mut route_ids = std::collections::HashSet::new();
     route_ids.insert(routing.conversation_respond.primary_provider_id.as_str());
     for provider_id in &routing.conversation_respond.fallback_provider_ids {
@@ -6472,6 +6934,7 @@ fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), Str
     let mut ids = std::collections::HashSet::new();
     let mut credential_suffixes = std::collections::HashSet::new();
     let mut enabled_larm_count = 0;
+    let mut enabled_gnosis_count = 0;
     for provider in &settings.providers {
         let provider_id = provider.id();
         if provider_id.is_empty()
@@ -6591,10 +7054,25 @@ fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), Str
                     ));
                 }
             }
+            ModelProviderSettings::Gnosis(provider) => {
+                if provider.enabled {
+                    enabled_gnosis_count += 1;
+                }
+                if provider.location != "local"
+                    || providers::gnosis::control_base_url(&provider.host).is_err()
+                {
+                    return Err(format!(
+                        "gnosis provider requires only a private-network host: {provider_id}"
+                    ));
+                }
+            }
         }
     }
     if enabled_larm_count > 1 {
         return Err("Only one LARM provider may be enabled".to_string());
+    }
+    if enabled_gnosis_count > 1 {
+        return Err("Only one gnosis provider may be enabled".to_string());
     }
     Ok(())
 }
@@ -6828,8 +7306,43 @@ fn application_database_path(app: &tauri::App) -> Result<PathBuf, Box<dyn std::e
         }
     }
     let directory = app.path().app_data_dir()?;
+    if let Some(readiness_directory) = env::var_os("SAAA_MVP2X_APP_DATA_DIR").map(PathBuf::from) {
+        let readiness_directory =
+            validate_readiness_data_directory(&readiness_directory, &directory)
+                .map_err(std::io::Error::other)?;
+        return Ok(readiness_directory.join("saaa.sqlite3"));
+    }
     fs::create_dir_all(&directory)?;
     Ok(directory.join("saaa.sqlite3"))
+}
+
+fn validate_readiness_data_directory(
+    directory: &Path,
+    normal_app_data: &Path,
+) -> Result<PathBuf, String> {
+    if !directory.is_absolute() {
+        return Err("SAAA_MVP2X_APP_DATA_DIR must be absolute".to_string());
+    }
+    let metadata = fs::symlink_metadata(directory)
+        .map_err(|_| "SAAA_MVP2X_APP_DATA_DIR must be an existing directory".to_string())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("SAAA_MVP2X_APP_DATA_DIR must be a real directory".to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o777 != 0o700 {
+            return Err("SAAA_MVP2X_APP_DATA_DIR must have mode 0700".to_string());
+        }
+    }
+    let canonical = fs::canonicalize(directory)
+        .map_err(|_| "SAAA_MVP2X_APP_DATA_DIR could not be resolved".to_string())?;
+    let normal =
+        fs::canonicalize(normal_app_data).unwrap_or_else(|_| normal_app_data.to_path_buf());
+    if canonical == normal {
+        return Err("SAAA_MVP2X_APP_DATA_DIR must not use normal application data".to_string());
+    }
+    Ok(canonical)
 }
 
 fn now_iso() -> String {
@@ -6891,7 +7404,7 @@ pub fn run() {
                 .to_path_buf();
             let voice_profile = Arc::new(voice::profile::VoiceProfileRuntime::initialize(
                 voice_resource_directory,
-                voice_data_directory,
+                voice_data_directory.clone(),
             ));
             let bundled_codex = app.path().resolve(
                 if cfg!(windows) {
@@ -6929,7 +7442,11 @@ pub fn run() {
             }
             app.manage(AppState {
                 connection,
+                data_directory: voice_data_directory,
+                context_still_recall:
+                    memory::context_still_recall::ContextStillRecallClient::from_environment(),
                 active_runs: Mutex::new(HashMap::new()),
+                interaction_policy: Mutex::new(()),
                 shutdown_started: AtomicBool::new(false),
                 larm_gate: providers::larm::LarmRuntimeGate::initialize(),
                 tts_process: Mutex::new(None),
@@ -7026,7 +7543,11 @@ mod tests {
             situation::repository::load_settings(&connection).expect("Situation settings load");
         AppState {
             connection: Arc::new(Mutex::new(connection)),
+            data_directory: PathBuf::new(),
+            context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(
+            ),
             active_runs: Mutex::new(HashMap::new()),
+            interaction_policy: Mutex::new(()),
             shutdown_started: AtomicBool::new(false),
             larm_gate: providers::larm::LarmRuntimeGate::Disabled,
             tts_process: Mutex::new(None),
@@ -7073,6 +7594,16 @@ mod tests {
             allocation_startup_timeout_seconds: 300,
             allow_fallback_by_default: false,
             deployment_policy: "existing-only".to_string(),
+        })
+    }
+
+    fn gnosis_provider(id: &str) -> ModelProviderSettings {
+        ModelProviderSettings::Gnosis(GnosisProviderSettings {
+            id: id.to_string(),
+            enabled: true,
+            label: id.to_string(),
+            location: "local".to_string(),
+            host: "192.168.0.65".to_string(),
         })
     }
 
@@ -7438,6 +7969,195 @@ mod tests {
     }
 
     #[test]
+    fn active_meeting_rejects_coding_turn_before_writing_partial_state() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('meeting-blocked-coding', 'Coding', 'coding', '0', '0')",
+                [],
+            )
+            .expect("coding conversation inserts");
+        let state = app_state(connection);
+        state
+            .meeting
+            .preflight(
+                &meeting::PreflightInput {
+                    microphone_device_id: "default".to_string(),
+                    system_audio_enabled: false,
+                    stt_model: voice::gnosis_asr::MODEL_ID.to_string(),
+                    translation_enabled: false,
+                },
+                Ok(()),
+            )
+            .expect("meeting preflight succeeds");
+        state
+            .meeting
+            .start(
+                &meeting::StartInput {
+                    session_id: "meeting-agent-policy".to_string(),
+                    microphone_device_id: "default".to_string(),
+                    microphone_enabled: true,
+                    system_audio_enabled: false,
+                    stt_model: voice::gnosis_asr::MODEL_ID.to_string(),
+                    translation_enabled: false,
+                    persistence_mode: "discard".to_string(),
+                },
+                &state.connection,
+            )
+            .expect("meeting starts");
+        let input = StartTurnInput {
+            run_id: "run-meeting-blocked-coding".to_string(),
+            conversation_id: "meeting-blocked-coding".to_string(),
+            content: "inspect only".to_string(),
+            workspace_path: Some("/tmp/fixture".to_string()),
+        };
+
+        let error = prepare_runtime_run(&state, &input).expect_err("coding turn is blocked");
+        let connection = state.connection.lock().expect("database lock");
+        let message_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = 'meeting-blocked-coding'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("message count loads");
+        let run_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM runtime_runs WHERE id = 'run-meeting-blocked-coding'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("run count loads");
+
+        assert_eq!(
+            error,
+            "MEETING_POLICY_AGENT_BLOCKED: Coding Agent is disabled during a meeting."
+        );
+        assert_eq!(message_count, 0);
+        assert_eq!(run_count, 0);
+    }
+
+    #[test]
+    fn running_coding_turn_rejects_meeting_start_before_writing_partial_state() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('agent-blocks-meeting', 'Coding', 'coding', '0', '0')",
+                [],
+            )
+            .expect("coding conversation inserts");
+        let state = app_state(connection);
+        let workspace = tempfile::tempdir().expect("workspace creates");
+        let turn = StartTurnInput {
+            run_id: "run-agent-blocks-meeting".to_string(),
+            conversation_id: "agent-blocks-meeting".to_string(),
+            content: "inspect only".to_string(),
+            workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
+        };
+        assert_eq!(
+            prepare_runtime_run(&state, &turn).expect("coding run prepares"),
+            "coding"
+        );
+        state
+            .meeting
+            .preflight(
+                &meeting::PreflightInput {
+                    microphone_device_id: "default".to_string(),
+                    system_audio_enabled: false,
+                    stt_model: voice::gnosis_asr::MODEL_ID.to_string(),
+                    translation_enabled: false,
+                },
+                Ok(()),
+            )
+            .expect("meeting preflight succeeds");
+
+        let error = start_meeting_inner(
+            &state,
+            &meeting::StartInput {
+                session_id: "meeting-blocked-by-agent".to_string(),
+                microphone_device_id: "default".to_string(),
+                microphone_enabled: true,
+                system_audio_enabled: false,
+                stt_model: voice::gnosis_asr::MODEL_ID.to_string(),
+                translation_enabled: false,
+                persistence_mode: "discard".to_string(),
+            },
+        )
+        .expect_err("meeting start is blocked");
+        let snapshot = state.meeting.snapshot().expect("meeting snapshot loads");
+        let connection = state.connection.lock().expect("database lock");
+        let meeting_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM meeting_sessions", [], |row| {
+                row.get(0)
+            })
+            .expect("meeting count loads");
+
+        assert_eq!(
+            error,
+            "MEETING_POLICY_AGENT_BLOCKED: Stop the Coding Agent and retry."
+        );
+        assert_eq!(snapshot.state, meeting::MeetingState::Ready);
+        assert_eq!(meeting_count, 0);
+    }
+
+    #[test]
+    fn task_specific_workspace_validation_precedes_runtime_writes() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('workspace-required', 'Coding', 'coding', '0', '0')",
+                [],
+            )
+            .expect("coding conversation inserts");
+        let state = app_state(connection);
+        let workspace = tempfile::tempdir().expect("workspace creates");
+        let normal = StartTurnInput {
+            run_id: "run-normal-workspace".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
+            content: "normal request".to_string(),
+            workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
+        };
+        let coding = StartTurnInput {
+            run_id: "run-coding-no-workspace".to_string(),
+            conversation_id: "workspace-required".to_string(),
+            content: "coding request".to_string(),
+            workspace_path: None,
+        };
+
+        assert!(prepare_runtime_run(&state, &normal)
+            .expect_err("normal workspace is rejected")
+            .contains("cannot include a workspace"));
+        assert!(prepare_runtime_run(&state, &coding)
+            .expect_err("coding workspace is required")
+            .contains("Select a workspace"));
+        let connection = state.connection.lock().expect("database lock");
+        let message_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages
+                 WHERE content IN ('normal request', 'coding request')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("message count loads");
+        let run_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM runtime_runs
+                 WHERE id IN ('run-normal-workspace', 'run-coding-no-workspace')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("run count loads");
+        assert_eq!(message_count, 0);
+        assert_eq!(run_count, 0);
+    }
+
+    #[test]
     fn normal_turns_reject_byte_oversized_context_before_writing_partial_state() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
@@ -7486,6 +8206,41 @@ mod tests {
     }
 
     #[test]
+    fn readiness_data_directory_is_isolated_and_permission_bounded() {
+        let directory = tempfile::tempdir().expect("temporary directory creates");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("temporary directory permissions are isolated");
+        }
+        let normal = directory.path().join("normal-app-data");
+        let resolved = validate_readiness_data_directory(directory.path(), &normal)
+            .expect("isolated directory is accepted");
+        assert_eq!(
+            resolved,
+            directory.path().canonicalize().expect("path resolves")
+        );
+        assert!(
+            validate_readiness_data_directory(directory.path(), directory.path())
+                .expect_err("normal app data is rejected")
+                .contains("normal application data")
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755))
+                .expect("permissions change");
+            assert!(validate_readiness_data_directory(directory.path(), &normal)
+                .expect_err("broad permissions are rejected")
+                .contains("mode 0700"));
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("permissions restore");
+        }
+    }
+
+    #[test]
     fn migration_creates_default_documents() {
         let connection = Connection::open_in_memory().expect("in-memory sqlite");
         initialize_database(&connection).expect("migration succeeds");
@@ -7503,13 +8258,18 @@ mod tests {
             Some(&json!(GNOSIS_PROVIDER_ID))
         );
         assert_eq!(
-            providers.value_json.pointer("/providers/0/endpoint"),
-            Some(&json!(GNOSIS_ENDPOINT))
+            providers.value_json.pointer("/providers/0/kind"),
+            Some(&json!("gnosis"))
         );
         assert_eq!(
-            providers.value_json.pointer("/providers/0/model"),
-            Some(&json!(GNOSIS_MODEL))
+            providers.value_json.pointer("/providers/0/host"),
+            Some(&json!(GNOSIS_HOST))
         );
+        assert!(providers
+            .value_json
+            .pointer("/providers/0/endpoint")
+            .is_none());
+        assert!(providers.value_json.pointer("/providers/0/model").is_none());
         assert_eq!(
             providers.value_json.pointer("/providers/0/enabled"),
             Some(&json!(true))
@@ -7540,7 +8300,7 @@ mod tests {
                 )
                 .expect("active profile reads"),
         );
-        assert_eq!(version, 11);
+        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         assert_eq!(active_profile, "profile_mvp1_default");
         let recall_schema_objects: i64 = connection
             .query_row(
@@ -7658,6 +8418,14 @@ mod tests {
             Some(&json!(GNOSIS_PROVIDER_ID))
         );
         assert_eq!(
+            providers.value_json.pointer("/providers/0/kind"),
+            Some(&json!("gnosis"))
+        );
+        assert_eq!(
+            providers.value_json.pointer("/providers/0/host"),
+            Some(&json!(GNOSIS_HOST))
+        );
+        assert_eq!(
             routing
                 .value_json
                 .pointer("/conversationRespond/primaryProviderId"),
@@ -7667,6 +8435,50 @@ mod tests {
             routing.value_json.pointer("/conversationRespond/timeoutMs"),
             Some(&json!(45000))
         );
+    }
+
+    #[test]
+    fn direct_gnosis_endpoint_migrates_to_host_only_discovery() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        let direct = json!({
+            "providers": [{
+                "kind": "openai-compatible",
+                "id": GNOSIS_PROVIDER_ID,
+                "enabled": true,
+                "label": "gnosis · Ornith",
+                "location": "local",
+                "endpoint": "http://192.168.0.77:8083/v1",
+                "model": "ornith15-35b",
+                "credentialStatus": "not-configured"
+            }],
+            "reasoningEffort": "medium"
+        });
+        connection
+            .execute(
+                "UPDATE settings_documents SET value_json=?1
+                 WHERE namespace='providers.model' AND key='default'",
+                [direct.to_string()],
+            )
+            .expect("direct provider writes");
+
+        initialize_database(&connection).expect("discovery migration succeeds");
+        let value: String = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents
+                 WHERE namespace='providers.model' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("provider settings read");
+        let value: Value = serde_json::from_str(&value).expect("provider settings parse");
+        assert_eq!(value.pointer("/providers/0/kind"), Some(&json!("gnosis")));
+        assert_eq!(
+            value.pointer("/providers/0/host"),
+            Some(&json!("192.168.0.77"))
+        );
+        assert!(value.pointer("/providers/0/endpoint").is_none());
+        assert!(value.pointer("/providers/0/model").is_none());
     }
 
     #[test]
@@ -7760,7 +8572,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("legacy transcript remains");
-        assert_eq!(version, 11);
+        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         assert_eq!(
             voice.pointer("/sttProviderId"),
             Some(&json!(voice::gnosis_asr::PROVIDER_ID))
@@ -7807,7 +8619,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 11);
+        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         assert!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table exists"));
         initialize_database(&connection).expect("migration idempotent");
     }
@@ -7886,7 +8698,7 @@ mod tests {
             .and_then(|document| document.value_json.pointer("/providers/0"))
             .expect("provider remains");
         assert!(providers.get("legacyProviderField").is_none());
-        assert_eq!(providers.get("kind"), Some(&json!("openai-compatible")));
+        assert_eq!(providers.get("kind"), Some(&json!("gnosis")));
     }
 
     #[test]
@@ -7977,7 +8789,7 @@ mod tests {
             .expect("provider settings read");
         let provider_value: Value =
             serde_json::from_str(&provider_value).expect("provider settings decode");
-        assert_eq!(version, 11);
+        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         assert_eq!(
             provider_value.pointer("/providers/0/kind"),
             Some(&json!("openai-compatible"))
@@ -8163,7 +8975,53 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("migrated provider settings read");
-        assert_eq!(migrated_provider_kind, "openai-compatible");
+        assert_eq!(migrated_provider_kind, "gnosis");
+    }
+
+    #[test]
+    fn version_eleven_database_is_backed_up_before_memory_v12() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("v11.sqlite3");
+        let connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("schema initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id,title,task_mode,created_at,updated_at)
+                 VALUES('v11-kept','Keep','coding','1','1')",
+                [],
+            )
+            .expect("fixture inserts");
+        connection
+            .pragma_update(None, "user_version", 11)
+            .expect("v11 fixture");
+        drop(connection);
+
+        let connection = Connection::open(&path).expect("database reopens");
+        let backup = backup_before_migration(&connection, &path)
+            .expect("backup succeeds")
+            .expect("v11 backup is created");
+        initialize_database(&connection).expect("v12 migration succeeds");
+
+        let migrated_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("migrated version reads");
+        let backup_connection = Connection::open(backup).expect("backup reopens");
+        let backup_version: i64 = backup_connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("backup version reads");
+        let title: String = backup_connection
+            .query_row(
+                "SELECT title FROM conversations WHERE id='v11-kept'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("backup data remains");
+        assert_eq!(
+            migrated_version,
+            memory::control_plane::MEMORY_SCHEMA_VERSION
+        );
+        assert_eq!(backup_version, 11);
+        assert_eq!(title, "Keep");
     }
 
     #[test]
@@ -8301,7 +9159,7 @@ mod tests {
         let version: i64 = reopened
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 11);
+        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         let documents = list_settings_documents(&reopened).expect("settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents
@@ -8429,6 +9287,32 @@ mod tests {
     }
 
     #[test]
+    fn gnosis_route_excludes_all_fallbacks_at_runtime() {
+        let providers = ModelProvidersSettings {
+            providers: vec![
+                gnosis_provider("gnosis-primary"),
+                provider("local-fallback", "local"),
+            ],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
+        };
+        let route = ConversationRouteSettings {
+            primary_provider_id: "gnosis-primary".to_string(),
+            fallback_provider_ids: vec!["local-fallback".to_string()],
+            timeout_ms: 30_000,
+        };
+        let security = SecurityRuntimeSettings {
+            credential_storage: "environment".to_string(),
+            local_only_when_selected: true,
+            diagnostics_redaction: true,
+        };
+
+        assert_eq!(
+            effective_conversation_route_ids(&providers, &route, &security),
+            ["gnosis-primary"]
+        );
+    }
+
+    #[test]
     fn disabled_larm_gate_removes_only_larm_and_preserves_direct_rollback_order() {
         let providers = ModelProvidersSettings {
             providers: vec![
@@ -8463,8 +9347,8 @@ mod tests {
         })
         .is_err());
         let mut gnosis = direct_provider(GNOSIS_PROVIDER_ID, "local");
-        gnosis.endpoint = GNOSIS_ENDPOINT.to_string();
-        gnosis.model = GNOSIS_MODEL.to_string();
+        gnosis.endpoint = "http://192.168.0.65:8083/v1".to_string();
+        gnosis.model = "ornith15-35b".to_string();
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(gnosis)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
@@ -8523,6 +9407,27 @@ mod tests {
             .expect("routing settings");
         routing.value_json["conversationRespond"]["primaryProviderId"] = json!("local");
         routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["cloud"]);
+        assert!(validate_settings_batch(&documents).is_err());
+
+        let mut documents = default_settings_input();
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.model")
+            .expect("provider settings")
+            .value_json = json!({
+            "providers": [
+                gnosis_provider("gnosis-primary"),
+                provider("local-fallback", "local")
+            ],
+            "reasoningEffort": "medium"
+        });
+        let routing = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing settings");
+        routing.value_json["conversationRespond"]["primaryProviderId"] = json!("gnosis-primary");
+        routing.value_json["conversationRespond"]["fallbackProviderIds"] =
+            json!(["local-fallback"]);
         assert!(validate_settings_batch(&documents).is_err());
     }
 
@@ -8701,10 +9606,12 @@ mod tests {
             }
             Ok(())
         });
-        let content = stream_model_provider(
+        let content = stream_model_provider_with_api_key(
             &provider,
             &history,
             5_000,
+            Some("ephemeral-connection-token"),
+            false,
             ModelStreamContext {
                 reasoning_effort: "low",
                 input: &input,
@@ -8727,6 +9634,11 @@ mod tests {
             .lock()
             .expect("request lock")
             .contains("\"reasoning_effort\":\"low\""));
+        assert!(request_body
+            .lock()
+            .expect("request lock")
+            .to_ascii_lowercase()
+            .contains("authorization: bearer ephemeral-connection-token"));
         assert_eq!(
             projected
                 .lock()
@@ -8736,6 +9648,69 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn gnosis_stream_policy_rejects_a_non_sse_completion() {
+        use std::io::{Read, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("fixture accepts request");
+            let mut request = [0_u8; 8_192];
+            let _ = socket.read(&mut request).expect("fixture reads request");
+            let body = r#"{"choices":[{"message":{"content":"not streamed"}}]}"#;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("fixture writes response");
+        });
+        let provider = OpenAiCompatibleProviderSettings {
+            endpoint: format!("http://{address}/v1"),
+            ..direct_provider("gnosis-sse-policy", "local")
+        };
+        let input = StartTurnInput {
+            run_id: "run-gnosis-sse-policy".to_string(),
+            conversation_id: "conversation-gnosis-sse-policy".to_string(),
+            content: "test".to_string(),
+            workspace_path: None,
+        };
+        let history = vec![ConversationMessage {
+            id: "message-gnosis-sse-policy".to_string(),
+            conversation_id: input.conversation_id.clone(),
+            role: "user".to_string(),
+            content: input.content.clone(),
+            created_at: "now".to_string(),
+        }];
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+        let outcome = stream_model_provider_with_api_key(
+            &provider,
+            &history,
+            5_000,
+            Some("ephemeral-connection-token"),
+            true,
+            ModelStreamContext {
+                reasoning_effort: "low",
+                input: &input,
+                on_event: &channel,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: None,
+            },
+        )
+        .await;
+        server.join().expect("fixture server joins");
+        assert!(matches!(
+            outcome,
+            ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::Protocol,
+                output_started: false,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -8919,6 +9894,182 @@ mod tests {
             )
             .expect("receipt count reads");
         assert_eq!(receipts, 1);
+    }
+
+    #[tokio::test]
+    async fn typed_memory_tools_are_routed_only_from_a_valid_typed_manifest() {
+        let directory = tempfile::tempdir().expect("temporary run directory creates");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("run directory permissions set");
+        }
+        let token_path = directory.path().join("mcp-memory-bearer.token");
+        fs::write(
+            &token_path,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+        )
+        .expect("test token writes");
+        let manifest_path = directory.path().join("mcp-endpoint.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&json!({
+                "server": "context-still",
+                "url": "http://127.0.0.1:39173/mcp",
+                "transport": "streamable-http",
+                "protocolVersion": "2025-03-26",
+                "auth": "bearer-token-file",
+                "authTokenPath": token_path,
+                "toolProfile": "typed-memory",
+                "contractVersion": "memory-recall-v1",
+                "startedAt": "unix-ms:1"
+            }))
+            .expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+        #[cfg(unix)]
+        for path in [&token_path, &manifest_path] {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("file permissions set");
+        }
+
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut state = app_state(connection);
+        state.context_still_recall =
+            memory::context_still_recall::ContextStillRecallClient::with_run_dir(
+                directory.path().to_path_buf(),
+                true,
+            );
+        let input = StartTurnInput {
+            run_id: "run-typed-routing".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
+            content: "remember a rule".to_string(),
+            workspace_path: None,
+        };
+        let persistence = Some(ProviderOutputPersistence {
+            state: &state,
+            session_id: "unused-session",
+        });
+        let names = available_agent_tools(persistence, &input, 0)
+            .into_iter()
+            .map(|definition| {
+                definition
+                    .pointer("/function/name")
+                    .and_then(Value::as_str)
+                    .expect("tool name exists")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "recall_conversation",
+                "recall_experience",
+                "recall_rule",
+                "recall_skill"
+            ]
+        );
+
+        let error = execute_agent_tool(
+            persistence,
+            &input,
+            &runtime::agent_tools::AgentToolCall {
+                id: "call-typed-invalid".to_string(),
+                name: "recall_rule".to_string(),
+                arguments: r#"{"query":"release","projectRef":"forbidden"}"#.to_string(),
+            },
+            Duration::from_secs(1),
+        )
+        .await;
+        assert!(error.contains("invalid-memory-input"));
+        assert!(!error.contains("forbidden"));
+    }
+
+    #[tokio::test]
+    async fn typed_memory_execution_cannot_exceed_the_provider_deadline() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let (release_sender, release_receiver) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("fixture accepts request");
+            let mut request = [0_u8; 4 * 1_024];
+            let _ = socket.read(&mut request).expect("fixture reads request");
+            release_receiver.recv().expect("fixture release arrives");
+        });
+
+        let directory = tempfile::tempdir().expect("run directory creates");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("run directory permissions set");
+        }
+        let token_path = directory.path().join("mcp-memory-bearer.token");
+        let manifest_path = directory.path().join("mcp-endpoint.json");
+        fs::write(
+            &token_path,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+        )
+        .expect("token writes");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&json!({
+                "server": "context-still",
+                "url": format!("http://{address}/mcp"),
+                "transport": "streamable-http",
+                "protocolVersion": "2025-03-26",
+                "auth": "bearer-token-file",
+                "authTokenPath": token_path,
+                "toolProfile": "typed-memory",
+                "contractVersion": "memory-recall-v1",
+                "startedAt": "unix-ms:1"
+            }))
+            .expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+        #[cfg(unix)]
+        for path in [&token_path, &manifest_path] {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("fixture permissions set");
+        }
+
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut state = app_state(connection);
+        state.context_still_recall =
+            memory::context_still_recall::ContextStillRecallClient::with_run_dir(
+                directory.path().to_path_buf(),
+                true,
+            );
+        let input = StartTurnInput {
+            run_id: "run-typed-memory-timeout".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
+            content: "remember".to_string(),
+            workspace_path: None,
+        };
+        let persistence = Some(ProviderOutputPersistence {
+            state: &state,
+            session_id: "session-typed-memory-timeout",
+        });
+        let call = runtime::agent_tools::AgentToolCall {
+            id: "call-typed-timeout".to_string(),
+            name: "recall_rule".to_string(),
+            arguments: r#"{"query":"release"}"#.to_string(),
+        };
+        let execution = execute_agent_tool(persistence, &input, &call, Duration::from_millis(20));
+        let error = tokio::time::timeout(Duration::from_millis(250), execution)
+            .await
+            .expect("typed recall respects the provider deadline");
+        assert!(error.contains("typed-memory-unavailable"));
+
+        release_sender.send(()).expect("fixture releases");
+        server.join().expect("fixture joins");
     }
 
     #[test]

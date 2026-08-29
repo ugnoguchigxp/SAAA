@@ -1,0 +1,893 @@
+<article lang="ja">
+  <h1 id="code-quality-module-size-and-coverage">
+    コード品質実装契約 — Module size budgets and test coverage
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Reviewed; ready for implementation</li>
+    <li>Created: 2026-08-29</li>
+    <li>SAAA baseline: <code>68a8142</code> + working tree</li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>対象: Runtime、Frontend、QA</li>
+  </ul>
+  <p>
+    本文書は、ユーザー機能を増やさず、巨大モジュールの分割とテストの移動・補強を行うための実装契約である。
+    完了の定義は<code>CQ-00</code>〜<code>CQ-12</code>を依存関係に従って完了し、Section
+    11のAcceptanceを満たすことである。
+  </p>
+  <p>
+    MVP 0の計画は、<code>lib.rs</code>を「stateとcommand
+    wiringのみ」へ縮小する大規模refactorを、
+    境界が安定してから別作業とすると先送りした。その先送り分が本契約である。
+    本文書を追加するTurnでは、Runtime、SQLite、UIの実装を変更しない。
+  </p>
+
+  <h2 id="1-fixed-conclusion">1. 結論と固定判断</h2>
+  <pre><code class="language-text">lib.rs (11,476 lines today)
+  ├─ keep: AppState, run(), generate_handler, shutdown
+  ├─ move: persistence / settings validation / SSE streaming
+  ├─ move: conversation orchestration / Codex turn / diagnostics
+  └─ move: tests with the production code they pin
+
+App.tsx (949 lines today)
+  ├─ keep: shell, surface switch, snapshot wiring
+  └─ extract: chat page, voice capture hook, pure helpers
+
+Coverage
+  ├─ no new behavior without a test in the same change
+  ├─ moved tests must not decrease in count or assertion
+  └─ line-coverage % is a report, not a ship gate</code></pre>
+  <ol>
+    <li>
+      分割はmove-firstである。公開IPC、SQLite schema、Settings JSON、LARM/Gnosis契約、イベント
+      camelCaseを変えない。
+    </li>
+    <li>
+      テストはコードと一緒に移す。<code>lib.rs</code>の<code>mod tests</code>を空にしてから分割しない。
+    </li>
+    <li>
+      1ファイルの本番行数（<code>#[cfg(test)]</code>より前）に予算を置く。超過は
+      <code>CQ-00</code>の機械チェックで失敗させる。
+    </li>
+    <li>
+      行カバレッジ100%を目標にしない。未テストの挙動を特定し、抽出した純関数とfake
+      HTTP/SQLiteで埋める。
+    </li>
+    <li>
+      本契約のコミットに、MVP 3 Memory、Target Speaker、Voice Behavior、LARM
+      canaryの機能追加を混ぜない。同じファイルを触る場合は、機能側を先に完了またはfreezeする。
+    </li>
+    <li>
+      <code>bun run check</code
+      >と<code>bun run ipc:check</code>が各ticketの完了条件である。
+    </li>
+  </ol>
+
+  <h2 id="2-measured-baseline">2. 計測済みBaseline（2026-08-29）</h2>
+  <p>
+    対象は<code>src/</code>、<code>src-tauri/src/</code>、<code>tests/</code>、<code>scripts/</code>。
+    <code>node_modules</code
+    >、<code>target</code>、archived specは除く。
+  </p>
+  <h3 id="21-oversized-files">2.1 巨大ファイル</h3>
+  <table>
+    <caption>
+      Table: Files over 800 lines
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">File</th>
+        <th scope="col">LOC</th>
+        <th scope="col">#[test] / bun test</th>
+        <th scope="col">本契約での扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src-tauri/src/lib.rs</code></td>
+        <td>11,476（本番 約7,484、test 約3,992）</td>
+        <td>66（ignore 3）</td>
+        <td>Wave 1の主対象。配線以外を移す</td>
+      </tr>
+      <tr>
+        <td><code>scripts/larm-readiness.ts</code></td>
+        <td>2,441</td>
+        <td>17（<code>tests/larm-readiness.test.ts</code>）</td>
+        <td>Wave 3。機能freeze後にrunner/schema/IOへ分割</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/client.rs</code></td>
+        <td>2,607（本番 約1,560）</td>
+        <td>22</td>
+        <td>Wave 2。HTTPとDTO検証を分ける</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/memory/recall.rs</code></td>
+        <td>2,211（本番 約1,288）</td>
+        <td>12</td>
+        <td>
+          Wave 2。<a href="./mvp-3-memory-architecture-implementation-plan.html">MVP 3</a>完了後
+        </td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/gnosis.rs</code></td>
+        <td>1,735（本番 約1,229）</td>
+        <td>9（ignore 1）</td>
+        <td>Wave 2。state検証とHTTPを分ける</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/memory/control_plane.rs</code></td>
+        <td>1,423</td>
+        <td>6</td>
+        <td>Wave 2。MVP 3完了後。計画上もrepository分割予定</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/situation/mod.rs</code></td>
+        <td>1,377</td>
+        <td>17</td>
+        <td>Wave 2任意。予算内なら触らない</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/memory/context_still_recall.rs</code></td>
+        <td>1,283</td>
+        <td>14（ignore 1）</td>
+        <td>Wave 2。MVP 3完了後</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/profile.rs</code></td>
+        <td>1,241</td>
+        <td>6</td>
+        <td>
+          Wave 2。
+          <a href="./target-speaker-enrollment-implementation-plan.html">Target Speaker</a>
+          freeze後
+        </td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/meeting/mod.rs</code></td>
+        <td>1,230</td>
+        <td>13</td>
+        <td>Wave 2任意</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/session.rs</code></td>
+        <td>1,161</td>
+        <td>15</td>
+        <td>Wave 2任意。テストは相対的に厚い</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/memory/context_window.rs</code></td>
+        <td>1,128</td>
+        <td>18</td>
+        <td>Wave 2任意。テストは相対的に厚い</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/live_canary.rs</code></td>
+        <td>1,094</td>
+        <td>5（うち ignore 4）</td>
+        <td>本契約の対象外。operator-only</td>
+      </tr>
+      <tr>
+        <td><code>src/App.tsx</code></td>
+        <td>949</td>
+        <td>0（画面本体）</td>
+        <td>Wave 1後半。純関数とhookへ抽出</td>
+      </tr>
+      <tr>
+        <td><code>scripts/mvp-2-2.5-readiness.ts</code></td>
+        <td>906</td>
+        <td>18</td>
+        <td>Wave 3任意</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/situation/repository.rs</code></td>
+        <td>815</td>
+        <td>9</td>
+        <td>予算内。成長したらWave 2</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="22-already-extracted">2.2 すでに分割済みで維持する境界</h3>
+  <p>
+    <code>meeting/</code
+    >、<code>situation/</code>、<code>voice/</code>、<code>memory/</code>、
+    <code>providers/larm/</code>、<code>runtime/{supervisor,codex_app_server,agent_tools,contracts}</code>、
+    <code>ipc_contract.rs</code
+    >は維持する。本契約はこれらを一つの巨大crateへ戻さない。
+    <code>ipc:check</code
+    >と<code>ts-rs</code>生成物を分割の回帰ゲートにする。
+  </p>
+  <h3 id="23-coverage-today">2.3 テストの現状</h3>
+  <table>
+    <caption>
+      Table: Current automated tests
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">層</th>
+        <th scope="col">規模</th>
+        <th scope="col">厚い領域</th>
+        <th scope="col">薄い / 無い領域</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          Rust <code>#[test]</code> /
+          <code>#[tokio::test]</code>
+        </td>
+        <td>261（うち ignore 10）</td>
+        <td>
+          LARM client/session、Meeting状態機械、Situation hysteresis、Supervisor、migration、SSE
+          fixture、memory FTS（作業ツリー）
+        </td>
+        <td>
+          <code>App.tsx</code>配線、TTS再生/割込、Whisper経路（現行はgnosis
+          ASRへ移行済み）、Settings DTOの生成同期
+        </td>
+      </tr>
+      <tr>
+        <td>Frontend <code>bun test tests</code></td>
+        <td>111</td>
+        <td>
+          Zod settings、<code>microphone.ts</code>、larm-readiness schema、voice
+          activity、 streaming speech
+        </td>
+        <td>
+          React画面の実行時テストはゼロ。一部は
+          <code>readFileSync</code
+          >でソース文字列をpinする契約で、リネームに脆い。
+          <code>VoiceProfileCard</code
+          >、<code>SituationPage</code>、<code
+            >useMeetingSession</code
+          >
+          本体、Frontendのmemory型は未テスト
+        </td>
+      </tr>
+      <tr>
+        <td>Coverage tooling</td>
+        <td>未導入</td>
+        <td>なし</td>
+        <td>
+          <code>cargo llvm-cov</code
+          >、<code>bun test --coverage</code>はscripts未登録。
+          <code>check</code>に載せない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Frontendの挙動テストは<code>microphone</code> / VAD / streaming
+    speechに限られる。<code>mvp-ui-contracts.test.ts</code>と
+    <code>microphone.test.ts</code
+    >の後半、<code>meeting-contracts</code>の一部は
+    ソース走査であり、実行時挙動を保証しない。本契約はこうしたテストを増やさない。抽出した純関数の
+    bun testへ置換する。
+  </p>
+  <p>
+    Rustの重要な挙動テストの多くが<code>lib.rs</code>（66件）に閉じ込められている。
+    <code>ipc:generate</code
+    >が同期するのは<code>RuntimeEvent</code>系だけである。Settings / Meeting /
+    Situation
+    DTOは<code>contracts.ts</code>、<code>schemas.ts</code>、Rust
+    <code>validate_*</code>の三重管理で、型名も一致していない（例: TS
+    <code>VoiceSettings</code>とRust
+    <code>VoiceRuntimeSettings</code>）。
+  </p>
+
+  <h2 id="3-non-goals">3. Non-goals</h2>
+  <ul>
+    <li>新しいユーザー機能、新しいTauri command、新しいSettings namespace</li>
+    <li>エラー型を<code>Result&lt;T, String&gt;</code>から全面置換すること</li>
+    <li>React Testing LibraryやE2Eフレームワークの新規導入（Wave 1では禁止）</li>
+    <li>
+      行カバレッジの数値目標を<code>bun run check</code>の失敗条件にすること
+    </li>
+    <li><code>live_canary.rs</code>のignored testを通常suiteへ入れること</li>
+    <li>Windows / Linux向けSituationの新規実装</li>
+    <li>デフォルトProviderの宅内LAN定数削除（別作業）</li>
+    <li>1ターンですべての800行超ファイルを予算内へ収めること</li>
+  </ul>
+
+  <h2 id="4-stop-conditions">4. Stop conditions</h2>
+  <ul>
+    <li>
+      IPC bind、Settings schema、SQLite
+      <code>user_version</code>、イベントshapeが変わる
+    </li>
+    <li>
+      既存の<code>#[test]</code>または<code>bun test</code>件数が、ignoredを除いて減る
+    </li>
+    <li>
+      clippy
+      <code>-D warnings</code>、fmt、typecheck、ipc:checkのいずれかが失敗する
+    </li>
+    <li>
+      同じPRにMemory write経路、Speaker verification、LARM live、Voice Behaviorの機能差分が混ざる
+    </li>
+    <li>
+      循環依存を解消するために<code>pub use</code>のbarrelを無制限に増やす。公開は
+      <code>pub(crate)</code>に留める
+    </li>
+  </ul>
+
+  <h2 id="5-size-budgets">5. サイズ予算</h2>
+  <table>
+    <caption>
+      Table: Hard and soft size budgets after Wave 1
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">Soft（超えたら次ticket）</th>
+        <th scope="col">Hard（CQ-00失敗）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <code>lib.rs</code
+          >本番（<code>#[cfg(test)] mod tests</code>より前）
+        </td>
+        <td>700</td>
+        <td>900（Wave 1完了後。完了前はratchet）</td>
+      </tr>
+      <tr>
+        <td>その他の<code>.rs</code>本番</td>
+        <td>1,000</td>
+        <td>1,600</td>
+      </tr>
+      <tr>
+        <td><code>src/App.tsx</code></td>
+        <td>350</td>
+        <td>450（Wave 1完了後）</td>
+      </tr>
+      <tr>
+        <td>その他の<code>.tsx</code></td>
+        <td>400</td>
+        <td>550</td>
+      </tr>
+      <tr>
+        <td><code>scripts/*.ts</code>（larm-readiness以外）</td>
+        <td>600</td>
+        <td>1,000</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Wave 1着手時は、現状値をbaselineとして記録し、各ファイルがbaselineの110%を超えたら失敗する
+    ratchetから始める。<code>lib.rs</code>と<code>App.tsx</code>のHardは、対応ticket完了コミットから適用する。
+    テスト専用行は本番予算に数えない。同一ファイル末尾の<code>#[cfg(test)]</code>は800行を目安に、
+    超えたら<code>foo/tests.rs</code>またはモジュール内<code>mod tests</code>のまま許容するが、
+    本番とテストを合わせて3,000行を超えるファイルは作らない。
+  </p>
+
+  <h2 id="6-lib-rs-target-map">
+    6. Wave 1 — <code>lib.rs</code>の目標配置
+  </h2>
+  <pre><code class="language-text">src-tauri/src/
+  lib.rs                         AppState, run, generate_handler, shutdown
+  process_guard.rs               ProcessGuard
+  redact.rs                      redact_runtime_text, bounded_text
+  diagnostics.rs                 export_diagnostics, backup_database
+  persistence/
+    mod.rs
+    schema.rs                    CREATE TABLE, initialize_database
+    migrate.rs                   v3→current, pre-migration backup
+    settings.rs                  validate_*, save_*, load_*, defaults
+    conversations.rs             create/list/append/list_messages
+    runs.rs                      reconcile_interrupted_runs, runtime_runs
+  providers/
+    openai_compatible.rs         SSE drain/project, stream, probe, URLs
+    routing.rs                   gates, fallback policy, route ids
+    session_store.rs             provider_sessions SQLite + LARM marks
+    gnosis.rs                    (既存、Wave 2まで分割しない)
+    larm/                        (既存)
+  runtime/
+    turns.rs                     execute_turn, conversation turn, prepare/finish
+    codex_turn.rs                execute_codex_turn, persist, spawn reader
+    supervisor.rs                (既存)
+    codex_app_server.rs          (既存)
+    agent_tools.rs               (既存。tool実行の呼び出し側だけturnsへ)</code></pre>
+  <p>
+    Tauri commandは<code>lib.rs</code>に薄いwrapperとして残してよい。
+    <code>generate_handler!</code
+    >の識別子を別ファイルへ散らさない。command本体が20行を超える処理は 上記モジュールへ移す。
+  </p>
+  <table>
+    <caption>
+      Table: lib.rs production regions to move
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">おおよその行</th>
+        <th scope="col">内容</th>
+        <th scope="col">移す先</th>
+        <th scope="col">一緒に移すtest例</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>5,890–7,250</td>
+        <td>schema、migration、settings validation、conversations</td>
+        <td><code>persistence/*</code></td>
+        <td>
+          <code>migration_creates_default_documents</code>、
+          <code>version_*_migrat*</code>、
+          <code>settings_reject_embedded_credentials_and_cloud_fallback_on_local_route</code>
+        </td>
+      </tr>
+      <tr>
+        <td>4,166–5,180</td>
+        <td>SSE、OpenAI互換stream、probe、API key env</td>
+        <td><code>providers/openai_compatible.rs</code></td>
+        <td>
+          <code>sse_parser_*</code>、
+          <code>openai_compatible_stream_fixture_projects_deltas</code>、
+          <code>model_provider_redirects_are_not_followed</code>
+        </td>
+      </tr>
+      <tr>
+        <td>1,808–2,430 / 3,567–4,165</td>
+        <td>turn orchestration、provider session、fallback</td>
+        <td>
+          <code>runtime/turns.rs</code>、<code>providers/routing.rs</code>
+        </td>
+        <td>
+          <code>conversation_route_falls_back_and_persists_completed_message</code>、
+          <code>partial_provider_stream_never_reaches_the_fallback_provider</code>、
+          <code>provider_fallback_policy_is_failure_kind_and_output_aware</code>
+        </td>
+      </tr>
+      <tr>
+        <td>2,430–3,379 / 5,193–5,674</td>
+        <td>Codex turnとapp-server補助</td>
+        <td>
+          <code>runtime/codex_turn.rs</code
+          >（既存<code>codex_app_server</code>と重複させない）
+        </td>
+        <td>
+          <code>codex_thread_mapping_survives_database_reopen</code>、
+          <code>codex_app_server_contract_covers_start_stream_resume_and_cancel</code>
+        </td>
+      </tr>
+      <tr>
+        <td>4,857–4,985</td>
+        <td>agent tool dispatch</td>
+        <td>
+          呼び出しは<code>turns.rs</code>、実装は既存<code
+            >agent_tools.rs</code
+          >
+        </td>
+        <td>
+          <code>openai_provider_executes_the_single_recall_tool_before_final_output</code>、
+          <code>typed_memory_*</code>
+        </td>
+      </tr>
+      <tr>
+        <td>848–1,007 / 5,178–5,192</td>
+        <td>diagnostics、redaction、backup</td>
+        <td>
+          <code>diagnostics.rs</code>、<code>redact.rs</code>
+        </td>
+        <td>
+          <code>provider_diagnostics_exclude_allocation_and_request_identifiers</code>、
+          <code>runtime_errors_are_redacted_and_bounded</code>、
+          <code>database_backup_is_reopenable_and_preserves_data</code>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>app_state()</code
+    >テストヘルパは<code>lib.rs</code>に残すか、
+    <code>src-tauri/src/test_support.rs</code
+    >（<code>#[cfg(test)]</code>）へ1つだけ置く。
+    モジュールごとに接続とmigrationを繰り返してよい。in-memory SQLiteを共有グローバルにしない。
+  </p>
+
+  <h2 id="7-frontend-split">7. Wave 1 — Frontend分割</h2>
+  <pre><code class="language-text">src/
+  App.tsx                        surface, snapshot, shell, error banner
+  features/chat/ChatPage.tsx     composer, messages, coding workspace
+  features/chat/useConversationTurn.ts
+  features/voice/usePushToTalk.ts
+  lib/pcm.ts                     mergePcmFrames
+  lib/conversationRouting.ts     findPrimaryRoute, updateConversationTimestamp
+  components/AppIcon.tsx</code></pre>
+  <p>
+    <code>App.tsx</code>から先に純関数
+    （<code>mergePcmFrames</code>、<code>findPrimaryRoute</code>、
+    <code>updateConversationTimestamp</code
+    >、<code>isMeetingBlocking</code>、<code>toMessage</code>）
+    を抜き、bun testを足してからhookを移す。MediaRecorderとTauri invokeはhookの境界に残し、Wave
+    1ではモックE2Eを導入しない。
+  </p>
+  <p>
+    <code>useMeetingSession.ts</code
+    >（498行）と<code>SettingsPage.tsx</code>（396行）はSoft超過。 Wave
+    1では予算超過を記録するだけにし、分割はWave 2とする。
+  </p>
+
+  <h2 id="8-coverage-contract">8. カバレッジ契約</h2>
+  <h3 id="81-principles">8.1 原則</h3>
+  <ol>
+    <li>
+      分割ticketは、移したテストが同じ名前・同じ断言で通ることを完了条件にする。新規テストは歓迎するが、
+      分割PRの必須条件は「減らさない」である。
+    </li>
+    <li>
+      穴を埋めるticket（<code>CQ-10</code>〜<code>CQ-11</code>）だけが新規テストを必須とする。
+      実マイク、実LARM、実Codex、30分soakは既存どおり<code>#[ignore]</code>のままとする。
+    </li>
+    <li>
+      ソース走査テスト（<code>readFileSync</code> +
+      <code>toContain</code>）を新規追加しない。
+      <code>CQ-08</code
+      >で純関数テストへ置換した行は、対応するソース走査を削除してよい。
+    </li>
+    <li>
+      <code>test:coverage</code
+      >は報告用である。<code>check</code>には入れない。HTML
+      artifactはgitignoreし、リポジトリへコミットしない。
+    </li>
+  </ol>
+  <h3 id="82-fill-list">8.2 埋める穴（優先順）</h3>
+  <table>
+    <caption>
+      Table: Coverage gaps to fill without live devices
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">優先</th>
+        <th scope="col">対象</th>
+        <th scope="col">方法</th>
+        <th scope="col">ticket</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>App純関数（PCM mix、route解決、会話timestamp、Meeting block）</td>
+        <td>抽出して<code>tests/chat-helpers.test.ts</code></td>
+        <td>CQ-08</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>persistence migrationとsettings reject（既にlib.rsにある）</td>
+        <td>ファイル移動のみ。新規はv12未カバー分岐があれば追加</td>
+        <td>CQ-02</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>SSE limit / UTF-8 split / redirect拒否 / disconnect</td>
+        <td>既存fixtureを<code>openai_compatible.rs</code>へ移動</td>
+        <td>CQ-03</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Gnosis <code>validate_state_shape</code> / URL local判定 / retry-after</td>
+        <td>既存mod testsを拡充。live canaryは触らない</td>
+        <td>CQ-11</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>LARM <code>drain_sse</code> / allocation DTO / 再試行判定</td>
+        <td>既存22件のうえ、未カバーのclassify/retry分岐だけ追加。分割はWave 2</td>
+        <td>CQ-11</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Recall <code>normalize_query</code> / cursor / window merge</td>
+        <td>MVP 3 freeze後。<code>recall.rs</code>内の未カバー分岐</td>
+        <td>CQ-11（Wave 2）</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>TTS cancel / overlap / Meeting中ブロック</td>
+        <td>
+          <code>spawn_tts_process</code>を差し替え可能な境界にしてunit化する。OS
+          <code>say</code>には依存しない
+        </td>
+        <td>CQ-10</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>ソース走査契約（<code>mvp-ui-contracts</code>等）の置換</td>
+        <td>抽出済み純関数のbun testで置き、残すのはIPC名など本当に文字列であるものだけ</td>
+        <td>CQ-08、CQ-10</td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>Settings DTOの三重定義</td>
+        <td>
+          Wave 1では触らない。Wave
+          2で<code>ipc:generate</code>対象をSettingsのwire型へ広げるか、
+          Zodを単一のfrontend正本にしてguardを削る。別名のままでの追記は禁止
+        </td>
+        <td>CQ-12任意</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="83-tooling">8.3 Tooling</h3>
+  <ul>
+    <li>
+      <code>bun run test:coverage</code>: <code>bun test --coverage tests</code>と
+      <code>cargo llvm-cov --manifest-path src-tauri/Cargo.toml --html --output-dir coverage/rust</code>
+    </li>
+    <li>
+      <code>cargo-llvm-cov</code
+      >は開発者マシンとCI（導入するなら別ticket）の任意依存である。
+      未インストールならscriptは案内を出してexit 0とするか、明示flagで失敗させる。Wave
+      1の必須は「scriptが存在する」まで。
+    </li>
+    <li>
+      <code>coverage/</code
+      >を<code>.gitignore</code>へ追加する。
+    </li>
+  </ul>
+
+  <h2 id="9-tickets">9. Tickets</h2>
+  <table>
+    <caption>
+      Table: Implementation tickets
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">内容</th>
+        <th scope="col">依存</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>CQ-00</td>
+        <td>
+          行数ratchet script（<code>scripts/module-size.ts</code>）と
+          <code>package.json</code
+          >の<code>size:check</code>。<code>check</code>へ追加する
+        </td>
+        <td>なし</td>
+        <td>
+          現状ファイルが通過するbaseline JSONをリポジトリへ固定する。新規のHard超過を失敗させる
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-01</td>
+        <td>
+          <code>ProcessGuard</code
+          >、<code>redact</code>、<code>diagnostics</code>を
+          <code>lib.rs</code>から移す
+        </td>
+        <td>CQ-00</td>
+        <td>既存redaction/backup/diagnosticsテストが新ファイル側で通る。command署名不変</td>
+      </tr>
+      <tr>
+        <td>CQ-02</td>
+        <td><code>persistence/{schema,migrate,settings,conversations,runs}</code></td>
+        <td>CQ-01</td>
+        <td>
+          migration/settings/conversationのlib.rsテストを移し、件数を減らさない。
+          <code>user_version</code>挙動不変
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-03</td>
+        <td>
+          <code>providers/openai_compatible.rs</code>と<code>providers/routing.rs</code>
+        </td>
+        <td>CQ-02</td>
+        <td>SSEとfallbackとredirectの既存テストが新モジュールで通る</td>
+      </tr>
+      <tr>
+        <td>CQ-04</td>
+        <td>
+          <code>runtime/turns.rs</code>とprovider session store。agent
+          tool呼び出しの配線
+        </td>
+        <td>CQ-03</td>
+        <td>
+          fallback persist、partial stream、recall tool fixtureが通る。MVP
+          3が同ファイルを編集中なら着手しない
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-05</td>
+        <td><code>runtime/codex_turn.rs</code></td>
+        <td>CQ-04</td>
+        <td>
+          thread mappingとapp-server contractテストを移す。ignored live
+          Codexテストの名前とignore理由を維持する
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-06</td>
+        <td>
+          残commandを薄いwrapperにし、<code>lib.rs</code>本番をHard
+          900以下にする
+        </td>
+        <td>CQ-05</td>
+        <td>
+          <code>generate_handler</code
+          >が<code>lib.rs</code>に残る。<code>size:check</code>が
+          lib.rs Hardを有効化する
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-07</td>
+        <td>テストヘルパの単一<code>#[cfg(test)]</code>モジュール化</td>
+        <td>CQ-06</td>
+        <td>
+          <code>app_state</code>相当が1箇所。各モジュールテストがin-memory
+          DBを自分で開く
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-08</td>
+        <td>App純関数抽出と bun test。続けてChatPage / voice hook</td>
+        <td>CQ-00</td>
+        <td>
+          <code>App.tsx</code>がHard
+          450以下。抽出関数のテストが追加される。見た目のclassと文言は不変
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-09</td>
+        <td>
+          <code>test:coverage</code>
+          script、gitignore、<code>README</code>の1節
+        </td>
+        <td>CQ-00</td>
+        <td>ローカルでHTMLレポートが出る。checkは遅くならない</td>
+      </tr>
+      <tr>
+        <td>CQ-10</td>
+        <td>Wave 1で露出した未テスト分岐、TTS割込、ソース走査の置換</td>
+        <td>CQ-02、CQ-08</td>
+        <td>計画Section 8.2の優先1–3と7–8を閉じる。live testを増やさない</td>
+      </tr>
+      <tr>
+        <td>CQ-11</td>
+        <td>Wave 2: Gnosis / LARM client純関数テスト拡充。続けて予算超過ファイルの分割</td>
+        <td>CQ-06、対象featureのfreeze</td>
+        <td>
+          <code>gnosis.rs</code
+          >と<code>larm/client.rs</code>の本番がHard以下。
+          <code>recall.rs</code>はMVP 3 Complete後
+        </td>
+      </tr>
+      <tr>
+        <td>CQ-12</td>
+        <td>
+          Wave 3任意: <code>larm-readiness.ts</code>分割、
+          <code>useMeetingSession</code>純状態、Settings DTOの生成同期
+        </td>
+        <td>CQ-11</td>
+        <td>script Hard 1,600以下（段階的ratchet）。既存larm-readiness 17テストを維持</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="10-ordering">10. 順序とfreeze</h2>
+  <pre><code class="language-text">CQ-00 size ratchet
+  ├─ CQ-01 redact/diagnostics
+  ├─ CQ-02 persistence          ← schemaを触る他計画と同時にしない
+  ├─ CQ-03 openai-compatible
+  ├─ CQ-04 turns                ← MVP 3 が tool/recall を編集中なら待つ
+  ├─ CQ-05 codex turn
+  ├─ CQ-06 lib.rs wiring only
+  └─ CQ-07 test helpers
+CQ-00 ─┬─ CQ-08 App.tsx split（Rustと並列可）
+       └─ CQ-09 coverage script（並列可）
+CQ-02 + CQ-08 → CQ-10 fill gaps
+CQ-06 + feature freeze → CQ-11
+CQ-11 → CQ-12 optional</code></pre>
+  <p>
+    1 ticket = 1つのレビュー可能なPRを基本とする。CQ-02のようにmigrationテストが長い場合は、
+    schemaとsettingsでPRを分けてよいが、中間状態で<code>check</code>が落ちてはならない。
+  </p>
+
+  <h2 id="11-acceptance">11. Acceptance</h2>
+  <table>
+    <caption>
+      Table: Acceptance criteria
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">基準</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A1</td>
+        <td>
+          <code>bun run check</code
+          >が通る。<code>size:check</code>が<code>check</code>に含まれる
+        </td>
+      </tr>
+      <tr>
+        <td>A2</td>
+        <td>
+          Wave 1完了時、<code>lib.rs</code>本番 ≤ 900行、<code
+            >App.tsx</code
+          >
+          ≤ 450行
+        </td>
+      </tr>
+      <tr>
+        <td>A3</td>
+        <td>
+          ignoredを除く自動テスト件数がbaseline（Rust 251、Frontend
+          111）を下回らない。名前を変える場合は本計画へ追記する
+        </td>
+      </tr>
+      <tr>
+        <td>A4</td>
+        <td>
+          Tauri command一覧がCQ-06前後で一致する。<code>ipc:check</code>が通る
+        </td>
+      </tr>
+      <tr>
+        <td>A5</td>
+        <td>
+          ユーザー向け文言、Meeting discard既定、LARM kill switch、Codex read-only、 Situation
+          NONE/SILENTを変えない
+        </td>
+      </tr>
+      <tr>
+        <td>A6</td>
+        <td>
+          <code>test:coverage</code>が文書化され、coverage成果物がgitに入らない
+        </td>
+      </tr>
+      <tr>
+        <td>A7</td>
+        <td>
+          Wave 1のrelease
+          evidenceに、移動したテスト名、最終行数、<code>check</code>結果を記録する
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="12-evidence">12. Release evidence</h2>
+  <p>
+    実装開始時に<code>spec/docs/code-quality-module-size-and-coverage-release-evidence.html</code>
+    を作り、StatusをIn progressにする。推測値で行数やテスト件数を埋めない。CQ-00のbaseline
+    JSONから転記する。Wave 1完了までArchiveしない。
+  </p>
+
+  <h2 id="13-review-amendments">13. Review amendments</h2>
+  <table>
+    <caption>
+      Table: Document review decisions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Review finding</th>
+        <th scope="col">Fixed decision</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          Rust件数を<code>#[test]</code>だけだと約218と過小評価していた。LARM
+          clientは薄いと書いたが、tokio込みで22件ある
+        </td>
+        <td>
+          baselineをRust 261（ignore 10）へ修正。LARM
+          clientは分割対象のまま、新規テストは未カバー分岐のみ
+        </td>
+      </tr>
+      <tr>
+        <td>Frontendの111件の一部はソース走査で、偽カバレッジになる</td>
+        <td>
+          ソース走査の新規追加を禁止し、CQ-08/10で純関数テストへ置換する。RTLはWave 1では入れない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</article>

@@ -1,0 +1,22 @@
+{
+  "evaluatorVersion": "memory-recall-quality-v1",
+  "seed": "context-still-synthetic-golden-v1",
+  "queriesPerType": 50,
+  "cases": [
+    {
+      "memoryType": "experience",
+      "queryPrefix": "golden-experience",
+      "expectedTitlePrefix": "Golden experience"
+    },
+    {
+      "memoryType": "rule",
+      "queryPrefix": "golden-rule",
+      "expectedTitlePrefix": "Golden rule"
+    },
+    {
+      "memoryType": "skill",
+      "queryPrefix": "golden-skill",
+      "expectedTitlePrefix": "Golden skill"
+    }
+  ]
+}

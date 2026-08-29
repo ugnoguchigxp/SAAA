@@ -1,0 +1,753 @@
+<article lang="ja">
+  <h1 id="mvp-2-25-completion-implementation-plan">
+    MVP 2 / 2.5 完了実装契約 — Desktop Acceptance and Evidence Closeout
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <dl>
+    <dt>Status</dt>
+    <dd>
+      Complete — SAAA-side implementation and automated verification complete; operator desktop
+      acceptance remains in active release evidence
+    </dd>
+    <dt>Created</dt>
+    <dd>2026-08-29</dd>
+    <dt>Archived</dt>
+    <dd>2026-08-29</dd>
+    <dt>Authoring baseline</dt>
+    <dd><code>68a8142</code> + working tree</dd>
+    <dt>Shipping target</dt>
+    <dd>macOS arm64 SAAA desktop</dd>
+  </dl>
+  <p>
+    本書は、MVP 2とMVP 2.5のCoding Surface、desktop acceptance runner、再現可能な証跡作成を
+    実装した際の完了済みimplementation contractである。現行要件や未完了作業の入口として扱わない。
+  </p>
+  <p>
+    過去の<a href="./mvp-2-implementation-plan.html">MVP 2実装計画</a>と<a
+      href="./mvp-2.5-implementation-plan.html"
+      >MVP 2.5実装計画</a
+    >と同様、実装済みcontractの参照に限って使用する。未完了のoperator acceptanceと最終判定の正本は
+    <a href="../mvp-2-release-evidence.html">MVP 2 Release Evidence</a>と<a
+      href="../mvp-2.5-release-evidence.html"
+      >MVP 2.5 Release Evidence</a
+    >とする。
+  </p>
+  <p>
+    完了の定義は、<code>C25-00</code>〜<code>C25-07</code>を順に完了し、Section
+    13の全Acceptanceを clean commitから作ったdevelopment buildと署名済みpackaged
+    buildで満たし、両release evidenceを
+    <code>Accepted</code>へ変更できることである。
+  </p>
+
+  <h2 id="1-fixed-conclusion">1. 結論と固定判断</h2>
+  <ol>
+    <li>
+      MVP 2のshipping scopeはmicrophone-only Meetingのまま固定する。System Audio、Translation、
+      Floating Overlayを本closeoutへ追加しない。
+    </li>
+    <li>
+      Meetingの残作業は、real microphone、real gnosis ASR、permission lifecycle、partial/final表示、
+      Save/Discard、TTS guard、30分・2時間soakの実機証跡である。
+    </li>
+    <li>
+      Input Activityの残作業は、実時間category遷移、lock/sleep lifecycle、monitoring off時のOS API
+      call 0件、development/署名済みbundleでpermission prompt 0件を記録することである。
+    </li>
+    <li>
+      Agent Run Supervisorの自動contractは作り直さない。残作業はshipping UIからの到達性を確定し、
+      実Codexでlong reasoning、Cancel連打、app close、restart reconcile、read-only
+      violationを検証することである。
+    </li>
+    <li>
+      現行UIは通常ChatをSessionlessにした一方、<code>coding.assist</code>の操作、Codex状態、workspace選択を
+      削除している。既存のMVP 0／2.5 contractを維持する場合、通常Chatとは別resourceとして最小Coding
+      Surfaceを復元する。復元しない場合は実装前にconcept、README、MVP 0 acceptance、MVP 2.5
+      acceptanceを 明示的に改訂し、Agent Runをshipping scopeから外す承認を必要とする。
+    </li>
+    <li>
+      推奨判断は最小Coding
+      Surfaceの復元である。過去実装<code>e4fbb53</code>を参考にできるが、現在の
+      Sessionless normal Chat、Voice、Meeting、Memory baselineへ古いConversation UIを戻さない。
+    </li>
+    <li>
+      未確認、実行不能、証跡欠落、署名identity欠落はPassとして扱わない。該当Gateを<code>pending</code>または
+      <code>blocked</code>に保つ。
+    </li>
+  </ol>
+
+  <h2 id="2-current-baseline">2. 現在のBaseline</h2>
+  <table>
+    <caption>
+      Verified and pending baseline at authoring time
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">確認済み</th>
+        <th scope="col">残存Gap</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Workspace verification</td>
+        <td>
+          <code>bun run check</code>でFrontend 111件、Rust library 240件、IPC
+          integration 1件が成功。失敗0、実機／外部runtime 9件はignored
+        </td>
+        <td>最終clean commitで再実行し、件数とcommitを証跡へ固定する</td>
+      </tr>
+      <tr>
+        <td>Build / package</td>
+        <td><code>bun run build</code>、Spec check、debug desktop smoke成功</td>
+        <td>配布用identityで署名した同一commitのmanual matrixがない</td>
+      </tr>
+      <tr>
+        <td>Meeting Core</td>
+        <td>
+          state、bounded queue、gnosis ASR adapter、partial/final、Save/Discard、TTS guardを実装済み
+        </td>
+        <td>実マイク、permission、real ASR、indicator、2時間soak、保存lifecycleの実機証跡がない</td>
+      </tr>
+      <tr>
+        <td>Input Activity</td>
+        <td>bounded category、privacy contract、30分live sampling soak成功</td>
+        <td>実時間遷移、lock/sleep、permission prompt、monitoring off breakpoint証跡がない</td>
+      </tr>
+      <tr>
+        <td>Agent Run</td>
+        <td>Supervisor、fake app-server、実Codex normal turnと単一Cancelを検証済み</td>
+        <td>
+          shipping UIから到達不能。long reasoning、Cancel連打、GUI close/restart、実read-only
+          violationが未確認
+        </td>
+      </tr>
+      <tr>
+        <td>Release status</td>
+        <td>MVP 2、2.5ともSAAA-side automated implementation complete</td>
+        <td>
+          両方とも<code>Conditional</code>であり、<code>Accepted</code>ではない
+        </td>
+      </tr>
+      <tr>
+        <td>Source state</td>
+        <td>Authoring時点のHEADは<code>68a8142</code></td>
+        <td>
+          gnosis discoveryとIPC bindingを含む未commit WIPがある。production evidenceへ使用できない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="3-scope-and-non-goals">3. Scopeと非要件</h2>
+  <h3 id="31-in-scope">3.1 In scope</h3>
+  <ul>
+    <li>最終実行commit、bundle digest、OS、署名identity classを固定するpreflight</li>
+    <li>通常Chatと分離したread-only Coding Surfaceの到達性</li>
+    <li>repeatableなvalidation runnerとstrict evidence schema</li>
+    <li>real microphone / gnosis ASR Meeting functional matrix</li>
+    <li>Meeting 30分・2時間resource soak</li>
+    <li>Meeting Save / Discard / app-close / TTS policyの実機確認</li>
+    <li>Input Activity manual lifecycleとprivacy確認</li>
+    <li>Agent Run manual lifecycleとread-only確認</li>
+    <li>MVP 2、MVP 2.5 evidence、Input Activity spike、ADR 0003のcloseout</li>
+  </ul>
+
+  <h3 id="32-out-of-scope">3.2 Out of scope</h3>
+  <ul>
+    <li>System Audio、Translation、Floating Overlayの実装またはgate再開</li>
+    <li>STT / TTSのLARM移行、LARM production canary</li>
+    <li>Voice Behavior Tool、ContextStill、MVP 3 Memory、Application Adapter</li>
+    <li>Agent Runへのworkspace-write、approval、Network、Web Search、write-capable MCP追加</li>
+    <li>Input Activityのraw duration、last-input timestamp、event種別の保存または表示</li>
+    <li>Meeting transcript補正、話者分離、Cloud fallback、automatic meeting start</li>
+    <li>検証に便乗したUI redesign、database migration、provider contract変更</li>
+  </ul>
+
+  <h2 id="4-safety-and-evidence-boundary">4. SafetyとEvidence境界</h2>
+  <p>reportへ保存してよい情報:</p>
+  <pre><code class="language-text">schemaVersion
+suite / mode / caseId
+SAAA commit and canonical bundle digest
+OS version / architecture / signing class
+operator pseudonym
+startedAt / completedAt in UTC
+pass | fail | blocked and bounded reason code
+event type counts and relative timing
+RSS samples and bounded resource counters
+SQLite row counts and terminal status counts
+permission prompt count and indicator release latency
+</code></pre>
+  <p>report、release evidence、consoleへ保存してはならない情報:</p>
+  <pre><code class="language-text">credential / token / Authorization header
+provider endpoint / SSH host / private IP
+prompt / response / transcript text
+raw or encoded audio
+workspace path / database path / home directory
+Codex thread id / turn id / runtime request id
+window title / application identifier / raw input duration
+raw provider event / raw system log / screenshot containing user data
+</code></pre>
+  <ul>
+    <li>
+      検証は専用の空app-data directoryと専用の一時workspaceだけを使い、ユーザーの通常DBを開かない。
+    </li>
+    <li>Meetingでは人工音声または公開利用可能な短文だけを発話し、reportへ内容を残さない。</li>
+    <li>
+      Codex workspaceは検証用fixtureから作り、実repositoryや未commit user worktreeを渡さない。
+    </li>
+    <li>
+      report directoryは絶対pathの空directoryを要求し、mode
+      <code>0700</code>、file
+      <code>0600</code>、上書き禁止とする。
+    </li>
+    <li>runnerはcredential、endpoint、prompt、remote commandをCLI argumentとして受け取らない。</li>
+  </ul>
+
+  <h2 id="5-deliverables">5. 成果物と変更場所</h2>
+  <table>
+    <caption>
+      Planned deliverables
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Path / artifact</th>
+        <th scope="col">責務</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>scripts/mvp-2-2.5-readiness.ts</code></td>
+        <td>
+          preflight、report schema検証、resource sampling、aggregate判定。secretやcontentは扱わない
+        </td>
+      </tr>
+      <tr>
+        <td><code>tests/mvp-2-2.5-readiness.test.ts</code></td>
+        <td>
+          CLI shape、strict schema、redaction、threshold、aggregate、atomic reportのcontract test
+        </td>
+      </tr>
+      <tr>
+        <td><code>package.json</code></td>
+        <td>
+          <code>mvp2x:preflight</code
+          >、<code>mvp2x:verify</code>、<code>mvp2x:report</code>を登録
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>src/App.tsx</code>、<code>src/features/settings/SettingsPage.tsx</code>
+        </td>
+        <td>
+          G0でcontract維持を選んだ場合の最小Coding Surface、Codex status、read-only workspace導線
+        </td>
+      </tr>
+      <tr>
+        <td><code>tests/mvp-ui-contracts.test.ts</code></td>
+        <td>Sessionless normal Chatを維持しつつCoding resourceへ到達できることを固定</td>
+      </tr>
+      <tr>
+        <td>operator-owned report directory</td>
+        <td>preflight、Meeting、Input Activity、Agent Run、aggregateのmachine-readable evidence</td>
+      </tr>
+      <tr>
+        <td><code>spec/docs/mvp-2-release-evidence.html</code></td>
+        <td>Meetingの実施結果、artifact digest、既知制限、最終判定</td>
+      </tr>
+      <tr>
+        <td><code>spec/docs/mvp-2.5-release-evidence.html</code></td>
+        <td>Input Activity、Agent Run、MVP 2継承条件、最終判定</td>
+      </tr>
+      <tr>
+        <td><code>spec/docs/spikes/mvp-2.5-macos-input-activity.html</code></td>
+        <td>manual resultとshipping conclusionを追記</td>
+      </tr>
+      <tr>
+        <td><code>spec/docs/adr/0003-input-activity-signal-privacy.html</code></td>
+        <td>
+          permission prompt 0件を確認した場合だけ<code>Accepted</code>へ変更
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Runtime、Meeting、Situationのproduction codeは、実機検証で再現する欠陥の修正に限って変更する。
+    先回りしたrefactorをwork packageへ混ぜない。
+  </p>
+
+  <h2 id="6-runner-contract">6. Validation runner contract</h2>
+  <p>
+    2026-08-29 implementation checkpoint: 下記CLI、strict schema、case matrix、bounded
+    threshold、MeetingとInput ActivityのRSS median sampling、forbidden-data scan、実行前後の
+    commit／bundle／Apple署名chain整合、fixture workspace自動digest確認、mode 0600 atomic
+    report、report set digest、上書き拒否を実装し、contract testを追加した。各functional/manual
+    caseはbuild
+    class別にまとめ、開始前に対象PIDがdebugまたは署名済みbundleの実行ファイルと完全一致することを確認する。専用app-data環境変数は
+    runtime自身が検証し、DB、voice profile、diagnostics、backupを通常data
+    directoryへ書かない。実機reportはまだ作成しておらず、Gate G2〜G6は未通過である。
+  </p>
+  <pre><code class="language-bash">bun run mvp2x:preflight --report-dir &lt;absolute-empty-directory&gt;
+bun run mvp2x:verify --suite meeting --mode functional --report-dir &lt;directory&gt;
+bun run mvp2x:verify --suite meeting --mode soak-30m --report-dir &lt;directory&gt;
+bun run mvp2x:verify --suite meeting --mode soak-2h --report-dir &lt;directory&gt;
+bun run mvp2x:verify --suite input-activity --mode manual --report-dir &lt;directory&gt;
+bun run mvp2x:verify --suite agent-run --mode manual --report-dir &lt;directory&gt;
+bun run mvp2x:report --report-dir &lt;directory&gt;
+</code></pre>
+  <ul>
+    <li>
+      <code>preflight</code>はclean tree、commit、bundle digest、bundle
+      identifier、architecture、署名検証、専用data directoryを確認する。
+    </li>
+    <li>
+      <code>verify</code>はoperatorのcase入力をstrict
+      enumとして受け、自由記述のprompt、transcript、pathを受けない。
+    </li>
+    <li>
+      resource samplingは外部processからRSSとprocess existenceだけを取得し、app内部へdiagnostic
+      bypassを追加しない。
+    </li>
+    <li>各caseは一度だけterminal resultを書き、既存reportを上書きしない。</li>
+    <li>
+      <code>report</code>は全suiteのcommit、bundle digest、OS、signing
+      class一致を要求し、一つでもmissing/failedならAcceptedを返さない。
+    </li>
+    <li>
+      manual checkboxだけではPassにしない。対応するtimestamp、bounded observation、artifact
+      digestを必須にする。
+    </li>
+  </ul>
+
+  <h2 id="7-work-packages">7. Work packages</h2>
+  <h3 id="c25-00">C25-00 — Contract alignment and clean baseline</h3>
+  <ol>
+    <li>未commit WIPをreview可能なcommitへ確定するか、本検証から除外したclean refを選ぶ。</li>
+    <li>
+      <code>bun run check</code
+      >、<code>bun run build</code>、<code>bun run spec:check</code>、<code>bun run desktop:smoke</code>を実行する。
+    </li>
+    <li><code>coding.assist</code>をshipping scopeへ維持するかを決定する。</li>
+    <li>
+      維持する場合は最小Coding Surfaceを復元し、通常Chatのcanonical conversation、Voice continuous
+      listening、Meeting capture ownershipを変更しない。
+    </li>
+    <li>
+      廃止する場合は本書を停止し、concept、README、MVP 0 evidence、MVP 2.5
+      acceptanceを同時に改訂してreviewを受ける。
+    </li>
+  </ol>
+  <p>
+    Gate G0: clean commitから全自動検証が成功し、Agent Run acceptanceがshipping
+    UIまたは承認済みの改訂contractから 実行可能であること。
+  </p>
+
+  <h3 id="c25-01">C25-01 — Evidence runner and isolated environment</h3>
+  <ol>
+    <li>Section 6のCLI、strict schema、atomic file contractを実装する。</li>
+    <li>dedicated app-data、fixture workspace、report directoryの分離をpreflightで確認する。</li>
+    <li>reportのforbidden-data scannerを実装し、全fileをaggregate前に走査する。</li>
+    <li>実行中appと子processのPIDだけを保持し、終了後に存在しないことを確認する。</li>
+    <li>bundle署名とdigestの不一致、dirty tree、report再利用を開始前に拒否する。</li>
+  </ol>
+  <p>
+    Gate G1: fake report fixtureでunknown field、content leak、digest mismatch、missing
+    case、overwriteがすべて拒否されること。
+  </p>
+
+  <h3 id="c25-02">C25-02 — Meeting functional desktop matrix</h3>
+  <p>development buildと同一commitの署名済みpackaged buildで、次をそれぞれ実施する。</p>
+  <ol>
+    <li>microphone permissionを未決定状態に戻し、初回許可でpreflight後のtrackが解放されること。</li>
+    <li>permission拒否でcapture 0、Start disabled、recovery表示になること。</li>
+    <li>
+      active中のpermission revokeまたはdevice
+      lossでFailed/Pausedへ安全に遷移し、bufferとtrackを解放すること。
+    </li>
+    <li>real gnosis ASRへ人工音声を送り、同じlane/sequenceのPartialがFinalへ置換されること。</li>
+    <li>pause 5分でtranscriptが増えず、microphone indicatorが5秒以内に消えること。</li>
+    <li>resumeで新しいcapture tokenを使い、sequenceの重複や逆行がないこと。</li>
+    <li>Stopを連打しても一つのCompleted snapshotになり、indicatorが5秒以内に消えること。</li>
+    <li>
+      Meeting active/paused中にChat TTSが開始されず、既に再生中ならMeeting開始前に停止されること。
+    </li>
+    <li>
+      Surface移動、window unmount、通常のapp closeでtrack、AudioContext、in-flight
+      ASR、queueが残らないこと。
+    </li>
+  </ol>
+  <p>
+    表示証跡はevent type、lane、sequence、相対時刻だけをreportへ保存する。transcript
+    textを保存せず、screenshotを使う場合は transcriptとhost情報を不可逆にマスクする。
+  </p>
+  <p>Gate G2: 全caseが両buildでPassし、permission/indicator/cleanupの未確認項目が0件であること。</p>
+
+  <h3 id="c25-03">C25-03 — Meeting persistence and resource soak</h3>
+  <ol>
+    <li>
+      専用DBでMeeting開始前、Completed後Save前、Save後、reopen後、Discard後のrow countを採取する。
+    </li>
+    <li>Save reviewに保存先、final件数、検出言語、raw audio非保存が表示されることを確認する。</li>
+    <li>
+      Save後はFinalだけが保存され、件数と<code>original_language</code>のnon-null/null状態がUI
+      reviewと一致することを確認する。
+    </li>
+    <li>DiscardとSaveしないapp closeではtranscript body 0件であることを確認する。</li>
+    <li>
+      30分soakでは5秒segment、in-flight
+      ASR最大1、queue最大2を維持し、pause/resume/stopを各1回含める。
+    </li>
+    <li>2時間soakではreal ASRを継続し、45分と90分でpause/resume、終了前にStopを実施する。</li>
+  </ol>
+  <p>resource threshold:</p>
+  <ul>
+    <li>30分: warm-up後最初の5分と最後の5分のRSS中央値差が48 MiB以下。</li>
+    <li>2時間: warm-up後最初の15分と最後の15分のRSS中央値差が64 MiB以下。</li>
+    <li>
+      全mode: queue 2以下、in-flight ASR 1以下、未回収child/task 0、unexpected transcript
+      persistence 0。
+    </li>
+    <li>
+      pause/stop/app close後: microphone indicator 5秒以内消灯、app child process 5秒以内終了。
+    </li>
+  </ul>
+  <p>
+    thresholdを超えた場合、単発の最大値だけでwaiveしない。RSS sample、queue
+    bound、処理件数を用いて原因を修正し、 新しいreport directoryで全soakを再実行する。
+  </p>
+  <p>
+    Gate G3:
+    functionalと両soakが同一commit/bundleで成功し、Save/DiscardのDB差分がcontractと一致すること。
+  </p>
+
+  <h3 id="c25-04">C25-04 — Input Activity lifecycle and privacy</h3>
+  <p>development buildと署名済みpackaged buildの両方で実施する。</p>
+  <ol>
+    <li>Situation monitoring offでsymbolic breakpointのOS API hitが10秒間0件であること。</li>
+    <li>monitoring onでsampleが開始し、UIとcontractにはcategory/healthだけが現れること。</li>
+    <li>
+      keyboard、mouse、trackpadの各操作後30秒以内に<code>active</code>へresetすること。
+    </li>
+    <li>
+      30秒超から5分以内に<code>recent</code>、5分超で<code>idle</code>へ遷移すること。
+    </li>
+    <li>
+      screen lock/unlock、sleep/resume後にpanicせず、bounded categoryまたはdegraded
+      fallbackへ戻ること。
+    </li>
+    <li>Accessibility/Input Monitoring permission promptが両buildで0件であること。</li>
+    <li>
+      最終commitで30分sampling soakを再実行し、890 sample以上、RSS増加32 MiB以下を維持すること。
+    </li>
+    <li>
+      SQLite、diagnostics、Tauri payload、frontend state、console、reportにraw duration/last-input
+      timestampが0件であること。
+    </li>
+  </ol>
+  <p>
+    Gate G4: lifecycle 8項目がPassし、permission prompt 0件、privacy leak
+    0件であること。このGate通過後だけADR
+    0003を<code>Accepted</code>へ変更できる。
+  </p>
+
+  <h3 id="c25-05">C25-05 — Agent Run reachability and lifecycle</h3>
+  <p>認証済みのpackaged Codexと専用fixture workspaceを使い、次を実施する。</p>
+  <ol>
+    <li>SettingsでCodex enabled/authenticated/read-only状態を確認し、Coding Surfaceへ到達する。</li>
+    <li>
+      normal read-only turnがstreamし、terminal event 1件、SQLite
+      <code>completed</code>になること。
+    </li>
+    <li>
+      複数のmeaningful progressを伴うlong reasoningがprogress timeoutを誤発火させず完了すること。
+    </li>
+    <li>
+      turn開始後の単一Cancelと10回の連続Cancelを実施し、interrupt最大1、child/task残存0を確認する。
+    </li>
+    <li>
+      active run中の通常window closeでcancel/cleanupが完了し、app processとCodex
+      childが5秒以内に終了すること。
+    </li>
+    <li>
+      専用data directoryのappを強制終了し、restartで残存running
+      rowが<code>interrupted/app-restarted</code>になること。
+    </li>
+    <li>
+      workspace変更を要求するread-only violationで変更0、承認UI 0、Network/Web Search/write MCP
+      0を確認する。
+    </li>
+    <li>
+      各case後に<code>git status --short</code>とfixture
+      digestが開始前と一致することを確認する。
+    </li>
+  </ol>
+  <p>
+    prompt、response、workspace path、thread/turn idはreportへ保存しない。case ID、event
+    count、terminal status、 interrupt count、workspace digest一致だけを保存する。
+  </p>
+  <p>
+    Gate G5: 全case成功、workspace差分0、child残存0、terminal event重複0、raw provider data leak 0。
+  </p>
+
+  <h3 id="c25-06">C25-06 — Regression, signed package, and aggregate</h3>
+  <ol>
+    <li>全修正後のclean commitからSection 11のcommandを実行する。</li>
+    <li>同じcommitからdebugとrelease相当の署名済みbundleを作り、canonical digestを記録する。</li>
+    <li>G2〜G5を最終bundleで再実行し、古いreportを再利用しない。</li>
+    <li>forbidden-data scanner、report schema、commit/digest identityを検証する。</li>
+    <li>
+      aggregateはmissing/blocked/failed
+      caseが一件でもあれば<code>not-accepted</code>を返す。
+    </li>
+  </ol>
+  <p>Gate G6: 全reportが同一identityでPassし、自動検証、実機検証、privacy scanの欠落が0件。</p>
+
+  <h3 id="c25-07">C25-07 — Evidence closeout</h3>
+  <ol>
+    <li>
+      MVP 2 evidenceへMeeting functional、soak、persistence、cleanupの結果とreport
+      digestを転記する。
+    </li>
+    <li>
+      MVP 2.5 evidenceへInput Activity、Agent Run、MVP 2 Accepted参照、report digestを転記する。
+    </li>
+    <li>Input Activity spikeへmanual resultを追記し、ADR 0003を条件成立時だけAcceptedにする。</li>
+    <li>
+      test件数、commit、bundle digest、OS、signing
+      class、operator、UTC実行期間、既知制限を記録する。
+    </li>
+    <li>
+      全条件成立時だけ両release evidenceを<code>Accepted</code>へ変更する。
+    </li>
+    <li>
+      本書を<code>Complete</code>に変更し、archive
+      ruleに従って計画と完了証跡を整理する。
+    </li>
+  </ol>
+  <p>
+    MVP 2だけがPassした場合はMVP 2のみAcceptedにできる。MVP 2.5はMVP
+    2の未完了項目を継承するため、MVP 2が ConditionalのままMVP 2.5だけをAcceptedにしてはならない。
+  </p>
+
+  <h2 id="8-manual-matrix">8. Manual matrix summary</h2>
+  <table>
+    <caption>
+      Required manual cases
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Suite</th>
+        <th scope="col">Required cases</th>
+        <th scope="col">Builds</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Meeting</td>
+        <td>
+          grant、deny、revoke/device loss、partial→final、pause/resume、stop連打、TTS block、app
+          close
+        </td>
+        <td>development + signed packaged</td>
+      </tr>
+      <tr>
+        <td>Meeting persistence</td>
+        <td>
+          Save review、before/after/reopen count、original language、Discard、close without Save
+        </td>
+        <td>signed packaged</td>
+      </tr>
+      <tr>
+        <td>Meeting soak</td>
+        <td>30分、2時間、queue/in-flight/RSS、indicator、child cleanup</td>
+        <td>signed packaged</td>
+      </tr>
+      <tr>
+        <td>Input Activity</td>
+        <td>
+          off call 0、active/recent/idle、lock/unlock、sleep/resume、permission prompt 0、privacy
+          scan
+        </td>
+        <td>development + signed packaged</td>
+      </tr>
+      <tr>
+        <td>Agent Run</td>
+        <td>
+          normal、long reasoning、Cancel、Cancel連打、close、forced restart、read-only violation
+        </td>
+        <td>signed packaged Codex</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="9-defect-handling">9. Defect handling</h2>
+  <ol>
+    <li>caseがFailしたら同じreportを編集せず、failure reasonを確定して終了する。</li>
+    <li>再現testを可能な限り自動suiteへ追加してからproduction codeを最小修正する。</li>
+    <li>関連する<code>bun run check</code>とfocused testを実行する。</li>
+    <li>新しいclean commitと空report directoryで、そのGateの全caseを最初から再実行する。</li>
+    <li>修正が他のGateのidentityまたは挙動へ影響する場合、G2〜G6を再実行する。</li>
+  </ol>
+  <p>
+    reportの手編集、failed
+    caseだけの削除、古い成功reportとのmerge、thresholdの実行後変更を禁止する。
+  </p>
+
+  <h2 id="10-stop-conditions">10. Stop conditions</h2>
+  <p>次のいずれかが発生したら次Gateへ進まず、issue、ADR、または本書の改訂を行う。</p>
+  <ul>
+    <li>
+      <code>coding.assist</code>を維持するか廃止するか未決定で、Agent Run
+      acceptanceが実行不能
+    </li>
+    <li>clean commitまたはproduction相当の署名identityを用意できない</li>
+    <li>real gnosis ASRが利用不能でPartial/Finalを確認できない</li>
+    <li>microphone indicatorがpause/stop/app close後も残る、またはraw audioがfileへ残る</li>
+    <li>Meeting queue 2、in-flight ASR 1、RSS thresholdのいずれかを超える</li>
+    <li>Input ActivityだけでAccessibility/Input Monitoring permission promptが出る</li>
+    <li>
+      raw input duration、prompt、transcript、credential、private endpointがreportまたはlogへ出る
+    </li>
+    <li>
+      Agent Runがfixture workspaceを変更する、approvalを要求する、Network/Web Search/write
+      MCPを実行する
+    </li>
+    <li>Cancel/app close後にCodex child、reader thread、async task、running SQLite rowが残る</li>
+    <li>release evidenceのPass判断にoperatorの推測または未保存の口頭確認が必要になる</li>
+  </ul>
+
+  <h2 id="11-verification-commands">11. Verification commands</h2>
+  <pre><code class="language-bash">bun run spec:check
+bun run check
+bun run build
+bun run desktop:smoke
+bun run codex:smoke
+
+cargo test --manifest-path src-tauri/Cargo.toml meeting --lib
+cargo test --manifest-path src-tauri/Cargo.toml runtime::supervisor --lib
+cargo test --manifest-path src-tauri/Cargo.toml input_activity --lib
+</code></pre>
+  <p>
+    実Codex、real gnosis ASR、30分／2時間soakはdefault test suiteへ入れず、Section
+    6の明示commandだけで実行する。 ignored testをPass件数へ含めない。
+  </p>
+
+  <h2 id="12-delivery-gates">12. Delivery gates</h2>
+  <table>
+    <caption>
+      MVP 2 / 2.5 closeout gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">条件</th>
+        <th scope="col">次の操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>G0 Contract</td>
+        <td>clean baseline、Agent Run reachability、shipping scope確定</td>
+        <td>runner実装</td>
+      </tr>
+      <tr>
+        <td>G1 Evidence</td>
+        <td>strict report、isolation、redaction、identity fixture成功</td>
+        <td>実機matrix</td>
+      </tr>
+      <tr>
+        <td>G2 Meeting functional</td>
+        <td>permission、real ASR、lifecycle、TTS、cleanup成功</td>
+        <td>Meeting soak/persistence</td>
+      </tr>
+      <tr>
+        <td>G3 Meeting acceptance</td>
+        <td>Save/Discard、30分、2時間、resource threshold成功</td>
+        <td>MVP 2 Accepted候補</td>
+      </tr>
+      <tr>
+        <td>G4 Input Activity</td>
+        <td>実時間遷移、OS lifecycle、prompt 0、privacy 0</td>
+        <td>ADR 0003 Accepted候補</td>
+      </tr>
+      <tr>
+        <td>G5 Agent Run</td>
+        <td>real lifecycle、read-only、cleanup、workspace差分0</td>
+        <td>aggregate</td>
+      </tr>
+      <tr>
+        <td>G6 Closeout</td>
+        <td>同一commit/bundle、全report Pass、evidence review完了</td>
+        <td>MVP 2 / 2.5 Accepted</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="13-acceptance">13. Acceptance criteria</h2>
+  <h3 id="131-mvp-2">13.1 MVP 2</h3>
+  <ol>
+    <li>real microphoneのgrant、deny、revoke/device lossが安全に処理される。</li>
+    <li>real gnosis ASRでPartialが同じlane/sequenceのFinalへ置換される。</li>
+    <li>
+      pause、resume、stop、surface移動、app closeでcapture resourceがbounded time内に解放される。
+    </li>
+    <li>Meeting active/paused中はTTS、notification、Agent/Application actionが起動しない。</li>
+    <li>Save前のtranscript bodyは0件で、明示Save後だけFinalがtransaction保存される。</li>
+    <li>DiscardとSaveなしcloseではtranscript bodyが残らない。</li>
+    <li>30分・2時間soakでqueue、in-flight、RSS、process cleanup thresholdを満たす。</li>
+    <li>development buildと署名済みpackaged buildの両方に証跡がある。</li>
+  </ol>
+
+  <h3 id="132-mvp-25">13.2 MVP 2.5</h3>
+  <ol>
+    <li>MVP 2がAcceptedである。</li>
+    <li>
+      Input Activityの実時間category、lock/sleep recovery、monitoring off call 0が確認される。
+    </li>
+    <li>
+      Input Activityによるpermission prompt、raw duration persistence、policy境界違反が0件である。
+    </li>
+    <li>
+      shipping Coding Surfaceから実Codex normal/long/cancel/close/restart/violationを実行できる。
+    </li>
+    <li>Agent Runのinterruptは最大1、terminal eventは1、child/task/running row残存は0である。</li>
+    <li>
+      read-only fixture workspaceの変更、Network、Web Search、write MCP、approval要求が0件である。
+    </li>
+    <li>最終clean commitの全verification commandが成功する。</li>
+  </ol>
+
+  <h3 id="133-evidence">13.3 Evidence</h3>
+  <ol>
+    <li>全reportが同じSAAA commit、bundle digest、OS、architecture、signing classを参照する。</li>
+    <li>全caseに開始・終了UTC、operator、bounded observation、terminal resultがある。</li>
+    <li>forbidden-data scannerの検出件数が0である。</li>
+    <li>missing、ignored、blocked、failed、waivedをPassへ変換していない。</li>
+    <li>MVP 2と2.5のrelease evidenceが各acceptanceとartifact digestを相互参照できる。</li>
+  </ol>
+
+  <h2 id="14-final-state">14. 完成時の状態</h2>
+  <pre><code class="language-text">Clean SAAA commit
+  ↓ reproducible build and signed package
+MVP 2 Meeting
+  ├─ real microphone permission lifecycle verified
+  ├─ real gnosis Partial → Final verified
+  ├─ Save / Discard / TTS / app-close verified
+  └─ 30m + 2h soak passed
+
+MVP 2.5 Input Activity
+  ├─ real-time category and OS lifecycle verified
+  ├─ monitoring-off OS calls = 0
+  └─ permission prompts and privacy leaks = 0
+
+MVP 2.5 Agent Run
+  ├─ reachable read-only Coding Surface
+  ├─ normal / long / cancel / close / restart verified
+  └─ workspace writes, network, approvals, leaks = 0
+
+Strict aggregate evidence
+  ↓ reviewed
+MVP 2 = Accepted
+MVP 2.5 = Accepted
+</code></pre>
+</article>

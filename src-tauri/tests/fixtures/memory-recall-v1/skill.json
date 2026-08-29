@@ -1,0 +1,19 @@
+{
+  "contractVersion": "memory-recall-v1",
+  "memoryType": "skill",
+  "trust": {
+    "trustClass": "untrusted_memory_evidence",
+    "instructionAuthority": "none"
+  },
+  "items": [
+    {
+      "title": "Verify a typed-memory release",
+      "useWhen": "The typed-memory MCP profile is ready for release.",
+      "workflow": ["Run contract and endpoint tests.", "Run the default-profile regression suite."],
+      "verification": ["All checks pass and the manifest contains no project identity or token."],
+      "avoid": ["Do not infer compatibility from tools/list alone."]
+    }
+  ],
+  "noContent": false,
+  "truncated": false
+}

@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-still.local/contracts/memory-recall-v1/schema.json",
+  "title": "context-still typed memory recall envelope",
+  "oneOf": [
+    { "$ref": "#/$defs/experienceEnvelope" },
+    { "$ref": "#/$defs/ruleEnvelope" },
+    { "$ref": "#/$defs/skillEnvelope" }
+  ],
+  "$defs": {
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trustClass": { "const": "untrusted_memory_evidence" },
+        "instructionAuthority": { "const": "none" }
+      },
+      "required": ["trustClass", "instructionAuthority"]
+    },
+    "baseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contractVersion": { "const": "memory-recall-v1" },
+        "memoryType": { "enum": ["experience", "rule", "skill"] },
+        "trust": { "$ref": "#/$defs/trust" },
+        "items": { "type": "array" },
+        "noContent": { "type": "boolean" },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["contractVersion", "memoryType", "trust", "items", "noContent", "truncated"],
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": { "noContent": { "const": true } },
+            "required": ["noContent"]
+          },
+          "then": {
+            "type": "object",
+            "properties": { "items": { "type": "array", "maxItems": 0 } }
+          },
+          "else": {
+            "type": "object",
+            "properties": { "items": { "type": "array", "minItems": 1 } }
+          }
+        }
+      ]
+    },
+    "experience": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "situation": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "outcome": { "type": "string", "minLength": 1 },
+        "lesson": { "type": "string", "minLength": 1 },
+        "outcomeKind": { "enum": ["success", "failure", "mixed", "unknown"] }
+      },
+      "required": ["title", "situation", "lesson", "outcomeKind"]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "rule": { "type": "string", "minLength": 1 },
+        "polarity": { "enum": ["positive", "negative", "neutral"] }
+      },
+      "required": ["title", "rule", "polarity"]
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "useWhen": { "type": "string", "minLength": 1 },
+        "workflow": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "verification": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "avoid": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "required": ["title", "useWhen", "workflow", "verification", "avoid"]
+    },
+    "experienceEnvelope": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "memoryType": { "const": "experience" },
+            "items": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/experience" } }
+          }
+        }
+      ]
+    },
+    "ruleEnvelope": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "memoryType": { "const": "rule" },
+            "items": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/rule" } }
+          }
+        }
+      ]
+    },
+    "skillEnvelope": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "memoryType": { "const": "skill" },
+            "items": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/skill" } }
+          }
+        }
+      ]
+    }
+  }
+}
