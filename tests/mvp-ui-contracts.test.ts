@@ -15,6 +15,17 @@ describe("MVP UI reachability contracts", () => {
     expect(app).toContain("Codex ready");
   });
 
+  test("exposes one continuous normal conversation while retaining separate Coding threads", () => {
+    const app = source("src/App.tsx");
+    const contracts = source("src/lib/contracts.ts");
+    expect(contracts).toContain("primaryConversationId: string");
+    expect(app).toContain("nextSnapshot.primaryConversationId");
+    expect(app).toContain('taskMode === "coding" && <><button className="new-chat"');
+    expect(app).toContain('conversation.taskMode === "coding"');
+    expect(app).not.toContain("新しい会話");
+    expect(app).not.toContain("最近の会話");
+  });
+
   test("keeps Codex configuration and coding routing visible in Settings", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
     expect(settings).toContain('id: "codex"');

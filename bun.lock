@@ -10,6 +10,7 @@
         "@tauri-apps/plugin-dialog": "^2",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
+        "s11tnext": "0.1.2",
         "zod": "^4.4.3",
       },
       "devDependencies": {
@@ -17,6 +18,7 @@
         "@types/react": "^19.1.8",
         "@types/react-dom": "^19.1.6",
         "@vitejs/plugin-react": "^4.6.0",
+        "s11tnext-cli": "0.1.2",
         "spec-html": "0.1.6",
         "typescript": "~5.8.3",
         "vite": "^7.0.4",
@@ -139,6 +141,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
+
+    "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
 
     "@openai/codex": ["@openai/codex@0.144.4", "", { "optionalDependencies": { "@openai/codex-darwin-arm64": "npm:@openai/codex@0.144.4-darwin-arm64", "@openai/codex-darwin-x64": "npm:@openai/codex@0.144.4-darwin-x64", "@openai/codex-linux-arm64": "npm:@openai/codex@0.144.4-linux-arm64", "@openai/codex-linux-x64": "npm:@openai/codex@0.144.4-linux-x64", "@openai/codex-win32-arm64": "npm:@openai/codex@0.144.4-win32-arm64", "@openai/codex-win32-x64": "npm:@openai/codex@0.144.4-win32-x64" }, "bin": { "codex": "bin/codex.js" } }, "sha512-DTHzYatlKq9dw55E0/HsbK4tRCEKabuJ10ybbqpsG8gVv/kvwEdg3Z4OI3cvLXKa21xkIa4lkGlZoO/HmqmFFw=="],
 
@@ -394,6 +398,10 @@
 
     "run-applescript": ["run-applescript@7.1.0", "", {}, "sha512-DPe5pVFaAsinSaV6QjQ6gdiedWDcRCbUuiQfQa2wmWV7+xC9bGulGI8+TdRmoFkAPaBXk8CrAbnlY2ISniJ47Q=="],
 
+    "s11tnext": ["s11tnext@0.1.2", "", { "dependencies": { "@noble/hashes": "2.2.0" } }, "sha512-e4keRVYcNHY7uzz2pONQlt3NEDY/iOxkJ5TGFg03YSezf5cHXoMpq87MF2+UolMB9sQD8DVrmOrx4g/TiK5Kag=="],
+
+    "s11tnext-cli": ["s11tnext-cli@0.1.2", "", { "dependencies": { "s11tnext": "0.1.2", "smol-toml": "1.7.0" }, "bin": { "s11tnext": "bin/s11tnext.js" } }, "sha512-6ydFbbjr/FaORpAI0FeDWuw3mcuqDJ2weXNfpfxdcx3f29IecPGTDQoog4vSyi+ziDJvHDD674ZwQ2syp9wLoA=="],
+
     "safer-buffer": ["safer-buffer@2.1.2", "", {}, "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="],
 
     "saxes": ["saxes@6.0.0", "", { "dependencies": { "xmlchars": "^2.2.0" } }, "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA=="],
@@ -403,6 +411,8 @@
     "semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 
     "sisteransi": ["sisteransi@1.0.5", "", {}, "sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg=="],
+
+    "smol-toml": ["smol-toml@1.7.0", "", {}, "sha512-aqVvWoyO21L23mb+drl4RmMXbf6N7FdHjAhTRA9ZBL7apWBgfWC16KjrASI+1p9GAroljyMHj6fK67i0UiTNvQ=="],
 
     "source-map-js": ["source-map-js@1.2.1", "", {}, "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="],
 

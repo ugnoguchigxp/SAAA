@@ -18,6 +18,7 @@ import {
 } from "../../lib/runtime";
 import { appendFrames } from "./audio/pcm";
 import { SegmentQueue } from "./audio/segmentQueue";
+import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
 
 const idle: MeetingSnapshot = {
   sessionId: null,
@@ -64,6 +65,7 @@ export function useMeetingSession(
   const previewRunId = useRef<string | null>(null);
   const started = useRef(0);
   const operation = useRef(false);
+  const captureLease = useRef<(() => void) | null>(null);
 
   function commitSnapshot(next: MeetingSnapshot) {
     snapshotRef.current = next;
@@ -161,6 +163,8 @@ export function useMeetingSession(
     source.current = null;
     if (context.current) await context.current.close().catch(() => undefined);
     context.current = null;
+    captureLease.current?.();
+    captureLease.current = null;
     if (clearPending) {
       frames.current = [];
       frameSamples.current = 0;
@@ -266,10 +270,11 @@ export function useMeetingSession(
 
   async function attachCapture() {
     if (!voice) throw new Error("Voice settings are unavailable.");
+    if (!captureLease.current) captureLease.current = acquireAudioCapture("meeting");
     const device =
       voice.inputDeviceId === "default"
-        ? true
-        : { deviceId: { exact: voice.inputDeviceId } };
+        ? { autoGainControl: true, echoCancellation: true, noiseSuppression: true }
+        : { autoGainControl: true, echoCancellation: true, noiseSuppression: true, deviceId: { exact: voice.inputDeviceId } };
     const nextStream = await requestMicrophoneStream(device);
     stream.current = nextStream;
     try {
@@ -355,10 +360,11 @@ export function useMeetingSession(
     applySnapshot({ ...snapshotRef.current, state: "preflight", error: null });
     let startedSession: string | null = null;
     try {
+      captureLease.current = acquireAudioCapture("meeting");
       const check = await requestMicrophoneStream(
         voice.inputDeviceId === "default"
-          ? true
-          : { deviceId: { exact: voice.inputDeviceId } },
+          ? { autoGainControl: true, echoCancellation: true, noiseSuppression: true }
+          : { autoGainControl: true, echoCancellation: true, noiseSuppression: true, deviceId: { exact: voice.inputDeviceId } },
       );
       check.getTracks().forEach((track) => track.stop());
       const preflight = await meetingPreflight({

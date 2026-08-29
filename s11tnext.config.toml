@@ -1,0 +1,17 @@
+source_dir = "contexts"
+out_dir = ".s11tnext"
+
+[authoring]
+source_locale = "en-US"
+
+[governance]
+require_owner = true
+
+[keyspaces.codex]
+owner = "saaa-runtime"
+
+[release_profiles.development]
+required_locales = ["$source"]
+
+[generation]
+typescript_indent = 2

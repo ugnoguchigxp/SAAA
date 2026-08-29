@@ -1,0 +1,1339 @@
+<article lang="ja">
+  <h1 id="target-speaker-enrollment-plan">
+    Target Speaker Enrollment and Transcription Gate 実装計画
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Proposed implementation plan。実装開始はGate G0通過後</li>
+    <li>Created: 2026-08-29</li>
+    <li>SAAA baseline: <code>ae9b84a</code> + working tree</li>
+    <li>Database baseline: <code>PRAGMA user_version = 10</code></li>
+    <li>Settings document baseline: <code>schema_version = 9</code></li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>対象: Voice Settings、Audio Capture、Voice Runtime、SQLite、File Store、QA、運用</li>
+  </ul>
+  <p>
+    本文書は、Settings画面から本人音声を複数回サンプリングし、その音声ファイルを端末内へ永続保存し、
+    通常Chatでは登録話者と判定された音声だけをgnosis ASRへ送って文字起こしするための実装契約である。
+    ユーザーは登録音声の保存を明示的に許可している。本機能はその許可を製品上でも確認可能にし、
+    保存、再生、追加、再評価、削除のlifecycleをSettingsから管理できるようにする。
+  </p>
+  <p>
+    完了の定義は<code>TS-00</code>〜<code>TS-10</code>を順に完了し、Section
+    20の自動検証、 isolated audio fixture、実機canaryがすべてSection 21のGateを通過することである。
+    Speaker verificationは本人認証ではなく、文字起こし対象を選ぶためのprivacy filterとして扱う。
+  </p>
+
+  <h2 id="1-fixed-conclusion">1. 結論と固定判断</h2>
+  <pre><code class="language-text">Settings / Voice / My voice profile
+  ↓ explicit enrollment
+Shared microphone lease
+  ↓ bounded PCM capture
+Canonical 16 kHz mono WAV
+  ├─ encrypted persistent sample file
+  └─ local speaker embedding
+       ↓ multiple enrollment references
+Local Target Speaker Verifier
+
+Normal Chat microphone
+  ↓ WebView audio processing and bounded pre-roll
+Candidate VAD
+  ↓ local speaker verification before ASR
+  ├─ verified-user → user utterance buffer → endpoint → gnosis ASR
+  ├─ non-user     → discard; never preview or transcribe
+  └─ uncertain    → wait for more audio, then fail closed</code></pre>
+  <ol>
+    <li>
+      AECだけでは本人と他者を区別できないため、STTの前に登録話者のspeaker verification gateを置く。
+    </li>
+    <li>話者判定はMac上で実行する。判定前の音声、非本人音声、判定不能音声をgnosisへ送らない。</li>
+    <li>
+      登録音声は一つの平均値に潰さず、複数の暗号化音声ファイルと複数embeddingを保持する。
+      これにより、model更新時に保存音声からembeddingを再生成できる。
+    </li>
+    <li>
+      音声ファイルはSQLite
+      BLOBに入れず、Tauriの<code>app_data_dir</code>配下へ暗号化して保存する。
+      SQLiteはprofile、sample metadata、model provenance、状態の正本とする。
+    </li>
+    <li>
+      暗号鍵は音声ファイルとSQLiteへ保存せず、macOS Keychainへ保存する。 plaintext
+      WAVを一時fileとして書き出さない。
+    </li>
+    <li>
+      Target Speaker Filterは登録完了後も自動でONにしない。Settingsでユーザーが明示的に有効化する。
+    </li>
+    <li>
+      FilterがONのとき、model、Keychain、profile、inferenceのいずれかが利用不能ならfail-closedにする。
+      既存の未filter音声経路へ自動fallbackしない。
+    </li>
+    <li>FilterがOFFのときだけ現行の音声入力経路を維持する。rollbackで登録音声を自動削除しない。</li>
+    <li>通常Chatだけを対象とし、Meetingの複数話者文字起こしへ同じfilterを適用しない。</li>
+    <li>
+      保存音声、embedding、similarity scoreを本人認証、決済、権限昇格、security
+      decisionへ使用しない。
+    </li>
+  </ol>
+
+  <h2 id="2-user-contract">2. User Contract</h2>
+  <h3 id="21-enrollment-journey">2.1 登録</h3>
+  <ol>
+    <li>SettingsのVoiceから「本人の声を登録」を選ぶ。</li>
+    <li>保存される内容、保存場所、用途、削除方法を確認して開始する。</li>
+    <li>異なる文章を5回、各6〜10秒話す。</li>
+    <li>各sampleの品質結果を確認し、再生、録り直し、削除を行える。</li>
+    <li>4件以上かつ合計20秒以上の有効発話が揃うとprofileを構築できる。</li>
+    <li>holdout確認用の追加発話で本人一致を確認する。</li>
+    <li>Target Speaker Filterを明示的にONにする。</li>
+  </ol>
+
+  <h3 id="22-daily-use">2.2 日常利用</h3>
+  <ol>
+    <li>本人の声は通常の無音区間で確定し、文字起こしとLLM送信へ進む。</li>
+    <li>他者、テレビ、通知、SAAAのTTSだけが聞こえてもChatへ文字を追加しない。</li>
+    <li>
+      判定不能な短文または重畳音声は送信せず、必要なら「本人確認できませんでした」と状態表示する。
+    </li>
+    <li>Filter状態、登録sample数、model状態をSettingsとChatのVoice statusで確認できる。</li>
+    <li>FilterをOFFにしても登録音声は保持され、再度ONにできる。</li>
+  </ol>
+
+  <h3 id="23-maintenance">2.3 保守</h3>
+  <ul>
+    <li>保存sampleをローカル再生できる。</li>
+    <li>sampleを追加、個別削除、録り直しできる。</li>
+    <li>全profileを削除すると、音声file、embedding、metadata、Keychain keyを削除する。</li>
+    <li>入力device変更またはmodel更新後に、短い再確認またはembedding再構築を実行できる。</li>
+  </ul>
+
+  <h2 id="3-goals">3. 達成すること</h2>
+  <ol>
+    <li>Settings内で完結する、明示的で再開可能な本人音声登録flowを提供する。</li>
+    <li>登録音声fileをlocal-only、暗号化、bounded、原子的に永続保存する。</li>
+    <li>複数sampleからmodel-version付きspeaker embeddingを構築する。</li>
+    <li>Filter ON時はspeaker verification成功後にだけpreview ASRとfinal ASRを許可する。</li>
+    <li>非本人音声がVAD endpointまたは自動送信を発火させないようにする。</li>
+    <li>TTS中もcaptureを継続し、本人barge-inとTTS自己音声を可能な範囲で区別する。</li>
+    <li>restart、model更新、file欠落、Keychain失敗、削除途中から整合した状態へ復旧する。</li>
+    <li>保存と判定の状態を、raw audioまたはbiometric値をlogせず観測できるようにする。</li>
+  </ol>
+
+  <h2 id="4-non-goals">4. 非要件</h2>
+  <ul>
+    <li>声紋による本人認証、login、権限付与、anti-spoof保証。</li>
+    <li>本人の録音再生またはvoice cloneを攻撃として防ぐliveness detection。</li>
+    <li>複数人が同時に話す音声から本人だけを完全分離するtarget-speaker extraction。</li>
+    <li>Meeting transcriptを一人の話者だけへ限定すること。</li>
+    <li>Cloud speaker verificationまたは判定前音声のLAN送信。</li>
+    <li>登録音声のCloud backup、同期、共有、export package。</li>
+    <li>globalなRetention期限による登録音声の自動削除。</li>
+    <li>保存音声をLLM Context、Memory、diagnostics、analyticsへ入力すること。</li>
+    <li>音声による設定変更toolの実装。これは別計画で扱う。</li>
+  </ul>
+
+  <h2 id="5-baseline">5. 実装済みBaseline</h2>
+  <table>
+    <caption>
+      Table: Verified current seams
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">現行実装</th>
+        <th scope="col">本計画の判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Microphone</td>
+        <td>
+          <code>src/lib/microphone.ts</code
+          >から<code>getUserMedia</code>を使用
+        </td>
+        <td>permissionとdevice選択を再利用し、shared leaseを追加する</td>
+      </tr>
+      <tr>
+        <td>Capture</td>
+        <td><code>src/App.tsx</code>のAudioWorkletがPCM frameを収集</td>
+        <td>同じframe contractを登録と通常Chatで共有する</td>
+      </tr>
+      <tr>
+        <td>Web audio processing</td>
+        <td>
+          <code>echoCancellation</code
+          >、<code>noiseSuppression</code>、<code>autoGainControl</code>を要求
+        </td>
+        <td>実際のtrack settingsを検証・表示し、本人判定の代用にはしない</td>
+      </tr>
+      <tr>
+        <td>VAD</td>
+        <td><code>src/lib/voiceActivity.ts</code>がRMSと無音時間で確定</td>
+        <td>energy prefilterとして残し、verified userだけがendpointを進める</td>
+      </tr>
+      <tr>
+        <td>Preview</td>
+        <td>2秒経過で判定前の全PCMをgnosisへ送る</td>
+        <td>Filter ON時は本人判定完了まで開始しない</td>
+      </tr>
+      <tr>
+        <td>Final ASR</td>
+        <td><code>voice::gnosis_asr</code>が全WAVをLAN endpointへ送る</td>
+        <td>本人として受理したPCMだけを送る</td>
+      </tr>
+      <tr>
+        <td>Settings</td>
+        <td><code>voice.runtime/default</code>、strict schema version 9</td>
+        <td>既存documentへprofile metadataを埋めず、専用repositoryを追加する</td>
+      </tr>
+      <tr>
+        <td>SQLite</td>
+        <td><code>user_version = 10</code></td>
+        <td>実装開始時の次の空きmigrationへrebaseする</td>
+      </tr>
+      <tr>
+        <td>App data</td>
+        <td>database、backup、diagnosticsで<code>app_data_dir</code>を使用</td>
+        <td>同じroot下の専用directoryを使用する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="6-architecture">6. Module Architecture</h2>
+  <pre><code class="language-text">React / TypeScript
+├─ VoiceEnrollmentCard
+├─ useVoiceEnrollment
+├─ AudioCaptureCoordinator
+├─ TargetSpeakerGate state machine
+└─ Chat voice capture
+        ↓ bounded Tauri commands
+
+Rust / Tauri
+├─ voice::enrollment
+│  ├─ EnrollmentRuntime
+│  ├─ quality analysis
+│  └─ profile lifecycle
+├─ voice::sample_store
+│  ├─ canonical WAV encoding
+│  ├─ AES-256-GCM container
+│  ├─ Keychain key provider
+│  └─ atomic file lifecycle
+├─ voice::speaker_verifier
+│  ├─ dedicated worker thread owns all native handles
+│  ├─ embedding extraction
+│  ├─ multiple-reference scoring
+│  └─ model provenance
+├─ voice::repository
+│  └─ SQLite profile / sample / embedding metadata
+└─ voice::gate
+   └─ accept / reject / uncertain decision
+
+Local storage
+├─ saaa.sqlite3
+├─ voice-profiles/&lt;profile-id&gt;/samples/&lt;sample-id&gt;.wav.enc
+├─ voice-models/&lt;model-id&gt;/model.onnx
+└─ macOS Keychain: file encryption key only</code></pre>
+  <p>責務境界:</p>
+  <ol>
+    <li>Frontendはpermission、capture UX、bounded frame buffering、画面状態を担当する。</li>
+    <li>
+      Rustはvalidation、quality、encryption、file path、SQLite transaction、model
+      inferenceを担当する。
+    </li>
+    <li>
+      Model native
+      APIを呼ぶ<code>unsafe</code>は<code>speaker_verifier</code>一moduleへ閉じ込め、
+      C handleを所有threadの外へ移動しない。
+    </li>
+    <li>
+      gnosisは話者判定済みの発話に対するASRだけを担当し、profileまたは登録sampleを保持しない。
+    </li>
+  </ol>
+
+  <h2 id="7-settings-ux">7. Settings UX Contract</h2>
+  <p><code>Settings → Voice</code>へ「My voice profile」cardを追加する。</p>
+  <table>
+    <caption>
+      Table: Settings fields and actions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">表示／操作</th>
+        <th scope="col">Contract</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Target Speaker Filter</td>
+        <td>OFF / ON。Ready profileがない場合はONにできない</td>
+      </tr>
+      <tr>
+        <td>Profile status</td>
+        <td>Not enrolled / Enrolling / Ready / Rebuilding / Degraded / Delete pending</td>
+      </tr>
+      <tr>
+        <td>Model</td>
+        <td>model ID、version、checksum stateを表示し、pathは表示しない</td>
+      </tr>
+      <tr>
+        <td>Samples</td>
+        <td>件数、総有効発話秒数、作成日時、quality、使用中deviceの差異を表示</td>
+      </tr>
+      <tr>
+        <td>Add sample</td>
+        <td>明示操作で録音flowを開始する</td>
+      </tr>
+      <tr>
+        <td>Play</td>
+        <td>選択sampleをmemory上で復号し、local playbackだけを行う</td>
+      </tr>
+      <tr>
+        <td>Retry / Replace</td>
+        <td>不合格sampleを保存せず、同じpromptを再収録する</td>
+      </tr>
+      <tr>
+        <td>Delete sample</td>
+        <td>確認後にfile、embedding、metadataを削除し、profileを再構築する</td>
+      </tr>
+      <tr>
+        <td>Delete profile</td>
+        <td>全sampleとKeychain keyを削除する。取り消し不能であることを明示する</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Enrollment開始前に「音声fileをこのMacへ保存し、本人の声を選別するために使用する」こと、
+    「録音または合成された本人音声をsecurity認証として検出する機能ではない」こと、
+    「削除するまで保持する」ことを表示する。Consent checkboxは法的免責ではなく、
+    ユーザーが保存状態を誤認しないための明示確認として扱う。
+  </p>
+  <p>
+    Settingsの通常の<code>Save Settings</code>とは別に、Enrollment操作は即時commandとして保存する。
+    長時間の音声file transactionをsettings_documents一括保存へ混ぜない。 Voice
+    cardは専用snapshotを再取得し、frontend-onlyな成功表示を正本にしない。
+  </p>
+
+  <h2 id="8-enrollment-lifecycle">8. Enrollment Capture Contract</h2>
+  <pre><code class="language-text">not-enrolled
+  ↓ begin
+requesting-permission
+  ↓ microphone ready
+recording
+  ├─ cancel → not-enrolled / existing-ready
+  ↓ explicit stop or bounded maximum
+analyzing
+  ├─ quality rejected → review-rejected → retry / discard
+  ↓ quality passed
+encrypting-and-saving
+  ├─ failure → failed; no completed row
+  ↓ file + metadata committed
+sample-ready
+  ↓ enough samples
+building-profile
+  ├─ failure → degraded; filter remains OFF
+  ↓ holdout verification passed
+profile-ready
+  ↓ explicit enable
+filter-enabled</code></pre>
+  <p>Capture invariant:</p>
+  <ul>
+    <li>一回のsampleは6〜10秒を推奨し、3〜12秒だけを受理する。</li>
+    <li>保存可能なsampleは最大10件、合計120秒、暗号化file合計32 MiB以下とする。</li>
+    <li>canonical formatはPCM signed 16-bit、16 kHz、mono WAVとする。</li>
+    <li>
+      capture元sample rate、effective AEC、noise suppression、input device hashをmetadataへ残す。
+    </li>
+    <li>promptは5種類以上用意し、同じ文だけの反復登録を既定flowにしない。</li>
+    <li>TTS中、Meeting active / paused中、Chat capture中はEnrollmentを開始しない。</li>
+    <li>Settings離脱、app close、permission revokeでcaptureを停止し、未保存PCMを破棄する。</li>
+  </ul>
+  <p>Quality gateの初期値:</p>
+  <ul>
+    <li>有効発話3秒以上。</li>
+    <li>voiced ratio 40%以上。</li>
+    <li>clipping sample比率0.5%未満。</li>
+    <li>無音、DC offset、過小RMS、過大RMSをreason code付きで拒否する。</li>
+    <li>既存sampleとのembedding重複が過度に高い場合も、同一録音の再送として拒否する。</li>
+  </ul>
+  <p>
+    RMS detectorはcheap prefilterに限定し、保存可否のspeech segmentationとembedding readinessは
+    native VAD / speaker model側で判定する。thresholdはfixtureと実機dataを使ってSection
+    21のGateで固定する。
+  </p>
+
+  <h2 id="9-capture-coordination">9. Shared Audio Capture Coordination</h2>
+  <p>
+    現行のChatとMeetingはそれぞれWebView側にcapture lifecycleを持つ。Settingsへ第三の独立した
+    <code>getUserMedia</code
+    >を直接追加すると競合するため、Frontendに<code>AudioCaptureCoordinator</code>を追加する。
+  </p>
+  <pre><code class="language-text">Capture owner
+  NONE
+  CHAT_VOICE
+  MEETING
+  VOICE_ENROLLMENT
+
+Lease rules
+  one owner at a time
+  owner must release tracks, worklet, handlers, AudioContext
+  close / navigation / error always releases
+  stale token cannot append or finalize</code></pre>
+  <ol>
+    <li>Leaseはrandom tokenとownerを持ち、releaseはidempotentにする。</li>
+    <li>Frontend leaseに加え、Backend commandもMeetingとTTS状態を再検証する。</li>
+    <li>Settings captureはChatまたはMeetingを暗黙停止せず、競合理由と復旧操作を表示する。</li>
+    <li>Input device変更は次回leaseから適用し、進行中sampleへ途中適用しない。</li>
+    <li>
+      Track取得後に<code>getSettings()</code>を読み、要求値ではなくeffective処理状態をsnapshotへ返す。
+    </li>
+  </ol>
+
+  <h2 id="10-file-storage">10. Audio File Storage and Encryption</h2>
+  <h3 id="101-layout">10.1 Layout</h3>
+  <pre><code class="language-text">app_data_dir/
+└─ voice-profiles/
+   └─ &lt;opaque-profile-id&gt;/
+      └─ samples/
+         └─ &lt;opaque-sample-id&gt;.wav.enc</code></pre>
+  <ul>
+    <li>directoryはowner-only、fileはowner read/writeだけのpermissionにする。</li>
+    <li>profile IDとsample IDはBackend生成のopaque IDだけを使用する。</li>
+    <li>DBにはfilenameだけを保存し、absolute pathとUser入力pathを保存しない。</li>
+    <li>symlink component、hard-link置換、root外canonical pathを拒否する。</li>
+    <li>model fileはsample directoryと分離し、profile削除でmodel artifactを消さない。</li>
+  </ul>
+
+  <h3 id="102-container">10.2 Encrypted container</h3>
+  <pre><code class="language-text">SAAA-VOICE-SAMPLE
+├─ magic + container version
+├─ cipher suite = AES-256-GCM
+├─ random 96-bit nonce
+├─ authenticated metadata version
+└─ ciphertext
+   └─ canonical PCM WAV bytes</code></pre>
+  <p>
+    AADへprofile ID、sample ID、container version、canonical
+    formatを含め、別profileまたは別rowへのfile差し替えを拒否する。
+    nonceを再利用せず、profileごとに生成した256-bit master keyは
+    <code>com.saaa.desktop.voice-profile.v1</code>のservice identityとprofile ID accountでmacOS
+    Keychainへ保存する。 HKDF-SHA-256の用途別contextからsample
+    file用keyとembedding用keyをderiveし、keyを使い回さない。 Keychain
+    itemへ音声file本体を保存しない。
+  </p>
+  <p>
+    Rust
+    dependency候補は<code>aes-gcm</code>、<code>hkdf</code>、<code>sha2</code>、
+    <code>zeroize</code>、macOS Keychain
+    bindingとする。採用version、license、security advisoryを
+    <code>TS-00</code>で固定し、独自暗号を実装しない。
+  </p>
+
+  <h3 id="103-atomic-write">10.3 Atomic save</h3>
+  <ol>
+    <li>PCM bounds、sample rate、qualityをmemory上で検証する。</li>
+    <li>canonical WAVとembeddingをmemory上で生成する。</li>
+    <li>random nonceでWAVを暗号化し、同一directoryのrandom temporary fileへ書く。</li>
+    <li>flush、permission検査、authenticated read-back、ciphertext SHA-256を確認する。</li>
+    <li>temporary fileをfinal filenameへatomic renameする。</li>
+    <li>SQLite transactionでsample、encrypted embedding、profile revisionをcommitする。</li>
+    <li>
+      DB commit失敗時はfinal fileを削除する。削除失敗はorphan reconciliation対象として記録する。
+    </li>
+  </ol>
+  <p>plaintext WAVをdisk、diagnostics、stdout、temporary directoryへ書かない。</p>
+
+  <h3 id="104-playback-delete">10.4 Playback and deletion</h3>
+  <ul>
+    <li>PlaybackはBackendで認証付き復号し、bounded memory bufferとしてFrontendへ返す。</li>
+    <li>再生終了または取消時にFrontendのobject URLとbuffer参照を破棄する。</li>
+    <li>
+      個別削除はsampleを<code>deleting</code>にし、filter参照から外してからfileを削除する。
+    </li>
+    <li>
+      全profile削除はFilterを先にOFFにしてprofileを<code>delete-pending</code>にし、Keychain
+      keyを削除して crypto-shredを成立させた後、ciphertext fileとDB rowを削除する。
+    </li>
+    <li>
+      Keychain key削除に失敗した場合は削除完了を表示せず、fileとrowを保持したまま再試行可能にする。
+    </li>
+    <li>
+      削除失敗は成功表示せず、<code>delete-pending</code>として再試行できる。
+    </li>
+  </ul>
+  <p>
+    Backendのplaintext WAV、PCM、embedding、key bufferは使用後に可能な範囲でzeroizeする。 JavaScript
+    memoryの完全消去は保証できないため、bufferを上書きして参照とobject URLを速やかに破棄し、
+    Settings playback中のmemory residencyをboundedにする。
+  </p>
+
+  <h2 id="11-sqlite">11. SQLite Contract</h2>
+  <p>
+    Migration番号は実装開始時にrebaseする。現時点の候補はv10→v11だが、MVP
+    3など別作業がv11を使用した場合は
+    次の空きversionを使用し、既存migrationを上書きしない。既存のsettings document schema version
+    9は変更しない。
+  </p>
+  <pre><code class="language-sql">voice_profiles
+  id                         TEXT PRIMARY KEY
+  status                     TEXT NOT NULL
+                             CHECK (status IN (
+                               'enrolling','building','ready','rebuilding',
+                               'degraded','delete-pending'
+                             ))
+  filter_enabled             INTEGER NOT NULL CHECK (filter_enabled IN (0,1))
+  policy_mode                TEXT NOT NULL CHECK (policy_mode = 'strict')
+  model_id                   TEXT NOT NULL
+  model_version              TEXT NOT NULL
+  model_sha256               TEXT NOT NULL
+  embedding_revision         INTEGER NOT NULL CHECK (embedding_revision &gt;= 0)
+  reject_below               REAL NOT NULL CHECK (reject_below BETWEEN -1.0 AND 1.0)
+  accept_at_or_above         REAL NOT NULL CHECK (accept_at_or_above BETWEEN -1.0 AND 1.0)
+  created_at                 TEXT NOT NULL
+  updated_at                 TEXT NOT NULL
+  CHECK (reject_below &lt; accept_at_or_above)
+  CHECK (filter_enabled = 0 OR status = 'ready')
+
+voice_enrollment_samples
+  id                         TEXT PRIMARY KEY
+  profile_id                 TEXT NOT NULL REFERENCES voice_profiles(id) ON DELETE CASCADE
+  file_name                  TEXT NOT NULL UNIQUE
+  status                     TEXT NOT NULL
+                             CHECK (status IN ('ready','deleting','delete-pending','missing'))
+  duration_ms                INTEGER NOT NULL CHECK (duration_ms BETWEEN 3000 AND 12000)
+  voiced_duration_ms         INTEGER NOT NULL CHECK (voiced_duration_ms BETWEEN 1 AND duration_ms)
+  source_sample_rate         INTEGER NOT NULL CHECK (source_sample_rate BETWEEN 8000 AND 192000)
+  canonical_sample_rate      INTEGER NOT NULL CHECK (canonical_sample_rate = 16000)
+  file_size_bytes            INTEGER NOT NULL CHECK (file_size_bytes BETWEEN 1 AND 4194304)
+  ciphertext_sha256          TEXT NOT NULL
+  cipher_version             INTEGER NOT NULL CHECK (cipher_version = 1)
+  quality_code               TEXT NOT NULL CHECK (quality_code = 'passed')
+  input_device_hash          TEXT NOT NULL
+  effective_aec              INTEGER CHECK (effective_aec IS NULL OR effective_aec IN (0,1))
+  created_at                 TEXT NOT NULL
+
+voice_profile_embeddings
+  id                         TEXT PRIMARY KEY
+  sample_id                  TEXT NOT NULL REFERENCES voice_enrollment_samples(id) ON DELETE CASCADE
+  window_index               INTEGER NOT NULL CHECK (window_index &gt;= 0)
+  model_id                   TEXT NOT NULL
+  model_version              TEXT NOT NULL
+  dimensions                 INTEGER NOT NULL CHECK (dimensions BETWEEN 64 AND 2048)
+  encrypted_embedding        BLOB NOT NULL
+  created_at                 TEXT NOT NULL
+  UNIQUE (sample_id, window_index, model_id, model_version)</code></pre>
+  <p>追加invariant:</p>
+  <ul>
+    <li>
+      初期releaseではprofileは一件だけとし、partial unique
+      indexで削除中を除く複数profileを拒否する。
+    </li>
+    <li>
+      Ready sample
+      4件未満または有効発話合計20秒未満では<code>status = ready</code>にしない。
+    </li>
+    <li>Sample削除後に条件を下回る場合、同一transactionでFilterをOFF、profileをdegradedにする。</li>
+    <li>Embedding modelとactive profile modelが一致しない場合は使用せず、rebuildする。</li>
+    <li>設定文書の保存batchがprofile rowまたはfile lifecycleを変更しない。</li>
+  </ul>
+
+  <h2 id="12-model-runtime">12. Speaker Model and Native Runtime</h2>
+  <h3 id="121-selection">12.1 Model selection spike</h3>
+  <p>
+    <code>TS-00</code>でsherpa-onnxのspeaker embedding C
+    APIを利用し、少なくともWeSpeaker系と
+    3D-Speakerの日本語利用候補を比較する。model名だけで選ばず、同じholdout corpusで次を測定する。
+  </p>
+  <ul>
+    <li>本人accept率、他者false accept率、TTS false accept率。</li>
+    <li>短文、通常文、小声、距離、入力device差、雑音、TTS重畳。</li>
+    <li>model load時間、embedding latency、memory、binary / model size。</li>
+    <li>arm64 macOS bundle、codesign、notarization、offline startup。</li>
+    <li>source、runtime、model weight、training dataに関するlicenseとNOTICE。</li>
+  </ul>
+  <p>
+    sherpa-onnx source licenseだけでmodel weightの再配布可否を推定しない。
+    選定modelに明示的な再配布根拠がない場合はG0を通過させず、別modelまたはuser-provided
+    artifactへ切り替える。
+  </p>
+
+  <h3 id="122-native-boundary">12.2 Native boundary</h3>
+  <ol>
+    <li>
+      sherpa-onnx C APIをRustの専用wrapperから呼ぶ。PythonまたはNode runtimeをshipping
+      dependencyにしない。
+    </li>
+    <li>
+      App setupで専用worker threadを開始し、そのthreadだけがmodel instanceと全C handleを所有する。
+      <code>AppState</code>はbounded request channelとhealth
+      snapshotだけを保持する。
+    </li>
+    <li>
+      Inference requestはrequest ID、deadline、profile revisionを持ち、UI threadとasync
+      executorをblockしない。
+    </li>
+    <li>一度に一件のembedding jobを実行し、bounded queueを越えたcandidateはfail-closedにする。</li>
+    <li>
+      C pointer、length、dimension、lifecycleをwrapperで検証し、panicをTauri
+      command境界へ漏らさない。
+    </li>
+    <li>model artifactはversionとSHA-256をpinし、checksum不一致時はloadしない。</li>
+    <li>
+      app shutdownで新規requestを拒否し、queueを取消し、C handleをowner
+      thread上で破棄してthreadをjoinする。
+    </li>
+  </ol>
+
+  <h3 id="123-reference-score">12.3 Reference and score</h3>
+  <ul>
+    <li>各sampleから複数のvoiced window embeddingを生成し、外れ値を除外する。</li>
+    <li>queryは複数referenceとのcosine similarity上位値とrobust aggregateから算出する。</li>
+    <li>固定sample codeにある例示thresholdをproduction defaultとして流用しない。</li>
+    <li>Enrollment sample同士のleave-one-out scoreと独立holdoutから二閾値を校正する。</li>
+    <li><code>score &gt;= accept_at_or_above</code>だけを本人として受理する。</li>
+    <li><code>score &lt; reject_below</code>は非本人として破棄する。</li>
+    <li>二閾値の間は追加音声を待ち、期限後も中間なら破棄する。</li>
+  </ul>
+
+  <h2 id="13-runtime-gate">13. Normal Chat Target Speaker Gate</h2>
+  <pre><code class="language-text">IDLE
+  ↓ energy / candidate VAD
+CANDIDATE
+  ├─ keep 500 ms pre-roll
+  ├─ collect at least model-ready voiced audio
+  ↓ verify locally
+VERIFYING
+  ├─ accept    → VERIFIED_USER
+  ├─ reject    → DISCARDING → IDLE
+  └─ uncertain → CANDIDATE until maximum, then DISCARDING
+
+VERIFIED_USER
+  ├─ append accepted PCM
+  ├─ re-verify sliding windows
+  ├─ start preview only from accepted PCM
+  └─ verified-user silence timeout → FINALIZING
+
+FINALIZING
+  ↓ final ASR with accepted PCM only
+SUBMITTING
+  ↓
+IDLE</code></pre>
+  <p>Gate invariant:</p>
+  <ol>
+    <li>
+      Filter
+      ON時、<code>previewAudio</code>と<code>transcribeAudio</code>の直前にverified
+      receiptを必須にする。
+    </li>
+    <li>
+      Receiptはprofile revision、model checksum、candidate ID、accepted
+      rangeを含み、別candidateへ再利用できない。
+    </li>
+    <li>Endpoint silence timerはverified user speech後にだけ進む。</li>
+    <li>非本人の発話終了はauto-finalizeまたはLLM queryを発生させない。</li>
+    <li>
+      長い発話は1〜2秒ごとにsliding re-verificationし、speaker switch後の未確認tailを送らない。
+    </li>
+    <li>Filter ON中にprofile revisionが変わったcandidateは取消し、新しいprofileで再判定する。</li>
+    <li>Verifier timeout、queue full、model unavailable、Keychain failureではASRを呼ばない。</li>
+    <li>短すぎる発話は本人と推定して通さず、再発話を促す。</li>
+  </ol>
+  <p>
+    Filter OFF時は現行経路を維持するが、共通capture coordinatorとresource
+    releaseの改善は両経路へ適用する。 Speaker gateを追加するためにMeetingのsegment
+    contractを変更しない。
+  </p>
+
+  <h2 id="14-tts-aec">14. TTS重畳、AEC、Barge-in</h2>
+  <ol>
+    <li>Enrollment中はTTSを開始せず、TTS中はEnrollment開始を拒否する。</li>
+    <li>通常ChatはTTS中もcaptureを継続し、TTS lifecycleをspeaker gateへ入力する。</li>
+    <li>
+      <code>echoCancellation: true</code>の要求だけで成功扱いにせず、trackのeffective
+      settingを取得する。
+    </li>
+    <li>TTS-only candidateはspeaker mismatchとして破棄し、endpoint timerへ数えない。</li>
+    <li>
+      TTS中に本人scoreがaccept thresholdを越えたらbarge-inとし、TTSをfade /
+      stopしてpre-rollから収録を継続する。
+    </li>
+    <li>TTSと本人が重なってuncertainならASRへ送らない。TTS停止後の追加発話を待つ。</li>
+    <li>
+      実機評価でbarge-in gateを満たせない場合、system
+      <code>say</code>の直接再生を見直し、playback
+      referenceを持てるaudio pathを別spikeする。
+    </li>
+  </ol>
+  <p>
+    Speaker verificationはAECの代替ではない。AECは既知の再生音を減らし、speaker
+    verificationは残った音声が
+    登録話者に一致するか判断する。単一microphoneへ複数音源が同時に強く入った場合の完全分離は本計画の保証外である。
+  </p>
+
+  <h2 id="15-api-contract">15. Tauri API and Event Contract</h2>
+  <p>提案command:</p>
+  <pre><code class="language-text">get_voice_profile_snapshot()
+begin_voice_enrollment_capture(input) → capture token
+append_voice_enrollment_chunk(input, token, sequence, bounded PCM)
+finish_voice_enrollment_capture(input, token) → sample result
+cancel_voice_enrollment_capture(token)
+play_voice_enrollment_sample(sample_id) → bounded audio stream / bytes
+delete_voice_enrollment_sample(sample_id)
+rebuild_voice_profile()
+set_target_speaker_filter_enabled(enabled)
+delete_voice_profile()
+verify_target_speaker_candidate(input) → decision receipt</code></pre>
+  <p>Contract rules:</p>
+  <ul>
+    <li>Profile IDとfile pathをFrontendから指定させない。</li>
+    <li>Chunkはsequence、sample rate、sample count、total bytesをstrictに検証する。</li>
+    <li>Capture tokenは一回のsessionとownerに限定し、restart後に無効とする。</li>
+    <li>一回のcaptureは最大12秒でBackendからも強制停止する。</li>
+    <li>Snapshotはfile path、embedding、Keychain identifier、exact scoreを返さない。</li>
+    <li>
+      Decisionは<code>verified-user</code>、<code>non-user</code>、<code>uncertain</code>とbounded
+      reason codeを返す。
+    </li>
+    <li>Exact similarityはdebug buildの明示診断以外でFrontendまたはlogへ返さない。</li>
+  </ul>
+  <p>Snapshot例:</p>
+  <pre><code class="language-json">{
+  "status": "ready",
+  "filterEnabled": true,
+  "policyMode": "strict",
+  "sampleCount": 5,
+  "totalVoicedDurationMs": 31840,
+  "model": {
+    "id": "selected-speaker-model",
+    "version": "pinned-version",
+    "integrity": "verified"
+  },
+  "storage": {
+    "encrypted": true,
+    "persistentUntilDeleted": true
+  },
+  "lastErrorCode": null
+}</code></pre>
+
+  <h2 id="16-privacy-security">16. Privacy and Security Contract</h2>
+  <table>
+    <caption>
+      Table: Data handling
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Data</th>
+        <th scope="col">保存先</th>
+        <th scope="col">Network</th>
+        <th scope="col">Retention</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Enrollment WAV</td>
+        <td>暗号化file</td>
+        <td>送信しない</td>
+        <td>ユーザーが削除するまで</td>
+      </tr>
+      <tr>
+        <td>Speaker embedding</td>
+        <td>暗号化SQLite BLOB</td>
+        <td>送信しない</td>
+        <td>sample / profile削除まで</td>
+      </tr>
+      <tr>
+        <td>Rejected candidate PCM</td>
+        <td>保存しない</td>
+        <td>送信しない</td>
+        <td>判定後直ちにmemory参照を破棄</td>
+      </tr>
+      <tr>
+        <td>Verified user utterance</td>
+        <td>現行contract。通常Chatではraw保存しない</td>
+        <td>LAN-local gnosis ASRへ送信</td>
+        <td>ASR完了後にPCMを破棄</td>
+      </tr>
+      <tr>
+        <td>Metrics</td>
+        <td>count、latency、reason codeだけ</td>
+        <td>既定では送信しない</td>
+        <td>bounded</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>音声、embedding、exact score、promptへの回答をLLMへ渡さない。</li>
+    <li>Diagnosticsはprofile status、sample count、model ID、error codeだけを含める。</li>
+    <li>Database backupは登録音声fileとKeychain keyを含まないことをUIとmanifestで明示する。</li>
+    <li>
+      Restore後にmetadataだけ存在する場合はprofileをdegraded、FilterをOFFにし、missing
+      fileを報告する。
+    </li>
+    <li>Application log、panic、tool errorへabsolute pathまたは暗号材料を含めない。</li>
+    <li>File暗号化keyをenvironment variable、settings JSON、source codeへ置かない。</li>
+    <li>
+      Model artifactのdownloadをapp起動中に暗黙実行しない。bundleまたは明示installで供給する。
+    </li>
+    <li>
+      Canary用availability
+      flagは<code>TargetSpeakerRuntimeGate</code>が所有し、既定OFFにする。 UserのFilter
+      toggleはavailability flagを緩和できない。
+    </li>
+  </ul>
+
+  <h2 id="17-failure-recovery">17. Failure, Reconciliation, Rollback</h2>
+  <table>
+    <caption>
+      Table: Failure behavior
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Failure</th>
+        <th scope="col">Required behavior</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Permission denied / revoked</td>
+        <td>capture停止、未保存PCM破棄、既存profile維持</td>
+      </tr>
+      <tr>
+        <td>Quality rejected</td>
+        <td>fileとrowを作らず、reasonと録り直しを表示</td>
+      </tr>
+      <tr>
+        <td>Keychain unavailable</td>
+        <td>新規保存を拒否。Filter ON中ならASRをfail-closed</td>
+      </tr>
+      <tr>
+        <td>Encryption / authenticated read-back failure</td>
+        <td>DB commitせずtemporary / final fileを削除</td>
+      </tr>
+      <tr>
+        <td>DB commit failure after file rename</td>
+        <td>file削除。失敗時はorphan reconciliationへ登録</td>
+      </tr>
+      <tr>
+        <td>File missing / authentication failure</td>
+        <td>sampleをmissing、profileをdegraded、FilterをOFF</td>
+      </tr>
+      <tr>
+        <td>Model missing / checksum mismatch</td>
+        <td>modelをloadせずprofileをdegraded。Network downloadしない</td>
+      </tr>
+      <tr>
+        <td>Embedding rebuild failure</td>
+        <td>旧modelと旧revisionがvalidなら維持。それ以外はFilter OFF</td>
+      </tr>
+      <tr>
+        <td>Verifier timeout / overload</td>
+        <td>candidateをuncertainとして破棄し、ASRを呼ばない</td>
+      </tr>
+      <tr>
+        <td>Delete failure</td>
+        <td>Filter参照から外し、delete-pendingを表示して再試行</td>
+      </tr>
+      <tr>
+        <td>Feature rollback</td>
+        <td>FilterをOFFにしてtool / UI entryを隠す。保存dataは自動削除しない</td>
+      </tr>
+      <tr>
+        <td>Native worker crash / channel close</td>
+        <td>runtime gateをunavailableにし、進行candidateを破棄。app内で無制限restartしない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Startup reconciliation:</p>
+  <ol>
+    <li>
+      DBにあるReady sampleのfile存在、root containment、permission、cipher
+      authenticationをboundedに検査する。
+    </li>
+    <li>DBにないsafe-format fileはorphanとして隔離し、active profileが使用しない。</li>
+    <li>
+      <code>deleting</code
+      >と<code>delete-pending</code>を再実行する。
+    </li>
+    <li>Model provenance不一致では保存WAVから新embeddingを別revisionへ構築する。</li>
+    <li>新revisionが完全にreadyになるまで旧revisionをatomicに切り替えない。</li>
+  </ol>
+  <p>Stop condition:</p>
+  <ul>
+    <li>選定model weightの再配布licenseまたはNOTICEを確定できない。</li>
+    <li>非本人音声が判定前にpreview / final ASRへ到達する経路が残る。</li>
+    <li>Keychain failure時にplaintext fileまたは未filter fallbackが発生する。</li>
+    <li>Meeting、Chat、Enrollmentが同時にmicrophoneを所有できる。</li>
+    <li>Section 20のnegative corpusでfalse accept gateを満たせない。</li>
+    <li>TTS中の自己応答loopを0件にできない。</li>
+  </ul>
+
+  <h2 id="18-observability">18. Observability and Backup</h2>
+  <p>Structured reason code:</p>
+  <pre><code class="language-text">enrollment.started
+enrollment.quality-rejected
+enrollment.sample-saved
+enrollment.profile-ready
+enrollment.delete-pending
+speaker.verified-user
+speaker.non-user
+speaker.uncertain
+speaker.model-unavailable
+speaker.verifier-timeout
+speaker.profile-revision-changed
+speaker.tts-overlap
+speaker.barge-in
+speaker.asr-receipt-missing</code></pre>
+  <ul>
+    <li>count、duration bucket、latency bucket、model version、reason codeを記録する。</li>
+    <li>
+      raw PCM、transcript、embedding、exact similarity、file path、Keychain status
+      detailを記録しない。
+    </li>
+    <li>Local evaluation reportはfixture IDと集計値を持ち、user録音fileを添付しない。</li>
+    <li>
+      既存database backupはprofile
+      metadataだけを含むため、<code>voiceSamplesIncluded: false</code>を明示する。
+    </li>
+    <li>Voice profileの完全backup / exportは別計画とし、誤って通常backupへ混ぜない。</li>
+  </ul>
+
+  <h2 id="19-work-packages">19. 実装Work Package</h2>
+  <table>
+    <caption>
+      Table: Target Speaker implementation sequence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">内容</th>
+        <th scope="col">主なfile / module</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>TS-00</td>
+        <td>Model、runtime、license、macOS bundle spike</td>
+        <td><code>spikes/</code>、model manifest</td>
+        <td>G0 Model and Legal通過</td>
+      </tr>
+      <tr>
+        <td>TS-01</td>
+        <td>Domain contract、state machine、reason code、feature flag</td>
+        <td>
+          <code>src-tauri/src/voice/contracts.rs</code>、<code>gate.rs</code>
+        </td>
+        <td>pure unit testで全遷移とfail-closedを確認</td>
+      </tr>
+      <tr>
+        <td>TS-02</td>
+        <td>Keychain、暗号container、atomic file store</td>
+        <td><code>voice/sample_store.rs</code></td>
+        <td>tamper、swap、crash、permission test通過</td>
+      </tr>
+      <tr>
+        <td>TS-03</td>
+        <td>次の空きSQLite migration、repository、startup reconciliation</td>
+        <td><code>voice/repository.rs</code>、migration</td>
+        <td>v10 fixture upgrade、restart、missing / orphan test通過</td>
+      </tr>
+      <tr>
+        <td>TS-04</td>
+        <td>sherpa-onnx native wrapper、model integrity、embedding build</td>
+        <td>
+          <code>voice/speaker_verifier.rs</code>、<code>build.rs</code>
+        </td>
+        <td>checksum、dimension、lifecycle、latency test通過</td>
+      </tr>
+      <tr>
+        <td>TS-05</td>
+        <td>Enrollment commandとbounded capture session</td>
+        <td>
+          <code>voice/enrollment.rs</code>、<code>src/lib/runtime.ts</code>
+        </td>
+        <td>quality、保存、取消、再試行、上限test通過</td>
+      </tr>
+      <tr>
+        <td>TS-06</td>
+        <td>Shared capture coordinatorとVoice Settings UI</td>
+        <td>
+          <code>AudioCaptureCoordinator</code>、<code>VoiceEnrollmentCard</code>
+        </td>
+        <td>Chat / Meeting / Enrollment相互排他と再起動復元</td>
+      </tr>
+      <tr>
+        <td>TS-07</td>
+        <td>通常Chatのspeaker gate、verified receipt、ASR順序変更</td>
+        <td>
+          <code>src/App.tsx</code>、<code>voice/gate.rs</code>
+        </td>
+        <td>reject / uncertainでpreviewとfinal ASR呼出0</td>
+      </tr>
+      <tr>
+        <td>TS-08</td>
+        <td>TTS lifecycle、AEC capability、barge-in</td>
+        <td>Chat voice capture、TTS runtime</td>
+        <td>TTS-only送信0、本人barge-in gate通過</td>
+      </tr>
+      <tr>
+        <td>TS-09</td>
+        <td>削除、rebuild、diagnostics、backup表示、failure injection</td>
+        <td>repository、Settings、diagnostics</td>
+        <td>残存data、誤表示、sensitive diagnostic 0</td>
+      </tr>
+      <tr>
+        <td>TS-10</td>
+        <td>isolated evaluation、実機canary、rollback evidence</td>
+        <td>tests、evidence、runbook</td>
+        <td>G4 Canary通過</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>TS-00</code>完了前にmodel artifactをshipping bundleへ追加しない。
+    <code>TS-02</code
+    >と<code>TS-03</code>完了前にSettingsから録音を開始できるUIをreleaseしない。
+    <code>TS-07</code>完了前にFilter toggleを有効にしない。
+  </p>
+
+  <h2 id="20-verification">20. Verification and Acceptance Criteria</h2>
+  <h3 id="201-unit">20.1 Unit and property tests</h3>
+  <ul>
+    <li>全state transition、cancel、restart、stale token、profile revision race。</li>
+    <li>PCM sample count、sample rate、sequence、duration、total byte bounds。</li>
+    <li>Resampling、WAV header、clipping、RMS、voiced duration、quality reason。</li>
+    <li>AES-GCM nonce uniqueness、AAD swap、bit tamper、wrong key、truncated file。</li>
+    <li>Safe path、symlink、unexpected extension、oversized file、duplicate ID。</li>
+    <li>Migration re-entry、old v10 fixture、newer version stop、foreign key cascade。</li>
+    <li>Model checksum、dimension mismatch、NaN embedding、empty output、native error。</li>
+    <li>Two-threshold decision、uncertain retry、timeout、queue full、profile revision change。</li>
+    <li>Filter ONでreceiptなしのpreview / final ASRを拒否する。</li>
+  </ul>
+
+  <h3 id="202-integration">20.2 Integration and failure injection</h3>
+  <ul>
+    <li>5sample登録、app再起動、再生、追加、個別削除、profile削除。</li>
+    <li>file rename直後、DB commit直前、DB commit直後、削除途中のcrash recovery。</li>
+    <li>
+      Keychain locked / denied / missing、model missing / corrupt、disk full、read-only directory。
+    </li>
+    <li>Chat、Meeting、Enrollmentの同時開始競合と全release path。</li>
+    <li>非本人fixtureでgnosis mock request countが0、本人fixtureで一回だけ。</li>
+    <li>Previewが本人判定前に開始せず、accepted PCM以外を含まない。</li>
+    <li>Filter OFFで既存microphone、VAD、自動送信、ASR testが回帰しない。</li>
+    <li>Diagnosticsとbackup manifestにaudio、path、embedding、exact scoreが含まれない。</li>
+  </ul>
+
+  <h3 id="203-model-evaluation">20.3 Model evaluation</h3>
+  <p>
+    Enrollmentに使っていない独立holdoutを使う。最低構成は本人200 utterancesを3日以上、2距離以上、
+    2voice level以上で収録し、negative 1,000 utterancesを5人以上、system
+    TTS、media音声、通知音から構成する。 Corpusの利用許諾とprovenanceを記録する。
+  </p>
+  <table>
+    <caption>
+      Table: Initial quality thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Metric</th>
+        <th scope="col">Gate</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Target speaker accept rate</td>
+        <td>95%以上</td>
+      </tr>
+      <tr>
+        <td>Non-target false accept rate</td>
+        <td>0.1%以下</td>
+      </tr>
+      <tr>
+        <td>TTS-only query submission</td>
+        <td>0件</td>
+      </tr>
+      <tr>
+        <td>Quoted / media speech query submission</td>
+        <td>0.1%以下</td>
+      </tr>
+      <tr>
+        <td>Uncertain fail-open</td>
+        <td>0件</td>
+      </tr>
+      <tr>
+        <td>TTS中の本人barge-in accept</td>
+        <td>90%以上</td>
+      </tr>
+      <tr>
+        <td>Verification latency p95</td>
+        <td>250 ms以下</td>
+      </tr>
+      <tr>
+        <td>Steady verifier memory</td>
+        <td>承認済みbudget内、2時間で単調増加なし</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="204-manual">20.4 Manual desktop acceptance</h3>
+  <ol>
+    <li>Settingsで5sampleを登録し、全fileが再起動後も一覧と再生に残る。</li>
+    <li>app data上のfileがplaintext WAVとして再生できず、UIからだけ再生できる。</li>
+    <li>本人が通常声、小声、少し離れた位置から話し、文字起こしと自動送信が成立する。</li>
+    <li>別人、テレビ、system TTSが話してもtranscriptとqueryが作られない。</li>
+    <li>TTS中に本人が割り込み、TTS停止後にpre-rollを失わず本人発話が文字起こしされる。</li>
+    <li>短すぎる発話は誤って通過せず、再発話案内が表示される。</li>
+    <li>Keychain accessを失った状態でFilterが未filter経路へfallbackしない。</li>
+    <li>個別sample削除後にprofileが再構築され、必要件数未満ならFilterがOFFになる。</li>
+    <li>全profile削除後にfile、row、embedding、Keychain itemが残らない。</li>
+    <li>Meetingの複数話者captureが従来どおり動作し、Target Speaker Filterに影響されない。</li>
+  </ol>
+
+  <h2 id="21-delivery-gates">21. Delivery Gates</h2>
+  <table>
+    <caption>
+      Table: Target Speaker delivery gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">条件</th>
+        <th scope="col">次の操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>G0 Model and Legal</td>
+        <td>
+          model精度候補、C API version、全artifact checksum、license、NOTICE、redistribution根拠確定
+        </td>
+        <td>TS-01〜04</td>
+      </tr>
+      <tr>
+        <td>G1 Offline Core</td>
+        <td>state、crypto、file、migration、native wrapperの自動test成功</td>
+        <td>TS-05〜06</td>
+      </tr>
+      <tr>
+        <td>G2 Enrollment</td>
+        <td>登録、保存、再生、削除、restart、rebuild、failure injection成功</td>
+        <td>TS-07</td>
+      </tr>
+      <tr>
+        <td>G3 Isolated Gate</td>
+        <td>Section 20.3 threshold、gnosis pre-gate request 0違反、既存Voice回帰0</td>
+        <td>opt-in desktop canary</td>
+      </tr>
+      <tr>
+        <td>G4 Opt-in Canary</td>
+        <td>実機50Turn以上、誤query 0、復旧不能0、自己応答loop 0、2時間soak成功</td>
+        <td>strict mode default候補</td>
+      </tr>
+      <tr>
+        <td>G5 Default Candidate</td>
+        <td>複数deviceでquality gate維持、rollback evidence、support手順完了</td>
+        <td>新規登録Userへの案内を検討</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    G4通過まではfeature flagを既定OFFにする。Profile登録済みでもFilterを自動ONにしない。
+    RollbackはFilterをOFFにし、Userが明示削除するまで暗号化音声fileを保持する。
+  </p>
+
+  <h2 id="22-alternatives">22. 採用しない方式</h2>
+  <table>
+    <caption>
+      Table: Rejected alternatives
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">方式</th>
+        <th scope="col">採用しない理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>AECだけ</td>
+        <td>SAAAの再生音は減らせても、他者、テレビ、録音を本人と区別できない</td>
+      </tr>
+      <tr>
+        <td>Keyword / wake phrase</td>
+        <td>本人識別ではなく、録音や他者も同じphraseを話せる</td>
+      </tr>
+      <tr>
+        <td>ASR後にspeaker判定</td>
+        <td>非本人音声がすでにgnosisへ送信・文字起こしされ、privacy境界が遅い</td>
+      </tr>
+      <tr>
+        <td>gnosis上でspeaker判定</td>
+        <td>判定前の他者音声がMac外へ出る</td>
+      </tr>
+      <tr>
+        <td>Browser-only keyword model</td>
+        <td>話者embeddingではなく要件を満たさない。WebView差とresource lifecycleも大きい</td>
+      </tr>
+      <tr>
+        <td>Embeddingだけ保存</td>
+        <td>Userが音声file保存を希望しており、model更新時の再embeddingもできない</td>
+      </tr>
+      <tr>
+        <td>Plaintext WAV保存</td>
+        <td>biometric音声をapp dataから直接取得でき、必要な保護が不足する</td>
+      </tr>
+      <tr>
+        <td>判定不能時の未filter fallback</td>
+        <td>「本人だけを文字起こしする」という主目的を破る</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="23-quality-review">23. 計画品質の自己レビュー</h2>
+  <table>
+    <caption>
+      Table: 100-point implementation-plan rubric
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">評価項目</th>
+        <th scope="col">配点</th>
+        <th scope="col">自己評価</th>
+        <th scope="col">根拠</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>要件と非要件</td>
+        <td>10</td>
+        <td>10</td>
+        <td>User journey、保存前提、Meeting除外、認証非要件を固定</td>
+      </tr>
+      <tr>
+        <td>現行実装との整合</td>
+        <td>10</td>
+        <td>9</td>
+        <td>具体file、DB v10、settings v9、preview / ASR seamを確認</td>
+      </tr>
+      <tr>
+        <td>Architectureと責務境界</td>
+        <td>15</td>
+        <td>15</td>
+        <td>Frontend、Rust、native owner thread、gnosis、capture leaseを分離</td>
+      </tr>
+      <tr>
+        <td>Data、file、migration</td>
+        <td>15</td>
+        <td>15</td>
+        <td>schema、暗号container、atomic save、reconcile、削除を定義</td>
+      </tr>
+      <tr>
+        <td>PrivacyとSecurity</td>
+        <td>15</td>
+        <td>15</td>
+        <td>local pre-gate、HKDF、Keychain、crypto-shred、fail-closed、backup境界を定義</td>
+      </tr>
+      <tr>
+        <td>FailureとRollback</td>
+        <td>10</td>
+        <td>10</td>
+        <td>各failure、startup recovery、stop condition、data-preserving rollbackを定義</td>
+      </tr>
+      <tr>
+        <td>実装順序</td>
+        <td>10</td>
+        <td>10</td>
+        <td>TS-00〜10と依存Gateを固定</td>
+      </tr>
+      <tr>
+        <td>検証可能性</td>
+        <td>10</td>
+        <td>10</td>
+        <td>unit、failure injection、model corpus、manual、数値gateを定義</td>
+      </tr>
+      <tr>
+        <td>運用と保守</td>
+        <td>5</td>
+        <td>4</td>
+        <td>観測、model rebuild、device差、削除、backup制限を定義。完全exportは非要件</td>
+      </tr>
+      <tr>
+        <th scope="row">合計</th>
+        <td>100</td>
+        <td>98</td>
+        <td>実装開始条件90点以上を満たす</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>初稿レビューで追加した改善:</p>
+  <ul>
+    <li>音声file保存の要望を反映し、embeddingだけでなく暗号化WAVを正規lifecycleへ追加した。</li>
+    <li>Keychain、plaintext temporary禁止、file swap防止、crash整合、delete-pendingを追加した。</li>
+    <li>既存Settings schema versionを不要に上げず、profileを専用repositoryへ分離した。</li>
+    <li>判定前preview送信、非本人によるendpoint発火、profile revision raceを明示的に禁止した。</li>
+    <li>model weight licenseをsource licenseと分け、G0 stop conditionへ追加した。</li>
+    <li>database backupが音声fileを含まない不整合とrestore時のdegraded処理を追加した。</li>
+    <li>
+      本人acceptだけでなく1,000件negative corpus、TTS、barge-in、latencyの数値Gateを追加した。
+    </li>
+    <li>
+      C handleを専用worker threadへ閉じ込め、shutdown、queue overflow、worker
+      crashをfail-closedにした。
+    </li>
+    <li>
+      profile全削除はKeychain
+      keyのcrypto-shredを先行し、crash後にciphertextが読めるwindowをなくした。
+    </li>
+  </ul>
+
+  <h2 id="24-references">24. 外部Dependency Reference</h2>
+  <ul>
+    <li>
+      <a href="https://k2-fsa.github.io/sherpa/onnx/c-api/html/speaker_embedding.html"
+        >sherpa-onnx Speaker Embedding C API</a
+      >
+    </li>
+    <li>
+      <a href="https://k2-fsa.github.io/sherpa/onnx/c-api/index.html"
+        >sherpa-onnx C API build and macOS artifacts</a
+      >
+    </li>
+    <li>
+      <a href="https://developer.apple.com/documentation/security/keychain-services/"
+        >Apple Keychain Services</a
+      >
+    </li>
+    <li>
+      <a href="https://www.w3.org/TR/mediacapture-streams/">W3C Media Capture and Streams</a>
+    </li>
+  </ul>
+  <p>
+    Link先は実装方法の参考であり、選定modelのlicense、checksum、再配布可否を保証しない。
+    <code>TS-00</code
+    >で採用versionごとの根拠をrepository内manifestへ固定する。
+  </p>
+
+  <h2 id="25-final-state">25. 完成時の状態</h2>
+  <pre><code class="language-text">User explicitly enrolls voice in Settings
+  ↓
+Encrypted local WAV samples + encrypted embeddings
+  ↓ persistent, replayable, deletable, rebuildable
+Ready owner voice profile
+  ↓ explicit Target Speaker Filter ON
+
+Continuous microphone candidates
+  ↓ local-only target speaker decision
+verified user only
+  ↓
+preview / final gnosis ASR
+  ↓
+Chat transcript and LLM query
+
+Non-user, TTS-only, uncertain, or verifier failure
+  ↓
+no ASR, no transcript, no query, no persistence</code></pre>
+  <p>
+    完成後、登録音声はユーザーが削除するまで暗号化fileとしてMac内に残り、model更新時の再構築と
+    Settingsからの再生に利用できる。通常Chatでは登録話者としてlocal検証された音声だけがLAN-local
+    ASRへ進む。 判定不能時は利便性よりprivacyを優先し、未filter経路へfallbackしない。
+  </p>
+</article>

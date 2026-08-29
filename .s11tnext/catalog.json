@@ -1,0 +1,49 @@
+{
+  "format": "s11tnext.catalog",
+  "artifactVersion": 2,
+  "compilerVersion": "0.1.2",
+  "releaseProfile": "development",
+  "policyDigest": "sha256:5c53138e991d7c178dc908b35cdd8bd74971966def5b3a8bdbdf04fbd96aa0cf",
+  "createdFrom": {
+    "configPath": "s11tnext.config.toml",
+    "sourceFiles": [
+      "contexts/codex/read-only.context.toml"
+    ]
+  },
+  "contexts": {
+    "codex.read-only": {
+      "key": "codex.read-only",
+      "owner": "saaa-runtime",
+      "contentKind": "text",
+      "messageRole": "system",
+      "sourceLocale": "en-US",
+      "requiredLocales": [
+        "en-US"
+      ],
+      "variables": {},
+      "locales": {
+        "en-US": {
+          "sections": [
+            {
+              "id": "context.text",
+              "kind": "instruction",
+              "severity": "must",
+              "optimizable": false,
+              "omitIfEmpty": false,
+              "segments": [
+                {
+                  "type": "literal",
+                  "value": "Operate read-only. Do not modify files, use network access, use web search, or call MCP tools. If asked to write, explain that this route is read-only."
+                }
+              ]
+            }
+          ],
+          "artifactHash": "sha256:d663fdd30dbcfb11330e88d760e9b45454f9fa614f304a8d14e6364bbaed12d1"
+        }
+      },
+      "definitionHash": "sha256:324080fef682e14fea38a49693a1c208fab982263d656c48ae24c846e4395992",
+      "releaseDigest": "sha256:5aeca72b0c13a6716465f28e2b098d3b770693fe988c90ce4a7a0a158a1266b5"
+    }
+  },
+  "catalogDigest": "sha256:139cc0074ad9d7559857c80a9489ef5f1f92bb1faaacbf4dc87104a0f7269196"
+}

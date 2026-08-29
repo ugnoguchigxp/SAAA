@@ -702,6 +702,12 @@ fn load_cursor(
     }
     let range = match (row.2, row.3, row.4, row.5) {
         (Some(from_ms), Some(to_exclusive_ms), Some(timezone), Some(label)) => {
+            if from_ms >= to_exclusive_ms
+                || DateTime::<Utc>::from_timestamp_millis(from_ms).is_none()
+                || DateTime::<Utc>::from_timestamp_millis(to_exclusive_ms).is_none()
+            {
+                return Err(local_unavailable(""));
+            }
             let timezone = timezone.parse::<Tz>().map_err(|_| local_unavailable(""))?;
             Some(ResolvedRange {
                 from_ms,
@@ -938,7 +944,14 @@ fn load_window(
         )
         .map_err(local_unavailable)?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(local_unavailable)?
+        .map_err(local_unavailable)?;
+    if events
+        .iter()
+        .any(|event| DateTime::<Utc>::from_timestamp_millis(event.created_at_ms).is_none())
+    {
+        return Err(local_unavailable(""));
+    }
+    let events = events
         .into_iter()
         .filter(|event| {
             event.turn_sequence == anchor_turn
@@ -1247,7 +1260,11 @@ fn escape_like(value: &str) -> String {
 }
 
 fn score(raw_bm25: f64) -> f64 {
-    (1.0 / (1.0 + raw_bm25.abs())).clamp(0.0, 1.0)
+    if !raw_bm25.is_finite() {
+        return 0.0;
+    }
+    let strength = (-raw_bm25).max(0.0);
+    (strength / (1.0 + strength)).clamp(0.0, 1.0)
 }
 
 fn digest(value: &str) -> String {
@@ -1433,11 +1450,27 @@ mod tests {
     }
 
     #[test]
+    fn projected_relevance_increases_with_stronger_sqlite_bm25_matches() {
+        assert!(score(-2.0) > score(-1.0));
+        assert!(score(-1.0) > score(0.0));
+        assert_eq!(score(f64::NAN), 0.0);
+    }
+
+    #[test]
     fn version_ten_schema_is_repaired_without_rebuilding_the_database() {
         let connection = database();
+        insert_turn(
+            &connection,
+            "repair_history",
+            1,
+            1_000,
+            "repair keyword",
+            "repair answer",
+        );
         connection
             .execute_batch(
                 "PRAGMA user_version=10;
+                 DELETE FROM conversation_messages_fts;
                  DROP TABLE conversation_recall_attempts;
                  CREATE TABLE conversation_recall_attempts (
                    id TEXT PRIMARY KEY,
@@ -1504,9 +1537,17 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("attempt schema reads");
+        let fts_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages_fts",
+                [],
+                |row| row.get(0),
+            )
+            .expect("fts rows read");
         assert!(attempts);
         assert!(insert_trigger);
         assert!(snapshot_column);
+        assert_eq!(fts_rows, 2);
         assert!(!attempts_schema
             .split_whitespace()
             .collect::<String>()

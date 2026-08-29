@@ -37,7 +37,31 @@ export type ConversationMessage = {
 export type AppSnapshot = {
   settings: SettingsDocument[];
   conversations: Conversation[];
+  primaryConversationId: string;
   larmRuntime: LarmRuntimeStatus;
+  voiceProfile: VoiceProfileSnapshot;
+};
+
+export type VoiceProfileSnapshot = {
+  status: "empty" | "collecting" | "ready";
+  filterEnabled: boolean;
+  runtimeAvailable: boolean;
+  runtimeMessage: string;
+  sampleCount: number;
+  targetSampleCount: number;
+  totalDurationMs: number;
+  minimumDurationMs: number;
+  threshold: number;
+  samples: VoiceSampleSummary[];
+};
+
+export type VoiceSampleSummary = {
+  id: string;
+  ordinal: number;
+  durationMs: number;
+  inputDeviceId: string;
+  effectiveAec: boolean;
+  createdAt: string;
 };
 
 export type LarmRuntimeStatus = {

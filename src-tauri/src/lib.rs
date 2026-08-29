@@ -17,6 +17,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
+use zeroize::Zeroizing;
 
 mod meeting;
 mod memory;
@@ -31,6 +32,9 @@ const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 const GNOSIS_PROVIDER_ID: &str = "gnosis-qwen";
 const GNOSIS_ENDPOINT: &str = "http://192.168.0.65:8080/v1";
 const GNOSIS_MODEL: &str = "Qwen3.8-27B-ROCmFP4-FAST.gguf";
+const PRIMARY_CONVERSATION_ID: &str = "conversation_primary";
+const PRIMARY_CONVERSATION_TITLE: &str = "SAAAとの会話";
+const CODEX_READ_ONLY_SYSTEM_CONTEXT: &str = include_str!("../../.s11tnext/codex-read-only.txt");
 
 struct AppState {
     connection: Arc<Mutex<Connection>>,
@@ -40,6 +44,7 @@ struct AppState {
     tts_process: Mutex<Option<ActiveTts>>,
     situation: Arc<situation::SituationRuntime>,
     meeting: Arc<meeting::MeetingRuntime>,
+    voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
 }
 
 struct ActiveTts {
@@ -134,7 +139,7 @@ struct SaveSettingsDocumentsInput {
     documents: Vec<SaveSettingsDocumentInput>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Conversation {
     id: String,
@@ -174,7 +179,9 @@ struct AppendMessageInput {
 struct AppSnapshot {
     settings: Vec<SettingsDocument>,
     conversations: Vec<Conversation>,
+    primary_conversation_id: String,
     larm_runtime: LarmRuntimeStatus,
+    voice_profile: voice::profile::VoiceProfileSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -487,6 +494,19 @@ fn frontend_ready(state: tauri::State<'_, AppState>) -> Result<(), String> {
         return Ok(());
     };
     validate_identifier(&marker_id, "smoke marker id")?;
+    if env::var_os("SAAA_SMOKE_REQUIRE_SPEAKER").is_some() {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        let voice_profile = state.voice_profile.snapshot(&connection)?;
+        if !voice_profile.runtime_available {
+            return Err(format!(
+                "Packaged speaker verification is unavailable: {}",
+                voice_profile.runtime_message
+            ));
+        }
+    }
     if env::var_os("SAAA_SMOKE_EXERCISE_SITUATION").is_some() {
         state.situation.set_monitoring(&state.connection, true)?;
         let sample = state.situation.sample_platform()?;
@@ -613,15 +633,110 @@ fn get_app_snapshot(state: tauri::State<'_, AppState>) -> Result<AppSnapshot, St
         .connection
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
+    let primary_conversation = ensure_primary_conversation(&connection)?;
+    let mut conversations = list_conversations_from_connection(&connection)?;
+    if !conversations
+        .iter()
+        .any(|conversation| conversation.id == primary_conversation.id)
+    {
+        conversations.push(primary_conversation.clone());
+    }
     Ok(AppSnapshot {
         settings: list_settings_documents(&connection)?,
-        conversations: list_conversations_from_connection(&connection)?,
+        conversations,
+        primary_conversation_id: primary_conversation.id,
         larm_runtime: LarmRuntimeStatus {
             state: state.larm_gate.state(),
             message: state.larm_gate.public_message(),
             contract_commit: providers::larm::CONTRACT_COMMIT,
         },
+        voice_profile: state.voice_profile.snapshot(&connection)?,
     })
+}
+
+#[tauri::command]
+fn get_voice_profile_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Result<voice::profile::VoiceProfileSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    state.voice_profile.snapshot(&connection)
+}
+
+#[tauri::command]
+fn save_voice_enrollment_sample(
+    state: tauri::State<'_, AppState>,
+    input: voice::profile::SaveVoiceEnrollmentSampleInput,
+) -> Result<voice::profile::VoiceProfileSnapshot, String> {
+    if state.meeting.blocks_tts() {
+        return Err(
+            "Voice enrollment is unavailable while a meeting is active or paused".to_string(),
+        );
+    }
+    if state
+        .tts_process
+        .lock()
+        .map(|value| value.is_some())
+        .unwrap_or(true)
+    {
+        return Err("Stop speech playback before recording an enrollment sample".to_string());
+    }
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    state.voice_profile.save_sample(&connection, input)
+}
+
+#[tauri::command]
+fn set_target_speaker_filter_enabled(
+    state: tauri::State<'_, AppState>,
+    input: voice::profile::SetTargetSpeakerFilterInput,
+) -> Result<voice::profile::VoiceProfileSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    state
+        .voice_profile
+        .set_filter_enabled(&connection, input.enabled)
+}
+
+#[tauri::command]
+fn delete_voice_enrollment_sample(
+    state: tauri::State<'_, AppState>,
+    sample_id: String,
+) -> Result<voice::profile::VoiceProfileSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    state.voice_profile.delete_sample(&connection, &sample_id)
+}
+
+#[tauri::command]
+fn delete_voice_profile(
+    state: tauri::State<'_, AppState>,
+) -> Result<voice::profile::VoiceProfileSnapshot, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    state.voice_profile.delete_profile(&connection)
+}
+
+#[tauri::command]
+fn read_voice_enrollment_sample(
+    state: tauri::State<'_, AppState>,
+    sample_id: String,
+) -> Result<Vec<u8>, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    state.voice_profile.read_sample(&connection, &sample_id)
 }
 
 #[tauri::command]
@@ -998,7 +1113,7 @@ async fn test_model_provider(
 #[tauri::command]
 async fn transcribe_audio(
     state: tauri::State<'_, AppState>,
-    input: TranscribeAudioInput,
+    mut input: TranscribeAudioInput,
     on_event: tauri::ipc::Channel<VoiceEvent>,
 ) -> Result<String, String> {
     validate_identifier(&input.run_id, "run id")?;
@@ -1014,6 +1129,25 @@ async fn transcribe_audio(
     }
     if input.model != voice::gnosis_asr::MODEL_ID {
         return Err("Voice settings must use the configured gnosis ASR model".to_string());
+    }
+    let samples = Zeroizing::new(std::mem::take(&mut input.samples));
+    let verification = {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        state
+            .voice_profile
+            .verify_if_enabled(&connection, &samples, input.sample_rate)
+    };
+    if let Err(error) = verification {
+        let recovery = "Use the enrolled microphone and speak clearly, or disable the target-speaker filter in Settings.".to_string();
+        let _ = on_event.send(VoiceEvent::Failed {
+            run_id: input.run_id.clone(),
+            message: error.clone(),
+            recovery,
+        });
+        return Err(error);
     }
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(&state, &input.run_id, cancellation.clone())?;
@@ -1037,7 +1171,7 @@ async fn transcribe_audio(
         .situation
         .set_microphone_state(situation::contracts::MicrophoneState::SaaaTranscribing);
     let result = voice::gnosis_asr::transcribe(
-        &input.samples,
+        &samples,
         input.sample_rate,
         &input.model,
         cancellation.clone(),
@@ -1085,7 +1219,7 @@ async fn transcribe_audio(
 #[tauri::command]
 async fn preview_audio(
     state: tauri::State<'_, AppState>,
-    input: PreviewAudioInput,
+    mut input: PreviewAudioInput,
     on_event: tauri::ipc::Channel<VoiceEvent>,
 ) -> Result<String, String> {
     validate_identifier(&input.run_id, "run id")?;
@@ -1102,10 +1236,20 @@ async fn preview_audio(
     if input.model != voice::gnosis_asr::MODEL_ID {
         return Err("Voice settings must use the configured gnosis ASR model".to_string());
     }
+    let samples = Zeroizing::new(std::mem::take(&mut input.samples));
+    {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        state
+            .voice_profile
+            .verify_if_enabled(&connection, &samples, input.sample_rate)?;
+    }
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(&state, &input.run_id, cancellation.clone())?;
     let result = voice::gnosis_asr::transcribe(
-        &input.samples,
+        &samples,
         input.sample_rate,
         &input.model,
         cancellation.clone(),
@@ -1941,16 +2085,39 @@ async fn execute_conversation_turn(
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
 ) -> Result<ConversationMessage, String> {
-    let (providers, route, security, history) = {
+    let (providers, route, security, history, context_health) = {
         let connection = state
             .connection
             .lock()
             .map_err(|_| "Database lock unavailable".to_string())?;
+        let input_message_id: String = connection
+            .query_row(
+                "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
+                params![input.run_id],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        let context_window =
+            memory::context_window::build(&connection, &input.conversation_id, &input_message_id)?;
+        let context_health = context_window.health.clone();
+        let history = context_window
+            .messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| ConversationMessage {
+                id: format!("context-projection-{index}"),
+                conversation_id: input.conversation_id.clone(),
+                role: message.role,
+                content: message.content,
+                created_at: index.to_string(),
+            })
+            .collect::<Vec<_>>();
         (
             load_model_providers(&connection)?,
             load_routing_settings(&connection)?.conversation_respond,
             load_security_settings(&connection)?,
-            list_messages_from_connection(&connection, &input.conversation_id)?,
+            history,
+            context_health,
         )
     };
     let route_ids = apply_runtime_provider_gates(
@@ -1962,6 +2129,7 @@ async fn execute_conversation_turn(
         return Err(state.larm_gate.public_message().to_string());
     }
     let mut failures = Vec::new();
+    let mut context_health_emitted = false;
 
     for provider_id in route_ids {
         if cancellation.is_cancelled() {
@@ -2007,6 +2175,22 @@ async fn execute_conversation_turn(
                 .public_message()
                 .as_str()
                 .to_string());
+        }
+        if !context_health_emitted {
+            let _ = on_event.send(RuntimeEvent::Activity {
+                run_id: input.run_id.clone(),
+                kind: "context-window".to_string(),
+                summary: format!(
+                    "Context {}: {}/{} bytes, {} recent messages, {} continuity groups, {} source messages omitted",
+                    context_health.status,
+                    context_health.projected_bytes,
+                    context_health.hard_limit_bytes,
+                    context_health.recent_source_messages,
+                    context_health.continuity_group_count,
+                    context_health.dropped_source_messages,
+                ),
+            });
+            context_health_emitted = true;
         }
         let outcome = match &provider {
             ModelProviderSettings::OpenAiCompatible(provider) => {
@@ -2557,7 +2741,7 @@ fn run_codex_turn_process_with_policy(
                 "mcp_servers": {},
                 "sandbox_workspace_write": { "network_access": false }
             },
-            "developerInstructions": "Operate read-only. Do not modify files, use network access, use web search, or call MCP tools. If asked to write, explain that this route is read-only."
+            "developerInstructions": CODEX_READ_ONLY_SYSTEM_CONTEXT
         });
         if !model.is_empty() {
             params["model"] = Value::String(model.to_string());
@@ -5211,6 +5395,13 @@ fn create_conversation(
     {
         return Err("Conversation title exceeds the 120 character limit".to_string());
     }
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    if input.task_mode == "conversation" {
+        return ensure_primary_conversation(&connection);
+    }
     let now = now_iso();
     let conversation = Conversation {
         id: new_id("conversation"),
@@ -5219,10 +5410,6 @@ fn create_conversation(
         created_at: now.clone(),
         updated_at: now,
     };
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
     connection
         .execute(
             "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
@@ -5236,6 +5423,37 @@ fn create_conversation(
             ],
         )
         .map_err(database_error)?;
+    Ok(conversation)
+}
+
+fn ensure_primary_conversation(connection: &Connection) -> Result<Conversation, String> {
+    let now = now_iso();
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+             VALUES (?1, ?2, 'conversation', ?3, ?3)",
+            params![PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE, now],
+        )
+        .map_err(database_error)?;
+    let conversation = connection
+        .query_row(
+            "SELECT id, title, task_mode, created_at, updated_at
+             FROM conversations WHERE id = ?1",
+            params![PRIMARY_CONVERSATION_ID],
+            |row| {
+                Ok(Conversation {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    task_mode: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            },
+        )
+        .map_err(database_error)?;
+    if conversation.task_mode != "conversation" {
+        return Err("Primary conversation has an invalid task mode".to_string());
+    }
     Ok(conversation)
 }
 
@@ -5458,6 +5676,7 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     migrate_v7_to_v8(&transaction)?;
     migrate_v8_to_v9(&transaction)?;
     memory::recall::migrate_v9_to_v10(&transaction)?;
+    voice::profile::migrate_v10_to_v11(&transaction)?;
     transaction.execute("UPDATE settings_documents SET schema_version = 9, updated_at = ?1 WHERE schema_version < 9", params![now_iso()])?;
 
     for (namespace, key, schema_version, value) in default_settings_documents() {
@@ -5470,7 +5689,7 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     migrate_pristine_provider_defaults_to_gnosis(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
-    transaction.pragma_update(None, "user_version", 10)?;
+    transaction.pragma_update(None, "user_version", 11)?;
     transaction.commit()
 }
 
@@ -5803,7 +6022,7 @@ fn backup_before_migration(
     let has_data = fs::metadata(database_path)
         .map(|metadata| metadata.len() > 0)
         .unwrap_or(false);
-    if !has_data || version >= 10 {
+    if !has_data || version >= 11 {
         return Ok(None);
     }
     let directory = database_path
@@ -6510,11 +6729,13 @@ fn list_conversations_from_connection(
     let mut statement = connection
         .prepare(
             "SELECT id, title, task_mode, created_at, updated_at
-             FROM conversations ORDER BY updated_at DESC LIMIT 30",
+             FROM conversations
+             WHERE task_mode = 'coding' OR id = ?1
+             ORDER BY updated_at DESC LIMIT 30",
         )
         .map_err(database_error)?;
     let conversations = statement
-        .query_map([], |row| {
+        .query_map(params![PRIMARY_CONVERSATION_ID], |row| {
             Ok(Conversation {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -6607,6 +6828,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let database_path = application_database_path(app)?;
+            let voice_resource_directory = app
+                .path()
+                .resolve("voice", tauri::path::BaseDirectory::Resource)?;
+            let voice_data_directory = database_path
+                .parent()
+                .ok_or_else(|| std::io::Error::other("Database path has no parent directory"))?
+                .to_path_buf();
+            let voice_profile = Arc::new(voice::profile::VoiceProfileRuntime::initialize(
+                voice_resource_directory,
+                voice_data_directory,
+            ));
             let bundled_codex = app.path().resolve(
                 if cfg!(windows) {
                     "bin/codex.exe"
@@ -6649,6 +6881,7 @@ pub fn run() {
                 tts_process: Mutex::new(None),
                 situation,
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
+                voice_profile,
             });
             Ok(())
         })
@@ -6682,6 +6915,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            get_voice_profile_snapshot,
+            save_voice_enrollment_sample,
+            set_target_speaker_filter_enabled,
+            delete_voice_enrollment_sample,
+            delete_voice_profile,
+            read_voice_enrollment_sample,
             frontend_ready,
             export_diagnostics,
             backup_database,
@@ -6742,6 +6981,9 @@ mod tests {
                     .expect("Situation runtime initializes"),
             ),
             meeting: Arc::new(meeting::MeetingRuntime::new()),
+            voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
+                PathBuf::new(),
+            )),
         }
     }
 
@@ -7039,6 +7281,60 @@ mod tests {
     }
 
     #[test]
+    fn primary_conversation_is_idempotent_and_preserves_legacy_history() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('legacy-conversation', 'Legacy', 'conversation', '0', '0')",
+                [],
+            )
+            .expect("legacy conversation inserts");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('coding-conversation', 'Coding', 'coding', '0', '0')",
+                [],
+            )
+            .expect("coding conversation inserts");
+
+        let first = ensure_primary_conversation(&connection).expect("primary creates");
+        let second = ensure_primary_conversation(&connection).expect("primary reuses");
+        let primary_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE id = ?1",
+                params![PRIMARY_CONVERSATION_ID],
+                |row| row.get(0),
+            )
+            .expect("primary count loads");
+        let legacy_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE id = 'legacy-conversation'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy count loads");
+        let visible =
+            list_conversations_from_connection(&connection).expect("visible conversations load");
+
+        assert_eq!(first.id, PRIMARY_CONVERSATION_ID);
+        assert_eq!(first.title.as_deref(), Some(PRIMARY_CONVERSATION_TITLE));
+        assert_eq!(first.id, second.id);
+        assert_eq!(primary_count, 1);
+        assert_eq!(legacy_count, 1);
+        assert!(visible
+            .iter()
+            .any(|conversation| conversation.id == PRIMARY_CONVERSATION_ID));
+        assert!(visible
+            .iter()
+            .any(|conversation| conversation.id == "coding-conversation"));
+        assert!(!visible
+            .iter()
+            .any(|conversation| conversation.id == "legacy-conversation"));
+    }
+
+    #[test]
     fn migration_creates_default_documents() {
         let connection = Connection::open_in_memory().expect("in-memory sqlite");
         initialize_database(&connection).expect("migration succeeds");
@@ -7089,7 +7385,7 @@ mod tests {
                 )
                 .expect("active profile reads"),
         );
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         assert_eq!(active_profile, "profile_mvp1_default");
         let recall_schema_objects: i64 = connection
             .query_row(
@@ -7282,7 +7578,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("legacy transcript remains");
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         assert_eq!(
             voice.pointer("/sttProviderId"),
             Some(&json!(voice::gnosis_asr::PROVIDER_ID))
@@ -7329,7 +7625,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         assert!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table exists"));
         initialize_database(&connection).expect("migration idempotent");
     }
@@ -7499,7 +7795,7 @@ mod tests {
             .expect("provider settings read");
         let provider_value: Value =
             serde_json::from_str(&provider_value).expect("provider settings decode");
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         assert_eq!(
             provider_value.pointer("/providers/0/kind"),
             Some(&json!("openai-compatible"))
@@ -7823,7 +8119,7 @@ mod tests {
         let version: i64 = reopened
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         let documents = list_settings_documents(&reopened).expect("settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents
@@ -8884,6 +9180,8 @@ mod tests {
         let projected = events.lock().expect("event lock").join("\n");
         assert!(projected.contains("providerFailed"));
         assert!(projected.contains("messageCompleted"));
+        assert_eq!(projected.matches("\"kind\":\"context-window\"").count(), 1);
+        assert!(projected.contains("Context green:"));
         assert_eq!(
             *completed_states.lock().expect("completed state lock"),
             vec!["completed"]

@@ -1,0 +1,3 @@
+message_role = "system"
+
+text = "Operate read-only. Do not modify files, use network access, use web search, or call MCP tools. If asked to write, explain that this route is read-only."

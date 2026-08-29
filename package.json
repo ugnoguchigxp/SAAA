@@ -5,12 +5,15 @@
   "description": "Situation-Aware Ambient Agent Runtime",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "bun run s11tnext:check && vite",
+    "build": "bun run s11tnext:check && tsc && vite build",
     "typecheck": "tsc --noEmit",
-    "test:frontend": "bun test tests",
+    "test:frontend": "bun run s11tnext:check && bun test tests",
     "test": "bun run test:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
-    "check": "bun run typecheck && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && bun run test",
+    "check": "bun run s11tnext:check && bun run typecheck && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && bun run test",
+    "s11tnext:lint": "s11tnext lint --release-profile development",
+    "s11tnext:build": "s11tnext build --release-profile development && bun scripts/render-system-contexts.ts",
+    "s11tnext:check": "s11tnext build --check --release-profile development && bun scripts/render-system-contexts.ts --check",
     "desktop:smoke": "bun scripts/desktop-smoke.ts",
     "larm:preflight": "bun scripts/larm-readiness.ts preflight",
     "larm:canary": "bun scripts/larm-readiness.ts canary",
@@ -30,6 +33,7 @@
     "@tauri-apps/plugin-dialog": "^2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "s11tnext": "0.1.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -37,6 +41,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "s11tnext-cli": "0.1.2",
     "spec-html": "0.1.6",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"

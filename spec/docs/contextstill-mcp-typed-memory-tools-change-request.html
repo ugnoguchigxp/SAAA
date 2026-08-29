@@ -1,0 +1,798 @@
+<article lang="ja">
+  <h1 id="contextstill-mcp-typed-memory-tools-change-request">
+    ContextStill MCP 型別Memory Tool改修依頼書
+  </h1>
+
+  <h2 id="0-request-metadata">0. 依頼情報</h2>
+  <ul>
+    <li>Status: Implementation Request</li>
+    <li>Requested: 2026-08-29</li>
+    <li>Requester: SAAA MVP 3 Memory Architecture</li>
+    <li>Target repository: ContextStill</li>
+    <li>Verified ContextStill baseline: <code>b20d78e</code></li>
+    <li>Primary target: TypeScript MCP server and shared retrieval services</li>
+  </ul>
+  <p>
+    本依頼は、ContextStill MCPのMemory FetchをExperience、Rule、Skillの型別Toolへ整理し、
+    SAAAのSessionless Agentが必要なMemoryだけを安全に選択取得できるようにするものである。
+    ContextStillの保存schema、既存Episode・Knowledge lifecycle、primary coding
+    workflowを置き換える依頼ではない。
+  </p>
+  <p>
+    SAAA側の上位契約は
+    <a href="mvp-3-memory-architecture-implementation-plan.html"
+      >MVP 3 Memory Architecture実装契約</a
+    >のSection 14を参照する。
+  </p>
+
+  <h2 id="1-request-summary">1. 依頼する変更</h2>
+  <p>ContextStill MCPに次の三つのmodel-visible Fetch Toolを追加する。</p>
+  <pre><code class="language-text">recall_experience → EpisodeCard
+recall_rule       → Knowledge type = rule
+recall_skill      → Knowledge type = procedure</code></pre>
+  <p>
+    各Toolは同じ検索結果を名前だけ変えて返すaliasではない。入力schema、返却型、Context上の意味、
+    output
+    budget、no-hit契約を型ごとに固定する。ただし検索・ranking・repositoryは既存serviceを再利用し、
+    新しいMemory storeまたは重複indexを作らない。
+  </p>
+  <p>
+    既存<code>search_episodes</code>、<code>fetch_episode</code>、
+    <code>search_knowledge</code>は互換呼び出し可能に残す。 新typed
+    toolsの安定後、default exposed catalogではtyped toolsを優先し、generic toolsは compatibility
+    callableへ段階的に移す。
+  </p>
+
+  <h2 id="2-verified-baseline">2. 確認済みBaseline</h2>
+  <table>
+    <caption>
+      Table: Current ContextStill MCP implementation
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Tool / component</th>
+        <th scope="col">現状</th>
+        <th scope="col">本依頼での扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>search_episodes</code></td>
+        <td>
+          <code>src/mcp/tools/episode.tool.ts</code>からEpisodeCardを検索し、outcome
+          kindとrefを返す
+        </td>
+        <td><code>recall_experience</code>の検索serviceとして再利用する</td>
+      </tr>
+      <tr>
+        <td><code>fetch_episode</code></td>
+        <td>EpisodeCard一件をfull objectで返す</td>
+        <td>互換用に維持し、SAAAの通常Fetchでは使用しない</td>
+      </tr>
+      <tr>
+        <td><code>search_knowledge</code></td>
+        <td>
+          <code>types: [rule, procedure]</code>で絞り込めるが、一つのgeneric
+          outputへ混在可能
+        </td>
+        <td>
+          <code>recall_rule</code
+          >と<code>recall_skill</code>の検索serviceとして再利用する
+        </td>
+      </tr>
+      <tr>
+        <td><code>context_compile</code></td>
+        <td>Knowledgeとsource evidenceからcoding task用context packを編集するprimary workflow</td>
+        <td>維持する。SAAAの型別Runtime Fetchへ転用しない</td>
+      </tr>
+      <tr>
+        <td>
+          <code>search_memory</code> /
+          <code>fetch_memory</code>
+        </td>
+        <td>vibe memory、past session、agent diffを扱うGnosis互換Tool</td>
+        <td>維持するが、SAAAのEpisode・Rule・Skill Fetchへ転用しない</td>
+      </tr>
+      <tr>
+        <td>MCP catalog</td>
+        <td><code>src/mcp/tools/index.ts</code>のv1 / v2 entriesで公開面を管理</td>
+        <td>feature-gated typed catalogを追加する</td>
+      </tr>
+      <tr>
+        <td>Procedure quality</td>
+        <td>
+          <code>Use when</code
+          >、<code>Workflow</code>、<code>Verification</code>、
+          <code>Avoid</code>の品質検査が存在
+        </td>
+        <td>Skill typed projectionでも同じsection contractを使用する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="3-problem">3. 現状の問題</h2>
+  <ol>
+    <li>
+      <code>search_knowledge</code
+      >はRuleとProcedureを同時に返せるため、Agentが判断基準を探しているのか、
+      実行手順を探しているのかがTool選択時に固定されない。
+    </li>
+    <li>
+      Episode、Rule、ProcedureはContext上のtrustと利用方法が異なるが、共通のtyped envelopeがない。
+    </li>
+    <li>
+      現行<code>search_episodes</code> outputにはrepository path/keyやraw
+      locatorを含み得る。 SAAAは抽象化済みopaque source ref以外を受け取ってはならない。
+    </li>
+    <li>
+      現行no-hitはToolによってplain
+      textの<code>no content</code>になり、callerが型付きで処理できない。
+    </li>
+    <li>
+      <code>context_compile</code>はcoding
+      task用に複数Memoryを編集するため、SAAAのMemory種別別Fetchには広すぎる。
+    </li>
+    <li>
+      legacy <code>search_memory</code>はsession filterとRaw
+      memoryを扱うため、Sessionless SAAAの Experience Fetchに使用すると責務が混線する。
+    </li>
+  </ol>
+
+  <h2 id="4-fixed-boundaries">4. 固定する責務境界</h2>
+  <table>
+    <caption>
+      Table: Memory types and authority
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Memory</th>
+        <th scope="col">正本</th>
+        <th scope="col">Tool</th>
+        <th scope="col">Context上の扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Raw Conversation</td>
+        <td>SAAA SQLite</td>
+        <td><code>recall_conversation</code></td>
+        <td>historical raw evidence</td>
+      </tr>
+      <tr>
+        <td>Experience</td>
+        <td>ContextStill EpisodeCard</td>
+        <td><code>recall_experience</code></td>
+        <td>past precedent evidence</td>
+      </tr>
+      <tr>
+        <td>Rule</td>
+        <td>ContextStill Knowledge type <code>rule</code></td>
+        <td><code>recall_rule</code></td>
+        <td>constraint candidate</td>
+      </tr>
+      <tr>
+        <td>Skill</td>
+        <td>ContextStill Knowledge type <code>procedure</code></td>
+        <td><code>recall_skill</code></td>
+        <td>procedure candidate</td>
+      </tr>
+      <tr>
+        <td>User Core / Working / Capsule</td>
+        <td>SAAA SQLite</td>
+        <td>なし</td>
+        <td>SAAA Context Builderによる自動投影</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>ContextStillはSAAAのRaw Conversationを検索しない。</li>
+    <li>三つのtyped toolsはすべてread-onlyで、Memoryを登録、昇格、更新しない。</li>
+    <li>active Memoryだけを通常返し、draftまたはdeprecatedをcaller inputで有効化させない。</li>
+    <li>返却MemoryはAgent PolicyまたはCurrent User instructionを上書きする権限を持たない。</li>
+    <li>
+      scopeは既存の<code>repo</code>と<code>global</code>だけを使用し、新scopeを追加しない。
+    </li>
+  </ul>
+
+  <h2 id="5-common-contract">5. 共通MCP Contract</h2>
+  <h3 id="51-common-input">5.1 Common input</h3>
+  <pre><code class="language-json">{
+  "query": "string, 1..2000 chars",
+  "projectRef": "optional opaque string",
+  "includeGlobal": true,
+  "domains": ["optional"],
+  "technologies": ["optional"],
+  "changeTypes": ["optional"],
+  "limit": 5
+}</code></pre>
+  <ul>
+    <li>全input schemaを<code>additionalProperties: false</code>にする。</li>
+    <li><code>limit</code>はdefault 5、minimum 1、maximum 10とする。</li>
+    <li>
+      <code>projectRef</code>はopaque、case-sensitive、最大256文字とする。
+    </li>
+    <li>
+      新typed
+      toolsは<code>repoPath</code>、<code>repoKey</code>、<code>sessionId</code>を受けない。
+    </li>
+    <li>queryをdiagnostic logまたはusage receiptへ平文保存しない。</li>
+  </ul>
+
+  <h3 id="52-common-output">5.2 Common output envelope</h3>
+  <pre><code class="language-json">{
+  "contractVersion": "memory-recall-v1",
+  "memoryType": "experience | rule | skill",
+  "trust": {
+    "trustClass": "untrusted_memory_evidence",
+    "instructionAuthority": "none"
+  },
+  "retrieval": {
+    "mode": "lexical-metadata-v1",
+    "degradedReasons": []
+  },
+  "items": [],
+  "noContent": true,
+  "truncated": false
+}</code></pre>
+  <ul>
+    <li>
+      no-hitでも同じJSON
+      envelopeを返し、<code>items: []</code>、<code>noContent: true</code>とする。
+    </li>
+    <li>Tool response全体は4,000 token以内をhard capとする。</li>
+    <li>各itemの本文は1,200文字以内を初期capとし、超過時は型を壊さずfield単位で短縮する。</li>
+    <li>
+      outputに<code>repoPath</code>、<code>repoKey</code>、raw
+      locator、DB id以外の内部識別子を出さない。
+    </li>
+    <li>score、confidenceは0〜100へ正規化し、scaleをTool間で揃える。</li>
+    <li>
+      degraded時も別形式へfallbackせず、<code>degradedReasons</code>へbounded reason
+      codeを入れる。
+    </li>
+  </ul>
+
+  <h2 id="6-experience-contract">6. <code>recall_experience</code></h2>
+  <p>再利用可能な成功、失敗、mixed、unknown Episodeを取得する。</p>
+  <h3 id="61-experience-input">6.1 Input extension</h3>
+  <pre><code class="language-json">{
+  "query": "similar failure with a reusable avoidance",
+  "outcomeKinds": ["success", "failure", "mixed"],
+  "projectRef": "opaque-or-omitted",
+  "includeGlobal": true,
+  "limit": 5
+}</code></pre>
+  <p>
+    <code>outcomeKinds</code
+    >は<code>success</code>、<code>failure</code>、
+    <code>mixed</code
+    >、<code>unknown</code>だけを許可する。
+  </p>
+  <h3 id="62-experience-output">6.2 Item output</h3>
+  <pre><code class="language-json">{
+  "id": "episode-id",
+  "title": "abstracted title",
+  "situation": "abstracted situation",
+  "action": "abstracted action",
+  "outcome": "abstracted outcome",
+  "lesson": "abstracted reusable lesson",
+  "outcomeKind": "failure",
+  "confidence": 88,
+  "score": 92,
+  "sourceRefs": [
+    {
+      "kind": "opaque",
+      "ref": "saaa://memory-source/opaque-id"
+    }
+  ]
+}</code></pre>
+  <ul>
+    <li>Episode以外を返さない。</li>
+    <li>actionを含む。現行compact mapperで欠落している場合はtyped projectionで補う。</li>
+    <li>source refはallowlist済みopaque schemeだけを返す。</li>
+    <li>Raw Conversation本文、raw query hint、filesystem locatorを返さない。</li>
+  </ul>
+
+  <h2 id="7-rule-contract">7. <code>recall_rule</code></h2>
+  <p>現在の判断へ適用候補となる宣言的RuleとGuardrailを取得する。</p>
+  <h3 id="71-rule-input">7.1 Input extension</h3>
+  <pre><code class="language-json">{
+  "query": "rule for preserving raw-memory provenance",
+  "polarities": ["positive", "negative", "neutral"],
+  "intentTags": ["guardrail"],
+  "projectRef": "opaque-or-omitted",
+  "includeGlobal": true,
+  "limit": 5
+}</code></pre>
+  <h3 id="72-rule-output">7.2 Item output</h3>
+  <pre><code class="language-json">{
+  "id": "knowledge-id",
+  "title": "rule title",
+  "rule": "declarative rule body",
+  "polarity": "negative",
+  "appliesTo": {},
+  "intentTags": ["guardrail"],
+  "confidence": 91,
+  "importance": 85,
+  "score": 93,
+  "originRefs": []
+}</code></pre>
+  <ul>
+    <li>
+      <code>searchKnowledgeCandidates</code
+      >を<code>types: [rule]</code>で強制する。
+    </li>
+    <li>statusはactiveに固定し、draft/deprecatedを返さない。</li>
+    <li>RuleはPolicyではなくconstraint candidateである。</li>
+    <li>Rule本文中の命令形をsystem instruction roleへ変換しない。</li>
+  </ul>
+
+  <h2 id="8-skill-contract">8. <code>recall_skill</code></h2>
+  <p>再利用可能な実行手順をProcedureから取得し、構造化Skillとして返す。</p>
+  <h3 id="81-skill-input">8.1 Input extension</h3>
+  <pre><code class="language-json">{
+  "query": "procedure for revising a memory tool contract",
+  "intentTags": ["workflow"],
+  "projectRef": "opaque-or-omitted",
+  "includeGlobal": true,
+  "limit": 5
+}</code></pre>
+  <h3 id="82-skill-output">8.2 Item output</h3>
+  <pre><code class="language-json">{
+  "id": "knowledge-id",
+  "title": "skill title",
+  "useWhen": "applicability condition",
+  "workflow": ["step 1", "step 2"],
+  "verification": ["check 1"],
+  "avoid": ["unsafe shortcut"],
+  "appliesTo": {},
+  "confidence": 90,
+  "importance": 82,
+  "score": 94,
+  "originRefs": []
+}</code></pre>
+  <ul>
+    <li>
+      <code>searchKnowledgeCandidates</code
+      >を<code>types: [procedure]</code>で強制する。
+    </li>
+    <li>
+      既存の<code>Use when</code>、<code>Workflow</code>、<code>Verification</code>、
+      <code>Avoid</code> section contractからtyped projectionを作る。
+    </li>
+    <li>
+      sectionを安全にparseできないactive Procedureはuntyped bodyとして返さず、除外して
+      <code>malformed_skill_projection</code>をdegraded reasonへ追加する。
+    </li>
+    <li>workflowの各stepは順序を保持し、VerificationとAvoidをWorkflowへ混ぜない。</li>
+    <li>Skillは実行候補であり、現在のUser instructionなしに自動実行する権限を持たない。</li>
+  </ul>
+
+  <h2 id="9-routing">9. Agent Tool選択契約</h2>
+  <table>
+    <caption>
+      Table: Tool selection examples
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">User intent</th>
+        <th scope="col">選ぶTool</th>
+        <th scope="col">選ばないTool</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>以前何を話したか</td>
+        <td>SAAA <code>recall_conversation</code></td>
+        <td>ContextStill全Tool</td>
+      </tr>
+      <tr>
+        <td>似た成功・失敗事例</td>
+        <td><code>recall_experience</code></td>
+        <td>
+          <code>recall_rule</code>、<code>recall_skill</code>
+        </td>
+      </tr>
+      <tr>
+        <td>守るべき原則・禁止事項</td>
+        <td><code>recall_rule</code></td>
+        <td>
+          <code>recall_experience</code>、<code>recall_skill</code>
+        </td>
+      </tr>
+      <tr>
+        <td>再利用できる進め方</td>
+        <td><code>recall_skill</code></td>
+        <td>
+          <code>recall_experience</code>、<code>recall_rule</code>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>no-hitを理由に残り二Toolを無条件に全件呼び出さない。</li>
+    <li>一つのintentが複数型を明示的に必要とする場合だけ、必要な型を順番に追加取得する。</li>
+    <li>
+      <code>context_compile</code>はcoding taskのprimary workflowとして維持し、
+      typed toolsを毎task三件すべて呼ぶworkflowへ変更しない。
+    </li>
+  </ul>
+
+  <h2 id="10-compatibility">10. 公開Catalogと互換性</h2>
+  <p>
+    現行<code>MCP_V2</code>を直接破壊しない。新catalogは明示feature gate
+    <code>MCP_TYPED_MEMORY_TOOLS</code>で段階導入する。
+  </p>
+  <table>
+    <caption>
+      Table: Compatibility behavior
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Tool</th>
+        <th scope="col">typed catalogでの公開</th>
+        <th scope="col">callable compatibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>recall_experience</code></td>
+        <td>公開</td>
+        <td>新規</td>
+      </tr>
+      <tr>
+        <td><code>recall_rule</code></td>
+        <td>公開</td>
+        <td>新規</td>
+      </tr>
+      <tr>
+        <td><code>recall_skill</code></td>
+        <td>公開</td>
+        <td>新規</td>
+      </tr>
+      <tr>
+        <td><code>search_episodes</code></td>
+        <td>移行後は非公開候補</td>
+        <td>維持</td>
+      </tr>
+      <tr>
+        <td><code>fetch_episode</code></td>
+        <td>移行後は非公開候補</td>
+        <td>維持</td>
+      </tr>
+      <tr>
+        <td><code>search_knowledge</code></td>
+        <td>移行後は非公開候補</td>
+        <td>維持</td>
+      </tr>
+      <tr>
+        <td><code>context_compile</code></td>
+        <td>公開維持</td>
+        <td>維持</td>
+      </tr>
+      <tr>
+        <td>
+          <code>search_memory</code> /
+          <code>fetch_memory</code>
+        </td>
+        <td>現状維持</td>
+        <td>維持</td>
+      </tr>
+    </tbody>
+  </table>
+  <ol>
+    <li>Phase A: feature gate OFFでtyped toolsをcallableに追加し、既存catalogを維持する。</li>
+    <li>Phase B: isolated SAAAだけでfeature gateをONにし、typed toolsをexposeする。</li>
+    <li>Phase C: contract、quality、latency gate通過後にtyped catalogをdefault ON候補にする。</li>
+    <li>generic toolsを削除する場合は本依頼とは別のdeprecation decisionを必要とする。</li>
+  </ol>
+
+  <h2 id="11-implementation-targets">11. 実装対象</h2>
+  <pre><code class="language-text">ContextStill
+├─ src/mcp/tools/typed-memory.tool.ts                 # new MCP façades
+├─ src/mcp/tools/index.ts                             # gated catalog
+├─ src/shared/schemas/memory-recall.schema.ts         # strict input/output contracts
+├─ src/modules/memory-recall/
+│  ├─ experience-recall.service.ts                    # Episode projection
+│  ├─ rule-recall.service.ts                          # Rule projection
+│  ├─ skill-recall.service.ts                         # Procedure parser/projection
+│  ├─ source-ref-sanitizer.ts                         # opaque allowlist
+│  └─ output-budget.ts                                # bounded response
+├─ test/mcp.typed-memory-tools.test.ts
+├─ test/mcp.tools.index.test.ts
+├─ test/mcp.contract.test.ts
+├─ test/mcp-schema-compat.test.ts
+└─ spec/docs/pub/mcp-tools.md</code></pre>
+  <ul>
+    <li>Episode検索は<code>searchEpisodes</code>を再利用する。</li>
+    <li>
+      Rule / Skill検索は<code>searchKnowledgeCandidates</code>と既存rankingを再利用する。
+    </li>
+    <li>新しいtable、migration、embedding index、queueを追加しない。</li>
+    <li>repository resultをMCPへ直接spreadせず、型別projection allowlistを通す。</li>
+    <li>MCP descriptionに使用条件と非使用条件を一文ずつ明記する。</li>
+  </ul>
+
+  <h2 id="12-work-packages">12. Work Package</h2>
+  <h3 id="ctm-00">CTM-00 — Contract fixture</h3>
+  <ul>
+    <li>三Toolのinput/output JSON fixture、no-hit、degraded、invalid inputを先に固定する。</li>
+    <li>type purity、active-only、trust metadata、source-ref allowlistをfixture化する。</li>
+    <li>SAAA側fixtureと<code>memory-recall-v1</code> contractVersionを共有する。</li>
+  </ul>
+  <p>Gate: ContextStillとSAAAが同じfixtureをparseできること。</p>
+
+  <h3 id="ctm-01">CTM-01 — Typed projection services</h3>
+  <ul>
+    <li>Experience、Rule、Skillのpure projection serviceを実装する。</li>
+    <li>Skill section parser、source-ref sanitizer、output budgetを実装する。</li>
+    <li>repository path、raw locator、metadataのallowlist外fieldを除外する。</li>
+  </ul>
+  <p>Gate: 誤種別0、raw identifier残留0、malformed Skillのfail-closed成功。</p>
+
+  <h3 id="ctm-02">CTM-02 — MCP Tool registration</h3>
+  <ul>
+    <li>三Toolを<code>typed-memory.tool.ts</code>へ登録する。</li>
+    <li><code>MCP_TYPED_MEMORY_TOOLS</code>によるexposed/callable catalogを実装する。</li>
+    <li>Tool descriptions、initial instructions、public MCP docsを更新する。</li>
+  </ul>
+  <p>Gate: catalog snapshotとschema compatibility testが成功すること。</p>
+
+  <h3 id="ctm-03">CTM-03 — Backend parity</h3>
+  <ul>
+    <li>PostgresとSQLiteで同一fixture、同一type、同一no-hit responseを確認する。</li>
+    <li>score scale、active status、scope selection、source refsのparityを確認する。</li>
+    <li>embedding unavailable時のlexical fallbackとdegraded reasonを確認する。</li>
+  </ul>
+  <p>Gate: backend別contract差分0件。</p>
+
+  <h3 id="ctm-04">CTM-04 — SAAA isolated integration</h3>
+  <ul>
+    <li>isolated ContextStill DBとSAAA fixture profileだけでfeature gateをONにする。</li>
+    <li>Conversation / Experience / Rule / SkillのTool selection fixtureを実行する。</li>
+    <li>Context Healthがtrust、type、budgetを維持することをend-to-endで確認する。</li>
+  </ul>
+  <p>Gate: Section 14のAcceptance Criteriaを満たすこと。</p>
+
+  <h3 id="ctm-05">CTM-05 — Closeout</h3>
+  <ul>
+    <li>compatibility期間、default catalog、rollback結果をrelease evidenceへ記録する。</li>
+    <li>generic toolsを非公開化するかはusage telemetryとclient確認後に決める。</li>
+    <li>known limitationsとmalformed Skill件数を記録する。</li>
+  </ul>
+
+  <h2 id="13-security">13. PrivacyとSecurity</h2>
+  <ul>
+    <li>query、Episode本文、Rule本文、Skill本文をlogまたはerror messageへ保存しない。</li>
+    <li>Tool outputをusage receiptへ複製しない。</li>
+    <li>
+      source refは<code>saaa://memory-source/</code>等の承認済みopaque schemeだけを返す。
+    </li>
+    <li>project/client/person name、absolute path、internal endpoint、credentialを返さない。</li>
+    <li>retrieved textをtrusted system instructionへ昇格しない。</li>
+    <li>draft、deprecated、malformed、source policy違反itemはfail-closedで除外する。</li>
+    <li>ContextStillからSAAA SQLiteへ直接接続しない。</li>
+  </ul>
+
+  <h2 id="14-acceptance">14. Acceptance Criteria</h2>
+  <table>
+    <caption>
+      Table: Required thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">閾値</th>
+        <th scope="col">検証</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Typed Tool count</td>
+        <td>3件</td>
+        <td>exposed catalog snapshot</td>
+      </tr>
+      <tr>
+        <td>Experience type purity</td>
+        <td>100%</td>
+        <td>Episode / Knowledge混在fixture</td>
+      </tr>
+      <tr>
+        <td>Rule type purity</td>
+        <td>100%</td>
+        <td>rule / procedure混在fixture</td>
+      </tr>
+      <tr>
+        <td>Skill type purity</td>
+        <td>100%</td>
+        <td>rule / procedure混在fixture</td>
+      </tr>
+      <tr>
+        <td>Active-only</td>
+        <td>100%</td>
+        <td>draft / deprecated fixture</td>
+      </tr>
+      <tr>
+        <td>Trust metadata</td>
+        <td>100%</td>
+        <td>hit / no-hit / degraded</td>
+      </tr>
+      <tr>
+        <td>No-hit schema consistency</td>
+        <td>100%</td>
+        <td>全三Tool</td>
+      </tr>
+      <tr>
+        <td>Opaque source-ref policy</td>
+        <td>違反0件</td>
+        <td>legacy refs、path、locator fixture</td>
+      </tr>
+      <tr>
+        <td>Output hard cap</td>
+        <td>100%</td>
+        <td>large body、10 hits</td>
+      </tr>
+      <tr>
+        <td>Existing callable compatibility</td>
+        <td>100%</td>
+        <td>generic tool contract tests</td>
+      </tr>
+      <tr>
+        <td>Postgres / SQLite parity</td>
+        <td>差分0件</td>
+        <td>shared JSON fixture</td>
+      </tr>
+      <tr>
+        <td>Experience Recall@5</td>
+        <td>85%以上</td>
+        <td>golden Episode query</td>
+      </tr>
+      <tr>
+        <td>Rule Recall@5</td>
+        <td>90%以上</td>
+        <td>golden Rule query</td>
+      </tr>
+      <tr>
+        <td>Skill Recall@5</td>
+        <td>90%以上</td>
+        <td>golden Procedure query</td>
+      </tr>
+      <tr>
+        <td>Warm local p95</td>
+        <td>150 ms以下</td>
+        <td>10,000 active items、limit 5</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="141-required-scenarios">14.1 Required scenarios</h3>
+  <ul>
+    <li>
+      failure queryで<code>recall_experience</code>がfailure Episodeだけを返す。
+    </li>
+    <li>guardrail queryで<code>recall_rule</code>がRuleだけを返す。</li>
+    <li>workflow queryで<code>recall_skill</code>が四sectionを型付きで返す。</li>
+    <li>malformed Procedureはbodyをそのまま返さずdegraded reasonを返す。</li>
+    <li>no-hit時もJSON parseが成功し、itemsが空である。</li>
+    <li>legacy source refにpathが含まれてもtyped outputへ出ない。</li>
+    <li>embedding停止時もlexical fallbackで型とtrust metadataが維持される。</li>
+    <li>feature gate OFF時に現行MCP catalogと既存client testが変わらない。</li>
+  </ul>
+
+  <h2 id="15-verification">15. Verification Commands</h2>
+  <table>
+    <caption>
+      Table: Required ContextStill commands
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">段階</th>
+        <th scope="col">command</th>
+        <th scope="col">期待結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Spec整形</td>
+        <td><code>bun run spec:fix</code></td>
+        <td>安全な修正完了</td>
+      </tr>
+      <tr>
+        <td>Spec検証</td>
+        <td><code>bun run spec:check</code></td>
+        <td>error / warning 0</td>
+      </tr>
+      <tr>
+        <td>Type</td>
+        <td><code>bun run typecheck</code></td>
+        <td>error 0</td>
+      </tr>
+      <tr>
+        <td>Focused unit</td>
+        <td>
+          <code>bunx vitest run test/mcp.typed-memory-tools.test.ts test/mcp.tools.index.test.ts
+            test/mcp.contract.test.ts test/mcp-schema-compat.test.ts</code>
+        </td>
+        <td>全件成功</td>
+      </tr>
+      <tr>
+        <td>Verify</td>
+        <td><code>bun run verify</code></td>
+        <td>type、unit、format、contract成功</td>
+      </tr>
+      <tr>
+        <td>SQLite</td>
+        <td><code>bun run verify:sqlite</code></td>
+        <td>SQLite repositoryとMCP smoke成功</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>bun run verify:mcp</code></td>
+        <td>managed daemonとHTTP MCP smoke成功</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="16-stop-rollback">16. Stop conditionとRollback</h2>
+  <p>次のいずれかが発生した場合、feature gateをdefault ONにしない。</p>
+  <ul>
+    <li>三Toolのいずれかが別Memory typeを返す。</li>
+    <li>draft、deprecated、malformed itemが通常resultへ入る。</li>
+    <li>raw locator、repo path、client/project/person identifierがtyped outputへ入る。</li>
+    <li>no-hitまたはdegraded時だけoutput schemaが変わる。</li>
+    <li>typed toolsのために新しいMemory table、重複index、DB migrationが必要になる。</li>
+    <li>
+      既存<code>context_compile</code> workflowまたはgeneric callable
+      contractが壊れる。
+    </li>
+    <li>ContextStillがSAAA SQLiteへ接続する必要が生じる。</li>
+    <li>Tool resultにinstruction authorityを与えないとAgentが動作しない。</li>
+  </ul>
+  <p>Rollbackは次の順で行う。</p>
+  <ol>
+    <li><code>MCP_TYPED_MEMORY_TOOLS</code>をOFFにする。</li>
+    <li>現行v2 exposed catalogへ戻す。</li>
+    <li>typed toolsはcallable compatibilityとして残すか、未公開のまま停止する。</li>
+    <li>repository、Episode、Knowledge schemaは変更していないためdata rollbackは行わない。</li>
+  </ol>
+
+  <h2 id="17-deliverables">17. 納品物</h2>
+  <ul>
+    <li>三つのtyped MCP Toolとshared schema</li>
+    <li>Experience、Rule、Skill projection service</li>
+    <li>source-ref sanitizerとoutput budget implementation</li>
+    <li>feature-gated exposed/callable catalog</li>
+    <li>Postgres / SQLite共通contract fixtures</li>
+    <li>MCP public documentationとinitial instructions更新</li>
+    <li>focused test、verify、SQLite、MCP smokeの実行証跡</li>
+    <li>SAAA isolated integration結果とrollback rehearsal</li>
+  </ul>
+
+  <h2 id="18-completion">18. 完了状態</h2>
+  <pre><code class="language-text">SAAA asks what happened
+  → recall_conversation in SAAA SQLite
+
+SAAA asks what worked or failed
+  → recall_experience in ContextStill
+  → typed Episode evidence
+
+SAAA asks which constraint applies
+  → recall_rule in ContextStill
+  → typed Rule candidate
+
+SAAA asks how to perform the work
+  → recall_skill in ContextStill
+  → typed Procedure candidate
+
+All ContextStill results
+  → active only
+  → bounded
+  → opaque provenance only
+  → untrusted_memory_evidence
+  → instructionAuthority = none</code></pre>
+  <p>
+    完了後、AgentはMemoryの種類をTool選択時点で明示できる。ContextStillは既存のEpisode・Knowledge
+    repositoryとrankingを再利用しながら、SAAAへは型が純粋で、boundedで、source
+    policyを満たす結果だけを返す。 これにより、Memory Fetchを増やしてもContext
+    Windowの健全性と現在指示の優先順位を維持できる。
+  </p>
+</article>

@@ -37,6 +37,7 @@ const application = Bun.spawn([executable], {
     SAAA_SMOKE_MARKER_ID: markerId,
     SAAA_SMOKE_DATA_DIR: dataDirectory,
     SAAA_SMOKE_EXERCISE_SITUATION: "1",
+    SAAA_SMOKE_REQUIRE_SPEAKER: "1",
   },
   stdout: "inherit",
   stderr: "inherit",

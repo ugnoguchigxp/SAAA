@@ -1,0 +1,1260 @@
+<article lang="ja">
+  <h1 id="voice-behavior-tool-plan">Voice Behavior Tool 構想・検証計画 — Exploration Draft</h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Exploration draft。価値仮説、対象機能、実装開始はいずれも未承認</li>
+    <li>Created: 2026-08-29</li>
+    <li>Research refreshed: 2026-08-29</li>
+    <li>SAAA baseline: <code>ae9b84a</code> + working tree</li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>対象: Conversation Runtime、Voice Runtime、UI、QA</li>
+  </ul>
+  <p>
+    本文書は、ユーザーが通常の会話の中で「しばらく黙って」「今回は読み上げなくてよい」
+    「もう話してよい」「次からは考えながら話すので少し長く待って」のように依頼したとき、
+    LLMが文脈から意図を判断し、会話の音声挙動を変更する機能の価値と実現方法を検証するための構想書である。
+    現時点では実装契約ではなく、Section 3.4の最小検証範囲を選ぶための仮説を記録する。
+  </p>
+  <p>
+    現在進行中の連続文字起こし、無音区間による自動送信、AECまたは自己音声除外とは同時に実装しない。
+    それらの音声入力経路を先に安定させた後、Section
+    17の開始条件を満たしてから本計画を実装契約へ昇格する。
+    本文書を追加するTurnでは、Runtime、SQLite、UIの実装を変更しない。
+  </p>
+  <p>
+    調査によって候補を増やすが、一度にすべてを実装しない。まず「予期しない発声を止める」
+    「ユーザーの話す間を急かさない」の二つが実利用で価値を持つかを確かめ、価値が確認できた範囲だけを
+    Deferred implementationへ進める。
+  </p>
+
+  <h2 id="1-separation">1. 作業トラックの分離</h2>
+  <table>
+    <caption>
+      Table: Voice work tracks
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Track</th>
+        <th scope="col">責務</th>
+        <th scope="col">本計画との関係</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A: Voice input foundation</td>
+        <td>連続capture、VAD、無音区間、自動送信、AECまたはTTS自己音声の除外</td>
+        <td>先行して安定化する。本文書では変更しない</td>
+      </tr>
+      <tr>
+        <td>B: Voice behavior tool</td>
+        <td>文脈に応じたTTS抑止・再開と、発話確定待機時間の変更</td>
+        <td>本計画の対象。Track A完了後に開始する</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code class="language-text">Microphone
+  ↓
+Track A: capture → echo mitigation / AEC → STT → utterance finalization
+  ↓ text
+Conversation LLM
+  ↓ optional tool call
+Track B: bounded voice policy mutation
+  ↓
+Effective response presentation → Chat text + optional TTS</code></pre>
+  <p>
+    AECはOS、audio device、capture API、audio processing layerの能力に依存する。 LLM
+    toolまたは会話PolicyはAECを提供しない。本計画は、Track
+    Aが生成した文字列と状態を消費するだけであり、 acoustic echoの除去方法を切り替えない。
+  </p>
+
+  <h2 id="2-working-hypotheses">2. 設計上の作業仮説</h2>
+  <p>
+    以下は構想段階のworking hypothesisである。安全境界は先に固定するが、機能範囲とtool schemaは
+    Discovery Gateの結果に応じて狭められる。機能を増やす変更は別の価値検証を必要とする。
+  </p>
+  <ol>
+    <li>
+      ツール実行の判断は、完全一致する命令文やkeyword
+      listではなく、LLMが現在の発言と会話文脈から行う。
+    </li>
+    <li>
+      強制境界は決定方法ではなく実行可能範囲へ置く。LLMは柔軟に意図を解釈できるが、 tool
+      executorは許可済みの音声挙動しか変更できない。
+    </li>
+    <li>
+      <code>update_settings</code>のような汎用toolを公開しない。
+      初期候補としてmodel-visibleなtoolは<code>update_conversation_voice_behavior</code>一件とする。
+    </li>
+    <li>
+      永続範囲は現在のConversationだけとする。global設定、別Conversation、Meeting、Coding
+      Taskへ波及させない。
+    </li>
+    <li>
+      「今回だけ黙る」は現在のRuntime Runだけに保持し、SQLiteへ永続化しない。
+      「指示があるまで黙る」はConversation policyとして永続化する。
+    </li>
+    <li>
+      同じ応答から発声を止められるよう、TTSの最終判断はLLM応答完了後のFrontend状態ではなく、
+      BackendがTool結果を含めて計算する。
+    </li>
+    <li>
+      Meeting中のTTS禁止とglobalな<code>autoSpeak = false</code>はLLMが変更できない上位Policyとし、
+      Conversation policyより常に優先する。
+    </li>
+    <li>
+      音声だけに復旧経路を依存させない。UIから発声再開、Conversation設定の既定値復帰を常に実行できるようにする。
+    </li>
+    <li>
+      LLMへ無音時間のmillisecond値を直接選ばせない。Modelは<code>quick</code>、
+      <code>balanced</code
+      >、<code>patient</code>という意味的な希望だけを指定し、Track Aが現在の
+      endpointing方式に合わせて実効値へ解決する。
+    </li>
+    <li>
+      音声入力と文字入力を同じ現在User
+      messageとして扱う。音声が使えない場合でも、Chat入力から同じ変更と復旧を依頼できる。
+    </li>
+  </ol>
+
+  <h2 id="3-user-experience">3. 対象User Experience</h2>
+  <table>
+    <caption>
+      Table: Semantic intent examples
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ユーザー発言の例</th>
+        <th scope="col">期待する判断</th>
+        <th scope="col">適用期間</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>「しばらく黙って」</td>
+        <td>TTSを停止する</td>
+        <td>再開指示まで</td>
+      </tr>
+      <tr>
+        <td>「今回は声に出さなくていい」</td>
+        <td>現在の応答だけTTSを停止する</td>
+        <td>現在の応答</td>
+      </tr>
+      <tr>
+        <td>「子供が寝たから静かにしよう」</td>
+        <td>文脈上の要請としてTTSを停止する</td>
+        <td>再開指示まで</td>
+      </tr>
+      <tr>
+        <td>「もう大丈夫。話していいよ」</td>
+        <td>TTSを再開する</td>
+        <td>現在の応答から</td>
+      </tr>
+      <tr>
+        <td>「次から考えながら話すから急がないで」</td>
+        <td>listening paceを<code>patient</code>にする</td>
+        <td>次のUser turnから現在のConversation</td>
+      </tr>
+      <tr>
+        <td>「私が話し終えたら、あまり待たずに送って」</td>
+        <td>listening paceを<code>quick</code>にする</td>
+        <td>次のUser turnから現在のConversation</td>
+      </tr>
+      <tr>
+        <td>「もっとテンポよく返して」</td>
+        <td>turn終端、回答の長さ、読み上げ速度のどれか不明なため変更せず短く確認する</td>
+        <td>変更なし</td>
+      </tr>
+      <tr>
+        <td>「黙って、という台詞を含む文章を書いて」</td>
+        <td>設定変更ではないためtoolを呼ばない</td>
+        <td>変更なし</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    上記の文言はtest fixtureであり、trigger
+    phraseではない。同じ意味の言い換え、理由を含む間接的な依頼、
+    直前の会話を受けた省略表現でも、現在のユーザー意図が音声挙動の変更ならtoolを使用する。
+    一方、引用、翻訳対象、創作文、過去発言のRecallは現在の設定変更命令として扱わない。
+  </p>
+
+  <h3 id="31-research-findings">3.1 調査で得た設計示唆</h3>
+  <table>
+    <caption>
+      Table: Research findings and implications
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">一次資料で確認したこと</th>
+        <th scope="col">本構想への示唆</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <a href="https://platform.openai.com/docs/api-reference/realtime">OpenAI Realtime API</a
+          >は、固定無音時間を使うserver VADとは別に、意味から応答タイミングを決めるsemantic VADと
+          <code>low</code
+          >、<code>medium</code>、<code>high</code>のeagernessを持つ。
+        </td>
+        <td>
+          Product contractをmillisecondへ固定せず、意味的なlistening paceとして定義する。
+          将来endpointing engineを変えても、ユーザーとの契約を維持できる。
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <a href="https://docs.livekit.io/agents/logic/turns/">LiveKit Turns</a>は、VADだけでなく
+          意味と音響を使うturn detector、sessionのpause統計を使うdynamic endpointing、
+          backchannelと本当の割り込みを分けるadaptive interruptionを別機能として扱う。
+        </td>
+        <td>
+          「話し終わりを待つ」と「Assistantの発話を止める」を同じsettingへ押し込めない。 後者はTrack
+          Aのinterrupt / barge-in候補として独立させる。
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <a
+            href="https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/multimodal-live"
+            >Gemini Live API</a
+          >も、発話終了の感度・無音時間と、User
+          activityがAssistant応答を中断するかを別々に設定する。
+          無音を長くすればcut-offは減るが、応答latencyは増える。
+        </td>
+        <td>
+          listening paceの評価は「長いほど良い」ではなく、premature cutoffとresponse
+          latencyの両方を測る。
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <a href="https://developers.openai.com/api/docs/guides/function-calling"
+            >OpenAI Function Calling</a
+          >はstrict schema、全propertyのrequired化、nullableによるoptional表現、
+          <code>additionalProperties: false</code>を推奨する。
+        </td>
+        <td>
+          Toolは<code>strict: true</code>にし、変更しないfieldも<code>null</code>で明示する。
+          初期releaseではparallel tool callを無効にして順序と副作用を限定する。
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <a href="https://developer.apple.com/design/human-interface-guidelines/accessibility/"
+            >Apple Accessibility</a
+          >と<a href="https://www.w3.org/WAI/WCAG22/Understanding/audio-control.html"
+            >W3C Audio Control</a
+          >は、自動再生音声に停止手段を用意し、重要情報を音声だけで伝えないことを求める。
+        </td>
+        <td>
+          画面本文、常時見える停止・再開、keyboard操作をacceptance条件にする。
+          Policy変更の確認を音声だけで伝えない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Shipping targetのmacOSに含まれる<code>say</code>
+    commandは<code>-r</code>でwords per minuteを指定できる。
+    したがって読み上げ速度の変更は技術的候補になるが、適切な範囲、voiceごとの差、global設定との関係を別途評価する。
+  </p>
+
+  <h3 id="32-value-hypotheses">3.2 価値仮説</h3>
+  <table>
+    <caption>
+      Table: User jobs and observable value
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">User job</th>
+        <th scope="col">現在の手戻り</th>
+        <th scope="col">価値が出たと判断できる行動変化</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>周囲へ音を出せない状況へすぐ切り替える</td>
+        <td>応答前にSettingsを開く、または読み上げ開始後に停止する</td>
+        <td>一回の自然な依頼で同じ応答から静かになり、後続も意図した範囲だけsilentになる</td>
+      </tr>
+      <tr>
+        <td>考えながら、途中で切られずに話す</td>
+        <td>短い無音で送信され、続きを別messageとして言い直す</td>
+        <td>次の発話からcut-offが減り、許容できない待ち時間増加を起こさない</td>
+      </tr>
+      <tr>
+        <td>状況が変わったら元へ戻す</td>
+        <td>どの設定が変わったか分からず、音声でしか戻せない</td>
+        <td>現在状態と適用範囲が一目で分かり、UIまたは文字入力だけで短時間に復旧できる</td>
+      </tr>
+      <tr>
+        <td>画面を読めない時にも長い回答を負担なく聞く</td>
+        <td>表示本文をそのまま長く読み上げる</td>
+        <td>音声では要点、画面では全文というchannel別表現を選べる</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    最後のchannel別表現は有望だが、表示本文と読み上げ本文の食い違いを新たに生むため初期sliceへ含めない。
+    先にmute / resumeとlistening paceで、自然言語による挙動変更そのものに価値があるかを確かめる。
+  </p>
+
+  <h3 id="33-capability-map">3.3 Capability Opportunity Map</h3>
+  <table>
+    <caption>
+      Table: Candidate capabilities and priority
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">候補</th>
+        <th scope="col">自然な依頼例</th>
+        <th scope="col">実現上の要点</th>
+        <th scope="col">判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>現在応答だけsilent / 継続silent / resume</td>
+        <td>「今回は読まなくていい」「しばらく静かに」「もう話して」</td>
+        <td>Backendで同一Turnの発声可否を確定し、UIから必ず解除可能にする</td>
+        <td>P0: 最初に検証</td>
+      </tr>
+      <tr>
+        <td>Conversationのlistening pace</td>
+        <td>「次から少し待って」「もっとテンポよく」</td>
+        <td>意味的profileをTrack Aの固定またはsemantic endpointingへ変換する</td>
+        <td>P0: 最初に検証</td>
+      </tr>
+      <tr>
+        <td>次のUser turnだけpatient</td>
+        <td>「次は長く話すから、終わるまで待って」</td>
+        <td>次に正常確定したutteranceで一度だけ消費するPolicyが必要</td>
+        <td>P1: P0後</td>
+      </tr>
+      <tr>
+        <td>現在の読み上げを音声でstop / hold / continue</td>
+        <td>「止めて」「ちょっと待って」「続きを話して」</td>
+        <td>TTS中capture、barge-in、誤割り込み復旧、聞こえた範囲の整合が必要</td>
+        <td>P1 / Track A連携</td>
+      </tr>
+      <tr>
+        <td>読み上げ速度</td>
+        <td>「もう少しゆっくり読んで」</td>
+        <td>
+          macOS
+          <code>say -r</code>で実現可能。voice別の可聴性とboundsを評価する
+        </td>
+        <td>P1 feasibility</td>
+      </tr>
+      <tr>
+        <td>音声は要点だけ、画面は全文</td>
+        <td>「声では結論だけ教えて」</td>
+        <td>二つのcontent、読み上げ漏れ、accessibility、履歴の正本を定義する</td>
+        <td>P2 / Presentation Manager</td>
+      </tr>
+      <tr>
+        <td>Situationから自動的にquietへ変更</td>
+        <td>明示依頼なしに会議・夜間・周囲の人を推定</td>
+        <td>誤推定、監視感、Situation Policyとの二重所有が生じる</td>
+        <td>本計画では実行しない</td>
+      </tr>
+      <tr>
+        <td>音量、device、credential、Provider変更</td>
+        <td>「音を大きくして」「別のspeakerを使って」</td>
+        <td>OSとsecurity境界を越え、可逆なConversation behaviorではない</td>
+        <td>Tool allowlist外</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="34-first-discovery-slice">3.4 最初のDiscovery Slice</h3>
+  <p>最初の検証対象は次に限定する。</p>
+  <ol>
+    <li>同じAssistant応答からの一回限りsilent。</li>
+    <li>当該Conversationだけの継続silent、resume、default復帰。</li>
+    <li>
+      次のUser
+      turnからの<code>quick</code>、<code>balanced</code>、<code>patient</code>。
+    </li>
+    <li>状態表示、発声停止、resume、全override resetの非音声UI。</li>
+  </ol>
+  <p>
+    Toolはutteranceの確定後に初めてUser messageを受け取るため、listening
+    paceの変更は依頼を含む現在の発話には間に合わない。
+    「今まさに話している同じ発話をもう少し待つ」はP0で約束せず、partial transcriptまたは別のrealtime
+    control pathを必要とする Track Aの探索項目とする。この制約はUIと受け入れtestで曖昧にしない。
+  </p>
+
+  <h3 id="35-solution-alternatives">3.5 より単純な代替案との比較</h3>
+  <table>
+    <caption>
+      Table: Solution alternatives
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">方式</th>
+        <th scope="col">強み</th>
+        <th scope="col">弱み</th>
+        <th scope="col">Discoveryでの扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>UI controlだけ</td>
+        <td>決定的で誤解釈がなく、実装と説明が最も小さい</td>
+        <td>手や視線が塞がっている時と、同じ応答を急いでsilentにしたい時に操作が増える</td>
+        <td>必ずbaselineとして比較する</td>
+      </tr>
+      <tr>
+        <td>専用phrase / command parser</td>
+        <td>低latencyで動作を予測しやすい</td>
+        <td>言い換え、文脈、引用との区別が弱く、LLM会話と別の言語体系を覚える必要がある</td>
+        <td>固定commandが必要なemergency stopだけ別途検討する</td>
+      </tr>
+      <tr>
+        <td>LLM + bounded tool + UI recovery</td>
+        <td>自然な言い換えと会話文脈を使え、Voice-firstのまま変更できる</td>
+        <td>semantic false positive、Provider差、tool loop latencyを評価する必要がある</td>
+        <td>本構想の第一候補。shadowで価値と品質を検証する</td>
+      </tr>
+      <tr>
+        <td>Situationによる自動切り替え</td>
+        <td>依頼そのものを不要にできる</td>
+        <td>誤推定時の驚きと監視感が大きく、既存Situation Policyと責務が重なる</td>
+        <td>P0では採用しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    LLM toolを採用する条件は、Voice-first scenarioでUI-onlyより操作数または復旧時間を明確に減らし、
+    Section 16のunexpected speechとfalse positive gateを満たすことである。差が小さければUI
+    controlだけを採用する。
+  </p>
+
+  <h2 id="4-goals">4. 達成すること</h2>
+  <ol>
+    <li>ユーザーが自然な音声または文字の会話だけで、TTSの一時抑止、継続抑止、再開を依頼できる。</li>
+    <li>
+      ユーザーが自然な会話だけで、次の発話からのlistening paceをConversation単位で調整できる。
+    </li>
+    <li>LLMが現在の文脈からtoolの必要性、変更内容、適用期間を判断できる。</li>
+    <li>抑止指示を受けた同じTurnのAssistant応答を発声しない。</li>
+    <li>変更中の状態と適用範囲をUIで確認し、音声を使わずに解除できる。</li>
+    <li>Provider、再起動、tool retryが変わっても、Conversation policyが一貫して適用される。</li>
+  </ol>
+
+  <h2 id="5-non-goals">5. 非要件</h2>
+  <ul>
+    <li>AEC、noise suppression、speaker identification、音響echo判定の実装または再設計。</li>
+    <li>連続capture、自動送信、barge-in、VAD algorithmまたはthresholdの実装・再設計。</li>
+    <li>OSのmicrophone permission、input device、output deviceの変更。</li>
+    <li>LLM、STT、TTS Provider、model、endpoint、credential、security設定の変更。</li>
+    <li>globalな<code>autoSpeak</code>設定の書き換え。</li>
+    <li>任意のapplication設定を変更できる汎用Agent tool。</li>
+    <li>Meeting hard policyまたはCoding routeへのtool公開。</li>
+    <li>一定時間が経過しただけで自動的に発声を再開する処理。</li>
+    <li>音声入力を設定変更専用command parserへ分岐すること。</li>
+    <li>
+      Tool依頼を含む、すでに進行中または確定済みのUser utteranceへlistening paceを遡及適用すること。
+    </li>
+    <li>
+      P1候補の読み上げ速度、音声によるbarge-in、次の一回だけのlistening paceをP0へ含めること。
+    </li>
+    <li>
+      明示または明瞭な文脈上の依頼がないのに、Situation推定だけでConversation policyを変更すること。
+    </li>
+  </ul>
+
+  <h2 id="6-current-baseline">6. 現行Baselineと変更点</h2>
+  <table>
+    <caption>
+      Table: Verified implementation seams
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">現行</th>
+        <th scope="col">後続実装で必要な変更</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Agent tool parser</td>
+        <td>
+          <code>src-tauri/src/runtime/agent_tools.rs</code>は
+          <code>recall_conversation</code>だけを許可する
+        </td>
+        <td>allowlist型のtool registryへ一般化し、tool別のschemaとquotaを分離する</td>
+      </tr>
+      <tr>
+        <td>Tool loop</td>
+        <td>一つのRecall toolを前提にstream / non-stream callを解析する</td>
+        <td>RecallとPolicy mutationを同一Turnで安全に直列実行できるようにする</td>
+      </tr>
+      <tr>
+        <td>Completion event</td>
+        <td>
+          <code>RuntimeEvent::MessageCompleted</code
+          >は<code>run_id</code>と
+          <code>message</code>だけを返す
+        </td>
+        <td>Backendで計算したeffective speech decisionを追加する</td>
+      </tr>
+      <tr>
+        <td>TTS decision</td>
+        <td>
+          <code>src/App.tsx</code
+          >が<code>voiceSettings.autoSpeak</code>とMeeting状態から判断する
+        </td>
+        <td>Completion eventのeffective decisionを使用し、Frontendのstale stateを判断源にしない</td>
+      </tr>
+      <tr>
+        <td>Voice settings</td>
+        <td><code>VoiceRuntimeSettings.auto_speak</code>はglobal設定</td>
+        <td>書き換えず、Conversation muteを別のPolicyとして重ねる。global OFFは常に優先する</td>
+      </tr>
+      <tr>
+        <td>Turn endpointing</td>
+        <td>
+          <code>src/lib/voiceActivity.ts</code
+          >が固定<code>1500 ms</code>のsilence timeoutで
+          <code>VoiceActivityDetector</code>を生成する
+        </td>
+        <td>意味的なlistening paceをcapture開始時にTrack Aの実効設定へ解決する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="7-tool-contract">7. Model-visible Tool Contract</h2>
+  <p>提案するtoolは次の一件だけとする。</p>
+  <pre><code class="language-json">{
+  "type": "function",
+  "function": {
+    "name": "update_conversation_voice_behavior",
+    "description": "Change only how the current conversation speaks and waits between user turns when the current user message requests it.",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "speechOutput": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["silent", "speak", "inherit"]
+            },
+            "scope": {
+              "type": "string",
+              "enum": ["current_response", "conversation"]
+            }
+          },
+          "required": ["mode", "scope"]
+        },
+        "listeningPace": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["quick", "balanced", "patient", "default"]
+            },
+            "scope": {
+              "type": "string",
+              "enum": ["conversation"]
+            }
+          },
+          "required": ["mode", "scope"]
+        }
+      },
+      "required": ["speechOutput", "listeningPace"]
+    }
+  }
+}</code></pre>
+  <p>Validation contract:</p>
+  <ol>
+    <li>
+      二つのfieldはstrict
+      schema上requiredにし、変更しないfieldを<code>null</code>で渡す。
+    </li>
+    <li>
+      <code>speechOutput</code
+      >と<code>listeningPace</code>の少なくとも一方をnon-nullにする。
+    </li>
+    <li>
+      <code>silent</code
+      >は<code>current_response</code>または<code>conversation</code>で使用できる。
+    </li>
+    <li>
+      <code>speak</code
+      >は<code>current_response</code>だけに使用し、global OFFまたはhard
+      blockを上書きしない。
+    </li>
+    <li>
+      <code>inherit</code
+      >は<code>conversation</code>だけに使用し、継続muteを解除する。
+    </li>
+    <li>
+      <code>listeningPace</code>はP0ではConversation
+      scopeだけにし、<code>default</code>でoverrideを解除する。
+    </li>
+    <li>
+      Model argumentへConversation ID、policy
+      revision、実効millisecond、自由記述のreasonを含めない。
+    </li>
+    <li>
+      RuntimeがConversation ID、現在User message ID、turn開始時のpolicy revisionをexecutorへ注入し、
+      stale revisionによるUI変更の上書きを防ぐ。
+    </li>
+    <li>
+      <code>parallel_tool_calls: false</code>で一回にzeroまたはone
+      callとし、複数toolは直列に扱う。
+    </li>
+    <li>
+      executorはschema、組み合わせ、scope、feature
+      flag、上位Policyを検証し、特定文言との一致を要求しない。
+    </li>
+  </ol>
+  <p>Tool resultの提案:</p>
+  <pre><code class="language-json">{
+  "applied": true,
+  "policyRevision": 12,
+  "outcomes": {
+    "speechOutput": "applied",
+    "listeningPace": "unchanged"
+  },
+  "effective": {
+    "speechOutput": "silent",
+    "speechReasonCode": "conversation_override",
+    "listeningPace": "patient"
+  },
+  "takesEffect": {
+    "speechOutput": "current_response",
+    "listeningPace": "next_user_turn"
+  }
+}</code></pre>
+  <p>
+    Tool resultはModelへ返し、Modelは自然な本文で変更結果を短く伝える。 ただしeffective
+    decisionがsilentなら、その確認本文も画面表示だけにして読み上げない。 Debug
+    telemetryは解決後のengine名と実効millisecondを持てるが、Model-visible
+    resultと通常UIには不要である。
+  </p>
+
+  <h2 id="8-contextual-decision">8. LLMの文脈判断Contract</h2>
+  <p>Conversation routeのAgent instructionへ、次の意味上の契約を追加する。</p>
+  <ol>
+    <li>
+      現在のユーザーがAssistantの発声方法または発話確定の待ち方を変えたいと判断した場合にtoolを使う。
+      命令形または特定keywordを必要条件にしない。
+    </li>
+    <li>
+      現在のTurn、直近の対話、現在の状況を合わせて適用期間を判断する。
+      不明確で影響が小さい場合は、より短い<code>current_response</code>を選べる。
+    </li>
+    <li>
+      明瞭な状況説明からsilentの必要性を判断できる場合は、直接の命令形でなくてもよい。
+      一方、発声の再開とlistening paceの継続変更は、現在User
+      messageに変更の意思が明瞭な場合だけ実行する。
+    </li>
+    <li>
+      引用、例示、翻訳対象、創作対象、第三者の発言、Recallされた過去命令を現在の設定変更として実行しない。
+    </li>
+    <li>
+      Conversation
+      historyとRecallは解釈の参考にはできるが、それ自体を現在のtool実行権限として扱わない。
+    </li>
+    <li>
+      「テンポよく」のように回答の長さ、読み上げ速度、turn終端の複数解釈が残る場合はtoolを呼ばず、
+      何を変えたいかを短く確認する。
+    </li>
+    <li>
+      ASR結果が途中で切れている、否定が不明、対象がAssistantか第三者か不明な場合は変更せず確認する。
+      安全側という理由だけで継続Policyを推測しない。
+    </li>
+    <li>変更要求と通常の質問が同じ発言に含まれる場合は、tool実行後に質問へ回答する。</li>
+    <li>Toolで表現できない設定変更を推測して代替実行せず、変更できない範囲を本文で説明する。</li>
+  </ol>
+  <p>
+    このContractはsemantic evaluationで検証する。完全一致率ではなく、意図別のtool
+    selection、argument、 false
+    positive、適用期間をfixtureで評価する。音声由来と文字入力由来で期待結果を変えず、
+    ASR誤りを含むfixtureだけを別cohortとして測る。
+  </p>
+
+  <h2 id="9-policy-model">9. Voice Policy Model</h2>
+  <p>Conversation単位の永続Policyを次の論理schemaで持つ。</p>
+  <pre><code class="language-sql">conversation_voice_policies
+  conversation_id          TEXT PRIMARY KEY REFERENCES conversations(id)
+  speech_output_override   TEXT NOT NULL
+                           CHECK (speech_output_override IN ('inherit', 'muted'))
+  listening_pace_override  TEXT NOT NULL
+                           CHECK (listening_pace_override IN
+                             ('inherit', 'quick', 'balanced', 'patient'))
+  policy_revision          INTEGER NOT NULL CHECK (policy_revision &gt;= 1)
+  updated_at               TEXT NOT NULL</code></pre>
+  <p>
+    実装開始時に既存migrationの最新versionを再確認し、次の空きversionを使用する。 本draftではMVP
+    3など並行計画が使用するversion番号を予約しない。
+  </p>
+  <p>Responseごとのeffective speech decisionは次の優先順位で計算する。</p>
+  <ol>
+    <li>Meetingなどのhard TTS block</li>
+    <li>globalな<code>VoiceRuntimeSettings.auto_speak = false</code></li>
+    <li>現在のRunに設定された<code>current_response</code> silent / speak</li>
+    <li>Conversationの<code>speech_output_override = muted</code></li>
+    <li>globalな<code>VoiceRuntimeSettings.auto_speak = true</code></li>
+  </ol>
+  <p>
+    上位のblockを下位Policyが解除してはならない。特にglobalなAuto speak
+    OFFはユーザーの明示的なopt-outであり、 Conversation
+    toolからONにしない。Conversationの<code>inherit</code>はglobal設定へ戻ることを意味する。
+    削除されたConversationのPolicyはforeign key lifecycleに従って削除する。
+  </p>
+  <p>
+    <code>policy_revision</code
+    >はUIとtoolの同時変更を検出する。Turn開始後にUIがPolicyを変更してrevisionが進んだ場合、
+    古いTurnのtool
+    mutationは<code>policy_conflict</code>として適用せず、最新状態をresultへ返す。
+  </p>
+
+  <h2 id="10-runtime-and-same-turn">10. Runtimeと同一TurnのTTS抑止</h2>
+  <pre><code class="language-text">User utterance final
+  ↓
+LLM requests update_conversation_voice_behavior
+  ↓
+Validate bounded arguments
+  ↓
+Apply run override and optional Conversation transaction
+  ↓
+Return tool result to LLM
+  ↓
+Generate final assistant text
+  ↓
+Backend computes effective presentation
+  ↓
+MessageCompleted(message, presentation.speech, reasonCode)
+  ↓
+Frontend renders text and speaks only when decision = speak</code></pre>
+  <p>
+    <code>RuntimeEvent::MessageCompleted</code
+    >へ、少なくとも<code>speak</code>または
+    <code>silent</code
+    >のdecisionと、<code>meeting_blocked</code>、<code>turn_override</code>、
+    <code>global_opt_out</code
+    >、<code>conversation_override</code>、<code>global_default</code>のreason
+    codeを追加する。
+    Frontendは<code>voiceSettings.autoSpeak</code>を再評価してこのdecisionを上書きしない。
+  </p>
+  <p>
+    Tool callは<code>run_id + tool_call_id</code>で一回だけ適用する。 同じdesired
+    stateへのretryは成功として同じeffective stateを返し、重複mutationとして扱わない。 Recall
+    quotaとVoice Policy mutation quotaを分離し、Voice Policy mutationは一Turn一回を初期上限とする。
+  </p>
+
+  <h2 id="11-listening-pace-policy">11. Listening Paceの適用</h2>
+  <ol>
+    <li>
+      Modelは<code>quick</code>、<code>balanced</code>、<code>patient</code>、<code>default</code>だけを選ぶ。
+    </li>
+    <li>
+      Tool成功後に開始する次のUser utteranceから適用し、現在進行中のdetectorへ途中適用しない。
+    </li>
+    <li>
+      Capture開始時に<code>conversation_id + policy_revision</code>のeffective profileをsnapshotし、
+      そのutteranceのfinalizeまたはcancelまで固定する。
+    </li>
+    <li>
+      固定VADでは各profileをboundedなsilence timeoutへ、semantic
+      endpointingでは対応するeagernessまたは min / max delayへTrack Aが変換する。
+    </li>
+    <li>
+      具体的なmillisecond、上下限、default mappingはTrack Aの実測とfeasibility spikeで決め、Tool
+      schemaへ露出しない。
+    </li>
+    <li>Profile変更でVAD threshold、AEC、STT Provider、audio buffer sizeを同時に変更しない。</li>
+    <li>
+      UIは意味的なprofileとoverrideの有無を表示し、診断画面だけがengine固有の実効値を表示できる。
+    </li>
+  </ol>
+  <p>
+    この分離により、P0では固定1.5秒VADのprofile mappingから開始でき、将来semantic turn
+    detectorへ移行しても 会話履歴に保存されたPolicyと自然言語の意味を変えずに済む。
+  </p>
+
+  <h2 id="12-ui-and-recovery">12. UIと手動復旧</h2>
+  <ol>
+    <li>
+      Chat headerまたはVoice status領域に、発声状態<code>Voice on</code> /
+      <code>Quiet</code> /
+      <code>Global quiet</code>と、listening pace
+      <code>Quick</code> / <code>Balanced</code> /
+      <code>Patient</code>を別々に表示する。
+    </li>
+    <li>
+      <code>Quiet</code>中は常に見える「発声を再開」操作を置く。global
+      OFF時はSettingsへの導線を明示する。
+    </li>
+    <li>TTS再生中は、Conversation policyに関係なく常に見える「読み上げを停止」操作を置く。</li>
+    <li>Conversation overrideを一括解除する「音声設定を既定に戻す」操作を置く。</li>
+    <li>
+      変更時はChat本文とは別の非interruptive statusで、対象Conversation、適用範囲、
+      <code>次の発話から</code>などの発効時点を表示する。
+    </li>
+    <li>UI操作はLLM tool loopを経由せず、同じBackend Policy serviceを直接使用する。</li>
+    <li>音声入力、STT、LLM、TTSのいずれが停止中でも手動復旧できる。</li>
+    <li>
+      stop、resume、resetはpointerとkeyboardで操作でき、状態変更を画面上のtextまたはlive
+      regionでも伝える。
+    </li>
+  </ol>
+
+  <h2 id="13-safety-and-privacy">13. Safety、Privacy、Observability</h2>
+  <ul>
+    <li>
+      Toolはnormal Conversation routeだけへ公開する。Coding routeとMeeting routeへ公開しない。
+    </li>
+    <li>変更可能なfieldはTTS presentationと意味的なlistening paceだけにallowlistする。</li>
+    <li>
+      permission、device、Provider、credential、network、security、external
+      actionへ到達するAPIを持たせない。
+    </li>
+    <li>現在のConversation IDはRuntimeから注入し、Model argumentとして受け取らない。</li>
+    <li>Toolの権限根拠は現在User messageだけとし、そのmessage IDをRuntimeから注入する。</li>
+    <li>
+      自由記述の<code>reason</code>をtool argumentとauditへ複製しない。
+    </li>
+    <li>
+      auditはtool名、run ID、tool call ID、source message ID、旧Policy、新Policy、policy revision、
+      result code、timestampを構造化して記録する。
+    </li>
+    <li>
+      意図判定のためのユーザー発言を別のaudit tableへ重複保存しない。正本のConversation
+      messageを参照する。
+    </li>
+    <li>raw audio、partial transcript、Model内部の推論をVoice Policy auditへ保存しない。</li>
+    <li>
+      UIには現在のeffective
+      stateを表示し、Model内部の推論文または非表示chain-of-thoughtを要求しない。
+    </li>
+  </ul>
+
+  <h2 id="14-failure-contract">14. Failure、Stop、Rollback Contract</h2>
+  <table>
+    <caption>
+      Table: Failure behavior
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Failure</th>
+        <th scope="col">Required behavior</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>継続muteのDB保存失敗</td>
+        <td>現在の応答はsilentにし、永続化失敗を画面だけで通知する</td>
+      </tr>
+      <tr>
+        <td>発声再開の保存失敗</td>
+        <td>既存muteを維持し、発声せず、UIの手動復旧を案内する</td>
+      </tr>
+      <tr>
+        <td>argument不正または範囲外</td>
+        <td>変更を一件も適用せず、typed tool errorをModelへ返す</td>
+      </tr>
+      <tr>
+        <td>Turn開始後にUIがPolicyを変更した</td>
+        <td>
+          古いtool
+          mutationを適用せず、<code>policy_conflict</code>と最新revisionを返す
+        </td>
+      </tr>
+      <tr>
+        <td>global Auto speak OFF中の<code>speak</code></td>
+        <td>
+          global設定を変更せずeffective silentを維持し、Settingsからの明示変更が必要だと画面で伝える
+        </td>
+      </tr>
+      <tr>
+        <td>listening pace変更直前に次のcaptureが始まった</td>
+        <td>開始済みutteranceは旧revisionのまま完了し、その次のutteranceから新profileを使う</td>
+      </tr>
+      <tr>
+        <td>Provider tool protocol不正</td>
+        <td>既存Policyを維持し、通常のbounded tool protocol failureとして終了する</td>
+      </tr>
+      <tr>
+        <td>Frontend event欠落</td>
+        <td>Backend decisionなしでは自動発声しない</td>
+      </tr>
+      <tr>
+        <td>Feature flag rollback</td>
+        <td>
+          tool公開を停止し、Conversation overrideを無視してglobal設定とTrack A
+          defaultへ戻す。保存dataは削除しない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>次の場合は実装を停止し、draftを改訂する。</p>
+  <ul>
+    <li>Track AのTTS自己音声除外が安定せず、発声再開によって自己応答loopが発生する。</li>
+    <li>OpenAI互換routeとLARM routeで同じtool/result contractを維持できない。</li>
+    <li>同一Turn muteをFrontendの推測なしで保証できない。</li>
+    <li>Meeting hard blockをConversation policyが回避できる経路が見つかる。</li>
+    <li>global Auto speak OFFをConversation policyが回避できる経路が見つかる。</li>
+    <li>音声を使わない復旧経路を常時提供できない。</li>
+  </ul>
+
+  <h2 id="15-work-packages">15. DiscoveryとDeferred Work Package</h2>
+  <h3 id="151-discovery-packages">15.1 実装前のDiscovery Package</h3>
+  <table>
+    <caption>
+      Table: Discovery sequence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">検証すること</th>
+        <th scope="col">成果物と終了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>VB-D0</td>
+        <td>quiet、listening pace、recoveryの利用scenarioと現在の手戻りを整理する</td>
+        <td>各4件以上のscenarioを頻度、失敗時影響、代替操作の手間で順位付けする</td>
+      </tr>
+      <tr>
+        <td>VB-D1</td>
+        <td>状態chip、stop、resume、reset、発効時点のUI prototypeを評価する</td>
+        <td>全scenarioで音声なしに現在状態を説明し、二操作以内に復旧できる</td>
+      </tr>
+      <tr>
+        <td>VB-D2</td>
+        <td>
+          同一Turn mute、global opt-out、policy revision、listening pace
+          resolverのfeasibilityをspikeする
+        </td>
+        <td>production mutationなしのtest harnessでSection 10、11の境界を再現できる</td>
+      </tr>
+      <tr>
+        <td>VB-D3</td>
+        <td>Modelが提案したmutationを適用しないshadow semantic evaluationを行う</td>
+        <td>Section 16のsafety suiteと初期quality gateを満たし、誤判断の分類が完了する</td>
+      </tr>
+      <tr>
+        <td>VB-D4</td>
+        <td>P0 / P1 / P2を再評価し、実装価値と複雑性を比較する</td>
+        <td>P0の採用・縮小・中止、P1以降の保留理由をdecision logへ残す</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    DiscoveryではSQLite migrationや本番tool公開を行わない。価値が弱い場合は、LLM toolを追加せず、 UI
+    shortcutまたはglobal設定の改善だけを代替案として選べる。
+  </p>
+
+  <h3 id="152-implementation-packages">15.2 Gate通過後のDeferred Implementation</h3>
+  <table>
+    <caption>
+      Table: Deferred implementation sequence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">内容</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>VB-00</td>
+        <td>Discovery結果、Track A readiness、baselineを再確認し、draftを実装契約へ改訂する</td>
+        <td>Section 17のDiscovery / Entry Gate通過、P0再確定、migration version再確定</td>
+      </tr>
+      <tr>
+        <td>VB-01</td>
+        <td>Voice Policy domain型、validation、effective precedenceをpure moduleとして実装する</td>
+        <td>table-driven unit testが全優先順位と範囲を通過</td>
+      </tr>
+      <tr>
+        <td>VB-02</td>
+        <td>Conversation Policy migration、repository、transaction、restart復元を実装する</td>
+        <td>migration、rollback compatibility、Conversation isolation test通過</td>
+      </tr>
+      <tr>
+        <td>VB-03</td>
+        <td>Agent tool registryを一般化し、tool schema、executor、quota、idempotencyを追加する</td>
+        <td>Recall regression 0、stream / non-stream parity、二Provider parity</td>
+      </tr>
+      <tr>
+        <td>VB-04</td>
+        <td>Conversation Agent instructionとsemantic intent evaluation fixtureを追加する</td>
+        <td>Section 16のselection thresholdを満たす</td>
+      </tr>
+      <tr>
+        <td>VB-05</td>
+        <td>Backend effective presentationとCompletion eventを実装する</td>
+        <td>同一Turn mute、resume、Meeting precedence test通過</td>
+      </tr>
+      <tr>
+        <td>VB-06</td>
+        <td>FrontendをBackend decisionへ移行し、status、resume、reset UIを追加する</td>
+        <td>stale stateで誤発声せず、keyboardとpointerで復旧可能</td>
+      </tr>
+      <tr>
+        <td>VB-07</td>
+        <td>Listening pace resolverを次のcaptureから適用する</td>
+        <td>進行中capture不変、revision snapshot、次回適用、engine bounds、reset test通過</td>
+      </tr>
+      <tr>
+        <td>VB-08</td>
+        <td>feature flag、structured audit、failure injection、manual canaryを追加する</td>
+        <td>rollback、restart、Provider failure、manual acceptance通過</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>VB-D4</code
+    >と<code>VB-00</code>完了前に<code>VB-01</code>以降を開始しない。
+    実装時はPolicy domainとBackend decisionを先に完成させ、LLM promptだけを先行releaseしない。
+  </p>
+
+  <h2 id="16-verification">16. VerificationとAcceptance Criteria</h2>
+  <h3 id="161-automated">16.1 Automated verification</h3>
+  <ul>
+    <li>
+      Tool parserが未知field、未知enum、両field null、禁止されたmode /
+      scope組み合わせ、過大argumentを拒否する。
+    </li>
+    <li>Streamとnon-streamが同じtool contractとfailure codeを返す。</li>
+    <li>Recallを最大回数使用してもVoice Policy mutation quotaが独立して残る。</li>
+    <li>同じtool callをretryしてもPolicyとauditが一回だけ更新される。</li>
+    <li>現在の応答だけのsilentはDBへ残らず、次の応答で既定Policyへ戻る。</li>
+    <li>継続silentはapp再起動後も同じConversationだけで有効になる。</li>
+    <li>別Conversationの発声状態とlistening paceが変更されない。</li>
+    <li>継続silent中のresume指示に対する応答が同じTurnから発声される。</li>
+    <li>Meeting hard blockとglobal Auto speak OFFがrun、Conversationのすべてに勝つ。</li>
+    <li>
+      UIでrevisionが進んだ後のtool
+      mutationは<code>policy_conflict</code>になり、UI変更を上書きしない。
+    </li>
+    <li>Listening paceは次のcapture開始時にsnapshotされ、進行中のcaptureへ遡及適用されない。</li>
+    <li>
+      各profileのengine mappingがTrack
+      Aのbounds内にあり、<code>quick &lt; balanced &lt; patient</code>を保つ。
+    </li>
+    <li>DB failure時に部分更新が残らず、mute要求の現在応答はfail-closedでsilentになる。</li>
+    <li>OpenAI互換routeとLARM routeが同じtool call、tool result、final completionを扱う。</li>
+    <li>Backend presentationのないCompletion eventではFrontendが自動発声しない。</li>
+  </ul>
+
+  <h3 id="162-semantic-evaluation">16.2 Semantic intent evaluation</h3>
+  <p>
+    日本語を中心に、直接命令、間接依頼、省略、理由付き依頼、否定、引用、翻訳、創作、Recall、
+    第三者発言、曖昧表現、ASR誤り、複合質問のfixtureを作る。各fixtureはtool selection、 speech mode
+    / scope、listening pace、clarificationの期待値を持つ。
+  </p>
+  <table>
+    <caption>
+      Table: Initial semantic quality gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Metric</th>
+        <th scope="col">Gate</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>明瞭な設定変更意図のtool selection recall</td>
+        <td>95%以上</td>
+      </tr>
+      <tr>
+        <td>設定変更でない発言のfalse positive率</td>
+        <td>1%以下</td>
+      </tr>
+      <tr>
+        <td>禁止caseでの発声再開・継続設定</td>
+        <td>0件</td>
+      </tr>
+      <tr>
+        <td>speech mode / scope exact match</td>
+        <td>98%以上</td>
+      </tr>
+      <tr>
+        <td>listening pace exact match</td>
+        <td>95%以上</td>
+      </tr>
+      <tr>
+        <td>複数解釈が残る発言でのno mutationまたはclarification</td>
+        <td>95%以上</td>
+      </tr>
+      <tr>
+        <td>引用・Recallされた命令の誤実行</td>
+        <td>0件</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    数値はSLAではなく最初の仮説gateである。少なくとも200
+    fixtureを用意し、使用するmodel、temperature、 prompt
+    versionを固定して各fixtureを5回実行する。集計値だけでなく、想定外の発声、不要な継続変更、
+    不要なsilentの順にseverityを付け、critical cohortは一件でも失敗したら原因を分類して再評価する。
+    Keyword完全一致testを品質指標の代わりにしない。
+  </p>
+
+  <h3 id="163-interaction-metrics">16.3 Voice interaction metrics</h3>
+  <p>
+    Track
+    Aの<code>balanced</code>相当をbaselineとして、次を同じscriptとaudio条件で比較する。
+  </p>
+  <ul>
+    <li>Premature cutoff率: まだ続く発話を確定してしまった割合。</li>
+    <li>Endpoint latency p50 / p95: 最後の発声からUser message確定まで。</li>
+    <li>Unexpected speech count: silentまたは上位block中にTTS processが開始した回数。</li>
+    <li>Stop latency: UIの停止操作からTTS process終了まで。</li>
+    <li>Recovery time: 現在状態の発見からresumeまたはdefault復帰までの時間と操作数。</li>
+    <li>Policy leakage / conflict: 別Conversationへの漏洩とstale updateによる上書き件数。</li>
+  </ul>
+  <p>
+    <code>patient</code>はpauseを含むscriptのpremature
+    cutoffを減らし、<code>quick</code>は短い発話のendpoint latencyを
+    改善することを期待する。許容幅はTrack A
+    baseline採取後に決め、改善が確認できないprofileはP0から外す。
+  </p>
+
+  <h3 id="164-manual-acceptance">16.4 Manual desktop acceptance</h3>
+  <ol>
+    <li>連続文字起こし中に間接的なmute依頼を話し、同じAssistant応答が画面だけに表示される。</li>
+    <li>黙った状態で質問を続け、複数応答が読み上げられないことを確認する。</li>
+    <li>自然な再開依頼を話し、その返答からTTSが再開する。</li>
+    <li>文字入力だけでもmute、resume、listening pace resetを行える。</li>
+    <li>UIだけで読み上げを停止し、発声を再開し、Conversation overrideを既定値へ戻せる。</li>
+    <li>別Conversationへ移動し、mute状態が漏れないことを確認する。</li>
+    <li>
+      appを再起動し、継続muteとlistening paceだけが同じConversationへ復元されることを確認する。
+    </li>
+    <li>
+      listening paceの依頼を含む発話は旧profileで完了し、次の発話から新profileになることを確認する。
+    </li>
+    <li>「もっとテンポよく返して」では勝手にPolicyを変更せず、対象を確認することを確認する。</li>
+    <li>Meeting中に再開を依頼してもTTSが実行されないことを確認する。</li>
+    <li>
+      global Auto speak
+      OFF中に再開を依頼してもTTSが実行されず、global設定が書き換わらないことを確認する。
+    </li>
+    <li>
+      TTS実行中もTrack
+      Aの自己音声除外が働き、Assistant音声が新しいUser発話にならないことを確認する。
+    </li>
+  </ol>
+
+  <h2 id="17-entry-and-delivery-gates">17. Entry GateとDelivery Gate</h2>
+  <table>
+    <caption>
+      Table: Voice Behavior delivery gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">条件</th>
+        <th scope="col">次の操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>D0 Exploration</td>
+        <td>調査、価値仮説、Capability Mapを作成済み。採用範囲は未承認</td>
+        <td>VB-D0〜D1。実装しない</td>
+      </tr>
+      <tr>
+        <td>D1 Value / UX</td>
+        <td>優先scenarioと手戻りが確認され、非音声復旧prototypeが全scenarioを満たす</td>
+        <td>VB-D2〜D3</td>
+      </tr>
+      <tr>
+        <td>D2 Feasibility / Shadow</td>
+        <td>
+          同一Turn mute、Policy precedence、profile resolverを再現し、shadow semantic gateを通過
+        </td>
+        <td>VB-D4でP0を採用・縮小・中止する</td>
+      </tr>
+      <tr>
+        <td>E1 Voice foundation ready</td>
+        <td>自動送信、TTS中capture、自己音声除外、停止・再開がmanual acceptance済み</td>
+        <td>VB-00でbaselineとopen decisionを再確認する</td>
+      </tr>
+      <tr>
+        <td>G0 Contract</td>
+        <td>Tool schema、Policy優先順位、migration version、UI復旧経路を承認</td>
+        <td>VB-01〜03</td>
+      </tr>
+      <tr>
+        <td>G1 Isolated</td>
+        <td>Domain、persistence、tool protocol、Provider parityの自動test成功</td>
+        <td>VB-04〜07</td>
+      </tr>
+      <tr>
+        <td>G2 Shadow evaluation</td>
+        <td>semantic fixtureがthresholdを満たし、実環境ではmutationをまだ適用しない</td>
+        <td>opt-in canary</td>
+      </tr>
+      <tr>
+        <td>G3 Opt-in canary</td>
+        <td>誤発声0、復旧不能0、Conversation漏洩0、自己応答loop 0</td>
+        <td>default ON候補</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="18-open-decisions">18. 実装開始時に確定する項目</h2>
+  <ul>
+    <li>
+      Track Aが固定VAD、semantic turn
+      detector、hybridのどれを採用し、三つのprofileをどう解決するか。
+    </li>
+    <li>
+      <code>quick</code
+      >と<code>patient</code>がbaseline比較で十分な差を出し、両方をP0へ残す価値があるか。
+    </li>
+    <li>P1の「次のUser turnだけpatient」を追加するほど一回限りの利用scenarioが多いか。</li>
+    <li>継続PolicyをConversation再訪時にも維持するか、再訪時に目立つstatus確認を出すか。</li>
+    <li>Voice statusをChat headerへ置くかComposer付近へ置くか。</li>
+    <li>P1の読み上げ速度を同じtoolへ追加するか、Presentation Managerの別契約にするか。</li>
+    <li>既存Runtime auditへVoice Policy mutationを統合するか、専用のtyped eventを追加するか。</li>
+    <li>使用するprimary Providerごとのsemantic fixture model、temperature、seed条件。</li>
+  </ul>
+  <p>
+    上記は実装方式の詳細であり、Section 2の境界を変更しない。
+    汎用設定toolへの拡張、AECとの統合、global設定変更が必要になった場合は、このdraftの範囲を越えるため別計画とする。
+  </p>
+
+  <h2 id="19-completed-state">19. 完成時の状態</h2>
+  <pre><code class="language-text">Natural user speech or typed text
+  ↓ contextual understanding, not phrase matching
+Conversation LLM
+  ↓ one bounded reversible tool
+Conversation Voice Policy
+  ├─ current response silent / speak
+  ├─ conversation mute / inherit
+  └─ quick / balanced / patient listening pace
+  ↓ Meeting and global opt-out precedence
+Effective presentation decision
+  ├─ text is always rendered
+  └─ TTS runs only when explicitly effective
+
+Track A resolves listening pace for the next utterance only.
+
+Manual UI recovery remains available at every state.</code></pre>
+  <p>
+    完成後、ユーザーは会話を中断してSettings画面を操作しなくても、自然な言葉で音声挙動を調整できる。
+    判断はLLMが文脈的に行う一方、実行可能な変更はConversation内の可逆な音声Policyに限定される。
+    AEC、自己音声除外、現在utteranceのendpointingは独立した音声入力基盤として維持され、LLM
+    toolに責務を混在させない。
+  </p>
+</article>

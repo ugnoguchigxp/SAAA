@@ -174,24 +174,42 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain("if (voiceActionRef.current) return");
     expect(app).toContain("if (voiceFinalizingRef.current) return");
     expect(app).toContain("setVoiceStarting(true)");
-    expect(app).toContain("void finishVoiceCapture()");
+    expect(app).toContain("void finishVoiceCapture(false)");
+    expect(app).toContain("void finishVoiceCapture(targetSpeakerFilterEnabledRef.current)");
+  });
+
+  test("auto-finalizes chat voice after detected speech and silence without changing Meeting", () => {
+    const app = readFileSync(join(import.meta.dir, "../src/App.tsx"), "utf8");
+    const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
+    expect(app).toContain("new VoiceActivityDetector({ sampleRate: context.sampleRate })");
+    expect(app).toContain("voiceActivityDetectorRef.current?.observe(event.data).shouldFinalize");
+    expect(app).toContain("void finishVoiceCapture(targetSpeakerFilterEnabledRef.current)");
+    expect(meeting).not.toContain("VoiceActivityDetector");
+  });
+
+  test("keeps automatic voice turns connected to LLM submission and response speech", () => {
+    const app = readFileSync(join(import.meta.dir, "../src/App.tsx"), "utf8");
+    expect(app).toContain("void submitPrompt(transcript, true)");
+    expect(app).toContain("pendingVoicePromptsRef.current.push(transcript)");
+    expect(app).toContain('voiceSettings?.autoSpeak');
+    expect(app).toContain("void startSpeech(event.message.content, conversationId)");
   });
 
   test("treats a requested transcription stop as cancellation rather than failure", () => {
     const app = readFileSync(join(import.meta.dir, "../src/App.tsx"), "utf8");
     expect(app).toContain("const voiceRunId = activeVoiceRunIdRef.current");
     expect(app).toContain("voiceCancellationRequestedRef.current = true");
-    expect(app).toContain("if (!voiceCancellationRequestedRef.current)");
-    expect(app).toContain("if (voiceCancellationRequestedRef.current) return");
+    expect(app).toContain("if (!voiceCancellationRequestedRef.current &&");
+    expect(app).toContain("if (voiceCancellationRequestedRef.current || !transcript.trim()) continue");
   });
 
   test("releases raw chat PCM before waiting for the model response", () => {
     const app = readFileSync(join(import.meta.dir, "../src/App.tsx"), "utf8");
     const clearFrames = app.indexOf("voiceFramesRef.current = []", app.indexOf("async function finishVoiceCapture"));
-    const submitTranscript = app.indexOf("await submitPrompt(transcript, true)");
+    const enqueueTranscript = app.indexOf("enqueueVoiceSegment({", clearFrames);
     expect(clearFrames).toBeGreaterThan(-1);
-    expect(clearFrames).toBeLessThan(submitTranscript);
-    expect(app).toContain("samples = []");
+    expect(clearFrames).toBeLessThan(enqueueTranscript);
+    expect(app).toContain("segment.samples = []");
   });
 
   test("blocks chat capture while Meeting is still in preflight", () => {

@@ -14,6 +14,7 @@ import type {
   SituationReviewSnapshot, CalibrationParameters, CalibrationProfile, CalibrationRun,
   TaskMode,
   VoiceEvent,
+  VoiceProfileSnapshot,
   MeetingPreflightResult,
   MeetingSegmentResult,
   MeetingSnapshot,
@@ -79,6 +80,35 @@ export async function stopTts(runId: string): Promise<void> {
 
 export async function getAppSnapshot(): Promise<AppSnapshot> {
   return invoke<AppSnapshot>("get_app_snapshot");
+}
+
+export async function getVoiceProfileSnapshot(): Promise<VoiceProfileSnapshot> {
+  return invoke<VoiceProfileSnapshot>("get_voice_profile_snapshot");
+}
+
+export async function saveVoiceEnrollmentSample(input: {
+  samples: number[];
+  sampleRate: number;
+  inputDeviceId: string;
+  effectiveAec: boolean;
+}): Promise<VoiceProfileSnapshot> {
+  return invoke<VoiceProfileSnapshot>("save_voice_enrollment_sample", { input });
+}
+
+export async function setTargetSpeakerFilterEnabled(enabled: boolean): Promise<VoiceProfileSnapshot> {
+  return invoke<VoiceProfileSnapshot>("set_target_speaker_filter_enabled", { input: { enabled } });
+}
+
+export async function deleteVoiceEnrollmentSample(sampleId: string): Promise<VoiceProfileSnapshot> {
+  return invoke<VoiceProfileSnapshot>("delete_voice_enrollment_sample", { sampleId });
+}
+
+export async function deleteVoiceProfile(): Promise<VoiceProfileSnapshot> {
+  return invoke<VoiceProfileSnapshot>("delete_voice_profile");
+}
+
+export async function readVoiceEnrollmentSample(sampleId: string): Promise<number[]> {
+  return invoke<number[]>("read_voice_enrollment_sample", { sampleId });
 }
 
 export async function reportFrontendReady(): Promise<void> {

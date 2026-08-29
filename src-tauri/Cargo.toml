@@ -22,6 +22,7 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+aes-gcm = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
@@ -30,7 +31,10 @@ rusqlite = { version = "0.37", features = ["backup", "bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 chrono-tz = "0.10"
 futures-util = "0.3"
+hkdf = "0.12"
 iana-time-zone = "0.1"
+libloading = "0.8"
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 regex = "1"
 sha2 = "0.10"
@@ -39,10 +43,12 @@ tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-t
 unicode-segmentation = "1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+zeroize = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSRunningApplication", "NSWorkspace"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEventSource", "CGEventTypes"] }
+security-framework = "3.7"
 
 [dev-dependencies]
 time = { version = "0.3.55", features = ["formatting"] }
