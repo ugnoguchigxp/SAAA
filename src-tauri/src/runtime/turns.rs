@@ -1,0 +1,704 @@
+use rusqlite::params;
+use std::fs;
+use std::sync::Arc;
+
+use crate::ipc_contract::{ConversationMessage, RuntimeEvent, RuntimeFailureCode};
+use crate::persistence::{
+    load_model_providers, load_routing_settings, load_security_settings,
+    validate_conversation_write_target,
+};
+use crate::providers::routing::{apply_runtime_provider_gates, effective_conversation_route_ids};
+use crate::redact::{bounded_text, redact_runtime_text};
+use crate::{
+    begin_provider_session, database_error, execute_codex_turn, finish_gnosis_provider_session,
+    finish_larm_provider_session, finish_provider_session, memory, new_id, now_iso,
+    persist_conversation_success, situation, stream_gnosis_provider, stream_larm_provider,
+    stream_model_provider, update_runtime_provider, AppState, CleanupOutcome, LarmStreamContext,
+    ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
+    ProviderOutputPersistence, RunCancellation, StartTurnInput, TurnExecutionFailure,
+};
+
+pub(crate) async fn execute_turn(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+    codex_policy_override: Option<crate::runtime::contracts::RunSupervisionPolicy>,
+) -> Result<(), TurnExecutionFailure> {
+    let task_mode = match prepare_runtime_run(state, input) {
+        Ok(task_mode) => task_mode,
+        Err(message) => {
+            let _ = on_event.send(RuntimeEvent::Failed {
+                run_id: input.run_id.clone(),
+                code: RuntimeFailureCode::RuntimeError,
+                message: redact_runtime_text(&message),
+                recovery: "Review the conversation and runtime state, then retry.".to_string(),
+            });
+            return Err(TurnExecutionFailure::unsupervised(
+                crate::runtime::contracts::RunFailureCode::InternalError,
+                message,
+            ));
+        }
+    };
+    state
+        .situation
+        .set_conversation_state(if task_mode == "coding" {
+            situation::contracts::ConversationState::AgentRunning
+        } else {
+            situation::contracts::ConversationState::ModelRunning
+        });
+    if task_mode == "coding" {
+        let result = execute_codex_turn(
+            state,
+            input,
+            on_event,
+            cancellation.clone(),
+            codex_policy_override,
+        )
+        .await;
+        if let Err(error) = &result {
+            if !error.finalized {
+                let cancelled = cancellation.is_cancelled()
+                    || error.code == crate::runtime::contracts::RunFailureCode::UserCancelled;
+                finish_supervised_runtime_run(
+                    state,
+                    &input.run_id,
+                    if cancelled { "cancelled" } else { "failed" },
+                    Some(if cancelled {
+                        crate::runtime::contracts::RunFailureCode::UserCancelled
+                    } else {
+                        error.code
+                    }),
+                    error.supervisor_version,
+                    error.last_progress_at.as_deref(),
+                    Some(&error.message),
+                )
+                .map_err(|message| {
+                    TurnExecutionFailure::unsupervised(
+                        crate::runtime::contracts::RunFailureCode::InternalError,
+                        message,
+                    )
+                })?;
+                send_runtime_terminal_event(on_event, &input.run_id, error, cancelled);
+            }
+        }
+        state
+            .situation
+            .set_conversation_state(situation::contracts::ConversationState::Idle);
+        return result.map(|_| ());
+    }
+
+    let result = execute_conversation_turn(state, input, on_event, cancellation.clone())
+        .await
+        .map_err(|message| {
+            TurnExecutionFailure::unsupervised(
+                crate::runtime::contracts::RunFailureCode::ProviderError,
+                message,
+            )
+        });
+    let finalization = match &result {
+        Ok(message) => {
+            let _ = on_event.send(RuntimeEvent::MessageCompleted {
+                run_id: input.run_id.clone(),
+                message: message.clone(),
+            });
+            Ok(())
+        }
+        Err(error) if cancellation.is_cancelled() => {
+            let finalization = finish_supervised_runtime_run(
+                state,
+                &input.run_id,
+                "cancelled",
+                Some(crate::runtime::contracts::RunFailureCode::UserCancelled),
+                None,
+                None,
+                Some("Cancelled by user"),
+            );
+            if finalization.is_ok() {
+                let _ = on_event.send(RuntimeEvent::Cancelled {
+                    run_id: input.run_id.clone(),
+                });
+            }
+            finalization
+        }
+        Err(error) => {
+            let finalization = finish_supervised_runtime_run(
+                state,
+                &input.run_id,
+                "failed",
+                None,
+                None,
+                None,
+                Some(&error.message),
+            );
+            if finalization.is_ok() {
+                let _ = on_event.send(RuntimeEvent::Failed {
+                    run_id: input.run_id.clone(),
+                    code: RuntimeFailureCode::RuntimeError,
+                    message: redact_runtime_text(&error.message),
+                    recovery: "Review the selected provider and runtime settings, then retry."
+                        .to_string(),
+                });
+            }
+            finalization
+        }
+    };
+    state
+        .situation
+        .set_conversation_state(situation::contracts::ConversationState::Idle);
+    finalization.map_err(|message| {
+        TurnExecutionFailure::unsupervised(
+            crate::runtime::contracts::RunFailureCode::InternalError,
+            message,
+        )
+    })?;
+    result.map(|_| ())
+}
+
+pub(crate) fn send_runtime_terminal_event(
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    run_id: &str,
+    error: &TurnExecutionFailure,
+    cancelled: bool,
+) {
+    if cancelled {
+        let _ = on_event.send(RuntimeEvent::Cancelled {
+            run_id: run_id.to_string(),
+        });
+    } else {
+        let _ = on_event.send(RuntimeEvent::Failed {
+            run_id: run_id.to_string(),
+            code: match error.code {
+                crate::runtime::contracts::RunFailureCode::ConfigurationError => {
+                    RuntimeFailureCode::ConfigurationError
+                }
+                crate::runtime::contracts::RunFailureCode::ChildStartFailed => {
+                    RuntimeFailureCode::ChildStartFailed
+                }
+                crate::runtime::contracts::RunFailureCode::RequestTimeout => {
+                    RuntimeFailureCode::RequestTimeout
+                }
+                crate::runtime::contracts::RunFailureCode::ProgressTimeout => {
+                    RuntimeFailureCode::ProgressTimeout
+                }
+                crate::runtime::contracts::RunFailureCode::TerminalTimeout => {
+                    RuntimeFailureCode::TerminalTimeout
+                }
+                crate::runtime::contracts::RunFailureCode::HardTimeout => {
+                    RuntimeFailureCode::HardTimeout
+                }
+                crate::runtime::contracts::RunFailureCode::ChildExited => {
+                    RuntimeFailureCode::ChildExited
+                }
+                crate::runtime::contracts::RunFailureCode::ProtocolError => {
+                    RuntimeFailureCode::ProtocolError
+                }
+                crate::runtime::contracts::RunFailureCode::PolicyViolation => {
+                    RuntimeFailureCode::PolicyViolation
+                }
+                crate::runtime::contracts::RunFailureCode::ProviderError => {
+                    RuntimeFailureCode::ProviderError
+                }
+                crate::runtime::contracts::RunFailureCode::ResponseTooLarge => {
+                    RuntimeFailureCode::ResponseTooLarge
+                }
+                crate::runtime::contracts::RunFailureCode::InternalError
+                | crate::runtime::contracts::RunFailureCode::AppRestarted => {
+                    RuntimeFailureCode::InternalError
+                }
+                crate::runtime::contracts::RunFailureCode::UserCancelled => {
+                    RuntimeFailureCode::RuntimeError
+                }
+            },
+            message: redact_runtime_text(&error.message),
+            recovery: error.code.recovery().to_string(),
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn finish_supervised_runtime_run(
+    state: &AppState,
+    run_id: &str,
+    status: &str,
+    failure_code: Option<crate::runtime::contracts::RunFailureCode>,
+    supervisor_version: Option<&str>,
+    last_progress_at: Option<&str>,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE runtime_runs
+             SET status=?1, error_message=?2, completed_at=?3, failure_code=?4,
+                 supervisor_version=?5, last_progress_at=?6
+             WHERE id=?7 AND status='running'",
+            params![
+                status,
+                error.map(redact_runtime_text),
+                now_iso(),
+                failure_code.map(crate::runtime::contracts::RunFailureCode::as_str),
+                supervisor_version,
+                last_progress_at,
+                run_id
+            ],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run was already finalized".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn prepare_runtime_run(
+    state: &AppState,
+    input: &StartTurnInput,
+) -> Result<String, String> {
+    let _policy = state
+        .interaction_policy
+        .lock()
+        .map_err(|_| "Interaction policy lock unavailable".to_string())?;
+    let task_mode: String = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?
+        .query_row(
+            "SELECT task_mode FROM conversations WHERE id = ?1",
+            params![input.conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Conversation does not exist".to_string())?;
+    validate_conversation_write_target(&input.conversation_id, &task_mode)?;
+    if task_mode == "coding" && state.meeting.blocks_tts() {
+        return Err(
+            "MEETING_POLICY_AGENT_BLOCKED: Coding Agent is disabled during a meeting.".to_string(),
+        );
+    }
+    if task_mode == "coding" {
+        let workspace = input
+            .workspace_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Select a workspace before starting a Codex turn".to_string())?;
+        let workspace = fs::canonicalize(workspace)
+            .map_err(|_| "The selected Codex workspace does not exist".to_string())?;
+        if !workspace.is_dir() {
+            return Err("The selected Codex workspace is not a directory".to_string());
+        }
+    } else if input.workspace_path.is_some() {
+        return Err("Normal conversation turns cannot include a workspace".to_string());
+    }
+    if task_mode == "conversation" {
+        memory::context_window::validate_current_instruction(input.content.trim())?;
+    }
+    let mut connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    let route_kind = if task_mode == "coding" {
+        "coding.assist"
+    } else {
+        "conversation.respond"
+    };
+    let now = now_iso();
+    let input_message_id = new_id("message");
+    transaction
+        .execute(
+            "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+             VALUES (?1, ?2, 'user', ?3, ?4)",
+            params![
+                input_message_id,
+                input.conversation_id,
+                input.content.trim(),
+                now
+            ],
+        )
+        .map_err(database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO runtime_runs(
+               id,conversation_id,route_kind,status,started_at,supervisor_version,input_message_id
+             ) VALUES(?1,?2,?3,'running',?4,?5,?6)",
+            params![
+                input.run_id,
+                input.conversation_id,
+                route_kind,
+                now,
+                if task_mode == "coding" {
+                    Some(crate::runtime::contracts::SUPERVISOR_VERSION)
+                } else {
+                    None
+                },
+                input_message_id,
+            ],
+        )
+        .map_err(database_error)?;
+    transaction
+        .execute(
+            "UPDATE conversations SET updated_at = ?1, title = COALESCE(title, ?2) WHERE id = ?3",
+            params![
+                now,
+                bounded_text(input.content.trim(), 60),
+                input.conversation_id
+            ],
+        )
+        .map_err(database_error)?;
+    transaction.commit().map_err(database_error)?;
+    Ok(task_mode)
+}
+
+pub(crate) fn finish_runtime_run(
+    state: &AppState,
+    run_id: &str,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE runtime_runs
+             SET status = ?1, error_message = ?2, completed_at = ?3
+             WHERE id = ?4 AND status = 'running'",
+            params![status, error.map(redact_runtime_text), now_iso(), run_id],
+        )
+        .map_err(database_error)?;
+    if changed != 1 {
+        return Err("Runtime run was already finalized".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) async fn execute_conversation_turn(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+) -> Result<ConversationMessage, String> {
+    let (providers, route, security, history, context_health) = {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        let input_message_id: String = connection
+            .query_row(
+                "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
+                params![input.run_id],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        let context_window =
+            memory::context_window::build(&connection, &input.conversation_id, &input_message_id)?;
+        let context_health = context_window.health.clone();
+        let _ = memory::control_plane::record_projection_event(
+            &connection,
+            context_health.status,
+            context_health.projected_bytes,
+            context_health.hard_limit_bytes,
+            context_health.output_reserve_bytes,
+            context_health.repair_count,
+            &now_iso(),
+        );
+        let history = context_window
+            .messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| ConversationMessage {
+                id: format!("context-projection-{index}"),
+                conversation_id: input.conversation_id.clone(),
+                role: message.role,
+                content: message.content,
+                created_at: index.to_string(),
+            })
+            .collect::<Vec<_>>();
+        (
+            load_model_providers(&connection)?,
+            load_routing_settings(&connection)?.conversation_respond,
+            load_security_settings(&connection)?,
+            history,
+            context_health,
+        )
+    };
+    let reasoning_effort = providers.reasoning_effort.clone();
+    let route_ids = apply_runtime_provider_gates(
+        &providers,
+        effective_conversation_route_ids(&providers, &route, &security),
+        &state.larm_gate,
+    );
+    if route_ids.is_empty() && !state.larm_gate.allows_traffic() {
+        return Err(state.larm_gate.public_message().to_string());
+    }
+    let mut failures = Vec::new();
+    let mut context_health_emitted = false;
+
+    for provider_id in route_ids {
+        if cancellation.is_cancelled() {
+            return Err("Cancelled by user".to_string());
+        }
+        let Some(provider) = providers
+            .providers
+            .iter()
+            .find(|provider| provider.id() == provider_id && provider.enabled())
+            .cloned()
+        else {
+            failures.push(format!("{provider_id}: provider is disabled or missing"));
+            continue;
+        };
+        update_runtime_provider(state, &input.run_id, provider.id())?;
+        let session_id =
+            begin_provider_session(state, &input.run_id, provider.id(), provider.kind())?;
+        if on_event
+            .send(RuntimeEvent::Started {
+                run_id: input.run_id.clone(),
+                route: "conversation.respond".to_string(),
+                provider_id: provider.id().to_string(),
+            })
+            .is_err()
+        {
+            if provider.kind() == "larm" {
+                finish_larm_provider_session(
+                    state,
+                    &session_id,
+                    "failed",
+                    Some(ProviderFailureKind::ClientDisconnected),
+                    CleanupOutcome::NotStarted,
+                )?;
+            } else {
+                finish_provider_session(
+                    state,
+                    &session_id,
+                    "failed",
+                    Some(ProviderFailureKind::ClientDisconnected),
+                )?;
+            }
+            return Err(ProviderFailureKind::ClientDisconnected
+                .public_message()
+                .as_str()
+                .to_string());
+        }
+        if !context_health_emitted {
+            let _ = on_event.send(RuntimeEvent::Activity {
+                run_id: input.run_id.clone(),
+                kind: "context-window".to_string(),
+                summary: format!(
+                    "Context {}: {}/{} input bytes, {} bytes output reserved, {} memory items, {} recent messages, {} continuity groups, {} loaded source messages omitted{}{}",
+                    context_health.status,
+                    context_health.projected_bytes,
+                    context_health.hard_limit_bytes,
+                    context_health.output_reserve_bytes,
+                    context_health.memory_item_count,
+                    context_health.recent_source_messages,
+                    context_health.continuity_group_count,
+                    context_health.omitted_loaded_source_messages,
+                    if context_health.source_history_truncated {
+                        ", older source history truncated"
+                    } else {
+                        ""
+                    },
+                    if context_health.repair_count > 0 {
+                        ", minimal reconstruction applied"
+                    } else {
+                        ""
+                    },
+                ),
+            });
+            context_health_emitted = true;
+        }
+        let outcome = match &provider {
+            ModelProviderSettings::OpenAiCompatible(provider) => {
+                stream_model_provider(
+                    provider,
+                    &history,
+                    route.timeout_ms,
+                    ModelStreamContext {
+                        reasoning_effort: &reasoning_effort,
+                        input,
+                        on_event,
+                        cancellation: cancellation.clone(),
+                        output_persistence: Some(ProviderOutputPersistence {
+                            state,
+                            session_id: &session_id,
+                        }),
+                    },
+                )
+                .await
+            }
+            ModelProviderSettings::Larm(provider) => {
+                stream_larm_provider(
+                    provider,
+                    &history,
+                    &reasoning_effort,
+                    route.timeout_ms,
+                    cancellation.clone(),
+                    LarmStreamContext {
+                        state,
+                        session_id: &session_id,
+                        input,
+                        on_event,
+                    },
+                )
+                .await
+            }
+            ModelProviderSettings::Gnosis(provider) => {
+                stream_gnosis_provider(
+                    provider,
+                    &history,
+                    route.timeout_ms,
+                    cancellation.clone(),
+                    ModelStreamContext {
+                        reasoning_effort: &reasoning_effort,
+                        input,
+                        on_event,
+                        cancellation: cancellation.clone(),
+                        output_persistence: Some(ProviderOutputPersistence {
+                            state,
+                            session_id: &session_id,
+                        }),
+                    },
+                )
+                .await
+            }
+        };
+        match outcome {
+            ProviderAttemptOutcome::Completed { content, cleanup } => {
+                if provider.kind() == "larm" {
+                    finish_larm_provider_session(state, &session_id, "completed", None, cleanup)?;
+                } else if matches!(&provider, ModelProviderSettings::Gnosis(_)) {
+                    finish_gnosis_provider_session(state, &session_id, "completed", None, cleanup)?;
+                } else {
+                    finish_provider_session(state, &session_id, "completed", None)?;
+                }
+                return persist_conversation_success(state, input, &content);
+            }
+            ProviderAttemptOutcome::Cancelled { cleanup, .. } => {
+                if provider.kind() == "larm" {
+                    finish_larm_provider_session(
+                        state,
+                        &session_id,
+                        "cancelled",
+                        Some(ProviderFailureKind::Cancelled),
+                        cleanup,
+                    )?;
+                } else if matches!(&provider, ModelProviderSettings::Gnosis(_)) {
+                    finish_gnosis_provider_session(
+                        state,
+                        &session_id,
+                        "cancelled",
+                        Some(ProviderFailureKind::Cancelled),
+                        cleanup,
+                    )?;
+                } else {
+                    finish_provider_session(
+                        state,
+                        &session_id,
+                        "cancelled",
+                        Some(ProviderFailureKind::Cancelled),
+                    )?;
+                }
+                return Err("Cancelled by user".to_string());
+            }
+            ProviderAttemptOutcome::Failed {
+                kind,
+                public_message,
+                output_started,
+                cleanup,
+            } => {
+                let reason = public_message.as_str();
+                if provider.kind() == "larm" {
+                    finish_larm_provider_session(
+                        state,
+                        &session_id,
+                        "failed",
+                        Some(kind),
+                        cleanup,
+                    )?;
+                } else if matches!(&provider, ModelProviderSettings::Gnosis(_)) {
+                    finish_gnosis_provider_session(
+                        state,
+                        &session_id,
+                        "failed",
+                        Some(kind),
+                        cleanup,
+                    )?;
+                } else {
+                    finish_provider_session(state, &session_id, "failed", Some(kind))?;
+                }
+                let _ = on_event.send(RuntimeEvent::ProviderFailed {
+                    run_id: input.run_id.clone(),
+                    provider_id: provider.id().to_string(),
+                    reason: reason.to_string(),
+                });
+                let failure = format!("{}: {reason}", provider.id());
+                if matches!(provider, ModelProviderSettings::Gnosis(_))
+                    || !provider_fallback_allowed(kind, output_started)
+                {
+                    return Err(failure);
+                }
+                failures.push(failure);
+            }
+        }
+    }
+    Err(format!(
+        "All configured providers failed. {}",
+        failures.join("; ")
+    ))
+}
+
+pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {
+    !output_started
+        && matches!(
+            kind,
+            ProviderFailureKind::Capacity
+                | ProviderFailureKind::Policy
+                | ProviderFailureKind::Unavailable
+                | ProviderFailureKind::Draining
+                | ProviderFailureKind::Upstream
+                | ProviderFailureKind::Network
+                | ProviderFailureKind::Timeout
+                | ProviderFailureKind::AllocationLost
+                | ProviderFailureKind::AllocationOutcomeUnknown
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_fallback_policy_is_failure_kind_and_output_aware() {
+        for kind in [
+            ProviderFailureKind::Policy,
+            ProviderFailureKind::Capacity,
+            ProviderFailureKind::Unavailable,
+            ProviderFailureKind::Draining,
+            ProviderFailureKind::Upstream,
+            ProviderFailureKind::Network,
+            ProviderFailureKind::Timeout,
+            ProviderFailureKind::AllocationLost,
+            ProviderFailureKind::AllocationOutcomeUnknown,
+        ] {
+            assert!(provider_fallback_allowed(kind, false), "{}", kind.as_str());
+            assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
+        }
+        for kind in [
+            ProviderFailureKind::Authentication,
+            ProviderFailureKind::Contract,
+            ProviderFailureKind::Protocol,
+            ProviderFailureKind::RequestTooLarge,
+            ProviderFailureKind::NotReady,
+            ProviderFailureKind::PartialOutput,
+            ProviderFailureKind::ClientDisconnected,
+            ProviderFailureKind::Cancelled,
+            ProviderFailureKind::Internal,
+        ] {
+            assert!(!provider_fallback_allowed(kind, false), "{}", kind.as_str());
+            assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
+        }
+    }
+}

@@ -34,7 +34,8 @@ async fn probe_at(base_url: &str) -> Result<(), String> {
         .await
         .map_err(|error| format!("Could not reach gnosis ASR: {error}"))?;
     let status = response.status();
-    let body = bounded_response(response).await?;
+    let cancellation = RunCancellation::default();
+    let body = bounded_response(response, &cancellation).await?;
     if !status.is_success() {
         return Err(format!(
             "gnosis ASR health check returned HTTP {}",
@@ -90,7 +91,7 @@ async fn transcribe_at(
         response = request => response.map_err(|error| format!("Could not reach gnosis ASR: {error}"))?,
     };
     let status = response.status();
-    let body = bounded_response(response).await?;
+    let body = bounded_response(response, &cancellation).await?;
     if !status.is_success() {
         return Err(format!("gnosis ASR returned HTTP {}", status.as_u16()));
     }
@@ -111,11 +112,15 @@ fn client() -> Result<Client, String> {
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .build()
         .map_err(|error| format!("Could not initialize gnosis ASR client: {error}"))
 }
 
-async fn bounded_response(response: Response) -> Result<Vec<u8>, String> {
+async fn bounded_response(
+    response: Response,
+    cancellation: &RunCancellation,
+) -> Result<Vec<u8>, String> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
@@ -124,7 +129,14 @@ async fn bounded_response(response: Response) -> Result<Vec<u8>, String> {
     }
     let mut stream = response.bytes_stream();
     let mut body = Vec::new();
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let chunk = tokio::select! {
+            _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
+            chunk = stream.next() => chunk,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
         let chunk =
             chunk.map_err(|error| format!("Could not read gnosis ASR response: {error}"))?;
         if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
@@ -272,5 +284,40 @@ mod tests {
         server.join().expect("fixture joins");
         assert_eq!(result.0, "gnosis transcript");
         assert_eq!(result.1.as_deref(), Some("Japanese"));
+    }
+
+    #[tokio::test]
+    async fn response_body_read_stops_when_transcription_is_cancelled() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("fixture accepts");
+            let mut request = [0_u8; 4_096];
+            let _ = socket.read(&mut request).expect("fixture reads request");
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 10\r\nConnection: close\r\n\r\n",
+                )
+                .expect("fixture writes headers");
+            thread::sleep(Duration::from_millis(200));
+        });
+        let response = client()
+            .expect("client builds")
+            .get(format!("http://{address}/health"))
+            .send()
+            .await
+            .expect("headers arrive");
+        let cancellation = Arc::new(RunCancellation::default());
+        let cancellation_for_task = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            cancellation_for_task.cancel();
+        });
+
+        assert_eq!(
+            bounded_response(response, &cancellation).await,
+            Err("Transcription cancelled".to_string())
+        );
+        server.join().expect("fixture joins");
     }
 }

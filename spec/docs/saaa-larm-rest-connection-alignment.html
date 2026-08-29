@@ -43,7 +43,10 @@
     <dt>Adapter owner</dt>
     <dd>SAAA coding agent / SAAA repository reviewer</dd>
     <dt>Implementation commit</dt>
-    <dd>Current review worktree。review commit作成後にcommit IDを追記する。</dd>
+    <dd>
+      <code>18924fa</code>（adapter integration
+      baseline）。固定audienceの最終hardeningは現在のreview worktreeに含む。
+    </dd>
     <dt>LAN canary window</dt>
     <dd>Gnosis側のREST Gateway準備完了通知とtoken注入後、SAAA Macから直ちに実行可能。</dd>
     <dt>REST-only and no SSH</dt>
@@ -105,9 +108,19 @@
 
   <h2 id="canary">5. LAN canary</h2>
   <p>
-    Gnosis側の準備完了後に、SAAA MacからTCP 9810のRESTだけで次を確認する。現時点では外部準備と API
-    token受領待ちであり、SSHによる代替確認は行わない。
+    SAAA MacからTCP 9810のRESTだけで次を確認する。未認証control APIの到達性は確認済みで、認証付き
+    lifecycleはSAAA processへのAPI token設定待ち。SSHによる代替確認は行わない。
   </p>
+  <dl>
+    <dt>Last attempt</dt>
+    <dd><time>2026-08-29T20:06:00+09:00</time></dd>
+    <dt>Observed result</dt>
+    <dd>
+      <code>GET http://192.168.0.65:9810/v1/agent-profiles</code>への未認証HTTP requestは
+      約0.14秒で<code>401</code>。SAAA process
+      environmentの<code>LARM_API_TOKEN</code>は未設定。
+    </dd>
+  </dl>
   <ol>
     <li>未認証control requestが401になる。</li>
     <li>認証付きcreate、poll、claim、semantic health、SSE inference、DELETE releaseが完了する。</li>

@@ -44,7 +44,7 @@ describe("target-speaker voice profile", () => {
   });
 
   test("keeps filtered listening active while serializing ASR and LLM work", async () => {
-    const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+    const app = await readFile(new URL("../src/features/voice/usePushToTalk.ts", import.meta.url), "utf8");
     expect(app).toContain("finishVoiceCapture(targetSpeakerFilterEnabledRef.current)");
     expect(app).toContain("if (keepListening && voiceContextRef.current)");
     expect(app).toContain("voiceSegmentQueueRef.current.length >= 2");

@@ -25,6 +25,9 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_RETRY_AFTER_SECONDS: u64 = 30;
 const RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_LIFETIME_MARGIN: Duration = Duration::from_secs(30);
+pub(crate) const MAX_REQUEST_TIMEOUT_MS: u64 =
+    ((CONNECTION_TTL_SECONDS as u64) - REQUEST_LIFETIME_MARGIN.as_secs()) * 1_000 - 1;
+const CLOCK_SKEW_TOLERANCE_SECONDS: i64 = 60;
 const RESPONSE_LIMIT: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -45,15 +48,24 @@ pub(crate) enum ErrorKind {
 pub(crate) struct GnosisError {
     pub(crate) kind: ErrorKind,
     message: &'static str,
+    release_failure: Option<ErrorKind>,
 }
 
 impl GnosisError {
     pub(crate) fn new(kind: ErrorKind, message: &'static str) -> Self {
-        Self { kind, message }
+        Self {
+            kind,
+            message,
+            release_failure: None,
+        }
     }
 
     pub(crate) fn public_message(&self) -> &'static str {
         self.message
+    }
+
+    pub(crate) fn release_failure(&self) -> Option<ErrorKind> {
+        self.release_failure
     }
 }
 
@@ -221,6 +233,7 @@ pub(crate) struct GnosisConnection {
     endpoint: String,
     model: String,
     api_key: Zeroizing<String>,
+    prior_release_failure: Option<ErrorKind>,
 }
 
 impl GnosisConnection {
@@ -247,6 +260,7 @@ impl GnosisConnection {
                     "Could not initialize the gnosis discovery client.",
                 )
             })?;
+        let mut prior_release_failure = None;
         for attempt in 0..2 {
             match Self::resolve_once(
                 client.clone(),
@@ -256,14 +270,26 @@ impl GnosisConnection {
             )
             .await
             {
-                Err(error) if error.kind == ErrorKind::StaleConnection && attempt == 0 => continue,
-                result => return result,
+                Ok(mut connection) => {
+                    connection.prior_release_failure =
+                        prior_release_failure.or(connection.prior_release_failure);
+                    return Ok(connection);
+                }
+                Err(error) if error.kind == ErrorKind::StaleConnection && attempt == 0 => {
+                    prior_release_failure = prior_release_failure.or(error.release_failure);
+                }
+                Err(mut error) => {
+                    error.release_failure = prior_release_failure.or(error.release_failure);
+                    return Err(error);
+                }
             }
         }
-        Err(GnosisError::new(
+        let mut error = GnosisError::new(
             ErrorKind::StaleConnection,
             "The gnosis daemon restarted while resolving the provider connection.",
-        ))
+        );
+        error.release_failure = prior_release_failure;
+        Err(error)
     }
 
     async fn resolve_once(
@@ -287,7 +313,7 @@ impl GnosisConnection {
         .await?;
         validate_config_revision(profiles.config_revision.as_deref())?;
         validate_profiles(&profiles.value)?;
-        let audience = select_audience(&profiles.value.audiences, control_is_loopback)?.to_string();
+        let audience = select_audience(&profiles.value.audiences)?.to_string();
 
         let idempotency_key = format!("saaa-{}", Uuid::new_v4().simple());
         let create_body = json!({
@@ -322,7 +348,9 @@ impl GnosisConnection {
             Ok(identity) => identity,
             Err(error) => {
                 if let Ok(url) = connection_resource_url(&control_base, &state.id) {
-                    let _ = release_connection(&client, &url, &control_credential).await;
+                    return Err(
+                        error_after_release(error, &client, &url, &control_credential).await,
+                    );
                 }
                 return Err(error);
             }
@@ -334,8 +362,13 @@ impl GnosisConnection {
                 &control_base,
                 &connection_url,
             ) {
-                let _ = release_connection(&client, &connection_url, &control_credential).await;
-                return Err(error);
+                return Err(error_after_release(
+                    error,
+                    &client,
+                    &connection_url,
+                    &control_credential,
+                )
+                .await);
             }
         }
         let mut poll_interval = created.retry_after.unwrap_or(POLL_INTERVAL);
@@ -352,31 +385,73 @@ impl GnosisConnection {
                         .map(|error| error.code.as_str())
                         .unwrap_or_default();
                     let error = classify_api_error(kind);
-                    let _ = release_connection(&client, &connection_url, &control_credential).await;
-                    return Err(error);
+                    return Err(error_after_release(
+                        error,
+                        &client,
+                        &connection_url,
+                        &control_credential,
+                    )
+                    .await);
                 }
                 "released" | "expired" => {
-                    let _ = release_connection(&client, &connection_url, &control_credential).await;
-                    return Err(GnosisError::new(
+                    let error = GnosisError::new(
                         ErrorKind::StaleConnection,
                         "The gnosis provider connection became inactive before it was ready.",
-                    ));
+                    );
+                    return Err(error_after_release(
+                        error,
+                        &client,
+                        &connection_url,
+                        &control_credential,
+                    )
+                    .await);
                 }
                 _ => {
-                    let _ = release_connection(&client, &connection_url, &control_credential).await;
-                    return Err(contract_error(()));
+                    return Err(error_after_release(
+                        contract_error(()),
+                        &client,
+                        &connection_url,
+                        &control_credential,
+                    )
+                    .await);
                 }
             }
-            if tokio::time::Instant::now() >= ready_deadline {
-                let _ = release_connection(&client, &connection_url, &control_credential).await;
-                return Err(GnosisError::new(
+            let remaining = ready_deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                let error = GnosisError::new(
                     ErrorKind::Timeout,
                     "gnosis did not finish resolving the provider before the startup timeout.",
-                ));
+                );
+                return Err(error_after_release(
+                    error,
+                    &client,
+                    &connection_url,
+                    &control_credential,
+                )
+                .await);
             }
-            if let Err(error) = cancellable_sleep(poll_interval, &cancellation).await {
-                let _ = release_connection(&client, &connection_url, &control_credential).await;
-                return Err(error);
+            if let Err(error) = cancellable_sleep(poll_interval.min(remaining), &cancellation).await
+            {
+                return Err(error_after_release(
+                    error,
+                    &client,
+                    &connection_url,
+                    &control_credential,
+                )
+                .await);
+            }
+            if tokio::time::Instant::now() >= ready_deadline {
+                let error = GnosisError::new(
+                    ErrorKind::Timeout,
+                    "gnosis did not finish resolving the provider before the startup timeout.",
+                );
+                return Err(error_after_release(
+                    error,
+                    &client,
+                    &connection_url,
+                    &control_credential,
+                )
+                .await);
             }
             let polled = send_json_response::<ConnectionState>(
                 &client,
@@ -392,16 +467,25 @@ impl GnosisConnection {
                 Ok(next) => {
                     if let Err(error) = validate_successor_state(&next.value, &identity, &audience)
                     {
-                        let _ =
-                            release_connection(&client, &connection_url, &control_credential).await;
-                        return Err(error);
+                        return Err(error_after_release(
+                            error,
+                            &client,
+                            &connection_url,
+                            &control_credential,
+                        )
+                        .await);
                     }
                     poll_interval = next.retry_after.unwrap_or(POLL_INTERVAL);
                     state = next.value;
                 }
                 Err(error) => {
-                    let _ = release_connection(&client, &connection_url, &control_credential).await;
-                    return Err(error);
+                    return Err(error_after_release(
+                        error,
+                        &client,
+                        &connection_url,
+                        &control_credential,
+                    )
+                    .await);
                 }
             }
         }
@@ -419,8 +503,13 @@ impl GnosisConnection {
         {
             Ok(descriptor) => descriptor,
             Err(error) => {
-                let _ = release_connection(&client, &connection_url, &control_credential).await;
-                return Err(error);
+                return Err(error_after_release(
+                    error,
+                    &client,
+                    &connection_url,
+                    &control_credential,
+                )
+                .await);
             }
         };
 
@@ -433,6 +522,7 @@ impl GnosisConnection {
             endpoint: descriptor.configuration.fields.base_url,
             model: descriptor.configuration.fields.model,
             api_key: Zeroizing::new(descriptor.credential.token),
+            prior_release_failure: None,
         })
     }
 
@@ -446,6 +536,10 @@ impl GnosisConnection {
 
     pub(crate) fn api_key(&self) -> &str {
         self.api_key.as_str()
+    }
+
+    pub(crate) fn prior_release_failure(&self) -> Option<ErrorKind> {
+        self.prior_release_failure
     }
 
     pub(crate) async fn ensure_lifetime(
@@ -611,7 +705,10 @@ fn validate_renewed_state(
         || expires_at <= expected.expires_at
         || expires_at <= chrono::Utc::now()
         || expires_at
-            > chrono::Utc::now() + chrono::Duration::seconds(CONNECTION_TTL_SECONDS.into())
+            > chrono::Utc::now()
+                + chrono::Duration::seconds(
+                    i64::from(CONNECTION_TTL_SECONDS) + CLOCK_SKEW_TOLERANCE_SECONDS,
+                )
     {
         return Err(contract_error(()));
     }
@@ -782,14 +879,7 @@ fn validate_profiles(profiles: &AgentProfiles) -> Result<(), GnosisError> {
     Ok(())
 }
 
-fn select_audience(audiences: &[String], control_is_loopback: bool) -> Result<&str, GnosisError> {
-    if control_is_loopback {
-        return audiences
-            .iter()
-            .find(|audience| audience.as_str() == "same-host")
-            .map(String::as_str)
-            .ok_or_else(|| contract_error(()));
-    }
+fn select_audience(audiences: &[String]) -> Result<&str, GnosisError> {
     let mut matching = audiences
         .iter()
         .filter(|audience| audience.as_str() == AUDIENCE);
@@ -905,15 +995,19 @@ async fn send_json_response<T: for<'de> Deserialize<'de>>(
         response = request.send() => response.map_err(classify_transport)?,
     };
     let status = response.status();
-    let retry_after = parse_retry_after(response.headers().get(RETRY_AFTER))?;
-    let location = bounded_header(response.headers().get(LOCATION), 512)?;
-    let config_revision = bounded_header(response.headers().get("x-larm-config-revision"), 128)?;
     let content_type = response
         .headers()
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let success_metadata = status.is_success().then(|| {
+        Ok::<_, GnosisError>((
+            parse_retry_after(response.headers().get(RETRY_AFTER))?,
+            bounded_header(response.headers().get(LOCATION), 512)?,
+            bounded_header(response.headers().get("x-larm-config-revision"), 128)?,
+        ))
+    });
     let body = read_limited(response, cancellation).await?;
     if !status.is_success() {
         let code = serde_json::from_slice::<ErrorEnvelope>(&body)
@@ -922,7 +1016,9 @@ async fn send_json_response<T: for<'de> Deserialize<'de>>(
             .unwrap_or_default();
         return Err(classify_status(status, &code));
     }
-    if !content_type.starts_with("application/json") {
+    let (retry_after, location, config_revision) =
+        success_metadata.ok_or_else(|| contract_error(()))??;
+    if !is_json_content_type(&content_type) {
         return Err(contract_error(()));
     }
     let value = serde_json::from_slice(&body).map_err(|_| contract_error(()))?;
@@ -933,6 +1029,13 @@ async fn send_json_response<T: for<'de> Deserialize<'de>>(
         location,
         config_revision,
     })
+}
+
+fn is_json_content_type(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .is_some_and(|media_type| media_type.trim() == "application/json")
 }
 
 fn parse_retry_after(value: Option<&HeaderValue>) -> Result<Option<Duration>, GnosisError> {
@@ -980,6 +1083,18 @@ async fn release_connection(
     } else {
         Err(classify_status(response.status(), ""))
     }
+}
+
+async fn error_after_release(
+    mut error: GnosisError,
+    client: &reqwest::Client,
+    url: &Url,
+    credential: &HeaderValue,
+) -> GnosisError {
+    if let Err(release_error) = release_connection(client, url, credential).await {
+        error.release_failure = Some(release_error.kind);
+    }
+    error
 }
 
 async fn read_limited(
@@ -1034,7 +1149,8 @@ fn provider_credential(token: &str) -> Result<HeaderValue, GnosisError> {
             "The gnosis provider credential is invalid.",
         ));
     }
-    let mut value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
+    let bearer = Zeroizing::new(format!("Bearer {token}"));
+    let mut value = HeaderValue::from_str(bearer.as_str()).map_err(|_| {
         GnosisError::new(
             ErrorKind::Authentication,
             "The gnosis provider credential is invalid.",
@@ -1070,9 +1186,7 @@ pub(crate) fn control_base_url(host: &str) -> Result<Url, GnosisError> {
 
 fn url_is_local(url: &Url) -> bool {
     match url.host() {
-        Some(Host::Domain(host)) => {
-            host == "localhost" || !host.contains('.') || host.ends_with(".local")
-        }
+        Some(Host::Domain(host)) => valid_local_hostname(host),
         Some(Host::Ipv4(address)) => {
             address.is_loopback() || address.is_private() || address.is_link_local()
         }
@@ -1083,6 +1197,20 @@ fn url_is_local(url: &Url) -> bool {
         }
         None => false,
     }
+}
+
+fn valid_local_hostname(host: &str) -> bool {
+    let labels = host.split('.').collect::<Vec<_>>();
+    (labels.len() == 1 || host.ends_with(".local"))
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 fn url_is_loopback(url: &Url) -> bool {
@@ -1357,6 +1485,9 @@ mod tests {
             "example.com",
             "gnosis/path",
             "-proxy",
+            "proxy-",
+            "foo..local",
+            "foo-.local",
             "[::1]",
         ] {
             assert!(control_base_url(host).is_err(), "{host}");
@@ -1410,19 +1541,20 @@ mod tests {
     }
 
     #[test]
-    fn selects_a_remote_audience_without_persisting_it() {
+    fn requires_the_fixed_saaa_desktop_audience() {
         let audiences = vec!["same-host".to_string(), "saaa-desktop".to_string()];
-        assert_eq!(
-            select_audience(&audiences, false).expect("audience"),
-            "saaa-desktop"
-        );
-        assert_eq!(
-            select_audience(&audiences, true).expect("audience"),
-            "same-host"
-        );
-        assert!(select_audience(&["same-host".to_string()], false).is_err());
-        assert!(select_audience(&["unknown-network".to_string()], false).is_err());
-        assert!(select_audience(&["saaa-desktop".to_string()], true).is_err());
+        assert_eq!(select_audience(&audiences).expect("audience"), AUDIENCE);
+        assert!(select_audience(&["same-host".to_string()]).is_err());
+        assert!(select_audience(&["unknown-network".to_string()]).is_err());
+        assert!(select_audience(&[AUDIENCE.to_string(), AUDIENCE.to_string()]).is_err());
+    }
+
+    #[test]
+    fn accepts_only_the_json_media_type_for_success_responses() {
+        assert!(is_json_content_type("application/json"));
+        assert!(is_json_content_type("application/json; charset=utf-8"));
+        assert!(!is_json_content_type("application/jsonp"));
+        assert!(!is_json_content_type("application/problem+json"));
     }
 
     #[test]
@@ -1445,6 +1577,103 @@ mod tests {
         assert!(validate_claim(claim("127.0.0.1"), &identity, AUDIENCE, false).is_err());
         let wrong_identity = test_identity("different-id", &created_at, &expires_at);
         assert!(validate_claim(claim("192.168.0.65"), &wrong_identity, AUDIENCE, false).is_err());
+    }
+
+    #[test]
+    fn renewed_expiry_allows_only_the_bounded_clock_skew() {
+        let created_at = (chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339();
+        let initial_expires_at = (chrono::Utc::now() + chrono::Duration::seconds(45)).to_rfc3339();
+        let expected = test_identity("aconn_test", &created_at, &initial_expires_at);
+        let within_skew = (chrono::Utc::now() + chrono::Duration::seconds(330)).to_rfc3339();
+        let state: ConnectionState = serde_json::from_value(connection_state_json(
+            "aconn_test",
+            "ready",
+            AUDIENCE,
+            &created_at,
+            &within_skew,
+        ))
+        .expect("renewed state fixture");
+        assert!(validate_renewed_state(&state, &expected, AUDIENCE).is_ok());
+
+        let beyond_skew = (chrono::Utc::now() + chrono::Duration::seconds(361)).to_rfc3339();
+        let state: ConnectionState = serde_json::from_value(connection_state_json(
+            "aconn_test",
+            "ready",
+            AUDIENCE,
+            &created_at,
+            &beyond_skew,
+        ))
+        .expect("overlong renewed state fixture");
+        assert!(validate_renewed_state(&state, &expected, AUDIENCE).is_err());
+    }
+
+    #[tokio::test]
+    async fn error_status_is_classified_before_success_only_retry_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request accepted");
+            let _ = read_request(&mut stream);
+            write_response_with_headers(
+                &mut stream,
+                "429 Too Many Requests",
+                "application/json",
+                "Retry-After: 120\r\nLocation: invalid location\r\n",
+                &json!({ "error": { "code": "capacity_exhausted" } }).to_string(),
+            );
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("test client");
+        let error = match send_json_response::<Value>(
+            &client,
+            Method::GET,
+            Url::parse(&format!("http://{address}/v1/agent-profiles")).expect("test URL"),
+            &provider_credential("test-control-token").expect("test credential"),
+            None,
+            None,
+            &RunCancellation::default(),
+        )
+        .await
+        {
+            Ok(_) => panic!("429 must fail"),
+            Err(error) => error,
+        };
+        server.join().expect("server joins");
+        assert_eq!(error.kind, ErrorKind::Capacity);
+    }
+
+    #[tokio::test]
+    async fn initialization_error_preserves_a_release_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request accepted");
+            let request = read_request(&mut stream);
+            assert!(request.starts_with("DELETE "));
+            write_response(
+                &mut stream,
+                "503 Service Unavailable",
+                "application/json",
+                "{}",
+            );
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("test client");
+        let error = error_after_release(
+            contract_error(()),
+            &client,
+            &Url::parse(&format!("http://{address}/v1/agent-connections/aconn_test"))
+                .expect("release URL"),
+            &provider_credential("test-control-token").expect("test credential"),
+        )
+        .await;
+        server.join().expect("server joins");
+        assert_eq!(error.kind, ErrorKind::Contract);
+        assert_eq!(error.release_failure(), Some(ErrorKind::Unavailable));
     }
 
     #[tokio::test]
@@ -1478,7 +1707,7 @@ mod tests {
                                     "model": AGENT_PROFILE
                                 }]
                             }],
-                            "audiences": ["same-host"]
+                            "audiences": [AUDIENCE]
                         })
                         .to_string(),
                     ),
@@ -1490,7 +1719,7 @@ mod tests {
                         &connection_state_json(
                             "aconn_original",
                             "pending",
-                            "same-host",
+                            AUDIENCE,
                             &created_at,
                             &expires_at,
                         )
@@ -1503,7 +1732,7 @@ mod tests {
                         &connection_state_json(
                             "aconn_changed",
                             "ready",
-                            "same-host",
+                            AUDIENCE,
                             &created_at,
                             &expires_at,
                         )
@@ -1565,19 +1794,18 @@ mod tests {
                                 "model": AGENT_PROFILE
                             }]
                         }],
-                        "audiences": ["same-host"]
+                        "audiences": [AUDIENCE]
                     })
                     .to_string(),
                     1 => connection_state_json(
                         "aconn_test",
                         "ready",
-                        "same-host",
+                        AUDIENCE,
                         &created_at,
                         &expires_at,
                     )
                     .to_string(),
-                    2 => claim_json("127.0.0.1", address.port(), "same-host", &expires_at)
-                        .to_string(),
+                    2 => claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at).to_string(),
                     3 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
                     4 => String::new(),
                     _ => unreachable!(),
@@ -1661,19 +1889,18 @@ mod tests {
                                 "model": AGENT_PROFILE
                             }]
                         }],
-                        "audiences": ["same-host"]
+                        "audiences": [AUDIENCE]
                     })
                     .to_string(),
                     1 => connection_state_json(
                         "aconn_test",
                         "ready",
-                        "same-host",
+                        AUDIENCE,
                         &created_at,
                         &expires_at,
                     )
                     .to_string(),
-                    2 => claim_json("127.0.0.1", address.port(), "same-host", &expires_at)
-                        .to_string(),
+                    2 => claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at).to_string(),
                     3 => json!({ "ready": true, "acceptingRequests": false }).to_string(),
                     4 => String::new(),
                     _ => unreachable!(),
@@ -1737,40 +1964,30 @@ mod tests {
                                 "model": AGENT_PROFILE
                             }]
                         }],
-                        "audiences": ["same-host"]
+                        "audiences": [AUDIENCE]
                     })
                     .to_string(),
                     1 => connection_state_json(
                         "aconn_test",
                         "ready",
-                        "same-host",
+                        AUDIENCE,
                         &created_at,
                         &initial_expires_at,
                     )
                     .to_string(),
-                    2 => claim_json(
-                        "127.0.0.1",
-                        address.port(),
-                        "same-host",
-                        &initial_expires_at,
-                    )
-                    .to_string(),
+                    2 => claim_json("127.0.0.1", address.port(), AUDIENCE, &initial_expires_at)
+                        .to_string(),
                     3 | 6 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
                     4 => connection_state_json(
                         "aconn_test",
                         "ready",
-                        "same-host",
+                        AUDIENCE,
                         &created_at,
                         &renewed_expires_at,
                     )
                     .to_string(),
-                    5 => claim_json(
-                        "127.0.0.1",
-                        address.port(),
-                        "same-host",
-                        &renewed_expires_at,
-                    )
-                    .to_string(),
+                    5 => claim_json("127.0.0.1", address.port(), AUDIENCE, &renewed_expires_at)
+                        .to_string(),
                     7 => String::new(),
                     _ => unreachable!(),
                 };
@@ -1862,7 +2079,10 @@ mod tests {
             content_type.starts_with("text/event-stream"),
             "claimed provider must return SSE"
         );
-        let body = response.text().await.expect("provider SSE reads");
+        let body = read_limited(response, &RunCancellation::default())
+            .await
+            .expect("provider SSE reads");
+        let body = std::str::from_utf8(&body).expect("provider SSE is UTF-8");
         assert!(body.lines().any(|line| line.trim() == "data: [DONE]"));
         let completion = body
             .lines()

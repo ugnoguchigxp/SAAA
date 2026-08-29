@@ -110,8 +110,18 @@ describe("settings contracts", () => {
     }];
     (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string } }).conversationRespond.primaryProviderId = "gnosis-qwen";
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
+    const localName = structuredClone(snapshot);
+    ((localName[0].valueJson as { providers: Array<{ host: string }> }).providers[0]).host = "Gnosis.LOCAL";
+    expect(() => validateSettingsDocuments(localName)).not.toThrow();
 
-    for (const host of ["http://192.168.0.65", "192.168.0.65:9810", "example.com"]) {
+    for (const host of [
+      "http://192.168.0.65",
+      "192.168.0.65:9810",
+      "example.com",
+      "gnosis-",
+      "foo..local",
+      "foo-.local",
+    ]) {
       const invalid = structuredClone(snapshot);
       ((invalid[0].valueJson as { providers: Array<{ host: string }> }).providers[0]).host = host;
       expect(() => validateSettingsDocuments(invalid)).toThrow();
@@ -127,6 +137,18 @@ describe("settings contracts", () => {
     route.primaryProviderId = "gnosis-qwen";
     route.fallbackProviderIds = ["local-fallback"];
     expect(() => validateSettingsDocuments(snapshot)).toThrow("must not configure fallback");
+  });
+
+  test("rejects a gnosis timeout that cannot fit within its connection lifetime", () => {
+    const snapshot = documents();
+    const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
+    providers[0] = { kind: "gnosis", id: "gnosis-qwen", enabled: true, label: "gnosis", location: "local", host: "192.168.0.65" };
+    const route = (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string; timeoutMs: number } }).conversationRespond;
+    route.primaryProviderId = "gnosis-qwen";
+    route.timeoutMs = 270_000;
+    expect(() => validateSettingsDocuments(snapshot)).toThrow("gnosis conversation timeout must not exceed 269999 ms");
+    route.timeoutMs = 269_999;
+    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });
 
   test("rejects unsafe or credential-ambiguous provider ids", () => {

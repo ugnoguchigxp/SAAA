@@ -8,8 +8,6 @@ import {
   isSituationSettings,
   isVoiceSettings,
   type CodexAgentSettings,
-  type CodexModelOption,
-  type CodexRuntimeStatus,
   type GnosisProviderSettings,
   type LarmProviderSettings,
   type LarmRuntimeStatus,
@@ -25,11 +23,12 @@ import {
   type VoiceSettings,
   type VoiceProfileSnapshot,
 } from "../../lib/contracts";
-import { backupDatabase, exportDiagnostics, getCodexStatus, getSituationSnapshot, listCodexModels, saveSettingsDocuments, testModelProvider } from "../../lib/runtime";
+import { backupDatabase, exportDiagnostics, getSituationSnapshot, saveSettingsDocuments, testModelProvider } from "../../lib/runtime";
 import { enumerateAudioInputDevices, microphoneErrorMessage } from "../../lib/microphone";
+import { GNOSIS_MAX_REQUEST_TIMEOUT_MS } from "../../lib/schemas";
 import { VoiceProfileCard } from "./VoiceProfileCard";
 
-type SettingsTab = "general" | "providers" | "routing" | "voice" | "codex" | "situation" | "security";
+type SettingsTab = "general" | "providers" | "routing" | "voice" | "situation" | "security";
 
 type SettingsDraft = {
   providers: ModelProvidersSettings;
@@ -45,7 +44,6 @@ const tabs: Array<{ id: SettingsTab; label: string; detail: string }> = [
   { id: "providers", label: "LLM Providers", detail: "Endpoints and models" },
   { id: "routing", label: "Task Routing", detail: "Primary and fallback" },
   { id: "voice", label: "Voice", detail: "STT, TTS and devices" },
-  { id: "codex", label: "Codex SDK", detail: "Read-only agent runtime" },
   { id: "situation", label: "Situation", detail: "Shadow observation controls" },
   { id: "security", label: "Privacy & Security", detail: "Local-first controls" },
 ];
@@ -195,7 +193,6 @@ export function SettingsPage({
           {activeTab === "providers" && <ProvidersSection providers={draft.providers} larmRuntime={larmRuntime} onChange={(providers) => setDraft((current) => ({ ...current, providers }))} />}
           {activeTab === "routing" && <RoutingSection routing={draft.routing} providers={draft.providers.providers} localOnlyWhenSelected={draft.security.localOnlyWhenSelected} onChange={(routing) => setDraft((current) => ({ ...current, routing }))} />}
           {activeTab === "voice" && <VoiceSection voice={draft.voice} profile={voiceProfile} enrollmentBlocked={voiceEnrollmentBlocked} onProfileChanged={onVoiceProfileChanged} onChange={(voice) => setDraft((current) => ({ ...current, voice }))} />}
-          {activeTab === "codex" && <CodexSection codex={draft.codex} onChange={(codex) => setDraft((current) => ({ ...current, codex }))} />}
           {activeTab === "situation" && <SituationSection situation={draft.situation} onChange={(situation) => setDraft((current) => ({ ...current, situation }))} />}
           {activeTab === "security" && <SecuritySection security={draft.security} onChange={(security) => setDraft((current) => ({ ...current, security }))} />}
         </div>
@@ -214,7 +211,7 @@ export function SettingsPage({
 
 function GeneralSection({ draft }: { draft: SettingsDraft }) {
   const enabledProviders = draft.providers.providers.filter((provider) => provider.enabled).length;
-  return <div className="settings-stack"><section className="settings-card"><h3>Runtime state</h3><div className="settings-summary-grid"><Metric label="LLM providers" value={`${enabledProviders} enabled`} /><Metric label="Conversation route" value={draft.routing.conversationRespond.primaryProviderId} /><Metric label="Voice input" value={draft.voice.captureMode} /><Metric label="Codex route" value={draft.codex.enabled ? "enabled · read-only" : "disabled"} /><Metric label="Situation" value={draft.situation.enabled ? "shadow monitoring" : "paused"} /></div></section><section className="settings-card"><h3>Persistence</h3><p>設定、Conversation、Message、boundedなSituation履歴はSAAA所有のSQLiteに保存されます。API keyやCodex認証本文はSQLiteに複製しません。</p></section></div>;
+  return <div className="settings-stack"><section className="settings-card"><h3>Runtime state</h3><div className="settings-summary-grid"><Metric label="LLM providers" value={`${enabledProviders} enabled`} /><Metric label="Conversation route" value={draft.routing.conversationRespond.primaryProviderId} /><Metric label="Voice input" value={draft.voice.captureMode} /><Metric label="Situation" value={draft.situation.enabled ? "shadow monitoring" : "paused"} /></div></section><section className="settings-card"><h3>Persistence</h3><p>設定、Conversation、Message、boundedなSituation履歴はSAAA所有のSQLiteに保存されます。API keyはSQLiteに複製しません。</p></section></div>;
 }
 
 function SituationSection({ situation, onChange }: { situation: SituationSettings; onChange: (value: SituationSettings) => void }) {
@@ -294,10 +291,11 @@ function RoutingSection({ routing, providers, localOnlyWhenSelected, onChange }:
   const selectable = providers.filter((provider) => provider.enabled);
   const fallbackIds = routing.conversationRespond.fallbackProviderIds;
   const primary = providers.find((provider) => provider.id === routing.conversationRespond.primaryProviderId);
+  const timeoutMaximum = primary?.kind === "gnosis" ? GNOSIS_MAX_REQUEST_TIMEOUT_MS : 300_000;
   const fallbackLocked = primary?.kind === "gnosis";
   const effectiveFallbackIds = fallbackLocked ? [] : fallbackIds.filter((id) => !(localOnlyWhenSelected && primary?.location === "local" && providers.find((provider) => provider.id === id)?.location === "cloud"));
   const blockedFallbacks = fallbackIds.filter((id) => !effectiveFallbackIds.includes(id));
-  return <div className="settings-stack"><section className="settings-card"><h3>conversation.respond</h3><p className="settings-help">通常ChatとVoiceの確定文字起こしに使うModel Routeです。</p><div className="settings-form-grid"><Field label="Primary provider"><select value={routing.conversationRespond.primaryProviderId} onChange={(event) => { const nextPrimary = providers.find((provider) => provider.id === event.target.value); onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, primaryProviderId: event.target.value, fallbackProviderIds: nextPrimary?.kind === "gnosis" ? [] : fallbackIds } }); }}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label || provider.id}{provider.enabled ? "" : " (disabled)"}</option>)}</select></Field><Field label="Timeout (ms)"><input type="number" min="1000" max="120000" value={routing.conversationRespond.timeoutMs} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, timeoutMs: clampTimeout(event.target.value) } })} /></Field></div><div className="fallback-list"><strong>Fallback providers</strong>{fallbackLocked ? <p className="muted">gnosisのREST接続はfallbackなしで実行します。</p> : <>{selectable.filter((provider) => provider.id !== routing.conversationRespond.primaryProviderId).map((provider) => <label className="check-row" key={provider.id}><input type="checkbox" checked={fallbackIds.includes(provider.id)} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, fallbackProviderIds: event.target.checked ? [...fallbackIds, provider.id] : fallbackIds.filter((id) => id !== provider.id) } })} />{provider.label || provider.id}</label>)}{selectable.length < 2 && <p className="muted">Fallbackを使うには、もう一つ有効なProviderを登録してください。</p>}</>}{!fallbackLocked && blockedFallbacks.length > 0 && <p className="provider-test-result error">Local-only policy blocks Cloud fallback: {blockedFallbacks.join(", ")}</p>}</div><div className="effective-route"><span>Effective route</span><strong>{[routing.conversationRespond.primaryProviderId, ...effectiveFallbackIds].join(" → ")}</strong></div></section></div>;
+  return <div className="settings-stack"><section className="settings-card"><h3>conversation.respond</h3><p className="settings-help">通常ChatとVoiceの確定文字起こしに使うModel Routeです。</p><div className="settings-form-grid"><Field label="Primary provider"><select value={routing.conversationRespond.primaryProviderId} onChange={(event) => { const nextPrimary = providers.find((provider) => provider.id === event.target.value); onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, primaryProviderId: event.target.value, fallbackProviderIds: nextPrimary?.kind === "gnosis" ? [] : fallbackIds } }); }}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label || provider.id}{provider.enabled ? "" : " (disabled)"}</option>)}</select></Field><Field label="Timeout (ms)"><input type="number" min="1000" max={timeoutMaximum} value={routing.conversationRespond.timeoutMs} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, timeoutMs: clampTimeout(event.target.value, timeoutMaximum) } })} /></Field></div><div className="fallback-list"><strong>Fallback providers</strong>{fallbackLocked ? <p className="muted">gnosisのREST接続はfallbackなしで実行します。</p> : <>{selectable.filter((provider) => provider.id !== routing.conversationRespond.primaryProviderId).map((provider) => <label className="check-row" key={provider.id}><input type="checkbox" checked={fallbackIds.includes(provider.id)} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, fallbackProviderIds: event.target.checked ? [...fallbackIds, provider.id] : fallbackIds.filter((id) => id !== provider.id) } })} />{provider.label || provider.id}</label>)}{selectable.length < 2 && <p className="muted">Fallbackを使うには、もう一つ有効なProviderを登録してください。</p>}</>}{!fallbackLocked && blockedFallbacks.length > 0 && <p className="provider-test-result error">Local-only policy blocks Cloud fallback: {blockedFallbacks.join(", ")}</p>}</div><div className="effective-route"><span>Effective route</span><strong>{[routing.conversationRespond.primaryProviderId, ...effectiveFallbackIds].join(" → ")}</strong></div></section></div>;
 }
 
 function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onChange }: { voice: VoiceSettings; profile: VoiceProfileSnapshot; enrollmentBlocked: boolean; onProfileChanged: (profile: VoiceProfileSnapshot) => void; onChange: (value: VoiceSettings) => void }) {
@@ -312,33 +310,6 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
   }, []);
   const currentDeviceMissing = voice.inputDeviceId !== "default" && !devices.some((device) => device.deviceId === voice.inputDeviceId);
   return <div className="settings-stack"><section className="settings-card"><h3>Capture</h3><div className="settings-form-grid"><Field label="Capture mode"><select value={voice.captureMode} disabled><option value="push-to-talk">Push-to-talk</option></select></Field><Field label="Input device"><select value={voice.inputDeviceId} onChange={(event) => onChange({ ...voice, inputDeviceId: event.target.value })}><option value="default">System default</option>{currentDeviceMissing && <option value={voice.inputDeviceId}>{voice.inputDeviceId} (unavailable)</option>}{devices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></Field><Field label="STT provider"><input value={voice.sttProviderId} disabled /></Field><Field label="STT model"><input value={voice.sttModel} disabled /></Field></div>{deviceError && <p className="provider-test-result error">Microphone devices unavailable: {deviceError}</p>}<div className="locked-policy">ASR endpoint: gnosis:8081 · Audio is sent only to the LAN-local gnosis server.</div></section><VoiceProfileCard voice={voice} profile={profile} blocked={enrollmentBlocked} onChanged={onProfileChanged} /><section className="settings-card"><h3>Speech output</h3><div className="settings-form-grid"><Field label="Output device"><input value="System default" disabled /></Field><Field label="TTS provider"><input value={voice.ttsProviderId} disabled /></Field><Field label="Voice"><input value={voice.ttsVoice} onChange={(event) => onChange({ ...voice, ttsVoice: event.target.value })} /></Field><Field label="Auto speak"><select value={voice.autoSpeak ? "on" : "off"} onChange={(event) => onChange({ ...voice, autoSpeak: event.target.value === "on" })}><option value="on">On</option><option value="off">Off</option></select></Field></div><div className="locked-policy">URLと絵文字は読み上げから除外します。Cloud fallback: disabled.</div></section></div>;
-}
-
-function CodexSection({ codex, onChange }: { codex: CodexAgentSettings; onChange: (value: CodexAgentSettings) => void }) {
-  const [models, setModels] = useState<CodexModelOption[]>([]);
-  const [modelState, setModelState] = useState<"loading" | "ready" | "error">("loading");
-  const [modelError, setModelError] = useState<string | null>(null);
-  const [runtimeStatus, setRuntimeStatus] = useState<CodexRuntimeStatus | null>(null);
-
-  async function refresh() {
-    setModelState("loading");
-    setModelError(null);
-    const [statusResult, modelsResult] = await Promise.allSettled([getCodexStatus(), listCodexModels()]);
-    if (statusResult.status === "fulfilled") setRuntimeStatus(statusResult.value);
-    else setRuntimeStatus({ installed: false, authenticated: false, runtime: "unavailable", accountType: null, message: statusResult.reason instanceof Error ? statusResult.reason.message : String(statusResult.reason) });
-    if (modelsResult.status === "fulfilled") {
-      setModels(modelsResult.value);
-      setModelState("ready");
-    } else {
-      setModelState("error");
-      setModelError(modelsResult.reason instanceof Error ? modelsResult.reason.message : String(modelsResult.reason));
-    }
-  }
-
-  useEffect(() => { void refresh(); }, []);
-  const defaultModel = models.find((model) => model.isDefault);
-  const selectedModelMissing = Boolean(codex.model) && !models.some((model) => model.model === codex.model);
-  return <div className="settings-stack"><section className="settings-card"><div className="card-title-row"><div><h3>Codex SDK agent</h3><p className="settings-help"><code>coding.assist</code>専用のread-only Agent Providerです。</p></div><label className="toggle"><input type="checkbox" checked={codex.enabled} onChange={(event) => onChange({ ...codex, enabled: event.target.checked })} /><span /></label></div><div className="settings-form-grid"><Field label="Model"><select value={codex.model} onChange={(event) => onChange({ ...codex, model: event.target.value })} disabled={modelState === "loading" && models.length === 0}><option value="">Codex default{defaultModel ? ` (${defaultModel.displayName})` : ""}</option>{selectedModelMissing && <option value={codex.model}>{codex.model} (saved)</option>}{models.map((model) => <option key={model.id} value={model.model}>{model.displayName}{model.isDefault ? " — default" : ""}</option>)}</select></Field><Field label="Runtime"><input value={runtimeStatus?.runtime ?? codex.runtimeMode.replace(/-/g, " ")} disabled /></Field><Field label="Installed"><input value={runtimeStatus ? (runtimeStatus.installed ? "yes" : "no") : "checking"} disabled /></Field><Field label="Authentication"><input value={runtimeStatus ? (runtimeStatus.authenticated ? runtimeStatus.accountType ?? "authenticated" : "not authenticated") : "checking"} disabled /></Field><Field label="Workspace"><input value="Choose per Coding thread" disabled /></Field></div><div className={`codex-model-status ${runtimeStatus?.authenticated ? "ready" : modelState}`} aria-live="polite"><span>{runtimeStatus?.message ?? "Codex runtimeを確認しています…"} · {modelState === "loading" && "モデル一覧を取得中"}{modelState === "ready" && `${models.length} models available`}{modelState === "error" && (modelError || "モデル一覧を取得できませんでした。")}</span><button className="text-button" type="button" onClick={() => void refresh()} disabled={modelState === "loading"}>Refresh</button></div></section><section className="settings-card"><h3>Safety policy</h3><div className="policy-grid"><Policy label="Sandbox" value={codex.sandboxMode} /><Policy label="Approvals" value={codex.approvalPolicy} /><Policy label="Network" value="disabled" /><Policy label="Web Search" value="disabled" /></div><p className="settings-help">MVPの固定安全条件であり、Settingsから緩和できません。</p></section></div>;
 }
 
 function SecuritySection({ security, onChange }: { security: SecuritySettings; onChange: (value: SecuritySettings) => void }) {
@@ -356,13 +327,12 @@ function SecuritySection({ security, onChange }: { security: SecuritySettings; o
       setArtifactMessage(cause instanceof Error ? cause.message : String(cause));
     }
   }
-  return <div className="settings-stack"><section className="settings-card"><h3>Credential handling</h3><p className="settings-help">Model API keyは環境変数からだけ読み込み、SQLiteやDiagnosticsへ保存しません。</p><Field label="Credential store"><input value={security.credentialStorage} disabled /></Field></section><section className="settings-card"><h3>Privacy defaults</h3><label className="check-row"><input type="checkbox" checked={security.localOnlyWhenSelected} onChange={(event) => onChange({ ...security, localOnlyWhenSelected: event.target.checked })} />Local routeを選択している場合はCloudへ自動fallbackしない</label><label className="check-row"><input type="checkbox" checked={security.diagnosticsRedaction} onChange={(event) => onChange({ ...security, diagnosticsRedaction: event.target.checked })} disabled />DiagnosticsとProvider activityからsecretをredactする（固定）</label></section><section className="settings-card"><h3>Recovery & diagnostics</h3><p className="settings-help">Diagnosticsには会話本文、workspace path、thread ID、credentialを含めません。Backupは整合性のあるSQLite snapshotですが、登録音声fileとKeychain keyは含まないため、声profile単体では復元できません。</p><div className="artifact-actions"><button className="secondary-button" type="button" onClick={() => void createArtifact("diagnostics")} disabled={artifactState === "working"}>Export diagnostics</button><button className="secondary-button" type="button" onClick={() => void createArtifact("backup")} disabled={artifactState === "working"}>Backup database</button></div>{artifactMessage && <p className={`provider-test-result ${artifactState === "success" ? "success" : "error"}`} aria-live="polite">{artifactMessage}</p>}</section></div>;
+  return <div className="settings-stack"><section className="settings-card"><h3>Credential handling</h3><p className="settings-help">Model API keyは環境変数からだけ読み込み、SQLiteやDiagnosticsへ保存しません。</p><Field label="Credential store"><input value={security.credentialStorage} disabled /></Field></section><section className="settings-card"><h3>Privacy defaults</h3><label className="check-row"><input type="checkbox" checked={security.localOnlyWhenSelected} onChange={(event) => onChange({ ...security, localOnlyWhenSelected: event.target.checked })} />Local routeを選択している場合はCloudへ自動fallbackしない</label><label className="check-row"><input type="checkbox" checked={security.diagnosticsRedaction} onChange={(event) => onChange({ ...security, diagnosticsRedaction: event.target.checked })} disabled />DiagnosticsとProvider activityからsecretをredactする（固定）</label></section><section className="settings-card"><h3>Recovery & diagnostics</h3><p className="settings-help">Diagnosticsには会話本文、ローカルpath、credentialを含めません。Backupは整合性のあるSQLite snapshotですが、登録音声fileとKeychain keyは含まないため、声profile単体では復元できません。</p><div className="artifact-actions"><button className="secondary-button" type="button" onClick={() => void createArtifact("diagnostics")} disabled={artifactState === "working"}>Export diagnostics</button><button className="secondary-button" type="button" onClick={() => void createArtifact("backup")} disabled={artifactState === "working"}>Backup database</button></div>{artifactMessage && <p className={`provider-test-result ${artifactState === "success" ? "success" : "error"}`} aria-live="polite">{artifactMessage}</p>}</section></div>;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="settings-field"><span>{label}</span>{children}</label>; }
 function Metric({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
-function Policy({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
-function clampTimeout(value: string): number { return Math.max(1000, Math.min(300000, Number(value) || 30000)); }
+function clampTimeout(value: string, maximum: number): number { return Math.max(1000, Math.min(maximum, Number(value) || 30000)); }
 
 function draftFromDocuments(documents: SettingsDocument[]): SettingsDraft {
   const model = findSettingsDocument(documents, "providers.model", "default");

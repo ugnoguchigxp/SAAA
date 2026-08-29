@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { runtimeFailureCodes } from "./generated/runtimeEvent";
 
+export const GNOSIS_MAX_REQUEST_TIMEOUT_MS = 269_999;
+
 export const runtimeFailureCodeSchema = z.enum(runtimeFailureCodes);
 
 export const signalHealthSchema = z.enum([
@@ -82,8 +84,11 @@ function isGnosisHost(value: string): boolean {
       || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
       || (octets[0] === 192 && octets[1] === 168);
   }
-  return /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(value)
-    && (!value.includes(".") || value.endsWith(".local"));
+  const labels = value.split(".");
+  return (labels.length === 1 || value.toLowerCase().endsWith(".local"))
+    && labels.every((label) => label.length >= 1
+      && label.length <= 63
+      && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label));
 }
 
 const gnosisProviderSchema = providerCommonSchema.extend({
@@ -267,6 +272,9 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   if (enabled.size > 0 && !primary) throw new Error("The primary conversation provider must be enabled");
   if (primary?.kind === "gnosis" && routing.conversationRespond.fallbackProviderIds.length > 0) {
     throw new Error("gnosis routes must not configure fallback providers");
+  }
+  if (primary?.kind === "gnosis" && routing.conversationRespond.timeoutMs > GNOSIS_MAX_REQUEST_TIMEOUT_MS) {
+    throw new Error(`gnosis conversation timeout must not exceed ${GNOSIS_MAX_REQUEST_TIMEOUT_MS} ms`);
   }
   const routeIds = new Set([routing.conversationRespond.primaryProviderId]);
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {

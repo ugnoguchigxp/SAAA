@@ -1,6 +1,9 @@
 pub(crate) mod gnosis;
 #[allow(dead_code)]
 pub(crate) mod larm;
+pub(crate) mod openai_compatible;
+pub(crate) mod routing;
+pub(crate) mod session_store;
 
 pub(crate) const DEFAULT_CONVERSATION_REASONING_EFFORT: &str = "medium";
 

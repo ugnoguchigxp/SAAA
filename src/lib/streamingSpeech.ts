@@ -73,6 +73,18 @@ export class StreamingSpeechChunker {
       }
 
       if (characters.length >= this.maxChars) {
+        const url = findUrlRangeContaining(characters, this.maxChars - 1);
+        if (url) {
+          if (url.start > 0) {
+            this.take(characters, url.start, chunks);
+            continue;
+          }
+          if (url.end < characters.length || final) {
+            this.buffer = characters.slice(url.end).join("");
+            continue;
+          }
+          break;
+        }
         this.take(characters, this.maxChars, chunks);
         continue;
       }
@@ -98,7 +110,7 @@ function findSentenceBoundary(
   const limit = Math.min(characters.length, maximum);
   for (let index = 0; index < limit; index += 1) {
     if (!SENTENCE_END.has(characters[index])) continue;
-    if (isUrlQuestionMark(characters, index)) continue;
+    if (findUrlRangeContaining(characters, index)) continue;
     let boundary = index + 1;
     while (boundary < limit && CLOSING_MARKS.has(characters[boundary])) boundary += 1;
     if (boundary >= minimum) return boundary;
@@ -113,16 +125,29 @@ function findSoftBoundary(
 ): number | null {
   for (let index = Math.min(limit, characters.length) - 1; index >= minimum - 1; index -= 1) {
     const character = characters[index];
-    if (SOFT_BREAK.has(character)) return index + 1;
+    if (SOFT_BREAK.has(character) && !findUrlRangeContaining(characters, index)) return index + 1;
     if (/\s/u.test(character)) return index;
   }
   return null;
 }
 
-function isUrlQuestionMark(characters: string[], index: number): boolean {
-  if (characters[index] !== "?") return false;
+function findUrlRangeContaining(
+  characters: string[],
+  index: number,
+): { start: number; end: number } | null {
+  if (index < 0 || index >= characters.length || /\s/u.test(characters[index])) return null;
   let tokenStart = index;
   while (tokenStart > 0 && !/\s/u.test(characters[tokenStart - 1])) tokenStart -= 1;
-  const prefix = characters.slice(tokenStart, index).join("").toLowerCase();
-  return prefix.includes("http://") || prefix.includes("https://") || prefix.includes("www.");
+  for (let start = tokenStart; start <= index; start += 1) {
+    const prefix = characters.slice(start, start + 8).join("").toLowerCase();
+    if (!(prefix.startsWith("http://") || prefix.startsWith("https://") || prefix.startsWith("www."))) {
+      continue;
+    }
+    let end = start;
+    while (end < characters.length && /[A-Za-z0-9._~:/?#@!$&'*+,;=%-]/u.test(characters[end])) {
+      end += 1;
+    }
+    if (index < end) return { start, end };
+  }
+  return null;
 }

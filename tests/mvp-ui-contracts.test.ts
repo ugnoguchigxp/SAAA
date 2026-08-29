@@ -7,15 +7,14 @@ function source(path: string): string {
 }
 
 describe("MVP UI reachability contracts", () => {
-  test("exposes Coding as a separate read-only surface", () => {
-    const app = source("src/App.tsx");
-    expect(app).not.toContain("switchTaskMode");
-    expect(app).toContain('type Surface = "chat" | "coding"');
-    expect(app).toContain("openCodingSurface");
-    expect(app).toContain("読み取り専用Codex workspaceを選択");
-    expect(app).toContain("新しいCoding thread");
-    expect(app).toContain("Codex ready");
-    expect(app).toContain('workspacePath: runMode === "coding" ? workspacePath.trim() : null');
+  test("removes the Coding surface and always starts normal conversation turns", () => {
+    const app = source("src/App.tsx") + source("src/features/chat/useConversationTurn.ts");
+    expect(app).toContain('type Surface = "chat" | "meeting" | "situation" | "settings"');
+    expect(app).toContain("workspacePath: null");
+    expect(app).not.toContain("openCodingSurface");
+    expect(app).not.toContain("createCodingConversation");
+    expect(app).not.toContain("Coding thread");
+    expect(app).not.toContain("Codex ready");
   });
 
   test("exposes one continuous normal conversation", () => {
@@ -29,15 +28,12 @@ describe("MVP UI reachability contracts", () => {
     expect(app).not.toContain("最近の会話");
   });
 
-  test("keeps normal Chat workspace-free and Coding read-only", () => {
-    const app = source("src/App.tsx");
-    const contracts = source("src/lib/contracts.ts");
-    expect(app).toContain('workspacePath: runMode === "coding" ? workspacePath.trim() : null');
-    expect(app).toContain('activeRunMode === "coding" ? "agent-running" : "model-running"');
-    expect(contracts).toContain('sandboxMode: "read-only"');
-    expect(contracts).toContain("networkEnabled: false");
-    expect(contracts).toContain("webSearchEnabled: false");
-    expect(app).toContain("Meeting中はCoding Agentを開始できません");
+  test("keeps normal Chat workspace-free and Meeting transitions safe", () => {
+    const app = source("src/App.tsx") + source("src/features/chat/useConversationTurn.ts");
+    expect(app).toContain("workspacePath: null");
+    expect(app).toContain('conversationState: activeRunId ? "model-running"');
+    expect(app).not.toContain("workspacePath.trim()");
+    expect(app).not.toContain("agent-running");
     expect(app).toContain("if (activeTtsRunIdRef.current || streamingSpeechSessionRef.current) await stopSpeech()");
   });
 
@@ -49,14 +45,14 @@ describe("MVP UI reachability contracts", () => {
     expect(app).toContain('openAuxiliarySurface("situation")');
   });
 
-  test("exposes fixed read-only Codex configuration in Settings", () => {
+  test("removes Codex controls from Settings while preserving the stored document", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
-    expect(settings).toContain('id: "codex"');
-    expect(settings).toContain("<CodexSection");
-    expect(settings).toContain("coding.assist");
-    expect(settings).toContain("getCodexStatus()");
-    expect(settings).toContain('<Policy label="Sandbox" value={codex.sandboxMode} />');
-    expect(settings).toContain('<Policy label="Network" value="disabled" />');
+    expect(settings).not.toContain('id: "codex"');
+    expect(settings).not.toContain("<CodexSection");
+    expect(settings).not.toContain("coding.assist");
+    expect(settings).not.toContain("getCodexStatus");
+    expect(settings).not.toContain("listCodexModels");
+    expect(settings).toContain('document("providers.agent", "codex-sdk", draft.codex)');
   });
 
   test("lets users select the conversation reasoning effort in LLM Providers", () => {

@@ -17,7 +17,10 @@ test("renders the Codex system context from the S11tnext catalog", () => {
 });
 
 test("keeps the system context outside Rust program code", () => {
-  const rustSource = projectFile("src-tauri/src/lib.rs");
+  const rustSource = [
+    projectFile("src-tauri/src/lib.rs"),
+    projectFile("src-tauri/src/runtime/codex_turn.rs"),
+  ].join("\n");
 
   expect(rustSource).toContain('include_str!("../../.s11tnext/codex-read-only.txt")');
   expect(rustSource).toContain('"developerInstructions": CODEX_READ_ONLY_SYSTEM_CONTEXT');
