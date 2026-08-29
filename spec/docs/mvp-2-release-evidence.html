@@ -1,5 +1,13 @@
 <article lang="ja">
   <h1 id="mvp-2-release-evidence">MVP 2 release evidence</h1>
+  <dl>
+    <dt>Status</dt>
+    <dd>Conditional — SAAA-side implementation complete; manual desktop acceptance pending</dd>
+    <dt>Reviewed</dt>
+    <dd>2026-08-29</dd>
+    <dt>Archived implementation plan</dt>
+    <dd><a href="./.archived/mvp-2-implementation-plan.html">MVP 2 Implementation Plan</a></dd>
+  </dl>
   <h2 id="shipping-capabilities">Shipping capabilities</h2>
   <ul>
     <li>Microphone Meeting Session: implemented.</li>
@@ -19,8 +27,8 @@
       body for its session.
     </li>
     <li>
-      Temporary audio workspaces are drop-cleaned on success and failure paths; cancellation uses
-      the same scoped workspace and process guard.
+      Chat and Meeting encode WAV data in memory and send it only to the fixed private-network
+      gnosis ASR adapter. No temporary raw-audio file is created.
     </li>
     <li>
       Frontend queue tests cover two-item backpressure and PCM frame boundaries. Rust covers
@@ -28,8 +36,19 @@
       and migration/reconcile.
     </li>
     <li>
-      The final suite reports 10 frontend tests passed and 61 Rust tests passed, with 2 external
-      Codex runtime tests intentionally ignored.
+      Chat emits a real ASR preview after approximately two seconds. Meeting emits
+      <code>TranscriptPartial</code> for the current lane/sequence and replaces it with
+      <code>TranscriptFinal</code>; a late preview cannot consume or overwrite a
+      final sequence.
+    </li>
+    <li>
+      Save requires a review of target, final entry count, detected languages, and raw-audio
+      deletion. The detected language is persisted in <code>original_language</code>.
+      Discard has a separate destructive confirmation.
+    </li>
+    <li>
+      The 2026-08-29 workspace-wide suite reports 46 frontend tests passed and 156 Rust tests
+      passed, with 8 operator-only or external-runtime tests intentionally ignored.
     </li>
     <li>
       <code>bun run check</code>, <code>bun run build</code>, and
@@ -42,21 +61,23 @@
   </h2>
   <ul>
     <li>
-      Test a real local Whisper model with microphone permission grant, denial, and revocation.
+      Test the real gnosis ASR node with microphone permission grant, denial, and revocation, and
+      confirm that a two-second preview is visibly replaced by the final transcript.
     </li>
     <li>
       Run 30-minute and 2-hour resource soak tests; verify pause/stop/unmount release the microphone
       indicator.
     </li>
-    <li>Verify temporary WAV deletion during a real cancelled Whisper process.</li>
     <li>
-      Verify Save-before/after database entry counts, Discard, app-close cleanup, and TTS blocking
-      on macOS.
+      Verify the Save review contents, Save-before/after database entry counts including
+      <code>original_language</code>, Discard, app-close cleanup, and TTS blocking on
+      macOS.
     </li>
   </ul>
   <p>
-    Known limitation: Whisper processes fixed five-second microphone segments. Segment boundaries
-    can omit a word; no LLM correction, speaker attribution, cloud fallback, notification, or
-    automatic action is performed.
+    Known limitation: gnosis ASR is a non-streaming endpoint. SAAA obtains a bounded interim result
+    through a short preview request and finalizes fixed five-second Meeting segments. Segment
+    boundaries can omit a word; no LLM correction, speaker attribution, cloud fallback,
+    notification, or automatic action is performed.
   </p>
 </article>

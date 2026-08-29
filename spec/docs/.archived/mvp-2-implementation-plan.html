@@ -2,12 +2,10 @@
   <h1 id="mvp-2-実装契約--explicit-meeting-mode">MVP 2 実装契約 — Explicit Meeting Mode</h1>
   <h2 id="0-文書の役割">0. 文書の役割</h2>
   <ul>
-    <li>Status: Proposed</li>
+    <li>Status: Complete — implementation archived; manual desktop validation remains active</li>
     <li>
       実装前提:
-      <a href="./.archived/mvp-1.5-implementation-plan.html"
-        ><code>mvp-1.5-implementation-plan.html</code></a
-      >
+      <a href="./mvp-1.5-implementation-plan.html"><code>mvp-1.5-implementation-plan.html</code></a>
       の受け入れ完了
     </li>
     <li>対象: macOS desktopを最初のshipping platformとする</li>
@@ -20,6 +18,11 @@
     </li>
   </ul>
   <p>
+    2026-08-29にコード実装と自動検証を完了した。未完了の実マイク、権限、長時間soak、保存 lifecycle
+    検証はactiveな<a href="../mvp-2-release-evidence.html">MVP 2 Release Evidence</a
+    >へ分離し、本書は実装計画としてArchiveする。
+  </p>
+  <p>
     この文書では、未検証のsystem audioを前提に全体を組まない。まずmicrophone-onlyのMeeting
     Sessionを縦に完成させ、system audioは独立したfeasibility gateを通過した場合だけ同じlane
     contractへ追加する。
@@ -27,7 +30,8 @@
   <h2 id="1-今回達成すること">1. 今回達成すること</h2>
   <p>
     ユーザーが明示的に開始し、pause/resume/stopできるMeeting
-    Sessionを追加する。会議中の音声はローカルで文字起こしし、non-modalなMeeting画面へpartial/final
+    Sessionを追加する。会議中の音声は固定したprivate-network gnosis
+    ASRで文字起こしし、non-modalなMeeting画面へpartial/final
     transcriptを反映する。終了後の既定動作はDiscardであり、ユーザーがSaveを押した場合だけfinal
     transcriptをSQLiteへ保存する。
   </p>
@@ -62,31 +66,30 @@ defaultTranscriptPersistence = discard
     <tbody>
       <tr>
         <td>
-          <code>App.tsx</code
-          >が<code>getUserMedia</code>、<code>MediaRecorder</code>、Blob
-          decode、STT、Chat送信を一括管理
+          <code>App.tsx</code>がChat
+          push-to-talkの<code>getUserMedia</code>、AudioWorklet、STT、Chat送信を管理
         </td>
         <td>Meetingへ流用するとChatと長時間captureが密結合する</td>
         <td>
-          captureを<code>features/meeting/audio/</code>へ分離し、Chat
-          push-to-talkは既存のまま維持
+          Meeting
+          captureを<code>features/meeting/</code>へ分離し、ChatとMeetingが同じPCM
+          workletを別々に所有
         </td>
       </tr>
       <tr>
-        <td><code>transcribe_audio</code>は最大5分の全samplesを一括受信</td>
+        <td>
+          <code>transcribe_audio</code>は確定音声を一括受信し、gnosis ASRへin-memory
+          WAVを送る
+        </td>
         <td>長時間会議、低遅延partial、bounded memoryに適さない</td>
-        <td>共通のWhisper実行部を抽出し、Meetingは短いsegment単位でcommandを呼ぶ</td>
+        <td>
+          共通のgnosis ASR adapterを抽出し、Chat previewとMeetingは短いsegment単位でcommandを呼ぶ
+        </td>
       </tr>
       <tr>
-        <td>
-          <code>run_whisper_transcription</code
-          >は一時WAVを<code>tempdir</code>へ書く
-        </td>
-        <td>「fileを一切作らない」という旧計画と矛盾</td>
-        <td>
-          MVP
-          2では暗号化永続保存ではなく一時fileを許容するが、成功/失敗/取消時の削除をtestする。完全in-memory化は別ADR
-        </td>
+        <td>gnosis ASR adapterはPCMからWAVをmemory上でencodeする</td>
+        <td>raw audioを永続化せずprivate-network endpointへ送る境界が必要</td>
+        <td>一時fileを作らずmultipart bodyだけを生成し、request終了後にPCM/WAV参照を破棄する</td>
       </tr>
       <tr>
         <td><code>VoiceEvent</code>はconversation/run中心</td>
@@ -134,7 +137,7 @@ defaultTranscriptPersistence = discard
     <li>microphone lane 1本</li>
     <li>明示Start、Pause、Resume、Stop</li>
     <li>bounded segment capture</li>
-    <li>local Whisper transcript</li>
+    <li>private-network gnosis ASR transcript</li>
     <li>original transcriptのpartial表示とfinal確定</li>
     <li>input/provider/privacy health表示</li>
     <li>終了後のSave/Discard</li>
@@ -275,7 +278,7 @@ defaultTranscriptPersistence = discard
 ├── policy.rs                 # TTS/agent/action guard
 └── stt/
     ├── mod.rs                # MeetingStt traitとsegment validation
-    └── local_whisper.rs      # 既存Whisper coreのadapter
+    └── gnosis_asr.rs         # 固定private-network ASR adapter
 
 src-tauri/src/situation/
 └── ...                       # owned microphone stateの更新だけ。Meetingロジックを入れない
@@ -283,9 +286,9 @@ src-tauri/src/situation/
 src-tauri/src/lib.rs          # AppState、command、migration v6、handler登録
 </code></pre>
   <p>
-    <code>run_whisper_transcription</code
-    >、<code>write_whisper_wav</code>、<code>resample_pcm</code>、<code>whisper_transcript_line</code>はMeeting固有moduleへコピーしない。<code>src-tauri/src/voice/local_whisper.rs</code>へ共通coreとして抽出し、既存<code>transcribe_audio</code>とMeeting
-    adapterの両方から呼ぶ。抽出後も既存Chat voice testの期待値を変えない。
+    <code>encode_wav</code
+    >と<code>resample_pcm</code>はMeeting固有moduleへコピーしない。<code>src-tauri/src/voice/gnosis_asr.rs</code>へ共通adapterとして置き、既存<code>transcribe_audio</code>、Chat
+    preview、Meeting segmentのすべてから呼ぶ。WAVはmemory上だけで生成する。
   </p>
   <h3 id="52-frontend">5.2 Frontend</h3>
   <pre><code class="language-text">src/features/meeting/
@@ -489,8 +492,9 @@ pub enum MeetingEvent {
   </p>
   <h3 id="72-partialの意味">7.2 Partialの意味</h3>
   <p>
-    既存Whisper CLIは真のstreaming APIではない。MVP 2
-    Coreの<code>partial</code>は「直近5秒segmentの処理中に得たCLI出力」、<code>final</code>はそのsegmentの確定結果であり、session全文の再推論ではない。segment境界で単語が欠ける可能性を既知制限として表示する。
+    gnosis ASR endpointは真のstreaming APIではない。MVP 2
+    Coreの<code>partial</code>は同じsequenceの約2秒時点のPCMを短周期preview
+    requestした結果、<code>final</code>は約5秒segmentの確定結果である。UIは同じlane/sequenceのpartialをfinalで置換し、session全文の再推論はしない。segment境界で単語が欠ける可能性を既知制限として表示する。
   </p>
   <p>重複除去は次の限定ルールだけを使う。</p>
   <ul>
@@ -503,7 +507,7 @@ pub enum MeetingEvent {
   <pre><code class="language-text">state / elapsed time
 microphone selected device and health
 system audio capability and health
-STT provider = local-whisper / model filename
+STT provider = gnosis-asr / qwen3-asr-1.7b
 translation = disabled or explicit route
 persistence = Discard unless user presses Save after stop
 original transcript window
@@ -528,7 +532,7 @@ Completed時のSave / Discard
   )),
   microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0, 1)),
   system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0, 1)),
-  stt_provider_id TEXT NOT NULL CHECK(stt_provider_id = &#39;local-whisper&#39;),
+  stt_provider_id TEXT NOT NULL CHECK(stt_provider_id = &#39;gnosis-asr&#39;),
   stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) &lt;= 256),
   translation_provider_id TEXT,
   persistence_mode TEXT NOT NULL CHECK(persistence_mode IN (&#39;discard&#39;, &#39;explicit-save&#39;)),
@@ -667,10 +671,10 @@ pub fn blocks_application_action(&amp;self) -&gt; bool;
     <li>Done: Tauri/DBなしで遷移表を網羅できる。</li>
     <li>Depends on: M2-01。</li>
   </ul>
-  <h3 id="m2-03--whisper-core抽出">M2-03 — Whisper core抽出</h3>
+  <h3 id="m2-03--whisper-core抽出">M2-03 — gnosis ASR core抽出</h3>
   <ul>
-    <li>既存voice関数を<code>voice/local_whisper.rs</code>へ移動する。</li>
-    <li>一時WAV cleanupを成功/失敗/取消でtestする。</li>
+    <li>voice関数を<code>voice/gnosis_asr.rs</code>へ集約する。</li>
+    <li>WAVのin-memory encode、resampling、request cancellationをtestする。</li>
     <li>existing <code>transcribe_audio</code> command signatureは変更しない。</li>
     <li>Done: 既存voice fixture、resampling、cancellation testが同じ期待値でpass。</li>
   </ul>
@@ -782,7 +786,7 @@ meeting_segment_queue_is_bounded_and_ordered
 invalid_capture_token_never_reaches_stt
 meeting_policy_blocks_tts_while_active_or_paused
 meeting_save_is_atomic_and_discard_writes_no_transcript
-meeting_temp_audio_is_removed_on_success_failure_and_cancel
+gnosis_audio_is_encoded_in_memory_and_cancel_is_bounded
 meeting_module_has_no_notification_agent_or_application_action_calls
 </code></pre>
   <p>Frontend test:</p>
@@ -879,8 +883,8 @@ meeting_module_has_no_notification_agent_or_application_action_calls
   <h2 id="15-実装中にadrが必要な条件">15. 実装中にADRが必要な条件</h2>
   <ul>
     <li>AudioWorkletが対象Tauri WebViewで安定せずnative microphone captureへ変更する。</li>
-    <li>Whisperのsegment境界品質を上げるためoverlap audioを保持したい。</li>
-    <li>一時WAVも禁止し、Whisper libraryのin-process利用へ変更する。</li>
+    <li>ASRのsegment境界品質を上げるためboundedなoverlap audioを保持したい。</li>
+    <li>gnosis ASRがstreaming contractを提供した場合に、preview requestを真のstreamへ置換する。</li>
     <li>system audioのframework、entitlement、最小macOS versionを決める。</li>
     <li>別window overlayへ新しいTauri capabilityを追加する。</li>
     <li>translation providerまたはCloud consentを追加する。</li>

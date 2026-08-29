@@ -17,6 +17,8 @@ use std::{
 use tokio::sync::Notify;
 use url::Url;
 
+use crate::runtime::agent_tools::{AgentToolCall, ToolCallAccumulator, ToolProtocolError};
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -45,6 +47,237 @@ impl SharedLarmClient {
             .map(Self)
             .map_err(|_| SessionFailureKind::Internal)
     }
+
+    #[cfg(test)]
+    pub(crate) async fn canary_authentication_boundary(
+        &self,
+        base_url: &str,
+    ) -> Result<(), SessionFailureKind> {
+        let base_url = parse_base_url(base_url)?;
+        let synthetic_id = format!("canary_{}", uuid::Uuid::new_v4().simple());
+        let url = base_url
+            .join(&format!("v1/allocations/{synthetic_id}"))
+            .map_err(|_| SessionFailureKind::Contract)?;
+        let correct = EphemeralCredential::from_environment()?;
+        let incorrect = EphemeralCredential::from_token(&format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        ))?;
+        for (credential, expected) in [
+            (None, SessionFailureKind::Authentication),
+            (Some(&incorrect), SessionFailureKind::Authentication),
+            (Some(&correct), SessionFailureKind::AllocationLost),
+        ] {
+            let mut request = self.0.get(url.clone()).timeout(PROBE_TIMEOUT);
+            if let Some(credential) = credential {
+                request = request.header(AUTHORIZATION, credential.0.clone());
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|error| classify_transport(&error))?;
+            if classify_error_response(response, ERROR_BODY_LIMIT).await != expected {
+                return Err(SessionFailureKind::Contract);
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn canary_health(&self, base_url: &str) -> Result<(), SessionFailureKind> {
+        LarmHttpClient::new_probe(self, base_url)?
+            .probe_endpoint("health", "ok")
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn canary_ready(&self, base_url: &str) -> Result<(), SessionFailureKind> {
+        LarmHttpClient::new_probe(self, base_url)?
+            .probe_endpoint("ready", "ready")
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn canary_active_allocations(
+        &self,
+        base_url: &str,
+    ) -> Result<u64, SessionFailureKind> {
+        const METRICS_LIMIT: usize = 1_024 * 1_024;
+        const METRICS_LINE_LIMIT: usize = 16 * 1_024;
+        const ACTIVE_METRIC: &str = "larm_active_allocations";
+        let metrics_scope = std::env::var("SAAA_LARM_CANARY_METRICS_SCOPE")
+            .map_err(|_| SessionFailureKind::Contract)?;
+        if !matches!(metrics_scope.as_str(), "exclusive-window" | "client-scoped") {
+            return Err(SessionFailureKind::Contract);
+        }
+        let base_url = parse_base_url(base_url)?;
+        let token =
+            std::env::var("LARM_API_TOKEN").map_err(|_| SessionFailureKind::Authentication)?;
+        let credential = EphemeralCredential::from_token(&token)?;
+        let response = self
+            .0
+            .get(
+                base_url
+                    .join("metrics")
+                    .map_err(|_| SessionFailureKind::Contract)?,
+            )
+            .header(AUTHORIZATION, credential.0)
+            .timeout(PROBE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|error| classify_transport(&error))?;
+        let status = response.status();
+        if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            return Err(SessionFailureKind::Authentication);
+        }
+        if status.is_server_error() {
+            return Err(SessionFailureKind::Upstream);
+        }
+        if !status.is_success() {
+            return Err(SessionFailureKind::Contract);
+        }
+        if response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_none_or(|value| media_type(value) != "text/plain")
+        {
+            return Err(SessionFailureKind::Contract);
+        }
+        let body = read_body_limited(response, METRICS_LIMIT, None, false)
+            .await
+            .map_err(|error| error.kind)?;
+        let text = std::str::from_utf8(&body).map_err(|_| SessionFailureKind::Protocol)?;
+        let endpoint = base_url.as_str();
+        let endpoint_without_trailing_slash = endpoint.strip_suffix('/').unwrap_or(endpoint);
+        if text.contains(&token)
+            || text.contains(endpoint)
+            || text.contains(endpoint_without_trailing_slash)
+            || super::CANARY_PROMPTS
+                .iter()
+                .any(|value| text.contains(value))
+        {
+            return Err(SessionFailureKind::Policy);
+        }
+        let mut active = None;
+        for line in text.lines() {
+            if line.len() > METRICS_LINE_LIMIT {
+                return Err(SessionFailureKind::RequestTooLarge);
+            }
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut fields = line.split_ascii_whitespace();
+            let Some(series) = fields.next() else {
+                continue;
+            };
+            let Some(value) = fields.next() else {
+                return Err(SessionFailureKind::Protocol);
+            };
+            if fields.next().is_some() {
+                return Err(SessionFailureKind::Protocol);
+            }
+            if metric_series_has_sensitive_label(series)? {
+                return Err(SessionFailureKind::Policy);
+            }
+            let allowed_series = match metrics_scope.as_str() {
+                "exclusive-window" => series == ACTIVE_METRIC,
+                "client-scoped" => series == format!(r#"{ACTIVE_METRIC}{{client="saaa-desktop"}}"#),
+                _ => false,
+            };
+            if !allowed_series {
+                continue;
+            }
+            if active.is_some() {
+                return Err(SessionFailureKind::Protocol);
+            }
+            active = Some(
+                value
+                    .parse::<u64>()
+                    .map_err(|_| SessionFailureKind::Protocol)?,
+            );
+        }
+        active.ok_or(SessionFailureKind::Contract)
+    }
+}
+
+#[cfg(test)]
+fn metric_series_has_sensitive_label(series: &str) -> Result<bool, SessionFailureKind> {
+    let Some(open) = series.find('{') else {
+        return if series.contains('}') {
+            Err(SessionFailureKind::Protocol)
+        } else {
+            Ok(false)
+        };
+    };
+    if !series.ends_with('}') || series[..open].contains('}') {
+        return Err(SessionFailureKind::Protocol);
+    }
+    let labels = &series[open + 1..series.len() - 1];
+    let mut segment_start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, character) in labels.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quoted {
+            escaped = true;
+        } else if character == '"' {
+            quoted = !quoted;
+        } else if character == ',' && !quoted {
+            if sensitive_metric_label_segment(&labels[segment_start..index])? {
+                return Ok(true);
+            }
+            segment_start = index + character.len_utf8();
+        }
+    }
+    if quoted || escaped {
+        return Err(SessionFailureKind::Protocol);
+    }
+    sensitive_metric_label_segment(&labels[segment_start..])
+}
+
+#[cfg(test)]
+fn sensitive_metric_label_segment(segment: &str) -> Result<bool, SessionFailureKind> {
+    let segment = segment.trim();
+    if segment.is_empty() {
+        return Ok(false);
+    }
+    let (key, _) = segment
+        .split_once('=')
+        .ok_or(SessionFailureKind::Protocol)?;
+    let key = key.trim();
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(SessionFailureKind::Protocol);
+    }
+    let compact = key
+        .bytes()
+        .filter(|byte| *byte != b'_')
+        .map(|byte| byte.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    Ok(matches!(
+        compact.as_slice(),
+        b"authorization"
+            | b"bearer"
+            | b"token"
+            | b"prompt"
+            | b"response"
+            | b"endpoint"
+            | b"identifier"
+            | b"allocationid"
+            | b"operationid"
+            | b"requestid"
+            | b"conversationid"
+            | b"runtimerunid"
+    ))
 }
 
 pub(crate) struct EphemeralCredential(HeaderValue);
@@ -133,7 +366,10 @@ pub(crate) struct ChatMessage {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct ChatCompletion {
     pub(crate) content: String,
+    pub(crate) tool_call: Option<AgentToolCall>,
     pub(crate) request_id: Option<BoundedIdentifier>,
+    pub(crate) renewed_allocation: ReadyAllocation,
+    pub(crate) lease_received_at: tokio::time::Instant,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -171,13 +407,6 @@ struct AllocationRequirement<'a> {
 #[serde(rename_all = "camelCase")]
 struct RenewRequest {
     ttl_seconds: u32,
-}
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'static str,
-    messages: &'a [ChatMessage],
-    stream: bool,
 }
 
 impl Serialize for ChatMessage {
@@ -238,30 +467,37 @@ impl<'a> LarmHttpClient<'a> {
     }
 
     pub(crate) async fn probe(&self) -> Result<(), SessionFailureKind> {
-        for path in ["health", "ready"] {
-            let response = self
-                .client
-                .get(self.url(path)?)
-                .timeout(PROBE_TIMEOUT)
-                .send()
-                .await
-                .map_err(|error| classify_transport(&error))?;
-            if !response.status().is_success() {
-                return Err(classify_probe_response(response).await);
-            }
-            let body = read_body_limited(response, PROBE_BODY_LIMIT, None, false)
-                .await
-                .map_err(|error| error.kind)?;
-            let value: Value =
-                serde_json::from_slice(&body).map_err(|_| SessionFailureKind::Protocol)?;
-            let status = value
-                .get("status")
-                .and_then(Value::as_str)
-                .ok_or(SessionFailureKind::Protocol)?;
-            let expected = if path == "health" { "ok" } else { "ready" };
-            if status != expected {
-                return Err(SessionFailureKind::Unavailable);
-            }
+        self.probe_endpoint("health", "ok").await?;
+        self.probe_endpoint("ready", "ready").await?;
+        Ok(())
+    }
+
+    async fn probe_endpoint(
+        &self,
+        path: &'static str,
+        expected: &'static str,
+    ) -> Result<(), SessionFailureKind> {
+        let response = self
+            .client
+            .get(self.url(path)?)
+            .timeout(PROBE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|error| classify_transport(&error))?;
+        if !response.status().is_success() {
+            return Err(classify_probe_response(response).await);
+        }
+        let body = read_body_limited(response, PROBE_BODY_LIMIT, None, false)
+            .await
+            .map_err(|error| error.kind)?;
+        let value: Value =
+            serde_json::from_slice(&body).map_err(|_| SessionFailureKind::Protocol)?;
+        let status = value
+            .get("status")
+            .and_then(Value::as_str)
+            .ok_or(SessionFailureKind::Protocol)?;
+        if status != expected {
+            return Err(SessionFailureKind::Unavailable);
         }
         Ok(())
     }
@@ -424,17 +660,56 @@ impl<'a> LarmHttpClient<'a> {
         messages: &[ChatMessage],
         timeout: Duration,
         cancellation: Cancellation<'_>,
+        on_delta: F,
+    ) -> Result<ChatCompletion, LarmError>
+    where
+        F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
+    {
+        self.chat_with_tools(
+            allocation,
+            lease_received_at,
+            messages,
+            &[],
+            &[],
+            timeout,
+            cancellation,
+            on_delta,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn chat_with_tools<F>(
+        &self,
+        allocation: &ReadyAllocation,
+        lease_received_at: tokio::time::Instant,
+        messages: &[ChatMessage],
+        tool_exchanges: &[Value],
+        tools: &[Value],
+        timeout: Duration,
+        cancellation: Cancellation<'_>,
         mut on_delta: F,
     ) -> Result<ChatCompletion, LarmError>
     where
         F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
     {
-        let body = serde_json::to_vec(&ChatRequest {
-            model: VIRTUAL_MODEL,
-            messages,
-            stream: true,
-        })
-        .map_err(|_| LarmError::new(SessionFailureKind::Internal, false))?;
+        let mut serialized_messages = serde_json::to_value(messages)
+            .map_err(|_| LarmError::new(SessionFailureKind::Internal, false))?
+            .as_array()
+            .cloned()
+            .ok_or_else(|| LarmError::new(SessionFailureKind::Internal, false))?;
+        serialized_messages.extend_from_slice(tool_exchanges);
+        let mut request = serde_json::json!({
+            "model": VIRTUAL_MODEL,
+            "messages": serialized_messages,
+            "stream": true
+        });
+        if !tools.is_empty() {
+            request["tools"] = Value::Array(tools.to_vec());
+            request["tool_choice"] = Value::String("auto".to_string());
+        }
+        let body = serde_json::to_vec(&request)
+            .map_err(|_| LarmError::new(SessionFailureKind::Internal, false))?;
         if body.len() > GATEWAY_REQUEST_LIMIT {
             return Err(LarmError::new(SessionFailureKind::RequestTooLarge, false));
         }
@@ -489,7 +764,9 @@ impl<'a> LarmHttpClient<'a> {
         let mut content_chars = 0;
         let mut output_started = false;
         let mut stream_completed = false;
+        let mut tool_calls = ToolCallAccumulator::default();
         let mut renewed_allocation = allocation.clone();
+        let mut renewed_at = lease_received_at;
         let mut renew_retry = 0_u8;
         loop {
             let next = tokio::select! {
@@ -512,9 +789,10 @@ impl<'a> LarmHttpClient<'a> {
                     match renewal {
                         Ok(next) => {
                             renewed_allocation = next;
+                            renewed_at = tokio::time::Instant::now();
                             renew_retry = 0;
                             (renew_at, expires_at) = lease_deadlines(
-                                tokio::time::Instant::now(),
+                                renewed_at,
                                 renewed_allocation.effective_ttl_seconds,
                             );
                         }
@@ -540,6 +818,7 @@ impl<'a> LarmHttpClient<'a> {
                         &mut content_chars,
                         &mut output_started,
                         &mut on_delta,
+                        &mut tool_calls,
                     )?;
                 }
                 break;
@@ -560,6 +839,7 @@ impl<'a> LarmHttpClient<'a> {
                 &mut content_chars,
                 &mut output_started,
                 &mut on_delta,
+                &mut tool_calls,
             )? {
                 stream_completed = true;
                 break;
@@ -568,12 +848,21 @@ impl<'a> LarmHttpClient<'a> {
         if !stream_completed {
             return Err(LarmError::new(SessionFailureKind::Network, output_started));
         }
-        if content.trim().is_empty() {
+        let tool_call = tool_calls
+            .finish()
+            .map_err(|error| tool_protocol_error(error, output_started))?;
+        if tool_call.is_some() && !content.trim().is_empty() {
+            return Err(LarmError::new(SessionFailureKind::Protocol, output_started));
+        }
+        if content.trim().is_empty() && tool_call.is_none() {
             return Err(LarmError::new(SessionFailureKind::Protocol, false));
         }
         Ok(ChatCompletion {
             content,
+            tool_call,
             request_id,
+            renewed_allocation,
+            lease_received_at: renewed_at,
         })
     }
 
@@ -1216,6 +1505,7 @@ fn project_sse<F>(
     content_chars: &mut usize,
     output_started: &mut bool,
     on_delta: &mut F,
+    tool_calls: &mut ToolCallAccumulator,
 ) -> Result<bool, LarmError>
 where
     F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
@@ -1228,6 +1518,9 @@ where
             }
             let value: Value = serde_json::from_str(data)
                 .map_err(|_| LarmError::new(SessionFailureKind::Protocol, *output_started))?;
+            tool_calls
+                .absorb_stream_delta(&value)
+                .map_err(|error| tool_protocol_error(error, *output_started))?;
             if let Some(delta) = value
                 .pointer("/choices/0/delta/content")
                 .and_then(Value::as_str)
@@ -1251,6 +1544,14 @@ where
         }
     }
     Ok(false)
+}
+
+fn tool_protocol_error(error: ToolProtocolError, output_started: bool) -> LarmError {
+    let kind = match error {
+        ToolProtocolError::Protocol => SessionFailureKind::Protocol,
+        ToolProtocolError::TooLarge => SessionFailureKind::RequestTooLarge,
+    };
+    LarmError::new(kind, output_started)
 }
 
 #[cfg(test)]
@@ -1407,6 +1708,137 @@ mod tests {
         (AtomicBool::new(false), Notify::new())
     }
 
+    struct EnvironmentGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvironmentGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvironmentGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn canary_authentication_and_metrics_helpers_are_strict_and_bounded() {
+        let _environment_lock = super::super::test_environment_lock().lock().await;
+        let _guard = EnvironmentGuard::set("LARM_API_TOKEN", "test-token");
+        let _scope_guard = EnvironmentGuard::set("SAAA_LARM_CANARY_METRICS_SCOPE", "client-scoped");
+        let server = FakeServer::start(vec![
+            response(
+                "401 Unauthorized",
+                "application/json",
+                r#"{"error":{"code":"unauthorized","message":"denied"}}"#,
+            ),
+            response(
+                "401 Unauthorized",
+                "application/json",
+                r#"{"error":{"code":"unauthorized","message":"denied"}}"#,
+            ),
+            response(
+                "404 Not Found",
+                "application/json",
+                r#"{"error":{"code":"not_found","message":"missing"}}"#,
+            ),
+            response(
+                "200 OK",
+                "text/plain; version=0.0.4",
+                "# TYPE larm_active_allocations gauge\nhttp_response_seconds 1\nlarm_active_allocations{client=\"saaa-desktop\"} 0\n",
+            ),
+        ]);
+        let shared = SharedLarmClient::build().expect("shared client builds");
+        shared
+            .canary_authentication_boundary(&server.base_url)
+            .await
+            .expect("auth boundary validates");
+        assert_eq!(
+            shared
+                .canary_active_allocations(&server.base_url)
+                .await
+                .expect("metrics validate"),
+            0
+        );
+        let captures = server.captures();
+        assert_eq!(captures.len(), 4);
+        assert!(!captures[0].to_ascii_lowercase().contains("authorization:"));
+        assert!(captures[1].contains("authorization: Bearer "));
+        assert!(captures[2].contains("authorization: Bearer test-token"));
+        assert!(captures[3].contains("GET /metrics HTTP/1.1"));
+
+        let leaking = FakeServer::start(vec![response(
+            "200 OK",
+            "text/plain",
+            "leaking_metric{request_id=\"private\"} 1\nlarm_active_allocations 0\n",
+        )]);
+        assert_eq!(
+            shared.canary_active_allocations(&leaking.base_url).await,
+            Err(SessionFailureKind::Policy)
+        );
+
+        let camel_case_leak = FakeServer::start(vec![response(
+            "200 OK",
+            "text/plain",
+            "unrelated_metric{allocationId=\"private\"} 1\nlarm_active_allocations{client=\"saaa-desktop\"} 0\n",
+        )]);
+        assert_eq!(
+            shared
+                .canary_active_allocations(&camel_case_leak.base_url)
+                .await,
+            Err(SessionFailureKind::Policy)
+        );
+
+        let wrong_scope = FakeServer::start(vec![response(
+            "200 OK",
+            "text/plain",
+            "larm_active_allocations 0\n",
+        )]);
+        assert_eq!(
+            shared
+                .canary_active_allocations(&wrong_scope.base_url)
+                .await,
+            Err(SessionFailureKind::Contract)
+        );
+
+        let restarting = FakeServer::start(vec![response(
+            "503 Service Unavailable",
+            "application/json",
+            r#"{"status":"restarting"}"#,
+        )]);
+        assert_eq!(
+            shared.canary_active_allocations(&restarting.base_url).await,
+            Err(SessionFailureKind::Upstream)
+        );
+
+        {
+            let _exclusive =
+                EnvironmentGuard::set("SAAA_LARM_CANARY_METRICS_SCOPE", "exclusive-window");
+            let exclusive = FakeServer::start(vec![response(
+                "200 OK",
+                "text/plain",
+                "larm_active_allocations 0\n",
+            )]);
+            assert_eq!(
+                shared
+                    .canary_active_allocations(&exclusive.base_url)
+                    .await
+                    .expect("exclusive metric validates"),
+                0
+            );
+        }
+    }
+
     #[test]
     fn credential_and_base_url_reject_ambiguous_inputs() {
         for token in ["", "two words", "tab\ttoken", "line\ntoken"] {
@@ -1513,6 +1945,87 @@ mod tests {
         assert!(captures[1].contains("x-larm-allocation-id: alloc_1"));
         assert!(captures[1].contains("\"model\":\"local\""));
         assert!(captures[2].contains("DELETE /v1/allocations/alloc_1 HTTP/1.1"));
+    }
+
+    #[tokio::test]
+    async fn larm_gateway_projects_recall_tool_calls_and_serializes_tool_exchanges() {
+        let first = serde_json::json!({
+            "choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_larm_recall",
+                "function": {
+                    "name": "recall_conversation",
+                    "arguments": "{\"time\":{\"kind\":\"preset\","
+                }
+            }]}}]
+        });
+        let second = serde_json::json!({
+            "choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "function": {"arguments": "\"preset\":\"yesterday\"}}"}
+            }]}}]
+        });
+        let stream = format!("data: {first}\n\ndata: {second}\n\ndata: [DONE]\n\n");
+        let server = FakeServer::start(vec![response("200 OK", "text/event-stream", &stream)]);
+        let shared = SharedLarmClient::build().expect("client builds");
+        let credential = credential();
+        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
+            .expect("client config");
+        let allocation = client
+            .ready_allocation(
+                serde_json::from_str(&ready_json(
+                    "alloc_tool",
+                    "runtime_tool",
+                    false,
+                    "primary-live",
+                ))
+                .expect("fixture decodes"),
+            )
+            .expect("allocation validates");
+        let (flag, notify) = cancellation();
+        let tool_exchange = serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_previous",
+            "content": "{\"reasonCode\":\"continuity-no-hit\"}"
+        });
+        let tools = [crate::runtime::agent_tools::recall_tool_definition()];
+        let completion = client
+            .chat_with_tools(
+                &allocation,
+                tokio::time::Instant::now(),
+                &[ChatMessage {
+                    role: "user",
+                    content: "昨日の話".to_string(),
+                }],
+                &[tool_exchange],
+                &tools,
+                Duration::from_secs(5),
+                Cancellation {
+                    flag: &flag,
+                    notify: &notify,
+                },
+                |_, _| Ok(()),
+            )
+            .await
+            .expect("tool call completes");
+        assert!(completion.content.is_empty());
+        let call = completion.tool_call.expect("tool call projects");
+        assert_eq!(call.id, "call_larm_recall");
+        assert_eq!(call.name, "recall_conversation");
+        assert_eq!(
+            crate::runtime::agent_tools::parse_recall_arguments(&call.arguments)
+                .expect("arguments decode")
+                .time,
+            Some(crate::memory::contracts::RecallTimeFilter::Preset {
+                preset: crate::memory::contracts::RecallTimePreset::Yesterday
+            })
+        );
+
+        let captures = server.captures();
+        assert_eq!(captures.len(), 1);
+        assert!(captures[0].contains("\"name\":\"recall_conversation\""));
+        assert!(captures[0].contains("\"tool_choice\":\"auto\""));
+        assert!(captures[0].contains("\"tool_call_id\":\"call_previous\""));
     }
 
     #[tokio::test]
@@ -2007,12 +2520,14 @@ mod tests {
         let mut content = String::new();
         let mut content_chars = 0;
         let mut output_started = false;
+        let mut tool_calls = ToolCallAccumulator::default();
         let error = project_sse(
             vec!["data: {\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}".to_string()],
             &mut content,
             &mut content_chars,
             &mut output_started,
             &mut |_, _| Err(SessionFailureKind::ClientDisconnected),
+            &mut tool_calls,
         )
         .expect_err("consumer failure stops projection");
         assert_eq!(error.kind, SessionFailureKind::ClientDisconnected);

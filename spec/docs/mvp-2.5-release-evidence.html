@@ -2,11 +2,13 @@
   <h1 id="mvp-25-release-evidence">MVP 2.5 Release Evidence</h1>
   <dl>
     <dt>Status</dt>
-    <dd>Conditional — archive not approved</dd>
+    <dd>Conditional — implementation archived; manual validation evidence remains active</dd>
     <dt>Reviewed</dt>
     <dd>2026-08-27</dd>
     <dt>Implementation plan</dt>
-    <dd><a href="./mvp-2.5-implementation-plan.html">MVP 2.5 Implementation Plan</a></dd>
+    <dd>
+      <a href="./.archived/mvp-2.5-implementation-plan.html">MVP 2.5 Implementation Plan</a>
+    </dd>
   </dl>
 
   <h2 id="implemented">Implemented</h2>
@@ -43,9 +45,9 @@
       readerはAgent Runとstatus/model lookupの双方で4 MiB + 1 byteに物理的に制限する。
     </li>
     <li>
-      cancellation通知をlate waiterでも観測できるようにし、Whisper readerのbounded
+      cancellation通知をlate waiterでも観測できるようにし、当時のWhisper process readerのbounded
       queue、全終了経路の kill/wait/join、Runtime Runとprovider sessionのone-shot
-      finalizationを追加。
+      finalizationを追加した。Voiceの現行実装はgnosis ASR HTTP adapterへ移行済みである。
     </li>
   </ul>
 
@@ -70,6 +72,13 @@
         <td>
           95 passed、0 failed。normal suiteでは4件をignoredとし、このうち30分soakと実Codex
           normal/Cancelは下記のとおり別途成功
+        </td>
+      </tr>
+      <tr>
+        <td>Current workspace regression (2026-08-29)</td>
+        <td>
+          46 frontend passed、156 Rust passed、8 ignored、0 failed。MVP 2.6.1のoffline readiness
+          testsとMVP UI reachability regressionを含む
         </td>
       </tr>
       <tr>
@@ -127,7 +136,7 @@
     <tbody>
       <tr>
         <td>
-          <a href="./mvp-2.5-implementation-plan.html#agent-run-supervisor"
+          <a href="./.archived/mvp-2.5-implementation-plan.html#agent-run-supervisor"
             >Agent Run Supervisor 1–11</a
           >
         </td>
@@ -145,7 +154,7 @@
       </tr>
       <tr>
         <td>
-          <a href="./mvp-2.5-implementation-plan.html#input-activity-signal"
+          <a href="./.archived/mvp-2.5-implementation-plan.html#input-activity-signal"
             >Input Activity Signal 1–10</a
           >
         </td>
@@ -157,14 +166,18 @@
       </tr>
       <tr>
         <td>
-          <a href="./mvp-2.5-implementation-plan.html#release-quality">Release quality 1–3</a>
+          <a href="./.archived/mvp-2.5-implementation-plan.html#release-quality"
+            >Release quality 1–3</a
+          >
         </td>
         <td>上記verification table、v6 migration/backup/reopen tests、30分soak</td>
         <td>Passed</td>
       </tr>
       <tr>
         <td>
-          <a href="./mvp-2.5-implementation-plan.html#release-quality">Release quality 4</a>
+          <a href="./.archived/mvp-2.5-implementation-plan.html#release-quality"
+            >Release quality 4</a
+          >
         </td>
         <td>
           <a href="./spikes/mvp-2.5-macos-input-activity.html">Input Activity spike</a>と下記manual
@@ -174,7 +187,9 @@
       </tr>
       <tr>
         <td>
-          <a href="./mvp-2.5-implementation-plan.html#release-quality">Release quality 5</a>
+          <a href="./.archived/mvp-2.5-implementation-plan.html#release-quality"
+            >Release quality 5</a
+          >
         </td>
         <td>下記にMVP 2から引き継いだ未完了項目を明記</td>
         <td>Recorded</td>
@@ -211,7 +226,7 @@
     </li>
   </ul>
 
-  <h2 id="manual-blockers">Manual blockers before archive</h2>
+  <h2 id="manual-blockers">Manual validation blockers</h2>
   <ul>
     <li>
       Input Activityのkeyboard/mouse/trackpad
@@ -223,14 +238,14 @@
     </li>
     <li>Agent Runの実Codex long reasoning/Cancel連打/app close/restart/read-only violation。</li>
     <li>
-      MVP 2から引き継いだreal microphone permission、real Whisper、2-hour resource
-      soak、Save/Discard/app-close/TTS blocking。
+      MVP 2から引き継いだreal microphone permission、real gnosis ASR preview/final、2-hour resource
+      soak、Save review/Discard/app-close/TTS blocking。
     </li>
   </ul>
 
   <h2 id="archive-decision">Archive decision</h2>
   <p>
-    自動実装と検証が完了しても、上記manual evidenceが未記録の間はAcceptedへ変更せず、 implementation
-    planをArchiveしない。既に生成されたarchive copyは完了証跡として扱わない。
+    実装計画はコードと自動検証の完了によりArchiveした。本release evidenceは上記manual
+    evidenceが記録されるまでAcceptedへ変更せず、activeな検証記録として維持する。
   </p>
 </article>

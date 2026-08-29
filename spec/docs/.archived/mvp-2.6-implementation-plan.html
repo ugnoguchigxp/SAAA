@@ -3,11 +3,9 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>
-      Status: M26-01〜08 implemented; G1 contract deviations and G2/G3 production evidence pending
-    </li>
+    <li>Status: Complete — SAAA implementation archived; G1/G2/F1/G3 validation remains active</li>
     <li>Created: 2026-08-28</li>
-    <li>Last reviewed: 2026-08-28</li>
+    <li>Last reviewed: 2026-08-29</li>
     <li>
       Baseline: <code>d0ba3fd</code> — MVP 2.5 implementation checkpoint
     </li>
@@ -15,11 +13,18 @@
     <li>Production node: <code>gnosis</code></li>
     <li>読者: SAAA実装担当、LARM実装担当、レビュー担当、QA担当、運用担当</li>
   </ul>
+  <p>
+    M26-01〜08と後続のoperator-only readiness toolingは実装・自動検証済みである。G1/G2/F1/G3は
+    activeな<a href="../mvp-2.6-release-evidence.html">MVP 2.6 Release Evidence</a>と<a
+      href="../mvp-2.6-larm-operations-runbook.html"
+      >Operations Runbook</a
+    >へ分離し、本書は実装計画としてArchiveする。
+  </p>
   <h3 id="02-implementation-status">0.2 Implementation status</h3>
   <ul>
     <li>
-      SAAA implementation baseline: uncommitted working tree after
-      <code>9a307a5</code>。ユーザー承認なしにcommitしない。
+      SAAA implementation baseline: <code>b2aab6f</code>
+      （<code>Complete LARM provider integration</code>）。
     </li>
     <li>
       LARM fixture source:
@@ -37,6 +42,10 @@
       自動検証はfake LARMだけを使用し、gnosisへallocationまたはGateway requestを送信していない。
     </li>
   </ul>
+  <p>
+    M26-09とM26-10の実施手順、operator-only tooling、evidence schema、G1〜G3の詳細な通過条件は、
+    <a href="./mvp-2.6.1-implementation-plan.html">MVP 2.6.1実装契約</a>を正本とする。
+  </p>
   <p>
     <strong>G1は条件付き未通過である。</strong> LARM <code>7dca7c3</code>は
     <code>/v1/allocations</code>、operation
@@ -65,8 +74,8 @@
   </p>
   <p>
     MVP 2.5はimplementation completeだがmanual acceptance pendingである。MVP
-    2.6のcontract作業は並行できるが、 MVP
-    2.5の未完了evidenceを完了扱いにせず、既存計画をarchiveしない。
+    2.6のcontract作業は並行できる。MVP 2.5の実装計画は完了後にArchiveするが、未完了のmanual
+    evidenceはactiveな検証記録として保持し、Accepted扱いにしない。
   </p>
   <h3 id="01-review-amendments">0.1 Review amendments</h3>
   <table>
@@ -198,7 +207,7 @@ Selected Local Runtime</code></pre>
       <tr>
         <td>Voice</td>
         <td>
-          <code>local-whisper</code>と<code
+          <code>gnosis-asr</code>と<code
             >system-tts</code
           >
         </td>
@@ -1548,95 +1557,19 @@ type ProviderSelectedEvent = {
 
   <h2 id="19-gnosis-canary">19. gnosis canary and production gate</h2>
   <p>
-    canary clientとは、isolated application-data
-    directory、専用environment、単一operatorを持つ一つのSAAA
-    instanceを指す。Conversation単位の隠しfrontend
-    flagは追加せず、通常利用profileのSettingsとSQLiteを共有しない。
+    M26-09とM26-10はMVP 2.6のoffline実装後に実施するproduction-readiness sliceである。canary
+    clientは、isolated application-data directory、専用environment、単一operatorを持つ一つのSAAA
+    instanceとし、通常利用profileのSettings、SQLite、environmentを共有しない。
   </p>
-  <p>実機canaryでは次の順番を変えない。</p>
-  <ol>
-    <li>
-      gnosisへのloopback
-      tunnelを確立し、SAAAから<code>health</code>と<code>ready</code>を確認する。
-    </li>
-    <li>Bearerなし、誤token、正tokenの境界を確認する。</li>
-    <li>
-      <code>llm-default</code>で一回の非stream requestまたは短いstream
-      requestを完走する。
-    </li>
-    <li>通常stream、user cancel、request timeoutを確認する。</li>
-    <li>最初のnon-empty assistant delta後のupstream failureで自動retryしないことを確認する。</li>
-    <li>LARM daemon restart後に古いallocationを捨て、新規allocateできることを確認する。</li>
-    <li>
-      <code>resource_exhausted</code
-      >と<code>no_candidate_available</code>でretry stormがないことを確認する。
-    </li>
-    <li>default routeからoptional workerまたは未登録Runtimeへ暗黙切替しないことを確認する。</li>
-    <li>Settingsでdirect Providerへ戻し、新しいturnがLARMへ接続しないことを確認する。</li>
-    <li>feature flag OFFでSAAAをrestartし、全LARM経路が閉じることを確認する。</li>
-    <li>
-      <code>/ready</code
-      >と<code>/metrics</code>を監視へ追加し、本文またはsecretがmetric
-      labelにないことを確認する。
-    </li>
-    <li>30分canary、2時間soakの順でallocation leakとmemory増加を確認する。</li>
-  </ol>
   <p>
-    canary中にprompt、response、Authorization header、resolved
-    endpointがLARMまたはSAAAの通常logへ出た場合は、 即時停止してsecret rotationとlog
-    cleanupの判断を行う。
+    実行順、G1 / G2 / F1 / G3、operator-only runner、strict manifest、minimum workload、count
+    semantics、RSS / allocation threshold、rollback、redaction、runbookの正本は、
+    <a href="./mvp-2.6.1-implementation-plan.html">MVP 2.6.1実装契約</a>とする。本節に数値や手順を
+    重複記載せず、MVP 2.6側はM26-01〜08のProvider contractとoffline acceptanceだけを所有する。
   </p>
-  <h3 id="191-canary-thresholds">19.1 Canary thresholds</h3>
-  <table>
-    <caption>
-      Table: Canary and soak success thresholds
-    </caption>
-    <thead>
-      <tr>
-        <th scope="col">Gate</th>
-        <th scope="col">Minimum workload</th>
-        <th scope="col">Pass condition</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>Functional canary</td>
-        <td>
-          通常turn 5件、cancel 2件、最初のnon-empty assistant delta後のcontrolled tunnel
-          interruption 1件、restart 1件、capacity rejection 1件
-        </td>
-        <td>重複出力、暗黙fallback、古いallocation再利用、secret露出が0件</td>
-      </tr>
-      <tr>
-        <td>30-minute canary</td>
-        <td>20件以上のshort turn、うち5件以上をuser cancel</td>
-        <td>unexpected failure 0件、release成功時は10秒以内にactive allocationがbaselineへ戻る</td>
-      </tr>
-      <tr>
-        <td>2-hour soak</td>
-        <td>60件以上のturn、10件以上のcancel、1回のLARM restart、1回のSAAA restart</td>
-        <td>
-          10分warm-up後のRSS max − minが64 MiB以下、最後30分のmedianが直前30分のmedian + 16
-          MiB以下。 同時turnが一件ならactive
-          allocationは一件以下、idleかつrelease成功後10秒以内に0件
-        </td>
-      </tr>
-      <tr>
-        <td>TTL recovery</td>
-        <td>release failure fixtureまたはcontrolled network interruption 3件</td>
-        <td>各allocationがTTL + 30秒以内に回収される</td>
-      </tr>
-      <tr>
-        <td>Rollback</td>
-        <td>Settings rollback後3 turn、kill switch restart後3 turn</td>
-        <td>LARM request 0件、direct Provider完走、route表示一致</td>
-      </tr>
-    </tbody>
-  </table>
   <p>
-    SAAAはLARM metricsでallocation count、selected Runtime、fallback、releaseを観測するが、Runtime
-    stopを要求しない。 Resident停止またはdefault routeからの意図しないoptional
-    Runtime選択を一件でも観測した場合はfailとする。
+    G1 / G2通過後のoperator操作と障害復旧は、
+    <a href="../mvp-2.6-larm-operations-runbook.html">MVP 2.6 LARM Operations Runbook</a>を使う。
   </p>
 
   <h2 id="20-verification">20. Verification plan</h2>
@@ -1746,9 +1679,10 @@ bun run desktop:smoke</code></pre>
       allocation / Gateway / artifact lifecycleはhandoff作成時点で未commit WIPと記録されている。
     </li>
     <li>
-      SAAA baseline <code>d0ba3fd</code>。Model Provider、Conversation
-      router、SSE parser、Settings migration、 provider session、shutdown
-      lifecycleの実装をレビューした。
+      初回design review時のSAAA baseline
+      <code>d0ba3fd</code>。現在の実装baselineはSection
+      0.2の<code>b2aab6f</code>。Model Provider、Conversation router、SSE
+      parser、Settings migration、provider session、shutdown lifecycleをレビューした。
     </li>
     <li>
       <code>src-tauri/src/lib.rs</code>: runtime、Provider、SQLite、migration、Tauri

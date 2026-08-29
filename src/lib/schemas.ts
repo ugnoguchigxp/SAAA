@@ -56,6 +56,16 @@ const providerCommonSchema = z.object({
   label: z.string().trim().min(1).max(120),
 });
 
+function isLocalProviderHost(hostname: string): boolean {
+  if (["localhost", "[::1]"].includes(hostname)) return true;
+  const octets = hostname.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
+  return octets[0] === 10
+    || octets[0] === 127
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168);
+}
+
 const openAiCompatibleProviderSchema = providerCommonSchema.extend({
   kind: z.literal("openai-compatible"),
   location: z.enum(["local", "cloud"]),
@@ -104,8 +114,8 @@ export const modelProvidersSettingsSchema = z.object({
         if (endpoint.username || endpoint.password) {
           context.addIssue({ code: "custom", message: "Credentials must not be embedded in endpoints", path: [index, "endpoint"] });
         }
-        if (provider.location === "local" && (endpoint.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname))) {
-          context.addIssue({ code: "custom", message: "Local providers must use an http:// loopback endpoint", path: [index, "endpoint"] });
+        if (provider.location === "local" && (endpoint.protocol !== "http:" || !isLocalProviderHost(endpoint.hostname))) {
+          context.addIssue({ code: "custom", message: "Local providers must use an http:// loopback or private-network endpoint", path: [index, "endpoint"] });
         }
         if (provider.location === "cloud" && endpoint.protocol !== "https:") {
           context.addIssue({ code: "custom", message: "Cloud providers must use HTTPS", path: [index, "endpoint"] });
@@ -165,8 +175,8 @@ export const voiceSettingsSchema = z.object({
   inputDeviceId: z.string().trim().min(1).max(300),
   outputDeviceId: z.string().trim().min(1).max(300),
   captureMode: z.literal("push-to-talk"),
-  sttProviderId: z.literal("local-whisper"),
-  sttModel: z.string().trim().max(1_024),
+  sttProviderId: z.literal("gnosis-asr"),
+  sttModel: z.literal("qwen3-asr-1.7b"),
   ttsProviderId: z.literal("system-tts"),
   ttsVoice: z.string().trim().min(1).max(160),
   autoSpeak: z.boolean(),
@@ -192,7 +202,7 @@ export const situationSettingsSchema = z.object({
 const settingsDocumentBaseSchema = z.object({
   namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
-  schemaVersion: z.literal(8),
+  schemaVersion: z.literal(9),
   valueJson: z.record(z.string(), z.unknown()),
 }).strict();
 

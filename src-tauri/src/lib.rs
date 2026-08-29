@@ -19,6 +19,7 @@ use std::{
 use tauri::Manager;
 
 mod meeting;
+mod memory;
 mod providers;
 mod runtime;
 mod situation;
@@ -27,6 +28,9 @@ mod voice;
 static BUNDLED_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
 const MAX_CODEX_STDOUT_BYTES: u64 = 4 * 1_024 * 1_024;
 const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+const GNOSIS_PROVIDER_ID: &str = "gnosis-qwen";
+const GNOSIS_ENDPOINT: &str = "http://192.168.0.65:8080/v1";
+const GNOSIS_MODEL: &str = "Qwen3.8-27B-ROCmFP4-FAST.gguf";
 
 struct AppState {
     connection: Arc<Mutex<Connection>>,
@@ -503,7 +507,17 @@ struct TranscribeAudioInput {
     conversation_id: String,
     samples: Vec<f32>,
     sample_rate: u32,
-    model_path: String,
+    model: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PreviewAudioInput {
+    run_id: String,
+    conversation_id: String,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    model: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -525,11 +539,11 @@ enum VoiceEvent {
     Transcribing {
         run_id: String,
     },
-    TranscriptDelta {
+    TranscriptFinal {
         run_id: String,
         text: String,
     },
-    TranscriptFinal {
+    TranscriptDelta {
         run_id: String,
         text: String,
     },
@@ -998,15 +1012,8 @@ async fn transcribe_audio(
     if input.samples.len() > input.sample_rate as usize * 300 {
         return Err("Recording exceeds the five minute MVP limit".to_string());
     }
-    if input.model_path.len() > 4_096 {
-        return Err("Local whisper model path is too long".to_string());
-    }
-    let model = fs::canonicalize(&input.model_path).map_err(|_| {
-        "Local whisper model is missing. Select an existing model file in Voice settings."
-            .to_string()
-    })?;
-    if !model.is_file() {
-        return Err("The selected whisper model is not a file".to_string());
+    if input.model != voice::gnosis_asr::MODEL_ID {
+        return Err("Voice settings must use the configured gnosis ASR model".to_string());
     }
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(&state, &input.run_id, cancellation.clone())?;
@@ -1015,7 +1022,7 @@ async fn transcribe_audio(
         &input.run_id,
         &input.conversation_id,
         "voice.transcribe",
-        "local-whisper",
+        voice::gnosis_asr::PROVIDER_ID,
     ) {
         remove_active_run(&state, &input.run_id);
         state
@@ -1029,26 +1036,14 @@ async fn transcribe_audio(
     state
         .situation
         .set_microphone_state(situation::contracts::MicrophoneState::SaaaTranscribing);
-    let run_id = input.run_id.clone();
-    let samples = input.samples;
-    let sample_rate = input.sample_rate;
-    let on_event_for_worker = on_event.clone();
-    let cancellation_for_worker = cancellation.clone();
-    let result = match tauri::async_runtime::spawn_blocking(move || {
-        run_whisper_transcription(
-            &run_id,
-            &samples,
-            sample_rate,
-            &model,
-            &on_event_for_worker,
-            &cancellation_for_worker,
-        )
-    })
+    let result = voice::gnosis_asr::transcribe(
+        &input.samples,
+        input.sample_rate,
+        &input.model,
+        cancellation.clone(),
+    )
     .await
-    {
-        Ok(result) => result,
-        Err(error) => Err(format!("Transcription task failed: {error}")),
-    };
+    .map(|(text, _language)| text);
     remove_active_run(&state, &input.run_id);
     state
         .situation
@@ -1080,11 +1075,54 @@ async fn transcribe_audio(
             let _ = on_event.send(VoiceEvent::Failed {
                 run_id: input.run_id,
                 message: error.clone(),
-                recovery: "Set SAAA_WHISPER_PATH and select a compatible local model file."
-                    .to_string(),
+                recovery: "Check the gnosis ASR service and retry.".to_string(),
             });
             Err(error)
         }
+    }
+}
+
+#[tauri::command]
+async fn preview_audio(
+    state: tauri::State<'_, AppState>,
+    input: PreviewAudioInput,
+    on_event: tauri::ipc::Channel<VoiceEvent>,
+) -> Result<String, String> {
+    validate_identifier(&input.run_id, "run id")?;
+    validate_identifier(&input.conversation_id, "conversation id")?;
+    if !(8_000..=192_000).contains(&input.sample_rate)
+        || input.samples.len() < input.sample_rate as usize
+        || input.samples.len() > input.sample_rate as usize * 15
+        || input.samples.iter().any(|sample| !sample.is_finite())
+    {
+        return Err(
+            "Voice preview must contain between one and fifteen seconds of valid audio".to_string(),
+        );
+    }
+    if input.model != voice::gnosis_asr::MODEL_ID {
+        return Err("Voice settings must use the configured gnosis ASR model".to_string());
+    }
+    let cancellation = Arc::new(RunCancellation::default());
+    register_active_run(&state, &input.run_id, cancellation.clone())?;
+    let result = voice::gnosis_asr::transcribe(
+        &input.samples,
+        input.sample_rate,
+        &input.model,
+        cancellation.clone(),
+    )
+    .await
+    .map(|(text, _language)| text);
+    remove_active_run(&state, &input.run_id);
+    match result {
+        Ok(transcript) => {
+            let _ = on_event.send(VoiceEvent::TranscriptDelta {
+                run_id: input.run_id,
+                text: transcript.clone(),
+            });
+            Ok(transcript)
+        }
+        Err(_) if cancellation.is_cancelled() => Err("Voice preview cancelled".to_string()),
+        Err(error) => Err(redact_runtime_text(&error)),
     }
 }
 
@@ -1100,6 +1138,10 @@ async fn speak_text(
     }
     if input.voice.trim().is_empty() || input.voice.len() > 160 {
         return Err("TTS voice must contain between 1 and 160 characters".to_string());
+    }
+    let speech_text = voice::tts::text_for_speech(&input.text);
+    if speech_text.is_empty() {
+        return Ok(());
     }
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(&state, &input.run_id, cancellation.clone())?;
@@ -1129,7 +1171,7 @@ async fn speak_text(
         }
         *process = Some(ActiveTts {
             run_id: input.run_id.clone(),
-            child: spawn_tts_process(&input.text, &input.voice)?,
+            child: spawn_tts_process(&speech_text, &input.voice)?,
         });
         Ok::<(), String>(())
     })();
@@ -1235,11 +1277,12 @@ fn stop_tts(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), Str
 }
 
 #[tauri::command]
-fn meeting_preflight(
+async fn meeting_preflight(
     state: tauri::State<'_, AppState>,
     input: meeting::PreflightInput,
 ) -> Result<meeting::PreflightResult, String> {
-    let result = state.meeting.preflight(&input)?;
+    let asr_health = voice::gnosis_asr::probe().await;
+    let result = state.meeting.preflight(&input, asr_health)?;
     state.meeting.emit(meeting::MeetingEvent::StateChanged {
         session_id: None,
         state: result.state.clone(),
@@ -1349,29 +1392,9 @@ async fn append_meeting_audio_segment(
     state
         .situation
         .set_microphone_state(situation::contracts::MicrophoneState::SaaaTranscribing);
-    let worker_cancellation = cancellation.clone();
-    let meeting_runtime = state.meeting.clone();
-    let partial_session_id = input.session_id.clone();
-    let partial_lane = input.lane.clone();
-    let partial_sequence = input.sequence;
-    let sample_rate = input.sample_rate;
-    let transcription = tauri::async_runtime::spawn_blocking(move || {
-        meeting::transcribe_segment(
-            model,
-            samples,
-            sample_rate,
-            &worker_cancellation,
-            move |text| {
-                meeting_runtime.emit(meeting::MeetingEvent::TranscriptPartial {
-                    session_id: partial_session_id.clone(),
-                    lane: partial_lane.clone(),
-                    sequence: partial_sequence,
-                    text,
-                });
-            },
-        )
-    })
-    .await;
+    let transcription =
+        voice::gnosis_asr::transcribe(&samples, input.sample_rate, &model, cancellation.clone())
+            .await;
     let record_failure = |code: &str, message: String| {
         let message = redact_runtime_text(&message);
         match state
@@ -1383,37 +1406,31 @@ async fn append_meeting_audio_segment(
         }
     };
     let result = match transcription {
-        Ok(Ok(text)) => match state.meeting.finish_segment(&input, text) {
-            Ok(result) => {
-                state.meeting.emit(meeting::MeetingEvent::TranscriptFinal {
-                    session_id: input.session_id.clone(),
-                    lane: input.lane.clone(),
-                    sequence: input.sequence,
-                    text: result.text.clone(),
-                    language: None,
-                });
-                Ok(result)
-            }
-            Err(error) => {
-                state.meeting.abort_segment(&input);
-                if cancellation.is_cancelled() {
-                    Err("Transcription cancelled".to_string())
-                } else {
-                    let code = if error == "MEETING_BACKPRESSURE" {
-                        "MEETING_BACKPRESSURE"
-                    } else {
-                        "MEETING_STT_FAILED"
-                    };
-                    record_failure(code, error)
+        Ok((text, language)) => {
+            match state.meeting.finish_segment(&input, text, language.clone()) {
+                Ok(result) => {
+                    state.meeting.emit(meeting::MeetingEvent::TranscriptFinal {
+                        session_id: input.session_id.clone(),
+                        lane: input.lane.clone(),
+                        sequence: input.sequence,
+                        text: result.text.clone(),
+                        language,
+                    });
+                    Ok(result)
                 }
-            }
-        },
-        Ok(Err(error)) => {
-            state.meeting.abort_segment(&input);
-            if cancellation.is_cancelled() {
-                Err("Transcription cancelled".to_string())
-            } else {
-                record_failure("MEETING_STT_FAILED", error)
+                Err(error) => {
+                    state.meeting.abort_segment(&input);
+                    if cancellation.is_cancelled() {
+                        Err("Transcription cancelled".to_string())
+                    } else {
+                        let code = if error == "MEETING_BACKPRESSURE" {
+                            "MEETING_BACKPRESSURE"
+                        } else {
+                            "MEETING_STT_FAILED"
+                        };
+                        record_failure(code, error)
+                    }
+                }
             }
         }
         Err(error) => {
@@ -1421,7 +1438,7 @@ async fn append_meeting_audio_segment(
             if cancellation.is_cancelled() {
                 Err("Transcription cancelled".to_string())
             } else {
-                record_failure("MEETING_STT_FAILED", error.to_string())
+                record_failure("MEETING_STT_FAILED", error)
             }
         }
     };
@@ -1437,6 +1454,50 @@ async fn append_meeting_audio_segment(
         },
     );
     result
+}
+
+#[tauri::command]
+async fn preview_meeting_audio_segment(
+    state: tauri::State<'_, AppState>,
+    input: meeting::PreviewSegmentInput,
+) -> Result<(), String> {
+    validate_identifier(&input.run_id, "run id")?;
+    let cancellation = Arc::new(RunCancellation::default());
+    register_active_run(&state, &input.run_id, cancellation.clone())?;
+    let preview = state.meeting.preview(&input.segment);
+    let (model, samples) = match preview {
+        Ok(preview) => preview,
+        Err(error) => {
+            remove_active_run(&state, &input.run_id);
+            return Err(error);
+        }
+    };
+    let transcription = voice::gnosis_asr::transcribe(
+        &samples,
+        input.segment.sample_rate,
+        &model,
+        cancellation.clone(),
+    )
+    .await;
+    remove_active_run(&state, &input.run_id);
+    match transcription {
+        Ok((text, language)) => {
+            if state.meeting.preview_is_current(&input.segment) {
+                state
+                    .meeting
+                    .emit(meeting::MeetingEvent::TranscriptPartial {
+                        session_id: input.segment.session_id,
+                        lane: input.segment.lane,
+                        sequence: input.segment.sequence,
+                        text,
+                        language,
+                    });
+            }
+            Ok(())
+        }
+        Err(_) if cancellation.is_cancelled() => Err("Meeting preview cancelled".to_string()),
+        Err(error) => Err(redact_runtime_text(&error)),
+    }
 }
 
 #[tauri::command]
@@ -1526,34 +1587,6 @@ fn begin_simple_runtime_run(
         )
         .map_err(database_error)?;
     Ok(())
-}
-
-fn run_whisper_transcription(
-    run_id: &str,
-    samples: &[f32],
-    sample_rate: u32,
-    model: &std::path::Path,
-    on_event: &tauri::ipc::Channel<VoiceEvent>,
-    cancellation: &RunCancellation,
-) -> Result<String, String> {
-    voice::local_whisper::transcribe(samples, sample_rate, model, cancellation, |text| {
-        let _ = on_event.send(VoiceEvent::TranscriptDelta {
-            run_id: run_id.to_string(),
-            text,
-        });
-    })
-}
-
-pub(crate) fn whisper_transcript_line(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("whisper_") || trimmed.starts_with("system_info") {
-        return None;
-    }
-    let text = trimmed
-        .rsplit_once(']')
-        .map_or(trimmed, |(_, text)| text)
-        .trim();
-    (!text.is_empty()).then(|| bounded_text(text, 1_000))
 }
 
 fn spawn_tts_process(text: &str, voice: &str) -> Result<Child, String> {
@@ -1832,12 +1865,13 @@ fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<Strin
         "conversation.respond"
     };
     let now = now_iso();
+    let input_message_id = new_id("message");
     transaction
         .execute(
             "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
              VALUES (?1, ?2, 'user', ?3, ?4)",
             params![
-                new_id("message"),
+                input_message_id,
                 input.conversation_id,
                 input.content.trim(),
                 now
@@ -1847,8 +1881,8 @@ fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<Strin
     transaction
         .execute(
             "INSERT INTO runtime_runs(
-               id,conversation_id,route_kind,status,started_at,supervisor_version
-             ) VALUES(?1,?2,?3,'running',?4,?5)",
+               id,conversation_id,route_kind,status,started_at,supervisor_version,input_message_id
+             ) VALUES(?1,?2,?3,'running',?4,?5,?6)",
             params![
                 input.run_id,
                 input.conversation_id,
@@ -1858,7 +1892,8 @@ fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<Strin
                     Some(runtime::contracts::SUPERVISOR_VERSION)
                 } else {
                     None
-                }
+                },
+                input_message_id,
             ],
         )
         .map_err(database_error)?;
@@ -3869,7 +3904,7 @@ async fn stream_larm_provider(
         flag: &cancellation.cancelled,
         notify: &cancellation.notify,
     };
-    let allocation = match larm.allocate_ready(cancellation_signal).await {
+    let mut allocation = match larm.allocate_ready(cancellation_signal).await {
         Ok(allocation) => allocation,
         Err(failure) => {
             let cleanup = match failure.cleanup {
@@ -3944,27 +3979,91 @@ async fn stream_larm_provider(
             })
         })
         .collect::<Vec<_>>();
-    let chat = larm
-        .chat(
-            &allocation,
-            &messages,
-            Duration::from_millis(timeout_ms),
-            cancellation_signal,
-            |delta, first| {
-                if first && mark_provider_output_started(context.state, context.session_id).is_err()
-                {
-                    return Err(providers::larm::contracts::SessionFailureKind::Internal);
+    let mut tool_exchanges = Vec::<Value>::new();
+    let mut tool_calls_this_attempt = 0_usize;
+    let mut latest_request_id = None;
+    let chat_deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    let chat = loop {
+        let Some(round_timeout) = chat_deadline
+            .checked_duration_since(tokio::time::Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+        else {
+            break Err(providers::larm::client::LarmError::new(
+                providers::larm::contracts::SessionFailureKind::Timeout,
+                false,
+            ));
+        };
+        let tools_enabled = context
+            .state
+            .connection
+            .lock()
+            .ok()
+            .and_then(|connection| {
+                memory::recall::remaining_calls(&connection, &context.input.run_id).ok()
+            })
+            .is_some_and(|remaining| remaining > 0)
+            && tool_calls_this_attempt < memory::contracts::MAX_RECALL_CALLS_PER_TURN;
+        let tools = if tools_enabled {
+            vec![runtime::agent_tools::recall_tool_definition()]
+        } else {
+            Vec::new()
+        };
+        let round = larm
+            .chat_with_tools(
+                &mut allocation,
+                &messages,
+                &tool_exchanges,
+                &tools,
+                round_timeout,
+                cancellation_signal,
+                |delta, first| {
+                    if first
+                        && mark_provider_output_started(context.state, context.session_id).is_err()
+                    {
+                        return Err(providers::larm::contracts::SessionFailureKind::Internal);
+                    }
+                    context
+                        .on_event
+                        .send(RuntimeEvent::Delta {
+                            run_id: context.input.run_id.clone(),
+                            text: delta.to_string(),
+                        })
+                        .map_err(|_| {
+                            providers::larm::contracts::SessionFailureKind::ClientDisconnected
+                        })
+                },
+            )
+            .await;
+        match round {
+            Ok(mut completion) => {
+                if completion.request_id.is_some() {
+                    latest_request_id = completion.request_id.clone();
+                } else {
+                    completion.request_id = latest_request_id.clone();
                 }
-                context
-                    .on_event
-                    .send(RuntimeEvent::Delta {
-                        run_id: context.input.run_id.clone(),
-                        text: delta.to_string(),
-                    })
-                    .map_err(|_| providers::larm::contracts::SessionFailureKind::ClientDisconnected)
-            },
-        )
-        .await;
+                let Some(call) = completion.tool_call.clone() else {
+                    break Ok(completion);
+                };
+                if !tools_enabled {
+                    break Err(providers::larm::client::LarmError::new(
+                        providers::larm::contracts::SessionFailureKind::Protocol,
+                        false,
+                    ));
+                }
+                tool_calls_this_attempt += 1;
+                let content = execute_recall_tool(
+                    Some(ProviderOutputPersistence {
+                        state: context.state,
+                        session_id: context.session_id,
+                    }),
+                    context.input,
+                    &call,
+                );
+                runtime::agent_tools::append_tool_exchange(&mut tool_exchanges, &call, content);
+            }
+            Err(error) => break Err(error),
+        }
+    };
 
     let persistence_failed = match &chat {
         Ok(completion) => {
@@ -4049,7 +4148,7 @@ async fn stream_model_provider_inner(
     let client = client
         .build()
         .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Internal, false))?;
-    let messages = history
+    let mut messages = history
         .iter()
         .filter_map(|message| {
             let role = match message.role.as_str() {
@@ -4061,12 +4160,83 @@ async fn stream_model_provider_inner(
             Some(json!({ "role": role, "content": message.content }))
         })
         .collect::<Vec<_>>();
+    let mut tool_calls_this_attempt = 0_usize;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let round_timeout = deadline
+            .checked_duration_since(tokio::time::Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| ProviderAttemptError::failed(ProviderFailureKind::Timeout, false))?;
+        let tools_enabled = output_persistence.is_some_and(|persistence| {
+            persistence
+                .state
+                .connection
+                .lock()
+                .ok()
+                .and_then(|connection| {
+                    memory::recall::remaining_calls(&connection, &input.run_id).ok()
+                })
+                .is_some_and(|remaining| remaining > 0)
+                && tool_calls_this_attempt < memory::contracts::MAX_RECALL_CALLS_PER_TURN
+        });
+        match stream_model_provider_round(
+            &client,
+            provider,
+            &messages,
+            tools_enabled,
+            input,
+            on_event,
+            cancellation.clone(),
+            output_persistence,
+            round_timeout,
+        )
+        .await?
+        {
+            ModelProviderCompletion::Content(content) => return Ok(content),
+            ModelProviderCompletion::ToolCall(call) => {
+                if !tools_enabled {
+                    return Err(ProviderAttemptError::failed(
+                        ProviderFailureKind::Protocol,
+                        false,
+                    ));
+                }
+                tool_calls_this_attempt += 1;
+                let tool_content = execute_recall_tool(output_persistence, input, &call);
+                runtime::agent_tools::append_tool_exchange(&mut messages, &call, tool_content);
+            }
+        }
+    }
+}
+
+enum ModelProviderCompletion {
+    Content(String),
+    ToolCall(runtime::agent_tools::AgentToolCall),
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_model_provider_round(
+    client: &reqwest::Client,
+    provider: &OpenAiCompatibleProviderSettings,
+    messages: &[Value],
+    tools_enabled: bool,
+    input: &StartTurnInput,
+    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
+    round_timeout: Duration,
+) -> Result<ModelProviderCompletion, ProviderAttemptError> {
+    let mut body = json!({ "model": provider.model, "messages": messages, "stream": true });
+    if tools_enabled {
+        body["tools"] = json!([runtime::agent_tools::recall_tool_definition()]);
+        body["tool_choice"] = json!("auto");
+    }
     let mut request = client
         .post(
             provider_chat_url(&provider.endpoint)
                 .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Contract, false))?,
         )
-        .json(&json!({ "model": provider.model, "messages": messages, "stream": true }));
+        .timeout(round_timeout)
+        .json(&body);
     if let Some(api_key) = provider_api_key(provider) {
         request = request.bearer_auth(api_key);
     }
@@ -4092,9 +4262,21 @@ async fn stream_model_provider_inner(
         let body = read_provider_body_limited(response, 1_048_576, &cancellation, false).await?;
         let response: Value = serde_json::from_slice(&body)
             .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Protocol, false))?;
+        let tool_call = runtime::agent_tools::parse_non_stream_tool_call(&response)
+            .map_err(|error| tool_protocol_failure(error, false))?;
         let content = response
             .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
+            .and_then(Value::as_str);
+        if let Some(call) = tool_call {
+            if content.is_some_and(|value| !value.trim().is_empty()) {
+                return Err(ProviderAttemptError::failed(
+                    ProviderFailureKind::Protocol,
+                    false,
+                ));
+            }
+            return Ok(ModelProviderCompletion::ToolCall(call));
+        }
+        let content = content
             .ok_or_else(|| ProviderAttemptError::failed(ProviderFailureKind::Protocol, false))?;
         if content.chars().count() > 64_000 {
             return Err(ProviderAttemptError::failed(
@@ -4120,7 +4302,7 @@ async fn stream_model_provider_inner(
             .map_err(|_| {
                 ProviderAttemptError::failed(ProviderFailureKind::ClientDisconnected, true)
             })?;
-        return Ok(content);
+        return Ok(ModelProviderCompletion::Content(content));
     }
 
     let mut stream = response.bytes_stream();
@@ -4129,6 +4311,7 @@ async fn stream_model_provider_inner(
     let mut content_chars = 0_usize;
     let mut output_started = false;
     let mut stream_completed = false;
+    let mut tool_calls = runtime::agent_tools::ToolCallAccumulator::default();
     loop {
         if cancellation.is_cancelled() {
             return Err(ProviderAttemptError::Cancelled { output_started });
@@ -4149,6 +4332,7 @@ async fn stream_model_provider_inner(
                     input,
                     on_event,
                     output_persistence,
+                    &mut tool_calls,
                 )?;
             }
             break;
@@ -4173,6 +4357,7 @@ async fn stream_model_provider_inner(
             input,
             on_event,
             output_persistence,
+            &mut tool_calls,
         )?;
         if stream_done {
             stream_completed = true;
@@ -4185,13 +4370,87 @@ async fn stream_model_provider_inner(
             output_started,
         ));
     }
+    let tool_call = tool_calls
+        .finish()
+        .map_err(|error| tool_protocol_failure(error, output_started))?;
+    if let Some(call) = tool_call {
+        if !content.trim().is_empty() {
+            return Err(ProviderAttemptError::failed(
+                ProviderFailureKind::Protocol,
+                output_started,
+            ));
+        }
+        return Ok(ModelProviderCompletion::ToolCall(call));
+    }
     if content.trim().is_empty() {
         return Err(ProviderAttemptError::failed(
             ProviderFailureKind::Protocol,
             false,
         ));
     }
-    Ok(content)
+    Ok(ModelProviderCompletion::Content(content))
+}
+
+fn execute_recall_tool(
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
+    input: &StartTurnInput,
+    call: &runtime::agent_tools::AgentToolCall,
+) -> String {
+    let Some(persistence) = output_persistence else {
+        return runtime::agent_tools::tool_error_content(
+            "local-recall-unavailable",
+            "Local conversation recall is unavailable for this request.",
+        );
+    };
+    let mut connection = match persistence.state.connection.lock() {
+        Ok(connection) => connection,
+        Err(_) => {
+            return runtime::agent_tools::tool_error_content(
+                "local-recall-unavailable",
+                "Local conversation recall is temporarily unavailable.",
+            );
+        }
+    };
+    let context = memory::recall::RecallExecutionContext {
+        runtime_run_id: &input.run_id,
+        tool_call_id: &call.id,
+        now: chrono::Utc::now(),
+        timezone: memory::recall::system_timezone(),
+    };
+    let arguments = match runtime::agent_tools::parse_recall_arguments(&call.arguments) {
+        Ok(arguments) => arguments,
+        Err(()) => {
+            return match memory::recall::record_failed_attempt(&mut connection, &context) {
+                Ok(()) => runtime::agent_tools::tool_error_content(
+                    "invalid-input",
+                    "Tool arguments do not match the recall_conversation schema.",
+                ),
+                Err(error) => {
+                    runtime::agent_tools::tool_error_content(error.code.as_str(), error.message)
+                }
+            };
+        }
+    };
+    match memory::recall::execute(&mut connection, context, arguments) {
+        Ok(output) => serde_json::to_string(&output).unwrap_or_else(|_| {
+            runtime::agent_tools::tool_error_content(
+                "local-recall-unavailable",
+                "The conversation recall result could not be encoded.",
+            )
+        }),
+        Err(error) => runtime::agent_tools::tool_error_content(error.code.as_str(), error.message),
+    }
+}
+
+fn tool_protocol_failure(
+    error: runtime::agent_tools::ToolProtocolError,
+    output_started: bool,
+) -> ProviderAttemptError {
+    let kind = match error {
+        runtime::agent_tools::ToolProtocolError::Protocol => ProviderFailureKind::Protocol,
+        runtime::agent_tools::ToolProtocolError::TooLarge => ProviderFailureKind::RequestTooLarge,
+    };
+    ProviderAttemptError::failed(kind, output_started)
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -4237,6 +4496,7 @@ fn drain_sse_events(
     Ok(events)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_sse_events(
     events: Vec<String>,
     content: &mut String,
@@ -4245,6 +4505,7 @@ fn project_sse_events(
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     output_persistence: Option<ProviderOutputPersistence<'_>>,
+    tool_calls: &mut runtime::agent_tools::ToolCallAccumulator,
 ) -> Result<bool, ProviderAttemptError> {
     for event in events {
         for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
@@ -4255,6 +4516,9 @@ fn project_sse_events(
             let value: Value = serde_json::from_str(data).map_err(|_| {
                 ProviderAttemptError::failed(ProviderFailureKind::Protocol, *output_started)
             })?;
+            tool_calls
+                .absorb_stream_delta(&value)
+                .map_err(|error| tool_protocol_failure(error, *output_started))?;
             if let Some(delta) = value
                 .pointer("/choices/0/delta/content")
                 .and_then(Value::as_str)
@@ -5122,6 +5386,7 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
            )),
            supervisor_version TEXT CHECK(supervisor_version IS NULL OR length(supervisor_version) BETWEEN 1 AND 64),
            last_progress_at TEXT CHECK(last_progress_at IS NULL OR length(last_progress_at) BETWEEN 1 AND 32),
+           input_message_id TEXT,
            started_at TEXT NOT NULL,
            completed_at TEXT,
            FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
@@ -5167,7 +5432,7 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
            status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
            microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0,1)),
            system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0,1)),
-           stt_provider_id TEXT NOT NULL CHECK(stt_provider_id = 'local-whisper'),
+           stt_provider_id TEXT NOT NULL CHECK(stt_provider_id IN ('local-whisper','gnosis-asr')),
            stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) <= 256),
            translation_provider_id TEXT,
            persistence_mode TEXT NOT NULL CHECK(persistence_mode IN ('discard','explicit-save')),
@@ -5191,7 +5456,9 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     migrate_v4_to_v5(&transaction)?;
     migrate_v6_to_v7(&transaction)?;
     migrate_v7_to_v8(&transaction)?;
-    transaction.execute("UPDATE settings_documents SET schema_version = 8, updated_at = ?1 WHERE schema_version < 8", params![now_iso()])?;
+    migrate_v8_to_v9(&transaction)?;
+    memory::recall::migrate_v9_to_v10(&transaction)?;
+    transaction.execute("UPDATE settings_documents SET schema_version = 9, updated_at = ?1 WHERE schema_version < 9", params![now_iso()])?;
 
     for (namespace, key, schema_version, value) in default_settings_documents() {
         transaction.execute(
@@ -5200,9 +5467,10 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
             params![namespace, key, schema_version, value.to_string(), now_iso()],
         )?;
     }
+    migrate_pristine_provider_defaults_to_gnosis(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
-    transaction.pragma_update(None, "user_version", 8)?;
+    transaction.pragma_update(None, "user_version", 10)?;
     transaction.commit()
 }
 
@@ -5405,6 +5673,92 @@ fn migrate_v7_to_v8(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> {
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= 9 {
+        return Ok(());
+    }
+
+    let meeting_schema: String = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_sessions'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !meeting_schema.contains("gnosis-asr") {
+        connection.execute_batch(
+            "CREATE TABLE meeting_sessions_v9 (
+               id TEXT PRIMARY KEY,
+               status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
+               microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0,1)),
+               system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0,1)),
+               stt_provider_id TEXT NOT NULL CHECK(stt_provider_id IN ('local-whisper','gnosis-asr')),
+               stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) <= 256),
+               translation_provider_id TEXT,
+               persistence_mode TEXT NOT NULL CHECK(persistence_mode IN ('discard','explicit-save')),
+               started_at TEXT NOT NULL, ended_at TEXT, saved_at TEXT, error_code TEXT
+             );
+             INSERT INTO meeting_sessions_v9
+               SELECT * FROM meeting_sessions;
+             CREATE TABLE meeting_transcript_entries_v9 (
+               id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+               lane TEXT NOT NULL CHECK(lane IN ('microphone','system-audio')),
+               sequence INTEGER NOT NULL CHECK(sequence >= 0),
+               original_text TEXT NOT NULL CHECK(length(original_text) BETWEEN 1 AND 8000),
+               original_language TEXT,
+               translated_text TEXT CHECK(translated_text IS NULL OR length(translated_text) <= 8000),
+               translated_language TEXT,
+               started_at_ms INTEGER NOT NULL CHECK(started_at_ms >= 0),
+               ended_at_ms INTEGER NOT NULL CHECK(ended_at_ms >= started_at_ms),
+               created_at TEXT NOT NULL,
+               FOREIGN KEY(session_id) REFERENCES meeting_sessions_v9(id) ON DELETE CASCADE,
+               UNIQUE(session_id,lane,sequence)
+             );
+             INSERT INTO meeting_transcript_entries_v9
+               SELECT * FROM meeting_transcript_entries;
+             DROP TABLE meeting_transcript_entries;
+             DROP TABLE meeting_sessions;
+             ALTER TABLE meeting_sessions_v9 RENAME TO meeting_sessions;
+             ALTER TABLE meeting_transcript_entries_v9 RENAME TO meeting_transcript_entries;
+             CREATE INDEX idx_meeting_sessions_started ON meeting_sessions(started_at DESC);
+             CREATE INDEX idx_meeting_transcript_session_sequence
+               ON meeting_transcript_entries(session_id,lane,sequence);",
+        )?;
+    }
+
+    for (namespace, key, _, template) in default_settings_documents() {
+        let legacy: Option<String> = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents
+                 WHERE namespace=?1 AND key=?2 AND schema_version < 9",
+                params![namespace, key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(legacy) = legacy else {
+            continue;
+        };
+        let value: Value = serde_json::from_str(&legacy).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        let mut normalized = normalize_json_to_template(&value, &template);
+        if namespace == "voice.runtime" {
+            normalized["sttProviderId"] = json!(voice::gnosis_asr::PROVIDER_ID);
+            normalized["sttModel"] = json!(voice::gnosis_asr::MODEL_ID);
+        }
+        connection.execute(
+            "UPDATE settings_documents
+             SET schema_version=9, value_json=?1, updated_at=?2
+             WHERE namespace=?3 AND key=?4",
+            params![normalized.to_string(), now_iso(), namespace, key],
+        )?;
+    }
+    Ok(())
+}
+
 fn normalize_json_to_template(value: &Value, template: &Value) -> Value {
     match (value, template) {
         (Value::Object(value), Value::Object(template)) => Value::Object(
@@ -5449,7 +5803,7 @@ fn backup_before_migration(
     let has_data = fs::metadata(database_path)
         .map(|metadata| metadata.len() > 0)
         .unwrap_or(false);
-    if !has_data || version >= 8 {
+    if !has_data || version >= 10 {
         return Ok(None);
     }
     let directory = database_path
@@ -5468,16 +5822,16 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "providers.model",
             "default",
-            8,
+            9,
             json!({
                 "providers": [{
                     "kind": "openai-compatible",
-                    "id": "local-openai-compatible",
-                    "enabled": false,
-                    "label": "Local OpenAI-compatible",
+                    "id": GNOSIS_PROVIDER_ID,
+                    "enabled": true,
+                    "label": "gnosis · Qwen3.8 27B",
                     "location": "local",
-                    "endpoint": "",
-                    "model": "",
+                    "endpoint": GNOSIS_ENDPOINT,
+                    "model": GNOSIS_MODEL,
                     "credentialStatus": "not-configured"
                 }]
             }),
@@ -5485,7 +5839,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "providers.agent",
             "codex-sdk",
-            8,
+            9,
             json!({
                 "enabled": false,
                 "provider": "codex-sdk",
@@ -5502,10 +5856,10 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "routing.tasks",
             "default",
-            8,
+            9,
             json!({
                 "conversationRespond": {
-                    "primaryProviderId": "local-openai-compatible",
+                    "primaryProviderId": GNOSIS_PROVIDER_ID,
                     "fallbackProviderIds": [],
                     "timeoutMs": 30000
                 },
@@ -5521,13 +5875,13 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "voice.runtime",
             "default",
-            8,
+            9,
             json!({
                 "inputDeviceId": "default",
                 "outputDeviceId": "default",
                 "captureMode": "push-to-talk",
-                    "sttProviderId": "local-whisper",
-                "sttModel": "",
+                    "sttProviderId": "gnosis-asr",
+                "sttModel": "qwen3-asr-1.7b",
                     "ttsProviderId": "system-tts",
                 "ttsVoice": "default",
                 "autoSpeak": true,
@@ -5537,7 +5891,7 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "security.runtime",
             "default",
-            8,
+            9,
             json!({
                 "credentialStorage": "environment",
                 "localOnlyWhenSelected": true,
@@ -5547,11 +5901,73 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
         (
             "situation.runtime",
             "default",
-            8,
+            9,
             serde_json::to_value(situation::contracts::SituationRuntimeSettings::default())
                 .expect("default Situation settings serialize"),
         ),
     ]
+}
+
+fn migrate_pristine_provider_defaults_to_gnosis(connection: &Connection) -> rusqlite::Result<()> {
+    let legacy_providers = json!({
+        "providers": [{
+            "kind": "openai-compatible",
+            "id": "local-openai-compatible",
+            "enabled": false,
+            "label": "Local OpenAI-compatible",
+            "location": "local",
+            "endpoint": "",
+            "model": "",
+            "credentialStatus": "not-configured"
+        }]
+    });
+    let current: Option<(String, String)> = connection
+        .query_row(
+            "SELECT providers.value_json, routing.value_json
+             FROM settings_documents AS providers
+             JOIN settings_documents AS routing
+               ON routing.namespace='routing.tasks' AND routing.key='default'
+             WHERE providers.namespace='providers.model' AND providers.key='default'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((providers_text, routing_text)) = current else {
+        return Ok(());
+    };
+    let providers: Value = serde_json::from_str(&providers_text).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let routing: Value = serde_json::from_str(&routing_text).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    if providers != legacy_providers
+        || routing.pointer("/conversationRespond/primaryProviderId")
+            != Some(&json!("local-openai-compatible"))
+    {
+        return Ok(());
+    }
+
+    let defaults = default_settings_documents();
+    let gnosis_providers = defaults
+        .iter()
+        .find(|(namespace, key, _, _)| *namespace == "providers.model" && *key == "default")
+        .map(|(_, _, _, value)| value)
+        .expect("providers default exists");
+    let mut gnosis_routing = routing;
+    gnosis_routing["conversationRespond"]["primaryProviderId"] = json!(GNOSIS_PROVIDER_ID);
+    let updated_at = now_iso();
+    connection.execute(
+        "UPDATE settings_documents SET value_json=?1, updated_at=?2
+         WHERE namespace='providers.model' AND key='default'",
+        params![gnosis_providers.to_string(), updated_at],
+    )?;
+    connection.execute(
+        "UPDATE settings_documents SET value_json=?1, updated_at=?2
+         WHERE namespace='routing.tasks' AND key='default'",
+        params![gnosis_routing.to_string(), updated_at],
+    )?;
+    Ok(())
 }
 
 fn migrate_legacy_settings_documents(connection: &Connection) -> rusqlite::Result<()> {
@@ -5600,8 +6016,8 @@ fn migrate_legacy_settings_documents(connection: &Connection) -> rusqlite::Resul
             "inputDeviceId": legacy.get("inputDeviceId").and_then(Value::as_str).unwrap_or("default"),
             "outputDeviceId": legacy.get("outputDeviceId").and_then(Value::as_str).unwrap_or("default"),
             "captureMode": "push-to-talk",
-            "sttProviderId": "local-whisper",
-            "sttModel": legacy.get("sttModel").and_then(Value::as_str).unwrap_or(""),
+            "sttProviderId": "gnosis-asr",
+            "sttModel": "qwen3-asr-1.7b",
             "ttsProviderId": "system-tts",
             "ttsVoice": legacy.get("ttsVoice").and_then(Value::as_str).unwrap_or("default"),
             "autoSpeak": legacy.get("autoSpeak").and_then(Value::as_bool).unwrap_or(true),
@@ -5666,7 +6082,7 @@ fn validate_settings_document(input: &SaveSettingsDocumentInput) -> Result<(), S
     if !allowed {
         return Err("Unsupported settings document".to_string());
     }
-    if input.schema_version != 8 || !input.value_json.is_object() {
+    if input.schema_version != 9 || !input.value_json.is_object() {
         return Err("Invalid settings schema".to_string());
     }
     match (input.namespace.as_str(), input.key.as_str()) {
@@ -5843,12 +6259,18 @@ fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), Str
                     ));
                 }
                 if provider.location == "local" {
-                    let host = endpoint.host_str().unwrap_or_default();
                     if endpoint.scheme() != "http"
-                        || !matches!(host, "localhost" | "127.0.0.1" | "::1")
+                        || !match endpoint.host() {
+                            Some(url::Host::Domain(host)) => host == "localhost",
+                            Some(url::Host::Ipv4(address)) => {
+                                address.is_loopback() || address.is_private()
+                            }
+                            Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                            None => false,
+                        }
                     {
                         return Err(format!(
-                            "Local provider must use an HTTP loopback endpoint: {provider_id}"
+                            "Local provider must use an HTTP loopback or private-network endpoint: {provider_id}"
                         ));
                     }
                 } else if endpoint.scheme() != "https" {
@@ -5965,8 +6387,8 @@ fn validate_voice_settings(settings: &VoiceRuntimeSettings) -> Result<(), String
         || settings.input_device_id.len() > 300
         || settings.output_device_id.len() > 300
         || settings.capture_mode != "push-to-talk"
-        || settings.stt_provider_id != "local-whisper"
-        || settings.stt_model.len() > 1_024
+        || settings.stt_provider_id != voice::gnosis_asr::PROVIDER_ID
+        || settings.stt_model != voice::gnosis_asr::MODEL_ID
         || settings.tts_provider_id != "system-tts"
         || settings.tts_voice.trim().is_empty()
         || settings.tts_voice.len() > 160
@@ -6278,6 +6700,7 @@ pub fn run() {
             cancel_run,
             test_model_provider,
             transcribe_audio,
+            preview_audio,
             speak_text,
             stop_tts,
             meeting_preflight,
@@ -6289,6 +6712,7 @@ pub fn run() {
             resume_meeting,
             stop_meeting,
             append_meeting_audio_segment,
+            preview_meeting_audio_segment,
             save_meeting_transcript,
             discard_meeting,
             save_settings_documents,
@@ -6540,12 +6964,12 @@ mod tests {
         assert!(selected.get("allocationId").is_none());
         assert!(selected.get("requestId").is_none());
 
-        let voice = serde_json::to_value(VoiceEvent::TranscriptDelta {
+        let voice = serde_json::to_value(VoiceEvent::TranscriptFinal {
             run_id: "voice_contract".to_string(),
-            text: "delta".to_string(),
+            text: "transcript".to_string(),
         })
         .expect("voice event serializes");
-        assert_eq!(voice["type"], "transcriptDelta");
+        assert_eq!(voice["type"], "transcriptFinal");
         assert_eq!(voice["runId"], "voice_contract");
         assert!(voice.get("run_id").is_none());
     }
@@ -6622,7 +7046,37 @@ mod tests {
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 8));
+            .all(|document| document.schema_version == 9));
+        let providers = documents
+            .iter()
+            .find(|document| document.namespace == "providers.model")
+            .expect("provider defaults exist");
+        assert_eq!(
+            providers.value_json.pointer("/providers/0/id"),
+            Some(&json!(GNOSIS_PROVIDER_ID))
+        );
+        assert_eq!(
+            providers.value_json.pointer("/providers/0/endpoint"),
+            Some(&json!(GNOSIS_ENDPOINT))
+        );
+        assert_eq!(
+            providers.value_json.pointer("/providers/0/model"),
+            Some(&json!(GNOSIS_MODEL))
+        );
+        assert_eq!(
+            providers.value_json.pointer("/providers/0/enabled"),
+            Some(&json!(true))
+        );
+        let routing = documents
+            .iter()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing defaults exist");
+        assert_eq!(
+            routing
+                .value_json
+                .pointer("/conversationRespond/primaryProviderId"),
+            Some(&json!(GNOSIS_PROVIDER_ID))
+        );
         let (version, active_profile): (i64, String) = (
             connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -6635,8 +7089,221 @@ mod tests {
                 )
                 .expect("active profile reads"),
         );
-        assert_eq!(version, 8);
+        assert_eq!(version, 10);
         assert_eq!(active_profile, "profile_mvp1_default");
+        let recall_schema_objects: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE name IN (
+                   'conversation_messages_fts',
+                   'conversation_recall_cursors',
+                   'conversation_recall_attempts',
+                   'conversation_recall_receipts',
+                   'conversation_messages_recall_insert',
+                   'conversation_messages_recall_update',
+                   'conversation_messages_recall_delete'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .expect("recall schema reads");
+        assert_eq!(recall_schema_objects, 7);
+        let input_message_column: bool = connection
+            .query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM pragma_table_info('runtime_runs') WHERE name='input_message_id'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .expect("runtime input column reads");
+        assert!(input_message_column);
+    }
+
+    #[test]
+    fn pristine_previous_provider_defaults_migrate_to_gnosis() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        let legacy_providers = json!({
+            "providers": [{
+                "kind": "openai-compatible",
+                "id": "local-openai-compatible",
+                "enabled": false,
+                "label": "Local OpenAI-compatible",
+                "location": "local",
+                "endpoint": "",
+                "model": "",
+                "credentialStatus": "not-configured"
+            }]
+        });
+        let legacy_routing = json!({
+            "conversationRespond": {
+                "primaryProviderId": "local-openai-compatible",
+                "fallbackProviderIds": [],
+                "timeoutMs": 45000
+            },
+            "codingAssist": {
+                "providerId": "codex-sdk",
+                "timeoutMs": 120000,
+                "readOnly": true,
+                "networkEnabled": false,
+                "webSearchEnabled": false
+            }
+        });
+        connection
+            .execute(
+                "UPDATE settings_documents SET value_json=?1
+                 WHERE namespace='providers.model' AND key='default'",
+                [legacy_providers.to_string()],
+            )
+            .expect("legacy provider defaults write");
+        connection
+            .execute(
+                "UPDATE settings_documents SET value_json=?1
+                 WHERE namespace='routing.tasks' AND key='default'",
+                [legacy_routing.to_string()],
+            )
+            .expect("legacy routing defaults write");
+
+        initialize_database(&connection).expect("default upgrade succeeds");
+        let documents = list_settings_documents(&connection).expect("settings load");
+        let providers = documents
+            .iter()
+            .find(|document| document.namespace == "providers.model")
+            .expect("providers exist");
+        let routing = documents
+            .iter()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing exists");
+        assert_eq!(
+            providers.value_json.pointer("/providers/0/id"),
+            Some(&json!(GNOSIS_PROVIDER_ID))
+        );
+        assert_eq!(
+            routing
+                .value_json
+                .pointer("/conversationRespond/primaryProviderId"),
+            Some(&json!(GNOSIS_PROVIDER_ID))
+        );
+        assert_eq!(
+            routing.value_json.pointer("/conversationRespond/timeoutMs"),
+            Some(&json!(45000))
+        );
+    }
+
+    #[test]
+    fn version_eight_voice_and_meeting_schema_migrate_to_gnosis_asr() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET schema_version=8,
+                     value_json=json_set(value_json,
+                       '$.sttProviderId','local-whisper',
+                       '$.sttModel','/tmp/legacy-model.bin')
+                 WHERE namespace='voice.runtime' AND key='default'",
+                [],
+            )
+            .expect("v8 voice settings write");
+        connection
+            .execute_batch(
+                "DROP TABLE meeting_transcript_entries;
+                 DROP TABLE meeting_sessions;
+                 CREATE TABLE meeting_sessions (
+                   id TEXT PRIMARY KEY,
+                   status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
+                   microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0,1)),
+                   system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0,1)),
+                   stt_provider_id TEXT NOT NULL CHECK(stt_provider_id = 'local-whisper'),
+                   stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) <= 256),
+                   translation_provider_id TEXT,
+                   persistence_mode TEXT NOT NULL CHECK(persistence_mode IN ('discard','explicit-save')),
+                   started_at TEXT NOT NULL, ended_at TEXT, saved_at TEXT, error_code TEXT
+                 );
+                 CREATE TABLE meeting_transcript_entries (
+                   id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+                   lane TEXT NOT NULL CHECK(lane IN ('microphone','system-audio')),
+                   sequence INTEGER NOT NULL CHECK(sequence >= 0),
+                   original_text TEXT NOT NULL CHECK(length(original_text) BETWEEN 1 AND 8000),
+                   original_language TEXT,
+                   translated_text TEXT CHECK(translated_text IS NULL OR length(translated_text) <= 8000),
+                   translated_language TEXT,
+                   started_at_ms INTEGER NOT NULL CHECK(started_at_ms >= 0),
+                   ended_at_ms INTEGER NOT NULL CHECK(ended_at_ms >= started_at_ms),
+                   created_at TEXT NOT NULL,
+                   FOREIGN KEY(session_id) REFERENCES meeting_sessions(id) ON DELETE CASCADE,
+                   UNIQUE(session_id,lane,sequence)
+                 );
+                 INSERT INTO meeting_sessions(
+                   id,status,microphone_enabled,system_audio_enabled,stt_provider_id,
+                   stt_model_label,persistence_mode,started_at,ended_at
+                 ) VALUES(
+                   'legacy-meeting','completed',1,0,'local-whisper','legacy-model.bin',
+                   'discard','1','2'
+                 );
+                 INSERT INTO meeting_transcript_entries(
+                   id,session_id,lane,sequence,original_text,started_at_ms,ended_at_ms,created_at
+                 ) VALUES(
+                   'legacy-entry','legacy-meeting','microphone',0,'kept transcript',0,1000,'2'
+                 );",
+            )
+            .expect("v8 meeting schema writes");
+        connection
+            .pragma_update(None, "user_version", 8)
+            .expect("v8 version writes");
+
+        initialize_database(&connection).expect("v9 migration succeeds");
+
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("version reads");
+        let voice: String = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents
+                 WHERE namespace='voice.runtime' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("voice settings read");
+        let voice: Value = serde_json::from_str(&voice).expect("voice settings decode");
+        let meeting_schema: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_sessions'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("meeting schema reads");
+        let transcript: String = connection
+            .query_row(
+                "SELECT original_text FROM meeting_transcript_entries
+                 WHERE id='legacy-entry'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy transcript remains");
+        assert_eq!(version, 10);
+        assert_eq!(
+            voice.pointer("/sttProviderId"),
+            Some(&json!(voice::gnosis_asr::PROVIDER_ID))
+        );
+        assert_eq!(
+            voice.pointer("/sttModel"),
+            Some(&json!(voice::gnosis_asr::MODEL_ID))
+        );
+        assert!(meeting_schema.contains("gnosis-asr"));
+        assert_eq!(transcript, "kept transcript");
+        connection
+            .execute("DELETE FROM meeting_sessions WHERE id='legacy-meeting'", [])
+            .expect("cascading delete succeeds");
+        let remaining: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM meeting_transcript_entries WHERE id='legacy-entry'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("cascade count reads");
+        assert_eq!(remaining, 0);
     }
 
     #[test]
@@ -6662,7 +7329,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 8);
+        assert_eq!(version, 10);
         assert!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table exists"));
         initialize_database(&connection).expect("migration idempotent");
     }
@@ -6733,7 +7400,7 @@ mod tests {
         let documents = list_settings_documents(&connection).expect("strict settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents.iter().all(|document| {
-            document.schema_version == 8 && document.value_json.get("legacyField").is_none()
+            document.schema_version == 9 && document.value_json.get("legacyField").is_none()
         }));
         let providers = documents
             .iter()
@@ -6832,7 +7499,7 @@ mod tests {
             .expect("provider settings read");
         let provider_value: Value =
             serde_json::from_str(&provider_value).expect("provider settings decode");
-        assert_eq!(version, 8);
+        assert_eq!(version, 10);
         assert_eq!(
             provider_value.pointer("/providers/0/kind"),
             Some(&json!("openai-compatible"))
@@ -7156,12 +7823,12 @@ mod tests {
         let version: i64 = reopened
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, 8);
+        assert_eq!(version, 10);
         let documents = list_settings_documents(&reopened).expect("settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 8));
+            .all(|document| document.schema_version == 9));
         let thread: String = reopened
             .query_row(
                 "SELECT thread_id FROM codex_threads WHERE conversation_id = 'kept-conversation'",
@@ -7310,6 +7977,20 @@ mod tests {
 
     #[test]
     fn settings_reject_embedded_credentials_and_cloud_fallback_on_local_route() {
+        let mut gnosis = direct_provider(GNOSIS_PROVIDER_ID, "local");
+        gnosis.endpoint = GNOSIS_ENDPOINT.to_string();
+        gnosis.model = GNOSIS_MODEL.to_string();
+        assert!(validate_model_providers(&ModelProvidersSettings {
+            providers: vec![ModelProviderSettings::OpenAiCompatible(gnosis)]
+        })
+        .is_ok());
+        let mut public_http = direct_provider("public-http", "local");
+        public_http.endpoint = "http://203.0.113.10:8080/v1".to_string();
+        assert!(validate_model_providers(&ModelProvidersSettings {
+            providers: vec![ModelProviderSettings::OpenAiCompatible(public_http)]
+        })
+        .is_err());
+
         let with_credentials = ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(
                 OpenAiCompatibleProviderSettings {
@@ -7553,6 +8234,339 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
+        use std::io::{Read, Write as _};
+        use std::net::{TcpListener, TcpStream};
+
+        fn read_request(socket: &mut TcpStream) -> String {
+            let mut bytes = Vec::new();
+            let mut buffer = [0_u8; 8_192];
+            let mut expected = None;
+            loop {
+                let size = socket.read(&mut buffer).expect("fixture reads request");
+                assert!(size > 0, "request closed before its body completed");
+                bytes.extend_from_slice(&buffer[..size]);
+                if expected.is_none() {
+                    if let Some(boundary) = bytes.windows(4).position(|value| value == b"\r\n\r\n")
+                    {
+                        let headers = String::from_utf8_lossy(&bytes[..boundary]);
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.split_once(':').and_then(|(name, value)| {
+                                    name.eq_ignore_ascii_case("content-length")
+                                        .then(|| value.trim().parse::<usize>().ok())
+                                        .flatten()
+                                })
+                            })
+                            .expect("content length exists");
+                        expected = Some(boundary + 4 + content_length);
+                    }
+                }
+                if expected.is_some_and(|length| bytes.len() >= length) {
+                    return String::from_utf8(bytes).expect("request is UTF-8");
+                }
+            }
+        }
+
+        fn request_json(request: &str) -> Value {
+            let (_, body) = request.split_once("\r\n\r\n").expect("request has body");
+            serde_json::from_str(body).expect("request body is JSON")
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let captures = Arc::new(Mutex::new(Vec::<String>::new()));
+        let captures_for_server = captures.clone();
+        let first_delta = json!({
+            "choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_recall_1",
+                "type": "function",
+                "function": {"name": "recall_conversation", "arguments": "{\"query\":\""}
+            }]}}]
+        });
+        let second_delta = json!({
+            "choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "function": {"arguments": "SQLite\"}"}
+            }]}}]
+        });
+        let server = thread::spawn(move || {
+            let responses = [
+                format!(
+                    concat!(
+                        "HTTP/1.1 200 OK\r\n",
+                        "Content-Type: text/event-stream\r\n",
+                        "Connection: close\r\n\r\n",
+                        "data: {}\n\n",
+                        "data: {}\n\n",
+                        "data: [DONE]\n\n"
+                    ),
+                    first_delta, second_delta
+                ),
+                concat!(
+                    "HTTP/1.1 200 OK\r\n",
+                    "Content-Type: text/event-stream\r\n",
+                    "Connection: close\r\n\r\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"履歴を確認しました\"}}]}\n\n",
+                    "data: [DONE]\n\n"
+                )
+                .to_string(),
+            ];
+            for response in responses {
+                let (mut socket, _) = listener.accept().expect("fixture accepts request");
+                captures_for_server
+                    .lock()
+                    .expect("capture lock")
+                    .push(read_request(&mut socket));
+                socket
+                    .write_all(response.as_bytes())
+                    .expect("fixture writes response");
+            }
+        });
+
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute_batch(
+                "INSERT INTO conversations(id,task_mode,created_at,updated_at)
+                   VALUES('conversation-old','conversation','1','1');
+                 INSERT INTO conversations(id,task_mode,created_at,updated_at)
+                   VALUES('conversation-current','conversation','2','2');
+                 INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
+                   VALUES('message-old-user','conversation-old','user','SQLite の検索方式を相談した','1000');
+                 INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
+                   VALUES('message-old-assistant','conversation-old','assistant','FTS と時間条件を組み合わせます','1001');",
+            )
+            .expect("history inserts");
+        let state = app_state(connection);
+        let input = StartTurnInput {
+            run_id: "run-recall-tool".to_string(),
+            conversation_id: "conversation-current".to_string(),
+            content: "前の話を思い出して".to_string(),
+            workspace_path: None,
+        };
+        prepare_runtime_run(&state, &input).expect("runtime prepares");
+        let session_id =
+            begin_provider_session(&state, &input.run_id, "recall-fixture", "openai-compatible")
+                .expect("provider session starts");
+        let history = list_messages_from_connection(
+            &state.connection.lock().expect("database lock"),
+            &input.conversation_id,
+        )
+        .expect("history loads");
+        let provider = OpenAiCompatibleProviderSettings {
+            endpoint: format!("http://{address}/v1"),
+            ..direct_provider("recall-fixture", "local")
+        };
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+        let outcome = stream_model_provider(
+            &provider,
+            &history,
+            5_000,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+            Some(ProviderOutputPersistence {
+                state: &state,
+                session_id: &session_id,
+            }),
+        )
+        .await;
+        server.join().expect("fixture server joins");
+
+        let ProviderAttemptOutcome::Completed { content, .. } = outcome else {
+            panic!("tool-assisted provider stream should complete");
+        };
+        assert_eq!(content, "履歴を確認しました");
+        let captures = captures.lock().expect("capture lock");
+        assert_eq!(captures.len(), 2);
+        let first = request_json(&captures[0]);
+        assert_eq!(first["tools"].as_array().expect("tools array").len(), 1);
+        assert_eq!(
+            first
+                .pointer("/tools/0/function/name")
+                .and_then(Value::as_str),
+            Some("recall_conversation")
+        );
+        let second = request_json(&captures[1]);
+        let messages = second["messages"].as_array().expect("messages array");
+        assert!(messages.iter().any(|message| {
+            message["role"] == "tool"
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("SQLite の検索方式"))
+        }));
+        assert!(!messages.iter().any(|message| {
+            message["role"] == "tool"
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("前の話を思い出して"))
+        }));
+        let connection = state.connection.lock().expect("database lock");
+        let receipts: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_recall_receipts WHERE runtime_run_id=?1",
+                [&input.run_id],
+                |row| row.get(0),
+            )
+            .expect("receipt count reads");
+        assert_eq!(receipts, 1);
+    }
+
+    #[test]
+    fn malformed_recall_calls_consume_the_persistent_turn_limit() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id,task_mode,created_at,updated_at)
+                 VALUES('conversation-malformed','conversation','1','1')",
+                [],
+            )
+            .expect("conversation inserts");
+        let state = app_state(connection);
+        let input = StartTurnInput {
+            run_id: "run-malformed-recall".to_string(),
+            conversation_id: "conversation-malformed".to_string(),
+            content: "remember".to_string(),
+            workspace_path: None,
+        };
+        prepare_runtime_run(&state, &input).expect("runtime prepares");
+        let persistence = Some(ProviderOutputPersistence {
+            state: &state,
+            session_id: "unused-session",
+        });
+        for index in 0..3 {
+            let content = execute_recall_tool(
+                persistence,
+                &input,
+                &runtime::agent_tools::AgentToolCall {
+                    id: format!("call_malformed_{index}"),
+                    name: "recall_conversation".to_string(),
+                    arguments: "{".to_string(),
+                },
+            );
+            assert!(content.contains("invalid-input"));
+        }
+        let limited = execute_recall_tool(
+            persistence,
+            &input,
+            &runtime::agent_tools::AgentToolCall {
+                id: "call_malformed_4".to_string(),
+                name: "recall_conversation".to_string(),
+                arguments: "{".to_string(),
+            },
+        );
+        assert!(limited.contains("call-limit-exceeded"));
+        let attempts: i64 = state
+            .connection
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_recall_attempts
+                 WHERE runtime_run_id=?1",
+                [&input.run_id],
+                |row| row.get(0),
+            )
+            .expect("attempt count reads");
+        assert_eq!(attempts, 3);
+    }
+
+    #[tokio::test]
+    async fn recall_tool_rounds_share_one_provider_timeout_budget() {
+        use std::io::{Read, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let server = thread::spawn(move || {
+            let tool_response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/event-stream\r\n",
+                "Connection: close\r\n\r\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{",
+                "\"index\":0,\"id\":\"call_timeout\",\"type\":\"function\",",
+                "\"function\":{\"name\":\"recall_conversation\",",
+                "\"arguments\":\"{\\\"query\\\":\\\"missing\\\"}\"}}]}}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let final_response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/event-stream\r\n",
+                "Connection: close\r\n\r\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"too late\"}}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            for response in [tool_response, final_response] {
+                let (mut socket, _) = listener.accept().expect("fixture accepts request");
+                let mut request = [0_u8; 32 * 1_024];
+                let _ = socket.read(&mut request).expect("fixture reads request");
+                thread::sleep(Duration::from_millis(350));
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id,task_mode,created_at,updated_at)
+                 VALUES('conversation-timeout','conversation','1','1')",
+                [],
+            )
+            .expect("conversation inserts");
+        let state = app_state(connection);
+        let input = StartTurnInput {
+            run_id: "run-recall-timeout".to_string(),
+            conversation_id: "conversation-timeout".to_string(),
+            content: "remember".to_string(),
+            workspace_path: None,
+        };
+        prepare_runtime_run(&state, &input).expect("runtime prepares");
+        let session_id = begin_provider_session(
+            &state,
+            &input.run_id,
+            "timeout-fixture",
+            "openai-compatible",
+        )
+        .expect("provider session starts");
+        let history = list_messages_from_connection(
+            &state.connection.lock().expect("database lock"),
+            &input.conversation_id,
+        )
+        .expect("history loads");
+        let provider = OpenAiCompatibleProviderSettings {
+            endpoint: format!("http://{address}/v1"),
+            ..direct_provider("timeout-fixture", "local")
+        };
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+        let outcome = stream_model_provider(
+            &provider,
+            &history,
+            600,
+            &input,
+            &channel,
+            Arc::new(RunCancellation::default()),
+            Some(ProviderOutputPersistence {
+                state: &state,
+                session_id: &session_id,
+            }),
+        )
+        .await;
+        server.join().expect("fixture server joins");
+        assert!(matches!(
+            outcome,
+            ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::Timeout,
+                output_started: false,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -8082,82 +9096,13 @@ mod tests {
         let input = (0..48_000)
             .map(|index| (index as f32 / 48_000.0) * 2.0 - 1.0)
             .collect::<Vec<_>>();
-        let output = voice::local_whisper::resample_pcm(&input, 48_000, 16_000);
+        let output = voice::gnosis_asr::resample_pcm(&input, 48_000, 16_000);
         assert_eq!(output.len(), 16_000);
         assert!(output.iter().all(|sample| (-1.0..=1.0).contains(sample)));
         let cancellation = RunCancellation::default();
         cancellation.cancel();
         cancellation.cancel();
         assert!(cancellation.is_cancelled());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn local_whisper_fixture_emits_delta_and_final_text() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let executable = directory.path().join("whisper-fixture.sh");
-        let model = directory.path().join("model.bin");
-        fs::write(&model, b"fixture model").expect("model fixture writes");
-        fs::write(
-            &executable,
-            r#"#!/bin/sh
-if [ "$1" = "--help" ]; then exit 0; fi
-output=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-of" ]; then shift; output="$1"; fi
-  shift
-done
-index=0
-while [ "$index" -lt 80 ]; do
-  printf '[00:00:00.000 --> 00:00:00.500] fixture delta\n'
-  index=$((index + 1))
-done
-printf 'fixture transcript' > "${output}.txt"
-"#,
-        )
-        .expect("whisper fixture writes");
-        let mut permissions = fs::metadata(&executable)
-            .expect("fixture metadata")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&executable, permissions).expect("fixture becomes executable");
-        let previous = env::var_os("SAAA_WHISPER_PATH");
-        env::set_var("SAAA_WHISPER_PATH", &executable);
-        let projected = Arc::new(Mutex::new(Vec::<String>::new()));
-        let projected_for_channel = projected.clone();
-        let channel: tauri::ipc::Channel<VoiceEvent> = tauri::ipc::Channel::new(move |body| {
-            if let tauri::ipc::InvokeResponseBody::Json(value) = body {
-                projected_for_channel
-                    .lock()
-                    .expect("projection lock")
-                    .push(value);
-            }
-            Ok(())
-        });
-        let result = run_whisper_transcription(
-            "voice-fixture",
-            &[0.0; 16_000],
-            16_000,
-            &model,
-            &channel,
-            &RunCancellation::default(),
-        );
-        if let Some(value) = previous {
-            env::set_var("SAAA_WHISPER_PATH", value);
-        } else {
-            env::remove_var("SAAA_WHISPER_PATH");
-        }
-        assert_eq!(
-            result.expect("transcription succeeds"),
-            "fixture transcript"
-        );
-        assert!(projected
-            .lock()
-            .expect("projection lock")
-            .iter()
-            .any(|event| event.contains("fixture delta")));
     }
 
     #[cfg(target_os = "macos")]
@@ -8184,6 +9129,28 @@ printf 'fixture transcript' > "${output}.txt"
                 },
             )
             .collect()
+    }
+
+    #[test]
+    fn voice_settings_require_the_fixed_gnosis_asr_contract() {
+        let mut documents = default_settings_input();
+        let voice = documents
+            .iter_mut()
+            .find(|document| document.namespace == "voice.runtime")
+            .expect("voice settings");
+        voice.value_json["sttProviderId"] = json!("local-whisper");
+        assert_eq!(
+            validate_settings_document(voice).expect_err("local Whisper is rejected"),
+            "Invalid local voice settings"
+        );
+
+        let voice = documents
+            .iter_mut()
+            .find(|document| document.namespace == "voice.runtime")
+            .expect("voice settings");
+        voice.value_json["sttProviderId"] = json!(voice::gnosis_asr::PROVIDER_ID);
+        voice.value_json["sttModel"] = json!(voice::gnosis_asr::MODEL_ID);
+        validate_settings_document(voice).expect("gnosis ASR contract is accepted");
     }
 
     #[test]
@@ -8759,11 +9726,7 @@ for line in sys.stdin:
             }
         }
 
-        static LARM_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        let _environment_lock = LARM_ENV_LOCK
-            .get_or_init(|| tokio::sync::Mutex::new(()))
-            .lock()
-            .await;
+        let _environment_lock = providers::larm::test_environment_lock().lock().await;
         let _token = EnvGuard::set("LARM_API_TOKEN", "fixture-token");
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("fake LARM binds");
@@ -8784,6 +9747,17 @@ for line in sys.stdin:
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{allocation}",
             allocation.len()
         );
+        let tool_stream_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{",
+            "\"index\":0,\"id\":\"call_larm_turn\",\"type\":\"function\",",
+            "\"function\":{\"name\":\"recall_conversation\",",
+            "\"arguments\":\"{\\\"query\\\":\\\"missing-history\\\"}\"}}]}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let tool_stream_response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Request-ID: req_tool\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{tool_stream_body}",
+            tool_stream_body.len()
+        );
         let stream_body = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"LARM ok\"}}]}\n\n",
             "data: [DONE]\n\n"
@@ -8799,7 +9773,12 @@ for line in sys.stdin:
             release_error.len()
         );
         let server = thread::spawn(move || {
-            for response in [allocate_response, stream_response, release_response] {
+            for response in [
+                allocate_response,
+                tool_stream_response,
+                stream_response,
+                release_response,
+            ] {
                 let (mut socket, _) = listener.accept().expect("fake LARM accepts");
                 socket
                     .set_read_timeout(Some(Duration::from_secs(2)))
@@ -8937,11 +9916,14 @@ for line in sys.stdin:
             ]
         );
         let captures = requests.lock().expect("request lock");
-        assert_eq!(captures.len(), 3);
+        assert_eq!(captures.len(), 4);
         assert!(captures.iter().all(|request| request
             .to_ascii_lowercase()
             .contains("authorization: bearer fixture-token")));
         assert!(captures[1].contains("x-larm-allocation-id: alloc_turn"));
+        assert!(captures[1].contains("\"name\":\"recall_conversation\""));
+        assert!(captures[2].contains("\"role\":\"tool\""));
+        assert!(captures[2].contains("continuity-no-hit"));
         let telemetry: (String, String, i64, String, String, Option<String>, String) = state
             .connection
             .lock()

@@ -1,1 +1,2 @@
-pub mod local_whisper;
+pub mod gnosis_asr;
+pub mod tts;

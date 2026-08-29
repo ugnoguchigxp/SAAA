@@ -4,16 +4,16 @@
   </h1>
   <h2 id="0-文書の役割">0. 文書の役割</h2>
   <ul>
-    <li>Status: Implementation complete; manual acceptance pending</li>
+    <li>Status: Complete — implementation archived; manual acceptance remains active</li>
     <li>Reviewed: 2026-08-27</li>
     <li>
       実装前提:
-      <a href="./mvp-2-implementation-plan.html"><code>mvp-2-implementation-plan.md</code></a>
+      <a href="./mvp-2-implementation-plan.html"><code>mvp-2-implementation-plan.html</code></a>
       のCore実装が完了していること
     </li>
     <li>
       引き継ぐ未完了事項:
-      <a href="./mvp-2-release-evidence.html"><code>mvp-2-release-evidence.md</code></a>
+      <a href="../mvp-2-release-evidence.html"><code>mvp-2-release-evidence.html</code></a>
       のmanual desktop evidence。MVP 2.5はこれを完了扱いにしない
     </li>
     <li>shipping platform: macOS desktop</li>
@@ -24,6 +24,11 @@
       >〜<code>M25-10</code>を順に完了し、本文の受け入れ条件を証跡付きで満たすこと
     </li>
   </ul>
+  <p>
+    2026-08-29にコード実装と自動検証を完了した。Input Activityと実Codexを含むmanual
+    acceptanceはactiveな<a href="../mvp-2.5-release-evidence.html">MVP 2.5 Release Evidence</a
+    >へ分離し、本書は実装計画としてArchiveする。
+  </p>
   <h3 id="01-implementation-closeout-amendments">0.1 Implementation closeout amendments</h3>
   <p>
     実装レビューで、Section 5/6の単一file案は責務境界を保った3 module構成へ改訂した。
@@ -2036,7 +2041,7 @@ struct ReplaySampleV2 {
   </ul>
   <h2 id="13-privacy-and-diagnostics">13. Privacy and diagnostics</h2>
   <p>
-    M25-00で<a href="./adr/0002-situation-signal-privacy.html"
+    M25-00で<a href="../adr/0002-situation-signal-privacy.html"
       ><code>adr/0002-situation-signal-privacy.md</code></a
     >を継承する<code>0003-input-activity-signal-privacy.md</code>を作る。
   </p>

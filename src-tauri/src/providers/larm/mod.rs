@@ -1,5 +1,7 @@
 pub(crate) mod client;
 pub(crate) mod contracts;
+#[cfg(test)]
+mod live_canary;
 pub(crate) mod session;
 
 use client::{
@@ -11,6 +13,22 @@ use session::{AllocationSession, SessionEffect, SessionPhase, SessionSignal};
 use std::{ops::Deref, sync::Arc, time::Duration};
 
 pub(crate) const CONTRACT_COMMIT: &str = "7dca7c3";
+
+#[cfg(test)]
+pub(crate) const CANARY_PROMPTS: [&str; 5] = [
+    "Reply with exactly: CANARY_OK",
+    "List the numbers 1 through 5.",
+    "Write one short greeting in Japanese.",
+    "Write ten numbered words, one at a time.",
+    "Reply with exactly: READY",
+];
+
+#[cfg(test)]
+pub(crate) fn test_environment_lock() -> &'static tokio::sync::Mutex<()> {
+    use std::sync::OnceLock;
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 pub(crate) enum LarmRuntimeGate {
     Disabled,
@@ -418,11 +436,58 @@ impl<'a> LarmProvider<'a> {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn chat_with_tools<F>(
+        &self,
+        lease: &mut ReadyLease,
+        messages: &[ChatMessage],
+        tool_exchanges: &[serde_json::Value],
+        tools: &[serde_json::Value],
+        timeout: Duration,
+        cancellation: Cancellation<'_>,
+        on_delta: F,
+    ) -> Result<ChatCompletion, LarmError>
+    where
+        F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
+    {
+        let completion = self
+            .http()
+            .map_err(|kind| LarmError::new(kind, false))?
+            .chat_with_tools(
+                &lease.allocation,
+                lease.received_at,
+                messages,
+                tool_exchanges,
+                tools,
+                timeout,
+                cancellation,
+                on_delta,
+            )
+            .await?;
+        lease.allocation = completion.renewed_allocation.clone();
+        lease.received_at = completion.lease_received_at;
+        Ok(completion)
+    }
+
     pub(crate) async fn release(&self, allocation_id: &BoundedIdentifier) -> CleanupResult {
         match self.http() {
             Ok(http) => http.release(allocation_id).await,
             Err(kind) => CleanupResult::DeferredToTtl(release_kind(kind)),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn renew_for_canary(
+        &self,
+        lease: &ReadyLease,
+        cancellation: Cancellation<'_>,
+    ) -> Result<ReadyLease, LarmError> {
+        let allocation = self
+            .http()
+            .map_err(|kind| LarmError::new(kind, false))?
+            .renew(&lease.allocation, cancellation, false)
+            .await?;
+        Ok(ReadyLease::received(allocation))
     }
 
     fn http(&self) -> Result<LarmHttpClient<'_>, SessionFailureKind> {

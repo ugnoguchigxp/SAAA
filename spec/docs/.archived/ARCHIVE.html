@@ -10,8 +10,10 @@
       documentsを優先する。
     </li>
     <li>
-      Archive対象は、計画のStatusがCompleteで、対応するrelease evidenceがAcceptedである文書とする。
-      後続文書で置換する場合は、置換先または理由を本文に記録する。
+      計画とrelease evidenceを一組でArchiveする場合は、計画のStatusがCompleteで、release
+      evidenceがAcceptedであることを条件とする。コードと自動検証が完了し、残作業が手動・実機・外部
+      gateだけの場合は、実装計画だけをCompleteとしてArchiveし、未完了の検証はactiveなrelease
+      evidenceまたはrunbookへ分離してよい。後続文書で置換する場合は、置換先または理由を本文に記録する。
     </li>
     <li>恒久contractであるADRと、未完了・提案中の計画はArchiveしない。</li>
     <li>

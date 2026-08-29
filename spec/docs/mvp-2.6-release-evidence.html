@@ -1,0 +1,228 @@
+<article lang="ja">
+  <h1 id="mvp-26-release-evidence">MVP 2.6 Release Evidence</h1>
+  <dl>
+    <dt>Status</dt>
+    <dd>Blocked — SAAA側のserver-independent実装とrunbookは完成、G1とG2の外部条件待ち</dd>
+    <dt>Last reviewed</dt>
+    <dd>2026-08-29（offline evidenceのみ）</dd>
+    <dt>Implementation plan</dt>
+    <dd>
+      <a href="./.archived/mvp-2.6.1-implementation-plan.html">MVP 2.6.1 Implementation Plan</a>
+    </dd>
+  </dl>
+
+  <p>
+    この文書はproduction readinessの正本である。token、credential、prompt、response、allocation
+    id、request id、endpoint、local path、raw log、raw metricsは記録しない。日時はUTCのRFC
+    3339、commitとhashはmachine-readable reportから転記し、推測値で埋めない。
+  </p>
+
+  <h2 id="gate-summary">Gate summary</h2>
+  <table>
+    <caption>
+      MVP 2.6 production readiness gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">State</th>
+        <th scope="col">Evidence</th>
+        <th scope="col">Reviewer / reviewed at</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>G1 — Frozen API contract</td>
+        <td>blocked</td>
+        <td>
+          Fixture baselineは<code>7dca7c3</code>。effective TTL、virtual
+          model rewrite、Gateway request limitのdeployment-independent contractが未確定
+        </td>
+        <td>未レビュー</td>
+      </tr>
+      <tr>
+        <td>G2 — Isolated canary environment</td>
+        <td>pending</td>
+        <td>
+          Manifest SHA-256、LARM deployment revision、operator、private tunnel、metrics scope、
+          isolated data directoryは未記録
+        </td>
+        <td>未レビュー</td>
+      </tr>
+      <tr>
+        <td>F1 — Functional canary</td>
+        <td>pending</td>
+        <td>G1とG2通過後に実施。functional reportは未生成</td>
+        <td>未レビュー</td>
+      </tr>
+      <tr>
+        <td>G3 — Production readiness</td>
+        <td>pending</td>
+        <td>30分canary、2時間soak、security、rollback、runbook reviewは未実施</td>
+        <td>未レビュー</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="automated-evidence">Automated evidence</h2>
+  <table>
+    <caption>
+      Server-independent verification on 2026-08-29
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Evidence</th>
+        <th scope="col">Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Frontend and readiness contract tests</td>
+        <td>46 passed、0 failed</td>
+      </tr>
+      <tr>
+        <td>Rust unit and integration tests</td>
+        <td>
+          156 passed、0 failed、8 ignored。LARM live suite 4件、実Codex 3件、Input Activity 30分soak
+          1件は意図どおりignored
+        </td>
+      </tr>
+      <tr>
+        <td>Rust formatting and Clippy <code>-D warnings</code></td>
+        <td>Passed</td>
+      </tr>
+      <tr>
+        <td>TypeScript typecheck and production frontend build</td>
+        <td>Passed</td>
+      </tr>
+      <tr>
+        <td>Restricted-environment release app build and canonical bundle digest</td>
+        <td>Passed。未commit review treeのためdigest値はproduction evidenceへ転記しない</td>
+      </tr>
+      <tr>
+        <td>Packaged desktop smoke</td>
+        <td>Passed。debug SAAA.appのfrontend readyとpackaged Codexを確認</td>
+      </tr>
+      <tr>
+        <td>G1 missing-gate fake-listener test</td>
+        <td>Passed。runnerはloopback request 0件でblocked</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    上記はworking treeのoffline結果であり、clean commitから作るproduction evidenceではない。G1、G2、
+    gnosisへのhealth / ready、allocation、Gateway、canary、soakの代替にはしない。
+  </p>
+  <table>
+    <caption>
+      Allowlisted machine-readable evidence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Mode</th>
+        <th scope="col">Report</th>
+        <th scope="col">Artifact / manifest</th>
+        <th scope="col">Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Preflight</td>
+        <td><code>preflight.json</code> — 未生成</td>
+        <td>未記録</td>
+        <td>pending</td>
+      </tr>
+      <tr>
+        <td>Functional</td>
+        <td><code>functional.json</code> — 未生成</td>
+        <td>未記録</td>
+        <td>pending</td>
+      </tr>
+      <tr>
+        <td>30-minute canary</td>
+        <td><code>soak-30m.json</code> — 未生成</td>
+        <td>未記録</td>
+        <td>pending</td>
+      </tr>
+      <tr>
+        <td>2-hour soak</td>
+        <td><code>soak-2h.json</code> — 未生成</td>
+        <td>未記録</td>
+        <td>pending</td>
+      </tr>
+      <tr>
+        <td>Aggregate</td>
+        <td><code>aggregate.json</code> — 未生成</td>
+        <td>未記録</td>
+        <td>pending</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="manual-evidence">Manual UI evidence</h2>
+  <ul>
+    <li>Operator: 未記録</li>
+    <li>Execution window: 未記録</li>
+    <li>Isolated Settings and database confirmation: pending</li>
+    <li>Normal、Cancel、timeout、partial interruption、restart、capacity confirmation: pending</li>
+    <li>SQLite commit-before-event and single terminal confirmation: pending</li>
+  </ul>
+
+  <h2 id="security-evidence">Security evidence</h2>
+  <ul>
+    <li>Runner、app、LARM logのforbidden-data検出件数: 未記録</li>
+    <li>Report redaction check: pending</li>
+    <li>Server-side log audit: pending</li>
+    <li>Token rotation後の新規report directoryによる再preflight: pending</li>
+  </ul>
+
+  <h2 id="rollback-evidence">Rollback evidence</h2>
+  <ul>
+    <li>Direct Provider preflight turn: pending</li>
+    <li>Settings rollback three turns: pending</li>
+    <li>Restart-required kill-switch rollback three turns: pending</li>
+    <li>Implicit LARM fallback zero件の確認: pending</li>
+  </ul>
+
+  <h2 id="soak-evidence">Soak evidence</h2>
+  <ul>
+    <li>30分canaryの5秒sample、sampling gap、RSS range、allocation cleanup: pending</li>
+    <li>2時間soakの70分memory window、LARM restart、SAAA restart、RSS median: pending</li>
+    <li>開始時と終了時のactive allocation一致: pending</li>
+  </ul>
+
+  <h2 id="runbook-evidence">Runbook evidence</h2>
+  <p>
+    <a href="./mvp-2.6-larm-operations-runbook.html">MVP 2.6 LARM Operations Runbook</a>は作成済み。
+    次の項目はG1 / G2通過後の実機reviewと別operator rehearsal待ちである。
+  </p>
+  <ul>
+    <li>LARM unavailable / tunnel failure手順: documented、rehearsal pending</li>
+    <li>Token rotation手順: documented、rehearsal pending</li>
+    <li>Capacity rejection手順: documented、rehearsal pending</li>
+    <li>
+      TTL cleanupとdeterministic one-shot create / release interruption fixture:
+      documented、rehearsal pending
+    </li>
+    <li>Limited enablement monitoringと別operatorによるrollback: documented、rehearsal pending</li>
+  </ul>
+
+  <h2 id="deviations">Deviations and waivers</h2>
+  <p>
+    未解決deviationはG1の3件。waiverは0件。deviationが残る間はG1をpassedへ変更せず、live
+    preflightを実行しない。
+  </p>
+
+  <h2 id="decision">G3 decision</h2>
+  <dl>
+    <dt>Decision</dt>
+    <dd>pending</dd>
+    <dt>Decision maker</dt>
+    <dd>未記録</dd>
+    <dt>Decided at</dt>
+    <dd>未記録</dd>
+    <dt>Initial scope and rollback window</dt>
+    <dd>未記録</dd>
+  </dl>
+  <p>G3がpassedになるまで通常profileのprimary Provider、feature flag、利用者範囲を変更しない。</p>
+</article>

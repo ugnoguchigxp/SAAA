@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "SAAA",
-        "width": 1180,
-        "height": 760,
-        "minWidth": 960,
-        "minHeight": 640
+        "width": 800,
+        "height": 600,
+        "minWidth": 720,
+        "minHeight": 520
       }
     ],
     "security": {
@@ -31,6 +31,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    },
     "resources": {
       "resources/bin/": "bin/"
     },

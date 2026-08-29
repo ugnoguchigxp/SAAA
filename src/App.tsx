@@ -24,6 +24,7 @@ import {
   getCodexStatus,
   getAppSnapshot,
   listMessages,
+  previewAudio,
   reportFrontendReady,
   speakText,
   startTurn,
@@ -31,6 +32,7 @@ import {
   transcribeAudio,
   reportOwnedSignal,
 } from "./lib/runtime";
+import { ensureMicrophoneAudioContextRunning, MicrophoneCaptureError, requestMicrophoneStream } from "./lib/microphone";
 
 const initialSnapshot: AppSnapshot = { settings: [], conversations: [], larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" } };
 type Surface = "chat" | "meeting" | "situation" | "settings";
@@ -51,14 +53,25 @@ function App() {
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
   const [codexStatus, setCodexStatus] = useState<CodexRuntimeStatus | null>(null);
+  const [voiceStarting, setVoiceStarting] = useState(false);
   const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
   const [interimTranscript, setInterimTranscript] = useState("");
-  const [activeVoiceRunId, setActiveVoiceRunId] = useState<string | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
   const [meetingState, setMeetingState] = useState<MeetingState>("idle");
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recorderChunksRef = useRef<Blob[]>([]);
-  const recorderStreamRef = useRef<MediaStream | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceContextRef = useRef<AudioContext | null>(null);
+  const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const voiceNodeRef = useRef<AudioWorkletNode | null>(null);
+  const voiceFramesRef = useRef<Float32Array[]>([]);
+  const voiceFrameSamplesRef = useRef(0);
+  const voiceFlushResolverRef = useRef<(() => void) | null>(null);
+  const voicePreviewStartedRef = useRef(false);
+  const voicePreviewRunIdRef = useRef<string | null>(null);
+  const voicePreviewPromiseRef = useRef<Promise<void> | null>(null);
+  const voiceActionRef = useRef(false);
+  const voiceFinalizingRef = useRef(false);
+  const activeVoiceRunIdRef = useRef<string | null>(null);
+  const voiceCancellationRequestedRef = useRef(false);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
   const activeRunIdRef = useRef<string | null>(null);
@@ -70,12 +83,15 @@ function App() {
   const selectedConversation = snapshot.conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
-  const modelProviderLabel = useMemo(() => {
+  const modelProviderStatus = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "providers.model", "default");
-    if (!document || !isModelProvidersSettings(document.valueJson)) return "No provider configured";
+    if (!document || !isModelProvidersSettings(document.valueJson)) {
+      return { ready: false, label: "モデル未選択" };
+    }
     const providers = document.valueJson.providers;
     const primaryId = findPrimaryRoute(snapshot.settings);
     const primary = providers.find((provider) => provider.id === primaryId);
+    if (!primary) return { ready: false, label: "モデル未選択" };
     if (primary?.kind === "larm" && snapshot.larmRuntime.state !== "ready") {
       const routing = findSettingsDocument(snapshot.settings, "routing.tasks", "default");
       const fallbackIds = routing && isRoutingSettings(routing.valueJson)
@@ -84,9 +100,20 @@ function App() {
       const fallback = fallbackIds
         .map((id) => providers.find((provider) => provider.id === id))
         .find((provider) => provider?.enabled && provider.kind !== "larm");
-      return `${primary.label || primary.id} ${snapshot.larmRuntime.state} → ${fallback?.label ?? fallback?.id ?? "no rollback provider"}`;
+      if (fallback?.kind === "openai-compatible") {
+        return {
+          ready: Boolean(fallback.endpoint.trim() && fallback.model.trim()),
+          label: fallback.label || fallback.id,
+        };
+      }
+      return { ready: false, label: primary.label || primary.id };
     }
-    return primary?.label ?? primaryId;
+    return {
+      ready: primary.kind === "larm"
+        ? primary.enabled && snapshot.larmRuntime.state === "ready"
+        : primary.enabled && Boolean(primary.endpoint.trim() && primary.model.trim()),
+      label: primary.label || primary.id,
+    };
   }, [snapshot.larmRuntime.state, snapshot.settings]);
   const voiceSettings = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "voice.runtime", "default");
@@ -97,9 +124,14 @@ function App() {
     return document && isCodexAgentSettings(document.valueJson) ? document.valueJson : null;
   }, [snapshot.settings]);
   const meetingActive = isMeetingBlocking(meetingState);
+  const voiceBusy = voiceStarting || voiceState !== "idle";
 
   useEffect(() => { void reportFrontendReady(); void initialize(); }, []);
-  useEffect(() => { void getCodexStatus().then(setCodexStatus).catch((cause) => setCodexStatus({ installed: false, authenticated: false, runtime: "unavailable", accountType: null, message: toMessage(cause) })); }, []);
+  useEffect(() => {
+    void getCodexStatus()
+      .then(setCodexStatus)
+      .catch((cause) => setCodexStatus({ installed: false, authenticated: false, runtime: "unavailable", accountType: null, message: toMessage(cause) }));
+  }, []);
   useEffect(() => {
     if (!selectedConversationId) { setMessages([]); return; }
     setMessages([]);
@@ -112,7 +144,7 @@ function App() {
       const command = event.metaKey || event.ctrlKey;
       if (command && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        if (!activeRunId) void handleNewConversation();
+        if (!activeRunId && !voiceBusy) void handleNewConversation();
       } else if (command && event.key === ",") {
         event.preventDefault();
         setSurface("settings");
@@ -124,10 +156,14 @@ function App() {
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeRunId, activeTtsRunId, taskMode, voiceState]);
+  }, [activeRunId, activeTtsRunId, taskMode, voiceBusy, voiceState]);
   useEffect(() => () => {
-    if (recorderRef.current) recorderRef.current.onstop = null;
-    recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
+    const previewRunId = voicePreviewRunIdRef.current;
+    if (previewRunId) void cancelRun(previewRunId);
+    voiceNodeRef.current?.disconnect();
+    voiceSourceRef.current?.disconnect();
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
+    void voiceContextRef.current?.close();
   }, []);
   useEffect(() => {
     const input = {
@@ -145,15 +181,16 @@ function App() {
     try {
       setLoading(true);
       const nextSnapshot = await getAppSnapshot();
-      if (nextSnapshot.conversations.length > 0) {
+      const conversation = nextSnapshot.conversations[0];
+      if (conversation) {
         setSnapshot(nextSnapshot);
-        setSelectedConversationId(nextSnapshot.conversations[0].id);
-        setTaskMode(nextSnapshot.conversations[0].taskMode);
+        setSelectedConversationId(conversation.id);
+        setTaskMode(conversation.taskMode);
         return;
       }
-      const conversation = await createConversation("conversation");
-      setSnapshot({ ...nextSnapshot, conversations: [conversation] });
-      setSelectedConversationId(conversation.id);
+      const created = await createConversation("conversation");
+      setSnapshot({ ...nextSnapshot, conversations: [created, ...nextSnapshot.conversations] });
+      setSelectedConversationId(created.id);
     } catch (cause) { setError(toMessage(cause)); } finally { setLoading(false); }
   }
 
@@ -177,6 +214,10 @@ function App() {
   }
 
   async function handleNewConversation(mode: TaskMode = taskMode) {
+    if (voiceActionRef.current || voiceState !== "idle") {
+      setError("Stop voice capture before changing conversations.");
+      return;
+    }
     try {
       setError(null);
       const conversation = await createConversation(mode);
@@ -194,15 +235,37 @@ function App() {
 
   async function chooseWorkspace() {
     try {
-      const selected = await open({ directory: true, multiple: false, title: "Choose a read-only Codex workspace" });
+      const selected = await open({ directory: true, multiple: false, title: "読み取り専用Codex workspaceを選択" });
       if (typeof selected === "string") setWorkspacePath(selected);
     } catch (cause) {
-      setError(`Workspace selection failed: ${toMessage(cause)}`);
+      setError(`Workspaceを選択できませんでした: ${toMessage(cause)}`);
     }
   }
 
-  async function submitPrompt(prompt: string) {
-    if (!selectedConversationId || !prompt.trim() || activeRunIdRef.current) return;
+  async function switchTaskMode(mode: TaskMode) {
+    if (voiceActionRef.current || voiceState !== "idle") {
+      setError("Stop voice capture before changing task mode.");
+      return;
+    }
+    if (mode === taskMode) return;
+    const existing = snapshot.conversations.find((conversation) => conversation.taskMode === mode);
+    setTaskMode(mode);
+    setWorkspacePath("");
+    if (existing) {
+      setSelectedConversationId(existing.id);
+      setSurface("chat");
+      return;
+    }
+    await handleNewConversation(mode);
+  }
+
+  async function submitPrompt(prompt: string, allowVoiceBusy = false) {
+    if (
+      !selectedConversationId
+      || !prompt.trim()
+      || activeRunIdRef.current
+      || (!allowVoiceBusy && (voiceActionRef.current || voiceState !== "idle"))
+    ) return;
     const conversationId = selectedConversationId;
     const runMode = taskMode;
     const content = prompt.trim();
@@ -219,8 +282,8 @@ function App() {
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
       await startTurn(
-        { runId, conversationId, content, workspacePath: workspacePath.trim() || null },
-        (event) => handleRuntimeEvent(event, conversationId),
+        { runId, conversationId, content, workspacePath: runMode === "coding" ? workspacePath.trim() || null : null },
+        (event) => handleRuntimeEvent(event, conversationId, runMode),
       );
     } catch (cause) {
       setError((current) => current ?? toMessage(cause));
@@ -237,7 +300,7 @@ function App() {
     }
   }
 
-  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string) {
+  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, runMode: TaskMode) {
     if (
       selectedConversationIdRef.current !== conversationId ||
       activeRunIdRef.current !== event.runId
@@ -262,7 +325,7 @@ function App() {
       case "messageCompleted":
         setMessages((current) => [...current.filter((message) => !message.id.startsWith("streaming_")), event.message]);
         setStreamingText("");
-        if (voiceSettings?.autoSpeak && !meetingActive) void startSpeech(event.message.content, conversationId);
+        if (runMode === "conversation" && voiceSettings?.autoSpeak && !meetingActive) void startSpeech(event.message.content, conversationId);
         break;
       case "cancelled":
         setRuntimeActivity((current) => [...current, "Generation cancelled"].slice(-8));
@@ -280,86 +343,191 @@ function App() {
   }
 
   async function toggleVoiceCapture() {
-    if (voiceState === "recording") {
-      recorderRef.current?.stop();
-      return;
-    }
-    if (voiceState === "transcribing" && activeVoiceRunId) {
-      await cancelRun(activeVoiceRunId);
-      return;
-    }
-    if (isMeetingBlocking(meetingStateRef.current)) {
-      setError("Chat voice capture is disabled while a meeting is active or paused.");
-      return;
-    }
-    if (!selectedConversationId || !voiceSettings) {
-      setError("Voice settings are unavailable.");
-      return;
-    }
-    if (!voiceSettings.sttModel.trim()) {
-      setError("Select an absolute local whisper model path in Settings → Voice.");
-      return;
-    }
+    if (voiceActionRef.current) return;
+    voiceActionRef.current = true;
     try {
-      setError(null);
-      const audio = voiceSettings.inputDeviceId === "default"
-        ? true
-        : { deviceId: { exact: voiceSettings.inputDeviceId } };
-      const stream = await navigator.mediaDevices.getUserMedia({ audio });
-      const recorder = new MediaRecorder(stream);
-      recorderChunksRef.current = [];
-      recorderStreamRef.current = stream;
-      recorder.ondataavailable = (event) => { if (event.data.size > 0) recorderChunksRef.current.push(event.data); };
-      recorder.onstop = () => { void finishVoiceCapture(); };
-      recorderRef.current = recorder;
-      recorder.start(250);
-      setInterimTranscript("");
-      setVoiceState("recording");
-    } catch (cause) {
-      setError(`Microphone unavailable: ${toMessage(cause)} Check the device and microphone permission, then retry.`);
-      setVoiceState("idle");
+      if (voiceState === "recording") {
+        void finishVoiceCapture();
+        return;
+      }
+      const voiceRunId = activeVoiceRunIdRef.current;
+      if (voiceState === "transcribing" && voiceRunId) {
+        voiceCancellationRequestedRef.current = true;
+        try {
+          await cancelRun(voiceRunId);
+        } catch (cause) {
+          voiceCancellationRequestedRef.current = false;
+          setError(toMessage(cause));
+        }
+        return;
+      }
+      if (isMeetingBlocking(meetingStateRef.current)) {
+        setError("Chat voice capture is disabled while a meeting is active or paused.");
+        return;
+      }
+      if (!selectedConversationId || !voiceSettings) {
+        setError("Voice settings are unavailable.");
+        return;
+      }
+      if (voiceSettings.sttProviderId !== "gnosis-asr" || voiceSettings.sttModel !== "qwen3-asr-1.7b") {
+        setError("Voice settings must use the gnosis ASR provider.");
+        return;
+      }
+      try {
+        setError(null);
+        setVoiceStarting(true);
+        const audio = voiceSettings.inputDeviceId === "default"
+          ? true
+          : { deviceId: { exact: voiceSettings.inputDeviceId } };
+        const stream = await requestMicrophoneStream(audio);
+        voiceStreamRef.current = stream;
+        const context = new AudioContext();
+        voiceContextRef.current = context;
+        await context.audioWorklet.addModule("/audio/meeting-processor.js");
+        const source = context.createMediaStreamSource(stream);
+        const node = new AudioWorkletNode(context, "meeting-processor");
+        voiceSourceRef.current = source;
+        voiceNodeRef.current = node;
+        voiceFramesRef.current = [];
+        voiceFrameSamplesRef.current = 0;
+        voicePreviewStartedRef.current = false;
+        node.port.onmessage = (event: MessageEvent<Float32Array | { type: "flushed" }>) => {
+          if (!(event.data instanceof Float32Array)) {
+            if (event.data.type === "flushed") voiceFlushResolverRef.current?.();
+            return;
+          }
+          voiceFramesRef.current.push(event.data);
+          voiceFrameSamplesRef.current += event.data.length;
+          if (!voicePreviewStartedRef.current && voiceFrameSamplesRef.current >= context.sampleRate * 2) {
+            startVoicePreview(context.sampleRate);
+          }
+        };
+        source.connect(node);
+        node.connect(context.destination);
+        await ensureMicrophoneAudioContextRunning(context);
+        setInterimTranscript("");
+        setVoiceState("recording");
+      } catch (cause) {
+        await detachVoiceCapture(false);
+        setError(cause instanceof MicrophoneCaptureError
+          ? cause.message
+          : `Voice capture initialization failed: ${toMessage(cause)}`);
+        setVoiceState("idle");
+      }
+    } finally {
+      setVoiceStarting(false);
+      voiceActionRef.current = false;
     }
   }
 
+  function startVoicePreview(sampleRate: number) {
+    if (!selectedConversationId || !voiceSettings || voicePreviewStartedRef.current) return;
+    voicePreviewStartedRef.current = true;
+    const runId = `voice_preview_${crypto.randomUUID().replace(/-/g, "")}`;
+    const samples = mergePcmFrames(voiceFramesRef.current, voiceFrameSamplesRef.current);
+    voicePreviewRunIdRef.current = runId;
+    const preview = previewAudio({
+      runId,
+      conversationId: selectedConversationId,
+      samples: Array.from(samples),
+      sampleRate,
+      model: voiceSettings.sttModel,
+    }, (event) => {
+      if (event.runId === runId && event.type === "transcriptDelta") {
+        setInterimTranscript(event.text);
+      }
+    }).then(() => undefined).catch(() => undefined).finally(() => {
+      if (voicePreviewRunIdRef.current === runId) {
+        voicePreviewRunIdRef.current = null;
+        voicePreviewPromiseRef.current = null;
+      }
+    });
+    voicePreviewPromiseRef.current = preview;
+  }
+
+  async function detachVoiceCapture(flush: boolean) {
+    if (flush && voiceNodeRef.current) {
+      await new Promise<void>((resolve) => {
+        let completed = false;
+        const finish = () => {
+          if (completed) return;
+          completed = true;
+          voiceFlushResolverRef.current = null;
+          window.clearTimeout(timeout);
+          resolve();
+        };
+        const timeout = window.setTimeout(finish, 250);
+        voiceFlushResolverRef.current = finish;
+        voiceNodeRef.current?.port.postMessage({ type: "flush" });
+      });
+    }
+    voiceNodeRef.current?.disconnect();
+    voiceSourceRef.current?.disconnect();
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
+    voiceNodeRef.current = null;
+    voiceSourceRef.current = null;
+    voiceStreamRef.current = null;
+    if (voiceContextRef.current) await voiceContextRef.current.close().catch(() => undefined);
+    voiceContextRef.current = null;
+  }
+
   async function finishVoiceCapture() {
-    const stream = recorderStreamRef.current;
-    stream?.getTracks().forEach((track) => track.stop());
-    recorderStreamRef.current = null;
-    recorderRef.current = null;
-    if (!selectedConversationId || !voiceSettings) { setVoiceState("idle"); return; }
+    if (voiceFinalizingRef.current) return;
+    voiceFinalizingRef.current = true;
+    if (!selectedConversationId || !voiceSettings) {
+      try {
+        await detachVoiceCapture(false);
+      } finally {
+        setVoiceState("idle");
+        voiceFinalizingRef.current = false;
+      }
+      return;
+    }
     const runId = `voice_${crypto.randomUUID()}`;
-    setActiveVoiceRunId(runId);
+    activeVoiceRunIdRef.current = runId;
+    voiceCancellationRequestedRef.current = false;
     setVoiceState("transcribing");
     try {
-      const blob = new Blob(recorderChunksRef.current);
-      const context = new AudioContext();
-      let buffer: AudioBuffer;
-      try {
-        buffer = await context.decodeAudioData(await blob.arrayBuffer());
-      } finally {
-        await context.close().catch(() => undefined);
-      }
-      const samples = mixAudioChannels(buffer);
+      const sampleRate = voiceContextRef.current?.sampleRate;
+      await detachVoiceCapture(true);
+      if (!sampleRate || voiceFrameSamplesRef.current === 0) throw new Error("Recorded audio is empty.");
+      let samples = Array.from(mergePcmFrames(voiceFramesRef.current, voiceFrameSamplesRef.current));
+      voiceFramesRef.current = [];
+      voiceFrameSamplesRef.current = 0;
+      voicePreviewStartedRef.current = false;
+      const previewRunId = voicePreviewRunIdRef.current;
+      if (previewRunId) await cancelRun(previewRunId).catch(() => undefined);
+      await voicePreviewPromiseRef.current?.catch(() => undefined);
       const transcript = await transcribeAudio({
         runId,
         conversationId: selectedConversationId,
-        samples: Array.from(samples),
-        sampleRate: buffer.sampleRate,
-        modelPath: voiceSettings.sttModel,
+        samples,
+        sampleRate,
+        model: voiceSettings.sttModel,
       }, (event) => {
         if (event.runId !== runId) return;
-        if (event.type === "transcriptDelta") setInterimTranscript((current) => `${current} ${event.text}`.trim());
+        if (event.type === "transcriptDelta") setInterimTranscript(event.text);
         if (event.type === "transcriptFinal") setInterimTranscript(event.text);
         if (event.type === "failed") setError(`${event.message} ${event.recovery}`);
       });
+      samples = [];
+      if (voiceCancellationRequestedRef.current) return;
       setInterimTranscript(transcript);
-      await submitPrompt(transcript);
+      activeVoiceRunIdRef.current = null;
+      setVoiceState("idle");
+      await submitPrompt(transcript, true);
     } catch (cause) {
-      setError((current) => current ?? toMessage(cause));
+      if (!voiceCancellationRequestedRef.current) {
+        setError((current) => current ?? toMessage(cause));
+      }
     } finally {
       setVoiceState("idle");
-      setActiveVoiceRunId(null);
-      recorderChunksRef.current = [];
+      if (activeVoiceRunIdRef.current === runId) activeVoiceRunIdRef.current = null;
+      voiceCancellationRequestedRef.current = false;
+      voiceFramesRef.current = [];
+      voiceFrameSamplesRef.current = 0;
+      voicePreviewStartedRef.current = false;
+      voiceFinalizingRef.current = false;
     }
   }
 
@@ -390,23 +558,21 @@ function App() {
 
   return <main className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><span className="brand-mark">S</span><div><strong>SAAA</strong><small>Ambient agent runtime</small></div></div>
+      <div className="brand"><span className="brand-mark">S</span><strong>SAAA</strong></div>
       <nav className="primary-nav" aria-label="Primary navigation">
-        <button className={surface === "chat" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("chat")}>◌ Conversations</button>
-        <button className={surface === "meeting" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("meeting")}>● Meeting {meetingActive && <span className="meeting-active-indicator">Active</span>}</button>
-        <button className={surface === "situation" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("situation")}>◎ Situation</button>
-        <button className={surface === "settings" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("settings")}>⚙ Settings</button>
+        <button className={surface === "chat" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("chat")}><AppIcon name="chat" />会話</button>
+        <button className={surface === "meeting" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("meeting")}><AppIcon name="calendar" />ミーティング {meetingActive && <span className="meeting-active-indicator">進行中</span>}</button>
+        <button className={surface === "situation" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("situation")}><AppIcon name="situation" />状況</button>
       </nav>
-      {surface === "chat" && <><button className="new-chat" onClick={() => void handleNewConversation()}><span>＋</span> New conversation</button><nav className="conversation-list" aria-label="Conversations">{snapshot.conversations.map((conversation) => <button className={conversation.id === selectedConversationId ? "conversation active" : "conversation"} key={conversation.id} onClick={() => { setSelectedConversationId(conversation.id); setTaskMode(conversation.taskMode); }}><span>{conversation.taskMode === "coding" ? "⌘" : "◌"}</span><span>{conversation.title ?? (conversation.taskMode === "coding" ? "Coding thread" : "New conversation")}</span></button>)}</nav></>}
-      <div className="sidebar-status"><span className="status-dot" />SQLite local state</div>
+      {surface === "chat" && <><div className="task-mode-switcher" aria-label="Task mode"><button className={taskMode === "conversation" ? "active" : ""} type="button" onClick={() => void switchTaskMode("conversation")} disabled={Boolean(activeRunId) || voiceBusy}><AppIcon name="chat" />会話</button><button className={taskMode === "coding" ? "active" : ""} type="button" onClick={() => void switchTaskMode("coding")} disabled={Boolean(activeRunId) || voiceBusy}><AppIcon name="code" />コーディング</button></div><button className="new-chat" onClick={() => void handleNewConversation()} disabled={voiceBusy}><AppIcon name="plus" />{taskMode === "coding" ? "新しいCoding thread" : "新しい会話"}</button><p className="conversation-list-label">最近の会話</p><nav className="conversation-list" aria-label="Conversations">{snapshot.conversations.map((conversation) => <button className={conversation.id === selectedConversationId ? "conversation active" : "conversation"} key={conversation.id} onClick={() => { setSelectedConversationId(conversation.id); setTaskMode(conversation.taskMode); setWorkspacePath(""); }} disabled={voiceBusy}><AppIcon name={conversation.taskMode === "coding" ? "code" : "chat"} /><span>{conversation.title ?? (conversation.taskMode === "coding" ? "Coding thread" : "新しい会話")}</span></button>)}</nav></>}
+      <button className={surface === "settings" ? "sidebar-settings active" : "sidebar-settings"} onClick={() => setSurface("settings")}><AppIcon name="settings" />設定</button>
     </aside>
 
-    <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} chatVoiceBusy={voiceState !== "idle"} onStateChanged={setMeetingState} /></div>
+    <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} chatVoiceBusy={voiceBusy} onStateChanged={setMeetingState} /></div>
     {surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} onSaved={(settings) => setSnapshot((current) => ({ ...current, settings }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <section className="chat-panel">
-      <header className="topbar"><div><p className="eyebrow">{taskMode === "coding" ? "READ-ONLY AGENT" : "CONVERSATION"}</p><h1>{taskMode === "coding" ? "Coding assist" : "Local voice chat"}</h1></div><button className="secondary-button" onClick={() => setSurface("settings")}>Settings</button></header>
-      <div className="route-banner"><span className="route-label">Effective route</span><strong>{taskMode === "coding" ? "coding.assist → codex-sdk" : `conversation.respond → ${modelProviderLabel}`}</strong><span className={taskMode === "coding" ? `badge ${codexStatus?.authenticated && codexSettings?.enabled ? "safe" : "warning"}` : "badge local"}>{taskMode === "coding" ? (codexStatus?.authenticated && codexSettings?.enabled ? "ready · read-only" : "unavailable") : "configured route"}</span></div>
-      <div className="message-area" aria-live="polite">{messages.length === 0 && !streamingText ? <div className="empty-state"><p className="eyebrow">MVP 0 RUNTIME</p><h2>保存済みRouteで会話を実行します。</h2><p>Settingsで有効なProviderを登録してからメッセージを送信してください。</p></div> : messages.map((message) => <article className={`message ${message.role}`} key={message.id}><span className="message-role">{message.role === "user" ? "You" : message.role}</span><p>{message.content}</p></article>)}{streamingText && <article className="message assistant streaming"><span className="message-role">assistant · streaming</span><p>{streamingText}</p></article>}{interimTranscript && voiceState !== "idle" && <article className="message transcript streaming"><span className="message-role">transcript · {voiceState}</span><p>{interimTranscript}</p></article>}{runtimeActivity.length > 0 && <details className="activity-panel"><summary>Runtime activity</summary>{runtimeActivity.map((activity, index) => <p key={`${index}-${activity}`}>{activity}</p>)}</details>}</div>
-      <form className="composer" onSubmit={handleSubmit}><div className="mode-switch" role="group" aria-label="Task mode"><button className={taskMode === "conversation" ? "selected" : ""} type="button" onClick={() => taskMode !== "conversation" && void handleNewConversation("conversation")}>Chat</button><button className={taskMode === "coding" ? "selected" : ""} type="button" onClick={() => taskMode !== "coding" && void handleNewConversation("coding")}>Coding</button></div>{taskMode === "coding" && <div className="workspace-picker"><input className="workspace-input" aria-label="Codex workspace" value={workspacePath} onChange={(event) => setWorkspacePath(event.currentTarget.value)} placeholder="Read-only workspace path" /><button className="secondary-button" type="button" onClick={() => void chooseWorkspace()}>Choose…</button></div>}<textarea aria-label="Message" onChange={(event) => setComposer(event.currentTarget.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); }} placeholder={taskMode === "coding" ? "Ask Codex to inspect or explain…" : "Message SAAA…"} value={composer} disabled={Boolean(activeRunId)} /><div className="composer-actions"><button className={voiceState === "recording" ? "voice-button recording" : "voice-button"} type="button" onClick={() => void toggleVoiceCapture()} disabled={Boolean(activeRunId) || taskMode === "coding" || meetingActive}>{voiceState === "recording" ? "■ Stop recording" : voiceState === "transcribing" ? "■ Stop transcription" : "◉ Voice"}</button><div className="composer-primary-actions">{activeTtsRunId && <button className="stop-button" type="button" onClick={() => void stopSpeech()}>Stop speech</button>}{error && lastPrompt && !activeRunId && <button className="secondary-button" type="button" onClick={() => void submitPrompt(lastPrompt)}>Retry</button>}{activeRunId ? <button className="stop-button" type="button" onClick={() => void stopActiveRun()}>Stop</button> : <button className="send-button" type="submit" disabled={!composer.trim() || !selectedConversation || voiceState !== "idle" || (taskMode === "coding" && (!workspacePath.trim() || !codexSettings?.enabled || !codexStatus?.authenticated))}>Send ↑</button>}</div></div>{taskMode === "coding" && (!codexSettings?.enabled || !codexStatus?.authenticated) && <p className="composer-hint">{codexStatus?.message ?? "Codex runtimeを確認しています…"} Settings → Codex SDKで有効化してください。</p>}</form>
+      <header className="topbar"><div><p className="eyebrow">{taskMode === "coding" ? "READ-ONLY AGENT" : "CONVERSATION"}</p><h1>{selectedConversation?.title ?? (taskMode === "coding" ? "Coding assist" : "新しい会話")}</h1></div><div className="topbar-status"><span className="status-pill local-status"><span className="status-dot" />{taskMode === "coding" ? "読み取り専用" : "ローカル処理"}</span><button className={taskMode === "coding" ? (!codexStatus?.authenticated || !codexSettings?.enabled ? "status-pill provider-status warning" : "status-pill provider-status") : (!modelProviderStatus.ready ? "status-pill provider-status warning" : "status-pill provider-status")} onClick={() => setSurface("settings")}><AppIcon name={taskMode === "coding" ? "code" : "model"} />{taskMode === "coding" ? (codexStatus?.authenticated && codexSettings?.enabled ? "Codex ready" : "Codex未準備") : (modelProviderStatus.ready ? modelProviderStatus.label : "モデル未選択")}</button></div></header>
+      <div className="message-area" aria-live="polite">{messages.length === 0 && !streamingText ? <div className="empty-state"><h2>今日はどうしましたか？</h2><p>声で話すか、メッセージを入力してください。</p><div className="suggestion-list"><button type="button" onClick={() => setComposer("考えを整理するのを手伝ってください")}>考えを整理する</button><button type="button" onClick={() => setSurface("meeting")}>会議を文字起こし</button><button type="button" onClick={() => setSurface("situation")}>状況を確認</button></div></div> : messages.map((message) => <article className={`message ${message.role}`} key={message.id}><span className="message-role">{message.role === "user" ? "You" : message.role}</span><p>{message.content}</p></article>)}{streamingText && <article className="message assistant streaming"><span className="message-role">assistant · streaming</span><p>{streamingText}</p></article>}{interimTranscript && voiceState !== "idle" && <article className="message transcript streaming"><span className="message-role">transcript · {voiceState}</span><p>{interimTranscript}</p></article>}{runtimeActivity.length > 0 && <details className="activity-panel"><summary>Runtime activity</summary>{runtimeActivity.map((activity, index) => <p key={`${index}-${activity}`}>{activity}</p>)}</details>}</div>
+      <form className="composer" onSubmit={handleSubmit}>{taskMode === "coding" && <div className="workspace-selector"><div><span>Read-only workspace</span><strong>{workspacePath || "未選択"}</strong></div><button className="secondary-button" type="button" onClick={() => void chooseWorkspace()} disabled={Boolean(activeRunId)}>選択</button></div>}<div className="composer-row"><button className={voiceState === "recording" ? "voice-button recording" : "voice-button"} type="button" aria-label={voiceStarting ? "マイクを準備中" : voiceState === "recording" ? "録音を停止" : voiceState === "transcribing" ? "文字起こしを停止" : "音声入力"} title={taskMode === "coding" ? "Coding modeでは音声入力を使用しません" : voiceStarting ? "マイクを準備中" : voiceState === "recording" ? "録音を停止" : voiceState === "transcribing" ? "文字起こしを停止" : "音声入力"} onClick={() => void toggleVoiceCapture()} disabled={voiceStarting || taskMode === "coding" || Boolean(activeRunId) || meetingActive}><AppIcon name={voiceState === "recording" || voiceState === "transcribing" ? "stop" : "mic"} /></button><textarea rows={1} aria-label="Message" onChange={(event) => setComposer(event.currentTarget.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); }} placeholder={taskMode === "coding" ? "Codexに読み取り専用で依頼" : "SAAAにメッセージ"} value={composer} disabled={Boolean(activeRunId)} /><div className="composer-end">{activeRunId ? <button className="stop-button composer-stop" type="button" onClick={() => void stopActiveRun()}><AppIcon name="stop" /><span>停止</span></button> : <button className="send-button" type="submit" aria-label="送信" disabled={!composer.trim() || !selectedConversation || voiceBusy || (taskMode === "coding" && (!workspacePath.trim() || !codexStatus?.authenticated || !codexSettings?.enabled))}><AppIcon name="send" /></button>}</div></div><div className="composer-meta">{activeTtsRunId && <button className="text-button" type="button" onClick={() => void stopSpeech()}>読み上げを停止</button>}{error && lastPrompt && !activeRunId && <button className="text-button" type="button" onClick={() => void submitPrompt(lastPrompt)}>再試行</button>}{taskMode === "coding" && (!codexStatus?.authenticated || !codexSettings?.enabled) && <span className="composer-hint">SettingsでCodexを有効化し、認証状態を確認してください。</span>}</div></form>
       {error && <p className="error-banner" role="alert">{error}</p>}
     </section> : null}
   </main>;
@@ -418,7 +584,7 @@ function findPrimaryRoute(documents: SettingsDocument[]): string {
     const value = routing.valueJson.conversationRespond as Record<string, unknown>;
     if (typeof value.primaryProviderId === "string") return value.primaryProviderId;
   }
-  return "local-openai-compatible";
+  return "gnosis-qwen";
 }
 
 function updateConversationTimestamp(snapshot: AppSnapshot, conversationId: string, title: string): AppSnapshot {
@@ -430,16 +596,45 @@ function updateConversationTimestamp(snapshot: AppSnapshot, conversationId: stri
 function toMessage(cause: unknown): string { return cause instanceof Error ? cause.message : String(cause); }
 
 function isMeetingBlocking(state: MeetingState): boolean {
-  return state === "active" || state === "paused" || state === "stopping";
+  return state === "preflight" || state === "active" || state === "paused" || state === "stopping";
 }
 
-function mixAudioChannels(buffer: AudioBuffer): Float32Array {
-  const mixed = new Float32Array(buffer.length);
-  for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
-    const data = buffer.getChannelData(channel);
-    for (let index = 0; index < data.length; index += 1) mixed[index] += data[index] / buffer.numberOfChannels;
+function mergePcmFrames(frames: Float32Array[], length: number): Float32Array {
+  const merged = new Float32Array(length);
+  let offset = 0;
+  for (const frame of frames) {
+    merged.set(frame, offset);
+    offset += frame.length;
   }
-  return mixed;
+  return merged;
+}
+
+type AppIconName = "calendar" | "chat" | "code" | "mic" | "model" | "plus" | "send" | "settings" | "situation" | "stop";
+
+function AppIcon({ name }: { name: AppIconName }) {
+  const common = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
+  switch (name) {
+    case "calendar":
+      return <svg {...common}><path d="M7 3v3M17 3v3M4 9h16" /><rect x="4" y="5" width="16" height="16" rx="3" /></svg>;
+    case "chat":
+      return <svg {...common}><path d="M20 15a4 4 0 0 1-4 4H9l-5 3 1.5-4.5A8 8 0 1 1 20 15Z" /></svg>;
+    case "code":
+      return <svg {...common}><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14" /></svg>;
+    case "mic":
+      return <svg {...common}><rect x="8" y="3" width="8" height="13" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" /></svg>;
+    case "model":
+      return <svg {...common}><path d="M8 4a4 4 0 0 0-3 6.7A4.5 4.5 0 0 0 8.5 19H10V5.5A1.5 1.5 0 0 0 8.5 4ZM16 4a4 4 0 0 1 3 6.7A4.5 4.5 0 0 1 15.5 19H14V5.5A1.5 1.5 0 0 1 15.5 4Z" /><path d="M6 12h4M14 12h4" /></svg>;
+    case "plus":
+      return <svg {...common}><path d="M12 5v14M5 12h14" /></svg>;
+    case "send":
+      return <svg {...common}><path d="M12 20V5M6 11l6-6 6 6" /></svg>;
+    case "settings":
+      return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></svg>;
+    case "situation":
+      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 3v9h9" /></svg>;
+    case "stop":
+      return <svg {...common}><rect x="7" y="7" width="10" height="10" rx="2" /></svg>;
+  }
 }
 
 export default App;

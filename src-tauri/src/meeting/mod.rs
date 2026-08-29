@@ -3,8 +3,6 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fs,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 use tauri::ipc::Channel;
@@ -70,7 +68,7 @@ pub struct MeetingError {
 pub struct PreflightInput {
     pub microphone_device_id: String,
     pub system_audio_enabled: bool,
-    pub stt_model_path: String,
+    pub stt_model: String,
     pub translation_enabled: bool,
 }
 #[derive(Debug, Serialize)]
@@ -91,7 +89,7 @@ pub struct StartInput {
     pub microphone_device_id: String,
     pub microphone_enabled: bool,
     pub system_audio_enabled: bool,
-    pub stt_model_path: String,
+    pub stt_model: String,
     pub translation_enabled: bool,
     pub persistence_mode: String,
 }
@@ -108,6 +106,13 @@ pub struct SegmentInput {
     pub duration_ms: u32,
 }
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSegmentInput {
+    pub run_id: String,
+    #[serde(flatten)]
+    pub segment: SegmentInput,
+}
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionInput {
     pub session_id: String,
@@ -118,6 +123,7 @@ pub struct SessionInput {
 pub struct SegmentResult {
     pub accepted: bool,
     pub text: String,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,13 +137,14 @@ pub enum MeetingEvent {
         session_id: Option<String>,
         state: MeetingState,
     },
-    TranscriptPartial {
+    TranscriptFinal {
         session_id: String,
         lane: MeetingLane,
         sequence: u64,
         text: String,
+        language: Option<String>,
     },
-    TranscriptFinal {
+    TranscriptPartial {
         session_id: String,
         lane: MeetingLane,
         sequence: u64,
@@ -157,13 +164,14 @@ struct Entry {
     lane: MeetingLane,
     sequence: u64,
     text: String,
+    language: Option<String>,
     started_at_ms: u64,
     ended_at_ms: u64,
 }
 struct Session {
     id: String,
     token: Option<String>,
-    model: PathBuf,
+    model: String,
     entries: Vec<Entry>,
     total_text_chars: usize,
     next_sequences: HashMap<MeetingLane, u64>,
@@ -237,8 +245,12 @@ impl MeetingRuntime {
         let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         Ok(snapshot(&r))
     }
-    pub fn preflight(&self, input: &PreflightInput) -> Result<PreflightResult, String> {
-        validate_device_and_model_bounds(&input.microphone_device_id, &input.stt_model_path)?;
+    pub fn preflight(
+        &self,
+        input: &PreflightInput,
+        asr_health: Result<(), String>,
+    ) -> Result<PreflightResult, String> {
+        validate_device_and_model_bounds(&input.microphone_device_id, &input.stt_model)?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         ensure(&r.state, &[MeetingState::Idle, MeetingState::Ready])?;
         r.state = MeetingState::Preflight;
@@ -253,15 +265,24 @@ impl MeetingRuntime {
         } else {
             health("ready", "Microphone permission was checked by the app")
         };
-        let stt = match fs::canonicalize(&input.stt_model_path) {
-            Ok(path) if path.is_file() => health("ready", "local-whisper"),
-            _ => {
-                errors.push(err(
-                    "MEETING_STT_MODEL_MISSING",
-                    "The local Whisper model is unavailable.",
-                    "Select an existing local model file in Settings.",
-                ));
-                health("unavailable", "Model file missing")
+        let stt = if input.stt_model != crate::voice::gnosis_asr::MODEL_ID {
+            errors.push(err(
+                "MEETING_STT_MODEL_UNAVAILABLE",
+                "The configured gnosis ASR model is unsupported.",
+                "Restore the default Voice ASR settings.",
+            ));
+            health("unavailable", "ASR model mismatch")
+        } else {
+            match asr_health {
+                Ok(()) => health("ready", "gnosis-asr"),
+                Err(error) => {
+                    errors.push(err(
+                        "MEETING_STT_UNAVAILABLE",
+                        &error,
+                        "Check the gnosis ASR service and retry.",
+                    ));
+                    health("unavailable", "gnosis ASR unavailable")
+                }
             }
         };
         if input.system_audio_enabled {
@@ -298,12 +319,10 @@ impl MeetingRuntime {
         input: &StartInput,
         connection: &Mutex<Connection>,
     ) -> Result<MeetingSnapshot, String> {
-        validate_device_and_model_bounds(&input.microphone_device_id, &input.stt_model_path)?;
+        validate_device_and_model_bounds(&input.microphone_device_id, &input.stt_model)?;
         crate::validate_identifier(&input.session_id, "meeting session id")?;
-        let model = fs::canonicalize(&input.stt_model_path)
-            .map_err(|_| "MEETING_STT_MODEL_MISSING: Select an existing local model file.")?;
-        if !model.is_file() {
-            return Err("MEETING_STT_MODEL_MISSING: Model path is not a file.".into());
+        if input.stt_model != crate::voice::gnosis_asr::MODEL_ID {
+            return Err("MEETING_STT_MODEL_UNAVAILABLE: Unsupported gnosis ASR model.".into());
         }
         if input.microphone_device_id.trim().is_empty()
             || !input.microphone_enabled
@@ -321,13 +340,13 @@ impl MeetingRuntime {
         let token = capture_token();
         {
             let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,'local-whisper',?3,NULL,'discard',?4)",params![input.session_id,if input.microphone_enabled {1} else {0},model.file_name().and_then(|x|x.to_str()).unwrap_or("model"),now_iso()]).map_err(crate::database_error)?;
+            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,?3,?4,NULL,'discard',?5)",params![input.session_id,if input.microphone_enabled {1} else {0},crate::voice::gnosis_asr::PROVIDER_ID,input.stt_model,now_iso()]).map_err(crate::database_error)?;
         }
         r.state = MeetingState::Active;
         r.session = Some(Session {
             id: input.session_id.clone(),
             token: Some(token),
-            model,
+            model: input.stt_model.clone(),
             entries: Vec::new(),
             total_text_chars: 0,
             next_sequences: HashMap::new(),
@@ -396,7 +415,7 @@ impl MeetingRuntime {
         &self,
         input: &SegmentInput,
         cancellation: Arc<RunCancellation>,
-    ) -> Result<(PathBuf, Vec<f32>), String> {
+    ) -> Result<(String, Vec<f32>), String> {
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         let active = r.state == MeetingState::Active;
         let s = r.session.as_mut().ok_or("MEETING_INVALID_STATE")?;
@@ -406,25 +425,7 @@ impl MeetingRuntime {
         if input.lane != MeetingLane::Microphone {
             return Err("MEETING_SYSTEM_AUDIO_UNAVAILABLE".into());
         };
-        if !(8_000..=96_000).contains(&input.sample_rate)
-            || !(1_000..=15_000).contains(&input.duration_ms)
-            || input.samples.is_empty()
-            || input.samples.len() > input.sample_rate as usize * 15
-            || input.samples.iter().any(|sample| !sample.is_finite())
-        {
-            return Err("MEETING_INVALID_STATE: Invalid segment bounds".into());
-        };
-        let expected = u64::from(input.sample_rate) * u64::from(input.duration_ms) / 1_000;
-        let actual = input.samples.len() as u64;
-        let tolerance = u64::from(input.sample_rate / 50).max(256);
-        if actual.abs_diff(expected) > tolerance
-            || input
-                .started_at_ms
-                .checked_add(u64::from(input.duration_ms))
-                .is_none()
-        {
-            return Err("MEETING_INVALID_STATE: Segment timing does not match samples".into());
-        }
+        validate_segment_bounds(input)?;
         let next = s.next_sequences.get(&input.lane).copied().unwrap_or(0);
         if input.sequence != next {
             return Err("MEETING_OUT_OF_ORDER_SEGMENT".into());
@@ -445,10 +446,42 @@ impl MeetingRuntime {
             .insert((input.lane.clone(), input.sequence), cancellation);
         Ok((s.model.clone(), input.samples.clone()))
     }
+    pub fn preview(&self, input: &SegmentInput) -> Result<(String, Vec<f32>), String> {
+        let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
+        let s = r.session.as_ref().ok_or("MEETING_INVALID_STATE")?;
+        if r.state != MeetingState::Active
+            || s.id != input.session_id
+            || s.token.as_deref() != Some(&input.capture_token)
+        {
+            return Err("MEETING_INVALID_CAPTURE_TOKEN".into());
+        }
+        if input.lane != MeetingLane::Microphone {
+            return Err("MEETING_SYSTEM_AUDIO_UNAVAILABLE".into());
+        }
+        validate_segment_bounds(input)?;
+        let next = s.next_sequences.get(&input.lane).copied().unwrap_or(0);
+        if input.sequence != next {
+            return Err("MEETING_OUT_OF_ORDER_SEGMENT".into());
+        }
+        Ok((s.model.clone(), input.samples.clone()))
+    }
+    pub fn preview_is_current(&self, input: &SegmentInput) -> bool {
+        let Ok(r) = self.inner.lock() else {
+            return false;
+        };
+        let Some(s) = r.session.as_ref() else {
+            return false;
+        };
+        r.state == MeetingState::Active
+            && s.id == input.session_id
+            && s.token.as_deref() == Some(&input.capture_token)
+            && s.next_sequences.get(&input.lane).copied().unwrap_or(0) == input.sequence
+    }
     pub fn finish_segment(
         &self,
         input: &SegmentInput,
         text: String,
+        language: Option<String>,
     ) -> Result<SegmentResult, String> {
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         let active = r.state == MeetingState::Active;
@@ -478,6 +511,7 @@ impl MeetingRuntime {
             lane: input.lane.clone(),
             sequence: input.sequence,
             text: text.clone(),
+            language: language.clone(),
             started_at_ms: input.started_at_ms,
             ended_at_ms: input
                 .started_at_ms
@@ -488,6 +522,7 @@ impl MeetingRuntime {
         Ok(SegmentResult {
             accepted: true,
             text,
+            language,
         })
     }
     pub fn abort_segment(&self, input: &SegmentInput) {
@@ -577,7 +612,7 @@ impl MeetingRuntime {
         let mut conn = connection.lock().map_err(|_| "Database lock unavailable")?;
         let tx = conn.transaction().map_err(crate::database_error)?;
         for e in &s.entries {
-            tx.execute("INSERT INTO meeting_transcript_entries(id,session_id,lane,sequence,original_text,started_at_ms,ended_at_ms,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![new_id("meeting_entry"),id,match e.lane {MeetingLane::Microphone=>"microphone",MeetingLane::SystemAudio=>"system-audio"},e.sequence,e.text,e.started_at_ms,e.ended_at_ms,now_iso()]).map_err(crate::database_error)?;
+            tx.execute("INSERT INTO meeting_transcript_entries(id,session_id,lane,sequence,original_text,original_language,started_at_ms,ended_at_ms,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![new_id("meeting_entry"),id,match e.lane {MeetingLane::Microphone=>"microphone",MeetingLane::SystemAudio=>"system-audio"},e.sequence,e.text,e.language.as_deref(),e.started_at_ms,e.ended_at_ms,now_iso()]).map_err(crate::database_error)?;
         }
         let changed = tx
             .execute(
@@ -626,12 +661,35 @@ impl MeetingRuntime {
     }
 }
 
-fn validate_device_and_model_bounds(device_id: &str, model_path: &str) -> Result<(), String> {
+fn validate_device_and_model_bounds(device_id: &str, model: &str) -> Result<(), String> {
     if device_id.len() > 256 {
         return Err("Invalid microphone device id".to_string());
     }
-    if model_path.len() > 4_096 {
-        return Err("Invalid STT model path".to_string());
+    if model.trim().is_empty() || model.len() > 160 {
+        return Err("Invalid STT model".to_string());
+    }
+    Ok(())
+}
+
+fn validate_segment_bounds(input: &SegmentInput) -> Result<(), String> {
+    if !(8_000..=96_000).contains(&input.sample_rate)
+        || !(1_000..=15_000).contains(&input.duration_ms)
+        || input.samples.is_empty()
+        || input.samples.len() > input.sample_rate as usize * 15
+        || input.samples.iter().any(|sample| !sample.is_finite())
+    {
+        return Err("MEETING_INVALID_STATE: Invalid segment bounds".into());
+    }
+    let expected = u64::from(input.sample_rate) * u64::from(input.duration_ms) / 1_000;
+    let actual = input.samples.len() as u64;
+    let tolerance = u64::from(input.sample_rate / 50).max(256);
+    if actual.abs_diff(expected) > tolerance
+        || input
+            .started_at_ms
+            .checked_add(u64::from(input.duration_ms))
+            .is_none()
+    {
+        return Err("MEETING_INVALID_STATE: Segment timing does not match samples".into());
     }
     Ok(())
 }
@@ -773,20 +831,6 @@ pub fn reconcile(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub fn transcribe_segment<F>(
-    model: PathBuf,
-    samples: Vec<f32>,
-    sample_rate: u32,
-    cancellation: &RunCancellation,
-    on_partial: F,
-) -> Result<String, String>
-where
-    F: FnMut(String),
-{
-    crate::voice::local_whisper::transcribe(&samples, sample_rate, &model, cancellation, on_partial)
-        .map(|text| bounded_text(&text, 8_000))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -810,7 +854,7 @@ mod tests {
                 session: Some(Session {
                     id: "session_a".into(),
                     token: Some("capture_token".into()),
-                    model: PathBuf::from("model"),
+                    model: crate::voice::gnosis_asr::MODEL_ID.to_string(),
                     entries: Vec::new(),
                     total_text_chars: 0,
                     next_sequences: HashMap::new(),
@@ -844,18 +888,21 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_missing_local_model_without_arming_capture() {
+    fn preflight_rejects_unavailable_gnosis_asr_without_arming_capture() {
         let runtime = MeetingRuntime::new();
         let result = runtime
-            .preflight(&PreflightInput {
-                microphone_device_id: "default".into(),
-                system_audio_enabled: false,
-                stt_model_path: "/missing/model.bin".into(),
-                translation_enabled: false,
-            })
+            .preflight(
+                &PreflightInput {
+                    microphone_device_id: "default".into(),
+                    system_audio_enabled: false,
+                    stt_model: crate::voice::gnosis_asr::MODEL_ID.into(),
+                    translation_enabled: false,
+                },
+                Err("gnosis ASR unavailable".into()),
+            )
             .expect("preflight result");
         assert_eq!(result.state, MeetingState::Idle);
-        assert_eq!(result.blocking_errors[0].code, "MEETING_STT_MODEL_MISSING");
+        assert_eq!(result.blocking_errors[0].code, "MEETING_STT_UNAVAILABLE");
         assert_eq!(
             runtime.snapshot().expect("snapshot").state,
             MeetingState::Idle
@@ -908,6 +955,28 @@ mod tests {
     }
 
     #[test]
+    fn partial_preview_does_not_consume_sequence_and_is_dropped_after_final_starts() {
+        let runtime = runtime_with_session(MeetingState::Active);
+        let input = SegmentInput {
+            session_id: "session_a".to_string(),
+            capture_token: "capture_token".to_string(),
+            lane: MeetingLane::Microphone,
+            sequence: 0,
+            samples: vec![0.0; 16_000],
+            sample_rate: 8_000,
+            started_at_ms: 0,
+            duration_ms: 2_000,
+        };
+
+        runtime.preview(&input).expect("preview is accepted");
+        assert!(runtime.preview_is_current(&input));
+        runtime
+            .append(&input, Arc::new(RunCancellation::default()))
+            .expect("the same sequence remains available for the final segment");
+        assert!(!runtime.preview_is_current(&input));
+    }
+
+    #[test]
     fn pause_updates_persisted_state_and_cancels_segments() {
         let runtime = runtime_with_session(MeetingState::Active);
         let cancellation = Arc::new(RunCancellation::default());
@@ -948,7 +1017,7 @@ mod tests {
             duration_ms: 1_000,
         };
         assert!(runtime
-            .finish_segment(&input, "late transcript".to_string())
+            .finish_segment(&input, "late transcript".to_string(), None)
             .is_err());
         assert_eq!(
             runtime.snapshot().expect("snapshot").state,
@@ -1013,7 +1082,7 @@ mod tests {
             .expect("schema initializes");
         {
             let conn = connection.lock().expect("database lock");
-            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_a','completed',1,0,'local-whisper','model','discard','1')", []).expect("meeting fixture");
+            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_a','completed',1,0,'gnosis-asr','model','discard','1')", []).expect("meeting fixture");
         }
         let runtime = runtime_with_session(MeetingState::Completed);
         runtime
@@ -1028,6 +1097,7 @@ mod tests {
                 lane: MeetingLane::Microphone,
                 sequence: 0,
                 text: "final text".into(),
+                language: Some("Japanese".into()),
                 started_at_ms: 0,
                 ended_at_ms: 5_000,
             });
@@ -1044,10 +1114,20 @@ mod tests {
             )
             .expect("saved transcript count");
         assert_eq!(saved, 1);
+        let saved_language: Option<String> = connection
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT original_language FROM meeting_transcript_entries WHERE session_id='session_a'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("saved transcript language");
+        assert_eq!(saved_language.as_deref(), Some("Japanese"));
 
         {
             let conn = connection.lock().expect("database lock");
-            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_b','completed',1,0,'local-whisper','model','discard','1')", []).expect("discard fixture");
+            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_b','completed',1,0,'gnosis-asr','model','discard','1')", []).expect("discard fixture");
         }
         let runtime = runtime_with_session(MeetingState::Completed);
         runtime
@@ -1070,6 +1150,7 @@ mod tests {
                 lane: MeetingLane::Microphone,
                 sequence: 0,
                 text: "discarded text".into(),
+                language: None,
                 started_at_ms: 0,
                 ended_at_ms: 5_000,
             });

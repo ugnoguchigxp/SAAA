@@ -1,0 +1,568 @@
+<article lang="ja">
+  <h1 id="mvp-26-larm-operations-runbook">MVP 2.6 LARM Operations Runbook</h1>
+  <dl>
+    <dt>Status</dt>
+    <dd>Implemented — G1 / G2通過後にrehearsal可能</dd>
+    <dt>Owner</dt>
+    <dd>SAAA operatorとLARM operatorの共同所有</dd>
+    <dt>Last reviewed</dt>
+    <dd>2026-08-29（手順実装のみ。実機rehearsalは未実施）</dd>
+    <dt>Implementation contract</dt>
+    <dd>
+      <a href="./.archived/mvp-2.6.1-implementation-plan.html">MVP 2.6.1 Implementation Plan</a>
+    </dd>
+    <dt>Evidence record</dt>
+    <dd><a href="./mvp-2.6-release-evidence.html">MVP 2.6 Release Evidence</a></dd>
+  </dl>
+
+  <p>
+    このrunbookは、隔離されたmacOS版SAAAからprivate tunnel経由でLARM canaryを実行し、 障害時にdirect
+    Providerへ戻すための唯一の運用手順である。G1とG2が通過するまでは、 以下のlive command、health /
+    ready、allocation、Gateway、metrics requestを実行しない。
+  </p>
+
+  <h2 id="1-safety-boundary">1. Safety boundary</h2>
+  <ul>
+    <li>通常profile、通常application-data、既存の会話をcanaryへ使わない。</li>
+    <li>LARM originはSAAA host上のnumeric loopbackだけを使い、LAN上のplain HTTPへ接続しない。</li>
+    <li>
+      token、credential、endpoint、prompt、response、identifier、raw log、raw
+      metricsを証跡へ記録しない。
+    </li>
+    <li>runnerからSSH、remote shell、systemctl、llama-swap、LARM fault commandを実行しない。</li>
+    <li>
+      一つのreport directoryではpreflightからaggregateまでを一回だけ実行し、fileを上書きしない。
+    </li>
+    <li>
+      進行中streamのProvider
+      bindingを変更しない。cancelまたは既存bindingでterminalへ進めてからrollbackする。
+    </li>
+    <li>G3がpassedになるまで通常profileのprimary Providerとfeature flag既定値を変更しない。</li>
+  </ul>
+
+  <h2 id="2-roles">2. Roles and handoff</h2>
+  <table>
+    <caption>
+      Table: Required operator responsibilities
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Role</th>
+        <th scope="col">Responsibility</th>
+        <th scope="col">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SAAA operator</td>
+        <td>isolated directory、manifest、launcher、UI workload、local rollback</td>
+        <td>operator名、UTC execution window、manual result</td>
+      </tr>
+      <tr>
+        <td>LARM operator</td>
+        <td>
+          deployment revision、private tunnel、metrics scope、one-shot fixture、restart、server log
+          audit
+        </td>
+        <td>revision、contract一致、監査結果の件数、UTC時刻</td>
+      </tr>
+      <tr>
+        <td>Reviewer</td>
+        <td>report identity、threshold、security、rollback、runbook rehearsal、deviationを照合</td>
+        <td>判断者、reviewed at、G3 decision</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    tokenやhost detailを役割間のhandoff文書へ貼り付けない。秘密情報はoperator-owned launcherまたは
+    secret storeからprocess environmentへ渡し、SAAA repositoryとshell historyへ保存しない。
+  </p>
+
+  <h2 id="3-g1">3. G1 — Frozen contract</h2>
+  <p>live trafficを許可する前に、SAAA実装担当とLARM実装担当が同じchange setで次を完了する。</p>
+  <ol>
+    <li>LARM repositoryのcommit、API schema、daemon testを確認する。</li>
+    <li>
+      virtual modelとrewrite、effective TTL、Gateway request / response上限を含む全contract
+      decisionを確定する。
+    </li>
+    <li>
+      SAAAの<code>CONTRACT_COMMIT</code>、<code>FROZEN_LARM_CONTRACT_COMMIT</code>、DTO、bounds、
+      Runtime category、commit由来fixtureを同じcommitへ更新する。
+    </li>
+    <li>
+      release evidenceのG1欄へsource commit、fixture source、reviewer、UTC reviewed atを記録する。
+    </li>
+    <li>未決定値、仮値、未commit WIPが0件であることを別reviewerが確認する。</li>
+  </ol>
+  <p>
+    一件でも未確定ならG1は<code>blocked</code>のままとし、loopback
+    listenerが存在していても
+    <code>larm:preflight</code>を実行しない。
+  </p>
+
+  <h2 id="4-g2">4. G2 — Isolated canary environment</h2>
+  <h3 id="41-private-paths">4.1 Private paths</h3>
+  <p>SAAA operatorは、互いにancestor / descendantではない次の三つを用意する。</p>
+  <ul>
+    <li>
+      空のreport directory: current user所有、mode
+      <code>0700</code>、repository外
+    </li>
+    <li>
+      空のapplication-data directory: current user所有、mode
+      <code>0700</code>、通常profile外
+    </li>
+    <li>
+      manifest file: current user所有、mode
+      <code>0600</code>、上記directoryとrepositoryの外
+    </li>
+  </ul>
+  <p>
+    symlink、hard link、共有directory、通常profileのinode再利用を禁止する。失敗または中断後は report
+    directoryとapplication-data directoryを再利用せず、新しい空directoryと新しいmanifestで
+    preflightをやり直す。
+  </p>
+
+  <h3 id="42-manifest">4.2 Manifest</h3>
+  <p>credential値を含めず、次のstrict JSONをoperator-owned manifestへ保存する。</p>
+  <pre><code class="language-json">{
+  "format": "saaa-larm-canary-manifest-v1",
+  "saaaCommit": "reviewed-clean-saaa-commit",
+  "larmContractCommit": "reviewed-g1-larm-commit",
+  "deploymentRevision": "reviewed-gnosis-revision",
+  "dataDirectory": "/absolute/operator-owned/canary-data",
+  "metricsScope": "exclusive-window",
+  "larmProvider": {
+    "baseUrl": "http://127.0.0.1:port",
+    "allocationTtlSeconds": 300,
+    "allocationStartupTimeoutSeconds": 300,
+    "allowFallbackByDefault": false,
+    "deploymentPolicy": "existing-only"
+  },
+  "rollbackProvider": {
+    "id": "local-openai-compatible",
+    "location": "local",
+    "endpoint": "operator-approved-endpoint",
+    "model": "operator-approved-model",
+    "credentialEnv": "SAAA_PROVIDER_LOCAL_OPENAI_COMPATIBLE_API_KEY",
+    "credentialRequired": true
+  }
+}</code></pre>
+  <p>
+    <code>metricsScope</code
+    >は<code>exclusive-window</code>または<code>client-scoped</code>だけを使う。
+    placeholderを実行値として残さない。manifest確定後は全modeが終了するまで変更しない。
+  </p>
+
+  <h3 id="43-launcher">4.3 Operator-owned launcher</h3>
+  <p>launcherは次のenvironmentだけをrunnerへ渡し、値をterminalへ表示しない。</p>
+  <table>
+    <caption>
+      Table: Required live environment
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Name</th>
+        <th scope="col">Required value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SAAA_LARM_CANARY</code></td>
+        <td><code>1</code></td>
+      </tr>
+      <tr>
+        <td><code>SAAA_LARM_ENABLED</code></td>
+        <td><code>1</code></td>
+      </tr>
+      <tr>
+        <td><code>LARM_API_TOKEN</code></td>
+        <td>secret storeから取得した1〜4,096 byteのheader-safe値</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_LARM_CANARY_BASE_URL</code></td>
+        <td>manifestと同じnumeric loopback origin</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_LARM_DEPLOYED_COMMIT</code></td>
+        <td>G1と同じlowercase hex commit</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_LARM_DEPLOYMENT_REVISION</code></td>
+        <td>manifestと同じrevision</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_LARM_CANARY_REPORT_DIR</code></td>
+        <td>CLIと同じabsolute report directory</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_SMOKE_DATA_DIR</code></td>
+        <td>manifestと同じabsolute application-data directory</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_LARM_CANARY_MANIFEST_FILE</code></td>
+        <td>manifestのabsolute path</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_PROVIDER_LOCAL_OPENAI_COMPATIBLE_API_KEY</code></td>
+        <td><code>credentialRequired</code>がtrueの場合のrollback credential</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    proxy、Codex credential、無関係な<code>*_TOKEN</code> /
+    <code>*_API_KEY</code>、runner-owned
+    <code>SAAA_LARM_CANARY_RESULT_FILE</code>などをcaller environmentへ設定しない。
+  </p>
+
+  <h3 id="44-g2-check">4.4 G2 approval</h3>
+  <ol>
+    <li>gnosis deployment revisionがG1 commitを含むことをLARM operatorが確認する。</li>
+    <li>
+      private tunnelがmanifestのloopback portでlistenしていることだけを確認する。HTTP
+      requestは送らない。
+    </li>
+    <li>排他的観測windowまたはclient-scoped metricsを予約する。</li>
+    <li>rollback Provider credentialが存在することだけを確認し、G2中に推論しない。</li>
+    <li>
+      deterministic one-shot create-response遮断、release-response遮断fixtureをこの順で準備する。
+    </li>
+    <li>
+      operator、manifest SHA-256、revision、metrics scope、manual isolation結果をrelease
+      evidenceへ記録する。
+    </li>
+  </ol>
+
+  <h2 id="5-execution">5. Fixed execution sequence</h2>
+  <p>
+    同じclean SAAA commit、manifest、report directory、deployment revisionで次を順番どおり実行する。
+  </p>
+  <pre><code class="language-sh">bun run larm:preflight -- --report-dir /absolute/operator-owned/report-dir
+bun run larm:canary -- --report-dir /absolute/operator-owned/report-dir
+bun run larm:soak -- --report-dir /absolute/operator-owned/report-dir --duration 30m
+bun run larm:soak -- --report-dir /absolute/operator-owned/report-dir --duration 2h
+bun run larm:report -- --report-dir /absolute/operator-owned/report-dir</code></pre>
+  <p>
+    exit code
+    <code>0</code
+    >だけをpassedとして扱う。<code>2</code>はfailed、<code>3</code>はblocked、
+    <code>64</code>はusage
+    error、<code>70</code>はinternal
+    errorである。failedまたはblockedを手編集で
+    passedへ変更しない。後続modeを開始せず、原因を解消して新しいreport directory、空の
+    application-data directory、新しいmanifestからやり直す。
+  </p>
+
+  <h2 id="6-functional-checkpoints">6. Functional canary checkpoints</h2>
+  <p>
+    runnerは自由記述の入力を受け取らない。stderrへ次の固定codeが出たら、SAAA operatorとLARM
+    operatorは5分以内に対応する。runnerがSQLiteまたはmetricsで結果を観測すると自動的に次へ進む。
+  </p>
+  <table>
+    <caption>
+      Table: Functional operator checkpoints
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Progress code</th>
+        <th scope="col">Operator action</th>
+        <th scope="col">Completion signal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>waiting-for-isolated-settings</code></td>
+        <td>
+          flag OFFのpackaged appでmanifestどおりの二Providerを保存し、directをprimaryにして1
+          turn完走する。
+        </td>
+        <td>direct session一件がcompleted</td>
+      </tr>
+      <tr>
+        <td><code>enabling-larm-canary</code></td>
+        <td>LARMをprimary、directを唯一のfallbackに保存する。新しいturnは開始しない。</td>
+        <td>SQLite上のrouteがmanifestと一致</td>
+      </tr>
+      <tr>
+        <td><code>waiting-for-ui-workload</code></td>
+        <td>固定promptでnormal 1 turnと、非empty delta後のcancel 1 turnを実行する。</td>
+        <td>LARM completed一件、cancelled一件</td>
+      </tr>
+      <tr>
+        <td><code>checkpoint-timeout-fixture-ready</code></td>
+        <td>
+          pre-output latency fixtureを一回だけ有効化し、timeout後のexplicit direct
+          fallbackを完走して解除する。
+        </td>
+        <td>LARM timeout一件、direct completed一件</td>
+      </tr>
+      <tr>
+        <td><code>checkpoint-tunnel-interruption-ready</code></td>
+        <td>
+          non-empty delta後にtunnelを一回遮断する。terminal後にtunnelを復旧し、normal 1
+          turnを完走する。
+        </td>
+        <td>partial-output一件、復旧後completed一件</td>
+      </tr>
+      <tr>
+        <td><code>checkpoint-larm-restart-ready</code></td>
+        <td>active run 0件を確認してLARMを一回restartし、復旧後normal 1 turnを完走する。</td>
+        <td>新規allocationによるcompleted一件</td>
+      </tr>
+      <tr>
+        <td><code>checkpoint-capacity-fixture-ready</code></td>
+        <td>
+          capacity rejectionを一回だけ発生させ、explicit direct
+          fallbackを完走してfixtureを解除する。
+        </td>
+        <td>LARM capacity一件、direct completed一件</td>
+      </tr>
+      <tr>
+        <td><code>waiting-for-ui-workload</code>（rollback）</td>
+        <td>Settingsでdirectをprimaryに変更し、新しい3 turnを完走する。</td>
+        <td>direct completedが合計6件</td>
+      </tr>
+      <tr>
+        <td><code>enabling-larm-canary</code>（rollback後）</td>
+        <td>LARM primaryとdirect fallbackを保存する。turnを開始しない。</td>
+        <td>SQLite上のLARM route復元</td>
+      </tr>
+      <tr>
+        <td><code>checkpoint-saaa-restart</code></td>
+        <td>runnerのflag OFF再起動後、新しいdirect turnを3件完走する。</td>
+        <td>direct completedが合計9件、LARM network access 0件</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    packaged UIとlive suiteは次のfixed
+    promptだけを使う。実会話、workspace内容、秘密情報を入力しない。
+  </p>
+  <pre><code class="language-text">Reply with exactly: CANARY_OK
+List the numbers 1 through 5.
+Write one short greeting in Japanese.
+Write ten numbered words, one at a time.
+Reply with exactly: READY</code></pre>
+  <p>
+    live suite用のone-shot TTL
+    fixtureはcreate-response遮断、release-response遮断の順で一度ずつ自動解除され、 三件目は専用test
+    client終了で検証される。
+  </p>
+
+  <h2 id="7-soak">7. Canary and soak operation</h2>
+  <h3 id="71-30m">7.1 30-minute canary</h3>
+  <ul>
+    <li>同時active turnを一件以下に保ち、normal completed 20件以上、cancel 5件以上を実行する。</li>
+    <li>
+      runnerが5秒間隔でSAAA RSS、SQLite、LARM metricsを観測している間、appとterminalを閉じない。
+    </li>
+    <li>
+      unexpected failure、implicit fallback、duplicate terminal、allocation
+      leakが一件でもあれば停止する。
+    </li>
+  </ul>
+
+  <h3 id="72-2h">7.2 2-hour soak</h3>
+  <ul>
+    <li>normal completed 60件以上、cancel 10件以上を、同時active turn一件以下で実行する。</li>
+    <li>
+      minute 30〜40で<code>checkpoint-larm-restart-ready</code>が出た後、active run
+      0件でLARMを一回restartする。
+    </li>
+    <li>
+      minute 70以降の<code>checkpoint-saaa-restart</code>では操作せず、runnerによるlocal app
+      restartを待つ。
+    </li>
+    <li>restart後にSettings保持と新しいallocationを確認できるnormal turnを実行する。</li>
+    <li>samplingを妨げるsleep、network切替、terminal suspendを行わない。</li>
+  </ul>
+
+  <h2 id="8-incident">8. Incident procedures</h2>
+  <h3 id="81-unavailable">8.1 LARM unavailable or tunnel failure</h3>
+  <ol>
+    <li>新しいLARM turnを開始せず、実行中runをfailedまたはblockedとして終了させる。</li>
+    <li>
+      non-empty delta後はProvider fallbackや同一request retryを行わず、cancelまたはterminalを待つ。
+    </li>
+    <li>Settings rollbackを実施し、新しいturnをdirect Providerだけへ送る。</li>
+    <li>
+      LARM network accessが続く、またはSettingsを操作できない場合はkill-switch rollbackを実施する。
+    </li>
+    <li>
+      LARM operatorがserviceとtunnelを復旧し、active allocationがbaselineへ戻ったことを確認する。
+    </li>
+    <li>
+      復旧確認は新しいempty report / application-data
+      directoryと新しいmanifestのpreflightから開始する。
+    </li>
+  </ol>
+
+  <h3 id="82-token">8.2 Token rotation</h3>
+  <ol>
+    <li>canaryを停止し、active runとallocationが0件になるまで待つ。</li>
+    <li>LARM operatorがserver側tokenを更新し、旧tokenを失効させる。</li>
+    <li>
+      SAAA operatorがsecret storeまたはoperator-owned launcherを更新する。値を表示・記録しない。
+    </li>
+    <li>
+      新しいempty report / application-data
+      directoryを用意し、両pathを反映した新しいmanifestとlauncherで
+      SAAAをrestartしてpreflightを実行する。
+    </li>
+    <li>旧token拒否、新token成功、allocation baseline不変をrelease evidenceへ件数だけ記録する。</li>
+  </ol>
+
+  <h3 id="83-capacity">8.3 Capacity rejection</h3>
+  <ol>
+    <li>
+      <code>allowFallback: false</code
+      >と<code>existing-only</code>を変更しない。
+    </li>
+    <li>
+      同じLARM requestをretryせず、output前のcapacity確定時だけ明示済みdirect Providerへ一回進む。
+    </li>
+    <li>Resident Runtime停止、model切替、optional Runtimeへの暗黙切替を行わない。</li>
+    <li>
+      retry storm、implicit fallback、active allocation増加があれば直ちにrunをfailedとして停止する。
+    </li>
+  </ol>
+
+  <h3 id="84-ttl">8.4 TTL cleanup</h3>
+  <ol>
+    <li>allocate結果が不明な場合はblind retryしない。</li>
+    <li>server-confirmed effective TTL + 30秒までmetricsだけで回収を待つ。</li>
+    <li>active allocationがbaselineへ戻らなければ新しいscenarioを開始せず、runをfailedにする。</li>
+    <li>allocation idやrequest idをrunbook、terminal、release evidenceへ転記しない。</li>
+  </ol>
+
+  <h2 id="9-rollback">9. Two-stage rollback</h2>
+  <h3 id="91-settings">9.1 Settings rollback</h3>
+  <ol>
+    <li>active streamをcancelまたはterminalへ進める。</li>
+    <li>
+      Settingsでconversation
+      routeのprimaryを<code>local-openai-compatible</code>へ変更し、fallbackを空にする。
+    </li>
+    <li>新しいturnを3件実行し、すべてdirect Providerでcompletedになることを確認する。</li>
+    <li>
+      新しいLARM session、allocation、requestが0件であることをSQLiteとallowlist metricsで確認する。
+    </li>
+  </ol>
+
+  <h3 id="92-kill-switch">9.2 Kill-switch rollback</h3>
+  <ol>
+    <li>active streamをcancelまたはterminalへ進め、SAAAを停止する。</li>
+    <li>
+      operator-owned
+      launcherの<code>SAAA_LARM_ENABLED</code>をOFFにしてSAAAを再起動する。
+    </li>
+    <li>UIがLARM disabledを示すことを確認する。</li>
+    <li>新しいdirect Provider turnを3件完走する。</li>
+    <li>Connection Testを含むLARM network accessが0件であることを確認する。</li>
+  </ol>
+  <p>
+    rollback後にLARMへ戻す場合は、障害原因を解消し、G1 / G2
+    identityが変わっていないことを確認してから、 新しいempty report / application-data
+    directoryと新しいmanifestのpreflightから再開する。 緊急復旧を理由に既存failed reportやcanary
+    dataを再利用しない。
+  </p>
+
+  <h2 id="10-security-review">10. Security and privacy review</h2>
+  <ol>
+    <li>
+      SAAA
+      runner、app、diagnosticsにtoken、prompt、response、identifier、endpointが0件であることを確認する。
+    </li>
+    <li>LARM operatorはserver上で同じ監査を実行し、raw logをSAAA hostへ転送しない。</li>
+    <li>raw metricsを保存せず、allowlist済みnumeric aggregateだけがreportにあることを確認する。</li>
+    <li>
+      report fileがcurrent user所有、mode <code>0600</code>、regular
+      file、hard linkなしであることを確認する。
+    </li>
+    <li>release evidenceには各検出件数、監査UTC時刻、reviewerだけを記録する。</li>
+  </ol>
+  <p>検出件数が一件でも0でなければG3をfailedとし、証跡から値を削除しただけでpassedにしない。</p>
+
+  <h2 id="11-evidence">11. Evidence finalization and G3</h2>
+  <ol>
+    <li>
+      <code>aggregate.json</code>がpassedで、四modeのidentityとallocation
+      baselineが一致することを確認する。
+    </li>
+    <li>bounded summaryだけをrelease evidenceのautomated欄へ転記する。</li>
+    <li>
+      manual UI、security、rollback、soak、runbook rehearsalをそれぞれの欄へ分離して記録する。
+    </li>
+    <li>別operatorがこのrunbookだけでSettings rollbackとkill-switch rollbackを再現する。</li>
+    <li>未解決deviationとwaiverが0件であることをreviewerが確認する。</li>
+    <li>
+      G3を<code>passed | failed | blocked</code>のいずれかで記録し、判断者とUTC時刻を埋める。
+    </li>
+    <li>
+      passedの場合も、初期利用profile、operator、rollback windowを別の明示的判断として記録する。
+    </li>
+  </ol>
+  <p>
+    G3
+    passedは全体有効化を意味しない。限定enablement中はoperatorが<code>/ready</code>とallowlist
+    metricsを監視し、異常時はSection 9の二段階rollbackを実施する。
+  </p>
+  <table>
+    <caption>
+      Table: Limited enablement monitoring
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Timing</th>
+        <th scope="col">Observation</th>
+        <th scope="col">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>enablement前</td>
+        <td>
+          <code>/ready</code>、active allocation baseline、direct rollback
+          credential
+        </td>
+        <td>一件でも確認できなければ開始しない</td>
+      </tr>
+      <tr>
+        <td>限定利用中</td>
+        <td>
+          <code>/ready</code>、active allocation、capacity、release、Runtime
+          category
+        </td>
+        <td>raw labelを保存せず、承認済みallowlist aggregateだけを監視する</td>
+      </tr>
+      <tr>
+        <td>異常時</td>
+        <td>unready、allocation leak、implicit fallback、unknown Runtime、secret/content leak</td>
+        <td>新しいturnを止め、Section 9のSettings rollback、必要ならkill switchを実行する</td>
+      </tr>
+      <tr>
+        <td>window終了時</td>
+        <td>active allocationがbaselineへ復帰し、未完了runが0件</td>
+        <td>UTC window、件数、rollback有無だけをevidenceへ記録する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="12-stop">12. Immediate stop conditions</h2>
+  <ul>
+    <li>contract、deployment revision、manifest hash、artifact hashの不一致</li>
+    <li>通常profile、Settings、SQLite、environmentとの共有</li>
+    <li>secret、本文、identifier、endpointの露出</li>
+    <li>health / readyによるallocationまたはRuntime起動</li>
+    <li>non-empty delta後のfallback、retry、reallocation</li>
+    <li>optional Runtimeへの暗黙切替、Resident停止、SAAAからのRuntime運用操作</li>
+    <li>duplicate terminal、unexpected failure、allocation leak</li>
+    <li>sampling gap、RSS、cleanupがimplementation contractのthresholdを超過</li>
+  </ul>
+  <p>
+    stop condition発生後は後続gateへ進まない。機密値を含まないfailure code、UTC時刻、影響modeだけを
+    release evidenceへ記録し、原因を解消して新しいreport / application-data
+    directoryとmanifestから再開する。
+  </p>
+</article>

@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type { MeetingSnapshot, MeetingState, VoiceSettings } from "../../lib/contracts";
+import type { MeetingLane, MeetingSnapshot, MeetingState, VoiceSettings } from "../../lib/contracts";
+import { ensureMicrophoneAudioContextRunning, requestMicrophoneStream } from "../../lib/microphone";
 import {
   appendMeetingAudioSegment,
+  cancelRun,
   discardMeeting,
   getMeetingSnapshot,
   meetingPreflight,
   pauseMeeting,
+  previewMeetingAudioSegment,
   resumeMeeting,
   saveMeetingTranscript,
   startMeeting,
@@ -25,8 +28,9 @@ const idle: MeetingSnapshot = {
   error: null,
 };
 
-type Line = { sequence: number; text: string; partial?: boolean };
+type Line = { sequence: number; lane: MeetingLane; text: string; language: string | null; partial?: boolean };
 type PendingSegment = {
+  sequence: number;
   samples: Float32Array;
   sampleRate: number;
   startedAtMs: number;
@@ -56,6 +60,8 @@ export function useMeetingSession(
   const queue = useRef(new SegmentQueue<PendingSegment>());
   const processing = useRef<Promise<void> | null>(null);
   const sequence = useRef(0);
+  const previewedSequence = useRef<number | null>(null);
+  const previewRunId = useRef<string | null>(null);
   const started = useRef(0);
   const operation = useRef(false);
 
@@ -96,7 +102,7 @@ export function useMeetingSession(
         if (event.sessionId !== snapshotRef.current.sessionId) return;
         setTranscript((lines) => {
           const index = lines.findIndex((line) => line.sequence === event.sequence);
-          const next = { sequence: event.sequence, text: event.text, partial: event.type === "transcriptPartial" };
+          const next = { sequence: event.sequence, lane: event.lane, text: event.text, language: event.language, partial: event.type === "transcriptPartial" };
           return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
         });
       } else if (event.type === "failed") {
@@ -128,6 +134,9 @@ export function useMeetingSession(
   }, [snapshot.state]);
 
   async function detachCapture(clearPending: boolean) {
+    const activePreview = previewRunId.current;
+    previewRunId.current = null;
+    if (activePreview) void cancelRun(activePreview).catch(() => undefined);
     if (clearPending) flushResolver.current?.();
     if (!clearPending && node.current) {
       await new Promise<void>((resolve) => {
@@ -171,6 +180,7 @@ export function useMeetingSession(
       return false;
     }
     const segment: PendingSegment = {
+      sequence: sequence.current,
       samples,
       sampleRate,
       startedAtMs: frameStartedAtMs.current ?? Math.max(0, Date.now() - started.current - durationMs),
@@ -185,6 +195,7 @@ export function useMeetingSession(
       void pauseAfterFailure();
       return false;
     }
+    sequence.current += 1;
     void drainQueue().catch(() => undefined);
     return true;
   }
@@ -194,6 +205,7 @@ export function useMeetingSession(
     const task = (async () => {
       let segment: PendingSegment | undefined;
       while ((segment = queue.current.shift())) {
+        const segmentSequence = segment.sequence;
         const currentSnapshot = snapshotRef.current;
         if (
           currentSnapshot.state !== "active" ||
@@ -202,22 +214,20 @@ export function useMeetingSession(
         ) {
           throw new Error("Meeting capture is no longer active.");
         }
-        const currentSequence = sequence.current;
-        sequence.current += 1;
         try {
           const result = await appendMeetingAudioSegment({
             sessionId: currentSnapshot.sessionId,
             captureToken: currentSnapshot.captureToken,
             lane: "microphone",
-            sequence: currentSequence,
+            sequence: segmentSequence,
             samples: Array.from(segment.samples),
             sampleRate: segment.sampleRate,
             startedAtMs: segment.startedAtMs,
             durationMs: segment.durationMs,
           });
           setTranscript((lines) => {
-            const next = { sequence: currentSequence, text: result.text, partial: false };
-            const index = lines.findIndex((line) => line.sequence === currentSequence);
+            const next = { sequence: segmentSequence, lane: "microphone" as const, text: result.text, language: result.language, partial: false };
+            const index = lines.findIndex((line) => line.sequence === segmentSequence);
             return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
           });
         } catch (cause) {
@@ -260,11 +270,11 @@ export function useMeetingSession(
       voice.inputDeviceId === "default"
         ? true
         : { deviceId: { exact: voice.inputDeviceId } };
-    const nextStream = await navigator.mediaDevices.getUserMedia({ audio: device });
-    const nextContext = new AudioContext();
+    const nextStream = await requestMicrophoneStream(device);
     stream.current = nextStream;
-    context.current = nextContext;
     try {
+      const nextContext = new AudioContext();
+      context.current = nextContext;
       await nextContext.audioWorklet.addModule("/audio/meeting-processor.js");
       const nextSource = nextContext.createMediaStreamSource(nextStream);
       const nextNode = new AudioWorkletNode(nextContext, "meeting-processor");
@@ -280,17 +290,51 @@ export function useMeetingSession(
         }
         frames.current.push(event.data);
         frameSamples.current += event.data.length;
+        if (frameSamples.current >= nextContext.sampleRate * 2) {
+          startSegmentPreview(nextContext.sampleRate);
+        }
         if (frameSamples.current >= nextContext.sampleRate * 5) {
           enqueueBuffered(nextContext.sampleRate, 5_000);
         }
       };
       nextSource.connect(nextNode);
       nextNode.connect(nextContext.destination);
+      await ensureMicrophoneAudioContextRunning(nextContext);
       setHealth("ready");
     } catch (cause) {
       await detachCapture(true);
       throw cause;
     }
+  }
+
+  function startSegmentPreview(sampleRate: number) {
+    const current = snapshotRef.current;
+    const currentSequence = sequence.current;
+    if (
+      previewedSequence.current === currentSequence
+      || previewRunId.current
+      || !current.sessionId
+      || !current.captureToken
+      || frameSamples.current < sampleRate
+    ) return;
+    previewedSequence.current = currentSequence;
+    const runId = `meeting_preview_${crypto.randomUUID().replace(/-/g, "")}`;
+    previewRunId.current = runId;
+    const samples = appendFrames(new Float32Array(), frames.current);
+    const durationMs = Math.round((samples.length / sampleRate) * 1_000);
+    void previewMeetingAudioSegment({
+      runId,
+      sessionId: current.sessionId,
+      captureToken: current.captureToken,
+      lane: "microphone",
+      sequence: currentSequence,
+      samples: Array.from(samples),
+      sampleRate,
+      startedAtMs: frameStartedAtMs.current ?? Math.max(0, Date.now() - started.current - durationMs),
+      durationMs,
+    }).catch(() => undefined).finally(() => {
+      if (previewRunId.current === runId) previewRunId.current = null;
+    });
   }
 
   function beginOperation(): boolean {
@@ -308,19 +352,19 @@ export function useMeetingSession(
   async function start() {
     if (!voice || !beginOperation()) return;
     setError(null);
+    applySnapshot({ ...snapshotRef.current, state: "preflight", error: null });
     let startedSession: string | null = null;
     try {
-      const check = await navigator.mediaDevices.getUserMedia({
-        audio:
-          voice.inputDeviceId === "default"
-            ? true
-            : { deviceId: { exact: voice.inputDeviceId } },
-      });
+      const check = await requestMicrophoneStream(
+        voice.inputDeviceId === "default"
+          ? true
+          : { deviceId: { exact: voice.inputDeviceId } },
+      );
       check.getTracks().forEach((track) => track.stop());
       const preflight = await meetingPreflight({
         microphoneDeviceId: voice.inputDeviceId,
         systemAudioEnabled: false,
-        sttModelPath: voice.sttModel,
+        sttModel: voice.sttModel,
         translationEnabled: false,
       });
       if (preflight.blockingErrors.length) {
@@ -331,7 +375,7 @@ export function useMeetingSession(
         microphoneDeviceId: voice.inputDeviceId,
         microphoneEnabled: true,
         systemAudioEnabled: false,
-        sttModelPath: voice.sttModel,
+        sttModel: voice.sttModel,
         translationEnabled: false,
         persistenceMode: "discard",
       });
@@ -339,6 +383,7 @@ export function useMeetingSession(
       applySnapshot(next);
       started.current = Date.now();
       sequence.current = 0;
+      previewedSequence.current = null;
       setElapsed(0);
       setTranscript([]);
       await attachCapture();
@@ -347,10 +392,9 @@ export function useMeetingSession(
       if (startedSession) {
         await stopMeeting(startedSession).catch(() => undefined);
         await discardMeeting(startedSession).catch(() => undefined);
-        applySnapshot(idle);
-      } else {
-        await getMeetingSnapshot().then(applySnapshot).catch(() => undefined);
       }
+      const restored = await getMeetingSnapshot().catch(() => null);
+      applySnapshot(restored ?? idle);
       setError(`Meeting start failed: ${toMessage(cause)}`);
     } finally {
       endOperation();
@@ -377,6 +421,7 @@ export function useMeetingSession(
     try {
       const next = await resumeMeeting(current.sessionId);
       applySnapshot(next);
+      previewedSequence.current = null;
       try {
         await attachCapture();
       } catch (cause) {
@@ -384,7 +429,7 @@ export function useMeetingSession(
         throw cause;
       }
     } catch (cause) {
-      setError(`Microphone unavailable: ${toMessage(cause)}`);
+      setError(toMessage(cause));
     } finally {
       endOperation();
     }

@@ -1,0 +1,2418 @@
+<article lang="ja">
+  <h1 id="mvp-3-memory-architecture">
+    MVP 3 実装契約 — Sessionless Continuity, Context Health, and Selective Memory
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>
+      Status: Single Conversation Recall Toolのlocal continuity sliceは2026-08-29に実装済み。
+      Continuous Timeline、ContextStill Experience Recall、Raw drill-downを含むMVP 3全体はProposed
+    </li>
+    <li>Created: 2026-08-29</li>
+    <li>
+      SAAA baseline: <code>b2aab6f</code>。作業開始時点のworking
+      treeには別作業の未commit変更がある
+    </li>
+    <li>ContextStill baseline: <code>b20d78e</code></li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>読者: SAAA実装担当、ContextStill実装担当、レビュー担当、QA担当、運用担当</li>
+    <li>
+      完了の定義:
+      <code>M3-00</code
+      >〜<code>M3-12</code>を順に完了し、Section 18の受け入れ条件を
+      isolated fixtureと実機canaryの両方で満たすこと
+    </li>
+  </ul>
+  <p>
+    実装済みsliceは、model-visibleな<code>recall_conversation</code>一件、strict
+    input、相対・絶対時間解決、既存<code>conversation_messages</code>を正本とするFTS5
+    compatibility index、前後Turn window、opaque cursor、bounded receipt、OpenAI互換・LARMのtool
+    loopで構成する。M3-01〜M3-08およびM3-09のExperience Recall / Raw
+    drill-downは、この完了表示に含めない。
+  </p>
+  <p>
+    この文書はロードマップではなく、SAAAのMemory
+    ArchitectureとContextStill拡張を実装するための契約である。
+    実装担当は、本文に選択肢が明記されていない限り別方式を選ばない。契約どおり実装できない場合は、推測で進めず
+    Section 17のStop conditionとして計画を改訂する。
+  </p>
+  <p>
+    上位方針は<code>spec/docs/plan.html</code>のContextStill責務境界を引き継ぐ。
+    ContextStillのprivate DBをSAAAから直接参照せず、両者はversioned APIとopaque source
+    referenceだけで接続する。
+  </p>
+
+  <h2 id="1-fixed-conclusion">1. 結論と固定判断</h2>
+  <p>SAAAとContextStillの責務を次のように固定する。</p>
+  <pre><code class="language-text">SAAA
+├─ One continuous user-facing Timeline
+├─ Raw interaction events and local FTS
+├─ User Profile / User Core
+├─ Working State / Continuity Capsule
+├─ Per-turn Context Projection
+├─ Context Health Engine
+├─ Idle eligibility
+├─ Reflection source window
+├─ Pre-egress abstraction
+└─ Raw drill-down resolver
+
+ContextStill
+├─ EpisodeCard
+│  └─ success / failure / mixed / unknown
+├─ Rule
+├─ Procedure = Skill
+├─ Deduplication / consolidation
+├─ Rule / Skill induction
+├─ Knowledge lifecycle
+└─ Episode + Knowledge retrieval</code></pre>
+  <p>
+    User-facingな<em>Session</em>の概念を廃止する。通常Chatに「新しい会話」「Sessionを開く」「Sessionを再開する」操作は置かず、
+    一人のUserとAgentの関係を一つの連続Timelineとして扱う。話題変更、app再起動、Provider変更、日付変更はTimelineを分割しない。
+  </p>
+  <p>
+    実装内部には処理境界として<code>Turn</code>、<code>Runtime Run</code>、<code>Reflection Window</code>、
+    <code>Context Projection</code
+    >を残す。ただし、いずれもSessionではなく、記憶、検索、関係性の境界に使用しない。 Context
+    Projectionは毎Turn作り直す使い捨て入力であり、Provider側の会話状態へ無期限に追記しない。
+  </p>
+  <p>
+    Meeting、Coding Task、Document、Runtime
+    RunはTimelineから参照できるresourceとして残せる。resourceを開く操作は表示filterにすぎず、
+    別の会話履歴、別の人格、別のMemory partitionを作らず、Continuityをresetしない。
+  </p>
+  <p>
+    Sessionlessは「全履歴を常時Contextへ投入する」ことを意味しない。全Raw履歴はSAAAのTimelineへ保持し、
+    Context Windowには現在の指示、Policy、User Core、Continuity Capsule、Working
+    State、直近Raw、必要なRecallだけを選択投影する。 投影前後をContext Health
+    Engineで検査し、健全性を満たさないContextはProviderへ送信しない。
+  </p>
+  <p>
+    ContextStillはPersonal Memory DBにしない。人物、クライアント、予定、現在のプロジェクト進捗、User
+    Preference、会話全文を保存しない。保存するのは、将来の判断または実行へ再利用できる経験、Rule、Skillだけである。
+  </p>
+  <p>
+    ProcedureとSkillはMemory上では同義とする。既存schemaとCandidate
+    pipelineの互換性を維持するため、永続化typeは
+    <code>procedure</code>を正本とし、UI、Context
+    projection、文書上では<code>Skill</code>と呼んでよい。
+    <code>SKILL.md</code>生成は将来のexport形式であり、別のMemory
+    categoryを追加する理由にはしない。
+  </p>
+  <p>
+    scopeは新設しない。ContextStillに既存の<code>repository</code>と<code>global</code>だけを利用する。
+    repository scopeは再利用知識の適用境界であり、現在のプロジェクト状態を保存する意味ではない。
+  </p>
+  <p>
+    プロジェクト名、製品名、具体的なクライアント名、人物名、内部endpoint、絶対path、branch、ticketなどは、
+    ContextStillへ送る前に役割ベースの表現へ抽象化する。ContextStill側でも保存直前に同じ契約を再検証する。
+  </p>
+
+  <h2 id="2-baseline">2. 変更前baseline</h2>
+  <table>
+    <caption>
+      Table: SAAA baseline
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">現状</th>
+        <th scope="col">MVP 3での扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SQLite</td>
+        <td>schema version 9。Conversation、Message、Run、SettingsをSAAAが所有</td>
+        <td>
+          version 10でContinuous Timelineを追加し、既存Conversationはlegacy sourceとして移行する
+        </td>
+      </tr>
+      <tr>
+        <td>Raw Conversation</td>
+        <td>
+          <code>conversation_messages</code>へuser / assistant / system /
+          transcriptを保存
+        </td>
+        <td>全Conversationを横断するTimelineへ投影し、ContextStillへ本文を複製しない</td>
+      </tr>
+      <tr>
+        <td>User-facing Session</td>
+        <td>Conversation作成、選択、再開がUIとContext取得の境界</td>
+        <td>通常Chatから廃止し、一つのprimary continuity streamへ統合する</td>
+      </tr>
+      <tr>
+        <td>Recent Context</td>
+        <td>Conversation単位で直近100 messageを取得し、そのままProviderへ渡す</td>
+        <td>全Timelineから毎Turn生成するbounded Context Projectionへ置換する</td>
+      </tr>
+      <tr>
+        <td>Context Health</td>
+        <td>message数制限以外の検査、出力予約、汚染検知がない</td>
+        <td>budget、重複、矛盾、鮮度、provenance、照応を送信前に検証する</td>
+      </tr>
+      <tr>
+        <td>User Core</td>
+        <td>未実装</td>
+        <td>構造化Profileからbounded projectionを生成する</td>
+      </tr>
+      <tr>
+        <td>Working State</td>
+        <td>Conversationとは独立した永続Stateは未実装</td>
+        <td>TTLつきのtyped itemとして追加する</td>
+      </tr>
+      <tr>
+        <td>Background Memory</td>
+        <td>未実装</td>
+        <td>durable jobとidle coordinatorを追加する</td>
+      </tr>
+      <tr>
+        <td>ContextStill Runtime</td>
+        <td>設計参照だけで、SAAAの実行経路には未統合</td>
+        <td>versioned ingressとrecall APIだけで統合する</td>
+      </tr>
+      <tr>
+        <td>Foreground DB access</td>
+        <td>一つの<code>Arc&lt;Mutex&lt;Connection&gt;&gt;</code>を共有</td>
+        <td>Background処理用の専用connectionと短いtransactionを追加する</td>
+      </tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>
+      Table: ContextStill baseline
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">現状</th>
+        <th scope="col">MVP 3での変更</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>EpisodeCard</td>
+        <td>title、situation、action、outcome、lesson、outcome kind、refsを保持</td>
+        <td>schemaを再利用し、SAAA reflectionをsource kindへ追加する</td>
+      </tr>
+      <tr>
+        <td>Episode Distiller</td>
+        <td><code>vibe_memory</code>だけをsourceとしてqueue処理する</td>
+        <td>抽象化済みSAAA reflectionを入力可能にする</td>
+      </tr>
+      <tr>
+        <td>Episode API</td>
+        <td>register / search / fetchが存在。MCPはsearch / fetchだけを公開</td>
+        <td>active Episode直書きではなくCandidate ingressを追加する</td>
+      </tr>
+      <tr>
+        <td>Rule / Procedure</td>
+        <td>Candidate登録、cover evidence、finalize、active Knowledgeが存在</td>
+        <td>Episode群からCandidateを生成するInduction producerを追加する</td>
+      </tr>
+      <tr>
+        <td>匿名化</td>
+        <td>Knowledge finalizeでsecret、path、project identifier、internal URL等を抽象化</td>
+        <td>Episode ingressとEpisode保存にも同じcontractを適用する</td>
+      </tr>
+      <tr>
+        <td>Scope</td>
+        <td>
+          <code>repo / global</code>とopaque
+          <code>projectRef</code>をサポート
+        </td>
+        <td>新scopeを追加しない</td>
+      </tr>
+      <tr>
+        <td>Knowledge origin</td>
+        <td><code>episode_card</code>をorigin kindとして保持可能</td>
+        <td>Rule / Skill Candidateの全source Episodeを関連づける</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="3-goals">3. 今回達成すること</h2>
+  <ol>
+    <li>User-facing Sessionを廃止し、通常Chatを一つの連続Timelineとして提供する。</li>
+    <li>
+      既存Conversationを失わず、legacy sourceとして一つのTimelineから横断参照できるようにする。
+    </li>
+    <li>Raw interaction eventをSAAA SQLiteへSource of Truthとして残す。</li>
+    <li>
+      Agent Policy、User Core、Continuity Capsule、Working State、Recent
+      Rawをpriority付きでContextへ投影する。
+    </li>
+    <li>
+      Providerの実効Context上限から出力予約と安全marginを先に引き、残りだけを入力budgetとして使う。
+    </li>
+    <li>毎Turn Contextを再構築し、重複、古い情報、矛盾、無関係なMemory、未解決照応を検査する。</li>
+    <li>
+      全Timelineを横断するlocal Continuity Recallと、ContextStillのExperience Recallを分離する。
+    </li>
+    <li>明示的・永続的Preferenceを構造化し、現在の明示指示より低い優先順位で利用する。</li>
+    <li>Turn完了時にMemory整理jobをtransactionalにenqueueする。</li>
+    <li>
+      Agent待機時だけ、Profile候補抽出、Experience Reflection、Working State
+      cleanupをboundedに実行する。
+    </li>
+    <li>再利用価値がないConversationへ<code>NO_MEMORY</code>を返す。</li>
+    <li>ContextStillへ送る前に、固有名詞とsensitive valueを抽象化または除去する。</li>
+    <li>抽象化済みExperience CandidateをContextStillのEpisode pipelineへ冪等に登録する。</li>
+    <li>Episode群からRule CandidateとSkill Candidateを自動生成する。</li>
+    <li>重いretrievalを毎turn実行せず、必要時だけEpisodeとKnowledgeをrecallする。</li>
+    <li>Episodeのopaque source referenceから、SAAA内のRaw Timelineへdrill-downできる。</li>
+    <li>ContextStill停止、Memory worker失敗、抽象化失敗が通常会話を停止させない。</li>
+  </ol>
+
+  <h2 id="4-non-goals">4. 非要件</h2>
+  <ul>
+    <li>Session廃止を、全Raw履歴の常時Context投入として実装しない。</li>
+    <li>内部のTurn、Run、Reflection WindowをUser-facing Sessionとして再導入しない。</li>
+    <li>ContextStillをPersonal Memory DBへ変更しない。</li>
+    <li>
+      User
+      Profile、Interest、人物関係、予定、Task、Contact、Fileの現在値をContextStillへ保存しない。
+    </li>
+    <li>SAAAとContextStillでSQLite fileまたはprivate tableを共有しない。</li>
+    <li>
+      <code>user</code
+      >、<code>project</code>等の新scopeを追加しない。
+    </li>
+    <li>Conversation全文、Meeting全文、Tool Result全文をContextStillへ送信しない。</li>
+    <li>保存前の抽象化に失敗した内容を「後で直す」前提で保存しない。</li>
+    <li>すべてのTurnからEpisodeを生成しない。</li>
+    <li>一つのEpisodeだけを根拠に、RuleまたはSkillを無条件でactive化しない。</li>
+    <li>Vector SearchをChat起動またはMemory機能の必須dependencyにしない。</li>
+    <li>巨大Knowledge Graph、人物Graph、Conversation Graphを導入しない。</li>
+    <li>初期MVPでRaw Conversationの自動削除policyを変更しない。</li>
+    <li>Meetingのexplicit-save / discard policyを変更しない。</li>
+  </ul>
+
+  <h2 id="5-memory-types">5. Memory種別と優先順位</h2>
+  <table>
+    <caption>
+      Table: Memory ownership and context residency
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">種別</th>
+        <th scope="col">Source of Truth</th>
+        <th scope="col">Context residency</th>
+        <th scope="col">用途</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Agent Policy</td>
+        <td>Git管理されたSAAA config</td>
+        <td>常駐、version付き</td>
+        <td>Role、Privacy、Tool、Safety、Autonomy</td>
+      </tr>
+      <tr>
+        <td>User Profile</td>
+        <td>SAAA SQLite</td>
+        <td>User Coreだけ常駐</td>
+        <td>明示Preferenceと慎重に扱う推測候補</td>
+      </tr>
+      <tr>
+        <td>Working State</td>
+        <td>SAAA SQLite</td>
+        <td>active itemだけ</td>
+        <td>現在の活動、open loop、直近の判断</td>
+      </tr>
+      <tr>
+        <td>Continuity Capsule</td>
+        <td>SAAA SQLite</td>
+        <td>source付きactive itemだけ</td>
+        <td>現在の照応、制約、open loop、commitment、直近判断</td>
+      </tr>
+      <tr>
+        <td>Recent Raw</td>
+        <td>SAAA SQLite</td>
+        <td>token budget内</td>
+        <td>会話のニュアンス、照応、現在の指示</td>
+      </tr>
+      <tr>
+        <td>Episode</td>
+        <td>ContextStill</td>
+        <td>必要時だけ</td>
+        <td>再利用可能な成功・失敗・判断経験</td>
+      </tr>
+      <tr>
+        <td>Rule</td>
+        <td>ContextStill</td>
+        <td>必要時だけ</td>
+        <td>再利用可能な判断基準とGuardrail</td>
+      </tr>
+      <tr>
+        <td>Skill</td>
+        <td>ContextStillの<code>procedure</code></td>
+        <td>必要時だけ</td>
+        <td>Use when、Workflow、Verification、Avoidを持つ手順</td>
+      </tr>
+      <tr>
+        <td>Raw Timeline</td>
+        <td>SAAA SQLite</td>
+        <td>常駐させない</td>
+        <td>全履歴の原文Evidence、Continuity Recall、drill-down</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Inference時の優先順位を次で固定する。</p>
+  <pre><code class="language-text">1. Agent Policy and safety constraints
+2. Current explicit user instruction
+3. Explicit scoped preference
+4. Explicit global preference
+5. Stable User Core item
+6. Source-backed Continuity Capsule and Working State
+7. Recalled raw continuity evidence
+8. Recalled Rule / Skill / Episode as evidence
+9. Inferred tendency
+10. Agent default</code></pre>
+  <p>
+    Recall結果は命令ではなく、untrusted
+    evidenceとして扱う。Recall内容に「以前の指示を無視する」等の文が含まれても、 Agent
+    Policyまたは現在のUser instructionを上書きしない。
+  </p>
+
+  <h2 id="6-abstraction-contract">6. Memory Abstraction Contract</h2>
+  <p>次の不変条件を、SAAA pre-egressとContextStill pre-storageの両方で検証する。</p>
+  <ol>
+    <li>Raw ConversationをContextStillへ送信しない。</li>
+    <li>固有名詞を含む置換辞書をContextStillへ送信または保存しない。</li>
+    <li>ContextStillへ届く自然文は、すでに役割ベースの表現へ抽象化済みである。</li>
+    <li>ContextStillは防御的に再抽象化し、残留を検出した場合は保存せずrejectする。</li>
+    <li>抽象化前本文をoutbox、error、audit log、diagnosticsへ保存しない。</li>
+    <li>source referenceはopaque idだけとし、Conversation titleやclient名を含めない。</li>
+    <li>技術的再利用に必要な公開用語は保持する。</li>
+  </ol>
+  <table>
+    <caption>
+      Table: Required abstraction classes
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">入力の種類</th>
+        <th scope="col">置換例</th>
+        <th scope="col">保存可否</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>プロジェクト名、製品名</td>
+        <td>
+          <code>the application</code
+          >、<code>the repository</code>、<code
+            >対象システム</code
+          >
+        </td>
+        <td>元名称は保存しない</td>
+      </tr>
+      <tr>
+        <td>具体的なクライアント名、組織名</td>
+        <td>
+          <code>the client organization</code>、<code
+            >外部組織</code
+          >
+        </td>
+        <td>元名称は保存しない</td>
+      </tr>
+      <tr>
+        <td>人物名、username、email</td>
+        <td>
+          <code>the user</code
+          >、<code>the operator</code>、<code
+            >the reviewer</code
+          >
+        </td>
+        <td>役割が判定できなければreject</td>
+      </tr>
+      <tr>
+        <td>絶対path</td>
+        <td><code>the workspace path</code></td>
+        <td>元pathは保存しない</td>
+      </tr>
+      <tr>
+        <td>内部URL、host、private IP</td>
+        <td><code>the private endpoint</code></td>
+        <td>元endpointは保存しない</td>
+      </tr>
+      <tr>
+        <td>branch、ticket、issue id</td>
+        <td><code>the change request</code></td>
+        <td>元識別子は保存しない</td>
+      </tr>
+      <tr>
+        <td>secret、token、credential</td>
+        <td><code>[REMOVED SENSITIVE DATA]</code></td>
+        <td>必ずredact</td>
+      </tr>
+      <tr>
+        <td>SQLite、Rust、React等の公開技術名</td>
+        <td>置換しない</td>
+        <td>保存可能</td>
+      </tr>
+      <tr>
+        <td>公開API名、一般的なcommand名</td>
+        <td>置換しない</td>
+        <td>再利用に必要な場合だけ保存可能</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    repository scopeを指定する場合、SAAAからはopaque
+    <code>projectRef</code>を送る。
+    <code>repoPath</code
+    >と<code>repoKey</code>をEpisode本文、ref、metadataへ複製しない。global
+    scopeにはrepository identityを付けない。
+  </p>
+  <p>
+    abstraction resultには元文字列ではなく、version、replacement kind、count、residual
+    check結果だけを記録する。
+  </p>
+  <pre><code class="language-json">{
+  "version": 1,
+  "applied": true,
+  "replacementKinds": ["project_identifier", "client_identifier", "absolute_path"],
+  "replacementCounts": {
+    "project_identifier": 2,
+    "client_identifier": 1,
+    "absolute_path": 1
+  },
+  "residualIdentifierDetected": false
+}</code></pre>
+
+  <h2 id="7-saaa-modules">7. SAAA module構成</h2>
+  <p>
+    <code>src-tauri/src/memory/</code
+    >を新設し、巨大な<code>lib.rs</code>へMemory実装を追加しない。
+  </p>
+  <pre><code class="language-text">src-tauri/src/memory/
+├─ mod.rs
+├─ contracts.rs
+├─ repository.rs
+├─ timeline.rs
+├─ continuity_capsule.rs
+├─ context_builder.rs
+├─ context_health.rs
+├─ profile.rs
+├─ working_state.rs
+├─ idle_coordinator.rs
+├─ reflection.rs
+├─ abstraction.rs
+├─ context_still_client.rs
+├─ recall.rs
+├─ raw_recall.rs
+└─ observability.rs</code></pre>
+  <p>
+    Agent runtime側には<code>src-tauri/src/runtime/agent_tools.rs</code>を追加し、model-visible
+    toolの登録、strict input parse、bounded output変換だけを担当させる。 SQLite検索と時間解決は<code
+      >memory</code
+    >
+    domainからruntime adapterへ漏らさない。
+  </p>
+  <table>
+    <caption>
+      Table: SAAA module responsibilities
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">module</th>
+        <th scope="col">責務</th>
+        <th scope="col">禁止</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>contracts</code></td>
+        <td>bounded enum、input/output、state transition</td>
+        <td>SQLite、HTTP、Tauri eventへ依存しない</td>
+      </tr>
+      <tr>
+        <td><code>repository</code></td>
+        <td>schema v10 tableへの短いtransaction</td>
+        <td>LLMまたはContextStillを呼ばない</td>
+      </tr>
+      <tr>
+        <td><code>timeline</code></td>
+        <td>primary stream、legacy import、Turn、event順序、pagination</td>
+        <td>Conversation idを検索またはContextの境界にしない</td>
+      </tr>
+      <tr>
+        <td><code>continuity_capsule</code></td>
+        <td>照応、制約、open loop、commitmentをsource付きでbounded保持</td>
+        <td>前版Capsuleだけから次版を要約しない</td>
+      </tr>
+      <tr>
+        <td><code>context_builder</code></td>
+        <td>candidate収集、優先順位、dynamic token budget、projection</td>
+        <td>Memoryを新規作成しない</td>
+      </tr>
+      <tr>
+        <td><code>context_health</code></td>
+        <td>重複、矛盾、鮮度、照応、provenance、output reserveを検査</td>
+        <td>RED判定のEnvelopeをProviderへ通さない</td>
+      </tr>
+      <tr>
+        <td><code>profile</code></td>
+        <td>Preference lifecycleとUser Core projection</td>
+        <td>inferred itemを初期MVPで自動active化しない</td>
+      </tr>
+      <tr>
+        <td><code>idle_coordinator</code></td>
+        <td>idle gate、job claim、cancel、quota</td>
+        <td>Memory内容を解釈しない</td>
+      </tr>
+      <tr>
+        <td><code>reflection</code></td>
+        <td>source windowからNO_MEMORYまたはtyped candidateを生成</td>
+        <td>ContextStillへ直接書き込まない</td>
+      </tr>
+      <tr>
+        <td><code>abstraction</code></td>
+        <td>固有名詞抽象化、secret redaction、residual gate</td>
+        <td>抽象化前後の対応表を永続化しない</td>
+      </tr>
+      <tr>
+        <td><code>context_still_client</code></td>
+        <td>versioned HTTP、timeout、receipt、retry classification</td>
+        <td>ContextStill DBを参照しない</td>
+      </tr>
+      <tr>
+        <td><code>recall</code></td>
+        <td>
+          単一<code>recall_conversation</code>のuse case、Dual Recallの必要性判断、safe
+          projection
+        </td>
+        <td>SQL / FTS構文またはRecall結果をsystem instructionとして扱わない</td>
+      </tr>
+      <tr>
+        <td><code>raw_recall</code></td>
+        <td>相対時間解決、全Timelineのlocal FTS、Turn window結合、source解決</td>
+        <td>ContextStillまたはNetworkへRaw queryを送らない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="8-sqlite-v10">8. SAAA SQLite v10</h2>
+  <p>
+    実装開始時に現行<code>user_version</code>が9であることを確認する。9以外ならmigration番号を推測せず、
+    baselineを更新して本Sectionを改訂する。migration前backup、transaction、reopen検証を既存方式どおり維持する。
+  </p>
+  <h3 id="81-continuous-timeline">8.1 Continuous Timeline</h3>
+  <pre><code class="language-sql">CREATE TABLE continuity_streams (
+  id TEXT PRIMARY KEY,
+  stream_kind TEXT NOT NULL UNIQUE CHECK(stream_kind = 'primary'),
+  status TEXT NOT NULL CHECK(status IN ('active','archived')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE continuity_turns (
+  id TEXT PRIMARY KEY,
+  stream_id TEXT NOT NULL,
+  turn_status TEXT NOT NULL CHECK(turn_status IN (
+    'started','completed','failed','cancelled'
+  )),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(stream_id) REFERENCES continuity_streams(id)
+);
+
+CREATE TABLE timeline_events (
+  id TEXT PRIMARY KEY,
+  stream_id TEXT NOT NULL,
+  turn_id TEXT,
+  ordinal INTEGER NOT NULL CHECK(ordinal &gt;= 0),
+  role TEXT NOT NULL CHECK(role IN (
+    'user','assistant','system','tool','transcript'
+  )),
+  event_kind TEXT NOT NULL CHECK(event_kind IN (
+    'message','tool_call','tool_result','runtime_note','import_marker'
+  )),
+  content_text TEXT NOT NULL,
+  content_digest TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('native','legacy_import')),
+  tool_name TEXT,
+  tool_call_ref TEXT,
+  legacy_conversation_id TEXT,
+  legacy_message_id TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(stream_id) REFERENCES continuity_streams(id),
+  FOREIGN KEY(turn_id) REFERENCES continuity_turns(id),
+  CHECK(
+    (
+      event_kind IN ('tool_call','tool_result')
+      AND tool_name IS NOT NULL
+      AND tool_call_ref IS NOT NULL
+    ) OR (
+      event_kind NOT IN ('tool_call','tool_result')
+      AND tool_name IS NULL
+      AND tool_call_ref IS NULL
+    )
+  ),
+  UNIQUE(stream_id, ordinal),
+  UNIQUE(stream_id, tool_call_ref, event_kind),
+  UNIQUE(legacy_message_id)
+);
+
+CREATE VIRTUAL TABLE timeline_events_fts USING fts5(
+  event_id UNINDEXED,
+  content_text,
+  tokenize = 'trigram'
+);
+
+CREATE INDEX timeline_events_stream_time_ordinal_idx
+ON timeline_events(stream_id, created_at, ordinal);</code></pre>
+  <ul>
+    <li>
+      <code>primary</code> streamはlocal profile
+      DBごとに一件だけ作る。通常Chatから二件目を作成するAPIを公開しない。
+    </li>
+    <li>
+      v9の全<code>conversation_messages</code>を<code>created_at</code>、既存順序、idの順で安定sortし、
+      <code>legacy_import</code>
+      eventとしてcopyする。件数、digest、先頭・末尾時刻を検証後、新規Chat書き込み先をTimelineへ切り替える。
+    </li>
+    <li>
+      legacy importではuser eventから次のuser event直前までを一つのTurnへgroup化し、orphan
+      eventにはsynthetic completed Turnを割り当てる。
+    </li>
+    <li>
+      native tool call / resultは同じopaque <code>tool_call_ref</code>とbounded
+      <code>tool_name</code>を持ち、callとresultを各一件に制限する。legacy
+      tool eventに相関情報がない場合は安全に対応できる範囲だけを
+      pair化し、不明な場合は独立したopaque refを付けてContext上で未完了Toolとして保護しない。
+    </li>
+    <li>
+      既存<code>conversations</code>と<code>conversation_messages</code>はmigration直後に削除せずread-only
+      legacy archiveとして残す。
+      互換adapterは移行期間中だけ利用し、新しいContext、Recall、Reflectionの絞り込み条件に<code>conversation_id</code>を使わない。
+    </li>
+    <li>
+      FTS rowはinsert / update / delete
+      triggerで同期し、migration後にrebuildして件数を検証する。anchor候補にはuser / assistantの
+      <code>message</code
+      >とUserが保存確定した<code>transcript</code>だけをindexする。system、runtime
+      note、tool call / result、Recall receiptはindexせず、必要なTool eventはTurn
+      windowのneighborとしてのみ取得する。 検索結果はevent
+      idとscoreだけを返し、本文と前後eventは通常tableからboundedに取得する。
+    </li>
+    <li>
+      <code>created_at</code>はUTCの固定幅RFC
+      3339へ正規化して保存する。相対時間はUser
+      timezoneで解決し、UTCの半開区間<code>[from, toExclusive)</code>に変換してから
+      <code>timeline_events_stream_time_ordinal_idx</code>で絞り込む。
+    </li>
+    <li>
+      migration前にSQLiteのtrigram tokenizerをcapability
+      probeする。未対応なら実装を止めて代替tokenizerをADRで決め、短すぎるqueryはbounded LIKE
+      fallbackを使う。
+    </li>
+    <li>
+      Runtime
+      Runは<code>turn_id</code>へ関連づける。TurnとRunは実行単位であり、Userに見えるSessionまたはRecall境界ではない。
+    </li>
+  </ul>
+
+  <h3 id="82-continuity-capsule-items">8.2 continuity_capsule_items</h3>
+  <pre><code class="language-sql">CREATE TABLE continuity_capsule_items (
+  id TEXT PRIMARY KEY,
+  stream_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK(item_kind IN (
+    'active_referent','constraint','open_loop','commitment','recent_decision'
+  )),
+  value_json TEXT NOT NULL CHECK(json_valid(value_json)),
+  status TEXT NOT NULL CHECK(status IN (
+    'active','resolved','superseded','stale','deleted'
+  )),
+  priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN -100 AND 100),
+  source_start_event_id TEXT NOT NULL,
+  source_end_event_id TEXT NOT NULL,
+  valid_from TEXT NOT NULL,
+  valid_until TEXT,
+  revision INTEGER NOT NULL CHECK(revision &gt; 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(stream_id) REFERENCES continuity_streams(id),
+  FOREIGN KEY(source_start_event_id) REFERENCES timeline_events(id),
+  FOREIGN KEY(source_end_event_id) REFERENCES timeline_events(id)
+);</code></pre>
+  <ul>
+    <li>
+      Capsuleは長期記憶ではなく、Recent Rawから外れたactive continuityを保持する短い索引である。
+    </li>
+    <li>各itemはRaw source rangeを必須とし、sourceが失われたitemは投影しない。</li>
+    <li>
+      次revisionを前revisionだけから生成するsummary-of-summaryを禁止する。Raw sourceとactive
+      itemを再読して再構築する。
+    </li>
+    <li>
+      同じkeyの矛盾を黙って上書きせず、旧itemをsupersededにするかunresolved conflictとしてHealth
+      Engineへ渡す。
+    </li>
+  </ul>
+
+  <h3 id="83-user-profile-items">8.3 user_profile_items</h3>
+  <pre><code class="language-sql">CREATE TABLE user_profile_items (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value_json TEXT NOT NULL CHECK(json_valid(value_json)),
+  scope TEXT NOT NULL CHECK(scope IN (
+    'global','technical','coding','casual','writing','planning'
+  )),
+  source_type TEXT NOT NULL CHECK(source_type IN ('explicit','inferred','observed')),
+  confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 100),
+  status TEXT NOT NULL CHECK(status IN (
+    'candidate','active','superseded','rejected','deleted'
+  )),
+  priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN -100 AND 100),
+  projection_eligible INTEGER NOT NULL DEFAULT 0 CHECK(projection_eligible IN (0,1)),
+  source_event_id TEXT NOT NULL,
+  supersedes_id TEXT,
+  valid_from TEXT NOT NULL,
+  valid_until TEXT,
+  expires_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_confirmed_at TEXT,
+  FOREIGN KEY(source_event_id) REFERENCES timeline_events(id),
+  FOREIGN KEY(supersedes_id) REFERENCES user_profile_items(id)
+);</code></pre>
+  <ul>
+    <li>
+      同じ<code>category + key + scope</code>にactive itemを一件だけ許すpartial unique
+      indexを作る。
+    </li>
+    <li>
+      <code>explicit</code>はprovenanceであり、confidence
+      100を自動設定する理由にはしない。
+    </li>
+    <li>明示的かつ永続的なPreferenceだけを自動activeかつprojection eligibleにできる。</li>
+    <li>「今回は」「この回答では」等のtemporary instructionはProfileへ保存しない。</li>
+    <li>inferred / observedはcandidateに留め、初期MVPではUser Coreへ自動投入しない。</li>
+    <li>
+      Settingsからの明示編集は、非表示のlocal
+      <code>runtime_note</code> eventを同じtransactionで作りprovenanceにする。
+    </li>
+    <li>supersedeは旧item更新と新item挿入を同じtransactionで行う。</li>
+  </ul>
+
+  <h3 id="84-working-state-items">8.4 working_state_items</h3>
+  <pre><code class="language-sql">CREATE TABLE working_state_items (
+  id TEXT PRIMARY KEY,
+  item_kind TEXT NOT NULL CHECK(item_kind IN (
+    'current_activity','active_topic','open_loop','recent_decision'
+  )),
+  key TEXT NOT NULL,
+  value_json TEXT NOT NULL CHECK(json_valid(value_json)),
+  status TEXT NOT NULL CHECK(status IN ('active','resolved','expired','deleted')),
+  priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN -100 AND 100),
+  source_event_id TEXT NOT NULL,
+  expires_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_touched_at TEXT NOT NULL,
+  FOREIGN KEY(source_event_id) REFERENCES timeline_events(id)
+);</code></pre>
+  <p>
+    default TTLはcurrent activity 24時間、active topic 72時間、recent decision 7日とする。open
+    loopはTTLだけで削除せず、 inactive化して再確認対象にする。TTLはconfig化する。
+  </p>
+
+  <h3 id="85-memory-reflection-jobs">8.5 memory_reflection_jobs</h3>
+  <pre><code class="language-sql">CREATE TABLE memory_reflection_jobs (
+  id TEXT PRIMARY KEY,
+  stream_id TEXT NOT NULL,
+  job_kind TEXT NOT NULL CHECK(job_kind IN (
+    'experience_reflection','profile_candidate','working_state_cleanup',
+    'continuity_capsule_refresh','timeline_index_maintenance'
+  )),
+  source_start_event_id TEXT NOT NULL,
+  source_end_event_id TEXT NOT NULL,
+  source_digest TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (
+    'pending','running','completed','skipped','failed','paused'
+  )),
+  priority INTEGER NOT NULL DEFAULT 50 CHECK(priority BETWEEN 0 AND 100),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count &gt;= 0),
+  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK(max_attempts BETWEEN 1 AND 10),
+  next_run_at TEXT,
+  locked_by TEXT,
+  locked_at TEXT,
+  heartbeat_at TEXT,
+  last_outcome TEXT,
+  last_error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(stream_id) REFERENCES continuity_streams(id),
+  FOREIGN KEY(source_start_event_id) REFERENCES timeline_events(id),
+  FOREIGN KEY(source_end_event_id) REFERENCES timeline_events(id),
+  UNIQUE(job_kind, source_digest)
+);</code></pre>
+  <p>
+    source digestはevent id、role、content digest、reflection contract
+    versionから作る。Raw本文をqueue rowへ複製しない。 failed jobのerrorはbounded
+    codeだけとし、Provider responseまたはConversation本文を保存しない。
+  </p>
+
+  <h3 id="86-memory-outbox">8.6 memory_outbox</h3>
+  <pre><code class="language-sql">CREATE TABLE memory_outbox (
+  id TEXT PRIMARY KEY,
+  reflection_job_id TEXT NOT NULL,
+  destination TEXT NOT NULL CHECK(destination = 'contextstill'),
+  contract_version INTEGER NOT NULL CHECK(contract_version = 1),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  source_ref TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+  abstraction_version INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (
+    'pending','sending','accepted','skipped','failed','paused'
+  )),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count &gt;= 0),
+  next_run_at TEXT,
+  receipt_ref TEXT,
+  last_error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  accepted_at TEXT,
+  FOREIGN KEY(reflection_job_id) REFERENCES memory_reflection_jobs(id) ON DELETE CASCADE
+);</code></pre>
+  <ul>
+    <li><code>payload_json</code>には抽象化済みCandidateだけを保存する。</li>
+    <li>
+      <code>source_ref</code
+      >は<code>saaa://memory-source/&lt;opaque-id&gt;</code>形式とする。
+    </li>
+    <li>outbox insertとreflection job完了を同じtransactionで確定する。</li>
+    <li>HTTP timeout時に別idempotency keyで再送しない。</li>
+    <li>receipt取得後の同一送信はContextStill側が同じreceiptを返す。</li>
+  </ul>
+
+  <h3 id="87-memory-decision-events">8.7 memory_decision_events</h3>
+  <pre><code class="language-sql">CREATE TABLE memory_decision_events (
+  id TEXT PRIMARY KEY,
+  job_id TEXT,
+  event_kind TEXT NOT NULL CHECK(event_kind IN (
+    'reflection_decided','candidate_abstracted','candidate_rejected',
+    'outbox_accepted','recall_requested','recall_completed','raw_drill_down'
+  )),
+  reason_code TEXT NOT NULL,
+  counts_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(counts_json)),
+  duration_ms INTEGER CHECK(duration_ms IS NULL OR duration_ms &gt;= 0),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(job_id) REFERENCES memory_reflection_jobs(id) ON DELETE SET NULL
+);</code></pre>
+  <p>本文、固有名詞、query全文、Recall本文をこのtableへ保存しない。</p>
+
+  <h3 id="88-context-projection-events">8.8 context_projection_events</h3>
+  <pre><code class="language-sql">CREATE TABLE context_projection_events (
+  id TEXT PRIMARY KEY,
+  turn_id TEXT NOT NULL,
+  provider_profile TEXT NOT NULL,
+  health_state TEXT NOT NULL CHECK(health_state IN ('green','yellow','red')),
+  input_budget_tokens INTEGER NOT NULL CHECK(input_budget_tokens &gt; 0),
+  projected_tokens INTEGER NOT NULL CHECK(projected_tokens &gt;= 0),
+  output_reserve_tokens INTEGER NOT NULL CHECK(output_reserve_tokens &gt; 0),
+  section_counts_json TEXT NOT NULL CHECK(json_valid(section_counts_json)),
+  health_signals_json TEXT NOT NULL CHECK(json_valid(health_signals_json)),
+  repair_action TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(turn_id) REFERENCES continuity_turns(id)
+);</code></pre>
+  <p>
+    Context本文、Raw
+    query、固有名詞は保存しない。token数、重複数、矛盾数、未解決照応数、source欠落数、
+    eviction数、実行したrepair actionだけをboundedに記録する。
+  </p>
+
+  <h2 id="9-context-builder">9. Context Builder</h2>
+  <h3 id="91-per-turn-projection">9.1 Per-turn Context Projection</h3>
+  <p>
+    Provider
+    adapterが直接historyを組み立てる処理と、Provider側Sessionへ履歴を追記し続ける処理を廃止する。
+    全Providerは、SAAAがTimelineから毎Turn新規生成した一つの<code>ContextEnvelope</code>だけを受け取る。
+  </p>
+  <pre><code class="language-text">ContextEnvelope
+├─ policy: Agent Policy + version
+├─ currentInstruction: exactly once, highest user priority
+├─ userCore: bounded projection + profile revision
+├─ continuityCapsule: source-backed active continuity
+├─ situation: Current Situation
+├─ workingState: active bounded items
+├─ rawContinuityEvidence: optional local Timeline evidence
+├─ experienceEvidence: optional Episode / Rule / Skill evidence
+├─ recentRaw: token-budgeted tail from the one Timeline
+└─ healthReport: counts and provenance manifest, not prompt prose</code></pre>
+  <p>Context生成順序を次で固定する。</p>
+  <ol>
+    <li>
+      Policy、Current、User Core、Capsule、Working State、Recent Raw、二種類のRecall候補を収集する。
+    </li>
+    <li>source id、content digest、semantic keyで正規化・重複排除する。</li>
+    <li>superseded、expired、stale、無関係なitemを除外し、矛盾と未解決照応を検出する。</li>
+    <li>Provider profileからdynamic input budgetを計算し、protected itemを先に確保する。</li>
+    <li>role、trust、source、validityを明示してserializationする。</li>
+    <li>完成したEnvelopeを再計測し、Context Healthのhard invariantを検証する。</li>
+  </ol>
+  <ul>
+    <li>
+      Current user messageは<code>currentInstruction</code>へ一回だけ入れ、Recent
+      Rawから同じevent idを除外する。
+    </li>
+    <li>直前の完全なuser / assistant pairと未完了Tool correlationを途中で分断しない。</li>
+    <li>
+      Topic変更ではTimelineを分割しない。relevanceを下げてinactive
+      topicを投影対象から外すが、Rawと未解決open loopは保持する。
+    </li>
+    <li>大きなTool Resultは全文を再投入せず、source id、結果種別、必要fragmentだけを投影する。</li>
+    <li>
+      Agent PolicyとUser Coreはversion
+      keyでcacheできるが、最終EnvelopeとHealth判定は毎Turn作り直す。
+    </li>
+    <li>
+      selectable itemの初期relevanceは<code>priority + active topic match + explicit reference + recency - stale penalty</code>で決める。
+      threshold未満は投影せず、Fast PathのためにForeground LLM scoringを必須にしない。
+    </li>
+  </ul>
+
+  <h3 id="92-dynamic-token-budget">9.2 Dynamic Token Budget</h3>
+  <pre><code class="language-text">effectiveContext = providerAdvertisedContext - adapterOverhead
+outputReserve    = max(requestedMaxOutput, ceil(effectiveContext * 0.20))
+safetyMargin     = ceil(effectiveContext * 0.10)
+inputBudget      = effectiveContext - outputReserve - safetyMargin</code></pre>
+  <ul>
+    <li>
+      Provider上限が取得できない場合は、検証済みprovider
+      profileのうち最小の上限を使う。推測値で上限を広げない。
+    </li>
+    <li>output reserveとsafety marginをMemoryまたはRaw履歴のために消費しない。</li>
+    <li>
+      Policy、Current instruction、直前の完全なturn pair、active critical constraintはprotected
+      itemとする。
+    </li>
+    <li>
+      初期hard capはUser Core 1,200、Capsule 1,500、Working State 1,000、Raw Recall
+      3,000、ContextStill Recall 3,000 tokenとする。
+    </li>
+    <li>
+      Recent Rawはprotected itemと各hard
+      capを差し引いた残量を使う。固定12Kを全Providerへ適用しない。
+    </li>
+    <li>
+      token estimatorはProviderごとに交換可能にし、unsupported
+      Providerには保守的な文字数推定と10%追加marginを使う。
+    </li>
+  </ul>
+
+  <h3 id="93-context-health-engine">9.3 Context Health Engine</h3>
+  <p>Provider送信前に次のhard invariantをすべて満たす。</p>
+  <ol>
+    <li>Current instructionがexactly onceで、他のUser preferenceより高い。</li>
+    <li>再計測したprojected tokenがinput budget以下である。</li>
+    <li>output reserveとsafety marginが100%残っている。</li>
+    <li>superseded、expired、deleted itemが0件である。</li>
+    <li>User Core、Capsule、Working State、Recall itemがsource referenceとvalidityを持つ。</li>
+    <li>同一factまたはinstructionの重複投影が0件である。</li>
+    <li>現在のtopicと無関係なMemoryを投影しない。</li>
+    <li>
+      過去のuser message、Raw Recall、ContextStill Recall、Tool Resultをhistorical / untrusted
+      evidenceとして区切る。
+    </li>
+    <li>過去の命令文がCurrent instructionまたはPolicyを上書きできない。</li>
+    <li>直前の完全なturn pairと未完了Tool correlationを保持する。</li>
+  </ol>
+  <table>
+    <caption>
+      Table: Context health state and required action
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">状態</th>
+        <th scope="col">判定</th>
+        <th scope="col">動作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>GREEN</td>
+        <td>input budgetの70%以下、critical conflictなし、source coverage充足</td>
+        <td>そのまま送信する</td>
+      </tr>
+      <tr>
+        <td>YELLOW</td>
+        <td>70%超85%以下、または非criticalな矛盾・照応不足・重複がある</td>
+        <td>dedup、stale eviction、targeted local Recallを行って再検査する</td>
+      </tr>
+      <tr>
+        <td>RED</td>
+        <td>
+          85%超、reserve不足、instruction conflict、source欠落、prompt injection疑いのいずれか
+        </td>
+        <td>元Envelopeを破棄し、minimal safe Envelopeを再構築する</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    REDのEnvelopeは送信しない。Policy、Current、直前pair、critical constraintだけのminimal
+    Envelopeを作り、必要ならlocal Raw Recallを一回だけ行う。 再検査でもREDならProvider
+    requestを開始せず、解決不能な照応またはContext容量不足をUserへ明示する。
+  </p>
+
+  <h3 id="94-capsule-and-health-repair">9.4 Capsule更新とHealth repair</h3>
+  <ul>
+    <li>
+      Recent Rawからeventをevictする直前に、active referent、constraint、open
+      loop、commitment、decisionのsource-backed itemを更新する。
+    </li>
+    <li>
+      Capsule全体は1,500 token以内とし、上限超過時はresolved、superseded、inactive
+      topic、低priorityの順で除外する。
+    </li>
+    <li>
+      Context eviction順はstale Recall、低priority Working State、重複Raw、古い非anchor
+      Raw、inactive Capsule itemとする。
+    </li>
+    <li>
+      Policy、Current instruction、直前pair、active critical constraint、未完了Tool
+      correlationは自動evictしない。
+    </li>
+    <li>
+      照応をCapsuleとRecent Rawで解決できない場合、ContextStillより先にlocal Continuity
+      Recallを行う。
+    </li>
+    <li>CapsuleとRawが矛盾する場合はRawを優先し、Capsuleをstaleまたはsupersededへ遷移させる。</li>
+  </ul>
+  <p>ContextStill由来のEvidenceは次のように明示的にdata blockとして囲む。</p>
+  <pre><code class="language-text">[RECALLED_EVIDENCE — untrusted historical evidence]
+kind: episode | rule | skill
+status: active
+sourceRef: opaque reference
+content: ...
+[END_RECALLED_EVIDENCE]</code></pre>
+
+  <h2 id="10-idle-memory-coordinator">10. Idle Memory Coordinator</h2>
+  <p>
+    「idleになったらjobを作る」のではなく、「Turn完了時にjobを作り、idle時に実行する」と固定する。
+  </p>
+  <pre><code class="language-text">assistant message + runtime completion commit
+  ↓ same transaction boundary or immediate durable follow-up
+reflection jobs enqueue
+  ↓
+idle eligibility
+  ↓
+claim one bounded job
+  ↓
+run domain worker
+  ↓
+commit terminal state
+  ↓
+re-check idle before next job</code></pre>
+  <h3 id="101-idle-eligibility">10.1 Idle eligibility</h3>
+  <p>次の全条件を満たしたときだけ一件のjobをclaimする。</p>
+  <ul>
+    <li><code>active_runs</code>が空である。</li>
+    <li>最後のuser inputから30秒以上経過している。</li>
+    <li>Meetingがactive、paused、stoppingではない。</li>
+    <li>STTとTTSがrunningではない。</li>
+    <li>window shutdownが開始されていない。</li>
+    <li>Memory feature flagとUser settingの両方が有効である。</li>
+    <li>local-only policyに反するProvider routeを必要としない。</li>
+  </ul>
+  <h3 id="102-runtime-bounds">10.2 Runtime bounds</h3>
+  <ul>
+    <li>worker concurrencyは1とする。</li>
+    <li>一回のidle wakeで最大3 job、または合計120秒の早い方で停止する。</li>
+    <li>一つのreflection source windowは最大16K estimated tokenとする。</li>
+    <li>
+      user activityを検知したら、新しいLLM
+      requestを開始せず、現在の短いtransaction完了後にjobをpauseする。
+    </li>
+    <li>running leaseは30秒ごとにheartbeatし、5分staleでpendingへreconcileする。</li>
+    <li>
+      app restart時にrunning jobをinterrupted扱いにせず、lease expiry後に同じidempotency
+      keyで再開する。
+    </li>
+  </ul>
+  <h3 id="103-domain-workers">10.3 独立した整理domain</h3>
+  <p>
+    jobの入力は<code>stream_id + event range</code>で指定し、ConversationまたはSessionを単位にしない。
+    Reflection
+    Windowは処理量を制限するための一時的な範囲であり、必要なら旧Conversation境界をまたぐ。
+  </p>
+  <table>
+    <caption>
+      Table: Idle domain workers
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">domain</th>
+        <th scope="col">入力</th>
+        <th scope="col">出力</th>
+        <th scope="col">所有者</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Experience Reflection</td>
+        <td>completed Turnを含むbounded event range</td>
+        <td>NO_MEMORYまたはabstracted Episode Candidate</td>
+        <td>SAAA</td>
+      </tr>
+      <tr>
+        <td>Profile Candidate</td>
+        <td>明示Preferenceまたは複数の観測</td>
+        <td>SAAA Profile Candidate</td>
+        <td>SAAA</td>
+      </tr>
+      <tr>
+        <td>Working State Cleanup</td>
+        <td>expired / stale state</td>
+        <td>resolved / expired transition</td>
+        <td>SAAA</td>
+      </tr>
+      <tr>
+        <td>Continuity Capsule Refresh</td>
+        <td>Raw sourceとactive Capsule item</td>
+        <td>source-backed next revision、conflict marker</td>
+        <td>SAAA</td>
+      </tr>
+      <tr>
+        <td>Timeline Index Maintenance</td>
+        <td>unindexed event、tombstone、FTS integrity</td>
+        <td>rebuild / optimize / integrity result</td>
+        <td>SAAA</td>
+      </tr>
+      <tr>
+        <td>Episode Distillation</td>
+        <td>accepted SAAA reflection</td>
+        <td>active Episodeまたはskip</td>
+        <td>ContextStill</td>
+      </tr>
+      <tr>
+        <td>Rule Induction</td>
+        <td>複数の独立Episode</td>
+        <td>Rule Candidate</td>
+        <td>ContextStill</td>
+      </tr>
+      <tr>
+        <td>Skill Induction</td>
+        <td>成功Episodeと失敗Episode</td>
+        <td>Procedure / Skill Candidate</td>
+        <td>ContextStill</td>
+      </tr>
+      <tr>
+        <td>Lifecycle Consolidation</td>
+        <td>重複、矛盾、stale、feedback</td>
+        <td>merge review、supersede、deprecated</td>
+        <td>ContextStill</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="11-reflection-and-promotion">11. Reflectionと昇格</h2>
+  <h3 id="111-reflection-output">11.1 SAAA Reflection output</h3>
+  <p>Reflection routeは次のいずれか一つだけを返す。</p>
+  <pre><code class="language-text">NO_MEMORY
+EPISODE_CANDIDATE
+USER_PROFILE_CANDIDATE
+WORKING_STATE_UPDATE</code></pre>
+  <p>
+    一回のdomain jobで異なるcategoryを同時に確定しない。同じsource
+    windowに複数categoryがある場合は、 domainごとに独立したjobとdecision eventを作る。
+  </p>
+  <h3 id="112-no-memory">11.2 NO_MEMORY条件</h3>
+  <ul>
+    <li>雑談、一時的な感想、単発ニュース反応</li>
+    <li>既存Episodeの言い換えだけで新しい因果・判断・失敗がない</li>
+    <li>結果が分からず、行動または判断も記録できない</li>
+    <li>固有情報を除くと再利用可能な意味が残らない</li>
+    <li>抽象化後のlessonが一般論だけになる</li>
+    <li>Evidenceが不足し、誤った教訓を固定する可能性が高い</li>
+  </ul>
+  <h3 id="113-episode-candidate">11.3 Episode Candidate</h3>
+  <pre><code class="language-json">{
+  "title": "Bounded worker retries avoid duplicate promotion",
+  "situation": "A background knowledge task could be retried after interruption.",
+  "observations": ["The first attempt may have reached the destination before timeout."],
+  "action": "Use a durable outbox and one stable idempotency key.",
+  "outcome": "Retry no longer creates duplicate records.",
+  "lesson": "Treat timeout as an unknown delivery outcome and reconcile by idempotency key.",
+  "outcomeKind": "success",
+  "applicability": ["background synchronization", "cross-store delivery"],
+  "antiApplicability": ["single local transaction"],
+  "domains": ["memory-lifecycle"],
+  "technologies": ["SQLite"],
+  "confidence": 78,
+  "importance": 82
+}</code></pre>
+  <p>
+    Reflection modelが出した文字列をそのままoutboxへ入れない。Zod相当のstrict
+    schema、長さ上限、enum、 abstraction、residual scan、quality
+    gateを通過して初めてpayloadを永続化する。
+  </p>
+
+  <h2 id="12-contextstill-extension">12. ContextStill拡張</h2>
+  <h3 id="121-saaa-reflection-ingress">12.1 SAAA Reflection ingress</h3>
+  <p>
+    既存<code>POST /api/episodes</code>はactive
+    Episodeの直接登録であり、SAAA自動処理には使わない。 Candidateをqueueへ登録するversioned
+    endpointを追加する。
+  </p>
+  <pre><code class="language-http">POST /api/v1/episode-candidates
+Idempotency-Key: &lt;stable-key&gt;
+Content-Type: application/json</code></pre>
+  <pre><code class="language-json">{
+  "contractVersion": 1,
+  "producer": "saaa",
+  "source": {
+    "kind": "saaa_reflection",
+    "ref": "saaa://memory-source/opaque-id",
+    "digest": "sha256:..."
+  },
+  "scope": "global",
+  "projectRef": null,
+  "candidate": {},
+  "abstraction": {
+    "version": 1,
+    "residualIdentifierDetected": false
+  }
+}</code></pre>
+  <p>成功responseはEpisodeそのものではなく、受付receiptを返す。</p>
+  <pre><code class="language-json">{
+  "receiptRef": "episode-candidate-receipt-id",
+  "status": "accepted",
+  "queueJobId": "episode-distiller-job-id"
+}</code></pre>
+  <ul>
+    <li>同じIdempotency-Keyへの再送は同じreceiptを返す。</li>
+    <li>
+      unknown fieldはforward-compatibleに無視してよいが、required fieldとenumはstrictに検証する。
+    </li>
+    <li>
+      payload上限は64 KiBとし、超過を<code>payload-too-large</code>で拒否する。
+    </li>
+    <li>本文、header、errorへcandidate内容を複製しない。</li>
+    <li>
+      ContextStill側の認証方式は既存Admin APIのcredential境界を再利用し、credentialをSAAA
+      SQLiteへ保存しない。
+    </li>
+  </ul>
+  <h3 id="122-schema-extension">12.2 Episode schemaとqueue</h3>
+  <ul>
+    <li>
+      <code>episodeSourceKindSchema</code
+      >へ<code>saaa_reflection</code>を追加する。
+    </li>
+    <li>
+      <code>episodeRefKindSchema</code
+      >へ<code>saaa_reflection</code>を追加する。
+    </li>
+    <li>
+      <code>episode_distiller_queue.source_kind</code
+      >へ<code>saaa_reflection</code>を追加する。
+    </li>
+    <li>source readerはqueue payload内の抽象化済みCandidateだけを読む。</li>
+    <li>
+      <code>vibe_memory</code> readerの挙動、source key、既存jobを変更しない。
+    </li>
+    <li>unique keyは<code>source_kind + source_key + distillation_version</code>を維持する。</li>
+    <li>
+      Episodeのstatusは既存どおりactive / deprecatedとし、Candidate状態はqueueだけで表現する。
+    </li>
+  </ul>
+  <h3 id="123-defense-in-depth-abstraction">12.3 保存直前の再抽象化</h3>
+  <p>
+    既存<code>finalizeDistille/anonymization.service</code>の規則を、Knowledge専用関数から共有Memory
+    abstraction serviceへ分離する。Knowledge finalizeとEpisode createが同じpure functionを利用する。
+  </p>
+  <ul>
+    <li>
+      <code>client_identifier</code
+      >と<code>person_identifier</code>をreplacement kindへ追加する。
+    </li>
+    <li>projectRefはcontrol metadataとして許可するが、本文またはref labelへ展開しない。</li>
+    <li>
+      抽象化後にtitle、situation、observations、action、outcome、lessonを再度quality
+      validationする。
+    </li>
+    <li>
+      抽象化で因果関係またはlessonが失われた場合は<code>skipped: abstraction-destroyed-meaning</code>とする。
+    </li>
+    <li>
+      residual identifierを検出した場合はEpisodeを作らず、bounded reasonだけをqueueへ保存する。
+    </li>
+  </ul>
+
+  <h2 id="13-rule-skill-induction">13. EpisodeからRule／SkillへのInduction</h2>
+  <p>Episode保存直後にactive Knowledgeを書かない。EpisodeをoriginにしたCandidateだけを生成する。</p>
+  <pre><code class="language-text">Active Episodes
+  ↓ applicability signature + similarity grouping
+Induction review
+  ├─ NO_KNOWLEDGE
+  ├─ RULE_CANDIDATE
+  └─ PROCEDURE_CANDIDATE (= SKILL_CANDIDATE)
+  ↓
+existing covering evidence
+  ↓
+existing finalizeDistille
+  ↓
+Active Rule / Procedure</code></pre>
+  <h3 id="131-independent-evidence">13.1 Independent evidence</h3>
+  <p>独立Evidenceは次の全条件を満たすEpisodeとする。</p>
+  <ul>
+    <li>異なるsource keyまたは重ならないsource rangeを持つ。</li>
+    <li>同じdistillation outputの複製ではない。</li>
+    <li>near-duplicate reviewで同一Episodeと判定されていない。</li>
+    <li>statusがactiveで、classification statusがclassifiedである。</li>
+    <li>confidence 60以上、importance 60以上である。</li>
+  </ul>
+  <h3 id="132-rule-candidate">13.2 Rule Candidate</h3>
+  <ul>
+    <li>原則として独立Episodeが2件以上必要。</li>
+    <li>成功だけでなく、同じfailureを避けるnegative Ruleも生成可能。</li>
+    <li>現在のsourceから説明できない一般化を追加しない。</li>
+    <li>適用条件と非適用条件を必須にする。</li>
+    <li>一件の重大failureはCandidateにはできるが、自動active化しない。</li>
+  </ul>
+  <h3 id="133-skill-candidate">13.3 Skill Candidate</h3>
+  <ul>
+    <li>少なくとも一件のsuccessまたはmixed Episodeを必要とする。</li>
+    <li>安定した順序を持つstepが2件以上必要。</li>
+    <li>Verificationを最低一つ必要とする。</li>
+    <li>failure EpisodeからAvoidまたはfailure recoveryを生成できる。</li>
+    <li>Use when、Workflow、Verification、Avoidの4 sectionを必須にする。</li>
+    <li>一件だけのEpisodeから生成したSkillはmanual approvalなしにactive化しない。</li>
+  </ul>
+  <h3 id="134-origin-and-lifecycle">13.4 OriginとLifecycle</h3>
+  <ul>
+    <li>全source Episodeを<code>knowledge_origin_links.origin_kind = episode_card</code>で保存する。</li>
+    <li>Rule / Skill本文へEpisode idまたはsource refを埋め込まない。</li>
+    <li>source Episodeが全件deprecatedになったKnowledgeはstaleness reviewへ送る。</li>
+    <li>矛盾Episodeが現れた場合はdirect updateせず、existing merge / review queueへ送る。</li>
+    <li>Candidate登録、cover evidence、finalizeの既存quality gateを迂回しない。</li>
+  </ul>
+
+  <h2 id="14-recall">14. RecallとRaw Drill-down</h2>
+  <h3 id="141-conversation-recall-tool">14.1 Single model-visible conversation tool</h3>
+  <p>
+    Agentから見える会話履歴toolは<code>recall_conversation</code>一つだけとする。
+    <code>search_timeline</code
+    >、<code>read_timeline_window</code>、SQLite query、FTS queryはmodel-visible
+    surfaceへ公開しない。検索、時間解決、前後Turn取得、窓結合、token budget適用は一回のtool
+    call内でSAAAが完了する。
+  </p>
+  <pre><code class="language-json">{
+  "query": "SQLiteの保存方針",
+  "time": {
+    "kind": "preset",
+    "preset": "yesterday"
+  },
+  "cursor": null
+}</code></pre>
+  <pre><code class="language-json">{
+  "time": {
+    "kind": "absolute",
+    "from": "2026-08-10T00:00:00+09:00",
+    "toExclusive": "2026-08-15T00:00:00+09:00"
+  },
+  "cursor": null
+}</code></pre>
+  <p>
+    <code>query</code
+    >は自然文または単純な検索語で、正規化後1〜256文字とする。
+    <code>time</code
+    >は<code>preset</code>またはRFC 3339の
+    <code>absolute</code>
+    rangeとする。少なくとも<code>query</code>か<code>time</code>の一方を必須とし、
+    absolute rangeの最大幅は366日とする。raw MATCH構文、table名、DB path、任意SQL、任意token
+    budgetは受け取らない。
+  </p>
+  <pre><code class="language-json">{
+  "resolvedTimeRange": {
+    "from": "2026-08-28T00:00:00+09:00",
+    "toExclusive": "2026-08-29T00:00:00+09:00",
+    "timezone": "Asia/Tokyo",
+    "label": "yesterday"
+  },
+  "windows": [
+    {
+      "windowRef": "opaque-window-ref",
+      "score": 0.86,
+      "matchedEventRefs": ["opaque-event-ref"],
+      "startEventRef": "opaque-event-ref",
+      "endEventRef": "opaque-event-ref",
+      "events": [
+        {
+          "eventRef": "opaque-event-ref",
+          "turnRef": "opaque-turn-ref",
+          "role": "user",
+          "eventKind": "message",
+          "content": "SQLiteの保存方針について…",
+          "createdAt": "2026-08-28T10:00:00+09:00",
+          "truncated": false
+        }
+      ]
+    }
+  ],
+  "truncated": false,
+  "nextCursor": null,
+  "reasonCode": "ok",
+  "retrievalMode": "local-fts-time-window-v1"
+}</code></pre>
+  <ul>
+    <li>
+      <code>cursor</code>はopaqueかつquery digest、確定済みUTC
+      range、並び順にbindし、日付変更後の続き取得で
+      <code>yesterday</code>を再計算しない。
+    </li>
+    <li>
+      <code>query</code
+      >ありは関連度順、<code>time</code>だけの検索は新しいcompleted
+      Turnから返す。各window内のeventは常に時系列順とする。
+    </li>
+    <li>
+      初期hard capはanchor候補5件、返却window 3件、各anchorの前後2 Turn、総量3,000 tokenとし、model
+      inputからは拡張できない。
+    </li>
+    <li>
+      有効な結果がない場合は<code>windows: []</code>と
+      <code>continuity-no-hit</code>を返し、似た本文を生成しない。
+    </li>
+    <li>
+      invalid input、逆転または過大なabsolute range、cursorとfilterの不一致、SQLite
+      failureは<code>invalid-input</code>、<code>invalid-time-range</code>、
+      <code>cursor-filter-mismatch</code
+      >、<code>local-recall-unavailable</code>のtyped errorにし、曖昧な部分結果を返さない。
+    </li>
+    <li>
+      一のMain Turnからの呼び出しは直列3回までとし、並列呼び出しとRecall
+      resultからの再帰呼び出しを拒否する。
+    </li>
+    <li>
+      modelへ返すRaw windowはそのTurn限りとする。SQLiteにはtool name、query digest、resolved
+      range、matched event ref、件数、reason codeだけのbounded receiptを残し、Recall本文を
+      <code>timeline_events_fts</code>へ再投入しない。
+    </li>
+  </ul>
+
+  <h3 id="142-continuity-recall">14.2 Time resolution and Local Continuity Recall</h3>
+  <p>
+    「昨日」「先週」はFTS用keywordへ入れず、Agentがtool schemaの構造化された
+    <code>time</code>へ写像する。UTC境界の計算はLLMではなくSAAAがUser
+    timezoneと呼び出し時刻から決定的に行う。timezoneはSAAAの明示設定、未設定なら呼び出し時点のOS
+    timezoneを使い、model inputで上書きできない。
+  </p>
+  <table>
+    <caption>
+      Table: Relative time preset contract
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">preset</th>
+        <th scope="col">解決規則</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>today</code></td>
+        <td>User timezoneの当日00:00から呼び出し時刻まで</td>
+      </tr>
+      <tr>
+        <td><code>yesterday</code></td>
+        <td>前の暦日の00:00から当日00:00まで</td>
+      </tr>
+      <tr>
+        <td><code>day_before_yesterday</code></td>
+        <td>2日前の暦日0:00から1日前00:00まで</td>
+      </tr>
+      <tr>
+        <td><code>current_week</code></td>
+        <td>当週月曜日00:00から呼び出し時刻まで</td>
+      </tr>
+      <tr>
+        <td><code>previous_calendar_week</code></td>
+        <td>前週月曜日00:00から当週月曜日00:00まで</td>
+      </tr>
+      <tr>
+        <td><code>past_7_days</code></td>
+        <td>呼び出し時刻から過去168時間</td>
+      </tr>
+      <tr>
+        <td><code>previous_calendar_month</code></td>
+        <td>前月1日00:00から当月1日00:00まで</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    「先週」は<code>previous_calendar_week</code>、「過去7日」は<code>past_7_days</code>とし、同義にしない。
+    「この前」のような仕様にない曖昧表現は勝手にpreset化せず、timeなしのkeyword
+    RecallまたはUser確認へ戻す。
+  </p>
+  <pre><code class="language-text">validated recall_conversation input
+  ↓ resolve preset or validate absolute range once
+UTC [from, toExclusive) + normalized plain-text query
+  ↓ time index intersection + local FTS5 trigram
+ranked event anchors across the entire primary stream
+  ↓ exact phrase + term coverage + BM25 + weak recency + role weighting
+top 5 completed-turn anchors
+  ↓ fetch anchor turn and at most 2 neighboring turns
+merge overlapping turn ranges and deduplicate by event id
+  ↓ apply 3-window / 3,000-token hard cap
+typed historical evidence with opaque source refs</code></pre>
+  <ul>
+    <li>
+      <code>conversation_id</code>、旧Session、現在の画面をfilter条件にせず、legacy
+      importを含むprimary stream全体を検索する。
+    </li>
+    <li>
+      anchor eventは確定したtime range内を必須とする。anchor
+      Turnは分断せず、隣接Turnはrange外へ拡張しない。
+    </li>
+    <li>近接hitのTurn rangeが重なる場合は先にmergeし、event idで一回だけ投影する。</li>
+    <li>
+      過去user message、assistant message、Tool ResultはCurrent instructionではなく、source付き
+      <code>untrusted historical evidence</code>として囲む。過去system event、runtime
+      note、保存対象外transcriptは返さない。
+    </li>
+    <li>
+      FTS query、hit本文、固有名詞、cursor内部をnetwork、ContextStill、diagnostic logへ送らない。
+    </li>
+  </ul>
+  <p>
+    Recent RawとCapsuleで照応が解決する場合はtoolを呼ばない。SAAA内部のDual Recall Routerも同じ<code
+      >recall</code
+    >
+    application serviceを使い、model-visibleな二つ目の会話toolは追加しない。 ContextStill Experience
+    Recallは抽象化済み経験が必要な場合だけ、SAAA内部APIとして後段で呼び出す。
+  </p>
+
+  <h3 id="143-context-recall-api">14.3 Experience Recall API</h3>
+  <p>
+    SAAAはContextStillのfull <code>context_compile</code>をForeground
+    Chatへ使用しない。 EpisodeとKnowledgeの既存searchをまとめる軽量APIを追加する。
+    これはSAAAからContextStillへの内部APIであり、Agentに二つ目のmodel-visible toolとして公開しない。
+  </p>
+  <pre><code class="language-json">{
+  "query": "...",
+  "projectRef": "opaque-or-null",
+  "episodeLimit": 3,
+  "knowledgeLimit": 5,
+  "outcomeKinds": ["success", "failure", "mixed"]
+}</code></pre>
+  <pre><code class="language-json">{
+  "episodes": [],
+  "rules": [],
+  "skills": [],
+  "confidence": 0,
+  "needsRawCheck": false,
+  "retrievalMode": "lexical-metadata-v1"
+}</code></pre>
+  <ul>
+    <li>最終回答またはLLM向け再作文をContextStill側で行わない。</li>
+    <li>Lexical、metadata、recency、applicabilityをbaselineとする。</li>
+    <li>Vectorまたはrerankerはbenchmarkでbaselineを上回った場合だけ有効化する。</li>
+    <li>active itemだけをdefaultで返す。</li>
+    <li>Rule、Skill、Episodeを混ぜず、型付き配列で返す。</li>
+    <li>response本文も抽象化contractを満たす。</li>
+  </ul>
+  <h3 id="144-raw-drill-down">14.4 Episode Raw Drill-down</h3>
+  <pre><code class="language-text">Episode ref
+  ↓ opaque saaa://memory-source/id
+SAAA local resolver
+  ↓ memory_reflection_jobs event range
+SAAA timeline_events
+  ↓ bounded raw window</code></pre>
+  <ul>
+    <li>ContextStillはSAAA DBへ接続しない。</li>
+    <li>Raw resolverをTauri commandとして外部公開しない。SAAA内部のRecall flowだけが利用する。</li>
+    <li>
+      source eventが削除済みなら<code>raw-unavailable</code>を返し、EpisodeをPrimary
+      Evidenceとして断定しない。
+    </li>
+    <li>
+      Raw確認でEpisodeと矛盾した場合はretrieval
+      feedbackを<code>wrong</code>または<code>stale</code>で返す。
+    </li>
+  </ul>
+
+  <h2 id="15-privacy-security-observability">15. Privacy、Security、Observability</h2>
+  <h3 id="151-feature-gates">15.1 Feature gate</h3>
+  <ul>
+    <li>
+      migrationとcanary用process gate
+      <code>SAAA_SESSIONLESS_ENABLED</code>を追加し、G2まではdefault OFFとする。
+    </li>
+    <li>
+      Sessionless gate ONではprimary Timeline、single-timeline UI、Context Health
+      Engineを一体で有効にする。
+    </li>
+    <li>process gate <code>SAAA_MEMORY_ENABLED</code>をdefault OFFで追加する。</li>
+    <li>User setting <code>memory.enabled</code>をdefault OFFで追加する。</li>
+    <li>
+      Memoryの両gateがONのときだけReflection、outbox送信、ContextStill Experience
+      Recallを有効にする。
+    </li>
+    <li>
+      Local Continuity RecallとContext HealthはSessionlessの中核であり、Memory setting
+      OFFでも利用可能とする。
+    </li>
+    <li>Memory gate OFFでもRaw Timeline、通常Chat、User Profileの明示編集は利用可能とする。</li>
+    <li>kill switch OFF後は新規jobをclaimせず、送信前jobをpausedへ戻す。</li>
+  </ul>
+  <h3 id="152-provider-policy">15.2 Provider policy</h3>
+  <ul>
+    <li><code>memory.reflect</code>を独立Task routeとして追加する。</li>
+    <li>defaultはlocal Providerだけ、Cloud fallbackなしとする。</li>
+    <li>local Providerが利用できない場合はjobをpendingまたはpausedにし、通常Chatを継続する。</li>
+    <li>Cloudを将来許可する場合は別の明示User consentとADRを必要とする。</li>
+    <li>Raw source windowをdiagnostics、Provider selection event、errorへ複製しない。</li>
+  </ul>
+  <h3 id="153-observability">15.3 Bounded observability</h3>
+  <p>次のmetricとreason codeだけを記録する。</p>
+  <ul>
+    <li>pending / running / completed / skipped / failed job count</li>
+    <li>NO_MEMORY率</li>
+    <li>abstraction replacement kind別count</li>
+    <li>residual rejection count</li>
+    <li>Episode accepted / deduped / skipped count</li>
+    <li>Rule / Skill Candidate generated count</li>
+    <li>
+      Continuity / Experience別のRecall requested / no-hit / hit / raw-check count、time
+      preset種別count、 window merge count、cursor continuation count
+    </li>
+    <li>Fast Path、Continuity Recall、Experience Recallのp50 / p95 duration</li>
+    <li>Context section別token数、input utilization、output reserve</li>
+    <li>GREEN / YELLOW / RED countとrepair action別count</li>
+    <li>duplicate、superseded、stale、conflict、unresolved reference、missing source count</li>
+    <li>active Capsule source coverage、Capsule revision age、eviction kind別count</li>
+    <li>topic contamination count、FTS index lag、FTS integrity failure count</li>
+  </ul>
+  <p>
+    Timeline本文、抽象化前後の全文、Recall
+    query全文、client名、project名をlogまたはdiagnosticsへ保存しない。
+  </p>
+
+  <h2 id="16-work-packages">16. 実装Work Package</h2>
+  <h3 id="m3-00">M3-00 — Baseline、ADR、Contract fixture</h3>
+  <ul>
+    <li>SAAA schema version、ContextStill schema、両repo commit、working treeを記録する。</li>
+    <li>
+      Session廃止、Continuous Timeline、内部Turn / Run境界、SAAA / ContextStill責務、Procedure =
+      Skill、repository / globalだけをADRとして固定する。
+    </li>
+    <li>
+      Context Envelope、dynamic budget、hard invariant、GREEN / YELLOW / RED、repair actionをpure
+      contract fixtureにする。
+    </li>
+    <li>
+      model-visibleな会話toolが<code>recall_conversation</code>一件だけであるcontract
+      fixtureと、Continuity Recall / Experience Recallのrouting fixtureを作る。
+    </li>
+    <li>
+      query only、time only、query + time、absolute range、cursor continuation、invalid
+      inputのrequest / response fixtureをRust contractとruntime tool schemaで共有する。
+    </li>
+    <li>
+      Episode Candidate ingress v1、receipt、error code、Recall responseのshared fixtureを作る。
+    </li>
+    <li>
+      client名、project名、人物名、path、endpoint、secretを含むadversarial abstraction
+      fixtureを作る。
+    </li>
+    <li>ContextStill unavailableでもChatが継続するfake-server testを先に作る。</li>
+  </ul>
+  <p>Gate: fixtureが両repoで同じcontractとしてparseされるまでM3-01へ進まない。</p>
+
+  <h3 id="m3-01">M3-01 — SQLite v10 Continuous Timeline migration</h3>
+  <ul>
+    <li>
+      <code>memory/</code> module、pure contracts、Timeline
+      repositoryを追加する。
+    </li>
+    <li>Section 8のtable、FTS5、trigger、index、CHECK、foreign keyをmigrationへ追加する。</li>
+    <li>v9の全Conversationを一つのprimary streamへ安定順序でimportする。</li>
+    <li>
+      message件数、content digest、FTS件数、先頭・末尾時刻、legacy provenanceをmigration
+      testで照合する。
+    </li>
+    <li>既存data保持、reopen、二重migration防止、backup restoreをtestする。</li>
+    <li>
+      native tool call / resultの一対一correlation、legacy orphan tool event、Recall
+      receiptのFTS非収載をmigration / repository testで固定する。
+    </li>
+    <li>running lease reconcileとidempotent enqueueをrepository testで固定する。</li>
+  </ul>
+  <p>
+    Gate: legacy message欠落0、重複0、FTS integrity成功、schema
+    testと既存<code>bun run check</code>通過までM3-02へ進まない。
+  </p>
+
+  <h3 id="m3-02">M3-02 — Single Timeline UIとRuntime write switch</h3>
+  <ul>
+    <li>
+      通常ChatのNew Conversation、Conversation選択、Session resumeをUIとcommand surfaceから除く。
+    </li>
+    <li>一つの時系列Timeline、日付jump、local search、現在位置への復帰を実装する。</li>
+    <li>
+      新規user / assistant / tool
+      eventの書き込み先を<code>timeline_events</code>へ切り替える。
+    </li>
+    <li>Runtime RunをTurnへ関連づけ、app再起動後も追加操作なしで同じTimelineを表示する。</li>
+    <li>
+      legacy archiveをTimelineの過去eventとして表示し、旧Conversation
+      titleは検索・Context境界に使わない。
+    </li>
+    <li>
+      移行中の旧command callerには一つのsynthetic continuity viewを返すcompatibility
+      adapterを用意する。
+    </li>
+  </ul>
+  <p>
+    Gate: 通常Chatの作成・再開にSession操作が不要で、全legacy
+    messageと新規Turnが一つのTimelineに見えること。
+  </p>
+
+  <h3 id="m3-03">M3-03 — Context Projection、Capsule、Health Engine</h3>
+  <ul>
+    <li>
+      Provider adapterとProvider Sessionからhistory組立てを分離し、毎Turn Envelopeを再構築する。
+    </li>
+    <li>
+      Section 9のdynamic budget、protected item、Capsule、dedup、conflict、evictionを実装する。
+    </li>
+    <li>GREEN / YELLOW / RED判定とminimal safe rebuildをProvider送信前のmandatory gateにする。</li>
+    <li>
+      Current instruction exactly once、pair保持、reserve 100%、historical evidence隔離をcontract
+      testする。
+    </li>
+    <li>
+      Memory setting OFFかつContextStill unavailableでも同じHealth gateを通るFast Pathを実装する。
+    </li>
+  </ul>
+  <p>
+    Gate: RED Envelope送信0件、hard invariant違反0件、Memory
+    OFF時のChat成功率がbaseline同等までM3-04へ進まない。
+  </p>
+
+  <h3 id="m3-04">M3-04 — User CoreとWorking State</h3>
+  <ul>
+    <li>explicit persistent PreferenceのCRUD、supersede、source付きprojectionを実装する。</li>
+    <li>Working State item、TTL、bounded projectionを実装する。</li>
+    <li>temporary instructionを永続化せず、inferred itemを自動active化しない。</li>
+    <li>Profile、Working State、Capsule間の重複keyと優先順位をHealth fixtureで固定する。</li>
+  </ul>
+  <p>Gate: Userがactive User Coreを確認・訂正でき、source欠落itemがContextへ0件であること。</p>
+
+  <h3 id="m3-05">M3-05 — Idle CoordinatorとReflection route</h3>
+  <ul>
+    <li>Turn完了後のdurable job enqueueを実装する。</li>
+    <li>Section 10のidle eligibility、quota、lease、pauseを実装する。</li>
+    <li><code>memory.reflect</code> routeをlocal-only、no fallbackで追加する。</li>
+    <li>NO_MEMORY、Episode Candidate、Profile Candidateのstrict output parserを実装する。</li>
+    <li>Capsule Refresh、Timeline Index Maintenanceを別job kindとして実装する。</li>
+    <li>Reflection WindowがConversation境界に依存せず、stream event rangeを使うtestを追加する。</li>
+    <li>foreground activityで新しいbackground inferenceが開始されないtestを追加する。</li>
+  </ul>
+  <p>Gate: worker crash / app restart / user activityの3 fixtureでjob lossと二重実行がないこと。</p>
+
+  <h3 id="m3-06">M3-06 — Pre-egress abstractionとOutbox</h3>
+  <ul>
+    <li>pure abstraction serviceとresidual detectorを実装する。</li>
+    <li>project/client/person identifierをrole表現へ置換する。</li>
+    <li>opaque source refとstable idempotency keyを生成する。</li>
+    <li>抽象化済みpayloadだけをoutboxへ保存する。</li>
+    <li>抽象化で意味が失われたCandidateをskipする。</li>
+    <li>SQLite、Rust、React等の公開技術名が過剰抽象化されないfixtureを追加する。</li>
+  </ul>
+  <p>Gate: adversarial fixture上の固有識別子残留が0件であること。</p>
+
+  <h3 id="m3-07">M3-07 — ContextStill Candidate ingressとEpisode Distiller</h3>
+  <ul>
+    <li><code>POST /api/v1/episode-candidates</code>とreceipt persistenceを追加する。</li>
+    <li>
+      <code>saaa_reflection</code> source / ref
+      kindをPostgresとSQLiteの両schemaへ追加する。
+    </li>
+    <li>Episode Distiller source readerへsanitized payload adapterを追加する。</li>
+    <li>既存quality score、near-duplicate review、active Episode createを再利用する。</li>
+    <li>shared abstraction serviceをEpisode createへ適用する。</li>
+    <li>same idempotency key、timeout後retry、duplicate sourceをtestする。</li>
+  </ul>
+  <p>
+    Gate: raw fixture textをContextStill process、DB、queue event、errorのどこにも保存しないこと。
+  </p>
+
+  <h3 id="m3-08">M3-08 — Rule / Skill Induction</h3>
+  <ul>
+    <li>Episode groupingとindependent evidence判定をpure serviceとして実装する。</li>
+    <li>Rule / Procedure Candidate generatorを追加する。</li>
+    <li>既存<code>register_candidates</code>相当の内部serviceへCandidateを渡す。</li>
+    <li>全Episodeをknowledge origin linkへ関連づける。</li>
+    <li>
+      一件Episode、duplicate Episode、矛盾Episode、failure-only Skillをrejectするtestを追加する。
+    </li>
+    <li>既存cover evidence / finalize / merge reviewを通過した場合だけactiveにする。</li>
+  </ul>
+  <p>Gate: direct active Knowledge writeが0件で、origin link欠落が0件であること。</p>
+
+  <h3 id="m3-09">M3-09 — Single Conversation Recall Tool、Dual Recall、Raw Drill-down</h3>
+  <ol>
+    <li>
+      <strong>Contract and registration:</strong>
+      <code>memory/contracts.rs</code>にstrict request / response、time preset、reason
+      code、opaque cursorを定義する。
+      <code>runtime/agent_tools.rs</code
+      >に<code>recall_conversation</code>だけを登録し、他の会話検索toolが公開されないschema
+      snapshot testを先に固定する。
+    </li>
+    <li>
+      <strong>Deterministic time resolution:</strong>
+      <code>memory/raw_recall.rs</code>にUser
+      timezone、呼び出し時刻、presetからUTC半開区間を生成するpure
+      functionを実装する。月曜日始まり、月跨ぎ、年跨ぎ、うるう日、timezone境界、日付変更前後のcursorをtable-driven
+      testする。
+    </li>
+    <li>
+      <strong>Local retrieval:</strong>
+      全primary streamを対象にtime indexとFTS5 trigramを交差させ、query only、time only、query +
+      time、absolute rangeの4 pathをrepository testする。関連度順のanchor取得、前後2 Turn、overlap
+      merge、event id dedup、large Tool Resultのtruncationを実装する。
+    </li>
+    <li>
+      <strong>Use case and safe projection:</strong>
+      <code>memory/recall.rs</code>でvalidation、repository呼び出し、window
+      cap、token budget、cursor、typed historical evidence変換を一つのapplication
+      serviceにする。過去system / runtime noteの除外、Tool
+      correlation保持、injection隔離、<code>continuity-no-hit</code>、Turnあたり3回の呼び出し上限をcontract
+      testする。Raw result本文を永続化せず、bounded
+      receiptだけを残し、次回FTSでRecall自身にhitしないfeedback-loop fixtureを追加する。
+    </li>
+    <li>
+      <strong>Dual Recall integration:</strong>
+      SAAA Routerも同じapplication serviceを使う。ContextStillのEpisode / Knowledge
+      searchは内部Experience Recall APIとして統合し、timeout時はFast
+      Pathへ一回だけfallbackする。repository scopeにはopaque
+      <code>projectRef</code>だけを使用する。
+    </li>
+    <li>
+      <strong>Raw drill-down and feedback:</strong>
+      opaque source refからSAAA event rangeを解決する内部resolverを追加し、Raw
+      windowをEpisodeと区別する。
+      <code>wrong</code> / <code>stale</code> /
+      <code>needs_raw_check</code>をContextStillへ返し、deleted / missing
+      sourceは<code>raw-unavailable</code>として扱う。
+    </li>
+  </ol>
+  <p>
+    Gate: model-visibleな会話toolが一件だけで、Section
+    18のtime解決、window、Recall@5、latency閾値を満たすこと。 Recall
+    unavailable時のChat成功率がbaseline同等で、ContextStill単独ではRaw Timelineへ到達できないこと。
+  </p>
+
+  <h3 id="m3-10">M3-10 — Settings、Context Health UI、Observability</h3>
+  <ul>
+    <li>
+      Memory enable、User Core review、Profile Candidate accept / reject /
+      supersedeをSettingsへ追加する。
+    </li>
+    <li>
+      Job件数、last success、Context Health state、token utilization、repair
+      reasonを診断UIへ追加する。
+    </li>
+    <li>Episode本文、Raw本文、抽象化mappingをdiagnosticsへ表示しない。</li>
+    <li>Memory停止と再開がnew jobだけへ作用することをtestする。</li>
+  </ul>
+  <p>Gate: Userが何を常駐Contextへ入れるか確認・訂正できること。</p>
+
+  <h3 id="m3-11">M3-11 — Benchmark、Soak、Recovery</h3>
+  <ul>
+    <li>Section 18のfixture setとbaselineを固定する。</li>
+    <li>Fast Path、Continuity Recall、Experience Recall、idle workerのlatencyを測定する。</li>
+    <li>
+      100,000 message、20回のtopic shift、legacy importを含むlong-timeline fixtureを実行する。
+    </li>
+    <li>app restart、ContextStill restart、network timeout、SQLite busyをfault injectionする。</li>
+    <li>2時間のisolated soakでqueue growth、duplicate、RSS、SQLite sampling gapを確認する。</li>
+    <li>pre-migration backupとrollback手順を実行する。</li>
+  </ul>
+  <p>
+    Gate: threshold未達時はVectorや追加LLMではなく、原因別にretrieval / abstraction /
+    promotionを修正する。
+  </p>
+
+  <h3 id="m3-12">M3-12 — Isolated canaryとCloseout</h3>
+  <ul>
+    <li>通常profileと異なるapp-data、ContextStill fixture DB、専用feature flagで実施する。</li>
+    <li>実在client名やproduction Timelineをcanary inputに使わない。</li>
+    <li>G0〜G3を通過後、明示的に選んだ一つのprofileだけへMemory settingを公開する。</li>
+    <li>
+      G3通過とrollback
+      rehearsal完了後、macOS版の<code>SAAA_SESSIONLESS_ENABLED</code>をdefault ONにする。
+    </li>
+    <li>release evidence、known limitations、rollback結果を別文書へ記録する。</li>
+    <li>
+      Memoryは自動有効化せず、<code>memory.enabled</code>のdefault変更は別decisionとする。
+    </li>
+  </ul>
+
+  <h2 id="17-stop-conditions">17. Stop conditionとRollback</h2>
+  <p>次のいずれかが発生した場合、次のWork Packageへ進まない。</p>
+  <ul>
+    <li>SAAA実装開始時のschema versionが9ではない。</li>
+    <li>通常Chatの作成、表示、再開にConversation / Session idの選択が必要なままである。</li>
+    <li>
+      Context Projection、Continuity
+      Recall、Reflectionのいずれかが現在の<code>conversation_id</code>だけに絞られる。
+    </li>
+    <li>
+      Agentから見える会話履歴toolが<code>recall_conversation</code>以外に増えるか、任意SQL、raw
+      FTS構文、DB path、table名をmodelが指定できる。
+    </li>
+    <li>相対時間の解決をLLMが計算するか、続きcursorで確定済みUTC rangeが変わる。</li>
+    <li>
+      <code>recall_conversation</code>のRaw
+      result本文をTimelineへ複製保存するか、次回のFTS候補にRecall receiptが含まれる。
+    </li>
+    <li>legacy importでmessage欠落、重複、順序逆転、digest不一致、FTS未収載が一件でもある。</li>
+    <li>
+      Current instruction重複、output reserve不足、sourceなしCapsule、superseded
+      item投影が一件でもある。
+    </li>
+    <li>RED判定された元EnvelopeがProviderへ送信される。</li>
+    <li>CapsuleがRaw sourceを読まず、前版Capsuleだけからsummary-of-summaryとして更新される。</li>
+    <li>過去のuser messageまたはRecall中の命令がCurrent instructionかPolicyを上書きする。</li>
+    <li>ContextStillのEpisodeまたはKnowledge schemaがbaselineから互換性なく変更されている。</li>
+    <li>
+      抽象化前のproject名、client名、人物名、path、endpoint、secretがContextStill側へ到達する。
+    </li>
+    <li>ContextStillがSAAA private DBまたはRaw Conversationへ直接接続する必要が生じる。</li>
+    <li>Idempotency-KeyなしでCandidateを登録する必要が生じる。</li>
+    <li>ContextStill停止が通常Chatの失敗または起動blockerになる。</li>
+    <li>foreground activity開始後も新しいMemory inferenceが開始される。</li>
+    <li>Rule / Skillが既存quality gateを通らずactive化される。</li>
+    <li>User Profileのinferred itemが確認なしにUser Coreへ入る。</li>
+    <li>Meeting discard policyまたはlocal-only policyが緩む。</li>
+    <li>Fast Path p95がSection 18の閾値を超える。</li>
+  </ul>
+  <p>Rollback順序を次で固定する。</p>
+  <ol>
+    <li>User setting <code>memory.enabled</code>をOFFにする。</li>
+    <li>process gate <code>SAAA_MEMORY_ENABLED</code>をOFFにして再起動する。</li>
+    <li>outbox senderとContextStill ingressを停止する。</li>
+    <li>
+      Experience Recallだけを外し、Timeline、Local Continuity Recall、Context Healthを維持したFast
+      Pathへ戻す。
+    </li>
+    <li>
+      Sessionless canary自体を停止する場合は<code>SAAA_SESSIONLESS_ENABLED</code>をOFFにし、
+      compatibility adapterからprimary Timelineを一つのsynthetic continuity viewとして読む。native
+      eventをlegacy tableへ逆copyしない。
+    </li>
+    <li>schema v10 tableとlegacy archiveは削除せず、forward-compatible dataとして残す。</li>
+    <li>
+      migration integrityが破損した場合だけ、write switch前のpre-migration backupからSAAA
+      DBを復元する。
+    </li>
+  </ol>
+
+  <h2 id="18-acceptance">18. VerificationとAcceptance Criteria</h2>
+  <h3 id="181-static-verification">18.1 Static verification</h3>
+  <table>
+    <caption>
+      Table: Required verification commands
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">repository</th>
+        <th scope="col">command</th>
+        <th scope="col">期待結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SAAA</td>
+        <td><code>bun run spec:check</code></td>
+        <td>Spec HTML error / warning 0</td>
+      </tr>
+      <tr>
+        <td>SAAA</td>
+        <td><code>bun run check</code></td>
+        <td>TypeScript、Rust fmt、clippy、unit test成功</td>
+      </tr>
+      <tr>
+        <td>SAAA</td>
+        <td><code>bun run build</code></td>
+        <td>production frontend build成功</td>
+      </tr>
+      <tr>
+        <td>SAAA</td>
+        <td><code>bun run desktop:smoke</code></td>
+        <td>isolated app-dataでdesktop起動成功</td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td><code>bun run spec:check</code></td>
+        <td>Spec HTML error / warning 0</td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td><code>bun run verify</code></td>
+        <td>typecheck、unit、format、contract verification成功</td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td><code>bun run verify:sqlite</code></td>
+        <td>SQLite schema、Episode、queue、MCP smoke成功</td>
+      </tr>
+      <tr>
+        <td>ContextStill</td>
+        <td><code>bun run verify:rust-daemon</code></td>
+        <td>resident queueとAPI adapterのsmoke成功</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="182-quality-gates">18.2 Quality gates</h3>
+  <table>
+    <caption>
+      Table: Sessionless continuity, Context health, and Memory quality thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">閾値</th>
+        <th scope="col">計測条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Legacy Timeline migration integrity</td>
+        <td>欠落0、重複0、順序逆転0</td>
+        <td>v9 fixtureの全message、digest、FTS row照合</td>
+      </tr>
+      <tr>
+        <td>User-facing Session操作</td>
+        <td>0件</td>
+        <td>通常Chatのcreate、open、resume、topic shift、restart</td>
+      </tr>
+      <tr>
+        <td>Context input budget compliance</td>
+        <td>100%</td>
+        <td>全Provider profileと100,000 message Timeline</td>
+      </tr>
+      <tr>
+        <td>Output reserve preservation</td>
+        <td>100%</td>
+        <td>GREEN、YELLOW、RED、minimal rebuild</td>
+      </tr>
+      <tr>
+        <td>Current instruction exactly once</td>
+        <td>100%</td>
+        <td>Current eventがRecent Rawにも存在する全fixture</td>
+      </tr>
+      <tr>
+        <td>Protected turn pair retention</td>
+        <td>100%</td>
+        <td>budget境界とlarge Tool Resultを含むfixture</td>
+      </tr>
+      <tr>
+        <td>Projected structured source coverage</td>
+        <td>100%</td>
+        <td>全active Profile、Working State、Capsule item</td>
+      </tr>
+      <tr>
+        <td>Superseded / expired projection</td>
+        <td>0件</td>
+        <td>Profile、Working State、Capsule、Recall</td>
+      </tr>
+      <tr>
+        <td>Duplicate fact / instruction projection</td>
+        <td>0件</td>
+        <td>Recent、Capsule、Profile、Recall間の重複fixture</td>
+      </tr>
+      <tr>
+        <td>RED Envelope送信</td>
+        <td>0件</td>
+        <td>budget超過、source欠落、conflict、injection</td>
+      </tr>
+      <tr>
+        <td>Topic contamination</td>
+        <td>2%未満</td>
+        <td>20回topic shift後の無関係item投影率</td>
+      </tr>
+      <tr>
+        <td>Current instruction override</td>
+        <td>100%</td>
+        <td>過去Preferenceと現在指示が矛盾する全fixture</td>
+      </tr>
+      <tr>
+        <td>Temporary Preference非永続化</td>
+        <td>100%</td>
+        <td>再起動を含むfixture</td>
+      </tr>
+      <tr>
+        <td>抽象化対象の残留</td>
+        <td>0件</td>
+        <td>最低100件のadversarial fixture</td>
+      </tr>
+      <tr>
+        <td>公開技術名の誤抽象化</td>
+        <td>5%未満</td>
+        <td>最低100語のallowlist fixture</td>
+      </tr>
+      <tr>
+        <td>NO_MEMORY precision</td>
+        <td>90%以上</td>
+        <td>雑談、一時的反応、再利用不能会話</td>
+      </tr>
+      <tr>
+        <td>Episode Candidate precision</td>
+        <td>85%以上</td>
+        <td>人手label済み最低100 window</td>
+      </tr>
+      <tr>
+        <td>Duplicate Episode</td>
+        <td>0件</td>
+        <td>timeout、restart、同一idempotency retry</td>
+      </tr>
+      <tr>
+        <td>Rule / Skill origin completeness</td>
+        <td>100%</td>
+        <td>生成Candidateの全source Episode</td>
+      </tr>
+      <tr>
+        <td>Experience Recall@5</td>
+        <td>85%以上</td>
+        <td>更新、failure、decision、Skillを含むgolden query</td>
+      </tr>
+      <tr>
+        <td>Continuity Recall@5</td>
+        <td>90%以上</td>
+        <td>legacy境界、具体的照応、過去発言を含むgolden query</td>
+      </tr>
+      <tr>
+        <td>Model-visible conversation tool count</td>
+        <td>1件</td>
+        <td>
+          <code>recall_conversation</code>以外のSQLite / search / window toolが非公開
+        </td>
+      </tr>
+      <tr>
+        <td>Relative time resolution</td>
+        <td>100%</td>
+        <td>全presetの月跨ぎ、年跨ぎ、うるう日、timezone、日付変更fixture</td>
+      </tr>
+      <tr>
+        <td>Recall anchor time-range compliance</td>
+        <td>100%</td>
+        <td>query + time、time only、absolute range、cursor continuation</td>
+      </tr>
+      <tr>
+        <td>Recall window duplicate event</td>
+        <td>0件</td>
+        <td>近接anchor、overlap window、同文の異なeventを含むfixture</td>
+      </tr>
+      <tr>
+        <td>Recall self-hit / Raw result persistence</td>
+        <td>0件</td>
+        <td>前Turnのreceiptを含む反復query、FTS row、Timeline persistenceの照合</td>
+      </tr>
+      <tr>
+        <td>Conversation Recall calls per Main Turn</td>
+        <td>3回以下</td>
+        <td>pagination、invalid cursor、recursive / parallel call fixture</td>
+      </tr>
+      <tr>
+        <td>No-evidence abstention</td>
+        <td>95%以上</td>
+        <td>正解Memoryが存在しないquery</td>
+      </tr>
+      <tr>
+        <td>Raw source reference integrity</td>
+        <td>100%</td>
+        <td>削除されていない全canary Episode</td>
+      </tr>
+      <tr>
+        <td>Fast Path added latency p95</td>
+        <td>25 ms以下</td>
+        <td>Model inferenceを除くContext Builder処理</td>
+      </tr>
+      <tr>
+        <td>Local Continuity Recall p95</td>
+        <td>100 ms以下</td>
+        <td>100,000 message、top 5 + neighbor取得</td>
+      </tr>
+      <tr>
+        <td>User activityからworker休止まで</td>
+        <td>200 ms以下</td>
+        <td>新規Provider requestを開始しないことを含む</td>
+      </tr>
+      <tr>
+        <td>ContextStill unavailable時Chat成功率</td>
+        <td>baselineと同値</td>
+        <td>timeout、connection refused、5xx</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3 id="183-required-scenarios">18.3 Required scenarios</h3>
+  <ul>
+    <li>初回起動→Session作成なしでprimary Timelineが開き、入力できる。</li>
+    <li>話題を20回変更→Timelineは分割されず、現在topicへ無関係なMemoryは投影されない。</li>
+    <li>app再起動→Session再開操作なしで直前Turnとactive open loopが復元される。</li>
+    <li>
+      複数の旧Conversationに分かれた過去発言を尋ねる→全legacy eventを横断してRaw
+      source付きで見つかる。
+    </li>
+    <li>
+      100,000 messageかつ保存履歴100万token超→Context inputはbudget内、output reserveは維持される。
+    </li>
+    <li>Current messageがRecent tailにも存在→Envelopeには一回だけ入る。</li>
+    <li>CapsuleとRawが矛盾→Rawを優先し、Capsuleをstaleへ遷移して再構築する。</li>
+    <li>前版Capsuleしか読めない状態→更新を拒否し、Raw sourceから再構築する。</li>
+    <li>ContextがYELLOW→dedupとstale eviction後に再検査してGREENまたはbounded REDへ遷移する。</li>
+    <li>ContextがRED→元Envelopeを送信せず、minimal safe Envelopeを再構築する。</li>
+    <li>
+      「前に約束した件」→SAAA Continuity Recallを使い、ContextStillを具体的会話検索に使わない。
+    </li>
+    <li>
+      「昨日SQLiteについて何を話した？」→<code>query</code>と<code>yesterday</code>に分離し、確定期間内のanchorと前後Turnを返す。
+    </li>
+    <li>
+      「先週は何を話した？」→<code>previous_calendar_week</code>のtime-only
+      searchを行い、未取得分はopaque cursorで続行できる。
+    </li>
+    <li>
+      「過去7日」と「先週」→前者は168時間のrolling range、後者は前calendar
+      weekとして異なる期間を返す。
+    </li>
+    <li>日付変更前に「昨日」を検索して日付変更後にcursor続行→初回と同じUTC rangeを使う。</li>
+    <li>「この前の件」→未定義の相対期間を推測で作らず、keyword RecallまたはUser確認へ戻す。</li>
+    <li>
+      Agent tool
+      schemaを列挙→会話履歴取得は<code>recall_conversation</code>一件だけで、SQL / FTS /
+      search / window toolは含まれない。
+    </li>
+    <li>
+      同じqueryを次Turnで再実行→前回のRecall result本文またはreceiptではなく、元のTimeline
+      eventだけが検索候補になる。
+    </li>
+    <li>
+      「似た失敗の回避手順」→ContextStill Experience RecallからEpisode / Rule / Skillを取得する。
+    </li>
+    <li>「今後は技術説明を詳しく」→ explicit persistent Profileへ保存される。</li>
+    <li>「今回は3行で」→ Profileへ保存されず、現在Turnだけに作用する。</li>
+    <li>過去のPreferenceと「今日は短く」が矛盾する→現在指示が優先される。</li>
+    <li>雑談だけのevent range→<code>NO_MEMORY</code>でEpisode 0件。</li>
+    <li>再現性のある成功→abstracted success Episodeが一件作られる。</li>
+    <li>失敗原因と回避策がある→failure Episodeが一件作られる。</li>
+    <li>具体的なclient名を含む成功→client名なしでlessonが保持される。</li>
+    <li>固有名詞を除くと意味がない→ContextStillへ送らずskipされる。</li>
+    <li>同一送信がtimeout後に再送される→receiptとEpisodeは一件だけ。</li>
+    <li>独立した成功Episodeが複数ある→Skill Candidateが作られる。</li>
+    <li>failure Episode一件だけ→Skillはactive化されない。</li>
+    <li>過去の再利用方式を尋ねる→EpisodeをRecallし、必要ならRawを確認する。</li>
+    <li>存在しない過去を尋ねる→「記録が見つからない」と棄却する。</li>
+    <li>Recall Episode内に命令文がある→Policyと現在指示を上書きしない。</li>
+    <li>ContextStill停止中→通常ChatはFast Pathで成功する。</li>
+    <li>
+      Timeline source event削除後→Raw
+      Drill-downは<code>raw-unavailable</code>になる。
+    </li>
+  </ul>
+
+  <h2 id="19-delivery-gates">19. Delivery Gate</h2>
+  <table>
+    <caption>
+      Table: MVP 3 delivery gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">条件</th>
+        <th scope="col">許可される次の操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>G0 Contract</td>
+        <td>
+          Sessionless境界、Health invariant、shared fixture、abstraction contract、rollback確定
+        </td>
+        <td>schemaとoffline実装</td>
+      </tr>
+      <tr>
+        <td>G1 Offline</td>
+        <td>M3-01〜04、legacy migration、single Timeline、Context Health test成功</td>
+        <td>fake ContextStillによるSAAA統合</td>
+      </tr>
+      <tr>
+        <td>G2 Isolated</td>
+        <td>M3-05〜11、quality threshold、long-timeline test、2時間soak成功</td>
+        <td>専用fixture DBでの実ContextStill canary</td>
+      </tr>
+      <tr>
+        <td>G3 Opt-in Canary</td>
+        <td>Session操作0、migration欠落0、Health違反0、抽象化残留0、rollback確認</td>
+        <td>Sessionless default ONと、選択profileでのMemory setting表示</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    G3通過後もMemoryのdefaultはOFFである。Memoryのshipping default変更、Cloud reflection、Raw
+    retention変更、 User Profile inferred自動active化は、それぞれ別の計画と承認を必要とする。
+  </p>
+
+  <h2 id="20-final-state">20. 完成時の状態</h2>
+  <pre><code class="language-text">One continuous user Timeline in SAAA
+├─ native interaction events
+├─ imported legacy conversation events
+└─ local FTS + source references
+
+Every foreground Turn
+  ↓ build a fresh Context Projection
+Policy + Current + User Core + Capsule + Working State + Recent Raw
+  ↓ unresolved concrete continuity only
+Local Continuity Recall across the whole Timeline
+  ↓ reusable experience needed only
+ContextStill Episode + Rule + Skill as untrusted evidence
+  ↓ dynamic input budget and protected output reserve
+Context Health Engine
+├─ GREEN → send
+├─ YELLOW → repair and recheck
+└─ RED → discard and rebuild minimal safe Envelope
+
+Completed Timeline event range
+  ↓ durable idle job
+NO_MEMORY is normal or reusable experience candidate
+  ↓ candidate only
+Reusable experience candidate
+  ↓ pre-egress abstraction
+SAAA outbox with opaque source ref
+  ↓ idempotent ContextStill ingress
+Episode Distiller
+  ↓ quality + deduplication
+Active Episode
+  ↓ repeated independent evidence
+Rule / Skill Candidate
+  ↓ existing evidence and finalize pipeline
+Active Rule / Skill
+
+Recalled Episode with insufficient evidence
+  ↓ opaque source reference only
+Local Raw Drill-down in SAAA</code></pre>
+  <p>
+    完成後のSAAAには、通常Chatの新規Session、Session一覧、Session再開というUser-facing概念がない。
+    Userとの関係は一つのTimeline、User Core、source-backed Continuity
+    Capsuleで継続するが、全履歴をContextへ常駐させない。
+    毎Turn、必要な情報だけを新しく投影し、出力余力、重複、矛盾、鮮度、provenance、照応をHealth
+    Engineで検査する。
+  </p>
+  <p>
+    具体的な過去会話はSAAA内のContinuity
+    Recall、将来再利用できる経験・Rule・SkillはContextStillのExperience Recallが担当する。
+    ContextStillへ送る前に固有名詞を抽象化し、根拠が不足する場合だけopaque
+    sourceからRawへ戻る。この責務分離を崩さない。
+  </p>
+</article>

@@ -6,7 +6,7 @@ function documents() {
     {
       namespace: "providers.model",
       key: "default",
-      schemaVersion: 8,
+      schemaVersion: 9,
       valueJson: {
         providers: [{ kind: "openai-compatible", id: "local", enabled: true, label: "Local", location: "local", endpoint: "http://127.0.0.1:11434/v1", model: "test", credentialStatus: "not-configured" }],
       },
@@ -14,31 +14,31 @@ function documents() {
     {
       namespace: "providers.agent",
       key: "codex-sdk",
-      schemaVersion: 8,
+      schemaVersion: 9,
       valueJson: { enabled: false, provider: "codex-sdk", model: "", runtimeMode: "app-server", health: "unchecked", sandboxMode: "read-only", approvalPolicy: "never", networkEnabled: false, webSearchEnabled: false, workspacePolicy: "select-per-conversation" },
     },
     {
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 8,
+      schemaVersion: 9,
       valueJson: { conversationRespond: { primaryProviderId: "local", fallbackProviderIds: [], timeoutMs: 30_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } },
     },
     {
       namespace: "voice.runtime",
       key: "default",
-      schemaVersion: 8,
-      valueJson: { inputDeviceId: "default", outputDeviceId: "default", captureMode: "push-to-talk", sttProviderId: "local-whisper", sttModel: "", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
+      schemaVersion: 9,
+      valueJson: { inputDeviceId: "default", outputDeviceId: "default", captureMode: "push-to-talk", sttProviderId: "gnosis-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
     },
     {
       namespace: "security.runtime",
       key: "default",
-      schemaVersion: 8,
+      schemaVersion: 9,
       valueJson: { credentialStorage: "environment", localOnlyWhenSelected: true, diagnosticsRedaction: true },
     },
     {
       namespace: "situation.runtime",
       key: "default",
-      schemaVersion: 8,
+      schemaVersion: 9,
       valueJson: { enabled: false, sampleIntervalMs: 2_000, calendarEnabled: false, retentionDays: 7, maxLedgerEntries: 10_000, heartbeatIntervalMs: 300_000, sensitiveApplicationCategories: true },
     },
   ];
@@ -47,6 +47,16 @@ function documents() {
 describe("settings contracts", () => {
   test("accepts the complete MVP settings snapshot", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
+  });
+
+  test("requires the fixed gnosis ASR provider and model", () => {
+    const localWhisper = documents();
+    (localWhisper[3].valueJson as { sttProviderId: string }).sttProviderId = "local-whisper";
+    expect(() => validateSettingsDocuments(localWhisper)).toThrow("Invalid input");
+
+    const wrongModel = documents();
+    (wrongModel[3].valueJson as { sttModel: string }).sttModel = "ggml-base.bin";
+    expect(() => validateSettingsDocuments(wrongModel)).toThrow("Invalid input");
   });
 
   test("keeps schema 6 provider identifiers and default Codex models readable", () => {
@@ -64,6 +74,16 @@ describe("settings contracts", () => {
     const snapshot = documents();
     (snapshot[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://user:secret@127.0.0.1:11434/v1";
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Credentials must not be embedded");
+  });
+
+  test("accepts private-network local providers and rejects public HTTP endpoints", () => {
+    const privateNetwork = documents();
+    (privateNetwork[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://192.168.0.65:8080/v1";
+    expect(() => validateSettingsDocuments(privateNetwork)).not.toThrow();
+
+    const publicNetwork = documents();
+    (publicNetwork[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://203.0.113.10:8080/v1";
+    expect(() => validateSettingsDocuments(publicNetwork)).toThrow("loopback or private-network");
   });
 
   test("rejects unsafe or credential-ambiguous provider ids", () => {
@@ -108,10 +128,10 @@ describe("settings contracts", () => {
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Unrecognized key");
   });
 
-  test("accepts schema 8 and rejects schema 7", () => {
+  test("accepts schema 9 and rejects schema 8", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
     const legacy = documents();
-    legacy[0].schemaVersion = 7;
+    legacy[0].schemaVersion = 8;
     expect(() => validateSettingsDocuments(legacy)).toThrow("Invalid input");
   });
 

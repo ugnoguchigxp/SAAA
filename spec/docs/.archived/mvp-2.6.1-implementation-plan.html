@@ -1,0 +1,2033 @@
+<article lang="ja">
+  <h1 id="mvp-261-larm-production-readiness">
+    MVP 2.6.1 実装契約 — LARM Canary and Production Readiness
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>
+      Status: Complete — SAAA readiness implementation archived; external and live validation
+      remains active
+    </li>
+    <li>Created: 2026-08-28</li>
+    <li>Last reviewed: 2026-08-29</li>
+    <li>
+      SAAA baseline: <code>b2aab6f</code> — Complete LARM provider
+      integration
+    </li>
+    <li>LARM fixture baseline: <code>7dca7c3</code></li>
+    <li>Production node: <code>gnosis</code></li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>読者: SAAA実装担当、LARM実装担当、QA担当、運用担当、レビュー担当</li>
+  </ul>
+  <p>
+    server-independent readiness tooling、live test harness、evidence evaluator、redaction
+    boundary、runbookは 実装・自動検証済みである。M261-05以降のG1/G2/F1/G3判定はactiveな<a
+      href="../mvp-2.6-release-evidence.html"
+      >MVP 2.6 Release Evidence</a
+    >と<a href="../mvp-2.6-larm-operations-runbook.html">Operations Runbook</a
+    >へ分離し、本書は実装計画としてArchiveする。
+  </p>
+  <p>
+    この文書は、MVP 2.6で完成したLARM Providerのoffline実装を、実機canary、soak、rollback、
+    runbookを備えたproduction-readyな状態へ進めるための実装契約である。新しい推論機能を追加する計画ではなく、
+    既存実装と実際のLARM
+    deploymentの契約を一致させ、安全に運用判断できる証跡を完成させる計画である。
+  </p>
+  <p>
+    <a href="./mvp-2.6-implementation-plan.html">MVP 2.6実装契約</a>は、M26-01〜08の設計、
+    実装済みProvider contract、offline acceptanceの正本として維持する。本書はM26-09とM26-10を
+    M261-00〜09へ詳細化し、G1、G2、F1、G3の通過条件とproduction evidenceの作り方を正本化する。
+    両文書が矛盾する場合、M26-01〜08にはMVP 2.6実装契約を、M26-09以降には本書を適用する。
+  </p>
+  <p>
+    AI server停止中は、文書同期、evidence schema、operator-only runner、test-only live suite、
+    redaction testまでを実装できる。gnosisへ接続するpreflight、allocation、Gateway request、canary、
+    soakはG1とG2を通過し、サーバー復旧と運用担当の許可が揃うまで開始しない。
+  </p>
+  <h3 id="01-review-amendments">0.1 Review amendments</h3>
+  <table>
+    <caption>
+      Table: Document review decisions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Review finding</th>
+        <th scope="col">Fixed decision</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>G1前の実機禁止とG1での実機response確認が競合していた</td>
+        <td>G1はrepository contract、G2はdeployment一致、live preflightはG2後へ分離</td>
+      </tr>
+      <tr>
+        <td>TypeScript runnerが二つ目のHTTP adapterになり得た</td>
+        <td>全LARM通信をproduction clientを再利用するRust live suiteへ限定</td>
+      </tr>
+      <tr>
+        <td>live testがturnを生成するとpackaged SAAAのRSSとSQLiteをsoakできなかった</td>
+        <td>soak workloadはpackaged UI、Rust suiteはmetrics observerだけに分離</td>
+      </tr>
+      <tr>
+        <td><code>--ignored</code>が既存ignored testまで実行し得た</td>
+        <td>modeごとの完全修飾test名と<code>--exact --test-threads=1</code>を固定</td>
+      </tr>
+      <tr>
+        <td>report object、数値、file permissionがunboundedだった</td>
+        <td>strict schema、64 KiB、numeric bound、0700 / 0600、symlink禁止を固定</td>
+      </tr>
+      <tr>
+        <td>child test outputからsecretがterminalへ出る余地があった</td>
+        <td>stdout / stderrを各1 MiBでcaptureし、固定error以外を転送しない</td>
+      </tr>
+      <tr>
+        <td>SAAA restartとRSSの30分比較windowが両立しなかった</td>
+        <td>restart前に70分連続稼働し、10分warm-up + 30分×2を確保</td>
+      </tr>
+      <tr>
+        <td>他clientのallocationをleakとして誤集計し得た</td>
+        <td>排他的観測windowまたはclient-scoped metricsをG2必須条件化</td>
+      </tr>
+      <tr>
+        <td>rollback Providerが未検証のままcanary開始できた</td>
+        <td>
+          G2とnon-mutating preflight後、flag OFFかつ最初のLARM allocation前にoperator testで一回完走
+        </td>
+      </tr>
+      <tr>
+        <td>G2時点のisolated Settingsとrelease artifactが循環依存していた</td>
+        <td>G2はstrict manifestを固定し、functional開始時にUI保存とSQLite再読込を行う</td>
+      </tr>
+      <tr>
+        <td>前modeのenvironmentとartifactを文字列のpassedだけで信頼できた</td>
+        <td>manifest SHA-256、artifact SHA-256、commit、revision、allocation baselineを連鎖検証</td>
+      </tr>
+      <tr>
+        <td>main executableだけのhashではapp bundle内のresource差分を検出できなかった</td>
+        <td>固定bundle内の全regular fileを対象とするcanonical bundle digestへ変更</td>
+      </tr>
+      <tr>
+        <td>scenario countとresult countの単位が曖昧だった</td>
+        <td>
+          logical turn、Provider attempt、explicit / implicit fallbackを分離し、passed countを固定
+        </td>
+      </tr>
+      <tr>
+        <td>TTL recovery 3件と最大3,600秒TTLが60分deadline内に収まらなかった</td>
+        <td>canary requested TTLを300秒、effective TTLを60〜300秒へ固定</td>
+      </tr>
+      <tr>
+        <td>MVP 2.6と2.6.1にcanary閾値が重複していた</td>
+        <td>M26-09 / 10の数値と手順は2.6.1だけを正本化</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="02-implementation-checkpoint">0.2 Implementation checkpoint</h3>
+  <ul>
+    <li>
+      M261-00〜04: release evidence、strict manifest / report schema、operator-only
+      runner、canonical bundle digest、ignored Rust live suite、pure evaluator、redaction /
+      no-network testを実装済み。
+    </li>
+    <li>
+      package
+      commandは<code>larm:preflight</code>、<code>larm:canary</code>、
+      <code>larm:soak</code
+      >、<code>larm:report</code>へ固定済み。
+    </li>
+    <li>
+      通常suiteではlive test 4件をignoreし、G1未通過時はloopback requestより前に
+      <code>gate-missing</code>で停止する。
+    </li>
+    <li>
+      M261-05はeffective TTL専用field、virtual model / rewrite、Gateway request limitの3件が
+      LARM側のcommit済みcontractになっていないためblocked。working treeの実装をG1証跡へ使わない。
+    </li>
+    <li>
+      M261-06〜08で必要なstrict manifest、functional / soak orchestration、operator checkpoint、
+      security boundary、二段階rollback、独立runbookは実装済み。ticket acceptanceはG1 / G2と live
+      rehearsalが終わるまでpendingとする。
+    </li>
+    <li>
+      M261-09のevidence欄とdecision schemaは実装済み。G3 result、判断者、初期利用範囲は production
+      evidence reviewまで未記録のまま維持する。
+    </li>
+    <li>このcheckpointは未commitであり、production evidence baselineにはまだ使用しない。</li>
+  </ul>
+
+  <h2 id="1-conclusion">1. 結論</h2>
+  <p>次のshipping sliceはVoiceではなく、MVP 2.6 LLM経路のproduction readinessとする。</p>
+  <p>
+    本sliceのproduction gateは、現在SAAAが実装している<code>llm.general</code>
+    /
+    <code>llm-default</code
+    >だけを対象にする。<code>llm-long-context</code>と<code>llm-speed</code>は、Task
+    intentとroute selectionを明示的に設計する別milestoneで扱う。
+  </p>
+  <pre><code class="language-text">MVP 2.6 offline implementation at b2aab6f
+  ↓ documentation and evidence foundation
+M261-00〜04: server-independent readiness tooling
+  ↓
+M261-05: frozen LARM contract adoption
+  ↓ G1: committed API contract
+M261-06: canary environment manifest
+  ↓ G2: isolated private canary environment
+M261-07: functional canary
+  ↓ F1
+M261-08: 30-minute canary and 2-hour soak
+  ↓
+M261-09: G3 evidence review and readiness decision
+  ↓ if passed, separate limited enablement decision
+separate Voice pipeline plan</code></pre>
+  <p>
+    G3通過までは<code>SAAA_LARM_ENABLED</code>の既定をOFFのまま維持し、通常利用profileの
+    primary ProviderをLARMへ変更しない。G3通過は自動的な全体有効化を意味しない。
+    production利用範囲は、証跡レビュー後に別の明示的判断として記録する。
+  </p>
+
+  <h2 id="2-baseline">2. Baseline and known gaps</h2>
+  <table>
+    <caption>
+      Table: MVP 2.6.1 start baseline
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">開始時点</th>
+        <th scope="col">本計画で必要な状態</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SAAA実装</td>
+        <td><code>b2aab6f</code>でM26-01〜08をcommit済み</td>
+        <td>実機契約との差分を反映し、全offline testを維持</td>
+      </tr>
+      <tr>
+        <td>自動検証</td>
+        <td>fake LARMと既存回帰は成功。gnosis requestは未実施</td>
+        <td>opt-in live suiteとredacted reportを追加</td>
+      </tr>
+      <tr>
+        <td>LARM contract</td>
+        <td><code>7dca7c3</code>由来fixture。3件の差異が残る</td>
+        <td>commit、schema、deployment revisionを一致させる</td>
+      </tr>
+      <tr>
+        <td>Canary環境</td>
+        <td>operator、private tunnel、isolated data、rollback Providerが未固定</td>
+        <td>一つの隔離SAAA instanceとしてG2を通過</td>
+      </tr>
+      <tr>
+        <td>Production evidence</td>
+        <td>MVP 2.6 release evidence文書が未作成</td>
+        <td>functional、soak、rollback、security、runbookを記録</td>
+      </tr>
+      <tr>
+        <td>Voice</td>
+        <td>gnosis ASRとsystem TTSを維持</td>
+        <td>本計画では変更しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>開始時点で解消が必要なLARM contract差異は次の3件である。</p>
+  <ol>
+    <li>
+      Allocation responseにserver-confirmed effective TTL専用fieldがなく、
+      <code>createdAt</code
+      >と<code>expiresAt</code>だけがある。
+    </li>
+    <li>
+      Gatewayの安定した仮想<code>model</code>名と、upstreamへのrewrite有無がschemaとして固定されていない。
+    </li>
+    <li>Gateway request上限がdeployment非依存のcontractとして固定されていない。</li>
+  </ol>
+  <p>
+    SAAA側の保守的な仮実装だけを理由に差異を解消済みとしない。G1では両projectのAPI schemaと
+    executable behaviorを同じrevisionで再確認する。
+  </p>
+
+  <h2 id="3-goals">3. Goals</h2>
+  <ol>
+    <li>実装、計画、release evidenceのbaselineを同じcommitへ揃える。</li>
+    <li>AI serverなしでcanary手順、evidence schema、redactionを自動検証できる。</li>
+    <li>
+      live testを通常のtest suiteから分離し、明示的operator opt-inなしにはnetworkへ接続しない。
+    </li>
+    <li>LARM contract差異を解消し、SAAA fixtureとproduction deploymentを同じcommitへ固定する。</li>
+    <li>通常profileとSettings、SQLite、environmentを共有しないcanary clientを作る。</li>
+    <li>
+      normal、cancel、timeout、partial failure、restart、BUSY /
+      capacity、TTL、rollbackを実機で検証する。
+    </li>
+    <li>allocation leak、RSS増加、Resident停止、暗黙fallbackをsoakで検出する。</li>
+    <li>secretや本文を含まないreview可能なproduction evidenceとoperator runbookを作る。</li>
+  </ol>
+
+  <h2 id="4-non-goals">4. Non-goals</h2>
+  <ul>
+    <li>STT / TTS ProviderのLARM移行</li>
+    <li>Meeting Sessionの複数capability allocation</li>
+    <li>LARM STT / TTS Gatewayの設計または実装</li>
+    <li>Voice pipeline、VOICEVOX credit UI、expressive TTS</li>
+    <li>35B Runtimeの評価または登録</li>
+    <li>artifact stage、activate、rollback APIのSAAA統合</li>
+    <li><code>deploymentPolicy: allow-listed</code>の利用</li>
+    <li>multi-node scheduling</li>
+    <li>
+      <code>llm-long-context</code
+      >または<code>llm-speed</code>を選ぶSAAA Task routeと実機E2E
+    </li>
+    <li>SAAAからのsystemd、llama-swap、Runtime stop、daemon restart操作</li>
+    <li>plain HTTP LAN接続またはremote HTTPS schemaの追加</li>
+    <li>通常利用profileの自動変更または全ユーザーへの自動展開</li>
+  </ul>
+
+  <h2 id="5-fixed-decisions">5. Fixed implementation decisions</h2>
+  <h3 id="51-one-runner">5.1 One operator-only runner</h3>
+  <p>
+    readiness toolingは<code>scripts/larm-readiness.ts</code>へ集約し、次のsubcommandを持つ。
+  </p>
+  <ul>
+    <li>
+      <code>preflight</code>: local validationとhealth / readyだけを実行する
+    </li>
+    <li>
+      <code>canary</code>: bounded functional scenarioとmanual
+      checkpointを実行する
+    </li>
+    <li>
+      <code>soak</code>: 30分または2時間のbounded
+      workloadと観測を実行する
+    </li>
+    <li>
+      <code>report</code>: raw
+      captureを持たず、allowlist済みsummaryだけを出力する
+    </li>
+  </ul>
+  <p>
+    runnerはSSH command、remote shell、systemctl、llama-swap APIを実行しない。private tunnelと LARM
+    restart、capacity fixtureは運用担当がrunner外で準備する。runnerはloopback originの到達性と
+    checkpoint結果だけを検証する。
+  </p>
+  <p>
+    runner自身はLARMへHTTP
+    requestを送らない。preflight、metrics取得、allocation、Gateway、releaseを含む
+    すべてのLARM通信はSection 5.3のRust live suiteを通し、production
+    clientと同じno-proxy、no-redirect、 timeout、body limitを使用する。TypeScript側に二つ目のLARM
+    protocol implementationを作らない。
+  </p>
+  <p>
+    local child processはすべてargument
+    arrayを使う<code>Bun.spawn</code>で起動し、shell、command
+    interpolation、caller-provided executableを使用しない。working directoryはrepository
+    rootへ固定する。
+  </p>
+  <p>
+    networkへ接続できるRust live childとpackaged appにはcaller environment全体を渡さない。Rust
+    childはtoolchain / temporary-directory / certificate variable、canary / enable flag、base
+    URL、deployed commit、revision、runner-owned result / hash / metrics scope
+    variable、<code>LARM_API_TOKEN</code>だけ、packaged appはOS
+    起動に必要なvariable、canary / enable flag、runner-owned marker、data directory、
+    <code>LARM_API_TOKEN</code>、固定rollback
+    Providerのcredentialだけを明示的に渡す。proxy variable、Codex credential、無関係な<code
+      >*_TOKEN</code
+    >
+    / <code>*_API_KEY</code>は除外する。release build
+    childもcredential-shaped variableを除外し、渡すenvironment key名をunit testで固定する。
+  </p>
+
+  <h4 id="511-cli-contract">5.1.1 CLI contract</h4>
+  <p>package scriptはすべて同じrunnerへ委譲する。</p>
+  <pre><code class="language-json">{
+  "larm:preflight": "bun scripts/larm-readiness.ts preflight",
+  "larm:canary": "bun scripts/larm-readiness.ts canary",
+  "larm:soak": "bun scripts/larm-readiness.ts soak",
+  "larm:report": "bun scripts/larm-readiness.ts report"
+}</code></pre>
+  <ul>
+    <li><code>--report-dir &lt;absolute-path&gt;</code>を全subcommandで必須にする。</li>
+    <li>
+      <code>soak</code
+      >だけが<code>--duration 30m | 2h</code>を必須で受け取る。
+    </li>
+    <li>
+      <code>report</code>は同じdirectoryにある四つのfinal mode
+      reportだけを入力にする。
+    </li>
+    <li>base URL、token、prompt、turn count、remote commandをCLI argumentとして受け取らない。</li>
+    <li>unknown argument、重複argument、symlink、既存fileの上書きを拒否する。</li>
+  </ul>
+  <p>
+    <code>canary</code>はpassed preflight
+    report、<code>soak --duration 30m</code>はpassed functional
+    report、<code>soak --duration 2h</code>はpassed soak-30m
+    reportを同じdirectoryに要求する。commit、artifact SHA-256、manifest SHA-256、deployment
+    revisionのいずれかが現在値と一致しないreportは前提として使わない。各predecessorの
+    <code>finalActiveAllocations</code>がpreflightの
+    <code>baselineActiveAllocations</code>と一致しない場合も、後続modeを開始しない。
+  </p>
+  <table>
+    <caption>
+      Table: Readiness runner exit codes
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Code</th>
+        <th scope="col">Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>0</code></td>
+        <td>実行と評価がpassed</td>
+      </tr>
+      <tr>
+        <td><code>2</code></td>
+        <td>scenarioまたはthresholdがfailed</td>
+      </tr>
+      <tr>
+        <td><code>3</code></td>
+        <td>gate、environment、operator checkpoint不足でblocked</td>
+      </tr>
+      <tr>
+        <td><code>64</code></td>
+        <td>CLI usage error</td>
+      </tr>
+      <tr>
+        <td><code>70</code></td>
+        <td>runner internal error</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>runnerがmonotonic clockで測るhard deadlineは次に固定する。</p>
+  <ul>
+    <li><code>preflight</code>: 30分</li>
+    <li><code>canary</code>: 60分</li>
+    <li><code>soak --duration 30m</code>: 45分</li>
+    <li><code>soak --duration 2h</code>: 150分</li>
+    <li><code>report</code>: 60秒</li>
+  </ul>
+  <p>
+    deadline超過時は新しいscenarioを開始せず、runnerが所有するchildとpackaged
+    appだけへ終了要求を送り、 5秒後も残る同じPIDだけを強制終了する。name-based
+    <code>pkill</code>や他processへのsignalは使わない。 active LARM
+    sessionがあり得る場合はSection 11のbounded cleanupを行い、
+    <code>runner-timeout</code>を記録してfailedにする。
+  </p>
+  <p>
+    stdoutは<code>format</code>、<code>mode</code>、<code>result</code>だけを持つ一行JSONに限定する。
+    stderrは固定progress codeまたは固定error codeだけを一行ずつ出し、path、environment、HTTP
+    body、identifierを含めない。
+  </p>
+  <pre><code class="language-text">building-release-artifact
+waiting-for-isolated-settings
+enabling-larm-canary
+waiting-for-ui-workload
+checkpoint-timeout-fixture-ready
+checkpoint-tunnel-interruption-ready
+checkpoint-larm-restart-ready
+checkpoint-capacity-fixture-ready
+checkpoint-saaa-restart
+finalizing-report</code></pre>
+  <p>
+    operator actionが必要なcheckpointはprogress
+    code出力後5分以内に期待する状態変化を観測できなければ
+    <code>blocked</code>で終了する。自由記述のstdin、yes/no prompt、remote
+    command入力は受け取らない。
+  </p>
+
+  <h3 id="52-opt-in">5.2 Triple opt-in for live traffic</h3>
+  <p>
+    G3前のreadiness runでは、health / readyを含むlive requestを次がすべて成立する場合だけ許可する。
+    <code>SAAA_LARM_CANARY</code>はoperator
+    toolingの追加gateであり、G3後の通常production runtimeへ新しい必須flagとして追加しない。
+  </p>
+  <ol>
+    <li><code>SAAA_LARM_CANARY=1</code></li>
+    <li><code>SAAA_LARM_ENABLED=1</code></li>
+    <li><code>LARM_API_TOKEN</code>がprocess environmentに存在する</li>
+  </ol>
+  <p>
+    これらはrunner processの開始条件である。functional bootstrapで最初に起動するpackaged app
+    childだけは、Settings作成とdirect rollback test中のLARM通信を構造的に禁止するため
+    <code>SAAA_LARM_ENABLED=0</code
+    >を渡す。LARMをprimaryへ保存した後、runnerが同じartifactを
+    <code>SAAA_LARM_ENABLED=1</code>で再起動してからlive UI scenarioを開始する。
+  </p>
+  <p>
+    runnerとtest-only live suiteのbase
+    URLは<code>SAAA_LARM_CANARY_BASE_URL</code>から読み、packaged appはisolated
+    Settingsに保存された同じoriginを使う。preflightはenvironmentとG2
+    manifestの一致を検証し、functional canaryは最初のLARM
+    request前、soakはapp起動前にSQLite上のSettingsとの一致を検証する。MVP 2.6と同じnumeric loopback
+    originだけを受理する。flag不足、token不足、relative
+    URL、hostname、credential付きURL、path、query、fragmentはnetwork
+    access前に失敗させる。token値をcommand line argumentとして受け取らない。
+  </p>
+  <p>live runでは、triple opt-inに加えて次のmetadataを必須にする。</p>
+  <ul>
+    <li>
+      <code>SAAA_LARM_DEPLOYED_COMMIT</code>: G1 commitと一致する7〜64文字のlowercase hex
+    </li>
+    <li>
+      <code>SAAA_LARM_DEPLOYMENT_REVISION</code>: 1〜64文字のASCII
+      <code>[A-Za-z0-9._-]</code>
+    </li>
+    <li>
+      <code>SAAA_LARM_CANARY_REPORT_DIR</code>:
+      CLIの<code>--report-dir</code>と同じabsolute path
+    </li>
+    <li>
+      <code>SAAA_SMOKE_DATA_DIR</code>: G2で確定したcanary専用application-data
+      directoryのabsolute path
+    </li>
+    <li>
+      <code>SAAA_LARM_CANARY_MANIFEST_FILE</code>: Section 5.2.1のoperator-owned manifestへの
+      absolute path
+    </li>
+  </ul>
+  <p>
+    metadataの値は対応するreport allowlist fieldがある場合だけ複製する。manifest path、data
+    path、base URLはreportへ出力しない。CLIとenvironmentのreport directoryが canonical
+    pathとして一致しない場合は、file作成とnetwork accessの前に失敗させる。
+    <code>SAAA_SMOKE_MARKER_ID</code
+    >と<code>SAAA_SMOKE_EXERCISE_SITUATION</code>がcaller
+    environmentに存在する場合も拒否し、runnerが必要な値だけをchildへ設定する。
+  </p>
+  <p>
+    <code>LARM_API_TOKEN</code>と、manifestでrequiredになったrollback
+    credentialは1〜4,096 byte、HTTP headerへ安全に変換でき、whitespaceとcontrol
+    characterを含まないことをmemory上で検証する。 値同士の比較、hash化、report出力は行わない。
+  </p>
+
+  <h4 id="521-canary-manifest">5.2.1 G2 canary manifest</h4>
+  <p>G2 manifestは次のstrict JSONとし、tokenまたはcredential値を含めない。</p>
+  <pre><code class="language-json">{
+  "format": "saaa-larm-canary-manifest-v1",
+  "saaaCommit": "...",
+  "larmContractCommit": "...",
+  "deploymentRevision": "...",
+  "dataDirectory": "/absolute/operator-owned/path",
+  "metricsScope": "exclusive-window | client-scoped",
+  "larmProvider": {
+    "baseUrl": "http://127.0.0.1:...",
+    "allocationTtlSeconds": 300,
+    "allocationStartupTimeoutSeconds": 300,
+    "allowFallbackByDefault": false,
+    "deploymentPolicy": "existing-only"
+  },
+  "rollbackProvider": {
+    "id": "local-openai-compatible",
+    "location": "local | cloud",
+    "endpoint": "...",
+    "model": "...",
+    "credentialEnv": "SAAA_PROVIDER_LOCAL_OPENAI_COMPATIBLE_API_KEY",
+    "credentialRequired": true
+  }
+}</code></pre>
+  <p>
+    manifestは16 KiB以下、unknown fieldなし、最大depth 2、ownerはcurrent user、mode
+    <code>0600</code>のregular fileとし、fileと全directory
+    componentのsymlinkを拒否する。commitと revisionはSection 5.5、LARM Providerとrollback
+    Providerは既存Settings schemaで検証する。canary LARM SettingsはTTL 300秒、startup timeout
+    300秒、fallback false、existing-onlyへ固定する。data
+    directoryはpreflight時に既存の空directory、mode
+    <code>0700</code>とし、report
+    directoryおよび通常profileと分離する。後続modeでは同じdirectory内にfunctionalが作成したdatabaseが
+    存在することを要求する。
+  </p>
+  <p>
+    manifest fileはrepository、report directory、application-data directoryの外に置き、これらの
+    directoryとancestor / descendant関係を持たせない。
+  </p>
+  <p>
+    runnerはpreflight開始時にmanifestを一回だけbounded
+    readし、SHA-256と検証済み値をmemoryへ保持する。
+    各後続modeの開始前に同じpathを再検証し、hashが変わっていれば開始しない。reportにはpathや内容を出さず
+    <code>canaryManifestSha256</code>だけを記録する。release evidenceにはhash、G2
+    result、review時刻を転記し、 manifest本体をrepositoryへ追加またはcommitしない。
+  </p>
+
+  <h3 id="53-test-only-live-suite">5.3 Test-only live suite</h3>
+  <p>
+    実際の<code>LarmProvider</code>、allocation lifecycle、Gateway
+    parserを再利用するlive testは、
+    <code>src-tauri/src/providers/larm/live_canary.rs</code>へtest-only moduleとして置く。すべてのtestを
+    <code>#[ignore]</code
+    >にし、通常の<code>cargo test</code>、<code>bun run check</code>、CIから実行しない。
+    production Tauri command、hidden UI flag、通常buildで呼べるremote control surfaceは追加しない。
+  </p>
+  <p>
+    functional UI確認は隔離packaged appで手動実施し、live suiteは反復可能なadapter lifecycle、
+    workload、timing、cleanup観測を担当する。この二つを同じ結果として扱わない。
+  </p>
+  <p>
+    ただしsoak modeではRust suiteからallocationまたはGateway requestを送らない。runnerが隔離packaged
+    appを起動し、operatorが通常UIから固定promptとcancelを実行する。TypeScript runnerはlocal SAAA
+    processのRSSとisolated SQLiteだけを観測し、Rust suiteはLARM metricsのread-only
+    observerとして動く。 これによりmemory、persistence、route、cleanupを実際のshipping
+    processで測定する。
+  </p>
+  <p>
+    runnerはmodeごとに一つの完全修飾test名を指定し、
+    <code>cargo test --manifest-path src-tauri/Cargo.toml &lt;exact-name&gt; -- --ignored --exact
+      --test-threads=1</code>で起動する。
+    <code>--ignored</code>だけでrepository内の他のignored
+    testを一括実行しない。Rust suiteは
+    <code>SAAA_LARM_CANARY_RESULT_FILE</code>で指定された新規fileへredacted fragmentをatomic
+    writeし、 runnerはschema検証後にだけaggregate reportへ取り込む。result fileはreport
+    directory直下の regular fileに限定し、symlinkと既存fileを拒否する。
+  </p>
+  <pre><code class="language-text">.preflight-rust.json
+.functional-rust.json
+.soak-30m-rust.json
+.soak-2h-rust.json</code></pre>
+  <p>
+    runnerはmodeから上記以外のresult filenameを生成しない。Rust側のatomic writeに使うtemporary
+    fileも 同じdirectoryでexclusive createし、mode
+    <code>0600</code>、symlinkなしとする。runnerまたはchildが
+    途中終了してinternal fileが残ったrun directoryは再利用せず、新しい空directoryで再実行する。
+  </p>
+  <p>
+    三件目のTTL recoveryでは、functional test binary自身をexact test名で専用子processとして一回だけ
+    起動する。子processはallocation後、Gatewayとreleaseを呼ばずに終了する。親へ渡す一時file
+    <code>.ttl-client-exit.txt</code>はeffective TTLのdecimal一行だけ、16 byte以下、mode
+    <code>0600</code>とし、allocation
+    idなどのidentifierを含めない。親は子processの終了を確認してから
+    fileを削除し、metricsによるTTL回収を待つ。timeout時は同じ子PIDだけを終了する。
+  </p>
+  <p>
+    <code>SAAA_LARM_CANARY_RESULT_FILE</code>はrunnerがmodeから導出してchild
+    processだけへ設定する内部値である。 caller
+    environmentに同名variableが存在する場合は開始前に拒否し、任意pathへの書き込みを許可しない。
+  </p>
+  <p>
+    artifact hashとmanifest hashはrunnerが
+    <code>SAAA_LARM_CANARY_ARTIFACT_SHA256</code>と
+    <code>SAAA_LARM_CANARY_MANIFEST_SHA256</code>としてchildへ渡す内部値である。caller
+    environmentに同名variableがあれば拒否する。Rust fragment、local observation、前mode
+    reportのhashが一致しなければmergeまたは後続modeを開始しない。
+  </p>
+  <p>
+    child <code>cargo test</code>のstdoutとstderrはrunnerが各1
+    MiBを上限にcaptureし、terminalへ転送しない。captureはforbidden-data scannerへ逐次渡し、検出時は
+    <code>redaction-failed</code>とする。上限超過時はchildをcancelしてinternal
+    failureとし、capture内容を保存せず破棄する。test failure時もrunnerは Section
+    5.1.1の固定errorだけを返すため、Rust assertion messageにはraw responseを含めない。
+  </p>
+  <ul>
+    <li><code>providers::larm::live_canary::live_preflight</code></li>
+    <li><code>providers::larm::live_canary::live_functional</code></li>
+    <li><code>providers::larm::live_canary::observe_soak_30m</code></li>
+    <li><code>providers::larm::live_canary::observe_soak_2h</code></li>
+  </ul>
+  <p>
+    <code>report</code>はRust live
+    testを起動せず、既存fragmentの検証と集計だけを行う。
+  </p>
+
+  <h3 id="54-isolation">5.4 Canary isolation</h3>
+  <p>
+    live evidenceにはclean SAAA commitから作ったrelease-mode macOS app
+    bundleを使う。runnerは固定bundle path
+    <code>src-tauri/target/release/bundle/macos/SAAA.app</code>と、その内部の固定executable
+    <code>Contents/MacOS/saaa</code>だけを受理する。bundle
+    directoryと全entryのsymlinkを拒否し、main
+    executableがregularかつexecutable、build開始時と同じGit commitであることを確認する。debug
+    binary、 <code>cargo test</code> process、任意の<code
+      >--app</code
+    >
+    pathをshipping artifactとして扱わない。
+  </p>
+  <p>
+    <code>saaaArtifactSha256</code>はmain executable単体ではなく、bundle内の全regular
+    fileから作る canonical bundle digestとする。relative pathのUTF-8 byte列で昇順sortし、ASCII
+    <code>SAAA-BUNDLE-V1\0</code>、path byte lengthのunsigned 32-bit
+    big-endian、path bytes、file sizeのunsigned 64-bit big-endian、各fileのraw 32-byte
+    SHA-256を順にouter SHA-256へ入力する。directory 自体はhash materialに含めず、regular
+    file以外のentry、hard link、bundle外へ解決するentryを拒否する。
+  </p>
+  <p>
+    release buildはpreflightだけが実行し、後続modeはartifactを再buildせずcanonical
+    digest一致を確認する。build childのstdoutとstderrは各8
+    MiBを上限にcaptureしてterminalへ転送せず、forbidden-data scannerへ逐次渡す。検出、失敗、または
+    上限超過時はnetwork access前に終了する。各fileとouter
+    digestはbundle全体をmemoryへ全読込せずstreamingで計算する。
+  </p>
+  <p>一つのcanary runは次を専有する。</p>
+  <ul>
+    <li>絶対pathで指定された一時application-data directory</li>
+    <li>canary専用SettingsとSQLite</li>
+    <li>canary専用environment</li>
+    <li>一つのlocal loopback tunnel</li>
+    <li>一人のoperator</li>
+    <li>一つのdirect rollback Provider</li>
+  </ul>
+  <p>
+    通常profileのapplication-data directory、Settings、SQLite、process environmentを再利用しない。
+    data directoryがrepository root、home directory、filesystem
+    root、既存の通常profileを指す場合は拒否する。 data directoryとreport directoryはcanonical
+    pathで異なり、一方が他方のancestorでもdescendantでも ないことを要求する。
+    runnerはdirectoryを自動削除せず、run終了時に保存・破棄対象をoperatorへ表示する。
+  </p>
+  <p>
+    packaged appの隔離起動には、既存<code>desktop:smoke</code>と同じ
+    <code>SAAA_SMOKE_MARKER_ID</code> /
+    <code>SAAA_SMOKE_DATA_DIR</code>契約を再利用する。marker idはcryptographically
+    secure random 128 bitから作る
+    <code>canary-&lt;32 lowercase hex&gt;</code
+    >としてprocess起動ごとに新規生成する。起動前に同名markerが 存在しないこと、ready時にregular
+    fileでsymlinkではないことを確認し、ready確認後にmarker fileを削除する。
+    <code>SAAA_SMOKE_EXERCISE_SITUATION</code>は設定しない。新しいproduction用 data-directory
+    overrideやhidden Tauri commandは追加しない。
+  </p>
+  <p>
+    packaged appのstdoutとstderrも各1 MiBを上限にrunnerがcaptureし、terminalやreportへ転送しない。
+    captureはforbidden-data scannerへ逐次渡し、該当があればappを停止して
+    <code>redaction-failed</code
+    >とする。上限超過もfailedとし、capture内容はrun終了時に破棄する。
+  </p>
+  <p>
+    G2ではcanary時間帯をLARMの排他的な観測windowとして予約する。LARM metricsが
+    <code>client: saaa-desktop</code>を安全に集計できる場合はclient-scoped
+    countを使い、できない場合は
+    他のallocationが0件であることをoperatorが確認してからbaselineを取得する。どちらも満たせない場合は
+    allocation leakとRuntime selectionを判定できないためG2をblockedとする。
+  </p>
+  <p>
+    direct rollback Providerは、LARMとは別の既存OpenAI-compatible Provider
+    <code>local-openai-compatible</code>としてisolated
+    Settingsへ登録する。credentialが必要な場合は
+    固有の<code>SAAA_PROVIDER_LOCAL_OPENAI_COMPATIBLE_API_KEY</code>だけをpackaged appへ渡し、
+    <code>OPENAI_API_KEY</code>の暗黙fallbackを使わない。non-mutating LARM
+    preflight後は、最初にdirect Providerだけをrouteへ置き、feature flag OFFのpackaged
+    appで一回完走させる。 完走後にoperatorがLARMをprimary、direct
+    Providerを直後のfallbackへ設定し、保存結果を再読込してからrunnerがappを停止する。次に同じartifactと
+    data directoryをfeature flag ONで再起動し、Settingsを再読込してから最初のLARM allocationへ進む。
+    このbootstrap restartは<code>saaaRestarts</code>へ数えない。この遷移中にLARM
+    requestが一件でも発生した場合はfailedとする。 direct Provider testでは、
+    endpoint、model、credentialが有効であることを確認する。この事前確認はLARM
+    failureによる自動fallbackではなく operator testとして実施する。 Section 8.2と同じ固定canary
+    prompt catalogを使う。promptとresponseは通常のshipping経路どおりisolated SQLiteにだけ保存し、
+    report、log、release evidenceへ複製しない。local-only policyが有効な場合はCloud
+    Providerをrollback先にしない。このturnは
+    <code>rollbackPreflightTurns</code>へ一件だけ計上し、通常stream 5件へ含めない。
+  </p>
+  <p>
+    このdirect ProviderはMVP 2.6 Section 7.3で許可したoperator-owned移行例外であり、LARM route
+    selectionの入力、Runtime
+    policyの正本、恒久的な二重設定として扱わない。撤去時期はG3後のenablement decisionで別途決める。
+  </p>
+
+  <h3 id="55-evidence-boundary">5.5 Evidence boundary</h3>
+  <p>
+    machine-readable reportは<code>saaa-larm-readiness-v1</code>とし、次のallowlist
+    fieldだけを持つ。
+  </p>
+  <pre><code class="language-json">{
+  "format": "saaa-larm-readiness-v1",
+  "saaaCommit": "...",
+  "saaaArtifactSha256": "...",
+  "canaryManifestSha256": "...",
+  "larmContractCommit": "...",
+  "deploymentRevision": "...",
+  "startedAt": "...",
+  "finishedAt": "...",
+  "mode": "preflight | functional | soak-30m | soak-2h | aggregate",
+  "scenarioCounts": {
+    "normalTurns": 0,
+    "cancellations": 0,
+    "requestTimeouts": 0,
+    "partialInterruptions": 0,
+    "larmRestarts": 0,
+    "saaaRestarts": 0,
+    "capacityRejections": 0,
+    "ttlRecoveries": 0,
+    "renewals": 0,
+    "rollbackPreflightTurns": 0,
+    "settingsRollbackTurns": 0,
+    "killSwitchRollbackTurns": 0
+  },
+  "resultCounts": {
+    "completed": 0,
+    "cancelled": 0,
+    "expectedFailures": 0,
+    "unexpectedFailures": 0,
+    "duplicateTerminals": 0,
+    "explicitProviderFallbacks": 0,
+    "implicitFallbacks": 0,
+    "staleAllocationReuses": 0,
+    "runtimePolicyViolations": 0,
+    "leakedAllocations": 0
+  },
+  "timingSummary": {
+    "elapsedMs": 0,
+    "sampleIntervalSeconds": 0,
+    "rssMaxSamplingGapSeconds": 0,
+    "metricsMaxSamplingGapSeconds": 0,
+    "plannedLarmRestartGapSeconds": 0,
+    "releaseRecoveryMaxMs": 0,
+    "ttlRecoveryMaxMs": 0
+  },
+  "resourceSummary": {
+    "baselineActiveAllocations": 0,
+    "maxActiveAllocations": 0,
+    "finalActiveAllocations": 0,
+    "rssRangeMiB": 0,
+    "rssPrevious30mMedianMiB": 0,
+    "rssLast30mMedianMiB": 0
+  },
+  "leaseSummary": {
+    "effectiveTtlSecondsMin": 0,
+    "effectiveTtlSecondsMax": 0,
+    "renewalsAttempted": 0,
+    "renewalsSucceeded": 0
+  },
+  "failureCodes": [],
+  "redactionCheck": "passed | failed",
+  "result": "passed | failed | blocked"
+}</code></pre>
+  <p>schemaと値のboundは次に固定する。</p>
+  <ul>
+    <li>top-levelとnested objectのunknown fieldを拒否し、最大nesting depthは3とする。</li>
+    <li>encoded JSON全体を64 KiB以下にする。</li>
+    <li>
+      commitは7〜64文字のlowercase hex、artifactとcanary manifestのSHA-256は64文字のlowercase
+      hex、deployment revisionは Section 5.2の文字集合を使う。
+    </li>
+    <li>
+      <code>startedAt</code
+      >と<code>finishedAt</code>はUTCのRFC 3339とし、終了は開始以後にする。
+    </li>
+    <li>countは0〜10,000のinteger、millisecondは0〜10,800,000のintegerとする。</li>
+    <li>
+      effective TTLは0〜3,600秒のintegerとし、passedのfunctionalとaggregate modeでは0を拒否する。
+      identity確定後でもTTLを観測できずにfailed / blockedとなったreportでは両方0を許可する。
+      preflight、soak-30m、soak-2h、およびsoak observer fragmentでは0を要求する。
+    </li>
+    <li>RSSは0〜1,048,576 MiBのfinite integerとし、NaN、Infinity、負数、小数を拒否する。</li>
+    <li>
+      <code>failureCodes</code
+      >は最大32件の固定enumとし、同じcodeの重複、自由記述、raw errorを拒否する。
+    </li>
+    <li>
+      modeに不要なsummary fieldも省略せず0で埋め、modeごとのrequired countをevaluatorで検証する。
+    </li>
+  </ul>
+  <p><code>failureCodes</code>のenumは次に固定する。</p>
+  <pre><code class="language-text">gate-missing
+environment-invalid
+artifact-mismatch
+contract-mismatch
+authentication-failed
+health-failed
+ready-failed
+allocation-failed
+gateway-failed
+cancel-failed
+partial-output-violation
+restart-recovery-failed
+capacity-policy-failed
+ttl-recovery-failed
+rollback-failed
+sampling-gap
+rss-growth
+allocation-leak
+runtime-policy-violation
+redaction-failed
+database-schema-invalid
+report-schema-invalid
+runner-timeout
+internal</code></pre>
+  <p>
+    <code>gate-missing</code
+    >、<code>environment-invalid</code>、operator checkpoint不足だけを
+    <code>blocked</code
+    >にできる。scenario、security、threshold、schemaの不合格は<code>failed</code>とし、
+    blockedへ弱めない。
+  </p>
+  <p>次はreport、stdout、stderr、release evidenceへ出力しない。</p>
+  <ul>
+    <li>Bearer token、Authorization header、environment dump</li>
+    <li>prompt、response、SSE delta、Conversation本文</li>
+    <li>allocation id、operation id、request id、Conversation id、Runtime Run id</li>
+    <li>resolved endpoint、local tunnel port、remote address</li>
+    <li>raw error body、raw metrics、raw log</li>
+  </ul>
+  <p>
+    scenario実行中の相関にはmemory上のidentifierを使用できるが、report作成前に破棄する。 report
+    directoryはoperatorがpreflight前に空の状態で作成し、mode
+    <code>0700</code>、所有者はcurrent
+    userに固定する。preflight後のsubcommandは前modeが作った既知のfileだけを許可し、unexpected fileを
+    拒否する。各fileはmode <code>0600</code>に固定する。directory
+    component、temporary file、result file、final reportのいずれにもsymlinkを許可せず、exclusive
+    createと同一directory内のno-replace atomic publishを使う。portableなrenameは既存fileを
+    上書きできるため、complete inodeのhard link作成とtemporary linkの削除で実現する。
+  </p>
+  <p>final filenameは次の5件に固定し、同じdirectoryでのrerunや上書きを許可しない。</p>
+  <pre><code class="language-text">preflight.json
+functional.json
+soak-30m.json
+soak-2h.json
+aggregate.json</code></pre>
+  <p>
+    identity確定後に生じたfailedまたはblocked resultは、そのmodeのfinal
+    fileとして保持する。artifact、 manifest、contract identityを確定できないpre-identity gate
+    failureは、固定stdout / stderrとexit
+    codeだけを返し、identityを捏造したreportを作らない。再実行する場合は新しい空のreport directoryを
+    用意し、過去runのfileをコピーまたは混在させない。
+  </p>
+
+  <h4 id="551-fragment-merge">5.5.1 Fragment merge</h4>
+  <p>
+    Rust result fileもSection 5.5の同じschemaを使用する。runnerはRust fragmentとlocal
+    observationを次のownershipでmergeし、一つのmode reportを作る。
+  </p>
+  <table>
+    <caption>
+      Table: Report field ownership
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Mode</th>
+        <th scope="col">Rust live suite</th>
+        <th scope="col">TypeScript runner / packaged app</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>preflight</td>
+        <td>HTTP contract、auth、metrics baseline</td>
+        <td>gate、path、permission、commit一致</td>
+      </tr>
+      <tr>
+        <td>functional</td>
+        <td>adapter normal / cancel / TTL</td>
+        <td>UI scenario、SQLite、SAAA process、operator checkpoint</td>
+      </tr>
+      <tr>
+        <td>soak-30m / soak-2h</td>
+        <td>read-only LARM metrics</td>
+        <td>RSS、SQLite、packaged UI workload、local restart</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    countはoverflowを確認して加算し、timingはfieldごとに最大値、failure
+    codeは重複なしの和集合を使う。
+    <code>baselineActiveAllocations</code>、<code>maxActiveAllocations</code>、
+    <code>finalActiveAllocations</code>はRust、RSS三fieldは TypeScriptだけがnon-zero
+    valueを持つ。lease summaryはRustだけが所有し、non-owner側のnon-zero valueはschema
+    violationとして拒否する。commit、artifact SHA-256、manifest
+    SHA-256、revision、modeが一致しなければ mergeしない。 resultの強さは
+    <code>failed &gt; blocked &gt; passed</code>とし、一方のfailedまたはredaction
+    failedを他方のpassedで 上書きしない。merge完了後はRust temporary fragmentを削除し、final mode
+    reportだけを残す。
+  </p>
+
+  <h4 id="552-mode-evaluation">5.5.2 Count semantics and mode evaluation</h4>
+  <ul>
+    <li>
+      <code>scenarioCounts</code>はTable 8.2または8.3のlogical
+      scenarioを数える。同じturnをUIとSQLiteの 両方で観測しても一件として数える。
+    </li>
+    <li>
+      functional bootstrapでfeature flagをOFFからONへ切り替えるrestartは環境準備であり、
+      <code>saaaRestarts</code
+      >には含めない。functionalの一件はkill-switch、soak-2hの一件はmemory window後のplanned
+      restartだけを数える。
+    </li>
+    <li>
+      <code>completed</code
+      >と<code>cancelled</code>はlogical
+      turnの最終結果を数える。timeoutまたはcapacity後に explicit direct
+      fallbackで完走したturnは<code>completed</code>一件である。
+    </li>
+    <li>
+      <code>expectedFailures</code>はfixtureが意図したProvider
+      attemptのfailureを数え、完走したfallback
+      turnと重複してよい。plannedでないfailureはすべて<code>unexpectedFailures</code>へ数える。
+    </li>
+    <li>
+      <code>explicitProviderFallbacks</code>はSAAA
+      routeが明示設定された次Providerへ進んだturn、
+      <code>implicitFallbacks</code>はLARM
+      bindingの<code>fallback</code>がtrueだったallocationを数える。
+    </li>
+  </ul>
+  <p>passed modeは次のcountを満たす。ここに列挙しないscenario countは0とする。</p>
+  <table>
+    <caption>
+      Table: Required counts for passed mode reports
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Mode</th>
+        <th scope="col">Required scenario counts</th>
+        <th scope="col">Required result counts</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>preflight</td>
+        <td>すべて0</td>
+        <td>すべて0</td>
+      </tr>
+      <tr>
+        <td>functional</td>
+        <td>
+          normal 5、cancel 2、timeout 1、partial 1、LARM restart 1、SAAA restart 1、capacity 1、TTL
+          recovery 3、renewal 1、rollback preflight 1、Settings rollback 3、kill-switch rollback 3
+        </td>
+        <td>
+          completed 14、cancelled 2、expected failure 3、explicit Provider fallback 2。その他は0
+        </td>
+      </tr>
+      <tr>
+        <td>soak-30m</td>
+        <td>normal 20以上、cancel 5以上</td>
+        <td>completedはnormalと同数、cancelledはcancelと同数。その他は0</td>
+      </tr>
+      <tr>
+        <td>soak-2h</td>
+        <td>normal 60以上、cancel 10以上、LARM restart 1、SAAA restart 1</td>
+        <td>completedはnormalと同数、cancelledはcancelと同数。その他は0</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    passed
+    reportは<code>failureCodes</code>が空、<code>redactionCheck: passed</code>でなければならない。
+    全passed modeで<code>baselineActiveAllocations</code>と
+    <code>finalActiveAllocations</code
+    >は0、preflightの<code>maxActiveAllocations</code>は0、functionalと
+    soakの<code>maxActiveAllocations</code>は1以下を要求する。 failedまたはblocked
+    reportは途中までの実測countを保持し、未実施分を推測で補わない。
+  </p>
+
+  <h2 id="6-contract-gates">6. Delivery gates</h2>
+  <table>
+    <caption>
+      Table: MVP 2.6.1 delivery gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">Required evidence</th>
+        <th scope="col">通過前に許可する作業</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>R0 — Readiness baseline</td>
+        <td><code>b2aab6f</code>、clean regression、文書同期</td>
+        <td>R0前はM261-00の文書同期とbaseline verificationだけ</td>
+      </tr>
+      <tr>
+        <td>G1 — Frozen API contract</td>
+        <td>LARM commit、API schema、全contract decision、fixture一致</td>
+        <td>G1前はlive health / readyを含むgnosis requestを行わない</td>
+      </tr>
+      <tr>
+        <td>G2 — Isolated canary environment</td>
+        <td>
+          strict manifestとhash、deployment revision、private tunnel、token、operator、隔離data
+        </td>
+        <td>G2前はrunnerのdry validationとfake server testまで</td>
+      </tr>
+      <tr>
+        <td>F1 — Functional canary</td>
+        <td>normal、cancel、timeout、partial failure、restart、BUSY / capacity、TTL、rollback</td>
+        <td>F1前は30分canaryまたは2時間soakを開始しない</td>
+      </tr>
+      <tr>
+        <td>G3 — Production readiness</td>
+        <td>30分canary、2時間soak、security、runbook、release evidence review</td>
+        <td>G3前は通常profileのprimary ProviderをLARMへ変更しない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="7-g1-contract">7. G1 contract decisions</h2>
+  <p>
+    G1では次の全項目について、値、schema、source commit、commit由来fixtureまたはdaemon test
+    responseを記録する。
+  </p>
+  <ol>
+    <li>安定した仮想<code>model</code>名とGateway rewriteの有無</li>
+    <li>
+      lease開始時点、effective TTL、renew後TTLの表現。canary requested TTL 300秒に対するeffective
+      TTLは60〜300秒に収まること
+    </li>
+    <li>Gateway request、response、SSE event、error envelopeのbyte上限</li>
+    <li>metricsのcontent type、body上限、line上限、必要metric名とlabel cardinality</li>
+    <li>
+      <code>/v1</code
+      >、health、ready、metrics、<code>/state</code>、legacy
+      endpointのBearer適用範囲
+    </li>
+    <li><code>x-request-id</code>の生成、最大長、文字集合、欠落時の意味</li>
+    <li>error envelopeとerror codeのschema</li>
+    <li>allocationとoperationの全state、保持期間、daemon restart後の意味</li>
+    <li>
+      <code>BUSY</code>をreadyとする意味とupstream capacity errorの扱い
+    </li>
+    <li><code>client</code> labelとcredentialの関係</li>
+  </ol>
+  <p>
+    決定は「LARM変更」「SAAA変更」「両方変更」「現contractを明文化」のいずれかに分類する。
+    handoff文書だけを根拠にせず、LARM repositoryのcommit、API schema、daemon testを確認する。
+    未commit WIPをG1 evidenceとして使わない。gnosisの実deploymentがG1
+    commitと一致することはG2で確認する。
+  </p>
+  <p>G1通過時に次を同じchange setへ含める。</p>
+  <ul>
+    <li><code>CONTRACT_COMMIT</code>更新</li>
+    <li>DTO、strict invariant、body limit、timeoutの更新</li>
+    <li>commit由来fixtureとfake LARM testの更新</li>
+    <li>READMEとMVP 2.6 / 2.6.1文書の更新</li>
+    <li>contract decision tableとG2で照合するtarget LARM commit</li>
+  </ul>
+
+  <h2 id="8-runner-contract">8. Readiness runner contract</h2>
+  <h3 id="81-preflight">8.1 Preflight</h3>
+  <p><code>preflight</code>は次の順で実行する。</p>
+  <ol>
+    <li>
+      repositoryとSAAA commitを確認する。dirty treeは記録し、production evidence runでは拒否する。
+    </li>
+    <li>triple opt-in、numeric loopback origin、absolute isolated data directoryを検証する。</li>
+    <li>G2 manifestをstrict検証し、environmentと一致するSHA-256を確定する。</li>
+    <li>report directoryのowner permissionを検証する。</li>
+    <li>
+      Git commitを再確認してから<code>bunx tauri build --bundles app</code>でrelease
+      appをbuildし、build後も commitとclean treeが変わっていないことを確認する。
+    </li>
+    <li>
+      fixed release app bundleのcanonical digestを計算し、後続mode用のartifact hashを確定する。
+    </li>
+    <li>
+      compiled
+      <code>CONTRACT_COMMIT</code>、<code>SAAA_LARM_DEPLOYED_COMMIT</code>、G1
+      target commitが一致し、gnosis deployment revisionが指定されていることを検証する。
+    </li>
+    <li>
+      G2 manifestのdirect rollback Provider値と必要credentialの存在だけを検証し、推論は開始しない。
+    </li>
+    <li>preflight前のactive allocation baselineを取得し、0であることを要求する。</li>
+    <li><code>/health</code>を一回呼ぶ。</li>
+    <li><code>/ready</code>を一回呼ぶ。</li>
+    <li>
+      G1で固定した非mutating probeを使い、Bearerなし、誤token、正tokenの境界を各一回確認する。
+      既定probeはsynthetic idへの<code>GET /v1/allocations/:id</code>とし、正tokenでは
+      <code>not_found</code
+      >、不正credentialでは<code>unauthorized</code>を期待する。
+    </li>
+    <li>誤tokenはmemory上で32 byte以上のrandom値を生成し、一回のprobe後に保持しない。</li>
+    <li>response content type、body上限、timeout、redirect禁止を検証する。</li>
+    <li>active allocation countがpreflight前のbaselineから変化していないことを確認する。</li>
+    <li>redacted preflight reportをatomic writeする。</li>
+  </ol>
+  <p>
+    preflightはallocation、operation、Gateway、resolve、renew、releaseを呼ばない。health /
+    ready失敗時は bounded failureとし、自動反復しない。
+  </p>
+
+  <h3 id="82-functional">8.2 Functional canary</h3>
+  <p>
+    functional canaryは、isolated packaged appによるmanual UI確認とlive suiteを分離して記録する。
+  </p>
+  <table>
+    <caption>
+      Table: Functional canary minimum workload
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Scenario</th>
+        <th scope="col">Minimum</th>
+        <th scope="col">Execution surface</th>
+        <th scope="col">Pass condition</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Rollback Provider preflight</td>
+        <td>1 turn</td>
+        <td>packaged UI</td>
+        <td>
+          direct Provider完走、bootstrap app processからのLARM request 0件、通常stream countへ非算入
+        </td>
+      </tr>
+      <tr>
+        <td>通常stream</td>
+        <td>5 turn</td>
+        <td>packaged UI 3、live suite 2</td>
+        <td>completed message一件、release試行一件、暗黙fallbackなし</td>
+      </tr>
+      <tr>
+        <td>User cancel</td>
+        <td>2 turn</td>
+        <td>packaged UI 1、live suite 1</td>
+        <td>delta停止、terminal一件、releaseまたはTTL回収</td>
+      </tr>
+      <tr>
+        <td>Request timeout</td>
+        <td>1 turn</td>
+        <td>packaged UI + LARM operator latency fixture</td>
+        <td>pre-output timeout後、明示済みdirect Provider fallback 1件、同一LARM retry 0件</td>
+      </tr>
+      <tr>
+        <td>Partial stream interruption</td>
+        <td>1 turn</td>
+        <td>packaged UI + operator tunnel checkpoint</td>
+        <td>重複出力、Provider fallback、reallocationが0件</td>
+      </tr>
+      <tr>
+        <td>LARM restart</td>
+        <td>1回</td>
+        <td>packaged UI + LARM operator checkpoint</td>
+        <td>古いallocationを再利用せず、次turnだけが新規allocate</td>
+      </tr>
+      <tr>
+        <td>BUSY / capacity rejection</td>
+        <td>1回</td>
+        <td>packaged UI + LARM operator fixture</td>
+        <td>LARM内部fallback 0件、明示済みdirect Provider fallback 1件、retry storm 0件</td>
+      </tr>
+      <tr>
+        <td>TTL recovery</td>
+        <td>3 allocation</td>
+        <td>live suite + operator tunnel checkpoint</td>
+        <td>同時実行せず、各allocationがTTL + 30秒以内に回収</td>
+      </tr>
+      <tr>
+        <td>Lease renew</td>
+        <td>1 allocation</td>
+        <td>live suite</td>
+        <td>renew成功、effective TTL確認、Binding不変、release成功</td>
+      </tr>
+      <tr>
+        <td>Settings rollback</td>
+        <td>3 turn</td>
+        <td>packaged UI</td>
+        <td>LARM request 0件、direct Provider完走</td>
+      </tr>
+      <tr>
+        <td>Kill-switch rollback</td>
+        <td>restart後3 turn</td>
+        <td>packaged UI</td>
+        <td>全LARM network access 0件、UI表示一致</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>functional canaryは次の順を変えない。</p>
+  <ol>
+    <li>
+      同じcommit、artifact SHA-256、manifest SHA-256、revisionでpassedになったLARM preflight
+      reportの検証
+    </li>
+    <li>
+      packaged appをisolated data directoryで起動し、operatorがG2 manifestどおりのLARMとdirect
+      Providerを保存する。このprocessはfeature flag
+      OFFとし、runnerがSQLiteからstrictに再読込してdirect だけがrouteにあることを確認する
+    </li>
+    <li>direct rollback Provider preflight 1件</li>
+    <li>
+      LARMをprimary、direct
+      Providerを一件目のfallbackとして保存し、runnerがSQLiteから再確認する。appを 停止し、feature
+      flag ONで同じartifactとdata directoryを再起動する
+    </li>
+    <li>packaged UIの通常stream 1件とcancel 1件</li>
+    <li>pre-output request timeout 1件。latency fixtureを解除する</li>
+    <li>non-empty delta後のtunnel interruption 1件。tunnel復旧後に通常stream 1件</li>
+    <li>LARM restart 1回。復旧後に通常stream 1件</li>
+    <li>BUSY / capacity rejectionと明示済みdirect fallback 1件</li>
+    <li>live suiteの通常stream 2件、cancel 1件、TTL recovery 3件、renew 1件</li>
+    <li>Settings rollback 3件</li>
+    <li>kill-switch rollback 3件</li>
+  </ol>
+  <p>
+    restartとcapacity fixtureは運用担当がLARM側で実施する。SAAA runnerはremote actionを開始せず、
+    operator checkpointの前後にSAAAの観測結果だけを記録する。
+  </p>
+  <p>
+    disruptive scenarioの後はoperatorがtunnelまたはfixtureを通常状態へ戻し、runnerがactive
+    runとprovider sessionのterminal stateおよびrelease stateをSQLiteで確認してから
+    次の記載済みscenarioへ進む。5分以内に復帰しなければ 後続scenarioを開始せずblockedとする。
+  </p>
+  <p>
+    UI scenarioの完了後に<code>live_functional</code>を起動する。live
+    suiteは最初のmetrics sampleがpreflightのactive allocation
+    baselineと一致することを要求し、一致しなければUI phaseのallocation
+    leakとしてfailedにする。その後に自身のnormal、cancel、TTL、renew scenarioを実行し、
+    最終sampleが同じbaselineへ戻ったことを確認する。
+  </p>
+  <p>
+    capacity scenarioではLARM
+    requestの<code>allowFallback: false</code>を変更しない。最初のoutput前に
+    <code>capacity</code>が確定した場合だけ、Section 5.4で明示設定したSAAA
+    direct Providerへ一回進む。 これはLARM内部fallbackではなく、MVP 2.6 Section 13.1のSAAA Provider
+    policyとして <code>explicitProviderFallbacks</code>へ記録する。
+  </p>
+  <p>
+    request timeoutも最初のoutput前に確定させ、同じ明示済みdirect Providerへ一回だけ進む。したがって
+    functional
+    reportはcapacityとtimeoutを合わせて<code>explicitProviderFallbacks: 2</code>を要求する。
+    timeout fixtureから遅れて到着したLARM responseは破棄し、messageまたはterminal
+    resultを追加しない。
+  </p>
+  <p>
+    functional evaluatorは<code>ttlRecoveryMaxMs &lt;= effectiveTtlSecondsMax * 1000 + 30000</code>、
+    <code>renewalsAttempted: 1</code
+    >、<code>renewalsSucceeded: 1</code>、<code>effectiveTtlSecondsMin &gt;= 60</code>、
+    <code>effectiveTtlSecondsMax &lt;= 300</code>を要求する。renew responseで allocation
+    id、capability、route、selected Runtime、fallback stateが変わった場合は
+    <code>contract-mismatch</code>とする。
+  </p>
+  <p>TTL recoveryの三件は同時実行せず、次のfailure pointを一件ずつ固定する。</p>
+  <ol>
+    <li>serverがallocationを作成した後にcreate responseを遮断し、blind retryせずTTL回収を待つ。</li>
+    <li>
+      completed Gateway turnのrelease送信直前にtransportを遮断し、一回のrelease
+      attempt失敗後に再送せず TTL回収を待つ。
+    </li>
+    <li>allocation取得後、Gateway前にtest clientを終了し、process消失後のTTL回収を待つ。</li>
+  </ol>
+  <p>
+    一件目と二件目は、live suite開始前にLARM operatorがcanary clientだけを対象とするone-shot failure
+    sequenceとして準備する。順序はcreate-response遮断、release-response遮断に固定し、各条件は
+    一度発火したら自動解除する。captureされたRust childから対話的な合図を出したり、runnerからremote
+    fault commandを送ったりしない。G2でこのdeterministic fixtureを用意できない場合はfunctional runを
+    開始しない。
+  </p>
+  <p>
+    各caseはmetricsでactive countが一度1になってから0へ戻ることを要求する。これらはcleanup
+    lifecycleのplanned fixtureであり、logical Provider attemptの
+    <code>expectedFailures</code>へ重複計上しない。
+  </p>
+  <p>
+    rollbackは二つの独立scenarioとして実行する。Settings rollbackで3
+    turn完走後、LARMをprimaryへ戻すが
+    新しいturnは開始せず、SAAAを停止する。次に<code>SAAA_LARM_ENABLED</code>をOFFにして再起動し、
+    kill-switch rollbackの3 turnを実行する。この復元を行わずSettingsがdirectのままなら、kill-switch
+    scenarioは無効として再実行する。
+  </p>
+  <p>live suiteとpackaged UIは次の固定canary prompt catalogだけを使用する。</p>
+  <pre><code class="language-text">Reply with exactly: CANARY_OK
+List the numbers 1 through 5.
+Write one short greeting in Japanese.
+Write ten numbered words, one at a time.
+Reply with exactly: READY</code></pre>
+  <p>
+    各promptはUTF-8で80 byte以下とし、実装時にliteral一致testを追加する。 partial stream
+    interruptionは最初のnon-empty assistant deltaを確認した後にだけtunnelを遮断する。
+    operator操作が早すぎる、遅すぎる、または観測できなかった場合はrunをfailedにする。同じrun内で
+    scenarioだけをやり直さず、新しい空のreport directoryで全modeをpreflightから再実行する。
+  </p>
+
+  <h3 id="83-soak">8.3 Soak</h3>
+  <p>
+    runnerはSection 5.4の隔離contractでpackaged SAAAを起動し、operatorはSection 8.2の固定prompt
+    catalogを繰り返し使用する。turnとcancelの実績はisolated SQLiteのterminal
+    stateから数え、UI操作回数の 自己申告だけでminimum workloadを満たしたことにしない。Rust metrics
+    observerはsoak中にallocation、 Gateway、releaseを呼ばない。
+  </p>
+  <p>
+    runnerはpackaged appのready確認後、UI workload開始前に対応するRust metrics observerを起動する。
+    observerの最初のsampleがpreflight
+    baselineと一致してからworkloadを開始し、最後のturnのcleanup後に final
+    baselineを取得するまでobserverを終了しない。runnerはlocal RSS / SQLite samplingとobserverを
+    同時に監視し、どちらか一方の早期終了またはdeadline超過をrun全体のfailedとして扱う。
+  </p>
+  <table>
+    <caption>
+      Table: Soak workload and thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Run</th>
+        <th scope="col">Workload</th>
+        <th scope="col">Pass condition</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>30-minute canary</td>
+        <td>20 completed short turn以上、加えてuser cancel 5件以上</td>
+        <td>unexpected failure 0件、release成功時は10秒以内にallocation countがbaselineへ戻る</td>
+      </tr>
+      <tr>
+        <td>2-hour soak</td>
+        <td>60 completed turn以上、加えてcancel 10件以上、LARM restart 1回、SAAA restart 1回</td>
+        <td>重複terminal、暗黙fallback、allocation leak、Resident停止が0件</td>
+      </tr>
+      <tr>
+        <td>SAAA RSS</td>
+        <td>10分warm-up後を観測</td>
+        <td>
+          両modeでmax − minが64 MiB以下。2-hourでは最後30分medianが直前30分median + 16 MiB以下
+        </td>
+      </tr>
+      <tr>
+        <td>Idle cleanup</td>
+        <td>全turn終了後</td>
+        <td>release成功後10秒以内にactive allocationがrun開始時baselineへ戻る</td>
+      </tr>
+      <tr>
+        <td>Allocation concurrency</td>
+        <td>同時active turnは一件以下</td>
+        <td>active allocationはrun開始時baseline + 1以下</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    raw metricsはreportへ保存せず、allowlist済みnumeric sampleだけをmemory上で集計する。 metrics
+    labelにprompt、response、token、identifier、endpointが一件でも見つかった場合は即時停止する。
+  </p>
+  <p>
+    一回のmetrics responseは1 MiB、1行は16 KiB、sampleは4,096件をSAAA側のhard limitとする。 connect
+    timeoutは5秒、request全体deadlineは10秒とし、同時に複数scrapeを実行しない。 G1で固定したcontent
+    typeとallowlist metric名以外を判定材料にせず、必要metricの欠落、duplicate series、 非finite
+    value、cardinality上限超過は<code>contract-mismatch</code>としてrunをfailedにする。
+  </p>
+  <p>
+    durationとdeadlineはmonotonic clockで測る。RSS、SQLite、allocation countは5秒間隔で取得する。
+    RSSまたはSQLiteの最大sampling gapが15秒を超えたrunはmemory / persistence
+    gateを評価せずfailedとする。 LARM metricsも通常gapは15秒以下を要求するが、2-hour
+    modeの30〜40分に一回だけ、operatorが実施する LARM
+    restartに伴う1〜120秒の観測済みgapを一回だけ許可し、gapが0のrunをrestart実施済みとみなさない。
+    metrics responseは一行ずつallowlist parserへ渡し、sampleへ変換した直後にraw textを破棄する。
+  </p>
+  <p>
+    <code>elapsedMs</code>はmonotonic clock由来とし、30-minute modeは1,800,000
+    ms以上、2-hour modeは7,200,000 ms以上を要求する。RFC 3339のwall-clock
+    timestamp差をduration判定へ使わない。
+  </p>
+  <p>
+    30-minute modeの<code>rssRangeMiB</code>はminute 10〜30から計算し、二つのRSS
+    median fieldは0とする。 2-hour modeだけが次の60分memory
+    windowでrangeとmedian差の両方を評価する。
+  </p>
+  <p>
+    2-hour soakでは、最初のSAAA processを70分以上連続稼働させる。最初の10分をwarm-upとして除外し、
+    minute 10〜40をprevious、minute 40〜70をlastとする二つの重複しない30分windowを使う。
+    <code>rssRangeMiB</code>はminute 10〜70全体、二つのmedian
+    fieldはそれぞれのwindowから計算し、 評価完了後にSAAAを一回restartする。 LARM
+    restartは最初の30〜40分、SAAA restartは70分のmemory window完了後に実施する。 LARM
+    restartもactive runが0件であることをSQLiteで確認してからoperator checkpointへ進み、復旧後の
+    最初のturnで新しいallocationを確認する。restart後は残り時間でroute、allocation、rollback
+    configurationの保持を確認し、restart前後のRSS sampleを 一つのseriesへ混在させない。
+  </p>
+  <p>
+    functional、soak-30m、soak-2hは同じisolated SQLiteを継続利用する。各mode開始時に既存
+    <code>runtime_runs</code
+    >と<code>provider_sessions</code>のbounded identifier集合をmemory上へsnapshotし、
+    そのmodeで新規作成されたrowだけをworkload countと結果判定へ使う。snapshotとidentifierはreportへ
+    保存せず、mode終了時に破棄する。wall-clock timestampだけでmode境界を判定しない。
+  </p>
+  <p>
+    SAAA restartはactive runが0件であることをSQLiteで確認してからrunnerがlocal
+    processだけを停止し、同じ isolated data directoryと更新後environment、新しいmarker
+    idで再起動する。10秒以内にfrontend ready markerとSQLite reopenを確認できなければrestart
+    recoveryをfailedとする。LARM daemonやtunnelはこのlocal restartに 連動して操作しない。
+  </p>
+
+  <h3 id="84-report">8.4 Report finalization</h3>
+  <p><code>report</code>は次を行う。</p>
+  <ol>
+    <li>
+      runごとのschema version、commit、artifact SHA-256、manifest
+      SHA-256、revision、modeを検証する。
+    </li>
+    <li>
+      preflight、functional、soak-30m、soak-2hが各一件あり、commit、artifact SHA-256、manifest
+      SHA-256、revisionがすべて一致することを要求する。
+    </li>
+    <li>各input fileのSHA-256をmemory上で計算し、同じmode reportを重複集計しない。</li>
+    <li>必須scenario countとthresholdをpure functionで評価する。</li>
+    <li>forbidden key、credential pattern、本文候補、identifier候補を再走査する。</li>
+    <li>failedまたはblockedをpassedへ手動上書きしない。</li>
+    <li>release evidenceへ転記するbounded summaryを生成する。</li>
+  </ol>
+  <p>
+    report commandは四つのfinal mode reportから<code>mode: aggregate</code>のfinal
+    reportを一件だけ作り、HTML文書を 自動編集しない。生成したsummaryをoperatorがrelease
+    evidenceへ転記し、 reviewerがcommit、revision、mode、resultを照合する。gate stateは
+    <code>pending | passed | failed | blocked</code>のいずれかとし、failedまたはblocked evidenceを
+    waiverでpassedへ変更しない。
+  </p>
+  <p>
+    aggregateではscenario / result countを加算し、timingは最大値、failure codeは和集合にする。
+    各modeの<code>baselineActiveAllocations</code>が一致し、各modeのfinalがそのbaselineへ戻ることを要求し、
+    <code>maxActiveAllocations</code>は全modeの最大値を使う。RSS三fieldはsoak-2h、lease
+    summaryはfunctionalから 引き継ぐ。これらのsource
+    modeがfailed、blocked、欠落の場合はaggregateをpassedにしない。
+  </p>
+
+  <h2 id="9-persistence-observability">9. Persistence and observability</h2>
+  <p>canary判定には、次のsourceを分離して使う。</p>
+  <table>
+    <caption>
+      Table: Evidence sources
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Source</th>
+        <th scope="col">Use</th>
+        <th scope="col">禁止事項</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SAAA SQLite</td>
+        <td>run status、bounded Provider selection、cleanup status</td>
+        <td>Conversation本文をreportへ複製しない</td>
+      </tr>
+      <tr>
+        <td>SAAA process</td>
+        <td>RSS、exit、restart、feature flag state</td>
+        <td>environment dumpを取得しない</td>
+      </tr>
+      <tr>
+        <td>LARM metrics</td>
+        <td>allocation count、selected Runtime category、release、fallback</td>
+        <td>raw labelを保存しない</td>
+      </tr>
+      <tr>
+        <td>Operator checkpoint</td>
+        <td>tunnel interruption、daemon restart、capacity fixtureの時刻と結果</td>
+        <td>remote commandやhost detailをreportへ保存しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    SQLiteはisolated application-data directoryからread-only connectionで観測する。runnerは
+    production tableを更新せず、設定変更、turn作成、cancelは通常SAAA UIまたはtest-only live
+    suiteを通す。
+  </p>
+  <p>
+    database pathはG2 manifestのisolated data
+    directory直下の<code>saaa.sqlite3</code>に固定し、home
+    directoryを探索しない。 観測queryはread-only connectionとbounded busy
+    timeoutを使い、一回のsampleを一つのread transactionで取得する。final判定はpackaged
+    appを正常終了した後のSQLite stateで再確認する。
+  </p>
+  <p>
+    runnerはBun組み込みの<code>bun:sqlite</code>を使い、<code>create: false</code>、
+    <code>readonly: true</code>、<code>PRAGMA query_only=ON</code>、busy
+    timeout 1秒で開く。 database未作成、required table / column欠落、対象
+    <code>settings_documents.schema_version</code>不一致、query timeoutを0件として扱わず
+    <code>database-schema-invalid</code>でfailedにする。
+  </p>
+  <p>
+    selected Runtime idはG1で固定したroute catalogを使ってmemory上で
+    <code>resident-default | optional | unknown</code>へ分類し、reportにはraw idを保存しない。
+    <code>llm-default</code
+    >で<code>optional</code>または<code>unknown</code>が一件でもあれば
+    <code>runtimePolicyViolations</code>へ加算してrunをfailedにする。
+  </p>
+  <p>
+    macOSのSAAA RSSはrunnerがshellを介さず、absolute command
+    <code>/bin/ps -o rss= -p &lt;pid&gt;</code>を2秒deadline、64 byte
+    output上限で実行して取得する。 一つのunsigned KiB値以外はsample
+    failureとする。threshold計算はKiBのまま行い、reportへ書く三つの MiB
+    fieldだけを1,024で除して切り上げる。child processまたはRust observerのRSSを混ぜない。
+  </p>
+
+  <h2 id="10-security">10. Security and privacy</h2>
+  <ul>
+    <li>transportはSAAA host上のnumeric loopback originだけを許可する。</li>
+    <li>LAN上のplain HTTP originへ接続しない。</li>
+    <li>runnerはsystem / environment proxyを使用しない。</li>
+    <li>redirectを追従しない。</li>
+    <li>Bearer tokenをSQLite、Settings、report、log、command historyへ保存しない。</li>
+    <li>runnerのerrorはbounded codeと固定文言に正規化し、raw response bodyを表示しない。</li>
+    <li>
+      promptには固定の非機密canary textだけを使い、実会話または実workspace contextを送らない。
+    </li>
+    <li>
+      Rust live suiteのresponseはassertionと文字数上限の評価後に破棄する。packaged
+      UIのpromptとresponseはisolated SQLiteだけに保存し、report、log、release evidenceへ複製しない。
+    </li>
+    <li>
+      report directoryはrepositoryとapplication-data directoryの外に置き、reportを自動追加または
+      自動commitしない。
+    </li>
+    <li>
+      runnerは<code>git add</code>、<code>git commit</code>、<code>git push</code>を実行しない。
+    </li>
+    <li>
+      machine-readable mode reportからはaggregate summaryだけをrelease
+      evidenceへ転記する。G1、G2、manual、 security、runbook evidenceはそれぞれの専用欄に記録する。
+    </li>
+  </ul>
+  <p>
+    live suiteはcanary / enable flag、base URL、deployed commit、revision、G2で固定したmetrics
+    scope、<code>LARM_API_TOKEN</code>、 runner-owned
+    <code>SAAA_LARM_CANARY_RESULT_FILE</code> / <code>SAAA_LARM_CANARY_ARTIFACT_SHA256</code> /
+    <code>SAAA_LARM_CANARY_MANIFEST_SHA256</code>だけを明示的に読み、process environmentを
+    enumerateしない。report directory、data directory、manifest path、rollback
+    credentialは渡さない。 token rotationではcanaryを停止し、LARM側tokenを更新し、operator-owned
+    launcherのenvironmentを更新してSAAAをrestartする。LARM
+    operatorは旧tokenの失効だけをattestし、新tokenは 新しい空のreport directoryでSection
+    8.1のpreflightを通す。旧tokenと新tokenをreportまたはrunbookへ 記録しない。
+  </p>
+  <p>
+    gnosis上のLARM log auditはLARM operatorがserver側で実施し、raw logをSAAA hostへ転送しない。
+    release
+    evidenceにはtoken、prompt、response、identifier、endpointの検出件数と監査時刻だけを記録し、
+    すべて0件でなければG3をfailedとする。
+  </p>
+  <p>
+    streaming forbidden-data scannerは4,095 byteのrolling
+    overlapを保持し、chunk境界をまたぐ最大4,096
+    byteのcredentialも検出する。検出対象はmemory上のcredential exact
+    value、manifestのendpoint、固定prompt literal、既知identifier、Authorization / Bearer
+    patternとし、match内容自体はerrorまたはreportへ出さない。
+  </p>
+
+  <h2 id="11-error-and-retry">11. Error, retry, and interruption policy</h2>
+  <ul>
+    <li>authentication、contract、protocol、413、internalはretryしない。</li>
+    <li>health / readyは一回だけ呼び、自動pollしない。</li>
+    <li>allocation pending pollは既存LARM Providerのdeadlineとbackoffを使う。</li>
+    <li>allocate outcome unknownはblind retryせず、TTL回収scenarioへ記録する。</li>
+    <li>最初のnon-empty delta後はProvider fallback、reallocation、同一request retryを禁止する。</li>
+    <li>capacity failureはretry stormを起こさず、明示されたcanary scenario一件として終了する。</li>
+    <li>runner interruption時は進行中requestをcancelし、bounded releaseを一回だけ試行する。</li>
+    <li>release failureはinference結果を上書きせず、cleanup resultへ分離する。</li>
+  </ul>
+
+  <h2 id="12-implementation-tickets">12. Implementation tickets</h2>
+  <h3 id="121-execution-order">12.1 Execution order</h3>
+  <table>
+    <caption>
+      Table: MVP 2.6.1 execution batches
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Batch</th>
+        <th scope="col">Tickets</th>
+        <th scope="col">Exit artifact</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A — Baseline</td>
+        <td>M261-00 → R0 → M261-01</td>
+        <td>同期済み設計書とrelease evidence skeleton</td>
+      </tr>
+      <tr>
+        <td>B — Offline tooling</td>
+        <td>M261-02、M261-03、M261-04</td>
+        <td>network-off testでrunner、live-suite gate、redaction、threshold評価が成功</td>
+      </tr>
+      <tr>
+        <td>C — Contract and environment</td>
+        <td>M261-05 → G1 → M261-06 → G2</td>
+        <td>production revisionと隔離canary manifest</td>
+      </tr>
+      <tr>
+        <td>D — Functional evidence</td>
+        <td>M261-07 → F1</td>
+        <td>全functional scenarioのredacted summary</td>
+      </tr>
+      <tr>
+        <td>E — Production evidence</td>
+        <td>M261-08 → M261-09（G3 decision）</td>
+        <td>soak、rollback、runbook、enablement decision</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="m261-00">M261-00 — Baseline and document synchronization</h3>
+  <ul>
+    <li>MVP 2.6 implementation statusを<code>b2aab6f</code>へ更新する。</li>
+    <li>未commit working treeという古い記述を削除する。</li>
+    <li>
+      <code>b2aab6f</code>でSection 14.1の全verificationを実行し、R0
+      evidenceへ記録する。
+    </li>
+    <li>MVP 2.6のM26-09 / 10と本書のticket対応を記録する。</li>
+    <li>README、document catalog、roadmapのcurrent milestoneを同期する。</li>
+    <li>MVP 2.5 manual acceptance pendingを維持し、完了扱いにしない。</li>
+  </ul>
+  <p>Acceptance: 文書間に実装baseline、status、次ticketの矛盾がない。</p>
+
+  <h3 id="m261-01">M261-01 — Release evidence schema</h3>
+  <ul>
+    <li><code>mvp-2.6-release-evidence.html</code>を作成する。</li>
+    <li>G1、G2、F1、G3を既定でpendingにする。</li>
+    <li>
+      SAAA commit、release artifact SHA-256、canary manifest SHA-256、LARM contract
+      commit、deployment revisionを別fieldにする。
+    </li>
+    <li>automated、manual、security、rollback、soak、runbook evidenceを分離する。</li>
+    <li>raw logやidentifierを貼り付けない記録規則を明記する。</li>
+  </ul>
+  <p>Acceptance: 未実施項目をpassへできず、blocked reasonを残せる。</p>
+
+  <h3 id="m261-02">M261-02 — Readiness runner and dry validation</h3>
+  <ul>
+    <li><code>scripts/larm-readiness.ts</code>とpackage scriptを追加する。</li>
+    <li>subcommand、triple opt-in、loopback validation、isolated path validationを実装する。</li>
+    <li>
+      clean commitからのrelease build、fixed bundle / executable path、canonical
+      digest継承を実装する。
+    </li>
+    <li>G2 manifestのstrict parser、permission検証、SHA-256継承を実装する。</li>
+    <li>Section 5.1.1のargument、stdout、stderr、exit codeを固定する。</li>
+    <li>通常testではnetwork access 0件となるfake transport testを追加する。</li>
+    <li>unknown argument、不正duration、重複option、既存report上書きを拒否する。</li>
+    <li>reportをtemporary fileからno-replace atomic publishし、permissionを検証する。</li>
+  </ul>
+  <p>Acceptance: serverなしで全validation、failure、redaction、atomic write testが成功する。</p>
+
+  <h3 id="m261-03">M261-03 — Ignored live canary suite</h3>
+  <ul>
+    <li>test-only live moduleを追加し、production APIを増やさない。</li>
+    <li>
+      <code>client.rs</code
+      >へ<code>#[cfg(test)]</code>のauthentication probeとmetrics
+      readerを追加し、 productionと同じ<code>SharedLarmClient</code>を再利用する。
+    </li>
+    <li>modeごとのexact ignored testとatomic result fragment contractを実装する。</li>
+    <li>
+      health、ready、allocate、pending、Gateway
+      stream、cancel、renew、releaseを実Providerで実行する。
+    </li>
+    <li>normal、cancel、TTL recovery、explicit renewをbounded live scenarioとして実装する。</li>
+    <li>
+      soak test名ではread-only metrics observerだけを実行し、allocationまたはGatewayを呼ばない。
+    </li>
+    <li>全testをignoredにし、triple opt-in不足ではnetwork access前に失敗させる。</li>
+    <li>response本文とidentifierをtest failure outputへ表示しない。</li>
+  </ul>
+  <p>
+    Acceptance: 通常<code>bun run check</code>ではlive testが実行されず、fake
+    transportで制御経路を検証できる。
+  </p>
+
+  <h3 id="m261-04">M261-04 — Evidence evaluator and redaction tests</h3>
+  <ul>
+    <li>Section 8のworkloadとthresholdをpure evaluatorへ実装する。</li>
+    <li>Section 5.5のstrict schema、size、depth、numeric bound、permissionを実装する。</li>
+    <li>pass、fail、blocked、duplicate run、欠落scenarioをunit testする。</li>
+    <li>forbidden keyとsecret-shaped valueのrecursive scanを実装する。</li>
+    <li>
+      allocation id、request id、endpoint、prompt、responseを混入させたnegative fixtureを追加する。
+    </li>
+    <li>report schemaのunknown fieldを拒否し、version不一致を明示する。</li>
+  </ul>
+  <p>Acceptance: leak fixtureをすべて拒否し、validなmode / aggregate fixtureだけを受理する。</p>
+
+  <h3 id="m261-05">M261-05 — Frozen LARM contract adoption</h3>
+  <ul>
+    <li>Section 7の全contract decisionを両projectで確定する。</li>
+    <li>LARM commit、API schema、daemon testsを確認する。</li>
+    <li>SAAAのconstant、DTO、bounds、fixture、fake server testを更新する。</li>
+    <li>fixtureのsource fileとcommitをrelease evidenceへ記録する。</li>
+    <li>contract差異が残る場合はG1をblockedのまま維持する。</li>
+  </ul>
+  <p>Acceptance: G1 decisionに未決定、仮値、未commit WIPがない。</p>
+
+  <h3 id="m261-06">M261-06 — Canary environment manifest</h3>
+  <ul>
+    <li>
+      operator、空のisolated data directory、private tunnel、token、LARM Settings値、rollback
+      Provider値をmanifestとして固定する。
+    </li>
+    <li>gnosis deployment revisionがG1で固定したLARM commitを含むことを確認する。</li>
+    <li>排他的観測windowまたはclient-scoped metricsを確保する。</li>
+    <li>通常profileとisolated data directoryのinodeとcanonical pathが異なることを確認する。</li>
+    <li>direct rollback Providerのcredential存在をnetwork accessなしで検証する。</li>
+    <li>loopback tunnelのlisten状態だけを確認し、HTTP requestは送らない。</li>
+    <li>Section 5.2.1のstrict manifestとmanual isolation evidenceを作成する。</li>
+  </ul>
+  <p>
+    Acceptance: G2の全fieldが確定し、isolated Settingsへの書き込みはfunctional
+    canary開始時のoperator checkpointまで保留され、通常profileへの書き込みまたはLARM requestがない。
+  </p>
+
+  <h3 id="m261-07">M261-07 — Functional canary</h3>
+  <ul>
+    <li>G2通過後、最初のLARM live actionとしてSection 8.1のpreflightを実行する。</li>
+    <li>
+      preflight通過後、feature flag OFFのbootstrap appでSettingsを作成し、最初のLARM
+      allocation前にdirect rollback Providerを一回完走させる。
+    </li>
+    <li>
+      health / readyとauthentication probeがallocationを作らないことをLARM metricsで確認する。
+    </li>
+    <li>Section 8.2を記載順に実行する。</li>
+    <li>UI manual resultとlive suite resultを別々に記録する。</li>
+    <li>SQLite commit-before-event、release分離、partial-output禁止を確認する。</li>
+    <li>default routeからoptional Runtimeへ暗黙切替しないことを確認する。</li>
+    <li>Settings rollbackとkill-switch rollbackを両方実施する。</li>
+  </ul>
+  <p>Acceptance: 全minimum workloadを満たし、stop conditionが一件もない。</p>
+
+  <h3 id="m261-08">M261-08 — Canary, soak, security, and runbook</h3>
+  <ul>
+    <li>30分canaryを通過してから2時間soakを開始する。</li>
+    <li>5秒sample、通常15秒gap limit、restart時120秒gap limit、70分memory windowを評価する。</li>
+    <li>release recovery、LARM restart、SAAA restart recoveryを評価する。</li>
+    <li>SAAAとLARMのlog、metrics、diagnosticsをsecret / content leakの観点で確認する。</li>
+    <li>
+      LARM unavailable、tunnel failure、restart付きtoken rotation、capacity、TTL
+      cleanupのrunbookを作る。
+    </li>
+    <li>
+      限定enablement後にoperatorが<code>/ready</code>とallowlist
+      metricsを監視する手順をrunbookへ含める。
+    </li>
+    <li>rollback手順をrunbookだけで別operatorが再現できるか確認する。</li>
+  </ul>
+  <p>Acceptance: Section 8.3の全thresholdとsecurity reviewを通過する。</p>
+
+  <h3 id="m261-09">M261-09 — Production readiness decision</h3>
+  <ul>
+    <li>release evidenceのautomated、manual、security、rollback、soak、runbookをレビューする。</li>
+    <li>未解決deviationとwaiverが0件であることを確認する。</li>
+    <li>G3を<code>passed | failed | blocked</code>のいずれかとして明示する。</li>
+    <li>passedの場合も、初期production利用範囲、operator、rollback windowを別に決定する。</li>
+    <li>Voice follow-upはG3 passed後に独立計画として作成する。</li>
+  </ul>
+  <p>
+    Acceptance: feature flagとprimary Providerの扱いが暗黙に変わらず、判断者と根拠が記録される。
+  </p>
+
+  <h2 id="13-change-inventory">13. Planned change inventory</h2>
+  <table>
+    <caption>
+      Table: Planned files and responsibilities
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Path</th>
+        <th scope="col">Change</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>scripts/larm-readiness.ts</code></td>
+        <td>operator-only orchestration、validation、summary report</td>
+      </tr>
+      <tr>
+        <td><code>tests/larm-readiness.test.ts</code></td>
+        <td>CLI validation、threshold、redaction、report schema</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/live_canary.rs</code></td>
+        <td>ignored live lifecycle tests and read-only soak observers</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/mod.rs</code></td>
+        <td><code>#[cfg(test)]</code>付きlive canary module registration</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/client.rs</code></td>
+        <td>test-only auth / metrics helperと、必要な場合だけG1 contract update</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/contracts.rs</code></td>
+        <td>G1 DTO、bounds、invariant update</td>
+      </tr>
+      <tr>
+        <td><code>package.json</code></td>
+        <td>preflight、canary、soak、report command</td>
+      </tr>
+      <tr>
+        <td><code>spec/docs/mvp-2.6-release-evidence.html</code></td>
+        <td>G1、G2、F1、G3 evidence</td>
+      </tr>
+      <tr>
+        <td><code>spec/docs/mvp-2.6-larm-operations-runbook.html</code></td>
+        <td>G1 / G2準備、live checkpoint、障害対応、rollback、G3 operator手順</td>
+      </tr>
+      <tr>
+        <td><code>README.md</code></td>
+        <td>production-ready後のoperator entry pointと既定OFF説明</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    change inventoryは責務を示すものであり、G1差異がなければproduction clientを不要に変更しない。
+    runner実装のために<code>lib.rs</code>へ新しいproduction Tauri
+    commandを追加しない。
+  </p>
+
+  <h2 id="14-verification">14. Verification plan</h2>
+  <h3 id="141-server-independent">14.1 Server-independent verification</h3>
+  <pre><code class="language-sh">bun run spec:fix
+bun run spec:check
+bun run typecheck
+bun run test:frontend
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+bun run build
+bun run desktop:smoke</code></pre>
+  <p>
+    live canary testがignoredであるだけでは不十分である。triple opt-inがない通常検証中に、
+    loopbackを含むLARM network accessが0件であることをfake listenerで確認する。
+  </p>
+
+  <h3 id="142-live">14.2 Live verification</h3>
+  <pre><code class="language-sh">bun run larm:preflight -- --report-dir /absolute/operator-owned/report-dir
+bun run larm:canary -- --report-dir /absolute/operator-owned/report-dir
+bun run larm:soak -- --report-dir /absolute/operator-owned/report-dir --duration 30m
+bun run larm:soak -- --report-dir /absolute/operator-owned/report-dir --duration 2h
+bun run larm:report -- --report-dir /absolute/operator-owned/report-dir</code></pre>
+  <p>
+    tokenをinline assignmentまたはcommand argumentへ書かない。必要なenvironmentはoperator-owned
+    launcherから渡し、runnerは値を表示しない。各commandは前gateのrequired evidenceがrelease
+    evidenceに記録され、operatorとreview時刻が埋まっていない場合にnetwork
+    access前に停止する。cryptographic signatureは要求しない。
+  </p>
+
+  <h3 id="143-manual">14.3 Manual verification</h3>
+  <ul>
+    <li>通常profileとcanary profileのSettings、SQLite、environmentが共有されていない。</li>
+    <li>Settings cardにtoken、Runtime、model、port、resolved endpointが表示されない。</li>
+    <li>
+      Settings cardのcontract commitがpreflight
+      reportの<code>larmContractCommit</code>と一致する。
+    </li>
+    <li>Connection Testがhealth / ready以外を呼ばない。</li>
+    <li>flag OFFではConnection Testを含むLARM requestが0件である。</li>
+    <li>partial failure後に重複assistant messageまたはfallback表示がない。</li>
+    <li>cancel後にUIが停止し、releaseまたはTTL回収が確認できる。</li>
+    <li>chat成功・release失敗でassistant messageが成功のまま一度だけ保存される。</li>
+    <li>diagnosticsとreadiness reportにforbidden dataがない。</li>
+    <li>runbookだけを使い、別operatorがnew-turn rollbackとkill-switch rollbackを再現できる。</li>
+  </ul>
+
+  <h2 id="15-stop-conditions">15. Stop conditions</h2>
+  <p>
+    次のいずれかが発生した場合は、そのrunをfailedまたはblockedとして終了し、後続gateへ進まない。
+  </p>
+  <ul>
+    <li>LARM API contractが未commit、schemaと実装が不一致、deployment revisionが不明</li>
+    <li>G2 manifestがstrict schema、owner、permission、hashの検証を通過しない</li>
+    <li>
+      release bundleまたはmain executableが欠落し、bundle entryが不正、またはcanonical
+      digestがpreflightと 不一致
+    </li>
+    <li>compiled contract commit、deployed commit、G1 target commitが一致しない</li>
+    <li>effective TTL、仮想model名、Gateway上限のいずれかが未決定</li>
+    <li>canary requested TTL 300秒に対するserver-confirmed effective TTLが60〜300秒に収まらない</li>
+    <li>plain HTTP LAN接続またはnumeric loopback以外が必要</li>
+    <li>通常profileとcanary profileがSettings、SQLite、environmentを共有する</li>
+    <li>report directoryにsymlink、unexpected file、ownerまたはpermission不一致がある</li>
+    <li>direct rollback Providerが最初のLARM allocation前のoperator testを完走しない</li>
+    <li>排他的観測windowもclient-scoped metricsも利用できない</li>
+    <li>token、prompt、response、identifier、endpointがreport、log、metrics、diagnosticsへ出る</li>
+    <li>health / readyがallocation、operation、Runtime起動を発生させる</li>
+    <li>最初のnon-empty delta後にfallback、reallocation、retryが発生する</li>
+    <li>cancel、failure、shutdown後にreleaseもTTL + 30秒以内の回収も行われない</li>
+    <li>
+      <code>existing-only</code
+      >または<code>allowFallback: false</code>が通常canary requestで変わる
+    </li>
+    <li>default routeからoptional Runtime、long-context、speed、35Bへ暗黙切替する</li>
+    <li>Resident Runtime停止またはSAAAからのsystemd / llama-swap操作が発生する</li>
+    <li>Provider selection eventがSQLite commitより先に送られる</li>
+    <li>chat成功がrelease失敗だけを理由に失敗へ変更される</li>
+    <li>unexpected failure、duplicate terminal、allocation leakが一件でも発生する</li>
+    <li>
+      soakのRSS / SQLite gapまたは通常metrics gapが15秒を超える、planned LARM restart
+      gapが120秒を超える、 または70分の連続memory windowを確保できない
+    </li>
+    <li>既存direct Provider、Codex、Voice、Meeting、Situationに回帰がある</li>
+  </ul>
+
+  <h2 id="16-acceptance">16. Acceptance criteria</h2>
+  <ol>
+    <li>MVP 2.6と2.6.1のbaseline、status、ticket、gateが矛盾していない。</li>
+    <li>server-independent runner、evaluator、redaction、report testが成功する。</li>
+    <li>
+      全live modeが同じrelease bundle digestとcanary manifest SHA-256を使い、debugまたは
+      任意binaryを受理しない。
+    </li>
+    <li>
+      CLI argument、exit code、child output bound、result fragmentのcontractが固定されている。
+    </li>
+    <li>live testはtriple opt-inかつignoredで、通常testとCIから実行されない。</li>
+    <li>G1の全contract decisionがcommitとschemaで固定されている。</li>
+    <li>G2のisolated data、private tunnel、token、operator、rollback Providerが固定されている。</li>
+    <li>排他的観測windowまたはclient-scoped metricsによりallocationとRuntimeを誤集計しない。</li>
+    <li>functional canaryの全minimum workloadが成功する。</li>
+    <li>30分canaryと2時間soakがSection 8.3のthresholdを満たす。</li>
+    <li>
+      2時間soakのmemory window、sampling interval、sampling gap、restart順がSection 8.3に一致する。
+    </li>
+    <li>secret、本文、identifier、endpointの露出が0件である。</li>
+    <li>重複出力、暗黙fallback、古いallocation再利用、allocation leakが0件である。</li>
+    <li>Resident停止とSAAAからのRuntime運用操作が0件である。</li>
+    <li>Settings rollbackとkill-switch rollbackが別operatorによって再現できる。</li>
+    <li>release evidenceとrunbookがレビューされ、G3の判断者と結果が記録される。</li>
+    <li>G3判断までfeature flag既定OFFとdirect Provider rollbackが維持される。</li>
+    <li>STT / TTS、advanced LLM route、artifact、35B、multi-node実装が本changeへ混入しない。</li>
+  </ol>
+
+  <h2 id="17-release-and-rollback">17. Release and rollback policy</h2>
+  <p>
+    M261-00〜08の完了だけでは通常profileを変更しない。M261-09でG3
+    passedとなった場合に、初期利用範囲を operator-owned
+    profileまたは明示的に選ばれた少数profileへ限定する。段階的有効化中もdirect Providerを rollback
+    routeとして維持する。
+  </p>
+  <p>rollbackは二段階とする。</p>
+  <ol>
+    <li>Settings rollback: LARMをrouteから外し、新しいturnをdirect Providerへ送る。</li>
+    <li>
+      Kill switch: <code>SAAA_LARM_ENABLED</code>をOFFにしてprocessを再起動する。
+    </li>
+  </ol>
+  <p>
+    rollbackは進行中streamのBindingを変更しない。進行中turnはcancelまたは既存bindingでterminalへ進め、
+    新しいturnからroute変更を適用する。
+  </p>
+
+  <h2 id="18-follow-up">18. Follow-up after G3</h2>
+  <p>
+    G3 passed後に、MVP 2.7相当の独立計画としてLARM Voice pipelineを作成する。LLM、STT、通常TTSを
+    MeetingまたはVoice Session単位の一つのallocationへまとめ、STT / TTS
+    Gateway完成まではresolve結果を session内だけ保持する。
+  </p>
+  <p>
+    Voice計画の開始はMVP 2.6.1 acceptanceに依存する。文書調査とcontract質問表は先行できるが、
+    production code、Settings migration、Meeting route変更はG3前に実装しない。artifact
+    lifecycle、35B、 multi-node、allow-listed deploymentはVoice計画にも含めず、operator
+    credentialを分離した別計画とする。
+  </p>
+
+  <h2 id="19-traceability">19. Traceability</h2>
+  <ul>
+    <li>
+      <a href="./mvp-2.6-implementation-plan.html">MVP 2.6実装契約</a>: LARM Provider、allocation
+      lifecycle、Gateway、offline testの正本
+    </li>
+    <li>
+      <a href="../mvp-2.5-release-evidence.html">MVP 2.5 release evidence</a>: 未完了manual
+      acceptance。MVP 2.6.1で完了扱いにしない
+    </li>
+    <li>
+      <a href="../mvp-2.6-larm-operations-runbook.html">MVP 2.6 LARM Operations Runbook</a>: G1 /
+      G2準備、live execution、障害対応、二段階rollbackの正本
+    </li>
+    <li><code>src-tauri/src/providers/larm/client.rs</code>: bounded HTTP / Gateway adapter</li>
+    <li><code>src-tauri/src/providers/larm/session.rs</code>: pure allocation lifecycle</li>
+    <li>
+      <code>src-tauri/src/lib.rs</code>: router、SQLite、events、shutdown、diagnostics
+    </li>
+    <li>
+      <code>scripts/desktop-smoke.ts</code>: isolated packaged-app launchの既存precedent
+    </li>
+    <li>local-LLM-harness上位プロジェクト統合ガイド（2026-08-28）</li>
+  </ul>
+</article>

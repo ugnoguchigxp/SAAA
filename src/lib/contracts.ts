@@ -13,7 +13,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 8;
+  schemaVersion: 9;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };
@@ -179,7 +179,7 @@ export type VoiceSettings = {
   inputDeviceId: string;
   outputDeviceId: string;
   captureMode: "push-to-talk";
-  sttProviderId: "local-whisper";
+  sttProviderId: "gnosis-asr";
   sttModel: string;
   ttsProviderId: "system-tts";
   ttsVoice: string;
@@ -295,10 +295,10 @@ export type MeetingCapabilities = { microphone: boolean; systemAudio: boolean; o
 export type MeetingError = { code: string; message: string; recovery: string };
 export type MeetingSnapshot = { sessionId: string | null; state: MeetingState; captureToken: string | null; entries: number; capabilities: MeetingCapabilities; error: MeetingError | null };
 export type MeetingPreflightResult = { state: MeetingState; microphone: { status: string; message: string }; systemAudio: { status: string; message: string }; stt: { status: string; message: string }; translation: { status: string; message: string }; shippingCapabilities: MeetingCapabilities; blockingErrors: MeetingError[] };
-export type MeetingSegmentResult = { accepted: boolean; text: string };
+export type MeetingSegmentResult = { accepted: boolean; text: string; language: string | null };
 export type MeetingEvent =
   | { type: "stateChanged"; sessionId: string | null; state: MeetingState }
-  | { type: "transcriptPartial"; sessionId: string; lane: MeetingLane; sequence: number; text: string }
+  | { type: "transcriptPartial"; sessionId: string; lane: MeetingLane; sequence: number; text: string; language: string | null }
   | { type: "transcriptFinal"; sessionId: string; lane: MeetingLane; sequence: number; text: string; language: string | null }
   | { type: "failed"; sessionId: string | null; code: string; message: string; recovery: string };
 
@@ -385,7 +385,7 @@ export function isVoiceSettings(value: Record<string, unknown>): value is VoiceS
     typeof value.inputDeviceId === "string" &&
     typeof value.outputDeviceId === "string" &&
     value.captureMode === "push-to-talk" &&
-    value.sttProviderId === "local-whisper" &&
+    value.sttProviderId === "gnosis-asr" &&
     typeof value.sttModel === "string" &&
     value.ttsProviderId === "system-tts" &&
     typeof value.ttsVoice === "string" &&

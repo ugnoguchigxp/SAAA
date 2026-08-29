@@ -10,6 +10,19 @@ const buildArguments = process.platform === "darwin"
 const build = Bun.spawn(buildArguments, { cwd: root, stdout: "inherit", stderr: "inherit" });
 if (await build.exited !== 0) process.exit(1);
 
+if (process.platform === "darwin") {
+  const infoPlist = join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/Info.plist");
+  const plistCheck = Bun.spawn(
+    ["/usr/bin/plutil", "-extract", "NSMicrophoneUsageDescription", "raw", "-o", "-", infoPlist],
+    { cwd: root, stdout: "pipe", stderr: "inherit" },
+  );
+  const microphonePurpose = (await new Response(plistCheck.stdout).text()).trim();
+  if (await plistCheck.exited !== 0 || microphonePurpose.length === 0) {
+    console.error("Desktop smoke failed: packaged Info.plist has no microphone usage description.");
+    process.exit(1);
+  }
+}
+
 const executable = process.platform === "darwin"
   ? join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/MacOS/saaa")
   : join(root, `src-tauri/target/debug/saaa${process.platform === "win32" ? ".exe" : ""}`);

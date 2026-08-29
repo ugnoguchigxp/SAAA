@@ -1713,8 +1713,8 @@ Next MVPの明示開始Meeting Modeへ
   </p>
   <p>
     詳細なSession lifecycle、Audio permission、STT / Translation / Overlayの分割、検証条件は<a
-      href="./.archived/mvp-1-implementation-plan.html"
-      ><code>mvp-2-implementation-plan.md</code></a
+      href="./.archived/mvp-2-implementation-plan.html"
+      ><code>mvp-2-implementation-plan.html</code></a
     >に定義する。
   </p>
   <hr />
@@ -1727,8 +1727,24 @@ Next MVPの明示開始Meeting Modeへ
   <p>
     最初は<code>conversation.respond</code>だけを<code>llm.general + llm-default</code>へ接続し、
     feature flag付きの非critical clientでcanaryする。STT / TTS、artifact
-    lifecycle、35B、multi-nodeは後続とする。 詳細は<a href="./mvp-2.6-implementation-plan.html"
+    lifecycle、35B、multi-nodeは後続とする。 完了した実装契約は<a
+      href="./.archived/mvp-2.6-implementation-plan.html"
       ><code>mvp-2.6-implementation-plan.html</code></a
+    >に定義する。
+  </p>
+  <hr />
+  <h2 id="mvp-261--larm-production-readiness">MVP 2.6.1 — LARM Production Readiness</h2>
+  <p>
+    MVP 2.6のoffline実装を、契約固定、隔離canary、30分canary、2時間soak、rollback、runbookを備えた
+    production-readyな状態へ進める。AI server停止中にoperator-only runner、test-only live suite、
+    evidence schema、redaction boundary、operator
+    runbookを実装し、G1とG2通過後にだけgnosisへ接続する。
+  </p>
+  <p>
+    G3通過まではLARM feature flagを既定OFFに保ち、通常profileのprimary Providerを変更しない。
+    Voice、STT / TTS、artifact lifecycle、35B、multi-nodeは含めない。完了したreadiness実装契約は<a
+      href="./.archived/mvp-2.6.1-implementation-plan.html"
+      ><code>mvp-2.6.1-implementation-plan.html</code></a
     >に定義する。
   </p>
   <hr />
@@ -1863,17 +1879,19 @@ health()
   <blockquote>
     <p>
       <strong
-        >MVP 2.5のmanual acceptanceを未完了のまま保持しつつ、MVP 2.6でLARMをLocal Runtime allocation
-        Providerとして統合する。AI server停止中はcontract、state machine、fake
-        server、rollbackを実装し、 production contract確定とgnosis復旧後に一つのLLM
-        canaryだけを実行する。</strong
+        >MVP 2.xの実装計画はArchiveし、未完了のmanual validationとLARMの契約固定、隔離canary、soak、
+        rollback、runbook rehearsalだけをactive
+        evidenceとして管理する。G1とG2通過後にだけgnosisへ接続する。</strong
       >
     </p>
   </blockquote>
   <p>
-    MVP 2.5の自動実装と検証は完了しているが、Input Activity、Agent Run、real microphone / Whisper、
-    Meeting lifecycleのmanual evidenceは未完了であり、AcceptedまたはArchiveへ変更しない。MVP
-    2.6はこの状態を baselineとして別milestoneで進め、LARMの未commit WIPをproduction
-    contractにしない。LLM canary完了までは STT / TTSをLARMへ移行しない。
+    MVP 2と2.5のSAAA-side自動実装と検証は完了しているが、Input Activity、Agent Run、real microphone
+    / gnosis ASR preview/final、Meeting lifecycleのmanual evidenceは未完了であり、release
+    evidenceをAcceptedへ変更しない。MVP 2.6のoffline実装とMVP 2.6.1のreadiness tooling、evidence
+    schema、operator runbookは実装済みであり、 implementation
+    planはArchiveした。一方、LARMのcontract差異、live rehearsal、production
+    evidenceは未完了である。未commit WIPをproduction contractにせず、G3通過まで feature
+    flagを既定OFFに維持する。LLM canary完了までは STT / TTSをLARMへ移行しない。
   </p>
 </article>
