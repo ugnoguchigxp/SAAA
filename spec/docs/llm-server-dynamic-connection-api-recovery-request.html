@@ -7,8 +7,12 @@
   <dl>
     <dt>Request ID</dt>
     <dd><code>SAAA-LAN-LLM-AUTH-2026-08-29</code></dd>
+    <dt>Host response reference</dt>
+    <dd><code>SAAA-LLM SERVER-AUTH-2026-08-29</code></dd>
     <dt>Status</dt>
-    <dd>Host action required</dd>
+    <dd>Host-side remediation implemented; deployment and SAAA LAN canary pending</dd>
+    <dt>Acceptance state</dt>
+    <dd>LARM側改修済み・SAAA側受入待ち</dd>
     <dt>Requested</dt>
     <dd><time>2026-08-29</time></dd>
     <dt>Control API</dt>
@@ -26,8 +30,10 @@
   <p>
     SAAA DesktopからLAN LLM HostのAgent Connection APIを認証付きで利用できる状態へ復旧し、
     profile取得、Connection作成、claim、推論、releaseまでのREST lifecycleを完走させたい。
-    現在の失敗は推論モデル自体ではなく、SAAA processへ長期control credentialが注入されていないため、
-    動的設定取得のHTTP requestを送る前に発生している。
+    Host側の改修とHost内canaryの完了報告は受領したが、改修版のproduction反映とSAAA
+    processへの長期control
+    credential注入は未完了である。そのため、SAAAから動的設定取得の認証済みHTTP
+    requestを実行し、有効な結果を受け取った証跡はまだない。
   </p>
 
   <h2 id="observed-facts">2. SAAA側で確認済みの事実</h2>
@@ -91,9 +97,42 @@
     SAAA側で観測できていない。動的設定取得APIから有効な結果を受け取れた証跡はない。
   </p>
 
-  <h2 id="requested-host-actions">3. LAN LLM Host側への依頼事項</h2>
+  <h2 id="host-response">3. Host側から受領した改修・検証報告</h2>
+  <p>
+    <code>SAAA-LLM SERVER-AUTH-2026-08-29</code>として、次の完了報告を受領した。
+    これはHost側での実装・検証結果であり、production反映後のSAAA LANからの独立した受入結果ではない。
+  </p>
+  <ul>
+    <li>Client認証診断、bounded poll、確実なreleaseを改修した。</li>
+    <li>
+      Connection作成contractをHTTP
+      <code>201</code>/<code>202</code>と
+      <code>Location</code>へ統一した。
+    </li>
+    <li>claimされたhost、port、base URL、model、expiryの整合検証を追加した。</li>
+    <li>
+      <code>ttlSeconds: 300</code
+      >、fallback無効、<code>existing-only</code>の条件でHost canaryを完走した。
+    </li>
+    <li>
+      profile取得、semantic health、SSE <code>[DONE]</code>、
+      <code>DELETE 204</code>を確認した。
+    </li>
+    <li>
+      release後、短期tokenが<code>401</code>となり、runtimeが<code>COLD</code>になることを確認した。
+    </li>
+    <li>full checkとしてunit/integration 315件、deployment 11件の成功を確認した。</li>
+    <li>文書、log、chatへ秘密情報を出力していないことを確認した。</li>
+  </ul>
+  <p>
+    残作業は、改修版のproduction反映、承認済みsecret channelによる
+    <code>LARM_API_TOKEN</code>のSAAA processへの注入、SAAA Mac
+    <code>192.168.0.76</code>からの最終LAN canaryである。
+  </p>
 
-  <h3 id="credential-delivery">3.1 SAAA用API tokenの発行と安全な受け渡し</h3>
+  <h2 id="requested-host-actions">4. LAN LLM Host側への残存依頼事項</h2>
+
+  <h3 id="credential-delivery">4.1 SAAA用API tokenの発行と安全な受け渡し</h3>
   <ol>
     <li>
       client <code>saaa-desktop</code>、audience
@@ -107,7 +146,11 @@
     <li>無効・期限切れtokenに対するHTTP statusと安全なerror codeを回答する。</li>
   </ol>
 
-  <h3 id="contract-readiness">3.2 REST contractのready確認</h3>
+  <h3 id="contract-readiness">4.2 ProductionへのREST contract反映とready確認</h3>
+  <p>
+    Host側の実装とHost canaryは完了報告を受領済みである。以下のcontractをproductionへ反映し、 SAAA
+    LAN canaryから同じ結果を観測できる状態にする。
+  </p>
   <ol>
     <li>
       認証済み<code>GET /v1/agent-profiles</code>が<code>200 application/json</code>を返し、
@@ -141,7 +184,7 @@
     </li>
   </ol>
 
-  <h3 id="safe-observability">3.3 Secretを含まない完走証跡</h3>
+  <h3 id="safe-observability">4.3 Secretを含まない完走証跡</h3>
   <p>host側のcanaryまたはSAAAとの合同canaryについて、次のbounded metadataを提示する。</p>
   <ul>
     <li>実行timestampとrelease/config revision</li>
@@ -161,7 +204,7 @@
     completion本文を含めない。必要なら値を含まないserver correlation IDだけを共有する。
   </p>
 
-  <h3 id="readiness-probe">3.4 認証設定切り分け用のliveness</h3>
+  <h3 id="readiness-probe">4.4 認証設定切り分け用のliveness</h3>
   <p>
     認証情報がない場合、SAAAはhost到達不能とcredential不在を別々に判定する必要がある。
     model、profile、設定値、secretを返さないboundedなliveness
@@ -169,19 +212,32 @@
     readinessを確認する承認済み手順を提示する。
   </p>
 
-  <h2 id="requested-response">4. LAN LLM Host側から回答してほしい内容</h2>
+  <h2 id="requested-response">5. 回答受領状況と残確認</h2>
+  <p>
+    Host側の改修内容とHost canary結果は受領済みである。次の項目はproduction反映またはSAAA LAN
+    canaryでの確認が残っている。
+  </p>
   <ol>
-    <li>Control APIのready状態と稼働release</li>
-    <li>API tokenの発行状態と、値を含まない受け渡しchannelの案内</li>
-    <li><code>x-larm-config-revision</code>とadvertise中のprofile・audience</li>
-    <li>remote Provider data planeのport contract</li>
-    <li>canary実施可能な時間帯と、host側で照合できる担当</li>
-    <li>secretを含まない証跡またはcorrelation情報の形式</li>
-    <li>現在readyでない項目がある場合、その項目、復旧予定、暫定回避ではなく恒久対応のowner</li>
+    <li>改修版LARMのproduction反映と、反映後のControl API release</li>
+    <li>API tokenの発行状態と、値を含まない承認済み受け渡しchannelの案内</li>
+    <li>
+      SAAA LANから観測できる<code>x-larm-config-revision</code>、profile、audience、data
+      planeのport contract
+    </li>
+    <li>
+      SAAA Mac <code>192.168.0.76</code>からのcanary実施時間と、Host側の照合担当
+    </li>
+    <li>最終canaryについてsecretを含まない証跡またはcorrelation情報</li>
   </ol>
 
-  <h2 id="acceptance-criteria">5. 受入条件</h2>
+  <h2 id="acceptance-criteria">6. 受入条件</h2>
+  <p>
+    現時点の判定は<strong>「LARM側改修済み・SAAA側受入待ち」</strong>である。
+    production反映、token注入、SAAA LAN canaryがすべて完了するまで、
+    <strong>「authentication failure解消済み」には変更しない。</strong>
+  </p>
   <ol>
+    <li>改修版LARMがproductionへ反映される。</li>
     <li>SAAA processへ<code>LARM_API_TOKEN</code>が安全に注入される。</li>
     <li>
       認証済み<code>GET /v1/agent-profiles</code>が<code>200</code>と有効な
@@ -203,7 +259,7 @@
     <li>証跡がsecret boundaryを守り、SAAA実行結果にauthentication failureが残らない。</li>
   </ol>
 
-  <h2 id="rollback-and-non-goals">6. Rollbackと対象外</h2>
+  <h2 id="rollback-and-non-goals">7. Rollbackと対象外</h2>
   <p>
     SAAAは復旧までの可用性確保として、LAN内の直結Qwen
     <code>http://&lt;private-ip&gt;:8080/v1</code>を一時的なlocal rollback routeに設定している。
@@ -216,7 +272,7 @@
     <li>本依頼ではmodel deploymentの変更やcloud Providerへのfallbackを要求しない。</li>
   </ul>
 
-  <h2 id="saaa-follow-up">7. LAN LLM Host側回答後のSAAA作業</h2>
+  <h2 id="saaa-follow-up">8. Production反映後のSAAA作業</h2>
   <ol>
     <li>承認済みchannelで受領したtokenをSAAA process起動環境へ注入する。</li>
     <li>profile取得からreleaseまでのLAN canaryを実行する。</li>

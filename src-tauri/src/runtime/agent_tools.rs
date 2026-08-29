@@ -220,18 +220,21 @@ pub fn agent_tool_definitions(
     include_conversation: bool,
     include_typed_memory: bool,
 ) -> Vec<Value> {
-    let mut definitions = Vec::with_capacity(4);
+    let mut definitions = Vec::with_capacity(6);
     if include_conversation {
         definitions.push(recall_tool_definition());
     }
     if include_typed_memory {
         definitions.extend(typed_recall_tool_definitions());
     }
+    definitions.extend(crate::runtime::web_fetch::tool_definitions());
     definitions
 }
 
 pub fn is_supported_agent_tool(name: &str) -> bool {
-    name == RECALL_TOOL_NAME || is_typed_recall_tool(name)
+    name == RECALL_TOOL_NAME
+        || is_typed_recall_tool(name)
+        || crate::runtime::web_fetch::is_web_fetch_tool(name)
 }
 
 pub fn is_typed_memory_tool(name: &str) -> bool {
@@ -304,6 +307,7 @@ fn merge_tool_name(target: &mut String, incoming: &str) -> Result<(), ToolProtoc
     };
     if !std::iter::once(RECALL_TOOL_NAME)
         .chain(TYPED_RECALL_TOOL_NAMES)
+        .chain(crate::runtime::web_fetch::WEB_FETCH_TOOL_NAMES)
         .any(|name| name.starts_with(&candidate))
     {
         return Err(ToolProtocolError::Protocol);
@@ -361,7 +365,7 @@ mod tests {
     #[test]
     fn typed_memory_catalog_is_exposed_only_when_enabled() {
         let local_only = agent_tool_definitions(true, false);
-        assert_eq!(local_only.len(), 1);
+        assert_eq!(local_only.len(), 3);
         let all = agent_tool_definitions(true, true);
         let names = all
             .iter()
@@ -378,11 +382,13 @@ mod tests {
                 "recall_conversation",
                 "recall_experience",
                 "recall_rule",
-                "recall_skill"
+                "recall_skill",
+                "web_search",
+                "fetch_content"
             ]
         );
-        assert_eq!(agent_tool_definitions(false, true).len(), 3);
-        assert!(agent_tool_definitions(false, false).is_empty());
+        assert_eq!(agent_tool_definitions(false, true).len(), 5);
+        assert_eq!(agent_tool_definitions(false, false).len(), 2);
     }
 
     #[test]

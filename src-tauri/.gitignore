@@ -9,3 +9,5 @@
 # Generated from the exact @openai/codex platform package by build.rs.
 /resources/bin/codex
 /resources/bin/codex.exe
+/resources/bin/webfetch
+/resources/bin/webfetch.exe

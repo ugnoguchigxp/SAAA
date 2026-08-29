@@ -35,7 +35,10 @@ describe("target-speaker voice profile", () => {
   test("bundles only checksum-pinned local verification artifacts", async () => {
     const installer = await readFile(new URL("../scripts/install-speaker-runtime.sh", import.meta.url), "utf8");
     const tauri = await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8");
-    const backend = await readFile(new URL("../src-tauri/src/voice/profile.rs", import.meta.url), "utf8");
+    const backend = [
+      await readFile(new URL("../src-tauri/src/voice/profile/mod.rs", import.meta.url), "utf8"),
+      await readFile(new URL("../src-tauri/src/voice/profile/codec.rs", import.meta.url), "utf8"),
+    ].join("\n");
     expect(installer).toContain("archive_sha=\"812b144d");
     expect(installer).toContain("model_sha=\"f682b514");
     expect(tauri).toContain('"resources/voice/": "voice/"');

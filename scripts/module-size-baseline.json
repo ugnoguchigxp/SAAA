@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-29T11:59:44.439Z",
+  "generatedAt": "2026-08-29T12:22:13.425Z",
   "files": {
     "scripts/codex-sdk-smoke.ts": {
       "total": 21,
@@ -10,16 +10,48 @@
       "production": 70
     },
     "scripts/larm-readiness.ts": {
-      "total": 2442,
-      "production": 2442
+      "total": 53,
+      "production": 53
+    },
+    "scripts/larm-readiness/bundle.ts": {
+      "total": 359,
+      "production": 359
+    },
+    "scripts/larm-readiness/database.ts": {
+      "total": 257,
+      "production": 257
+    },
+    "scripts/larm-readiness/io.ts": {
+      "total": 470,
+      "production": 470
+    },
+    "scripts/larm-readiness/live.ts": {
+      "total": 582,
+      "production": 582
+    },
+    "scripts/larm-readiness/process.ts": {
+      "total": 258,
+      "production": 258
+    },
+    "scripts/larm-readiness/runner.ts": {
+      "total": 148,
+      "production": 148
+    },
+    "scripts/larm-readiness/schema.ts": {
+      "total": 515,
+      "production": 515
     },
     "scripts/module-size.ts": {
       "total": 208,
       "production": 208
     },
     "scripts/mvp-2-2.5-readiness.ts": {
-      "total": 907,
-      "production": 907
+      "total": 747,
+      "production": 747
+    },
+    "scripts/mvp-2-2.5-readiness/schema.ts": {
+      "total": 222,
+      "production": 222
     },
     "scripts/render-system-contexts.ts": {
       "total": 40,
@@ -77,9 +109,17 @@
       "total": 143,
       "production": 143
     },
-    "src-tauri/src/memory/control_plane.rs": {
-      "total": 1424,
-      "production": 1067
+    "src-tauri/src/memory/control_plane/items.rs": {
+      "total": 248,
+      "production": 248
+    },
+    "src-tauri/src/memory/control_plane/migrate.rs": {
+      "total": 180,
+      "production": 180
+    },
+    "src-tauri/src/memory/control_plane/mod.rs": {
+      "total": 1018,
+      "production": 661
     },
     "src-tauri/src/memory/idle.rs": {
       "total": 98,
@@ -89,9 +129,13 @@
       "total": 8,
       "production": 8
     },
-    "src-tauri/src/memory/recall.rs": {
-      "total": 2212,
-      "production": 1287
+    "src-tauri/src/memory/recall/mod.rs": {
+      "total": 1699,
+      "production": 772
+    },
+    "src-tauri/src/memory/recall/search.rs": {
+      "total": 530,
+      "production": 530
     },
     "src-tauri/src/memory/typed_recall.rs": {
       "total": 779,
@@ -110,8 +154,8 @@
       "production": 144
     },
     "src-tauri/src/persistence/migrate.rs": {
-      "total": 1595,
-      "production": 668
+      "total": 1523,
+      "production": 600
     },
     "src-tauri/src/persistence/mod.rs": {
       "total": 19,
@@ -122,12 +166,12 @@
       "production": 45
     },
     "src-tauri/src/persistence/schema.rs": {
-      "total": 194,
-      "production": 194
+      "total": 192,
+      "production": 192
     },
     "src-tauri/src/persistence/settings.rs": {
-      "total": 916,
-      "production": 641
+      "total": 900,
+      "production": 625
     },
     "src-tauri/src/process_guard.rs": {
       "total": 35,
@@ -161,9 +205,13 @@
       "total": 259,
       "production": 259
     },
-    "src-tauri/src/providers/larm/live_canary.rs": {
-      "total": 1095,
-      "production": 1095
+    "src-tauri/src/providers/larm/live_canary/mod.rs": {
+      "total": 746,
+      "production": 746
+    },
+    "src-tauri/src/providers/larm/live_canary/scenarios.rs": {
+      "total": 369,
+      "production": 369
     },
     "src-tauri/src/providers/larm/mod.rs": {
       "total": 674,
@@ -322,12 +370,16 @@
       "production": 6
     },
     "src-tauri/src/voice/network_asr.rs": {
-      "total": 356,
-      "production": 234
+      "total": 377,
+      "production": 238
     },
-    "src-tauri/src/voice/profile.rs": {
-      "total": 1242,
-      "production": 1139
+    "src-tauri/src/voice/profile/codec.rs": {
+      "total": 525,
+      "production": 525
+    },
+    "src-tauri/src/voice/profile/mod.rs": {
+      "total": 736,
+      "production": 633
     },
     "src-tauri/src/voice/session.rs": {
       "total": 347,
@@ -378,8 +430,8 @@
       "production": 499
     },
     "src/features/settings/SettingsPage.tsx": {
-      "total": 382,
-      "production": 382
+      "total": 367,
+      "production": 367
     },
     "src/features/settings/VoiceProfileCard.tsx": {
       "total": 235,
@@ -510,8 +562,8 @@
       "production": 38
     },
     "tests/voice-profile.test.ts": {
-      "total": 56,
-      "production": 56
+      "total": 59,
+      "production": 59
     }
   }
 }

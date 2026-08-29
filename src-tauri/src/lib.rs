@@ -633,6 +633,17 @@ pub fn run() {
             if bundled_codex.is_file() {
                 let _ = BUNDLED_CODEX_PATH.set(bundled_codex);
             }
+            let bundled_web_fetch = app.path().resolve(
+                if cfg!(windows) {
+                    "bin/webfetch.exe"
+                } else {
+                    "bin/webfetch"
+                },
+                tauri::path::BaseDirectory::Resource,
+            )?;
+            if bundled_web_fetch.is_file() {
+                let _ = runtime::web_fetch::BUNDLED_WEB_FETCH_PATH.set(bundled_web_fetch);
+            }
             let connection = Connection::open(&database_path)?;
             backup_before_migration(&connection, &database_path).map_err(std::io::Error::other)?;
             initialize_database(&connection)?;
@@ -1683,7 +1694,7 @@ mod tests {
         let captures = captures.lock().expect("capture lock");
         assert_eq!(captures.len(), 2);
         let first = request_json(&captures[0]);
-        assert_eq!(first["tools"].as_array().expect("tools array").len(), 1);
+        assert_eq!(first["tools"].as_array().expect("tools array").len(), 3);
         assert_eq!(
             first
                 .pointer("/tools/0/function/name")
@@ -1788,7 +1799,9 @@ mod tests {
                 "recall_conversation",
                 "recall_experience",
                 "recall_rule",
-                "recall_skill"
+                "recall_skill",
+                "web_search",
+                "fetch_content"
             ]
         );
 

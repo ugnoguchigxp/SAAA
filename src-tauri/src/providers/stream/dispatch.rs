@@ -41,6 +41,9 @@ pub(crate) async fn execute_agent_tool(
     call: &crate::runtime::agent_tools::AgentToolCall,
     timeout: Duration,
 ) -> String {
+    if crate::runtime::web_fetch::is_web_fetch_tool(&call.name) {
+        return crate::runtime::web_fetch::execute(call, timeout).await;
+    }
     if crate::runtime::agent_tools::is_typed_memory_tool(&call.name) {
         let Some(persistence) = output_persistence else {
             return crate::runtime::agent_tools::tool_error_content(

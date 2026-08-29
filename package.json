@@ -38,6 +38,7 @@
   "dependencies": {
     "@openai/codex-sdk": "0.144.4",
     "@tauri-apps/api": "^2",
+    "llm-fetch": "0.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "s11tnext": "0.1.2",

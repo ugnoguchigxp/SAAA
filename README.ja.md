@@ -84,6 +84,12 @@ bun start
 
 機能フラグは起動時に一度だけ読み込まれます。無効へ戻す場合もアプリを再起動してください。本番トラフィックを有効にする前に、[LARM Operations Runbook](spec/docs/mvp-2.6-larm-operations-runbook.html) と現在の release evidence を確認する必要があります。
 
+### WebFetch ツール
+
+会話モデルには、`llm-fetch` を使った `web_search` と `fetch_content` を提供します。DuckDuckGo 検索は API key なしで利用できます。SAAA の起動時に `BRAVE_SEARCH_API_KEY` が設定されている場合は、DuckDuckGo で再試行可能な失敗が起きたときだけ Brave Search をフォールバックとして使います。
+
+同梱ランタイムは、パッケージのモデル向け toolset と strict Context Guard を使います。検索結果と取得本文は、信頼できない tool data として扱われます。取得できるのは標準ポート上の公開 HTTP(S) URL だけで、任意機能の Playwright レンダリングは含みません。
+
 ## 音声プロファイル
 
 Settings → Voice → My voice profile では、利用者本人の声を端末内で照合するフィルターを設定できます。有効化には、3〜12 秒の有効なサンプルを 4 件以上、合計 20 秒以上登録する必要があります。サンプルは最大 5 件です。
