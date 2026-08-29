@@ -143,7 +143,12 @@ export type ModelProviderSettings =
   | OpenAiCompatibleProviderSettings
   | LarmProviderSettings;
 
-export type ModelProvidersSettings = { providers: ModelProviderSettings[] };
+export type ReasoningEffort = "low" | "medium" | "xhigh";
+
+export type ModelProvidersSettings = {
+  providers: ModelProviderSettings[];
+  reasoningEffort: ReasoningEffort;
+};
 
 export type CodexAgentSettings = {
   enabled: boolean;
@@ -341,7 +346,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isModelProvidersSettings(value: Record<string, unknown>): value is ModelProvidersSettings {
-  return Array.isArray(value.providers) && value.providers.every(isModelProviderSettings);
+  return (
+    Array.isArray(value.providers) &&
+    value.providers.every(isModelProviderSettings) &&
+    (value.reasoningEffort === "low" || value.reasoningEffort === "medium" || value.reasoningEffort === "xhigh")
+  );
 }
 
 function isModelProviderSettings(value: unknown): value is ModelProviderSettings {

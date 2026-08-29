@@ -1,27 +1,21 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { SituationPage } from "./features/situation/SituationPage";
 import { MeetingPage } from "./features/meeting/MeetingPage";
 import {
   findSettingsDocument,
-  isCodexAgentSettings,
   isModelProvidersSettings,
   isRoutingSettings,
   isVoiceSettings,
   type AppSnapshot,
-  type CodexRuntimeStatus,
   type ConversationMessage,
   type MeetingState,
   type RuntimeEvent,
   type SettingsDocument,
-  type TaskMode,
 } from "./lib/contracts";
 import {
   cancelRun,
-  createConversation,
-  getCodexStatus,
   getAppSnapshot,
   listMessages,
   previewAudio,
@@ -35,10 +29,23 @@ import {
 import { ensureMicrophoneAudioContextRunning, MicrophoneCaptureError, requestMicrophoneStream } from "./lib/microphone";
 import { DEFAULT_VOICE_SILENCE_TIMEOUT_MS, VoiceActivityDetector } from "./lib/voiceActivity";
 import { acquireAudioCapture } from "./lib/audioCaptureCoordinator";
+import { StreamingSpeechChunker } from "./lib/streamingSpeech";
 
 const initialSnapshot: AppSnapshot = { settings: [], conversations: [], primaryConversationId: "", larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" }, voiceProfile: { status: "empty", filterEnabled: false, runtimeAvailable: false, runtimeMessage: "Loading local speaker verification…", sampleCount: 0, targetSampleCount: 5, totalDurationMs: 0, minimumDurationMs: 20_000, threshold: 0.55, samples: [] } };
 type Surface = "chat" | "meeting" | "situation" | "settings";
 type QueuedVoiceSegment = { conversationId: string; model: string; samples: number[]; sampleRate: number; ttsActiveAtCapture: boolean };
+type StreamingSpeechSession = {
+  sourceRunId: string;
+  conversationId: string;
+  voice: string;
+  chunker: StreamingSpeechChunker;
+  receivedText: string;
+  queue: string[];
+  finalized: boolean;
+  cancelled: boolean;
+  speaking: boolean;
+  interruptRunId: string | null;
+};
 
 function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(initialSnapshot);
@@ -46,16 +53,12 @@ function App() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [composer, setComposer] = useState("");
-  const [taskMode, setTaskMode] = useState<TaskMode>("conversation");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [activeRunMode, setActiveRunMode] = useState<TaskMode | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [runtimeActivity, setRuntimeActivity] = useState<string[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
-  const [workspacePath, setWorkspacePath] = useState("");
-  const [codexStatus, setCodexStatus] = useState<CodexRuntimeStatus | null>(null);
   const [voiceStarting, setVoiceStarting] = useState(false);
   const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -85,6 +88,8 @@ function App() {
   const messagesRequestRef = useRef(0);
   const activeRunIdRef = useRef<string | null>(null);
   const activeTtsRunIdRef = useRef<string | null>(null);
+  const streamingSpeechSessionRef = useRef<StreamingSpeechSession | null>(null);
+  const speechDisabledRunIdsRef = useRef(new Set<string>());
   const meetingStateRef = useRef<MeetingState>("idle");
   selectedConversationIdRef.current = selectedConversationId;
   meetingStateRef.current = meetingState;
@@ -92,9 +97,6 @@ function App() {
 
   const selectedConversation = snapshot.conversations.find(
     (conversation) => conversation.id === selectedConversationId,
-  );
-  const codingConversations = snapshot.conversations.filter(
-    (conversation) => conversation.taskMode === "coding",
   );
   const modelProviderStatus = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "providers.model", "default");
@@ -132,19 +134,10 @@ function App() {
     const document = findSettingsDocument(snapshot.settings, "voice.runtime", "default");
     return document && isVoiceSettings(document.valueJson) ? document.valueJson : null;
   }, [snapshot.settings]);
-  const codexSettings = useMemo(() => {
-    const document = findSettingsDocument(snapshot.settings, "providers.agent", "codex-sdk");
-    return document && isCodexAgentSettings(document.valueJson) ? document.valueJson : null;
-  }, [snapshot.settings]);
   const meetingActive = isMeetingBlocking(meetingState);
   const voiceBusy = voiceStarting || voiceState !== "idle";
 
   useEffect(() => { void reportFrontendReady(); void initialize(); }, []);
-  useEffect(() => {
-    void getCodexStatus()
-      .then(setCodexStatus)
-      .catch((cause) => setCodexStatus({ installed: false, authenticated: false, runtime: "unavailable", accountType: null, message: toMessage(cause) }));
-  }, []);
   useEffect(() => {
     if (!selectedConversationId) { setMessages([]); return; }
     setMessages([]);
@@ -155,10 +148,7 @@ function App() {
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       const command = event.metaKey || event.ctrlKey;
-      if (command && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        if (taskMode === "coding" && !activeRunId && !voiceBusy) void handleNewConversation("coding");
-      } else if (command && event.key === ",") {
+      if (command && event.key === ",") {
         event.preventDefault();
         setSurface("settings");
       } else if (event.key === "Escape") {
@@ -169,7 +159,7 @@ function App() {
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeRunId, activeTtsRunId, taskMode, voiceBusy, voiceState]);
+  }, [activeRunId, activeTtsRunId, voiceState]);
   useEffect(() => () => {
     const previewRunId = voicePreviewRunIdRef.current;
     if (previewRunId) void cancelRun(previewRunId);
@@ -184,10 +174,19 @@ function App() {
     for (const segment of voiceSegmentQueueRef.current) segment.samples = [];
     voiceSegmentQueueRef.current = [];
     pendingVoicePromptsRef.current = [];
+    const speechSession = streamingSpeechSessionRef.current;
+    if (speechSession) {
+      speechSession.cancelled = true;
+      speechSession.queue = [];
+      speechSession.chunker.reset();
+      streamingSpeechSessionRef.current = null;
+    }
+    const ttsRunId = activeTtsRunIdRef.current;
+    if (ttsRunId) void stopTts(ttsRunId);
   }, []);
   useEffect(() => {
     const input = {
-      conversationState: activeRunId ? (activeRunMode === "coding" ? "agent-running" : "model-running") : composer.trim() ? "user-input" : "idle",
+      conversationState: activeRunId ? "model-running" : composer.trim() ? "user-input" : "idle",
       microphoneState: meetingState === "active" ? "saaa-capturing" : voiceState === "recording" ? "saaa-capturing" : voiceState === "transcribing" ? "saaa-transcribing" : "inactive",
       audioState: activeTtsRunId ? "saaa-speaking" : "silent",
     } as const;
@@ -195,7 +194,7 @@ function App() {
     if (input.conversationState === "idle" && input.microphoneState === "inactive" && input.audioState === "silent") return;
     const heartbeat = window.setInterval(() => { void reportOwnedSignal(input).catch(() => undefined); }, 2_000);
     return () => window.clearInterval(heartbeat);
-  }, [activeRunId, activeRunMode, activeTtsRunId, composer, meetingState, voiceState]);
+  }, [activeRunId, activeTtsRunId, composer, meetingState, voiceState]);
 
   async function initialize() {
     try {
@@ -207,7 +206,6 @@ function App() {
       if (!primaryConversation) throw new Error("Primary conversation is unavailable.");
       setSnapshot(nextSnapshot);
       setSelectedConversationId(primaryConversation.id);
-      setTaskMode("conversation");
     } catch (cause) { setError(toMessage(cause)); } finally { setLoading(false); }
   }
 
@@ -230,65 +228,9 @@ function App() {
     setSnapshot(next);
   }
 
-  async function handleNewConversation(mode: TaskMode = taskMode) {
-    if (voiceActionRef.current || voiceState !== "idle") {
-      setError("Stop voice capture before changing conversations.");
-      return;
-    }
-    try {
-      setError(null);
-      if (mode === "conversation") {
-        const primaryConversation = snapshot.conversations.find(
-          (conversation) => conversation.id === snapshot.primaryConversationId,
-        );
-        if (!primaryConversation) throw new Error("Primary conversation is unavailable.");
-        setTaskMode("conversation");
-        setSelectedConversationId(primaryConversation.id);
-        setWorkspacePath("");
-        setSurface("chat");
-        return;
-      }
-      const conversation = await createConversation(mode);
-      setSnapshot((current) => ({ ...current, conversations: [conversation, ...current.conversations] }));
-      setTaskMode(mode);
-      setSelectedConversationId(conversation.id);
-      setSurface("chat");
-    } catch (cause) { setError(toMessage(cause)); }
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await submitPrompt(composer);
-  }
-
-  async function chooseWorkspace() {
-    try {
-      const selected = await open({ directory: true, multiple: false, title: "読み取り専用Codex workspaceを選択" });
-      if (typeof selected === "string") setWorkspacePath(selected);
-    } catch (cause) {
-      setError(`Workspaceを選択できませんでした: ${toMessage(cause)}`);
-    }
-  }
-
-  async function switchTaskMode(mode: TaskMode) {
-    if (voiceActionRef.current || voiceState !== "idle") {
-      setError("Stop voice capture before changing task mode.");
-      return;
-    }
-    if (mode === taskMode) return;
-    setWorkspacePath("");
-    if (mode === "conversation") {
-      await handleNewConversation(mode);
-      return;
-    }
-    const existing = snapshot.conversations.find((conversation) => conversation.taskMode === "coding");
-    setTaskMode("coding");
-    if (existing) {
-      setSelectedConversationId(existing.id);
-      setSurface("chat");
-      return;
-    }
-    await handleNewConversation(mode);
   }
 
   async function submitPrompt(prompt: string, allowVoiceBusy = false) {
@@ -299,23 +241,27 @@ function App() {
       || (!allowVoiceBusy && (voiceActionRef.current || voiceState !== "idle"))
     ) return;
     const conversationId = selectedConversationId;
-    const runMode = taskMode;
     const content = prompt.trim();
     const runId = `run_${crypto.randomUUID()}`;
+    const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak)
+      && !isMeetingBlocking(meetingStateRef.current);
     try {
       setError(null);
       setLastPrompt(content);
       activeRunIdRef.current = runId;
       setActiveRunId(runId);
-      setActiveRunMode(runMode);
       setStreamingText("");
       setRuntimeActivity([]);
       setMessages((current) => [...current, { id: `pending_${runId}`, conversationId, role: "user", content, createdAt: String(Date.now()) }]);
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
+      if (shouldStreamSpeech && voiceSettings) {
+        await stopSpeech();
+        beginStreamingSpeech(runId, conversationId, voiceSettings.ttsVoice);
+      }
       await startTurn(
-        { runId, conversationId, content, workspacePath: runMode === "coding" ? workspacePath.trim() || null : null },
-        (event) => handleRuntimeEvent(event, conversationId, runMode),
+        { runId, conversationId, content, workspacePath: null },
+        (event) => handleRuntimeEvent(event, conversationId),
       );
     } catch (cause) {
       setError((current) => current ?? toMessage(cause));
@@ -323,21 +269,22 @@ function App() {
       if (activeRunIdRef.current === runId) {
         activeRunIdRef.current = null;
         setActiveRunId(null);
-        setActiveRunMode(null);
       }
       if (selectedConversationIdRef.current === conversationId) {
         setStreamingText("");
         await loadMessages(conversationId);
       }
+      speechDisabledRunIdsRef.current.delete(runId);
       const nextVoicePrompt = pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
         if (activeTtsRunIdRef.current) await stopSpeech();
+        else if (streamingSpeechSessionRef.current) await stopSpeech();
         await submitPrompt(nextVoicePrompt, true);
       }
     }
   }
 
-  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, runMode: TaskMode) {
+  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string) {
     if (
       selectedConversationIdRef.current !== conversationId ||
       activeRunIdRef.current !== event.runId
@@ -351,6 +298,7 @@ function App() {
         break;
       case "delta":
         setStreamingText((current) => current + event.text);
+        appendStreamingSpeech(event.runId, event.text);
         break;
       case "activity":
         setRuntimeActivity((current) => [...current, `${event.kind}: ${event.summary}`].slice(-8));
@@ -358,17 +306,26 @@ function App() {
       case "providerFailed":
         setRuntimeActivity((current) => [...current, `${event.providerId} failed: ${event.reason}`].slice(-8));
         setStreamingText("");
+        resetStreamingSpeech(event.runId);
         break;
       case "messageCompleted":
         setMessages((current) => [...current.filter((message) => !message.id.startsWith("streaming_")), event.message]);
         setStreamingText("");
-        if (runMode === "conversation" && voiceSettings?.autoSpeak && !meetingActive) void startSpeech(event.message.content, conversationId);
+        if (voiceSettings?.autoSpeak && !isMeetingBlocking(meetingStateRef.current)) {
+          if (streamingSpeechSessionRef.current?.sourceRunId === event.runId) {
+            finishStreamingSpeech(event.runId, event.message.content);
+          } else if (!speechDisabledRunIdsRef.current.has(event.runId)) {
+            void startSpeech(event.message.content, conversationId);
+          }
+        }
         break;
       case "cancelled":
         setRuntimeActivity((current) => [...current, "Generation cancelled"].slice(-8));
+        void stopStreamingSpeech(event.runId);
         break;
       case "failed":
         setError(`${event.message} ${event.recovery}`);
+        void stopStreamingSpeech(event.runId);
         break;
     }
   }
@@ -604,6 +561,7 @@ function App() {
           if (voiceCancellationRequestedRef.current || !transcript.trim()) continue;
           setInterimTranscript(transcript);
           if (activeTtsRunIdRef.current) await stopSpeech();
+          else if (streamingSpeechSessionRef.current) await stopSpeech();
           if (activeRunIdRef.current) {
             if (pendingVoicePromptsRef.current.length >= 2) {
               setError("応答待ちの音声クエリーが上限に達したため、新しい発話は送信しませんでした。");
@@ -648,10 +606,125 @@ function App() {
     }
   }
 
+  function beginStreamingSpeech(sourceRunId: string, conversationId: string, voice: string) {
+    speechDisabledRunIdsRef.current.delete(sourceRunId);
+    streamingSpeechSessionRef.current = {
+      sourceRunId,
+      conversationId,
+      voice,
+      chunker: new StreamingSpeechChunker(),
+      receivedText: "",
+      queue: [],
+      finalized: false,
+      cancelled: false,
+      speaking: false,
+      interruptRunId: null,
+    };
+  }
+
+  function appendStreamingSpeech(sourceRunId: string, text: string) {
+    const session = streamingSpeechSessionRef.current;
+    if (!session || session.sourceRunId !== sourceRunId || session.cancelled || session.finalized) return;
+    session.receivedText += text;
+    session.queue.push(...session.chunker.push(text));
+    void pumpStreamingSpeech(session);
+  }
+
+  function finishStreamingSpeech(sourceRunId: string, finalText: string) {
+    const session = streamingSpeechSessionRef.current;
+    if (!session || session.sourceRunId !== sourceRunId || session.cancelled || session.finalized) return;
+    if (finalText.startsWith(session.receivedText)) {
+      const missingSuffix = finalText.slice(session.receivedText.length);
+      if (missingSuffix) session.queue.push(...session.chunker.push(missingSuffix));
+    }
+    session.queue.push(...session.chunker.finish());
+    session.finalized = true;
+    void pumpStreamingSpeech(session);
+  }
+
+  function resetStreamingSpeech(sourceRunId: string) {
+    const session = streamingSpeechSessionRef.current;
+    if (!session || session.sourceRunId !== sourceRunId || session.cancelled) return;
+    session.receivedText = "";
+    session.queue = [];
+    session.chunker.reset();
+    const ttsRunId = activeTtsRunIdRef.current;
+    if (ttsRunId) {
+      session.interruptRunId = ttsRunId;
+      void stopTts(ttsRunId).catch((cause) => setError(toMessage(cause)));
+    }
+  }
+
+  async function pumpStreamingSpeech(session: StreamingSpeechSession) {
+    if (session.speaking || session.cancelled) return;
+    session.speaking = true;
+    try {
+      while (streamingSpeechSessionRef.current === session && !session.cancelled) {
+        const text = session.queue.shift();
+        if (!text) break;
+        const runId = `speech_${crypto.randomUUID()}`;
+        activeTtsRunIdRef.current = runId;
+        setActiveTtsRunId(runId);
+        try {
+          await speakText({
+            runId,
+            conversationId: session.conversationId,
+            text,
+            voice: session.voice,
+          });
+        } catch (cause) {
+          if (!session.cancelled && session.interruptRunId !== runId) {
+            session.cancelled = true;
+            session.queue = [];
+            speechDisabledRunIdsRef.current.add(session.sourceRunId);
+            setError(`Speech playback failed: ${toMessage(cause)}`);
+          }
+        } finally {
+          if (session.interruptRunId === runId) session.interruptRunId = null;
+          if (activeTtsRunIdRef.current === runId) {
+            activeTtsRunIdRef.current = null;
+            setActiveTtsRunId(null);
+          }
+        }
+      }
+    } finally {
+      session.speaking = false;
+      if (
+        streamingSpeechSessionRef.current === session
+        && (session.cancelled || (session.finalized && session.queue.length === 0))
+      ) {
+        streamingSpeechSessionRef.current = null;
+      }
+    }
+  }
+
+  async function stopStreamingSpeech(sourceRunId: string) {
+    if (streamingSpeechSessionRef.current?.sourceRunId !== sourceRunId) return;
+    await stopSpeech();
+  }
+
   async function stopSpeech() {
+    const session = streamingSpeechSessionRef.current;
+    if (session) {
+      if (session.finalized) speechDisabledRunIdsRef.current.delete(session.sourceRunId);
+      else speechDisabledRunIdsRef.current.add(session.sourceRunId);
+      session.cancelled = true;
+      session.queue = [];
+      session.chunker.reset();
+      streamingSpeechSessionRef.current = null;
+    }
     const runId = activeTtsRunIdRef.current;
     if (!runId) return;
-    try { await stopTts(runId); } catch (cause) { setError(toMessage(cause)); }
+    try {
+      await stopTts(runId);
+    } catch (cause) {
+      setError(toMessage(cause));
+    } finally {
+      if (activeTtsRunIdRef.current === runId) {
+        activeTtsRunIdRef.current = null;
+        setActiveTtsRunId(null);
+      }
+    }
   }
 
   if (loading) return <main className="boot-screen">SAAA Runtime を起動しています…</main>;
@@ -664,15 +737,14 @@ function App() {
         <button className={surface === "meeting" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("meeting")}><AppIcon name="calendar" />ミーティング {meetingActive && <span className="meeting-active-indicator">進行中</span>}</button>
         <button className={surface === "situation" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => setSurface("situation")}><AppIcon name="situation" />状況</button>
       </nav>
-      {surface === "chat" && <><div className="task-mode-switcher" aria-label="Task mode"><button className={taskMode === "conversation" ? "active" : ""} type="button" onClick={() => void switchTaskMode("conversation")} disabled={Boolean(activeRunId) || voiceBusy}><AppIcon name="chat" />会話</button><button className={taskMode === "coding" ? "active" : ""} type="button" onClick={() => void switchTaskMode("coding")} disabled={Boolean(activeRunId) || voiceBusy}><AppIcon name="code" />コーディング</button></div>{taskMode === "coding" && <><button className="new-chat" onClick={() => void handleNewConversation("coding")} disabled={voiceBusy}><AppIcon name="plus" />新しいCoding thread</button><p className="conversation-list-label">Coding threads</p><nav className="conversation-list" aria-label="Coding threads">{codingConversations.map((conversation) => <button className={conversation.id === selectedConversationId ? "conversation active" : "conversation"} key={conversation.id} onClick={() => { setSelectedConversationId(conversation.id); setTaskMode("coding"); setWorkspacePath(""); }} disabled={voiceBusy}><AppIcon name="code" /><span>{conversation.title ?? "Coding thread"}</span></button>)}</nav></>}</>}
       <button className={surface === "settings" ? "sidebar-settings active" : "sidebar-settings"} onClick={() => setSurface("settings")}><AppIcon name="settings" />設定</button>
     </aside>
 
     <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} chatVoiceBusy={voiceBusy} onStateChanged={setMeetingState} /></div>
     {surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} voiceProfile={snapshot.voiceProfile} voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)} onSaved={(settings) => setSnapshot((current) => ({ ...current, settings }))} onVoiceProfileChanged={(voiceProfile) => setSnapshot((current) => ({ ...current, voiceProfile }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <section className="chat-panel">
-      <header className="topbar"><div><p className="eyebrow">{taskMode === "coding" ? "READ-ONLY AGENT" : "CONTINUOUS CONVERSATION"}</p><h1>{taskMode === "coding" ? selectedConversation?.title ?? "Coding assist" : "SAAAとの会話"}</h1></div><div className="topbar-status"><span className="status-pill local-status"><span className="status-dot" />{taskMode === "coding" ? "読み取り専用" : "ローカル処理"}</span><button className={taskMode === "coding" ? (!codexStatus?.authenticated || !codexSettings?.enabled ? "status-pill provider-status warning" : "status-pill provider-status") : (!modelProviderStatus.ready ? "status-pill provider-status warning" : "status-pill provider-status")} onClick={() => setSurface("settings")}><AppIcon name={taskMode === "coding" ? "code" : "model"} />{taskMode === "coding" ? (codexStatus?.authenticated && codexSettings?.enabled ? "Codex ready" : "Codex未準備") : (modelProviderStatus.ready ? modelProviderStatus.label : "モデル未選択")}</button></div></header>
+      <header className="topbar"><div><p className="eyebrow">CONTINUOUS CONVERSATION</p><h1>SAAAとの会話</h1></div><div className="topbar-status"><span className="status-pill local-status"><span className="status-dot" />ローカル処理</span><button className={!modelProviderStatus.ready ? "status-pill provider-status warning" : "status-pill provider-status"} onClick={() => setSurface("settings")}><AppIcon name="model" />{modelProviderStatus.ready ? modelProviderStatus.label : "モデル未選択"}</button></div></header>
       <div className="message-area" aria-live="polite">{messages.length === 0 && !streamingText ? <div className="empty-state"><h2>今日はどうしましたか？</h2><p>声で話すか、メッセージを入力してください。</p><div className="suggestion-list"><button type="button" onClick={() => setComposer("考えを整理するのを手伝ってください")}>考えを整理する</button><button type="button" onClick={() => setSurface("meeting")}>会議を文字起こし</button><button type="button" onClick={() => setSurface("situation")}>状況を確認</button></div></div> : messages.map((message) => <article className={`message ${message.role}`} key={message.id}><span className="message-role">{message.role === "user" ? "You" : message.role}</span><p>{message.content}</p></article>)}{streamingText && <article className="message assistant streaming"><span className="message-role">assistant · streaming</span><p>{streamingText}</p></article>}{interimTranscript && voiceState !== "idle" && <article className="message transcript streaming"><span className="message-role">transcript · {voiceState}</span><p>{interimTranscript}</p></article>}{runtimeActivity.length > 0 && <details className="activity-panel"><summary>Runtime activity</summary>{runtimeActivity.map((activity, index) => <p key={`${index}-${activity}`}>{activity}</p>)}</details>}</div>
-      <form className="composer" onSubmit={handleSubmit}>{taskMode === "coding" && <div className="workspace-selector"><div><span>Read-only workspace</span><strong>{workspacePath || "未選択"}</strong></div><button className="secondary-button" type="button" onClick={() => void chooseWorkspace()} disabled={Boolean(activeRunId)}>選択</button></div>}<div className="composer-row"><button className={voiceState === "recording" ? "voice-button recording" : "voice-button"} type="button" aria-label={voiceStarting ? "マイクを準備中" : voiceState === "recording" ? "録音を停止" : voiceState === "transcribing" ? "文字起こしを停止" : "音声入力"} title={taskMode === "coding" ? "Coding modeでは音声入力を使用しません" : voiceStarting ? "マイクを準備中" : voiceState === "recording" ? "録音を停止（無音で自動送信）" : voiceState === "transcribing" ? "文字起こしを停止" : "音声入力"} onClick={() => void toggleVoiceCapture()} disabled={voiceStarting || taskMode === "coding" || meetingActive || (Boolean(activeRunId) && !snapshot.voiceProfile.filterEnabled)}><AppIcon name={voiceState === "recording" || voiceState === "transcribing" ? "stop" : "mic"} /></button><textarea rows={1} aria-label="Message" onChange={(event) => setComposer(event.currentTarget.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); }} placeholder={taskMode === "coding" ? "Codexに読み取り専用で依頼" : "SAAAにメッセージ"} value={composer} disabled={Boolean(activeRunId)} /><div className="composer-end">{activeRunId ? <button className="stop-button composer-stop" type="button" onClick={() => void stopActiveRun()}><AppIcon name="stop" /><span>停止</span></button> : <button className="send-button" type="submit" aria-label="送信" disabled={!composer.trim() || !selectedConversation || voiceBusy || (taskMode === "coding" && (!workspacePath.trim() || !codexStatus?.authenticated || !codexSettings?.enabled))}><AppIcon name="send" /></button>}</div></div><div className="composer-meta">{voiceState === "recording" && <span className="composer-hint">話し終えて{DEFAULT_VOICE_SILENCE_TIMEOUT_MS / 1_000}秒待つと自動送信します。{snapshot.voiceProfile.filterEnabled ? " 本人フィルター中は応答・読み上げ中も待ち受けます。" : ""}</span>}{activeTtsRunId && <button className="text-button" type="button" onClick={() => void stopSpeech()}>読み上げを停止</button>}{error && lastPrompt && !activeRunId && <button className="text-button" type="button" onClick={() => void submitPrompt(lastPrompt)}>再試行</button>}{taskMode === "coding" && (!codexStatus?.authenticated || !codexSettings?.enabled) && <span className="composer-hint">SettingsでCodexを有効化し、認証状態を確認してください。</span>}</div></form>
+      <form className="composer" onSubmit={handleSubmit}><div className="composer-row"><button className={voiceState === "recording" ? "voice-button recording" : "voice-button"} type="button" aria-label={voiceStarting ? "マイクを準備中" : voiceState === "recording" ? "録音を停止" : voiceState === "transcribing" ? "文字起こしを停止" : "音声入力"} title={voiceStarting ? "マイクを準備中" : voiceState === "recording" ? "録音を停止（無音で自動送信）" : voiceState === "transcribing" ? "文字起こしを停止" : "音声入力"} onClick={() => void toggleVoiceCapture()} disabled={voiceStarting || meetingActive || (Boolean(activeRunId) && !snapshot.voiceProfile.filterEnabled)}><AppIcon name={voiceState === "recording" || voiceState === "transcribing" ? "stop" : "mic"} /></button><textarea rows={1} aria-label="Message" onChange={(event) => setComposer(event.currentTarget.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); }} placeholder="SAAAにメッセージ" value={composer} disabled={Boolean(activeRunId)} /><div className="composer-end">{activeRunId ? <button className="stop-button composer-stop" type="button" onClick={() => void stopActiveRun()}><AppIcon name="stop" /><span>停止</span></button> : <button className="send-button" type="submit" aria-label="送信" disabled={!composer.trim() || !selectedConversation || voiceBusy}><AppIcon name="send" /></button>}</div></div><div className="composer-meta">{voiceState === "recording" && <span className="composer-hint">話し終えて{DEFAULT_VOICE_SILENCE_TIMEOUT_MS / 1_000}秒待つと自動送信します。{snapshot.voiceProfile.filterEnabled ? " 本人フィルター中は応答・読み上げ中も待ち受けます。" : ""}</span>}{activeTtsRunId && <button className="text-button" type="button" onClick={() => void stopSpeech()}>読み上げを停止</button>}{error && lastPrompt && !activeRunId && <button className="text-button" type="button" onClick={() => void submitPrompt(lastPrompt)}>再試行</button>}</div></form>
       {error && <p className="error-banner" role="alert">{error}</p>}
     </section> : null}
   </main>;
@@ -709,7 +781,7 @@ function mergePcmFrames(frames: Float32Array[], length: number): Float32Array {
   return merged;
 }
 
-type AppIconName = "calendar" | "chat" | "code" | "mic" | "model" | "plus" | "send" | "settings" | "situation" | "stop";
+type AppIconName = "calendar" | "chat" | "mic" | "model" | "send" | "settings" | "situation" | "stop";
 
 function AppIcon({ name }: { name: AppIconName }) {
   const common = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -718,14 +790,10 @@ function AppIcon({ name }: { name: AppIconName }) {
       return <svg {...common}><path d="M7 3v3M17 3v3M4 9h16" /><rect x="4" y="5" width="16" height="16" rx="3" /></svg>;
     case "chat":
       return <svg {...common}><path d="M20 15a4 4 0 0 1-4 4H9l-5 3 1.5-4.5A8 8 0 1 1 20 15Z" /></svg>;
-    case "code":
-      return <svg {...common}><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14" /></svg>;
     case "mic":
       return <svg {...common}><rect x="8" y="3" width="8" height="13" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" /></svg>;
     case "model":
       return <svg {...common}><path d="M8 4a4 4 0 0 0-3 6.7A4.5 4.5 0 0 0 8.5 19H10V5.5A1.5 1.5 0 0 0 8.5 4ZM16 4a4 4 0 0 1 3 6.7A4.5 4.5 0 0 1 15.5 19H14V5.5A1.5 1.5 0 0 1 15.5 4Z" /><path d="M6 12h4M14 12h4" /></svg>;
-    case "plus":
-      return <svg {...common}><path d="M12 5v14M5 12h14" /></svg>;
     case "send":
       return <svg {...common}><path d="M12 20V5M6 11l6-6 6 6" /></svg>;
     case "settings":

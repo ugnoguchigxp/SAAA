@@ -671,6 +671,7 @@ impl<'a> LarmHttpClient<'a> {
             messages,
             &[],
             &[],
+            crate::providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
             timeout,
             cancellation,
             on_delta,
@@ -686,6 +687,7 @@ impl<'a> LarmHttpClient<'a> {
         messages: &[ChatMessage],
         tool_exchanges: &[Value],
         tools: &[Value],
+        reasoning_effort: &str,
         timeout: Duration,
         cancellation: Cancellation<'_>,
         mut on_delta: F,
@@ -702,7 +704,8 @@ impl<'a> LarmHttpClient<'a> {
         let mut request = serde_json::json!({
             "model": VIRTUAL_MODEL,
             "messages": serialized_messages,
-            "stream": true
+            "stream": true,
+            "reasoning_effort": reasoning_effort
         });
         if !tools.is_empty() {
             request["tools"] = Value::Array(tools.to_vec());
@@ -1944,6 +1947,7 @@ mod tests {
         assert!(captures[0].contains("\"deploymentPolicy\":\"existing-only\""));
         assert!(captures[1].contains("x-larm-allocation-id: alloc_1"));
         assert!(captures[1].contains("\"model\":\"local\""));
+        assert!(captures[1].contains("\"reasoning_effort\":\"medium\""));
         assert!(captures[2].contains("DELETE /v1/allocations/alloc_1 HTTP/1.1"));
     }
 
@@ -1999,6 +2003,7 @@ mod tests {
                 }],
                 &[tool_exchange],
                 &tools,
+                "xhigh",
                 Duration::from_secs(5),
                 Cancellation {
                     flag: &flag,
@@ -2026,6 +2031,7 @@ mod tests {
         assert!(captures[0].contains("\"name\":\"recall_conversation\""));
         assert!(captures[0].contains("\"tool_choice\":\"auto\""));
         assert!(captures[0].contains("\"tool_call_id\":\"call_previous\""));
+        assert!(captures[0].contains("\"reasoning_effort\":\"xhigh\""));
     }
 
     #[tokio::test]

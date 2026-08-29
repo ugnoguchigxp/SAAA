@@ -141,6 +141,7 @@ export const modelProvidersSettingsSchema = z.object({
       context.addIssue({ code: "custom", message: "Only one LARM provider may be enabled", path: [] });
     }
   }),
+  reasoningEffort: z.enum(["low", "medium", "xhigh"]),
 }).strict();
 
 export const codexAgentSettingsSchema = z.object({

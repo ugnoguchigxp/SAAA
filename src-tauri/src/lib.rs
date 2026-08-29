@@ -381,9 +381,11 @@ impl ModelProviderSettings {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ModelProvidersSettings {
     providers: Vec<ModelProviderSettings>,
+    #[serde(default = "providers::default_conversation_reasoning_effort")]
+    reasoning_effort: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1091,6 +1093,7 @@ async fn test_model_provider(
     validate_identifier(provider.id(), "provider id")?;
     validate_model_providers(&ModelProvidersSettings {
         providers: vec![provider.clone()],
+        reasoning_effort: providers::default_conversation_reasoning_effort(),
     })?;
     let started = std::time::Instant::now();
     let result = match &provider {
@@ -2003,6 +2006,10 @@ fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<Strin
             |row| row.get(0),
         )
         .map_err(|_| "Conversation does not exist".to_string())?;
+    validate_conversation_write_target(&input.conversation_id, &task_mode)?;
+    if task_mode == "conversation" {
+        memory::context_window::validate_current_instruction(input.content.trim())?;
+    }
     let route_kind = if task_mode == "coding" {
         "coding.assist"
     } else {
@@ -2120,6 +2127,7 @@ async fn execute_conversation_turn(
             context_health,
         )
     };
+    let reasoning_effort = providers.reasoning_effort.clone();
     let route_ids = apply_runtime_provider_gates(
         &providers,
         effective_conversation_route_ids(&providers, &route, &security),
@@ -2181,13 +2189,18 @@ async fn execute_conversation_turn(
                 run_id: input.run_id.clone(),
                 kind: "context-window".to_string(),
                 summary: format!(
-                    "Context {}: {}/{} bytes, {} recent messages, {} continuity groups, {} source messages omitted",
+                    "Context {}: {}/{} bytes, {} recent messages, {} continuity groups, {} loaded source messages omitted{}",
                     context_health.status,
                     context_health.projected_bytes,
                     context_health.hard_limit_bytes,
                     context_health.recent_source_messages,
                     context_health.continuity_group_count,
-                    context_health.dropped_source_messages,
+                    context_health.omitted_loaded_source_messages,
+                    if context_health.source_history_truncated {
+                        ", older source history truncated"
+                    } else {
+                        ""
+                    },
                 ),
             });
             context_health_emitted = true;
@@ -2198,13 +2211,16 @@ async fn execute_conversation_turn(
                     provider,
                     &history,
                     route.timeout_ms,
-                    input,
-                    on_event,
-                    cancellation.clone(),
-                    Some(ProviderOutputPersistence {
-                        state,
-                        session_id: &session_id,
-                    }),
+                    ModelStreamContext {
+                        reasoning_effort: &reasoning_effort,
+                        input,
+                        on_event,
+                        cancellation: cancellation.clone(),
+                        output_persistence: Some(ProviderOutputPersistence {
+                            state,
+                            session_id: &session_id,
+                        }),
+                    },
                 )
                 .await
             }
@@ -2212,6 +2228,7 @@ async fn execute_conversation_turn(
                 stream_larm_provider(
                     provider,
                     &history,
+                    &reasoning_effort,
                     route.timeout_ms,
                     cancellation.clone(),
                     LarmStreamContext {
@@ -4006,26 +4023,21 @@ async fn read_provider_body_limited(
     }
 }
 
+struct ModelStreamContext<'a> {
+    reasoning_effort: &'a str,
+    input: &'a StartTurnInput,
+    on_event: &'a tauri::ipc::Channel<RuntimeEvent>,
+    cancellation: Arc<RunCancellation>,
+    output_persistence: Option<ProviderOutputPersistence<'a>>,
+}
+
 async fn stream_model_provider(
     provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
     timeout_ms: u64,
-    input: &StartTurnInput,
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
-    cancellation: Arc<RunCancellation>,
-    output_persistence: Option<ProviderOutputPersistence<'_>>,
+    context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
-    match stream_model_provider_inner(
-        provider,
-        history,
-        timeout_ms,
-        input,
-        on_event,
-        cancellation,
-        output_persistence,
-    )
-    .await
-    {
+    match stream_model_provider_inner(provider, history, timeout_ms, context).await {
         Ok(content) => ProviderAttemptOutcome::Completed {
             content,
             cleanup: CleanupOutcome::NotApplicable,
@@ -4058,6 +4070,7 @@ struct LarmStreamContext<'a> {
 async fn stream_larm_provider(
     provider: &LarmProviderSettings,
     history: &[ConversationMessage],
+    reasoning_effort: &str,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
     context: LarmStreamContext<'_>,
@@ -4198,6 +4211,7 @@ async fn stream_larm_provider(
                 &messages,
                 &tool_exchanges,
                 &tools,
+                reasoning_effort,
                 round_timeout,
                 cancellation_signal,
                 |delta, first| {
@@ -4313,12 +4327,9 @@ async fn stream_model_provider_inner(
     provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
     timeout_ms: u64,
-    input: &StartTurnInput,
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
-    cancellation: Arc<RunCancellation>,
-    output_persistence: Option<ProviderOutputPersistence<'_>>,
+    context: ModelStreamContext<'_>,
 ) -> Result<String, ProviderAttemptError> {
-    if cancellation.is_cancelled() {
+    if context.cancellation.is_cancelled() {
         return Err(ProviderAttemptError::Cancelled {
             output_started: false,
         });
@@ -4351,14 +4362,14 @@ async fn stream_model_provider_inner(
             .checked_duration_since(tokio::time::Instant::now())
             .filter(|remaining| !remaining.is_zero())
             .ok_or_else(|| ProviderAttemptError::failed(ProviderFailureKind::Timeout, false))?;
-        let tools_enabled = output_persistence.is_some_and(|persistence| {
+        let tools_enabled = context.output_persistence.is_some_and(|persistence| {
             persistence
                 .state
                 .connection
                 .lock()
                 .ok()
                 .and_then(|connection| {
-                    memory::recall::remaining_calls(&connection, &input.run_id).ok()
+                    memory::recall::remaining_calls(&connection, &context.input.run_id).ok()
                 })
                 .is_some_and(|remaining| remaining > 0)
                 && tool_calls_this_attempt < memory::contracts::MAX_RECALL_CALLS_PER_TURN
@@ -4368,10 +4379,11 @@ async fn stream_model_provider_inner(
             provider,
             &messages,
             tools_enabled,
-            input,
-            on_event,
-            cancellation.clone(),
-            output_persistence,
+            context.reasoning_effort,
+            context.input,
+            context.on_event,
+            context.cancellation.clone(),
+            context.output_persistence,
             round_timeout,
         )
         .await?
@@ -4385,7 +4397,8 @@ async fn stream_model_provider_inner(
                     ));
                 }
                 tool_calls_this_attempt += 1;
-                let tool_content = execute_recall_tool(output_persistence, input, &call);
+                let tool_content =
+                    execute_recall_tool(context.output_persistence, context.input, &call);
                 runtime::agent_tools::append_tool_exchange(&mut messages, &call, tool_content);
             }
         }
@@ -4403,13 +4416,19 @@ async fn stream_model_provider_round(
     provider: &OpenAiCompatibleProviderSettings,
     messages: &[Value],
     tools_enabled: bool,
+    reasoning_effort: &str,
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     round_timeout: Duration,
 ) -> Result<ModelProviderCompletion, ProviderAttemptError> {
-    let mut body = json!({ "model": provider.model, "messages": messages, "stream": true });
+    let mut body = json!({
+        "model": provider.model,
+        "messages": messages,
+        "stream": true,
+        "reasoning_effort": reasoning_effort
+    });
     if tools_enabled {
         body["tools"] = json!([runtime::agent_tools::recall_tool_definition()]);
         body["tool_choice"] = json!("auto");
@@ -5457,6 +5476,16 @@ fn ensure_primary_conversation(connection: &Connection) -> Result<Conversation, 
     Ok(conversation)
 }
 
+fn validate_conversation_write_target(
+    conversation_id: &str,
+    task_mode: &str,
+) -> Result<(), String> {
+    if task_mode == "conversation" && conversation_id != PRIMARY_CONVERSATION_ID {
+        return Err("Normal conversation writes must use the primary conversation".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn list_messages(
     state: tauri::State<'_, AppState>,
@@ -5502,16 +5531,14 @@ fn append_message(
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
     let transaction = connection.transaction().map_err(database_error)?;
-    let exists: bool = transaction
+    let task_mode: String = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+            "SELECT task_mode FROM conversations WHERE id = ?1",
             params![message.conversation_id],
             |row| row.get(0),
         )
-        .map_err(database_error)?;
-    if !exists {
-        return Err("Conversation does not exist".to_string());
-    }
+        .map_err(|_| "Conversation does not exist".to_string())?;
+    validate_conversation_write_target(&message.conversation_id, &task_mode)?;
     transaction
         .execute(
             "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
@@ -5686,11 +5713,34 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
             params![namespace, key, schema_version, value.to_string(), now_iso()],
         )?;
     }
+    transaction.execute(
+        "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+         VALUES (?1, ?2, 'conversation', ?3, ?3)",
+        params![
+            PRIMARY_CONVERSATION_ID,
+            PRIMARY_CONVERSATION_TITLE,
+            now_iso()
+        ],
+    )?;
     migrate_pristine_provider_defaults_to_gnosis(&transaction)?;
+    migrate_provider_reasoning_effort_default(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
     transaction.pragma_update(None, "user_version", 11)?;
     transaction.commit()
+}
+
+fn migrate_provider_reasoning_effort_default(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute(
+        "UPDATE settings_documents
+         SET value_json = json_set(value_json, '$.reasoningEffort', ?1), updated_at = ?2
+         WHERE namespace = 'providers.model'
+           AND key = 'default'
+           AND json_valid(value_json)
+           AND json_type(value_json, '$.reasoningEffort') IS NULL",
+        params![providers::DEFAULT_CONVERSATION_REASONING_EFFORT, now_iso()],
+    )?;
+    Ok(())
 }
 
 fn migrate_v4_to_v5(connection: &Connection) -> rusqlite::Result<()> {
@@ -6052,7 +6102,8 @@ fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)>
                     "endpoint": GNOSIS_ENDPOINT,
                     "model": GNOSIS_MODEL,
                     "credentialStatus": "not-configured"
-                }]
+                }],
+                "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT
             }),
         ),
         (
@@ -6412,6 +6463,9 @@ fn validate_settings_batch(documents: &[SaveSettingsDocumentInput]) -> Result<()
 }
 
 fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), String> {
+    if !providers::valid_conversation_reasoning_effort(&settings.reasoning_effort) {
+        return Err("Reasoning effort must be low, medium, or xhigh".to_string());
+    }
     if settings.providers.is_empty() || settings.providers.len() > 20 {
         return Err("Between 1 and 20 model providers are required".to_string());
     }
@@ -7284,6 +7338,13 @@ mod tests {
     fn primary_conversation_is_idempotent_and_preserves_legacy_history() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
+        let initialized_primary_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE id = ?1",
+                params![PRIMARY_CONVERSATION_ID],
+                |row| row.get(0),
+            )
+            .expect("initialized primary count loads");
         connection
             .execute(
                 "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
@@ -7322,6 +7383,7 @@ mod tests {
         assert_eq!(first.title.as_deref(), Some(PRIMARY_CONVERSATION_TITLE));
         assert_eq!(first.id, second.id);
         assert_eq!(primary_count, 1);
+        assert_eq!(initialized_primary_count, 1);
         assert_eq!(legacy_count, 1);
         assert!(visible
             .iter()
@@ -7332,6 +7394,95 @@ mod tests {
         assert!(!visible
             .iter()
             .any(|conversation| conversation.id == "legacy-conversation"));
+    }
+
+    #[test]
+    fn normal_turns_reject_legacy_conversation_ids_without_writing_partial_state() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
+                 VALUES ('legacy-conversation', 'Legacy', 'conversation', '0', '0')",
+                [],
+            )
+            .expect("legacy conversation inserts");
+        let state = app_state(connection);
+        let input = StartTurnInput {
+            run_id: "run-legacy-conversation".to_string(),
+            conversation_id: "legacy-conversation".to_string(),
+            content: "must not persist".to_string(),
+            workspace_path: None,
+        };
+
+        let error = prepare_runtime_run(&state, &input).expect_err("legacy turn is rejected");
+        let connection = state.connection.lock().expect("database lock");
+        let message_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages WHERE content = 'must not persist'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("message count loads");
+        let run_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM runtime_runs WHERE id = 'run-legacy-conversation'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("run count loads");
+
+        assert!(error.contains("primary conversation"));
+        assert_eq!(message_count, 0);
+        assert_eq!(run_count, 0);
+    }
+
+    #[test]
+    fn normal_turns_reject_byte_oversized_context_before_writing_partial_state() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let state = app_state(connection);
+        let content = "😀".repeat(16_000);
+        let input = StartTurnInput {
+            run_id: "run-byte-oversized-context".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
+            content: content.clone(),
+            workspace_path: None,
+        };
+
+        let error = prepare_runtime_run(&state, &input).expect_err("oversized turn is rejected");
+        let connection = state.connection.lock().expect("database lock");
+        let message_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages WHERE content = ?1",
+                params![content],
+                |row| row.get(0),
+            )
+            .expect("message count loads");
+        let run_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM runtime_runs WHERE id = 'run-byte-oversized-context'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("run count loads");
+
+        assert!(error.contains("too large"));
+        assert_eq!(message_count, 0);
+        assert_eq!(run_count, 0);
+    }
+
+    #[test]
+    fn conversation_write_scope_allows_only_primary_normal_chat_and_any_coding_thread() {
+        assert!(
+            validate_conversation_write_target(PRIMARY_CONVERSATION_ID, "conversation").is_ok()
+        );
+        assert!(validate_conversation_write_target("coding-thread", "coding").is_ok());
+        assert!(
+            validate_conversation_write_target("legacy-conversation", "conversation")
+                .expect_err("legacy normal write is rejected")
+                .contains("primary conversation")
+        );
     }
 
     #[test]
@@ -7362,6 +7513,10 @@ mod tests {
         assert_eq!(
             providers.value_json.pointer("/providers/0/enabled"),
             Some(&json!(true))
+        );
+        assert_eq!(
+            providers.value_json.pointer("/reasoningEffort"),
+            Some(&json!("medium"))
         );
         let routing = documents
             .iter()
@@ -7414,6 +7569,33 @@ mod tests {
             )
             .expect("runtime input column reads");
         assert!(input_message_column);
+    }
+
+    #[test]
+    fn existing_provider_settings_gain_the_medium_reasoning_default() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json = json_remove(value_json, '$.reasoningEffort')
+                 WHERE namespace = 'providers.model' AND key = 'default'",
+                [],
+            )
+            .expect("reasoning setting removes");
+
+        initialize_database(&connection).expect("reasoning default migrates");
+
+        let reasoning_effort: String = connection
+            .query_row(
+                "SELECT json_extract(value_json, '$.reasoningEffort')
+                 FROM settings_documents
+                 WHERE namespace = 'providers.model' AND key = 'default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("reasoning setting reads");
+        assert_eq!(reasoning_effort, "medium");
     }
 
     #[test]
@@ -8227,6 +8409,7 @@ mod tests {
                 provider("cloud-fallback", "cloud"),
                 provider("local-fallback", "local"),
             ],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         };
         let route = ConversationRouteSettings {
             primary_provider_id: "local-primary".to_string(),
@@ -8252,6 +8435,7 @@ mod tests {
                 larm_provider("larm-primary"),
                 provider("direct-rollback", "local"),
             ],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         };
         let configured = vec!["larm-primary".to_string(), "direct-rollback".to_string()];
         assert_eq!(
@@ -8273,17 +8457,24 @@ mod tests {
 
     #[test]
     fn settings_reject_embedded_credentials_and_cloud_fallback_on_local_route() {
+        assert!(validate_model_providers(&ModelProvidersSettings {
+            providers: vec![provider("local", "local")],
+            reasoning_effort: "mid".to_string(),
+        })
+        .is_err());
         let mut gnosis = direct_provider(GNOSIS_PROVIDER_ID, "local");
         gnosis.endpoint = GNOSIS_ENDPOINT.to_string();
         gnosis.model = GNOSIS_MODEL.to_string();
         assert!(validate_model_providers(&ModelProvidersSettings {
-            providers: vec![ModelProviderSettings::OpenAiCompatible(gnosis)]
+            providers: vec![ModelProviderSettings::OpenAiCompatible(gnosis)],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         })
         .is_ok());
         let mut public_http = direct_provider("public-http", "local");
         public_http.endpoint = "http://203.0.113.10:8080/v1".to_string();
         assert!(validate_model_providers(&ModelProvidersSettings {
-            providers: vec![ModelProviderSettings::OpenAiCompatible(public_http)]
+            providers: vec![ModelProviderSettings::OpenAiCompatible(public_http)],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         })
         .is_err());
 
@@ -8294,6 +8485,7 @@ mod tests {
                     ..direct_provider("cloud", "cloud")
                 },
             )],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         };
         assert!(validate_model_providers(&with_credentials).is_err());
         let mut disabled_with_credentials = with_credentials;
@@ -8307,10 +8499,12 @@ mod tests {
 
         let unsafe_id = ModelProvidersSettings {
             providers: vec![provider("local provider", "local")],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         };
         assert!(validate_model_providers(&unsafe_id).is_err());
         let ambiguous_ids = ModelProvidersSettings {
             providers: vec![provider("local-a", "local"), provider("local_a", "local")],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         };
         assert!(validate_model_providers(&ambiguous_ids).is_err());
 
@@ -8319,10 +8513,10 @@ mod tests {
             .iter_mut()
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
-            .value_json = json!({ "providers": [
-            provider("local", "local"),
-            provider("cloud", "cloud")
-        ]});
+            .value_json = json!({
+            "providers": [provider("local", "local"), provider("cloud", "cloud")],
+            "reasoningEffort": "medium"
+        });
         let routing = documents
             .iter_mut()
             .find(|document| document.namespace == "routing.tasks")
@@ -8336,6 +8530,7 @@ mod tests {
     fn larm_settings_enforce_the_fixed_loopback_security_contract() {
         let valid = ModelProvidersSettings {
             providers: vec![larm_provider("larm")],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         };
         assert!(validate_model_providers(&valid).is_ok());
         let mut ipv6 = larm_provider("larm-ipv6");
@@ -8344,7 +8539,8 @@ mod tests {
         };
         provider.base_url = "http://[::1]:9810/".to_string();
         assert!(validate_model_providers(&ModelProvidersSettings {
-            providers: vec![ipv6]
+            providers: vec![ipv6],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         })
         .is_ok());
 
@@ -8363,7 +8559,8 @@ mod tests {
             provider.base_url = base_url.to_string();
             assert!(
                 validate_model_providers(&ModelProvidersSettings {
-                    providers: vec![invalid]
+                    providers: vec![invalid],
+                    reasoning_effort: providers::default_conversation_reasoning_effort(),
                 })
                 .is_err(),
                 "invalid LARM URL was accepted: {base_url}"
@@ -8372,6 +8569,7 @@ mod tests {
 
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![larm_provider("larm-a"), larm_provider("larm-b")],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         })
         .is_err());
     }
@@ -8380,6 +8578,7 @@ mod tests {
     fn legacy_provider_ids_and_default_codex_model_remain_valid() {
         let providers = ModelProvidersSettings {
             providers: vec![provider("Local_Custom", "local")],
+            reasoning_effort: providers::default_conversation_reasoning_effort(),
         };
         assert!(validate_model_providers(&providers).is_ok());
 
@@ -8506,10 +8705,13 @@ mod tests {
             &provider,
             &history,
             5_000,
-            &input,
-            &channel,
-            Arc::new(RunCancellation::default()),
-            None,
+            ModelStreamContext {
+                reasoning_effort: "low",
+                input: &input,
+                on_event: &channel,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: None,
+            },
         )
         .await;
         let ProviderAttemptOutcome::Completed { content, .. } = content else {
@@ -8521,6 +8723,10 @@ mod tests {
             .lock()
             .expect("request lock")
             .contains("POST /v1/chat/completions"));
+        assert!(request_body
+            .lock()
+            .expect("request lock")
+            .contains("\"reasoning_effort\":\"low\""));
         assert_eq!(
             projected
                 .lock()
@@ -8631,8 +8837,6 @@ mod tests {
             .execute_batch(
                 "INSERT INTO conversations(id,task_mode,created_at,updated_at)
                    VALUES('conversation-old','conversation','1','1');
-                 INSERT INTO conversations(id,task_mode,created_at,updated_at)
-                   VALUES('conversation-current','conversation','2','2');
                  INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
                    VALUES('message-old-user','conversation-old','user','SQLite の検索方式を相談した','1000');
                  INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
@@ -8642,7 +8846,7 @@ mod tests {
         let state = app_state(connection);
         let input = StartTurnInput {
             run_id: "run-recall-tool".to_string(),
-            conversation_id: "conversation-current".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "前の話を思い出して".to_string(),
             workspace_path: None,
         };
@@ -8664,13 +8868,16 @@ mod tests {
             &provider,
             &history,
             5_000,
-            &input,
-            &channel,
-            Arc::new(RunCancellation::default()),
-            Some(ProviderOutputPersistence {
-                state: &state,
-                session_id: &session_id,
-            }),
+            ModelStreamContext {
+                reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                input: &input,
+                on_event: &channel,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: Some(ProviderOutputPersistence {
+                    state: &state,
+                    session_id: &session_id,
+                }),
+            },
         )
         .await;
         server.join().expect("fixture server joins");
@@ -8718,17 +8925,10 @@ mod tests {
     fn malformed_recall_calls_consume_the_persistent_turn_limit() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
-        connection
-            .execute(
-                "INSERT INTO conversations(id,task_mode,created_at,updated_at)
-                 VALUES('conversation-malformed','conversation','1','1')",
-                [],
-            )
-            .expect("conversation inserts");
         let state = app_state(connection);
         let input = StartTurnInput {
             run_id: "run-malformed-recall".to_string(),
-            conversation_id: "conversation-malformed".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "remember".to_string(),
             workspace_path: None,
         };
@@ -8809,17 +9009,10 @@ mod tests {
 
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
-        connection
-            .execute(
-                "INSERT INTO conversations(id,task_mode,created_at,updated_at)
-                 VALUES('conversation-timeout','conversation','1','1')",
-                [],
-            )
-            .expect("conversation inserts");
         let state = app_state(connection);
         let input = StartTurnInput {
             run_id: "run-recall-timeout".to_string(),
-            conversation_id: "conversation-timeout".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "remember".to_string(),
             workspace_path: None,
         };
@@ -8845,13 +9038,16 @@ mod tests {
             &provider,
             &history,
             600,
-            &input,
-            &channel,
-            Arc::new(RunCancellation::default()),
-            Some(ProviderOutputPersistence {
-                state: &state,
-                session_id: &session_id,
-            }),
+            ModelStreamContext {
+                reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                input: &input,
+                on_event: &channel,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: Some(ProviderOutputPersistence {
+                    state: &state,
+                    session_id: &session_id,
+                }),
+            },
         )
         .await;
         server.join().expect("fixture server joins");
@@ -8938,10 +9134,13 @@ mod tests {
             &provider,
             &[],
             2_000,
-            &input,
-            &channel,
-            Arc::new(RunCancellation::default()),
-            None,
+            ModelStreamContext {
+                reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                input: &input,
+                on_event: &channel,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: None,
+            },
         )
         .await;
         server.join().expect("fixture server joins");
@@ -9011,10 +9210,13 @@ mod tests {
             &provider,
             &[],
             2_000,
-            &input,
-            &channel,
-            Arc::new(RunCancellation::default()),
-            None,
+            ModelStreamContext {
+                reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                input: &input,
+                on_event: &channel,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: None,
+            },
         )
         .await;
         source_server.join().expect("source server joins");
@@ -9069,22 +9271,12 @@ mod tests {
         initialize_database(&connection).expect("database initializes");
         let state = app_state(connection);
         let conversation = Conversation {
-            id: "conversation-fallback".to_string(),
-            title: None,
+            id: PRIMARY_CONVERSATION_ID.to_string(),
+            title: Some(PRIMARY_CONVERSATION_TITLE.to_string()),
             task_mode: "conversation".to_string(),
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
         };
-        state
-            .connection
-            .lock()
-            .expect("database lock")
-            .execute(
-                "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
-                 VALUES (?1, NULL, 'conversation', 'now', 'now')",
-                params![conversation.id],
-            )
-            .expect("conversation inserts");
         let mut documents = default_settings_input();
         documents
             .iter_mut()
@@ -9239,16 +9431,6 @@ mod tests {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
         let state = app_state(connection);
-        state
-            .connection
-            .lock()
-            .expect("database lock")
-            .execute(
-                "INSERT INTO conversations(id, task_mode, created_at, updated_at)
-                 VALUES('conversation-partial', 'conversation', '1', '1')",
-                [],
-            )
-            .expect("conversation inserts");
         let mut documents = default_settings_input();
         documents
             .iter_mut()
@@ -9275,7 +9457,7 @@ mod tests {
         .expect("settings save");
         let input = StartTurnInput {
             run_id: "run-partial".to_string(),
-            conversation_id: "conversation-partial".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "partial test".to_string(),
             workspace_path: None,
         };
@@ -9297,8 +9479,8 @@ mod tests {
         let assistant_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_messages
-                 WHERE conversation_id='conversation-partial' AND role='assistant'",
-                [],
+                 WHERE conversation_id=?1 AND role='assistant'",
+                params![PRIMARY_CONVERSATION_ID],
                 |row| row.get(0),
             )
             .expect("assistant count reads");
@@ -10099,16 +10281,6 @@ for line in sys.stdin:
         state.larm_gate = providers::larm::LarmRuntimeGate::Ready(Arc::new(
             providers::larm::client::SharedLarmClient::build().expect("LARM client builds"),
         ));
-        state
-            .connection
-            .lock()
-            .expect("database lock")
-            .execute(
-                "INSERT INTO conversations(id, task_mode, created_at, updated_at)
-                 VALUES('conversation-larm', 'conversation', '1', '1')",
-                [],
-            )
-            .expect("conversation inserts");
         let mut documents = default_settings_input();
         documents
             .iter_mut()
@@ -10190,7 +10362,7 @@ for line in sys.stdin:
         });
         let input = StartTurnInput {
             run_id: "run-larm".to_string(),
-            conversation_id: "conversation-larm".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "fixture prompt".to_string(),
             workspace_path: None,
         };

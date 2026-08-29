@@ -7,30 +7,46 @@ function source(path: string): string {
 }
 
 describe("MVP UI reachability contracts", () => {
-  test("keeps Coding assist reachable with an explicit read-only workspace", () => {
+  test("does not expose Coding assist controls in the chat UI", () => {
     const app = source("src/App.tsx");
-    expect(app).toContain('switchTaskMode("coding")');
-    expect(app).toContain("chooseWorkspace()");
-    expect(app).toContain('runMode === "coding" ? workspacePath.trim() || null : null');
-    expect(app).toContain("Codex ready");
+    expect(app).not.toContain("switchTaskMode");
+    expect(app).not.toContain("chooseWorkspace");
+    expect(app).not.toContain("Coding thread");
+    expect(app).not.toContain("Codex ready");
   });
 
-  test("exposes one continuous normal conversation while retaining separate Coding threads", () => {
+  test("exposes one continuous normal conversation", () => {
     const app = source("src/App.tsx");
     const contracts = source("src/lib/contracts.ts");
     expect(contracts).toContain("primaryConversationId: string");
     expect(app).toContain("nextSnapshot.primaryConversationId");
-    expect(app).toContain('taskMode === "coding" && <><button className="new-chat"');
-    expect(app).toContain('conversation.taskMode === "coding"');
+    expect(app).not.toContain('taskMode === "coding"');
+    expect(app).not.toContain("codingConversations");
     expect(app).not.toContain("新しい会話");
     expect(app).not.toContain("最近の会話");
   });
 
-  test("keeps Codex configuration and coding routing visible in Settings", () => {
+  test("always submits the primary conversation without a workspace", () => {
+    const app = source("src/App.tsx");
+    expect(app).toContain("{ runId, conversationId, content, workspacePath: null }");
+    expect(app).not.toContain("agent-running");
+    expect(app).not.toContain("createConversation");
+  });
+
+  test("does not expose Codex configuration or coding routing in Settings", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
-    expect(settings).toContain('id: "codex"');
-    expect(settings).toContain("coding.assist");
-    expect(settings).toContain("Safety policy");
+    expect(settings).not.toContain('id: "codex"');
+    expect(settings).not.toContain("<CodexSection");
+    expect(settings).not.toContain("<h3>coding.assist</h3>");
+    expect(settings).not.toContain("getCodexStatus()");
+  });
+
+  test("lets users select the conversation reasoning effort in LLM Providers", () => {
+    const settings = source("src/features/settings/SettingsPage.tsx");
+    expect(settings).toContain('Field label="Reasoning effort"');
+    expect(settings).toContain('<option value="low">Low</option>');
+    expect(settings).toContain('<option value="medium">Medium (recommended)</option>');
+    expect(settings).toContain('<option value="xhigh">Extra high</option>');
   });
 
   test("renders actual partial and final transcript events", () => {

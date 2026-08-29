@@ -9,6 +9,7 @@ function documents() {
       schemaVersion: 9,
       valueJson: {
         providers: [{ kind: "openai-compatible", id: "local", enabled: true, label: "Local", location: "local", endpoint: "http://127.0.0.1:11434/v1", model: "test", credentialStatus: "not-configured" }],
+        reasoningEffort: "medium",
       },
     },
     {
@@ -47,6 +48,17 @@ function documents() {
 describe("settings contracts", () => {
   test("accepts the complete MVP settings snapshot", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
+  });
+
+  test("accepts only supported conversation reasoning efforts", () => {
+    for (const reasoningEffort of ["low", "medium", "xhigh"]) {
+      const snapshot = documents();
+      (snapshot[0].valueJson as { reasoningEffort: string }).reasoningEffort = reasoningEffort;
+      expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
+    }
+    const invalid = documents();
+    (invalid[0].valueJson as { reasoningEffort: string }).reasoningEffort = "mid";
+    expect(() => validateSettingsDocuments(invalid)).toThrow("Invalid option");
   });
 
   test("requires the fixed gnosis ASR provider and model", () => {
