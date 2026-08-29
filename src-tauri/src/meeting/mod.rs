@@ -1,163 +1,14 @@
+pub(crate) mod commands;
+mod types;
 use crate::{bounded_text, new_id, now_iso, redact_runtime_text, RunCancellation};
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 use tauri::ipc::Channel;
+pub use types::*;
 use uuid::Uuid;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum MeetingState {
-    Idle,
-    Preflight,
-    Ready,
-    Active,
-    Paused,
-    Stopping,
-    Completed,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "kebab-case")]
-pub enum MeetingLane {
-    Microphone,
-    SystemAudio,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Health {
-    pub status: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MeetingCapabilities {
-    pub microphone: bool,
-    pub system_audio: bool,
-    pub overlay: bool,
-    pub translation: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MeetingSnapshot {
-    pub session_id: Option<String>,
-    pub state: MeetingState,
-    pub capture_token: Option<String>,
-    pub entries: usize,
-    pub capabilities: MeetingCapabilities,
-    pub error: Option<MeetingError>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MeetingError {
-    pub code: String,
-    pub message: String,
-    pub recovery: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PreflightInput {
-    pub microphone_device_id: String,
-    pub system_audio_enabled: bool,
-    pub stt_model: String,
-    pub translation_enabled: bool,
-}
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreflightResult {
-    pub state: MeetingState,
-    pub microphone: Health,
-    pub system_audio: Health,
-    pub stt: Health,
-    pub translation: Health,
-    pub shipping_capabilities: MeetingCapabilities,
-    pub blocking_errors: Vec<MeetingError>,
-}
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct StartInput {
-    pub session_id: String,
-    pub microphone_device_id: String,
-    pub microphone_enabled: bool,
-    pub system_audio_enabled: bool,
-    pub stt_model: String,
-    pub translation_enabled: bool,
-    pub persistence_mode: String,
-}
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SegmentInput {
-    pub session_id: String,
-    pub capture_token: String,
-    pub lane: MeetingLane,
-    pub sequence: u64,
-    pub samples: Vec<f32>,
-    pub sample_rate: u32,
-    pub started_at_ms: u64,
-    pub duration_ms: u32,
-}
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewSegmentInput {
-    pub run_id: String,
-    #[serde(flatten)]
-    pub segment: SegmentInput,
-}
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SessionInput {
-    pub session_id: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SegmentResult {
-    pub accepted: bool,
-    pub text: String,
-    pub language: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum MeetingEvent {
-    StateChanged {
-        session_id: Option<String>,
-        state: MeetingState,
-    },
-    TranscriptFinal {
-        session_id: String,
-        lane: MeetingLane,
-        sequence: u64,
-        text: String,
-        language: Option<String>,
-    },
-    TranscriptPartial {
-        session_id: String,
-        lane: MeetingLane,
-        sequence: u64,
-        text: String,
-        language: Option<String>,
-    },
-    Failed {
-        session_id: Option<String>,
-        code: String,
-        message: String,
-        recovery: String,
-    },
-}
 
 #[derive(Clone)]
 struct Entry {
@@ -265,23 +116,23 @@ impl MeetingRuntime {
         } else {
             health("ready", "Microphone permission was checked by the app")
         };
-        let stt = if input.stt_model != crate::voice::gnosis_asr::MODEL_ID {
+        let stt = if input.stt_model != crate::voice::network_asr::MODEL_ID {
             errors.push(err(
                 "MEETING_STT_MODEL_UNAVAILABLE",
-                "The configured gnosis ASR model is unsupported.",
+                "The configured LAN ASR model is unsupported.",
                 "Restore the default Voice ASR settings.",
             ));
             health("unavailable", "ASR model mismatch")
         } else {
             match asr_health {
-                Ok(()) => health("ready", "gnosis-asr"),
+                Ok(()) => health("ready", "network-asr"),
                 Err(error) => {
                     errors.push(err(
                         "MEETING_STT_UNAVAILABLE",
                         &error,
-                        "Check the gnosis ASR service and retry.",
+                        "Check the LAN ASR service and retry.",
                     ));
-                    health("unavailable", "gnosis ASR unavailable")
+                    health("unavailable", "LAN ASR unavailable")
                 }
             }
         };
@@ -321,8 +172,8 @@ impl MeetingRuntime {
     ) -> Result<MeetingSnapshot, String> {
         validate_device_and_model_bounds(&input.microphone_device_id, &input.stt_model)?;
         crate::validate_identifier(&input.session_id, "meeting session id")?;
-        if input.stt_model != crate::voice::gnosis_asr::MODEL_ID {
-            return Err("MEETING_STT_MODEL_UNAVAILABLE: Unsupported gnosis ASR model.".into());
+        if input.stt_model != crate::voice::network_asr::MODEL_ID {
+            return Err("MEETING_STT_MODEL_UNAVAILABLE: Unsupported LAN ASR model.".into());
         }
         if input.microphone_device_id.trim().is_empty()
             || !input.microphone_enabled
@@ -340,7 +191,7 @@ impl MeetingRuntime {
         let token = capture_token();
         {
             let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,?3,?4,NULL,'discard',?5)",params![input.session_id,if input.microphone_enabled {1} else {0},crate::voice::gnosis_asr::PROVIDER_ID,input.stt_model,now_iso()]).map_err(crate::database_error)?;
+            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,?3,?4,NULL,'discard',?5)",params![input.session_id,if input.microphone_enabled {1} else {0},crate::voice::network_asr::PROVIDER_ID,input.stt_model,now_iso()]).map_err(crate::database_error)?;
         }
         r.state = MeetingState::Active;
         r.session = Some(Session {
@@ -854,7 +705,7 @@ mod tests {
                 session: Some(Session {
                     id: "session_a".into(),
                     token: Some("capture_token".into()),
-                    model: crate::voice::gnosis_asr::MODEL_ID.to_string(),
+                    model: crate::voice::network_asr::MODEL_ID.to_string(),
                     entries: Vec::new(),
                     total_text_chars: 0,
                     next_sequences: HashMap::new(),
@@ -888,17 +739,17 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_unavailable_gnosis_asr_without_arming_capture() {
+    fn preflight_rejects_unavailable_network_asr_without_arming_capture() {
         let runtime = MeetingRuntime::new();
         let result = runtime
             .preflight(
                 &PreflightInput {
                     microphone_device_id: "default".into(),
                     system_audio_enabled: false,
-                    stt_model: crate::voice::gnosis_asr::MODEL_ID.into(),
+                    stt_model: crate::voice::network_asr::MODEL_ID.into(),
                     translation_enabled: false,
                 },
-                Err("gnosis ASR unavailable".into()),
+                Err("LAN ASR unavailable".into()),
             )
             .expect("preflight result");
         assert_eq!(result.state, MeetingState::Idle);
@@ -1082,7 +933,7 @@ mod tests {
             .expect("schema initializes");
         {
             let conn = connection.lock().expect("database lock");
-            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_a','completed',1,0,'gnosis-asr','model','discard','1')", []).expect("meeting fixture");
+            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_a','completed',1,0,'network-asr','model','discard','1')", []).expect("meeting fixture");
         }
         let runtime = runtime_with_session(MeetingState::Completed);
         runtime
@@ -1127,7 +978,7 @@ mod tests {
 
         {
             let conn = connection.lock().expect("database lock");
-            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_b','completed',1,0,'gnosis-asr','model','discard','1')", []).expect("discard fixture");
+            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('session_b','completed',1,0,'network-asr','model','discard','1')", []).expect("discard fixture");
         }
         let runtime = runtime_with_session(MeetingState::Completed);
         runtime

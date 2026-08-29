@@ -10,6 +10,9 @@ require_owner = true
 [keyspaces.codex]
 owner = "saaa-runtime"
 
+[keyspaces.conversation]
+owner = "saaa-runtime"
+
 [release_profiles.development]
 required_locales = ["$source"]
 

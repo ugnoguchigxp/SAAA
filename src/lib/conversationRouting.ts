@@ -12,7 +12,7 @@ export function findPrimaryRoute(documents: SettingsDocument[]): string {
     const value = routing.valueJson.conversationRespond as Record<string, unknown>;
     if (typeof value.primaryProviderId === "string") return value.primaryProviderId;
   }
-  return "gnosis-qwen";
+  return "lan-llm-dynamic";
 }
 
 export function updateConversationTimestamp(snapshot: AppSnapshot, conversationId: string, title: string): AppSnapshot {
@@ -44,7 +44,7 @@ export function resolveModelProviderStatus(snapshot: AppSnapshot): { ready: bool
         label: fallback.label || fallback.id,
       };
     }
-    if (fallback?.kind === "gnosis") {
+    if (fallback?.kind === "dynamic-lan") {
       return {
         ready: Boolean(fallback.host.trim()),
         label: fallback.label || fallback.id,
@@ -55,7 +55,7 @@ export function resolveModelProviderStatus(snapshot: AppSnapshot): { ready: bool
   return {
     ready: primary.kind === "larm"
       ? primary.enabled && snapshot.larmRuntime.state === "ready"
-      : primary.kind === "gnosis"
+      : primary.kind === "dynamic-lan"
         ? primary.enabled && Boolean(primary.host.trim())
         : primary.enabled && Boolean(primary.endpoint.trim() && primary.model.trim()),
     label: primary.label || primary.id,

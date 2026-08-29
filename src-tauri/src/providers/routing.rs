@@ -1,7 +1,4 @@
-use crate::{
-    ConversationRouteSettings, ModelProviderSettings, ModelProvidersSettings,
-    SecurityRuntimeSettings,
-};
+use crate::{ConversationRouteSettings, ModelProvidersSettings, SecurityRuntimeSettings};
 
 pub(crate) fn effective_conversation_route_ids(
     providers: &ModelProvidersSettings,
@@ -13,15 +10,8 @@ pub(crate) fn effective_conversation_route_ids(
         .iter()
         .find(|provider| provider.id() == route.primary_provider_id);
     let primary_is_local = primary.is_some_and(|provider| provider.location() == "local");
-    let primary_is_gnosis =
-        primary.is_some_and(|provider| matches!(provider, ModelProviderSettings::Gnosis(_)));
-    let fallback_ids = if primary_is_gnosis {
-        &[][..]
-    } else {
-        route.fallback_provider_ids.as_slice()
-    };
     std::iter::once(route.primary_provider_id.clone())
-        .chain(fallback_ids.iter().cloned())
+        .chain(route.fallback_provider_ids.iter().cloned())
         .filter(|provider_id| {
             !(security.local_only_when_selected && primary_is_local)
                 || providers
@@ -53,7 +43,7 @@ pub(crate) fn apply_runtime_provider_gates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{gnosis_provider, larm_provider, provider};
+    use crate::test_support::{dynamic_lan_provider, larm_provider, provider};
     use crate::{ConversationRouteSettings, ModelProvidersSettings, SecurityRuntimeSettings};
     use std::sync::Arc;
 
@@ -85,16 +75,16 @@ mod tests {
     }
 
     #[test]
-    fn gnosis_route_excludes_all_fallbacks_at_runtime() {
+    fn dynamic_lan_route_keeps_local_fallbacks_at_runtime() {
         let providers = ModelProvidersSettings {
             providers: vec![
-                gnosis_provider("gnosis-primary"),
+                dynamic_lan_provider("dynamic_lan-primary"),
                 provider("local-fallback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
         };
         let route = ConversationRouteSettings {
-            primary_provider_id: "gnosis-primary".to_string(),
+            primary_provider_id: "dynamic_lan-primary".to_string(),
             fallback_provider_ids: vec!["local-fallback".to_string()],
             timeout_ms: 30_000,
         };
@@ -106,7 +96,7 @@ mod tests {
 
         assert_eq!(
             effective_conversation_route_ids(&providers, &route, &security),
-            ["gnosis-primary"]
+            ["dynamic_lan-primary", "local-fallback"]
         );
     }
 

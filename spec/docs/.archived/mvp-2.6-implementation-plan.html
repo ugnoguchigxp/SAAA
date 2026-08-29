@@ -10,7 +10,7 @@
       Baseline: <code>d0ba3fd</code> — MVP 2.5 implementation checkpoint
     </li>
     <li>Shipping client: macOS版SAAA desktop</li>
-    <li>Production node: <code>gnosis</code></li>
+    <li>Production node: <code>LLM server</code></li>
     <li>読者: SAAA実装担当、LARM実装担当、レビュー担当、QA担当、運用担当</li>
   </ul>
   <p>
@@ -39,7 +39,7 @@
       gate、Settings UI、fake LARM integrationを実装済み。
     </li>
     <li>
-      自動検証はfake LARMだけを使用し、gnosisへallocationまたはGateway requestを送信していない。
+      自動検証はfake LARMだけを使用し、LLM serverへallocationまたはGateway requestを送信していない。
     </li>
   </ul>
   <p>
@@ -70,7 +70,7 @@
     MVP 2.6はLLM canaryを最初のshipping sliceとする。STT / TTSはcontractと実機gateが別であるため、
     LLM canaryのproduction gateを通過するまで実装対象に含めない。AI server停止中はcontract、state
     machine、 fake server、settings
-    migration、security、rollbackを実装し、復旧後にだけgnosis実機canaryを行う。
+    migration、security、rollbackを実装し、復旧後にだけLLM server実機canaryを行う。
   </p>
   <p>
     MVP 2.5はimplementation completeだがmanual acceptance pendingである。MVP
@@ -207,7 +207,7 @@ Selected Local Runtime</code></pre>
       <tr>
         <td>Voice</td>
         <td>
-          <code>gnosis-asr</code>と<code
+          <code>network-asr</code>と<code
             >system-tts</code
           >
         </td>
@@ -216,7 +216,7 @@ Selected Local Runtime</code></pre>
       <tr>
         <td>Security</td>
         <td>Local HTTPはloopbackだけ、credentialはenvironmentだけ</td>
-        <td>この境界を緩めず、gnosis接続はloopback tunnelに限定する</td>
+        <td>この境界を緩めず、LLM server接続はloopback tunnelに限定する</td>
       </tr>
     </tbody>
   </table>
@@ -233,7 +233,7 @@ Selected Local Runtime</code></pre>
     <li>LARM feature flagを既定OFFにし、direct Providerへnew-turn rollbackできる。</li>
     <li>token、prompt、response、resolved endpointをlog、diagnostics、telemetryへ保存しない。</li>
     <li>サーバー停止中にfake LARMでcontract testを完了できる。</li>
-    <li>復旧後に一つの非critical clientだけでgnosis canaryを行う。</li>
+    <li>復旧後に一つの非critical clientだけでLLM server canaryを行う。</li>
   </ol>
 
   <h2 id="4-non-goals">4. Non-goals</h2>
@@ -323,7 +323,7 @@ Selected Local Runtime</code></pre>
   </ol>
   <p>
     LARM側の<code>/v1</code>
-    allocation、Gateway、authentication、metrics実装がcommitされ、API schemaと gnosis deployment
+    allocation、Gateway、authentication、metrics実装がcommitされ、API schemaと LLM server deployment
     revisionが特定できることをcanary開始条件とする。未commit WIPをproduction contractにしない。
   </p>
   <h3 id="61-delivery-gates">6.1 Delivery gates</h3>
@@ -356,7 +356,7 @@ Selected Local Runtime</code></pre>
       </tr>
       <tr>
         <td>G2 — Canary transport</td>
-        <td>gnosis revision、private transport、token、rollback Provider、operator</td>
+        <td>LLM server revision、private transport、token、rollback Provider、operator</td>
         <td>G2前はfake LARM integrationまで。実機requestを送らない</td>
       </tr>
       <tr>
@@ -1173,9 +1173,9 @@ Failure after first non-empty assistant delta
   <h2 id="14-security-and-network">14. Security and network topology</h2>
   <h3 id="141-canary-transport">14.1 Canary transport</h3>
   <p>
-    MVP 2.6のcanary transportは、SAAA hostからgnosisへのSSH tunnelまたは同等のloopback private
+    MVP 2.6のcanary transportは、SAAA hostからLLM serverへのSSH tunnelまたは同等のloopback private
     tunnelに固定する。 SAAAからは<code>http://127.0.0.1:&lt;forwarded-port&gt;</code>として見せ、LARM
-    daemonはgnosisのloopback listenを維持する。
+    daemonはLLM serverのloopback listenを維持する。
   </p>
   <p>
     MVP 2.6 Settingsはloopback URLだけを受け入れる。remote
@@ -1451,7 +1451,7 @@ type ProviderSelectedEvent = {
   <h3 id="m26-00">M26-00 — Baseline and contract review</h3>
   <ul>
     <li>MVP 2.5 checkpointと未完了manual gateを確認する。</li>
-    <li>G0を完了し、LARMのcommit、API schema、gnosis deployment revisionの取得状況を記録する。</li>
+    <li>G0を完了し、LARMのcommit、API schema、LLM server deployment revisionの取得状況を記録する。</li>
     <li>Section 6の未決定事項をG1 blocker一覧として管理する。</li>
     <li>G1未通過でもM26-01〜03を進められるが、provisional DTOを確定contractと呼ばない。</li>
   </ul>
@@ -1530,7 +1530,7 @@ type ProviderSelectedEvent = {
     <li>fixture connection、task、allocation sessionがtest後に残らないことを確認する。</li>
     <li>既存direct Provider、Codex、Voice、Meeting、Situationの回帰を確認する。</li>
   </ul>
-  <h3 id="m26-09">M26-09 — gnosis LLM canary</h3>
+  <h3 id="m26-09">M26-09 — LLM server LLM canary</h3>
   <ul>
     <li>G1とG2を満たしてから開始する。</li>
     <li>
@@ -1555,7 +1555,7 @@ type ProviderSelectedEvent = {
     <li>全acceptanceを満たすまで既定ProviderをLARMへ変更しない。</li>
   </ul>
 
-  <h2 id="19-gnosis-canary">19. gnosis canary and production gate</h2>
+  <h2 id="19-LLM server-canary">19. LLM server canary and production gate</h2>
   <p>
     M26-09とM26-10はMVP 2.6のoffline実装後に実施するproduction-readiness sliceである。canary
     clientは、isolated application-data directory、専用environment、単一operatorを持つ一つのSAAA
@@ -1640,7 +1640,7 @@ bun run desktop:smoke</code></pre>
     </li>
     <li>fake LARM suiteと既存全testが成功する。</li>
     <li>
-      gnosis canaryでdefault、cancel、partial failure、restart、capacity、rollbackが成功する。
+      LLM server canaryでdefault、cancel、partial failure、restart、capacity、rollbackが成功する。
     </li>
     <li>allocation leak、Resident停止、Preferred stop漏れがsoakで検出されない。</li>
     <li>

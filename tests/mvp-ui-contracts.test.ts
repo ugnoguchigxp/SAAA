@@ -63,20 +63,24 @@ describe("MVP UI reachability contracts", () => {
     expect(settings).toContain('<option value="xhigh">Extra high</option>');
   });
 
-  test("configures gnosis by host and resolves provider details dynamically", () => {
+  test("configures dynamic_lan by host and resolves provider details dynamically", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
-    const gnosis = source("src-tauri/src/providers/gnosis.rs");
+    const dynamic_lan = [
+      source("src-tauri/src/providers/dynamic_lan/mod.rs"),
+      source("src-tauri/src/providers/dynamic_lan/http.rs"),
+      source("src-tauri/src/providers/dynamic_lan/validate.rs"),
+    ].join("\n");
     expect(settings).toContain('Field label="LLM host server"');
     expect(settings).toContain("ホスト名またはプライベートIPだけを入力します");
     expect(settings).toContain("モデル・Gateway URL・短期credentialを接続APIから動的に解決");
     expect(settings).toContain("保存対象はhostのみ");
     expect(settings).toContain('`http://${provider.host || "<host>"}:9810`');
-    expect(gnosis).toContain('format!("http://{host}:{CONTROL_PORT}/")');
-    expect(gnosis).not.toContain('Command::new("ssh")');
-    expect(gnosis).toContain('.join("v1/agent-profiles")');
-    expect(gnosis).toContain('.extend(["v1", "agent-connections", id])');
-    expect(gnosis).toContain('.push("claim")');
-    expect(gnosis).toContain('"openai-provider-v1"');
+    expect(dynamic_lan).toContain('format!("http://{host}:{CONTROL_PORT}/")');
+    expect(dynamic_lan).not.toContain('Command::new("ssh")');
+    expect(dynamic_lan).toContain('.join("v1/agent-profiles")');
+    expect(dynamic_lan).toContain('.extend(["v1", "agent-connections", id])');
+    expect(dynamic_lan).toContain('.push("claim")');
+    expect(dynamic_lan).toContain('"openai-provider-v1"');
   });
 
   test("renders actual partial and final transcript events", () => {

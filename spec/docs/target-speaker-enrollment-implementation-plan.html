@@ -15,7 +15,8 @@
   </ul>
   <p>
     本文書は、Settings画面から本人音声を複数回サンプリングし、その音声ファイルを端末内へ永続保存し、
-    通常Chatでは登録話者と判定された音声だけをgnosis ASRへ送って文字起こしするための実装契約である。
+    通常Chatでは登録話者と判定された音声だけをLLM server
+    ASRへ送って文字起こしするための実装契約である。
     ユーザーは登録音声の保存を明示的に許可している。本機能はその許可を製品上でも確認可能にし、
     保存、再生、追加、再評価、削除のlifecycleをSettingsから管理できるようにする。
   </p>
@@ -40,14 +41,16 @@ Normal Chat microphone
   ↓ WebView audio processing and bounded pre-roll
 Candidate VAD
   ↓ local speaker verification before ASR
-  ├─ verified-user → user utterance buffer → endpoint → gnosis ASR
+  ├─ verified-user → user utterance buffer → endpoint → LLM server ASR
   ├─ non-user     → discard; never preview or transcribe
   └─ uncertain    → wait for more audio, then fail closed</code></pre>
   <ol>
     <li>
       AECだけでは本人と他者を区別できないため、STTの前に登録話者のspeaker verification gateを置く。
     </li>
-    <li>話者判定はMac上で実行する。判定前の音声、非本人音声、判定不能音声をgnosisへ送らない。</li>
+    <li>
+      話者判定はMac上で実行する。判定前の音声、非本人音声、判定不能音声をLLM serverへ送らない。
+    </li>
     <li>
       登録音声は一つの平均値に潰さず、複数の暗号化音声ファイルと複数embeddingを保持する。
       これにより、model更新時に保存音声からembeddingを再生成できる。
@@ -173,12 +176,12 @@ Candidate VAD
       </tr>
       <tr>
         <td>Preview</td>
-        <td>2秒経過で判定前の全PCMをgnosisへ送る</td>
+        <td>2秒経過で判定前の全PCMをLLM serverへ送る</td>
         <td>Filter ON時は本人判定完了まで開始しない</td>
       </tr>
       <tr>
         <td>Final ASR</td>
-        <td><code>voice::gnosis_asr</code>が全WAVをLAN endpointへ送る</td>
+        <td><code>voice::LLM server_asr</code>が全WAVをLAN endpointへ送る</td>
         <td>本人として受理したPCMだけを送る</td>
       </tr>
       <tr>
@@ -246,7 +249,7 @@ Local storage
       C handleを所有threadの外へ移動しない。
     </li>
     <li>
-      gnosisは話者判定済みの発話に対するASRだけを担当し、profileまたは登録sampleを保持しない。
+      LLM serverは話者判定済みの発話に対するASRだけを担当し、profileまたは登録sampleを保持しない。
     </li>
   </ol>
 
@@ -749,7 +752,7 @@ verify_target_speaker_candidate(input) → decision receipt</code></pre>
       <tr>
         <td>Verified user utterance</td>
         <td>現行contract。通常Chatではraw保存しない</td>
-        <td>LAN-local gnosis ASRへ送信</td>
+        <td>LAN-local LLM server ASRへ送信</td>
         <td>ASR完了後にPCMを破棄</td>
       </tr>
       <tr>
@@ -1017,7 +1020,7 @@ speaker.asr-receipt-missing</code></pre>
       Keychain locked / denied / missing、model missing / corrupt、disk full、read-only directory。
     </li>
     <li>Chat、Meeting、Enrollmentの同時開始競合と全release path。</li>
-    <li>非本人fixtureでgnosis mock request countが0、本人fixtureで一回だけ。</li>
+    <li>非本人fixtureでLLM server mock request countが0、本人fixtureで一回だけ。</li>
     <li>Previewが本人判定前に開始せず、accepted PCM以外を含まない。</li>
     <li>Filter OFFで既存microphone、VAD、自動送信、ASR testが回帰しない。</li>
     <li>Diagnosticsとbackup manifestにaudio、path、embedding、exact scoreが含まれない。</li>
@@ -1121,7 +1124,7 @@ speaker.asr-receipt-missing</code></pre>
       </tr>
       <tr>
         <td>G3 Isolated Gate</td>
-        <td>Section 20.3 threshold、gnosis pre-gate request 0違反、既存Voice回帰0</td>
+        <td>Section 20.3 threshold、LLM server pre-gate request 0違反、既存Voice回帰0</td>
         <td>opt-in desktop canary</td>
       </tr>
       <tr>
@@ -1163,10 +1166,10 @@ speaker.asr-receipt-missing</code></pre>
       </tr>
       <tr>
         <td>ASR後にspeaker判定</td>
-        <td>非本人音声がすでにgnosisへ送信・文字起こしされ、privacy境界が遅い</td>
+        <td>非本人音声がすでにLLM serverへ送信・文字起こしされ、privacy境界が遅い</td>
       </tr>
       <tr>
-        <td>gnosis上でspeaker判定</td>
+        <td>LLM server上でspeaker判定</td>
         <td>判定前の他者音声がMac外へ出る</td>
       </tr>
       <tr>
@@ -1218,7 +1221,7 @@ speaker.asr-receipt-missing</code></pre>
         <td>Architectureと責務境界</td>
         <td>15</td>
         <td>15</td>
-        <td>Frontend、Rust、native owner thread、gnosis、capture leaseを分離</td>
+        <td>Frontend、Rust、native owner thread、LLM server、capture leaseを分離</td>
       </tr>
       <tr>
         <td>Data、file、migration</td>
@@ -1324,7 +1327,7 @@ Continuous microphone candidates
   ↓ local-only target speaker decision
 verified user only
   ↓
-preview / final gnosis ASR
+preview / final LLM server ASR
   ↓
 Chat transcript and LLM query
 

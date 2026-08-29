@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { runtimeFailureCodes } from "./generated/runtimeEvent";
 
-export const GNOSIS_MAX_REQUEST_TIMEOUT_MS = 269_999;
+export const DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS = 269_999;
 
 export const runtimeFailureCodeSchema = z.enum(runtimeFailureCodes);
 
@@ -74,7 +74,7 @@ const larmProviderSchema = providerCommonSchema.extend({
   deploymentPolicy: z.literal("existing-only"),
 }).strict();
 
-function isGnosisHost(value: string): boolean {
+function isDynamicLanHost(value: string): boolean {
   if (!value || value.length > 253 || /[\s/@?#]/.test(value) || value.includes(":")) return false;
   const octets = value.split(".").map(Number);
   if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
@@ -91,16 +91,16 @@ function isGnosisHost(value: string): boolean {
       && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label));
 }
 
-const gnosisProviderSchema = providerCommonSchema.extend({
-  kind: z.literal("gnosis"),
+const dynamic_lanProviderSchema = providerCommonSchema.extend({
+  kind: z.literal("dynamic-lan"),
   location: z.literal("local"),
-  host: z.string().trim().refine(isGnosisHost, "gnosis host must be a private IP, .local name, or single-label hostname without a scheme, port, or path"),
+  host: z.string().trim().refine(isDynamicLanHost, "dynamic_lan host must be a private IP, .local name, or single-label hostname without a scheme, port, or path"),
 }).strict();
 
 const providerSchema = z.discriminatedUnion("kind", [
   openAiCompatibleProviderSchema,
   larmProviderSchema,
-  gnosisProviderSchema,
+  dynamic_lanProviderSchema,
 ]);
 
 export const modelProvidersSettingsSchema = z.object({
@@ -108,7 +108,7 @@ export const modelProvidersSettingsSchema = z.object({
     const ids = new Set<string>();
     const credentialSuffixes = new Set<string>();
     let enabledLarmProviders = 0;
-    let enabledGnosisProviders = 0;
+    let enabledDynamicLanProviders = 0;
     providers.forEach((provider, index) => {
       if (ids.has(provider.id)) {
         context.addIssue({ code: "custom", message: `Duplicate provider id: ${provider.id}`, path: [index, "id"] });
@@ -120,7 +120,7 @@ export const modelProvidersSettingsSchema = z.object({
       }
       credentialSuffixes.add(credentialSuffix);
       if (provider.kind === "larm" && provider.enabled) enabledLarmProviders += 1;
-      if (provider.kind === "gnosis" && provider.enabled) enabledGnosisProviders += 1;
+      if (provider.kind === "dynamic-lan" && provider.enabled) enabledDynamicLanProviders += 1;
       if (provider.kind === "openai-compatible" && provider.enabled && (!provider.endpoint || !provider.model)) {
         context.addIssue({ code: "custom", message: "Enabled providers require an endpoint and model", path: [index] });
       }
@@ -155,8 +155,8 @@ export const modelProvidersSettingsSchema = z.object({
     if (enabledLarmProviders > 1) {
       context.addIssue({ code: "custom", message: "Only one LARM provider may be enabled", path: [] });
     }
-    if (enabledGnosisProviders > 1) {
-      context.addIssue({ code: "custom", message: "Only one gnosis provider may be enabled", path: [] });
+    if (enabledDynamicLanProviders > 1) {
+      context.addIssue({ code: "custom", message: "Only one dynamic LAN provider may be enabled", path: [] });
     }
   }),
   reasoningEffort: z.enum(["low", "medium", "xhigh"]),
@@ -194,7 +194,7 @@ export const voiceSettingsSchema = z.object({
   inputDeviceId: z.string().trim().min(1).max(300),
   outputDeviceId: z.string().trim().min(1).max(300),
   captureMode: z.literal("push-to-talk"),
-  sttProviderId: z.literal("gnosis-asr"),
+  sttProviderId: z.literal("network-asr"),
   sttModel: z.literal("qwen3-asr-1.7b"),
   ttsProviderId: z.literal("system-tts"),
   ttsVoice: z.string().trim().min(1).max(160),
@@ -270,11 +270,8 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const enabled = new Map(providers.filter((provider) => provider.enabled).map((provider) => [provider.id, provider]));
   const primary = enabled.get(routing.conversationRespond.primaryProviderId);
   if (enabled.size > 0 && !primary) throw new Error("The primary conversation provider must be enabled");
-  if (primary?.kind === "gnosis" && routing.conversationRespond.fallbackProviderIds.length > 0) {
-    throw new Error("gnosis routes must not configure fallback providers");
-  }
-  if (primary?.kind === "gnosis" && routing.conversationRespond.timeoutMs > GNOSIS_MAX_REQUEST_TIMEOUT_MS) {
-    throw new Error(`gnosis conversation timeout must not exceed ${GNOSIS_MAX_REQUEST_TIMEOUT_MS} ms`);
+  if (primary?.kind === "dynamic-lan" && routing.conversationRespond.timeoutMs > DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS) {
+    throw new Error(`dynamic LAN conversation timeout must not exceed ${DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS} ms`);
   }
   const routeIds = new Set([routing.conversationRespond.primaryProviderId]);
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {

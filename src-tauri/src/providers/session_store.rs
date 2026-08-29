@@ -168,7 +168,7 @@ pub(crate) fn finish_larm_provider_session(
     Ok(())
 }
 
-pub(crate) fn finish_gnosis_provider_session(
+pub(crate) fn finish_dynamic_lan_provider_session(
     state: &AppState,
     session_id: &str,
     status: &str,
@@ -210,7 +210,7 @@ pub(crate) fn cleanup_persistence(cleanup: CleanupOutcome) -> (&'static str, Opt
         CleanupOutcome::DeferredToTtl { kind } => {
             ("deferred-to-ttl", Some(release_failure_kind_str(kind)))
         }
-        CleanupOutcome::GnosisDeferredToTtl { kind } => ("deferred-to-ttl", Some(kind)),
+        CleanupOutcome::DynamicLanDeferredToTtl { kind } => ("deferred-to-ttl", Some(kind)),
     }
 }
 

@@ -7,7 +7,7 @@ export function MeetingPage({ voiceSettings, chatVoiceBusy, onStateChanged }: { 
   const [decision, setDecision] = useState<"save" | "discard" | null>(null);
   const meeting = useMeetingSession(voiceSettings, onStateChanged, setError);
   const canStart =
-    voiceSettings?.sttProviderId === "gnosis-asr" && Boolean(voiceSettings.sttModel) && !chatVoiceBusy &&
+    voiceSettings?.sttProviderId === "network-asr" && Boolean(voiceSettings.sttModel) && !chatVoiceBusy &&
     (meeting.snapshot.state === "idle" || meeting.snapshot.state === "ready");
   const elapsed = useMemo(() => `${Math.floor(meeting.elapsed / 60)}:${String(meeting.elapsed % 60).padStart(2, "0")}`, [meeting.elapsed]);
   const finalEntries = useMemo(() => meeting.transcript.filter((line) => !line.partial), [meeting.transcript]);

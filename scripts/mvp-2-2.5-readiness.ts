@@ -88,7 +88,7 @@ const MEETING_FUNCTIONAL_CASES: CaseSpec[] = [
   ...forBuilds("permission-grant", "未決定状態からmicrophoneを許可し、capture開始とtrack解放を確認する。", [atLeast("captureStartCount", "capture開始回数"), latency("trackReleaseMs", "track解放時間")]),
   ...forBuilds("permission-deny", "microphoneを拒否し、capture 0とrecovery表示を確認する。", [count("captureStartCount", "capture開始回数"), atLeast("recoveryVisibleCount", "recovery表示回数")]),
   ...forBuilds("permission-loss", "active中にpermission revokeまたはdevice lossを発生させ、安全遷移とcleanupを確認する。", [count("captureResourceRemainingCount", "残存capture resource数"), count("asrTaskRemainingCount", "残存ASR task数"), latency("indicatorReleaseMs", "microphone indicator消灯時間")]),
-  ...forBuilds("partial-final", "real gnosis ASRで同一lane/sequenceのPartialがFinalへ置換されることを確認する。", [atLeast("partialFinalReplacementCount", "Partial→Final置換回数"), count("sequenceViolationCount", "sequence重複・逆行回数")]),
+  ...forBuilds("partial-final", "real LAN ASRで同一lane/sequenceのPartialがFinalへ置換されることを確認する。", [atLeast("partialFinalReplacementCount", "Partial→Final置換回数"), count("sequenceViolationCount", "sequence重複・逆行回数")]),
   ...forBuilds("pause", "5分pauseでtranscriptが増えずindicatorが消灯することを確認する。", [count("transcriptGrowthDuringPauseCount", "pause中の追加entry数"), latency("indicatorReleaseMs", "microphone indicator消灯時間")]),
   ...forBuilds("resume", "resumeで新capture tokenを使いsequence違反がないことを確認する。", [count("captureTokenReuseCount", "capture token再利用回数"), count("sequenceViolationCount", "sequence重複・逆行回数")]),
   ...forBuilds("stop-idempotent", "Stopを連打しCompleted snapshotが一つだけになることを確認する。", [{ key: "completedSnapshotCount", unit: "count", description: "Completed snapshot数", exact: 1 }, latency("indicatorReleaseMs", "microphone indicator消灯時間")]),

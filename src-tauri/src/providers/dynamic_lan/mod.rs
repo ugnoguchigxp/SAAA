@@ -1,16 +1,20 @@
-use futures_util::StreamExt;
-use reqwest::{
-    header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE, LOCATION, RETRY_AFTER},
-    Method, StatusCode,
-};
+use reqwest::{header::HeaderValue, Method, StatusCode};
 use serde::Deserialize;
-use serde_json::{json, Value};
-use std::{env, sync::Arc, time::Duration};
-use url::{Host, Url};
+use serde_json::json;
+use std::{sync::Arc, time::Duration};
+use url::Url;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::RunCancellation;
+
+mod http;
+mod validate;
+
+pub(crate) use http::control_credential_available;
+use http::*;
+pub(crate) use validate::control_base_url;
+use validate::*;
 
 pub(crate) const CONTROL_PORT: u16 = 9810;
 pub(crate) const AGENT_PROFILE: &str = "deep-reasoning-35b";
@@ -45,13 +49,13 @@ pub(crate) enum ErrorKind {
 }
 
 #[derive(Debug)]
-pub(crate) struct GnosisError {
+pub(crate) struct DynamicLanError {
     pub(crate) kind: ErrorKind,
     message: &'static str,
     release_failure: Option<ErrorKind>,
 }
 
-impl GnosisError {
+impl DynamicLanError {
     pub(crate) fn new(kind: ErrorKind, message: &'static str) -> Self {
         Self {
             kind,
@@ -224,7 +228,7 @@ struct ConnectionIdentity {
     expires_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
-pub(crate) struct GnosisConnection {
+pub(crate) struct DynamicLanConnection {
     client: reqwest::Client,
     control_base: Url,
     control_credential: HeaderValue,
@@ -236,18 +240,18 @@ pub(crate) struct GnosisConnection {
     prior_release_failure: Option<ErrorKind>,
 }
 
-impl GnosisConnection {
+impl DynamicLanConnection {
     pub(crate) async fn resolve(
         host: &str,
         cancellation: Arc<RunCancellation>,
-    ) -> Result<Self, GnosisError> {
+    ) -> Result<Self, DynamicLanError> {
         Self::resolve_at(control_base_url(host)?, cancellation).await
     }
 
     async fn resolve_at(
         control_base: Url,
         cancellation: Arc<RunCancellation>,
-    ) -> Result<Self, GnosisError> {
+    ) -> Result<Self, DynamicLanError> {
         let control_credential = control_credential()?;
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
@@ -255,9 +259,9 @@ impl GnosisConnection {
             .no_proxy()
             .build()
             .map_err(|_| {
-                GnosisError::new(
+                DynamicLanError::new(
                     ErrorKind::Internal,
-                    "Could not initialize the gnosis discovery client.",
+                    "Could not initialize the dynamic_lan discovery client.",
                 )
             })?;
         let mut prior_release_failure = None;
@@ -284,9 +288,9 @@ impl GnosisConnection {
                 }
             }
         }
-        let mut error = GnosisError::new(
+        let mut error = DynamicLanError::new(
             ErrorKind::StaleConnection,
-            "The gnosis daemon restarted while resolving the provider connection.",
+            "The dynamic_lan daemon restarted while resolving the provider connection.",
         );
         error.release_failure = prior_release_failure;
         Err(error)
@@ -297,7 +301,7 @@ impl GnosisConnection {
         control_base: Url,
         control_credential: HeaderValue,
         cancellation: Arc<RunCancellation>,
-    ) -> Result<Self, GnosisError> {
+    ) -> Result<Self, DynamicLanError> {
         let control_is_loopback = url_is_loopback(&control_base);
         let profiles = send_json_response::<AgentProfiles>(
             &client,
@@ -394,9 +398,9 @@ impl GnosisConnection {
                     .await);
                 }
                 "released" | "expired" => {
-                    let error = GnosisError::new(
+                    let error = DynamicLanError::new(
                         ErrorKind::StaleConnection,
-                        "The gnosis provider connection became inactive before it was ready.",
+                        "The dynamic LAN provider connection became inactive before it was ready.",
                     );
                     return Err(error_after_release(
                         error,
@@ -418,9 +422,9 @@ impl GnosisConnection {
             }
             let remaining = ready_deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
-                let error = GnosisError::new(
+                let error = DynamicLanError::new(
                     ErrorKind::Timeout,
-                    "gnosis did not finish resolving the provider before the startup timeout.",
+                    "dynamic_lan did not finish resolving the provider before the startup timeout.",
                 );
                 return Err(error_after_release(
                     error,
@@ -441,9 +445,9 @@ impl GnosisConnection {
                 .await);
             }
             if tokio::time::Instant::now() >= ready_deadline {
-                let error = GnosisError::new(
+                let error = DynamicLanError::new(
                     ErrorKind::Timeout,
-                    "gnosis did not finish resolving the provider before the startup timeout.",
+                    "dynamic_lan did not finish resolving the provider before the startup timeout.",
                 );
                 return Err(error_after_release(
                     error,
@@ -546,12 +550,12 @@ impl GnosisConnection {
         &mut self,
         request_timeout: Duration,
         cancellation: Arc<RunCancellation>,
-    ) -> Result<(), GnosisError> {
+    ) -> Result<(), DynamicLanError> {
         let required = request_timeout.saturating_add(REQUEST_LIFETIME_MARGIN);
         if required >= Duration::from_secs(CONNECTION_TTL_SECONDS.into()) {
-            return Err(GnosisError::new(
+            return Err(DynamicLanError::new(
                 ErrorKind::Contract,
-                "The configured provider timeout exceeds the gnosis connection lifetime.",
+                "The configured provider timeout exceeds the dynamic_lan connection lifetime.",
             ));
         }
         let remaining = self
@@ -561,9 +565,9 @@ impl GnosisConnection {
             .to_std()
             .unwrap_or_default();
         if remaining.is_zero() {
-            return Err(GnosisError::new(
+            return Err(DynamicLanError::new(
                 ErrorKind::StaleConnection,
-                "The gnosis provider connection expired before inference started.",
+                "The dynamic LAN provider connection expired before inference started.",
             ));
         }
         if remaining >= required {
@@ -602,766 +606,25 @@ impl GnosisConnection {
         Ok(())
     }
 
-    pub(crate) async fn release(&self) -> Result<(), GnosisError> {
+    pub(crate) async fn release(&self) -> Result<(), DynamicLanError> {
         let url = connection_resource_url(&self.control_base, &self.identity.id)?;
         release_connection(&self.client, &url, &self.control_credential).await
     }
 }
 
-fn validate_config_revision(revision: Option<&str>) -> Result<(), GnosisError> {
-    let revision = revision.ok_or_else(|| contract_error(()))?;
-    validate_revision(revision)
-}
-
-fn validate_revision(revision: &str) -> Result<(), GnosisError> {
-    if revision.len() == 64 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Ok(())
-    } else {
-        Err(contract_error(()))
-    }
-}
-
-fn validate_initial_state(
-    state: &ConnectionState,
-    expected_audience: &str,
-) -> Result<ConnectionIdentity, GnosisError> {
-    validate_state_shape(state, expected_audience)?;
-    let created_at =
-        chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
-    let expires_at =
-        chrono::DateTime::parse_from_rfc3339(&state.expires_at).map_err(contract_error)?;
-    let lifetime = expires_at.signed_duration_since(created_at);
-    if created_at > chrono::Utc::now() + chrono::Duration::seconds(60)
-        || expires_at <= chrono::Utc::now()
-        || lifetime <= chrono::Duration::zero()
-        || lifetime > chrono::Duration::seconds(CONNECTION_TTL_SECONDS.into())
-    {
-        return Err(contract_error(()));
-    }
-    Ok(ConnectionIdentity {
-        id: state.id.clone(),
-        allocation_id: state.allocation_id.clone(),
-        boot_epoch: state.boot_epoch.clone(),
-        catalog_revision: state.catalog_revision.clone(),
-        profile_revision: state.profile_revision.clone(),
-        audience_revision: state.audience_revision.clone(),
-        created_at,
-        expires_at,
-    })
-}
-
-fn validate_successor_state(
-    state: &ConnectionState,
-    expected: &ConnectionIdentity,
-    expected_audience: &str,
-) -> Result<(), GnosisError> {
-    validate_state_shape(state, expected_audience)?;
-    let created_at =
-        chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
-    let expires_at =
-        chrono::DateTime::parse_from_rfc3339(&state.expires_at).map_err(contract_error)?;
-    if state.boot_epoch != expected.boot_epoch {
-        return Err(GnosisError::new(
-            ErrorKind::StaleConnection,
-            "The gnosis daemon restarted while resolving the provider connection.",
-        ));
-    }
-    if state.id != expected.id
-        || state.allocation_id != expected.allocation_id
-        || state.catalog_revision != expected.catalog_revision
-        || state.profile_revision != expected.profile_revision
-        || state.audience_revision != expected.audience_revision
-        || created_at != expected.created_at
-        || expires_at != expected.expires_at
-    {
-        return Err(contract_error(()));
-    }
-    Ok(())
-}
-
-fn validate_renewed_state(
-    state: &ConnectionState,
-    expected: &ConnectionIdentity,
-    expected_audience: &str,
-) -> Result<ConnectionIdentity, GnosisError> {
-    validate_state_shape(state, expected_audience)?;
-    let created_at =
-        chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
-    let expires_at =
-        chrono::DateTime::parse_from_rfc3339(&state.expires_at).map_err(contract_error)?;
-    if state.boot_epoch != expected.boot_epoch {
-        return Err(GnosisError::new(
-            ErrorKind::StaleConnection,
-            "The gnosis daemon restarted while renewing the provider connection.",
-        ));
-    }
-    if state.status != "ready"
-        || state.id != expected.id
-        || state.allocation_id != expected.allocation_id
-        || state.catalog_revision != expected.catalog_revision
-        || state.profile_revision != expected.profile_revision
-        || state.audience_revision != expected.audience_revision
-        || created_at != expected.created_at
-        || expires_at <= expected.expires_at
-        || expires_at <= chrono::Utc::now()
-        || expires_at
-            > chrono::Utc::now()
-                + chrono::Duration::seconds(
-                    i64::from(CONNECTION_TTL_SECONDS) + CLOCK_SKEW_TOLERANCE_SECONDS,
-                )
-    {
-        return Err(contract_error(()));
-    }
-    Ok(ConnectionIdentity {
-        id: state.id.clone(),
-        allocation_id: state.allocation_id.clone(),
-        boot_epoch: state.boot_epoch.clone(),
-        catalog_revision: state.catalog_revision.clone(),
-        profile_revision: state.profile_revision.clone(),
-        audience_revision: state.audience_revision.clone(),
-        created_at,
-        expires_at,
-    })
-}
-
-fn validate_state_shape(
-    state: &ConnectionState,
-    expected_audience: &str,
-) -> Result<(), GnosisError> {
-    validate_connection_id(&state.id)?;
-    if !valid_bounded_identifier(&state.allocation_id, 192)
-        || !valid_bounded_identifier(&state.boot_epoch, 192)
-        || state.agent_profile != AGENT_PROFILE
-        || state.audience != expected_audience
-        || state.providers.len() != 1
-    {
-        return Err(contract_error(()));
-    }
-    validate_revision(&state.catalog_revision)?;
-    validate_revision(&state.profile_revision)?;
-    validate_revision(&state.audience_revision)?;
-    let provider = &state.providers[0];
-    let terminal = matches!(state.status.as_str(), "failed" | "released" | "expired");
-    if provider.name != "llm"
-        || provider.capability != PROFILE_CAPABILITY
-        || provider.protocol != "openai.chat-completions.v1"
-        || provider.public_model != AGENT_PROFILE
-        || !valid_bounded_identifier(&provider.route, 160)
-        || !matches!(
-            provider.readiness.as_str(),
-            "pending" | "probing" | "ready" | "failed" | "released" | "expired"
-        )
-        || (state.status == "ready" && (!provider.claimable || provider.readiness != "ready"))
-        || (state.status != "ready" && provider.claimable)
-        || (state.status == "failed" && state.error.is_none())
-        || (!terminal
-            && state.status != "pending"
-            && state.status != "probing"
-            && state.status != "ready")
-    {
-        return Err(contract_error(()));
-    }
-    Ok(())
-}
-
-fn valid_bounded_identifier(value: &str, max_len: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= max_len
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
-}
-
-fn validate_create_location(
-    location: Option<&str>,
-    control_base: &Url,
-    expected: &Url,
-) -> Result<(), GnosisError> {
-    let Some(location) = location else {
-        return Ok(());
-    };
-    if location.is_empty() || location.len() > 512 {
-        return Err(contract_error(()));
-    }
-    let resolved = control_base.join(location).map_err(contract_error)?;
-    if &resolved == expected {
-        Ok(())
-    } else {
-        Err(contract_error(()))
-    }
-}
-
-async fn claim_and_probe(
-    client: &reqwest::Client,
-    control_base: &Url,
-    control_credential: &HeaderValue,
-    identity: &ConnectionIdentity,
-    audience: &str,
-    control_is_loopback: bool,
-    cancellation: &RunCancellation,
-) -> Result<ProviderDescriptor, GnosisError> {
-    let claim = send_json_response::<ConnectionClaim>(
-        client,
-        Method::POST,
-        connection_claim_url(control_base, &identity.id)?,
-        control_credential,
-        None,
-        Some(&json!({ "format": "openai-provider-v1" })),
-        cancellation,
-    )
-    .await?;
-    if claim.status != StatusCode::OK {
-        return Err(contract_error(()));
-    }
-    let descriptor = validate_claim(claim.value, identity, audience, control_is_loopback)?;
-    probe_provider_health(client, &descriptor, cancellation).await?;
-    Ok(descriptor)
-}
-
-async fn probe_provider_health(
-    client: &reqwest::Client,
-    descriptor: &ProviderDescriptor,
-    cancellation: &RunCancellation,
-) -> Result<(), GnosisError> {
-    let credential = provider_credential(&descriptor.credential.token)?;
-    let health = send_json_response::<ProviderHealth>(
-        client,
-        Method::GET,
-        Url::parse(&descriptor.health.url).map_err(contract_error)?,
-        &credential,
-        None,
-        None,
-        cancellation,
-    )
-    .await?;
-    if health.status != StatusCode::OK || !health.value.ready || !health.value.accepting_requests {
-        return Err(GnosisError::new(
-            ErrorKind::Unavailable,
-            "The gnosis provider did not pass semantic readiness checks.",
-        ));
-    }
-    Ok(())
-}
-
-async fn cancellable_sleep(
-    duration: Duration,
-    cancellation: &RunCancellation,
-) -> Result<(), GnosisError> {
-    tokio::select! {
-        _ = cancellation.cancelled() => Err(GnosisError::new(ErrorKind::Cancelled, "The gnosis provider connection was cancelled.")),
-        _ = tokio::time::sleep(duration) => Ok(()),
-    }
-}
-
-fn validate_profiles(profiles: &AgentProfiles) -> Result<(), GnosisError> {
-    if profiles.contract_version != "agent-connection.v1" {
-        return Err(contract_error(()));
-    }
-    let mut matching = profiles
-        .profiles
-        .iter()
-        .filter(|profile| profile.id == AGENT_PROFILE);
-    let profile = matching.next().ok_or_else(|| {
-        GnosisError::new(
-            ErrorKind::Contract,
-            "gnosis does not advertise the required deep-reasoning provider profile.",
-        )
-    })?;
-    if matching.next().is_some()
-        || profile.providers.len() != 1
-        || profile.providers[0].name != "llm"
-        || profile.providers[0].capability != PROFILE_CAPABILITY
-        || profile.providers[0].protocol != "openai.chat-completions.v1"
-        || profile.providers[0].model != AGENT_PROFILE
-    {
-        return Err(contract_error(()));
-    }
-    Ok(())
-}
-
-fn select_audience(audiences: &[String]) -> Result<&str, GnosisError> {
-    let mut matching = audiences
-        .iter()
-        .filter(|audience| audience.as_str() == AUDIENCE);
-    match (matching.next(), matching.next()) {
-        (Some(audience), None) => Ok(audience.as_str()),
-        _ => Err(GnosisError::new(
-            ErrorKind::Contract,
-            "gnosis does not advertise exactly one saaa-desktop audience.",
-        )),
-    }
-}
-
-fn validate_claim(
-    claim: ConnectionClaim,
-    expected: &ConnectionIdentity,
-    expected_audience: &str,
-    control_is_loopback: bool,
-) -> Result<ProviderDescriptor, GnosisError> {
-    let claim_expires_at =
-        chrono::DateTime::parse_from_rfc3339(&claim.expires_at).map_err(contract_error)?;
-    if claim.id != expected.id
-        || claim.allocation_id != expected.allocation_id
-        || claim.status != "ready"
-        || claim.audience != expected_audience
-        || claim_expires_at <= chrono::Utc::now()
-        || claim_expires_at != expected.expires_at
-    {
-        return Err(contract_error(()));
-    }
-    let mut matching = claim.providers.into_iter().filter(|provider| {
-        provider.name == "llm"
-            && provider.capability == PROFILE_CAPABILITY
-            && provider.protocol == "openai.chat-completions.v1"
-    });
-    let descriptor = matching.next().ok_or_else(|| contract_error(()))?;
-    if matching.next().is_some() {
-        return Err(contract_error(()));
-    }
-    let base_url = Url::parse(&descriptor.base_url).map_err(contract_error)?;
-    let expected_scheme = base_url.scheme();
-    let expected_host = base_url.host_str().ok_or_else(|| contract_error(()))?;
-    let expected_port = base_url
-        .port_or_known_default()
-        .ok_or_else(|| contract_error(()))?;
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&descriptor.credential.expires_at)
-        .map_err(contract_error)?;
-    let expected_health_url = provider_health_url(&base_url, &expected.id, &descriptor.name)?;
-    if descriptor.api_style != "openai"
-        || expected_scheme != "http"
-        || descriptor.scheme != expected_scheme
-        || descriptor.host != expected_host
-        || descriptor.port != expected_port
-        || (!control_is_loopback && descriptor.port != CONTROL_PORT)
-        || base_url.path() != "/v1"
-        || base_url.query().is_some()
-        || base_url.fragment().is_some()
-        || !base_url.username().is_empty()
-        || base_url.password().is_some()
-        || !url_is_local(&base_url)
-        || (!control_is_loopback && url_is_loopback(&base_url))
-        || descriptor.model != AGENT_PROFILE
-        || descriptor.health.url != expected_health_url.as_str()
-        || descriptor.health.kind != "semantic-inference"
-        || descriptor.health.max_age_ms == 0
-        || descriptor.health.max_age_ms > 60_000
-        || descriptor.credential.r#type != "bearer"
-        || descriptor.credential.token.is_empty()
-        || descriptor.credential.token.len() > 4_096
-        || descriptor
-            .credential
-            .token
-            .bytes()
-            .any(|byte| byte.is_ascii_whitespace())
-        || expires_at <= chrono::Utc::now()
-        || expires_at != claim_expires_at
-        || expires_at != expected.expires_at
-        || descriptor.configuration.kind != "openai-provider-v1"
-        || descriptor.configuration.fields.base_url != descriptor.base_url
-        || descriptor.configuration.fields.model != descriptor.model
-        || descriptor.configuration.secret_fields.api_key != "credential.token"
-    {
-        let message = if !control_is_loopback && url_is_loopback(&base_url) {
-            "gnosis returned a same-host provider address; configure a LAN audience for SAAA."
-        } else {
-            "gnosis returned an invalid provider connection descriptor."
-        };
-        return Err(GnosisError::new(ErrorKind::Contract, message));
-    }
-    Ok(descriptor)
-}
-
-async fn send_json_response<T: for<'de> Deserialize<'de>>(
-    client: &reqwest::Client,
-    method: Method,
-    url: Url,
-    credential: &HeaderValue,
-    extra_header: Option<(&str, &str)>,
-    body: Option<&Value>,
-    cancellation: &RunCancellation,
-) -> Result<JsonResponse<T>, GnosisError> {
-    let mut request = client
-        .request(method, url)
-        .header(AUTHORIZATION, credential.clone())
-        .timeout(REQUEST_TIMEOUT);
-    if let Some((name, value)) = extra_header {
-        request = request.header(name, value);
-    }
-    if let Some(body) = body {
-        request = request.json(body);
-    }
-    let response = tokio::select! {
-        _ = cancellation.cancelled() => return Err(GnosisError::new(ErrorKind::Cancelled, "The gnosis provider connection was cancelled.")),
-        response = request.send() => response.map_err(classify_transport)?,
-    };
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let success_metadata = status.is_success().then(|| {
-        Ok::<_, GnosisError>((
-            parse_retry_after(response.headers().get(RETRY_AFTER))?,
-            bounded_header(response.headers().get(LOCATION), 512)?,
-            bounded_header(response.headers().get("x-larm-config-revision"), 128)?,
-        ))
-    });
-    let body = read_limited(response, cancellation).await?;
-    if !status.is_success() {
-        let code = serde_json::from_slice::<ErrorEnvelope>(&body)
-            .ok()
-            .map(|envelope| envelope.error.code)
-            .unwrap_or_default();
-        return Err(classify_status(status, &code));
-    }
-    let (retry_after, location, config_revision) =
-        success_metadata.ok_or_else(|| contract_error(()))??;
-    if !is_json_content_type(&content_type) {
-        return Err(contract_error(()));
-    }
-    let value = serde_json::from_slice(&body).map_err(|_| contract_error(()))?;
-    Ok(JsonResponse {
-        value,
-        status,
-        retry_after,
-        location,
-        config_revision,
-    })
-}
-
-fn is_json_content_type(value: &str) -> bool {
-    value
-        .split(';')
-        .next()
-        .is_some_and(|media_type| media_type.trim() == "application/json")
-}
-
-fn parse_retry_after(value: Option<&HeaderValue>) -> Result<Option<Duration>, GnosisError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let seconds = value
-        .to_str()
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|seconds| (1..=MAX_RETRY_AFTER_SECONDS).contains(seconds))
-        .ok_or_else(|| contract_error(()))?;
-    Ok(Some(Duration::from_secs(seconds)))
-}
-
-fn bounded_header(
-    value: Option<&HeaderValue>,
-    max_len: usize,
-) -> Result<Option<String>, GnosisError> {
-    value
-        .map(|value| {
-            let value = value.to_str().map_err(contract_error)?;
-            if value.is_empty() || value.len() > max_len || value.chars().any(char::is_control) {
-                return Err(contract_error(()));
-            }
-            Ok(value.to_string())
-        })
-        .transpose()
-}
-
-async fn release_connection(
-    client: &reqwest::Client,
-    url: &Url,
-    credential: &HeaderValue,
-) -> Result<(), GnosisError> {
-    let response = client
-        .delete(url.clone())
-        .header(AUTHORIZATION, credential.clone())
-        .timeout(RELEASE_TIMEOUT)
-        .send()
-        .await
-        .map_err(classify_transport)?;
-    if response.status() == StatusCode::NO_CONTENT {
-        Ok(())
-    } else {
-        Err(classify_status(response.status(), ""))
-    }
-}
-
-async fn error_after_release(
-    mut error: GnosisError,
-    client: &reqwest::Client,
-    url: &Url,
-    credential: &HeaderValue,
-) -> GnosisError {
-    if let Err(release_error) = release_connection(client, url, credential).await {
-        error.release_failure = Some(release_error.kind);
-    }
-    error
-}
-
-async fn read_limited(
-    response: reqwest::Response,
-    cancellation: &RunCancellation,
-) -> Result<Vec<u8>, GnosisError> {
-    let mut stream = response.bytes_stream();
-    let mut body = Vec::new();
-    loop {
-        let chunk = tokio::select! {
-            _ = cancellation.cancelled() => return Err(GnosisError::new(ErrorKind::Cancelled, "The gnosis provider connection was cancelled.")),
-            chunk = stream.next() => chunk,
-        };
-        let Some(chunk) = chunk else {
-            return Ok(body);
-        };
-        let chunk = chunk.map_err(classify_transport)?;
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(contract_error(()));
-        }
-        body.extend_from_slice(&chunk);
-    }
-}
-
-fn control_credential() -> Result<HeaderValue, GnosisError> {
-    let token = Zeroizing::new(env::var(API_TOKEN_ENV).map_err(|_| {
-        GnosisError::new(
-            ErrorKind::Authentication,
-            "LARM_API_TOKEN is required to resolve gnosis provider settings.",
-        )
-    })?);
-    if token.is_empty()
-        || token.len() > 4_096
-        || token.bytes().any(|byte| byte.is_ascii_whitespace())
-    {
-        return Err(GnosisError::new(
-            ErrorKind::Authentication,
-            "LARM_API_TOKEN is invalid.",
-        ));
-    }
-    provider_credential(token.as_str())
-        .map_err(|_| GnosisError::new(ErrorKind::Authentication, "LARM_API_TOKEN is invalid."))
-}
-
-fn provider_credential(token: &str) -> Result<HeaderValue, GnosisError> {
-    if token.is_empty()
-        || token.len() > 4_096
-        || token.bytes().any(|byte| byte.is_ascii_whitespace())
-    {
-        return Err(GnosisError::new(
-            ErrorKind::Authentication,
-            "The gnosis provider credential is invalid.",
-        ));
-    }
-    let bearer = Zeroizing::new(format!("Bearer {token}"));
-    let mut value = HeaderValue::from_str(bearer.as_str()).map_err(|_| {
-        GnosisError::new(
-            ErrorKind::Authentication,
-            "The gnosis provider credential is invalid.",
-        )
-    })?;
-    value.set_sensitive(true);
-    Ok(value)
-}
-
-pub(crate) fn control_base_url(host: &str) -> Result<Url, GnosisError> {
-    let host = host.trim();
-    if host.is_empty()
-        || host.len() > 253
-        || host.starts_with('-')
-        || host.contains(['/', '@', '?', '#'])
-        || host.chars().any(char::is_whitespace)
-        || host.contains(':')
-    {
-        return Err(GnosisError::new(
-            ErrorKind::Contract,
-            "gnosis host must be a hostname or private IP address without a scheme, port, or path.",
-        ));
-    }
-    let url = Url::parse(&format!("http://{host}:{CONTROL_PORT}/")).map_err(contract_error)?;
-    if !url_is_local(&url) {
-        return Err(GnosisError::new(
-            ErrorKind::Contract,
-            "gnosis host must be a loopback, private-network, .local, or single-label host.",
-        ));
-    }
-    Ok(url)
-}
-
-fn url_is_local(url: &Url) -> bool {
-    match url.host() {
-        Some(Host::Domain(host)) => valid_local_hostname(host),
-        Some(Host::Ipv4(address)) => {
-            address.is_loopback() || address.is_private() || address.is_link_local()
-        }
-        Some(Host::Ipv6(address)) => {
-            address.is_loopback()
-                || (address.segments()[0] & 0xfe00) == 0xfc00
-                || (address.segments()[0] & 0xffc0) == 0xfe80
-        }
-        None => false,
-    }
-}
-
-fn valid_local_hostname(host: &str) -> bool {
-    let labels = host.split('.').collect::<Vec<_>>();
-    (labels.len() == 1 || host.ends_with(".local"))
-        && labels.iter().all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
-}
-
-fn url_is_loopback(url: &Url) -> bool {
-    match url.host() {
-        Some(Host::Domain(host)) => host == "localhost",
-        Some(Host::Ipv4(address)) => address.is_loopback(),
-        Some(Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
-    }
-}
-
-fn validate_connection_id(id: &str) -> Result<(), GnosisError> {
-    if id.is_empty()
-        || id.len() > 192
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(contract_error(()));
-    }
-    Ok(())
-}
-
-fn connection_resource_url(control_base: &Url, id: &str) -> Result<Url, GnosisError> {
-    validate_connection_id(id)?;
-    let mut url = control_base.clone();
-    url.path_segments_mut()
-        .map_err(contract_error)?
-        .extend(["v1", "agent-connections", id]);
-    Ok(url)
-}
-
-fn connection_claim_url(control_base: &Url, id: &str) -> Result<Url, GnosisError> {
-    let mut url = connection_resource_url(control_base, id)?;
-    url.path_segments_mut()
-        .map_err(contract_error)?
-        .push("claim");
-    Ok(url)
-}
-
-fn connection_renew_url(control_base: &Url, id: &str) -> Result<Url, GnosisError> {
-    let mut url = connection_resource_url(control_base, id)?;
-    url.path_segments_mut()
-        .map_err(contract_error)?
-        .push("renew");
-    Ok(url)
-}
-
-fn provider_health_url(
-    provider_base: &Url,
-    connection_id: &str,
-    provider_name: &str,
-) -> Result<Url, GnosisError> {
-    validate_connection_id(connection_id)?;
-    if provider_name != "llm" {
-        return Err(contract_error(()));
-    }
-    let mut url = provider_base.clone();
-    url.path_segments_mut().map_err(contract_error)?.extend([
-        "agent-connections",
-        connection_id,
-        "providers",
-        provider_name,
-        "health",
-    ]);
-    Ok(url)
-}
-
-fn classify_transport(error: reqwest::Error) -> GnosisError {
-    if error.is_timeout() {
-        GnosisError::new(
-            ErrorKind::Timeout,
-            "The gnosis configuration API request timed out.",
-        )
-    } else {
-        GnosisError::new(
-            ErrorKind::Network,
-            "Could not reach the gnosis configuration API.",
-        )
-    }
-}
-
-fn classify_status(status: StatusCode, code: &str) -> GnosisError {
-    if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-        return GnosisError::new(ErrorKind::Authentication, "gnosis rejected LARM_API_TOKEN.");
-    }
-    if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) {
-        return GnosisError::new(
-            ErrorKind::StaleConnection,
-            "The gnosis provider connection is no longer active.",
-        );
-    }
-    if status == StatusCode::CONFLICT {
-        return classify_api_error(code);
-    }
-    if status == StatusCode::TOO_MANY_REQUESTS {
-        return GnosisError::new(
-            ErrorKind::Capacity,
-            "gnosis cannot allocate the requested provider right now.",
-        );
-    }
-    if status == StatusCode::SERVICE_UNAVAILABLE {
-        return GnosisError::new(
-            ErrorKind::Unavailable,
-            "The gnosis provider service is not ready.",
-        );
-    }
-    if status.is_server_error() {
-        return GnosisError::new(
-            ErrorKind::Upstream,
-            "gnosis could not resolve the provider connection.",
-        );
-    }
-    classify_api_error(code)
-}
-
-fn classify_api_error(code: &str) -> GnosisError {
-    match code {
-        "capacity_exhausted" | "admission_denied" | "provider_busy" => GnosisError::new(
-            ErrorKind::Capacity,
-            "gnosis cannot allocate the requested provider right now.",
-        ),
-        "connection_auth_not_configured" | "unauthorized" | "forbidden" => {
-            GnosisError::new(ErrorKind::Authentication, "gnosis rejected LARM_API_TOKEN.")
-        }
-        "provider_semantic_not_ready" | "connection_not_ready" => GnosisError::new(
-            ErrorKind::Unavailable,
-            "The gnosis provider did not pass semantic readiness checks.",
-        ),
-        "connection_inactive"
-        | "connection_expired"
-        | "connection_released"
-        | "connection_boot_epoch_mismatch"
-        | "connection_not_found" => GnosisError::new(
-            ErrorKind::StaleConnection,
-            "The gnosis provider connection is no longer active.",
-        ),
-        _ => contract_error(()),
-    }
-}
-
-fn contract_error<T>(_: T) -> GnosisError {
-    GnosisError::new(
+fn contract_error<T>(_: T) -> DynamicLanError {
+    DynamicLanError::new(
         ErrorKind::Contract,
-        "gnosis returned an incompatible agent-connection response.",
+        "dynamic_lan returned an incompatible agent-connection response.",
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::CONTENT_TYPE;
+    use serde_json::Value;
+    use std::env;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
@@ -1464,26 +727,26 @@ mod tests {
     #[test]
     fn derives_control_url_from_host_only() {
         assert_eq!(
-            control_base_url("192.168.0.65")
+            control_base_url("10.0.0.42")
                 .expect("private host")
                 .as_str(),
-            "http://192.168.0.65:9810/"
+            "http://10.0.0.42:9810/"
         );
         assert_eq!(
-            control_base_url("gnosis")
+            control_base_url("dynamic-lan")
                 .expect("single-label host")
                 .as_str(),
-            "http://gnosis:9810/"
+            "http://dynamic-lan:9810/"
         );
     }
 
     #[test]
     fn rejects_urls_ports_and_public_hosts() {
         for host in [
-            "http://gnosis",
-            "gnosis:8083",
+            "http://dynamic_lan",
+            "dynamic_lan:8083",
             "example.com",
-            "gnosis/path",
+            "dynamic_lan/path",
             "-proxy",
             "proxy-",
             "foo..local",
@@ -1558,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_private_http_endpoint_and_rejects_loopback_for_remote_gnosis() {
+    fn accepts_a_private_http_endpoint_and_rejects_loopback_for_remote_dynamic_lan() {
         let (created_at, expires_at) = test_timestamps();
         let identity = test_identity("aconn_test", &created_at, &expires_at);
         let claim = |host: &str| {
@@ -1571,12 +834,12 @@ mod tests {
             .expect("claim fixture")
         };
 
-        let descriptor = validate_claim(claim("192.168.0.65"), &identity, AUDIENCE, false)
+        let descriptor = validate_claim(claim("10.0.0.42"), &identity, AUDIENCE, false)
             .expect("private HTTP descriptor is accepted");
-        assert_eq!(descriptor.base_url, "http://192.168.0.65:9810/v1");
+        assert_eq!(descriptor.base_url, "http://10.0.0.42:9810/v1");
         assert!(validate_claim(claim("127.0.0.1"), &identity, AUDIENCE, false).is_err());
         let wrong_identity = test_identity("different-id", &created_at, &expires_at);
-        assert!(validate_claim(claim("192.168.0.65"), &wrong_identity, AUDIENCE, false).is_err());
+        assert!(validate_claim(claim("10.0.0.42"), &wrong_identity, AUDIENCE, false).is_err());
     }
 
     #[test]
@@ -1744,7 +1007,7 @@ mod tests {
             }
         });
 
-        let error = match GnosisConnection::resolve_at(
+        let error = match DynamicLanConnection::resolve_at(
             Url::parse(&format!("http://{address}/")).expect("control URL"),
             Arc::new(RunCancellation::default()),
         )
@@ -1818,7 +1081,7 @@ mod tests {
             }
         });
 
-        let connection = GnosisConnection::resolve_at(
+        let connection = DynamicLanConnection::resolve_at(
             Url::parse(&format!("http://{address}/")).expect("control URL"),
             Arc::new(RunCancellation::default()),
         )
@@ -1913,7 +1176,7 @@ mod tests {
             }
         });
 
-        let error = match GnosisConnection::resolve_at(
+        let error = match DynamicLanConnection::resolve_at(
             Url::parse(&format!("http://{address}/")).expect("control URL"),
             Arc::new(RunCancellation::default()),
         )
@@ -1999,7 +1262,7 @@ mod tests {
             }
         });
 
-        let mut connection = GnosisConnection::resolve_at(
+        let mut connection = DynamicLanConnection::resolve_at(
             Url::parse(&format!("http://{address}/")).expect("control URL"),
             Arc::new(RunCancellation::default()),
         )
@@ -2037,13 +1300,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "operator-only live gnosis Agent Connection API canary"]
-    async fn live_agent_connection_claim_and_chat() {
+    #[ignore = "operator-only live dynamic_lan Agent Connection API canary"]
+    async fn live_dynamic_lan_claim_and_chat() {
         let _environment = super::super::larm::test_environment_lock().lock().await;
-        let host = env::var("SAAA_GNOSIS_HOST").expect("SAAA_GNOSIS_HOST is required");
-        let connection = GnosisConnection::resolve(&host, Arc::new(RunCancellation::default()))
+        let host = env::var("SAAA_DYNAMIC_LAN_HOST").expect("SAAA_DYNAMIC_LAN_HOST is required");
+        let connection = DynamicLanConnection::resolve(&host, Arc::new(RunCancellation::default()))
             .await
-            .expect("live gnosis connection resolves");
+            .expect("live dynamic_lan connection resolves");
         let chat_url = Url::parse(connection.endpoint())
             .expect("claimed endpoint is valid")
             .join("chat/completions")

@@ -124,7 +124,11 @@ describe("MVP 2 / 2.5 readiness CLI", () => {
   });
 
   test("routes readiness runs to isolated application data", async () => {
-    const runtime = await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "lib.rs")).text();
+    const runtime = [
+      await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "lib.rs")).text(),
+      await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "app_paths.rs")).text(),
+      await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "diagnostics.rs")).text(),
+    ].join("\n");
     expect(runtime).toContain('env::var_os("SAAA_MVP2X_APP_DATA_DIR")');
     expect(runtime).toContain("validate_readiness_data_directory");
     expect(runtime).toContain("must not use normal application data");
@@ -170,9 +174,9 @@ describe("strict evidence contracts", () => {
     expect(forbiddenDataFindings({ prompt: "summarize" })).toBeGreaterThan(0);
     expect(forbiddenDataFindings({ value: "/Users/example/private" })).toBeGreaterThan(0);
     expect(forbiddenDataFindings({ value: "https://internal.example" })).toBeGreaterThan(0);
-    expect(forbiddenDataFindings({ value: "192.168.0.65" })).toBeGreaterThan(0);
+    expect(forbiddenDataFindings({ value: "10.0.0.42" })).toBeGreaterThan(0);
     expect(forbiddenDataFindings({ value: "172.20.10.4" })).toBeGreaterThan(0);
-    expect(forbiddenDataFindings({ value: "ssh operator@gnosis" })).toBeGreaterThan(0);
+    expect(forbiddenDataFindings({ value: "ssh operator@dynamic_lan" })).toBeGreaterThan(0);
   });
 
   test("requires an Apple certificate chain, Team ID, and signing extension", () => {

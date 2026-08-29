@@ -3,11 +3,12 @@
   "artifactVersion": 2,
   "compilerVersion": "0.1.2",
   "releaseProfile": "development",
-  "policyDigest": "sha256:5c53138e991d7c178dc908b35cdd8bd74971966def5b3a8bdbdf04fbd96aa0cf",
+  "policyDigest": "sha256:2e75e770c9bd6ee05bbb8d3651b2127fa9492815656718e05238113b5ecce1ba",
   "createdFrom": {
     "configPath": "s11tnext.config.toml",
     "sourceFiles": [
-      "contexts/codex/read-only.context.toml"
+      "contexts/codex/read-only.context.toml",
+      "contexts/conversation/respond.context.toml"
     ]
   },
   "contexts": {
@@ -33,17 +34,50 @@
               "segments": [
                 {
                   "type": "literal",
-                  "value": "Operate read-only. Do not modify files, use network access, use web search, or call MCP tools. If asked to write, explain that this route is read-only."
+                  "value": "Operate read-only. Do not modify files, use network access, use web search, or call MCP tools. If asked to write, explain that this route is read-only. SAAA transcribes voice input before invoking you and passes the finalized transcript as the user message text. Treat that text as the user's input; do not claim that speech recognition is unavailable or required."
                 }
               ]
             }
           ],
-          "artifactHash": "sha256:d663fdd30dbcfb11330e88d760e9b45454f9fa614f304a8d14e6364bbaed12d1"
+          "artifactHash": "sha256:f37b76c7d35eae17aa20b040ffb0aa94cfad1c1ee62f1b9de8c3ebbd0bbb61fd"
         }
       },
-      "definitionHash": "sha256:324080fef682e14fea38a49693a1c208fab982263d656c48ae24c846e4395992",
-      "releaseDigest": "sha256:5aeca72b0c13a6716465f28e2b098d3b770693fe988c90ce4a7a0a158a1266b5"
+      "definitionHash": "sha256:bf10d27ba052aebeb16d9566fa8dd7b224dbc39ae0bcdb05cd491ecaae6d1b58",
+      "releaseDigest": "sha256:98e230ec05f32d3f82c27c7dacb7b37e11ef7a7b1a213ceb7af831dfba76495a"
+    },
+    "conversation.respond": {
+      "key": "conversation.respond",
+      "owner": "saaa-runtime",
+      "contentKind": "text",
+      "messageRole": "system",
+      "sourceLocale": "en-US",
+      "requiredLocales": [
+        "en-US"
+      ],
+      "variables": {},
+      "locales": {
+        "en-US": {
+          "sections": [
+            {
+              "id": "context.text",
+              "kind": "instruction",
+              "severity": "must",
+              "optimizable": false,
+              "omitIfEmpty": false,
+              "segments": [
+                {
+                  "type": "literal",
+                  "value": "SAAA transcribes voice input before invoking you and passes the finalized transcript as the user message text. Treat that text as the user's input; do not claim that speech recognition is unavailable or required."
+                }
+              ]
+            }
+          ],
+          "artifactHash": "sha256:0d05a62594c4a5e342a85b446cca57b358dc78cf928fb897bf2638c64dad2561"
+        }
+      },
+      "definitionHash": "sha256:050d791e664b8608edc23357652ccc62a4278d36e4ca2dd635907c9635ea121e",
+      "releaseDigest": "sha256:27682d717b8fc3bb637c238e5d919d9158ca1df464f01775d93c53332c96a53d"
     }
   },
-  "catalogDigest": "sha256:139cc0074ad9d7559857c80a9489ef5f1f92bb1faaacbf4dc87104a0f7269196"
+  "catalogDigest": "sha256:93063ecb62acdd79bcf5be44626e1434f9a32e8fa441f54779396030d76b9b42"
 }

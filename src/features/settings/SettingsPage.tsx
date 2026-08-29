@@ -8,7 +8,7 @@ import {
   isSituationSettings,
   isVoiceSettings,
   type CodexAgentSettings,
-  type GnosisProviderSettings,
+  type DynamicLanProviderSettings,
   type LarmProviderSettings,
   type LarmRuntimeStatus,
   type ModelProviderSettings,
@@ -25,7 +25,7 @@ import {
 } from "../../lib/contracts";
 import { backupDatabase, exportDiagnostics, getSituationSnapshot, saveSettingsDocuments, testModelProvider } from "../../lib/runtime";
 import { enumerateAudioInputDevices, microphoneErrorMessage } from "../../lib/microphone";
-import { GNOSIS_MAX_REQUEST_TIMEOUT_MS } from "../../lib/schemas";
+import { DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS } from "../../lib/schemas";
 import { VoiceProfileCard } from "./VoiceProfileCard";
 
 type SettingsTab = "general" | "providers" | "routing" | "voice" | "situation" | "security";
@@ -48,18 +48,18 @@ const tabs: Array<{ id: SettingsTab; label: string; detail: string }> = [
   { id: "security", label: "Privacy & Security", detail: "Local-first controls" },
 ];
 
-const GNOSIS_PROVIDER_ID = "gnosis-qwen";
-const GNOSIS_HOST = "192.168.0.65";
+const DYNAMIC_LAN_PROVIDER_ID = "dynamic-lan";
+const DEFAULT_DYNAMIC_LAN_HOST = "localhost";
 
 const defaultDraft: SettingsDraft = {
   providers: {
     providers: [{
-      kind: "gnosis",
-      id: GNOSIS_PROVIDER_ID,
-      enabled: true,
-      label: "gnosis · Dynamic LLM",
+      kind: "dynamic-lan",
+      id: DYNAMIC_LAN_PROVIDER_ID,
+      enabled: false,
+      label: "Dynamic LAN LLM",
       location: "local",
-      host: GNOSIS_HOST,
+      host: DEFAULT_DYNAMIC_LAN_HOST,
     }],
     reasoningEffort: "medium",
   },
@@ -77,7 +77,7 @@ const defaultDraft: SettingsDraft = {
   },
   routing: {
     conversationRespond: {
-      primaryProviderId: GNOSIS_PROVIDER_ID,
+      primaryProviderId: DYNAMIC_LAN_PROVIDER_ID,
       fallbackProviderIds: [],
       timeoutMs: 30000,
     },
@@ -93,7 +93,7 @@ const defaultDraft: SettingsDraft = {
     inputDeviceId: "default",
     outputDeviceId: "default",
     captureMode: "push-to-talk",
-    sttProviderId: "gnosis-asr",
+    sttProviderId: "network-asr",
     sttModel: "qwen3-asr-1.7b",
     ttsProviderId: "system-tts",
     ttsVoice: "default",
@@ -242,8 +242,8 @@ function ProvidersSection({ providers, larmRuntime, onChange }: { providers: Mod
     const provider: LarmProviderSettings = { kind: "larm", id: `larm-${Date.now()}`, enabled: false, label: "LARM", location: "local", baseUrl: "http://127.0.0.1:9810", tokenEnv: "LARM_API_TOKEN", allocationTtlSeconds: 300, allocationStartupTimeoutSeconds: 300, allowFallbackByDefault: false, deploymentPolicy: "existing-only" };
     onChange({ ...providers, providers: [...providers.providers, provider] });
   }
-  function addGnosis() {
-    const provider: GnosisProviderSettings = { kind: "gnosis", id: `gnosis-${Date.now()}`, enabled: false, label: "gnosis · Dynamic LLM", location: "local", host: GNOSIS_HOST };
+  function addDynamicLan() {
+    const provider: DynamicLanProviderSettings = { kind: "dynamic-lan", id: `dynamic-lan-${Date.now()}`, enabled: false, label: "Dynamic LAN LLM", location: "local", host: DEFAULT_DYNAMIC_LAN_HOST };
     onChange({ ...providers, providers: [...providers.providers, provider] });
   }
   async function test(provider: ModelProviderSettings) {
@@ -256,9 +256,9 @@ function ProvidersSection({ providers, larmRuntime, onChange }: { providers: Mod
     }
   }
   const hasLarm = providers.providers.some((provider) => provider.kind === "larm");
-  const hasGnosis = providers.providers.some((provider) => provider.kind === "gnosis");
+  const hasDynamicLan = providers.providers.some((provider) => provider.kind === "dynamic-lan");
   return <div className="settings-stack">
-    <p className="settings-help">gnosisはhostだけを保存し、モデル・Gateway URL・短期credentialを接続APIから動的に解決します。credential値はSQLiteへ保存しません。</p>
+    <p className="settings-help">Dynamic LAN Providerはhostだけを保存し、モデル・Gateway URL・短期credentialを接続APIから動的に解決します。credential値はSQLiteへ保存しません。</p>
     <section className="settings-card">
       <h3>Generation</h3>
       <div className="settings-form-grid"><Field label="Reasoning effort"><select value={providers.reasoningEffort} onChange={(event) => onChange({ ...providers, reasoningEffort: event.target.value as ModelProvidersSettings["reasoningEffort"] })}><option value="low">Low</option><option value="medium">Medium (recommended)</option><option value="xhigh">Extra high</option></select></Field></div>
@@ -270,8 +270,8 @@ function ProvidersSection({ providers, larmRuntime, onChange }: { providers: Mod
         <div className="settings-form-grid"><Field label="Display name"><input value={provider.label} onChange={(event) => replace(index, { ...provider, label: event.target.value })} /></Field><Field label="Location"><select value={provider.location} onChange={(event) => replace(index, { ...provider, location: event.target.value as OpenAiCompatibleProviderSettings["location"] })}><option value="local">Local</option><option value="cloud">Cloud</option></select></Field><Field label="Endpoint"><input value={provider.endpoint} placeholder="http://localhost:11434/v1" onChange={(event) => replace(index, { ...provider, endpoint: event.target.value })} /></Field><Field label="Model"><input value={provider.model} placeholder="model name" onChange={(event) => replace(index, { ...provider, model: event.target.value })} /></Field></div>
         {tests[provider.id] && <p className={`provider-test-result ${tests[provider.id].state}`}>{tests[provider.id].message}</p>}
         <div className="provider-card-footer"><span>Credential: environment</span><div><button className="text-button" type="button" onClick={() => void test(provider)} disabled={!provider.endpoint || !provider.model || tests[provider.id]?.state === "testing"}>Test connection</button><button className="text-button danger" type="button" onClick={() => remove(index)} disabled={providers.providers.length === 1}>Remove provider</button></div></div>
-      </> : provider.kind === "gnosis" ? <>
-        <div className="settings-form-grid"><Field label="Display name"><input value={provider.label} onChange={(event) => replace(index, { ...provider, label: event.target.value })} /></Field><Field label="LLM host server"><input value={provider.host} placeholder="gnosis or 192.168.0.65" aria-describedby={`${provider.id}-host-help`} onChange={(event) => replace(index, { ...provider, host: event.target.value })} /></Field><Field label="Configuration API"><input value={`http://${provider.host || "<host>"}:9810`} disabled /></Field><Field label="Credential source"><input value="LARM_API_TOKEN" disabled /></Field></div>
+      </> : provider.kind === "dynamic-lan" ? <>
+        <div className="settings-form-grid"><Field label="Display name"><input value={provider.label} onChange={(event) => replace(index, { ...provider, label: event.target.value })} /></Field><Field label="LLM host server"><input value={provider.host} placeholder="llm-server.local or 10.0.0.42" aria-describedby={`${provider.id}-host-help`} onChange={(event) => replace(index, { ...provider, host: event.target.value })} /></Field><Field label="Configuration API"><input value={`http://${provider.host || "<host>"}:9810`} disabled /></Field><Field label="Credential source"><input value="LARM_API_TOKEN" disabled /></Field></div>
         <p className="settings-help" id={`${provider.id}-host-help`}>ホスト名またはプライベートIPだけを入力します。URL、ポート、モデル名は入力不要です。</p>
         <div className="locked-policy">Profile: deep-reasoning-35b · Audience: saaa-desktop · Endpoint, model, semantic health and short-lived key are resolved over REST</div>
         {tests[provider.id] && <p className={`provider-test-result ${tests[provider.id].state}`}>{tests[provider.id].message}</p>}
@@ -283,7 +283,7 @@ function ProvidersSection({ providers, larmRuntime, onChange }: { providers: Mod
         <div className="provider-card-footer"><span>Feature flag: {larmRuntime.state} · contract {larmRuntime.contractCommit}. {larmRuntime.message}</span><div><button className="text-button" type="button" onClick={() => void test(provider)} disabled={larmRuntime.state !== "ready" || !provider.baseUrl || tests[provider.id]?.state === "testing"}>Test health &amp; ready</button><button className="text-button danger" type="button" onClick={() => remove(index)} disabled={providers.providers.length === 1}>Remove provider</button></div></div>
       </>}
     </section>)}
-    <div className="provider-card-footer"><button className="add-provider-button" type="button" onClick={addOpenAiCompatible}>＋ Add provider</button><div><button className="add-provider-button" type="button" onClick={addGnosis} disabled={hasGnosis}>＋ Add gnosis</button><button className="add-provider-button" type="button" onClick={addLarm} disabled={hasLarm}>＋ Add LARM</button></div></div>
+    <div className="provider-card-footer"><button className="add-provider-button" type="button" onClick={addOpenAiCompatible}>＋ Add provider</button><div><button className="add-provider-button" type="button" onClick={addDynamicLan} disabled={hasDynamicLan}>＋ Add dynamic LAN</button><button className="add-provider-button" type="button" onClick={addLarm} disabled={hasLarm}>＋ Add LARM</button></div></div>
   </div>;
 }
 
@@ -291,11 +291,10 @@ function RoutingSection({ routing, providers, localOnlyWhenSelected, onChange }:
   const selectable = providers.filter((provider) => provider.enabled);
   const fallbackIds = routing.conversationRespond.fallbackProviderIds;
   const primary = providers.find((provider) => provider.id === routing.conversationRespond.primaryProviderId);
-  const timeoutMaximum = primary?.kind === "gnosis" ? GNOSIS_MAX_REQUEST_TIMEOUT_MS : 300_000;
-  const fallbackLocked = primary?.kind === "gnosis";
-  const effectiveFallbackIds = fallbackLocked ? [] : fallbackIds.filter((id) => !(localOnlyWhenSelected && primary?.location === "local" && providers.find((provider) => provider.id === id)?.location === "cloud"));
+  const timeoutMaximum = primary?.kind === "dynamic-lan" ? DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS : 300_000;
+  const effectiveFallbackIds = fallbackIds.filter((id) => !(localOnlyWhenSelected && primary?.location === "local" && providers.find((provider) => provider.id === id)?.location === "cloud"));
   const blockedFallbacks = fallbackIds.filter((id) => !effectiveFallbackIds.includes(id));
-  return <div className="settings-stack"><section className="settings-card"><h3>conversation.respond</h3><p className="settings-help">通常ChatとVoiceの確定文字起こしに使うModel Routeです。</p><div className="settings-form-grid"><Field label="Primary provider"><select value={routing.conversationRespond.primaryProviderId} onChange={(event) => { const nextPrimary = providers.find((provider) => provider.id === event.target.value); onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, primaryProviderId: event.target.value, fallbackProviderIds: nextPrimary?.kind === "gnosis" ? [] : fallbackIds } }); }}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label || provider.id}{provider.enabled ? "" : " (disabled)"}</option>)}</select></Field><Field label="Timeout (ms)"><input type="number" min="1000" max={timeoutMaximum} value={routing.conversationRespond.timeoutMs} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, timeoutMs: clampTimeout(event.target.value, timeoutMaximum) } })} /></Field></div><div className="fallback-list"><strong>Fallback providers</strong>{fallbackLocked ? <p className="muted">gnosisのREST接続はfallbackなしで実行します。</p> : <>{selectable.filter((provider) => provider.id !== routing.conversationRespond.primaryProviderId).map((provider) => <label className="check-row" key={provider.id}><input type="checkbox" checked={fallbackIds.includes(provider.id)} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, fallbackProviderIds: event.target.checked ? [...fallbackIds, provider.id] : fallbackIds.filter((id) => id !== provider.id) } })} />{provider.label || provider.id}</label>)}{selectable.length < 2 && <p className="muted">Fallbackを使うには、もう一つ有効なProviderを登録してください。</p>}</>}{!fallbackLocked && blockedFallbacks.length > 0 && <p className="provider-test-result error">Local-only policy blocks Cloud fallback: {blockedFallbacks.join(", ")}</p>}</div><div className="effective-route"><span>Effective route</span><strong>{[routing.conversationRespond.primaryProviderId, ...effectiveFallbackIds].join(" → ")}</strong></div></section></div>;
+  return <div className="settings-stack"><section className="settings-card"><h3>conversation.respond</h3><p className="settings-help">通常ChatとVoiceの確定文字起こしに使うModel Routeです。</p><div className="settings-form-grid"><Field label="Primary provider"><select value={routing.conversationRespond.primaryProviderId} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, primaryProviderId: event.target.value } })}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label || provider.id}{provider.enabled ? "" : " (disabled)"}</option>)}</select></Field><Field label="Timeout (ms)"><input type="number" min="1000" max={timeoutMaximum} value={routing.conversationRespond.timeoutMs} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, timeoutMs: clampTimeout(event.target.value, timeoutMaximum) } })} /></Field></div><div className="fallback-list"><strong>Fallback providers</strong>{selectable.filter((provider) => provider.id !== routing.conversationRespond.primaryProviderId).map((provider) => <label className="check-row" key={provider.id}><input type="checkbox" checked={fallbackIds.includes(provider.id)} onChange={(event) => onChange({ ...routing, conversationRespond: { ...routing.conversationRespond, fallbackProviderIds: event.target.checked ? [...fallbackIds, provider.id] : fallbackIds.filter((id) => id !== provider.id) } })} />{provider.label || provider.id}</label>)}{selectable.length < 2 && <p className="muted">Fallbackを使うには、もう一つ有効なProviderを登録してください。</p>}{blockedFallbacks.length > 0 && <p className="provider-test-result error">Local-only policy blocks Cloud fallback: {blockedFallbacks.join(", ")}</p>}</div><div className="effective-route"><span>Effective route</span><strong>{[routing.conversationRespond.primaryProviderId, ...effectiveFallbackIds].join(" → ")}</strong></div></section></div>;
 }
 
 function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onChange }: { voice: VoiceSettings; profile: VoiceProfileSnapshot; enrollmentBlocked: boolean; onProfileChanged: (profile: VoiceProfileSnapshot) => void; onChange: (value: VoiceSettings) => void }) {
@@ -309,7 +308,7 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
     return () => { active = false; };
   }, []);
   const currentDeviceMissing = voice.inputDeviceId !== "default" && !devices.some((device) => device.deviceId === voice.inputDeviceId);
-  return <div className="settings-stack"><section className="settings-card"><h3>Capture</h3><div className="settings-form-grid"><Field label="Capture mode"><select value={voice.captureMode} disabled><option value="push-to-talk">Push-to-talk</option></select></Field><Field label="Input device"><select value={voice.inputDeviceId} onChange={(event) => onChange({ ...voice, inputDeviceId: event.target.value })}><option value="default">System default</option>{currentDeviceMissing && <option value={voice.inputDeviceId}>{voice.inputDeviceId} (unavailable)</option>}{devices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></Field><Field label="STT provider"><input value={voice.sttProviderId} disabled /></Field><Field label="STT model"><input value={voice.sttModel} disabled /></Field></div>{deviceError && <p className="provider-test-result error">Microphone devices unavailable: {deviceError}</p>}<div className="locked-policy">ASR endpoint: gnosis:8081 · Audio is sent only to the LAN-local gnosis server.</div></section><VoiceProfileCard voice={voice} profile={profile} blocked={enrollmentBlocked} onChanged={onProfileChanged} /><section className="settings-card"><h3>Speech output</h3><div className="settings-form-grid"><Field label="Output device"><input value="System default" disabled /></Field><Field label="TTS provider"><input value={voice.ttsProviderId} disabled /></Field><Field label="Voice"><input value={voice.ttsVoice} onChange={(event) => onChange({ ...voice, ttsVoice: event.target.value })} /></Field><Field label="Auto speak"><select value={voice.autoSpeak ? "on" : "off"} onChange={(event) => onChange({ ...voice, autoSpeak: event.target.value === "on" })}><option value="on">On</option><option value="off">Off</option></select></Field></div><div className="locked-policy">URLと絵文字は読み上げから除外します。Cloud fallback: disabled.</div></section></div>;
+  return <div className="settings-stack"><section className="settings-card"><h3>Capture</h3><div className="settings-form-grid"><Field label="Capture mode"><select value={voice.captureMode} disabled><option value="push-to-talk">Push-to-talk</option></select></Field><Field label="Input device"><select value={voice.inputDeviceId} onChange={(event) => onChange({ ...voice, inputDeviceId: event.target.value })}><option value="default">System default</option>{currentDeviceMissing && <option value={voice.inputDeviceId}>{voice.inputDeviceId} (unavailable)</option>}{devices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></Field><Field label="STT provider"><input value={voice.sttProviderId} disabled /></Field><Field label="STT model"><input value={voice.sttModel} disabled /></Field></div>{deviceError && <p className="provider-test-result error">Microphone devices unavailable: {deviceError}</p>}<div className="locked-policy">ASR endpoint: SAAA_ASR_BASE_URL · Audio is sent only to the configured private-network server.</div></section><VoiceProfileCard voice={voice} profile={profile} blocked={enrollmentBlocked} onChanged={onProfileChanged} /><section className="settings-card"><h3>Speech output</h3><div className="settings-form-grid"><Field label="Output device"><input value="System default" disabled /></Field><Field label="TTS provider"><input value={voice.ttsProviderId} disabled /></Field><Field label="Voice"><input value={voice.ttsVoice} onChange={(event) => onChange({ ...voice, ttsVoice: event.target.value })} /></Field><Field label="Auto speak"><select value={voice.autoSpeak ? "on" : "off"} onChange={(event) => onChange({ ...voice, autoSpeak: event.target.value === "on" })}><option value="on">On</option><option value="off">Off</option></select></Field></div><div className="locked-policy">URLと絵文字は読み上げから除外します。Cloud fallback: disabled.</div></section></div>;
 }
 
 function SecuritySection({ security, onChange }: { security: SecuritySettings; onChange: (value: SecuritySettings) => void }) {

@@ -30,7 +30,7 @@ Voice chat and Meeting transcription use a local ASR server on the LAN. ASR is t
 - [Bun](https://bun.sh/)
 - Rust toolchain
 - The Tauri 2 build prerequisites for the target OS
-- For the default conversation route, a local LLM server reachable over the private network and a `LARM_API_TOKEN`
+- To use the local conversation route, a local LLM server reachable over the private network and a `LARM_API_TOKEN`
 - For voice input or Meeting, a local ASR server reachable from SAAA
 
 macOS is the primary verification target. System TTS is implemented for macOS, Linux, and Windows, but Situation foreground/input signals and secure voice-profile key storage depend on macOS facilities.
@@ -43,22 +43,24 @@ Install dependencies:
 bun install
 ```
 
-To use the default local LLM route, set its token in the same shell and start the desktop application:
+To use the local LLM route, set its token in the same shell and start the desktop application:
 
 ```sh
 export LARM_API_TOKEN="<token>"
 bun start
 ```
 
-After the application opens, check the local LLM server hostname or private IP under Settings → Model Providers. Enter the host only. SAAA obtains the connection details and model name from the server and does not persist them in Settings.
+After the application opens, configure and enable the local LLM provider under Settings → Model Providers. Enter only its hostname or private IP. SAAA obtains the connection details and model name from the server and does not persist them in Settings. No machine-specific endpoint or model is enabled by default.
 
 ## Configure model connections
 
 ### Local LLM server
 
-The local LLM server is the default conversation route. SAAA uses the connection API on the configured host to obtain a connection to the local model. It keeps the returned OpenAI-compatible endpoint, model name, and short-lived credential in memory, then releases the connection after each turn. None of these discovered values are written to SQLite.
+SAAA uses the connection API on the configured host to obtain a connection to the local model. It keeps the returned OpenAI-compatible endpoint, model name, and short-lived credential in memory, then releases the connection after each turn. None of these discovered values are written to SQLite.
 
 The local LLM server requires `LARM_API_TOKEN`. SAAA does not create an SSH tunnel, so both the connection API and the model endpoint returned by the server must be reachable over the private network.
+
+Voice chat and Meeting read the ASR origin from `SAAA_ASR_BASE_URL`, for example `http://10.0.0.42:8081`. The value must be a private-network HTTP origin without credentials or a path.
 
 ### OpenAI-compatible APIs
 

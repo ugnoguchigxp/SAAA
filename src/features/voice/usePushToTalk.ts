@@ -107,8 +107,8 @@ export function usePushToTalk({
         setError("Voice settings are unavailable.");
         return;
       }
-      if (voiceSettings.sttProviderId !== "gnosis-asr" || voiceSettings.sttModel !== "qwen3-asr-1.7b") {
-        setError("Voice settings must use the gnosis ASR provider.");
+      if (voiceSettings.sttProviderId !== "network-asr" || voiceSettings.sttModel !== "qwen3-asr-1.7b") {
+        setError("Voice settings must use the LAN ASR provider.");
         return;
       }
       try {

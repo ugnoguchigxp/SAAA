@@ -10,12 +10,13 @@ use crate::persistence::{
 use crate::providers::routing::{apply_runtime_provider_gates, effective_conversation_route_ids};
 use crate::redact::{bounded_text, redact_runtime_text};
 use crate::{
-    begin_provider_session, database_error, execute_codex_turn, finish_gnosis_provider_session,
-    finish_larm_provider_session, finish_provider_session, memory, new_id, now_iso,
-    persist_conversation_success, situation, stream_gnosis_provider, stream_larm_provider,
-    stream_model_provider, update_runtime_provider, AppState, CleanupOutcome, LarmStreamContext,
-    ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
-    ProviderOutputPersistence, RunCancellation, StartTurnInput, TurnExecutionFailure,
+    begin_provider_session, database_error, execute_codex_turn,
+    finish_dynamic_lan_provider_session, finish_larm_provider_session, finish_provider_session,
+    memory, new_id, now_iso, persist_conversation_success, situation, stream_dynamic_lan_provider,
+    stream_larm_provider, stream_model_provider, update_runtime_provider, AppState, CleanupOutcome,
+    LarmStreamContext, ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome,
+    ProviderFailureKind, ProviderOutputPersistence, RunCancellation, StartTurnInput,
+    TurnExecutionFailure, CONVERSATION_SYSTEM_CONTEXT,
 };
 
 pub(crate) async fn execute_turn(
@@ -405,18 +406,27 @@ pub(crate) async fn execute_conversation_turn(
             context_health.repair_count,
             &now_iso(),
         );
-        let history = context_window
-            .messages
-            .into_iter()
-            .enumerate()
-            .map(|(index, message)| ConversationMessage {
-                id: format!("context-projection-{index}"),
-                conversation_id: input.conversation_id.clone(),
-                role: message.role,
-                content: message.content,
-                created_at: index.to_string(),
-            })
-            .collect::<Vec<_>>();
+        let history = std::iter::once(ConversationMessage {
+            id: "context-system-conversation-respond".to_string(),
+            conversation_id: input.conversation_id.clone(),
+            role: "system".to_string(),
+            content: CONVERSATION_SYSTEM_CONTEXT.to_string(),
+            created_at: "system".to_string(),
+        })
+        .chain(
+            context_window
+                .messages
+                .into_iter()
+                .enumerate()
+                .map(|(index, message)| ConversationMessage {
+                    id: format!("context-projection-{index}"),
+                    conversation_id: input.conversation_id.clone(),
+                    role: message.role,
+                    content: message.content,
+                    created_at: index.to_string(),
+                }),
+        )
+        .collect::<Vec<_>>();
         (
             load_model_providers(&connection)?,
             load_routing_settings(&connection)?.conversation_respond,
@@ -426,10 +436,14 @@ pub(crate) async fn execute_conversation_turn(
         )
     };
     let reasoning_effort = providers.reasoning_effort.clone();
-    let route_ids = apply_runtime_provider_gates(
+    let route_ids = apply_dynamic_lan_credential_gate(
         &providers,
-        effective_conversation_route_ids(&providers, &route, &security),
-        &state.larm_gate,
+        apply_runtime_provider_gates(
+            &providers,
+            effective_conversation_route_ids(&providers, &route, &security),
+            &state.larm_gate,
+        ),
+        crate::providers::dynamic_lan::control_credential_available(),
     );
     if route_ids.is_empty() && !state.larm_gate.allows_traffic() {
         return Err(state.larm_gate.public_message().to_string());
@@ -545,8 +559,8 @@ pub(crate) async fn execute_conversation_turn(
                 )
                 .await
             }
-            ModelProviderSettings::Gnosis(provider) => {
-                stream_gnosis_provider(
+            ModelProviderSettings::DynamicLan(provider) => {
+                stream_dynamic_lan_provider(
                     provider,
                     &history,
                     route.timeout_ms,
@@ -569,8 +583,14 @@ pub(crate) async fn execute_conversation_turn(
             ProviderAttemptOutcome::Completed { content, cleanup } => {
                 if provider.kind() == "larm" {
                     finish_larm_provider_session(state, &session_id, "completed", None, cleanup)?;
-                } else if matches!(&provider, ModelProviderSettings::Gnosis(_)) {
-                    finish_gnosis_provider_session(state, &session_id, "completed", None, cleanup)?;
+                } else if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                    finish_dynamic_lan_provider_session(
+                        state,
+                        &session_id,
+                        "completed",
+                        None,
+                        cleanup,
+                    )?;
                 } else {
                     finish_provider_session(state, &session_id, "completed", None)?;
                 }
@@ -585,8 +605,8 @@ pub(crate) async fn execute_conversation_turn(
                         Some(ProviderFailureKind::Cancelled),
                         cleanup,
                     )?;
-                } else if matches!(&provider, ModelProviderSettings::Gnosis(_)) {
-                    finish_gnosis_provider_session(
+                } else if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                    finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
                         "cancelled",
@@ -618,8 +638,8 @@ pub(crate) async fn execute_conversation_turn(
                         Some(kind),
                         cleanup,
                     )?;
-                } else if matches!(&provider, ModelProviderSettings::Gnosis(_)) {
-                    finish_gnosis_provider_session(
+                } else if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                    finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
                         "failed",
@@ -635,9 +655,7 @@ pub(crate) async fn execute_conversation_turn(
                     reason: reason.to_string(),
                 });
                 let failure = format!("{}: {reason}", provider.id());
-                if matches!(provider, ModelProviderSettings::Gnosis(_))
-                    || !provider_fallback_allowed(kind, output_started)
-                {
+                if !provider_route_fallback_allowed(&provider, kind, output_started) {
                     return Err(failure);
                 }
                 failures.push(failure);
@@ -648,6 +666,23 @@ pub(crate) async fn execute_conversation_turn(
         "All configured providers failed. {}",
         failures.join("; ")
     ))
+}
+
+fn apply_dynamic_lan_credential_gate(
+    providers: &crate::ModelProvidersSettings,
+    mut route_ids: Vec<String>,
+    credential_available: bool,
+) -> Vec<String> {
+    if route_ids.len() > 1 && !credential_available {
+        route_ids.retain(|provider_id| {
+            providers
+                .providers
+                .iter()
+                .find(|provider| provider.id() == provider_id)
+                .is_none_or(|provider| !matches!(provider, ModelProviderSettings::DynamicLan(_)))
+        });
+    }
+    route_ids
 }
 
 pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {
@@ -664,6 +699,17 @@ pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_starte
                 | ProviderFailureKind::AllocationLost
                 | ProviderFailureKind::AllocationOutcomeUnknown
         )
+}
+
+fn provider_route_fallback_allowed(
+    provider: &ModelProviderSettings,
+    kind: ProviderFailureKind,
+    output_started: bool,
+) -> bool {
+    provider_fallback_allowed(kind, output_started)
+        || (!output_started
+            && matches!(provider, ModelProviderSettings::DynamicLan(_))
+            && kind == ProviderFailureKind::Authentication)
 }
 
 #[cfg(test)]
@@ -700,5 +746,49 @@ mod tests {
             assert!(!provider_fallback_allowed(kind, false), "{}", kind.as_str());
             assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
         }
+    }
+
+    #[test]
+    fn dynamic_lan_authentication_can_fall_back_before_output_only() {
+        let dynamic_lan = crate::test_support::dynamic_lan_provider("dynamic_lan-primary");
+        let direct = crate::test_support::provider("direct-primary", "local");
+        assert!(provider_route_fallback_allowed(
+            &dynamic_lan,
+            ProviderFailureKind::Authentication,
+            false
+        ));
+        assert!(!provider_route_fallback_allowed(
+            &dynamic_lan,
+            ProviderFailureKind::Authentication,
+            true
+        ));
+        assert!(!provider_route_fallback_allowed(
+            &direct,
+            ProviderFailureKind::Authentication,
+            false
+        ));
+    }
+
+    #[test]
+    fn missing_dynamic_lan_credential_prefers_the_configured_direct_route() {
+        let providers = crate::ModelProvidersSettings {
+            providers: vec![
+                crate::test_support::dynamic_lan_provider("dynamic_lan-primary"),
+                crate::test_support::provider("direct-fallback", "local"),
+            ],
+            reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+        };
+        let configured = vec![
+            "dynamic_lan-primary".to_string(),
+            "direct-fallback".to_string(),
+        ];
+        assert_eq!(
+            apply_dynamic_lan_credential_gate(&providers, configured.clone(), false),
+            ["direct-fallback"]
+        );
+        assert_eq!(
+            apply_dynamic_lan_credential_gate(&providers, configured, true),
+            ["dynamic_lan-primary", "direct-fallback"]
+        );
     }
 }

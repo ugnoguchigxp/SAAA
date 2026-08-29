@@ -28,7 +28,7 @@ function documents() {
       namespace: "voice.runtime",
       key: "default",
       schemaVersion: 9,
-      valueJson: { inputDeviceId: "default", outputDeviceId: "default", captureMode: "push-to-talk", sttProviderId: "gnosis-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
+      valueJson: { inputDeviceId: "default", outputDeviceId: "default", captureMode: "push-to-talk", sttProviderId: "network-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
     },
     {
       namespace: "security.runtime",
@@ -61,7 +61,7 @@ describe("settings contracts", () => {
     expect(() => validateSettingsDocuments(invalid)).toThrow("Invalid option");
   });
 
-  test("requires the fixed gnosis ASR provider and model", () => {
+  test("requires the fixed LAN ASR provider and model", () => {
     const localWhisper = documents();
     (localWhisper[3].valueJson as { sttProviderId: string }).sttProviderId = "local-whisper";
     expect(() => validateSettingsDocuments(localWhisper)).toThrow("Invalid input");
@@ -90,7 +90,7 @@ describe("settings contracts", () => {
 
   test("accepts private-network local providers and rejects public HTTP endpoints", () => {
     const privateNetwork = documents();
-    (privateNetwork[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://192.168.0.65:8080/v1";
+    (privateNetwork[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://10.0.0.42:8080/v1";
     expect(() => validateSettingsDocuments(privateNetwork)).not.toThrow();
 
     const publicNetwork = documents();
@@ -98,27 +98,27 @@ describe("settings contracts", () => {
     expect(() => validateSettingsDocuments(publicNetwork)).toThrow("loopback or private-network");
   });
 
-  test("accepts a host-only gnosis provider and rejects embedded URLs or ports", () => {
+  test("accepts a host-only dynamic LAN provider and rejects embedded URLs or ports", () => {
     const snapshot = documents();
     (snapshot[0].valueJson as { providers: unknown[] }).providers = [{
-      kind: "gnosis",
-      id: "gnosis-qwen",
+      kind: "dynamic-lan",
+      id: "lan-llm-dynamic",
       enabled: true,
-      label: "gnosis · Dynamic LLM",
+      label: "LAN LLM · Dynamic connection",
       location: "local",
-      host: "192.168.0.65",
+      host: "10.0.0.42",
     }];
-    (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string } }).conversationRespond.primaryProviderId = "gnosis-qwen";
+    (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string } }).conversationRespond.primaryProviderId = "lan-llm-dynamic";
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
     const localName = structuredClone(snapshot);
-    ((localName[0].valueJson as { providers: Array<{ host: string }> }).providers[0]).host = "Gnosis.LOCAL";
+    ((localName[0].valueJson as { providers: Array<{ host: string }> }).providers[0]).host = "DynamicLan.LOCAL";
     expect(() => validateSettingsDocuments(localName)).not.toThrow();
 
     for (const host of [
-      "http://192.168.0.65",
-      "192.168.0.65:9810",
+      "http://10.0.0.42",
+      "10.0.0.42:9810",
       "example.com",
-      "gnosis-",
+      "dynamic_lan-",
       "foo..local",
       "foo-.local",
     ]) {
@@ -128,25 +128,25 @@ describe("settings contracts", () => {
     }
   });
 
-  test("rejects every fallback behind a gnosis primary", () => {
+  test("accepts a local fallback behind a dynamic_lan primary", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
-    providers[0] = { kind: "gnosis", id: "gnosis-qwen", enabled: true, label: "gnosis", location: "local", host: "192.168.0.65" };
+    providers[0] = { kind: "dynamic-lan", id: "lan-llm-dynamic", enabled: true, label: "dynamic-lan", location: "local", host: "10.0.0.42" };
     providers.push({ kind: "openai-compatible", id: "local-fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://127.0.0.1:11435/v1", model: "test", credentialStatus: "not-configured" });
     const route = (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string; fallbackProviderIds: string[] } }).conversationRespond;
-    route.primaryProviderId = "gnosis-qwen";
+    route.primaryProviderId = "lan-llm-dynamic";
     route.fallbackProviderIds = ["local-fallback"];
-    expect(() => validateSettingsDocuments(snapshot)).toThrow("must not configure fallback");
+    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });
 
-  test("rejects a gnosis timeout that cannot fit within its connection lifetime", () => {
+  test("rejects a dynamic_lan timeout that cannot fit within its connection lifetime", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
-    providers[0] = { kind: "gnosis", id: "gnosis-qwen", enabled: true, label: "gnosis", location: "local", host: "192.168.0.65" };
+    providers[0] = { kind: "dynamic-lan", id: "lan-llm-dynamic", enabled: true, label: "dynamic-lan", location: "local", host: "10.0.0.42" };
     const route = (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string; timeoutMs: number } }).conversationRespond;
-    route.primaryProviderId = "gnosis-qwen";
+    route.primaryProviderId = "lan-llm-dynamic";
     route.timeoutMs = 270_000;
-    expect(() => validateSettingsDocuments(snapshot)).toThrow("gnosis conversation timeout must not exceed 269999 ms");
+    expect(() => validateSettingsDocuments(snapshot)).toThrow("dynamic LAN conversation timeout must not exceed 269999 ms");
     route.timeoutMs = 269_999;
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });

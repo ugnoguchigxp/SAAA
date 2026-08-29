@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use super::settings::default_settings_documents;
 use crate::backup::backup_connection_to;
 use crate::{
-    database_error, memory, now_iso, providers, situation, voice, GNOSIS_HOST, GNOSIS_PROVIDER_ID,
+    database_error, memory, now_iso, providers, situation, voice, DEFAULT_DYNAMIC_LAN_HOST,
+    DYNAMIC_LAN_PROVIDER_ID,
 };
 
 pub(crate) fn migrate_provider_reasoning_effort_default(
@@ -24,7 +25,7 @@ pub(crate) fn migrate_provider_reasoning_effort_default(
     Ok(())
 }
 
-pub(crate) fn migrate_direct_gnosis_provider_to_discovery(
+pub(crate) fn migrate_direct_dynamic_lan_provider_to_discovery(
     connection: &Connection,
 ) -> rusqlite::Result<()> {
     let current: Option<String> = connection
@@ -46,7 +47,7 @@ pub(crate) fn migrate_direct_gnosis_provider_to_discovery(
     };
     let mut changed = false;
     for item in items {
-        if item.get("id").and_then(Value::as_str) != Some(GNOSIS_PROVIDER_ID)
+        if item.get("id").and_then(Value::as_str) != Some(DYNAMIC_LAN_PROVIDER_ID)
             || item.get("kind").and_then(Value::as_str) != Some("openai-compatible")
             || item.get("location").and_then(Value::as_str) != Some("local")
         {
@@ -57,14 +58,14 @@ pub(crate) fn migrate_direct_gnosis_provider_to_discovery(
             .and_then(Value::as_str)
             .and_then(|endpoint| url::Url::parse(endpoint).ok())
             .and_then(|endpoint| endpoint.host_str().map(str::to_string))
-            .filter(|host| providers::gnosis::control_base_url(host).is_ok())
-            .unwrap_or_else(|| GNOSIS_HOST.to_string());
+            .filter(|host| providers::dynamic_lan::control_base_url(host).is_ok())
+            .unwrap_or_else(|| DEFAULT_DYNAMIC_LAN_HOST.to_string());
         let enabled = item.get("enabled").and_then(Value::as_bool).unwrap_or(true);
         *item = json!({
-            "kind": "gnosis",
-            "id": GNOSIS_PROVIDER_ID,
+            "kind": "dynamic-lan",
+            "id": DYNAMIC_LAN_PROVIDER_ID,
             "enabled": enabled,
-            "label": "gnosis · Dynamic LLM",
+            "label": "LAN LLM · Dynamic connection",
             "location": "local",
             "host": host
         });
@@ -309,14 +310,14 @@ pub(crate) fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> 
         [],
         |row| row.get(0),
     )?;
-    if !meeting_schema.contains("gnosis-asr") {
+    if !meeting_schema.contains("network-asr") {
         connection.execute_batch(
             "CREATE TABLE meeting_sessions_v9 (
                id TEXT PRIMARY KEY,
                status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
                microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0,1)),
                system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0,1)),
-               stt_provider_id TEXT NOT NULL CHECK(stt_provider_id IN ('local-whisper','gnosis-asr')),
+               stt_provider_id TEXT NOT NULL CHECK(stt_provider_id IN ('local-whisper','network-asr')),
                stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) <= 256),
                translation_provider_id TEXT,
                persistence_mode TEXT NOT NULL CHECK(persistence_mode IN ('discard','explicit-save')),
@@ -372,8 +373,8 @@ pub(crate) fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> 
         })?;
         let mut normalized = normalize_json_to_template(&value, &template);
         if namespace == "voice.runtime" {
-            normalized["sttProviderId"] = json!(voice::gnosis_asr::PROVIDER_ID);
-            normalized["sttModel"] = json!(voice::gnosis_asr::MODEL_ID);
+            normalized["sttProviderId"] = json!(voice::network_asr::PROVIDER_ID);
+            normalized["sttModel"] = json!(voice::network_asr::MODEL_ID);
         }
         connection.execute(
             "UPDATE settings_documents
@@ -433,7 +434,7 @@ pub(crate) fn backup_before_migration(
     Ok(Some(path))
 }
 
-pub(crate) fn migrate_pristine_provider_defaults_to_gnosis(
+pub(crate) fn migrate_pristine_provider_defaults_to_dynamic_lan(
     connection: &Connection,
 ) -> rusqlite::Result<()> {
     let legacy_providers = json!({
@@ -476,23 +477,24 @@ pub(crate) fn migrate_pristine_provider_defaults_to_gnosis(
     }
 
     let defaults = default_settings_documents();
-    let gnosis_providers = defaults
+    let dynamic_lan_providers = defaults
         .iter()
         .find(|(namespace, key, _, _)| *namespace == "providers.model" && *key == "default")
         .map(|(_, _, _, value)| value)
         .expect("providers default exists");
-    let mut gnosis_routing = routing;
-    gnosis_routing["conversationRespond"]["primaryProviderId"] = json!(GNOSIS_PROVIDER_ID);
+    let mut dynamic_lan_routing = routing;
+    dynamic_lan_routing["conversationRespond"]["primaryProviderId"] =
+        json!(DYNAMIC_LAN_PROVIDER_ID);
     let updated_at = now_iso();
     connection.execute(
         "UPDATE settings_documents SET value_json=?1, updated_at=?2
          WHERE namespace='providers.model' AND key='default'",
-        params![gnosis_providers.to_string(), updated_at],
+        params![dynamic_lan_providers.to_string(), updated_at],
     )?;
     connection.execute(
         "UPDATE settings_documents SET value_json=?1, updated_at=?2
          WHERE namespace='routing.tasks' AND key='default'",
-        params![gnosis_routing.to_string(), updated_at],
+        params![dynamic_lan_routing.to_string(), updated_at],
     )?;
     Ok(())
 }
@@ -543,7 +545,7 @@ pub(crate) fn migrate_legacy_settings_documents(connection: &Connection) -> rusq
             "inputDeviceId": legacy.get("inputDeviceId").and_then(Value::as_str).unwrap_or("default"),
             "outputDeviceId": legacy.get("outputDeviceId").and_then(Value::as_str).unwrap_or("default"),
             "captureMode": "push-to-talk",
-            "sttProviderId": "gnosis-asr",
+            "sttProviderId": "network-asr",
             "sttModel": "qwen3-asr-1.7b",
             "ttsProviderId": "system-tts",
             "ttsVoice": legacy.get("ttsVoice").and_then(Value::as_str).unwrap_or("default"),
@@ -599,9 +601,10 @@ pub(crate) fn migrate_document(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::list_settings_documents;
     use crate::{
-        initialize_database, list_settings_documents, memory, situation, voice, GNOSIS_HOST,
-        GNOSIS_PROVIDER_ID,
+        initialize_database, memory, situation, voice, DEFAULT_DYNAMIC_LAN_HOST,
+        DYNAMIC_LAN_PROVIDER_ID,
     };
     use rusqlite::Connection;
     use serde_json::{json, Value};
@@ -621,15 +624,15 @@ mod tests {
             .expect("provider defaults exist");
         assert_eq!(
             providers.value_json.pointer("/providers/0/id"),
-            Some(&json!(GNOSIS_PROVIDER_ID))
+            Some(&json!(DYNAMIC_LAN_PROVIDER_ID))
         );
         assert_eq!(
             providers.value_json.pointer("/providers/0/kind"),
-            Some(&json!("gnosis"))
+            Some(&json!("dynamic-lan"))
         );
         assert_eq!(
             providers.value_json.pointer("/providers/0/host"),
-            Some(&json!(GNOSIS_HOST))
+            Some(&json!(DEFAULT_DYNAMIC_LAN_HOST))
         );
         assert!(providers
             .value_json
@@ -638,7 +641,11 @@ mod tests {
         assert!(providers.value_json.pointer("/providers/0/model").is_none());
         assert_eq!(
             providers.value_json.pointer("/providers/0/enabled"),
-            Some(&json!(true))
+            Some(&json!(false))
+        );
+        assert_eq!(
+            providers.value_json["providers"].as_array().map(Vec::len),
+            Some(1)
         );
         assert_eq!(
             providers.value_json.pointer("/reasoningEffort"),
@@ -652,7 +659,13 @@ mod tests {
             routing
                 .value_json
                 .pointer("/conversationRespond/primaryProviderId"),
-            Some(&json!(GNOSIS_PROVIDER_ID))
+            Some(&json!(DYNAMIC_LAN_PROVIDER_ID))
+        );
+        assert_eq!(
+            routing
+                .value_json
+                .pointer("/conversationRespond/fallbackProviderIds"),
+            Some(&json!([]))
         );
         let (version, active_profile): (i64, String) = (
             connection
@@ -725,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn pristine_previous_provider_defaults_migrate_to_gnosis() {
+    fn pristine_previous_provider_defaults_migrate_to_dynamic_lan() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
         let legacy_providers = json!({
@@ -781,21 +794,21 @@ mod tests {
             .expect("routing exists");
         assert_eq!(
             providers.value_json.pointer("/providers/0/id"),
-            Some(&json!(GNOSIS_PROVIDER_ID))
+            Some(&json!(DYNAMIC_LAN_PROVIDER_ID))
         );
         assert_eq!(
             providers.value_json.pointer("/providers/0/kind"),
-            Some(&json!("gnosis"))
+            Some(&json!("dynamic-lan"))
         );
         assert_eq!(
             providers.value_json.pointer("/providers/0/host"),
-            Some(&json!(GNOSIS_HOST))
+            Some(&json!(DEFAULT_DYNAMIC_LAN_HOST))
         );
         assert_eq!(
             routing
                 .value_json
                 .pointer("/conversationRespond/primaryProviderId"),
-            Some(&json!(GNOSIS_PROVIDER_ID))
+            Some(&json!(DYNAMIC_LAN_PROVIDER_ID))
         );
         assert_eq!(
             routing.value_json.pointer("/conversationRespond/timeoutMs"),
@@ -804,15 +817,15 @@ mod tests {
     }
 
     #[test]
-    fn direct_gnosis_endpoint_migrates_to_host_only_discovery() {
+    fn direct_dynamic_lan_endpoint_migrates_to_host_only_discovery() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
         let direct = json!({
             "providers": [{
                 "kind": "openai-compatible",
-                "id": GNOSIS_PROVIDER_ID,
+                "id": DYNAMIC_LAN_PROVIDER_ID,
                 "enabled": true,
-                "label": "gnosis · Ornith",
+                "label": "LAN LLM · Ornith",
                 "location": "local",
                 "endpoint": "http://192.168.0.77:8083/v1",
                 "model": "ornith15-35b",
@@ -838,7 +851,10 @@ mod tests {
             )
             .expect("provider settings read");
         let value: Value = serde_json::from_str(&value).expect("provider settings parse");
-        assert_eq!(value.pointer("/providers/0/kind"), Some(&json!("gnosis")));
+        assert_eq!(
+            value.pointer("/providers/0/kind"),
+            Some(&json!("dynamic-lan"))
+        );
         assert_eq!(
             value.pointer("/providers/0/host"),
             Some(&json!("192.168.0.77"))
@@ -848,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn version_eight_voice_and_meeting_schema_migrate_to_gnosis_asr() {
+    fn version_eight_voice_and_meeting_schema_migrate_to_network_asr() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
         connection
@@ -941,13 +957,13 @@ mod tests {
         assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         assert_eq!(
             voice.pointer("/sttProviderId"),
-            Some(&json!(voice::gnosis_asr::PROVIDER_ID))
+            Some(&json!(voice::network_asr::PROVIDER_ID))
         );
         assert_eq!(
             voice.pointer("/sttModel"),
-            Some(&json!(voice::gnosis_asr::MODEL_ID))
+            Some(&json!(voice::network_asr::MODEL_ID))
         );
-        assert!(meeting_schema.contains("gnosis-asr"));
+        assert!(meeting_schema.contains("network-asr"));
         assert_eq!(transcript, "kept transcript");
         connection
             .execute("DELETE FROM meeting_sessions WHERE id='legacy-meeting'", [])
@@ -1064,7 +1080,7 @@ mod tests {
             .and_then(|document| document.value_json.pointer("/providers/0"))
             .expect("provider remains");
         assert!(providers.get("legacyProviderField").is_none());
-        assert_eq!(providers.get("kind"), Some(&json!("gnosis")));
+        assert_eq!(providers.get("kind"), Some(&json!("dynamic-lan")));
     }
 
     #[test]
@@ -1341,7 +1357,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("migrated provider settings read");
-        assert_eq!(migrated_provider_kind, "gnosis");
+        assert_eq!(migrated_provider_kind, "dynamic-lan");
     }
 
     #[test]

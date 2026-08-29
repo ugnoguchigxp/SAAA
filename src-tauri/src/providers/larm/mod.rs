@@ -626,7 +626,7 @@ mod tests {
         }
         fn allocation(id: &str, status: &str, operation: &str) -> String {
             format!(
-                r#"{{"id":"{id}","status":"{status}","requirements":[{{"capability":"llm.general","route":"llm-default"}}],"bindings":[{{"capability":"llm.general","route":"llm-default","runtime":"runtime_1","node":"gnosis","status":"HOT","candidateRank":1,"fallback":false,"selectionReason":"primary-live"}}],"allowFallback":false,"deploymentPolicy":"existing-only","createdAt":"2026-08-28T00:00:00.000Z","expiresAt":"2026-08-28T00:05:00.000Z"{operation}}}"#
+                r#"{{"id":"{id}","status":"{status}","requirements":[{{"capability":"llm.general","route":"llm-default"}}],"bindings":[{{"capability":"llm.general","route":"llm-default","runtime":"runtime_1","node":"dynamic-lan","status":"HOT","candidateRank":1,"fallback":false,"selectionReason":"primary-live"}}],"allowFallback":false,"deploymentPolicy":"existing-only","createdAt":"2026-08-28T00:00:00.000Z","expiresAt":"2026-08-28T00:05:00.000Z"{operation}}}"#
             )
         }
 

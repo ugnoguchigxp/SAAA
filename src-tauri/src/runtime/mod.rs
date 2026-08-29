@@ -1,6 +1,12 @@
 pub mod agent_tools;
 pub mod codex_app_server;
+pub(crate) mod codex_cli;
+pub(crate) mod codex_persist;
+pub(crate) mod codex_process;
+pub(crate) mod codex_supervise;
 pub(crate) mod codex_turn;
 pub mod contracts;
+pub(crate) mod run_support;
 pub mod supervisor;
+pub(crate) mod turn_types;
 pub(crate) mod turns;

@@ -1,8 +1,8 @@
 use rusqlite::{params, Connection};
 
 use super::migrate::{
-    migrate_direct_gnosis_provider_to_discovery, migrate_legacy_settings_documents,
-    migrate_pristine_provider_defaults_to_gnosis, migrate_provider_reasoning_effort_default,
+    migrate_direct_dynamic_lan_provider_to_discovery, migrate_legacy_settings_documents,
+    migrate_pristine_provider_defaults_to_dynamic_lan, migrate_provider_reasoning_effort_default,
     migrate_v4_to_v5, migrate_v6_to_v7, migrate_v7_to_v8, migrate_v8_to_v9,
 };
 use super::runs::reconcile_interrupted_runs;
@@ -124,7 +124,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
            status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
            microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0,1)),
            system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0,1)),
-           stt_provider_id TEXT NOT NULL CHECK(stt_provider_id IN ('local-whisper','gnosis-asr')),
+           stt_provider_id TEXT NOT NULL CHECK(stt_provider_id IN ('local-whisper','network-asr')),
            stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) <= 256),
            translation_provider_id TEXT,
            persistence_mode TEXT NOT NULL CHECK(persistence_mode IN ('discard','explicit-save')),
@@ -177,8 +177,8 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
         &memory_now,
     )?;
     memory::control_plane::recover_interrupted_jobs(&transaction, &memory_now)?;
-    migrate_pristine_provider_defaults_to_gnosis(&transaction)?;
-    migrate_direct_gnosis_provider_to_discovery(&transaction)?;
+    migrate_pristine_provider_defaults_to_dynamic_lan(&transaction)?;
+    migrate_direct_dynamic_lan_provider_to_discovery(&transaction)?;
     migrate_provider_reasoning_effort_default(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;

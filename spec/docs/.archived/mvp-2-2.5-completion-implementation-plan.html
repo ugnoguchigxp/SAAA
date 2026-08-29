@@ -47,7 +47,7 @@
       Floating Overlayを本closeoutへ追加しない。
     </li>
     <li>
-      Meetingの残作業は、real microphone、real gnosis ASR、permission lifecycle、partial/final表示、
+      Meetingの残作業は、real microphone、real LLM server ASR、permission lifecycle、partial/final表示、
       Save/Discard、TTS guard、30分・2時間soakの実機証跡である。
     </li>
     <li>
@@ -105,7 +105,7 @@
       <tr>
         <td>Meeting Core</td>
         <td>
-          state、bounded queue、gnosis ASR adapter、partial/final、Save/Discard、TTS guardを実装済み
+          state、bounded queue、LLM server ASR adapter、partial/final、Save/Discard、TTS guardを実装済み
         </td>
         <td>実マイク、permission、real ASR、indicator、2時間soak、保存lifecycleの実機証跡がない</td>
       </tr>
@@ -133,7 +133,7 @@
         <td>Source state</td>
         <td>Authoring時点のHEADは<code>68a8142</code></td>
         <td>
-          gnosis discoveryとIPC bindingを含む未commit WIPがある。production evidenceへ使用できない
+          LLM server discoveryとIPC bindingを含む未commit WIPがある。production evidenceへ使用できない
         </td>
       </tr>
     </tbody>
@@ -145,7 +145,7 @@
     <li>最終実行commit、bundle digest、OS、署名identity classを固定するpreflight</li>
     <li>通常Chatと分離したread-only Coding Surfaceの到達性</li>
     <li>repeatableなvalidation runnerとstrict evidence schema</li>
-    <li>real microphone / gnosis ASR Meeting functional matrix</li>
+    <li>real microphone / LLM server ASR Meeting functional matrix</li>
     <li>Meeting 30分・2時間resource soak</li>
     <li>Meeting Save / Discard / app-close / TTS policyの実機確認</li>
     <li>Input Activity manual lifecycleとprivacy確認</li>
@@ -364,7 +364,7 @@ bun run mvp2x:report --report-dir &lt;directory&gt;
       active中のpermission revokeまたはdevice
       lossでFailed/Pausedへ安全に遷移し、bufferとtrackを解放すること。
     </li>
-    <li>real gnosis ASRへ人工音声を送り、同じlane/sequenceのPartialがFinalへ置換されること。</li>
+    <li>real LLM server ASRへ人工音声を送り、同じlane/sequenceのPartialがFinalへ置換されること。</li>
     <li>pause 5分でtranscriptが増えず、microphone indicatorが5秒以内に消えること。</li>
     <li>resumeで新しいcapture tokenを使い、sequenceの重複や逆行がないこと。</li>
     <li>Stopを連打しても一つのCompleted snapshotになり、indicatorが5秒以内に消えること。</li>
@@ -601,7 +601,7 @@ bun run mvp2x:report --report-dir &lt;directory&gt;
       acceptanceが実行不能
     </li>
     <li>clean commitまたはproduction相当の署名identityを用意できない</li>
-    <li>real gnosis ASRが利用不能でPartial/Finalを確認できない</li>
+    <li>real LLM server ASRが利用不能でPartial/Finalを確認できない</li>
     <li>microphone indicatorがpause/stop/app close後も残る、またはraw audioがfileへ残る</li>
     <li>Meeting queue 2、in-flight ASR 1、RSS thresholdのいずれかを超える</li>
     <li>Input ActivityだけでAccessibility/Input Monitoring permission promptが出る</li>
@@ -628,7 +628,7 @@ cargo test --manifest-path src-tauri/Cargo.toml runtime::supervisor --lib
 cargo test --manifest-path src-tauri/Cargo.toml input_activity --lib
 </code></pre>
   <p>
-    実Codex、real gnosis ASR、30分／2時間soakはdefault test suiteへ入れず、Section
+    実Codex、real LLM server ASR、30分／2時間soakはdefault test suiteへ入れず、Section
     6の明示commandだけで実行する。 ignored testをPass件数へ含めない。
   </p>
 
@@ -687,7 +687,7 @@ cargo test --manifest-path src-tauri/Cargo.toml input_activity --lib
   <h3 id="131-mvp-2">13.1 MVP 2</h3>
   <ol>
     <li>real microphoneのgrant、deny、revoke/device lossが安全に処理される。</li>
-    <li>real gnosis ASRでPartialが同じlane/sequenceのFinalへ置換される。</li>
+    <li>real LLM server ASRでPartialが同じlane/sequenceのFinalへ置換される。</li>
     <li>
       pause、resume、stop、surface移動、app closeでcapture resourceがbounded time内に解放される。
     </li>
@@ -731,7 +731,7 @@ cargo test --manifest-path src-tauri/Cargo.toml input_activity --lib
   ↓ reproducible build and signed package
 MVP 2 Meeting
   ├─ real microphone permission lifecycle verified
-  ├─ real gnosis Partial → Final verified
+  ├─ real LLM server Partial → Final verified
   ├─ Save / Discard / TTS / app-close verified
   └─ 30m + 2h soak passed
 

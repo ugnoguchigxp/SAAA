@@ -1,0 +1,228 @@
+<article lang="ja">
+  <h1 id="llm-server-dynamic-connection-api-recovery-request">
+    LAN LLM Host 動的接続API 復旧依頼書
+  </h1>
+
+  <h2 id="request-summary">1. 依頼概要</h2>
+  <dl>
+    <dt>Request ID</dt>
+    <dd><code>SAAA-LAN-LLM-AUTH-2026-08-29</code></dd>
+    <dt>Status</dt>
+    <dd>Host action required</dd>
+    <dt>Requested</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>Control API</dt>
+    <dd><code>http://&lt;private-ip&gt;:9810</code></dd>
+    <dt>Client</dt>
+    <dd>
+      <code>saaa-desktop</code>（送信元候補
+      <code>192.168.0.76/32</code>）
+    </dd>
+    <dt>Agent profile</dt>
+    <dd><code>deep-reasoning-35b</code></dd>
+    <dt>Audience</dt>
+    <dd><code>saaa-desktop</code></dd>
+  </dl>
+  <p>
+    SAAA DesktopからLAN LLM HostのAgent Connection APIを認証付きで利用できる状態へ復旧し、
+    profile取得、Connection作成、claim、推論、releaseまでのREST lifecycleを完走させたい。
+    現在の失敗は推論モデル自体ではなく、SAAA processへ長期control credentialが注入されていないため、
+    動的設定取得のHTTP requestを送る前に発生している。
+  </p>
+
+  <h2 id="observed-facts">2. SAAA側で確認済みの事実</h2>
+  <table>
+    <caption>
+      動的接続APIと直結Qwen routeについてSAAA側で確認した実行結果
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">時刻</th>
+        <th scope="col">確認内容</th>
+        <th scope="col">結果</th>
+        <th scope="col">判定</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><time>2026-08-29T20:10:56+09:00</time></td>
+        <td><code>run_5e3119ba-8156-4e3a-8fa8-39a49c7a17cc</code></td>
+        <td>
+          旧dynamic routeが4ミリ秒でauthentication failure。 release
+          statusは<code>not-started</code>。
+        </td>
+        <td>
+          <code>LARM_API_TOKEN</code>不在をlocal preflightで検出。control
+          APIからのresponseは未受信。
+        </td>
+      </tr>
+      <tr>
+        <td><time>2026-08-29T20:06:00+09:00</time></td>
+        <td><code>GET /v1/agent-profiles</code>を未認証で実行</td>
+        <td><code>401</code></td>
+        <td>TCP/HTTP到達性と認証必須であることだけを確認。動的設定内容は未取得。</td>
+      </tr>
+      <tr>
+        <td><time>2026-08-29T15:21:17+09:00</time></td>
+        <td><code>run_62a12666-af03-4aca-a53e-88d0c403f574</code></td>
+        <td>
+          同じProvider IDで成功。release statusは<code>not-applicable</code>。
+        </td>
+        <td>
+          動的adapter導入前の旧・直結Qwen route。Agent Connection API成功の証跡には該当しない。
+        </td>
+      </tr>
+      <tr>
+        <td><time>2026-08-29</time></td>
+        <td><code>http://&lt;private-ip&gt;:8080/v1</code>を直接確認</td>
+        <td>
+          <code>GET /models</code
+          >は<code>200</code>、modelは
+          <code>&lt;model-id&gt;</code>。SSE chat completionも完走。
+        </td>
+        <td>推論serviceは利用可能。ただし動的control planeの正常性を示すものではない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    したがって現時点では、認証済み<code>GET /v1/agent-profiles</code>の<code>200</code>、
+    <code>x-larm-config-revision</code
+    >、Connectionの作成・状態遷移・claim・health・releaseのいずれも
+    SAAA側で観測できていない。動的設定取得APIから有効な結果を受け取れた証跡はない。
+  </p>
+
+  <h2 id="requested-host-actions">3. LAN LLM Host側への依頼事項</h2>
+
+  <h3 id="credential-delivery">3.1 SAAA用API tokenの発行と安全な受け渡し</h3>
+  <ol>
+    <li>
+      client <code>saaa-desktop</code>、audience
+      <code>saaa-desktop</code>、profile
+      <code>deep-reasoning-35b</code>のlifecycleを実行できる有効なAPI tokenを発行する。
+    </li>
+    <li>
+      token値は本文書、チケット、chat、通常logへ記載せず、承認済みsecret channelでSAAA運用者へ渡す。
+    </li>
+    <li>token値を含めず、発行状態、activation時刻、expiry、rotation方法、失効手順を回答する。</li>
+    <li>無効・期限切れtokenに対するHTTP statusと安全なerror codeを回答する。</li>
+  </ol>
+
+  <h3 id="contract-readiness">3.2 REST contractのready確認</h3>
+  <ol>
+    <li>
+      認証済み<code>GET /v1/agent-profiles</code>が<code>200 application/json</code>を返し、
+      <code>x-larm-config-revision</code>が64桁の小文字16進数であることを確認する。
+    </li>
+    <li>
+      profileが<code>contractVersion: agent-connection.v1</code>、provider
+      <code>llm</code>、capability
+      <code>llm.reasoning</code>、protocol
+      <code>openai.chat-completions.v1</code>、model
+      <code>deep-reasoning-35b</code>、audience
+      <code>saaa-desktop</code>をadvertiseすることを確認する。
+    </li>
+    <li>
+      <code>POST /v1/agent-connections</code>、bounded poll、claim、semantic health、
+      OpenAI-compatible SSE、<code>DELETE</code>
+      releaseが利用可能であることを確認する。
+    </li>
+    <li>
+      SAAA
+      adapterは<code>ttlSeconds: 300</code>、<code>allowFallback: false</code>、
+      <code>deploymentPolicy: existing-only</code
+      >を送る。この条件で既存deploymentがreadyになることを確認する。
+    </li>
+    <li>
+      claimされたProvider data planeはSAAA MacからLAN到達可能で、loopback
+      addressではないことを確認する。 現行adapterはremote
+      descriptorのportを<code>9810</code>として検証するため、Gatewayが同portで
+      OpenAI-compatible data planeを公開するcontractかを明示回答する。異なるportを返す設計なら、
+      SAAA側修正が必要なcontract差分として回答する。
+    </li>
+  </ol>
+
+  <h3 id="safe-observability">3.3 Secretを含まない完走証跡</h3>
+  <p>host側のcanaryまたはSAAAとの合同canaryについて、次のbounded metadataを提示する。</p>
+  <ul>
+    <li>実行timestampとrelease/config revision</li>
+    <li>client、profile、audience</li>
+    <li>各routeのHTTP method、status、duration</li>
+    <li>
+      Connectionの<code>pending</code>、<code>probing</code>、<code>ready</code>状態遷移
+    </li>
+    <li>
+      semantic
+      healthのready判定、SSEの非空completionと<code>[DONE]</code>確認
+    </li>
+    <li>releaseのHTTP statusと、release後にConnectionおよびworkerが残っていないこと</li>
+  </ul>
+  <p>
+    証跡にはAPI token、Authorization header、claim response、Provider短期token、base URL、prompt、
+    completion本文を含めない。必要なら値を含まないserver correlation IDだけを共有する。
+  </p>
+
+  <h3 id="readiness-probe">3.4 認証設定切り分け用のliveness</h3>
+  <p>
+    認証情報がない場合、SAAAはhost到達不能とcredential不在を別々に判定する必要がある。
+    model、profile、設定値、secretを返さないboundedなliveness
+    endpointを未認証で提供できるか回答する。 提供しない方針の場合は、認証済みprofile取得以外でhost
+    readinessを確認する承認済み手順を提示する。
+  </p>
+
+  <h2 id="requested-response">4. LAN LLM Host側から回答してほしい内容</h2>
+  <ol>
+    <li>Control APIのready状態と稼働release</li>
+    <li>API tokenの発行状態と、値を含まない受け渡しchannelの案内</li>
+    <li><code>x-larm-config-revision</code>とadvertise中のprofile・audience</li>
+    <li>remote Provider data planeのport contract</li>
+    <li>canary実施可能な時間帯と、host側で照合できる担当</li>
+    <li>secretを含まない証跡またはcorrelation情報の形式</li>
+    <li>現在readyでない項目がある場合、その項目、復旧予定、暫定回避ではなく恒久対応のowner</li>
+  </ol>
+
+  <h2 id="acceptance-criteria">5. 受入条件</h2>
+  <ol>
+    <li>SAAA processへ<code>LARM_API_TOKEN</code>が安全に注入される。</li>
+    <li>
+      認証済み<code>GET /v1/agent-profiles</code>が<code>200</code>と有効な
+      <code>x-larm-config-revision</code>を返す。
+    </li>
+    <li>
+      <code>POST /v1/agent-connections</code
+      >が<code>201</code>または<code>202</code>とLocationを返す。
+    </li>
+    <li>Connectionがbounded time内に<code>ready</code>へ遷移する。</li>
+    <li>claim responseがcontract検証を通り、semantic healthがreadyになる。</li>
+    <li>
+      OpenAI-compatible SSEが非空completionと<code>[DONE]</code>で完走する。
+    </li>
+    <li>
+      <code>DELETE</code
+      >が<code>204</code>を返し、host側でもresource残留がない。
+    </li>
+    <li>証跡がsecret boundaryを守り、SAAA実行結果にauthentication failureが残らない。</li>
+  </ol>
+
+  <h2 id="rollback-and-non-goals">6. Rollbackと対象外</h2>
+  <p>
+    SAAAは復旧までの可用性確保として、LAN内の直結Qwen
+    <code>http://&lt;private-ip&gt;:8080/v1</code>を一時的なlocal rollback routeに設定している。
+    動的lifecycleの受入後はDynamic LAN Provider routeをprimaryとして利用する。
+  </p>
+  <ul>
+    <li>認証を無効化しない。</li>
+    <li>SAAAからLAN LLM HostへSSH、SFTP、SCP、SSH tunnel、port forwardingを行わない。</li>
+    <li>tokenやclaim結果をSAAAのSQLite、設定JSON、diagnostics、logへ保存しない。</li>
+    <li>本依頼ではmodel deploymentの変更やcloud Providerへのfallbackを要求しない。</li>
+  </ul>
+
+  <h2 id="saaa-follow-up">7. LAN LLM Host側回答後のSAAA作業</h2>
+  <ol>
+    <li>承認済みchannelで受領したtokenをSAAA process起動環境へ注入する。</li>
+    <li>profile取得からreleaseまでのLAN canaryを実行する。</li>
+    <li>SAAA側とhost側のbounded evidenceを照合し、受入条件を判定する。</li>
+    <li>
+      成功後、dynamic routeをprimaryとして実行し、直結Qwen routeはlocal rollbackとして保持する。
+    </li>
+  </ol>
+</article>

@@ -89,7 +89,7 @@ describe("LARM readiness CLI", () => {
       "http://127.0.0.1:9810/v1",
       "http://user@127.0.0.1:9810",
       "http://127.0.0.1:9810?x=1",
-      "http://192.168.0.65:9810",
+      "http://10.0.0.42:9810",
     ]) {
       expect(() => validateNumericLoopbackOrigin(value)).toThrow(RunnerError);
     }

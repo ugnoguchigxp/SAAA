@@ -32,7 +32,7 @@ pub(crate) fn reconcile_interrupted_runs(connection: &Connection) -> rusqlite::R
                            ) AS configured
                       WHERE settings.namespace='providers.model' AND settings.key='default'
                         AND json_extract(configured.value, '$.id')=provider_sessions.provider_id
-                        AND json_extract(configured.value, '$.kind')='gnosis'
+                        AND json_extract(configured.value, '$.kind')='dynamic-lan'
                     ) THEN 'deferred-to-ttl'
                ELSE release_status
              END,
@@ -46,7 +46,7 @@ pub(crate) fn reconcile_interrupted_runs(connection: &Connection) -> rusqlite::R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::initialize_database;
+    use crate::{initialize_database, DYNAMIC_LAN_PROVIDER_ID};
     use rusqlite::Connection;
 
     #[test]
@@ -85,12 +85,12 @@ mod tests {
                    id, provider_id, runtime_run_id, provider_kind,
                    fallback_used, output_started, release_status, status, started_at, updated_at
                  ) VALUES(
-                   'session-gnosis','gnosis-qwen','run-1','openai-compatible',
+                   'session-dynamic_lan',?1,'run-1','openai-compatible',
                    0,0,'not-applicable','running','before-restart','before-restart'
                  )",
-                [],
+                [DYNAMIC_LAN_PROVIDER_ID],
             )
-            .expect("running gnosis session inserts");
+            .expect("running dynamic_lan session inserts");
         connection
             .execute(
                 "INSERT INTO provider_sessions(
@@ -126,15 +126,15 @@ mod tests {
             .expect("provider session loads");
         assert_eq!(provider_status, "interrupted");
         assert_eq!(release_status, "deferred-to-ttl");
-        let (gnosis_status, gnosis_release_status): (String, String) = connection
+        let (dynamic_lan_status, dynamic_lan_release_status): (String, String) = connection
             .query_row(
-                "SELECT status,release_status FROM provider_sessions WHERE id='session-gnosis'",
+                "SELECT status,release_status FROM provider_sessions WHERE id='session-dynamic_lan'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .expect("gnosis provider session loads");
-        assert_eq!(gnosis_status, "interrupted");
-        assert_eq!(gnosis_release_status, "deferred-to-ttl");
+            .expect("dynamic LAN provider session loads");
+        assert_eq!(dynamic_lan_status, "interrupted");
+        assert_eq!(dynamic_lan_release_status, "deferred-to-ttl");
         let direct_release_status: String = connection
             .query_row(
                 "SELECT release_status FROM provider_sessions WHERE id='session-direct'",

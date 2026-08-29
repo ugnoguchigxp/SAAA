@@ -16,7 +16,7 @@
       integration
     </li>
     <li>LARM fixture baseline: <code>7dca7c3</code></li>
-    <li>Production node: <code>gnosis</code></li>
+    <li>Production node: <code>LLM server</code></li>
     <li>Shipping client: macOS版SAAA desktop</li>
     <li>読者: SAAA実装担当、LARM実装担当、QA担当、運用担当、レビュー担当</li>
   </ul>
@@ -42,7 +42,7 @@
   </p>
   <p>
     AI server停止中は、文書同期、evidence schema、operator-only runner、test-only live suite、
-    redaction testまでを実装できる。gnosisへ接続するpreflight、allocation、Gateway request、canary、
+    redaction testまでを実装できる。LLM serverへ接続するpreflight、allocation、Gateway request、canary、
     soakはG1とG2を通過し、サーバー復旧と運用担当の許可が揃うまで開始しない。
   </p>
   <h3 id="01-review-amendments">0.1 Review amendments</h3>
@@ -207,7 +207,7 @@ separate Voice pipeline plan</code></pre>
       </tr>
       <tr>
         <td>自動検証</td>
-        <td>fake LARMと既存回帰は成功。gnosis requestは未実施</td>
+        <td>fake LARMと既存回帰は成功。LLM server requestは未実施</td>
         <td>opt-in live suiteとredacted reportを追加</td>
       </tr>
       <tr>
@@ -227,7 +227,7 @@ separate Voice pipeline plan</code></pre>
       </tr>
       <tr>
         <td>Voice</td>
-        <td>gnosis ASRとsystem TTSを維持</td>
+        <td>LLM server ASRとsystem TTSを維持</td>
         <td>本計画では変更しない</td>
       </tr>
     </tbody>
@@ -1029,7 +1029,7 @@ aggregate.json</code></pre>
       <tr>
         <td>G1 — Frozen API contract</td>
         <td>LARM commit、API schema、全contract decision、fixture一致</td>
-        <td>G1前はlive health / readyを含むgnosis requestを行わない</td>
+        <td>G1前はlive health / readyを含むLLM server requestを行わない</td>
       </tr>
       <tr>
         <td>G2 — Isolated canary environment</td>
@@ -1080,7 +1080,7 @@ aggregate.json</code></pre>
   <p>
     決定は「LARM変更」「SAAA変更」「両方変更」「現contractを明文化」のいずれかに分類する。
     handoff文書だけを根拠にせず、LARM repositoryのcommit、API schema、daemon testを確認する。
-    未commit WIPをG1 evidenceとして使わない。gnosisの実deploymentがG1
+    未commit WIPをG1 evidenceとして使わない。LLM serverの実deploymentがG1
     commitと一致することはG2で確認する。
   </p>
   <p>G1通過時に次を同じchange setへ含める。</p>
@@ -1112,7 +1112,7 @@ aggregate.json</code></pre>
     <li>
       compiled
       <code>CONTRACT_COMMIT</code>、<code>SAAA_LARM_DEPLOYED_COMMIT</code>、G1
-      target commitが一致し、gnosis deployment revisionが指定されていることを検証する。
+      target commitが一致し、LLM server deployment revisionが指定されていることを検証する。
     </li>
     <li>
       G2 manifestのdirect rollback Provider値と必要credentialの存在だけを検証し、推論は開始しない。
@@ -1576,7 +1576,7 @@ Reply with exactly: READY</code></pre>
     8.1のpreflightを通す。旧tokenと新tokenをreportまたはrunbookへ 記録しない。
   </p>
   <p>
-    gnosis上のLARM log auditはLARM operatorがserver側で実施し、raw logをSAAA hostへ転送しない。
+    LLM server上のLARM log auditはLARM operatorがserver側で実施し、raw logをSAAA hostへ転送しない。
     release
     evidenceにはtoken、prompt、response、identifier、endpointの検出件数と監査時刻だけを記録し、
     すべて0件でなければG3をfailedとする。
@@ -1740,7 +1740,7 @@ Reply with exactly: READY</code></pre>
       operator、空のisolated data directory、private tunnel、token、LARM Settings値、rollback
       Provider値をmanifestとして固定する。
     </li>
-    <li>gnosis deployment revisionがG1で固定したLARM commitを含むことを確認する。</li>
+    <li>LLM server deployment revisionがG1で固定したLARM commitを含むことを確認する。</li>
     <li>排他的観測windowまたはclient-scoped metricsを確保する。</li>
     <li>通常profileとisolated data directoryのinodeとcanonical pathが異なることを確認する。</li>
     <li>direct rollback Providerのcredential存在をnetwork accessなしで検証する。</li>

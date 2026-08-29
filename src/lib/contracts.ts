@@ -112,8 +112,8 @@ export type LarmProviderSettings = {
   deploymentPolicy: "existing-only";
 };
 
-export type GnosisProviderSettings = {
-  kind: "gnosis";
+export type DynamicLanProviderSettings = {
+  kind: "dynamic-lan";
   id: string;
   enabled: boolean;
   label: string;
@@ -124,7 +124,7 @@ export type GnosisProviderSettings = {
 export type ModelProviderSettings =
   | OpenAiCompatibleProviderSettings
   | LarmProviderSettings
-  | GnosisProviderSettings;
+  | DynamicLanProviderSettings;
 
 export type ReasoningEffort = "low" | "medium" | "xhigh";
 
@@ -191,7 +191,7 @@ export type VoiceSettings = {
   inputDeviceId: string;
   outputDeviceId: string;
   captureMode: "push-to-talk";
-  sttProviderId: "gnosis-asr";
+  sttProviderId: "network-asr";
   sttModel: string;
   ttsProviderId: "system-tts";
   ttsVoice: string;
@@ -352,7 +352,7 @@ function isModelProviderSettings(value: unknown): value is ModelProviderSettings
       (value.credentialStatus === "not-configured" || value.credentialStatus === "configured")
     );
   }
-  if (value.kind === "gnosis") {
+  if (value.kind === "dynamic-lan") {
     return value.location === "local" && typeof value.host === "string";
   }
   return (
@@ -404,7 +404,7 @@ export function isVoiceSettings(value: Record<string, unknown>): value is VoiceS
     typeof value.inputDeviceId === "string" &&
     typeof value.outputDeviceId === "string" &&
     value.captureMode === "push-to-talk" &&
-    value.sttProviderId === "gnosis-asr" &&
+    value.sttProviderId === "network-asr" &&
     typeof value.sttModel === "string" &&
     value.ttsProviderId === "system-tts" &&
     typeof value.ttsVoice === "string" &&

@@ -5,7 +5,7 @@ use crate::{
     database_error, now_iso, provider_environment_suffix, providers, situation, voice,
     CodexAgentRuntimeSettings, ModelProviderSettings, ModelProvidersSettings, RoutingSettings,
     SaveSettingsDocumentInput, SecurityRuntimeSettings, SettingsDocument, VoiceRuntimeSettings,
-    GNOSIS_HOST, GNOSIS_PROVIDER_ID,
+    DEFAULT_DYNAMIC_LAN_HOST, DYNAMIC_LAN_PROVIDER_ID,
 };
 
 pub(crate) fn load_codex_settings(
@@ -96,12 +96,12 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             9,
             json!({
                 "providers": [{
-                    "kind": "gnosis",
-                    "id": GNOSIS_PROVIDER_ID,
-                    "enabled": true,
-                    "label": "gnosis · Dynamic LLM",
+                    "kind": "dynamic-lan",
+                    "id": DYNAMIC_LAN_PROVIDER_ID,
+                    "enabled": false,
+                    "label": "Dynamic LAN LLM",
                     "location": "local",
-                    "host": GNOSIS_HOST
+                    "host": DEFAULT_DYNAMIC_LAN_HOST
                 }],
                 "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT
             }),
@@ -129,7 +129,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             9,
             json!({
                 "conversationRespond": {
-                    "primaryProviderId": GNOSIS_PROVIDER_ID,
+                    "primaryProviderId": DYNAMIC_LAN_PROVIDER_ID,
                     "fallbackProviderIds": [],
                     "timeoutMs": 30000
                 },
@@ -150,7 +150,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
                 "inputDeviceId": "default",
                 "outputDeviceId": "default",
                 "captureMode": "push-to-talk",
-                    "sttProviderId": "gnosis-asr",
+                    "sttProviderId": "network-asr",
                 "sttModel": "qwen3-asr-1.7b",
                     "ttsProviderId": "system-tts",
                 "ttsVoice": "default",
@@ -277,24 +277,16 @@ pub(crate) fn validate_settings_batch(
     {
         return Err("The primary conversation provider must be enabled".to_string());
     }
-    let primary_is_gnosis = providers.providers.iter().any(|provider| {
+    let primary_is_dynamic_lan = providers.providers.iter().any(|provider| {
         provider.id() == routing.conversation_respond.primary_provider_id
-            && matches!(provider, ModelProviderSettings::Gnosis(_))
+            && matches!(provider, ModelProviderSettings::DynamicLan(_))
     });
-    if primary_is_gnosis
-        && !routing
-            .conversation_respond
-            .fallback_provider_ids
-            .is_empty()
-    {
-        return Err("gnosis routes must not configure fallback providers".to_string());
-    }
-    if primary_is_gnosis
-        && routing.conversation_respond.timeout_ms > providers::gnosis::MAX_REQUEST_TIMEOUT_MS
+    if primary_is_dynamic_lan
+        && routing.conversation_respond.timeout_ms > providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
     {
         return Err(format!(
-            "gnosis conversation timeout must not exceed {} ms",
-            providers::gnosis::MAX_REQUEST_TIMEOUT_MS
+            "dynamic LAN conversation timeout must not exceed {} ms",
+            providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
         ));
     }
     let mut route_ids = std::collections::HashSet::new();
@@ -333,7 +325,7 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
     let mut ids = std::collections::HashSet::new();
     let mut credential_suffixes = std::collections::HashSet::new();
     let mut enabled_larm_count = 0;
-    let mut enabled_gnosis_count = 0;
+    let mut enabled_dynamic_lan_count = 0;
     for provider in &settings.providers {
         let provider_id = provider.id();
         if provider_id.is_empty()
@@ -453,15 +445,15 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                     ));
                 }
             }
-            ModelProviderSettings::Gnosis(provider) => {
+            ModelProviderSettings::DynamicLan(provider) => {
                 if provider.enabled {
-                    enabled_gnosis_count += 1;
+                    enabled_dynamic_lan_count += 1;
                 }
                 if provider.location != "local"
-                    || providers::gnosis::control_base_url(&provider.host).is_err()
+                    || providers::dynamic_lan::control_base_url(&provider.host).is_err()
                 {
                     return Err(format!(
-                        "gnosis provider requires only a private-network host: {provider_id}"
+                        "dynamic LAN provider requires only a private-network host: {provider_id}"
                     ));
                 }
             }
@@ -470,8 +462,8 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
     if enabled_larm_count > 1 {
         return Err("Only one LARM provider may be enabled".to_string());
     }
-    if enabled_gnosis_count > 1 {
-        return Err("Only one gnosis provider may be enabled".to_string());
+    if enabled_dynamic_lan_count > 1 {
+        return Err("Only one dynamic LAN provider may be enabled".to_string());
     }
     Ok(())
 }
@@ -537,8 +529,8 @@ pub(crate) fn validate_voice_settings(settings: &VoiceRuntimeSettings) -> Result
         || settings.input_device_id.len() > 300
         || settings.output_device_id.len() > 300
         || settings.capture_mode != "push-to-talk"
-        || settings.stt_provider_id != voice::gnosis_asr::PROVIDER_ID
-        || settings.stt_model != voice::gnosis_asr::MODEL_ID
+        || settings.stt_provider_id != voice::network_asr::PROVIDER_ID
+        || settings.stt_model != voice::network_asr::MODEL_ID
         || settings.tts_provider_id != "system-tts"
         || settings.tts_voice.trim().is_empty()
         || settings.tts_voice.chars().count() > 160
@@ -635,11 +627,11 @@ pub(crate) fn settings_document_from_row(
 mod tests {
     use super::*;
     use crate::test_support::{
-        default_settings_input, direct_provider, gnosis_provider, larm_provider, provider,
+        default_settings_input, direct_provider, dynamic_lan_provider, larm_provider, provider,
     };
     use crate::{
         initialize_database, providers, voice, CodexAgentRuntimeSettings, ModelProviderSettings,
-        ModelProvidersSettings, OpenAiCompatibleProviderSettings, GNOSIS_PROVIDER_ID,
+        ModelProvidersSettings, OpenAiCompatibleProviderSettings, DYNAMIC_LAN_PROVIDER_ID,
     };
     use rusqlite::Connection;
     use serde_json::{json, Value};
@@ -688,11 +680,11 @@ mod tests {
             reasoning_effort: "mid".to_string(),
         })
         .is_err());
-        let mut gnosis = direct_provider(GNOSIS_PROVIDER_ID, "local");
-        gnosis.endpoint = "http://192.168.0.65:8083/v1".to_string();
-        gnosis.model = "ornith15-35b".to_string();
+        let mut dynamic_lan = direct_provider(DYNAMIC_LAN_PROVIDER_ID, "local");
+        dynamic_lan.endpoint = "http://10.0.0.42:8083/v1".to_string();
+        dynamic_lan.model = "ornith15-35b".to_string();
         assert!(validate_model_providers(&ModelProvidersSettings {
-            providers: vec![ModelProviderSettings::OpenAiCompatible(gnosis)],
+            providers: vec![ModelProviderSettings::OpenAiCompatible(dynamic_lan)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
         })
         .is_ok());
@@ -758,7 +750,7 @@ mod tests {
             .expect("provider settings")
             .value_json = json!({
             "providers": [
-                gnosis_provider("gnosis-primary"),
+                dynamic_lan_provider("dynamic_lan-primary"),
                 provider("local-fallback", "local")
             ],
             "reasoningEffort": "medium"
@@ -768,18 +760,18 @@ mod tests {
             .position(|document| document.namespace == "routing.tasks")
             .expect("routing settings");
         documents[routing_index].value_json["conversationRespond"]["primaryProviderId"] =
-            json!("gnosis-primary");
+            json!("dynamic_lan-primary");
         documents[routing_index].value_json["conversationRespond"]["fallbackProviderIds"] =
             json!(["local-fallback"]);
-        assert!(validate_settings_batch(&documents).is_err());
+        assert!(validate_settings_batch(&documents).is_ok());
 
         documents[routing_index].value_json["conversationRespond"]["fallbackProviderIds"] =
             json!([]);
         documents[routing_index].value_json["conversationRespond"]["timeoutMs"] =
-            json!(providers::gnosis::MAX_REQUEST_TIMEOUT_MS + 1);
+            json!(providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS + 1);
         assert!(validate_settings_batch(&documents).is_err());
         documents[routing_index].value_json["conversationRespond"]["timeoutMs"] =
-            json!(providers::gnosis::MAX_REQUEST_TIMEOUT_MS);
+            json!(providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS);
         assert!(validate_settings_batch(&documents).is_ok());
     }
 
@@ -884,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn voice_settings_require_the_fixed_gnosis_asr_contract() {
+    fn voice_settings_require_the_fixed_network_asr_contract() {
         let mut documents = default_settings_input();
         let voice = documents
             .iter_mut()
@@ -900,8 +892,8 @@ mod tests {
             .iter_mut()
             .find(|document| document.namespace == "voice.runtime")
             .expect("voice settings");
-        voice.value_json["sttProviderId"] = json!(voice::gnosis_asr::PROVIDER_ID);
-        voice.value_json["sttModel"] = json!(voice::gnosis_asr::MODEL_ID);
-        validate_settings_document(voice).expect("gnosis ASR contract is accepted");
+        voice.value_json["sttProviderId"] = json!(voice::network_asr::PROVIDER_ID);
+        voice.value_json["sttModel"] = json!(voice::network_asr::MODEL_ID);
+        validate_settings_document(voice).expect("LAN ASR contract is accepted");
     }
 }

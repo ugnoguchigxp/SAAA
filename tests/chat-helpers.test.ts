@@ -29,8 +29,8 @@ describe("chat helpers", () => {
     expect(Array.from(merged)).toEqual([1, 2, 3]);
   });
 
-  test("findPrimaryRoute reads the conversation route and falls back to gnosis", () => {
-    expect(findPrimaryRoute([])).toBe("gnosis-qwen");
+  test("findPrimaryRoute reads the conversation route and falls back to dynamic_lan", () => {
+    expect(findPrimaryRoute([])).toBe("lan-llm-dynamic");
     const documents: SettingsDocument[] = [{
       namespace: "routing.tasks",
       key: "default",

@@ -27,8 +27,8 @@
       body for its session.
     </li>
     <li>
-      Chat and Meeting encode WAV data in memory and send it only to the fixed private-network
-      gnosis ASR adapter. No temporary raw-audio file is created.
+      Chat and Meeting encode WAV data in memory and send it only to the fixed private-network LLM
+      server ASR adapter. No temporary raw-audio file is created.
     </li>
     <li>
       Frontend queue tests cover two-item backpressure and PCM frame boundaries. Rust covers
@@ -61,8 +61,8 @@
   </h2>
   <ul>
     <li>
-      Test the real gnosis ASR node with microphone permission grant, denial, and revocation, and
-      confirm that a two-second preview is visibly replaced by the final transcript.
+      Test the real LLM server ASR node with microphone permission grant, denial, and revocation,
+      and confirm that a two-second preview is visibly replaced by the final transcript.
     </li>
     <li>
       Run 30-minute and 2-hour resource soak tests; verify pause/stop/unmount release the microphone
@@ -75,8 +75,8 @@
     </li>
   </ul>
   <p>
-    Known limitation: gnosis ASR is a non-streaming endpoint. SAAA obtains a bounded interim result
-    through a short preview request and finalizes fixed five-second Meeting segments. Segment
+    Known limitation: LLM server ASR is a non-streaming endpoint. SAAA obtains a bounded interim
+    result through a short preview request and finalizes fixed five-second Meeting segments. Segment
     boundaries can omit a word; no LLM correction, speaker attribution, cloud fallback,
     notification, or automatic action is performed.
   </p>

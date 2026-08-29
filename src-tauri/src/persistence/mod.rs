@@ -1,3 +1,4 @@
+pub(crate) mod app_commands;
 pub(crate) mod conversations;
 pub(crate) mod migrate;
 pub(crate) mod runs;

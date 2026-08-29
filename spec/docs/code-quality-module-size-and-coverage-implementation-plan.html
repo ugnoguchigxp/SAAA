@@ -40,7 +40,7 @@ Coverage
   └─ line-coverage % is a report, not a ship gate</code></pre>
   <ol>
     <li>
-      分割はmove-firstである。公開IPC、SQLite schema、Settings JSON、LARM/Gnosis契約、イベント
+      分割はmove-firstである。公開IPC、SQLite schema、Settings JSON、LARM/LLM server契約、イベント
       camelCaseを変えない。
     </li>
     <li>
@@ -111,7 +111,7 @@ Coverage
         </td>
       </tr>
       <tr>
-        <td><code>src-tauri/src/providers/gnosis.rs</code></td>
+        <td><code>src-tauri/src/providers/dynamic_lan.rs</code></td>
         <td>1,735（本番 約1,229）</td>
         <td>9（ignore 1）</td>
         <td>Wave 2。state検証とHTTPを分ける</td>
@@ -223,8 +223,8 @@ Coverage
           fixture、memory FTS（作業ツリー）
         </td>
         <td>
-          <code>App.tsx</code>配線、TTS再生/割込、Whisper経路（現行はgnosis
-          ASRへ移行済み）、Settings DTOの生成同期
+          <code>App.tsx</code>配線、TTS再生/割込、Whisper経路（現行はLLM
+          server ASRへ移行済み）、Settings DTOの生成同期
         </td>
       </tr>
       <tr>
@@ -382,7 +382,7 @@ Coverage
     openai_compatible.rs         SSE drain/project, stream, probe, URLs
     routing.rs                   gates, fallback policy, route ids
     session_store.rs             provider_sessions SQLite + LARM marks
-    gnosis.rs                    (既存、Wave 2まで分割しない)
+    dynamic_lan.rs                    (既存、Wave 2まで分割しない)
     larm/                        (既存)
   runtime/
     turns.rs                     execute_turn, conversation turn, prepare/finish
@@ -567,7 +567,9 @@ Coverage
       </tr>
       <tr>
         <td>4</td>
-        <td>Gnosis <code>validate_state_shape</code> / URL local判定 / retry-after</td>
+        <td>
+          LLM server <code>validate_state_shape</code> / URL local判定 / retry-after
+        </td>
         <td>既存mod testsを拡充。live canaryは触らない</td>
         <td>CQ-11</td>
       </tr>
@@ -750,10 +752,10 @@ Coverage
       </tr>
       <tr>
         <td>CQ-11</td>
-        <td>Wave 2: Gnosis / LARM client純関数テスト拡充。続けて予算超過ファイルの分割</td>
+        <td>Wave 2: LLM server / LARM client純関数テスト拡充。続けて予算超過ファイルの分割</td>
         <td>CQ-06、対象featureのfreeze</td>
         <td>
-          <code>gnosis.rs</code
+          <code>dynamic_lan.rs</code
           >と<code>larm/client.rs</code>の本番がHard以下。
           <code>recall.rs</code>はMVP 3 Complete後
         </td>

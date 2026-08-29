@@ -8,16 +8,16 @@
     <dt>Updated</dt>
     <dd><time>2026-08-29</time></dd>
     <dt>Control API</dt>
-    <dd><code>http://192.168.0.65:9810</code></dd>
+    <dd><code>http://&lt;private-ip&gt;:9810</code></dd>
     <dt>Agent profile</dt>
     <dd><code>deep-reasoning-35b</code></dd>
     <dt>Audience</dt>
     <dd><code>saaa-desktop</code></dd>
   </dl>
   <p>
-    本文書は、Gnosis側のProvider配備依頼ではなく、SAAA adapterが従うREST接続contractと
-    SAAA側回答を記録する。Gnosis側の常駐化、firewall、secret生成はGnosis側計画の責務とし、
-    SAAAからGnosisへSSH、SFTP、SCP、SSH tunnel、port forwardingを行わない。
+    本文書は、LLM server側のProvider配備依頼ではなく、SAAA adapterが従うREST接続contractと
+    SAAA側回答を記録する。LLM server側の常駐化、firewall、secret生成はLLM server側計画の責務とし、
+    SAAAからLLM serverへSSH、SFTP、SCP、SSH tunnel、port forwardingを行わない。
   </p>
 
   <h2 id="response">2. SAAA側回答</h2>
@@ -48,14 +48,14 @@
       baseline）。固定audienceの最終hardeningは現在のreview worktreeに含む。
     </dd>
     <dt>LAN canary window</dt>
-    <dd>Gnosis側のREST Gateway準備完了通知とtoken注入後、SAAA Macから直ちに実行可能。</dd>
+    <dd>LLM server側のREST Gateway準備完了通知とtoken注入後、SAAA Macから直ちに実行可能。</dd>
     <dt>REST-only and no SSH</dt>
     <dd>Acknowledged</dd>
     <dt>Dynamic claim configuration</dt>
     <dd>Acknowledged</dd>
     <dt>Open questions</dt>
     <dd>
-      Gnosis側の準備完了通知、config revision、SAAA用API tokenの承認済みsecret channelでの受領。
+      LLM server側の準備完了通知、config revision、SAAA用API tokenの承認済みsecret channelでの受領。
     </dd>
   </dl>
 
@@ -83,7 +83,7 @@
     </li>
     <li>成功、失敗、cancelの全経路で独立したbounded DELETEを実行し、204を成功とする。</li>
     <li>
-      401、409、410、429、503を明示的失敗として扱う。Gnosis routeは設定保存時と実行時の両方で
+      401、409、410、429、503を明示的失敗として扱う。LLM server routeは設定保存時と実行時の両方で
       別Providerへのfallbackを禁止する。
     </li>
     <li>
@@ -116,7 +116,7 @@
     <dd><time>2026-08-29T20:06:00+09:00</time></dd>
     <dt>Observed result</dt>
     <dd>
-      <code>GET http://192.168.0.65:9810/v1/agent-profiles</code>への未認証HTTP requestは
+      <code>GET http://&lt;private-ip&gt;:9810/v1/agent-profiles</code>への未認証HTTP requestは
       約0.14秒で<code>401</code>。SAAA process
       environmentの<code>LARM_API_TOKEN</code>は未設定。
     </dd>
@@ -125,7 +125,7 @@
     <li>未認証control requestが401になる。</li>
     <li>認証付きcreate、poll、claim、semantic health、SSE inference、DELETE releaseが完了する。</li>
     <li>OpenAI clientがclaim responseだけから構成される。</li>
-    <li>Gnosis側でrelease後にConnectionとworkerが残っていないことを照合する。</li>
+    <li>LLM server側でrelease後にConnectionとworkerが残っていないことを照合する。</li>
   </ol>
   <p>
     証跡はtimestamp、release commit、config revision、HTTP status、SSE完了、release結果だけを含め、

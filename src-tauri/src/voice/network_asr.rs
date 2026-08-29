@@ -2,11 +2,12 @@ use crate::{bounded_text, RunCancellation};
 use futures_util::StreamExt;
 use reqwest::{multipart, Client, Response};
 use serde::Deserialize;
-use std::{sync::Arc, time::Duration};
+use std::{env, sync::Arc, time::Duration};
+use url::{Host, Url};
 
-pub const PROVIDER_ID: &str = "gnosis-asr";
-pub const BASE_URL: &str = "http://192.168.0.65:8081";
+pub const PROVIDER_ID: &str = "network-asr";
 pub const MODEL_ID: &str = "qwen3-asr-1.7b";
+const BASE_URL_ENV: &str = "SAAA_ASR_BASE_URL";
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 const MAX_TRANSCRIPT_CHARS: usize = 16_000;
@@ -24,7 +25,8 @@ struct TranscriptionResponse {
 }
 
 pub async fn probe() -> Result<(), String> {
-    probe_at(BASE_URL).await
+    let base_url = configured_base_url()?;
+    probe_at(&base_url).await
 }
 
 async fn probe_at(base_url: &str) -> Result<(), String> {
@@ -32,20 +34,20 @@ async fn probe_at(base_url: &str) -> Result<(), String> {
         .get(format!("{}/health", base_url.trim_end_matches('/')))
         .send()
         .await
-        .map_err(|error| format!("Could not reach gnosis ASR: {error}"))?;
+        .map_err(|error| format!("Could not reach LAN ASR: {error}"))?;
     let status = response.status();
     let cancellation = RunCancellation::default();
     let body = bounded_response(response, &cancellation).await?;
     if !status.is_success() {
         return Err(format!(
-            "gnosis ASR health check returned HTTP {}",
+            "LAN ASR health check returned HTTP {}",
             status.as_u16()
         ));
     }
     let health: HealthResponse = serde_json::from_slice(&body)
-        .map_err(|_| "gnosis ASR returned an invalid health response".to_string())?;
+        .map_err(|_| "LAN ASR returned an invalid health response".to_string())?;
     if health.status != "ok" || health.model != MODEL_ID {
-        return Err("gnosis ASR is not ready with the configured model".to_string());
+        return Err("LAN ASR is not ready with the configured model".to_string());
     }
     Ok(())
 }
@@ -56,7 +58,8 @@ pub async fn transcribe(
     model: &str,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
-    transcribe_at(BASE_URL, samples, sample_rate, model, cancellation).await
+    let base_url = configured_base_url()?;
+    transcribe_at(&base_url, samples, sample_rate, model, cancellation).await
 }
 
 async fn transcribe_at(
@@ -67,7 +70,7 @@ async fn transcribe_at(
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
     if model != MODEL_ID {
-        return Err(format!("Unsupported gnosis ASR model: {model}"));
+        return Err(format!("Unsupported LAN ASR model: {model}"));
     }
     let wav = encode_wav(samples, sample_rate)?;
     let audio = multipart::Part::bytes(wav)
@@ -88,18 +91,18 @@ async fn transcribe_at(
         .send();
     let response = tokio::select! {
         _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
-        response = request => response.map_err(|error| format!("Could not reach gnosis ASR: {error}"))?,
+        response = request => response.map_err(|error| format!("Could not reach LAN ASR: {error}"))?,
     };
     let status = response.status();
     let body = bounded_response(response, &cancellation).await?;
     if !status.is_success() {
-        return Err(format!("gnosis ASR returned HTTP {}", status.as_u16()));
+        return Err(format!("LAN ASR returned HTTP {}", status.as_u16()));
     }
     let result: TranscriptionResponse = serde_json::from_slice(&body)
-        .map_err(|_| "gnosis ASR returned an invalid transcription response".to_string())?;
+        .map_err(|_| "LAN ASR returned an invalid transcription response".to_string())?;
     let text = result.text.trim();
     if text.is_empty() {
-        return Err("gnosis ASR completed without a transcript".to_string());
+        return Err("LAN ASR completed without a transcript".to_string());
     }
     Ok((
         bounded_text(text, MAX_TRANSCRIPT_CHARS),
@@ -114,7 +117,41 @@ fn client() -> Result<Client, String> {
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
         .build()
-        .map_err(|error| format!("Could not initialize gnosis ASR client: {error}"))
+        .map_err(|error| format!("Could not initialize LAN ASR client: {error}"))
+}
+
+fn configured_base_url() -> Result<String, String> {
+    let value =
+        env::var(BASE_URL_ENV).map_err(|_| format!("{BASE_URL_ENV} is required to use LAN ASR"))?;
+    validate_base_url(&value)
+}
+
+fn validate_base_url(value: &str) -> Result<String, String> {
+    let url = Url::parse(value.trim())
+        .map_err(|_| format!("{BASE_URL_ENV} must be a valid private-network HTTP origin"))?;
+    let private_host = match url.host() {
+        Some(Host::Ipv4(address)) => {
+            address.is_loopback() || address.is_private() || address.is_link_local()
+        }
+        Some(Host::Ipv6(address)) => {
+            address.is_loopback() || address.is_unique_local() || address.is_unicast_link_local()
+        }
+        Some(Host::Domain(domain)) => !domain.contains('.') || domain.ends_with(".local"),
+        None => false,
+    };
+    if url.scheme() != "http"
+        || !private_host
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+    {
+        return Err(format!(
+            "{BASE_URL_ENV} must be a private-network HTTP origin without credentials, path, query, or fragment"
+        ));
+    }
+    Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
 async fn bounded_response(
@@ -125,7 +162,7 @@ async fn bounded_response(
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
     {
-        return Err("gnosis ASR response exceeded the size limit".to_string());
+        return Err("LAN ASR response exceeded the size limit".to_string());
     }
     let mut stream = response.bytes_stream();
     let mut body = Vec::new();
@@ -137,10 +174,9 @@ async fn bounded_response(
         let Some(chunk) = chunk else {
             break;
         };
-        let chunk =
-            chunk.map_err(|error| format!("Could not read gnosis ASR response: {error}"))?;
+        let chunk = chunk.map_err(|error| format!("Could not read LAN ASR response: {error}"))?;
         if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err("gnosis ASR response exceeded the size limit".to_string());
+            return Err("LAN ASR response exceeded the size limit".to_string());
         }
         body.extend_from_slice(&chunk);
     }
@@ -210,6 +246,23 @@ mod tests {
     };
 
     #[test]
+    fn asr_base_url_accepts_only_private_http_origins() {
+        assert_eq!(
+            validate_base_url("http://10.0.0.42:8081/").expect("private origin is accepted"),
+            "http://10.0.0.42:8081"
+        );
+        assert!(validate_base_url("http://llm-server.local:8081").is_ok());
+        for invalid in [
+            "https://10.0.0.42:8081",
+            "http://example.com:8081",
+            "http://user:secret@10.0.0.42:8081",
+            "http://10.0.0.42:8081/v1",
+        ] {
+            assert!(validate_base_url(invalid).is_err(), "accepted {invalid}");
+        }
+    }
+
+    #[test]
     fn wav_encoding_is_mono_pcm_at_sixteen_kilohertz() {
         let wav = encode_wav(&[0.0; 8_000], 8_000).expect("wav encodes");
         assert_eq!(&wav[0..4], b"RIFF");
@@ -262,7 +315,7 @@ mod tests {
             assert!(request_text.contains("name=\"language\""));
             assert!(request_text.contains("audio/wav"));
 
-            let body = r#"{"text":"gnosis transcript","language":"Japanese"}"#;
+            let body = r#"{"text":"dynamic_lan transcript","language":"Japanese"}"#;
             write!(
                 socket,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -282,7 +335,7 @@ mod tests {
         .await
         .expect("transcription succeeds");
         server.join().expect("fixture joins");
-        assert_eq!(result.0, "gnosis transcript");
+        assert_eq!(result.0, "dynamic_lan transcript");
         assert_eq!(result.1.as_deref(), Some("Japanese"));
     }
 

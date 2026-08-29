@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     meeting, memory, persistence::settings::default_settings_documents, providers, situation,
-    voice, AppState, GnosisProviderSettings, LarmProviderSettings, ModelProviderSettings,
+    voice, AppState, DynamicLanProviderSettings, LarmProviderSettings, ModelProviderSettings,
     OpenAiCompatibleProviderSettings, SaveSettingsDocumentInput,
 };
 
@@ -69,13 +69,13 @@ pub(crate) fn larm_provider(id: &str) -> ModelProviderSettings {
     })
 }
 
-pub(crate) fn gnosis_provider(id: &str) -> ModelProviderSettings {
-    ModelProviderSettings::Gnosis(GnosisProviderSettings {
+pub(crate) fn dynamic_lan_provider(id: &str) -> ModelProviderSettings {
+    ModelProviderSettings::DynamicLan(DynamicLanProviderSettings {
         id: id.to_string(),
         enabled: true,
         label: id.to_string(),
         location: "local".to_string(),
-        host: "192.168.0.65".to_string(),
+        host: "10.0.0.42".to_string(),
     })
 }
 

@@ -1,0 +1,1 @@
+SAAA transcribes voice input before invoking you and passes the finalized transcript as the user message text. Treat that text as the user's input; do not claim that speech recognition is unavailable or required.

@@ -1737,8 +1737,8 @@ Next MVPの明示開始Meeting Modeへ
   <p>
     MVP 2.6のoffline実装を、契約固定、隔離canary、30分canary、2時間soak、rollback、runbookを備えた
     production-readyな状態へ進める。AI server停止中にoperator-only runner、test-only live suite、
-    evidence schema、redaction boundary、operator
-    runbookを実装し、G1とG2通過後にだけgnosisへ接続する。
+    evidence schema、redaction boundary、operator runbookを実装し、G1とG2通過後にだけLLM
+    serverへ接続する。
   </p>
   <p>
     G3通過まではLARM feature flagを既定OFFに保ち、通常profileのprimary Providerを変更しない。
@@ -1880,14 +1880,14 @@ health()
     <p>
       <strong
         >MVP 2.xの実装計画はArchiveし、未完了のmanual validationとLARMの契約固定、隔離canary、soak、
-        rollback、runbook rehearsalだけをactive
-        evidenceとして管理する。G1とG2通過後にだけgnosisへ接続する。</strong
+        rollback、runbook rehearsalだけをactive evidenceとして管理する。G1とG2通過後にだけLLM
+        serverへ接続する。</strong
       >
     </p>
   </blockquote>
   <p>
     MVP 2と2.5のSAAA-side自動実装と検証は完了しているが、Input Activity、Agent Run、real microphone
-    / gnosis ASR preview/final、Meeting lifecycleのmanual evidenceは未完了であり、release
+    / LLM server ASR preview/final、Meeting lifecycleのmanual evidenceは未完了であり、release
     evidenceをAcceptedへ変更しない。MVP 2.6のoffline実装とMVP 2.6.1のreadiness tooling、evidence
     schema、operator runbookは実装済みであり、 implementation
     planはArchiveした。一方、LARMのcontract差異、live rehearsal、production

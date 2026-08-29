@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-29T11:05:18.470Z",
+  "generatedAt": "2026-08-29T11:59:44.439Z",
   "files": {
     "scripts/codex-sdk-smoke.ts": {
       "total": 21,
@@ -22,36 +22,48 @@
       "production": 907
     },
     "scripts/render-system-contexts.ts": {
-      "total": 31,
-      "production": 31
+      "total": 40,
+      "production": 40
     },
     "scripts/test-coverage.ts": {
       "total": 47,
       "production": 47
+    },
+    "src-tauri/src/app_paths.rs": {
+      "total": 95,
+      "production": 95
     },
     "src-tauri/src/backup.rs": {
       "total": 84,
       "production": 29
     },
     "src-tauri/src/diagnostics.rs": {
-      "total": 96,
-      "production": 61
+      "total": 187,
+      "production": 152
     },
     "src-tauri/src/ipc_contract.rs": {
       "total": 121,
       "production": 121
     },
     "src-tauri/src/lib.rs": {
-      "total": 6454,
-      "production": 3858
+      "total": 3362,
+      "production": 752
     },
     "src-tauri/src/main.rs": {
       "total": 7,
       "production": 7
     },
+    "src-tauri/src/meeting/commands.rs": {
+      "total": 261,
+      "production": 261
+    },
     "src-tauri/src/meeting/mod.rs": {
-      "total": 1231,
-      "production": 833
+      "total": 1082,
+      "production": 684
+    },
+    "src-tauri/src/meeting/types.rs": {
+      "total": 153,
+      "production": 153
     },
     "src-tauri/src/memory/context_still_recall.rs": {
       "total": 1284,
@@ -85,41 +97,65 @@
       "total": 779,
       "production": 536
     },
+    "src-tauri/src/models.rs": {
+      "total": 391,
+      "production": 391
+    },
+    "src-tauri/src/persistence/app_commands.rs": {
+      "total": 181,
+      "production": 181
+    },
     "src-tauri/src/persistence/conversations.rs": {
       "total": 253,
       "production": 144
     },
     "src-tauri/src/persistence/migrate.rs": {
-      "total": 1507,
-      "production": 598
+      "total": 1595,
+      "production": 668
     },
     "src-tauri/src/persistence/mod.rs": {
-      "total": 18,
-      "production": 18
+      "total": 19,
+      "production": 19
     },
     "src-tauri/src/persistence/runs.rs": {
       "total": 148,
       "production": 45
     },
     "src-tauri/src/persistence/schema.rs": {
-      "total": 192,
-      "production": 192
+      "total": 194,
+      "production": 194
     },
     "src-tauri/src/persistence/settings.rs": {
-      "total": 908,
-      "production": 633
+      "total": 916,
+      "production": 641
     },
     "src-tauri/src/process_guard.rs": {
       "total": 35,
       "production": 35
     },
-    "src-tauri/src/providers/gnosis.rs": {
-      "total": 2175,
-      "production": 1361
+    "src-tauri/src/providers/dynamic_lan/http.rs": {
+      "total": 353,
+      "production": 353
     },
-    "src-tauri/src/providers/larm/client.rs": {
-      "total": 2608,
-      "production": 1559
+    "src-tauri/src/providers/dynamic_lan/mod.rs": {
+      "total": 1438,
+      "production": 621
+    },
+    "src-tauri/src/providers/dynamic_lan/validate.rs": {
+      "total": 431,
+      "production": 431
+    },
+    "src-tauri/src/providers/larm/client/chat.rs": {
+      "total": 233,
+      "production": 233
+    },
+    "src-tauri/src/providers/larm/client/decode.rs": {
+      "total": 604,
+      "production": 604
+    },
+    "src-tauri/src/providers/larm/client/mod.rs": {
+      "total": 1824,
+      "production": 773
     },
     "src-tauri/src/providers/larm/contracts.rs": {
       "total": 259,
@@ -138,20 +174,44 @@
       "production": 630
     },
     "src-tauri/src/providers/mod.rs": {
-      "total": 17,
-      "production": 17
+      "total": 19,
+      "production": 19
     },
     "src-tauri/src/providers/openai_compatible.rs": {
       "total": 173,
       "production": 119
     },
+    "src-tauri/src/providers/probe.rs": {
+      "total": 62,
+      "production": 62
+    },
     "src-tauri/src/providers/routing.rs": {
-      "total": 140,
-      "production": 52
+      "total": 130,
+      "production": 42
     },
     "src-tauri/src/providers/session_store.rs": {
       "total": 314,
       "production": 314
+    },
+    "src-tauri/src/providers/stream/attempt.rs": {
+      "total": 278,
+      "production": 278
+    },
+    "src-tauri/src/providers/stream/dispatch.rs": {
+      "total": 140,
+      "production": 140
+    },
+    "src-tauri/src/providers/stream/dynamic_lan.rs": {
+      "total": 183,
+      "production": 183
+    },
+    "src-tauri/src/providers/stream/larm.rs": {
+      "total": 282,
+      "production": 282
+    },
+    "src-tauri/src/providers/stream/mod.rs": {
+      "total": 445,
+      "production": 445
     },
     "src-tauri/src/redact.rs": {
       "total": 57,
@@ -165,25 +225,49 @@
       "total": 334,
       "production": 218
     },
+    "src-tauri/src/runtime/codex_cli.rs": {
+      "total": 438,
+      "production": 438
+    },
+    "src-tauri/src/runtime/codex_persist.rs": {
+      "total": 217,
+      "production": 217
+    },
+    "src-tauri/src/runtime/codex_process.rs": {
+      "total": 636,
+      "production": 636
+    },
+    "src-tauri/src/runtime/codex_supervise.rs": {
+      "total": 202,
+      "production": 202
+    },
     "src-tauri/src/runtime/codex_turn.rs": {
-      "total": 1152,
-      "production": 1152
+      "total": 133,
+      "production": 133
     },
     "src-tauri/src/runtime/contracts.rs": {
       "total": 153,
       "production": 153
     },
     "src-tauri/src/runtime/mod.rs": {
-      "total": 7,
-      "production": 7
+      "total": 13,
+      "production": 13
+    },
+    "src-tauri/src/runtime/run_support.rs": {
+      "total": 104,
+      "production": 104
     },
     "src-tauri/src/runtime/supervisor.rs": {
       "total": 442,
       "production": 225
     },
+    "src-tauri/src/runtime/turn_types.rs": {
+      "total": 62,
+      "production": 62
+    },
     "src-tauri/src/runtime/turns.rs": {
-      "total": 705,
-      "production": 668
+      "total": 795,
+      "production": 714
     },
     "src-tauri/src/situation/calibration.rs": {
       "total": 674,
@@ -198,8 +282,12 @@
       "production": 490
     },
     "src-tauri/src/situation/mod.rs": {
-      "total": 1378,
-      "production": 855
+      "total": 1113,
+      "production": 590
+    },
+    "src-tauri/src/situation/monitor.rs": {
+      "total": 29,
+      "production": 29
     },
     "src-tauri/src/situation/platform/macos.rs": {
       "total": 133,
@@ -217,21 +305,33 @@
       "total": 816,
       "production": 591
     },
+    "src-tauri/src/situation/tick.rs": {
+      "total": 272,
+      "production": 272
+    },
     "src-tauri/src/test_support.rs": {
       "total": 95,
       "production": 95
     },
-    "src-tauri/src/voice/gnosis_asr.rs": {
-      "total": 324,
-      "production": 202
+    "src-tauri/src/util.rs": {
+      "total": 37,
+      "production": 37
     },
     "src-tauri/src/voice/mod.rs": {
-      "total": 5,
-      "production": 5
+      "total": 6,
+      "production": 6
+    },
+    "src-tauri/src/voice/network_asr.rs": {
+      "total": 356,
+      "production": 234
     },
     "src-tauri/src/voice/profile.rs": {
       "total": 1242,
       "production": 1139
+    },
+    "src-tauri/src/voice/session.rs": {
+      "total": 347,
+      "production": 347
     },
     "src-tauri/src/voice/speaker.rs": {
       "total": 303,
@@ -278,8 +378,8 @@
       "production": 499
     },
     "src/features/settings/SettingsPage.tsx": {
-      "total": 368,
-      "production": 368
+      "total": 382,
+      "production": 382
     },
     "src/features/settings/VoiceProfileCard.tsx": {
       "total": 235,
@@ -330,8 +430,8 @@
       "production": 200
     },
     "src/lib/schemas.ts": {
-      "total": 290,
-      "production": 290
+      "total": 287,
+      "production": 287
     },
     "src/lib/streamingSpeech.ts": {
       "total": 154,
@@ -374,12 +474,12 @@
       "production": 83
     },
     "tests/mvp-2-2.5-readiness.test.ts": {
-      "total": 287,
-      "production": 287
+      "total": 291,
+      "production": 291
     },
     "tests/mvp-ui-contracts.test.ts": {
-      "total": 90,
-      "production": 90
+      "total": 94,
+      "production": 94
     },
     "tests/runtime-supervisor-contracts.test.ts": {
       "total": 30,
@@ -402,8 +502,8 @@
       "production": 68
     },
     "tests/system-context.test.ts": {
-      "total": 29,
-      "production": 29
+      "total": 59,
+      "production": 59
     },
     "tests/voice-activity.test.ts": {
       "total": 38,
