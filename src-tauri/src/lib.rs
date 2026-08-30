@@ -22,6 +22,8 @@ mod models;
 mod persistence;
 mod process_guard;
 mod providers;
+#[cfg(feature = "quality-eval-harness")]
+pub mod quality_eval;
 mod redact;
 mod runtime;
 mod situation;
@@ -29,6 +31,9 @@ mod situation;
 mod test_support;
 mod util;
 mod voice;
+mod voice_commands;
+mod voice_contracts;
+mod voice_text;
 
 use backup::backup_connection_to;
 
@@ -56,6 +61,13 @@ pub(crate) use runtime::turns::prepare_runtime_run;
 pub(crate) use runtime::turns::{execute_turn, finish_runtime_run, send_runtime_terminal_event};
 pub(crate) use situation::spawn_situation_monitor;
 pub(crate) use util::{database_error, new_id, now_iso, validate_identifier};
+use voice_commands::{
+    delete_voice_enrollment_sample, delete_voice_profile, get_voice_profile_snapshot,
+    list_tts_capabilities, read_voice_enrollment_sample, resolve_network_asr,
+    save_voice_enrollment_sample, set_target_speaker_filter_enabled, speak_text,
+    stage_audio_upload, stop_tts, transcribe_audio,
+};
+pub(crate) use voice_contracts::*;
 
 pub(crate) use redact::{bounded_text, redact_runtime_text};
 
@@ -80,9 +92,8 @@ struct AppState {
     shutdown_started: AtomicBool,
     larm_gate: providers::larm::LarmRuntimeGate,
     network_asr: voice::network_asr::NetworkAsrRuntime,
+    audio_uploads: voice::audio_upload::AudioUploadStore,
     tts_process: Mutex<Option<ActiveTts>>,
-    #[cfg(target_os = "macos")]
-    tts_audio_output: voice::system_tts::audio_output::TtsAudioOutput,
     situation: Arc<situation::SituationRuntime>,
     meeting: Arc<meeting::MeetingRuntime>,
     voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
@@ -92,13 +103,13 @@ struct AppState {
 struct ProviderProbeStatus {
     ok: bool,
     checked_at: String,
+    configuration_fingerprint: String,
+    prior_session_rowid: i64,
 }
 
 struct ActiveTts {
     run_id: String,
     child: Child,
-    #[cfg(target_os = "macos")]
-    rendered_audio: Option<voice::system_tts::audio_output::RenderedTtsAudio>,
 }
 
 #[derive(Default)]
@@ -138,91 +149,6 @@ fn frontend_ready(state: tauri::State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 fn get_app_snapshot(state: tauri::State<'_, AppState>) -> Result<AppSnapshot, String> {
     persistence::app_commands::get_app_snapshot(&state)
-}
-
-#[tauri::command]
-fn get_voice_profile_snapshot(
-    state: tauri::State<'_, AppState>,
-) -> Result<voice::profile::VoiceProfileSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    state.voice_profile.snapshot(&connection)
-}
-
-#[tauri::command]
-fn save_voice_enrollment_sample(
-    state: tauri::State<'_, AppState>,
-    input: voice::profile::SaveVoiceEnrollmentSampleInput,
-) -> Result<voice::profile::VoiceProfileSnapshot, String> {
-    if state.meeting.blocks_tts() {
-        return Err(
-            "Voice enrollment is unavailable while a meeting is active or paused".to_string(),
-        );
-    }
-    if state
-        .tts_process
-        .lock()
-        .map(|value| value.is_some())
-        .unwrap_or(true)
-    {
-        return Err("Stop speech playback before recording an enrollment sample".to_string());
-    }
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    state.voice_profile.save_sample(&connection, input)
-}
-
-#[tauri::command]
-fn set_target_speaker_filter_enabled(
-    state: tauri::State<'_, AppState>,
-    input: voice::profile::SetTargetSpeakerFilterInput,
-) -> Result<voice::profile::VoiceProfileSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    state
-        .voice_profile
-        .set_filter_enabled(&connection, input.enabled)
-}
-
-#[tauri::command]
-fn delete_voice_enrollment_sample(
-    state: tauri::State<'_, AppState>,
-    sample_id: String,
-) -> Result<voice::profile::VoiceProfileSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    state.voice_profile.delete_sample(&connection, &sample_id)
-}
-
-#[tauri::command]
-fn delete_voice_profile(
-    state: tauri::State<'_, AppState>,
-) -> Result<voice::profile::VoiceProfileSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    state.voice_profile.delete_profile(&connection)
-}
-
-#[tauri::command]
-fn read_voice_enrollment_sample(
-    state: tauri::State<'_, AppState>,
-    sample_id: String,
-) -> Result<Vec<u8>, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    state.voice_profile.read_sample(&connection, &sample_id)
 }
 
 #[tauri::command]
@@ -349,39 +275,6 @@ async fn test_model_provider(
     input: TestProviderInput,
 ) -> Result<ProviderTestResult, String> {
     providers::probe::test_model_provider(&state, input).await
-}
-
-#[tauri::command]
-async fn resolve_network_asr(
-    state: tauri::State<'_, AppState>,
-    input: ResolveNetworkAsrInput,
-) -> Result<NetworkAsrResolution, String> {
-    state
-        .network_asr
-        .refresh(&input.host, Arc::new(RunCancellation::default()))
-        .await
-}
-
-#[tauri::command]
-async fn transcribe_audio(
-    state: tauri::State<'_, AppState>,
-    input: TranscribeAudioInput,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    voice::session::transcribe_audio(&state, input, on_event).await
-}
-
-#[tauri::command]
-async fn speak_text(
-    state: tauri::State<'_, AppState>,
-    input: SpeakTextInput,
-) -> Result<(), String> {
-    voice::session::speak_text(&state, input).await
-}
-
-#[tauri::command]
-fn stop_tts(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
-    voice::session::stop_tts(&state, run_id)
 }
 
 #[tauri::command]
@@ -613,8 +506,6 @@ fn shutdown_app_state(state: &AppState) {
             cancellation.cancel();
         }
     }
-    #[cfg(target_os = "macos")]
-    state.tts_audio_output.shutdown();
     state.meeting.shutdown(&state.connection);
     let _ = state.situation.flush_quality(&state.connection);
     state
@@ -699,10 +590,8 @@ pub fn run() {
                 larm_gate: providers::larm::LarmRuntimeGate::initialize(),
                 network_asr: voice::network_asr::NetworkAsrRuntime::new()
                     .map_err(std::io::Error::other)?,
+                audio_uploads: voice::audio_upload::AudioUploadStore::default(),
                 tts_process: Mutex::new(None),
-                #[cfg(target_os = "macos")]
-                tts_audio_output: voice::system_tts::audio_output::TtsAudioOutput::new()
-                    .map_err(std::io::Error::other)?,
                 situation,
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
                 voice_profile,
@@ -740,6 +629,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
             get_voice_profile_snapshot,
+            stage_audio_upload,
             save_voice_enrollment_sample,
             set_target_speaker_filter_enabled,
             delete_voice_enrollment_sample,
@@ -765,6 +655,7 @@ pub fn run() {
             resolve_network_asr,
             transcribe_audio,
             speak_text,
+            list_tts_capabilities,
             stop_tts,
             meeting_preflight,
             start_meeting,
@@ -801,6 +692,30 @@ mod tests {
         sync::mpsc,
         thread,
     };
+
+    fn begin_test_provider_session(
+        state: &AppState,
+        runtime_run_id: &str,
+        provider_id: &str,
+        provider_kind: &str,
+    ) -> Result<String, String> {
+        let fingerprint = {
+            let connection = state
+                .connection
+                .lock()
+                .map_err(|_| "Database lock unavailable".to_string())?;
+            crate::persistence::effective_route::load_conversation_configuration_fingerprint(
+                &connection,
+            )?
+        };
+        begin_provider_session(
+            state,
+            runtime_run_id,
+            provider_id,
+            provider_kind,
+            &fingerprint,
+        )
+    }
 
     #[test]
     fn duplicate_run_registration_preserves_the_original_cancellation_handle() {
@@ -883,7 +798,7 @@ mod tests {
         );
         assert!(update_runtime_provider(&state, "run-finalize", "provider-late").is_err());
 
-        let session_id = begin_provider_session(
+        let session_id = begin_test_provider_session(
             &state,
             "run-finalize",
             "provider-selected",
@@ -956,7 +871,7 @@ mod tests {
             )
             .expect("runtime starts");
             let session_id =
-                begin_provider_session(&state, run_id, "lan-llm-dynamic", "openai-compatible")
+                begin_test_provider_session(&state, run_id, "lan-llm-dynamic", "openai-compatible")
                     .expect("provider session starts");
             finish_dynamic_lan_provider_session(&state, &session_id, "completed", None, cleanup)
                 .expect("dynamic_lan session finalizes");
@@ -1719,9 +1634,13 @@ mod tests {
             presentation_mode: "visual".to_string(),
         };
         prepare_runtime_run(&state, &input).expect("runtime prepares");
-        let session_id =
-            begin_provider_session(&state, &input.run_id, "recall-fixture", "openai-compatible")
-                .expect("provider session starts");
+        let session_id = begin_test_provider_session(
+            &state,
+            &input.run_id,
+            "recall-fixture",
+            "openai-compatible",
+        )
+        .expect("provider session starts");
         let history = list_messages_from_connection(
             &state.connection.lock().expect("database lock"),
             &input.conversation_id,
@@ -2078,7 +1997,7 @@ mod tests {
             presentation_mode: "visual".to_string(),
         };
         prepare_runtime_run(&state, &input).expect("runtime prepares");
-        let session_id = begin_provider_session(
+        let session_id = begin_test_provider_session(
             &state,
             &input.run_id,
             "timeout-fixture",

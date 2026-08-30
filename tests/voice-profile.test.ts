@@ -50,10 +50,12 @@ describe("target-speaker voice profile", () => {
     const app = await readFile(new URL("../src/features/voice/usePushToTalk.ts", import.meta.url), "utf8");
     expect(app).toContain("finishVoiceCapture(true)");
     expect(app).toContain("if (keepListening && voiceContextRef.current)");
-    expect(app).toContain("voiceSegmentQueueRef.current.length >= 2");
+    expect(app).toContain("new VoiceSegmentQueue()");
+    expect(app).toContain("if (!voiceSegmentQueueRef.current.push(segment))");
     expect(app).toContain("pendingVoicePromptsRef.current.length >= 2");
     expect(app).toContain("if (conversationSessionRef.current.speechRunId) await stopSpeech()");
     expect(app).toContain("suspendVoiceForSpeech");
-    expect(app).toContain("voiceFramesRef.current = []");
+    expect(app).toContain("voiceFramesRef.current.take()");
+    expect(app).toContain("voiceFramesRef.current.clear()");
   });
 });

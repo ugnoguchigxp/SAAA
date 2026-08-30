@@ -9,28 +9,33 @@ use crate::{
     TranscribeAudioInput, VoiceEvent,
 };
 
-const MAX_TTS_RUN_DURATION: Duration = Duration::from_secs(30 * 60);
-
 pub(crate) async fn transcribe_audio(
     state: &AppState,
-    mut input: TranscribeAudioInput,
+    input: TranscribeAudioInput,
     on_event: tauri::ipc::Channel<VoiceEvent>,
 ) -> Result<String, String> {
     validate_identifier(&input.run_id, "run id")?;
     validate_identifier(&input.conversation_id, "conversation id")?;
-    if !(8_000..=192_000).contains(&input.sample_rate) || input.samples.is_empty() {
+    if input.sample_rate != 16_000 {
+        return Err("Recorded audio must use the canonical 16 kHz sample rate".to_string());
+    }
+    let samples = Zeroizing::new(
+        state
+            .audio_uploads
+            .consume(&input.audio_upload_id, "chat-asr")?,
+    );
+    if samples.is_empty() {
         return Err("Recorded audio is empty or has an unsupported sample rate".to_string());
     }
-    if input.samples.iter().any(|sample| !sample.is_finite()) {
+    if samples.iter().any(|sample| !sample.is_finite()) {
         return Err("Recorded audio contains invalid samples".to_string());
     }
-    if input.samples.len() > input.sample_rate as usize * 120 {
+    if samples.len() > input.sample_rate as usize * 120 {
         return Err("Recording exceeds the two minute limit".to_string());
     }
     if input.model != crate::voice::network_asr::MODEL_ID {
         return Err("Voice settings must use the configured LAN ASR model".to_string());
     }
-    let samples = Zeroizing::new(std::mem::take(&mut input.samples));
     let verification = {
         let connection = state
             .connection
@@ -121,7 +126,7 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
     if input.voice.trim().is_empty() || input.voice.len() > 160 {
         return Err("TTS voice must contain between 1 and 160 characters".to_string());
     }
-    let speech_text = crate::voice::tts::text_for_speech(&input.text);
+    let speech_text = crate::voice_text::text_for_speech(&input.text);
     if speech_text.is_empty() {
         return Ok(());
     }
@@ -154,21 +159,22 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
                 "MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string(),
             );
         }
-        crate::voice::system_tts::prepare_output(state, &input.run_id)?;
         if cancellation.is_cancelled() {
             return Err("Speech cancelled".to_string());
         }
-        let spawned = crate::voice::system_tts::spawn_tts_process(&speech_text, &input.voice)?;
+        let mut spawned = crate::voice::system_tts::spawn_tts_process(&speech_text, &input.voice)?;
+        if cancellation.is_cancelled() {
+            let _ = spawned.child.kill();
+            let _ = spawned.child.wait();
+            return Err("Speech cancelled".to_string());
+        }
         *process = Some(ActiveTts {
             run_id: input.run_id.clone(),
             child: spawned.child,
-            #[cfg(target_os = "macos")]
-            rendered_audio: Some(spawned.rendered_audio),
         });
         Ok::<(), String>(())
     })();
     if let Err(error) = spawn_result {
-        crate::voice::system_tts::cancel_output(state, &input.run_id);
         remove_active_run(state, &input.run_id);
         finish_runtime_run(
             state,
@@ -186,7 +192,8 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
         .situation
         .set_audio_state(crate::situation::contracts::AudioState::SaaaSpeaking);
 
-    let result = match tokio::time::timeout(MAX_TTS_RUN_DURATION, async {
+    let run_timeout = tts_run_timeout(&speech_text);
+    let result = match tokio::time::timeout(run_timeout, async {
         let synthesis_result: Result<(), String> = async {
             loop {
                 if cancellation.is_cancelled() {
@@ -216,23 +223,16 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
             }
         }
         .await;
-        crate::voice::system_tts::complete_output(
-            state,
-            &input.run_id,
-            cancellation.clone(),
-            synthesis_result,
-        )
-        .await
+        synthesis_result
     })
     .await
     {
         Ok(result) => result,
-        Err(_) => Err("System TTS exceeded the 30 minute limit".to_string()),
+        Err(_) => Err(format!(
+            "System TTS exceeded the {} second run limit",
+            run_timeout.as_secs()
+        )),
     };
-
-    if result.is_err() {
-        crate::voice::system_tts::cancel_output(state, &input.run_id);
-    }
 
     if let Ok(mut process) = state.tts_process.lock() {
         if process
@@ -284,18 +284,21 @@ pub(crate) fn stop_tts(state: &AppState, run_id: String) -> Result<(), String> {
         .is_none_or(|active| active.run_id != run_id)
     {
         drop(process);
-        crate::voice::system_tts::cancel_output(state, &run_id);
         return Ok(());
     }
     if let Some(mut active) = process.take() {
         let _ = active.child.kill();
         let _ = active.child.wait();
     }
-    crate::voice::system_tts::cancel_output(state, &run_id);
     state
         .situation
         .set_audio_state(crate::situation::contracts::AudioState::Silent);
     Ok(())
+}
+
+fn tts_run_timeout(text: &str) -> Duration {
+    let estimated_seconds = 45_u64.saturating_add((text.chars().count() as u64).div_ceil(3));
+    Duration::from_secs(estimated_seconds.clamp(60, 30 * 60))
 }
 
 #[cfg(test)]
@@ -315,5 +318,18 @@ mod tests {
 
         assert!(cancellation.is_cancelled());
         remove_active_run(&state, "speech-starting");
+    }
+
+    #[test]
+    fn speech_timeout_scales_with_text_and_remains_bounded() {
+        assert_eq!(tts_run_timeout("short"), Duration::from_secs(60));
+        assert_eq!(
+            tts_run_timeout(&"a".repeat(3_000)),
+            Duration::from_secs(1_045)
+        );
+        assert_eq!(
+            tts_run_timeout(&"a".repeat(16_000)),
+            Duration::from_secs(1_800)
+        );
     }
 }

@@ -2,11 +2,10 @@ import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFi
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { QUALITY_SCENARIOS, type QualityScenario } from "./conversation-quality/scenarios";
-import { normalizeEndpointBaseUrl, parseWebSearchToolCall } from "./conversation-quality/protocol";
+import { normalizeEndpointBaseUrl } from "./conversation-quality/protocol";
 import { hashText, parseEvaluation, summarizeQualityGate, totalScore, validateScenarios } from "./conversation-quality/schema";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const TOOL = { type: "function", function: { name: "web_search", description: "Search current public information", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false } } };
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -113,20 +112,43 @@ function systemPrompt(inputOrigin: "text" | "voice" = "text"): string {
 }
 
 async function answer(config: Endpoint, scenario: QualityScenario, policy: RequestPolicy): Promise<Completion> {
-  const inputOrigin = scenario.category === "ambiguous-asr" ? "voice" : "text";
-  const messages: Message[] = [{ role: "system", content: systemPrompt(inputOrigin) }, { role: "user", content: scenario.input }];
-  const first = await complete(config, messages, policy, scenario.toolMode === "none" ? undefined : [TOOL]);
-  if (scenario.toolMode === "none") {
-    if (first.finishReason !== "stop") throw new Error("completion invoked a tool that was not offered");
-    return first;
+  const process = Bun.spawn([
+    "cargo", "run", "--quiet", "--manifest-path", join(ROOT, "src-tauri/Cargo.toml"),
+    "--features", "quality-eval-harness", "--bin", "conversation_quality_runtime",
+  ], {
+    cwd: ROOT,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  process.stdin.write(JSON.stringify({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model,
+    input: scenario.input,
+    inputOrigin: scenario.category === "ambiguous-asr" ? "voice" : "text",
+    timeoutMs: policy.timeoutMs,
+    toolMode: scenario.toolMode,
+    toolResult: scenario.toolResult,
+  }));
+  process.stdin.end();
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`conversation runtime harness failed: ${stderr.trim() || `exit ${exitCode}`}`);
+  let response: { content?: unknown; latencyMs?: unknown; runtimePath?: unknown };
+  try {
+    response = JSON.parse(stdout) as typeof response;
+  } catch {
+    throw new Error("conversation runtime harness returned invalid JSON");
   }
-  if (first.finishReason === "stop") return first;
-  const call = parseWebSearchToolCall(first.message.tool_calls);
-  messages.push(first.message);
-  messages.push({ role: "tool", tool_call_id: call.id, content: scenario.toolResult });
-  const second = await complete(config, messages, policy);
-  if (second.finishReason !== "stop") throw new Error("completion requested another tool after the fixture result");
-  return { ...second, latencyMs: first.latencyMs + second.latencyMs };
+  if (typeof response.content !== "string" || typeof response.latencyMs !== "number"
+      || response.runtimePath !== "execute_turn/conversation.respond") {
+    throw new Error("conversation runtime harness returned an invalid response");
+  }
+  return { content: response.content, message: { role: "assistant", content: response.content }, finishReason: "stop", latencyMs: response.latencyMs };
 }
 
 function judgePrompt(scenario: QualityScenario, response: string): string {
@@ -204,7 +226,7 @@ async function run(): Promise<void> {
   }
   const gate = summarizeQualityGate(results, QUALITY_SCENARIOS.map((scenario) => scenario.id), rounds);
   const generatedAt = new Date().toISOString();
-  const report = { evaluatorVersion: "conversation-quality-v2", generatedAt, target: { baseUrlHash: hashText(target.baseUrl), modelHash: hashText(target.model) }, judge: { baseUrlHash: hashText(judge.baseUrl), modelHash: hashText(judge.model) }, rounds, scenarioCount: QUALITY_SCENARIOS.length, requestPolicy: policy, ...gate, results };
+  const report = { evaluatorVersion: "conversation-quality-v3", runtimePath: "execute_turn/conversation.respond", generatedAt, target: { baseUrlHash: hashText(target.baseUrl), modelHash: hashText(target.model) }, judge: { baseUrlHash: hashText(judge.baseUrl), modelHash: hashText(judge.model) }, rounds, scenarioCount: QUALITY_SCENARIOS.length, requestPolicy: policy, ...gate, results };
   const reportPath = writeReport(report, generatedAt);
   console.log(`conversation quality ${gate.passed ? "passed" : "failed"}: median ${gate.medianRunAverage.toFixed(1)}/100, ${gate.passingRunCount}/3 runs passed; report ${reportPath}`);
   if (!gate.passed) process.exitCode = 1;

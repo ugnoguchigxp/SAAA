@@ -201,7 +201,6 @@ export const routingSettingsSchema = z.object({
 
 export const voiceSettingsSchema = z.object({
   inputDeviceId: z.string().trim().min(1).max(300),
-  outputDeviceId: z.literal("default"),
   captureMode: z.literal("push-to-talk"),
   sttHost: z.string().trim().min(1).max(253).refine(
     (value) => !value.includes("://") && !value.includes("/") && !value.includes(":"),
@@ -234,7 +233,7 @@ export const situationSettingsSchema = z.object({
 const settingsDocumentBaseSchema = z.object({
   namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
-  schemaVersion: z.literal(10),
+  schemaVersion: z.literal(11),
   valueJson: z.record(z.string(), z.unknown()),
 }).strict();
 

@@ -402,7 +402,7 @@ pub(crate) async fn execute_conversation_turn(
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
 ) -> Result<ConversationMessage, String> {
-    let (providers, route, security, history, context_health) = {
+    let (providers, route, security, history, context_health, configuration_fingerprint) = {
         let connection = state
             .connection
             .lock()
@@ -435,12 +435,19 @@ pub(crate) async fn execute_conversation_turn(
             &input.presentation_mode,
             context_window.messages,
         )?;
+        let providers = load_model_providers(&connection)?;
+        let route = load_routing_settings(&connection)?.conversation_respond;
+        let configuration_fingerprint =
+            crate::persistence::effective_route::conversation_configuration_fingerprint(
+                &providers, &route,
+            )?;
         (
-            load_model_providers(&connection)?,
-            load_routing_settings(&connection)?.conversation_respond,
+            providers,
+            route,
             load_security_settings(&connection)?,
             history,
             context_health,
+            configuration_fingerprint,
         )
     };
     let reasoning_effort = providers.reasoning_effort.clone();
@@ -474,8 +481,13 @@ pub(crate) async fn execute_conversation_turn(
             continue;
         };
         update_runtime_provider(state, &input.run_id, provider.id())?;
-        let session_id =
-            begin_provider_session(state, &input.run_id, provider.id(), provider.kind())?;
+        let session_id = begin_provider_session(
+            state,
+            &input.run_id,
+            provider.id(),
+            provider.kind(),
+            &configuration_fingerprint,
+        )?;
         if on_event
             .send(RuntimeEvent::Started {
                 run_id: input.run_id.clone(),

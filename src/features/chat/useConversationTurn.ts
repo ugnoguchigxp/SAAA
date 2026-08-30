@@ -11,9 +11,11 @@ import {
   type PendingConversationPrompt,
   type SubmitPromptOptions,
 } from "../../lib/conversationSession";
+import { ConversationIssueCoordinator } from "./conversationIssueCoordinator";
+import { FinalResponseSpeechGate, speechRetry, type SpeechRetry } from "./speechPlaybackPolicy";
 type RetryAction =
   | { kind: "response"; prompt: string; inputMessageId: string; inputOrigin: InputOrigin }
-  | { kind: "speech"; text: string; conversationId: string };
+  | SpeechRetry;
 export function useConversationTurn({
   selectedConversationId,
   voiceSettings,
@@ -50,30 +52,45 @@ export function useConversationTurn({
   const meetingStateRef = useRef<MeetingState>("idle");
   const failedRunIdsRef = useRef(new Set<string>());
   const speechStopRequestsRef = useRef(new Set<string>());
+  const issueCoordinatorRef = useRef(new ConversationIssueCoordinator());
+  const speechGateRef = useRef(new FinalResponseSpeechGate());
+  const disposedRef = useRef(false);
   selectedConversationIdRef.current = selectedConversationId;
   meetingStateRef.current = meetingState;
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      issueCoordinatorRef.current.dispose();
+      const runId = conversationSessionRef.current.runId;
+      const ttsRunId = conversationSessionRef.current.speechRunId;
+      if (runId) void cancelRun(runId).catch(() => undefined);
+      if (ttsRunId) void stopTts(ttsRunId).catch(() => undefined);
+    };
+  }, [conversationSessionRef]);
   useEffect(() => {
     if (!selectedConversationId) { setMessages([]); return; }
     setMessages([]);
     setStreamingText("");
     setRuntimeActivity([]);
-    void loadMessages(selectedConversationId);
+    void loadMessages(selectedConversationId, issueCoordinatorRef.current.begin());
   }, [selectedConversationId]);
-  useEffect(() => () => {
-    const ttsRunId = conversationSessionRef.current.speechRunId;
-    if (ttsRunId) void stopTts(ttsRunId);
-  }, [conversationSessionRef]);
-  async function loadMessages(conversationId: string): Promise<ConversationMessage[]> {
+  function publishIssue(scope: number, message: string, retry: RetryAction | null = null) {
+    if (disposedRef.current || !issueCoordinatorRef.current.isCurrent(scope)) return;
+    setError(message);
+    setRetryAction(retry);
+  }
+  async function loadMessages(conversationId: string, issueScope: number): Promise<ConversationMessage[]> {
     const request = ++messagesRequestRef.current;
     try {
       const nextMessages = await listMessages(conversationId);
-      if (request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
+      if (!disposedRef.current && request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
         setMessages(nextMessages);
       }
       return nextMessages;
     } catch (cause) {
-      if (request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
-        setError(toMessage(cause));
+      if (!disposedRef.current && request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
+        publishIssue(issueScope, toMessage(cause));
       }
       return [];
     }
@@ -89,7 +106,8 @@ export function useConversationTurn({
       inputOrigin = "text",
     } = options;
     if (
-      !selectedConversationId
+      disposedRef.current
+      || !selectedConversationId
       || !prompt.trim()
       || conversationSessionRef.current.runId
       || (!allowVoiceBusy && isVoiceBusy())
@@ -97,6 +115,7 @@ export function useConversationTurn({
     const conversationId = selectedConversationId;
     const content = prompt.trim();
     const runId = `run_${crypto.randomUUID()}`;
+    const issueScope = issueCoordinatorRef.current.begin();
     const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak)
       && !isMeetingBlocking(meetingStateRef.current);
     const presentationMode = shouldStreamSpeech ? "visual-and-spoken" : "visual";
@@ -117,43 +136,47 @@ export function useConversationTurn({
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
       if (shouldStreamSpeech) {
-        await stopSpeech();
+        await stopSpeech(issueScope);
       }
       await startTurn(
         { runId, conversationId, content, workspacePath: null, retryInputMessageId, inputOrigin, presentationMode },
-        (event) => handleRuntimeEvent(event, conversationId),
+        (event) => handleRuntimeEvent(event, conversationId, issueScope),
       );
     } catch (cause) {
       failedRunIdsRef.current.add(runId);
-      setError((current) => current ?? toMessage(cause));
+      publishIssue(issueScope, toMessage(cause));
     } finally {
       if (conversationSessionRef.current.runId === runId) {
         conversationSessionRef.current = transitionConversationSession(
           conversationSessionRef.current,
           { type: "runFinished", runId },
         );
-        setActiveRunId(null);
+        if (!disposedRef.current) setActiveRunId(null);
       }
-      if (selectedConversationIdRef.current === conversationId) {
+      if (!disposedRef.current && selectedConversationIdRef.current === conversationId) {
         setStreamingText("");
-        const nextMessages = await loadMessages(conversationId);
+        const nextMessages = await loadMessages(conversationId, issueScope);
         if (failedRunIdsRef.current.delete(runId)) {
           const input = [...nextMessages].reverse().find((message) => message.role === "user" && message.content === content);
-          if (input) setRetryAction({ kind: "response", prompt: content, inputMessageId: input.id, inputOrigin });
+          if (input && issueCoordinatorRef.current.isCurrent(issueScope)) {
+            setRetryAction({ kind: "response", prompt: content, inputMessageId: input.id, inputOrigin });
+          }
         }
       }
-      const nextVoicePrompt = pendingVoicePromptsRef.current.shift();
+      const nextVoicePrompt = disposedRef.current ? undefined : pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
-        if (conversationSessionRef.current.speechRunId) await stopSpeech();
+        if (conversationSessionRef.current.speechRunId) await stopSpeech(issueScope);
         await submitPrompt(nextVoicePrompt.content, { allowVoiceBusy: true, inputOrigin: nextVoicePrompt.inputOrigin });
       }
     }
   }
-  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string) {
+  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, issueScope: number) {
     if (
+      disposedRef.current ||
       selectedConversationIdRef.current !== conversationId ||
       conversationSessionRef.current.runId !== event.runId
     ) return;
+    const finalSpeechText = speechGateRef.current.accept(event);
     switch (event.type) {
       case "started":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
@@ -181,8 +204,8 @@ export function useConversationTurn({
           ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", { fallbackUsed: current.effectiveRoute.fallbackUsed, reasonCode: "last-turn-completed" })
           : current);
         setStreamingText("");
-        if (voiceSettings?.autoSpeak && !isMeetingBlocking(meetingStateRef.current)) {
-          void startSpeech(event.message.content, conversationId);
+        if (finalSpeechText && voiceSettings?.autoSpeak && !isMeetingBlocking(meetingStateRef.current)) {
+          void startSpeech(finalSpeechText, conversationId);
         }
         break;
       case "cancelled":
@@ -191,17 +214,19 @@ export function useConversationTurn({
         break;
       case "failed":
         failedRunIdsRef.current.add(event.runId);
-        setError(`${event.message} ${event.recovery}`);
+        publishIssue(issueScope, `${event.message} ${event.recovery}`);
         break;
     }
   }
   async function stopActiveRun() {
     const runId = conversationSessionRef.current.runId;
     if (!runId) return;
-    try { await cancelRun(runId); } catch (cause) { setError(toMessage(cause)); }
+    const issueScope = issueCoordinatorRef.current.begin();
+    try { await cancelRun(runId); } catch (cause) { publishIssue(issueScope, toMessage(cause)); }
   }
   async function startSpeech(text: string, conversationId = selectedConversationId) {
-    if (!conversationId || !voiceSettings || conversationSessionRef.current.speechRunId || isMeetingBlocking(meetingStateRef.current)) return;
+    if (disposedRef.current || !conversationId || !voiceSettings || conversationSessionRef.current.speechRunId || isMeetingBlocking(meetingStateRef.current)) return;
+    const issueScope = issueCoordinatorRef.current.begin();
     const runId = `speech_${crypto.randomUUID()}`;
     conversationSessionRef.current = transitionConversationSession(
       conversationSessionRef.current,
@@ -210,6 +235,8 @@ export function useConversationTurn({
     setActiveTtsRunId(runId);
     let voiceSuspended = false;
     try {
+      setError(null);
+      setRetryAction(null);
       const speakable = toSpeakableText(text);
       if (!speakable) return;
       voiceSuspended = await suspendVoiceForSpeech();
@@ -217,8 +244,7 @@ export function useConversationTurn({
       await speakText({ runId, conversationId, text: speakable, voice: voiceSettings.ttsVoice });
     } catch (cause) {
       if (!speechStopRequestsRef.current.has(runId)) {
-        setError(`Speech playback failed: ${toMessage(cause)}`);
-        setRetryAction({ kind: "speech", text, conversationId });
+        publishIssue(issueScope, `Speech playback failed: ${toMessage(cause)}`, speechRetry(text, conversationId));
       }
     } finally {
       if (conversationSessionRef.current.speechRunId === runId) {
@@ -226,21 +252,22 @@ export function useConversationTurn({
           conversationSessionRef.current,
           { type: "speechFinished", runId },
         );
-        setActiveTtsRunId(null);
+        if (!disposedRef.current) setActiveTtsRunId(null);
       }
       if (voiceSuspended) {
         try {
           await resumeVoiceAfterSpeech();
         } catch (cause) {
-          setError(`Microphone resume failed: ${toMessage(cause)}`);
+          publishIssue(issueScope, `Microphone resume failed: ${toMessage(cause)}`);
         }
       }
       speechStopRequestsRef.current.delete(runId);
     }
   }
-  async function stopSpeech() {
+  async function stopSpeech(existingIssueScope?: number) {
     const runId = conversationSessionRef.current.speechRunId;
     if (!runId) return;
+    const issueScope = existingIssueScope ?? issueCoordinatorRef.current.begin();
     speechStopRequestsRef.current.add(runId);
     let stopped = false;
     try {
@@ -248,14 +275,14 @@ export function useConversationTurn({
       stopped = true;
     } catch (cause) {
       speechStopRequestsRef.current.delete(runId);
-      setError(toMessage(cause));
+      publishIssue(issueScope, toMessage(cause));
     } finally {
       if (stopped && conversationSessionRef.current.speechRunId === runId) {
         conversationSessionRef.current = transitionConversationSession(
           conversationSessionRef.current,
           { type: "speechFinished", runId },
         );
-        setActiveTtsRunId(null);
+        if (!disposedRef.current) setActiveTtsRunId(null);
       }
     }
   }

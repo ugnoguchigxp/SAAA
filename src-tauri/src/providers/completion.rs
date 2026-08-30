@@ -22,7 +22,11 @@ pub(crate) struct CompletionTerminal {
 
 impl CompletionTerminal {
     pub(crate) fn observe(&mut self, value: &Value) -> Result<(), CompletionTerminalError> {
-        let Some(reason) = value.pointer("/choices/0/finish_reason") else {
+        if self.finish.is_some() {
+            return Err(CompletionTerminalError::Protocol);
+        }
+        let choice = exact_choice(value)?;
+        let Some(reason) = choice.get("finish_reason") else {
             return Ok(());
         };
         if reason.is_null() {
@@ -35,9 +39,6 @@ impl CompletionTerminal {
             Some("content_filter") => return Err(CompletionTerminalError::Policy),
             _ => return Err(CompletionTerminalError::Protocol),
         };
-        if self.finish.is_some_and(|previous| previous != finish) {
-            return Err(CompletionTerminalError::Protocol);
-        }
         self.finish = Some(finish);
         Ok(())
     }
@@ -45,6 +46,24 @@ impl CompletionTerminal {
     pub(crate) fn complete(&self) -> Result<CompletionFinish, CompletionTerminalError> {
         self.finish.ok_or(CompletionTerminalError::Protocol)
     }
+}
+
+fn exact_choice(value: &Value) -> Result<&serde_json::Map<String, Value>, CompletionTerminalError> {
+    let choices = value
+        .get("choices")
+        .and_then(Value::as_array)
+        .filter(|choices| choices.len() == 1)
+        .ok_or(CompletionTerminalError::Protocol)?;
+    let choice = choices[0]
+        .as_object()
+        .ok_or(CompletionTerminalError::Protocol)?;
+    if choice
+        .get("index")
+        .is_some_and(|index| index.as_u64() != Some(0))
+    {
+        return Err(CompletionTerminalError::Protocol);
+    }
+    Ok(choice)
 }
 
 pub(crate) fn validate_non_stream_completion(
@@ -92,5 +111,33 @@ mod tests {
         assert!(!thinking_enabled("low"));
         assert!(thinking_enabled("medium"));
         assert!(thinking_enabled("xhigh"));
+    }
+
+    #[test]
+    fn rejects_missing_ambiguous_or_non_primary_choices() {
+        for value in [
+            json!({}),
+            json!({ "choices": [] }),
+            json!({ "choices": [{ "finish_reason": "stop" }, { "finish_reason": "stop" }] }),
+            json!({ "choices": [{ "index": 1, "finish_reason": "stop" }] }),
+            json!({ "choices": [null] }),
+        ] {
+            assert_eq!(
+                validate_non_stream_completion(&value),
+                Err(CompletionTerminalError::Protocol)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_any_provider_event_after_a_terminal_choice() {
+        let mut terminal = CompletionTerminal::default();
+        terminal
+            .observe(&json!({ "choices": [{ "index": 0, "finish_reason": "stop" }] }))
+            .expect("first terminal is accepted");
+        assert_eq!(
+            terminal.observe(&json!({ "choices": [{ "index": 0, "delta": {} }] })),
+            Err(CompletionTerminalError::Protocol)
+        );
     }
 }

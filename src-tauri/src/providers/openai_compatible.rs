@@ -40,6 +40,18 @@ pub(crate) fn drain_sse_events(
     Ok(events)
 }
 
+/// Projects one SSE event according to the event-stream specification. Multiple
+/// `data:` fields belong to the same event and are joined with a newline; treating
+/// them as independent JSON documents silently accepts truncated provider output.
+pub(crate) fn sse_event_data(event: &str) -> Option<String> {
+    let fields = event.lines().filter_map(|line| {
+        let value = line.strip_prefix("data:")?;
+        Some(value.strip_prefix(' ').unwrap_or(value))
+    });
+    let data = fields.collect::<Vec<_>>();
+    (!data.is_empty()).then(|| data.join("\n"))
+}
+
 pub(crate) fn provider_chat_url(endpoint: &str) -> Result<String, String> {
     provider_operation_url(endpoint, "chat/completions")
 }
@@ -145,5 +157,15 @@ mod tests {
             drain_sse_events(&mut buffer, 1_048_576).expect("complete UTF-8 event parses"),
             [event.trim_end()]
         );
+    }
+
+    #[test]
+    fn sse_data_fields_are_joined_as_one_event() {
+        let event = "event: message\ndata: {\"choices\":[\ndata: {\"index\":0,\"delta\":{}}]}";
+        assert_eq!(
+            sse_event_data(event).as_deref(),
+            Some("{\"choices\":[\n{\"index\":0,\"delta\":{}}]}")
+        );
+        assert_eq!(sse_event_data(": heartbeat"), None);
     }
 }

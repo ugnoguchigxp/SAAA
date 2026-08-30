@@ -25,11 +25,11 @@ describe("effective provider route", () => {
   test("runtime provider events expose the selected fallback route", () => {
     const current = snapshot();
     current.settings = [
-      { namespace: "providers.model", key: "default", schemaVersion: 10, valueJson: { providers: [
+      { namespace: "providers.model", key: "default", schemaVersion: 11, valueJson: { providers: [
         { kind: "openai-compatible", id: "primary", enabled: true, label: "Primary", location: "cloud", endpoint: "https://example.test/v1", model: "primary", credentialStatus: "configured" },
         { kind: "openai-compatible", id: "fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://localhost:11434/v1", model: "fallback", credentialStatus: "configured" },
       ], reasoningEffort: "medium", maxOutputTokens: 2048 }, updatedAt: "1" },
-      { namespace: "routing.tasks", key: "default", schemaVersion: 10, valueJson: { conversationRespond: { primaryProviderId: "primary", fallbackProviderIds: ["fallback"], timeoutMs: 60_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 60_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } }, updatedAt: "1" },
+      { namespace: "routing.tasks", key: "default", schemaVersion: 11, valueJson: { conversationRespond: { primaryProviderId: "primary", fallbackProviderIds: ["fallback"], timeoutMs: 60_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 60_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } }, updatedAt: "1" },
     ];
     const updated = updateEffectiveRoute(current, "fallback", "active", { reasonCode: "turn-active" });
     expect(updated.effectiveRoute).toMatchObject({ label: "Fallback", location: "local", fallbackUsed: true, reasonCode: "fallback-route" });

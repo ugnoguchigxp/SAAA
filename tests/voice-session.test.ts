@@ -22,5 +22,7 @@ describe("voice session state machine", () => {
     const suspended = transitionVoiceSession(recording, { type: "speechSuspended" });
     expect(voiceCaptureState(suspended)).toBe("idle");
     expect(voiceSessionBusy(suspended)).toBe(true);
+    const starting = transitionVoiceSession(initialVoiceSession, { type: "captureStarting" });
+    expect(transitionVoiceSession(starting, { type: "speechSuspended" }).capture).toBe("suspended");
   });
 });

@@ -88,6 +88,11 @@ export async function ensureMicrophoneAudioContextRunning(
   }
 }
 
+export async function disposeMicrophoneCapture(stream: MediaStream | null, context: AudioContext | null): Promise<void> {
+  stream?.getTracks().forEach((track) => track.stop());
+  if (context) await context.close().catch(() => undefined);
+}
+
 export function microphoneErrorMessage(cause: unknown): string {
   return cause instanceof MicrophoneCaptureError
     ? cause.message

@@ -128,23 +128,27 @@ impl SpeakerExtractor {
         self.inner.dimension
     }
 
-    pub fn embed(&self, samples: Vec<f32>) -> Result<Vec<f32>, String> {
+    pub fn embed(&self, mut samples: Vec<f32>) -> Result<Vec<f32>, String> {
         if samples.len() < SAMPLE_RATE as usize || samples.len() > SAMPLE_RATE as usize * 30 {
+            samples.zeroize();
             return Err(
                 "Speaker verification requires between one and thirty seconds of audio".to_string(),
             );
         }
         if samples.iter().any(|sample| !sample.is_finite()) {
+            samples.zeroize();
             return Err("Speaker verification received invalid audio".to_string());
         }
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
-        self.inner
-            .sender
-            .send(Request::Embed {
-                samples,
-                response: response_sender,
-            })
-            .map_err(|_| "Speaker-verification worker is unavailable".to_string())?;
+        if let Err(error) = self.inner.sender.send(Request::Embed {
+            samples,
+            response: response_sender,
+        }) {
+            if let Request::Embed { mut samples, .. } = error.0 {
+                samples.zeroize();
+            }
+            return Err("Speaker-verification worker is unavailable".to_string());
+        }
         response_receiver
             .recv_timeout(REQUEST_TIMEOUT)
             .map_err(|_| "Speaker-verification inference timed out".to_string())?
@@ -251,12 +255,13 @@ impl NativeExtractor {
             unsafe { (self.destroy_stream)(stream) };
             return Err("Speaker-verification inference failed".to_string());
         }
-        let result = unsafe { std::slice::from_raw_parts(embedding, self.dimension) }.to_vec();
+        let mut result = unsafe { std::slice::from_raw_parts(embedding, self.dimension) }.to_vec();
         unsafe {
             (self.destroy_embedding)(embedding);
             (self.destroy_stream)(stream);
         }
         if result.iter().any(|value| !value.is_finite()) {
+            result.zeroize();
             return Err("Speaker-verification model returned an invalid embedding".to_string());
         }
         Ok(result)

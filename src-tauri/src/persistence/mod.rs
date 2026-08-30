@@ -1,6 +1,6 @@
 pub(crate) mod app_commands;
 pub(crate) mod conversations;
-mod effective_route;
+pub(crate) mod effective_route;
 pub(crate) mod migrate;
 mod provider_identity;
 pub(crate) mod runs;

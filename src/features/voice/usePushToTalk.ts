@@ -4,13 +4,13 @@ import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
 import type { MeetingState, VoiceSettings } from "../../lib/contracts";
 import type { ConversationSession, PendingConversationPrompt, SubmitPromptOptions } from "../../lib/conversationSession";
 import {
+  disposeMicrophoneCapture,
   ensureMicrophoneAudioContextRunning,
   microphoneCaptureConstraints,
   MicrophoneCaptureError,
   requestMicrophoneStream,
 } from "../../lib/microphone";
 import { resamplePcm } from "../../lib/audioResampling";
-import { mergePcmFrames } from "../../lib/pcm";
 import { cancelRun, transcribeAudio } from "../../lib/runtime";
 import { VoiceActivityDetector } from "../../lib/voiceActivity";
 import {
@@ -20,8 +20,9 @@ import {
   voiceSessionBusy,
   type VoiceSessionEvent,
 } from "../../lib/voiceSession";
+import { VoiceFrameBuffer } from "./voiceFrameBuffer";
+import { type QueuedVoiceSegment, VoiceSegmentQueue } from "./voiceSegmentQueue";
 
-type QueuedVoiceSegment = { conversationId: string; model: string; samples: number[]; sampleRate: number; ttsActiveAtCapture: boolean };
 const ASR_SAMPLE_RATE = 16_000;
 const MAX_VOICE_SEGMENT_SECONDS = 30;
 export type VoiceCaptureState = "idle" | "recording" | "transcribing";
@@ -54,12 +55,12 @@ export function usePushToTalk({
   const voiceContextRef = useRef<AudioContext | null>(null);
   const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const voiceNodeRef = useRef<AudioWorkletNode | null>(null);
-  const voiceFramesRef = useRef<Float32Array[]>([]);
-  const voiceFrameSamplesRef = useRef(0);
+  const voiceFramesRef = useRef(new VoiceFrameBuffer());
   const voiceFlushResolverRef = useRef<(() => void) | null>(null);
   const voiceActivityDetectorRef = useRef<VoiceActivityDetector | null>(null);
   const voiceCaptureLeaseRef = useRef<(() => void) | null>(null);
-  const voiceSegmentQueueRef = useRef<QueuedVoiceSegment[]>([]);
+  const voiceCaptureAttemptRef = useRef(0);
+  const voiceSegmentQueueRef = useRef(new VoiceSegmentQueue());
   const disposedRef = useRef(false);
   const meetingStateRef = useRef<MeetingState>("idle");
   meetingStateRef.current = meetingState;
@@ -78,6 +79,7 @@ export function usePushToTalk({
     disposedRef.current = false;
     return () => {
       disposedRef.current = true;
+      voiceCaptureAttemptRef.current += 1;
       const transcriptionRunId = voiceSessionRef.current.transcriptionRunId;
       if (transcriptionRunId) void cancelRun(transcriptionRunId).catch(() => undefined);
       voiceFlushResolverRef.current?.();
@@ -87,10 +89,8 @@ export function usePushToTalk({
       void voiceContextRef.current?.close().catch(() => undefined);
       voiceCaptureLeaseRef.current?.();
       voiceCaptureLeaseRef.current = null;
-      voiceFramesRef.current = [];
-      voiceFrameSamplesRef.current = 0;
-      for (const segment of voiceSegmentQueueRef.current) segment.samples = [];
-      voiceSegmentQueueRef.current = [];
+      voiceFramesRef.current.clear();
+      voiceSegmentQueueRef.current.clear();
       pendingVoicePromptsRef.current = [];
     };
   }, [pendingVoicePromptsRef]);
@@ -99,6 +99,7 @@ export function usePushToTalk({
     if (voiceSessionRef.current.actionInProgress) return;
     applyVoiceEvent({ type: "actionStarted" });
     try {
+      setError(null);
       if (voiceSessionRef.current.capture === "suspended") {
         await stopSpeech();
         return;
@@ -110,8 +111,7 @@ export function usePushToTalk({
       const voiceRunId = voiceSessionRef.current.transcriptionRunId;
       if (voiceState === "transcribing" && voiceRunId) {
         applyVoiceEvent({ type: "transcriptionCancelRequested" });
-        for (const segment of voiceSegmentQueueRef.current) segment.samples = [];
-        voiceSegmentQueueRef.current = [];
+        voiceSegmentQueueRef.current.clear();
         try {
           await cancelRun(voiceRunId);
         } catch (cause) {
@@ -144,58 +144,53 @@ export function usePushToTalk({
 
   async function attachVoiceCapture() {
     if (disposedRef.current || !voiceSettings || !selectedConversationId || voiceStreamRef.current) return;
+    const captureAttempt = ++voiceCaptureAttemptRef.current;
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
     try {
-      setError(null);
       applyVoiceEvent({ type: "captureStarting" });
       voiceCaptureLeaseRef.current = acquireAudioCapture("chat");
       const audio = microphoneCaptureConstraints(voiceSettings.inputDeviceId);
-      const stream = await requestMicrophoneStream(audio);
-      if (disposedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        voiceCaptureLeaseRef.current?.();
-        voiceCaptureLeaseRef.current = null;
-        return;
-      }
+      stream = await requestMicrophoneStream(audio);
+      if (disposedRef.current || voiceCaptureAttemptRef.current !== captureAttempt) { await disposeMicrophoneCapture(stream, null); return; }
       voiceStreamRef.current = stream;
-      const context = new AudioContext();
-      voiceContextRef.current = context;
-      await context.audioWorklet.addModule("/audio/meeting-processor.js");
-      if (disposedRef.current) {
-        await detachVoiceCapture(false);
-        return;
-      }
-      const source = context.createMediaStreamSource(stream);
-      const node = new AudioWorkletNode(context, "meeting-processor");
+      context = new AudioContext();
+      const activeContext = context;
+      voiceContextRef.current = activeContext;
+      await activeContext.audioWorklet.addModule("/audio/meeting-processor.js");
+      if (disposedRef.current || voiceCaptureAttemptRef.current !== captureAttempt) { await disposeMicrophoneCapture(stream, activeContext); return; }
+      const source = activeContext.createMediaStreamSource(stream);
+      const node = new AudioWorkletNode(activeContext, "meeting-processor");
       voiceSourceRef.current = source;
       voiceNodeRef.current = node;
-      voiceFramesRef.current = [];
-      voiceFrameSamplesRef.current = 0;
-      voiceActivityDetectorRef.current = new VoiceActivityDetector({ sampleRate: context.sampleRate });
+      voiceFramesRef.current.clear();
+      voiceActivityDetectorRef.current = new VoiceActivityDetector({ sampleRate: activeContext.sampleRate });
       node.port.onmessage = (event: MessageEvent<Float32Array | { type: "flushed" }>) => {
         if (!(event.data instanceof Float32Array)) {
           if (event.data.type === "flushed") voiceFlushResolverRef.current?.();
           return;
         }
         const observation = voiceActivityDetectorRef.current?.observe(event.data);
-        voiceFramesRef.current.push(event.data);
-        voiceFrameSamplesRef.current += event.data.length;
+        voiceFramesRef.current.append(event.data);
         if (!observation?.hasSpeech) {
-          const leadingSilenceLimit = Math.round(context.sampleRate * 0.5);
-          while (voiceFrameSamplesRef.current > leadingSilenceLimit && voiceFramesRef.current.length > 1) {
-            const removed = voiceFramesRef.current.shift();
-            if (removed) voiceFrameSamplesRef.current -= removed.length;
-          }
+          const leadingSilenceLimit = Math.round(activeContext.sampleRate * 0.5);
+          voiceFramesRef.current.trimStartTo(leadingSilenceLimit);
         }
-        if (observation?.shouldFinalize || voiceFrameSamplesRef.current >= context.sampleRate * MAX_VOICE_SEGMENT_SECONDS) {
+        if (observation?.shouldFinalize || voiceFramesRef.current.sampleCount >= activeContext.sampleRate * MAX_VOICE_SEGMENT_SECONDS) {
           void finishVoiceCapture(true);
         }
       };
       source.connect(node);
-      node.connect(context.destination);
-      await ensureMicrophoneAudioContextRunning(context);
+      node.connect(activeContext.destination);
+      await ensureMicrophoneAudioContextRunning(activeContext);
+      if (disposedRef.current || voiceCaptureAttemptRef.current !== captureAttempt) { await disposeMicrophoneCapture(stream, activeContext); return; }
       setInterimTranscript("");
       applyVoiceEvent({ type: "captureStarted" });
     } catch (cause) {
+      if (disposedRef.current || voiceCaptureAttemptRef.current !== captureAttempt) {
+        await disposeMicrophoneCapture(stream, context);
+        return;
+      }
       await detachVoiceCapture(false);
       if (disposedRef.current) return;
       setError(cause instanceof MicrophoneCaptureError
@@ -206,10 +201,9 @@ export function usePushToTalk({
   }
 
   async function suspendVoiceForSpeech(): Promise<boolean> {
-    if (!voiceStreamRef.current) return false;
+    if (!voiceStreamRef.current && voiceSessionRef.current.capture !== "starting") return false;
     applyVoiceEvent({ type: "speechSuspended" });
-    voiceFramesRef.current = [];
-    voiceFrameSamplesRef.current = 0;
+    voiceFramesRef.current.clear();
     await detachVoiceCapture(false);
     return true;
   }
@@ -224,6 +218,7 @@ export function usePushToTalk({
   }
 
   async function detachVoiceCapture(flush: boolean) {
+    voiceCaptureAttemptRef.current += 1;
     if (flush && voiceNodeRef.current) {
       await new Promise<void>((resolve) => {
         let completed = false;
@@ -277,11 +272,10 @@ export function usePushToTalk({
         await detachVoiceCapture(true);
       }
       if (!sampleRate) throw new Error("Recorded audio is unavailable.");
-      if (voiceFrameSamplesRef.current === 0) return;
-      const captured = mergePcmFrames(voiceFramesRef.current, voiceFrameSamplesRef.current);
-      const samples = Array.from(resamplePcm(captured, sampleRate, ASR_SAMPLE_RATE));
-      voiceFramesRef.current = [];
-      voiceFrameSamplesRef.current = 0;
+      if (voiceFramesRef.current.sampleCount === 0) return;
+      const captured = voiceFramesRef.current.take();
+      const samples = resamplePcm(captured, sampleRate, ASR_SAMPLE_RATE);
+      captured.fill(0);
       if (keepListening && voiceContextRef.current) {
         voiceActivityDetectorRef.current = new VoiceActivityDetector({ sampleRate: voiceContextRef.current.sampleRate });
         applyVoiceEvent({ type: "captureStarted" });
@@ -294,7 +288,7 @@ export function usePushToTalk({
         ttsActiveAtCapture: conversationSessionRef.current.speechRunId !== null,
       });
     } catch (cause) {
-      setError((current) => current ?? toMessage(cause));
+      if (!disposedRef.current) setError((current) => current ?? toMessage(cause));
     } finally {
       const pending = voiceSessionRef.current.pendingFinalize;
       applyVoiceEvent({ type: "finalizeCompleted" });
@@ -304,14 +298,14 @@ export function usePushToTalk({
 
   function enqueueVoiceSegment(segment: QueuedVoiceSegment) {
     if (disposedRef.current) {
-      segment.samples = [];
+      segment.samples.fill(0);
+      segment.samples = new Float32Array();
       return;
     }
-    if (voiceSegmentQueueRef.current.length >= 2) {
+    if (!voiceSegmentQueueRef.current.push(segment)) {
       setError("音声処理が追いつかないため、新しい発話は送信しませんでした。");
       return;
     }
-    voiceSegmentQueueRef.current.push(segment);
     void drainVoiceSegments();
   }
 
@@ -335,7 +329,8 @@ export function usePushToTalk({
             if (disposedRef.current || event.runId !== runId) return;
             if (event.type === "transcriptFinal") setInterimTranscript(event.text);
           });
-          segment.samples = [];
+          segment.samples.fill(0);
+          segment.samples = new Float32Array();
           if (voiceSessionRef.current.cancellationRequested || !transcript.trim()) continue;
           if (disposedRef.current) continue;
           setInterimTranscript(transcript);
@@ -352,7 +347,8 @@ export function usePushToTalk({
             void submitPrompt(transcript, { allowVoiceBusy: true, inputOrigin: "voice" });
           }
         } catch (cause) {
-          segment.samples = [];
+          segment.samples.fill(0);
+          segment.samples = new Float32Array();
           const message = toMessage(cause);
           if (!voiceSessionRef.current.cancellationRequested && !(segment.ttsActiveAtCapture && message.startsWith("TARGET_SPEAKER_REJECTED")) && !disposedRef.current) {
             setError(message.startsWith("TARGET_SPEAKER_REJECTED") ? "登録した本人の声として確認できなかったため、文字起こしへ送信しませんでした。" : message);

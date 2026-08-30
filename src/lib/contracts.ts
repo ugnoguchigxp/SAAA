@@ -19,7 +19,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 10;
+  schemaVersion: 11;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };
@@ -208,7 +208,6 @@ export type RoutingSettings = {
 
 export type VoiceSettings = {
   inputDeviceId: string;
-  outputDeviceId: "default";
   captureMode: "push-to-talk";
   sttHost: string;
   sttProviderId: "network-asr";
@@ -217,6 +216,13 @@ export type VoiceSettings = {
   ttsVoice: string;
   autoSpeak: boolean;
   cloudFallbackEnabled: false;
+};
+
+export type TtsCapabilities = {
+  available: boolean;
+  message: string;
+  voices: Array<{ id: string; label: string; language: string | null }>;
+  outputDevices: string[];
 };
 
 export type SecuritySettings = {
@@ -428,7 +434,6 @@ export function isRoutingSettings(value: Record<string, unknown>): value is Rout
 export function isVoiceSettings(value: Record<string, unknown>): value is VoiceSettings {
   return (
     typeof value.inputDeviceId === "string" &&
-    value.outputDeviceId === "default" &&
     value.captureMode === "push-to-talk" &&
     typeof value.sttHost === "string" &&
     value.sttProviderId === "network-asr" &&

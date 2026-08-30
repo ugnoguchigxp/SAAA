@@ -14,6 +14,7 @@ use super::{
     ERROR_BODY_LIMIT, PROBE_BODY_LIMIT, ROUTE, SSE_EVENT_LIMIT,
 };
 use crate::providers::completion::{CompletionTerminal, CompletionTerminalError};
+use crate::providers::openai_compatible::sse_event_data;
 use crate::runtime::agent_tools::{ToolCallAccumulator, ToolProtocolError};
 
 pub(crate) fn validate_allocation_common(dto: &AllocationDto) -> Result<(), LarmError> {
@@ -449,42 +450,43 @@ where
     F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
 {
     for event in events {
-        for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
-            let data = line.trim();
-            if data == "[DONE]" {
-                terminal
-                    .complete()
-                    .map_err(|error| completion_terminal_error(error, *output_started))?;
-                return Ok(true);
-            }
-            let value: Value = serde_json::from_str(data)
-                .map_err(|_| LarmError::new(SessionFailureKind::Protocol, *output_started))?;
+        let Some(data) = sse_event_data(&event) else {
+            continue;
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
             terminal
-                .observe(&value)
+                .complete()
                 .map_err(|error| completion_terminal_error(error, *output_started))?;
-            tool_calls
-                .absorb_stream_delta(&value)
-                .map_err(|error| tool_protocol_error(error, *output_started))?;
-            if let Some(delta) = value
-                .pointer("/choices/0/delta/content")
-                .and_then(Value::as_str)
-            {
-                let delta_chars = delta.chars().count();
-                if delta_chars == 0 {
-                    continue;
-                }
-                if *content_chars + delta_chars > ASSISTANT_CHAR_LIMIT {
-                    return Err(LarmError::new(
-                        SessionFailureKind::RequestTooLarge,
-                        *output_started,
-                    ));
-                }
-                let first = !*output_started;
-                on_delta(delta, first).map_err(|kind| LarmError::new(kind, true))?;
-                content.push_str(delta);
-                *content_chars += delta_chars;
-                *output_started = true;
+            return Ok(true);
+        }
+        let value: Value = serde_json::from_str(data)
+            .map_err(|_| LarmError::new(SessionFailureKind::Protocol, *output_started))?;
+        terminal
+            .observe(&value)
+            .map_err(|error| completion_terminal_error(error, *output_started))?;
+        tool_calls
+            .absorb_stream_delta(&value)
+            .map_err(|error| tool_protocol_error(error, *output_started))?;
+        if let Some(delta) = value
+            .pointer("/choices/0/delta/content")
+            .and_then(Value::as_str)
+        {
+            let delta_chars = delta.chars().count();
+            if delta_chars == 0 {
+                continue;
             }
+            if *content_chars + delta_chars > ASSISTANT_CHAR_LIMIT {
+                return Err(LarmError::new(
+                    SessionFailureKind::RequestTooLarge,
+                    *output_started,
+                ));
+            }
+            let first = !*output_started;
+            on_delta(delta, first).map_err(|kind| LarmError::new(kind, true))?;
+            content.push_str(delta);
+            *content_chars += delta_chars;
+            *output_started = true;
         }
     }
     Ok(false)

@@ -37,7 +37,7 @@ export function transitionVoiceSession(state: VoiceSession, event: VoiceSessionE
     case "captureStarting": return { ...state, capture: "starting" };
     case "captureStarted": return { ...state, capture: "recording" };
     case "captureDetached": return { ...state, capture: "idle" };
-    case "speechSuspended": return { ...state, capture: state.capture === "recording" ? "suspended" : state.capture };
+    case "speechSuspended": return { ...state, capture: ["starting", "recording"].includes(state.capture) ? "suspended" : state.capture };
     case "finalizeRequested":
       return state.finalizing
         ? { ...state, pendingFinalize: mergeFinalizeMode(state.pendingFinalize, event.mode) }

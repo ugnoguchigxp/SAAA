@@ -20,13 +20,15 @@ import { getAppSnapshot, reportFrontendReady, reportOwnedSignal } from "./lib/ru
 
 const initialSnapshot: AppSnapshot = { settings: [], conversations: [], primaryConversationId: "", effectiveRoute: { providerId: null, label: "モデル未選択", location: null, state: "unchecked", fallbackUsed: false, reasonCode: "snapshot-loading", updatedAt: null }, larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" }, voiceProfile: { status: "empty", filterEnabled: false, runtimeAvailable: false, runtimeMessage: "Loading local speaker verification…", sampleCount: 0, targetSampleCount: 5, totalDurationMs: 0, minimumDurationMs: 20_000, threshold: 0.55, samples: [] } };
 type Surface = "chat" | "meeting" | "situation" | "settings";
+type ErrorSlot = "app" | "conversation" | "voice";
+type ErrorSlots = Record<ErrorSlot, string | null>;
 
 function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(initialSnapshot);
   const [surface, setSurface] = useState<Surface>("chat");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<ErrorSlots>({ app: null, conversation: null, voice: null });
   const [meetingState, setMeetingState] = useState<MeetingState>("idle");
   const pendingVoicePromptsRef = useRef<PendingConversationPrompt[]>([]);
   const conversationSessionRef = useRef<ConversationSession>(initialConversationSession);
@@ -43,6 +45,16 @@ function App() {
     return document && isVoiceSettings(document.valueJson) ? document.valueJson : null;
   }, [snapshot.settings]);
   const meetingActive = isMeetingBlocking(meetingState);
+  const error = errors.conversation ?? errors.voice ?? errors.app;
+  const errorSetter = (slot: ErrorSlot): Dispatch<SetStateAction<string | null>> => (value) => {
+    setErrors((current) => ({
+      ...current,
+      [slot]: typeof value === "function" ? value(current[slot]) : value,
+    }));
+  };
+  const setAppError = errorSetter("app");
+  const setConversationError = errorSetter("conversation");
+  const setVoiceError = errorSetter("voice");
 
   const voice = usePushToTalk({
     selectedConversationId,
@@ -50,7 +62,7 @@ function App() {
     meetingState,
     conversationSessionRef,
     pendingVoicePromptsRef,
-    setError,
+    setError: setVoiceError,
     setRuntimeActivity: (value) => setRuntimeActivityRef.current(value),
     stopSpeech: () => stopSpeechRef.current(),
     submitPrompt: (prompt, options) => submitPromptRef.current(prompt, options),
@@ -65,7 +77,7 @@ function App() {
     suspendVoiceForSpeech: voice.suspendVoiceForSpeech,
     resumeVoiceAfterSpeech: voice.resumeVoiceAfterSpeech,
     setSnapshot,
-    setError,
+    setError: setConversationError,
   });
   submitPromptRef.current = turn.submitPrompt;
   stopSpeechRef.current = turn.stopSpeech;
@@ -105,6 +117,7 @@ function App() {
   async function initialize() {
     try {
       setLoading(true);
+      setAppError(null);
       const nextSnapshot = await getAppSnapshot();
       const primaryConversation = nextSnapshot.conversations.find(
         (conversation) => conversation.id === nextSnapshot.primaryConversationId,
@@ -112,27 +125,29 @@ function App() {
       if (!primaryConversation) throw new Error("Primary conversation is unavailable.");
       setSnapshot(nextSnapshot);
       setSelectedConversationId(primaryConversation.id);
-    } catch (cause) { setError(toMessage(cause)); } finally { setLoading(false); }
+    } catch (cause) { setAppError(toMessage(cause)); } finally { setLoading(false); }
   }
 
   async function refreshSnapshot() {
     try {
       const next = await getAppSnapshot();
       setSnapshot(next);
+      setAppError(null);
     } catch (cause) {
-      setError(toMessage(cause));
+      setAppError(toMessage(cause));
     }
   }
 
   function canChangeConversation(): boolean {
     if (conversationSessionRef.current.runId) {
-      setError("実行中の処理を停止してからSurfaceを切り替えてください。");
+      setAppError("実行中の処理を停止してからSurfaceを切り替えてください。");
       return false;
     }
     if (voice.isBusy()) {
-      setError("音声入力を停止してからSurfaceを切り替えてください。");
+      setAppError("音声入力を停止してからSurfaceを切り替えてください。");
       return false;
     }
+    setAppError(null);
     return true;
   }
 
@@ -142,7 +157,7 @@ function App() {
       (conversation) => conversation.id === snapshot.primaryConversationId,
     );
     if (!primaryConversation) {
-      setError("Primary conversation is unavailable.");
+      setAppError("Primary conversation is unavailable.");
       return;
     }
     setSelectedConversationId(primaryConversation.id);

@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
-pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 10;
+pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 11;
 
 use crate::{
     database_error, now_iso, provider_environment_suffix, providers, situation, voice,
@@ -161,7 +161,6 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             SETTINGS_SCHEMA_VERSION,
             json!({
                 "inputDeviceId": "default",
-                "outputDeviceId": "default",
                 "captureMode": "push-to-talk",
                 "sttHost": voice::network_asr::DEFAULT_HOST,
                 "sttProviderId": "network-asr",
@@ -549,7 +548,6 @@ pub(crate) fn validate_routing_settings(settings: &RoutingSettings) -> Result<()
 
 pub(crate) fn validate_voice_settings(settings: &VoiceRuntimeSettings) -> Result<(), String> {
     if settings.input_device_id.trim().is_empty()
-        || settings.output_device_id != "default"
         || settings.input_device_id.len() > 300
         || settings.capture_mode != "push-to-talk"
         || voice::network_asr::base_url_from_host(&settings.stt_host).is_err()

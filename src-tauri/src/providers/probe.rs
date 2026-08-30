@@ -21,6 +21,7 @@ pub(crate) async fn test_model_provider(
         reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
         max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
     })?;
+    let captured_configuration = super::probe_state::capture_if_current(state, &provider);
     let started = std::time::Instant::now();
     let result = match &provider {
         ModelProviderSettings::OpenAiCompatible(provider) => probe_model_provider(provider).await,
@@ -59,6 +60,6 @@ pub(crate) async fn test_model_provider(
         message: result.unwrap_or_else(|error| redact_runtime_text(&error)),
         latency_ms: started.elapsed().as_millis(),
     };
-    super::probe_state::record_if_current(state, &provider, tested.ok);
+    super::probe_state::record_if_current(state, &provider, captured_configuration, tested.ok);
     Ok(tested)
 }

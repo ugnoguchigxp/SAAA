@@ -92,7 +92,9 @@ pub struct SegmentInput {
     pub capture_token: String,
     pub lane: MeetingLane,
     pub sequence: u64,
+    #[serde(skip)]
     pub samples: Vec<f32>,
+    pub audio_upload_id: String,
     pub sample_rate: u32,
     pub started_at_ms: u64,
     pub duration_ms: u32,

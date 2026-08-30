@@ -173,21 +173,51 @@ fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
 }
 
 pub fn resample_pcm(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || source_rate == 0 || target_rate == 0 {
+    if samples.is_empty()
+        || !(8_000..=192_000).contains(&source_rate)
+        || !(8_000..=192_000).contains(&target_rate)
+    {
         return Vec::new();
     }
     if source_rate == target_rate {
         return samples.to_vec();
     }
+    const FILTER_RADIUS: isize = 24;
+    const CUTOFF_GUARD: f64 = 0.94;
     let ratio = source_rate as f64 / target_rate as f64;
+    let cutoff = (target_rate as f64 / source_rate as f64).min(1.0) * CUTOFF_GUARD;
     let target_len = ((samples.len() as f64) / ratio).floor() as usize;
     (0..target_len)
         .map(|index| {
             let position = index as f64 * ratio;
-            let left = position.floor() as usize;
-            let right = (left + 1).min(samples.len().saturating_sub(1));
-            let fraction = (position - left as f64) as f32;
-            samples[left] * (1.0 - fraction) + samples[right] * fraction
+            let center = position.floor() as isize;
+            let mut weighted = 0.0_f64;
+            let mut weight_sum = 0.0_f64;
+            for source_index in (center - FILTER_RADIUS + 1)..=(center + FILTER_RADIUS) {
+                if source_index < 0 || source_index >= samples.len() as isize {
+                    continue;
+                }
+                let distance = position - source_index as f64;
+                let window_position = distance.abs() / FILTER_RADIUS as f64;
+                if window_position >= 1.0 {
+                    continue;
+                }
+                let window = 0.5 * (1.0 + (std::f64::consts::PI * window_position).cos());
+                let scaled = std::f64::consts::PI * cutoff * distance;
+                let sinc = if scaled.abs() < 1e-8 {
+                    cutoff
+                } else {
+                    cutoff * scaled.sin() / scaled
+                };
+                let weight = sinc * window;
+                weighted += samples[source_index as usize] as f64 * weight;
+                weight_sum += weight;
+            }
+            if weight_sum == 0.0 {
+                0.0
+            } else {
+                (weighted / weight_sum) as f32
+            }
         })
         .collect()
 }
@@ -200,6 +230,30 @@ mod tests {
         net::TcpListener,
         thread,
     };
+
+    #[test]
+    fn band_limited_resampling_suppresses_aliases() {
+        let source_rate = 48_000_u32;
+        let sine = |frequency: f64| {
+            (0..source_rate / 5)
+                .map(|index| {
+                    (2.0 * std::f64::consts::PI * frequency * index as f64 / source_rate as f64)
+                        .sin() as f32
+                })
+                .collect::<Vec<_>>()
+        };
+        let rms = |samples: &[f32]| {
+            let stable = &samples[32..samples.len() - 32];
+            (stable
+                .iter()
+                .map(|sample| (*sample as f64).powi(2))
+                .sum::<f64>()
+                / stable.len() as f64)
+                .sqrt()
+        };
+        assert!(rms(&resample_pcm(&sine(1_000.0), source_rate, 16_000)) > 0.65);
+        assert!(rms(&resample_pcm(&sine(12_000.0), source_rate, 16_000)) < 0.03);
+    }
 
     #[test]
     fn asr_base_url_accepts_only_private_http_origins() {

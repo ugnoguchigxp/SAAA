@@ -8,7 +8,7 @@ use super::completion::{
     CompletionTerminalError,
 };
 use super::openai_compatible::{
-    drain_sse_events, provider_api_key, provider_chat_url, SseDrainError,
+    drain_sse_events, provider_api_key, provider_chat_url, sse_event_data, SseDrainError,
 };
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
 use crate::{OpenAiCompatibleProviderSettings, RunCancellation, StartTurnInput};
@@ -411,55 +411,56 @@ pub(crate) fn project_sse_events(
     terminal: &mut CompletionTerminal,
 ) -> Result<bool, ProviderAttemptError> {
     for event in events {
-        for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
-            let data = line.trim();
-            if data == "[DONE]" {
-                terminal
-                    .complete()
-                    .map_err(|error| completion_terminal_failure(error, *output_started))?;
-                return Ok(true);
-            }
-            let value: Value = serde_json::from_str(data).map_err(|_| {
-                ProviderAttemptError::failed(ProviderFailureKind::Protocol, *output_started)
-            })?;
+        let Some(data) = sse_event_data(&event) else {
+            continue;
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
             terminal
-                .observe(&value)
+                .complete()
                 .map_err(|error| completion_terminal_failure(error, *output_started))?;
-            tool_calls
-                .absorb_stream_delta(&value)
-                .map_err(|error| tool_protocol_failure(error, *output_started))?;
-            if let Some(delta) = value
-                .pointer("/choices/0/delta/content")
-                .and_then(Value::as_str)
-            {
-                let delta_chars = delta.chars().count();
-                if delta_chars == 0 {
-                    continue;
-                }
-                let remaining = 64_000usize.saturating_sub(*content_chars);
-                if remaining == 0 || delta_chars > remaining {
-                    return Err(ProviderAttemptError::failed(
-                        ProviderFailureKind::RequestTooLarge,
-                        *output_started,
-                    ));
-                }
-                if !*output_started {
-                    if let Some(persistence) = output_persistence {
-                        persistence.mark_started()?;
-                    }
-                }
-                content.push_str(delta);
-                *content_chars += delta_chars;
-                *output_started = true;
-                on_event
-                    .send(RuntimeEvent::Delta {
-                        run_id: input.run_id.clone(),
-                        text: delta.to_string(),
-                    })
-                    .map_err(|_| {
-                        ProviderAttemptError::failed(ProviderFailureKind::ClientDisconnected, true)
-                    })?;
+            return Ok(true);
+        }
+        let value: Value = serde_json::from_str(data).map_err(|_| {
+            ProviderAttemptError::failed(ProviderFailureKind::Protocol, *output_started)
+        })?;
+        terminal
+            .observe(&value)
+            .map_err(|error| completion_terminal_failure(error, *output_started))?;
+        tool_calls
+            .absorb_stream_delta(&value)
+            .map_err(|error| tool_protocol_failure(error, *output_started))?;
+        if let Some(delta) = value
+            .pointer("/choices/0/delta/content")
+            .and_then(Value::as_str)
+        {
+            let delta_chars = delta.chars().count();
+            if delta_chars == 0 {
+                continue;
             }
+            let remaining = 64_000usize.saturating_sub(*content_chars);
+            if remaining == 0 || delta_chars > remaining {
+                return Err(ProviderAttemptError::failed(
+                    ProviderFailureKind::RequestTooLarge,
+                    *output_started,
+                ));
+            }
+            if !*output_started {
+                if let Some(persistence) = output_persistence {
+                    persistence.mark_started()?;
+                }
+            }
+            content.push_str(delta);
+            *content_chars += delta_chars;
+            *output_started = true;
+            on_event
+                .send(RuntimeEvent::Delta {
+                    run_id: input.run_id.clone(),
+                    text: delta.to_string(),
+                })
+                .map_err(|_| {
+                    ProviderAttemptError::failed(ProviderFailureKind::ClientDisconnected, true)
+                })?;
         }
     }
     Ok(false)

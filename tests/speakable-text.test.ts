@@ -14,6 +14,15 @@ describe("speakable text", () => {
     expect(text).toBe("次の例です。コードブロックは省略します。以上です。");
     expect(text).not.toContain("const secret");
   });
+  test("uses an English omission message for English responses", () => {
+    expect(toSpeakableText("Example:\n```ts\nconst hidden = true;\n```"))
+      .toBe("Example: Code block omitted.");
+  });
+
+  test("recognizes kanji-only Japanese text", () => {
+    expect(toSpeakableText("東京駅\n```txt\nhidden\n```"))
+      .toBe("東京駅。コードブロックは省略します。");
+  });
 
   test("returns an empty value for non-speakable-only content", () => {
     expect(toSpeakableText("https://example.com 🚀")).toBe("");

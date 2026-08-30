@@ -1,14 +1,15 @@
 use rusqlite::{params, Connection};
 
 use super::migrate::{
-    migrate_direct_dynamic_lan_provider_to_discovery, migrate_legacy_settings_documents,
-    migrate_pristine_provider_defaults_to_dynamic_lan, migrate_provider_reasoning_effort_default,
-    migrate_v4_to_v5, migrate_v6_to_v7, migrate_v7_to_v8, migrate_v8_to_v9,
+    ensure_provider_configuration_fingerprint, migrate_direct_dynamic_lan_provider_to_discovery,
+    migrate_legacy_settings_documents, migrate_pristine_provider_defaults_to_dynamic_lan,
+    migrate_provider_reasoning_effort_default, migrate_v4_to_v5, migrate_v6_to_v7,
+    migrate_v7_to_v8, migrate_v8_to_v9,
 };
 use super::provider_identity::migrate_dynamic_lan_provider_identity;
 use super::runs::reconcile_interrupted_runs;
 use super::settings::default_settings_documents;
-use super::settings_migration::migrate_settings_v9_to_v10;
+use super::settings_migration::migrate_settings_to_current;
 use crate::{meeting, memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
@@ -46,6 +47,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
            provider_id TEXT NOT NULL,
            runtime_run_id TEXT CHECK(runtime_run_id IS NULL OR (length(runtime_run_id) BETWEEN 1 AND 160 AND runtime_run_id NOT GLOB '*[^A-Za-z0-9_-]*')),
            provider_kind TEXT CHECK(provider_kind IS NULL OR provider_kind IN ('openai-compatible', 'larm')),
+           configuration_fingerprint TEXT NOT NULL DEFAULT '' CHECK(length(configuration_fingerprint) IN (0,64)),
            route_id TEXT CHECK(route_id IS NULL OR (length(route_id) BETWEEN 1 AND 80 AND route_id NOT GLOB '*[^A-Za-z0-9._-]*')),
            allocation_id TEXT CHECK(allocation_id IS NULL OR (length(allocation_id) BETWEEN 1 AND 160 AND allocation_id NOT GLOB '*[^A-Za-z0-9_-]*')),
            selected_runtime_id TEXT CHECK(selected_runtime_id IS NULL OR (length(selected_runtime_id) BETWEEN 1 AND 160 AND selected_runtime_id NOT GLOB '*[^A-Za-z0-9_-]*')),
@@ -154,6 +156,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     memory::recall::migrate_v9_to_v10(&transaction)?;
     voice::profile::migrate_v10_to_v11(&transaction)?;
     memory::control_plane::migrate_v11_to_v12(&transaction)?;
+    ensure_provider_configuration_fingerprint(&transaction)?;
     transaction.execute("UPDATE settings_documents SET schema_version = 9, updated_at = ?1 WHERE schema_version < 9", params![now_iso()])?;
 
     for (namespace, key, schema_version, value) in default_settings_documents() {
@@ -183,7 +186,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     migrate_direct_dynamic_lan_provider_to_discovery(&transaction)?;
     migrate_dynamic_lan_provider_identity(&transaction)?;
     migrate_provider_reasoning_effort_default(&transaction)?;
-    migrate_settings_v9_to_v10(&transaction)?;
+    migrate_settings_to_current(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
     transaction.pragma_update(

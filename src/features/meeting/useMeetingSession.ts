@@ -21,6 +21,9 @@ import {
 import { appendFrames } from "./audio/pcm";
 import { SegmentQueue } from "./audio/segmentQueue";
 import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
+import { resamplePcm } from "../../lib/audioResampling";
+
+const MEETING_SAMPLE_RATE = 16_000;
 
 const idle: MeetingSnapshot = {
   sessionId: null,
@@ -60,7 +63,7 @@ export function useMeetingSession(
   const frames = useRef<Float32Array[]>([]);
   const frameSamples = useRef(0);
   const frameStartedAtMs = useRef<number | null>(null);
-  const queue = useRef(new SegmentQueue<PendingSegment>());
+  const queue = useRef(new SegmentQueue<PendingSegment>(2, (segment) => segment.samples.fill(0)));
   const processing = useRef<Promise<void> | null>(null);
   const sequence = useRef(0);
   const started = useRef(0);
@@ -163,6 +166,7 @@ export function useMeetingSession(
     captureLease.current?.();
     captureLease.current = null;
     if (clearPending) {
+      for (const frame of frames.current) frame.fill(0);
       frames.current = [];
       frameSamples.current = 0;
       frameStartedAtMs.current = null;
@@ -172,24 +176,24 @@ export function useMeetingSession(
 
   function enqueueBuffered(sampleRate: number, minimumDurationMs: number): boolean {
     if (frameSamples.current === 0) return false;
+    const capturedStartedAtMs = frameStartedAtMs.current;
     const samples = appendFrames(new Float32Array(), frames.current);
+    for (const frame of frames.current) frame.fill(0);
+    frames.current = [];
+    frameSamples.current = 0;
+    frameStartedAtMs.current = null;
     const durationMs = Math.round((samples.length / sampleRate) * 1_000);
     if (durationMs < minimumDurationMs) {
-      frames.current = [];
-      frameSamples.current = 0;
-      frameStartedAtMs.current = null;
+      samples.fill(0);
       return false;
     }
     const segment: PendingSegment = {
       sequence: sequence.current,
       samples,
       sampleRate,
-      startedAtMs: frameStartedAtMs.current ?? Math.max(0, Date.now() - started.current - durationMs),
+      startedAtMs: capturedStartedAtMs ?? Math.max(0, Date.now() - started.current - durationMs),
       durationMs,
     };
-    frames.current = [];
-    frameSamples.current = 0;
-    frameStartedAtMs.current = null;
     if (!queue.current.push(segment)) {
       setHealth("degraded");
       setError("Meeting transcription cannot keep up. Capture was paused without evicting queued audio.");
@@ -213,16 +217,21 @@ export function useMeetingSession(
           !currentSnapshot.sessionId ||
           !currentSnapshot.captureToken
         ) {
+          segment.samples.fill(0);
           throw new Error("Meeting capture is no longer active.");
         }
+        let normalized = new Float32Array();
         try {
+          normalized = resamplePcm(segment.samples, segment.sampleRate, MEETING_SAMPLE_RATE);
+          segment.samples.fill(0);
+          segment.samples = new Float32Array();
           const result = await appendMeetingAudioSegment({
             sessionId: currentSnapshot.sessionId,
             captureToken: currentSnapshot.captureToken,
             lane: "microphone",
             sequence: segmentSequence,
-            samples: Array.from(segment.samples),
-            sampleRate: segment.sampleRate,
+            samples: normalized,
+            sampleRate: MEETING_SAMPLE_RATE,
             startedAtMs: segment.startedAtMs,
             durationMs: segment.durationMs,
           });
@@ -241,6 +250,8 @@ export function useMeetingSession(
           setError(toMessage(cause));
           await pauseAfterFailure();
           throw cause;
+        } finally {
+          normalized.fill(0);
         }
       }
     })();

@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { stageAudioUpload } from "./audioIpc";
 import type {
   AppSnapshot,
   CodexModelOption,
@@ -20,6 +21,7 @@ import type {
   MeetingSegmentResult,
   MeetingSnapshot,
   MeetingEvent,
+  TtsCapabilities,
 } from "./contracts";
 import { validateSettingsDocuments } from "./schemas";
 
@@ -53,12 +55,17 @@ export async function resolveNetworkAsr(host: string): Promise<NetworkAsrResolut
 }
 
 export async function transcribeAudio(
-  input: { runId: string; conversationId: string; samples: number[]; sampleRate: number; model: string },
+  input: { runId: string; conversationId: string; samples: Float32Array; sampleRate: number; model: string },
   onEvent: (event: VoiceEvent) => void,
 ): Promise<string> {
   const channel = new Channel<VoiceEvent>();
   channel.onmessage = onEvent;
-  return invoke<string>("transcribe_audio", { input, onEvent: channel });
+  const { samples, ...metadata } = input;
+  const audioUploadId = await stageAudioUpload(samples, "chat-asr").finally(() => samples.fill(0));
+  return invoke<string>("transcribe_audio", {
+    input: { ...metadata, audioUploadId },
+    onEvent: channel,
+  });
 }
 
 export async function speakText(input: {
@@ -68,6 +75,10 @@ export async function speakText(input: {
   voice: string;
 }): Promise<void> {
   return invoke<void>("speak_text", { input });
+}
+
+export async function listTtsCapabilities(): Promise<TtsCapabilities> {
+  return invoke<TtsCapabilities>("list_tts_capabilities");
 }
 
 export async function stopTts(runId: string): Promise<void> {
@@ -83,12 +94,16 @@ export async function getVoiceProfileSnapshot(): Promise<VoiceProfileSnapshot> {
 }
 
 export async function saveVoiceEnrollmentSample(input: {
-  samples: number[];
+  samples: Float32Array;
   sampleRate: number;
   inputDeviceId: string;
   effectiveAec: boolean;
 }): Promise<VoiceProfileSnapshot> {
-  return invoke<VoiceProfileSnapshot>("save_voice_enrollment_sample", { input });
+  const { samples, ...metadata } = input;
+  const audioUploadId = await stageAudioUpload(samples, "voice-enrollment").finally(() => samples.fill(0));
+  return invoke<VoiceProfileSnapshot>("save_voice_enrollment_sample", {
+    input: { ...metadata, audioUploadId },
+  });
 }
 
 export async function setTargetSpeakerFilterEnabled(enabled: boolean): Promise<VoiceProfileSnapshot> {
@@ -103,8 +118,8 @@ export async function deleteVoiceProfile(): Promise<VoiceProfileSnapshot> {
   return invoke<VoiceProfileSnapshot>("delete_voice_profile");
 }
 
-export async function readVoiceEnrollmentSample(sampleId: string): Promise<number[]> {
-  return invoke<number[]>("read_voice_enrollment_sample", { sampleId });
+export async function readVoiceEnrollmentSample(sampleId: string): Promise<ArrayBuffer> {
+  return invoke<ArrayBuffer>("read_voice_enrollment_sample", { sampleId });
 }
 
 export async function reportFrontendReady(): Promise<void> {
@@ -189,7 +204,7 @@ export async function unwatchMeeting(subscriberId: string): Promise<void> { retu
 export async function pauseMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("pause_meeting", { input: { sessionId } }); }
 export async function resumeMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("resume_meeting", { input: { sessionId } }); }
 export async function stopMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("stop_meeting", { input: { sessionId } }); }
-export async function appendMeetingAudioSegment(input: { sessionId: string; captureToken: string; lane: "microphone"; sequence: number; samples: number[]; sampleRate: number; startedAtMs: number; durationMs: number }): Promise<MeetingSegmentResult> { return invoke("append_meeting_audio_segment", { input }); }
-export async function previewMeetingAudioSegment(input: { runId: string; sessionId: string; captureToken: string; lane: "microphone"; sequence: number; samples: number[]; sampleRate: number; startedAtMs: number; durationMs: number }): Promise<void> { return invoke("preview_meeting_audio_segment", { input }); }
+export async function appendMeetingAudioSegment(input: { sessionId: string; captureToken: string; lane: "microphone"; sequence: number; samples: Float32Array; sampleRate: number; startedAtMs: number; durationMs: number }): Promise<MeetingSegmentResult> { const { samples, ...metadata } = input; const audioUploadId = await stageAudioUpload(samples, "meeting-segment").finally(() => samples.fill(0)); return invoke("append_meeting_audio_segment", { input: { ...metadata, audioUploadId } }); }
+export async function previewMeetingAudioSegment(input: { runId: string; sessionId: string; captureToken: string; lane: "microphone"; sequence: number; samples: Float32Array; sampleRate: number; startedAtMs: number; durationMs: number }): Promise<void> { const { samples, ...metadata } = input; const audioUploadId = await stageAudioUpload(samples, "meeting-segment").finally(() => samples.fill(0)); return invoke("preview_meeting_audio_segment", { input: { ...metadata, audioUploadId } }); }
 export async function saveMeetingTranscript(sessionId: string): Promise<MeetingSnapshot> { return invoke("save_meeting_transcript", { input: { sessionId } }); }
 export async function discardMeeting(sessionId: string): Promise<void> { return invoke("discard_meeting", { input: { sessionId } }); }

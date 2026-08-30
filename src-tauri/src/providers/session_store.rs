@@ -11,7 +11,15 @@ pub(crate) fn begin_provider_session(
     runtime_run_id: &str,
     provider_id: &str,
     provider_kind: &str,
+    configuration_fingerprint: &str,
 ) -> Result<String, String> {
+    if configuration_fingerprint.len() != 64
+        || !configuration_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("Conversation configuration fingerprint is invalid".to_string());
+    }
     let session_id = new_id("provider-session");
     let now = now_iso();
     let connection = state
@@ -21,14 +29,22 @@ pub(crate) fn begin_provider_session(
     connection
         .execute(
             "INSERT INTO provider_sessions(
-               id, runtime_run_id, provider_id, provider_kind, fallback_used, output_started,
+               id, runtime_run_id, provider_id, provider_kind, configuration_fingerprint,
+               fallback_used, output_started,
                release_status, status, started_at, updated_at
              ) VALUES (
-               ?1, ?2, ?3, ?4, 0, 0,
+               ?1, ?2, ?3, ?4, ?5, 0, 0,
                CASE WHEN ?4='larm' THEN 'not-started' ELSE 'not-applicable' END,
-               'running', ?5, ?5
+               'running', ?6, ?6
              )",
-            params![session_id, runtime_run_id, provider_id, provider_kind, now],
+            params![
+                session_id,
+                runtime_run_id,
+                provider_id,
+                provider_kind,
+                configuration_fingerprint,
+                now
+            ],
         )
         .map_err(database_error)?;
     Ok(session_id)

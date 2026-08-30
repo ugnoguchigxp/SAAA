@@ -25,10 +25,8 @@ pub(crate) fn app_state(connection: Connection) -> AppState {
         larm_gate: providers::larm::LarmRuntimeGate::Disabled,
         network_asr: voice::network_asr::NetworkAsrRuntime::new()
             .expect("Network ASR runtime initializes"),
+        audio_uploads: voice::audio_upload::AudioUploadStore::default(),
         tts_process: Mutex::new(None),
-        #[cfg(target_os = "macos")]
-        tts_audio_output: voice::system_tts::audio_output::TtsAudioOutput::new()
-            .expect("TTS audio output initializes"),
         situation: Arc::new(
             situation::SituationRuntime::new(settings, None)
                 .expect("Situation runtime initializes"),

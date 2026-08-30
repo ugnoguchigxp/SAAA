@@ -55,7 +55,9 @@ pub struct VoiceSampleSummary {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveVoiceEnrollmentSampleInput {
+    #[serde(skip)]
     pub samples: Vec<f32>,
+    pub audio_upload_id: String,
     pub sample_rate: u32,
     pub input_device_id: String,
     pub effective_aec: bool,
@@ -126,7 +128,7 @@ impl VoiceProfileRuntime {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "quality-eval-harness"))]
     pub fn unavailable_for_tests(data_directory: PathBuf) -> Self {
         Self {
             data_directory,
@@ -190,9 +192,10 @@ impl VoiceProfileRuntime {
     pub fn save_sample(
         &self,
         connection: &Connection,
-        input: SaveVoiceEnrollmentSampleInput,
+        mut input: SaveVoiceEnrollmentSampleInput,
     ) -> Result<VoiceProfileSnapshot, String> {
-        validate_enrollment_input(&input)?;
+        let input_samples = Zeroizing::new(std::mem::take(&mut input.samples));
+        validate_enrollment_input(&input, &input_samples)?;
         let extractor = self.extractor.as_ref().ok_or_else(|| {
             format!(
                 "Speaker enrollment is unavailable: {}",
@@ -232,7 +235,6 @@ impl VoiceProfileRuntime {
                 );
             }
         }
-        let input_samples = Zeroizing::new(input.samples);
         let canonical = Zeroizing::new(resample_mono(
             &input_samples,
             input.sample_rate,
@@ -272,8 +274,10 @@ impl VoiceProfileRuntime {
             let references = encrypted_references
                 .into_iter()
                 .map(|(id, encrypted)| {
-                    decrypt_payload(&master_key, "embedding", &id, &encrypted)
-                        .and_then(|value| decode_embedding(&value, extractor.dimension()))
+                    decrypt_payload(&master_key, "embedding", &id, &encrypted).and_then(|value| {
+                        let value = Zeroizing::new(value);
+                        decode_embedding(&value, extractor.dimension())
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let best_score = references
@@ -584,7 +588,10 @@ impl VoiceProfileRuntime {
                     );
                 }
                 decrypt_payload(&master_key, "embedding", &id, &encrypted)
-                    .and_then(|value| decode_embedding(&value, extractor.dimension()))
+                    .and_then(|value| {
+                        let value = Zeroizing::new(value);
+                        decode_embedding(&value, extractor.dimension())
+                    })
                     .map_err(|error| format!("TARGET_SPEAKER_UNAVAILABLE: {error}"))
             })
             .collect::<Result<Vec<_>, _>>()?;

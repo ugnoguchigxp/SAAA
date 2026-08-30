@@ -35,7 +35,7 @@ describe("chat helpers", () => {
     const documents: SettingsDocument[] = [{
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 10,
+      schemaVersion: 11,
       valueJson: { conversationRespond: { primaryProviderId: "local-openai-compatible" } },
       updatedAt: "1",
     }];

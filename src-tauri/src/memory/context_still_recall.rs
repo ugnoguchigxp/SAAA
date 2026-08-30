@@ -131,7 +131,7 @@ impl ContextStillRecallClient {
         Self::with_run_dir(resolve_run_dir(), control_plane::memory_enabled())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "quality-eval-harness"))]
     pub fn disabled() -> Self {
         Self::with_run_dir(PathBuf::new(), false)
     }

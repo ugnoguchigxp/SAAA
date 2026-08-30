@@ -3,7 +3,9 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 
-use super::{drain_sse_events, provider_api_key, provider_chat_url, provider_models_url};
+use super::{
+    drain_sse_events, provider_api_key, provider_chat_url, provider_models_url, sse_event_data,
+};
 use crate::providers::completion::{thinking_enabled, CompletionFinish, CompletionTerminal};
 use crate::OpenAiCompatibleProviderSettings;
 
@@ -98,7 +100,7 @@ fn validate_probe_stream(mut body: Vec<u8>) -> Result<(), String> {
     let mut content_seen = false;
     let mut done_seen = false;
     for event in events {
-        let Some(data) = event.lines().find_map(|line| line.strip_prefix("data:")) else {
+        let Some(data) = sse_event_data(&event) else {
             continue;
         };
         let data = data.trim();

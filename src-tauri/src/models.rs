@@ -313,7 +313,6 @@ fn default_agent_name() -> String {
 #[serde(deny_unknown_fields)]
 pub(crate) struct VoiceRuntimeSettings {
     pub(crate) input_device_id: String,
-    pub(crate) output_device_id: String,
     pub(crate) capture_mode: String,
     #[serde(default = "default_stt_host")]
     pub(crate) stt_host: String,
@@ -381,47 +380,4 @@ pub(crate) struct NetworkAsrResolution {
 pub(crate) struct LocalArtifactResult {
     pub(crate) path: String,
     pub(crate) created_at: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscribeAudioInput {
-    pub(crate) run_id: String,
-    pub(crate) conversation_id: String,
-    pub(crate) samples: Vec<f32>,
-    pub(crate) sample_rate: u32,
-    pub(crate) model: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SpeakTextInput {
-    pub(crate) run_id: String,
-    pub(crate) conversation_id: String,
-    pub(crate) text: String,
-    pub(crate) voice: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub(crate) enum VoiceEvent {
-    Transcribing {
-        run_id: String,
-    },
-    TranscriptFinal {
-        run_id: String,
-        text: String,
-    },
-    Cancelled {
-        run_id: String,
-    },
-    Failed {
-        run_id: String,
-        message: String,
-        recovery: String,
-    },
 }

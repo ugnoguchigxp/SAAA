@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::redact::redact_runtime_text;
 use crate::{
@@ -22,8 +23,6 @@ pub(crate) fn start_meeting_inner(
         return Err("MEETING_POLICY_TTS_BLOCKED: Stop speech and retry.".to_string());
     }
     drop(tts_process);
-    #[cfg(target_os = "macos")]
-    state.tts_audio_output.stop();
     let coding_run_active: bool = state
         .connection
         .lock()
@@ -106,10 +105,16 @@ pub(crate) fn stop_meeting(
 
 pub(crate) async fn append_meeting_audio_segment(
     state: &AppState,
-    input: crate::meeting::SegmentInput,
+    mut input: crate::meeting::SegmentInput,
 ) -> Result<crate::meeting::SegmentResult, String> {
+    input.samples = state
+        .audio_uploads
+        .consume(&input.audio_upload_id, "meeting-segment")?;
     let cancellation = Arc::new(RunCancellation::default());
-    let (model, samples) = state.meeting.append(&input, cancellation.clone())?;
+    let appended = state.meeting.append(&input, cancellation.clone());
+    input.samples.zeroize();
+    let (model, samples) = appended?;
+    let samples = Zeroizing::new(samples);
     state
         .situation
         .set_microphone_state(crate::situation::contracts::MicrophoneState::SaaaTranscribing);
@@ -186,12 +191,16 @@ pub(crate) async fn append_meeting_audio_segment(
 
 pub(crate) async fn preview_meeting_audio_segment(
     state: &AppState,
-    input: crate::meeting::PreviewSegmentInput,
+    mut input: crate::meeting::PreviewSegmentInput,
 ) -> Result<(), String> {
     validate_identifier(&input.run_id, "run id")?;
+    input.segment.samples = state
+        .audio_uploads
+        .consume(&input.segment.audio_upload_id, "meeting-segment")?;
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(state, &input.run_id, cancellation.clone())?;
     let preview = state.meeting.preview(&input.segment);
+    input.segment.samples.zeroize();
     let (model, samples) = match preview {
         Ok(preview) => preview,
         Err(error) => {
@@ -199,6 +208,7 @@ pub(crate) async fn preview_meeting_audio_segment(
             return Err(error);
         }
     };
+    let samples = Zeroizing::new(samples);
     let transcription = crate::voice::network_asr::transcribe(
         state,
         &samples,

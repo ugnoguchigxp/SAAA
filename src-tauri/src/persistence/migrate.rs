@@ -11,6 +11,25 @@ use crate::{
     DYNAMIC_LAN_PROVIDER_ID,
 };
 
+pub(crate) fn ensure_provider_configuration_fingerprint(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('provider_sessions')
+         WHERE name='configuration_fingerprint')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        connection.execute_batch(
+            "ALTER TABLE provider_sessions
+             ADD COLUMN configuration_fingerprint TEXT NOT NULL DEFAULT ''
+             CHECK(length(configuration_fingerprint) IN (0,64));",
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn migrate_provider_reasoning_effort_default(
     connection: &Connection,
 ) -> rusqlite::Result<()> {
@@ -552,7 +571,6 @@ pub(crate) fn migrate_legacy_settings_documents(connection: &Connection) -> rusq
     migrate_document(connection, "voice.runtime", "default", |legacy| {
         json!({
             "inputDeviceId": legacy.get("inputDeviceId").and_then(Value::as_str).unwrap_or("default"),
-            "outputDeviceId": legacy.get("outputDeviceId").and_then(Value::as_str).unwrap_or("default"),
             "captureMode": "push-to-talk",
             "sttProviderId": "network-asr",
             "sttModel": "qwen3-asr-1.7b",

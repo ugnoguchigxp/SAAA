@@ -22,13 +22,20 @@ fn add_default(
     Ok(())
 }
 
-pub(crate) fn migrate_settings_v9_to_v10(connection: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::Result<()> {
     add_default(
         connection,
         "providers.model",
         "default",
         "maxOutputTokens",
         crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+    )?;
+    connection.execute(
+        "UPDATE settings_documents
+         SET value_json=json_remove(value_json, '$.outputDeviceId'), updated_at=?1
+         WHERE namespace='voice.runtime' AND key='default'
+           AND json_valid(value_json) AND json_type(value_json, '$.outputDeviceId') IS NOT NULL",
+        [now_iso()],
     )?;
     add_default(
         connection,

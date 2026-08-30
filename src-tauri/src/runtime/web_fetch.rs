@@ -72,6 +72,10 @@ pub fn is_web_fetch_tool(name: &str) -> bool {
 }
 
 pub async fn execute(call: &AgentToolCall, timeout: Duration) -> String {
+    #[cfg(feature = "quality-eval-harness")]
+    if let Ok(fixture) = env::var("SAAA_QUALITY_TOOL_FIXTURE") {
+        return fixture;
+    }
     let arguments = match serde_json::from_str::<Value>(&call.arguments) {
         Ok(Value::Object(arguments)) => Value::Object(arguments),
         _ => {

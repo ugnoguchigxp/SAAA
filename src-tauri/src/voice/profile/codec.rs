@@ -123,14 +123,15 @@ pub(super) fn update_profile_readiness(connection: &Connection) -> Result<(), St
 
 pub(super) fn validate_enrollment_input(
     input: &SaveVoiceEnrollmentSampleInput,
+    samples: &[f32],
 ) -> Result<(), String> {
     if !(8_000..=192_000).contains(&input.sample_rate)
-        || input.samples.is_empty()
-        || input.samples.iter().any(|sample| !sample.is_finite())
+        || samples.is_empty()
+        || samples.iter().any(|sample| !sample.is_finite())
     {
         return Err("Enrollment audio is empty or invalid".to_string());
     }
-    let duration = input.samples.len() as f32 / input.sample_rate as f32;
+    let duration = samples.len() as f32 / input.sample_rate as f32;
     if !(MIN_SAMPLE_SECONDS..=MAX_SAMPLE_SECONDS).contains(&duration) {
         return Err("Each voice sample must be between 3 and 12 seconds".to_string());
     }

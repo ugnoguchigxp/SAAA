@@ -41,13 +41,14 @@ describe("MVP UI reachability contracts", () => {
   });
   test("removes Codex controls from Settings while preserving the stored document", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
+    const settingsPersistence = source("src/features/settings/settingsDraft.ts");
     expect(settings).not.toContain('id: "codex"');
     expect(settings).not.toContain("<CodexSection");
     expect(settings).not.toContain("coding.assist");
     expect(settings).not.toContain("getCodexStatus");
     expect(settings).not.toContain("listCodexModels");
-    expect(settings).toContain('document("providers.agent", "codex-sdk", {');
-    expect(settings).toContain("...draft.codex");
+    expect(settingsPersistence).toContain('document("providers.agent", "codex-sdk", {');
+    expect(settingsPersistence).toContain("...draft.codex");
   });
   test("lets users select the conversation reasoning effort in LLM Providers", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
@@ -78,13 +79,14 @@ describe("MVP UI reachability contracts", () => {
   });
   test("lets users configure conversation identity names in General settings", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
+    const settingsPersistence = source("src/features/settings/settingsDraft.ts");
     expect(settings).toContain('Field label="Agent name"');
     expect(settings).toContain("会話のSystem Contextへ反映");
-    expect(settings).toContain("agentName: draft.codex.agentName.trim()");
+    expect(settingsPersistence).toContain("agentName: draft.codex.agentName.trim()");
     expect(settings).toContain('Field label="User name"');
     expect(settings).toContain('const DEFAULT_USER_NAME = ""');
     expect(settings).toContain("名前を推測せず、名前で呼びかけません");
-    expect(settings).toContain("userName: draft.codex.userName.trim()");
+    expect(settingsPersistence).toContain("userName: draft.codex.userName.trim()");
   });
   test("renders only the single final ASR transcript event", () => {
     const contracts = source("src/lib/contracts.ts");

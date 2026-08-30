@@ -51,7 +51,7 @@ describe("macOS microphone bundle configuration", () => {
   test("registers acquired streams before AudioContext construction can fail", () => {
     const app = chatVoiceSource();
     const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    expect(app.indexOf("voiceStreamRef.current = stream")).toBeLessThan(app.indexOf("const context = new AudioContext()"));
+    expect(app.indexOf("voiceStreamRef.current = stream")).toBeLessThan(app.indexOf("context = new AudioContext()"));
     expect(meeting.indexOf("stream.current = nextStream")).toBeLessThan(meeting.indexOf("const nextContext = new AudioContext()"));
   });
 
@@ -69,7 +69,7 @@ describe("macOS microphone bundle configuration", () => {
     const app = chatVoiceSource();
     const chatPage = readFileSync(join(import.meta.dir, "../src/features/chat/ChatPage.tsx"), "utf8");
     const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    expect(app).toContain("new VoiceActivityDetector({ sampleRate: context.sampleRate })");
+    expect(app).toContain("new VoiceActivityDetector({ sampleRate: activeContext.sampleRate })");
     expect(app).toContain("const observation = voiceActivityDetectorRef.current?.observe(event.data)");
     expect(app).toContain("observation?.shouldFinalize");
     expect(app).toContain("void finishVoiceCapture(true)");
@@ -86,7 +86,8 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain('void submitPrompt(transcript, { allowVoiceBusy: true, inputOrigin: "voice" })');
     expect(app).toContain('pendingVoicePromptsRef.current.push({ content: transcript, inputOrigin: "voice" })');
     expect(app).toContain('voiceSettings?.autoSpeak');
-    expect(app).toContain("void startSpeech(event.message.content, conversationId)");
+    expect(app).toContain("speechGateRef.current.accept(event)");
+    expect(app).toContain("void startSpeech(finalSpeechText, conversationId)");
   });
 
   test("treats a requested transcription stop as cancellation rather than failure", () => {
@@ -99,11 +100,14 @@ describe("macOS microphone bundle configuration", () => {
 
   test("releases raw chat PCM before waiting for the model response", () => {
     const app = chatVoiceSource();
-    const clearFrames = app.indexOf("voiceFramesRef.current = []", app.indexOf("async function finishVoiceCapture"));
-    const enqueueTranscript = app.indexOf("enqueueVoiceSegment({", clearFrames);
-    expect(clearFrames).toBeGreaterThan(-1);
-    expect(clearFrames).toBeLessThan(enqueueTranscript);
-    expect(app).toContain("segment.samples = []");
+    const takeFrames = app.indexOf("voiceFramesRef.current.take()", app.indexOf("async function finishVoiceCapture"));
+    const wipeCaptured = app.indexOf("captured.fill(0)", takeFrames);
+    const enqueueTranscript = app.indexOf("enqueueVoiceSegment({", wipeCaptured);
+    expect(takeFrames).toBeGreaterThan(-1);
+    expect(takeFrames).toBeLessThan(wipeCaptured);
+    expect(wipeCaptured).toBeLessThan(enqueueTranscript);
+    expect(app).toContain("segment.samples.fill(0)");
+    expect(app).toContain("segment.samples = new Float32Array()");
   });
 
   test("blocks chat capture while Meeting is still in preflight", () => {

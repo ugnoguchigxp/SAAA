@@ -1,9 +1,30 @@
 use std::collections::HashMap;
 
 use rusqlite::OptionalExtension;
+use sha2::{Digest, Sha256};
 
 use super::{load_model_providers, load_routing_settings};
-use crate::{database_error, EffectiveRouteSnapshot, ModelProviderSettings, ProviderProbeStatus};
+use crate::{
+    database_error, ConversationRouteSettings, EffectiveRouteSnapshot, ModelProviderSettings,
+    ModelProvidersSettings, ProviderProbeStatus,
+};
+
+pub(crate) fn conversation_configuration_fingerprint(
+    providers: &ModelProvidersSettings,
+    route: &ConversationRouteSettings,
+) -> Result<String, String> {
+    let encoded = serde_json::to_vec(&(providers, route))
+        .map_err(|error| format!("Could not fingerprint conversation configuration: {error}"))?;
+    Ok(format!("{:x}", Sha256::digest(encoded)))
+}
+
+pub(crate) fn load_conversation_configuration_fingerprint(
+    connection: &rusqlite::Connection,
+) -> Result<String, String> {
+    let providers = load_model_providers(connection)?;
+    let route = load_routing_settings(connection)?.conversation_respond;
+    conversation_configuration_fingerprint(&providers, &route)
+}
 
 pub(crate) fn effective_route_snapshot(
     connection: &rusqlite::Connection,
@@ -11,19 +32,11 @@ pub(crate) fn effective_route_snapshot(
 ) -> Result<EffectiveRouteSnapshot, String> {
     let providers = load_model_providers(connection)?;
     let route = load_routing_settings(connection)?.conversation_respond;
+    let configuration_fingerprint = conversation_configuration_fingerprint(&providers, &route)?;
     let configured = providers
         .providers
         .iter()
         .find(|provider| provider.id() == route.primary_provider_id && provider.enabled());
-    let configuration_updated_at: String = connection
-        .query_row(
-            "SELECT MAX(updated_at) FROM settings_documents
-             WHERE (namespace='providers.model' AND key='default')
-                OR (namespace='routing.tasks' AND key='default')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
     let unchecked = || EffectiveRouteSnapshot {
         provider_id: configured.map(|provider| provider.id().to_string()),
         label: configured
@@ -41,44 +54,48 @@ pub(crate) fn effective_route_snapshot(
             .map(|probe| (provider, probe))
     });
     let current_primary_probe = primary_probe
-        .filter(|(_, probe)| probe.checked_at.as_str() >= configuration_updated_at.as_str());
+        .filter(|(_, probe)| probe.configuration_fingerprint == configuration_fingerprint);
     let latest = connection
         .query_row(
-            "SELECT ps.provider_id, ps.status, COALESCE(ps.fallback_used, 0),
+            "SELECT ps.rowid, ps.provider_id, ps.status, COALESCE(ps.fallback_used, 0),
                     ps.selection_reason, ps.failure_kind, ps.updated_at
              FROM provider_sessions ps
              JOIN runtime_runs rr ON rr.id = ps.runtime_run_id
              WHERE rr.route_kind = 'conversation.respond'
-             ORDER BY ps.updated_at DESC, ps.started_at DESC
+               AND ps.configuration_fingerprint = ?1
+             ORDER BY ps.rowid DESC
              LIMIT 1",
-            [],
+            [&configuration_fingerprint],
             |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, bool>(2)?,
-                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
                     row.get::<_, Option<String>>(4)?,
-                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
         .optional()
         .map_err(database_error)?;
-    let Some((provider_id, status, provider_fallback, selection_reason, failure_kind, updated_at)) =
-        latest
+    let Some((
+        session_rowid,
+        provider_id,
+        status,
+        provider_fallback,
+        selection_reason,
+        failure_kind,
+        updated_at,
+    )) = latest
     else {
         return Ok(current_primary_probe
             .map(|(provider, probe)| probe_snapshot(provider, probe))
             .unwrap_or_else(unchecked));
     };
-    if updated_at <= configuration_updated_at {
-        return Ok(current_primary_probe
-            .map(|(provider, probe)| probe_snapshot(provider, probe))
-            .unwrap_or_else(unchecked));
-    }
     if let Some((provider, probe)) = current_primary_probe {
-        if probe.checked_at > updated_at {
+        if probe.prior_session_rowid >= session_rowid {
             return Ok(probe_snapshot(provider, probe));
         }
     }
@@ -161,6 +178,9 @@ mod tests {
             ProviderProbeStatus {
                 ok: true,
                 checked_at: crate::now_iso(),
+                configuration_fingerprint: load_conversation_configuration_fingerprint(&connection)
+                    .expect("configuration fingerprints"),
+                prior_session_rowid: 0,
             },
         )]);
         let snapshot = effective_route_snapshot(&connection, &probes).expect("snapshot builds");
@@ -173,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn session_with_ambiguous_same_millisecond_timestamp_is_not_reused_after_configuration() {
+    fn session_without_the_current_configuration_fingerprint_is_not_reused() {
         let mut connection = rusqlite::Connection::open_in_memory().expect("database opens");
         crate::persistence::schema::initialize_database(&connection).expect("database initializes");
         let mut settings = crate::test_support::default_settings_input();
@@ -184,14 +204,6 @@ mod tests {
         providers.value_json["providers"][0]["enabled"] = serde_json::json!(true);
         crate::persistence::save_settings_documents_to_connection(&mut connection, &settings)
             .expect("settings save");
-        let configured_at: String = connection
-            .query_row(
-                "SELECT MAX(updated_at) FROM settings_documents
-                 WHERE namespace IN ('providers.model', 'routing.tasks')",
-                [],
-                |row| row.get(0),
-            )
-            .expect("configuration timestamp loads");
         connection
             .execute_batch(
                 "INSERT INTO conversations(id,title,task_mode,created_at,updated_at)
@@ -206,8 +218,8 @@ mod tests {
                    id,provider_id,runtime_run_id,provider_kind,fallback_used,output_started,
                    release_status,status,started_at,updated_at
                  ) VALUES('route-session',?1,'route-run','openai-compatible',0,1,
-                   'not-applicable','completed',?2,?2)",
-                rusqlite::params![crate::DYNAMIC_LAN_PROVIDER_ID, configured_at],
+                   'not-applicable','completed','1','1')",
+                rusqlite::params![crate::DYNAMIC_LAN_PROVIDER_ID],
             )
             .expect("provider session fixture inserts");
 

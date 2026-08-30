@@ -5,7 +5,7 @@ function documents() {
     {
       namespace: "providers.model",
       key: "default",
-      schemaVersion: 10,
+      schemaVersion: 11,
       valueJson: {
         providers: [{ kind: "openai-compatible", id: "local", enabled: true, label: "Local", location: "local", endpoint: "http://127.0.0.1:11434/v1", model: "test", credentialStatus: "not-configured" }],
         reasoningEffort: "medium",
@@ -15,31 +15,31 @@ function documents() {
     {
       namespace: "providers.agent",
       key: "codex-sdk",
-      schemaVersion: 10,
+      schemaVersion: 11,
       valueJson: { agentName: "SAAA", userName: "", enabled: false, provider: "codex-sdk", model: "", runtimeMode: "app-server", health: "unchecked", sandboxMode: "read-only", approvalPolicy: "never", networkEnabled: false, webSearchEnabled: false, workspacePolicy: "select-per-conversation" },
     },
     {
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 10,
+      schemaVersion: 11,
       valueJson: { conversationRespond: { primaryProviderId: "local", fallbackProviderIds: [], timeoutMs: 30_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } },
     },
     {
       namespace: "voice.runtime",
       key: "default",
-      schemaVersion: 10,
-      valueJson: { inputDeviceId: "default", outputDeviceId: "default", captureMode: "push-to-talk", sttHost: "localhost", sttProviderId: "network-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
+      schemaVersion: 11,
+      valueJson: { inputDeviceId: "default", captureMode: "push-to-talk", sttHost: "localhost", sttProviderId: "network-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
     },
     {
       namespace: "security.runtime",
       key: "default",
-      schemaVersion: 10,
+      schemaVersion: 11,
       valueJson: { credentialStorage: "environment", localOnlyWhenSelected: true, diagnosticsRedaction: true },
     },
     {
       namespace: "situation.runtime",
       key: "default",
-      schemaVersion: 10,
+      schemaVersion: 11,
       valueJson: { enabled: false, sampleIntervalMs: 2_000, calendarEnabled: false, retentionDays: 7, maxLedgerEntries: 10_000, heartbeatIntervalMs: 300_000, sensitiveApplicationCategories: true },
     },
   ];
@@ -206,10 +206,10 @@ describe("settings contracts", () => {
     (snapshot[4].valueJson as Record<string, unknown>).unexpectedPolicy = true;
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Unrecognized key");
   });
-  test("accepts schema 10 and rejects schema 9", () => {
+  test("accepts schema 11 and rejects schema 10", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
     const legacy = documents();
-    legacy[0].schemaVersion = 9;
+    legacy[0].schemaVersion = 10;
     expect(() => validateSettingsDocuments(legacy)).toThrow("Invalid input");
   });
   test("accepts only the fixed LARM security contract", () => {

@@ -1,18 +1,12 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { findSettingsDocument, isCodexAgentSettings, isModelProvidersSettings, isRoutingSettings, isSecuritySettings, isSituationSettings, isVoiceSettings, type CodexAgentSettings, type DynamicLanProviderSettings, type LarmProviderSettings, type LarmRuntimeStatus, type ModelProviderSettings, type ModelProvidersSettings, type OpenAiCompatibleProviderSettings, type RoutingSettings, type SecuritySettings, type SettingsDocument, type SettingsNamespace, type SituationSettings, type SituationSnapshot, type VoiceSettings, type VoiceProfileSnapshot } from "../../lib/contracts";
-import { backupDatabase, exportDiagnostics, getSituationSnapshot, resolveNetworkAsr, saveSettingsDocuments, testModelProvider } from "../../lib/runtime";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type DynamicLanProviderSettings, type LarmProviderSettings, type LarmRuntimeStatus, type ModelProviderSettings, type ModelProvidersSettings, type OpenAiCompatibleProviderSettings, type RoutingSettings, type SecuritySettings, type SettingsDocument, type SituationSettings, type SituationSnapshot, type TtsCapabilities, type VoiceSettings, type VoiceProfileSnapshot } from "../../lib/contracts";
+import { backupDatabase, exportDiagnostics, getSituationSnapshot, listTtsCapabilities, resolveNetworkAsr, saveSettingsDocuments, testModelProvider } from "../../lib/runtime";
+import { LatestRequestGate } from "../../lib/latestRequestGate";
 import { enumerateAudioInputDevices, microphoneErrorMessage } from "../../lib/microphone";
 import { DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS } from "../../lib/schemas";
 import { VoiceProfileCard } from "./VoiceProfileCard";
+import { documentsFromDraft, draftFromDocuments, type SettingsDraft } from "./settingsDraft";
 type SettingsTab = "general" | "providers" | "routing" | "voice" | "situation" | "security";
-type SettingsDraft = {
-  providers: ModelProvidersSettings;
-  codex: CodexAgentSettings;
-  routing: RoutingSettings;
-  voice: VoiceSettings;
-  security: SecuritySettings;
-  situation: SituationSettings;
-};
 const tabs: Array<{ id: SettingsTab; label: string; detail: string }> = [
   { id: "general", label: "General", detail: "Runtime overview" },
   { id: "providers", label: "LLM Providers", detail: "Endpoints and models" },
@@ -70,7 +64,6 @@ const defaultDraft: SettingsDraft = {
   },
   voice: {
     inputDeviceId: "default",
-    outputDeviceId: "default",
     captureMode: "push-to-talk",
     sttHost: DEFAULT_DYNAMIC_LAN_HOST,
     sttProviderId: "network-asr",
@@ -96,7 +89,7 @@ const defaultDraft: SettingsDraft = {
   },
 };
 export function SettingsPage({ documents, larmRuntime, voiceProfile, voiceEnrollmentBlocked, onSaved, onVoiceProfileChanged }: { documents: SettingsDocument[]; larmRuntime: LarmRuntimeStatus; voiceProfile: VoiceProfileSnapshot; voiceEnrollmentBlocked: boolean; onSaved: (documents: SettingsDocument[]) => void; onVoiceProfileChanged: (profile: VoiceProfileSnapshot) => void }) {
-  const source = useMemo(() => draftFromDocuments(documents), [documents]);
+  const source = useMemo(() => draftFromDocuments(documents, defaultDraft), [documents]);
   const [draft, setDraft] = useState<SettingsDraft>(source);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -243,7 +236,15 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
     message: string;
     endpoint: string | null;
   }>({ state: "idle", message: "", endpoint: null });
+  const [ttsCapabilities, setTtsCapabilities] = useState<TtsCapabilities | null>(null);
   const sttHost = voice.sttHost.trim();
+  const voiceRef = useRef(voice);
+  const resolutionRequestsRef = useRef(new LatestRequestGate());
+  voiceRef.current = voice;
+  useEffect(() => {
+    resolutionRequestsRef.current.activate();
+    return () => resolutionRequestsRef.current.dispose();
+  }, []);
   useEffect(() => {
     let active = true;
     void enumerateAudioInputDevices()
@@ -258,6 +259,13 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
     };
   }, []);
   useEffect(() => {
+    let active = true;
+    void listTtsCapabilities()
+      .then((capabilities) => { if (active) setTtsCapabilities(capabilities); })
+      .catch((cause) => { if (active) setTtsCapabilities({ available: false, message: cause instanceof Error ? cause.message : String(cause), voices: [], outputDevices: ["default"] }); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
     if (!sttHost) {
       setAsrState({
         state: "error",
@@ -267,6 +275,7 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
       return;
     }
     let active = true;
+    const requestId = resolutionRequestsRef.current.begin();
     setAsrState({
       state: "resolving",
       message: "ASR設定を問い合わせています…",
@@ -276,10 +285,10 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
       () =>
         void resolveNetworkAsr(sttHost)
           .then((resolution) => {
-            if (!active) return;
-            if (resolution.model !== voice.sttModel)
+            if (!active || !resolutionRequestsRef.current.isCurrent(requestId)) return;
+            if (resolution.model !== voiceRef.current.sttModel || resolution.providerId !== voiceRef.current.sttProviderId)
               onChange({
-                ...voice,
+                ...voiceRef.current,
                 sttProviderId: resolution.providerId,
                 sttModel: resolution.model,
               });
@@ -290,7 +299,7 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
             });
           })
           .catch((cause) => {
-            if (active)
+            if (active && resolutionRequestsRef.current.isCurrent(requestId))
               setAsrState({
                 state: "error",
                 message: cause instanceof Error ? cause.message : String(cause),
@@ -301,6 +310,7 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
     );
     return () => {
       active = false;
+      if (resolutionRequestsRef.current.isCurrent(requestId)) resolutionRequestsRef.current.begin();
       window.clearTimeout(timer);
     };
     // Resolution is keyed by the independent ASR host. Voice changes are applied from the response.
@@ -308,6 +318,7 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
   }, [sttHost]);
   async function retryAsrResolution() {
     if (!sttHost) return;
+    const requestId = resolutionRequestsRef.current.begin();
     setAsrState({
       state: "resolving",
       message: "ASR設定を問い合わせています…",
@@ -315,8 +326,9 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
     });
     try {
       const resolution = await resolveNetworkAsr(sttHost);
+      if (!resolutionRequestsRef.current.isCurrent(requestId) || sttHost !== voiceRef.current.sttHost.trim()) return;
       onChange({
-        ...voice,
+        ...voiceRef.current,
         sttProviderId: resolution.providerId,
         sttModel: resolution.model,
       });
@@ -326,6 +338,7 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
         endpoint: resolution.endpoint,
       });
     } catch (cause) {
+      if (!resolutionRequestsRef.current.isCurrent(requestId)) return;
       setAsrState({
         state: "error",
         message: cause instanceof Error ? cause.message : String(cause),
@@ -334,7 +347,8 @@ function VoiceSection({ voice, profile, enrollmentBlocked, onProfileChanged, onC
     }
   }
   const currentDeviceMissing = voice.inputDeviceId !== "default" && !devices.some((device) => device.deviceId === voice.inputDeviceId);
-  return ( <div className="settings-stack"> <section className="settings-card"> <h3>Capture</h3> <div className="settings-form-grid"> <Field label="Capture mode"> <select value={voice.captureMode} disabled> <option value="push-to-talk">Push-to-talk</option> </select> </Field> <Field label="Input device"> <select value={voice.inputDeviceId} onChange={(event) => onChange({ ...voice, inputDeviceId: event.target.value })}> <option value="default">System default</option> {currentDeviceMissing && <option value={voice.inputDeviceId}>{voice.inputDeviceId} (unavailable)</option>} {devices.map((device, index) => ( <option key={device.deviceId} value={device.deviceId}> {device.label || `Microphone ${index + 1}`} </option> ))} </select> </Field> <Field label="ASR host"> <input value={voice.sttHost} placeholder="localhost or 10.0.0.42" onChange={(event) => onChange({ ...voice, sttHost: event.target.value })} /> </Field> <Field label="ASR endpoint"> <input value={asrState.endpoint ?? (sttHost ? `http://${sttHost}:8081` : "Not configured")} disabled /> </Field> <Field label="STT provider"> <input value={voice.sttProviderId} disabled /> </Field> <Field label="STT model"> <input value={voice.sttModel} disabled /> </Field> </div> {deviceError && <p className="provider-test-result error">Microphone devices unavailable: {deviceError}</p>} <p className={`provider-test-result ${asrState.state === "success" ? "success" : asrState.state === "error" ? "error" : "testing"}`} aria-live="polite"> {asrState.message} </p> <div className="provider-card-footer"> <span>ASR hostはLLMの接続先から独立しています。endpointとmodelはASR APIから検証し、成功時は実行時キャッシュを更新します。</span> <button className="text-button" type="button" onClick={() => void retryAsrResolution()} disabled={!sttHost || asrState.state === "resolving"}> Resolve again </button> </div> </section> <VoiceProfileCard voice={voice} profile={profile} blocked={enrollmentBlocked} onChanged={onProfileChanged} /> <section className="settings-card"> <h3>Speech output</h3> <div className="settings-form-grid"> <Field label="Output device"> <input value="System default (fixed)" disabled /> </Field> <Field label="TTS provider"> <input value={voice.ttsProviderId} disabled /> </Field> <Field label="Voice"> <input value={voice.ttsVoice} onChange={(event) => onChange({ ...voice, ttsVoice: event.target.value })} /> </Field> <Field label="Auto speak"> <select value={voice.autoSpeak ? "on" : "off"} onChange={(event) => onChange({ ...voice, autoSpeak: event.target.value === "on" })}> <option value="on">On</option> <option value="off">Off</option> </select> </Field> </div> <div className="locked-policy">URLと絵文字は読み上げから除外します。Cloud fallback: disabled.</div> </section> </div> );
+  const currentVoiceMissing = voice.ttsVoice !== "default" && !ttsCapabilities?.voices.some((item) => item.id === voice.ttsVoice);
+  return ( <div className="settings-stack"> <section className="settings-card"> <h3>Capture</h3> <div className="settings-form-grid"> <Field label="Capture mode"> <select value={voice.captureMode} disabled> <option value="push-to-talk">Push-to-talk</option> </select> </Field> <Field label="Input device"> <select value={voice.inputDeviceId} onChange={(event) => onChange({ ...voice, inputDeviceId: event.target.value })}> <option value="default">System default</option> {currentDeviceMissing && <option value={voice.inputDeviceId}>{voice.inputDeviceId} (unavailable)</option>} {devices.map((device, index) => ( <option key={device.deviceId} value={device.deviceId}> {device.label || `Microphone ${index + 1}`} </option> ))} </select> </Field> <Field label="ASR host"> <input value={voice.sttHost} placeholder="localhost or 10.0.0.42" onChange={(event) => onChange({ ...voice, sttHost: event.target.value })} /> </Field> <Field label="ASR endpoint"> <input value={asrState.endpoint ?? (sttHost ? `http://${sttHost}:8081` : "Not configured")} disabled /> </Field> <Field label="STT provider"> <input value={voice.sttProviderId} disabled /> </Field> <Field label="STT model"> <input value={voice.sttModel} disabled /> </Field> </div> {deviceError && <p className="provider-test-result error">Microphone devices unavailable: {deviceError}</p>} <p className={`provider-test-result ${asrState.state === "success" ? "success" : asrState.state === "error" ? "error" : "testing"}`} aria-live="polite"> {asrState.message} </p> <div className="provider-card-footer"> <span>ASR hostはLLMの接続先から独立しています。endpointとmodelはASR APIから検証し、成功時は実行時キャッシュを更新します。</span> <button className="text-button" type="button" onClick={() => void retryAsrResolution()} disabled={!sttHost || asrState.state === "resolving"}> Resolve again </button> </div> </section> <VoiceProfileCard voice={voice} profile={profile} blocked={enrollmentBlocked} onChanged={onProfileChanged} /> <section className="settings-card"> <h3>Speech output</h3> <div className="settings-form-grid"> <Field label="Output device"> <input value="System default" disabled /> </Field> <Field label="TTS provider"> <input value={voice.ttsProviderId} disabled /> </Field> <Field label="Voice"> <select value={voice.ttsVoice} onChange={(event) => onChange({ ...voice, ttsVoice: event.target.value })} disabled={!ttsCapabilities?.available}> <option value="default">System default</option> {currentVoiceMissing && <option value={voice.ttsVoice}>{voice.ttsVoice} (unavailable)</option>} {ttsCapabilities?.voices.map((item) => <option key={item.id} value={item.id}>{item.label}{item.language ? ` · ${item.language}` : ""}</option>)} </select> </Field> <Field label="Auto speak"> <select value={voice.autoSpeak ? "on" : "off"} onChange={(event) => onChange({ ...voice, autoSpeak: event.target.value === "on" })}> <option value="on">On</option> <option value="off">Off</option> </select> </Field> </div> {ttsCapabilities && <p className={`provider-test-result ${ttsCapabilities.available ? "success" : "error"}`}>{ttsCapabilities.message}</p>} <div className="locked-policy">URLと絵文字は読み上げから除外します。Cloud fallback: disabled.</div> </section> </div> );
 }
 function SecuritySection({ security, onChange }: { security: SecuritySettings; onChange: (value: SecuritySettings) => void }) {
   const [artifactState, setArtifactState] = useState<"idle" | "working" | "success" | "error">("idle");
@@ -361,37 +375,4 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 function clampTimeout(value: string, maximum: number): number {
   return Math.max(1000, Math.min(maximum, Number(value) || 30000));
-}
-function draftFromDocuments(documents: SettingsDocument[]): SettingsDraft {
-  const model = findSettingsDocument(documents, "providers.model", "default");
-  const codex = findSettingsDocument(documents, "providers.agent", "codex-sdk");
-  const routing = findSettingsDocument(documents, "routing.tasks", "default");
-  const voice = findSettingsDocument(documents, "voice.runtime", "default");
-  const security = findSettingsDocument(documents, "security.runtime", "default");
-  const situation = findSettingsDocument(documents, "situation.runtime", "default");
-  return {
-    providers: model && isModelProvidersSettings(model.valueJson) ? model.valueJson : defaultDraft.providers,
-    codex: codex && isCodexAgentSettings(codex.valueJson) ? codex.valueJson : defaultDraft.codex,
-    routing: routing && isRoutingSettings(routing.valueJson) ? routing.valueJson : defaultDraft.routing,
-    voice: voice && isVoiceSettings(voice.valueJson) ? voice.valueJson : defaultDraft.voice,
-    security: security && isSecuritySettings(security.valueJson) ? security.valueJson : defaultDraft.security,
-    situation: situation && isSituationSettings(situation.valueJson) ? situation.valueJson : defaultDraft.situation,
-  };
-}
-function documentsFromDraft(draft: SettingsDraft): Array<Omit<SettingsDocument, "updatedAt">> {
-  return [
-    document("providers.model", "default", draft.providers),
-    document("providers.agent", "codex-sdk", {
-      ...draft.codex,
-      agentName: draft.codex.agentName.trim(),
-      userName: draft.codex.userName.trim(),
-    }),
-    document("routing.tasks", "default", draft.routing),
-    document("voice.runtime", "default", draft.voice),
-    document("security.runtime", "default", draft.security),
-    document("situation.runtime", "default", draft.situation),
-  ];
-}
-function document(namespace: SettingsNamespace, key: "default" | "codex-sdk", valueJson: Record<string, unknown>): Omit<SettingsDocument, "updatedAt"> {
-  return { namespace, key, schemaVersion: 10, valueJson };
 }
