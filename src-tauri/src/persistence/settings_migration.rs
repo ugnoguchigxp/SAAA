@@ -1,4 +1,5 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::Value;
 
 use super::settings::SETTINGS_SCHEMA_VERSION;
 use crate::{now_iso, DEFAULT_AGENT_NAME, DEFAULT_USER_NAME};
@@ -22,6 +23,30 @@ fn add_default(
     Ok(())
 }
 
+fn migration_asr_host(connection: &Connection) -> rusqlite::Result<String> {
+    let providers: Option<String> = connection
+        .query_row(
+            "SELECT value_json FROM settings_documents
+             WHERE namespace='providers.model' AND key='default' AND json_valid(value_json)",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let discovered = providers
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .and_then(|value| value.get("providers")?.as_array().cloned())
+        .and_then(|providers| {
+            providers.into_iter().find_map(|provider| {
+                let host = provider.get("host")?.as_str()?.trim();
+                (provider.get("kind")?.as_str()? == "dynamic-lan"
+                    && crate::voice::network_asr::base_url_from_host(host).is_ok())
+                .then(|| host.to_string())
+            })
+        });
+    Ok(discovered.unwrap_or_else(|| crate::voice::network_asr::DEFAULT_HOST.to_string()))
+}
+
 pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::Result<()> {
     add_default(
         connection,
@@ -37,13 +62,8 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
            AND json_valid(value_json) AND json_type(value_json, '$.outputDeviceId') IS NOT NULL",
         [now_iso()],
     )?;
-    add_default(
-        connection,
-        "voice.runtime",
-        "default",
-        "sttHost",
-        crate::voice::network_asr::DEFAULT_HOST,
-    )?;
+    let asr_host = migration_asr_host(connection)?;
+    add_default(connection, "voice.runtime", "default", "sttHost", asr_host)?;
     add_default(
         connection,
         "providers.agent",

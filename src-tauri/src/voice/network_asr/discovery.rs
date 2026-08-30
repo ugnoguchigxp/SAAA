@@ -3,11 +3,12 @@ use url::{Host, Url};
 
 #[cfg(test)]
 use super::client;
-use super::{bounded_response, PROVIDER_ID};
+use super::{bounded_response, request_error_message, PROVIDER_ID};
 use crate::{persistence::load_voice_settings, AppState, NetworkAsrResolution, RunCancellation};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 const ASR_PORT: u16 = 8081;
+const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Deserialize)]
 struct HealthResponse {
@@ -48,8 +49,10 @@ pub(super) async fn resolve_at_with_client(
     let base_url = validate_base_url(base_url)?;
     let models_response = tokio::select! {
         _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
-        response = client.get(format!("{base_url}/v1/models")).send() => response
-            .map_err(|error| format!("Could not query LAN ASR settings: {error}"))?,
+        response = client
+            .get(format!("{base_url}/v1/models"))
+            .timeout(DISCOVERY_TIMEOUT)
+            .send() => response.map_err(|error| request_error_message(&error))?,
     };
     let models_status = models_response.status();
     let models_body = bounded_response(models_response, cancellation).await?;
@@ -64,8 +67,10 @@ pub(super) async fn resolve_at_with_client(
 
     let health_response = tokio::select! {
         _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
-        response = client.get(format!("{base_url}/health")).send() => response
-            .map_err(|error| format!("Could not reach LAN ASR: {error}"))?,
+        response = client
+            .get(format!("{base_url}/health"))
+            .timeout(DISCOVERY_TIMEOUT)
+            .send() => response.map_err(|error| request_error_message(&error))?,
     };
     let health_status = health_response.status();
     let health_body = bounded_response(health_response, cancellation).await?;

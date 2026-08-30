@@ -863,19 +863,31 @@ mod tests {
     }
 
     #[test]
-    fn existing_voice_settings_gain_an_independent_asr_host() {
+    fn existing_voice_settings_copy_the_dynamic_lan_host_once() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
         connection
-            .execute(
+            .execute_batch(
                 "UPDATE settings_documents
+                 SET value_json = json_set(value_json, '$.providers[0].host', '192.168.0.130')
+                 WHERE namespace = 'providers.model' AND key = 'default';
+                 UPDATE settings_documents
                  SET value_json = json_remove(value_json, '$.sttHost')
-                 WHERE namespace = 'voice.runtime' AND key = 'default'",
-                [],
+                 WHERE namespace = 'voice.runtime' AND key = 'default';",
             )
-            .expect("ASR host removes");
+            .expect("migration fixture writes");
 
         initialize_database(&connection).expect("ASR host default migrates");
+
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json = json_set(value_json, '$.providers[0].host', '192.168.0.131')
+                 WHERE namespace = 'providers.model' AND key = 'default'",
+                [],
+            )
+            .expect("provider host changes independently");
+        initialize_database(&connection).expect("independent ASR host remains stable");
 
         let stt_host: String = connection
             .query_row(
@@ -886,7 +898,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("ASR host reads");
-        assert_eq!(stt_host, crate::voice::network_asr::DEFAULT_HOST);
+        assert_eq!(stt_host, "192.168.0.130");
     }
 
     #[test]

@@ -20,6 +20,17 @@ pub const DEFAULT_HOST: &str = "localhost";
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 const MAX_TRANSCRIPT_CHARS: usize = 16_000;
 
+fn request_error_message(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        "LAN ASR request timed out. Check the ASR host and service, then retry.".to_string()
+    } else if error.is_connect() {
+        "Could not connect to LAN ASR. Check the ASR host and make sure port 8081 is reachable, then retry."
+            .to_string()
+    } else {
+        "LAN ASR request failed. Check the ASR service and retry.".to_string()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
     text: String,
@@ -81,7 +92,7 @@ async fn transcribe_at(
         .send();
     let response = tokio::select! {
         _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
-        response = request => response.map_err(|error| format!("Could not reach LAN ASR: {error}"))?,
+        response = request => response.map_err(|error| request_error_message(&error))?,
     };
     let status = response.status();
     let body = bounded_response(response, &cancellation).await?;
@@ -107,7 +118,7 @@ pub(super) fn client() -> Result<Client, String> {
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
         .build()
-        .map_err(|error| format!("Could not initialize LAN ASR client: {error}"))
+        .map_err(|_| "Could not initialize LAN ASR client".to_string())
 }
 
 pub(super) async fn bounded_response(
@@ -130,7 +141,7 @@ pub(super) async fn bounded_response(
         let Some(chunk) = chunk else {
             break;
         };
-        let chunk = chunk.map_err(|error| format!("Could not read LAN ASR response: {error}"))?;
+        let chunk = chunk.map_err(|error| request_error_message(&error))?;
         if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
             return Err("LAN ASR response exceeded the size limit".to_string());
         }
@@ -231,6 +242,30 @@ mod tests {
         thread,
     };
 
+    fn serve_get_responses(
+        responses: Vec<(&'static str, u16, &'static str)>,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let server = thread::spawn(move || {
+            for (path, status, body) in responses {
+                let (mut socket, _) = listener.accept().expect("fixture accepts");
+                let mut request = [0_u8; 4_096];
+                let count = socket.read(&mut request).expect("fixture reads");
+                let request = String::from_utf8_lossy(&request[..count]);
+                assert!(request.starts_with(&format!("GET {path} HTTP/1.1")));
+                write!(
+                    socket,
+                    "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .expect("fixture responds");
+            }
+        });
+        (format!("http://{address}"), server)
+    }
+
     #[test]
     fn band_limited_resampling_suppresses_aliases() {
         let source_rate = 48_000_u32;
@@ -279,38 +314,85 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_endpoint_and_model_from_asr_apis() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
-        let address = listener.local_addr().expect("fixture address");
-        let server = thread::spawn(move || {
-            for (path, body) in [
-                (
-                    "/v1/models",
-                    r#"{"object":"list","data":[{"id":"qwen3-asr-1.7b"}]}"#,
-                ),
-                ("/health", r#"{"status":"ok","model":"qwen3-asr-1.7b"}"#),
-            ] {
-                let (mut socket, _) = listener.accept().expect("fixture accepts");
-                let mut request = [0_u8; 4_096];
-                let count = socket.read(&mut request).expect("fixture reads");
-                let request = String::from_utf8_lossy(&request[..count]);
-                assert!(request.starts_with(&format!("GET {path} HTTP/1.1")));
-                write!(
-                    socket,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                )
-                .expect("fixture responds");
-            }
-        });
+        let (base_url, server) = serve_get_responses(vec![
+            (
+                "/v1/models",
+                200,
+                r#"{"object":"list","data":[{"id":"qwen3-asr-1.7b"}]}"#,
+            ),
+            (
+                "/health",
+                200,
+                r#"{"status":"ok","model":"qwen3-asr-1.7b"}"#,
+            ),
+        ]);
 
-        let resolution = resolve_at(&format!("http://{address}"))
-            .await
-            .expect("settings resolve");
+        let resolution = resolve_at(&base_url).await.expect("settings resolve");
         server.join().expect("fixture joins");
         assert_eq!(resolution.provider_id, PROVIDER_ID);
-        assert_eq!(resolution.endpoint, format!("http://{address}"));
+        assert_eq!(resolution.endpoint, base_url);
         assert_eq!(resolution.model, MODEL_ID);
+    }
+
+    #[tokio::test]
+    async fn asr_discovery_errors_are_public_and_actionable() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        drop(listener);
+
+        let error = resolve_at(&format!("http://{address}"))
+            .await
+            .expect_err("closed endpoint is unavailable");
+
+        assert_eq!(
+            error,
+            "Could not connect to LAN ASR. Check the ASR host and make sure port 8081 is reachable, then retry."
+        );
+        assert!(!error.contains(&address.to_string()));
+        assert!(!error.contains("error sending request"));
+    }
+
+    #[tokio::test]
+    async fn asr_discovery_rejects_http_errors_and_malformed_settings() {
+        let (unavailable_url, unavailable_server) =
+            serve_get_responses(vec![("/v1/models", 503, r#"{"error":"starting"}"#)]);
+        let unavailable = resolve_at(&unavailable_url)
+            .await
+            .expect_err("HTTP failure is rejected");
+        unavailable_server.join().expect("fixture joins");
+        assert_eq!(unavailable, "LAN ASR settings query returned HTTP 503");
+
+        let (malformed_url, malformed_server) =
+            serve_get_responses(vec![("/v1/models", 200, r#"{"data":"invalid"}"#)]);
+        let malformed = resolve_at(&malformed_url)
+            .await
+            .expect_err("malformed settings are rejected");
+        malformed_server.join().expect("fixture joins");
+        assert_eq!(
+            malformed,
+            "LAN ASR returned an invalid model settings response"
+        );
+    }
+
+    #[tokio::test]
+    async fn asr_discovery_requires_models_and_health_to_agree() {
+        let (base_url, server) = serve_get_responses(vec![
+            ("/v1/models", 200, r#"{"data":[{"id":"qwen3-asr-1.7b"}]}"#),
+            (
+                "/health",
+                200,
+                r#"{"status":"ok","model":"different-model"}"#,
+            ),
+        ]);
+
+        let error = resolve_at(&base_url)
+            .await
+            .expect_err("mismatched model is rejected");
+        server.join().expect("fixture joins");
+        assert_eq!(
+            error,
+            "LAN ASR settings and health responses do not identify the same ready model"
+        );
     }
 
     #[test]
