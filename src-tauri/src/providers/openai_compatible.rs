@@ -1,6 +1,9 @@
-use std::{env, time::Duration};
+use std::env;
 
 use crate::OpenAiCompatibleProviderSettings;
+
+mod probe;
+pub(crate) use probe::probe_model_provider;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum SseDrainError {
@@ -35,32 +38,6 @@ pub(crate) fn drain_sse_events(
         );
     }
     Ok(events)
-}
-
-pub(crate) async fn probe_model_provider(
-    provider: &OpenAiCompatibleProviderSettings,
-) -> Result<String, String> {
-    let mut client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none());
-    if provider.location == "local" {
-        client = client.no_proxy();
-    }
-    let client = client
-        .build()
-        .map_err(|error| format!("Could not initialize HTTP client: {error}"))?;
-    let mut request = client.get(provider_models_url(&provider.endpoint)?);
-    if let Some(api_key) = provider_api_key(provider) {
-        request = request.bearer_auth(api_key);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("Connection failed: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!("Provider returned HTTP {}", response.status()));
-    }
-    Ok("Connection succeeded".to_string())
 }
 
 pub(crate) fn provider_chat_url(endpoint: &str) -> Result<String, String> {

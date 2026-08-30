@@ -2,9 +2,10 @@ use rusqlite::params;
 use std::fs;
 use std::sync::Arc;
 
+use super::conversation_context::compose_provider_history;
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent, RuntimeFailureCode};
 use crate::persistence::{
-    load_model_providers, load_routing_settings, load_security_settings,
+    load_codex_settings, load_model_providers, load_routing_settings, load_security_settings,
     validate_conversation_write_target,
 };
 use crate::providers::routing::{apply_runtime_provider_gates, effective_conversation_route_ids};
@@ -16,7 +17,7 @@ use crate::{
     stream_larm_provider, stream_model_provider, update_runtime_provider, AppState, CleanupOutcome,
     LarmStreamContext, ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome,
     ProviderFailureKind, ProviderOutputPersistence, RunCancellation, StartTurnInput,
-    TurnExecutionFailure, CONVERSATION_SYSTEM_CONTEXT,
+    TurnExecutionFailure,
 };
 
 pub(crate) async fn execute_turn(
@@ -306,19 +307,38 @@ pub(crate) fn prepare_runtime_run(
         "conversation.respond"
     };
     let now = now_iso();
-    let input_message_id = new_id("message");
-    transaction
-        .execute(
-            "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
-             VALUES (?1, ?2, 'user', ?3, ?4)",
-            params![
-                input_message_id,
-                input.conversation_id,
-                input.content.trim(),
-                now
-            ],
-        )
-        .map_err(database_error)?;
+    let input_message_id = if let Some(message_id) = input.retry_input_message_id.as_deref() {
+        crate::validate_identifier(message_id, "retry input message id")?;
+        let retryable: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM conversation_messages m
+                   WHERE m.id = ?1 AND m.conversation_id = ?2 AND m.role = 'user'
+                     AND m.content = ?3
+                     AND EXISTS(
+                       SELECT 1 FROM runtime_runs r
+                       WHERE r.input_message_id = m.id AND r.status = 'failed'
+                     )
+                 )",
+                params![message_id, input.conversation_id, input.content.trim()],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        if !retryable {
+            return Err("Only a failed conversation response can be retried".to_string());
+        }
+        message_id.to_string()
+    } else {
+        let message_id = new_id("message");
+        transaction
+            .execute(
+                "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                 VALUES (?1, ?2, 'user', ?3, ?4)",
+                params![message_id, input.conversation_id, input.content.trim(), now],
+            )
+            .map_err(database_error)?;
+        message_id
+    };
     transaction
         .execute(
             "INSERT INTO runtime_runs(
@@ -406,27 +426,15 @@ pub(crate) async fn execute_conversation_turn(
             context_health.repair_count,
             &now_iso(),
         );
-        let history = std::iter::once(ConversationMessage {
-            id: "context-system-conversation-respond".to_string(),
-            conversation_id: input.conversation_id.clone(),
-            role: "system".to_string(),
-            content: CONVERSATION_SYSTEM_CONTEXT.to_string(),
-            created_at: "system".to_string(),
-        })
-        .chain(
-            context_window
-                .messages
-                .into_iter()
-                .enumerate()
-                .map(|(index, message)| ConversationMessage {
-                    id: format!("context-projection-{index}"),
-                    conversation_id: input.conversation_id.clone(),
-                    role: message.role,
-                    content: message.content,
-                    created_at: index.to_string(),
-                }),
-        )
-        .collect::<Vec<_>>();
+        let identity = load_codex_settings(&connection)?;
+        let history = compose_provider_history(
+            &input.conversation_id,
+            &identity.agent_name,
+            &identity.user_name,
+            &input.input_origin,
+            &input.presentation_mode,
+            context_window.messages,
+        )?;
         (
             load_model_providers(&connection)?,
             load_routing_settings(&connection)?.conversation_respond,
@@ -436,6 +444,7 @@ pub(crate) async fn execute_conversation_turn(
         )
     };
     let reasoning_effort = providers.reasoning_effort.clone();
+    let max_output_tokens = providers.max_output_tokens;
     let route_ids = apply_dynamic_lan_credential_gate(
         &providers,
         apply_runtime_provider_gates(
@@ -532,6 +541,7 @@ pub(crate) async fn execute_conversation_turn(
                     route.timeout_ms,
                     ModelStreamContext {
                         reasoning_effort: &reasoning_effort,
+                        max_output_tokens,
                         input,
                         on_event,
                         cancellation: cancellation.clone(),
@@ -548,6 +558,7 @@ pub(crate) async fn execute_conversation_turn(
                     provider,
                     &history,
                     &reasoning_effort,
+                    max_output_tokens,
                     route.timeout_ms,
                     cancellation.clone(),
                     LarmStreamContext {
@@ -567,6 +578,7 @@ pub(crate) async fn execute_conversation_turn(
                     cancellation.clone(),
                     ModelStreamContext {
                         reasoning_effort: &reasoning_effort,
+                        max_output_tokens,
                         input,
                         on_event,
                         cancellation: cancellation.clone(),
@@ -662,10 +674,14 @@ pub(crate) async fn execute_conversation_turn(
             }
         }
     }
-    Err(format!(
-        "All configured providers failed. {}",
-        failures.join("; ")
-    ))
+    if failures.len() == 1 {
+        Err(failures.remove(0))
+    } else {
+        Err(format!(
+            "Configured provider attempts failed. {}",
+            failures.join("; ")
+        ))
+    }
 }
 
 fn apply_dynamic_lan_credential_gate(
@@ -715,6 +731,68 @@ fn provider_route_fallback_allowed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_retry_reuses_the_failed_input_message() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database opens");
+        crate::persistence::schema::initialize_database(&connection).expect("database initializes");
+        let state = crate::test_support::app_state(connection);
+        let first = StartTurnInput {
+            run_id: "run-first".to_string(),
+            conversation_id: crate::PRIMARY_CONVERSATION_ID.to_string(),
+            content: "retry this response".to_string(),
+            workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
+        };
+        prepare_runtime_run(&state, &first).expect("first run prepares");
+        let input_message_id: String = state
+            .connection
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
+                [&first.run_id],
+                |row| row.get(0),
+            )
+            .expect("input message reads");
+        state
+            .connection
+            .lock()
+            .expect("database lock")
+            .execute(
+                "UPDATE runtime_runs SET status = 'failed' WHERE id = ?1",
+                [&first.run_id],
+            )
+            .expect("first run fails");
+
+        let retry = StartTurnInput {
+            run_id: "run-retry".to_string(),
+            retry_input_message_id: Some(input_message_id.clone()),
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
+            ..first
+        };
+        prepare_runtime_run(&state, &retry).expect("retry prepares");
+        let connection = state.connection.lock().expect("database lock");
+        let message_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages WHERE role = 'user'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("message count reads");
+        let retry_input: String = connection
+            .query_row(
+                "SELECT input_message_id FROM runtime_runs WHERE id = 'run-retry'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("retry input reads");
+        assert_eq!(message_count, 1);
+        assert_eq!(retry_input, input_message_id);
+    }
 
     #[test]
     fn provider_fallback_policy_is_failure_kind_and_output_aware() {
@@ -777,6 +855,7 @@ mod tests {
                 crate::test_support::provider("direct-fallback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         let configured = vec![
             "dynamic_lan-primary".to_string(),

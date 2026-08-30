@@ -21,6 +21,9 @@ pub(crate) fn start_meeting_inner(
     if tts_process.is_some() {
         return Err("MEETING_POLICY_TTS_BLOCKED: Stop speech and retry.".to_string());
     }
+    drop(tts_process);
+    #[cfg(target_os = "macos")]
+    state.tts_audio_output.stop();
     let coding_run_active: bool = state
         .connection
         .lock()
@@ -111,6 +114,7 @@ pub(crate) async fn append_meeting_audio_segment(
         .situation
         .set_microphone_state(crate::situation::contracts::MicrophoneState::SaaaTranscribing);
     let transcription = crate::voice::network_asr::transcribe(
+        state,
         &samples,
         input.sample_rate,
         &model,
@@ -196,6 +200,7 @@ pub(crate) async fn preview_meeting_audio_segment(
         }
     };
     let transcription = crate::voice::network_asr::transcribe(
+        state,
         &samples,
         input.segment.sample_rate,
         &model,

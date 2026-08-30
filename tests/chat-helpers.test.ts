@@ -8,6 +8,7 @@ const emptySnapshot = (): AppSnapshot => ({
   settings: [],
   conversations: [],
   primaryConversationId: "",
+  effectiveRoute: { providerId: null, label: "モデル未選択", location: null, state: "unchecked", fallbackUsed: false, reasonCode: "test", updatedAt: null },
   larmRuntime: { state: "disabled", message: "", contractCommit: "unknown" },
   voiceProfile: {
     status: "empty",
@@ -34,7 +35,7 @@ describe("chat helpers", () => {
     const documents: SettingsDocument[] = [{
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 9,
+      schemaVersion: 10,
       valueJson: { conversationRespond: { primaryProviderId: "local-openai-compatible" } },
       updatedAt: "1",
     }];

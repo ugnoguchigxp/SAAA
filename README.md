@@ -60,7 +60,7 @@ SAAA uses the connection API on the configured host to obtain a connection to th
 
 The local LLM server requires `LARM_API_TOKEN`. SAAA does not create an SSH tunnel, so both the connection API and the model endpoint returned by the server must be reachable over the private network.
 
-Voice chat and Meeting read the ASR origin from `SAAA_ASR_BASE_URL`, for example `http://10.0.0.42:8081`. The value must be a private-network HTTP origin without credentials or a path.
+Voice chat and Meeting reuse the LAN host configured under Settings → Model Providers. SAAA derives the private ASR origin, queries `/v1/models` and `/health`, and reflects the resolved model under Settings → Voice. No separate ASR environment variable is required.
 
 ### OpenAI-compatible APIs
 

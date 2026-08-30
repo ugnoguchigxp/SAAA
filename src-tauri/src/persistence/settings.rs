@@ -1,11 +1,13 @@
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
+pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 10;
+
 use crate::{
     database_error, now_iso, provider_environment_suffix, providers, situation, voice,
     CodexAgentRuntimeSettings, ModelProviderSettings, ModelProvidersSettings, RoutingSettings,
     SaveSettingsDocumentInput, SecurityRuntimeSettings, SettingsDocument, VoiceRuntimeSettings,
-    DEFAULT_DYNAMIC_LAN_HOST, DYNAMIC_LAN_PROVIDER_ID,
+    DEFAULT_AGENT_NAME, DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME, DYNAMIC_LAN_PROVIDER_ID,
 };
 
 pub(crate) fn load_codex_settings(
@@ -25,6 +27,14 @@ pub(crate) fn load_model_providers(
     let settings = serde_json::from_value(document.value_json)
         .map_err(|error| format!("Could not decode provider settings: {error}"))?;
     validate_model_providers(&settings)?;
+    Ok(settings)
+}
+
+pub(crate) fn load_voice_settings(connection: &Connection) -> Result<VoiceRuntimeSettings, String> {
+    let document = read_settings_document(connection, "voice.runtime", "default")?;
+    let settings = serde_json::from_value(document.value_json)
+        .map_err(|error| format!("Could not decode voice settings: {error}"))?;
+    validate_voice_settings(&settings)?;
     Ok(settings)
 }
 
@@ -93,7 +103,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
         (
             "providers.model",
             "default",
-            9,
+            SETTINGS_SCHEMA_VERSION,
             json!({
                 "providers": [{
                     "kind": "dynamic-lan",
@@ -103,14 +113,17 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
                     "location": "local",
                     "host": DEFAULT_DYNAMIC_LAN_HOST
                 }],
-                "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT
+                "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                "maxOutputTokens": crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS
             }),
         ),
         (
             "providers.agent",
             "codex-sdk",
-            9,
+            SETTINGS_SCHEMA_VERSION,
             json!({
+                "agentName": DEFAULT_AGENT_NAME,
+                "userName": DEFAULT_USER_NAME,
                 "enabled": false,
                 "provider": "codex-sdk",
                 "model": "",
@@ -126,7 +139,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
         (
             "routing.tasks",
             "default",
-            9,
+            SETTINGS_SCHEMA_VERSION,
             json!({
                 "conversationRespond": {
                     "primaryProviderId": DYNAMIC_LAN_PROVIDER_ID,
@@ -145,14 +158,15 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
         (
             "voice.runtime",
             "default",
-            9,
+            SETTINGS_SCHEMA_VERSION,
             json!({
                 "inputDeviceId": "default",
                 "outputDeviceId": "default",
                 "captureMode": "push-to-talk",
-                    "sttProviderId": "network-asr",
+                "sttHost": voice::network_asr::DEFAULT_HOST,
+                "sttProviderId": "network-asr",
                 "sttModel": "qwen3-asr-1.7b",
-                    "ttsProviderId": "system-tts",
+                "ttsProviderId": "system-tts",
                 "ttsVoice": "default",
                 "autoSpeak": true,
                 "cloudFallbackEnabled": false
@@ -161,7 +175,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
         (
             "security.runtime",
             "default",
-            9,
+            SETTINGS_SCHEMA_VERSION,
             json!({
                 "credentialStorage": "environment",
                 "localOnlyWhenSelected": true,
@@ -171,7 +185,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
         (
             "situation.runtime",
             "default",
-            9,
+            SETTINGS_SCHEMA_VERSION,
             serde_json::to_value(situation::contracts::SituationRuntimeSettings::default())
                 .expect("default Situation settings serialize"),
         ),
@@ -191,7 +205,7 @@ pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> R
     if !allowed {
         return Err("Unsupported settings document".to_string());
     }
-    if input.schema_version != 9 || !input.value_json.is_object() {
+    if input.schema_version != SETTINGS_SCHEMA_VERSION || !input.value_json.is_object() {
         return Err("Invalid settings schema".to_string());
     }
     match (input.namespace.as_str(), input.key.as_str()) {
@@ -318,6 +332,9 @@ pub(crate) fn validate_settings_batch(
 pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), String> {
     if !providers::valid_conversation_reasoning_effort(&settings.reasoning_effort) {
         return Err("Reasoning effort must be low, medium, or xhigh".to_string());
+    }
+    if !(256..=8_192).contains(&settings.max_output_tokens) {
+        return Err("Maximum output tokens must be between 256 and 8192".to_string());
     }
     if settings.providers.is_empty() || settings.providers.len() > 20 {
         return Err("Between 1 and 20 model providers are required".to_string());
@@ -469,7 +486,14 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
 }
 
 pub(crate) fn validate_codex_settings(settings: &CodexAgentRuntimeSettings) -> Result<(), String> {
-    if settings.provider != "codex-sdk"
+    if settings.agent_name.trim().is_empty()
+        || settings.agent_name.trim() != settings.agent_name
+        || settings.agent_name.chars().count() > 80
+        || settings.agent_name.chars().any(char::is_control)
+        || settings.user_name.trim() != settings.user_name
+        || settings.user_name.chars().count() > 80
+        || settings.user_name.chars().any(char::is_control)
+        || settings.provider != "codex-sdk"
         || !matches!(
             settings.runtime_mode.as_str(),
             "pending-compatibility-check" | "bun" | "node-sidecar" | "app-server"
@@ -525,10 +549,10 @@ pub(crate) fn validate_routing_settings(settings: &RoutingSettings) -> Result<()
 
 pub(crate) fn validate_voice_settings(settings: &VoiceRuntimeSettings) -> Result<(), String> {
     if settings.input_device_id.trim().is_empty()
-        || settings.output_device_id.trim().is_empty()
+        || settings.output_device_id != "default"
         || settings.input_device_id.len() > 300
-        || settings.output_device_id.len() > 300
         || settings.capture_mode != "push-to-talk"
+        || voice::network_asr::base_url_from_host(&settings.stt_host).is_err()
         || settings.stt_provider_id != voice::network_asr::PROVIDER_ID
         || settings.stt_model != voice::network_asr::MODEL_ID
         || settings.tts_provider_id != "system-tts"
@@ -678,6 +702,7 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![provider("local", "local")],
             reasoning_effort: "mid".to_string(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         })
         .is_err());
         let mut dynamic_lan = direct_provider(DYNAMIC_LAN_PROVIDER_ID, "local");
@@ -686,6 +711,7 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(dynamic_lan)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         })
         .is_ok());
         let mut public_http = direct_provider("public-http", "local");
@@ -693,6 +719,7 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(public_http)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         })
         .is_err());
 
@@ -704,6 +731,7 @@ mod tests {
                 },
             )],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         assert!(validate_model_providers(&with_credentials).is_err());
         let mut disabled_with_credentials = with_credentials;
@@ -718,11 +746,13 @@ mod tests {
         let unsafe_id = ModelProvidersSettings {
             providers: vec![provider("local provider", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         assert!(validate_model_providers(&unsafe_id).is_err());
         let ambiguous_ids = ModelProvidersSettings {
             providers: vec![provider("local-a", "local"), provider("local_a", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         assert!(validate_model_providers(&ambiguous_ids).is_err());
 
@@ -780,6 +810,7 @@ mod tests {
         let valid = ModelProvidersSettings {
             providers: vec![larm_provider("larm")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         assert!(validate_model_providers(&valid).is_ok());
         let mut ipv6 = larm_provider("larm-ipv6");
@@ -790,6 +821,7 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ipv6],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         })
         .is_ok());
 
@@ -810,6 +842,7 @@ mod tests {
                 validate_model_providers(&ModelProvidersSettings {
                     providers: vec![invalid],
                     reasoning_effort: providers::default_conversation_reasoning_effort(),
+                    max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 })
                 .is_err(),
                 "invalid LARM URL was accepted: {base_url}"
@@ -819,6 +852,7 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![larm_provider("larm-a"), larm_provider("larm-b")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         })
         .is_err());
     }
@@ -828,10 +862,13 @@ mod tests {
         let providers = ModelProvidersSettings {
             providers: vec![provider("Local_Custom", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         assert!(validate_model_providers(&providers).is_ok());
 
         let codex = CodexAgentRuntimeSettings {
+            agent_name: DEFAULT_AGENT_NAME.to_string(),
+            user_name: DEFAULT_USER_NAME.to_string(),
             enabled: true,
             provider: "codex-sdk".to_string(),
             model: String::new(),
@@ -854,6 +891,7 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(provider.clone())],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         })
         .is_ok());
 
@@ -861,6 +899,7 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(provider)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         })
         .is_err());
 

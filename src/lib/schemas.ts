@@ -160,9 +160,18 @@ export const modelProvidersSettingsSchema = z.object({
     }
   }),
   reasoningEffort: z.enum(["low", "medium", "xhigh"]),
+  maxOutputTokens: z.number().int().min(256).max(8192),
 }).strict();
 
 export const codexAgentSettingsSchema = z.object({
+  agentName: z.string().trim().min(1).max(80).refine(
+    (value) => ![...value].some((character) => /[\u0000-\u001F\u007F]/.test(character)),
+    "Agent name must not contain control characters",
+  ),
+  userName: z.string().trim().max(80).refine(
+    (value) => ![...value].some((character) => /[\u0000-\u001F\u007F]/.test(character)),
+    "User name must not contain control characters",
+  ),
   enabled: z.boolean(),
   provider: z.literal("codex-sdk"),
   model: z.string().trim().max(160),
@@ -192,8 +201,12 @@ export const routingSettingsSchema = z.object({
 
 export const voiceSettingsSchema = z.object({
   inputDeviceId: z.string().trim().min(1).max(300),
-  outputDeviceId: z.string().trim().min(1).max(300),
+  outputDeviceId: z.literal("default"),
   captureMode: z.literal("push-to-talk"),
+  sttHost: z.string().trim().min(1).max(253).refine(
+    (value) => !value.includes("://") && !value.includes("/") && !value.includes(":"),
+    "ASR host must be a hostname or IP address without a scheme, port, or path",
+  ),
   sttProviderId: z.literal("network-asr"),
   sttModel: z.literal("qwen3-asr-1.7b"),
   ttsProviderId: z.literal("system-tts"),
@@ -221,7 +234,7 @@ export const situationSettingsSchema = z.object({
 const settingsDocumentBaseSchema = z.object({
   namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
-  schemaVersion: z.literal(9),
+  schemaVersion: z.literal(10),
   valueJson: z.record(z.string(), z.unknown()),
 }).strict();
 

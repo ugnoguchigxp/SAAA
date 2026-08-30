@@ -1,0 +1,1463 @@
+<article lang="ja">
+  <h1 id="conversation-voice-quality-plan">
+    Conversation / LLM / ASR / TTS 品質改善実装計画 — 90点Release Contract
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Implemented。自動GateはPass、実Provider・実機・soak Gateはoperator evidence待ち</li>
+    <li>Created: 2026-08-30</li>
+    <li>Implemented: 2026-08-30</li>
+    <li>SAAA baseline: <code>1f0b79f</code> + working tree</li>
+    <li>Database baseline: <code>PRAGMA user_version = 12</code></li>
+    <li>Settings document baseline: <code>schema_version = 9</code></li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>対象: Conversation Runtime、Provider、Voice Runtime、Settings、Chat UI、QA</li>
+  </ul>
+  <p>
+    本文書は、2026-08-30に実施したLLM、ASR、TTS、ユーザー応答のコードレビューで確認した問題を、
+    検証可能な実装契約へ変換する。現状評価は総合約30/100であり、機能の存在ではなく、
+    正しい状態遷移、失敗の扱い、実測性能、ユーザーに対する表示の正しさを満たした場合だけ90点以上とする。
+  </p>
+  <p>
+    初版の計画作成TurnではRuntime、SQLite、Settings JSON、UIを変更しなかった。
+    その後の実装Turnで<code>CV-00</code>〜<code>CV-07</code>と、<code>CV-08</code>の自動化部分を実装した。
+    Release完了の定義は<code>CV-00</code>〜<code>CV-08</code>を依存順に完了し、Section
+    15の採点が90点以上、Section 16の全GateがPassになることである。
+    計画書を書いたこと自体やテスト件数の増加だけでは製品スコアを更新しない。
+  </p>
+
+  <h3 id="01-implementation-result">0.1 実装結果</h3>
+  <table>
+    <caption>
+      Table: Automated implementation evidence on 2026-08-30
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">結果</th>
+        <th scope="col">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Repository check</td>
+        <td>Pass</td>
+        <td>
+          <code>bun run check</code>。Frontend 141 pass、Rust 286 pass、IPC 1
+          pass
+        </td>
+      </tr>
+      <tr>
+        <td>LLM / ASR / TTS / retry contract</td>
+        <td>Pass</td>
+        <td>finish reason、warm ASR、cancel、half-duplex、scope別retryのbehavioral test</td>
+      </tr>
+      <tr>
+        <td>Conversation quality harness</td>
+        <td>Pass</td>
+        <td>60固定scenario、6項目rubric、hard violation、本文非保存reportを検証</td>
+      </tr>
+      <tr>
+        <td>実Provider quality</td>
+        <td>Not run</td>
+        <td>
+          <code>bun run quality:eval</code
+          >を同一profileで3回実行する。評価用接続情報が必要
+        </td>
+      </tr>
+      <tr>
+        <td>実機音響 / soak</td>
+        <td>Not run</td>
+        <td>実マイク、スピーカー、ASR/TTS serviceを使うoperator-only release evidence</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    自動GateのPassは、実Provider回答の品質、実環境のCER/WER、音切れ、自己音声loop、30分soakの
+    Passを代替しない。接続情報や実機がない環境でこれらを成功扱いせず、Section 16のrelease score
+    capを維持する。
+  </p>
+
+  <h2 id="1-executive-conclusion">1. 結論</h2>
+  <pre><code class="language-text">User text / microphone
+        ↓
+Conversation Turn Coordinator（唯一の状態正本）
+  ├─ Capture Session → local VAD / bounded buffer → one final ASR request
+  ├─ LLM Turn        → effective capability → typed request → verified finish reason
+  └─ Presentation    → text completion → optional speakable text → queued TTS output
+        ↓
+Typed outcome / retry action / truthful route status
+        ↓
+Chat UI + runtime ledger + non-content diagnostics</code></pre>
+  <ol>
+    <li>
+      Frontendの複数<code>ref</code>を会話状態の正本にしない。Backendのruntime
+      runと、純粋なTurn state machineが同じrun ID、segment ID、message IDを共有する。
+    </li>
+    <li>
+      LLMの<code>max_tokens = 256</code>と<code>enable_thinking = false</code>の固定注入を廃止する。
+      ユーザーの希望とProvider能力から一つのEffective Completion
+      Policyを作り、通常実行と接続テストで共用する。
+    </li>
+    <li>
+      <code>finish_reason</code
+      >を終端契約にする。<code>length</code>、未知値、終端欠落を成功として保存、表示、
+      読み上げしない。
+    </li>
+    <li>
+      ASR discoveryを発話ごとに行わない。設定保存または明示的な再テストで解決し、warm
+      pathは一発話一回の transcription POSTだけにする。疑似partialのための二重文字起こしは削除する。
+    </li>
+    <li>
+      既定の音声会話はhalf-duplexとする。TTS再生中はASRへ音声を送らず、マイク操作はTTS停止完了後に開始する。
+      Target Speaker Filterが健全な場合だけ、verified barge-inを明示的に選べる。
+    </li>
+    <li>
+      LLM、ASR、TTS、設定の失敗を別の型として扱う。TTS失敗からLLM promptを再送しない。
+      LLM再試行でも既存User messageを再利用し、会話へ同じUser messageを追加しない。
+    </li>
+    <li>
+      Settingsは実際に変更できる値だけをcontrolとして表示する。固定adapterは説明文、動的値は選択肢、
+      未実装値は表示しない。readinessとlocal/cloud表示はBackendの直近probe結果から描画する。
+    </li>
+    <li>
+      TTSはmodel
+      deltaを12〜64文字で逐次process起動する方式をやめ、意味境界で分割して一つ先をrenderする。
+      画面表示用Markdownと読み上げ用plain textを分離する。
+    </li>
+    <li>
+      System
+      Contextに入力modality、応答言語、簡潔さ、音声向け表現、曖昧な文字起こしの確認規則を追加し、
+      固定fixtureと実Provider evalで品質を採点する。
+    </li>
+  </ol>
+
+  <h2 id="2-baseline">2. 計測済みBaseline</h2>
+  <h3 id="21-automated-baseline">2.1 自動検証</h3>
+  <table>
+    <caption>
+      Table: Baseline verification on 2026-08-30
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">検証</th>
+        <th scope="col">結果</th>
+        <th scope="col">判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>bun run test:frontend</code></td>
+        <td>134 pass / 0 fail</td>
+        <td>件数は十分に見えるが、source文字列検査が多く、非同期状態競合を保証しない</td>
+      </tr>
+      <tr>
+        <td>Rust test</td>
+        <td>279 pass / 0 fail / 10 ignored</td>
+        <td>Providerと永続化は比較的厚いが、実音声turnとTTS連結の保証が薄い</td>
+      </tr>
+      <tr>
+        <td><code>bun run check</code></td>
+        <td>Fail</td>
+        <td><code>tests/microphone.test.ts</code>がratchet 266に対して272行</td>
+      </tr>
+      <tr>
+        <td><code>bun run spec:check</code></td>
+        <td>Fail</td>
+        <td>既存archive 4文書のformat差分と2件のlint error。新規文書を含むactive docsはPass</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="22-defect-baseline">2.2 レビュー指摘と実装ticket</h3>
+  <table>
+    <caption>
+      Table: Review findings mapped to remediation
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">深刻度</th>
+        <th scope="col">現状</th>
+        <th scope="col">解決ticket</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>R-01</td>
+        <td>Critical</td>
+        <td>
+          Local/LARM回答を256
+          tokenへ固定し、<code>length</code>終了を成功扱いする
+        </td>
+        <td><code>CV-02</code></td>
+      </tr>
+      <tr>
+        <td>R-02</td>
+        <td>Critical</td>
+        <td>TTS中の収音と送信が可能で、Assistant自己音声loopを構造的に防げない</td>
+        <td><code>CV-04</code></td>
+      </tr>
+      <tr>
+        <td>R-03</td>
+        <td>Critical</td>
+        <td>preview/finalごとにmodels、health、transcriptionを呼び、一発話最大6 requestになる</td>
+        <td><code>CV-03</code></td>
+      </tr>
+      <tr>
+        <td>R-04</td>
+        <td>Critical</td>
+        <td>finalize guard中の次segment消失、discoveryのcancel欠落、先頭無音PCMの無制限蓄積</td>
+        <td>
+          <code>CV-03</code>、<code
+            >CV-04</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>R-05</td>
+        <td>High</td>
+        <td>ASR host/model、TTS provider/output deviceなどが固定または保存値未使用</td>
+        <td>
+          <code>CV-01</code>、<code
+            >CV-05</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>R-06</td>
+        <td>High</td>
+        <td>接続テストがstream、tool、reasoning、実際のdata planeを検証しない</td>
+        <td>
+          <code>CV-02</code>、<code>CV-03</code>
+        </td>
+      </tr>
+      <tr>
+        <td>R-07</td>
+        <td>High</td>
+        <td>Cloud routeでも「ローカル処理」と表示し、静的設定をreadyとみなす</td>
+        <td><code>CV-06</code></td>
+      </tr>
+      <tr>
+        <td>R-08</td>
+        <td>High</td>
+        <td>全失敗が一つの文字列となり、TTS失敗でもLLM promptを再送する</td>
+        <td><code>CV-06</code></td>
+      </tr>
+      <tr>
+        <td>R-09</td>
+        <td>Medium</td>
+        <td>短いchunkごとにsynthesis、再生を直列実行し、Markdownも読み上げる</td>
+        <td><code>CV-05</code></td>
+      </tr>
+      <tr>
+        <td>R-10</td>
+        <td>Medium</td>
+        <td>応答言語、簡潔さ、音声向け表現、ASR曖昧性の会話contractがない</td>
+        <td><code>CV-07</code></td>
+      </tr>
+      <tr>
+        <td>R-11</td>
+        <td>Medium</td>
+        <td>hookの挙動ではなくsource文字列を検査するtestが多い</td>
+        <td>
+          <code>CV-00</code>、<code>CV-08</code>
+        </td>
+      </tr>
+      <tr>
+        <td>R-12</td>
+        <td>Medium</td>
+        <td>現行branchがmodule-size gateを通らない</td>
+        <td><code>CV-00</code></td>
+      </tr>
+      <tr>
+        <td>R-13</td>
+        <td>Medium</td>
+        <td>既存archiveの不整合によりrepository-wide Spec gateが通らない</td>
+        <td><code>CV-00</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="3-scope">3. Scope</h2>
+  <h3 id="31-goals">3.1 達成すること</h3>
+  <ol>
+    <li>LLM回答の完全性、Provider能力、fallback、失敗理由を実行時とUIで一致させる。</li>
+    <li>一発話一transcriptionを通常経路にし、ASR待ち時間とnetwork request数を計測可能にする。</li>
+    <li>音声capture、endpoint、ASR、LLM、TTS、再開を一つの決定的な状態遷移にする。</li>
+    <li>TTS自己音声がUser messageになる経路を、既定設定で0件にする。</li>
+    <li>ユーザーがLLM、ASR、TTSの実効設定、接続状態、data locationを確認できるようにする。</li>
+    <li>各失敗に、対象を重複実行しないretry actionを一つだけ提示する。</li>
+    <li>Text表示とSpeech表現の双方で、会話の正確さ、自然さ、簡潔さを評価する。</li>
+  </ol>
+
+  <h3 id="32-non-goals">3.2 非要件</h3>
+  <ul>
+    <li>Cloud ASRまたはCloud TTSの追加。</li>
+    <li>ASR engine自体の再学習、speaker verification modelの変更。</li>
+    <li>WebSocket streaming ASRを、batch API上の疑似streamとして実装すること。</li>
+    <li>複数のAssistant音声を同時再生すること。</li>
+    <li>完全なacoustic echo cancellationをLLM、VAD、promptだけで実現したと主張すること。</li>
+    <li>Meetingの多話者UX全体の再設計。共通ASR clientとcancellationの修正だけを適用する。</li>
+    <li>会話内容、raw PCM、transcriptをanalyticsへ送信すること。</li>
+  </ul>
+
+  <h2 id="4-score-contract">4. 90点Release Contract</h2>
+  <table>
+    <caption>
+      Table: Product quality score
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">採点軸</th>
+        <th scope="col">配点</th>
+        <th scope="col">Baseline</th>
+        <th scope="col">合格後見込み</th>
+        <th scope="col">満点条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM correctness / completion</td>
+        <td>20</td>
+        <td>5</td>
+        <td>19</td>
+        <td>能力整合、終端検証、重複なし、全Providerで同じpolicy</td>
+      </tr>
+      <tr>
+        <td>ASR reliability / latency</td>
+        <td>20</td>
+        <td>5</td>
+        <td>18</td>
+        <td>一発話一POST、bounded buffer、cancel、segment欠落なし</td>
+      </tr>
+      <tr>
+        <td>TTS quality / turn safety</td>
+        <td>20</td>
+        <td>4</td>
+        <td>19</td>
+        <td>自己音声loop 0、自然なchunk、render ahead、正しいretry</td>
+      </tr>
+      <tr>
+        <td>User response / interaction</td>
+        <td>15</td>
+        <td>5</td>
+        <td>14</td>
+        <td>応答eval 90以上、明確な状態と取消、入力modality整合</td>
+      </tr>
+      <tr>
+        <td>Settings / truthful status</td>
+        <td>10</td>
+        <td>3</td>
+        <td>9</td>
+        <td>実効値だけ表示、実経路probe、local/cloudを偽らない</td>
+      </tr>
+      <tr>
+        <td>Automated regression safety</td>
+        <td>10</td>
+        <td>5</td>
+        <td>9</td>
+        <td>状態遷移、HTTP fixture、IPC、migration、full check</td>
+      </tr>
+      <tr>
+        <td>Privacy / accessibility</td>
+        <td>5</td>
+        <td>3</td>
+        <td>5</td>
+        <td>送信先表示、content-free metrics、keyboard/screen reader操作</td>
+      </tr>
+      <tr>
+        <td><strong>合計</strong></td>
+        <td><strong>100</strong></td>
+        <td><strong>30</strong></td>
+        <td><strong>93</strong></td>
+        <td>Section 16の全GateがPass</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    採点の下限規則を設ける。Critical acceptanceが一つでもFailなら最大79点、
+    <code>bun run check</code
+    >がFailなら最大84点、実機音声Gateが未実施またはFailなら最大89点、 Conversation Quality
+    Evalが90未満なら最大89点とする。平均点で重大欠陥を隠さない。
+  </p>
+
+  <h2 id="5-state-architecture">5. Target State Architecture</h2>
+  <h3 id="51-source-of-truth">5.1 状態の正本</h3>
+  <pre><code class="language-text">ConversationTurn
+  id: runId
+  input: { messageId, origin: text | voice, segmentId? }
+  phase:
+    idle | listening | endpointing | transcribing | generating
+    | presenting | completed | cancelled | failed
+  llm: { providerId?, location?, finishReason?, outputStarted }
+  speech: { sourceMessageId?, ttsRunId?, state }
+  issue: ConversationIssue?
+
+VoiceCaptureSession
+  id: captureSessionId
+  generation: monotonically increasing integer
+  armed: boolean
+  phase: idle | listening | finalizing | pausedForSpeech | failed
+  activeSegmentId: string?
+  boundedPreRoll + boundedCurrentUtterance + queue(max 2)</code></pre>
+  <p>
+    React stateは上記snapshotの表示用projectionである。非同期callbackはcapture generationとsegment
+    IDが一致する場合だけ状態を更新する。古いpreview、ASR、TTSの完了callbackが
+    新しいturnを閉じることを禁止する。
+  </p>
+
+  <h3 id="52-turn-taking">5.2 Turn taking policy</h3>
+  <table>
+    <caption>
+      Table: Audio turn modes
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Mode</th>
+        <th scope="col">適用条件</th>
+        <th scope="col">TTS中のcapture</th>
+        <th scope="col">期待挙動</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>half-duplex</code></td>
+        <td>既定。Filter OFFまたは不健全</td>
+        <td>pauseしbufferを破棄</td>
+        <td>Mic操作でTTS停止を待ち、150〜250ms drain後に新規captureを開始</td>
+      </tr>
+      <tr>
+        <td><code>verified-barge-in</code></td>
+        <td>Target Speaker Filterがreadyかつユーザーが選択</td>
+        <td>local verificationまで継続</td>
+        <td>本人speech確定後にTTSを停止し、その後だけASRへ送る</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    WebViewへ<code>echoCancellation: true</code>、noise suppression、auto
+    gainを<code>ideal</code>で要求し、
+    実際の<code>MediaTrackSettings</code>を表示する。ただしAEC有効表示を自己音声除外の証明には使わない。
+  </p>
+
+  <h2 id="6-settings-contract">6. Settings Contract</h2>
+  <h3 id="61-model-settings">6.1 LLM</h3>
+  <ul>
+    <li>
+      Conversation
+      routeへ<code>maxOutputTokens</code>を追加する。既定2048、許容256〜8192、
+      Provider上限を超える場合は保存時またはresolve時に明示的にclampして実効値を表示する。
+    </li>
+    <li>
+      reasoningは<code>openai-effort</code>、<code>qwen-thinking</code>、<code>none</code>の能力としてresolveする。
+      <code>none</code
+      >では選択controlをdisabledにし、「未対応」と表示する。
+    </li>
+    <li>
+      <code>qwen-thinking</code>ではlowをthinking off、medium/xhighをthinking
+      onへ一箇所で写像する。 <code>reasoning_effort</code>とthinking
+      offを同時に送る矛盾したrequestを禁止する。
+    </li>
+    <li>
+      Primaryが利用不能でfallbackを使った場合、実際に選ばれたProviderとlocationをChatへ表示する。
+    </li>
+  </ul>
+
+  <h3 id="62-asr-settings">6.2 ASR</h3>
+  <ul>
+    <li>LLM hostとの暗黙共有を廃止し、Voice SettingsにASR hostを独立して保存する。</li>
+    <li>
+      Providerは現時点でLAN batch ASR一つであるためselectorに見せない。「Built-in LAN ASR
+      adapter」と説明する。
+    </li>
+    <li>
+      modelは<code>/v1/models</code>と<code>/health</code>が一致した値だけを選択肢として保存する。
+    </li>
+    <li>
+      language、timeout、endpoint、last checked、healthを表示する。credentialやraw
+      errorは表示・保存しない。
+    </li>
+    <li>
+      文字起こし後の動作を<code>auto-send</code>または<code>review-before-send</code>から選べるようにする。
+      reviewでは確定transcriptを編集可能なcomposerへ置き、明示送信までLLMを開始しない。
+    </li>
+    <li>
+      設定保存時にBackendでresolveし、成功したEffective ASR Configurationをruntime cacheへ反映する。
+    </li>
+  </ul>
+
+  <h3 id="63-tts-settings">6.3 TTS</h3>
+  <ul>
+    <li>
+      <code>say -v ?</code
+      >をboundedに解析するIPCでvoice一覧を取得し、free-text入力をselectへ置き換える。
+    </li>
+    <li>
+      rodio/cpalからoutput
+      deviceを列挙し、保存した<code>outputDeviceId</code>で実際にstreamを開く。
+    </li>
+    <li>
+      rateを120〜260 words-per-minute相当のbounded値として追加し、試聴と通常読み上げで共用する。
+    </li>
+    <li>
+      <code>autoSpeak</code>
+      booleanを<code>off</code>、<code>voice-input-only</code>、<code>all</code>へ移行する。
+      新規installationは<code>voice-input-only</code>、既存<code>true</code>は<code>all</code>へ互換移行する。
+    </li>
+    <li>
+      output deviceまたはvoiceが消えた場合はSystem
+      defaultへ黙ってfallbackせず、degraded表示と選択修正を求める。
+    </li>
+  </ul>
+
+  <h3 id="64-migration">6.4 Settings migration</h3>
+  <ol>
+    <li>
+      実装開始時に次の空きSettings schemaとDB versionへrebaseする。本文書baselineではSettings 10、DB
+      13を候補とするが、同時進行migrationがあれば番号を取り直す。
+    </li>
+    <li>
+      Compatibility build Aはschema 9と新schemaの両方を読み、schema 9だけを書く。Feature build
+      Bで新schemaを書く。 これによりBからAへのbinary rollbackを成立させる。
+    </li>
+    <li>migrationはtransaction内で行い、旧値、変換後値、default適用をfixture testで固定する。</li>
+    <li>
+      unknown field、public HTTP ASR、制御文字、存在しないreasoning
+      mode、範囲外token/rateをfail-closedにする。
+    </li>
+  </ol>
+
+  <h2 id="7-llm-contract">7. LLM Runtime Contract</h2>
+  <h3 id="71-effective-policy">7.1 Effective Completion Policy</h3>
+  <pre><code class="language-text">User preference
+  + route maxOutputTokens
+  + resolved provider capabilities
+  + context-window output reserve
+  = EffectiveCompletionPolicy
+      { maxOutputTokens, reasoningProtocol, reasoningValue, stream: true,
+        toolsEnabled, timeoutMs }</code></pre>
+  <p>
+    Direct OpenAI-compatible、Dynamic
+    LAN、LARMは同じ型を受け取る。JSON生成を各adapterへ散在させない。
+    Provider固有parameterはcapabilityで許可された場合だけadapterが追加する。
+  </p>
+
+  <h3 id="72-finish-reason">7.2 Finish reason</h3>
+  <table>
+    <caption>
+      Table: Completion terminal semantics
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">finish reason</th>
+        <th scope="col">結果</th>
+        <th scope="col">永続化</th>
+        <th scope="col">UI / TTS</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>stop</code></td>
+        <td>completed</td>
+        <td>Assistant messageを保存</td>
+        <td>完成表示、TTS継続</td>
+      </tr>
+      <tr>
+        <td><code>tool_calls</code></td>
+        <td>次のtool round</td>
+        <td>tool exchangeのみ</td>
+        <td>回答完了にしない</td>
+      </tr>
+      <tr>
+        <td><code>length</code></td>
+        <td>failed / partial-output</td>
+        <td>完成Assistant messageとして保存しない</td>
+        <td>partial表示、TTS停止、「続きを生成」action</td>
+      </tr>
+      <tr>
+        <td><code>content_filter</code></td>
+        <td>failed / policy</td>
+        <td>完成Assistant messageとして保存しない</td>
+        <td>bounded説明、通常retryを出さない</td>
+      </tr>
+      <tr>
+        <td>missing / unknown / stream EOF</td>
+        <td>failed / protocol</td>
+        <td>完成Assistant messageとして保存しない</td>
+        <td>接続問題、同じProviderへのretry</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>[DONE]</code>はtransport終端にすぎず、直前までに有効なfinish
+    reasonが観測されて初めて成功する。 non-stream JSONも同じclassifierを通す。
+  </p>
+
+  <h3 id="73-production-probe">7.3 Production-shaped probe</h3>
+  <ol>
+    <li>実行時と同じURL、auth、no-proxy、request builder、stream parserを使う。</li>
+    <li>
+      短いstream completionでdelta、finish
+      reason、<code>[DONE]</code>を確認する。
+    </li>
+    <li>toolsを使うrouteでは副作用のないprobe toolを一件渡し、tool callを一roundだけ検証する。</li>
+    <li>
+      Dynamic LAN/LARMはallocation取得、data-plane生成、releaseまで完了して初めてreadyにする。
+    </li>
+    <li>
+      結果は<code>ready | degraded | unavailable</code>、checkedAt、latency、capability
+      summaryとして返す。
+    </li>
+  </ol>
+
+  <h2 id="8-asr-contract">8. ASR Runtime Contract</h2>
+  <h3 id="81-request-budget">8.1 Request budget</h3>
+  <table>
+    <caption>
+      Table: ASR network budget
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">状況</th>
+        <th scope="col">許可request</th>
+        <th scope="col">上限</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Settings resolve / Test</td>
+        <td>
+          <code>GET /v1/models</code
+          >、<code>GET /health</code>、probe transcription
+        </td>
+        <td>各1回</td>
+      </tr>
+      <tr>
+        <td>Warm utterance</td>
+        <td><code>POST /v1/audio/transcriptions</code></td>
+        <td>一発話1回</td>
+      </tr>
+      <tr>
+        <td>Cache invalidation recovery</td>
+        <td>models、health、同じaudioの再POST</td>
+        <td>一発話につき一回だけ。loop禁止</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    現行<code>previewAudio</code>による2秒PCMのbatch
+    transcriptionは削除する。Serverが将来正式なstreaming
+    endpointを提供するまで、UIは「Listening」「Transcribing」を表示し、仮transcriptを装わない。
+  </p>
+
+  <h3 id="82-buffering">8.2 Capture and buffer bounds</h3>
+  <ul>
+    <li>speech未検出時は最大500msのring pre-rollだけを保持する。</li>
+    <li>一発話は最大120秒または16MB相当の小さい方で強制終了し、ユーザーへ分割を促す。</li>
+    <li>segment queueは最大2件とし、drop時はsegment ID付きのcontent-free metricとUI通知を残す。</li>
+    <li>
+      finalize中に次endpointが来た場合はpending finalizeを一件記録し、guard returnで消失させない。
+    </li>
+    <li>stop/unmount/settings changeはcapture generationを進め、古いcallbackを無効にする。</li>
+  </ul>
+
+  <h3 id="83-cancellation">8.3 Cancellation</h3>
+  <ul>
+    <li>
+      models、health、upload送信、response
+      bodyの全awaitを同じ<code>RunCancellation</code>でselectする。
+    </li>
+    <li>AppStateで一つのconfigured HTTP clientを共有し、発話ごとのclient生成をやめる。</li>
+    <li>
+      cancel完了後200ms以内にFrontendをidleまたはlisteningへ戻す。遅延完了は表示を更新しない。
+    </li>
+    <li>
+      ASR再試行用PCMはmemory内に最大2分保持し、成功、破棄、conversation変更、app終了でzero/dropする。
+    </li>
+  </ul>
+
+  <h3 id="84-network-safety">8.4 Network safety</h3>
+  <ul>
+    <li>ASR endpointはprivate HTTP originだけを許可し、redirectを禁止する。</li>
+    <li>
+      DNS名は接続時に解決した全addressがloopback、link-local、private、unique-localのいずれかであることを確認する。
+    </li>
+    <li>
+      DNS再解決またはconnection reuseでpublic
+      addressへ変化した場合はrequestを送らずcacheをinvalidにする。
+    </li>
+    <li>
+      diagnosticsへhost、IP、transcript、audio hashを残さず、provider IDとbounded failure
+      codeだけを残す。
+    </li>
+  </ul>
+
+  <h2 id="9-tts-contract">9. TTS Runtime Contract</h2>
+  <h3 id="91-speakable-text">9.1 Speakable text</h3>
+  <p>
+    画面へ保存するAssistant
+    contentは変更しない。別の純関数<code>toSpeakableText</code>が、Markdown構造を
+    読み上げ向けplain textへ投影する。
+  </p>
+  <ul>
+    <li>code blockとinline codeは既定で「コードは画面をご覧ください」に一度だけ置換する。</li>
+    <li>URLは削除し、link labelが自然言語ならlabelだけを残す。</li>
+    <li>heading、bullet、table delimiter、引用記号、絵文字variation selectorを発声しない。</li>
+    <li>数字、単位、句読点、固有名詞は原文を保ち、内容を要約または改変しない。</li>
+    <li>空になった場合はTTSを開始せず、Text回答はcompletedのままにする。</li>
+  </ul>
+
+  <h3 id="92-render-pipeline">9.2 Render-ahead pipeline</h3>
+  <pre><code class="language-text">Model deltas
+  → sentence accumulator（24 min / 120 target / 240 max characters）
+  → speakable text
+  → render queue(max 2)
+      ├─ chunk N playback
+      └─ chunk N+1 synthesis in parallel
+  → one persistent output stream
+  → completion / cancel</code></pre>
+  <ul>
+    <li>punctuation boundaryを優先し、URL、括弧、数値を途中で切らない。</li>
+    <li>同じsource responseのchunk間無音p95を150ms以下にする。</li>
+    <li>render queueを2件に制限し、LLMが速い場合もtemp fileとprocessを無制限に増やさない。</li>
+    <li>
+      cancelはactive playback、queued render、synthesis process、temp fileを同じsession
+      IDで停止する。
+    </li>
+    <li>Text completionとSpeech completionを別outcomeにし、Speech失敗でTextを失敗へ戻さない。</li>
+  </ul>
+
+  <h2 id="10-user-experience">10. User Response and Interaction Contract</h2>
+  <h3 id="101-response-policy">10.1 Conversation response policy</h3>
+  <p>System Contextへ以下を追加し、入力値はJSON dataとしてescapeしたまま扱う。</p>
+  <ol>
+    <li>ユーザーの主言語に合わせ、答えを先に述べる。指定がなければ1〜4短段落を既定とする。</li>
+    <li>voice inputでは、不要な見出し、長い列挙、URL読み上げを避け、耳で追える文にする。</li>
+    <li>ASR transcriptを事実として扱うが、意味が一意に定まらない場合だけ短く確認する。</li>
+    <li>聞き取れなかったと断定したり、存在しないconfidenceを説明したりしない。</li>
+    <li>名前は自然な必要時だけ使い、毎回答の呼びかけを禁止する。</li>
+    <li>
+      最新情報はtool結果へ基づき、失敗時は推測しない。Textにはsourceを残し、TTSはURLを読まない。
+    </li>
+    <li>途中で切れた回答の続きを生成する際、既出部分を繰り返さず直後から続ける。</li>
+  </ol>
+  <p>
+    <code>StartTurnInput</code>へ<code>inputOrigin: text | voice</code>と
+    <code>presentationMode: text | text-and-speech</code>を追加し、promptがUI状態を推測しないようにする。
+  </p>
+
+  <h3 id="102-ui-states">10.2 Chat UI</h3>
+  <table>
+    <caption>
+      Table: User-visible states and actions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">状態</th>
+        <th scope="col">表示</th>
+        <th scope="col">許可action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Listening</td>
+        <td>device、turn mode、speech検出状態</td>
+        <td>停止</td>
+      </tr>
+      <tr>
+        <td>Transcribing</td>
+        <td>LAN ASRと経過状態。偽partialを出さない</td>
+        <td>取消</td>
+      </tr>
+      <tr>
+        <td>Transcript review</td>
+        <td>確定文字起こしを編集可能なcomposerへ表示</td>
+        <td>送信、録り直し、破棄</td>
+      </tr>
+      <tr>
+        <td>Generating</td>
+        <td>実Provider、local/LAN/cloud、fallback有無</td>
+        <td>停止</td>
+      </tr>
+      <tr>
+        <td>Speaking</td>
+        <td>voice、output device</td>
+        <td>読み上げ停止、Micでinterrupt</td>
+      </tr>
+      <tr>
+        <td>LLM failed</td>
+        <td>原因とrecovery</td>
+        <td>同じUser messageから回答を再試行</td>
+      </tr>
+      <tr>
+        <td>ASR failed</td>
+        <td>原因とaudio保持期限</td>
+        <td>文字起こしだけ再試行、または録り直し</td>
+      </tr>
+      <tr>
+        <td>TTS failed</td>
+        <td>Text回答は完成済みと表示</td>
+        <td>同じAssistant messageを読み上げ直す</td>
+      </tr>
+      <tr>
+        <td>Response truncated</td>
+        <td>途中回答であることを明示</td>
+        <td>続きを生成</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Chat headerの固定「ローカル処理」を削除する。BackendのEffective Route Snapshotから
+    <code>このMac</code
+    >、<code>LAN</code>、<code>Cloud</code>を表示し、未probeまたは期限切れは
+    <code>未確認</code>とする。
+  </p>
+
+  <h2 id="11-error-retry">11. Typed Error and Retry Contract</h2>
+  <pre><code class="language-typescript">type ConversationIssue =
+  | { scope: "llm"; code: LlmIssueCode; runId: string; inputMessageId: string;
+      retry: "retry-response" | "continue-response" | "none" }
+  | { scope: "asr"; code: AsrIssueCode; segmentId: string; audioRetainedUntil?: string;
+      retry: "retry-transcription" | "record-again" | "none" }
+  | { scope: "tts"; code: TtsIssueCode; sourceMessageId: string;
+      retry: "retry-speech" | "choose-output" | "none" }
+  | { scope: "settings"; code: SettingsIssueCode;
+      retry: "open-settings" | "test-connection" | "none" };</code></pre>
+  <ol>
+    <li>
+      <code>retry-response</code
+      >は既存<code>input_message_id</code>を使う新runを開始し、User
+      messageをinsertしない。
+    </li>
+    <li>
+      <code>continue-response</code
+      >は未完了contentをcontextへ一時追加し、重複禁止instructionと十分なtoken budgetで続ける。
+    </li>
+    <li>
+      <code>retry-transcription</code>は保持中の同じsegment
+      PCMだけを再送し、LLMを開始しない。
+    </li>
+    <li>
+      <code>retry-speech</code>は保存済みAssistant messageから新しいTTS
+      runだけを作る。
+    </li>
+    <li>
+      UIはissueの<code>retry</code>に対応するbuttonだけを表示し、文字列prefixで挙動を分岐しない。
+    </li>
+  </ol>
+
+  <h2 id="12-file-plan">12. File-level Implementation Plan</h2>
+  <table>
+    <caption>
+      Table: Planned production changes
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">File / module</th>
+        <th scope="col">操作</th>
+        <th scope="col">責務</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src-tauri/src/providers/completion_policy.rs</code></td>
+        <td>追加</td>
+        <td>Capability、reasoning写像、token budget、finish reason classifier</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/stream/mod.rs</code></td>
+        <td>修正・分割</td>
+        <td>固定256 tokenを削除し、共通policyとterminal classifierを使用</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/larm/client/chat.rs</code></td>
+        <td>修正</td>
+        <td>共通policy、finish reason、partial-output semanticsを適用</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/openai_compatible/probe.rs</code></td>
+        <td>修正</td>
+        <td>production-shaped streaming probeとresponse validation</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/providers/probe.rs</code></td>
+        <td>修正</td>
+        <td>Dynamic LAN/LARMのdata-plane canaryとtyped readiness</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/runtime/turns.rs</code></td>
+        <td>修正・分割</td>
+        <td>typed outcome、finish metadata、retry by input message、effective route event</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/ipc_contract.rs</code></td>
+        <td>修正</td>
+        <td>ConversationIssue、route snapshot、input origin、speech outcomeの生成型</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/asr_runtime.rs</code></td>
+        <td>追加</td>
+        <td>resolved config cache、共有HTTP client、invalidation、request metrics</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/network_asr.rs</code></td>
+        <td>修正</td>
+        <td>warm-path single POST、bounded PCM、typed error</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/network_asr/discovery.rs</code></td>
+        <td>修正</td>
+        <td>独立ASR host、全request cancellation、probe fixture</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/system_tts.rs</code></td>
+        <td>修正・分割</td>
+        <td>voice discovery、bounded synthesis queue、rate、session cancellation</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/audio_output.rs</code></td>
+        <td>修正</td>
+        <td>selected device、persistent stream、queued playback、gap metrics</td>
+      </tr>
+      <tr>
+        <td><code>src/lib/voiceTurnMachine.ts</code></td>
+        <td>追加</td>
+        <td>pure state transition、generation/segment guard、effect command</td>
+      </tr>
+      <tr>
+        <td><code>src/features/voice/usePushToTalk.ts</code></td>
+        <td>修正・分割</td>
+        <td>state machine adapterへ縮小し、previewと多重ref orchestrationを削除</td>
+      </tr>
+      <tr>
+        <td><code>src/lib/speakableText.ts</code></td>
+        <td>追加</td>
+        <td>表示contentから読み上げcontentへの純粋変換</td>
+      </tr>
+      <tr>
+        <td><code>src/features/chat/useConversationTurn.ts</code></td>
+        <td>修正・分割</td>
+        <td>LLM completionとspeech presentationを別sessionにする</td>
+      </tr>
+      <tr>
+        <td><code>src/features/chat/ChatPage.tsx</code></td>
+        <td>修正</td>
+        <td>typed status、正しいlocation、scope別retry、accessibility</td>
+      </tr>
+      <tr>
+        <td><code>src/features/settings/SettingsPage.tsx</code></td>
+        <td>修正・分割</td>
+        <td>実設定だけを操作し、LLM/ASR/TTSのEffective値とprobeを表示</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src/lib/contracts.ts</code>、<code>src/lib/schemas.ts</code>
+        </td>
+        <td>修正</td>
+        <td>生成IPC型とstrict Settings schemaの同期</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src-tauri/src/persistence/migrate.rs</code>、<code>settings.rs</code>
+        </td>
+        <td>修正</td>
+        <td>二段階互換migration、validation、rollback fixture</td>
+      </tr>
+      <tr>
+        <td><code>contexts/conversation/respond.context.toml</code></td>
+        <td>修正</td>
+        <td>Section 10.1のresponse policyと安全なmodality data</td>
+      </tr>
+      <tr>
+        <td><code>scripts/conversation-quality-eval.ts</code></td>
+        <td>追加</td>
+        <td>固定scenario実行、contentを保存しない集計、90点Gate</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="13-tickets">13. Ordered Implementation Tickets</h2>
+  <h3 id="cv-00">CV-00 — Baseline and behavioral seams</h3>
+  <ul>
+    <li>
+      <code>tests/microphone.test.ts</code
+      >を責務別に分割し、ratchetを上げずに<code>size:check</code>を緑にする。
+    </li>
+    <li>
+      既存archive 4文書のformat差分と2件のlint errorを文書専用差分で解消し、 repository-wide
+      <code>spec:check</code>を緑にする。
+    </li>
+    <li>
+      現行request数、finish reason、TTS中capture、finalize競合を再現する失敗testを先に追加する。
+    </li>
+    <li>
+      Voice state machineとspeakable textのpure
+      moduleだけを追加し、まだproduction経路を切り替えない。
+    </li>
+  </ul>
+  <p>
+    Acceptance: baselineの正常test数とassertionを減らさず、追加した欠陥再現testが旧実装では失敗し、
+    harness自体の誤検出でないことを確認する。
+  </p>
+
+  <h3 id="cv-01">CV-01 — Honest Settings and capabilities</h3>
+  <ul>
+    <li>
+      Compatibility build、Settings migration、strict schema、Effective Capability
+      Snapshotを実装する。
+    </li>
+    <li>
+      ASR hostをLLM hostから分離し、TTS voice/output/rateとLLM
+      token/reasoning実効値を保存・表示する。
+    </li>
+    <li>Backend resolve成功前のdraft値をruntimeで使用しない。</li>
+  </ul>
+  <p>
+    Acceptance: schema 9→新schema、new→compatibility rollback、欠落device/model、invalid
+    host、unknown fieldの fixtureが全て期待どおりになる。
+  </p>
+
+  <h3 id="cv-02">CV-02 — LLM request and completion correctness</h3>
+  <ul>
+    <li>共通Completion PolicyをDirect、Dynamic LAN、LARMへ適用する。</li>
+    <li>
+      全stream/non-stream parserでfinish
+      reasonを強制し、<code>length</code>をpartial failureにする。
+    </li>
+    <li>接続testをproduction-shaped probeへ置き換える。</li>
+  </ul>
+  <p>
+    Acceptance: 256 token固定がproductionから消え、low/medium/xhighが能力どおりrequestへ写像され、
+    stop/tool_calls/length/content_filter/unknown/EOFのfixtureが全adapterで同じ結果になる。
+  </p>
+
+  <h3 id="cv-03">CV-03 — Single-request cancellable ASR</h3>
+  <ul>
+    <li>共有clientとresolved configuration cacheをAppStateへ追加する。</li>
+    <li>preview transcriptionを削除し、warm pathを一発話一POSTにする。</li>
+    <li>discoveryを含む全network awaitへcancellationを伝播する。</li>
+    <li>pre-roll、utterance duration、queue、retry PCMの上限を実装する。</li>
+  </ul>
+  <p>
+    Acceptance: fake serverへ100連続発話を送り、100 transcription POST、0 discovery
+    GET、segment順序一致、 cancel p95 200ms以下、idle 30分のPCM増加1MB未満を満たす。review
+    modeで編集前transcriptがUser messageやLLM Contextへ保存されないことも確認する。
+  </p>
+
+  <h3 id="cv-04">CV-04 — Echo-safe Voice Turn Coordinator</h3>
+  <ul>
+    <li>
+      capture/endpoint/ASR/LLM/TTSをstate machineへ接続し、generationとsegment
+      IDでcallbackをguardする。
+    </li>
+    <li>half-duplex pause/resumeと、MicによるTTS interrupt順序を実装する。</li>
+    <li>Target Speaker ready時だけverified barge-inを許可する。</li>
+  </ul>
+  <p>
+    Acceptance: TTS-only音源を30分再生してUser message
+    0件、100回のspeech/silence境界でsegment欠落・重複0件、 interrupt後に旧TTS/ASR
+    callbackが新turnを更新しない。
+  </p>
+
+  <h3 id="cv-05">CV-05 — TTS presentation pipeline</h3>
+  <ul>
+    <li>voice/output device discoveryと試聴を実装し、保存値を実再生へ適用する。</li>
+    <li>
+      <code>toSpeakableText</code>、sentence chunk、render-ahead queue、session
+      cancelを実装する。
+    </li>
+    <li>auto-speak modeをinput originへ結びつける。</li>
+  </ul>
+  <p>
+    Acceptance: Markdown/code/URL fixture、voice/device消失、50 chunk cancel、連続再生を通し、
+    chunk間gap p95 150ms以下、cancelから無音までp95 200ms以下を実機で確認する。
+  </p>
+
+  <h3 id="cv-06">CV-06 — Typed issue, retry and truthful UI</h3>
+  <ul>
+    <li>RuntimeEvent、Frontend contract、Chat componentをscope別outcomeへ移行する。</li>
+    <li>LLM/ASR/TTS retryを別commandにし、source message/segmentを参照する。</li>
+    <li>Effective Route Snapshotからlocation、fallback、readiness期限を表示する。</li>
+  </ul>
+  <p>
+    Acceptance: TTS失敗後のretryでconversation message数が増えず、LLM retryでUser
+    message数が増えず、 ASR retryでLLM runが始まらず、Cloud routeをlocalと表示するcaseが0件になる。
+  </p>
+
+  <h3 id="cv-07">CV-07 — Response quality policy and eval</h3>
+  <ul>
+    <li>System ContextへSection 10.1を実装し、input originとpresentation modeを追加する。</li>
+    <li>日本語、英語、曖昧ASR、長文、最新情報、tool失敗、続き生成を含む60 scenarioを固定する。</li>
+    <li>同一Provider/profileで3回実行し、中央値とhard violationを集計する。</li>
+  </ul>
+  <p>
+    Acceptance: Section 14.4のConversation Quality Evalが90点以上、hard violation 0、各category
+    85%以上。
+  </p>
+
+  <h3 id="cv-08">CV-08 — Integration, soak and release evidence</h3>
+  <ul>
+    <li>source文字列testをbehavioral state/HTTP/UI contract testへ置き換える。</li>
+    <li>
+      full check、migration、30分音声soak、network failure matrix、実機device matrixを実行する。
+    </li>
+    <li>
+      content-free evidence JSONとrelease evidence HTMLを作り、採点をSection 4に従って確定する。
+    </li>
+  </ul>
+  <p>Acceptance: Section 16のG0〜G8が全てPassし、93点見込みを実測値で再計算して90点以上になる。</p>
+
+  <h2 id="14-test-strategy">14. Test Strategy</h2>
+  <h3 id="141-unit">14.1 Unit tests</h3>
+  <ul>
+    <li>Voice state transition tableを全state/event組み合わせで検査する。</li>
+    <li>
+      古いgeneration、重複endpoint、finalize中endpoint、cancel競合、queue overflowを検査する。
+    </li>
+    <li>
+      LLM finish reason、capability mapping、token clamp、fallback可否をpure functionで検査する。
+    </li>
+    <li>Speakable textの日本語/英語Markdown、URL、code、table、emoji、空出力を検査する。</li>
+    <li>Settings schemaの境界値とmigration round-tripをTypeScript/Rust双方で検査する。</li>
+  </ul>
+
+  <h3 id="142-integration">14.2 Integration tests</h3>
+  <ul>
+    <li>
+      fake OpenAI SSE serverで分割chunk、CRLF、tool call、length、未知reason、早期EOFを検査する。
+    </li>
+    <li>
+      fake ASR serverでrequest count、multipart model、cancel、timeout、oversize、cache
+      invalidationを検査する。
+    </li>
+    <li>
+      in-memory SQLiteでretry時のUser/Assistant message数、runtime run、provider sessionを検査する。
+    </li>
+    <li>
+      fake TTS renderer/outputでrender-ahead順序、cancel、device loss、temp cleanupを検査する。
+    </li>
+    <li>
+      generated IPC bindingsとFrontend schemaのexhaustive
+      switchを<code>ipc:check</code>で固定する。
+    </li>
+  </ul>
+
+  <h3 id="143-desktop">14.3 macOS desktop acceptance</h3>
+  <table>
+    <caption>
+      Table: Required real-device matrix
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Case</th>
+        <th scope="col">回数 / 時間</th>
+        <th scope="col">合格条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Built-in mic + speaker、half-duplex</td>
+        <td>30分</td>
+        <td>自己音声User message 0、欠落0、crash 0</td>
+      </tr>
+      <tr>
+        <td>Headset mic/output</td>
+        <td>20 turn</td>
+        <td>選択deviceを使用し、切断をdegraded表示</td>
+      </tr>
+      <tr>
+        <td>Mic interrupt during TTS</td>
+        <td>30回</td>
+        <td>旧TTS停止200ms以内、User speech先頭欠落300ms以下</td>
+      </tr>
+      <tr>
+        <td>Verified barge-in</td>
+        <td>本人/他者/TTS各30回</td>
+        <td>本人のみ送信。TTSと他者は0件</td>
+      </tr>
+      <tr>
+        <td>LAN packet loss / server restart</td>
+        <td>各10回</td>
+        <td>hang 0、bounded error、次turnで回復</td>
+      </tr>
+      <tr>
+        <td>Long LLM response</td>
+        <td>10回</td>
+        <td>不正なcompleted 0、lengthはcontinue action</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="144-quality-eval">14.4 Conversation Quality Eval</h3>
+  <table>
+    <caption>
+      Table: Response evaluation rubric
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">配点</th>
+        <th scope="col">判定</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Task correctness</td>
+        <td>35</td>
+        <td>質問への正答、禁止された推測なし</td>
+      </tr>
+      <tr>
+        <td>Relevance / concision</td>
+        <td>15</td>
+        <td>答え先行、不要な反復・前置きなし</td>
+      </tr>
+      <tr>
+        <td>Language / tone</td>
+        <td>15</td>
+        <td>主言語一致、名前の乱用なし、自然な敬体</td>
+      </tr>
+      <tr>
+        <td>Spoken suitability</td>
+        <td>15</td>
+        <td>voice入力時に耳で追える構造、URL/codeを読み上げない</td>
+      </tr>
+      <tr>
+        <td>ASR ambiguity handling</td>
+        <td>10</td>
+        <td>必要時だけ確認し、認識結果を捏造しない</td>
+      </tr>
+      <tr>
+        <td>Tool / current information</td>
+        <td>10</td>
+        <td>必要時にtoolを使い、失敗時に推測しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    hard violationは、架空の情報源、User名の推測、未確認のlocal表示、文字起こし不能という虚偽、
+    同一回答の重複、tool失敗後の断定とする。一件でもあればGateをFailにする。
+    評価artifactへprompt、transcript、回答本文を保存せず、scenario ID、hash、点数、violation
+    code、latencyだけを残す。
+  </p>
+
+  <h3 id="145-acoustic-quality">14.5 Acoustic quality and latency</h3>
+  <table>
+    <caption>
+      Table: Voice product quality thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">Corpus / measurement</th>
+        <th scope="col">合格閾値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Japanese ASR CER</td>
+        <td>同意済みまたはlicenseが明確な固定40発話、clean mic</td>
+        <td>median 8%以下、p90 15%以下</td>
+      </tr>
+      <tr>
+        <td>Noise ASR CER</td>
+        <td>同じ発話へ一定SNRの室内noiseをmix</td>
+        <td>median 15%以下、p90 25%以下</td>
+      </tr>
+      <tr>
+        <td>English / code-switch WER</td>
+        <td>英語10発話、日英混在10発話</td>
+        <td>median 15%以下、固有名詞失敗を個別記録</td>
+      </tr>
+      <tr>
+        <td>Speech end → transcript</td>
+        <td>同一LAN、60発話、cache warm</td>
+        <td>p50 1.2秒以下、p95 2.5秒以下</td>
+      </tr>
+      <tr>
+        <td>Frontend/runtime overhead to first LLM byte</td>
+        <td>ASR完了からProvider request送信まで</td>
+        <td>p95 100ms以下。Provider生成時間は別計測</td>
+      </tr>
+      <tr>
+        <td>First speakable sentence → audio</td>
+        <td>20短文、System voice、warm output stream</td>
+        <td>p50 500ms以下、p95 1.2秒以下</td>
+      </tr>
+      <tr>
+        <td>TTS completeness</td>
+        <td>20 fixtureを再録音して参照speakable textと照合</td>
+        <td>欠落文0、重複文0、順序逆転0</td>
+      </tr>
+      <tr>
+        <td>TTS listening quality</td>
+        <td>日本語15、英語5、2名以上のblind 5段階評価</td>
+        <td>平均4.0以上、3未満の項目0</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    音声fixtureをrepositoryへ置く場合は出所、同意、license、保持目的を記録する。実利用者の録音を
+    test
+    artifactへ転用しない。閾値を満たせない場合はUIやpromptで隠さず、model、endpointing、chunkingを
+    改善して同じcorpusを再実行する。
+  </p>
+
+  <h2 id="15-plan-quality-audit">15. 計画品質の再評価</h2>
+  <table>
+    <caption>
+      Table: Implementation plan audit
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">観点</th>
+        <th scope="col">配点</th>
+        <th scope="col">自己評価</th>
+        <th scope="col">根拠</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>全review指摘のcoverage</td>
+        <td>20</td>
+        <td>20</td>
+        <td>R-01〜R-13をticketへ1対1で対応</td>
+      </tr>
+      <tr>
+        <td>Architecture / state consistency</td>
+        <td>20</td>
+        <td>19</td>
+        <td>正本、ID、state、effect、half-duplex境界を固定</td>
+      </tr>
+      <tr>
+        <td>File-level actionability</td>
+        <td>15</td>
+        <td>14</td>
+        <td>追加・修正moduleと責務を列挙。実装時の次migration番号だけrebaseが必要</td>
+      </tr>
+      <tr>
+        <td>Acceptance / metrics</td>
+        <td>20</td>
+        <td>20</td>
+        <td>request、latency、gap、欠落、loop、qualityを数値化</td>
+      </tr>
+      <tr>
+        <td>Migration / rollback</td>
+        <td>10</td>
+        <td>9</td>
+        <td>compatibility buildを先行しbinary rollbackを保証</td>
+      </tr>
+      <tr>
+        <td>Test / release safety</td>
+        <td>15</td>
+        <td>15</td>
+        <td>unit、HTTP/SQLite integration、実機、quality eval、score capを定義</td>
+      </tr>
+      <tr>
+        <td><strong>合計</strong></td>
+        <td><strong>100</strong></td>
+        <td><strong>97</strong></td>
+        <td>実装計画として90点条件を満たす</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    実装と自動contractの評価は93点見込みまで改善した。ただしSection 4の93点は、実Provider、
+    実機音響、soakを含む全Acceptance通過後に確定する。operator evidenceを得るまでrelease品質の
+    90点達成済みとは扱わない。
+  </p>
+
+  <h2 id="16-release-gates">16. Release Gates</h2>
+  <ol>
+    <li><strong>G0 Plan:</strong> 固定判断、Scope、score cap、migration順序を承認する。</li>
+    <li>
+      <strong>G1 Baseline:</strong>
+      <code>CV-00</code>の欠陥再現testとcontent-free計測を固定する。
+    </li>
+    <li><strong>G2 Settings:</strong> compatibility buildとSettings migration/rollbackを通す。</li>
+    <li><strong>G3 LLM:</strong> 全Providerのrequest、finish reason、probe matrixを通す。</li>
+    <li>
+      <strong>G4 ASR:</strong> warm一発話一POST、cancel、bounded buffer、100 segment試験、CER/WER、
+      transcript latencyを通す。
+    </li>
+    <li>
+      <strong>G5 TTS/Turn:</strong> 自己音声0、interrupt、gap、device、cancel、completeness、
+      listening quality試験を通す。
+    </li>
+    <li>
+      <strong>G6 UX:</strong> typed retry、truthful route、keyboard、screen reader contractを通す。
+    </li>
+    <li><strong>G7 Quality:</strong> 60 scenario×3回で90点以上、hard violation 0を通す。</li>
+    <li>
+      <strong>G8 Release:</strong>
+      <code>bun run check</code>、<code>bun run spec:check</code>、
+      desktop acceptance、30分soakを通し、総合点を再計算する。
+    </li>
+  </ol>
+  <p>
+    下流GateがFailした場合は、そのGateを導入したticket単位で戻す。Migrationを含む<code>CV-01</code>は
+    compatibility buildへ戻し、Settingsを旧schemaで再保存してから旧binaryを起動する。
+    TTS/Voice切替は開発中のみlocal feature
+    gateで旧経路と比較し、G5通過後は安全でない旧音声経路をrelease buildから削除する。
+  </p>
+
+  <h2 id="17-risks">17. Risks and Decisions Requiring Revalidation</h2>
+  <table>
+    <caption>
+      Table: Known risks
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Risk</th>
+        <th scope="col">対策</th>
+        <th scope="col">Go / No-Go</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Providerがfinish reasonまたはcapabilityを返さない</td>
+        <td>protocol failureにし、対応が確認できるまでreadyにしない</td>
+        <td>No-Go for that Provider</td>
+      </tr>
+      <tr>
+        <td>rodioで指定output deviceを安定して開けない</td>
+        <td>device選択をshippingしない。System default固定を説明文として残す</td>
+        <td>機能を偽らなければscore -1でGo</td>
+      </tr>
+      <tr>
+        <td>render-aheadでもchunk gapが150msを超える</td>
+        <td>chunkを長くするか、応答完了後一括synthesisへ切り替える</td>
+        <td>G5 Fail</td>
+      </tr>
+      <tr>
+        <td>Target SpeakerがTTSを本人と誤判定する</td>
+        <td>verified barge-inを非表示にしhalf-duplexだけをshippingする</td>
+        <td>half-duplexでG5を再実行</td>
+      </tr>
+      <tr>
+        <td>Quality evalがProvider variabilityで不安定</td>
+        <td>3回中央値に加えてhard ruleを決定的checkerで判定する</td>
+        <td>3 run中2 runが90未満ならG7 Fail</td>
+      </tr>
+      <tr>
+        <td>並行中のmemory/voice migrationと衝突する</td>
+        <td>G0で最新mainへrebaseし、次の空きversionを再採番する</td>
+        <td>番号確定までCV-01開始禁止</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="18-definition-of-done">18. Definition of Done</h2>
+  <ul>
+    <li>R-01〜R-13に未解決または「後で対応」が残っていない。</li>
+    <li>Critical defectの再現testが新実装で全てPassし、旧実装へ戻すとFailする。</li>
+    <li>
+      全Provider、全音声state、全retry actionが型付きcontractと永続runtime stateで追跡できる。
+    </li>
+    <li>性能、network request、自己音声、segment lossの実測値が閾値内である。</li>
+    <li>会話品質が90点以上でhard violation 0である。</li>
+    <li>full check、Spec check、migration/rollback、実機matrix、soakがPassする。</li>
+    <li>Section 4を実測値で再採点して90点以上になり、release evidenceへ記録される。</li>
+  </ul>
+</article>

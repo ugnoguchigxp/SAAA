@@ -13,6 +13,7 @@ use super::{
     Cancellation, ErrorEnvelope, LarmError, LarmHttpClient, ASSISTANT_CHAR_LIMIT, CAPABILITY,
     ERROR_BODY_LIMIT, PROBE_BODY_LIMIT, ROUTE, SSE_EVENT_LIMIT,
 };
+use crate::providers::completion::{CompletionTerminal, CompletionTerminalError};
 use crate::runtime::agent_tools::{ToolCallAccumulator, ToolProtocolError};
 
 pub(crate) fn validate_allocation_common(dto: &AllocationDto) -> Result<(), LarmError> {
@@ -442,6 +443,7 @@ pub(crate) fn project_sse<F>(
     output_started: &mut bool,
     on_delta: &mut F,
     tool_calls: &mut ToolCallAccumulator,
+    terminal: &mut CompletionTerminal,
 ) -> Result<bool, LarmError>
 where
     F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
@@ -450,10 +452,16 @@ where
         for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
             let data = line.trim();
             if data == "[DONE]" {
+                terminal
+                    .complete()
+                    .map_err(|error| completion_terminal_error(error, *output_started))?;
                 return Ok(true);
             }
             let value: Value = serde_json::from_str(data)
                 .map_err(|_| LarmError::new(SessionFailureKind::Protocol, *output_started))?;
+            terminal
+                .observe(&value)
+                .map_err(|error| completion_terminal_error(error, *output_started))?;
             tool_calls
                 .absorb_stream_delta(&value)
                 .map_err(|error| tool_protocol_error(error, *output_started))?;
@@ -480,6 +488,18 @@ where
         }
     }
     Ok(false)
+}
+
+pub(crate) fn completion_terminal_error(
+    error: CompletionTerminalError,
+    output_started: bool,
+) -> LarmError {
+    let kind = match error {
+        CompletionTerminalError::PartialOutput => SessionFailureKind::PartialOutput,
+        CompletionTerminalError::Policy => SessionFailureKind::Policy,
+        CompletionTerminalError::Protocol => SessionFailureKind::Protocol,
+    };
+    LarmError::new(kind, output_started)
 }
 
 pub(crate) fn tool_protocol_error(error: ToolProtocolError, output_started: bool) -> LarmError {

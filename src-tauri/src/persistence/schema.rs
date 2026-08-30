@@ -5,8 +5,10 @@ use super::migrate::{
     migrate_pristine_provider_defaults_to_dynamic_lan, migrate_provider_reasoning_effort_default,
     migrate_v4_to_v5, migrate_v6_to_v7, migrate_v7_to_v8, migrate_v8_to_v9,
 };
+use super::provider_identity::migrate_dynamic_lan_provider_identity;
 use super::runs::reconcile_interrupted_runs;
 use super::settings::default_settings_documents;
+use super::settings_migration::migrate_settings_v9_to_v10;
 use crate::{meeting, memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
@@ -179,7 +181,9 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     memory::control_plane::recover_interrupted_jobs(&transaction, &memory_now)?;
     migrate_pristine_provider_defaults_to_dynamic_lan(&transaction)?;
     migrate_direct_dynamic_lan_provider_to_discovery(&transaction)?;
+    migrate_dynamic_lan_provider_identity(&transaction)?;
     migrate_provider_reasoning_effort_default(&transaction)?;
+    migrate_settings_v9_to_v10(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
     transaction.pragma_update(

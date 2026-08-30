@@ -69,14 +69,24 @@ pub(crate) fn begin_simple_runtime_run(
 pub(crate) fn validate_start_turn(input: &StartTurnInput) -> Result<(), String> {
     validate_identifier(&input.run_id, "run id")?;
     validate_identifier(&input.conversation_id, "conversation id")?;
+    if let Some(message_id) = input.retry_input_message_id.as_deref() {
+        validate_identifier(message_id, "retry input message id")?;
+    }
     let content = input.content.trim();
     if content.is_empty() || content.chars().count() > 16_000 {
         return Err("Message must contain between 1 and 16,000 characters".to_string());
     }
-    if let Some(workspace) = &input.workspace_path {
-        if workspace.len() > 4_096 {
-            return Err("Workspace path is too long".to_string());
-        }
+    if matches!(input.workspace_path.as_deref(), Some(workspace) if workspace.len() > 4_096) {
+        return Err("Workspace path is too long".to_string());
+    }
+    if !matches!(input.input_origin.as_str(), "text" | "voice") {
+        return Err("Input origin must be text or voice".to_string());
+    }
+    if !matches!(
+        input.presentation_mode.as_str(),
+        "visual" | "visual-and-spoken"
+    ) {
+        return Err("Presentation mode must be visual or visual-and-spoken".to_string());
     }
     Ok(())
 }

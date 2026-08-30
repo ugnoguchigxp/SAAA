@@ -31,6 +31,15 @@ export class MicrophoneCaptureError extends Error {
   }
 }
 
+export function microphoneCaptureConstraints(inputDeviceId = "default"): MediaTrackConstraints {
+  return {
+    autoGainControl: true,
+    echoCancellation: true,
+    noiseSuppression: true,
+    ...(inputDeviceId === "default" ? {} : { deviceId: { exact: inputDeviceId } }),
+  };
+}
+
 export async function requestMicrophoneStream(
   audio: boolean | MediaTrackConstraints,
   environment: MicrophoneEnvironment = browserMicrophoneEnvironment(),

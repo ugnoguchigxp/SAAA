@@ -1,5 +1,3 @@
-use std::env;
-use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 use zeroize::Zeroizing;
@@ -7,9 +5,11 @@ use zeroize::Zeroizing;
 use crate::redact::redact_runtime_text;
 use crate::{
     begin_simple_runtime_run, finish_runtime_run, register_active_run, remove_active_run,
-    validate_identifier, ActiveTts, AppState, PreviewAudioInput, RunCancellation, SpeakTextInput,
+    validate_identifier, ActiveTts, AppState, RunCancellation, SpeakTextInput,
     TranscribeAudioInput, VoiceEvent,
 };
+
+const MAX_TTS_RUN_DURATION: Duration = Duration::from_secs(30 * 60);
 
 pub(crate) async fn transcribe_audio(
     state: &AppState,
@@ -24,8 +24,8 @@ pub(crate) async fn transcribe_audio(
     if input.samples.iter().any(|sample| !sample.is_finite()) {
         return Err("Recorded audio contains invalid samples".to_string());
     }
-    if input.samples.len() > input.sample_rate as usize * 300 {
-        return Err("Recording exceeds the five minute MVP limit".to_string());
+    if input.samples.len() > input.sample_rate as usize * 120 {
+        return Err("Recording exceeds the two minute limit".to_string());
     }
     if input.model != crate::voice::network_asr::MODEL_ID {
         return Err("Voice settings must use the configured LAN ASR model".to_string());
@@ -71,6 +71,7 @@ pub(crate) async fn transcribe_audio(
         .situation
         .set_microphone_state(crate::situation::contracts::MicrophoneState::SaaaTranscribing);
     let result = crate::voice::network_asr::transcribe(
+        state,
         &samples,
         input.sample_rate,
         &input.model,
@@ -111,59 +112,6 @@ pub(crate) async fn transcribe_audio(
     }
 }
 
-pub(crate) async fn preview_audio(
-    state: &AppState,
-    mut input: PreviewAudioInput,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    validate_identifier(&input.run_id, "run id")?;
-    validate_identifier(&input.conversation_id, "conversation id")?;
-    if !(8_000..=192_000).contains(&input.sample_rate)
-        || input.samples.len() < input.sample_rate as usize
-        || input.samples.len() > input.sample_rate as usize * 15
-        || input.samples.iter().any(|sample| !sample.is_finite())
-    {
-        return Err(
-            "Voice preview must contain between one and fifteen seconds of valid audio".to_string(),
-        );
-    }
-    if input.model != crate::voice::network_asr::MODEL_ID {
-        return Err("Voice settings must use the configured LAN ASR model".to_string());
-    }
-    let samples = Zeroizing::new(std::mem::take(&mut input.samples));
-    {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        state
-            .voice_profile
-            .verify_if_enabled(&connection, &samples, input.sample_rate)?;
-    }
-    let cancellation = Arc::new(RunCancellation::default());
-    register_active_run(state, &input.run_id, cancellation.clone())?;
-    let result = crate::voice::network_asr::transcribe(
-        &samples,
-        input.sample_rate,
-        &input.model,
-        cancellation.clone(),
-    )
-    .await
-    .map(|(text, _language)| text);
-    remove_active_run(state, &input.run_id);
-    match result {
-        Ok(transcript) => {
-            let _ = on_event.send(VoiceEvent::TranscriptDelta {
-                run_id: input.run_id,
-                text: transcript.clone(),
-            });
-            Ok(transcript)
-        }
-        Err(_) if cancellation.is_cancelled() => Err("Voice preview cancelled".to_string()),
-        Err(error) => Err(redact_runtime_text(&error)),
-    }
-}
-
 pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Result<(), String> {
     validate_identifier(&input.run_id, "run id")?;
     validate_identifier(&input.conversation_id, "conversation id")?;
@@ -191,6 +139,9 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
     }
 
     let spawn_result = (|| {
+        if cancellation.is_cancelled() {
+            return Err("Speech cancelled".to_string());
+        }
         let mut process = state
             .tts_process
             .lock()
@@ -203,50 +154,85 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
                 "MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string(),
             );
         }
+        crate::voice::system_tts::prepare_output(state, &input.run_id)?;
+        if cancellation.is_cancelled() {
+            return Err("Speech cancelled".to_string());
+        }
+        let spawned = crate::voice::system_tts::spawn_tts_process(&speech_text, &input.voice)?;
         *process = Some(ActiveTts {
             run_id: input.run_id.clone(),
-            child: spawn_tts_process(&speech_text, &input.voice)?,
+            child: spawned.child,
+            #[cfg(target_os = "macos")]
+            rendered_audio: Some(spawned.rendered_audio),
         });
         Ok::<(), String>(())
     })();
     if let Err(error) = spawn_result {
+        crate::voice::system_tts::cancel_output(state, &input.run_id);
         remove_active_run(state, &input.run_id);
-        finish_runtime_run(state, &input.run_id, "failed", Some(&error))?;
+        finish_runtime_run(
+            state,
+            &input.run_id,
+            if cancellation.is_cancelled() {
+                "cancelled"
+            } else {
+                "failed"
+            },
+            Some(&error),
+        )?;
         return Err(error);
     }
     state
         .situation
         .set_audio_state(crate::situation::contracts::AudioState::SaaaSpeaking);
 
-    let result: Result<(), String> = async {
-        loop {
-            if cancellation.is_cancelled() {
-                break Err("Speech cancelled".to_string());
-            }
-            let status = {
-                let mut process = state
-                    .tts_process
-                    .lock()
-                    .map_err(|_| "TTS process lock unavailable".to_string())?;
-                let active = process
-                    .as_mut()
-                    .filter(|active| active.run_id == input.run_id)
-                    .ok_or_else(|| "Speech process ownership was lost".to_string())?;
-                active
-                    .child
-                    .try_wait()
-                    .map_err(|error| format!("Could not inspect TTS process: {error}"))?
-            };
-            if let Some(status) = status {
-                if status.success() {
-                    break Ok(());
+    let result = match tokio::time::timeout(MAX_TTS_RUN_DURATION, async {
+        let synthesis_result: Result<(), String> = async {
+            loop {
+                if cancellation.is_cancelled() {
+                    break Err("Speech cancelled".to_string());
                 }
-                break Err(format!("System TTS exited with {status}"));
+                let status = {
+                    let mut process = state
+                        .tts_process
+                        .lock()
+                        .map_err(|_| "TTS process lock unavailable".to_string())?;
+                    let active = process
+                        .as_mut()
+                        .filter(|active| active.run_id == input.run_id)
+                        .ok_or_else(|| "Speech process ownership was lost".to_string())?;
+                    active
+                        .child
+                        .try_wait()
+                        .map_err(|error| format!("Could not inspect TTS process: {error}"))?
+                };
+                if let Some(status) = status {
+                    if status.success() {
+                        break Ok(());
+                    }
+                    break Err(format!("System TTS exited with {status}"));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        .await;
+        crate::voice::system_tts::complete_output(
+            state,
+            &input.run_id,
+            cancellation.clone(),
+            synthesis_result,
+        )
+        .await
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err("System TTS exceeded the 30 minute limit".to_string()),
+    };
+
+    if result.is_err() {
+        crate::voice::system_tts::cancel_output(state, &input.run_id);
     }
-    .await;
 
     if let Ok(mut process) = state.tts_process.lock() {
         if process
@@ -254,7 +240,7 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
             .is_some_and(|active| active.run_id == input.run_id)
         {
             if let Some(mut active) = process.take() {
-                if cancellation.is_cancelled() {
+                if cancellation.is_cancelled() || result.is_err() {
                     let _ = active.child.kill();
                 }
                 let _ = active.child.wait();
@@ -280,16 +266,6 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
 
 pub(crate) fn stop_tts(state: &AppState, run_id: String) -> Result<(), String> {
     validate_identifier(&run_id, "run id")?;
-    let mut process = state
-        .tts_process
-        .lock()
-        .map_err(|_| "TTS process lock unavailable".to_string())?;
-    if process
-        .as_ref()
-        .is_none_or(|active| active.run_id != run_id)
-    {
-        return Ok(());
-    }
     {
         let active_runs = state
             .active_runs
@@ -299,48 +275,45 @@ pub(crate) fn stop_tts(state: &AppState, run_id: String) -> Result<(), String> {
             cancellation.cancel();
         }
     }
+    let mut process = state
+        .tts_process
+        .lock()
+        .map_err(|_| "TTS process lock unavailable".to_string())?;
+    if process
+        .as_ref()
+        .is_none_or(|active| active.run_id != run_id)
+    {
+        drop(process);
+        crate::voice::system_tts::cancel_output(state, &run_id);
+        return Ok(());
+    }
     if let Some(mut active) = process.take() {
         let _ = active.child.kill();
         let _ = active.child.wait();
     }
+    crate::voice::system_tts::cancel_output(state, &run_id);
     state
         .situation
         .set_audio_state(crate::situation::contracts::AudioState::Silent);
     Ok(())
 }
 
-pub(crate) fn spawn_tts_process(text: &str, voice: &str) -> Result<Child, String> {
-    let mut command = match env::consts::OS {
-        "macos" => {
-            let mut command = Command::new("say");
-            if voice != "default" {
-                command.arg("-v").arg(voice);
-            }
-            command.arg(text);
-            command
-        }
-        "linux" => {
-            let mut command = Command::new("espeak-ng");
-            if voice != "default" {
-                command.arg("-v").arg(voice);
-            }
-            command.arg(text);
-            command
-        }
-        "windows" => {
-            let escaped = text.replace('\\', "\\\\").replace('\'', "''");
-            let mut command = Command::new("powershell.exe");
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                &format!("Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{escaped}')"),
-            ]);
-            command
-        }
-        _ => return Err("System TTS is not supported on this platform".to_string()),
-    };
-    command.stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| {
-        format!("Could not start local system TTS: {error}. Install the platform speech runtime and retry.")
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_cancels_a_run_that_has_not_spawned_its_process_yet() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        let state = crate::test_support::app_state(connection);
+        let cancellation = Arc::new(RunCancellation::default());
+        register_active_run(&state, "speech-starting", cancellation.clone())
+            .expect("speech run registers");
+
+        stop_tts(&state, "speech-starting".to_string()).expect("speech stop succeeds");
+
+        assert!(cancellation.is_cancelled());
+        remove_active_run(&state, "speech-starting");
+    }
 }

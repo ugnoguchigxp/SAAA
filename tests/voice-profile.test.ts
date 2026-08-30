@@ -46,13 +46,14 @@ describe("target-speaker voice profile", () => {
     expect(backend).toContain("TARGET_SPEAKER_REJECTED");
   });
 
-  test("keeps filtered listening active while serializing ASR and LLM work", async () => {
+  test("keeps listening active while serializing ASR and LLM work", async () => {
     const app = await readFile(new URL("../src/features/voice/usePushToTalk.ts", import.meta.url), "utf8");
-    expect(app).toContain("finishVoiceCapture(targetSpeakerFilterEnabledRef.current)");
+    expect(app).toContain("finishVoiceCapture(true)");
     expect(app).toContain("if (keepListening && voiceContextRef.current)");
     expect(app).toContain("voiceSegmentQueueRef.current.length >= 2");
     expect(app).toContain("pendingVoicePromptsRef.current.length >= 2");
-    expect(app).toContain("if (activeTtsRunIdRef.current) await stopSpeech()");
-    expect(app).toContain("!targetSpeakerFilterEnabledRef.current");
+    expect(app).toContain("if (conversationSessionRef.current.speechRunId) await stopSpeech()");
+    expect(app).toContain("suspendVoiceForSpeech");
+    expect(app).toContain("voiceFramesRef.current = []");
   });
 });

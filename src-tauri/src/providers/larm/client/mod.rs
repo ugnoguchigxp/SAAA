@@ -1084,8 +1084,11 @@ mod tests {
     #[tokio::test]
     async fn ready_stream_release_uses_fixed_contract_and_bounded_headers() {
         let allocation = ready_json("alloc_1", "runtime_1", false, "primary-live");
-        let stream =
-            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n";
+        let stream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
         let mut chat_response = response("200 OK", "text/event-stream", stream);
         let header_end = chat_response
             .windows(4)
@@ -1164,6 +1167,8 @@ mod tests {
         assert!(captures[1].contains("x-larm-allocation-id: alloc_1"));
         assert!(captures[1].contains("\"model\":\"local\""));
         assert!(captures[1].contains("\"reasoning_effort\":\"medium\""));
+        assert!(captures[1].contains("\"max_tokens\":2048"));
+        assert!(captures[1].contains("\"enable_thinking\":true"));
         assert!(captures[2].contains("DELETE /v1/allocations/alloc_1 HTTP/1.1"));
     }
 
@@ -1185,7 +1190,11 @@ mod tests {
                 "function": {"arguments": "\"preset\":\"yesterday\"}}"}
             }]}}]
         });
-        let stream = format!("data: {first}\n\ndata: {second}\n\ndata: [DONE]\n\n");
+        let terminal = serde_json::json!({
+            "choices": [{"delta": {}, "finish_reason": "tool_calls"}]
+        });
+        let stream =
+            format!("data: {first}\n\ndata: {second}\n\ndata: {terminal}\n\ndata: [DONE]\n\n");
         let server = FakeServer::start(vec![response("200 OK", "text/event-stream", &stream)]);
         let shared = SharedLarmClient::build().expect("client builds");
         let credential = credential();
@@ -1220,6 +1229,7 @@ mod tests {
                 &[tool_exchange],
                 &tools,
                 "xhigh",
+                crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 Duration::from_secs(5),
                 Cancellation {
                     flag: &flag,
@@ -1248,6 +1258,8 @@ mod tests {
         assert!(captures[0].contains("\"tool_choice\":\"auto\""));
         assert!(captures[0].contains("\"tool_call_id\":\"call_previous\""));
         assert!(captures[0].contains("\"reasoning_effort\":\"xhigh\""));
+        assert!(captures[0].contains("\"max_tokens\":2048"));
+        assert!(captures[0].contains("\"enable_thinking\":true"));
     }
 
     #[tokio::test]
@@ -1743,6 +1755,7 @@ mod tests {
         let mut content_chars = 0;
         let mut output_started = false;
         let mut tool_calls = ToolCallAccumulator::default();
+        let mut terminal = crate::providers::completion::CompletionTerminal::default();
         let error = project_sse(
             vec!["data: {\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}".to_string()],
             &mut content,
@@ -1750,6 +1763,7 @@ mod tests {
             &mut output_started,
             &mut |_, _| Err(SessionFailureKind::ClientDisconnected),
             &mut tool_calls,
+            &mut terminal,
         )
         .expect_err("consumer failure stops projection");
         assert_eq!(error.kind, SessionFailureKind::ClientDisconnected);

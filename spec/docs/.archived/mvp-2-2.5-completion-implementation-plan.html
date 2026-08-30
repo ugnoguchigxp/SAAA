@@ -47,8 +47,8 @@
       Floating Overlayを本closeoutへ追加しない。
     </li>
     <li>
-      Meetingの残作業は、real microphone、real LLM server ASR、permission lifecycle、partial/final表示、
-      Save/Discard、TTS guard、30分・2時間soakの実機証跡である。
+      Meetingの残作業は、real microphone、real LLM server ASR、permission
+      lifecycle、partial/final表示、 Save/Discard、TTS guard、30分・2時間soakの実機証跡である。
     </li>
     <li>
       Input Activityの残作業は、実時間category遷移、lock/sleep lifecycle、monitoring off時のOS API
@@ -105,7 +105,8 @@
       <tr>
         <td>Meeting Core</td>
         <td>
-          state、bounded queue、LLM server ASR adapter、partial/final、Save/Discard、TTS guardを実装済み
+          state、bounded queue、LLM server ASR adapter、partial/final、Save/Discard、TTS
+          guardを実装済み
         </td>
         <td>実マイク、permission、real ASR、indicator、2時間soak、保存lifecycleの実機証跡がない</td>
       </tr>
@@ -133,7 +134,8 @@
         <td>Source state</td>
         <td>Authoring時点のHEADは<code>68a8142</code></td>
         <td>
-          LLM server discoveryとIPC bindingを含む未commit WIPがある。production evidenceへ使用できない
+          LLM server discoveryとIPC bindingを含む未commit WIPがある。production
+          evidenceへ使用できない
         </td>
       </tr>
     </tbody>
@@ -364,7 +366,9 @@ bun run mvp2x:report --report-dir &lt;directory&gt;
       active中のpermission revokeまたはdevice
       lossでFailed/Pausedへ安全に遷移し、bufferとtrackを解放すること。
     </li>
-    <li>real LLM server ASRへ人工音声を送り、同じlane/sequenceのPartialがFinalへ置換されること。</li>
+    <li>
+      real LLM server ASRへ人工音声を送り、同じlane/sequenceのPartialがFinalへ置換されること。
+    </li>
     <li>pause 5分でtranscriptが増えず、microphone indicatorが5秒以内に消えること。</li>
     <li>resumeで新しいcapture tokenを使い、sequenceの重複や逆行がないこと。</li>
     <li>Stopを連打しても一つのCompleted snapshotになり、indicatorが5秒以内に消えること。</li>

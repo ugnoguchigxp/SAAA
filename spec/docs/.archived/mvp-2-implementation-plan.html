@@ -78,12 +78,13 @@ defaultTranscriptPersistence = discard
       </tr>
       <tr>
         <td>
-          <code>transcribe_audio</code>は確定音声を一括受信し、LLM server ASRへin-memory
-          WAVを送る
+          <code>transcribe_audio</code>は確定音声を一括受信し、LLM server
+          ASRへin-memory WAVを送る
         </td>
         <td>長時間会議、低遅延partial、bounded memoryに適さない</td>
         <td>
-          共通のLLM server ASR adapterを抽出し、Chat previewとMeetingは短いsegment単位でcommandを呼ぶ
+          共通のLLM server ASR adapterを抽出し、Chat
+          previewとMeetingは短いsegment単位でcommandを呼ぶ
         </td>
       </tr>
       <tr>
@@ -884,7 +885,9 @@ meeting_module_has_no_notification_agent_or_application_action_calls
   <ul>
     <li>AudioWorkletが対象Tauri WebViewで安定せずnative microphone captureへ変更する。</li>
     <li>ASRのsegment境界品質を上げるためboundedなoverlap audioを保持したい。</li>
-    <li>LLM server ASRがstreaming contractを提供した場合に、preview requestを真のstreamへ置換する。</li>
+    <li>
+      LLM server ASRがstreaming contractを提供した場合に、preview requestを真のstreamへ置換する。
+    </li>
     <li>system audioのframework、entitlement、最小macOS versionを決める。</li>
     <li>別window overlayへ新しいTauri capabilityを追加する。</li>
     <li>translation providerまたはCloud consentを追加する。</li>

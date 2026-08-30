@@ -1,8 +1,10 @@
+pub(crate) mod completion;
 pub(crate) mod dynamic_lan;
 #[allow(dead_code)]
 pub(crate) mod larm;
 pub(crate) mod openai_compatible;
 pub(crate) mod probe;
+mod probe_state;
 pub(crate) mod routing;
 pub(crate) mod session_store;
 pub(crate) mod stream;

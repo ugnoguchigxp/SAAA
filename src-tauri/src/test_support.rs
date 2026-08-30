@@ -19,10 +19,16 @@ pub(crate) fn app_state(connection: Connection) -> AppState {
         data_directory: PathBuf::new(),
         context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(),
         active_runs: Mutex::new(HashMap::new()),
+        provider_probes: Mutex::new(HashMap::new()),
         interaction_policy: Mutex::new(()),
         shutdown_started: AtomicBool::new(false),
         larm_gate: providers::larm::LarmRuntimeGate::Disabled,
+        network_asr: voice::network_asr::NetworkAsrRuntime::new()
+            .expect("Network ASR runtime initializes"),
         tts_process: Mutex::new(None),
+        #[cfg(target_os = "macos")]
+        tts_audio_output: voice::system_tts::audio_output::TtsAudioOutput::new()
+            .expect("TTS audio output initializes"),
         situation: Arc::new(
             situation::SituationRuntime::new(settings, None)
                 .expect("Situation runtime initializes"),

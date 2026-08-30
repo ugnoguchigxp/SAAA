@@ -6,6 +6,7 @@ import type {
   Conversation,
   ConversationMessage,
   ModelProviderSettings,
+  NetworkAsrResolution,
   LocalArtifactResult,
   ProviderTestResult,
   RuntimeEvent,
@@ -31,7 +32,7 @@ export async function getCodexStatus(): Promise<CodexRuntimeStatus> {
 }
 
 export async function startTurn(
-  input: { runId: string; conversationId: string; content: string; workspacePath: string | null },
+  input: { runId: string; conversationId: string; content: string; workspacePath: string | null; retryInputMessageId?: string | null; inputOrigin: "text" | "voice"; presentationMode: "visual" | "visual-and-spoken" },
   onEvent: (event: RuntimeEvent) => void,
 ): Promise<void> {
   const channel = new Channel<RuntimeEvent>();
@@ -47,6 +48,10 @@ export async function testModelProvider(provider: ModelProviderSettings): Promis
   return invoke<ProviderTestResult>("test_model_provider", { input: { provider } });
 }
 
+export async function resolveNetworkAsr(host: string): Promise<NetworkAsrResolution> {
+  return invoke<NetworkAsrResolution>("resolve_network_asr", { input: { host } });
+}
+
 export async function transcribeAudio(
   input: { runId: string; conversationId: string; samples: number[]; sampleRate: number; model: string },
   onEvent: (event: VoiceEvent) => void,
@@ -54,15 +59,6 @@ export async function transcribeAudio(
   const channel = new Channel<VoiceEvent>();
   channel.onmessage = onEvent;
   return invoke<string>("transcribe_audio", { input, onEvent: channel });
-}
-
-export async function previewAudio(
-  input: { runId: string; conversationId: string; samples: number[]; sampleRate: number; model: string },
-  onEvent: (event: VoiceEvent) => void,
-): Promise<string> {
-  const channel = new Channel<VoiceEvent>();
-  channel.onmessage = onEvent;
-  return invoke<string>("preview_audio", { input, onEvent: channel });
 }
 
 export async function speakText(input: {

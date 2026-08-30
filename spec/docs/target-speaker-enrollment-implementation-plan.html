@@ -164,8 +164,8 @@ Candidate VAD
       <tr>
         <td>Web audio processing</td>
         <td>
-          <code>echoCancellation</code
-          >、<code>noiseSuppression</code>、<code>autoGainControl</code>を要求
+          <code>echoCancellation: false</code
+          >を固定し、<code>noiseSuppression</code>、<code>autoGainControl</code>を要求
         </td>
         <td>実際のtrack settingsを検証・表示し、本人判定の代用にはしない</td>
       </tr>
@@ -646,13 +646,13 @@ IDLE</code></pre>
     contractを変更しない。
   </p>
 
-  <h2 id="14-tts-aec">14. TTS重畳、AEC、Barge-in</h2>
+  <h2 id="14-tts-aec">14. TTS重畳、AEC方針、Barge-in</h2>
   <ol>
     <li>Enrollment中はTTSを開始せず、TTS中はEnrollment開始を拒否する。</li>
     <li>通常ChatはTTS中もcaptureを継続し、TTS lifecycleをspeaker gateへ入力する。</li>
     <li>
-      <code>echoCancellation: true</code>の要求だけで成功扱いにせず、trackのeffective
-      settingを取得する。
+      <code>echoCancellation: false</code>をmandatory
+      constraintとして全capture経路で固定し、 無効化できない環境ではcapture開始を失敗させる。
     </li>
     <li>TTS-only candidateはspeaker mismatchとして破棄し、endpoint timerへ数えない。</li>
     <li>
@@ -667,9 +667,9 @@ IDLE</code></pre>
     </li>
   </ol>
   <p>
-    Speaker verificationはAECの代替ではない。AECは既知の再生音を減らし、speaker
-    verificationは残った音声が
-    登録話者に一致するか判断する。単一microphoneへ複数音源が同時に強く入った場合の完全分離は本計画の保証外である。
+    現行製品ではAECの需要がなく、他のmedia再生へ影響しうるため常時無効とする。Speaker
+    verificationは、AECを使わない状態で残った音声が登録話者に一致するか判断する。単一microphoneへ
+    複数音源が同時に強く入った場合の完全分離は本計画の保証外である。
   </p>
 
   <h2 id="15-api-contract">15. Tauri API and Event Contract</h2>

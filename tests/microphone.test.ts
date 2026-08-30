@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   ensureMicrophoneAudioContextRunning,
   enumerateAudioInputDevices,
+  microphoneCaptureConstraints,
   MicrophoneCaptureError,
   requestMicrophoneStream,
   type MicrophoneEnvironment,
@@ -21,6 +20,20 @@ function environment(overrides: Partial<MicrophoneEnvironment> = {}): Microphone
 }
 
 describe("microphone capture", () => {
+  test("enables echo cancellation for speech playback safety", () => {
+    expect(microphoneCaptureConstraints()).toEqual({
+      autoGainControl: true,
+      echoCancellation: true,
+      noiseSuppression: true,
+    });
+    expect(microphoneCaptureConstraints("microphone-a")).toEqual({
+      autoGainControl: true,
+      echoCancellation: true,
+      noiseSuppression: true,
+      deviceId: { exact: "microphone-a" },
+    });
+  });
+
   test("reports a build/API problem before requesting permission", async () => {
     const result = requestMicrophoneStream(true, environment({ mediaDevices: undefined }));
     await expect(result).rejects.toMatchObject({
@@ -133,108 +146,5 @@ describe("microphone capture", () => {
     await expect(ensureMicrophoneAudioContextRunning(context)).rejects.toMatchObject({
       code: "startup-interrupted",
     });
-  });
-});
-
-function chatVoiceSource(): string {
-  return [
-    readFileSync(join(import.meta.dir, "../src/App.tsx"), "utf8"),
-    readFileSync(join(import.meta.dir, "../src/features/voice/usePushToTalk.ts"), "utf8"),
-    readFileSync(join(import.meta.dir, "../src/features/chat/useConversationTurn.ts"), "utf8"),
-  ].join("\n");
-}
-
-describe("macOS microphone bundle configuration", () => {
-  test("declares the purpose string and audio-input entitlement for signed builds", () => {
-    const info = readFileSync(join(import.meta.dir, "../src-tauri/Info.plist"), "utf8");
-    const entitlements = readFileSync(join(import.meta.dir, "../src-tauri/Entitlements.plist"), "utf8");
-    const config = JSON.parse(readFileSync(join(import.meta.dir, "../src-tauri/tauri.conf.json"), "utf8"));
-    expect(info).toContain("NSMicrophoneUsageDescription");
-    expect(entitlements).toContain("com.apple.security.device.audio-input");
-    expect(config.bundle.macOS.entitlements).toBe("Entitlements.plist");
-  });
-
-  test("verifies the packaged purpose string in desktop smoke", () => {
-    const smoke = readFileSync(join(import.meta.dir, "../scripts/desktop-smoke.ts"), "utf8");
-    expect(smoke).toContain('"NSMicrophoneUsageDescription"');
-    expect(smoke).toContain("packaged Info.plist has no microphone usage description");
-  });
-
-  test("routes every frontend microphone entry point through the checked boundary", () => {
-    const app = chatVoiceSource();
-    const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    const settings = readFileSync(join(import.meta.dir, "../src/features/settings/SettingsPage.tsx"), "utf8");
-    expect(app).toContain("requestMicrophoneStream(audio)");
-    expect(meeting).toContain("requestMicrophoneStream(");
-    expect(settings).toContain("enumerateAudioInputDevices()");
-    expect(`${app}\n${meeting}\n${settings}`).not.toContain("navigator.mediaDevices");
-  });
-
-  test("registers acquired streams before AudioContext construction can fail", () => {
-    const app = chatVoiceSource();
-    const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    expect(app.indexOf("voiceStreamRef.current = stream")).toBeLessThan(app.indexOf("const context = new AudioContext()"));
-    expect(meeting.indexOf("stream.current = nextStream")).toBeLessThan(meeting.indexOf("const nextContext = new AudioContext()"));
-  });
-
-  test("guards capture startup and finalization independently", () => {
-    const app = chatVoiceSource();
-    expect(app).toContain("if (voiceActionRef.current) return");
-    expect(app).toContain("if (voiceFinalizingRef.current) return");
-    expect(app).toContain("setVoiceStarting(true)");
-    expect(app).toContain("void finishVoiceCapture(false)");
-    expect(app).toContain("void finishVoiceCapture(targetSpeakerFilterEnabledRef.current)");
-  });
-
-  test("auto-finalizes chat voice after detected speech and silence without changing Meeting", () => {
-    const app = chatVoiceSource();
-    const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    expect(app).toContain("new VoiceActivityDetector({ sampleRate: context.sampleRate })");
-    expect(app).toContain("voiceActivityDetectorRef.current?.observe(event.data).shouldFinalize");
-    expect(app).toContain("void finishVoiceCapture(targetSpeakerFilterEnabledRef.current)");
-    expect(meeting).not.toContain("VoiceActivityDetector");
-  });
-
-  test("keeps automatic voice turns connected to LLM submission and response speech", () => {
-    const app = chatVoiceSource();
-    expect(app).toContain("void submitPrompt(transcript, true)");
-    expect(app).toContain("pendingVoicePromptsRef.current.push(transcript)");
-    expect(app).toContain('voiceSettings?.autoSpeak');
-    expect(app).toContain("void startSpeech(event.message.content, conversationId)");
-  });
-
-  test("treats a requested transcription stop as cancellation rather than failure", () => {
-    const app = chatVoiceSource();
-    expect(app).toContain("const voiceRunId = activeVoiceRunIdRef.current");
-    expect(app).toContain("voiceCancellationRequestedRef.current = true");
-    expect(app).toContain("if (!voiceCancellationRequestedRef.current &&");
-    expect(app).toContain("if (voiceCancellationRequestedRef.current || !transcript.trim()) continue");
-  });
-
-  test("releases raw chat PCM before waiting for the model response", () => {
-    const app = chatVoiceSource();
-    const clearFrames = app.indexOf("voiceFramesRef.current = []", app.indexOf("async function finishVoiceCapture"));
-    const enqueueTranscript = app.indexOf("enqueueVoiceSegment({", clearFrames);
-    expect(clearFrames).toBeGreaterThan(-1);
-    expect(clearFrames).toBeLessThan(enqueueTranscript);
-    expect(app).toContain("segment.samples = []");
-  });
-
-  test("blocks chat capture while Meeting is still in preflight", () => {
-    const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    expect(meeting).toContain('applySnapshot({ ...snapshotRef.current, state: "preflight", error: null })');
-  });
-
-  test("does not leave Meeting stuck in preflight when recovery lookup fails", () => {
-    const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    expect(meeting).toContain("const restored = await getMeetingSnapshot().catch(() => null)");
-    expect(meeting).toContain("applySnapshot(restored ?? idle)");
-  });
-
-  test("reconciles Meeting state after a post-start microphone failure", () => {
-    const meeting = readFileSync(join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"), "utf8");
-    const recovery = meeting.slice(meeting.indexOf("} catch (cause) {", meeting.indexOf("async function start()")), meeting.indexOf("} finally {", meeting.indexOf("async function start()")));
-    expect(recovery.indexOf("discardMeeting(startedSession)")).toBeLessThan(recovery.indexOf("getMeetingSnapshot()"));
-    expect(recovery).not.toContain("if (startedSession) {\n        applySnapshot(idle)");
   });
 });

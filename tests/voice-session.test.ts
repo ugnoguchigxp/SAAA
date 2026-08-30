@@ -1,0 +1,26 @@
+import { describe, expect, test } from "bun:test";
+import { initialVoiceSession, transitionVoiceSession, voiceCaptureState, voiceSessionBusy } from "../src/lib/voiceSession";
+
+describe("voice session state machine", () => {
+  test("serializes finalize requests without dropping a stop", () => {
+    const finalizing = transitionVoiceSession(initialVoiceSession, { type: "finalizeRequested", mode: "continue" });
+    const queued = transitionVoiceSession(finalizing, { type: "finalizeRequested", mode: "stop" });
+    expect(queued.pendingFinalize).toBe("stop");
+    expect(transitionVoiceSession(queued, { type: "finalizeRequested", mode: "continue" }).pendingFinalize).toBe("stop");
+  });
+
+  test("ignores stale transcription completion", () => {
+    const running = transitionVoiceSession(initialVoiceSession, { type: "transcriptionStarted", runId: "voice_1" });
+    expect(transitionVoiceSession(running, { type: "transcriptionFinished", runId: "old" })).toEqual(running);
+    expect(transitionVoiceSession(running, { type: "transcriptionFinished", runId: "voice_1" }).transcriptionRunId).toBeNull();
+  });
+
+  test("derives public busy state from the single snapshot", () => {
+    const recording = transitionVoiceSession(initialVoiceSession, { type: "captureStarted" });
+    expect(voiceCaptureState(recording)).toBe("recording");
+    expect(voiceSessionBusy(recording)).toBe(true);
+    const suspended = transitionVoiceSession(recording, { type: "speechSuspended" });
+    expect(voiceCaptureState(suspended)).toBe("idle");
+    expect(voiceSessionBusy(suspended)).toBe(true);
+  });
+});

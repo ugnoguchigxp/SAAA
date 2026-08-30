@@ -1,55 +1,73 @@
 import { describe, expect, test } from "bun:test";
 import { validateSettingsDocuments } from "../src/lib/schemas";
-
 function documents() {
   return [
     {
       namespace: "providers.model",
       key: "default",
-      schemaVersion: 9,
+      schemaVersion: 10,
       valueJson: {
         providers: [{ kind: "openai-compatible", id: "local", enabled: true, label: "Local", location: "local", endpoint: "http://127.0.0.1:11434/v1", model: "test", credentialStatus: "not-configured" }],
         reasoningEffort: "medium",
+        maxOutputTokens: 2048,
       },
     },
     {
       namespace: "providers.agent",
       key: "codex-sdk",
-      schemaVersion: 9,
-      valueJson: { enabled: false, provider: "codex-sdk", model: "", runtimeMode: "app-server", health: "unchecked", sandboxMode: "read-only", approvalPolicy: "never", networkEnabled: false, webSearchEnabled: false, workspacePolicy: "select-per-conversation" },
+      schemaVersion: 10,
+      valueJson: { agentName: "SAAA", userName: "", enabled: false, provider: "codex-sdk", model: "", runtimeMode: "app-server", health: "unchecked", sandboxMode: "read-only", approvalPolicy: "never", networkEnabled: false, webSearchEnabled: false, workspacePolicy: "select-per-conversation" },
     },
     {
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 9,
+      schemaVersion: 10,
       valueJson: { conversationRespond: { primaryProviderId: "local", fallbackProviderIds: [], timeoutMs: 30_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } },
     },
     {
       namespace: "voice.runtime",
       key: "default",
-      schemaVersion: 9,
-      valueJson: { inputDeviceId: "default", outputDeviceId: "default", captureMode: "push-to-talk", sttProviderId: "network-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
+      schemaVersion: 10,
+      valueJson: { inputDeviceId: "default", outputDeviceId: "default", captureMode: "push-to-talk", sttHost: "localhost", sttProviderId: "network-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
     },
     {
       namespace: "security.runtime",
       key: "default",
-      schemaVersion: 9,
+      schemaVersion: 10,
       valueJson: { credentialStorage: "environment", localOnlyWhenSelected: true, diagnosticsRedaction: true },
     },
     {
       namespace: "situation.runtime",
       key: "default",
-      schemaVersion: 9,
+      schemaVersion: 10,
       valueJson: { enabled: false, sampleIntervalMs: 2_000, calendarEnabled: false, retentionDays: 7, maxLedgerEntries: 10_000, heartbeatIntervalMs: 300_000, sensitiveApplicationCategories: true },
     },
   ];
 }
-
 describe("settings contracts", () => {
   test("accepts the complete MVP settings snapshot", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
   });
-
+  test("accepts a bounded agent name and rejects empty or control-character names", () => {
+    const localized = documents();
+    (localized[1].valueJson as { agentName: string }).agentName = "こはく";
+    expect(() => validateSettingsDocuments(localized)).not.toThrow();
+    for (const agentName of ["", "line\nbreak", "a".repeat(81)]) {
+      const invalid = documents();
+      (invalid[1].valueJson as { agentName: string }).agentName = agentName;
+      expect(() => validateSettingsDocuments(invalid)).toThrow();
+    }
+  });
+  test("accepts an empty or bounded user name and rejects control characters", () => {
+    for (const userName of ["", "野口"]) {
+      const snapshot = documents();
+      (snapshot[1].valueJson as { userName: string }).userName = userName;
+      expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
+    }
+    const invalid = documents();
+    (invalid[1].valueJson as { userName: string }).userName = "太郎\nさん";
+    expect(() => validateSettingsDocuments(invalid)).toThrow();
+  });
   test("accepts only supported conversation reasoning efforts", () => {
     for (const reasoningEffort of ["low", "medium", "xhigh"]) {
       const snapshot = documents();
@@ -60,17 +78,26 @@ describe("settings contracts", () => {
     (invalid[0].valueJson as { reasoningEffort: string }).reasoningEffort = "mid";
     expect(() => validateSettingsDocuments(invalid)).toThrow("Invalid option");
   });
-
+  test("bounds the maximum response length", () => {
+    for (const maxOutputTokens of [256, 2048, 8192]) {
+      const snapshot = documents();
+      (snapshot[0].valueJson as { maxOutputTokens: number }).maxOutputTokens = maxOutputTokens;
+      expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
+    }
+    for (const maxOutputTokens of [255, 8193, 2048.5]) {
+      const invalid = documents();
+      (invalid[0].valueJson as { maxOutputTokens: number }).maxOutputTokens = maxOutputTokens;
+      expect(() => validateSettingsDocuments(invalid)).toThrow();
+    }
+  });
   test("requires the fixed LAN ASR provider and model", () => {
     const localWhisper = documents();
     (localWhisper[3].valueJson as { sttProviderId: string }).sttProviderId = "local-whisper";
     expect(() => validateSettingsDocuments(localWhisper)).toThrow("Invalid input");
-
     const wrongModel = documents();
     (wrongModel[3].valueJson as { sttModel: string }).sttModel = "ggml-base.bin";
     expect(() => validateSettingsDocuments(wrongModel)).toThrow("Invalid input");
   });
-
   test("keeps schema 6 provider identifiers and default Codex models readable", () => {
     const snapshot = documents();
     const provider = (snapshot[0].valueJson as { providers: Array<{ id: string }> }).providers[0];
@@ -81,23 +108,19 @@ describe("settings contracts", () => {
     codex.model = "";
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });
-
   test("rejects credentials embedded in provider endpoints", () => {
     const snapshot = documents();
     (snapshot[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://user:secret@127.0.0.1:11434/v1";
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Credentials must not be embedded");
   });
-
   test("accepts private-network local providers and rejects public HTTP endpoints", () => {
     const privateNetwork = documents();
     (privateNetwork[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://10.0.0.42:8080/v1";
     expect(() => validateSettingsDocuments(privateNetwork)).not.toThrow();
-
     const publicNetwork = documents();
     (publicNetwork[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://203.0.113.10:8080/v1";
     expect(() => validateSettingsDocuments(publicNetwork)).toThrow("loopback or private-network");
   });
-
   test("accepts a host-only dynamic LAN provider and rejects embedded URLs or ports", () => {
     const snapshot = documents();
     (snapshot[0].valueJson as { providers: unknown[] }).providers = [{
@@ -113,7 +136,6 @@ describe("settings contracts", () => {
     const localName = structuredClone(snapshot);
     ((localName[0].valueJson as { providers: Array<{ host: string }> }).providers[0]).host = "DynamicLan.LOCAL";
     expect(() => validateSettingsDocuments(localName)).not.toThrow();
-
     for (const host of [
       "http://10.0.0.42",
       "10.0.0.42:9810",
@@ -127,7 +149,6 @@ describe("settings contracts", () => {
       expect(() => validateSettingsDocuments(invalid)).toThrow();
     }
   });
-
   test("accepts a local fallback behind a dynamic_lan primary", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
@@ -138,7 +159,6 @@ describe("settings contracts", () => {
     route.fallbackProviderIds = ["local-fallback"];
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });
-
   test("rejects a dynamic_lan timeout that cannot fit within its connection lifetime", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
@@ -150,12 +170,10 @@ describe("settings contracts", () => {
     route.timeoutMs = 269_999;
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });
-
   test("rejects unsafe or credential-ambiguous provider ids", () => {
     const unsafe = documents();
     (unsafe[0].valueJson as { providers: Array<{ id: string }> }).providers[0].id = "local provider";
     expect(() => validateSettingsDocuments(unsafe)).toThrow("Provider ids may contain only");
-
     const ambiguous = documents();
     const providers = (ambiguous[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
     providers[0].id = "local-a";
@@ -163,7 +181,6 @@ describe("settings contracts", () => {
     (ambiguous[2].valueJson as { conversationRespond: { primaryProviderId: string } }).conversationRespond.primaryProviderId = "local-a";
     expect(() => validateSettingsDocuments(ambiguous)).toThrow("credential environment variable");
   });
-
   test("rejects cloud fallback behind a local-only primary", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
@@ -171,7 +188,6 @@ describe("settings contracts", () => {
     (snapshot[2].valueJson as { conversationRespond: { fallbackProviderIds: string[] } }).conversationRespond.fallbackProviderIds = ["cloud"];
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Cloud fallback is blocked");
   });
-
   test("rejects duplicate fallback providers", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
@@ -179,27 +195,23 @@ describe("settings contracts", () => {
     (snapshot[2].valueJson as { conversationRespond: { fallbackProviderIds: string[] } }).conversationRespond.fallbackProviderIds = ["fallback", "fallback"];
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Duplicate provider in route: fallback");
   });
-
   test("rejects valid namespaces paired with the wrong settings keys", () => {
     const snapshot = documents();
     snapshot[0].key = "codex-sdk";
     snapshot[1].key = "default";
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Each supported settings document");
   });
-
   test("rejects unknown fields instead of silently dropping them", () => {
     const snapshot = documents();
     (snapshot[4].valueJson as Record<string, unknown>).unexpectedPolicy = true;
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Unrecognized key");
   });
-
-  test("accepts schema 9 and rejects schema 8", () => {
+  test("accepts schema 10 and rejects schema 9", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
     const legacy = documents();
-    legacy[0].schemaVersion = 8;
+    legacy[0].schemaVersion = 9;
     expect(() => validateSettingsDocuments(legacy)).toThrow("Invalid input");
   });
-
   test("accepts only the fixed LARM security contract", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
@@ -219,7 +231,6 @@ describe("settings contracts", () => {
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
     providers[1].baseUrl = "http://[::1]:9810";
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
-
     for (const baseUrl of [
       "http://localhost:9810",
       "http://192.168.1.10:9810",
@@ -231,7 +242,6 @@ describe("settings contracts", () => {
       expect(() => validateSettingsDocuments(snapshot)).toThrow("numeric-loopback");
     }
   });
-
   test("rejects multiple enabled LARM providers", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;

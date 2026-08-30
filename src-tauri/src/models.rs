@@ -5,6 +5,14 @@ fn default_conversation_reasoning_effort() -> String {
     "medium".to_string()
 }
 
+fn default_max_output_tokens() -> u32 {
+    crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS
+}
+
+fn default_stt_host() -> String {
+    crate::voice::network_asr::DEFAULT_HOST.to_string()
+}
+
 fn default_codex_input_modalities() -> Vec<String> {
     vec!["text".to_string(), "image".to_string()]
 }
@@ -65,8 +73,21 @@ pub(crate) struct AppSnapshot {
     pub(crate) settings: Vec<SettingsDocument>,
     pub(crate) conversations: Vec<Conversation>,
     pub(crate) primary_conversation_id: String,
+    pub(crate) effective_route: EffectiveRouteSnapshot,
     pub(crate) larm_runtime: LarmRuntimeStatus,
     pub(crate) voice_profile: crate::voice::profile::VoiceProfileSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EffectiveRouteSnapshot {
+    pub(crate) provider_id: Option<String>,
+    pub(crate) label: String,
+    pub(crate) location: Option<String>,
+    pub(crate) state: String,
+    pub(crate) fallback_used: bool,
+    pub(crate) reason_code: String,
+    pub(crate) updated_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -231,6 +252,8 @@ pub(crate) struct ModelProvidersSettings {
     pub(crate) providers: Vec<ModelProviderSettings>,
     #[serde(default = "default_conversation_reasoning_effort")]
     pub(crate) reasoning_effort: String,
+    #[serde(default = "default_max_output_tokens")]
+    pub(crate) max_output_tokens: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -265,6 +288,10 @@ pub(crate) struct RoutingSettings {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CodexAgentRuntimeSettings {
+    #[serde(default = "default_agent_name")]
+    pub(crate) agent_name: String,
+    #[serde(default)]
+    pub(crate) user_name: String,
     pub(crate) enabled: bool,
     pub(crate) provider: String,
     pub(crate) model: String,
@@ -277,6 +304,10 @@ pub(crate) struct CodexAgentRuntimeSettings {
     pub(crate) workspace_policy: String,
 }
 
+fn default_agent_name() -> String {
+    crate::DEFAULT_AGENT_NAME.to_string()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -284,6 +315,8 @@ pub(crate) struct VoiceRuntimeSettings {
     pub(crate) input_device_id: String,
     pub(crate) output_device_id: String,
     pub(crate) capture_mode: String,
+    #[serde(default = "default_stt_host")]
+    pub(crate) stt_host: String,
     pub(crate) stt_provider_id: String,
     pub(crate) stt_model: String,
     pub(crate) tts_provider_id: String,
@@ -308,6 +341,10 @@ pub(crate) struct StartTurnInput {
     pub(crate) conversation_id: String,
     pub(crate) content: String,
     pub(crate) workspace_path: Option<String>,
+    #[serde(default)]
+    pub(crate) retry_input_message_id: Option<String>,
+    pub(crate) input_origin: String,
+    pub(crate) presentation_mode: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,6 +362,20 @@ pub(crate) struct ProviderTestResult {
     pub(crate) latency_ms: u128,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ResolveNetworkAsrInput {
+    pub(crate) host: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkAsrResolution {
+    pub(crate) provider_id: String,
+    pub(crate) endpoint: String,
+    pub(crate) model: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LocalArtifactResult {
@@ -335,16 +386,6 @@ pub(crate) struct LocalArtifactResult {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TranscribeAudioInput {
-    pub(crate) run_id: String,
-    pub(crate) conversation_id: String,
-    pub(crate) samples: Vec<f32>,
-    pub(crate) sample_rate: u32,
-    pub(crate) model: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct PreviewAudioInput {
     pub(crate) run_id: String,
     pub(crate) conversation_id: String,
     pub(crate) samples: Vec<f32>,
@@ -372,10 +413,6 @@ pub(crate) enum VoiceEvent {
         run_id: String,
     },
     TranscriptFinal {
-        run_id: String,
-        text: String,
-    },
-    TranscriptDelta {
         run_id: String,
         text: String,
     },

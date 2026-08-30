@@ -1,22 +1,24 @@
-use crate::{bounded_text, RunCancellation};
+use crate::{bounded_text, AppState, RunCancellation};
 use futures_util::StreamExt;
 use reqwest::{multipart, Client, Response};
 use serde::Deserialize;
-use std::{env, sync::Arc, time::Duration};
-use url::{Host, Url};
+use std::{sync::Arc, time::Duration};
+
+mod discovery;
+mod runtime;
+pub(crate) use discovery::base_url_from_host;
+use discovery::ensure_selected_model;
+pub use discovery::probe;
+#[cfg(test)]
+use discovery::{resolve_at, validate_base_url};
+pub(crate) use runtime::NetworkAsrRuntime;
 
 pub const PROVIDER_ID: &str = "network-asr";
 pub const MODEL_ID: &str = "qwen3-asr-1.7b";
-const BASE_URL_ENV: &str = "SAAA_ASR_BASE_URL";
+pub const DEFAULT_HOST: &str = "localhost";
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 const MAX_TRANSCRIPT_CHARS: usize = 16_000;
-
-#[derive(Debug, Deserialize)]
-struct HealthResponse {
-    status: String,
-    model: String,
-}
 
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
@@ -24,54 +26,42 @@ struct TranscriptionResponse {
     language: Option<String>,
 }
 
-pub async fn probe() -> Result<(), String> {
-    let base_url = configured_base_url()?;
-    probe_at(&base_url).await
-}
-
-async fn probe_at(base_url: &str) -> Result<(), String> {
-    let response = client()?
-        .get(format!("{}/health", base_url.trim_end_matches('/')))
-        .send()
-        .await
-        .map_err(|error| format!("Could not reach LAN ASR: {error}"))?;
-    let status = response.status();
-    let cancellation = RunCancellation::default();
-    let body = bounded_response(response, &cancellation).await?;
-    if !status.is_success() {
-        return Err(format!(
-            "LAN ASR health check returned HTTP {}",
-            status.as_u16()
-        ));
-    }
-    let health: HealthResponse = serde_json::from_slice(&body)
-        .map_err(|_| "LAN ASR returned an invalid health response".to_string())?;
-    if health.status != "ok" || health.model != MODEL_ID {
-        return Err("LAN ASR is not ready with the configured model".to_string());
-    }
-    Ok(())
-}
-
 pub async fn transcribe(
+    state: &AppState,
     samples: &[f32],
     sample_rate: u32,
     model: &str,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
-    let base_url = configured_base_url()?;
-    transcribe_at(&base_url, samples, sample_rate, model, cancellation).await
+    let host = discovery::configured_host(state)?;
+    let resolution = state
+        .network_asr
+        .resolve(&host, cancellation.clone())
+        .await?;
+    ensure_selected_model(&resolution, model)?;
+    let result = transcribe_at(
+        state.network_asr.client(),
+        &resolution.endpoint,
+        samples,
+        sample_rate,
+        model,
+        cancellation.clone(),
+    )
+    .await;
+    if result.is_err() && !cancellation.is_cancelled() {
+        state.network_asr.invalidate(&host).await;
+    }
+    result
 }
 
 async fn transcribe_at(
+    client: &Client,
     base_url: &str,
     samples: &[f32],
     sample_rate: u32,
     model: &str,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
-    if model != MODEL_ID {
-        return Err(format!("Unsupported LAN ASR model: {model}"));
-    }
     let wav = encode_wav(samples, sample_rate)?;
     let audio = multipart::Part::bytes(wav)
         .file_name("audio.wav")
@@ -82,7 +72,7 @@ async fn transcribe_at(
         .text("model", model.to_string())
         .text("language", "auto")
         .text("response_format", "json");
-    let request = client()?
+    let request = client
         .post(format!(
             "{}/v1/audio/transcriptions",
             base_url.trim_end_matches('/')
@@ -110,7 +100,7 @@ async fn transcribe_at(
     ))
 }
 
-fn client() -> Result<Client, String> {
+pub(super) fn client() -> Result<Client, String> {
     Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(120))
@@ -120,41 +110,7 @@ fn client() -> Result<Client, String> {
         .map_err(|error| format!("Could not initialize LAN ASR client: {error}"))
 }
 
-fn configured_base_url() -> Result<String, String> {
-    let value =
-        env::var(BASE_URL_ENV).map_err(|_| format!("{BASE_URL_ENV} is required to use LAN ASR"))?;
-    validate_base_url(&value)
-}
-
-fn validate_base_url(value: &str) -> Result<String, String> {
-    let url = Url::parse(value.trim())
-        .map_err(|_| format!("{BASE_URL_ENV} must be a valid private-network HTTP origin"))?;
-    let private_host = match url.host() {
-        Some(Host::Ipv4(address)) => {
-            address.is_loopback() || address.is_private() || address.is_link_local()
-        }
-        Some(Host::Ipv6(address)) => {
-            address.is_loopback() || address.is_unique_local() || address.is_unicast_link_local()
-        }
-        Some(Host::Domain(domain)) => !domain.contains('.') || domain.ends_with(".local"),
-        None => false,
-    };
-    if url.scheme() != "http"
-        || !private_host
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !matches!(url.path(), "" | "/")
-    {
-        return Err(format!(
-            "{BASE_URL_ENV} must be a private-network HTTP origin without credentials, path, query, or fragment"
-        ));
-    }
-    Ok(url.as_str().trim_end_matches('/').to_string())
-}
-
-async fn bounded_response(
+pub(super) async fn bounded_response(
     response: Response,
     cancellation: &RunCancellation,
 ) -> Result<Vec<u8>, String> {
@@ -260,6 +216,47 @@ mod tests {
         ] {
             assert!(validate_base_url(invalid).is_err(), "accepted {invalid}");
         }
+        assert_eq!(
+            base_url_from_host("10.0.0.42").expect("host derives"),
+            "http://10.0.0.42:8081"
+        );
+        assert!(base_url_from_host("http://10.0.0.42").is_err());
+    }
+
+    #[tokio::test]
+    async fn resolves_endpoint_and_model_from_asr_apis() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let server = thread::spawn(move || {
+            for (path, body) in [
+                (
+                    "/v1/models",
+                    r#"{"object":"list","data":[{"id":"qwen3-asr-1.7b"}]}"#,
+                ),
+                ("/health", r#"{"status":"ok","model":"qwen3-asr-1.7b"}"#),
+            ] {
+                let (mut socket, _) = listener.accept().expect("fixture accepts");
+                let mut request = [0_u8; 4_096];
+                let count = socket.read(&mut request).expect("fixture reads");
+                let request = String::from_utf8_lossy(&request[..count]);
+                assert!(request.starts_with(&format!("GET {path} HTTP/1.1")));
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .expect("fixture responds");
+            }
+        });
+
+        let resolution = resolve_at(&format!("http://{address}"))
+            .await
+            .expect("settings resolve");
+        server.join().expect("fixture joins");
+        assert_eq!(resolution.provider_id, PROVIDER_ID);
+        assert_eq!(resolution.endpoint, format!("http://{address}"));
+        assert_eq!(resolution.model, MODEL_ID);
     }
 
     #[test]
@@ -326,6 +323,7 @@ mod tests {
         });
 
         let result = transcribe_at(
+            &client().expect("ASR client initializes"),
             &format!("http://{address}"),
             &[0.0; 8_000],
             8_000,

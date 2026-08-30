@@ -4,16 +4,21 @@ import {
   deleteVoiceEnrollmentSample,
   deleteVoiceProfile,
   getVoiceProfileSnapshot,
-  readVoiceEnrollmentSample,
   saveVoiceEnrollmentSample,
   setTargetSpeakerFilterEnabled,
 } from "../../lib/runtime";
 import {
   ensureMicrophoneAudioContextRunning,
+  microphoneCaptureConstraints,
   microphoneErrorMessage,
   requestMicrophoneStream,
 } from "../../lib/microphone";
 import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
+import { resamplePcm } from "../../lib/audioResampling";
+import { mergePcmFrames } from "../../lib/pcm";
+import { useVoiceSamplePlayback } from "./useVoiceSamplePlayback";
+
+const VOICE_PROFILE_SAMPLE_RATE = 16_000;
 
 const prompts = [
   "今日は落ち着いて、普段どおりの声で話しています。",
@@ -47,6 +52,7 @@ export function VoiceProfileCard({
   onChanged: (profile: VoiceProfileSnapshot) => void;
 }) {
   const captureRef = useRef<Capture | null>(null);
+  const disposedRef = useRef(false);
   const maximumTimerRef = useRef<number | null>(null);
   const elapsedTimerRef = useRef<number | null>(null);
   const startedAtRef = useRef(0);
@@ -54,31 +60,35 @@ export function VoiceProfileCard({
   const [elapsedMs, setElapsedMs] = useState(0);
   const [level, setLevel] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
-  const [playingId, setPlayingId] = useState<string | null>(null);
+  const playback = useVoiceSamplePlayback(setMessage);
 
-  useEffect(() => () => { void closeCapture(false); }, []);
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      void closeCapture(false);
+    };
+  }, []);
 
   async function startCapture() {
     if (blocked || captureState !== "idle" || profile.sampleCount >= profile.targetSampleCount) return;
     let releaseLease: (() => void) | null = null;
+    let pendingStream: MediaStream | null = null;
+    let pendingContext: AudioContext | null = null;
     try {
       setCaptureState("starting");
       setMessage(null);
       releaseLease = acquireAudioCapture("voice-enrollment");
-      const stream = await requestMicrophoneStream({
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-        ...(voice.inputDeviceId === "default" ? {} : { deviceId: { exact: voice.inputDeviceId } }),
-      });
-      const context = new AudioContext();
-      await context.audioWorklet.addModule("/audio/meeting-processor.js");
-      const source = context.createMediaStreamSource(stream);
-      const node = new AudioWorkletNode(context, "meeting-processor");
-      const settings = stream.getAudioTracks()[0]?.getSettings();
+      pendingStream = await requestMicrophoneStream(microphoneCaptureConstraints(voice.inputDeviceId));
+      pendingContext = new AudioContext();
+      await pendingContext.audioWorklet.addModule("/audio/meeting-processor.js");
+      if (disposedRef.current) throw new Error("Voice enrollment was closed");
+      const source = pendingContext.createMediaStreamSource(pendingStream);
+      const node = new AudioWorkletNode(pendingContext, "meeting-processor");
+      const settings = pendingStream.getAudioTracks()[0]?.getSettings();
       const capture: Capture = {
-        stream,
-        context,
+        stream: pendingStream,
+        context: pendingContext,
         source,
         node,
         frames: [],
@@ -87,6 +97,8 @@ export function VoiceProfileCard({
         effectiveAec: settings?.echoCancellation === true,
         inputDeviceId: settings?.deviceId || voice.inputDeviceId,
       };
+      pendingStream = null;
+      pendingContext = null;
       releaseLease = null;
       captureRef.current = capture;
       node.port.onmessage = (event: MessageEvent<Float32Array>) => {
@@ -97,16 +109,20 @@ export function VoiceProfileCard({
         setLevel(Math.min(1, rms * 12));
       };
       source.connect(node);
-      node.connect(context.destination);
-      await ensureMicrophoneAudioContextRunning(context);
+      node.connect(capture.context.destination);
+      await ensureMicrophoneAudioContextRunning(capture.context);
+      if (disposedRef.current || captureRef.current !== capture) return;
       startedAtRef.current = performance.now();
       setElapsedMs(0);
       elapsedTimerRef.current = window.setInterval(() => setElapsedMs(performance.now() - startedAtRef.current), 100);
       maximumTimerRef.current = window.setTimeout(() => { void stopAndSave(); }, 12_000);
       setCaptureState("recording");
     } catch (cause) {
+      pendingStream?.getTracks().forEach((track) => track.stop());
+      if (pendingContext) await pendingContext.close().catch(() => undefined);
       releaseLease?.();
       await closeCapture(false);
+      if (disposedRef.current) return;
       setCaptureState("idle");
       setMessage(microphoneErrorMessage(cause));
     }
@@ -119,22 +135,29 @@ export function VoiceProfileCard({
     setMessage(null);
     try {
       await closeCapture(true);
+      if (disposedRef.current) return;
       if (capture.length === 0) throw new Error("音声が記録されませんでした。");
-      const merged = mergeFrames(capture.frames, capture.length);
+      const merged = mergePcmFrames(capture.frames, capture.length);
+      const normalized = resamplePcm(merged, capture.context.sampleRate, VOICE_PROFILE_SAMPLE_RATE);
+      capture.frames = [];
+      capture.length = 0;
       const next = await saveVoiceEnrollmentSample({
-        samples: Array.from(merged),
-        sampleRate: capture.context.sampleRate,
+        samples: Array.from(normalized),
+        sampleRate: VOICE_PROFILE_SAMPLE_RATE,
         inputDeviceId: capture.inputDeviceId,
         effectiveAec: capture.effectiveAec,
       });
+      if (disposedRef.current) return;
       onChanged(next);
       setMessage(`サンプル ${next.sampleCount}/${next.targetSampleCount} を暗号化して保存しました。`);
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
+      if (!disposedRef.current) setMessage(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setCaptureState("idle");
-      setElapsedMs(0);
-      setLevel(0);
+      if (!disposedRef.current) {
+        setCaptureState("idle");
+        setElapsedMs(0);
+        setLevel(0);
+      }
     }
   }
 
@@ -162,23 +185,6 @@ export function VoiceProfileCard({
       setMessage(null);
       onChanged(await setTargetSpeakerFilterEnabled(enabled));
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
-  async function playSample(sampleId: string) {
-    let url: string | null = null;
-    try {
-      setPlayingId(sampleId);
-      const bytes = await readVoiceEnrollmentSample(sampleId);
-      url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "audio/wav" }));
-      const audio = new Audio(url);
-      audio.onended = () => { if (url) URL.revokeObjectURL(url); setPlayingId(null); };
-      audio.onerror = () => { if (url) URL.revokeObjectURL(url); setPlayingId(null); setMessage("サンプルを再生できませんでした。"); };
-      await audio.play();
-    } catch (cause) {
-      if (url) URL.revokeObjectURL(url);
-      setPlayingId(null);
       setMessage(cause instanceof Error ? cause.message : String(cause));
     }
   }
@@ -217,18 +223,11 @@ export function VoiceProfileCard({
     </div>
     {blocked && <p className="provider-test-result error">会話録音、読み上げ、またはミーティングを停止してから登録してください。</p>}
     {!profile.runtimeAvailable && <p className="provider-test-result error">{profile.runtimeMessage}</p>}
-    <div className="voice-sample-list">{profile.samples.map((sample) => <div key={sample.id}><span>Sample {sample.ordinal} · {(sample.durationMs / 1000).toFixed(1)} sec · AEC {sample.effectiveAec ? "on" : "off"}</span><div><button className="text-button" type="button" onClick={() => void playSample(sample.id)} disabled={blocked || playingId !== null || captureState !== "idle"}>{playingId === sample.id ? "Playing…" : "Play"}</button><button className="text-button danger" type="button" onClick={() => void removeSample(sample.id)} disabled={blocked || captureState !== "idle"}>Delete</button></div></div>)}</div>
+    <div className="voice-sample-list">{profile.samples.map((sample) => <div key={sample.id}><span>Sample {sample.ordinal} · {(sample.durationMs / 1000).toFixed(1)} sec · AEC {sample.effectiveAec ? "on" : "off"}</span><div><button className="text-button" type="button" onClick={() => void playback.play(sample.id)} disabled={blocked || playback.playingId !== null || captureState !== "idle"}>{playback.playingId === sample.id ? "Playing…" : "Play"}</button><button className="text-button danger" type="button" onClick={() => void removeSample(sample.id)} disabled={blocked || captureState !== "idle"}>Delete</button></div></div>)}</div>
     <label className="check-row"><input type="checkbox" checked={profile.filterEnabled} disabled={blocked || captureState !== "idle" || (!profile.filterEnabled && (!ready || !profile.runtimeAvailable))} onChange={(event) => void toggleFilter(event.target.checked)} />文字起こしを自分の声だけに限定する（判定不能時は送信しない）</label>
     <div className="locked-policy">音声ファイルと話者埋め込みは暗号化して端末内へ保存します。鍵は macOS Keychain に保存し、クラウドへ送信しません。</div>
     <p className="settings-help">これは文字起こし対象を絞る機能で、本人認証や録音・合成音声の検出には使用できません。</p>
     {profile.sampleCount > 0 && <button className="text-button danger" type="button" onClick={() => void removeProfile()} disabled={blocked || captureState !== "idle"}>Delete entire voice profile</button>}
     {message && <p className={message.includes("保存しました") || message.includes("削除しました") ? "provider-test-result success" : "provider-test-result error"} aria-live="polite">{message}</p>}
   </section>;
-}
-
-function mergeFrames(frames: Float32Array[], length: number): Float32Array {
-  const result = new Float32Array(length);
-  let offset = 0;
-  for (const frame of frames) { result.set(frame, offset); offset += frame.length; }
-  return result;
 }

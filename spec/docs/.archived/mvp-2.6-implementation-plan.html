@@ -69,8 +69,8 @@
   <p>
     MVP 2.6はLLM canaryを最初のshipping sliceとする。STT / TTSはcontractと実機gateが別であるため、
     LLM canaryのproduction gateを通過するまで実装対象に含めない。AI server停止中はcontract、state
-    machine、 fake server、settings
-    migration、security、rollbackを実装し、復旧後にだけLLM server実機canaryを行う。
+    machine、 fake server、settings migration、security、rollbackを実装し、復旧後にだけLLM
+    server実機canaryを行う。
   </p>
   <p>
     MVP 2.5はimplementation completeだがmanual acceptance pendingである。MVP
@@ -1451,7 +1451,9 @@ type ProviderSelectedEvent = {
   <h3 id="m26-00">M26-00 — Baseline and contract review</h3>
   <ul>
     <li>MVP 2.5 checkpointと未完了manual gateを確認する。</li>
-    <li>G0を完了し、LARMのcommit、API schema、LLM server deployment revisionの取得状況を記録する。</li>
+    <li>
+      G0を完了し、LARMのcommit、API schema、LLM server deployment revisionの取得状況を記録する。
+    </li>
     <li>Section 6の未決定事項をG1 blocker一覧として管理する。</li>
     <li>G1未通過でもM26-01〜03を進められるが、provisional DTOを確定contractと呼ばない。</li>
   </ul>
@@ -1555,7 +1557,7 @@ type ProviderSelectedEvent = {
     <li>全acceptanceを満たすまで既定ProviderをLARMへ変更しない。</li>
   </ul>
 
-  <h2 id="19-LLM server-canary">19. LLM server canary and production gate</h2>
+  <h2 id="19-llm-server-canary">19. LLM server canary and production gate</h2>
   <p>
     M26-09とM26-10はMVP 2.6のoffline実装後に実施するproduction-readiness sliceである。canary
     clientは、isolated application-data directory、専用environment、単一operatorを持つ一つのSAAA

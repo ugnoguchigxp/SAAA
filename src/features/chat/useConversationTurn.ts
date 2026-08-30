@@ -1,45 +1,39 @@
 import { type Dispatch, type FormEvent, type MutableRefObject, type SetStateAction, useEffect, useRef, useState } from "react";
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
-import { updateConversationTimestamp } from "../../lib/conversationRouting";
+import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
 import type { AppSnapshot, ConversationMessage, MeetingState, RuntimeEvent, VoiceSettings } from "../../lib/contracts";
 import { cancelRun, listMessages, speakText, startTurn, stopTts } from "../../lib/runtime";
-import { StreamingSpeechChunker } from "../../lib/streamingSpeech";
-
-export type StreamingSpeechSession = {
-  sourceRunId: string;
-  conversationId: string;
-  voice: string;
-  chunker: StreamingSpeechChunker;
-  receivedText: string;
-  queue: string[];
-  finalized: boolean;
-  cancelled: boolean;
-  speaking: boolean;
-  interruptRunId: string | null;
-};
-
+import { toSpeakableText } from "../../lib/speakableText";
+import {
+  transitionConversationSession,
+  type ConversationSession,
+  type InputOrigin,
+  type PendingConversationPrompt,
+  type SubmitPromptOptions,
+} from "../../lib/conversationSession";
+type RetryAction =
+  | { kind: "response"; prompt: string; inputMessageId: string; inputOrigin: InputOrigin }
+  | { kind: "speech"; text: string; conversationId: string };
 export function useConversationTurn({
   selectedConversationId,
   voiceSettings,
   meetingState,
-  voiceActionRef,
-  voiceState,
+  isVoiceBusy,
   pendingVoicePromptsRef,
-  activeRunIdRef,
-  activeTtsRunIdRef,
-  streamingSpeechSessionRef,
+  conversationSessionRef,
+  suspendVoiceForSpeech,
+  resumeVoiceAfterSpeech,
   setSnapshot,
   setError,
 }: {
   selectedConversationId: string | null;
   voiceSettings: VoiceSettings | null;
   meetingState: MeetingState;
-  voiceActionRef: MutableRefObject<boolean>;
-  voiceState: "idle" | "recording" | "transcribing";
-  pendingVoicePromptsRef: MutableRefObject<string[]>;
-  activeRunIdRef: MutableRefObject<string | null>;
-  activeTtsRunIdRef: MutableRefObject<string | null>;
-  streamingSpeechSessionRef: MutableRefObject<StreamingSpeechSession | null>;
+  isVoiceBusy: () => boolean;
+  pendingVoicePromptsRef: MutableRefObject<PendingConversationPrompt[]>;
+  conversationSessionRef: MutableRefObject<ConversationSession>;
+  suspendVoiceForSpeech: () => Promise<boolean>;
+  resumeVoiceAfterSpeech: () => Promise<void>;
   setSnapshot: Dispatch<SetStateAction<AppSnapshot>>;
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
@@ -49,14 +43,15 @@ export function useConversationTurn({
   const [streamingText, setStreamingText] = useState("");
   const [runtimeActivity, setRuntimeActivity] = useState<string[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
-  const speechDisabledRunIdsRef = useRef(new Set<string>());
   const meetingStateRef = useRef<MeetingState>("idle");
+  const failedRunIdsRef = useRef(new Set<string>());
+  const speechStopRequestsRef = useRef(new Set<string>());
   selectedConversationIdRef.current = selectedConversationId;
   meetingStateRef.current = meetingState;
-
   useEffect(() => {
     if (!selectedConversationId) { setMessages([]); return; }
     setMessages([]);
@@ -64,279 +59,216 @@ export function useConversationTurn({
     setRuntimeActivity([]);
     void loadMessages(selectedConversationId);
   }, [selectedConversationId]);
-
   useEffect(() => () => {
-    const speechSession = streamingSpeechSessionRef.current;
-    if (speechSession) {
-      speechSession.cancelled = true;
-      speechSession.queue = [];
-      speechSession.chunker.reset();
-      streamingSpeechSessionRef.current = null;
-    }
-    const ttsRunId = activeTtsRunIdRef.current;
+    const ttsRunId = conversationSessionRef.current.speechRunId;
     if (ttsRunId) void stopTts(ttsRunId);
-  }, [activeTtsRunIdRef, streamingSpeechSessionRef]);
-
-  async function loadMessages(conversationId: string) {
+  }, [conversationSessionRef]);
+  async function loadMessages(conversationId: string): Promise<ConversationMessage[]> {
     const request = ++messagesRequestRef.current;
     try {
       const nextMessages = await listMessages(conversationId);
       if (request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
         setMessages(nextMessages);
       }
+      return nextMessages;
     } catch (cause) {
       if (request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
         setError(toMessage(cause));
       }
+      return [];
     }
   }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await submitPrompt(composer);
   }
-
-  async function submitPrompt(prompt: string, allowVoiceBusy = false) {
+  async function submitPrompt(prompt: string, options: SubmitPromptOptions = {}) {
+    const {
+      allowVoiceBusy = false,
+      retryInputMessageId = null,
+      inputOrigin = "text",
+    } = options;
     if (
       !selectedConversationId
       || !prompt.trim()
-      || activeRunIdRef.current
-      || (!allowVoiceBusy && (voiceActionRef.current || voiceState !== "idle"))
+      || conversationSessionRef.current.runId
+      || (!allowVoiceBusy && isVoiceBusy())
     ) return;
     const conversationId = selectedConversationId;
     const content = prompt.trim();
     const runId = `run_${crypto.randomUUID()}`;
     const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak)
       && !isMeetingBlocking(meetingStateRef.current);
+    const presentationMode = shouldStreamSpeech ? "visual-and-spoken" : "visual";
     try {
       setError(null);
+      setRetryAction(null);
       setLastPrompt(content);
-      activeRunIdRef.current = runId;
+      conversationSessionRef.current = transitionConversationSession(
+        conversationSessionRef.current,
+        { type: "runStarted", runId },
+      );
       setActiveRunId(runId);
       setStreamingText("");
       setRuntimeActivity([]);
-      setMessages((current) => [...current, { id: `pending_${runId}`, conversationId, role: "user", content, createdAt: String(Date.now()) }]);
+      if (!retryInputMessageId) {
+        setMessages((current) => [...current, { id: `pending_${runId}`, conversationId, role: "user", content, createdAt: String(Date.now()) }]);
+      }
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
-      if (shouldStreamSpeech && voiceSettings) {
+      if (shouldStreamSpeech) {
         await stopSpeech();
-        beginStreamingSpeech(runId, conversationId, voiceSettings.ttsVoice);
       }
       await startTurn(
-        { runId, conversationId, content, workspacePath: null },
+        { runId, conversationId, content, workspacePath: null, retryInputMessageId, inputOrigin, presentationMode },
         (event) => handleRuntimeEvent(event, conversationId),
       );
     } catch (cause) {
+      failedRunIdsRef.current.add(runId);
       setError((current) => current ?? toMessage(cause));
     } finally {
-      if (activeRunIdRef.current === runId) {
-        activeRunIdRef.current = null;
+      if (conversationSessionRef.current.runId === runId) {
+        conversationSessionRef.current = transitionConversationSession(
+          conversationSessionRef.current,
+          { type: "runFinished", runId },
+        );
         setActiveRunId(null);
       }
       if (selectedConversationIdRef.current === conversationId) {
         setStreamingText("");
-        await loadMessages(conversationId);
+        const nextMessages = await loadMessages(conversationId);
+        if (failedRunIdsRef.current.delete(runId)) {
+          const input = [...nextMessages].reverse().find((message) => message.role === "user" && message.content === content);
+          if (input) setRetryAction({ kind: "response", prompt: content, inputMessageId: input.id, inputOrigin });
+        }
       }
-      speechDisabledRunIdsRef.current.delete(runId);
       const nextVoicePrompt = pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
-        if (activeTtsRunIdRef.current) await stopSpeech();
-        else if (streamingSpeechSessionRef.current) await stopSpeech();
-        await submitPrompt(nextVoicePrompt, true);
+        if (conversationSessionRef.current.speechRunId) await stopSpeech();
+        await submitPrompt(nextVoicePrompt.content, { allowVoiceBusy: true, inputOrigin: nextVoicePrompt.inputOrigin });
       }
     }
   }
-
   function handleRuntimeEvent(event: RuntimeEvent, conversationId: string) {
     if (
       selectedConversationIdRef.current !== conversationId ||
-      activeRunIdRef.current !== event.runId
+      conversationSessionRef.current.runId !== event.runId
     ) return;
     switch (event.type) {
       case "started":
+        setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
         setRuntimeActivity((current) => [...current, `${event.route} → ${event.providerId}`].slice(-8));
         break;
       case "providerSelected":
+        setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { fallbackUsed: event.fallbackUsed, reasonCode: event.selectionReasonCode === "other" ? "provider-selected-other" : "turn-active" }));
         setRuntimeActivity((current) => [...current, `${event.routeId} → ${event.runtimeId} · ${event.selectionReasonCode}${event.fallbackUsed ? " · fallback" : ""}`].slice(-8));
         break;
       case "delta":
         setStreamingText((current) => current + event.text);
-        appendStreamingSpeech(event.runId, event.text);
         break;
       case "activity":
         setRuntimeActivity((current) => [...current, `${event.kind}: ${event.summary}`].slice(-8));
         break;
       case "providerFailed":
+        setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "failed", { reasonCode: "provider-failed" }));
         setRuntimeActivity((current) => [...current, `${event.providerId} failed: ${event.reason}`].slice(-8));
         setStreamingText("");
-        resetStreamingSpeech(event.runId);
         break;
       case "messageCompleted":
+        setRetryAction(null);
         setMessages((current) => [...current.filter((message) => !message.id.startsWith("streaming_")), event.message]);
+        setSnapshot((current) => current.effectiveRoute.providerId
+          ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", { fallbackUsed: current.effectiveRoute.fallbackUsed, reasonCode: "last-turn-completed" })
+          : current);
         setStreamingText("");
         if (voiceSettings?.autoSpeak && !isMeetingBlocking(meetingStateRef.current)) {
-          if (streamingSpeechSessionRef.current?.sourceRunId === event.runId) {
-            finishStreamingSpeech(event.runId, event.message.content);
-          } else if (!speechDisabledRunIdsRef.current.has(event.runId)) {
-            void startSpeech(event.message.content, conversationId);
-          }
+          void startSpeech(event.message.content, conversationId);
         }
         break;
       case "cancelled":
+        failedRunIdsRef.current.delete(event.runId);
         setRuntimeActivity((current) => [...current, "Generation cancelled"].slice(-8));
-        void stopStreamingSpeech(event.runId);
         break;
       case "failed":
+        failedRunIdsRef.current.add(event.runId);
         setError(`${event.message} ${event.recovery}`);
-        void stopStreamingSpeech(event.runId);
         break;
     }
   }
-
   async function stopActiveRun() {
-    const runId = activeRunIdRef.current;
+    const runId = conversationSessionRef.current.runId;
     if (!runId) return;
     try { await cancelRun(runId); } catch (cause) { setError(toMessage(cause)); }
   }
-
   async function startSpeech(text: string, conversationId = selectedConversationId) {
-    if (!conversationId || !voiceSettings || activeTtsRunIdRef.current || isMeetingBlocking(meetingStateRef.current)) return;
+    if (!conversationId || !voiceSettings || conversationSessionRef.current.speechRunId || isMeetingBlocking(meetingStateRef.current)) return;
     const runId = `speech_${crypto.randomUUID()}`;
-    activeTtsRunIdRef.current = runId;
+    conversationSessionRef.current = transitionConversationSession(
+      conversationSessionRef.current,
+      { type: "speechStarted", runId },
+    );
     setActiveTtsRunId(runId);
+    let voiceSuspended = false;
     try {
-      await speakText({ runId, conversationId, text, voice: voiceSettings.ttsVoice });
+      const speakable = toSpeakableText(text);
+      if (!speakable) return;
+      voiceSuspended = await suspendVoiceForSpeech();
+      if (conversationSessionRef.current.speechRunId !== runId) return;
+      await speakText({ runId, conversationId, text: speakable, voice: voiceSettings.ttsVoice });
     } catch (cause) {
-      setError(`Speech playback failed: ${toMessage(cause)}`);
+      if (!speechStopRequestsRef.current.has(runId)) {
+        setError(`Speech playback failed: ${toMessage(cause)}`);
+        setRetryAction({ kind: "speech", text, conversationId });
+      }
     } finally {
-      if (activeTtsRunIdRef.current === runId) {
-        activeTtsRunIdRef.current = null;
+      if (conversationSessionRef.current.speechRunId === runId) {
+        conversationSessionRef.current = transitionConversationSession(
+          conversationSessionRef.current,
+          { type: "speechFinished", runId },
+        );
         setActiveTtsRunId(null);
       }
-    }
-  }
-
-  function beginStreamingSpeech(sourceRunId: string, conversationId: string, voice: string) {
-    speechDisabledRunIdsRef.current.delete(sourceRunId);
-    streamingSpeechSessionRef.current = {
-      sourceRunId,
-      conversationId,
-      voice,
-      chunker: new StreamingSpeechChunker(),
-      receivedText: "",
-      queue: [],
-      finalized: false,
-      cancelled: false,
-      speaking: false,
-      interruptRunId: null,
-    };
-  }
-
-  function appendStreamingSpeech(sourceRunId: string, text: string) {
-    const session = streamingSpeechSessionRef.current;
-    if (!session || session.sourceRunId !== sourceRunId || session.cancelled || session.finalized) return;
-    session.receivedText += text;
-    session.queue.push(...session.chunker.push(text));
-    void pumpStreamingSpeech(session);
-  }
-
-  function finishStreamingSpeech(sourceRunId: string, finalText: string) {
-    const session = streamingSpeechSessionRef.current;
-    if (!session || session.sourceRunId !== sourceRunId || session.cancelled || session.finalized) return;
-    if (finalText.startsWith(session.receivedText)) {
-      const missingSuffix = finalText.slice(session.receivedText.length);
-      if (missingSuffix) session.queue.push(...session.chunker.push(missingSuffix));
-    }
-    session.queue.push(...session.chunker.finish());
-    session.finalized = true;
-    void pumpStreamingSpeech(session);
-  }
-
-  function resetStreamingSpeech(sourceRunId: string) {
-    const session = streamingSpeechSessionRef.current;
-    if (!session || session.sourceRunId !== sourceRunId || session.cancelled) return;
-    session.receivedText = "";
-    session.queue = [];
-    session.chunker.reset();
-    const ttsRunId = activeTtsRunIdRef.current;
-    if (ttsRunId) {
-      session.interruptRunId = ttsRunId;
-      void stopTts(ttsRunId).catch((cause) => setError(toMessage(cause)));
-    }
-  }
-
-  async function pumpStreamingSpeech(session: StreamingSpeechSession) {
-    if (session.speaking || session.cancelled) return;
-    session.speaking = true;
-    try {
-      while (streamingSpeechSessionRef.current === session && !session.cancelled) {
-        const text = session.queue.shift();
-        if (!text) break;
-        const runId = `speech_${crypto.randomUUID()}`;
-        activeTtsRunIdRef.current = runId;
-        setActiveTtsRunId(runId);
+      if (voiceSuspended) {
         try {
-          await speakText({
-            runId,
-            conversationId: session.conversationId,
-            text,
-            voice: session.voice,
-          });
+          await resumeVoiceAfterSpeech();
         } catch (cause) {
-          if (!session.cancelled && session.interruptRunId !== runId) {
-            session.cancelled = true;
-            session.queue = [];
-            speechDisabledRunIdsRef.current.add(session.sourceRunId);
-            setError(`Speech playback failed: ${toMessage(cause)}`);
-          }
-        } finally {
-          if (session.interruptRunId === runId) session.interruptRunId = null;
-          if (activeTtsRunIdRef.current === runId) {
-            activeTtsRunIdRef.current = null;
-            setActiveTtsRunId(null);
-          }
+          setError(`Microphone resume failed: ${toMessage(cause)}`);
         }
       }
-    } finally {
-      session.speaking = false;
-      if (
-        streamingSpeechSessionRef.current === session
-        && (session.cancelled || (session.finalized && session.queue.length === 0))
-      ) {
-        streamingSpeechSessionRef.current = null;
-      }
+      speechStopRequestsRef.current.delete(runId);
     }
   }
-
-  async function stopStreamingSpeech(sourceRunId: string) {
-    if (streamingSpeechSessionRef.current?.sourceRunId !== sourceRunId) return;
-    await stopSpeech();
-  }
-
   async function stopSpeech() {
-    const session = streamingSpeechSessionRef.current;
-    if (session) {
-      if (session.finalized) speechDisabledRunIdsRef.current.delete(session.sourceRunId);
-      else speechDisabledRunIdsRef.current.add(session.sourceRunId);
-      session.cancelled = true;
-      session.queue = [];
-      session.chunker.reset();
-      streamingSpeechSessionRef.current = null;
-    }
-    const runId = activeTtsRunIdRef.current;
+    const runId = conversationSessionRef.current.speechRunId;
     if (!runId) return;
+    speechStopRequestsRef.current.add(runId);
+    let stopped = false;
     try {
       await stopTts(runId);
+      stopped = true;
     } catch (cause) {
+      speechStopRequestsRef.current.delete(runId);
       setError(toMessage(cause));
     } finally {
-      if (activeTtsRunIdRef.current === runId) {
-        activeTtsRunIdRef.current = null;
+      if (stopped && conversationSessionRef.current.speechRunId === runId) {
+        conversationSessionRef.current = transitionConversationSession(
+          conversationSessionRef.current,
+          { type: "speechFinished", runId },
+        );
         setActiveTtsRunId(null);
       }
     }
   }
-
+  async function retryFailedAction() {
+    const action = retryAction;
+    if (!action) return;
+    setRetryAction(null);
+    if (action.kind === "speech") {
+      await startSpeech(action.text, action.conversationId);
+    } else {
+      await submitPrompt(action.prompt, { retryInputMessageId: action.inputMessageId, inputOrigin: action.inputOrigin });
+    }
+  }
   return {
     messages,
     composer,
@@ -346,6 +278,8 @@ export function useConversationTurn({
     runtimeActivity,
     setRuntimeActivity,
     lastPrompt,
+    retryKind: retryAction?.kind ?? null,
+    retryFailedAction,
     activeTtsRunId,
     handleSubmit,
     submitPrompt,

@@ -19,6 +19,7 @@ pub(crate) async fn test_model_provider(
     validate_model_providers(&ModelProvidersSettings {
         providers: vec![provider.clone()],
         reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+        max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
     })?;
     let started = std::time::Instant::now();
     let result = match &provider {
@@ -52,10 +53,12 @@ pub(crate) async fn test_model_provider(
             }
         }
     };
-    Ok(ProviderTestResult {
+    let tested = ProviderTestResult {
         provider_id: provider.id().to_string(),
         ok: result.is_ok(),
         message: result.unwrap_or_else(|error| redact_runtime_text(&error)),
         latency_ms: started.elapsed().as_millis(),
-    })
+    };
+    super::probe_state::record_if_current(state, &provider, tested.ok);
+    Ok(tested)
 }

@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::settings::default_settings_documents;
+use super::settings::SETTINGS_SCHEMA_VERSION;
 use crate::backup::backup_connection_to;
 use crate::{
     database_error, memory, now_iso, providers, situation, voice, DEFAULT_DYNAMIC_LAN_HOST,
@@ -420,7 +421,15 @@ pub(crate) fn backup_before_migration(
     let has_data = fs::metadata(database_path)
         .map(|metadata| metadata.len() > 0)
         .unwrap_or(false);
-    if !has_data || version >= memory::control_plane::MEMORY_SCHEMA_VERSION {
+    let settings_current = connection
+        .query_row(
+            "SELECT COALESCE(MIN(schema_version), 0) FROM settings_documents",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        >= SETTINGS_SCHEMA_VERSION;
+    if !has_data || (version >= memory::control_plane::MEMORY_SCHEMA_VERSION && settings_current) {
         return Ok(None);
     }
     let directory = database_path
@@ -602,12 +611,80 @@ pub(crate) fn migrate_document(
 mod tests {
     use super::*;
     use crate::persistence::list_settings_documents;
+    use crate::persistence::provider_identity::migrate_dynamic_lan_provider_identity;
     use crate::{
         initialize_database, memory, situation, voice, DEFAULT_DYNAMIC_LAN_HOST,
         DYNAMIC_LAN_PROVIDER_ID,
     };
     use rusqlite::Connection;
     use serde_json::{json, Value};
+
+    #[test]
+    fn normalizes_regressed_dynamic_lan_provider_id_and_routes() {
+        let connection = Connection::open_in_memory().expect("in-memory sqlite");
+        initialize_database(&connection).expect("migration succeeds");
+        connection
+            .execute(
+                "UPDATE settings_documents SET value_json=?1
+                 WHERE namespace='providers.model' AND key='default'",
+                [json!({
+                    "providers": [{
+                        "kind": "dynamic-lan",
+                        "id": "dynamic-lan",
+                        "enabled": true,
+                        "label": "Dynamic LAN LLM",
+                        "location": "local",
+                        "host": "10.0.0.42"
+                    }],
+                    "reasoningEffort": "medium"
+                })
+                .to_string()],
+            )
+            .expect("regressed provider fixture writes");
+        connection
+            .execute(
+                "UPDATE settings_documents SET value_json=?1
+                 WHERE namespace='routing.tasks' AND key='default'",
+                [json!({
+                    "conversationRespond": {
+                        "primaryProviderId": "dynamic-lan",
+                        "fallbackProviderIds": [],
+                        "timeoutMs": 30000
+                    },
+                    "codingAssist": {
+                        "providerId": "codex-sdk",
+                        "timeoutMs": 120000,
+                        "readOnly": true,
+                        "networkEnabled": false,
+                        "webSearchEnabled": false
+                    }
+                })
+                .to_string()],
+            )
+            .expect("regressed route fixture writes");
+
+        migrate_dynamic_lan_provider_identity(&connection).expect("identity migrates");
+
+        let documents = list_settings_documents(&connection).expect("documents load");
+        let providers = documents
+            .iter()
+            .find(|document| document.namespace == "providers.model")
+            .expect("providers exist");
+        let routing = documents
+            .iter()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing exists");
+        assert_eq!(
+            providers.value_json.pointer("/providers/0/id"),
+            Some(&json!(DYNAMIC_LAN_PROVIDER_ID))
+        );
+        assert_eq!(
+            routing
+                .value_json
+                .pointer("/conversationRespond/primaryProviderId"),
+            Some(&json!(DYNAMIC_LAN_PROVIDER_ID))
+        );
+    }
 
     #[test]
     fn migration_creates_default_documents() {
@@ -617,7 +694,7 @@ mod tests {
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 9));
+            .all(|document| document.schema_version == SETTINGS_SCHEMA_VERSION));
         let providers = documents
             .iter()
             .find(|document| document.namespace == "providers.model")
@@ -735,6 +812,117 @@ mod tests {
             )
             .expect("reasoning setting reads");
         assert_eq!(reasoning_effort, "medium");
+    }
+
+    #[test]
+    fn existing_provider_settings_gain_the_output_token_default() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json = json_remove(value_json, '$.maxOutputTokens')
+                 WHERE namespace = 'providers.model' AND key = 'default'",
+                [],
+            )
+            .expect("output token setting removes");
+
+        initialize_database(&connection).expect("output token default migrates");
+
+        let max_output_tokens: u32 = connection
+            .query_row(
+                "SELECT json_extract(value_json, '$.maxOutputTokens')
+                 FROM settings_documents
+                 WHERE namespace = 'providers.model' AND key = 'default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("output token setting reads");
+        assert_eq!(
+            max_output_tokens,
+            crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS
+        );
+    }
+
+    #[test]
+    fn existing_voice_settings_gain_an_independent_asr_host() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json = json_remove(value_json, '$.sttHost')
+                 WHERE namespace = 'voice.runtime' AND key = 'default'",
+                [],
+            )
+            .expect("ASR host removes");
+
+        initialize_database(&connection).expect("ASR host default migrates");
+
+        let stt_host: String = connection
+            .query_row(
+                "SELECT json_extract(value_json, '$.sttHost')
+                 FROM settings_documents
+                 WHERE namespace = 'voice.runtime' AND key = 'default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("ASR host reads");
+        assert_eq!(stt_host, crate::voice::network_asr::DEFAULT_HOST);
+    }
+
+    #[test]
+    fn existing_agent_settings_gain_the_default_agent_name() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json = json_remove(value_json, '$.agentName')
+                 WHERE namespace = 'providers.agent' AND key = 'codex-sdk'",
+                [],
+            )
+            .expect("agent name removes");
+
+        initialize_database(&connection).expect("agent name default migrates");
+
+        let agent_name: String = connection
+            .query_row(
+                "SELECT json_extract(value_json, '$.agentName')
+                 FROM settings_documents
+                 WHERE namespace = 'providers.agent' AND key = 'codex-sdk'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("agent name reads");
+        assert_eq!(agent_name, crate::DEFAULT_AGENT_NAME);
+    }
+
+    #[test]
+    fn existing_agent_settings_gain_an_empty_user_name() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json = json_remove(value_json, '$.userName')
+                 WHERE namespace = 'providers.agent' AND key = 'codex-sdk'",
+                [],
+            )
+            .expect("user name removes");
+
+        initialize_database(&connection).expect("user name default migrates");
+
+        let user_name: String = connection
+            .query_row(
+                "SELECT json_extract(value_json, '$.userName')
+                 FROM settings_documents
+                 WHERE namespace = 'providers.agent' AND key = 'codex-sdk'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("user name reads");
+        assert_eq!(user_name, crate::DEFAULT_USER_NAME);
     }
 
     #[test]
@@ -1072,7 +1260,8 @@ mod tests {
         let documents = list_settings_documents(&connection).expect("strict settings load");
         assert_eq!(documents.len(), 6);
         assert!(documents.iter().all(|document| {
-            document.schema_version == 9 && document.value_json.get("legacyField").is_none()
+            document.schema_version == SETTINGS_SCHEMA_VERSION
+                && document.value_json.get("legacyField").is_none()
         }));
         let providers = documents
             .iter()
@@ -1407,6 +1596,84 @@ mod tests {
     }
 
     #[test]
+    fn settings_v9_is_backed_up_before_v10_shape_migration() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("settings-v9.sqlite3");
+        let connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("schema initializes");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET schema_version=9,
+                     value_json=CASE
+                       WHEN namespace='providers.model' THEN json_remove(value_json, '$.maxOutputTokens')
+                       WHEN namespace='voice.runtime' THEN json_remove(value_json, '$.sttHost')
+                       ELSE value_json
+                     END",
+                [],
+            )
+            .expect("v9 settings fixture writes");
+        drop(connection);
+
+        let connection = Connection::open(&path).expect("database reopens");
+        let backup = backup_before_migration(&connection, &path)
+            .expect("backup succeeds")
+            .expect("settings backup is created");
+        initialize_database(&connection).expect("settings v10 migration succeeds");
+
+        let backup_connection = Connection::open(backup).expect("backup reopens");
+        let (backup_schema, backup_tokens): (i64, Option<i64>) = backup_connection
+            .query_row(
+                "SELECT schema_version, json_extract(value_json, '$.maxOutputTokens')
+                 FROM settings_documents
+                 WHERE namespace='providers.model' AND key='default'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("v9 backup remains readable");
+        assert_eq!(backup_schema, 9);
+        assert!(backup_tokens.is_none());
+
+        let migrated = list_settings_documents(&connection).expect("v10 settings load");
+        assert!(migrated
+            .iter()
+            .all(|document| document.schema_version == SETTINGS_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn current_database_with_a_missing_settings_table_is_backed_up_before_repair() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("missing-settings.sqlite3");
+        let connection = Connection::open(&path).expect("database opens");
+        initialize_database(&connection).expect("schema initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id,title,task_mode,created_at,updated_at)
+                 VALUES('repair-kept','Keep','coding','1','1')",
+                [],
+            )
+            .expect("user data inserts");
+        connection
+            .execute("DROP TABLE settings_documents", [])
+            .expect("settings corruption fixture writes");
+        drop(connection);
+
+        let connection = Connection::open(&path).expect("database reopens");
+        let backup = backup_before_migration(&connection, &path)
+            .expect("backup succeeds")
+            .expect("repair backup is created");
+        let backup_connection = Connection::open(backup).expect("backup reopens");
+        let title: String = backup_connection
+            .query_row(
+                "SELECT title FROM conversations WHERE id='repair-kept'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("user data remains in backup");
+        assert_eq!(title, "Keep");
+    }
+
+    #[test]
     fn version_six_runtime_rows_gain_nullable_supervisor_columns() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("schema initializes");
@@ -1509,7 +1776,7 @@ mod tests {
         assert_eq!(documents.len(), 6);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == 9));
+            .all(|document| document.schema_version == SETTINGS_SCHEMA_VERSION));
         let thread: String = reopened
             .query_row(
                 "SELECT thread_id FROM codex_threads WHERE conversation_id = 'kept-conversation'",

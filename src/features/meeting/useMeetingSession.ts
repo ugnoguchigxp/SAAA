@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { MeetingLane, MeetingSnapshot, MeetingState, VoiceSettings } from "../../lib/contracts";
-import { ensureMicrophoneAudioContextRunning, requestMicrophoneStream } from "../../lib/microphone";
+import {
+  ensureMicrophoneAudioContextRunning,
+  microphoneCaptureConstraints,
+  requestMicrophoneStream,
+} from "../../lib/microphone";
 import {
   appendMeetingAudioSegment,
-  cancelRun,
   discardMeeting,
   getMeetingSnapshot,
   meetingPreflight,
   pauseMeeting,
-  previewMeetingAudioSegment,
   resumeMeeting,
   saveMeetingTranscript,
   startMeeting,
@@ -61,8 +63,6 @@ export function useMeetingSession(
   const queue = useRef(new SegmentQueue<PendingSegment>());
   const processing = useRef<Promise<void> | null>(null);
   const sequence = useRef(0);
-  const previewedSequence = useRef<number | null>(null);
-  const previewRunId = useRef<string | null>(null);
   const started = useRef(0);
   const operation = useRef(false);
   const captureLease = useRef<(() => void) | null>(null);
@@ -136,9 +136,6 @@ export function useMeetingSession(
   }, [snapshot.state]);
 
   async function detachCapture(clearPending: boolean) {
-    const activePreview = previewRunId.current;
-    previewRunId.current = null;
-    if (activePreview) void cancelRun(activePreview).catch(() => undefined);
     if (clearPending) flushResolver.current?.();
     if (!clearPending && node.current) {
       await new Promise<void>((resolve) => {
@@ -271,10 +268,7 @@ export function useMeetingSession(
   async function attachCapture() {
     if (!voice) throw new Error("Voice settings are unavailable.");
     if (!captureLease.current) captureLease.current = acquireAudioCapture("meeting");
-    const device =
-      voice.inputDeviceId === "default"
-        ? { autoGainControl: true, echoCancellation: true, noiseSuppression: true }
-        : { autoGainControl: true, echoCancellation: true, noiseSuppression: true, deviceId: { exact: voice.inputDeviceId } };
+    const device = microphoneCaptureConstraints(voice.inputDeviceId);
     const nextStream = await requestMicrophoneStream(device);
     stream.current = nextStream;
     try {
@@ -295,9 +289,6 @@ export function useMeetingSession(
         }
         frames.current.push(event.data);
         frameSamples.current += event.data.length;
-        if (frameSamples.current >= nextContext.sampleRate * 2) {
-          startSegmentPreview(nextContext.sampleRate);
-        }
         if (frameSamples.current >= nextContext.sampleRate * 5) {
           enqueueBuffered(nextContext.sampleRate, 5_000);
         }
@@ -310,36 +301,6 @@ export function useMeetingSession(
       await detachCapture(true);
       throw cause;
     }
-  }
-
-  function startSegmentPreview(sampleRate: number) {
-    const current = snapshotRef.current;
-    const currentSequence = sequence.current;
-    if (
-      previewedSequence.current === currentSequence
-      || previewRunId.current
-      || !current.sessionId
-      || !current.captureToken
-      || frameSamples.current < sampleRate
-    ) return;
-    previewedSequence.current = currentSequence;
-    const runId = `meeting_preview_${crypto.randomUUID().replace(/-/g, "")}`;
-    previewRunId.current = runId;
-    const samples = appendFrames(new Float32Array(), frames.current);
-    const durationMs = Math.round((samples.length / sampleRate) * 1_000);
-    void previewMeetingAudioSegment({
-      runId,
-      sessionId: current.sessionId,
-      captureToken: current.captureToken,
-      lane: "microphone",
-      sequence: currentSequence,
-      samples: Array.from(samples),
-      sampleRate,
-      startedAtMs: frameStartedAtMs.current ?? Math.max(0, Date.now() - started.current - durationMs),
-      durationMs,
-    }).catch(() => undefined).finally(() => {
-      if (previewRunId.current === runId) previewRunId.current = null;
-    });
   }
 
   function beginOperation(): boolean {
@@ -361,11 +322,7 @@ export function useMeetingSession(
     let startedSession: string | null = null;
     try {
       captureLease.current = acquireAudioCapture("meeting");
-      const check = await requestMicrophoneStream(
-        voice.inputDeviceId === "default"
-          ? { autoGainControl: true, echoCancellation: true, noiseSuppression: true }
-          : { autoGainControl: true, echoCancellation: true, noiseSuppression: true, deviceId: { exact: voice.inputDeviceId } },
-      );
+      const check = await requestMicrophoneStream(microphoneCaptureConstraints(voice.inputDeviceId));
       check.getTracks().forEach((track) => track.stop());
       const preflight = await meetingPreflight({
         microphoneDeviceId: voice.inputDeviceId,
@@ -389,7 +346,6 @@ export function useMeetingSession(
       applySnapshot(next);
       started.current = Date.now();
       sequence.current = 0;
-      previewedSequence.current = null;
       setElapsed(0);
       setTranscript([]);
       await attachCapture();
@@ -427,7 +383,6 @@ export function useMeetingSession(
     try {
       const next = await resumeMeeting(current.sessionId);
       applySnapshot(next);
-      previewedSequence.current = null;
       try {
         await attachCapture();
       } catch (cause) {

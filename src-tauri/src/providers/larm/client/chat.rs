@@ -11,6 +11,9 @@ use super::{
     ChatMessage, LarmError, LarmHttpClient, ERROR_BODY_LIMIT, GATEWAY_REQUEST_LIMIT,
     SSE_EVENT_LIMIT, VIRTUAL_MODEL,
 };
+use crate::providers::completion::{
+    thinking_enabled, CompletionFinish, CompletionTerminal, DEFAULT_MAX_OUTPUT_TOKENS,
+};
 use crate::runtime::agent_tools::ToolCallAccumulator;
 
 impl<'a> LarmHttpClient<'a> {
@@ -33,6 +36,7 @@ impl<'a> LarmHttpClient<'a> {
             &[],
             &[],
             crate::providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+            DEFAULT_MAX_OUTPUT_TOKENS,
             timeout,
             cancellation,
             on_delta,
@@ -49,6 +53,7 @@ impl<'a> LarmHttpClient<'a> {
         tool_exchanges: &[Value],
         tools: &[Value],
         reasoning_effort: &str,
+        max_output_tokens: u32,
         timeout: Duration,
         cancellation: Cancellation<'_>,
         mut on_delta: F,
@@ -66,7 +71,9 @@ impl<'a> LarmHttpClient<'a> {
             "model": VIRTUAL_MODEL,
             "messages": serialized_messages,
             "stream": true,
-            "reasoning_effort": reasoning_effort
+            "reasoning_effort": reasoning_effort,
+            "max_tokens": max_output_tokens,
+            "chat_template_kwargs": { "enable_thinking": thinking_enabled(reasoning_effort) }
         });
         if !tools.is_empty() {
             request["tools"] = Value::Array(tools.to_vec());
@@ -128,6 +135,7 @@ impl<'a> LarmHttpClient<'a> {
         let mut content_chars = 0;
         let mut output_started = false;
         let mut stream_completed = false;
+        let mut terminal = CompletionTerminal::default();
         let mut tool_calls = ToolCallAccumulator::default();
         let mut renewed_allocation = allocation.clone();
         let mut renewed_at = lease_received_at;
@@ -183,6 +191,7 @@ impl<'a> LarmHttpClient<'a> {
                         &mut output_started,
                         &mut on_delta,
                         &mut tool_calls,
+                        &mut terminal,
                     )?;
                 }
                 break;
@@ -204,6 +213,7 @@ impl<'a> LarmHttpClient<'a> {
                 &mut output_started,
                 &mut on_delta,
                 &mut tool_calls,
+                &mut terminal,
             )? {
                 stream_completed = true;
                 break;
@@ -215,7 +225,15 @@ impl<'a> LarmHttpClient<'a> {
         let tool_call = tool_calls
             .finish()
             .map_err(|error| tool_protocol_error(error, output_started))?;
-        if tool_call.is_some() && !content.trim().is_empty() {
+        let finish = terminal
+            .complete()
+            .map_err(|error| super::completion_terminal_error(error, output_started))?;
+        if tool_call.is_some()
+            && (finish != CompletionFinish::ToolCalls || !content.trim().is_empty())
+        {
+            return Err(LarmError::new(SessionFailureKind::Protocol, output_started));
+        }
+        if tool_call.is_none() && finish != CompletionFinish::Stop {
             return Err(LarmError::new(SessionFailureKind::Protocol, output_started));
         }
         if content.trim().is_empty() && tool_call.is_none() {

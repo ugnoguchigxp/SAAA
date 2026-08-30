@@ -33,7 +33,9 @@ mod voice;
 use backup::backup_connection_to;
 
 pub(crate) use models::*;
-use persistence::{backup_before_migration, initialize_database, list_messages_from_connection};
+use persistence::list_messages_from_connection;
+use persistence::migrate::backup_before_migration;
+use persistence::schema::initialize_database;
 pub(crate) use providers::openai_compatible::provider_environment_suffix;
 pub(crate) use providers::session_store::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_larm_provider_session,
@@ -60,11 +62,12 @@ pub(crate) use redact::{bounded_text, redact_runtime_text};
 use ipc_contract::{ConversationMessage, RuntimeEvent};
 
 const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
-const DYNAMIC_LAN_PROVIDER_ID: &str = "dynamic-lan";
+const DYNAMIC_LAN_PROVIDER_ID: &str = "lan-llm-dynamic";
 const DEFAULT_DYNAMIC_LAN_HOST: &str = "localhost";
+const DEFAULT_AGENT_NAME: &str = "SAAA";
+const DEFAULT_USER_NAME: &str = "";
 const PRIMARY_CONVERSATION_ID: &str = "conversation_primary";
 const PRIMARY_CONVERSATION_TITLE: &str = "SAAAとの会話";
-const CONVERSATION_SYSTEM_CONTEXT: &str = include_str!("../../.s11tnext/conversation-respond.txt");
 const CODEX_READ_ONLY_SYSTEM_CONTEXT: &str = include_str!("../../.s11tnext/codex-read-only.txt");
 
 struct AppState {
@@ -72,18 +75,30 @@ struct AppState {
     data_directory: PathBuf,
     context_still_recall: memory::context_still_recall::ContextStillRecallClient,
     active_runs: Mutex<HashMap<String, Arc<RunCancellation>>>,
+    provider_probes: Mutex<HashMap<String, ProviderProbeStatus>>,
     interaction_policy: Mutex<()>,
     shutdown_started: AtomicBool,
     larm_gate: providers::larm::LarmRuntimeGate,
+    network_asr: voice::network_asr::NetworkAsrRuntime,
     tts_process: Mutex<Option<ActiveTts>>,
+    #[cfg(target_os = "macos")]
+    tts_audio_output: voice::system_tts::audio_output::TtsAudioOutput,
     situation: Arc<situation::SituationRuntime>,
     meeting: Arc<meeting::MeetingRuntime>,
     voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
 }
 
+#[derive(Clone)]
+struct ProviderProbeStatus {
+    ok: bool,
+    checked_at: String,
+}
+
 struct ActiveTts {
     run_id: String,
     child: Child,
+    #[cfg(target_os = "macos")]
+    rendered_audio: Option<voice::system_tts::audio_output::RenderedTtsAudio>,
 }
 
 #[derive(Default)]
@@ -337,21 +352,23 @@ async fn test_model_provider(
 }
 
 #[tauri::command]
+async fn resolve_network_asr(
+    state: tauri::State<'_, AppState>,
+    input: ResolveNetworkAsrInput,
+) -> Result<NetworkAsrResolution, String> {
+    state
+        .network_asr
+        .refresh(&input.host, Arc::new(RunCancellation::default()))
+        .await
+}
+
+#[tauri::command]
 async fn transcribe_audio(
     state: tauri::State<'_, AppState>,
     input: TranscribeAudioInput,
     on_event: tauri::ipc::Channel<VoiceEvent>,
 ) -> Result<String, String> {
     voice::session::transcribe_audio(&state, input, on_event).await
-}
-
-#[tauri::command]
-async fn preview_audio(
-    state: tauri::State<'_, AppState>,
-    input: PreviewAudioInput,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    voice::session::preview_audio(&state, input, on_event).await
 }
 
 #[tauri::command]
@@ -420,7 +437,7 @@ async fn meeting_preflight(
     state: tauri::State<'_, AppState>,
     input: meeting::PreflightInput,
 ) -> Result<meeting::PreflightResult, String> {
-    let asr_health = voice::network_asr::probe().await;
+    let asr_health = voice::network_asr::probe(&state, &input.stt_model).await;
     let result = state.meeting.preflight(&input, asr_health)?;
     state.meeting.emit(meeting::MeetingEvent::StateChanged {
         session_id: None,
@@ -596,6 +613,8 @@ fn shutdown_app_state(state: &AppState) {
             cancellation.cancel();
         }
     }
+    #[cfg(target_os = "macos")]
+    state.tts_audio_output.shutdown();
     state.meeting.shutdown(&state.connection);
     let _ = state.situation.flush_quality(&state.connection);
     state
@@ -609,6 +628,7 @@ fn shutdown_app_state(state: &AppState) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_llm_fetch::init())
         .setup(|app| {
             let database_path = app_paths::application_database_path(app)?;
             let voice_resource_directory = app
@@ -673,10 +693,16 @@ pub fn run() {
                 context_still_recall:
                     memory::context_still_recall::ContextStillRecallClient::from_environment(),
                 active_runs: Mutex::new(HashMap::new()),
+                provider_probes: Mutex::new(HashMap::new()),
                 interaction_policy: Mutex::new(()),
                 shutdown_started: AtomicBool::new(false),
                 larm_gate: providers::larm::LarmRuntimeGate::initialize(),
+                network_asr: voice::network_asr::NetworkAsrRuntime::new()
+                    .map_err(std::io::Error::other)?,
                 tts_process: Mutex::new(None),
+                #[cfg(target_os = "macos")]
+                tts_audio_output: voice::system_tts::audio_output::TtsAudioOutput::new()
+                    .map_err(std::io::Error::other)?,
                 situation,
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
                 voice_profile,
@@ -736,8 +762,8 @@ pub fn run() {
             start_turn,
             cancel_run,
             test_model_provider,
+            resolve_network_asr,
             transcribe_audio,
-            preview_audio,
             speak_text,
             stop_tts,
             meeting_preflight,
@@ -1096,6 +1122,9 @@ mod tests {
             conversation_id: "legacy-conversation".to_string(),
             content: "must not persist".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
 
         let error = prepare_runtime_run(&state, &input).expect_err("legacy turn is rejected");
@@ -1164,6 +1193,9 @@ mod tests {
             conversation_id: "meeting-blocked-coding".to_string(),
             content: "inspect only".to_string(),
             workspace_path: Some("/tmp/fixture".to_string()),
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
 
         let error = prepare_runtime_run(&state, &input).expect_err("coding turn is blocked");
@@ -1209,6 +1241,9 @@ mod tests {
             conversation_id: "agent-blocks-meeting".to_string(),
             content: "inspect only".to_string(),
             workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         assert_eq!(
             prepare_runtime_run(&state, &turn).expect("coding run prepares"),
@@ -1274,12 +1309,18 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "normal request".to_string(),
             workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let coding = StartTurnInput {
             run_id: "run-coding-no-workspace".to_string(),
             conversation_id: "workspace-required".to_string(),
             content: "coding request".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
 
         assert!(prepare_runtime_run(&state, &normal)
@@ -1320,6 +1361,9 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: content.clone(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
 
         let error = prepare_runtime_run(&state, &input).expect_err("oversized turn is rejected");
@@ -1402,6 +1446,7 @@ mod tests {
                 "Connection: close\r\n\r\n",
                 "data: {\"choices\":[{\"delta\":{\"content\":\"hello \"}}]}\r\n\r\n",
                 "data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
                 "data: [DONE]\n\n"
             );
             socket
@@ -1417,6 +1462,9 @@ mod tests {
             conversation_id: "conversation-fixture".to_string(),
             content: "hello".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let history = vec![ConversationMessage {
             id: "message-fixture".to_string(),
@@ -1444,6 +1492,7 @@ mod tests {
             false,
             ModelStreamContext {
                 reasoning_effort: "low",
+                max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 input: &input,
                 on_event: &channel,
                 cancellation: Arc::new(RunCancellation::default()),
@@ -1464,6 +1513,9 @@ mod tests {
             .lock()
             .expect("request lock")
             .contains("\"reasoning_effort\":\"low\""));
+        let request = request_body.lock().expect("request lock").clone();
+        assert!(request.contains("\"max_tokens\":2048"));
+        assert!(request.contains("\"enable_thinking\":false"));
         assert!(request_body
             .lock()
             .expect("request lock")
@@ -1508,6 +1560,9 @@ mod tests {
             conversation_id: "conversation-dynamic_lan-sse-policy".to_string(),
             content: "test".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let history = vec![ConversationMessage {
             id: "message-dynamic_lan-sse-policy".to_string(),
@@ -1525,6 +1580,7 @@ mod tests {
             true,
             ModelStreamContext {
                 reasoning_effort: "low",
+                max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 input: &input,
                 on_event: &channel,
                 cancellation: Arc::new(RunCancellation::default()),
@@ -1611,15 +1667,19 @@ mod tests {
                         "Connection: close\r\n\r\n",
                         "data: {}\n\n",
                         "data: {}\n\n",
+                        "data: {}\n\n",
                         "data: [DONE]\n\n"
                     ),
-                    first_delta, second_delta
+                    first_delta,
+                    second_delta,
+                    json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
                 ),
                 concat!(
                     "HTTP/1.1 200 OK\r\n",
                     "Content-Type: text/event-stream\r\n",
                     "Connection: close\r\n\r\n",
                     "data: {\"choices\":[{\"delta\":{\"content\":\"履歴を確認しました\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
                     "data: [DONE]\n\n"
                 )
                 .to_string(),
@@ -1654,6 +1714,9 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "前の話を思い出して".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         prepare_runtime_run(&state, &input).expect("runtime prepares");
         let session_id =
@@ -1675,6 +1738,7 @@ mod tests {
             5_000,
             ModelStreamContext {
                 reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 input: &input,
                 on_event: &channel,
                 cancellation: Arc::new(RunCancellation::default()),
@@ -1778,6 +1842,9 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "remember a rule".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let persistence = Some(ProviderOutputPersistence {
             state: &state,
@@ -1884,6 +1951,9 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "remember".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let persistence = Some(ProviderOutputPersistence {
             state: &state,
@@ -1914,6 +1984,9 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "remember".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         prepare_runtime_run(&state, &input).expect("runtime prepares");
         let persistence = Some(ProviderOutputPersistence {
@@ -1972,6 +2045,7 @@ mod tests {
                 "\"index\":0,\"id\":\"call_timeout\",\"type\":\"function\",",
                 "\"function\":{\"name\":\"recall_conversation\",",
                 "\"arguments\":\"{\\\"query\\\":\\\"missing\\\"}\"}}]}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
                 "data: [DONE]\n\n"
             );
             let final_response = concat!(
@@ -1979,6 +2053,7 @@ mod tests {
                 "Content-Type: text/event-stream\r\n",
                 "Connection: close\r\n\r\n",
                 "data: {\"choices\":[{\"delta\":{\"content\":\"too late\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
                 "data: [DONE]\n\n"
             );
             for response in [tool_response, final_response] {
@@ -1998,6 +2073,9 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "remember".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         prepare_runtime_run(&state, &input).expect("runtime prepares");
         let session_id = begin_provider_session(
@@ -2023,6 +2101,7 @@ mod tests {
             600,
             ModelStreamContext {
                 reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 input: &input,
                 on_event: &channel,
                 cancellation: Arc::new(RunCancellation::default()),
@@ -2063,6 +2142,7 @@ mod tests {
                         "Connection: close\r\n\r\n",
                         "data: {\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}\n\n",
                         "data: {\"choices\":[{\"delta\":{\"content\":\"ignored\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
                         "data: [DONE]\n\n"
                     )
                     .as_bytes(),
@@ -2078,6 +2158,9 @@ mod tests {
             conversation_id: "conversation-consumer-disconnect".to_string(),
             content: "hello".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let channel: tauri::ipc::Channel<RuntimeEvent> =
             tauri::ipc::Channel::new(|_| Err(tauri::Error::Io(std::io::Error::other("closed"))));
@@ -2087,6 +2170,7 @@ mod tests {
             2_000,
             ModelStreamContext {
                 reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 input: &input,
                 on_event: &channel,
                 cancellation: Arc::new(RunCancellation::default()),
@@ -2155,6 +2239,9 @@ mod tests {
             conversation_id: "conversation-fixture".to_string(),
             content: "hello".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
         let outcome = stream_model_provider(
@@ -2163,6 +2250,7 @@ mod tests {
             2_000,
             ModelStreamContext {
                 reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
                 input: &input,
                 on_event: &channel,
                 cancellation: Arc::new(RunCancellation::default()),
@@ -2216,6 +2304,7 @@ mod tests {
             "Content-Type: text/event-stream\r\n",
             "Connection: close\r\n\r\n",
             "data: {\"choices\":[{\"delta\":{\"content\":\"fallback ok\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
             "data: [DONE]\n\n"
         ));
         let connection = Connection::open_in_memory().expect("database opens");
@@ -2256,6 +2345,9 @@ mod tests {
             conversation_id: conversation.id,
             content: "test fallback".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let events = Arc::new(Mutex::new(Vec::<String>::new()));
         let events_for_channel = events.clone();
@@ -2411,6 +2503,9 @@ mod tests {
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "partial test".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
         execute_turn(
@@ -2884,6 +2979,9 @@ for line in sys.stdin:
             conversation_id: "coding-atomic".to_string(),
             content: "ATOMIC".to_string(),
             workspace_path: Some(directory.path().to_string_lossy().into_owned()),
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         tauri::async_runtime::block_on(execute_turn(
             &state,
@@ -2941,6 +3039,9 @@ for line in sys.stdin:
                     conversation_id: "coding-atomic".to_string(),
                     content: scenario.to_string(),
                     workspace_path: Some(directory.path().to_string_lossy().into_owned()),
+                    retry_input_message_id: None,
+                    input_origin: "text".to_string(),
+                    presentation_mode: "visual".to_string(),
                 };
                 tauri::async_runtime::block_on(execute_turn(
                     &state,
@@ -3108,6 +3209,7 @@ for line in sys.stdin:
             "\"index\":0,\"id\":\"call_larm_turn\",\"type\":\"function\",",
             "\"function\":{\"name\":\"recall_conversation\",",
             "\"arguments\":\"{\\\"query\\\":\\\"missing-history\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
             "data: [DONE]\n\n"
         );
         let tool_stream_response = format!(
@@ -3116,6 +3218,7 @@ for line in sys.stdin:
         );
         let stream_body = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"LARM ok\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
             "data: [DONE]\n\n"
         );
         let stream_response = format!(
@@ -3241,6 +3344,9 @@ for line in sys.stdin:
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: "fixture prompt".to_string(),
             workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
         };
         execute_turn(
             &state,

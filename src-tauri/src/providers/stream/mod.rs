@@ -3,6 +3,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::completion::{
+    thinking_enabled, validate_non_stream_completion, CompletionFinish, CompletionTerminal,
+    CompletionTerminalError,
+};
 use super::openai_compatible::{
     drain_sse_events, provider_api_key, provider_chat_url, SseDrainError,
 };
@@ -12,15 +16,18 @@ use crate::{OpenAiCompatibleProviderSettings, RunCancellation, StartTurnInput};
 mod attempt;
 mod dispatch;
 mod dynamic_lan;
+mod finalize;
 mod larm;
 
 pub(crate) use attempt::*;
 pub(crate) use dispatch::*;
 pub(crate) use dynamic_lan::*;
+use finalize::finalize_stream_completion;
 pub(crate) use larm::*;
 
 pub(crate) struct ModelStreamContext<'a> {
     pub(crate) reasoning_effort: &'a str,
+    pub(crate) max_output_tokens: u32,
     pub(crate) input: &'a StartTurnInput,
     pub(crate) on_event: &'a tauri::ipc::Channel<RuntimeEvent>,
     pub(crate) cancellation: Arc<RunCancellation>,
@@ -128,6 +135,7 @@ pub(crate) async fn stream_model_provider_inner(
             &messages,
             &tools,
             context.reasoning_effort,
+            context.max_output_tokens,
             api_key,
             context.input,
             context.on_event,
@@ -186,6 +194,7 @@ pub(crate) async fn stream_model_provider_round(
     messages: &[Value],
     tools: &[Value],
     reasoning_effort: &str,
+    max_output_tokens: u32,
     api_key: Option<&str>,
     input: &StartTurnInput,
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
@@ -198,8 +207,13 @@ pub(crate) async fn stream_model_provider_round(
         "model": provider.model,
         "messages": messages,
         "stream": true,
-        "reasoning_effort": reasoning_effort
+        "reasoning_effort": reasoning_effort,
+        "max_tokens": max_output_tokens
     });
+    if provider.location == "local" {
+        body["chat_template_kwargs"] =
+            json!({ "enable_thinking": thinking_enabled(reasoning_effort) });
+    }
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools.to_vec());
         body["tool_choice"] = json!("auto");
@@ -243,19 +257,29 @@ pub(crate) async fn stream_model_provider_round(
         let body = read_provider_body_limited(response, 1_048_576, &cancellation, false).await?;
         let response: Value = serde_json::from_slice(&body)
             .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Protocol, false))?;
+        let finish = validate_non_stream_completion(&response)
+            .map_err(|error| completion_terminal_failure(error, false))?;
         let tool_call = crate::runtime::agent_tools::parse_non_stream_tool_call(&response)
             .map_err(|error| tool_protocol_failure(error, false))?;
         let content = response
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str);
         if let Some(call) = tool_call {
-            if content.is_some_and(|value| !value.trim().is_empty()) {
+            if finish != CompletionFinish::ToolCalls
+                || content.is_some_and(|value| !value.trim().is_empty())
+            {
                 return Err(ProviderAttemptError::failed(
                     ProviderFailureKind::Protocol,
                     false,
                 ));
             }
             return Ok(ModelProviderCompletion::ToolCall(call));
+        }
+        if finish != CompletionFinish::Stop {
+            return Err(ProviderAttemptError::failed(
+                ProviderFailureKind::Protocol,
+                false,
+            ));
         }
         let content = content
             .ok_or_else(|| ProviderAttemptError::failed(ProviderFailureKind::Protocol, false))?;
@@ -292,6 +316,7 @@ pub(crate) async fn stream_model_provider_round(
     let mut content_chars = 0_usize;
     let mut output_started = false;
     let mut stream_completed = false;
+    let mut terminal = CompletionTerminal::default();
     let mut tool_calls = crate::runtime::agent_tools::ToolCallAccumulator::default();
     loop {
         if cancellation.is_cancelled() {
@@ -314,6 +339,7 @@ pub(crate) async fn stream_model_provider_round(
                     on_event,
                     output_persistence,
                     &mut tool_calls,
+                    &mut terminal,
                 )?;
             }
             break;
@@ -339,6 +365,7 @@ pub(crate) async fn stream_model_provider_round(
             on_event,
             output_persistence,
             &mut tool_calls,
+            &mut terminal,
         )?;
         if stream_done {
             stream_completed = true;
@@ -354,22 +381,10 @@ pub(crate) async fn stream_model_provider_round(
     let tool_call = tool_calls
         .finish()
         .map_err(|error| tool_protocol_failure(error, output_started))?;
-    if let Some(call) = tool_call {
-        if !content.trim().is_empty() {
-            return Err(ProviderAttemptError::failed(
-                ProviderFailureKind::Protocol,
-                output_started,
-            ));
-        }
-        return Ok(ModelProviderCompletion::ToolCall(call));
-    }
-    if content.trim().is_empty() {
-        return Err(ProviderAttemptError::failed(
-            ProviderFailureKind::Protocol,
-            false,
-        ));
-    }
-    Ok(ModelProviderCompletion::Content(content))
+    let finish = terminal
+        .complete()
+        .map_err(|error| completion_terminal_failure(error, output_started))?;
+    finalize_stream_completion(content, tool_call, finish, output_started)
 }
 
 pub(crate) fn sse_drain_failure(
@@ -393,16 +408,23 @@ pub(crate) fn project_sse_events(
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     tool_calls: &mut crate::runtime::agent_tools::ToolCallAccumulator,
+    terminal: &mut CompletionTerminal,
 ) -> Result<bool, ProviderAttemptError> {
     for event in events {
         for line in event.lines().filter_map(|line| line.strip_prefix("data:")) {
             let data = line.trim();
             if data == "[DONE]" {
+                terminal
+                    .complete()
+                    .map_err(|error| completion_terminal_failure(error, *output_started))?;
                 return Ok(true);
             }
             let value: Value = serde_json::from_str(data).map_err(|_| {
                 ProviderAttemptError::failed(ProviderFailureKind::Protocol, *output_started)
             })?;
+            terminal
+                .observe(&value)
+                .map_err(|error| completion_terminal_failure(error, *output_started))?;
             tool_calls
                 .absorb_stream_delta(&value)
                 .map_err(|error| tool_protocol_failure(error, *output_started))?;
@@ -441,4 +463,16 @@ pub(crate) fn project_sse_events(
         }
     }
     Ok(false)
+}
+
+fn completion_terminal_failure(
+    error: CompletionTerminalError,
+    output_started: bool,
+) -> ProviderAttemptError {
+    let kind = match error {
+        CompletionTerminalError::PartialOutput => ProviderFailureKind::PartialOutput,
+        CompletionTerminalError::Policy => ProviderFailureKind::Policy,
+        CompletionTerminalError::Protocol => ProviderFailureKind::Protocol,
+    };
+    ProviderAttemptError::failed(kind, output_started)
 }

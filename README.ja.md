@@ -60,7 +60,7 @@ SAAA は設定したホストの接続 API を通じて、会話に使うロー�
 
 ローカル LLM サーバーとの通信には `LARM_API_TOKEN` が必要です。SAAA は SSH トンネルを作成しないため、接続 API と、サーバーが返すモデル接続先の両方へプライベートネットワークから到達できる必要があります。
 
-音声会話と Meeting の ASR 接続先は `SAAA_ASR_BASE_URL` から読み込みます。たとえば `http://10.0.0.42:8081` のように、認証情報やパスを含まないプライベートネットワーク上の HTTP origin を指定してください。
+音声会話と Meeting は、Settings → Model Providers で設定した LAN host を共用します。SAAA はプライベート ASR 接続先を導出し、`/v1/models` と `/health` からモデル情報を取得して Settings → Voice へ反映します。ASR専用の環境変数は不要です。
 
 ### OpenAI 互換 API
 

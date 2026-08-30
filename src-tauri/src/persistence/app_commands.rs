@@ -1,5 +1,6 @@
 use rusqlite::params;
 
+use super::effective_route::effective_route_snapshot;
 use super::{
     ensure_primary_conversation, list_conversations_from_connection, list_settings_documents,
     save_settings_documents_to_connection, validate_conversation_write_target,
@@ -29,6 +30,13 @@ pub(crate) fn get_app_snapshot(state: &AppState) -> Result<AppSnapshot, String> 
         settings: list_settings_documents(&connection)?,
         conversations,
         primary_conversation_id: primary_conversation.id,
+        effective_route: effective_route_snapshot(
+            &connection,
+            &state
+                .provider_probes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )?,
         larm_runtime: LarmRuntimeStatus {
             state: state.larm_gate.state(),
             message: state.larm_gate.public_message(),
@@ -63,6 +71,11 @@ pub(crate) fn save_settings_documents(
         situation_settings,
         |connection| save_settings_documents_to_connection(connection, &input.documents),
     )?;
+    state
+        .provider_probes
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
     if enabled {
         spawn_situation_monitor(state.connection.clone(), state.situation.clone());
     }

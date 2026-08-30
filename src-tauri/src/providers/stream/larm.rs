@@ -23,6 +23,7 @@ pub(crate) async fn stream_larm_provider(
     provider: &LarmProviderSettings,
     history: &[ConversationMessage],
     reasoning_effort: &str,
+    max_output_tokens: u32,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
     context: LarmStreamContext<'_>,
@@ -154,6 +155,7 @@ pub(crate) async fn stream_larm_provider(
                 &tool_exchanges,
                 &tools,
                 reasoning_effort,
+                max_output_tokens,
                 round_timeout,
                 cancellation_signal,
                 |delta, first| {

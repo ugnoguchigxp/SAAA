@@ -56,6 +56,7 @@ mod tests {
                 provider("local-fallback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         let route = ConversationRouteSettings {
             primary_provider_id: "local-primary".to_string(),
@@ -82,6 +83,7 @@ mod tests {
                 provider("local-fallback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         let route = ConversationRouteSettings {
             primary_provider_id: "dynamic_lan-primary".to_string(),
@@ -108,6 +110,7 @@ mod tests {
                 provider("direct-rollback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
         };
         let configured = vec!["larm-primary".to_string(), "direct-rollback".to_string()];
         assert_eq!(

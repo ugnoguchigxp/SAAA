@@ -19,7 +19,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 9;
+  schemaVersion: 10;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };
@@ -36,8 +36,19 @@ export type AppSnapshot = {
   settings: SettingsDocument[];
   conversations: Conversation[];
   primaryConversationId: string;
+  effectiveRoute: EffectiveRouteSnapshot;
   larmRuntime: LarmRuntimeStatus;
   voiceProfile: VoiceProfileSnapshot;
+};
+
+export type EffectiveRouteSnapshot = {
+  providerId: string | null;
+  label: string;
+  location: "local" | "cloud" | null;
+  state: "unchecked" | "active" | "ready" | "failed";
+  fallbackUsed: boolean;
+  reasonCode: string;
+  updatedAt: string | null;
 };
 
 export type VoiceProfileSnapshot = {
@@ -75,6 +86,12 @@ export type ProviderTestResult = {
   latencyMs: number;
 };
 
+export type NetworkAsrResolution = {
+  providerId: "network-asr";
+  endpoint: string;
+  model: string;
+};
+
 export type LocalArtifactResult = {
   path: string;
   createdAt: string;
@@ -82,7 +99,6 @@ export type LocalArtifactResult = {
 
 export type VoiceEvent =
   | { type: "transcribing"; runId: string }
-  | { type: "transcriptDelta"; runId: string; text: string }
   | { type: "transcriptFinal"; runId: string; text: string }
   | { type: "cancelled"; runId: string }
   | { type: "failed"; runId: string; message: string; recovery: string };
@@ -131,9 +147,12 @@ export type ReasoningEffort = "low" | "medium" | "xhigh";
 export type ModelProvidersSettings = {
   providers: ModelProviderSettings[];
   reasoningEffort: ReasoningEffort;
+  maxOutputTokens: number;
 };
 
 export type CodexAgentSettings = {
+  agentName: string;
+  userName: string;
   enabled: boolean;
   provider: "codex-sdk";
   model: string;
@@ -189,8 +208,9 @@ export type RoutingSettings = {
 
 export type VoiceSettings = {
   inputDeviceId: string;
-  outputDeviceId: string;
+  outputDeviceId: "default";
   captureMode: "push-to-talk";
+  sttHost: string;
   sttProviderId: "network-asr";
   sttModel: string;
   ttsProviderId: "system-tts";
@@ -332,7 +352,11 @@ export function isModelProvidersSettings(value: Record<string, unknown>): value 
   return (
     Array.isArray(value.providers) &&
     value.providers.every(isModelProviderSettings) &&
-    (value.reasoningEffort === "low" || value.reasoningEffort === "medium" || value.reasoningEffort === "xhigh")
+    (value.reasoningEffort === "low" || value.reasoningEffort === "medium" || value.reasoningEffort === "xhigh") &&
+    typeof value.maxOutputTokens === "number" &&
+    Number.isInteger(value.maxOutputTokens) &&
+    value.maxOutputTokens >= 256 &&
+    value.maxOutputTokens <= 8192
   );
 }
 
@@ -369,6 +393,8 @@ function isModelProviderSettings(value: unknown): value is ModelProviderSettings
 
 export function isCodexAgentSettings(value: Record<string, unknown>): value is CodexAgentSettings {
   return (
+    typeof value.agentName === "string" &&
+    typeof value.userName === "string" &&
     typeof value.enabled === "boolean" &&
     value.provider === "codex-sdk" &&
     typeof value.model === "string" &&
@@ -402,8 +428,9 @@ export function isRoutingSettings(value: Record<string, unknown>): value is Rout
 export function isVoiceSettings(value: Record<string, unknown>): value is VoiceSettings {
   return (
     typeof value.inputDeviceId === "string" &&
-    typeof value.outputDeviceId === "string" &&
+    value.outputDeviceId === "default" &&
     value.captureMode === "push-to-talk" &&
+    typeof value.sttHost === "string" &&
     value.sttProviderId === "network-asr" &&
     typeof value.sttModel === "string" &&
     value.ttsProviderId === "system-tts" &&
