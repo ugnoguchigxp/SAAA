@@ -23,7 +23,10 @@ describe("settings provider UI contracts", () => {
     const japanese = source("src/i18n/locales/ja.ts");
     expect(settings).toContain("<ConversationTimeoutField");
     expect(settings).toContain("conversationTimeoutMsFromSecondsInput(next)");
-    expect(settings).toContain('aria-invalid={invalid}');
+    expect(settings).toContain('aria-invalid={fieldInvalid}');
+    expect(settings).toContain("onValidityChange(!fieldInvalid)");
+    expect(settings).toContain('resolution?.revision === "agent-connection.v1"');
+    expect(settings).toContain('t(invalid');
     expect(japanese).toContain('llmTimeoutSeconds: "LLMタイムアウト（秒）"');
   });
 

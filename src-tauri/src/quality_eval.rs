@@ -203,6 +203,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
             PathBuf::new(),
         )),
+        voice_asr: voice::streaming_asr::AsrSessionManager::default(),
     })
 }
 

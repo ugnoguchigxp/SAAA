@@ -5,14 +5,15 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>Status: Reviewed; ready for implementation</li>
+    <li>Status: Complete — document corrections archived; Concept remains active</li>
     <li>Created: 2026-08-30</li>
+    <li>Archived: 2026-08-30</li>
     <li>SAAA baseline: <code>0f0d2cd</code> + working tree</li>
     <li>Shipping client: macOS版SAAA desktop</li>
     <li>対象: Spec docs、QA</li>
   </ul>
   <p>
-    本文書は、<a href="./saaa-adaptive-learning-memory-concept.html"
+    本文書は、<a href="../saaa-adaptive-learning-memory-concept.html"
       >SAAA Adaptive Learning and Selective Memory Concept</a
     >
     のreviewで確認された10件の欠陥だけを修正するための実装契約である。完了の定義は
@@ -21,13 +22,21 @@
     7のAcceptanceを満たすことである。
   </p>
   <p>
-    本契約はConcept文書と<a href="./README.html">Internal Design Documents</a>索引の2ファイルだけを
+    本契約はConcept文書と<a href="../README.html">Internal Design Documents</a>索引の2ファイルだけを
     変更する。Rust、TypeScript、SQLite schema、Settings、テストを変更しない。Concept文書のStatusを
     ConceptからPlanへ昇格させず、実装着手を許可しない。
   </p>
   <p>
     reviewで別途提案された「idle時の反実仮想replayを学習信号の生成器に格上げする」再構成は、
     Concept本体のarchitecture判断であり本契約に含まない。Section 3のNon-goalsとして明示する。
+  </p>
+  <p>
+    <code>AC-00</code
+    >〜<code>AC-10</code>の文書修正は完了した。正本はactiveな
+    <a href="../saaa-adaptive-learning-memory-concept.html"
+      >SAAA Adaptive Learning and Selective Memory Concept</a
+    >
+    である。本文書は修正契約としてArchiveする。
   </p>
 
   <h2 id="1-fixed-conclusion">1. 結論と固定判断</h2>

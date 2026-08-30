@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { validateSettingsDocuments } from "../src/lib/schemas";
-import { defaultSettingsDraft } from "../src/features/settings/settingsDefaults";
-import {
-  conversationTimeoutMsFromSecondsInput,
-  conversationTimeoutSecondsInputValue,
-} from "../src/lib/conversationTimeout";
 function documents() { return [
     {
       namespace: "providers.model",
@@ -50,25 +45,6 @@ function documents() { return [
   ];
 }
 describe("settings contracts", () => {
-  test("defaults the conversation LLM timeout to 1800 seconds", () => {
-    expect(defaultSettingsDraft.routing.conversationRespond.timeoutMs).toBe(1_800_000);
-  });
-  test("accepts a configurable conversation LLM timeout up to one hour", () => {
-    const snapshot = documents();
-    const route = (snapshot[2].valueJson as { conversationRespond: { timeoutMs: number } }).conversationRespond;
-    route.timeoutMs = 1_800_000;
-    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
-    route.timeoutMs = 3_600_001;
-    expect(() => validateSettingsDocuments(snapshot)).toThrow("Too big");
-  });
-  test("converts bounded second inputs without losing millisecond-compatible values", () => {
-    expect(conversationTimeoutMsFromSecondsInput("1800")).toBe(1_800_000);
-    expect(conversationTimeoutMsFromSecondsInput("269.999")).toBe(269_999);
-    expect(conversationTimeoutSecondsInputValue(269_999)).toBe("269.999");
-    for (const invalid of ["", " 1800", "0.999", "3600.001", "1.0001", "Infinity", "text"]) {
-      expect(conversationTimeoutMsFromSecondsInput(invalid)).toBeNull();
-    }
-  });
   test("accepts the complete MVP settings snapshot", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
   });

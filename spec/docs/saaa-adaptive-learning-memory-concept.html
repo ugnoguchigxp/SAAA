@@ -5,9 +5,11 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>Status: Concept。実装開始、学習algorithm採用、品質thresholdはいずれも未承認</li>
+    <li>Status: Concept; revision 2。実装開始、学習algorithm採用、品質thresholdはいずれも未承認</li>
     <li>Created: 2026-08-30</li>
+    <li>Revised: 2026-08-30</li>
     <li>Reviewed: 2026-08-30</li>
+    <li>SAAA baseline: <code>0f0d2cd</code></li>
     <li>Shipping client: macOS版SAAA desktop</li>
     <li>
       対象: Assist Planner、Context Broker、Conversation Runtime、Memory、ContextStill、Provider
@@ -17,7 +19,7 @@
   <p>
     本文書は、SAAAが日常の対話結果から個人に適応しつつ、保存したMemoryを毎TurnすべてLLMへ
     渡さないための概念境界を定義する。固定するのは、構造化Memory、制約付きContext選択、 小さなPolicy
-    Learner、検証可能な学習記録を分離するarchitectureである。LinUCBやRandom Forestなどの
+    Learner、検証可能な学習記録を分離するarchitectureである。LinUCBなどの
     個別algorithmは、本文書だけでは採用しない。
   </p>
   <p>
@@ -32,7 +34,12 @@
     現行baselineにはfeature gate配下のMemory control planeとactive Memory投影があるが、本文書の
     階層的selector、Learning
     Ledger、学習Policyが実装済みであるとはみなさない。既存挙動とConceptの差は、
-    後続の検証設計で明示的なbaselineとして扱う。
+    後続の検証設計で明示的なbaselineとして扱う。現行実装のContext
+    Healthは<code>green</code>と<code>yellow</code>のみを返し、RED状態は存在しない。minimal
+    rebuildが予算内へ収まらない場合はturn自体が失敗し、REDとして観測されない。Provider
+    requestの開始はContext Health statusでgateされていない。したがって§12の「Context
+    HealthがREDのEnvelopeは送信せず」と§16.3のContext
+    Health違反0件は、現時点でコード上未強制のinvariantである。§16のbaselineをこの差分の上で組む。
   </p>
 
   <h2 id="1-executive-decision">1. 結論とDecision Status</h2>
@@ -79,9 +86,12 @@
         <td>online linear contextual banditを第一候補とする</td>
       </tr>
       <tr>
-        <td>非線形補正</td>
-        <td>検証仮説</td>
-        <td>Random Forest residualをshadow challenger候補とする</td>
+        <td>学習器stateの再構成性</td>
+        <td>固定</td>
+        <td>
+          replay可能なexample
+          logと定期checkpointから常に再構成できる状態に保ち、不可逆なonline更新を 主経路にしない
+        </td>
       </tr>
       <tr>
         <td>長期的な会話戦略</td>
@@ -94,7 +104,7 @@
   <h2 id="2-problem-decomposition">2. 問題の分解</h2>
   <p>
     「普段の会話から学ぶ」という表現には、性質の異なる五つの問題が混在している。これらを一つの
-    Random ForestやNeural Networkへ入力しても、責務、正解、失敗時のrollbackを定義できない。
+    学習器やNeural Networkへ入力しても、責務、正解、失敗時のrollbackを定義できない。
   </p>
   <table>
     <caption>
@@ -244,6 +254,65 @@ Presentation</code></pre>
     </tbody>
   </table>
 
+  <h3 id="41-term-mapping">4.1 ConceptとMVP 3の用語対応</h3>
+  <p>
+    MVP 3実装契約の用語を正本とする。Concept独自語は独自と明記し、対応表なしで語彙を二重化しない。
+  </p>
+  <table>
+    <caption>
+      Table: Concept and MVP 3 term mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Concept term</th>
+        <th scope="col">MVP 3 term</th>
+        <th scope="col">関係</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Per-turn Working Set</td>
+        <td><code>ContextEnvelope</code></td>
+        <td>同一対象。MVP 3の型名を正本とする</td>
+      </tr>
+      <tr>
+        <td>Context Health</td>
+        <td>Context Health</td>
+        <td>同一。MVP 3 §9.3が正本</td>
+      </tr>
+      <tr>
+        <td>User Core / Working State / Continuity Capsule</td>
+        <td>同名</td>
+        <td>同一</td>
+      </tr>
+      <tr>
+        <td>Raw Event Store</td>
+        <td>Recent Raw / Recalled Raw</td>
+        <td>同一正本。MVP 3は投影経路で2種に分ける</td>
+      </tr>
+      <tr>
+        <td>Reusable Knowledge</td>
+        <td>Episode / Rule / Skill</td>
+        <td>MVP 3の3分類をConceptが束ねた呼称</td>
+      </tr>
+      <tr>
+        <td>MemoryPlan</td>
+        <td>なし</td>
+        <td>Concept独自。ContextEnvelope組み立て前のref計画</td>
+      </tr>
+      <tr>
+        <td>Candidate Index</td>
+        <td>なし</td>
+        <td>Concept独自。本文を読まずに選択可否を判断する派生projection</td>
+      </tr>
+      <tr>
+        <td>Learning Ledger / Route plan / Skill Runtime State</td>
+        <td>なし</td>
+        <td>Concept独自。MVP 3契約には対応物がない</td>
+      </tr>
+    </tbody>
+  </table>
+
   <h2 id="5-record-lifecycle">5. Memory RecordとLifecycle</h2>
   <h3 id="51-record-semantics">5.1 Record semantics</h3>
   <p>
@@ -280,9 +349,10 @@ active
   <p>
     LLMの要約、Reflection、反復観測はcandidateを作れるが、それだけでconfirmed factやactive Ruleへ
     昇格させない。訂正時は過去Evidenceを改変して一つへ溶かさず、関係を保持したまま新しいactive
-    revisionを
-    指す。削除は新規投影を止めるだけでなく、可能な範囲で派生Candidate、Index、学習example、model
-    revisionへのlineageを無効化し、再構築またはrollbackの対象にする。
+    revisionを 指す。削除は新規投影を止めるだけでなく、example
+    logから該当exampleを除去し、直前のcheckpointから replayしてmodel
+    revisionを再生成する。旧revisionはsupersededとし、派生CandidateとIndexは再構成後の
+    revisionに合わせる。
   </p>
 
   <h3 id="53-conflict-resolution">5.3 矛盾とauthority</h3>
@@ -397,10 +467,22 @@ subject to
   provider input and output reserve preserved
   deleted / expired / forbidden source count = 0
   selected set may be empty</code></pre>
+  <ul>
+    <li>
+      required information coverageは、Assist intentごとの必須スロットchecklistで表す。スロットは
+      要求の決定論的パースから導き、主体、時点、制約の対象、出典の要否を含む。
+    </li>
+    <li>
+      coverage failureは、当該スロットを充填できる候補がCandidate Indexに存在するにもかかわらず、
+      選択後のWorking Setで未充填スロットが残る状態と定義する。
+    </li>
+    <li>この定義は学習器なしでoffline計測できる。§16.1のB0からB3まで同一定義で比較する。</li>
+  </ul>
   <p>
-    「最小」は単に短いことではない。Taskを正しく処理するために必要なcoverageを満たしたうえで、不要な
-    情報がないことを意味する。coverageを満たせない場合は、薄いContextで断定せず、targeted recall、
-    確認、またはabstentionへ移る。
+    coverage failureは選択漏れである。充填候補がCandidate Indexに無い場合はselectorのcoverage
+    failureではない。「最小」は単に短いことではない。Taskを正しく
+    処理するために必要なcoverageを満たしたうえで、不要な情報がないことを意味する。coverageを満たせない
+    場合は、薄いContextで断定せず、targeted recall、確認、またはabstentionへ移る。
   </p>
   <h3 id="61-memory-plan-contract">6.1 MemoryPlanの概念契約</h3>
   <p>
@@ -420,8 +502,7 @@ subject to
     validityが変わった場合は、古い計画を送信せず再検査する。
   </p>
   <p>
-    Hot、Warm、Coldは永続Memory typeにしない。Warmに相当するCandidate Indexは本文cacheではなく、
-    各Turnで選択可否を判断するmetadata
+    Candidate Indexは本文cacheではなく、各Turnで選択可否を判断するmetadata
     projectionである。前Turnで選んだMemoryを無条件に持ち越さない。
   </p>
 
@@ -458,32 +539,44 @@ subject to
     rewardを無理に今回へ帰属させない。その場合はbandit仮説を棄却し、状態遷移を持つ別Policyとして再設計する。
   </p>
 
+  <h3 id="73-sample-budget">7.3 Sample budget</h3>
+  <p>
+    単一userのdesktop
+    clientでは、学習に使える分岐が恒久的に不足しうる。線形Policyを実装する前に、次のsample
+    budgetを確定する。
+  </p>
+  <ol>
+    <li>
+      <strong>測定対象:</strong> 既存baselineのlogから、guardで自動決定されず選択が実際に分岐する
+      turn数、§9.1上位2層に該当する強いoutcome件数、および§10が要求するprovider fingerprint別・
+      revision別・recency window別に分割した後のセルあたり有効標本数を測る。
+    </li>
+    <li>
+      <strong>測定主体:</strong> 学習器の実装前に、既存の投影経路へ§9.2が求めるlogged
+      decisionの記録を追加して測る。本文書はその実装を含まない。この計測がsample
+      budget確定の前提である。
+    </li>
+    <li>
+      <strong>停止条件:</strong>
+      セルあたり有効標本が特徴次元数を下回る場合、線形Policyを実装しない。
+      固定Policyを結論として採用し、§15の仮説1を実装前に棄却する。
+    </li>
+  </ol>
+
   <h2 id="8-guarded-hybrid-policy">8. Guarded Hybrid Policy</h2>
   <h3 id="81-primary-candidate">8.1 Linear policy candidate</h3>
   <p>
     初期候補はonline linear contextual banditである。少量の個人データから逐次更新しやすく、予測と
     不確実性を分けられ、Mac上でforegroundを妨げない計算量に収めやすい。LinUCBまたはBayesian linear
-    policyは候補であり、固定routingより良いことを時系列検証できなければ採用しない。
-  </p>
-
-  <h3 id="82-nonlinear-challenger">8.2 Random Forest residual candidate</h3>
-  <p>
-    Random Forestは線形Policyが残した系統的な誤差を予測するshadow challenger候補とする。線形Policyの
-    不確実性推定を置き換えず、探索、Safety、権限判定に使わない。時系列holdoutで再現性のある改善があり、
-    失敗group、calibration、latency、model sizeが許容される場合だけ、boundedな補正として評価する。
-  </p>
-  <p>
-    データが少ない、drift後である、provider
-    fingerprintが未知である、線形残差に安定した構造がない場合は 無効のままとする。Random
-    Forestという方式そのものに価値は置かず、単純なPolicyへ戻れることを優先する。
+    policyは候補であり、固定routingより良いことを時系列検証できなければ採用しない。逐次更新するとしても、
+    example logとcheckpointを正本とし、メモリ上の更新は再構成可能な派生に留める。
   </p>
   <pre><code class="language-text">candidate score
   = calibrated linear expected utility
   + allowed uncertainty term
-  + validated bounded residual
   - context / latency / risk costs</code></pre>
 
-  <h3 id="83-model-lifecycle">8.3 Model lifecycle</h3>
+  <h3 id="82-model-lifecycle">8.2 Model lifecycle</h3>
   <pre><code class="language-text">draft → shadow → candidate → active → superseded
                     │            │
                     └→ rejected  └→ rolled back</code></pre>
@@ -546,7 +639,9 @@ subject to
   <ul>
     <li>
       学習例がないUser、未知のSituation、未知のproviderでは、決定論的な最小Context
-      baselineから始める。 学習しないことと追加Memoryなしを正常状態とする。
+      baselineから始める。学習しないことと追加Memoryなしを正常状態とする。単一userのdesktop
+      clientでは恒久的にcold startである可能性を、棄却可能な選択肢として扱う。cold
+      startを一時状態とだけ扱わない。
     </li>
     <li>
       Userごとのデータ量を前提にせず、globalな個人情報を共有しない。共有する場合は個人情報を含まない
@@ -606,12 +701,12 @@ subject to
       </tr>
       <tr>
         <td>Soft idle</td>
-        <td>確定feedback反映、小さな線形更新、Candidate metadata整理</td>
+        <td>確定feedback反映、再構成可能な線形更新、Candidate metadata整理</td>
         <td>発話、ASR、TTS、Meeting、Provider実行の開始</td>
       </tr>
       <tr>
         <td>Hard idle</td>
-        <td>challenger再学習、reflection、consolidation、Procedure候補生成、offline評価</td>
+        <td>shadow再学習、reflection、consolidation、Procedure候補生成、offline評価</td>
         <td>Foreground需要またはresource pressure</td>
       </tr>
     </tbody>
@@ -706,6 +801,16 @@ subject to
   </table>
 
   <h2 id="15-falsifiable-hypotheses">15. 検証仮説と棄却条件</h2>
+  <p>
+    Userから見た成功は、次の条件が観測できたときに限る。これらが観測できない場合は、architectureの
+    内部的な正しさを採用理由にしない。
+  </p>
+  <ul>
+    <li>同じ前提をuserが繰り返し説明する回数が減る。</li>
+    <li>誤った前提に基づく応答が減る。</li>
+    <li>過去の事実を問う質問に、出典付きで答えられる割合が上がる。</li>
+    <li>foreground latencyとtoken costが悪化しない。</li>
+  </ul>
   <table>
     <caption>
       Table: Falsifiable hypotheses
@@ -729,13 +834,6 @@ subject to
         <td>Context量を減らしても必要情報coverage、訂正率、Task成功を維持できない</td>
       </tr>
       <tr>
-        <td>Random Forest residualは非線形誤差を補う</td>
-        <td>線形Policyのみ</td>
-        <td>
-          chronological holdoutで一貫した増分価値がない、calibrationまたはresource負荷が悪化する
-        </td>
-      </tr>
-      <tr>
         <td>短期banditとして扱える</td>
         <td>帰属window別の分析</td>
         <td>主要価値が遅延・複数Turnの状態遷移に依存し、今回の選択へ安定して帰属できない</td>
@@ -754,7 +852,8 @@ subject to
   </table>
   <p>
     仮説が棄却された場合、より複雑なmodelを自動追加しない。固定Policy、明示設定、targeted recall、
-    full Skill readなど、検証済みの単純な経路へ戻る。
+    full Skill readなど、検証済みの単純な経路へ戻る。§7.3の停止条件に該当する場合、仮説1は実装前に
+    棄却する。
   </p>
 
   <h2 id="16-evaluation-framework">16. 検証Framework</h2>
@@ -764,12 +863,10 @@ subject to
     <li>B1: 現行相当のactive Memory投影</li>
     <li>B2: 学習しないrule / semantic selector</li>
     <li>B3: Guard + linear Policy</li>
-    <li>B4: Guard + linear Policy + validated residual</li>
   </ol>
   <p>
-    保存、候補生成、route selection、set
-    selection、本文解決、Provider生成を別々にablationし、改善源を
-    特定する。B4が良くてもB3との差が確認できなければRandom Forestは採用しない。
+    B0からB3は§6のrequired information coverage定義で比較する。保存、候補生成、route selection、set
+    selection、本文解決、Provider生成を別々にablationし、改善源を特定する。
   </p>
 
   <h3 id="162-test-design">16.2 Test design</h3>
@@ -786,7 +883,7 @@ subject to
     </li>
     <li>明示feedback、機械的outcome、暗黙signalを混ぜず、signal別の寄与と誤差を確認する。</li>
     <li>
-      期待utilityだけでなく、uncertainty
+      期待utilityだけでなく、予測のuncertainty
       coverageとcalibrationを確認し、過信したPolicyを探索へ使わない。
     </li>
     <li>offline replay、supportのあるoff-policy評価、shadow、限定的canaryの順で証拠を強める。</li>
@@ -809,20 +906,18 @@ subject to
   </p>
 
   <h2 id="17-open-questions">17. Open Questions</h2>
-  <p>以下は実装時の自由項目ではなく、検証設計で解消してから採用判断する未決事項である。</p>
+  <p>
+    以下は実装時の自由項目ではなく、検証設計で解消してから採用判断する未決事項である。学習器stateの
+    再構成性は§1、required information coverageは§6で決定したため、本節から外す。
+  </p>
   <ul>
     <li>Route plan templateをどこまで組合せ可能にし、action supportをどう確保するか。</li>
-    <li>Candidate setのcoverage、冗長性、矛盾、costをどの独立指標で測るか。</li>
+    <li>Candidate setの冗長性、矛盾、costをどの独立指標で測るか。</li>
     <li>自然な会話だけで明示feedbackを得る範囲と、Review UIを必要とする判断はどこか。</li>
     <li>Soft idleをambient microphoneの無音中まで許可するか、microphone inactiveに限定するか。</li>
-    <li>
-      Personal dataを共有せずにcold-start priorを作れるか。作れない場合は固定baselineで十分か。
-    </li>
+    <li>Personal dataを共有せずにcold-start priorを作れるか。</li>
     <li>Provider変更後に旧学習例を再利用できる同等性条件をどう検証するか。</li>
     <li>遅延rewardがどの程度ならbandit仮説を棄却するか。</li>
-    <li>
-      User削除要求に対する派生modelのunlearningを、再学習とrevision rollbackのどちらで保証するか。
-    </li>
   </ul>
 
   <h2 id="18-non-goals">18. 非目標</h2>
@@ -832,7 +927,11 @@ subject to
     <li>ユーザー別LoRA、online fine-tuning、neural long-term memoryを初期主経路にしない。</li>
     <li>Vector DBまたはEmbeddingを必須dependencyにしない。</li>
     <li>全Memory、全Skill、全過去会話をContextへ投入しない。</li>
-    <li>Random ForestへRaw会話本文または巨大な疎text vectorを直接与えない。</li>
+    <li>
+      非線形residual補正（Random Forest）を初期主経路にしない。単一userのデータ量では chronological
+      holdoutで増分価値を検証できないため、個人情報を含まない横断学習のPrivacy
+      contractが成立した場合のみ再検討する。
+    </li>
     <li>ContextStillをPersonal Memory DB、Raw会話検索service、権限管理器へ変更しない。</li>
     <li>Memory utilityの最大化を、User満足、Safety、真実性の代理として無条件に扱わない。</li>
     <li>
@@ -847,7 +946,14 @@ subject to
         >Optimizing User Profiles via Contextual Bandits for Retrieval-Augmented LLM
         Personalization</a
       >
-      — semantic similarityだけでなくgeneration utilityからprofile setを選ぶ検証例。
+      — semantic similarityだけでなくgeneration utilityからprofile
+      setを選ぶ検証例。rewardはreference
+      responseのlikelihoodであり、正解応答が与えられたbenchmark上で成立する。学習は9個の
+      personalizationタスクを横断し、単一userのonline
+      feedbackではない。選択機構は線形banditではなく、 順序依存を扱うPlackett-Luce ranking
+      modelである。SAAAは§9.1で信号を疎な明示feedbackと機械検証に
+      限り、§10で横断学習を禁じるため、同一条件は成立しない。本引用は仮説の成立根拠ではなく、成立条件を
+      示す資料として扱う。
     </li>
     <li>
       <a href="https://arxiv.org/abs/2410.10813"
@@ -865,9 +971,11 @@ subject to
     </li>
     <li>
       <a href="https://arxiv.org/abs/2504.14225"
-        >PERSONAMEM: Improving Personalized Language Model through Dynamic User Profiling</a
+        >Know Me, Respond to Me: Benchmarking LLMs for Dynamic User Profiling and Personalized
+        Responses at Scale</a
       >
-      — static profileではなく会話に応じたdynamic profilingを評価する先行例。
+      — PERSONAMEMはbenchmark名であり、改善手法ではなく評価用datasetである。static
+      profileではなく会話に応じたdynamic profilingを評価する。
     </li>
     <li>
       <a href="https://proceedings.mlr.press/v70/wang17a.html"
@@ -877,9 +985,11 @@ subject to
     </li>
     <li>
       <a href="https://proceedings.mlr.press/v206/liu23d.html"
-        >Off-Policy Evaluation for Nonstationary Contextual Bandits</a
+        >Asymptotically Unbiased Off-Policy Policy Evaluation when Reusing Old Data in Nonstationary
+        Environments</a
       >
-      — distributionとpolicyが時間変化する場合の評価を分離する根拠。
+      — distributionとpolicyが時間変化する場合の評価を分離する根拠。fingerprintを跨いだ学習例を
+      poolしない。
     </li>
     <li>
       <a href="https://proceedings.mlr.press/v119/su20a.html"
@@ -909,7 +1019,7 @@ subject to
   </p>
   <p>
     次の成果物は実装計画ではなく、Section 15の仮説をSection
-    16のbaselineとscenarioで判定する検証設計と する。検証結果により、線形Policy、Random Forest
-    residual、または学習器を使わない固定Policyのいずれも 正当な結論になりうる。
+    16のbaselineとscenarioで判定する検証設計とする。検証結果により、線形Policy、または学習器を使わない
+    固定Policyのいずれも正当な結論になりうる。§7.3の停止条件は、後者を実装前に採用する。
   </p>
 </article>

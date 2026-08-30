@@ -455,7 +455,8 @@ pub(crate) async fn execute_conversation_turn(
         )
     };
     if route.source == "harness" {
-        resolve_harness_llm_provider(&mut providers, cancellation.clone()).await?;
+        resolve_harness_llm_provider(&mut providers, route.timeout_ms, cancellation.clone())
+            .await?;
     }
     let reasoning_effort = providers.reasoning_effort.clone();
     let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
