@@ -6,12 +6,12 @@ describe("meeting contracts", () => {
     expect(typeof meetingPreflight).toBe("function");
   });
   test("keeps continuous Chat ASR separate from Meeting segment ASR", () => {
-    const chat = ["../src/features/voice/useAmbientVoiceSession.ts", "../src/features/voice/voiceSegmentProcessor.ts"]
+    const chat = ["../src/features/voice/useAmbientVoiceSession.ts", "../src/features/voice/voiceAsrPacketSender.ts"]
       .map((path) => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
     const meeting = readFileSync(new URL("../src/features/meeting/useMeetingSession.ts", import.meta.url), "utf8");
-    expect(chat).toContain("context.transcribe ?? transcribeAudio");
+    expect(chat).toContain("appendVoiceAsrAudio");
     expect(typeof transcribeAudioChunk).toBe("function");
-    expect(chat).toContain("AmbientVoiceTranscriber");
+    expect(chat).toContain("VoiceAsrPacketSender");
     expect(readFileSync(new URL("../src/lib/voiceRuntime.ts", import.meta.url), "utf8")).toContain('"transcribe_audio_chunk"');
     expect(readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8")).toContain("transcribe_audio_chunk,");
     expect(meeting).toContain("appendMeetingAudioSegment({");

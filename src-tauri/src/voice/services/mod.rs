@@ -6,5 +6,9 @@ pub(crate) mod cloud_tts;
 pub(crate) mod language;
 #[path = "../session.rs"]
 pub(crate) mod session;
+#[path = "../speaker.rs"]
+pub mod speaker;
+#[path = "../streaming_asr/mod.rs"]
+pub mod streaming_asr;
 #[path = "../system_tts.rs"]
 pub(crate) mod system_tts;

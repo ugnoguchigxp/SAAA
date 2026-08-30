@@ -12,6 +12,7 @@ import { localizeProviderLabel, localizeStatus, localizeUiMessage } from "../../
 import {
   conversationTimeoutMsFromSecondsInput,
   conversationTimeoutSecondsInputValue,
+  LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS,
   MAX_CONVERSATION_TIMEOUT_SECONDS,
   MIN_CONVERSATION_TIMEOUT_SECONDS,
 } from "../../lib/conversationTimeout";
@@ -27,11 +28,13 @@ export function ServiceConnectionsSection({
   routing,
   onProvidersChange,
   onRoutingChange,
+  onValidityChange,
 }: {
   providers: ModelProvidersSettings;
   routing: RoutingSettings;
   onProvidersChange: (value: ModelProvidersSettings) => void;
   onRoutingChange: (value: RoutingSettings) => void;
+  onValidityChange: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [resolution, setResolution] = useState<HarnessResolution | null>(null);
@@ -145,6 +148,8 @@ export function ServiceConnectionsSection({
           </Field>
           <ConversationTimeoutField
             timeoutMs={routing.conversationRespond.timeoutMs}
+            legacyDynamicLan={resolution?.revision === "agent-connection.v1"}
+            onValidityChange={onValidityChange}
             onChange={(timeoutMs) => onRoutingChange({
               ...routing,
               conversationRespond: { ...routing.conversationRespond, timeoutMs },
@@ -206,9 +211,13 @@ export function ServiceConnectionsSection({
 
 function ConversationTimeoutField({
   timeoutMs,
+  legacyDynamicLan,
+  onValidityChange,
   onChange,
 }: {
   timeoutMs: number;
+  legacyDynamicLan: boolean;
+  onValidityChange: (valid: boolean) => void;
   onChange: (timeoutMs: number) => void;
 }) {
   const { t } = useTranslation();
@@ -216,8 +225,13 @@ function ConversationTimeoutField({
   const [inputValue, setInputValue] = useState(canonicalValue);
   const parsedTimeoutMs = conversationTimeoutMsFromSecondsInput(inputValue);
   const invalid = parsedTimeoutMs === null;
+  const legacyLimitExceeded = legacyDynamicLan
+    && timeoutMs > LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS;
+  const fieldInvalid = invalid || legacyLimitExceeded;
 
   useEffect(() => setInputValue(canonicalValue), [canonicalValue]);
+  useEffect(() => onValidityChange(!fieldInvalid), [fieldInvalid, onValidityChange]);
+  useEffect(() => () => onValidityChange(true), [onValidityChange]);
 
   return (
     <Field label={t("settings.connection.llmTimeoutSeconds")}>
@@ -228,7 +242,7 @@ function ConversationTimeoutField({
         step={0.001}
         value={inputValue}
         aria-describedby="llm-timeout-seconds-help"
-        aria-invalid={invalid}
+        aria-invalid={fieldInvalid}
         onChange={(event) => {
           const next = event.currentTarget.value;
           setInputValue(next);
@@ -247,9 +261,13 @@ function ConversationTimeoutField({
       />
       <small
         id="llm-timeout-seconds-help"
-        className={invalid ? "settings-field-hint error" : "settings-field-hint"}
+        className={fieldInvalid ? "settings-field-hint error" : "settings-field-hint"}
       >
-        {t(invalid ? "settings.connection.llmTimeoutInvalid" : "settings.connection.llmTimeoutHint")}
+        {t(invalid
+          ? "settings.connection.llmTimeoutInvalid"
+          : legacyLimitExceeded
+            ? "settings.connection.llmTimeoutLegacyLimit"
+            : "settings.connection.llmTimeoutHint")}
       </small>
     </Field>
   );

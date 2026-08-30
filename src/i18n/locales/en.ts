@@ -214,6 +214,7 @@ export const en = {
       llmTimeoutSeconds: "LLM timeout (seconds)",
       llmTimeoutHint: "1–3600 seconds. New settings default to 1800 seconds.",
       llmTimeoutInvalid: "Enter a value from 1 to 3600 seconds.",
+      llmTimeoutLegacyLimit: "This Legacy Dynamic LAN connection is limited to 269.999 seconds. Update the Harness or LARM to use 1800 seconds.",
       low: "Low",
       medium: "Medium (recommended)",
       extraHigh: "Extra high",

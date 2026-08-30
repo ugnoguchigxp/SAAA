@@ -8,6 +8,8 @@ use std::{
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+pub(crate) mod streaming_verifier;
+
 const PROFILE_ID: &str = "default";
 const KEYCHAIN_SERVICE: &str = "com.saaa.desktop.voice-profile.v1";
 const KEYCHAIN_ACCOUNT: &str = "default-master-key-v1";

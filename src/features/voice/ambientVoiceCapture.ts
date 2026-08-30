@@ -12,7 +12,6 @@ import {
 } from "../../lib/microphone";
 import { VoiceActivityDetector } from "../../lib/voiceActivity";
 import type { VoiceSessionEvent } from "../../lib/voiceSession";
-import type { VoiceFrameBuffer } from "./voiceFrameBuffer";
 
 const MAX_VOICE_SEGMENT_SECONDS = 30;
 
@@ -31,14 +30,13 @@ export async function attachAmbientVoiceCapture(context: {
   audioContext: MutableRefObject<AudioContext | null>;
   source: MutableRefObject<MediaStreamAudioSourceNode | null>;
   node: MutableRefObject<AudioWorkletNode | null>;
-  frames: MutableRefObject<VoiceFrameBuffer>;
-  preRollFrames: MutableRefObject<VoiceFrameBuffer>;
   flushResolver: MutableRefObject<(() => void) | null>;
   activityDetector: MutableRefObject<VoiceActivityDetector | null>;
   captureLease: MutableRefObject<(() => void) | null>;
   applyEvent: (event: VoiceSessionEvent) => unknown;
   finishSegment: () => void;
-  transcribeFrame: (frame: Float32Array, sampleRate: number) => void;
+  packetFrame: (frame: Float32Array) => void;
+  packetCount: () => number;
   clearTranscript: () => void;
   setError: (message: string) => void;
 }): Promise<void> {
@@ -70,16 +68,10 @@ export async function attachAmbientVoiceCapture(context: {
     if (context.activityDetector.current === activityDetector) context.activityDetector.current = null;
   };
   const disposeOwnedCapture = async () => {
-    const ownsBufferedAudio = (node !== null && context.node.current === node)
-      || (audioContext !== null && context.audioContext.current === audioContext);
     if (node) node.port.onmessage = null;
     node?.disconnect();
     source?.disconnect();
     await disposeMicrophoneCapture(stream, audioContext);
-    if (ownsBufferedAudio) {
-      context.frames.current.clear();
-      context.preRollFrames.current.clear();
-    }
     clearOwnedReferences();
     releaseOwnedCapture();
   };
@@ -94,8 +86,10 @@ export async function attachAmbientVoiceCapture(context: {
       return;
     }
     context.stream.current = stream;
-    audioContext = new AudioContext();
+    // The stream is registered before constructing the AudioContext.
+    audioContext = new AudioContext({ sampleRate: 16_000 });
     const activeContext = audioContext;
+    if (activeContext.sampleRate !== 16_000) throw new MicrophoneCaptureError("startup-interrupted", "Streaming transcription requires a 16 kHz audio context.");
     context.audioContext.current = activeContext;
     await activeContext.audioWorklet.addModule("/audio/meeting-processor.js");
     if (stale()) {
@@ -106,8 +100,6 @@ export async function attachAmbientVoiceCapture(context: {
     node = new AudioWorkletNode(activeContext, "meeting-processor");
     context.source.current = source;
     context.node.current = node;
-    context.frames.current.clear();
-    context.preRollFrames.current.clear();
     activityDetector = detector(context.settings, activeContext.sampleRate);
     context.activityDetector.current = activityDetector;
     node.port.onmessage = (event: MessageEvent<Float32Array | { type: "flushed" }>) => {
@@ -116,22 +108,10 @@ export async function attachAmbientVoiceCapture(context: {
         if (event.data.type === "flushed") context.flushResolver.current?.();
         return;
       }
-      context.transcribeFrame(event.data, activeContext.sampleRate);
+      // ASR receives every frame before VAD; VAD only decides commit boundaries.
+      context.packetFrame(event.data);
       const observation = context.activityDetector.current?.observe(event.data);
-      if (!observation?.hasSpeech) {
-        if (!context.activityDetector.current && context.frames.current.sampleCount > 0) {
-          context.frames.current.append(event.data);
-          return;
-        }
-        context.preRollFrames.current.append(event.data);
-        context.preRollFrames.current.trimStartTo(Math.round(activeContext.sampleRate * 0.5));
-        return;
-      }
-      if (context.frames.current.sampleCount === 0 && context.preRollFrames.current.sampleCount > 0) {
-        context.frames.current.append(context.preRollFrames.current.take());
-      }
-      context.frames.current.append(event.data);
-      if (observation.shouldFinalize || context.frames.current.sampleCount >= activeContext.sampleRate * MAX_VOICE_SEGMENT_SECONDS) {
+      if (observation?.hasSpeech && (observation.shouldFinalize || context.packetCount() >= MAX_VOICE_SEGMENT_SECONDS * 10)) {
         context.finishSegment();
         return;
       }

@@ -1,0 +1,3 @@
+import { describe, expect, test } from "bun:test";
+import { VoiceFinalDeliveryQueue } from "../src/features/voice/voiceFinalDeliveryQueue";
+describe("VoiceFinalDeliveryQueue", () => test("deduplicates utterance ids without consuming capacity", () => { const queue = new VoiceFinalDeliveryQueue(); const value = { sessionId: "s", utteranceId: "u", conversationId: "c", text: "x" }; expect(queue.push(value)).toBe("accepted"); expect(queue.push(value)).toBe("duplicate"); expect(queue.push({ ...value, utteranceId: "u2" })).toBe("accepted"); expect(queue.push({ ...value, utteranceId: "u3" })).toBe("full"); }));

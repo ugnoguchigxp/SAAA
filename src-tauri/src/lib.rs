@@ -61,6 +61,10 @@ pub(crate) use runtime::turns::prepare_runtime_run;
 pub(crate) use runtime::turns::{execute_turn, finish_runtime_run, send_runtime_terminal_event};
 pub(crate) use situation::spawn_situation_monitor;
 pub(crate) use util::{database_error, new_id, now_iso, validate_identifier};
+use voice::streaming_asr::{
+    append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
+    stop_voice_asr_session, AsrSessionManager,
+};
 use voice_commands::{
     delete_voice_enrollment_sample, delete_voice_profile, get_voice_profile_snapshot,
     list_tts_capabilities, read_voice_enrollment_sample, resolve_network_asr,
@@ -97,6 +101,7 @@ struct AppState {
     situation: Arc<situation::SituationRuntime>,
     meeting: Arc<meeting::MeetingRuntime>,
     voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
+    voice_asr: AsrSessionManager,
 }
 
 #[derive(Clone)]
@@ -525,6 +530,7 @@ fn list_messages(
 #[tauri::command]
 
 fn shutdown_app_state(state: &AppState) {
+    state.voice_asr.shutdown();
     if let Ok(mut process) = state.tts_process.lock() {
         if let Some(mut active) = process.take() {
             let _ = active.child.kill();
@@ -630,6 +636,7 @@ pub fn run() {
                 situation,
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
                 voice_profile,
+                voice_asr: AsrSessionManager::default(),
             });
             Ok(())
         })
@@ -694,6 +701,10 @@ pub fn run() {
             resolve_network_asr,
             transcribe_audio_chunk,
             transcribe_audio,
+            start_voice_asr_session,
+            append_voice_asr_audio,
+            commit_voice_asr_utterance,
+            stop_voice_asr_session,
             speak_text,
             list_tts_capabilities,
             stop_tts,

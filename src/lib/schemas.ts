@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { ASR_LANGUAGE_CODES } from "./asrLanguages";
-import { MAX_CONVERSATION_TIMEOUT_MS, MIN_CONVERSATION_TIMEOUT_MS } from "./conversationTimeout";
+import {
+  LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS,
+  MAX_CONVERSATION_TIMEOUT_MS,
+  MIN_CONVERSATION_TIMEOUT_MS,
+} from "./conversationTimeout";
 import { runtimeFailureCodes } from "./generated/runtimeEvent";
 import { modelProvidersSettingsSchema, providerIdSchema } from "./providerSchemas";
 import { CURRENCY_CODES, DISPLAY_LANGUAGE_PREFERENCES, isSupportedTimeZone, LENGTH_UNIT_SYSTEMS, WEIGHT_UNITS } from "./regionalPreferences";
 export { modelProvidersSettingsSchema } from "./providerSchemas";
-
-export const DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS = 269_999;
 
 export const runtimeFailureCodeSchema = z.enum(runtimeFailureCodes);
 
@@ -194,8 +196,8 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const primary = primaryId ? enabled.get(primaryId) : undefined;
   if (routing.conversationRespond.source === "provider" && !primary) throw new Error("The primary conversation provider must be enabled");
   if (primary && !["openai-compatible", "larm", "dynamic-lan"].includes(primary.kind)) throw new Error("The selected conversation provider does not support LLM");
-  if (primary?.kind === "dynamic-lan" && routing.conversationRespond.timeoutMs > DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS) {
-    throw new Error(`dynamic LAN conversation timeout must not exceed ${DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS} ms`);
+  if (primary?.kind === "dynamic-lan" && routing.conversationRespond.timeoutMs > LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS) {
+    throw new Error(`dynamic LAN conversation timeout must not exceed ${LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS} ms`);
   }
   if (routing.conversationRespond.source === "harness" && routing.conversationRespond.fallbackProviderIds.length > 0) throw new Error("Harness routes do not use individual provider fallbacks");
   const routeIds = new Set(primaryId ? [primaryId] : []);

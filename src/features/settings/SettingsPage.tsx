@@ -58,6 +58,7 @@ export function SettingsPage({
   const source = useMemo(() => draftFromDocuments(documents, defaultSettingsDraft), [documents]);
   const [draft, setDraft] = useState<SettingsDraft>(source);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const [connectionSettingsValid, setConnectionSettingsValid] = useState(true);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<SaveNotice | null>(null);
   useEffect(() => {
@@ -132,6 +133,7 @@ export function SettingsPage({
               routing={draft.routing}
               onProvidersChange={(providers) => setDraft((current) => ({ ...current, providers }))}
               onRoutingChange={(routing) => setDraft((current) => ({ ...current, routing }))}
+              onValidityChange={setConnectionSettingsValid}
             />
           )}
           {activeTab === "providers" && (
@@ -162,7 +164,7 @@ export function SettingsPage({
         <p>{dirty ? t("settings.pendingRuntime") : t("settings.showingSaved")}</p>
         <div>
           <button className="discard-button" onClick={discard} disabled={!dirty || saveState === "saving"}>{t("settings.discard")}</button>
-          <button className="save-button" onClick={() => void save()} disabled={!dirty || saveState === "saving"}>{saveState === "saving" ? t("settings.saving") : t("settings.saveSettings")}</button>
+          <button className="save-button" onClick={() => void save()} disabled={!dirty || !connectionSettingsValid || saveState === "saving"}>{saveState === "saving" ? t("settings.saving") : t("settings.saveSettings")}</button>
         </div>
       </footer>
     </section>

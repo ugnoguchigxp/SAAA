@@ -29,6 +29,25 @@ pub(crate) struct ServiceDescriptor {
     #[serde(default)]
     pub(crate) voice: Option<String>,
     pub(crate) health_url: String,
+    #[serde(default)]
+    pub(crate) streaming: Option<AsrStreamingDescriptor>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AsrStreamingDescriptor {
+    pub(crate) protocol: String,
+    pub(crate) url: String,
+    pub(crate) sample_rate: u32,
+    pub(crate) encoding: String,
+    pub(crate) packet_milliseconds: u64,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct ResolvedAsrService {
+    pub(crate) batch: ServiceDescriptor,
+    pub(crate) streaming: Option<AsrStreamingDescriptor>,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +80,23 @@ pub(crate) async fn resolve_service(
     capability: &str,
 ) -> Result<ServiceDescriptor, String> {
     resolve_service_inner(address, capability).await
+}
+
+/// Resolves the batch ASR endpoint and, when advertised by a v2 harness, its
+/// compatible native stream endpoint from the same validated descriptor.
+#[allow(dead_code)]
+pub(crate) async fn resolve_asr_service(address: &str) -> Result<ResolvedAsrService, String> {
+    let descriptor = load_descriptor(address, true).await?;
+    let service = descriptor
+        .services
+        .into_iter()
+        .find(|service| service.capability == "asr")
+        .ok_or_else(|| "Provider Harness does not advertise asr".to_string())?;
+    health::probe(&service).await?;
+    Ok(ResolvedAsrService {
+        streaming: service.streaming.clone(),
+        batch: service,
+    })
 }
 
 pub(crate) async fn resolve_service_cancellable(
@@ -210,8 +246,10 @@ fn is_private_harness_host(url: &url::Url) -> bool {
 }
 
 fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Result<(), String> {
-    if descriptor.contract_version != "saaa-service-harness.v1"
-        || descriptor.revision.is_empty()
+    if !matches!(
+        descriptor.contract_version.as_str(),
+        "saaa-service-harness.v1" | "saaa-service-harness.v2"
+    ) || descriptor.revision.is_empty()
         || descriptor.revision.trim() != descriptor.revision
         || descriptor.revision.len() > 160
         || descriptor.revision.chars().any(char::is_control)
@@ -248,6 +286,9 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
                 && (service.language.is_some() || service.voice.is_some()))
             || (service.capability == "asr" && service.voice.is_some())
             || (service.capability == "tts" && service.language.is_some())
+            || (descriptor.contract_version == "saaa-service-harness.v1"
+                && service.streaming.is_some())
+            || (service.capability != "asr" && service.streaming.is_some())
         {
             return Err("Provider Harness returned an invalid service descriptor".to_string());
         }
@@ -268,6 +309,43 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
                 return Err("Provider Harness service URLs must use the configured host without credentials".to_string());
             }
         }
+        if let Some(streaming) = &service.streaming {
+            validate_streaming_descriptor(base, streaming)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_streaming_descriptor(
+    base: &url::Url,
+    streaming: &AsrStreamingDescriptor,
+) -> Result<(), String> {
+    if streaming.protocol != "saaa.asr-stream.v1"
+        || streaming.sample_rate != 16_000
+        || streaming.encoding != "pcm_s16le"
+        || streaming.packet_milliseconds != 100
+        || streaming.url.len() > 2_048
+    {
+        return Err("Provider Harness returned an invalid ASR streaming descriptor".to_string());
+    }
+    let url = url::Url::parse(&streaming.url)
+        .map_err(|_| "Provider Harness returned an invalid ASR streaming URL".to_string())?;
+    let expected_scheme = if base.scheme() == "https" {
+        "wss"
+    } else {
+        "ws"
+    };
+    if url.scheme() != expected_scheme
+        || url.host_str() != base.host_str()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "Provider Harness streaming URL must use the configured host without credentials"
+                .to_string(),
+        );
     }
     Ok(())
 }

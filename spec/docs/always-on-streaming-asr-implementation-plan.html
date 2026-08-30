@@ -167,15 +167,18 @@ pub(crate) const AUDIO_PACKET_SAMPLES: usize = 1_600;
 pub(crate) const AUDIO_PACKET_BYTES: usize = 3_200;
 pub(crate) const FRONTEND_PACKET_CAPACITY: usize = 10;
 pub(crate) const BACKEND_COMMAND_CAPACITY: usize = 32;
+pub(crate) const PROVIDER_EVENT_CAPACITY: usize = 16;
 pub(crate) const MAX_UTTERANCE_MS: u64 = 30_000;
 pub(crate) const MAX_PENDING_FINALS: usize = 2;
 pub(crate) const MAX_TRANSCRIPT_CHARS: usize = 16_000;
 pub(crate) const MAX_WS_TEXT_BYTES: usize = 65_536;
 pub(crate) const PROVIDER_READY_TIMEOUT_MS: u64 = 5_000;
+pub(crate) const PROVIDER_SEND_TIMEOUT_MS: u64 = 1_000;
 pub(crate) const STOP_ACK_TIMEOUT_MS: u64 = 2_000;
 pub(crate) const BATCH_MIN_AUDIO_MS: u64 = 1_800;
 pub(crate) const BATCH_HOP_MS: u64 = 600;
 pub(crate) const BATCH_HYPOTHESIS_CAPACITY: usize = 3;
+pub(crate) const MAX_CONSECUTIVE_BATCH_FAILURES: usize = 3;
 pub(crate) const SPEAKER_BLOCK_MS: u64 = 100;
 pub(crate) const SPEAKER_WINDOW_MS: u64 = 1_500;
 pub(crate) const SPEAKER_HOP_MS: u64 = 500;
@@ -287,19 +290,35 @@ pub(crate) const SPEAKER_RAW_BLOCK_CAPACITY: usize = 30;</code></pre>
     </li>
     <li>packetizerはFloat32を1,600 sampleずつPCM16LEへ変換する。</li>
     <li>
-      VADの<code>shouldFinalize</code>でpacket queueをdrainしてからcommitを送る。
+      VADの<code>shouldFinalize</code>でserial senderへcommit barrierを追加する。
     </li>
     <li>
       300
       packet到達時も<code>max-duration</code>理由でcommitし、VADをresetする。
     </li>
-    <li>commit受付を待つ間もWorklet frameは最大10 packetまでqueueへ蓄積できる。</li>
+    <li>
+      barrier前のaudio、commit、barrier後のaudioは同じoperation queueで必ずこの順にinvokeする。
+    </li>
+    <li>commit受付を待つ間もWorklet frameは最大10 audio packetまでbarrier後へ蓄積できる。</li>
   </ol>
   <p>
     <code>VoiceAsrPacketizer</code>は1,600 sample未満の端数を次frameまで保持する。
     通常commitでは端数を次発話へ持ち越す。session stopでfinalizeする場合だけzero paddingして1
     packetにし、 実音声長ではなくProviderへ送ったsample
     cursorを発話endとして扱う。追加silenceは最大99.94 msである。
+  </p>
+  <pre><code class="language-typescript">type VoiceAsrSenderOperation =
+  | { type: "audio"; sequence: number; bytes: Uint8Array }
+  | { type: "commit"; reason: "silence" | "max-duration" }
+  | { type: "stop"; finalizeCurrent: boolean };
+
+// enqueueCommitはoperationをaudio列の末尾へ同期的に追加し、
+// その後にappendされたaudioは必ずcommitより後ろへ入る。
+enqueueCommit(reason: CommitReason): Promise&lt;void&gt;;</code></pre>
+  <p>
+    capacity 10は未送信<code>audio</code>だけを数える。commit/stop
+    control operationは各1件まで許可し、
+    同種controlの重複enqueueは同じPromiseを返す。sequenceはaudio invoke成功後にだけ確定する。
   </p>
 
   <h3 id="42-backend">4.2 Backend session manager</h3>
@@ -381,6 +400,12 @@ struct SessionTask {
         <td><code>try_send</code>失敗、sessionをfatal error</td>
       </tr>
       <tr>
+        <td>Native event reader</td>
+        <td>検証済みProvider event</td>
+        <td>16件</td>
+        <td>readerをawaitさせWebSocketへbackpressure</td>
+      </tr>
+      <tr>
         <td>Current utterance</td>
         <td>Provider送信用sanitized PCM16</td>
         <td>30 s / 960,000 byte</td>
@@ -423,16 +448,25 @@ enum BatchAsrDescriptor {
 }
 
 #[async_trait]
-trait NativeAsrTransport: Send {
+trait NativeAsrSink: Send {
     async fn send_audio(&amp;mut self, pcm16le: Zeroizing&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;(), AsrFailure&gt;;
     async fn commit(&amp;mut self, current: &amp;str, next: &amp;str, end_sample: u64)
         -&gt; Result&lt;(), AsrFailure&gt;;
-    async fn next_event(&amp;mut self) -&gt; Result&lt;ProviderStreamEvent, AsrFailure&gt;;
     async fn stop(&amp;mut self) -&gt; Result&lt;(), AsrFailure&gt;;
+}
+
+struct NativeAsrConnection {
+    sink: Box&lt;dyn NativeAsrSink&gt;,
+    events: tokio::sync::mpsc::Receiver&lt;Result&lt;ProviderStreamEvent, AsrFailure&gt;&gt;,
+    reader_task: tokio::task::JoinHandle&lt;()&gt;,
 }</code></pre>
   <p>
     production実装は<code>HarnessWebSocketTransport</code>一つだけとする。
-    testは同じtraitへ<code>FakeNativeAsrTransport</code>を差し込む。
+    testは同じsinkとevent channelへ<code>FakeNativeAsrConnection</code>を差し込む。
+    WebSocketは<code>StreamExt::split</code>し、session actorはsink、専用reader
+    taskはstreamを所有する。 actorはcommand receiverとevent
+    receiverを<code>tokio::select!</code>し、受信待ちでaudio送信を止めない。
+    sinkの各sendは1,000 msでtimeoutさせ、timeout時は通常のNative failure/degrade policyへ渡す。
     batch経路は既存Cloud/Harness batch clientとlegacy
     <code>network_asr</code>を<code>BatchDecoder</code>
     traitで包む。route選択条件を複製せず、現行<code>select_asr</code>の型と関数を
@@ -503,7 +537,8 @@ pub(crate) struct AsrStreamingDescriptor {
     <li>v2 ASRのbatch fieldは現行ASRと同じ制約を満たす。</li>
     <li>
       <code>streaming</code
-      >はASRにだけ許可し、5つの値を上記literalへ完全一致させる。
+      >はASRにだけ許可する。protocol、sampleRate、encoding、packetMillisecondsは
+      上記literalへ完全一致させ、URLは次項のpolicyで検証する。
     </li>
     <li>
       WebSocket URLは2,048 byte以下、credential、query、fragmentなし、Harnessと同じhostとする。
@@ -840,7 +875,7 @@ any active ── stop(true) ─▶ finalizing current(max 15 s) ─▶ stopped 
    | PCM seq 0..N               |                         |                     |
    |===========================&gt;|========================&gt;|                     |
    |&lt;------ partial revision ---|&lt;-------- partial -------|                     |
-   | queue drain + commit       |                         |                     |
+   | serial commit barrier      |                         |                     |
    |---------------------------&gt;| move current/create next|                     |
    |                            |----------- commit -----&gt;|                     |
    | PCM for next utterance     |                         |                     |
@@ -852,6 +887,13 @@ any active ── stop(true) ─▶ finalizing current(max 15 s) ─▶ stopped 
   <h3 id="64-degrade-sequence">6.4 Native failure</h3>
   <ol>
     <li>session taskがnative failureをtyped codeへ変換する。</li>
+    <li>
+      serverのutterance付き<code>recoverable=true</code>
+      errorはその発話だけ失敗させ、Native sessionを継続する。
+    </li>
+    <li>
+      transport、protocol、timeout、<code>recoverable=false</code>はdegrade対象にする。
+    </li>
     <li>
       batch descriptorがあり、<code>degraded_once == false</code>ならnative taskを閉じる。
     </li>
@@ -951,7 +993,33 @@ any active ── stop(true) ─▶ finalizing current(max 15 s) ─▶ stopped 
       完了仮説は同じutterance、同じstart sample、増加するend sampleのものだけ最大3件保持する。
     </li>
     <li>30秒commitで計算量とmemoryを上限化する。</li>
+    <li>
+      batch成功またはno-speechでconsecutive
+      failureを0へ戻す。partial/finalを通じて3回連続で失敗した場合は
+      <code>asr-provider-unavailable</code>のfatal eventを送りsessionを停止する。
+    </li>
   </ul>
+  <pre><code class="language-rust">struct BatchEngine {
+    generation: u64,
+    in_flight: Option&lt;InFlightDecode&gt;,
+    pending_partial_end_sample: Option&lt;u64&gt;,
+    hypotheses: VecDeque&lt;BatchHypothesis&gt;,
+    result_rx: mpsc::Receiver&lt;BatchDecodeResult&gt;,
+}
+
+struct BatchDecodeResult {
+    generation: u64,
+    utterance_id: String,
+    kind: DecodeKind,
+    end_sample: u64,
+    outcome: Result&lt;BatchDecodeOutcome, AsrFailure&gt;,
+}</code></pre>
+  <p>
+    HTTP/network decodeはsession actorからtaskへspawnし、actorをawaitで止めない。
+    commit時はgenerationを増やしてpartial cancellationを通知し、final taskを最優先で開始する。
+    旧generationのresultは内容を適用せずzeroizeする。final完了後に次発話の最新pending
+    partialを開始する。
+  </p>
   <pre><code class="language-text">Request 1: audio [0 ms, 1800 ms] ─▶ H1 "クロードコ"
 Request 2: audio [0 ms, 2400 ms] ─▶ H2 "クロードコード"
 Request 3: audio [0 ms, 3000 ms] ─▶ H3 "クロードコードを使う"
@@ -1018,6 +1086,11 @@ H3 "クロードコードを使う"    → LCP(H3,H2) "クロードコード" / 
     <li>no-speechまたは空textは<code>utteranceDiscarded</code>にする。</li>
     <li>allowed languageを検証し、通過したtextをfinalの正本にする。</li>
     <li>partial agreement textをfinal失敗時の代用としてLLMへ送らない。</li>
+    <li>
+      final
+      decode失敗は対象<code>utteranceId</code>の<code>failed(fatal=false)</code>として通知し、
+      consecutive failureが3未満なら次発話を継続する。
+    </li>
   </ol>
 
   <h2 id="9-speaker">9. Transcription scopeとtarget-speaker gate</h2>
@@ -1081,6 +1154,10 @@ impl PreparedVoiceVerifier {
   <h3 id="93-voting">9.3 Block voting</h3>
   <ul>
     <li>1 blockは100 ms、windowは連続15 block、window startは5 blockごととする。</li>
+    <li>
+      window RMSが現行<code>vadSensitivity</code>の閾値未満ならspeaker
+      modelを呼ばずfail voteにする。 閾値はhigh 0.006、medium 0.008、low 0.012を既存実装と共有する。
+    </li>
     <li>window scoreがprofile threshold以上ならpass voteである。</li>
     <li>各blockは、それを含むwindowがすべて完了した時点でreleaseする。</li>
     <li>通常blockは3票中2票以上でacceptする。</li>
@@ -1198,6 +1275,10 @@ class VoiceFinalDeliveryQueue {
         <td>IPC input/event/failure、TS binding</td>
       </tr>
       <tr>
+        <td><code>voice/streaming_asr/commands.rs</code></td>
+        <td>4 Tauri commandをmanagerへ薄く委譲する</td>
+      </tr>
+      <tr>
         <td><code>voice/streaming_asr/manager.rs</code></td>
         <td>session map、sequence validation、bounded command send</td>
       </tr>
@@ -1295,7 +1376,10 @@ class VoiceFinalDeliveryQueue {
       <code>lib.rs</code>: AppState field、initialize、shutdown、4
       command登録だけ追加する。
     </li>
-    <li><code>voice_commands.rs</code>: 4 commandを薄くmanagerへ委譲する。</li>
+    <li>
+      <code>voice_commands.rs</code>: legacy batch/TTS commandだけを残し、streaming
+      commandを追加しない。
+    </li>
     <li>
       <code>service_harness.rs</code>: v1
       codeを保ち、ASR解決だけ<code>asr_v2</code>へ委譲する。
@@ -1328,10 +1412,15 @@ class VoiceFinalDeliveryQueue {
       移行完了後、<code>ambientVoiceTranscriber.ts</code>、<code>voiceSegmentQueue.ts</code>、<code>voiceSegmentProcessor.ts</code>を削除する。
     </li>
     <li>
-      <code>transcribe_audio_chunk</code> command、input、<code
-        >chat-asr-chunk</code
-      >
-      purpose、関連testを削除する。
+      <code>transcribe_audio</code>と<code>transcribe_audio_chunk</code>
+      command、両input、legacy
+      <code>VoiceEvent</code
+      >、<code>chat-asr</code>/<code>chat-asr-chunk</code>
+      upload purposeを削除する。
+    </li>
+    <li>
+      <code>src/lib/voiceRuntime.ts</code
+      >と<code>runtime.ts</code>のlegacy re-exportを削除する。
     </li>
     <li>
       Meetingが使う<code>transcribe_selected_audio</code>とbatch provider codeは削除しない。
@@ -1403,7 +1492,7 @@ class VoiceFinalDeliveryQueue {
       </tr>
       <tr>
         <td>ASR-07</td>
-        <td>packet carry、capacity、drain-before-commit</td>
+        <td>packet carry、capacity、audio-commit-audio barrier順序</td>
         <td>Frontend packetizer/sender/runtime wrapper</td>
         <td>全sampleを一度だけ送信し、overflowを表示</td>
       </tr>
@@ -1416,7 +1505,10 @@ class VoiceFinalDeliveryQueue {
       <tr>
         <td>ASR-09</td>
         <td>production sourceに旧chunk symbolがないcontract test</td>
-        <td>旧3 Frontend moduleとchunk IPCを削除</td>
+        <td>
+          旧3 Frontend module、<code>voiceRuntime.ts</code>、staged Chat ASR
+          IPCを削除
+        </td>
         <td>Meeting batchを壊さず旧単純連結が消える</td>
       </tr>
       <tr>
@@ -1467,7 +1559,10 @@ class VoiceFinalDeliveryQueue {
       </tr>
       <tr>
         <td><code>streaming_asr/batch_engine.rs::tests</code></td>
-        <td>common anchor、600 ms latest-wins、cancel partial、final priority、max3</td>
+        <td>
+          common anchor、600 ms latest-wins、cancel partial、final priority、max3、3 consecutive
+          failures
+        </td>
       </tr>
       <tr>
         <td><code>streaming_asr/speaker_gate.rs::tests</code></td>
@@ -1479,7 +1574,7 @@ class VoiceFinalDeliveryQueue {
       </tr>
       <tr>
         <td><code>tests/voice-asr-packet-sender.test.ts</code></td>
-        <td>serial seq、capacity 10、drain、invoke failure</td>
+        <td>serial seq、capacity 10、audio-commit-audio barrier、invoke failure</td>
       </tr>
       <tr>
         <td><code>tests/voice-asr-projection.test.ts</code></td>
@@ -1498,6 +1593,7 @@ class VoiceFinalDeliveryQueue {
 
   <h3 id="132-acceptance">13.2 Short-run acceptance</h3>
   <ul>
+    <li>AudioWorklet frame受付からBackend append受付までのapplication overhead p95 150 ms以下</li>
     <li>mock native / all-speakers: speech開始からfirst partial p95 1,000 ms以下</li>
     <li>mock native / target-speaker: speech開始からfirst partial p95 2,500 ms以下</li>
     <li>mock batch / all-speakers: speech開始からfirst partial p95 2,500 ms以下</li>
@@ -1560,7 +1656,7 @@ bun run spec:check</code></pre>
     <li>all-speakersとtarget-speakerの外部送信PCMが仕様どおり異なる。</li>
     <li>target-speakerの非本人raw PCMが外部adapterへ渡らない。</li>
     <li>OS microphone DSPがfalseで、ASR codeが音量またはaudio duckingを操作しない。</li>
-    <li>production codeから非重複chunk単純連結が削除されている。</li>
+    <li>production codeから非重複chunk単純連結とlegacy staged Chat ASR IPCが削除されている。</li>
     <li>Section 13の自動Gateと短時間GateがすべてPassする。</li>
     <li>実装後に本文書へ実測値、利用可能Harness revision、未対応事項を追記する。</li>
   </ul>

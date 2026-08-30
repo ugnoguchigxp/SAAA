@@ -16,6 +16,7 @@ fn descriptor_rejects_duplicate_capabilities_and_cross_host_urls() {
                 language: None,
                 voice: None,
                 health_url: "http://provider.local:8080/health".to_string(),
+                streaming: None,
             },
             ServiceDescriptor {
                 capability: "llm".to_string(),
@@ -25,6 +26,7 @@ fn descriptor_rejects_duplicate_capabilities_and_cross_host_urls() {
                 language: None,
                 voice: None,
                 health_url: "http://other.local:8080/health".to_string(),
+                streaming: None,
             },
         ],
     };
@@ -48,6 +50,7 @@ fn address_rejects_public_http_and_descriptor_rejects_https_downgrade() {
             language: None,
             voice: None,
             health_url: "http://provider.example/health".to_string(),
+            streaming: None,
         }],
     };
     assert!(validate_descriptor(&base, &descriptor).is_err());
@@ -83,6 +86,7 @@ fn asr_descriptor_requires_automatic_language_detection() {
             language: Some("ja".to_string()),
             voice: None,
             health_url: "http://provider.local:8080/health".to_string(),
+            streaming: None,
         }],
     };
     assert!(validate_descriptor(&base, &descriptor).is_err());

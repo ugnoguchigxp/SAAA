@@ -25,6 +25,7 @@ import type {
 import { validateSettingsDocuments } from "./schemas";
 export { deleteProviderApiKey, getProviderCredentialState, resolveServiceHarness, setProviderApiKey } from "./providerRuntime";
 export { transcribeAudio, transcribeAudioChunk } from "./voiceRuntime";
+export { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } from "./voiceAsrRuntime";
 
 export async function listCodexModels(): Promise<CodexModelOption[]> {
   return invoke<CodexModelOption[]>("list_codex_models");

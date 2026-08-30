@@ -5,7 +5,7 @@ export type ConversationSession = {
 
 export type InputOrigin = "text" | "voice";
 export type PresentationMode = "visual" | "visual-and-spoken";
-export type PendingConversationPrompt = { content: string; inputOrigin: InputOrigin };
+export type PendingConversationPrompt = { content: string; inputOrigin: InputOrigin; sourceId?: string };
 export type SubmitPromptOptions = {
   retryInputMessageId?: string | null;
   inputOrigin?: InputOrigin;

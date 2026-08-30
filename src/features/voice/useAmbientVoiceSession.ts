@@ -2,10 +2,10 @@ import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect, u
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
 import type { ConversationRuntimeActivity } from "../../lib/conversationActivity";
+import { appendConversationActivity } from "../../lib/conversationActivity";
 import type { MeetingState, VoiceSettings } from "../../lib/contracts";
 import type { ConversationSession, PendingConversationPrompt, SubmitPromptOptions } from "../../lib/conversationSession";
-import { resamplePcm } from "../../lib/audioResampling";
-import { cancelRun } from "../../lib/runtime";
+import { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } from "../../lib/voiceAsrRuntime";
 import type { VoiceActivityDetector } from "../../lib/voiceActivity";
 import {
   initialVoiceSession,
@@ -15,11 +15,12 @@ import {
   voiceSessionProcessing,
   type VoiceSessionEvent,
 } from "../../lib/voiceSession";
-import { VoiceFrameBuffer } from "./voiceFrameBuffer";
-import { type QueuedVoiceSegment, VoiceSegmentQueue } from "./voiceSegmentQueue";
 import { attachAmbientVoiceCapture, resetVoiceActivityDetector } from "./ambientVoiceCapture";
-import { AmbientVoiceTranscriber } from "./ambientVoiceTranscriber";
-import { drainVoiceSegmentQueue } from "./voiceSegmentProcessor";
+import { VoiceAsrPacketizer } from "./voiceAsrPacketizer";
+import { VoiceAsrPacketSender } from "./voiceAsrPacketSender";
+import { initialVoiceAsrProjection, projectVoiceAsrEvent } from "./voiceAsrProjection";
+import { VoiceFinalDeliveryQueue } from "./voiceFinalDeliveryQueue";
+import type { VoiceAsrStreamEvent } from "../../lib/generated/voiceAsr";
 
 const ASR_SAMPLE_RATE = 16_000;
 export type VoiceCaptureState = "idle" | "recording" | "transcribing";
@@ -57,14 +58,16 @@ export function useAmbientVoiceSession({
   const voiceContextRef = useRef<AudioContext | null>(null);
   const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const voiceNodeRef = useRef<AudioWorkletNode | null>(null);
-  const voiceFramesRef = useRef(new VoiceFrameBuffer());
-  const voicePreRollFramesRef = useRef(new VoiceFrameBuffer());
   const voiceFlushResolverRef = useRef<(() => void) | null>(null);
   const voiceActivityDetectorRef = useRef<VoiceActivityDetector | null>(null);
   const voiceCaptureLeaseRef = useRef<(() => void) | null>(null);
   const voiceCaptureAttemptRef = useRef(0);
-  const voiceSegmentQueueRef = useRef(new VoiceSegmentQueue());
-  const voiceTranscriberRef = useRef<AmbientVoiceTranscriber | null>(null);
+  const voiceAsrPacketizerRef = useRef(new VoiceAsrPacketizer());
+  const voiceAsrSenderRef = useRef<VoiceAsrPacketSender | null>(null);
+  const voiceAsrSessionIdRef = useRef<string | null>(null);
+  const voiceAsrPacketCountRef = useRef(0);
+  const voiceAsrProjectionRef = useRef(initialVoiceAsrProjection);
+  const voiceFinalDeliveryRef = useRef(new VoiceFinalDeliveryQueue());
   const previousInputDeviceIdRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const meetingStateRef = useRef<MeetingState>("idle");
@@ -73,7 +76,6 @@ export function useAmbientVoiceSession({
   meetingStateRef.current = meetingState;
   selectedConversationIdRef.current = selectedConversationId;
   voiceSettingsRef.current = voiceSettings;
-  if (!voiceTranscriberRef.current) voiceTranscriberRef.current = new AmbientVoiceTranscriber();
 
   function applyVoiceEvent(event: VoiceSessionEvent) {
     const next = transitionVoiceSession(voiceSessionRef.current, event);
@@ -101,13 +103,9 @@ export function useAmbientVoiceSession({
 
   useEffect(() => {
     disposedRef.current = false;
-    voiceTranscriberRef.current?.activate();
     return () => {
       disposedRef.current = true;
-      voiceTranscriberRef.current?.dispose();
       voiceCaptureAttemptRef.current += 1;
-      const transcriptionRunId = voiceSessionRef.current.transcriptionRunId;
-      if (transcriptionRunId) void cancelRun(transcriptionRunId).catch(() => undefined);
       voiceFlushResolverRef.current?.();
       if (voiceNodeRef.current) voiceNodeRef.current.port.onmessage = null;
       voiceNodeRef.current?.disconnect();
@@ -116,12 +114,22 @@ export function useAmbientVoiceSession({
       void voiceContextRef.current?.close().catch(() => undefined);
       voiceCaptureLeaseRef.current?.();
       voiceCaptureLeaseRef.current = null;
-      voiceFramesRef.current.clear();
-      voicePreRollFramesRef.current.clear();
-      voiceSegmentQueueRef.current.clear();
+      const sender = voiceAsrSenderRef.current;
+      voiceAsrSenderRef.current = null;
+      const sessionId = voiceAsrSessionIdRef.current;
+      voiceAsrSessionIdRef.current = null;
+      if (sender) void sender.enqueueStop(false).catch(() => undefined);
+      else if (sessionId) void stopVoiceAsrSession({ sessionId, finalizeCurrent: false }).catch(() => undefined);
+      voiceFinalDeliveryRef.current.clear();
       pendingVoicePromptsRef.current = [];
     };
   }, [pendingVoicePromptsRef]);
+
+  useEffect(() => {
+    voiceFinalDeliveryRef.current.clear();
+    voiceAsrProjectionRef.current = initialVoiceAsrProjection;
+    setInterimTranscript("");
+  }, [selectedConversationId]);
 
   useEffect(() => {
     if (
@@ -193,10 +201,6 @@ export function useAmbientVoiceSession({
     // already been finalized must still be transcribed and delivered.
     const capture = voiceSessionRef.current.capture;
     if (capture === "starting") {
-      voiceTranscriberRef.current?.advanceSegment();
-      await voiceTranscriberRef.current?.cancelCurrent();
-      voiceFramesRef.current.clear();
-      voicePreRollFramesRef.current.clear();
       applyVoiceEvent({ type: "captureDetached" });
       await detachVoiceCapture(false);
     } else if (capture === "recording") {
@@ -231,7 +235,18 @@ export function useAmbientVoiceSession({
     const settings = voiceSettingsRef.current;
     if (disposedRef.current || !settings || !selectedConversationIdRef.current || voiceStreamRef.current) return;
     if (voiceSessionRef.current.capture === "starting" || voiceSessionRef.current.capture === "recording") return;
-    voiceTranscriberRef.current?.advanceSegment();
+    const sessionId = crypto.randomUUID();
+    try {
+      await startVoiceAsrSession({ sessionId, conversationId: selectedConversationIdRef.current, sampleRate: ASR_SAMPLE_RATE }, handleVoiceAsrEvent);
+      voiceAsrSessionIdRef.current = sessionId;
+      voiceAsrPacketizerRef.current.reset();
+      voiceAsrPacketCountRef.current = 0;
+      voiceAsrSenderRef.current = new VoiceAsrPacketSender({
+        append: (sequence, bytes) => appendVoiceAsrAudio(sessionId, sequence, bytes),
+        commit: (reason) => commitVoiceAsrUtterance({ sessionId, reason }),
+        stop: (finalizeCurrent) => stopVoiceAsrSession({ sessionId, finalizeCurrent }),
+      }, (error) => setError((current) => current ?? error.message));
+    } catch (cause) { setError(toMessage(cause)); return; }
     await attachAmbientVoiceCapture({
       settings,
       disposed: disposedRef,
@@ -242,14 +257,13 @@ export function useAmbientVoiceSession({
       audioContext: voiceContextRef,
       source: voiceSourceRef,
       node: voiceNodeRef,
-      frames: voiceFramesRef,
-      preRollFrames: voicePreRollFramesRef,
       flushResolver: voiceFlushResolverRef,
       activityDetector: voiceActivityDetectorRef,
       captureLease: voiceCaptureLeaseRef,
       applyEvent: applyVoiceEvent,
       finishSegment: () => void finishVoiceCapture(true),
-      transcribeFrame: transcribeVoiceFrame,
+      packetFrame: packetVoiceFrame,
+      packetCount: () => voiceAsrPacketCountRef.current,
       clearTranscript: () => setInterimTranscript(""),
       setError,
     });
@@ -263,12 +277,7 @@ export function useAmbientVoiceSession({
     if (!voiceStreamRef.current && voiceSessionRef.current.capture !== "starting") return false;
     suspensionReasonRef.current = reason;
     applyVoiceEvent({ type: "captureSuspended" });
-    voiceTranscriberRef.current?.advanceSegment();
-    const cancelTranscription = voiceTranscriberRef.current?.cancelCurrent();
-    voiceFramesRef.current.clear();
-    voicePreRollFramesRef.current.clear();
     await detachVoiceCapture(false);
-    await cancelTranscription;
     return true;
   }
 
@@ -315,7 +324,7 @@ export function useAmbientVoiceSession({
     await resumeVoice("meeting");
   }
 
-  async function detachVoiceCapture(flush: boolean) {
+  async function detachVoiceCapture(flush: boolean, stopSession = true) {
     voiceCaptureAttemptRef.current += 1;
     if (flush && voiceNodeRef.current) {
       await new Promise<void>((resolve) => {
@@ -344,6 +353,11 @@ export function useAmbientVoiceSession({
     voiceActivityDetectorRef.current = null;
     voiceCaptureLeaseRef.current?.();
     voiceCaptureLeaseRef.current = null;
+    const sender = voiceAsrSenderRef.current;
+    voiceAsrSenderRef.current = null;
+    voiceAsrPacketizerRef.current.reset();
+    voiceAsrSessionIdRef.current = null;
+    if (sender && stopSession) await sender.enqueueStop(false).catch(() => undefined);
   }
 
   async function finishVoiceCapture(keepListening: boolean) {
@@ -358,8 +372,6 @@ export function useAmbientVoiceSession({
     const settings = voiceSettingsRef.current;
     if (!conversationId || !settings) {
       try {
-        voiceTranscriberRef.current?.advanceSegment();
-        await voiceTranscriberRef.current?.cancelCurrent();
         await detachVoiceCapture(false);
       } finally {
         applyVoiceEvent({ type: "captureDetached" });
@@ -368,45 +380,21 @@ export function useAmbientVoiceSession({
       return;
     }
     try {
-      const sampleRate = voiceContextRef.current?.sampleRate;
-      if (!keepListening) {
-        voiceActivityDetectorRef.current = null;
-        applyVoiceEvent({ type: "captureDetached" });
-        await detachVoiceCapture(true);
-      }
-      if (!sampleRate && voiceFramesRef.current.sampleCount === 0) {
-        voicePreRollFramesRef.current.clear();
+      const sender = voiceAsrSenderRef.current;
+      if (!sender) throw new Error("ASR session is not available");
+      if (keepListening) {
+        await sender.enqueueCommit("silence");
+        voiceAsrPacketCountRef.current = 0;
+        const context = voiceContextRef.current;
+        if (context) resetVoiceActivityDetector(voiceActivityDetectorRef, settings, context.sampleRate);
+        applyVoiceEvent({ type: "captureStarted" });
         return;
       }
-      if (!sampleRate) throw new Error(uiMessage("chatRecordedAudioUnavailable"));
-      if (voiceFramesRef.current.sampleCount === 0) {
-        voicePreRollFramesRef.current.clear();
-        return;
-      }
-      const captured = voiceFramesRef.current.take();
-      voicePreRollFramesRef.current.clear();
-      voiceTranscriberRef.current?.advanceSegment();
-      let samples: Float32Array;
-      try {
-        samples = resamplePcm(captured, sampleRate, ASR_SAMPLE_RATE);
-      } finally {
-        captured.fill(0);
-      }
-      try {
-        if (keepListening && voiceContextRef.current) {
-          resetVoiceActivityDetector(voiceActivityDetectorRef, settings, voiceContextRef.current.sampleRate);
-          applyVoiceEvent({ type: "captureStarted" });
-        }
-        enqueueVoiceSegment({
-          conversationId,
-          samples,
-          sampleRate: ASR_SAMPLE_RATE,
-          ttsActiveAtCapture: conversationSessionRef.current.speechRunId !== null,
-        });
-      } catch (cause) {
-        samples.fill(0);
-        throw cause;
-      }
+      const finalPacket = voiceAsrPacketizerRef.current.flushPadded();
+      if (finalPacket) sender.enqueueAudio(finalPacket);
+      await sender.enqueueStop(true);
+      await detachVoiceCapture(false, false);
+      return;
     } catch (cause) {
       if (!disposedRef.current) setError((current) => current ?? toMessage(cause));
     } finally {
@@ -425,50 +413,35 @@ export function useAmbientVoiceSession({
     }
   }
 
-  function enqueueVoiceSegment(segment: QueuedVoiceSegment) {
-    if (disposedRef.current) {
-      segment.samples.fill(0);
-      segment.samples = new Float32Array();
-      return;
-    }
-    if (!voiceSegmentQueueRef.current.push(segment)) {
-      setError(uiMessage("chatVoiceQueueFull"));
-      return;
-    }
-    void drainVoiceSegments();
+  function packetVoiceFrame(frame: Float32Array) {
+    const sender = voiceAsrSenderRef.current;
+    if (!sender || disposedRef.current || !listeningEnabledRef.current) return;
+    for (const packet of voiceAsrPacketizerRef.current.append(frame)) { sender.enqueueAudio(packet); voiceAsrPacketCountRef.current += 1; }
   }
 
-  function transcribeVoiceFrame(frame: Float32Array, sampleRate: number) {
-    const transcriber = voiceTranscriberRef.current;
-    if (
-      !transcriber
-      || disposedRef.current
-      || !listeningEnabledRef.current
-      || isMeetingBlocking(meetingStateRef.current)
-      || conversationSessionRef.current.speechRunId
-    ) return;
-    transcriber.append(
-      frame,
-      sampleRate,
-      setInterimTranscript,
-      (message) => setError((current) => current ?? message),
-    );
-  }
-
-  async function drainVoiceSegments() {
-    await drainVoiceSegmentQueue({
-      queue: voiceSegmentQueueRef.current,
-      session: voiceSessionRef,
-      disposed: disposedRef,
-      conversation: conversationSessionRef,
-      pendingPrompts: pendingVoicePromptsRef,
-      applyEvent: applyVoiceEvent,
-      setTranscript: setInterimTranscript,
-      setError,
-      setRuntimeActivity,
-      stopSpeech,
-      submitPrompt,
-    });
+  function handleVoiceAsrEvent(event: VoiceAsrStreamEvent) {
+    if (event.type !== "ready" && event.sessionId !== voiceAsrSessionIdRef.current) return;
+    const next = projectVoiceAsrEvent(voiceAsrProjectionRef.current, event);
+    voiceAsrProjectionRef.current = next;
+    if (event.type === "partial") setInterimTranscript(`${next.stableText}${next.unstableText}`);
+    if (event.type === "utteranceDiscarded") setInterimTranscript("");
+    if (event.type === "failed" && event.fatal) setError((current) => current ?? event.message);
+    if (event.type !== "final" || disposedRef.current) return;
+    setInterimTranscript(event.text);
+    const conversationId = selectedConversationIdRef.current;
+    if (!conversationId) return;
+    const result = voiceFinalDeliveryRef.current.push({ sessionId: event.sessionId, utteranceId: event.utteranceId, conversationId, text: event.text });
+    if (result === "full") { setError((current) => current ?? uiMessage("chatVoicePendingLimit")); return; }
+    if (result !== "accepted") return;
+    const queued = voiceFinalDeliveryRef.current.shift();
+    if (!queued) return;
+    if (conversationSessionRef.current.runId) {
+      if (pendingVoicePromptsRef.current.length >= 2) { setError((current) => current ?? uiMessage("chatVoicePendingLimit")); return; }
+      pendingVoicePromptsRef.current.push({ content: queued.text, inputOrigin: "voice", sourceId: queued.utteranceId });
+      setRuntimeActivity((current) => appendConversationActivity(current, { type: "voiceQueryQueued" }));
+      return;
+    }
+    void submitPrompt(queued.text, { inputOrigin: "voice" });
   }
 
   return {

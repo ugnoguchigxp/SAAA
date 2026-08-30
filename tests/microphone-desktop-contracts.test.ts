@@ -13,14 +13,8 @@ function chatVoiceSource(): string {
       join(import.meta.dir, "../src/features/voice/ambientVoiceCapture.ts"),
       "utf8",
     ),
-    readFileSync(
-      join(import.meta.dir, "../src/features/voice/ambientVoiceTranscriber.ts"),
-      "utf8",
-    ),
-    readFileSync(
-      join(import.meta.dir, "../src/features/voice/voiceSegmentProcessor.ts"),
-      "utf8",
-    ),
+    readFileSync(join(import.meta.dir, "../src/features/voice/voiceAsrPacketizer.ts"), "utf8"),
+    readFileSync(join(import.meta.dir, "../src/features/voice/voiceAsrPacketSender.ts"), "utf8"),
     readFileSync(
       join(import.meta.dir, "../src/features/chat/ChatPage.tsx"),
       "utf8",
@@ -123,7 +117,7 @@ describe("macOS microphone bundle configuration", () => {
       "utf8",
     );
     expect(app.indexOf("context.stream.current = stream")).toBeLessThan(
-      app.indexOf("audioContext = new AudioContext()"),
+      app.indexOf("audioContext = new AudioContext({ sampleRate: 16_000 })"),
     );
     expect(meeting.indexOf("stream.current = nextStream")).toBeLessThan(
       meeting.indexOf("const nextContext = new AudioContext()"),
@@ -164,12 +158,12 @@ describe("macOS microphone bundle configuration", () => {
       "const observation = context.activityDetector.current?.observe(event.data)",
     );
     expect(app).toContain("observation.shouldFinalize");
-    expect(app).toContain("context.transcribeFrame(event.data, activeContext.sampleRate)");
-    expect(app).toContain("AmbientVoiceTranscriber");
-    expect(app).toContain("this.pending.takeStart(chunkSamples)");
-    expect(app).toContain("voiceTranscriberRef.current?.advanceSegment()");
+    expect(app).toContain("context.packetFrame(event.data)");
+    expect(app).toContain("VoiceAsrPacketizer");
+    expect(app).toContain("VoiceAsrPacketSender");
+    expect(app).toContain("voiceAsrPacketizerRef.current.append(frame)");
     expect(app).toContain("void finishVoiceCapture(true)");
-    expect(app).toContain("if (keepListening && voiceContextRef.current)");
+    expect(app).toContain("await sender.enqueueCommit(\"silence\")");
     expect(chatPage).toContain('t("chat.listeningHint"');
     expect(chatPage).toContain('t("chat.micPause")');
     expect(chatPage).not.toContain("filterEnabled");
@@ -198,7 +192,6 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain("context.stream.current || context.captureLease.current");
     expect(app).toContain("context.activityDetector.current === activityDetector");
     expect(app).toContain("context.captureLease.current === release");
-    expect(app).toContain("node !== null && context.node.current === node");
     expect(app).toContain("if (context.node.current !== node) return");
     expect(app).toContain("voiceNodeRef.current.port.onmessage = null");
     expect(app).toContain('voiceStarting ? t("chat.micCancel")');
@@ -224,10 +217,10 @@ describe("macOS microphone bundle configuration", () => {
   test("keeps automatic voice turns connected to LLM submission and response speech", () => {
     const app = chatVoiceSource();
     expect(app).toContain(
-      'void context.submitPrompt(transcript, { inputOrigin: "voice" })',
+      'void submitPrompt(queued.text, { inputOrigin: "voice" })',
     );
     expect(app).toContain(
-      'context.pendingPrompts.current.push({ content: transcript, inputOrigin: "voice" })',
+      'pendingVoicePromptsRef.current.push({ content: queued.text, inputOrigin: "voice", sourceId: queued.utteranceId })',
     );
     expect(app).toContain("voiceSettings?.autoSpeak");
     expect(app).toContain("speechGateRef.current.accept(event)");
@@ -245,25 +238,14 @@ describe("macOS microphone bundle configuration", () => {
     expect(pause).toContain("await finishVoiceCapture(false)");
     expect(pause).not.toContain("cancelRun");
     expect(pause).not.toContain("voiceSegmentQueueRef.current.clear()");
-    expect(app).toContain('void context.submitPrompt(transcript, { inputOrigin: "voice" })');
+    expect(app).toContain('void submitPrompt(queued.text, { inputOrigin: "voice" })');
   });
 
-  test("releases raw chat PCM before waiting for the model response", () => {
+  test("sends chat PCM through the bounded raw ASR sender", () => {
     const app = chatVoiceSource();
-    const takeFrames = app.indexOf(
-      "voiceFramesRef.current.take()",
-      app.indexOf("async function finishVoiceCapture"),
-    );
-    const wipeCaptured = app.indexOf("captured.fill(0)", takeFrames);
-    const enqueueTranscript = app.indexOf(
-      "enqueueVoiceSegment({",
-      wipeCaptured,
-    );
-    expect(takeFrames).toBeGreaterThan(-1);
-    expect(takeFrames).toBeLessThan(wipeCaptured);
-    expect(wipeCaptured).toBeLessThan(enqueueTranscript);
-    expect(app).toContain("segment.samples.fill(0)");
-    expect(app).toContain("segment.samples = new Float32Array()");
+    expect(app).toContain("voiceAsrPacketizerRef.current.append(frame)");
+    expect(app).toContain("sender.enqueueAudio(packet)");
+    expect(app).toContain("voiceAsrPacketizerRef.current.flushPadded()");
   });
 
   test("blocks chat capture while Meeting is still in preflight", () => {

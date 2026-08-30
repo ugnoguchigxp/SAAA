@@ -214,6 +214,7 @@ export const ja = {
       llmTimeoutSeconds: "LLMタイムアウト（秒）",
       llmTimeoutHint: "1〜3600秒。新規設定の既定値は1800秒です。",
       llmTimeoutInvalid: "1〜3600秒の範囲で入力してください。",
+      llmTimeoutLegacyLimit: "このLegacy Dynamic LAN接続の上限は269.999秒です。1800秒を使うにはHarnessまたはLARMを更新してください。",
       low: "低",
       medium: "中（推奨）",
       extraHigh: "最高",

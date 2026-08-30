@@ -88,12 +88,12 @@ describe("MVP UI reachability contracts", () => {
   test("transcribes captured audio continuously without treating chunks as final events", () => {
     const contracts = source("src/lib/contracts.ts");
     const voice = source("src/features/voice/useAmbientVoiceSession.ts");
-    const transcriber = source("src/features/voice/ambientVoiceTranscriber.ts");
+    const transcriber = source("src/features/voice/voiceAsrPacketSender.ts");
     const meeting = source("src/features/meeting/useMeetingSession.ts");
     expect(contracts).not.toContain('type: "transcriptDelta"');
-    expect(voice).toContain("transcribeVoiceFrame");
-    expect(transcriber).toContain("transcribeAudioChunk");
-    expect(transcriber).toContain("this.pending.takeStart(chunkSamples)");
+    expect(voice).toContain("packetVoiceFrame");
+    expect(transcriber).toContain("enqueueAudio");
+    expect(transcriber).toContain("this.operations.push");
     expect(contracts).toContain('type: "transcriptPartial"');
     expect(meeting).toContain(
       'event.type === "transcriptPartial" || event.type === "transcriptFinal"',
