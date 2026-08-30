@@ -1,0 +1,1604 @@
+<article lang="ja">
+  <h1 id="always-on-streaming-asr-plan">
+    常時ストリーミングASR実装計画 — Native Stream First / Anchored Local Agreement Fallback
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割と実装判断</h2>
+  <ul>
+    <li>Status: Implementation-ready / implementation not started</li>
+    <li>Reviewed: 2026-08-30</li>
+    <li>SAAA baseline: <code>0f0d2cd</code> + working tree</li>
+    <li>Database baseline: <code>PRAGMA user_version = 13</code></li>
+    <li>Settings document baseline: <code>schema_version = 12</code></li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>対象: Chat音声capture、ASR Provider契約、話者照合、Chat UI、LLM送信境界</li>
+  </ul>
+  <p>
+    本文書は、実装担当が追加の方式選定をせず、記載順にtestを書いて実装を完了できることを目的とする。
+    定数、wire format、IPC、状態遷移、失敗時挙動、変更file、test名を本文書で固定する。
+    本文書と既存のChat音声仕様が競合する場合、常時ASRとpartial表示については本文書を優先する。
+  </p>
+  <p>
+    「常時」は、Chatの待ち受けが有効で、MeetingまたはSAAA自身のTTSへ音声deviceを引き渡していない間を指す。
+    その間はVADのspeech判定前も含め、取得PCMを欠落なくASR coordinatorへ渡す。
+    VADはASR開始条件に使わず、沈黙後に現在発話を確定するtriggerとしてだけ使う。 Meeting
+    ASR、TTSのhalf-duplex既定、LLM completion契約は変更しない。
+  </p>
+  <p>
+    長時間soak、30分以上の連続運転、長時間実マイク検証は、ユーザー指示により本計画のGateへ含めない。
+    短いfixture、mock transport、5分以内のdesktop確認で完了判定する。
+  </p>
+
+  <h3 id="01-review-findings">0.1 今回のdocument reviewで解消した曖昧さ</h3>
+  <table>
+    <caption>
+      Table: Review findings and fixed decisions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">旧記述の問題</th>
+        <th scope="col">固定した判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>開始位置の異なる1,800 ms窓を共通prefixで比較していた</td>
+        <td>同一発話の先頭を共通anchorにした再認識だけを比較する</td>
+      </tr>
+      <tr>
+        <td>Native streamingのvendorとwire formatが未定だった</td>
+        <td>
+          本計画のNative経路はHarness v2の<code>saaa.asr-stream.v1</code>だけとする
+        </td>
+      </tr>
+      <tr>
+        <td>100 ms raw IPCのheader、queue、overflow挙動が未定だった</td>
+        <td>3 header、3,200 byte固定、Frontend 10 packet、Backend 32 commandに固定する</td>
+      </tr>
+      <tr>
+        <td>話者voteのrelease時刻と端点の票数が未定だった</td>
+        <td>15 block窓、5 block hop、利用可能票の過半数、error時rejectへ固定する</td>
+      </tr>
+      <tr>
+        <td>final受信後のLLM exactly-once責務が不明だった</td>
+        <td>
+          Frontendのsession単位delivery
+          queueが<code>utteranceId</code>で重複排除する
+        </td>
+      </tr>
+      <tr>
+        <td>既存fileへ追記するとmodule-size ratchetを超える可能性があった</td>
+        <td>新規小moduleを基本とし、既存large fileは配線だけ変更する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="1-decision">1. 採用方針</h2>
+  <pre><code class="language-text">AudioWorklet (16 kHz mono Float32)
+        ↓ VADより先に100 ms packet化
+Frontend serial raw-IPC sender
+        ↓ sequence付きPCM16LE
+Backend AsrSessionManager
+        ↓
+Optional local target-speaker gate
+  ├─ all-speakers   : raw PCMをそのまま通す
+  └─ target-speaker : 本人blockだけ通し、その他は同長silenceへ置換
+        ↓
+  ├─ Preferred : Harness v2 / saaa.asr-stream.v1
+  └─ Fallback  : whole-prefix batch decode + Anchored Local Agreement
+        ↓
+stableText + replaceable unstableText
+        ↓
+Chat live transcript
+
+VAD silence / 30 s limit ── commit ── final ── utteranceIdで一度だけLLM送信</code></pre>
+  <ol>
+    <li>現行の1〜5秒非重複chunkと単純文字列連結は完成形に残さない。</li>
+    <li>Native streamingはProvider Harness v2だけで実装する。</li>
+    <li>個別Cloud ASR、Harness v1、stream非対応Harness v2はbatch agreementへ送る。</li>
+    <li>partialは会話履歴へ保存せず、同一発話の表示projectionとして置換する。</li>
+    <li>
+      finalだけを会話入力にし、同じ<code>utteranceId</code>を二度送らない。
+    </li>
+    <li>ASRや話者filterのためにOS側の音量、出力音、周囲音を変更しない。</li>
+  </ol>
+
+  <h3 id="11-route-matrix">1.1 Effective route matrix</h3>
+  <table>
+    <caption>
+      Table: Route selection without implementer choice
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">設定route</th>
+        <th scope="col">発見結果</th>
+        <th scope="col">Effective protocol</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Harness</td>
+        <td>v2 ASRに有効な<code>streaming</code>あり</td>
+        <td>
+          <code>native</code
+          >。同じserviceのbatchをsession内fallbackとして保持
+        </td>
+      </tr>
+      <tr>
+        <td>Harness</td>
+        <td>v1、またはv2 ASRに<code>streaming</code>なし</td>
+        <td><code>batch-agreement</code></td>
+      </tr>
+      <tr>
+        <td>Individual provider</td>
+        <td><code>cloud-asr</code></td>
+        <td><code>batch-agreement</code></td>
+      </tr>
+      <tr>
+        <td>Legacy Dynamic LAN Harness address</td>
+        <td><code>legacy_dynamic_lan_host</code>がhostを返す</td>
+        <td>
+          <code>network_asr::transcribe</code>を使う<code
+            >batch-agreement</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>Harness</td>
+        <td>Native handshake失敗、batch利用可能</td>
+        <td>同一session中に一度だけ<code>batch-agreement</code>へdegrade</td>
+      </tr>
+      <tr>
+        <td>任意</td>
+        <td>有効なASR routeなし</td>
+        <td>session開始失敗。microphone captureを開始しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Google、AWSなどのvendor固有streaming adapterは本計画へ含めない。 追加する場合はHarness
+    server側で<code>saaa.asr-stream.v1</code>へ変換する。
+  </p>
+
+  <h3 id="12-constants">1.2 固定定数</h3>
+  <pre><code class="language-rust">pub(crate) const ASR_SAMPLE_RATE: u32 = 16_000;
+pub(crate) const AUDIO_PACKET_MS: u64 = 100;
+pub(crate) const AUDIO_PACKET_SAMPLES: usize = 1_600;
+pub(crate) const AUDIO_PACKET_BYTES: usize = 3_200;
+pub(crate) const FRONTEND_PACKET_CAPACITY: usize = 10;
+pub(crate) const BACKEND_COMMAND_CAPACITY: usize = 32;
+pub(crate) const MAX_UTTERANCE_MS: u64 = 30_000;
+pub(crate) const MAX_PENDING_FINALS: usize = 2;
+pub(crate) const MAX_TRANSCRIPT_CHARS: usize = 16_000;
+pub(crate) const MAX_WS_TEXT_BYTES: usize = 65_536;
+pub(crate) const PROVIDER_READY_TIMEOUT_MS: u64 = 5_000;
+pub(crate) const STOP_ACK_TIMEOUT_MS: u64 = 2_000;
+pub(crate) const BATCH_MIN_AUDIO_MS: u64 = 1_800;
+pub(crate) const BATCH_HOP_MS: u64 = 600;
+pub(crate) const BATCH_HYPOTHESIS_CAPACITY: usize = 3;
+pub(crate) const SPEAKER_BLOCK_MS: u64 = 100;
+pub(crate) const SPEAKER_WINDOW_MS: u64 = 1_500;
+pub(crate) const SPEAKER_HOP_MS: u64 = 500;
+pub(crate) const SPEAKER_SCORE_TIMEOUT_MS: u64 = 1_000;
+pub(crate) const SPEAKER_RAW_BLOCK_CAPACITY: usize = 30;</code></pre>
+  <p>
+    同じ値をFrontendとRustへ重複定義する場合、両側のcontract testで一致を固定する。
+    初回実装でSettingsへ公開しない。
+  </p>
+
+  <h2 id="2-current-state">2. 現状と変更理由</h2>
+  <table>
+    <caption>
+      Table: Current implementation evidence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">現状</th>
+        <th scope="col">根拠</th>
+        <th scope="col">変更</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Harness ASR protocolがbatch固定</td>
+        <td><code>src-tauri/src/providers/service_harness.rs</code></td>
+        <td>後方互換のv2 descriptorを追加</td>
+      </tr>
+      <tr>
+        <td>Cloud ASRはWAV multipartを毎回POST</td>
+        <td><code>src-tauri/src/voice/cloud_asr.rs</code></td>
+        <td>詳細batch outcomeを追加し、fallback engineから再利用</td>
+      </tr>
+      <tr>
+        <td>Frontendは1〜5秒の非重複chunkを直列送信</td>
+        <td><code>src/features/voice/ambientVoiceTranscriber.ts</code></td>
+        <td>100 ms packet senderへ置換</td>
+      </tr>
+      <tr>
+        <td>partialを日本語も単純連結</td>
+        <td><code>joinTranscript</code></td>
+        <td>Backend projectionをrevision単位で全置換</td>
+      </tr>
+      <tr>
+        <td>沈黙後にFrontendがwhole utteranceを再送</td>
+        <td>
+          <code>useAmbientVoiceSession.ts</code>、<code
+            >voiceSegmentProcessor.ts</code
+          >
+        </td>
+        <td>Backend sessionがPCMとfinalizationを所有</td>
+      </tr>
+      <tr>
+        <td>本人照合が発話chunk全体のall-or-nothing</td>
+        <td><code>voice/profile/mod.rs::verify_if_enabled</code></td>
+        <td>100 ms時間blockごとのlocal gateへ分離</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="3-requirements">3. 要件と不変条件</h2>
+  <h3 id="31-functional">3.1 Functional requirements</h3>
+  <ul>
+    <li><strong>F-01:</strong> 待ち受け中は全AudioWorklet frameをVAD判定前にpacketizerへ渡す。</li>
+    <li><strong>F-02:</strong> 録音中はpartialを継続更新し、stableとunstableを区別する。</li>
+    <li><strong>F-03:</strong> 設定済み沈黙時間または30秒上限で現在発話をcommitする。</li>
+    <li><strong>F-04:</strong> commit後もmicrophoneを閉じず、次発話packetを同じsessionへ送る。</li>
+    <li><strong>F-05:</strong> finalだけをLLMへ送り、partialとdiscarded utteranceは送らない。</li>
+    <li><strong>F-06:</strong> all-speakersでは取得した全PCMを認識対象にする。</li>
+    <li><strong>F-07:</strong> target-speakerでは本人判定blockだけを外部ASRへ渡す。</li>
+    <li><strong>F-08:</strong> native streamが失敗しbatchが使えるときだけ一度degradeする。</li>
+    <li>
+      <strong>F-09:</strong> microphone制約のAEC、noise suppression、auto gainをfalseのまま保つ。
+    </li>
+    <li>
+      <strong>F-10:</strong> ASRはsystem output volume、audio
+      ducking、他application音量を操作しない。
+    </li>
+  </ul>
+
+  <h3 id="32-invariants">3.2 Correctness and privacy invariants</h3>
+  <ul>
+    <li>packet sequenceはsession内で0から始まり、成功したappendごとに1増える。</li>
+    <li>duplicate、gap、out-of-order packetはProviderへ送らず、sessionをfatal errorにする。</li>
+    <li>
+      packetを静かにdropしない。queue
+      overflowは<code>ASR_BACKPRESSURE</code>として失敗させる。
+    </li>
+    <li>Backend mutexを保持したまま<code>await</code>しない。</li>
+    <li>同一発話のstable textは後退しない。finalだけが表示全体を差し替えられる。</li>
+    <li>Frontendはsession ID不一致、古いrevision、重複finalを無視する。</li>
+    <li>batch partial requestは最大1件、待機snapshotは最大1件、仮説は最大3件とする。</li>
+    <li>nativeからbatchへのdegradeはsessionあたり最大1回で、nativeへ自動復帰しない。</li>
+    <li>target-speakerのraw PCMはlocal gate決定前に外部Providerへ送らない。</li>
+    <li>target-speakerの判定error、timeout、profile不整合はrejectとして扱う。</li>
+    <li>PCMとtranscript本文を診断log、error message、metric labelへ含めない。</li>
+    <li>PCMは送信、確定、取消、session stopのいずれでも所有bufferからzeroizeする。</li>
+  </ul>
+
+  <h2 id="4-architecture">4. 実装architectureと所有権</h2>
+  <h3 id="41-frontend">4.1 Frontend capture</h3>
+  <ol>
+    <li>Chat captureだけ<code>new AudioContext({ sampleRate: 16_000 })</code>で作成する。</li>
+    <li>
+      作成後の<code>audioContext.sampleRate</code>が16,000でなければsession開始を中止する。
+    </li>
+    <li>
+      AudioWorklet frameを<code>VoiceAsrPacketizer</code>へ先に渡し、その後VADへ渡す。
+    </li>
+    <li>packetizerはFloat32を1,600 sampleずつPCM16LEへ変換する。</li>
+    <li>
+      VADの<code>shouldFinalize</code>でpacket queueをdrainしてからcommitを送る。
+    </li>
+    <li>
+      300
+      packet到達時も<code>max-duration</code>理由でcommitし、VADをresetする。
+    </li>
+    <li>commit受付を待つ間もWorklet frameは最大10 packetまでqueueへ蓄積できる。</li>
+  </ol>
+  <p>
+    <code>VoiceAsrPacketizer</code>は1,600 sample未満の端数を次frameまで保持する。
+    通常commitでは端数を次発話へ持ち越す。session stopでfinalizeする場合だけzero paddingして1
+    packetにし、 実音声長ではなくProviderへ送ったsample
+    cursorを発話endとして扱う。追加silenceは最大99.94 msである。
+  </p>
+
+  <h3 id="42-backend">4.2 Backend session manager</h3>
+  <pre><code class="language-rust">pub(crate) struct AsrSessionManager {
+    sessions: Mutex&lt;HashMap&lt;String, SessionHandle&gt;&gt;,
+    starting: AtomicBool,
+    next_generation: AtomicU64,
+}
+
+struct SessionHandle {
+    generation: u64,
+    conversation_id: String,
+    next_sequence: u64,
+    command_tx: tokio::sync::mpsc::Sender&lt;SessionCommand&gt;,
+    cancellation: Arc&lt;SessionCancellation&gt;,
+}
+
+enum SessionCommand {
+    Audio(AudioPacket),
+    Commit { reason: CommitReason },
+    Stop { finalize_current: bool, ack: oneshot::Sender&lt;()&gt; },
+}
+
+struct SessionTask {
+    protocol: EffectiveAsrProtocol,
+    scope: TranscriptionScope,
+    current: CurrentUtterance,
+    pending_finals: VecDeque&lt;FinalizingUtterance&gt;,
+    degraded_once: bool,
+}</code></pre>
+  <ul>
+    <li>
+      <code>AppState</code
+      >へ<code>voice_asr: AsrSessionManager</code>を追加する。
+    </li>
+    <li>Chat ASR sessionはprocess内で最大1件とする。二重startは拒否する。</li>
+    <li>
+      同時startは<code>starting.compare_exchange(false, true, ...)</code>で一件に限定し、RAII
+      guardで必ずfalseへ戻す。
+    </li>
+    <li>
+      manager mutexはmap
+      lookup、sequence確認、<code>try_send</code>の間だけ保持する。
+    </li>
+    <li>Provider discoveryとprofile準備はstart時に一度だけ行う。</li>
+    <li>
+      <code>shutdown_app_state</code>はmanagerの全cancellationを通知してからMeeting
+      shutdownへ進む。
+    </li>
+    <li>
+      新sessionは既存の<code>active_runs</code>へ登録しない。cancel/stopはmanagerが所有する。
+    </li>
+  </ul>
+
+  <h3 id="43-buffers">4.3 Buffer ownership and backpressure</h3>
+  <table>
+    <caption>
+      Table: Bounded buffers
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Owner</th>
+        <th scope="col">Content</th>
+        <th scope="col">Limit</th>
+        <th scope="col">Overflow</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Frontend sender</td>
+        <td>未invoke PCM packet</td>
+        <td>10 packet / 1.0 s</td>
+        <td>sessionをstopし<code>ASR_BACKPRESSURE</code></td>
+      </tr>
+      <tr>
+        <td>Backend channel</td>
+        <td><code>SessionCommand</code></td>
+        <td>32件</td>
+        <td><code>try_send</code>失敗、sessionをfatal error</td>
+      </tr>
+      <tr>
+        <td>Current utterance</td>
+        <td>Provider送信用sanitized PCM16</td>
+        <td>30 s / 960,000 byte</td>
+        <td>自動commit</td>
+      </tr>
+      <tr>
+        <td>Final queue</td>
+        <td>確定待ちutterance</td>
+        <td>2件</td>
+        <td>sessionをfatal error。発話をdropしない</td>
+      </tr>
+      <tr>
+        <td>Batch engine</td>
+        <td>完了仮説</td>
+        <td>3件</td>
+        <td>最古をzeroizeして除去</td>
+      </tr>
+      <tr>
+        <td>Target-speaker gate</td>
+        <td>判定待ちraw PCM block</td>
+        <td>30 block / 3.0 s</td>
+        <td><code>ASR_BACKPRESSURE</code>でsession失敗</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="44-provider-boundary">4.4 Provider boundary</h3>
+  <pre><code class="language-rust">enum EffectiveAsrProtocol {
+    Native {
+        stream: AsrStreamingDescriptor,
+        batch: BatchAsrDescriptor,
+    },
+    BatchAgreement(BatchAsrDescriptor),
+}
+
+enum BatchAsrDescriptor {
+    Harness(ServiceDescriptor),
+    Cloud(CloudAsrProviderSettings),
+    LegacyNetwork { host: String },
+}
+
+#[async_trait]
+trait NativeAsrTransport: Send {
+    async fn send_audio(&amp;mut self, pcm16le: Zeroizing&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;(), AsrFailure&gt;;
+    async fn commit(&amp;mut self, current: &amp;str, next: &amp;str, end_sample: u64)
+        -&gt; Result&lt;(), AsrFailure&gt;;
+    async fn next_event(&amp;mut self) -&gt; Result&lt;ProviderStreamEvent, AsrFailure&gt;;
+    async fn stop(&amp;mut self) -&gt; Result&lt;(), AsrFailure&gt;;
+}</code></pre>
+  <p>
+    production実装は<code>HarnessWebSocketTransport</code>一つだけとする。
+    testは同じtraitへ<code>FakeNativeAsrTransport</code>を差し込む。
+    batch経路は既存Cloud/Harness batch clientとlegacy
+    <code>network_asr</code>を<code>BatchDecoder</code>
+    traitで包む。route選択条件を複製せず、現行<code>select_asr</code>の型と関数を
+    <code>pub(crate)</code>へ広げてMeetingとstreaming managerで共有する。
+  </p>
+
+  <h2 id="5-contracts">5. Provider Harness、WebSocket、IPC contract</h2>
+  <h3 id="51-harness">5.1 Provider Harness v2 descriptor</h3>
+  <p>
+    v1
+    fieldを変更しない。v2は各serviceにoptionalな<code>streaming</code>だけを追加する。
+    ASRのbatch descriptorはv2でも必須とし、Native failure時の同一service fallbackを保証する。
+  </p>
+  <pre><code class="language-json">{
+  "contractVersion": "saaa-service-harness.v2",
+  "revision": "bounded-revision",
+  "services": [{
+    "capability": "asr",
+    "protocol": "openai.audio-transcriptions.v1",
+    "baseUrl": "http://private-host/v1",
+    "model": "bounded-model",
+    "language": "auto",
+    "healthUrl": "http://private-host/health",
+    "streaming": {
+      "protocol": "saaa.asr-stream.v1",
+      "url": "ws://private-host/v1/audio/transcription-stream",
+      "sampleRate": 16000,
+      "encoding": "pcm_s16le",
+      "packetMilliseconds": 100
+    }
+  }]
+}</code></pre>
+  <pre><code class="language-rust">#[derive(Clone, Deserialize)]
+#[serde(tag = "contractVersion", deny_unknown_fields)]
+enum HarnessDescriptor {
+    #[serde(rename = "saaa-service-harness.v1")]
+    V1 { revision: String, services: Vec&lt;ServiceDescriptor&gt; },
+    #[serde(rename = "saaa-service-harness.v2")]
+    V2 { revision: String, services: Vec&lt;ServiceDescriptorV2&gt; },
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ServiceDescriptorV2 {
+    capability: String,
+    protocol: String,
+    base_url: String,
+    model: String,
+    language: Option&lt;String&gt;,
+    voice: Option&lt;String&gt;,
+    health_url: String,
+    #[serde(default)]
+    streaming: Option&lt;AsrStreamingDescriptor&gt;,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AsrStreamingDescriptor {
+    pub(crate) protocol: String,
+    pub(crate) url: String,
+    pub(crate) sample_rate: u32,
+    pub(crate) encoding: String,
+    pub(crate) packet_milliseconds: u64,
+}</code></pre>
+  <ul>
+    <li>v1 validationは現行のまま通す。</li>
+    <li>v2のLLM/TTSは<code>streaming</code>を持ってはならない。</li>
+    <li>v2 ASRのbatch fieldは現行ASRと同じ制約を満たす。</li>
+    <li>
+      <code>streaming</code
+      >はASRにだけ許可し、5つの値を上記literalへ完全一致させる。
+    </li>
+    <li>
+      WebSocket URLは2,048 byte以下、credential、query、fragmentなし、Harnessと同じhostとする。
+    </li>
+    <li>
+      HarnessがHTTPSなら<code>wss</code>だけを許可する。private HTTP
+      Harnessは<code>ws</code>を許可する。
+    </li>
+    <li>unknown field、unknown contract、unknown protocolはdescriptor全体を拒否する。</li>
+    <li>
+      <code>resolve</code>のASR
+      statusはstreaming宣言があれば<code>saaa.asr-stream.v1</code>、 なければbatch
+      protocolを表示する。health probe成功だけでNative接続済みとは表示しない。
+    </li>
+  </ul>
+  <p>
+    既存<code>resolve_service</code>はLLM/TTS利用者のため変更しない。
+    新規<code>resolve_asr_service</code>が<code>ResolvedAsrService { batch, streaming }</code>を返す。
+  </p>
+
+  <h3 id="52-websocket">5.2 <code>saaa.asr-stream.v1</code> wire protocol</h3>
+  <p>
+    ClientはWebSocket subprotocol headerへ<code>saaa.asr-stream.v1</code>を指定する。
+    redirectとHarness credentialは使わない。WebSocketはmessage順序を保証するため、binary
+    frameへdesktop sequenceを重ねない。
+  </p>
+  <h4 id="521-client-messages">5.2.1 Client messages</h4>
+  <pre><code class="language-json">{
+  "type": "start",
+  "contractVersion": "saaa.asr-stream.v1",
+  "sessionId": "voice_asr_uuid",
+  "utteranceId": "utterance_uuid",
+  "model": "descriptor-model",
+  "sampleRate": 16000,
+  "encoding": "pcm_s16le",
+  "packetMilliseconds": 100,
+  "language": "auto"
+}</code></pre>
+  <pre><code class="language-json">{
+  "type": "commit",
+  "utteranceId": "current-id",
+  "nextUtteranceId": "next-id",
+  "endSample": 48000
+}</code></pre>
+  <pre><code class="language-json">{ "type": "stop", "sessionId": "voice_asr_uuid" }</code></pre>
+  <ul>
+    <li>
+      <code>ready</code>後のbinary frameは3,200 byteのraw PCM16LEである。
+    </li>
+    <li>
+      <code>commit</code>より前のbinaryはcurrent、後のbinaryはnext
+      utteranceに属する。
+    </li>
+    <li>Providerは前発話finalの生成中も次発話binaryを受け付ける。</li>
+  </ul>
+
+  <h4 id="522-server-messages">5.2.2 Server messages</h4>
+  <pre><code class="language-typescript">type ProviderStreamEvent =
+  | { type: "ready"; sessionId: string; utteranceId: string }
+  | { type: "partial"; sessionId: string; utteranceId: string; revision: number;
+      startSample: number; endSample: number; stableText: string; unstableText: string;
+      language: string | null }
+  | { type: "final"; sessionId: string; utteranceId: string; revision: number;
+      startSample: number; endSample: number; text: string; language: string | null }
+  | { type: "noSpeech"; sessionId: string; utteranceId: string; revision: number;
+      startSample: number; endSample: number }
+  | { type: "error"; sessionId: string; utteranceId: string | null;
+      code: string; message: string; recoverable: boolean }
+  | { type: "stopped"; sessionId: string };</code></pre>
+  <ul>
+    <li><code>revision</code>はutteranceごとに1から単調増加する。</li>
+    <li>
+      <code>stableText</code>は前partialのstable
+      prefixを完全に含み、後退してはならない。
+    </li>
+    <li>
+      <code>startSample &lt;= endSample</code>で、送信済みaudio cursorを超えてはならない。
+    </li>
+    <li>text messageは65,536 byte、各transcriptは16,000文字を上限とする。</li>
+    <li>
+      serverからのbinary frame、invalid JSON、unknown event、session不一致はprotocol fatal
+      errorにする。
+    </li>
+    <li>
+      音声なしは空<code>final</code>ではなく<code>noSpeech</code>で返す。
+    </li>
+    <li>
+      pingにはpongを返す。readyは5秒以内、commit
+      finalは<code>min(route timeout, 15秒)</code>以内とする。
+    </li>
+  </ul>
+
+  <h3 id="53-ipc">5.3 Tauri IPC</h3>
+  <pre><code class="language-typescript">type StartVoiceAsrSessionInput = {
+  sessionId: string;
+  conversationId: string;
+  sampleRate: number;
+};
+
+type CommitVoiceAsrUtteranceInput = {
+  sessionId: string;
+  reason: "silence" | "max-duration";
+};
+
+type StopVoiceAsrSessionInput = {
+  sessionId: string;
+  finalizeCurrent: boolean;
+};
+
+type VoiceAsrStreamEvent =
+  | { type: "ready"; sessionId: string; currentUtteranceId: string;
+      protocol: "native" | "batch-agreement";
+      scope: "all-speakers" | "target-speaker" }
+  | { type: "partial"; sessionId: string; utteranceId: string; revision: number;
+      startMs: number; endMs: number; stableText: string; unstableText: string;
+      language: string | null }
+  | { type: "final"; sessionId: string; utteranceId: string; revision: number;
+      startMs: number; endMs: number; text: string; language: string | null }
+  | { type: "utteranceDiscarded"; sessionId: string; utteranceId: string;
+      reason: "no-speech" | "target-speaker-empty" | "cancelled" }
+  | { type: "degraded"; sessionId: string; from: "native";
+      to: "batch-agreement"; reasonCode: VoiceAsrFailureCode }
+  | { type: "failed"; sessionId: string; utteranceId: string | null;
+      code: VoiceAsrFailureCode; message: string; recovery: string; fatal: boolean }
+  | { type: "stopped"; sessionId: string };</code></pre>
+  <p>Commandは次の4つだけを追加する。</p>
+  <ol>
+    <li><code>start_voice_asr_session(input, on_event) -&gt; Result&lt;(), String&gt;</code></li>
+    <li><code>append_voice_asr_audio(request: Request) -&gt; Result&lt;(), String&gt;</code></li>
+    <li><code>commit_voice_asr_utterance(input) -&gt; Result&lt;(), String&gt;</code></li>
+    <li><code>stop_voice_asr_session(input) -&gt; Result&lt;(), String&gt;</code></li>
+  </ol>
+  <p><code>append_voice_asr_audio</code>はraw bodyと次のheaderを完全検証する。</p>
+  <table>
+    <caption>
+      Table: Raw IPC headers
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Header</th>
+        <th scope="col">Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>x-saaa-asr-session-id</code></td>
+        <td><code>validate_identifier</code>を通るstart済みID</td>
+      </tr>
+      <tr>
+        <td><code>x-saaa-asr-sequence</code></td>
+        <td>先頭0のない10進u64。最初は0</td>
+      </tr>
+      <tr>
+        <td><code>x-saaa-asr-sample-count</code></td>
+        <td>常に<code>1600</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    bodyは常に3,200 byte、little-endian i16である。
+    commandはsequence確認後に<code>try_send</code>し、成功した場合だけmanagerのnext
+    sequenceを増やす。
+  </p>
+  <ul>
+    <li>
+      <code>start</code>はProviderまたはbatch
+      engineがreadyになるまで待ち、ready event送信後にreturnする。
+    </li>
+    <li>
+      <code>commit</code>はactor
+      queueへの受付でreturnし、finalはChannelだけで返す。
+    </li>
+    <li>
+      <code>stop</code>はactorがstop状態を受理したackを最大2秒待つ。
+      <code>finalizeCurrent=true</code>のfinalはChannelへ非同期に返り、Frontendは
+      <code>stopped</code>までChannelを保持する。
+    </li>
+    <li>stop ackが2秒で返らない場合だけcancellationを通知し、sessionをmapから除去する。</li>
+  </ul>
+
+  <h3 id="54-errors">5.4 Failure code catalog</h3>
+  <table>
+    <caption>
+      Table: Typed ASR failures
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Code</th>
+        <th scope="col">Fatal</th>
+        <th scope="col">Frontend action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>asr-session-exists</code></td>
+        <td>start失敗</td>
+        <td>既存sessionをstopして一度だけ再試行</td>
+      </tr>
+      <tr>
+        <td><code>asr-session-not-found</code></td>
+        <td>Yes</td>
+        <td>captureをdetach</td>
+      </tr>
+      <tr>
+        <td><code>asr-packet-format</code></td>
+        <td>Yes</td>
+        <td>captureをdetach</td>
+      </tr>
+      <tr>
+        <td><code>asr-packet-sequence</code></td>
+        <td>Yes</td>
+        <td>captureをdetach</td>
+      </tr>
+      <tr>
+        <td><code>asr-backpressure</code></td>
+        <td>Yes</td>
+        <td>欠落を隠さず待ち受けを停止</td>
+      </tr>
+      <tr>
+        <td><code>asr-provider-unavailable</code></td>
+        <td>Yes</td>
+        <td>ASR設定を開くrecoveryを表示</td>
+      </tr>
+      <tr>
+        <td><code>asr-stream-protocol</code></td>
+        <td>batchなしならYes</td>
+        <td>batchありならdegrade表示</td>
+      </tr>
+      <tr>
+        <td><code>asr-stream-timeout</code></td>
+        <td>batchなしならYes</td>
+        <td>batchありならdegrade表示</td>
+      </tr>
+      <tr>
+        <td><code>asr-final-timeout</code></td>
+        <td>No</td>
+        <td>その発話だけ失敗。sessionは継続</td>
+      </tr>
+      <tr>
+        <td><code>asr-target-speaker-unavailable</code></td>
+        <td>start失敗</td>
+        <td>profile修復またはall-speakers切替を案内</td>
+      </tr>
+      <tr>
+        <td><code>asr-language-not-allowed</code></td>
+        <td>No</td>
+        <td>その発話を送信せずlanguage設定を案内</td>
+      </tr>
+      <tr>
+        <td><code>asr-no-speech</code></td>
+        <td>No</td>
+        <td>error bannerを出さずdiscard</td>
+      </tr>
+      <tr>
+        <td><code>asr-cancelled</code></td>
+        <td>No</td>
+        <td>通常stopでは表示しない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="55-generated-contract">5.5 Rust / TypeScript binding</h3>
+  <ul>
+    <li>
+      Rust input、event、failure
+      enumへ<code>serde</code>と<code>ts-rs::TS</code>をderiveする。
+    </li>
+    <li>新規<code>src/lib/generated/voiceAsr.ts</code>を生成し、手編集しない。</li>
+    <li>
+      新規example
+      <code>export_voice_asr_bindings.rs</code
+      >を<code>ipc:generate</code>へ追加する。
+    </li>
+    <li>
+      新規integration test
+      <code>voice_asr_contract_bindings.rs</code
+      >を<code>ipc:check</code>へ追加する。
+    </li>
+    <li>
+      既存<code>runtimeEvent.ts</code>へ型を足さず、module-size
+      ratchetを増やさない。
+    </li>
+  </ul>
+  <pre><code class="language-rust">// src-tauri/src/ipc_contract.rsに追加する唯一のbridge
+pub fn voice_asr_typescript_bindings() -&gt; String {
+    crate::voice::streaming_asr::contracts::typescript_bindings()
+}</code></pre>
+  <pre><code class="language-json">{
+  "scripts": {
+    "ipc:generate": "cargo run --manifest-path src-tauri/Cargo.toml --example export_ipc_bindings &amp;&amp; cargo run --manifest-path src-tauri/Cargo.toml --example export_voice_asr_bindings",
+    "ipc:check": "cargo test --manifest-path src-tauri/Cargo.toml --test ipc_contract_bindings --test voice_asr_contract_bindings"
+  }
+}</code></pre>
+
+  <h2 id="6-state-sequences">6. State machineとruntime sequence</h2>
+  <h3 id="61-backend-state">6.1 Backend state</h3>
+  <pre><code class="language-text">absent
+  └─ start ─▶ resolving ─▶ connecting-native ─▶ streaming-native
+                         └─────────────────────▶ streaming-batch
+
+streaming-* ── commit accepted ─▶ finalizing(old) + streaming-*(next)
+streaming-native ── recoverable transport failure ─▶ degrading ─▶ streaming-batch
+any active ── fatal failure ─▶ failed ─▶ removed
+any active ── stop(false) ─▶ stopped ─▶ removed
+any active ── stop(true) ─▶ finalizing current(max 15 s) ─▶ stopped ─▶ removed</code></pre>
+  <ul>
+    <li>Backendがcurrent/next <code>utteranceId</code>を生成する。</li>
+    <li>commitはcurrent PCMをmoveし、空のnext bufferを作ってからProvider I/Oを行う。</li>
+    <li>前発話final待ちに次発話PCMを混ぜない。</li>
+    <li>
+      空またはno-speech finalは<code>utteranceDiscarded</code>にし、LLMへ送らない。
+    </li>
+  </ul>
+
+  <h3 id="62-frontend-state">6.2 Frontend state</h3>
+  <pre><code class="language-typescript">type AmbientAsrState =
+  | { kind: "idle" }
+  | { kind: "starting"; sessionId: string }
+  | { kind: "listening"; sessionId: string; protocol: EffectiveProtocol;
+      currentUtteranceId: string; revision: number }
+  | { kind: "stopping"; sessionId: string }
+  | { kind: "failed"; message: string };</code></pre>
+  <p>
+    <code>VoiceSession</code>のcapture lifecycleは残し、ASR protocol
+    stateは別reducerへ分離する。 一つのbooleanへ統合しない。古いsession eventはreducerで無視する。
+  </p>
+
+  <h3 id="63-native-sequence">6.3 Native normal path</h3>
+  <pre><code class="language-text">Frontend                 Manager/session             Harness stream       Conversation
+   | start + Channel            |                         |                     |
+   |---------------------------&gt;| start/handshake         |                     |
+   |                            |------------------------&gt;|                     |
+   |&lt;------ ready(native) ------|&lt;--------- ready --------|                     |
+   | PCM seq 0..N               |                         |                     |
+   |===========================&gt;|========================&gt;|                     |
+   |&lt;------ partial revision ---|&lt;-------- partial -------|                     |
+   | queue drain + commit       |                         |                     |
+   |---------------------------&gt;| move current/create next|                     |
+   |                            |----------- commit -----&gt;|                     |
+   | PCM for next utterance     |                         |                     |
+   |===========================&gt;|========================&gt;|                     |
+   |&lt;------ final old ----------|&lt;---------- final -------|                     |
+   | dedupe utteranceId         |                         |                     |
+   | submitPrompt(final) -----------------------------------------------------&gt;|</code></pre>
+
+  <h3 id="64-degrade-sequence">6.4 Native failure</h3>
+  <ol>
+    <li>session taskがnative failureをtyped codeへ変換する。</li>
+    <li>
+      batch descriptorがあり、<code>degraded_once == false</code>ならnative taskを閉じる。
+    </li>
+    <li>currentとpending finalのsanitized PCMは保持したままbatch engineを作る。</li>
+    <li><code>degraded</code> eventを一度送る。</li>
+    <li>pending finalを優先decodeし、その後current partial scheduleを開始する。</li>
+    <li>
+      同じsessionで二度目のProvider failureは再degradeせず、対象発話またはsessionを失敗させる。
+    </li>
+  </ol>
+
+  <h3 id="65-start-stop-policy">6.5 Start and stop policy</h3>
+  <p><code>start_voice_asr_session</code>は次の順序を変えずに実装する。</p>
+  <ol>
+    <li>session ID、conversation ID、16 kHzを検証する。</li>
+    <li>DB lock内でconversation存在、ASR route、voice settings、profile modeを読む。</li>
+    <li>target modeなら同じlock内でprepared verifierを作り、以後のwarm pathでDBを読まない。</li>
+    <li>DB lockを解放してからHarness resolve、health、WebSocket handshakeを行う。</li>
+    <li>
+      bounded actor channelを作り、manager mapへgeneration付きhandleを登録してからtaskをspawnする。
+    </li>
+    <li>task終了時は同じgenerationのhandleだけをmapから除去する。</li>
+    <li>
+      ready eventを送り、start commandへsuccessを返す。spawnまたはready失敗時はhandleを除去する。
+    </li>
+  </ol>
+  <table>
+    <caption>
+      Table: Stop callers and finalization
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Caller</th>
+        <th scope="col"><code>finalizeCurrent</code></th>
+        <th scope="col">Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>User pauses listening</td>
+        <td><code>true</code></td>
+        <td>取得済み発話をdeliverする</td>
+      </tr>
+      <tr>
+        <td>Input device changes</td>
+        <td><code>true</code></td>
+        <td>旧deviceの発話を確定して新sessionを開始する</td>
+      </tr>
+      <tr>
+        <td>TTS starts</td>
+        <td><code>false</code></td>
+        <td>既にLLM inputは確定済みで、自己音声loopを作らない</td>
+      </tr>
+      <tr>
+        <td>Meeting handoff</td>
+        <td><code>false</code></td>
+        <td>Chat conversationへ曖昧な途中発話を送らない</td>
+      </tr>
+      <tr>
+        <td>Conversation change / unmount</td>
+        <td><code>false</code></td>
+        <td>別conversationへ誤配送しない</td>
+      </tr>
+      <tr>
+        <td>Fatal error / app shutdown</td>
+        <td><code>false</code></td>
+        <td>即時zeroizeとcleanupを優先する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="7-native-path">7. Native streaming event normalization</h2>
+  <ol>
+    <li>Provider revisionはadapter内で検証し、FrontendへはBackendのlocal revisionを送る。</li>
+    <li>
+      古いProvider revision、unknown utterance、final済みutterance eventは破棄しmetricだけ増やす。
+    </li>
+    <li>Provider stable textが前回stableをprefixとして含まない場合はprotocol errorとする。</li>
+    <li>unstableは追加連結せず、eventごとに全置換する。</li>
+    <li>finalはallowed languageを検証し、通過後だけFrontendへ送る。</li>
+    <li>
+      commit timeout時は保持PCMをbatch finalへ一度だけ回す。batch失敗時はその発話をfailedにする。
+    </li>
+  </ol>
+
+  <h2 id="8-batch-fallback">8. Anchored Local Agreement batch fallback</h2>
+  <h3 id="81-snapshot">8.1 Snapshot policy</h3>
+  <ul>
+    <li>
+      一つの発話内の全partial requestは同じ<code>utteranceStartSample</code>から始める。
+    </li>
+    <li>最初のrequestは1,800 ms到達時、その後は600 msごとに作る。</li>
+    <li>request audioは<code>[utteranceStartSample, latestPacketEndSample)</code>のwhole prefixである。</li>
+    <li>開始位置の異なるrolling tail同士は比較しない。</li>
+    <li>in-flightは1件。処理中に複数hopが来た場合、最新end sample一つだけをpendingにする。</li>
+    <li>
+      完了仮説は同じutterance、同じstart sample、増加するend sampleのものだけ最大3件保持する。
+    </li>
+    <li>30秒commitで計算量とmemoryを上限化する。</li>
+  </ul>
+  <pre><code class="language-text">Request 1: audio [0 ms, 1800 ms] ─▶ H1 "クロードコ"
+Request 2: audio [0 ms, 2400 ms] ─▶ H2 "クロードコード"
+Request 3: audio [0 ms, 3000 ms] ─▶ H3 "クロードコードを使う"
+
+開始点はすべて0 ms。末尾だけが伸びるためprefix agreementが意味を持つ。</code></pre>
+
+  <h3 id="82-normalization">8.2 Comparable text</h3>
+  <p>
+    <code>unicode-segmentation</code
+    >と<code>unicode-normalization</code>を使い、次の純粋関数をRustへ実装する。
+    <code>unicode-normalization</code>はlockfileにtransitive
+    dependencyとして存在しても、直接dependencyへ明記する。
+  </p>
+  <pre><code class="language-rust">struct ComparableTranscript {
+    raw: String,
+    units: Vec&lt;ComparableUnit&gt;,
+}
+
+struct ComparableUnit {
+    key: String,
+    raw_end_byte: usize,
+}
+
+fn comparable_transcript(raw: &amp;str) -&gt; ComparableTranscript;
+fn longest_common_prefix(left: &amp;[ComparableUnit], right: &amp;[ComparableUnit]) -&gt; usize;</code></pre>
+  <ul>
+    <li>raw全体をNFC化してからgraphemeへ分割する。</li>
+    <li>連続するUnicode whitespaceは比較key一個のASCII spaceへまとめる。</li>
+    <li>英字case、数字、句読点、記号は変更しない。</li>
+    <li>表示文字列は最新仮説のNFC rawからbyte境界で切り出す。</li>
+    <li>LLM、辞書、fuzzy edit distanceを重複除去へ使わない。</li>
+  </ul>
+
+  <h3 id="83-agreement">8.3 Exact agreement algorithm</h3>
+  <pre><code class="language-text">on hypothesis Hn:
+  1. stale utterance/start/endならdiscard
+  2. latest 3へHnを追加
+  3. HnとHn-1のLCPを求める
+  4. Hn-2があればHnとHn-2のLCPも求める
+  5. 現stable unitsをprefixに含むcandidateだけ残す
+  6. 最長candidateを選ぶ。同長ならHn-1とのcandidateを優先
+  7. candidateがHn全文と同じなら末尾2 graphemeをstable化せずunstableに残す
+  8. candidateがHnの途中で終わるならcandidate全体をstableにする
+  9. Hnが既存stableをprefixに含まない場合はeventを出さずagreement_conflictを増やす
+ 10. unstable = Hn rawのstable境界以後。前回unstableへ連結しない</code></pre>
+  <p>
+    手順7は、まだ音声が続いていない時点で「クロードコ」の末尾を確定しないためのguardである。
+    次仮説が「クロードコード」へ伸びれば、共通prefixの後ろに新しいtailが存在するため手順8で確定できる。
+  </p>
+  <pre><code class="language-text">H1 "クロードコ"              → 初回はstable "" / unstable "クロードコ"
+H2 "クロードコード"          → LCP(H2,H1) "クロードコ" / unstable "ード"
+H3 "クロードコードを使う"    → LCP(H3,H2) "クロードコード" / unstable "を使う"
+
+禁止: "クロードコクロードコード" のような結果連結</code></pre>
+
+  <h3 id="84-batch-final">8.4 Batch finalization</h3>
+  <ol>
+    <li>commit受理時にpartial requestのcancellationを通知する。</li>
+    <li>同じ発話のsanitized whole PCMを一度だけbatch decodeする。</li>
+    <li>
+      <code>verbose_json</code>のtext、language、segment
+      start/end、no-speechをtyped outcomeへparseする。
+    </li>
+    <li>no-speechまたは空textは<code>utteranceDiscarded</code>にする。</li>
+    <li>allowed languageを検証し、通過したtextをfinalの正本にする。</li>
+    <li>partial agreement textをfinal失敗時の代用としてLLMへ送らない。</li>
+  </ol>
+
+  <h2 id="9-speaker">9. Transcription scopeとtarget-speaker gate</h2>
+  <h3 id="91-mode">9.1 Mode resolution</h3>
+  <table>
+    <caption>
+      Table: Scope behavior
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Mode</th>
+        <th scope="col">Backend source</th>
+        <th scope="col">外部ASRへ送るPCM</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>all-speakers</code></td>
+        <td><code>filter_enabled == false</code></td>
+        <td>取得PCMすべて</td>
+      </tr>
+      <tr>
+        <td><code>target-speaker</code></td>
+        <td><code>filter_enabled == true</code></td>
+        <td>accept blockはraw、reject blockは同sample数のzero</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    scopeはFrontend入力を信用せず、session開始時にBackendがvoice profileから決める。 Settings
+    UIは既存の<code>filterEnabled</code> radioを使うため、DB migrationとSettings
+    schema更新は行わない。
+  </p>
+
+  <h3 id="92-verifier">9.2 Prepared verifier</h3>
+  <p>
+    warm audio pathでDB、Keychain、embedding fileを読むことを禁止する。
+    <code>profile/streaming_verifier.rs</code>へ次を追加する。
+  </p>
+  <pre><code class="language-rust">pub(crate) struct PreparedVoiceVerifier {
+    extractor: SpeakerExtractor,
+    references: Vec&lt;Zeroizing&lt;Vec&lt;f32&gt;&gt;&gt;,
+    threshold: f32,
+}
+
+impl VoiceProfileRuntime {
+    pub(crate) fn prepare_streaming_verifier(
+        &amp;self,
+        connection: &amp;Connection,
+    ) -&gt; Result&lt;Option&lt;PreparedVoiceVerifier&gt;, String&gt;;
+}
+
+impl PreparedVoiceVerifier {
+    pub(crate) fn score(&amp;self, samples_16k: Vec&lt;f32&gt;) -&gt; Result&lt;f32, String&gt;;
+}</code></pre>
+  <p>
+    filter disabledなら<code>Ok(None)</code>、enabledだが準備不能ならtyped
+    start errorを返す。 scoreはcandidate embeddingと各referenceのcosine similarity最大値を返す。
+  </p>
+
+  <h3 id="93-voting">9.3 Block voting</h3>
+  <ul>
+    <li>1 blockは100 ms、windowは連続15 block、window startは5 blockごととする。</li>
+    <li>window scoreがprofile threshold以上ならpass voteである。</li>
+    <li>各blockは、それを含むwindowがすべて完了した時点でreleaseする。</li>
+    <li>通常blockは3票中2票以上でacceptする。</li>
+    <li>
+      session先頭にはstart -1,000 msと-500 msのvirtual windowを置き、範囲外sampleをzero
+      paddingする。
+    </li>
+    <li>端点を含む全blockを常に3窓で評価し、2票以上でacceptする。</li>
+    <li>speaker inference errorまたはtimeoutのwindowはfail voteとして数える。</li>
+    <li>
+      commit時は沈黙timeout分の後続audioがあるため、speech末尾を含むwindowを先に処理してからflushする。
+    </li>
+    <li>accepted/rejected blockの時刻とscoreをlogしない。countと処理時間だけmetric化する。</li>
+  </ul>
+  <p>
+    gateは判定までraw blockをlocal memoryへ保持する。判定後、accepted blockはProvider
+    queueへmoveし、 rejected blockはzeroizeして同長silenceを生成する。batch final
+    bufferにもsanitized PCMだけを保存する。
+  </p>
+  <p>
+    score計算は<code>spawn_blocking</code>へ出し、同時実行は1件、timeoutは1,000
+    msとする。 timeout後はsessionをfail closedにし、native worker上に残った計算結果を再利用しない。
+  </p>
+  <p>
+    このgateは「本人が含まれる時間block」を選ぶtemporal filterであり、同時発話から本人の波形だけを
+    分離するtarget-speaker
+    extractionではない。本人と他人が同じblockで同時に話し、そのblockがacceptされた場合、
+    両者の波形がASRへ渡る。厳密な同時発話分離を出荷要件にする場合はspeaker separation
+    modelを別計画で導入し、 それまではこのmodeを本人認証または完全分離と表示しない。
+  </p>
+
+  <h2 id="10-frontend">10. Frontend projectionとLLM delivery</h2>
+  <h3 id="101-projection">10.1 Transcript projection</h3>
+  <ul>
+    <li>stateは<code>{ stableText, unstableText, utteranceId, revision }</code>で保持する。</li>
+    <li>partial eventのrevisionが現在値以下なら無視する。</li>
+    <li>同じutteranceのunstableを全置換し、文字列を追加連結しない。</li>
+    <li>finalでstable/unstableを消し、final textを一度表示してdelivery queueへ渡す。</li>
+    <li>discardedでそのutteranceの表示を消す。</li>
+    <li>
+      screen
+      readerの<code>aria-live</code>はstatusだけに使い、全文更新を毎回読み上げない。
+    </li>
+  </ul>
+
+  <h3 id="102-delivery">10.2 Exactly-once delivery</h3>
+  <pre><code class="language-typescript">type FinalVoiceUtterance = {
+  sessionId: string;
+  utteranceId: string;
+  conversationId: string;
+  text: string;
+};
+
+class VoiceFinalDeliveryQueue {
+  // capacity 2; seen/inFlight/deliveredをutteranceIdで管理
+  push(value: FinalVoiceUtterance): "accepted" | "duplicate" | "full";
+  shift(): FinalVoiceUtterance | undefined;
+  clear(): void;
+}</code></pre>
+  <ol>
+    <li>final受信時に<code>push</code>し、duplicateなら何もしない。</li>
+    <li>conversation runが空なら既存<code>submitPrompt(text, { inputOrigin: "voice" })</code>を呼ぶ。</li>
+    <li>
+      conversation run中なら既存pending voice
+      promptへ<code>sourceId: utteranceId</code>を追加してqueueする。
+    </li>
+    <li>capacity 2超過はerror表示し、3件目を送らない。重複finalでcapacityを消費しない。</li>
+    <li>
+      markはsubmit前に<code>inFlight</code>へ移し、成功または既存retry
+      UIへの移行後に<code>delivered</code>へ移す。
+    </li>
+    <li>
+      session stop後も受信済みfinalはdeliverする。unmountまたはconversation
+      changeではdeliverせずclearする。
+    </li>
+  </ol>
+  <p>
+    ASR sessionはprocess再起動後に復元されないため、exactly-onceの範囲は一つのdesktop
+    process内である。 persistent idempotency migrationは本計画に含めない。
+  </p>
+
+  <h3 id="103-ui">10.3 User-visible states</h3>
+  <ul>
+    <li>
+      <code>接続中</code
+      >、<code>ストリーミング文字起こし中</code>、<code>互換モード</code>、<code>発話確定中</code>を区別する。
+    </li>
+    <li>stableは通常text、unstableは既存のstreaming styleで表示する。</li>
+    <li>
+      target-speakerでは<code>本人確認後に文字起こし</code>と表示し、追加latencyを隠さない。
+    </li>
+    <li>degradeはerror bannerではなくnon-blocking statusへ出す。</li>
+    <li>fatal errorだけ待ち受けを停止し、一つのrecovery actionを表示する。</li>
+  </ul>
+
+  <h2 id="11-file-map">11. File-by-file change map</h2>
+  <h3 id="111-new-rust">11.1 New Rust files</h3>
+  <table>
+    <caption>
+      Table: New Rust modules and sole responsibilities
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">File</th>
+        <th scope="col">Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>voice/streaming_asr/mod.rs</code></td>
+        <td>public facade、constants、module exportsだけ</td>
+      </tr>
+      <tr>
+        <td><code>voice/streaming_asr/contracts.rs</code></td>
+        <td>IPC input/event/failure、TS binding</td>
+      </tr>
+      <tr>
+        <td><code>voice/streaming_asr/manager.rs</code></td>
+        <td>session map、sequence validation、bounded command send</td>
+      </tr>
+      <tr>
+        <td><code>voice/streaming_asr/session.rs</code></td>
+        <td>single session actor、commit、degrade、final queue</td>
+      </tr>
+      <tr>
+        <td><code>voice/streaming_asr/harness_stream.rs</code></td>
+        <td>WebSocket handshake、wire encode/decode、protocol validation</td>
+      </tr>
+      <tr>
+        <td><code>voice/streaming_asr/batch_engine.rs</code></td>
+        <td>snapshot schedule、latest-wins、final priority</td>
+      </tr>
+      <tr>
+        <td><code>voice/streaming_asr/reconciler.rs</code></td>
+        <td>NFC/grapheme Local Agreement純粋関数</td>
+      </tr>
+      <tr>
+        <td><code>voice/streaming_asr/speaker_gate.rs</code></td>
+        <td>15/5 window voteとsanitized block release</td>
+      </tr>
+      <tr>
+        <td><code>voice/profile/streaming_verifier.rs</code></td>
+        <td>prepared referencesとscore API</td>
+      </tr>
+      <tr>
+        <td><code>providers/service_harness/asr_v2.rs</code></td>
+        <td>v2 parse/validationとResolvedAsrService変換</td>
+      </tr>
+      <tr>
+        <td><code>examples/export_voice_asr_bindings.rs</code></td>
+        <td>生成TSを書き出す</td>
+      </tr>
+      <tr>
+        <td><code>tests/voice_asr_contract_bindings.rs</code></td>
+        <td>生成TS freshness gate</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="112-new-frontend">11.2 New Frontend files</h3>
+  <table>
+    <caption>
+      Table: New TypeScript modules
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">File</th>
+        <th scope="col">Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/lib/voiceAsrRuntime.ts</code></td>
+        <td>4 IPC wrapperとraw header生成</td>
+      </tr>
+      <tr>
+        <td><code>src/features/voice/voiceAsrPacketizer.ts</code></td>
+        <td>Float32 carry、PCM16 encode、100 ms packet</td>
+      </tr>
+      <tr>
+        <td><code>src/features/voice/voiceAsrPacketSender.ts</code></td>
+        <td>capacity 10のserial invoke、drain、sequence</td>
+      </tr>
+      <tr>
+        <td><code>src/features/voice/voiceAsrProjection.ts</code></td>
+        <td>session/revision reducer</td>
+      </tr>
+      <tr>
+        <td><code>src/features/voice/voiceFinalDeliveryQueue.ts</code></td>
+        <td>final dedupeとcapacity 2 queue</td>
+      </tr>
+      <tr>
+        <td><code>src/lib/generated/voiceAsr.ts</code></td>
+        <td>Rustから生成したcontract。手編集禁止</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="113-modify-delete">11.3 Modify and delete</h3>
+  <ul>
+    <li>
+      <code>Cargo.toml</code>:
+      <code>tokio-tungstenite 0.30</code>の<code>connect</code>と
+      <code>rustls-tls-webpki-roots</code>、<code>async-trait</code>、
+      <code>unicode-normalization</code>を直接dependencyへ追加し、native-tlsは使わない。
+    </li>
+    <li>
+      <code>voice/mod.rs</code>:
+      <code>streaming_asr</code> moduleを公開する。
+    </li>
+    <li>
+      <code>lib.rs</code>: AppState field、initialize、shutdown、4
+      command登録だけ追加する。
+    </li>
+    <li><code>voice_commands.rs</code>: 4 commandを薄くmanagerへ委譲する。</li>
+    <li>
+      <code>service_harness.rs</code>: v1
+      codeを保ち、ASR解決だけ<code>asr_v2</code>へ委譲する。
+    </li>
+    <li>
+      <code>cloud_asr.rs</code>:
+      既存<code>transcribe</code>を壊さずtyped detailed decodeを委譲する。
+    </li>
+    <li>
+      <code>voice/session/asr.rs</code>:
+      route型と<code>select_asr</code>を<code>pub(crate)</code>にし、選択条件を共有する。
+    </li>
+    <li>
+      <code>ambientVoiceCapture.ts</code>: VAD前packet callback、16 kHz
+      validation、不要なwhole-audio bufferを削除する。
+    </li>
+    <li>
+      <code>useAmbientVoiceSession.ts</code>: session lifecycle、event
+      projection、commit、final deliveryへ置換する。
+    </li>
+    <li>
+      <code>ChatPage.tsx</code>とCSS/i18n: stable/unstableとprotocol
+      statusを表示する。
+    </li>
+    <li>
+      <code>conversationSession.ts</code>: pending promptへoptional
+      <code>sourceId</code>を追加する。
+    </li>
+    <li>
+      移行完了後、<code>ambientVoiceTranscriber.ts</code>、<code>voiceSegmentQueue.ts</code>、<code>voiceSegmentProcessor.ts</code>を削除する。
+    </li>
+    <li>
+      <code>transcribe_audio_chunk</code> command、input、<code
+        >chat-asr-chunk</code
+      >
+      purpose、関連testを削除する。
+    </li>
+    <li>
+      Meetingが使う<code>transcribe_selected_audio</code>とbatch provider codeは削除しない。
+    </li>
+  </ul>
+
+  <h2 id="12-work-packages">12. Test-first implementation packages</h2>
+  <p>
+    各packageは記載順に実施する。赤test追加、production実装、package対象test、repository
+    gateの順で進める。 一つのpackageで別packageの未決事項を作らない。
+  </p>
+  <table>
+    <caption>
+      Table: Dependency-ordered work packages
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">Red test</th>
+        <th scope="col">Implementation</th>
+        <th scope="col">Exit</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ASR-00</td>
+        <td><code>voice-asr-projection.test.ts</code>へstale/duplicate case</td>
+        <td>generated event contract、failure enum、pure reducer</td>
+        <td>
+          <code>ipc:generate</code
+          >後<code>ipc:check</code>成功
+        </td>
+      </tr>
+      <tr>
+        <td>ASR-01</td>
+        <td>Harness v1/v2/invalid URL fixture</td>
+        <td>v2 descriptor、<code>resolve_asr_service</code>、route matrix</td>
+        <td>v1 batch互換とv2 native優先を確認</td>
+      </tr>
+      <tr>
+        <td>ASR-02</td>
+        <td>start、seq 0/duplicate/gap、capacity fixture</td>
+        <td>manager、AppState、raw append、shutdown</td>
+        <td>不正packetがactorへ届かず、mutex-across-awaitなし</td>
+      </tr>
+      <tr>
+        <td>ASR-03</td>
+        <td>ready/partial/final/invalid frame fake transport</td>
+        <td>Native trait、Harness WebSocket、wire limits</td>
+        <td>subprotocol、commit順序、timeoutがtyped eventになる</td>
+      </tr>
+      <tr>
+        <td>ASR-04</td>
+        <td>H1/H2/H3、Unicode、whitespace、stable conflict</td>
+        <td>anchored reconcilerとbatch scheduler</td>
+        <td>重複連結0、in-flight 1、hypothesis 3以下</td>
+      </tr>
+      <tr>
+        <td>ASR-05</td>
+        <td>native失敗、batch final優先、二度目failure</td>
+        <td>session actor、degrade、pending final</td>
+        <td>一度だけdegradeし、current PCMを失わない</td>
+      </tr>
+      <tr>
+        <td>ASR-06</td>
+        <td>15/5 vote、端点、error vote、raw leak spy</td>
+        <td>prepared verifierとspeaker gate</td>
+        <td>reject raw PCMがexternal adapterへ0 byte</td>
+      </tr>
+      <tr>
+        <td>ASR-07</td>
+        <td>packet carry、capacity、drain-before-commit</td>
+        <td>Frontend packetizer/sender/runtime wrapper</td>
+        <td>全sampleを一度だけ送信し、overflowを表示</td>
+      </tr>
+      <tr>
+        <td>ASR-08</td>
+        <td>duplicate final、busy LLM、stop-after-final</td>
+        <td>hook、projection、delivery queue、Chat UI</td>
+        <td>partial表示と一発話一LLM送信</td>
+      </tr>
+      <tr>
+        <td>ASR-09</td>
+        <td>production sourceに旧chunk symbolがないcontract test</td>
+        <td>旧3 Frontend moduleとchunk IPCを削除</td>
+        <td>Meeting batchを壊さず旧単純連結が消える</td>
+      </tr>
+      <tr>
+        <td>ASR-10</td>
+        <td>short fixtureと全repository gate</td>
+        <td>実測、文書result更新、rollback確認</td>
+        <td>Section 13と14を満たす</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code class="language-text">ASR-00 ─▶ ASR-01 ─▶ ASR-02 ─▶ ASR-03 ─┐
+                    │                   ├─▶ ASR-05 ─▶ ASR-07 ─▶ ASR-08 ─▶ ASR-09 ─▶ ASR-10
+                    ├─▶ ASR-04 ─────────┤
+                    └─▶ ASR-06 ─────────┘</code></pre>
+
+  <h2 id="13-validation">13. Verification plan</h2>
+  <h3 id="131-test-files">13.1 Required tests</h3>
+  <table>
+    <caption>
+      Table: Named test files and mandatory cases
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Test</th>
+        <th scope="col">Mandatory cases</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>streaming_asr/contracts.rs::tests</code></td>
+        <td>全event JSON shape、全failure wire value</td>
+      </tr>
+      <tr>
+        <td><code>service_harness/asr_v2.rs::tests</code></td>
+        <td>v1、v2、wrong protocol、public ws、cross-host、unknown field</td>
+      </tr>
+      <tr>
+        <td><code>streaming_asr/manager.rs::tests</code></td>
+        <td>duplicate start、seq、body size、channel full、stop cleanup</td>
+      </tr>
+      <tr>
+        <td><code>streaming_asr/harness_stream.rs::tests</code></td>
+        <td>subprotocol、start、binary、commit、partial、final、noSpeech、oversize、timeout</td>
+      </tr>
+      <tr>
+        <td><code>streaming_asr/reconciler.rs::tests</code></td>
+        <td>クロードコード、Latin words、NFC、space run、punctuation、conflict</td>
+      </tr>
+      <tr>
+        <td><code>streaming_asr/batch_engine.rs::tests</code></td>
+        <td>common anchor、600 ms latest-wins、cancel partial、final priority、max3</td>
+      </tr>
+      <tr>
+        <td><code>streaming_asr/speaker_gate.rs::tests</code></td>
+        <td>先頭zero padding、2-of-3、error reject、silence replacement、zeroize</td>
+      </tr>
+      <tr>
+        <td><code>tests/voice-asr-packetizer.test.ts</code></td>
+        <td>frame境界、端数carry、stop padding、PCM clamp</td>
+      </tr>
+      <tr>
+        <td><code>tests/voice-asr-packet-sender.test.ts</code></td>
+        <td>serial seq、capacity 10、drain、invoke failure</td>
+      </tr>
+      <tr>
+        <td><code>tests/voice-asr-projection.test.ts</code></td>
+        <td>stale revision、session mismatch、unstable replace、final、discard</td>
+      </tr>
+      <tr>
+        <td><code>tests/voice-final-delivery.test.ts</code></td>
+        <td>duplicate final、busy queue、capacity 2、stop後delivery、unmount clear</td>
+      </tr>
+      <tr>
+        <td><code>tests/microphone-desktop-contracts.test.ts</code></td>
+        <td>VAD前packet、16 kHz context、DSP false、旧chunkなし</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="132-acceptance">13.2 Short-run acceptance</h3>
+  <ul>
+    <li>mock native / all-speakers: speech開始からfirst partial p95 1,000 ms以下</li>
+    <li>mock native / target-speaker: speech開始からfirst partial p95 2,500 ms以下</li>
+    <li>mock batch / all-speakers: speech開始からfirst partial p95 2,500 ms以下</li>
+    <li>mock batch / target-speaker: speech開始からfirst partial p95 4,000 ms以下</li>
+    <li>silence成立からfinal: native p95 1,000 ms以下、batch p95 3,000 ms以下</li>
+    <li>50 msずつ境界をずらすcontrolled response fixtureでfinal欠落0、重複0</li>
+    <li>duplicate finalを3回送ってもLLM submitは1回</li>
+    <li>all-speakersではPCM16 encode後の入力byte hashとadapter受信byte hashが一致する</li>
+    <li>target-speakerではreject blockのraw patternがadapter受信byte列に一度も現れない</li>
+  </ul>
+  <p>
+    実マイク確認は各mode 10発話、合計5分以内とする。30分、2時間などの長時間検証は行わない。 acoustic
+    modelそのものの正答率ではなく、境界、重複、遅延、送信回数、scopeを確認する。
+  </p>
+
+  <h3 id="133-commands">13.3 Repository gates</h3>
+  <pre><code class="language-shell">bun run ipc:generate
+bun run size:check
+bun run s11tnext:check
+bun run ipc:check
+bun run typecheck
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+bun test tests
+cargo test --manifest-path src-tauri/Cargo.toml
+bun run build
+bun run spec:check</code></pre>
+
+  <h2 id="14-rollout">14. Rollout、external dependency、rollback</h2>
+  <ol>
+    <li>ASR-00〜06は新Backendを既存Frontendから未使用のまま完成させる。</li>
+    <li>ASR-07でFrontend packet pathを接続し、v1/individual providerはbatch agreementで動かす。</li>
+    <li>ASR-08でfinal deliveryとUIを切り替える。</li>
+    <li>全test通過後だけASR-09で旧chunk pathを削除する。</li>
+    <li>
+      Native Harness server未提供でもbatch agreementは出荷可能だが、Native Doneとは記録しない。
+    </li>
+  </ol>
+  <p>
+    Native完成にはHarness server側の<code>saaa.asr-stream.v1</code>実装と短時間test
+    endpointが必要である。 Desktop repositoryだけを変更できる場合の完成範囲はbatch
+    agreementまでである。 server repositoryが不明でもASR-00〜10のbatch部分は止めない。
+  </p>
+  <p>
+    RollbackはHarness
+    v2の<code>streaming</code>宣言を外すか、Desktopを直前releaseへ戻して行う。
+    新DB columnとSettings schemaを追加しないためdata rollbackは不要である。
+    Nativeだけを無効化する場合も新Frontendとbatch agreement coordinatorは維持する。
+  </p>
+
+  <h2 id="15-done">15. Definition of Done</h2>
+  <ul>
+    <li>待ち受け中のPCMがVAD判定前にsequence付きでASR coordinatorへ届く。</li>
+    <li>Native対応Harnessでは持続WebSocketからpartial/finalが返る。</li>
+    <li>Harness v1と個別Cloud ASRではanchored batch agreementが動く。</li>
+    <li>「クロードコード」の途中境界fixtureでfinal欠落と重複が0件である。</li>
+    <li>partialはstable/unstableへ分かれ、unstableが追加連結されない。</li>
+    <li>沈黙または30秒上限でcommitし、次発話captureを止めない。</li>
+    <li>同一<code>utteranceId</code>のLLM submitが1件である。</li>
+    <li>all-speakersとtarget-speakerの外部送信PCMが仕様どおり異なる。</li>
+    <li>target-speakerの非本人raw PCMが外部adapterへ渡らない。</li>
+    <li>OS microphone DSPがfalseで、ASR codeが音量またはaudio duckingを操作しない。</li>
+    <li>production codeから非重複chunk単純連結が削除されている。</li>
+    <li>Section 13の自動Gateと短時間GateがすべてPassする。</li>
+    <li>実装後に本文書へ実測値、利用可能Harness revision、未対応事項を追記する。</li>
+  </ul>
+
+  <h2 id="16-references">16. Evidence and references</h2>
+  <ul>
+    <li><code>src-tauri/src/providers/service_harness.rs</code> — 現行Harness v1 validation</li>
+    <li><code>src-tauri/src/voice/cloud_asr.rs</code> — 現行batch ASR client</li>
+    <li><code>src-tauri/src/voice/session/asr.rs</code> — 現行route選択、language、final処理</li>
+    <li><code>src-tauri/src/voice/profile/mod.rs</code> — 現行speaker profileと照合</li>
+    <li><code>src/features/voice/ambientVoiceTranscriber.ts</code> — 削除対象の非重複chunk連結</li>
+    <li><code>src/features/voice/useAmbientVoiceSession.ts</code> — 現行VAD、final、LLM境界</li>
+    <li><code>src/lib/audioIpc.ts</code> — Tauri raw binary IPCの既存例</li>
+    <li>
+      <a
+        href="https://docs.cloud.google.com/speech-to-text/docs/reference/rest/v2/StreamingRecognitionResult"
+      >
+        Google Cloud Speech-to-Text: StreamingRecognitionResult
+      </a>
+      — interim/final、stability、result offsetの一次資料
+    </li>
+    <li>
+      <a href="https://docs.aws.amazon.com/transcribe/latest/dg/streaming-partial-results.html">
+        Amazon Transcribe: Streaming and partial results
+      </a>
+      — partial revisionとstabilizationの一次資料
+    </li>
+    <li>
+      <a href="https://aclanthology.org/2023.ijcnlp-demo.3.pdf">
+        Turning Whisper into Real-Time Transcription System
+      </a>
+      — Local Agreementとadaptive latencyの研究根拠
+    </li>
+    <li>
+      <a href="https://docs.rs/crate/tokio-tungstenite/latest/features">
+        tokio-tungstenite feature flags
+      </a>
+      — async WebSocket、connect、rustls featureの一次資料
+    </li>
+  </ul>
+</article>

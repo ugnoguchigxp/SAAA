@@ -2,9 +2,12 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
 mod provider_validation;
+pub(crate) mod regional_preferences;
 pub(crate) use provider_validation::validate_model_providers;
 
 pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 12;
+const DEFAULT_CONVERSATION_TIMEOUT_MS: u64 = 1_800_000;
+const MAX_CONVERSATION_TIMEOUT_MS: u64 = 3_600_000;
 
 use crate::{
     database_error, now_iso, providers, situation, CodexAgentRuntimeSettings,
@@ -157,7 +160,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
                     "source": "harness",
                     "primaryProviderId": null,
                     "fallbackProviderIds": [],
-                    "timeoutMs": 30000
+                    "timeoutMs": DEFAULT_CONVERSATION_TIMEOUT_MS
                 },
                 "voiceTranscribe": {
                     "source": "harness",
@@ -202,6 +205,12 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             }),
         ),
         (
+            "ui.preferences",
+            "default",
+            SETTINGS_SCHEMA_VERSION,
+            regional_preferences::default_value(),
+        ),
+        (
             "situation.runtime",
             "default",
             SETTINGS_SCHEMA_VERSION,
@@ -219,6 +228,7 @@ pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> R
             | ("routing.tasks", "default")
             | ("voice.runtime", "default")
             | ("security.runtime", "default")
+            | ("ui.preferences", "default")
             | ("situation.runtime", "default")
     );
     if !allowed {
@@ -256,6 +266,7 @@ pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> R
                     .map_err(|error| format!("Invalid security settings: {error}"))?;
             validate_security_settings(&settings)
         }
+        ("ui.preferences", "default") => regional_preferences::validate(input.value_json.clone()),
         ("situation.runtime", "default") => {
             let settings =
                 serde_json::from_value::<situation::contracts::SituationRuntimeSettings>(
@@ -271,14 +282,14 @@ pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> R
 pub(crate) fn validate_settings_batch(
     documents: &[SaveSettingsDocumentInput],
 ) -> Result<(), String> {
-    if documents.len() != 6 {
-        return Err("A complete six-document settings snapshot is required".to_string());
+    if documents.len() != 7 {
+        return Err("A complete seven-document settings snapshot is required".to_string());
     }
     let unique = documents
         .iter()
         .map(|document| (document.namespace.as_str(), document.key.as_str()))
         .collect::<std::collections::HashSet<_>>();
-    if unique.len() != 6 {
+    if unique.len() != 7 {
         return Err("Each settings document must appear exactly once".to_string());
     }
     let providers = documents
@@ -479,7 +490,7 @@ pub(crate) fn validate_routing_settings(settings: &RoutingSettings) -> Result<()
             .fallback_provider_ids
             .iter()
             .any(|provider_id| !valid_provider_id(provider_id))
-        || !(1_000..=300_000).contains(&conversation.timeout_ms)
+        || !(1_000..=MAX_CONVERSATION_TIMEOUT_MS).contains(&conversation.timeout_ms)
         || !valid_source(&transcribe.source, transcribe.provider_id.as_deref())
         || !(1_000..=300_000).contains(&transcribe.timeout_ms)
         || !valid_source(&speak.source, speak.provider_id.as_deref())
@@ -603,6 +614,35 @@ mod tests {
     use serde_json::{json, Value};
 
     #[test]
+    fn defaults_conversation_timeout_to_thirty_minutes() {
+        let documents = default_settings_documents();
+        let routing = documents
+            .iter()
+            .find(|(namespace, key, _, _)| *namespace == "routing.tasks" && *key == "default")
+            .expect("default routing settings");
+        assert_eq!(
+            routing.3.pointer("/conversationRespond/timeoutMs"),
+            Some(&json!(1_800_000))
+        );
+    }
+
+    #[test]
+    fn accepts_conversation_timeout_up_to_one_hour() {
+        let mut routing = serde_json::from_value::<RoutingSettings>(
+            default_settings_documents()
+                .into_iter()
+                .find(|(namespace, key, _, _)| *namespace == "routing.tasks" && *key == "default")
+                .expect("default routing settings")
+                .3,
+        )
+        .expect("routing settings decode");
+        routing.conversation_respond.timeout_ms = MAX_CONVERSATION_TIMEOUT_MS;
+        assert!(validate_routing_settings(&routing).is_ok());
+        routing.conversation_respond.timeout_ms = MAX_CONVERSATION_TIMEOUT_MS + 1;
+        assert!(validate_routing_settings(&routing).is_err());
+    }
+
+    #[test]
     fn settings_survive_reopen_and_invalid_batch_does_not_replace_snapshot() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("settings.sqlite3");
@@ -614,6 +654,11 @@ mod tests {
             .find(|document| document.namespace == "security.runtime")
             .expect("security document");
         security.value_json["localOnlyWhenSelected"] = Value::Bool(false);
+        let routing = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing document");
+        routing.value_json["conversationRespond"]["timeoutMs"] = json!(1_234_000);
         save_settings_documents_to_connection(&mut connection, &documents)
             .expect("valid settings save");
         drop(connection);
@@ -626,6 +671,14 @@ mod tests {
             .find(|document| document.namespace == "security.runtime")
             .expect("security settings reload");
         assert_eq!(security.value_json["localOnlyWhenSelected"], false);
+        let routing = loaded
+            .iter()
+            .find(|document| document.namespace == "routing.tasks")
+            .expect("routing settings reload");
+        assert_eq!(
+            routing.value_json["conversationRespond"]["timeoutMs"],
+            1_234_000
+        );
 
         let mut invalid = default_settings_input();
         invalid
@@ -749,6 +802,7 @@ mod tests {
         documents[routing_index].value_json["conversationRespond"]["primaryProviderId"] =
             json!("dynamic_lan-primary");
         documents[routing_index].value_json["conversationRespond"]["source"] = json!("provider");
+        documents[routing_index].value_json["conversationRespond"]["timeoutMs"] = json!(30_000);
         documents[routing_index].value_json["voiceSpeak"]["source"] = json!("harness");
         documents[routing_index].value_json["voiceSpeak"]["providerId"] = Value::Null;
         documents[routing_index].value_json["conversationRespond"]["fallbackProviderIds"] =

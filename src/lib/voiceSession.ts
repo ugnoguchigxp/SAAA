@@ -6,7 +6,6 @@ export type VoiceSession = {
   finalizing: boolean;
   pendingFinalize: FinalizeMode | null;
   transcriptionRunId: string | null;
-  cancellationRequested: boolean;
   processingSegments: boolean;
 };
 
@@ -17,7 +16,6 @@ export type VoiceSessionEvent =
   | { type: "finalizeCompleted" }
   | { type: "processingStarted" | "processingFinished" }
   | { type: "transcriptionStarted"; runId: string }
-  | { type: "transcriptionCancelRequested" }
   | { type: "transcriptionFinished"; runId: string };
 
 export const initialVoiceSession: VoiceSession = {
@@ -26,7 +24,6 @@ export const initialVoiceSession: VoiceSession = {
   finalizing: false,
   pendingFinalize: null,
   transcriptionRunId: null,
-  cancellationRequested: false,
   processingSegments: false,
 };
 
@@ -45,12 +42,10 @@ export function transitionVoiceSession(state: VoiceSession, event: VoiceSessionE
     case "finalizeCompleted": return { ...state, finalizing: false, pendingFinalize: null };
     case "processingStarted": return { ...state, processingSegments: true };
     case "processingFinished": return { ...state, processingSegments: false };
-    case "transcriptionStarted": return { ...state, transcriptionRunId: event.runId, cancellationRequested: false };
-    case "transcriptionCancelRequested":
-      return state.transcriptionRunId ? { ...state, cancellationRequested: true } : state;
+    case "transcriptionStarted": return { ...state, transcriptionRunId: event.runId };
     case "transcriptionFinished":
       return state.transcriptionRunId === event.runId
-        ? { ...state, transcriptionRunId: null, cancellationRequested: false }
+        ? { ...state, transcriptionRunId: null }
         : state;
   }
 }

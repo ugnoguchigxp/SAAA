@@ -1,5 +1,6 @@
 import type { MutableRefObject } from "react";
-import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
+import { isMeetingBlocking } from "../../lib/appHelpers";
+import { uiMessage } from "../../i18n/presentation";
 import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
 import type { MeetingState, VoiceSettings } from "../../lib/contracts";
 import {
@@ -37,6 +38,7 @@ export async function attachAmbientVoiceCapture(context: {
   captureLease: MutableRefObject<(() => void) | null>;
   applyEvent: (event: VoiceSessionEvent) => unknown;
   finishSegment: () => void;
+  transcribeFrame: (frame: Float32Array, sampleRate: number) => void;
   clearTranscript: () => void;
   setError: (message: string) => void;
 }): Promise<void> {
@@ -114,6 +116,7 @@ export async function attachAmbientVoiceCapture(context: {
         if (event.data.type === "flushed") context.flushResolver.current?.();
         return;
       }
+      context.transcribeFrame(event.data, activeContext.sampleRate);
       const observation = context.activityDetector.current?.observe(event.data);
       if (!observation?.hasSpeech) {
         if (!context.activityDetector.current && context.frames.current.sampleCount > 0) {
@@ -130,6 +133,7 @@ export async function attachAmbientVoiceCapture(context: {
       context.frames.current.append(event.data);
       if (observation.shouldFinalize || context.frames.current.sampleCount >= activeContext.sampleRate * MAX_VOICE_SEGMENT_SECONDS) {
         context.finishSegment();
+        return;
       }
     };
     source.connect(node);
@@ -150,7 +154,7 @@ export async function attachAmbientVoiceCapture(context: {
     if (context.disposed.current) return;
     context.setError(cause instanceof MicrophoneCaptureError
       ? cause.message
-      : `Voice capture initialization failed: ${toMessage(cause)}`);
+      : uiMessage("chatVoiceCaptureInitializationFailed"));
     context.applyEvent({ type: "captureDetached" });
   }
 }

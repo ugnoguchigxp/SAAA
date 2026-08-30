@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readVoiceEnrollmentSample } from "../../lib/runtime";
+import { uiMessage } from "../../i18n/presentation";
 
 export function useVoiceSamplePlayback(onError: (message: string) => void) {
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -35,7 +36,7 @@ export function useVoiceSamplePlayback(onError: (message: string) => void) {
       const playback = { audio, url };
       playbackRef.current = playback;
       audio.onended = () => finish(playback);
-      audio.onerror = () => finish(playback, "サンプルを再生できませんでした。");
+      audio.onerror = () => finish(playback, uiMessage("voiceSamplePlaybackFailed"));
       await audio.play();
     } catch (cause) {
       if (playbackRef.current?.url === url) stop();

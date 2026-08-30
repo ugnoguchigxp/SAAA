@@ -29,6 +29,27 @@ export class VoiceFrameBuffer {
     return merged;
   }
 
+  takeStart(maxSamples: number): Float32Array {
+    const target = Math.min(this.samples, Math.max(0, Math.floor(maxSamples)));
+    const result = new Float32Array(target);
+    let offset = 0;
+    while (offset < target) {
+      const frame = this.frames[0];
+      if (!frame) break;
+      const count = Math.min(frame.length, target - offset);
+      result.set(frame.subarray(0, count), offset);
+      offset += count;
+      this.samples -= count;
+      if (count === frame.length) {
+        this.frames.shift();
+      } else {
+        this.frames[0] = frame.slice(count);
+      }
+      frame.fill(0);
+    }
+    return result;
+  }
+
   clear(): void {
     for (const frame of this.frames) frame.fill(0);
     this.frames = [];

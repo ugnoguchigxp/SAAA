@@ -1,5 +1,7 @@
 import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect, useRef, useState } from "react";
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
+import { uiMessage } from "../../i18n/presentation";
+import type { ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type { MeetingState, VoiceSettings } from "../../lib/contracts";
 import type { ConversationSession, PendingConversationPrompt, SubmitPromptOptions } from "../../lib/conversationSession";
 import { resamplePcm } from "../../lib/audioResampling";
@@ -16,6 +18,7 @@ import {
 import { VoiceFrameBuffer } from "./voiceFrameBuffer";
 import { type QueuedVoiceSegment, VoiceSegmentQueue } from "./voiceSegmentQueue";
 import { attachAmbientVoiceCapture, resetVoiceActivityDetector } from "./ambientVoiceCapture";
+import { AmbientVoiceTranscriber } from "./ambientVoiceTranscriber";
 import { drainVoiceSegmentQueue } from "./voiceSegmentProcessor";
 
 const ASR_SAMPLE_RATE = 16_000;
@@ -39,7 +42,7 @@ export function useAmbientVoiceSession({
   conversationSessionRef: MutableRefObject<ConversationSession>;
   pendingVoicePromptsRef: MutableRefObject<PendingConversationPrompt[]>;
   setError: Dispatch<SetStateAction<string | null>>;
-  setRuntimeActivity: Dispatch<SetStateAction<string[]>>;
+  setRuntimeActivity: Dispatch<SetStateAction<ConversationRuntimeActivity[]>>;
   stopSpeech: () => Promise<void>;
   submitPrompt: (prompt: string, options?: SubmitPromptOptions) => Promise<void>;
 }) {
@@ -61,6 +64,7 @@ export function useAmbientVoiceSession({
   const voiceCaptureLeaseRef = useRef<(() => void) | null>(null);
   const voiceCaptureAttemptRef = useRef(0);
   const voiceSegmentQueueRef = useRef(new VoiceSegmentQueue());
+  const voiceTranscriberRef = useRef<AmbientVoiceTranscriber | null>(null);
   const previousInputDeviceIdRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const meetingStateRef = useRef<MeetingState>("idle");
@@ -69,6 +73,7 @@ export function useAmbientVoiceSession({
   meetingStateRef.current = meetingState;
   selectedConversationIdRef.current = selectedConversationId;
   voiceSettingsRef.current = voiceSettings;
+  if (!voiceTranscriberRef.current) voiceTranscriberRef.current = new AmbientVoiceTranscriber();
 
   function applyVoiceEvent(event: VoiceSessionEvent) {
     const next = transitionVoiceSession(voiceSessionRef.current, event);
@@ -96,8 +101,10 @@ export function useAmbientVoiceSession({
 
   useEffect(() => {
     disposedRef.current = false;
+    voiceTranscriberRef.current?.activate();
     return () => {
       disposedRef.current = true;
+      voiceTranscriberRef.current?.dispose();
       voiceCaptureAttemptRef.current += 1;
       const transcriptionRunId = voiceSessionRef.current.transcriptionRunId;
       if (transcriptionRunId) void cancelRun(transcriptionRunId).catch(() => undefined);
@@ -159,11 +166,11 @@ export function useAmbientVoiceSession({
         return;
       }
       if (isMeetingBlocking(meetingStateRef.current)) {
-        setError("Chat voice capture is disabled while a meeting is active or paused.");
+        setError(uiMessage("chatVoiceBlockedDuringMeeting"));
         return;
       }
       if (!selectedConversationIdRef.current || !voiceSettingsRef.current) {
-        setError("Voice settings are unavailable.");
+        setError(uiMessage("chatVoiceSettingsUnavailable"));
         return;
       }
       if (conversationSessionRef.current.speechRunId) {
@@ -182,8 +189,12 @@ export function useAmbientVoiceSession({
     setInterimTranscript("");
     suspensionReasonRef.current = null;
     speechResumeTokenRef.current = null;
+    // Pausing ambient listening only prevents future capture. Audio that has
+    // already been finalized must still be transcribed and delivered.
     const capture = voiceSessionRef.current.capture;
     if (capture === "starting") {
+      voiceTranscriberRef.current?.advanceSegment();
+      await voiceTranscriberRef.current?.cancelCurrent();
       voiceFramesRef.current.clear();
       voicePreRollFramesRef.current.clear();
       applyVoiceEvent({ type: "captureDetached" });
@@ -192,16 +203,6 @@ export function useAmbientVoiceSession({
       await finishVoiceCapture(false);
     } else if (capture === "suspended") {
       applyVoiceEvent({ type: "captureDetached" });
-    }
-    const voiceRunId = voiceSessionRef.current.transcriptionRunId;
-    voiceSegmentQueueRef.current.clear();
-    if (voiceRunId) {
-      applyVoiceEvent({ type: "transcriptionCancelRequested" });
-      try {
-        await cancelRun(voiceRunId);
-      } catch (cause) {
-        setError(toMessage(cause));
-      }
     }
   }
 
@@ -230,6 +231,7 @@ export function useAmbientVoiceSession({
     const settings = voiceSettingsRef.current;
     if (disposedRef.current || !settings || !selectedConversationIdRef.current || voiceStreamRef.current) return;
     if (voiceSessionRef.current.capture === "starting" || voiceSessionRef.current.capture === "recording") return;
+    voiceTranscriberRef.current?.advanceSegment();
     await attachAmbientVoiceCapture({
       settings,
       disposed: disposedRef,
@@ -247,6 +249,7 @@ export function useAmbientVoiceSession({
       captureLease: voiceCaptureLeaseRef,
       applyEvent: applyVoiceEvent,
       finishSegment: () => void finishVoiceCapture(true),
+      transcribeFrame: transcribeVoiceFrame,
       clearTranscript: () => setInterimTranscript(""),
       setError,
     });
@@ -260,9 +263,12 @@ export function useAmbientVoiceSession({
     if (!voiceStreamRef.current && voiceSessionRef.current.capture !== "starting") return false;
     suspensionReasonRef.current = reason;
     applyVoiceEvent({ type: "captureSuspended" });
+    voiceTranscriberRef.current?.advanceSegment();
+    const cancelTranscription = voiceTranscriberRef.current?.cancelCurrent();
     voiceFramesRef.current.clear();
     voicePreRollFramesRef.current.clear();
     await detachVoiceCapture(false);
+    await cancelTranscription;
     return true;
   }
 
@@ -352,6 +358,8 @@ export function useAmbientVoiceSession({
     const settings = voiceSettingsRef.current;
     if (!conversationId || !settings) {
       try {
+        voiceTranscriberRef.current?.advanceSegment();
+        await voiceTranscriberRef.current?.cancelCurrent();
         await detachVoiceCapture(false);
       } finally {
         applyVoiceEvent({ type: "captureDetached" });
@@ -370,13 +378,14 @@ export function useAmbientVoiceSession({
         voicePreRollFramesRef.current.clear();
         return;
       }
-      if (!sampleRate) throw new Error("Recorded audio is unavailable.");
+      if (!sampleRate) throw new Error(uiMessage("chatRecordedAudioUnavailable"));
       if (voiceFramesRef.current.sampleCount === 0) {
         voicePreRollFramesRef.current.clear();
         return;
       }
       const captured = voiceFramesRef.current.take();
       voicePreRollFramesRef.current.clear();
+      voiceTranscriberRef.current?.advanceSegment();
       let samples: Float32Array;
       try {
         samples = resamplePcm(captured, sampleRate, ASR_SAMPLE_RATE);
@@ -423,10 +432,27 @@ export function useAmbientVoiceSession({
       return;
     }
     if (!voiceSegmentQueueRef.current.push(segment)) {
-      setError("音声処理が追いつかないため、新しい発話は送信しませんでした。");
+      setError(uiMessage("chatVoiceQueueFull"));
       return;
     }
     void drainVoiceSegments();
+  }
+
+  function transcribeVoiceFrame(frame: Float32Array, sampleRate: number) {
+    const transcriber = voiceTranscriberRef.current;
+    if (
+      !transcriber
+      || disposedRef.current
+      || !listeningEnabledRef.current
+      || isMeetingBlocking(meetingStateRef.current)
+      || conversationSessionRef.current.speechRunId
+    ) return;
+    transcriber.append(
+      frame,
+      sampleRate,
+      setInterimTranscript,
+      (message) => setError((current) => current ?? message),
+    );
   }
 
   async function drainVoiceSegments() {

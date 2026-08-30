@@ -65,7 +65,7 @@ use voice_commands::{
     delete_voice_enrollment_sample, delete_voice_profile, get_voice_profile_snapshot,
     list_tts_capabilities, read_voice_enrollment_sample, resolve_network_asr,
     save_voice_enrollment_sample, set_target_speaker_filter_enabled, speak_text,
-    stage_audio_upload, stop_tts, transcribe_audio,
+    stage_audio_upload, stop_tts, transcribe_audio, transcribe_audio_chunk,
 };
 pub(crate) use voice_contracts::*;
 
@@ -692,6 +692,7 @@ pub fn run() {
             delete_provider_api_key,
             get_provider_credential_state,
             resolve_network_asr,
+            transcribe_audio_chunk,
             transcribe_audio,
             speak_text,
             list_tts_capabilities,

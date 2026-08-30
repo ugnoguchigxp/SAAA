@@ -14,6 +14,10 @@ function chatVoiceSource(): string {
       "utf8",
     ),
     readFileSync(
+      join(import.meta.dir, "../src/features/voice/ambientVoiceTranscriber.ts"),
+      "utf8",
+    ),
+    readFileSync(
       join(import.meta.dir, "../src/features/voice/voiceSegmentProcessor.ts"),
       "utf8",
     ),
@@ -109,7 +113,7 @@ describe("macOS microphone bundle configuration", () => {
     }
     expect(
       readFileSync(join(import.meta.dir, "../src/lib/microphone.ts"), "utf8"),
-    ).toContain("echoCancellation: true");
+    ).toContain("echoCancellation: false");
   });
 
   test("registers acquired streams before AudioContext construction can fail", () => {
@@ -160,10 +164,14 @@ describe("macOS microphone bundle configuration", () => {
       "const observation = context.activityDetector.current?.observe(event.data)",
     );
     expect(app).toContain("observation.shouldFinalize");
+    expect(app).toContain("context.transcribeFrame(event.data, activeContext.sampleRate)");
+    expect(app).toContain("AmbientVoiceTranscriber");
+    expect(app).toContain("this.pending.takeStart(chunkSamples)");
+    expect(app).toContain("voiceTranscriberRef.current?.advanceSegment()");
     expect(app).toContain("void finishVoiceCapture(true)");
     expect(app).toContain("if (keepListening && voiceContextRef.current)");
-    expect(chatPage).toContain("常時待ち受け中です。");
-    expect(chatPage).toContain("常時待ち受けを一時停止");
+    expect(chatPage).toContain('t("chat.listeningHint"');
+    expect(chatPage).toContain('t("chat.micPause")');
     expect(chatPage).not.toContain("filterEnabled");
     expect(meeting).not.toContain("VoiceActivityDetector");
     expect(app).toContain("suspendVoiceForSpeech");
@@ -193,7 +201,7 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain("node !== null && context.node.current === node");
     expect(app).toContain("if (context.node.current !== node) return");
     expect(app).toContain("voiceNodeRef.current.port.onmessage = null");
-    expect(app).toContain('voiceStarting ? "マイクの準備を中止"');
+    expect(app).toContain('voiceStarting ? t("chat.micCancel")');
     expect(app).toContain('disabled={meetingActive}');
     expect(app).toContain('aria-pressed={listeningEnabled}');
     expect(app).toContain('disabled={!composer.trim() || !selectedConversation}');
@@ -228,33 +236,16 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain("speechResumeTokenRef.current !== speechRunId");
   });
 
-  test("stops capture before cancelling pending transcription", () => {
+  test("stops future capture without discarding finalized transcription", () => {
     const app = chatVoiceSource();
-    expect(app).toContain(
-      "const voiceRunId = voiceSessionRef.current.transcriptionRunId",
-    );
-    expect(app).toContain(
-      'applyVoiceEvent({ type: "transcriptionCancelRequested" })',
-    );
-    expect(app).toContain(
-      "if (!context.session.current.cancellationRequested",
-    );
-    expect(app).toContain(
-      "if (context.session.current.cancellationRequested || !transcript.trim()) continue",
-    );
-    expect(app).toContain(
-      "context.session.current.cancellationRequested || event.runId !== runId",
-    );
     const pause = app.slice(
       app.indexOf("async function pauseAmbientCapture()"),
       app.indexOf("async function attachVoiceCapture()"),
     );
-    expect(pause.indexOf("await finishVoiceCapture(false)")).toBeLessThan(
-      pause.indexOf("await cancelRun(voiceRunId)"),
-    );
-    expect(pause).not.toContain(
-      'applyVoiceEvent({ type: "transcriptionFinished", runId: voiceRunId })',
-    );
+    expect(pause).toContain("await finishVoiceCapture(false)");
+    expect(pause).not.toContain("cancelRun");
+    expect(pause).not.toContain("voiceSegmentQueueRef.current.clear()");
+    expect(app).toContain('void context.submitPrompt(transcript, { inputOrigin: "voice" })');
   });
 
   test("releases raw chat PCM before waiting for the model response", () => {

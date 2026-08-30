@@ -73,22 +73,27 @@ describe("MVP UI reachability contracts", () => {
     const settingsPersistence = source(
       "src/features/settings/settingsDraft.ts",
     );
-    expect(settings).toContain('Field label="Agent name"');
-    expect(settings).toContain("Conversation identity");
+    expect(settings).toContain('t("settings.general.agentName")');
+    expect(settings).toContain('t("settings.general.identity")');
     expect(settingsPersistence).toContain(
       "agentName: draft.codex.agentName.trim()",
     );
-    expect(settings).toContain('Field label="User name"');
+    expect(settings).toContain('t("settings.general.userName")');
     expect(defaults).toContain('userName: ""');
-    expect(settings).toContain("未設定（名前で呼ばない）");
+    expect(settings).toContain('t("settings.general.userNamePlaceholder")');
     expect(settingsPersistence).toContain(
       "userName: draft.codex.userName.trim()",
     );
   });
-  test("renders only the single final ASR transcript event", () => {
+  test("transcribes captured audio continuously without treating chunks as final events", () => {
     const contracts = source("src/lib/contracts.ts");
+    const voice = source("src/features/voice/useAmbientVoiceSession.ts");
+    const transcriber = source("src/features/voice/ambientVoiceTranscriber.ts");
     const meeting = source("src/features/meeting/useMeetingSession.ts");
     expect(contracts).not.toContain('type: "transcriptDelta"');
+    expect(voice).toContain("transcribeVoiceFrame");
+    expect(transcriber).toContain("transcribeAudioChunk");
+    expect(transcriber).toContain("this.pending.takeStart(chunkSamples)");
     expect(contracts).toContain('type: "transcriptPartial"');
     expect(meeting).toContain(
       'event.type === "transcriptPartial" || event.type === "transcriptFinal"',

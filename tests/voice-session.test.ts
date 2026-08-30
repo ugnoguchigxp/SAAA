@@ -15,14 +15,6 @@ describe("voice session state machine", () => {
     expect(transitionVoiceSession(running, { type: "transcriptionFinished", runId: "voice_1" }).transcriptionRunId).toBeNull();
   });
 
-  test("keeps cancellation active until the matching transcription finishes", () => {
-    const running = transitionVoiceSession(initialVoiceSession, { type: "transcriptionStarted", runId: "voice_1" });
-    const cancelling = transitionVoiceSession(running, { type: "transcriptionCancelRequested" });
-    expect(cancelling.cancellationRequested).toBe(true);
-    expect(transitionVoiceSession(cancelling, { type: "transcriptionFinished", runId: "old" }).cancellationRequested).toBe(true);
-    expect(transitionVoiceSession(cancelling, { type: "transcriptionFinished", runId: "voice_1" }).cancellationRequested).toBe(false);
-  });
-
   test("derives public busy state from the single snapshot", () => {
     const recording = transitionVoiceSession(initialVoiceSession, { type: "captureStarted" });
     expect(voiceCaptureState(recording)).toBe("recording");

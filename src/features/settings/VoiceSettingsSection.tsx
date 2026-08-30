@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { VoiceProfileSnapshot, VoiceSettings } from "../../lib/contracts";
 import {
   enumerateAudioInputDevices,
@@ -7,6 +8,7 @@ import {
 import { ASR_LANGUAGES, type AsrLanguageCode } from "../../lib/asrLanguages";
 import { Field, Metric } from "./SettingsFields";
 import { VoiceProfileCard } from "./VoiceProfileCard";
+import { localizeUiMessage } from "../../i18n/presentation";
 
 export function VoiceSettingsSection({
   voice,
@@ -21,6 +23,7 @@ export function VoiceSettingsSection({
   onChange: (value: VoiceSettings) => void;
   onProfileChanged: (profile: VoiceProfileSnapshot) => void;
 }) {
+  const { t } = useTranslation();
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceError, setDeviceError] = useState<string | null>(null);
   useEffect(() => {
@@ -45,12 +48,9 @@ export function VoiceSettingsSection({
       <section className="settings-card">
         <div className="card-title-row">
           <div>
-            <p className="eyebrow">ALWAYS-ON VOICE</p>
-            <h3>常時待ち受け</h3>
-            <p className="settings-help">
-              有効にするとSAAAの起動中はローカルVADで待ち受けます。Cloud
-              選択したASRサービスへ送るのは、発話として確定した区間だけです。
-            </p>
+            <p className="eyebrow">{t("voice.eyebrow")}</p>
+            <h3>{t("voice.alwaysOnTitle")}</h3>
+            <p className="settings-help">{t("voice.alwaysOnDescription")}</p>
           </div>
           <label className="toggle">
             <input
@@ -65,57 +65,55 @@ export function VoiceSettingsSection({
         </div>
         <div className="settings-summary-grid">
           <Metric
-            label="Listening"
-            value={voice.listeningEnabled ? "always on" : "paused"}
+            label={t("voice.listening")}
+            value={voice.listeningEnabled ? t("settings.general.alwaysOn") : t("common.paused")}
           />
-          <Metric label="Detection" value="Local VAD" />
-          <Metric label="Cloud upload" value="Finalized speech only" />
-          <Metric label="Activation" value="automatic" />
+          <Metric label={t("voice.detection")} value={t("voice.localVad")} />
+          <Metric label={t("voice.cloudUpload")} value={t("voice.continuousChunks")} />
+          <Metric label={t("voice.activation")} value={t("voice.automatic")} />
         </div>
-        <p className="settings-help">
-          初回はmacOSのマイク許可が表示されます。Meeting・応答の読み上げ中は自動的に一時停止し、終了後に再開します。声の登録やサンプル再生は、Chatで常時待ち受けを一時停止してから実行してください。
-        </p>
+        <p className="settings-help">{t("voice.permissionHelp")}</p>
       </section>
 
       <section className="settings-card">
-        <h3>Audio devices</h3>
+        <h3>{t("voice.audioDevices")}</h3>
         <div className="settings-form-grid">
-          <Field label="Input device">
+          <Field label={t("voice.inputDevice")}>
             <select
               value={voice.inputDeviceId}
               onChange={(event) =>
                 onChange({ ...voice, inputDeviceId: event.target.value })
               }
             >
-              <option value="default">System default</option>
+              <option value="default">{t("common.systemDefault")}</option>
               {missingDevice && (
                 <option value={voice.inputDeviceId}>
-                  Previously selected (unavailable)
+                  {t("voice.unavailableDevice")}
                 </option>
               )}
               {devices.map((device, index) => (
                 <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || `Microphone ${index + 1}`}
+                  {device.label || t("voice.microphoneNumber", { number: index + 1 })}
                 </option>
               ))}
             </select>
           </Field>
-          <Field label="Output device">
+          <Field label={t("voice.outputDevice")}>
             <select value={voice.outputDeviceId} disabled>
-              <option value="default">System default</option>
+              <option value="default">{t("common.systemDefault")}</option>
             </select>
           </Field>
         </div>
         {deviceError && (
-          <p className="provider-test-result error">{deviceError}</p>
+          <p className="provider-test-result error">{localizeUiMessage(t, deviceError, "voice")}</p>
         )}
-        <p className="settings-help">音声の再生先はmacOSのシステム出力設定に従います。</p>
+        <p className="settings-help">{t("voice.outputHelp")}</p>
       </section>
 
       <section className="settings-card">
-        <h3>Speech detection</h3>
+        <h3>{t("voice.detectionTitle")}</h3>
         <div className="settings-form-grid">
-          <Field label="VAD sensitivity">
+          <Field label={t("voice.sensitivity")}>
             <select
               value={voice.vadSensitivity}
               onChange={(event) =>
@@ -126,12 +124,12 @@ export function VoiceSettingsSection({
                 })
               }
             >
-              <option value="low">Low · noisy room</option>
-              <option value="medium">Medium (recommended)</option>
-              <option value="high">High · quiet speech</option>
+              <option value="low">{t("voice.lowSensitivity")}</option>
+              <option value="medium">{t("voice.mediumSensitivity")}</option>
+              <option value="high">{t("voice.highSensitivity")}</option>
             </select>
           </Field>
-          <Field label="Silence timeout (ms)">
+          <Field label={t("voice.silenceTimeout")}>
             <input
               type="number"
               min="800"
@@ -151,14 +149,12 @@ export function VoiceSettingsSection({
           </Field>
         </div>
         <div>
-          <strong>使用する言語</strong>
-          <p className="settings-help">
-            ASRは言語を自動判定します。ここに登録していない言語、または判定できない音声は会話や議事録へ送りません。
-          </p>
+          <strong>{t("voice.languages")}</strong>
+          <p className="settings-help">{t("voice.languagesHelp")}</p>
           <div
             className="language-options"
             role="group"
-            aria-label="使用する言語"
+            aria-label={t("voice.languagesAria")}
           >
             {ASR_LANGUAGES.map((language) => (
               <label className="check-row" key={language.code}>
@@ -180,7 +176,7 @@ export function VoiceSettingsSection({
                     })
                   }
                 />
-                {language.label}
+                {t(`asrLanguages.${language.code}`, { defaultValue: language.label })}
               </label>
             ))}
           </div>
@@ -193,7 +189,7 @@ export function VoiceSettingsSection({
               onChange({ ...voice, autoSpeak: event.target.checked })
             }
           />
-          応答を音声で再生する
+          {t("voice.autoSpeak")}
         </label>
       </section>
 

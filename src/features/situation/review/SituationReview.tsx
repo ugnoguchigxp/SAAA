@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { CalibrationParameters, SituationReviewSnapshot } from "../../../lib/contracts";
 import { calibrationParametersSchema } from "../../../lib/schemas";
+import { localizeUiMessage } from "../../../i18n/presentation";
 import {
   createSituationCalibrationCandidate,
   decideSituationCalibration,
@@ -39,6 +41,7 @@ type ReplayMetrics = {
 };
 
 export function SituationReview() {
+  const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<SituationReviewSnapshot | null>(null);
   const [parameters, setParameters] = useState(defaultParameters);
   const [reasonCode, setReasonCode] = useState<(typeof decisionReasons)[number]>("insufficient-evidence");
@@ -89,7 +92,7 @@ export function SituationReview() {
   }
 
   async function decide(id: string, decision: "accept" | "reject" | "rollback") {
-    if (workingId || !window.confirm(`${decision} this calibration profile?`)) return;
+    if (workingId || !window.confirm(t("review.confirmDecision", { decision: t(`review.${decision}`, { defaultValue: decision }) }))) return;
     setWorkingId(id);
     setError(null);
     try {
@@ -103,74 +106,74 @@ export function SituationReview() {
 
   if (!snapshot) {
     return error
-      ? <p className="error-banner" role="alert">{error}</p>
-      : <p className="situation-loading">Reviewを読み込んでいます…</p>;
+      ? <p className="error-banner" role="alert">{localizeUiMessage(t, error, "situation")}</p>
+      : <p className="situation-loading">{t("review.loading")}</p>;
   }
 
   return <div className="situation-content">
-    {error && <p className="error-banner" role="alert">{error}</p>}
+    {error && <p className="error-banner" role="alert">{localizeUiMessage(t, error, "situation")}</p>}
     <section className="situation-card">
-      <h2>Calibration review</h2>
-      <p>Active rule: <strong>{snapshot.activeProfile.ruleVersion}</strong></p>
+      <h2>{t("review.title")}</h2>
+      <p>{t("review.activeRule")} <strong>{snapshot.activeProfile.ruleVersion}</strong></p>
       <div className="settings-summary-grid">
-        <div><span>Quality samples</span><strong>{snapshot.quality.sampleCount}</strong></div>
-        <div><span>Pending feedback</span><strong>{snapshot.feedbackQueue.length}</strong></div>
-        <div><span>Flapping rate</span><strong>{formatRate(snapshot.quality.flappingRate)}</strong></div>
-        <div><span>Stale signal rate</span><strong>{formatRate(snapshot.quality.staleRate)}</strong></div>
+        <div><span>{t("review.qualitySamples")}</span><strong>{snapshot.quality.sampleCount}</strong></div>
+        <div><span>{t("review.pendingFeedback")}</span><strong>{snapshot.feedbackQueue.length}</strong></div>
+        <div><span>{t("review.flappingRate")}</span><strong>{formatRate(snapshot.quality.flappingRate, t("review.insufficientData"))}</strong></div>
+        <div><span>{t("review.staleSignalRate")}</span><strong>{formatRate(snapshot.quality.staleRate, t("review.insufficientData"))}</strong></div>
       </div>
-      {snapshot.quality.sampleCount < 20 && <p className="settings-help">Insufficient data: rates remain unavailable until 20 samples are persisted.</p>}
+      {snapshot.quality.sampleCount < 20 && <p className="settings-help">{t("review.insufficientRates")}</p>}
     </section>
 
     <section className="situation-card">
-      <h2>Create candidate</h2>
+      <h2>{t("review.createTitle")}</h2>
       <div className="settings-form-grid">
-        <Parameter label="Classification confidence" value={parameters.classificationMinConfidence} min={50} max={95} onChange={(value) => setParameters((current) => ({ ...current, classificationMinConfidence: value }))} />
-        <Parameter label="Low-confidence maximum" value={parameters.lowConfidenceMax} min={0} max={60} onChange={(value) => setParameters((current) => ({ ...current, lowConfidenceMax: value }))} />
-        <Parameter label="Enter samples" value={parameters.enterSampleCount} min={1} max={10} onChange={(value) => setParameters((current) => ({ ...current, enterSampleCount: value }))} />
-        <Parameter label="Exit samples" value={parameters.exitSampleCount} min={1} max={20} onChange={(value) => setParameters((current) => ({ ...current, exitSampleCount: value }))} />
-        <Parameter label="Cooldown (ms)" value={parameters.cooldownMs} min={0} max={60_000} step={500} onChange={(value) => setParameters((current) => ({ ...current, cooldownMs: value }))} />
-        <Parameter label="Input active max (ms)" value={parameters.inputActiveMaxMs} min={5_000} max={120_000} step={5_000} onChange={(value) => setParameters((current) => ({ ...current, inputActiveMaxMs: value }))} />
-        <Parameter label="Input recent max (ms)" value={parameters.inputRecentMaxMs} min={60_000} max={1_800_000} step={30_000} onChange={(value) => setParameters((current) => ({ ...current, inputRecentMaxMs: value }))} />
+        <Parameter label={t("review.classificationConfidence")} value={parameters.classificationMinConfidence} min={50} max={95} onChange={(value) => setParameters((current) => ({ ...current, classificationMinConfidence: value }))} />
+        <Parameter label={t("review.lowConfidenceMaximum")} value={parameters.lowConfidenceMax} min={0} max={60} onChange={(value) => setParameters((current) => ({ ...current, lowConfidenceMax: value }))} />
+        <Parameter label={t("review.enterSamples")} value={parameters.enterSampleCount} min={1} max={10} onChange={(value) => setParameters((current) => ({ ...current, enterSampleCount: value }))} />
+        <Parameter label={t("review.exitSamples")} value={parameters.exitSampleCount} min={1} max={20} onChange={(value) => setParameters((current) => ({ ...current, exitSampleCount: value }))} />
+        <Parameter label={t("review.cooldown")} value={parameters.cooldownMs} min={0} max={60_000} step={500} onChange={(value) => setParameters((current) => ({ ...current, cooldownMs: value }))} />
+        <Parameter label={t("review.inputActiveMax")} value={parameters.inputActiveMaxMs} min={5_000} max={120_000} step={5_000} onChange={(value) => setParameters((current) => ({ ...current, inputActiveMaxMs: value }))} />
+        <Parameter label={t("review.inputRecentMax")} value={parameters.inputRecentMaxMs} min={60_000} max={1_800_000} step={30_000} onChange={(value) => setParameters((current) => ({ ...current, inputRecentMaxMs: value }))} />
       </div>
-      {!inputBoundariesOrdered && <p className="settings-help">Input active maximum must be lower than input recent maximum.</p>}
-      {!parametersValid && inputBoundariesOrdered && <p className="settings-help">Check every threshold range. Low-confidence maximum must remain lower than classification confidence.</p>}
-      <button className="save-button situation-toggle" disabled={!parametersValid || creating || Boolean(workingId)} onClick={() => void createCandidate()}>{creating ? "Creating…" : "Create candidate"}</button>
+      {!inputBoundariesOrdered && <p className="settings-help">{t("review.inputOrderError")}</p>}
+      {!parametersValid && inputBoundariesOrdered && <p className="settings-help">{t("review.rangeError")}</p>}
+      <button className="save-button situation-toggle" disabled={!parametersValid || creating || Boolean(workingId)} onClick={() => void createCandidate()}>{creating ? t("review.creating") : t("review.create")}</button>
     </section>
 
     <section className="situation-card">
       <div className="section-heading">
-        <h2>Profile history</h2>
-        <label className="settings-field">Decision reason
+        <h2>{t("review.history")}</h2>
+        <label className="settings-field">{t("review.decisionReason")}
           <select value={reasonCode} onChange={(event) => setReasonCode(event.currentTarget.value as typeof reasonCode)}>
-            {decisionReasons.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+            {decisionReasons.map((reason) => <option key={reason} value={reason}>{t(`review.reasons.${reason}`)}</option>)}
           </select>
         </label>
       </div>
       <div className="situation-profile-list">
         {snapshot.candidates.map((profile) => <article key={profile.id}>
-          <div><strong>{profile.ruleVersion}</strong><span>{profile.status}</span></div>
+          <div><strong>{profile.ruleVersion}</strong><span>{t(`review.status.${profile.status}`, { defaultValue: profile.status })}</span></div>
           <div className="profile-actions">
             {profile.status === "candidate" && <>
-              <button className="secondary-button" disabled={Boolean(workingId)} onClick={() => void replay(profile.id)}>{workingId === profile.id ? "Running…" : "Replay"}</button>
-              <button className="send-button" disabled={Boolean(workingId)} onClick={() => void decide(profile.id, "accept")}>Accept</button>
-              <button className="stop-button" disabled={Boolean(workingId)} onClick={() => void decide(profile.id, "reject")}>Reject</button>
+              <button className="secondary-button" disabled={Boolean(workingId)} onClick={() => void replay(profile.id)}>{workingId === profile.id ? t("review.running") : t("review.replay")}</button>
+              <button className="send-button" disabled={Boolean(workingId)} onClick={() => void decide(profile.id, "accept")}>{t("review.accept")}</button>
+              <button className="stop-button" disabled={Boolean(workingId)} onClick={() => void decide(profile.id, "reject")}>{t("review.reject")}</button>
             </>}
-            {profile.status === "superseded" && <button className="secondary-button" disabled={Boolean(workingId)} onClick={() => void decide(profile.id, "rollback")}>Rollback</button>}
+            {profile.status === "superseded" && <button className="secondary-button" disabled={Boolean(workingId)} onClick={() => void decide(profile.id, "rollback")}>{t("review.rollback")}</button>}
           </div>
         </article>)}
       </div>
     </section>
 
     {snapshot.latestRun && <section className="situation-card">
-      <h2>Latest replay</h2>
+      <h2>{t("review.latestReplay")}</h2>
       {replayMetrics ? <div className="settings-summary-grid">
-        <div><span>Fixture</span><strong>{replayMetrics.fixtureSetVersion}</strong></div>
-        <div><span>Samples</span><strong>{replayMetrics.sampleCount}</strong></div>
-        <div><span>Candidate matches</span><strong>{replayMetrics.expectedSceneMatches}</strong></div>
-        <div><span>Baseline matches</span><strong>{replayMetrics.baselineExpectedSceneMatches}</strong></div>
-        <div><span>Attention matches</span><strong>{replayMetrics.expectedAttentionMatches}/{replayMetrics.expectedAttentionSamples}</strong></div>
-        <div><span>Baseline attention</span><strong>{replayMetrics.baselineExpectedAttentionMatches}/{replayMetrics.expectedAttentionSamples}</strong></div>
-      </div> : <p className="settings-help">Replay did not produce readable comparison metrics.</p>}
+        <div><span>{t("review.fixture")}</span><strong>{replayMetrics.fixtureSetVersion}</strong></div>
+        <div><span>{t("review.samples")}</span><strong>{replayMetrics.sampleCount}</strong></div>
+        <div><span>{t("review.candidateMatches")}</span><strong>{replayMetrics.expectedSceneMatches}</strong></div>
+        <div><span>{t("review.baselineMatches")}</span><strong>{replayMetrics.baselineExpectedSceneMatches}</strong></div>
+        <div><span>{t("review.attentionMatches")}</span><strong>{replayMetrics.expectedAttentionMatches}/{replayMetrics.expectedAttentionSamples}</strong></div>
+        <div><span>{t("review.baselineAttention")}</span><strong>{replayMetrics.baselineExpectedAttentionMatches}/{replayMetrics.expectedAttentionSamples}</strong></div>
+      </div> : <p className="settings-help">{t("review.unreadableMetrics")}</p>}
     </section>}
   </div>;
 }
@@ -209,8 +212,8 @@ function validCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-function formatRate(value: number | null): string {
-  return value === null ? "Insufficient data" : `${(value * 100).toFixed(1)}%`;
+function formatRate(value: number | null, insufficientLabel: string): string {
+  return value === null ? insufficientLabel : `${(value * 100).toFixed(1)}%`;
 }
 
 function toMessage(cause: unknown): string {

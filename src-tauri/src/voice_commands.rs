@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     voice, AppState, NetworkAsrResolution, ResolveNetworkAsrInput, RunCancellation, SpeakTextInput,
-    TranscribeAudioInput, TtsCapabilities, VoiceEvent,
+    TranscribeAudioChunkInput, TranscribeAudioInput, TtsCapabilities, VoiceEvent,
 };
 
 #[tauri::command]
@@ -122,6 +122,15 @@ pub(crate) async fn transcribe_audio(
     on_event: tauri::ipc::Channel<VoiceEvent>,
 ) -> Result<String, String> {
     voice::session::transcribe_audio(&state, input, on_event).await
+}
+
+#[tauri::command]
+pub(crate) async fn transcribe_audio_chunk(
+    state: tauri::State<'_, AppState>,
+    input: TranscribeAudioChunkInput,
+    on_event: tauri::ipc::Channel<VoiceEvent>,
+) -> Result<String, String> {
+    voice::session::transcribe_audio_chunk(&state, input, on_event).await
 }
 
 #[tauri::command]

@@ -1,0 +1,915 @@
+<article lang="ja">
+  <h1 id="saaa-adaptive-learning-memory-concept">
+    SAAA Adaptive Learning and Selective Memory Concept
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Concept。実装開始、学習algorithm採用、品質thresholdはいずれも未承認</li>
+    <li>Created: 2026-08-30</li>
+    <li>Reviewed: 2026-08-30</li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>
+      対象: Assist Planner、Context Broker、Conversation Runtime、Memory、ContextStill、Provider
+      adapter、QA
+    </li>
+  </ul>
+  <p>
+    本文書は、SAAAが日常の対話結果から個人に適応しつつ、保存したMemoryを毎TurnすべてLLMへ
+    渡さないための概念境界を定義する。固定するのは、構造化Memory、制約付きContext選択、 小さなPolicy
+    Learner、検証可能な学習記録を分離するarchitectureである。LinUCBやRandom Forestなどの
+    個別algorithmは、本文書だけでは採用しない。
+  </p>
+  <p>
+    本文書は実装契約ではない。DB schema、Rust module、依存library、migration、Work
+    Package、導入順序、 固定threshold、verification commandは定義しない。既存の
+    <a href="./plan.html">Situation-Aware Ambient Agent Runtime</a>と
+    <a href="./mvp-3-memory-architecture-implementation-plan.html"
+      >MVP 3 Memory Architecture実装契約</a
+    >を自動的に変更せず、後続の検証設計と再baselineで参照するConceptとする。
+  </p>
+  <p>
+    現行baselineにはfeature gate配下のMemory control planeとactive Memory投影があるが、本文書の
+    階層的selector、Learning
+    Ledger、学習Policyが実装済みであるとはみなさない。既存挙動とConceptの差は、
+    後続の検証設計で明示的なbaselineとして扱う。
+  </p>
+
+  <h2 id="1-executive-decision">1. 結論とDecision Status</h2>
+  <p>
+    SAAAに必要なのは、会話全体を学習する単一modelではない。適応対象を、事実と状態の保持、
+    Context選択、実行可能な設定、再利用手順、LLM本体の能力に分解する。そのうち軽量学習器が担うのは、
+    安全な候補の中から今回役立つMemoryPlanを選ぶ限定的なPolicyである。
+  </p>
+  <table>
+    <caption>
+      Table: Concept decisions and hypotheses
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">Status</th>
+        <th scope="col">判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM weight更新</td>
+        <td>固定</td>
+        <td>日常適応の主経路にしない</td>
+      </tr>
+      <tr>
+        <td>保存とContext投影</td>
+        <td>固定</td>
+        <td>分離し、各Turnで必要十分なWorking Setを再構築する</td>
+      </tr>
+      <tr>
+        <td>Safetyと権限</td>
+        <td>固定</td>
+        <td>学習対象外のhard constraintとする</td>
+      </tr>
+      <tr>
+        <td>学習問題</td>
+        <td>固定</td>
+        <td>Memory itemの単一選択ではなく、制約付きの階層的な集合選択とする</td>
+      </tr>
+      <tr>
+        <td>初期主学習器</td>
+        <td>検証仮説</td>
+        <td>online linear contextual banditを第一候補とする</td>
+      </tr>
+      <tr>
+        <td>非線形補正</td>
+        <td>検証仮説</td>
+        <td>Random Forest residualをshadow challenger候補とする</td>
+      </tr>
+      <tr>
+        <td>長期的な会話戦略</td>
+        <td>対象外</td>
+        <td>短期rewardのbanditで代用せず、必要なら別の逐次意思決定問題として再設計する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="2-problem-decomposition">2. 問題の分解</h2>
+  <p>
+    「普段の会話から学ぶ」という表現には、性質の異なる五つの問題が混在している。これらを一つの
+    Random ForestやNeural Networkへ入力しても、責務、正解、失敗時のrollbackを定義できない。
+  </p>
+  <table>
+    <caption>
+      Table: Adaptation domains
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">例</th>
+        <th scope="col">主な解決手段</th>
+        <th scope="col">LLM Context</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Operational setting</td>
+        <td>読み上げ速度、通知禁止、Cloud利用可否</td>
+        <td>型付き設定とRuntime enforcement</td>
+        <td>原則不要</td>
+      </tr>
+      <tr>
+        <td>Personal fact / preference</td>
+        <td>呼称、安定した文体Preference、継続中の制約</td>
+        <td>source-backedな構造化Memory</td>
+        <td>今回の応答を変える場合だけ</td>
+      </tr>
+      <tr>
+        <td>Memory routing</td>
+        <td>過去発言、Rule、Procedureを今回使うか</td>
+        <td>guard付き軽量PolicyとContext Broker</td>
+        <td>選択結果だけ</td>
+      </tr>
+      <tr>
+        <td>Reusable knowledge / procedure</td>
+        <td>再利用可能な失敗知識、検証済み手順</td>
+        <td>ContextStillとCapability側の実行契約</td>
+        <td>必要な断片だけ</td>
+      </tr>
+      <tr>
+        <td>General reasoning / reading</td>
+        <td>未知分野の理解、複雑な推論、一般知識</td>
+        <td>基盤LLM、検索、Skill、専用Tool</td>
+        <td>Task依存</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    軽量学習器はMemory routingの即時性を改善できるが、基盤LLMの一般知識や読解力を置き換えない。
+    Skillを読む必要があるTask自体を消すのではなく、読むべきProcedureと必要なstepだけを早く特定する。
+  </p>
+
+  <h2 id="3-system-position">3. SAAA全体における位置</h2>
+  <pre><code class="language-text">Perception
+  ↓
+Situation
+  ↓
+Interaction Policy ── hard permission / privacy / intervention boundary
+  ↓
+Assist Planning
+  ↓ Memory request
+Adaptive Memory Policy + Context Broker
+  ↓ MemoryPlan / ContextEnvelope
+Capability Resolution
+  ↓
+Execution
+  ↓
+Presentation</code></pre>
+  <p>
+    Adaptive Memory Policyは、発話するか、介入するか、外部操作するかを決めない。Situationと
+    Interaction Policyが許したAssist Planningに対して、参照すべきMemoryの計画だけを返す。
+    MemoryPlanはCapabilityでもPermissionでもなく、外部作用を許可するauthorityを持たない。
+  </p>
+  <p>
+    LLMは自然言語の理解と生成を担当する。Memoryの保存可否、source validity、Context予算、 Tool
+    permission、学習revisionのactive化はSAAAが所有する。ContextStillは抽象化された再利用知識を
+    所有するが、Personal Raw Memory、現在状態、各TurnのContext選択は所有しない。
+  </p>
+
+  <h2 id="4-memory-ownership">4. Memory所有と正本</h2>
+  <table>
+    <caption>
+      Table: Memory ownership and projection
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Memory</th>
+        <th scope="col">Owner / authority</th>
+        <th scope="col">用途</th>
+        <th scope="col">Context上の扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Raw Event Store</td>
+        <td>SAAA SQLite / 原文の正本</td>
+        <td>会話原文、時刻、provenance</td>
+        <td>正確な過去Evidenceが必要な場合だけRecallする</td>
+      </tr>
+      <tr>
+        <td>User Core</td>
+        <td>SAAA SQLite / 明示発言とReview</td>
+        <td>明示的で安定した個人Preference</td>
+        <td>現在の応答に適用される最小項目だけ投影する</td>
+      </tr>
+      <tr>
+        <td>Working State</td>
+        <td>SAAA SQLite / 現在のTask状態</td>
+        <td>目的、制約、約束、未完了事項</td>
+        <td>activeかつ現在目的に必要な項目だけ投影する</td>
+      </tr>
+      <tr>
+        <td>Continuity Capsule</td>
+        <td>SAAA SQLite / Rawから再構築可能</td>
+        <td>照応、最近の判断、圧縮した継続状態</td>
+        <td>current referentに必要な断片だけ投影する</td>
+      </tr>
+      <tr>
+        <td>Skill Runtime State</td>
+        <td>SAAA SQLite / Executorの実行状態</td>
+        <td>Procedure、step、入力、検証結果</td>
+        <td>現在stepの判断に必要な情報だけ投影する</td>
+      </tr>
+      <tr>
+        <td>Reusable Knowledge</td>
+        <td>ContextStill / 抽象化済みCandidate</td>
+        <td>Episode、Rule、Procedure</td>
+        <td>Policyが選んだ場合だけ必要断片を投影する</td>
+      </tr>
+      <tr>
+        <td>Learning Ledger</td>
+        <td>SAAA SQLite / 学習判断の監査記録</td>
+        <td>特徴、候補、propensity、結果、revision</td>
+        <td>Contextへ投影しない</td>
+      </tr>
+      <tr>
+        <td>Candidate Index</td>
+        <td>SAAA / 再構築可能な派生projection</td>
+        <td>本文を読まずにeligibilityと選択を判断するmetadata</td>
+        <td>Routerだけが参照し、本文は投影しない</td>
+      </tr>
+      <tr>
+        <td>Per-turn Working Set</td>
+        <td>SAAA process memory / 一時成果物</td>
+        <td>今回Providerへ渡す必要十分な情報</td>
+        <td>Contextへ投影し、Turn後に正本として保持しない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="5-record-lifecycle">5. Memory RecordとLifecycle</h2>
+  <h3 id="51-record-semantics">5.1 Record semantics</h3>
+  <p>
+    Candidate Indexと構造化Memoryは、少なくとも次の意味を区別できなければならない。これはDB
+    schemaの指定ではなく、事実性、時間、削除、適用範囲を混同しないための概念契約である。
+  </p>
+  <ul>
+    <li>type、subject、scope、applicability</li>
+    <li>source reference、source trust、source availability、derivation lineage</li>
+    <li>valid timeとrecorded time</li>
+    <li>status、confidence、explicitness、review state</li>
+    <li>sensitivity、retention class、provider / configuration scope</li>
+    <li>推定utility、解決cost、Context cost、最終利用時刻</li>
+  </ul>
+  <p>
+    valid timeは「いつ真であったか」、recorded timeは「SAAAがいつ知ったか」である。後から訂正された
+    過去の予定を、最新の事実として扱わない。confidenceはsourceの信頼性を表す補助情報であり、
+    反復回数だけで事実を確定する投票値ではない。
+  </p>
+
+  <h3 id="52-lifecycle">5.2 Lifecycle</h3>
+  <pre><code class="language-text">observed
+  ↓ admission
+candidate
+  ├─ explicit confirmation / trusted deterministic rule → active
+  ├─ insufficient evidence                         → candidateのまま
+  └─ rejected / unsafe / irrelevant                → rejected
+
+active
+  ├─ newer valid evidence → superseded
+  ├─ valid time終了       → expired
+  ├─ user correction      → retracted
+  └─ source deletion      → invalidated / deleted</code></pre>
+  <p>
+    LLMの要約、Reflection、反復観測はcandidateを作れるが、それだけでconfirmed factやactive Ruleへ
+    昇格させない。訂正時は過去Evidenceを改変して一つへ溶かさず、関係を保持したまま新しいactive
+    revisionを
+    指す。削除は新規投影を止めるだけでなく、可能な範囲で派生Candidate、Index、学習example、model
+    revisionへのlineageを無効化し、再構築またはrollbackの対象にする。
+  </p>
+
+  <h3 id="53-conflict-resolution">5.3 矛盾とauthority</h3>
+  <p>同じsubjectとvalid timeで矛盾するEvidenceは、次の順序を既定の解決原則とする。</p>
+  <ol>
+    <li>現在Turnの明示的なUser instruction</li>
+    <li>Userが確認した、または明示発言に直接結び付くactive Memory</li>
+    <li>source-backedで新しいWorking State / Capsule</li>
+    <li>未確認のinferred candidate</li>
+    <li>個人事実ではない抽象的なEpisode / Rule / Procedure</li>
+  </ol>
+  <p>
+    この優先順位で意味が一意にならない場合、SAAAは一方を推測で採用しない。影響が小さければ追加Memoryを
+    使わず、必要なら確認する。過去Memoryと取得文書はdataであり、current instructionやtrusted
+    policyを 上書きできない。
+  </p>
+
+  <h3 id="54-admission-retention">5.4 AdmissionとRetention</h3>
+  <table>
+    <caption>
+      Table: Admission by memory class
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">観測</th>
+        <th scope="col">Admission先</th>
+        <th scope="col">必要条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>明示された安定Preference</td>
+        <td>User Coreまたは型付き設定</td>
+        <td>発言者、対象scope、適用期間が明確。実行境界で強制できるものは設定を優先する</td>
+      </tr>
+      <tr>
+        <td>現在の約束、制約、未完了事項</td>
+        <td>Working State</td>
+        <td>source、resolve条件、valid timeを持つ</td>
+      </tr>
+      <tr>
+        <td>照応、最近の判断</td>
+        <td>Continuity Capsule</td>
+        <td>Raw sourceから再構築可能で、継続に必要な範囲へ限定する</td>
+      </tr>
+      <tr>
+        <td>検証可能な成功または失敗</td>
+        <td>Episode candidate</td>
+        <td>source、実行条件、outcome、再利用可能なlessonが対応する</td>
+      </tr>
+      <tr>
+        <td>複数の独立Episodeが支持する判断</td>
+        <td>Rule candidate</td>
+        <td>反例、applicability、scopeを保持し、単一事例でactive化しない</td>
+      </tr>
+      <tr>
+        <td>複数回成功した検証付きAction Trace</td>
+        <td>Procedure candidate</td>
+        <td>入力、bounded step、stop condition、verificationを再現できる</td>
+      </tr>
+      <tr>
+        <td>雑談、一時的感想、第三者発言、根拠のない推測</td>
+        <td>NO_MEMORY</td>
+        <td>Raw retention contractを超えて再利用Memoryを作らない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    保存件数、利用回数、古さだけを価値とみなさない。RetentionはMemory class、valid time、source
+    availability、User
+    intent、法的・Privacy上の削除要求で決まり、学習utilityは投影候補から外す補助信号に
+    留める。低utilityを理由にRaw正本を無断削除しない。
+  </p>
+
+  <h2 id="6-context-selection">6. Context選択は制約付き集合構築である</h2>
+  <p>
+    一件のMemory typeを選ぶだけでは、直前の会話、複数の制約、正確な引用、Procedureを同時に必要とする
+    Turnを表現できない。そこで、選択を四段階に分ける。
+  </p>
+  <ol>
+    <li>
+      <strong>Eligibility guard:</strong> current instruction、trusted
+      policy、現在Taskに適用されるcritical constraint、直前の完全なturn pair、未完了Tool
+      correlationなどの必須Contextを確保し、expired、 deleted、権限外、機微度違反を除外する。
+    </li>
+    <li>
+      <strong>Route plan:</strong> 追加Memoryなし、Personal state、Raw recall、Reusable knowledge、
+      Procedure support、または許可済みのbounded combinationから計画templateを選ぶ。
+    </li>
+    <li>
+      <strong>Candidate set selection:</strong>
+      template内で、予算とtrustを守りながら候補の限界効用を
+      評価し、必要なcoverageを満たす小さなref集合を選ぶ。
+    </li>
+    <li>
+      <strong>Resolution and health:</strong>
+      選択したrefだけから本文を解決し、deduplicate、serialization、 Context Healthを経てWorking
+      Setを完成させる。
+    </li>
+  </ol>
+  <pre><code class="language-text">maximize
+  expected answer utility
+  + required information coverage
+  - token / latency cost
+  - redundancy
+  - contradiction and staleness risk
+  - privacy and trust risk
+
+subject to
+  mandatory context preserved
+  authority boundary preserved
+  provider input and output reserve preserved
+  deleted / expired / forbidden source count = 0
+  selected set may be empty</code></pre>
+  <p>
+    「最小」は単に短いことではない。Taskを正しく処理するために必要なcoverageを満たしたうえで、不要な
+    情報がないことを意味する。coverageを満たせない場合は、薄いContextで断定せず、targeted recall、
+    確認、またはabstentionへ移る。
+  </p>
+  <h3 id="61-memory-plan-contract">6.1 MemoryPlanの概念契約</h3>
+  <p>
+    MemoryPlanは本文の寄せ集めではなく、Context
+    Brokerが検証可能な選択理由付きref計画である。少なくとも
+    次の意味を表現し、ContextEnvelopeのtrusted policyやcurrent instructionを複製しない。
+  </p>
+  <ul>
+    <li>選択したRoute planとpolicy revision</li>
+    <li>mandatory contextとoptional Memory refの区別</li>
+    <li>各refのsource、trust、validity、sensitivity、選択理由</li>
+    <li>必要coverage、推定cost、不確実性、除外理由</li>
+    <li>解決先のProvider境界、deadline、失敗時のfallback</li>
+  </ul>
+  <p>
+    MemoryPlan自身にRaw本文、secret、Tool permission、外部実行命令を保存しない。本文解決後にsourceや
+    validityが変わった場合は、古い計画を送信せず再検査する。
+  </p>
+  <p>
+    Hot、Warm、Coldは永続Memory typeにしない。Warmに相当するCandidate Indexは本文cacheではなく、
+    各Turnで選択可否を判断するmetadata
+    projectionである。前Turnで選んだMemoryを無条件に持ち越さない。
+  </p>
+
+  <h2 id="7-learning-problem">7. 学習問題の定義</h2>
+  <h3 id="71-bounded-target">7.1 Bounded target</h3>
+  <p>
+    学習器は、guard通過後のRoute planと候補の限界効用を予測する。個々のMemory
+    refを恒久的なarmにすると、 追加と削除のたびにaction
+    spaceが変わり、集合の組合せが爆発する。そのため、安定したplan templateと
+    type別scorerを学習し、具体的なref集合は制約付きselectorが構築する。
+  </p>
+  <p>
+    判断前の特徴は、本文を巨大なtext vectorとして直接学習するのではなく、次のboundedな群に分ける。
+  </p>
+  <ul>
+    <li>Situation、Assist intent、要求される正確性、時間参照、照応、Task種別</li>
+    <li>利用可能なMemory type、件数、鮮度、source trust、矛盾、coverage</li>
+    <li>Context予算、推定token、解決latency、provider / model / adapter fingerprint</li>
+    <li>Userが明示した設定、学習停止、sensitivity、Cloud可否</li>
+    <li>最近のpolicy outcomeとrevision。ただしRaw本文はLearning Ledgerへ複製しない</li>
+  </ul>
+  <p>
+    Feature生成のために追加のblocking provider
+    callを必須にしない。Situationやintentを確定できない場合は
+    LLMに推測させて埋めず、unknownを表現して固定baselineへfallbackする。これにより、Memory routingを
+    改善するための学習器が、別の高能力LLMへ常時依存する循環を避ける。
+  </p>
+
+  <h3 id="72-short-horizon-assumption">7.2 Short-horizon assumption</h3>
+  <p>
+    Contextual
+    banditが妥当なのは、今回の選択の主な価値が今回または近接した結果で観測でき、次Turnの状態を
+    大きく変えない場合である。数日後の信頼、会話の主導権、長いProcedureの成否など遅延効果が支配するなら、
+    rewardを無理に今回へ帰属させない。その場合はbandit仮説を棄却し、状態遷移を持つ別Policyとして再設計する。
+  </p>
+
+  <h2 id="8-guarded-hybrid-policy">8. Guarded Hybrid Policy</h2>
+  <h3 id="81-primary-candidate">8.1 Linear policy candidate</h3>
+  <p>
+    初期候補はonline linear contextual banditである。少量の個人データから逐次更新しやすく、予測と
+    不確実性を分けられ、Mac上でforegroundを妨げない計算量に収めやすい。LinUCBまたはBayesian linear
+    policyは候補であり、固定routingより良いことを時系列検証できなければ採用しない。
+  </p>
+
+  <h3 id="82-nonlinear-challenger">8.2 Random Forest residual candidate</h3>
+  <p>
+    Random Forestは線形Policyが残した系統的な誤差を予測するshadow challenger候補とする。線形Policyの
+    不確実性推定を置き換えず、探索、Safety、権限判定に使わない。時系列holdoutで再現性のある改善があり、
+    失敗group、calibration、latency、model sizeが許容される場合だけ、boundedな補正として評価する。
+  </p>
+  <p>
+    データが少ない、drift後である、provider
+    fingerprintが未知である、線形残差に安定した構造がない場合は 無効のままとする。Random
+    Forestという方式そのものに価値は置かず、単純なPolicyへ戻れることを優先する。
+  </p>
+  <pre><code class="language-text">candidate score
+  = calibrated linear expected utility
+  + allowed uncertainty term
+  + validated bounded residual
+  - context / latency / risk costs</code></pre>
+
+  <h3 id="83-model-lifecycle">8.3 Model lifecycle</h3>
+  <pre><code class="language-text">draft → shadow → candidate → active → superseded
+                    │            │
+                    └→ rejected  └→ rolled back</code></pre>
+  <ul>
+    <li>draftとshadowはUser-facing選択を変えない。</li>
+    <li>candidateはbaselineとの検証を通過しても、active化前にhard invariantを再確認する。</li>
+    <li>revisionは完成前にactive化せず、atomicに切り替える。</li>
+    <li>active revisionとfeature contractを対応付け、旧revisionへrollbackできるようにする。</li>
+    <li>model fileの欠損、schema不一致、数値異常、検証期限切れでは固定Policyへ戻る。</li>
+  </ul>
+
+  <h2 id="9-learning-evidence">9. 学習Evidenceと因果的な妥当性</h2>
+  <h3 id="91-outcomes">9.1 Outcome hierarchy</h3>
+  <ul>
+    <li>明示的な承認、拒否、訂正、Memory削除を最も強い信号とする。</li>
+    <li>機械的に検証できるTask完了、Tool結果、verification失敗を強い結果信号とする。</li>
+    <li>再質問、言い換え、同じ依頼の繰り返しは低confidenceの補助信号とする。</li>
+    <li>無反応、無音、会話終了、Provider成功statusをUser満足とみなさない。</li>
+    <li>latency、Context量、不要なRecall、確認負荷をcostとして分離記録する。</li>
+  </ul>
+  <p>
+    一つのscalar rewardだけを正本にせず、観測したoutcome vector、confidence、帰属windowを保持する。
+    異なる価値を一つの重みへ圧縮する場合、そのreward definitionをversion化する。
+  </p>
+
+  <h3 id="92-logged-decision">9.2 Logged decision</h3>
+  <p>各判断は、後から別Policyを評価できるだけの情報を持つ。</p>
+  <ul>
+    <li>判断前に利用可能だったfeatureとeligible action / plan集合</li>
+    <li>選択したplan、candidate refs、selection probabilityまたはpropensity</li>
+    <li>guardと除外理由、Context health、選択しなかった候補のbounded metadata</li>
+    <li>policy revision、feature contract、reward definition</li>
+    <li>provider、model、adapter、prompt policy、Capability revisionのfingerprint</li>
+    <li>observed outcome、feedback confidence、遅延、token、失敗class</li>
+  </ul>
+  <p>
+    選んだactionの結果しか観測できないため、単純な過去平均は別Policyの効果を示さない。Safety範囲内の
+    controlled explorationとpropensity記録がある領域だけを、IPS、doubly robust、SWITCH系などの
+    off-policy
+    estimatorで比較する。supportがないaction、個人をまたぐ推測、選択確率が不明な古いlogは、
+    因果的改善の証拠に使わない。
+  </p>
+  <p>
+    Explorationは同じSafety、Privacy、authority、必要coverageを満たす等価候補間だけで許可する。機微dataの
+    追加送信、外部作用、Userが明示したPreferenceへの違反、必須Contextの欠落を試さない。確率化する単位が
+    Route
+    planだけなら、propensityとoff-policy評価もplan判断だけに適用し、決定論的guardやselectorまで
+    因果評価できたと主張しない。
+  </p>
+
+  <h3 id="93-no-self-confirmation">9.3 自己強化の防止</h3>
+  <p>
+    Policyがよく選んだMemoryは観測機会も増えるため、利用回数やLLMの肯定だけでutilityを上げると
+    self-confirming
+    loopになる。明示feedback、独立verification、反事実評価を優先し、Policy自身が生成した
+    要約や評価を独立した正解として再投入しない。
+  </p>
+
+  <h2 id="10-cold-start-drift">10. Cold Start、Drift、Provider変更</h2>
+  <ul>
+    <li>
+      学習例がないUser、未知のSituation、未知のproviderでは、決定論的な最小Context
+      baselineから始める。 学習しないことと追加Memoryなしを正常状態とする。
+    </li>
+    <li>
+      Userごとのデータ量を前提にせず、globalな個人情報を共有しない。共有する場合は個人情報を含まない
+      feature priorに限定し、明示的なPrivacy contractを別途必要とする。
+    </li>
+    <li>
+      Userの訂正、設定変更、生活状況の変化をconcept
+      driftとして扱い、recencyだけでなく明示revision境界、 change signal、手動resetを持つ。
+    </li>
+    <li>
+      Provider、model、system policy、Tool revisionが変わると同じContextの価値も変わりうる。
+      fingerprintを跨いだ学習例は無条件にpoolせず、再検証まではshadowまたはbaselineへ戻す。
+    </li>
+    <li>
+      過去logの量が多いことを現在の妥当性とみなさない。時間順のweighting、revision分割、stale判定は
+      検証対象とする。
+    </li>
+  </ul>
+
+  <h2 id="11-procedure-authority">11. Procedureと権限の分離</h2>
+  <p>
+    Skill全文を毎回LLMへ読ませない。Procedureは、Use when、入力、bounded
+    step、期待結果、verification、 stop
+    conditionを持つ実行候補として扱う。SAAAが現在stepと状態を管理し、LLMには現在の判断または生成に
+    必要な断片だけを渡す。
+  </p>
+  <p>
+    断片投影は、versioned Procedureから機械的に必要節を解決でき、必須prerequisite、禁止事項、stop
+    condition、verificationが欠落しない場合に限る。Procedureの整合性を証明できない、versionが変わった、
+    未知の分岐へ入った場合は、断片を推測で補わず、全文読解または実行停止へfallbackする。
+  </p>
+  <p>
+    Procedure inductionでは、LLMが説明文を生成できるが、根拠はsource-backed Episode、実際のAction
+    Trace、 結果、verificationである。ただし、成功したAction
+    Traceは将来の権限を付与しない。Procedureは提案または plan
+    templateであり、各外部作用は実行時点のCapability、Permission、Approval、idempotency、verificationを
+    毎回通る。過去のsecret、credential、Tool output、承認を再生しない。
+  </p>
+
+  <h2 id="12-runtime-resources">12. Foreground、idle、失敗時の挙動</h2>
+  <table>
+    <caption>
+      Table: Conceptual execution classes
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">状態</th>
+        <th scope="col">許可する責務</th>
+        <th scope="col">中断条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Foreground</td>
+        <td>bounded feature生成、Policy inference、MemoryPlan、Context Health、decision記録</td>
+        <td>失敗時はdeadline内で固定Policyへfallback</td>
+      </tr>
+      <tr>
+        <td>Soft idle</td>
+        <td>確定feedback反映、小さな線形更新、Candidate metadata整理</td>
+        <td>発話、ASR、TTS、Meeting、Provider実行の開始</td>
+      </tr>
+      <tr>
+        <td>Hard idle</td>
+        <td>challenger再学習、reflection、consolidation、Procedure候補生成、offline評価</td>
+        <td>Foreground需要またはresource pressure</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>ForegroundはIndex metadataだけで判断し、全Memory走査やmodel再学習を待たない。</li>
+    <li>idle jobはpreemptibleかつ再開可能で、途中成果物をactive revisionとして公開しない。</li>
+    <li>Memory、ContextStill、学習器の障害は通常Chatを停止させず、最小Contextへ縮退する。</li>
+    <li>
+      Context HealthがREDのEnvelopeは送信せず、minimal rebuild後もREDならProvider
+      requestを開始しない。
+    </li>
+  </ul>
+
+  <h2 id="13-user-agency-security">13. User Agency、Privacy、Security</h2>
+  <h3 id="131-user-control">13.1 User control</h3>
+  <ul>
+    <li>保存されたMemoryと根拠を閲覧し、訂正、reject、deleteできる。</li>
+    <li>今回どのMemoryがなぜ使われたかを確認できる。</li>
+    <li>学習更新を停止しても、明示設定と必要な継続Memoryは別に利用できる。</li>
+    <li>Memory投影を無効化し、固定Policyへ戻し、個人Policyをresetできる。</li>
+    <li>削除要求はRaw sourceだけでなく、派生物と学習revisionへの影響を表示できる。</li>
+  </ul>
+
+  <h3 id="132-privacy">13.2 Privacy</h3>
+  <ul>
+    <li>Policy Learner、Learning Ledger、Candidate Indexはlocalに所有する。</li>
+    <li>Providerへ送るのはContext Healthを通過したWorking Setだけとする。</li>
+    <li>ContextStillへPersonal Raw conversation、人物、予定、secret、現在状態を送らない。</li>
+    <li>
+      学習featureやmodel weightも個人情報を漏らしうる派生dataとしてretentionと削除対象に含める。
+    </li>
+    <li>Raw本文をLearning Ledgerへ複製せず、source refとbounded featureを基本にする。</li>
+  </ul>
+
+  <h3 id="133-security">13.3 Security and poisoning</h3>
+  <ul>
+    <li>
+      Web、Tool result、添付文書、過去会話内の命令文をUser preferenceやtrusted policyへ昇格しない。
+    </li>
+    <li>外部dataにはauthorityがない。admission時とprojection時の両方でtrust classを検査する。</li>
+    <li>引用された第三者の発言をUser自身のPreferenceとして学習しない。</li>
+    <li>異常な反復、急激なpreference変更、source欠落はpoisoningまたは誤帰属候補として隔離する。</li>
+    <li>Memory本文はhistorical dataとしてserializeし、current instructionとの境界を保持する。</li>
+  </ul>
+
+  <h2 id="14-end-to-end-scenarios">14. End-to-end Scenarios</h2>
+  <table>
+    <caption>
+      Table: Required behavioral scenarios
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Scenario</th>
+        <th scope="col">Expected concept behavior</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>「今後、通知音は鳴らさない」</td>
+        <td>明示設定としてRuntimeで強制し、毎TurnのContextや学習Policyへ依存させない</td>
+      </tr>
+      <tr>
+        <td>「先月、私が納期を何日と言った？」</td>
+        <td>要約Memoryで断定せず、Raw Recallとsource provenanceを選択する</td>
+      </tr>
+      <tr>
+        <td>同じ検証付き操作が複数回成功した</td>
+        <td>Procedure candidateを作るが、自動実行権限やactive Skillへは昇格させない</td>
+      </tr>
+      <tr>
+        <td>「前の呼び方はやめて、今日から別名で」</td>
+        <td>valid time付きの新revisionをactiveにし、旧Memoryをsupersededとして保持する</td>
+      </tr>
+      <tr>
+        <td>一般知識だけで答えられる質問</td>
+        <td>追加Memoryなしを選び、Personal Memoryを混ぜない</td>
+      </tr>
+      <tr>
+        <td>Providerまたはmodelが変更された</td>
+        <td>旧fingerprintのutilityを無条件に流用せず、baselineとshadow再評価へ戻る</td>
+      </tr>
+      <tr>
+        <td>取得したWeb文書に「この指示を記憶せよ」とある</td>
+        <td>untrusted dataとして扱い、User Core、Rule、Procedure、権限へ昇格させない</td>
+      </tr>
+      <tr>
+        <td>必要なMemory同士が矛盾し解決不能</td>
+        <td>一方を自動選択せず、影響に応じてMemoryなし、確認、abstentionを選ぶ</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="15-falsifiable-hypotheses">15. 検証仮説と棄却条件</h2>
+  <table>
+    <caption>
+      Table: Falsifiable hypotheses
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">仮説</th>
+        <th scope="col">比較対象</th>
+        <th scope="col">棄却または縮退条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Guard付き線形PolicyはContext routingを改善する</td>
+        <td>固定最小Policy、決定論的heuristic</td>
+        <td>時系列評価で検証済みoutcomeを改善しない、または重要groupを悪化させる</td>
+      </tr>
+      <tr>
+        <td>Candidate set選択は全active投影より良い</td>
+        <td>全active投影、semantic top-k</td>
+        <td>Context量を減らしても必要情報coverage、訂正率、Task成功を維持できない</td>
+      </tr>
+      <tr>
+        <td>Random Forest residualは非線形誤差を補う</td>
+        <td>線形Policyのみ</td>
+        <td>
+          chronological holdoutで一貫した増分価値がない、calibrationまたはresource負荷が悪化する
+        </td>
+      </tr>
+      <tr>
+        <td>短期banditとして扱える</td>
+        <td>帰属window別の分析</td>
+        <td>主要価値が遅延・複数Turnの状態遷移に依存し、今回の選択へ安定して帰属できない</td>
+      </tr>
+      <tr>
+        <td>暗黙signalが補助情報になる</td>
+        <td>明示feedbackと機械検証のみ</td>
+        <td>追加すると誤適応、特定groupの偏り、self-confirmationが増える</td>
+      </tr>
+      <tr>
+        <td>Procedure断片投影は全文読解より安定する</td>
+        <td>Skill全文投入</td>
+        <td>step completion、verification、recoveryが改善せず、重要instructionの欠落が増える</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    仮説が棄却された場合、より複雑なmodelを自動追加しない。固定Policy、明示設定、targeted recall、
+    full Skill readなど、検証済みの単純な経路へ戻る。
+  </p>
+
+  <h2 id="16-evaluation-framework">16. 検証Framework</h2>
+  <h3 id="161-baselines">16.1 Baseline and ablation</h3>
+  <ol>
+    <li>B0: 必須Contextだけの固定最小Policy</li>
+    <li>B1: 現行相当のactive Memory投影</li>
+    <li>B2: 学習しないrule / semantic selector</li>
+    <li>B3: Guard + linear Policy</li>
+    <li>B4: Guard + linear Policy + validated residual</li>
+  </ol>
+  <p>
+    保存、候補生成、route selection、set
+    selection、本文解決、Provider生成を別々にablationし、改善源を
+    特定する。B4が良くてもB3との差が確認できなければRandom Forestは採用しない。
+  </p>
+
+  <h3 id="162-test-design">16.2 Test design</h3>
+  <ul>
+    <li>random splitではなく、未来を過去から予測するchronological holdoutを基本にする。</li>
+    <li>同一source、近接turn、派生要約がtrainとtestへ跨るleakageを防ぐ。</li>
+    <li>
+      cold start、訂正、topic
+      shift、矛盾、削除、provider変更、ContextStill停止を独立scenarioにする。
+    </li>
+    <li>
+      LongMemEval型のinformation extraction、temporal reasoning、knowledge
+      update、abstentionを分ける。
+    </li>
+    <li>明示feedback、機械的outcome、暗黙signalを混ぜず、signal別の寄与と誤差を確認する。</li>
+    <li>
+      期待utilityだけでなく、uncertainty
+      coverageとcalibrationを確認し、過信したPolicyを探索へ使わない。
+    </li>
+    <li>offline replay、supportのあるoff-policy評価、shadow、限定的canaryの順で証拠を強める。</li>
+  </ul>
+
+  <h3 id="163-acceptance-logic">16.3 Acceptance logic</h3>
+  <p>数値thresholdは検証設計で定めるが、判定構造は次を固定する。</p>
+  <ol>
+    <li>
+      hard Safety、Privacy、authority、deleted-source、Context Health違反は0でなければならない。
+    </li>
+    <li>固定baselineに対し、明示feedbackまたは独立検証に基づくTask outcomeを改善する。</li>
+    <li>cold start、訂正、provider変更、機微dataなどの重要groupで重大な回帰がない。</li>
+    <li>foreground latency、Context cost、memory footprintがRuntime予算内である。</li>
+    <li>異常時に固定Policyへfallbackし、active revisionをrollbackできる。</li>
+  </ol>
+  <p>
+    全体平均の改善だけでは採用しない。どれかのhard invariantに違反したPolicyは、平均rewardに関係なく
+    rejectする。support不足や信頼区間が広い場合は「改善なし」ではなく「判断不能」とし、active化しない。
+  </p>
+
+  <h2 id="17-open-questions">17. Open Questions</h2>
+  <p>以下は実装時の自由項目ではなく、検証設計で解消してから採用判断する未決事項である。</p>
+  <ul>
+    <li>Route plan templateをどこまで組合せ可能にし、action supportをどう確保するか。</li>
+    <li>Candidate setのcoverage、冗長性、矛盾、costをどの独立指標で測るか。</li>
+    <li>自然な会話だけで明示feedbackを得る範囲と、Review UIを必要とする判断はどこか。</li>
+    <li>Soft idleをambient microphoneの無音中まで許可するか、microphone inactiveに限定するか。</li>
+    <li>
+      Personal dataを共有せずにcold-start priorを作れるか。作れない場合は固定baselineで十分か。
+    </li>
+    <li>Provider変更後に旧学習例を再利用できる同等性条件をどう検証するか。</li>
+    <li>遅延rewardがどの程度ならbandit仮説を棄却するか。</li>
+    <li>
+      User削除要求に対する派生modelのunlearningを、再学習とrevision rollbackのどちらで保証するか。
+    </li>
+  </ul>
+
+  <h2 id="18-non-goals">18. 非目標</h2>
+  <ul>
+    <li>本文書だけを根拠に実装を開始しない。</li>
+    <li>LLMの一般知識、読解力、推論能力を個人会話だけで置き換えない。</li>
+    <li>ユーザー別LoRA、online fine-tuning、neural long-term memoryを初期主経路にしない。</li>
+    <li>Vector DBまたはEmbeddingを必須dependencyにしない。</li>
+    <li>全Memory、全Skill、全過去会話をContextへ投入しない。</li>
+    <li>Random ForestへRaw会話本文または巨大な疎text vectorを直接与えない。</li>
+    <li>ContextStillをPersonal Memory DB、Raw会話検索service、権限管理器へ変更しない。</li>
+    <li>Memory utilityの最大化を、User満足、Safety、真実性の代理として無条件に扱わない。</li>
+    <li>
+      本Concept内でDB schema、module構成、migration、Work Package、release thresholdを決めない。
+    </li>
+  </ul>
+
+  <h2 id="19-research">19. Research References</h2>
+  <ul>
+    <li>
+      <a href="https://arxiv.org/abs/2601.12078"
+        >Optimizing User Profiles via Contextual Bandits for Retrieval-Augmented LLM
+        Personalization</a
+      >
+      — semantic similarityだけでなくgeneration utilityからprofile setを選ぶ検証例。
+    </li>
+    <li>
+      <a href="https://arxiv.org/abs/2410.10813"
+        >LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory</a
+      >
+      — extraction、cross-session reasoning、temporal reasoning、update、abstentionの分離評価。
+    </li>
+    <li>
+      <a href="https://arxiv.org/abs/2310.08560">MemGPT: Towards LLMs as Operating Systems</a>
+      — 有限Contextと外部Memoryを階層的に管理するarchitectureの先行例。
+    </li>
+    <li>
+      <a href="https://arxiv.org/abs/2309.02427">Cognitive Architectures for Language Agents</a>
+      — working、episodic、semantic、procedural memoryとstructured action spaceの整理。
+    </li>
+    <li>
+      <a href="https://arxiv.org/abs/2504.14225"
+        >PERSONAMEM: Improving Personalized Language Model through Dynamic User Profiling</a
+      >
+      — static profileではなく会話に応じたdynamic profilingを評価する先行例。
+    </li>
+    <li>
+      <a href="https://proceedings.mlr.press/v70/wang17a.html"
+        >Optimal and Adaptive Off-policy Evaluation in Contextual Bandits</a
+      >
+      — logged bandit feedbackに対するIPS、doubly robust、SWITCH estimatorの根拠。
+    </li>
+    <li>
+      <a href="https://proceedings.mlr.press/v206/liu23d.html"
+        >Off-Policy Evaluation for Nonstationary Contextual Bandits</a
+      >
+      — distributionとpolicyが時間変化する場合の評価を分離する根拠。
+    </li>
+    <li>
+      <a href="https://proceedings.mlr.press/v119/su20a.html"
+        >Doubly Robust Off-policy Evaluation with Shrinkage</a
+      >
+      — largeまたはcombinatorial action spaceにおけるoff-policy評価のvariance対策。
+    </li>
+    <li>
+      <a href="https://arxiv.org/abs/2402.04401"
+        >Democratizing Large Language Models via Personalized Parameter-Efficient Fine-tuning</a
+      >
+      — personal PEFTの可能性と、Provider非所有時にSAAAの主経路へできない境界。
+    </li>
+    <li>
+      <a href="https://arxiv.org/abs/2310.06762"
+        >TRACE: A Comprehensive Benchmark for Continual Learning in Large Language Models</a
+      >
+      — continual fine-tuningでgeneral abilityとinstruction followingの回帰を検査する根拠。
+    </li>
+  </ul>
+
+  <h2 id="20-completion">20. Concept完了条件</h2>
+  <p>
+    本Conceptの完成状態は、学習器の名前が決まっていることではない。適応対象と非対象、Memoryの正本と
+    lifecycle、Context集合選択、authority、学習Evidence、off-policy評価、drift、User
+    control、fallback、 仮説の棄却条件が一貫しており、実装計画と分離されていることである。
+  </p>
+  <p>
+    次の成果物は実装計画ではなく、Section 15の仮説をSection
+    16のbaselineとscenarioで判定する検証設計と する。検証結果により、線形Policy、Random Forest
+    residual、または学習器を使わない固定Policyのいずれも 正当な結論になりうる。
+  </p>
+</article>

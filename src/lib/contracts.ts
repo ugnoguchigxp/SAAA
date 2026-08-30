@@ -4,11 +4,19 @@ export type {
   RuntimeFailureCode,
 } from "./generated/runtimeEvent";
 import { isAsrLanguageCode } from "./asrLanguages";
+import {
+  CURRENCY_CODES,
+  DISPLAY_LANGUAGE_PREFERENCES,
+  isSupportedTimeZone,
+  LENGTH_UNIT_SYSTEMS,
+  WEIGHT_UNITS,
+} from "./regionalPreferences";
 import type {
   CodexAgentSettings,
   ModelProviderSettings,
   ModelProvidersSettings,
   RoutingSettings,
+  RegionalPreferencesSettings,
   SecuritySettings,
   SituationSettings,
   VoiceSettings,
@@ -23,6 +31,7 @@ export type SettingsNamespace =
   | "routing.tasks"
   | "voice.runtime"
   | "security.runtime"
+  | "ui.preferences"
   | "situation.runtime";
 
 export type SettingsKey = "default" | "codex-sdk";
@@ -380,6 +389,17 @@ export function isSecuritySettings(value: Record<string, unknown>): value is Sec
   return (
     typeof value.localOnlyWhenSelected === "boolean" &&
     value.diagnosticsRedaction === true
+  );
+}
+
+export function isRegionalPreferencesSettings(value: Record<string, unknown>): value is RegionalPreferencesSettings {
+  return (
+    DISPLAY_LANGUAGE_PREFERENCES.some((language) => language === value.language) &&
+    typeof value.timeZone === "string" &&
+    isSupportedTimeZone(value.timeZone) &&
+    LENGTH_UNIT_SYSTEMS.some((unit) => unit === value.lengthUnit) &&
+    WEIGHT_UNITS.some((unit) => unit === value.weightUnit) &&
+    CURRENCY_CODES.some((currency) => currency === value.currency)
   );
 }
 

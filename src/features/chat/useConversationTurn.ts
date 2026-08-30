@@ -1,6 +1,8 @@
 import { type Dispatch, type FormEvent, type MutableRefObject, type SetStateAction, useEffect, useRef, useState } from "react";
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
+import { uiMessage } from "../../i18n/presentation";
 import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
+import { appendConversationActivity, type ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type { AppSnapshot, ConversationMessage, MeetingState, RuntimeEvent, VoiceSettings } from "../../lib/contracts";
 import { cancelRun, listMessages, speakText, startTurn, stopTts } from "../../lib/runtime";
 import { toSpeakableText } from "../../lib/speakableText";
@@ -41,7 +43,7 @@ export function useConversationTurn({
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
-  const [runtimeActivity, setRuntimeActivity] = useState<string[]>([]);
+  const [runtimeActivity, setRuntimeActivity] = useState<ConversationRuntimeActivity[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
@@ -176,21 +178,21 @@ export function useConversationTurn({
     switch (event.type) {
       case "started":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
-        setRuntimeActivity((current) => [...current, `${event.route} → ${event.providerId}`].slice(-8));
+        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerStarted", providerId: event.providerId }));
         break;
       case "providerSelected":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { fallbackUsed: event.fallbackUsed, reasonCode: event.selectionReasonCode === "other" ? "provider-selected-other" : "turn-active" }));
-        setRuntimeActivity((current) => [...current, `${event.routeId} → ${event.runtimeId} · ${event.selectionReasonCode}${event.fallbackUsed ? " · fallback" : ""}`].slice(-8));
+        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerSelected", providerId: event.runtimeId, fallbackUsed: event.fallbackUsed }));
         break;
       case "delta":
         setStreamingText((current) => current + event.text);
         break;
       case "activity":
-        setRuntimeActivity((current) => [...current, `${event.kind}: ${event.summary}`].slice(-8));
+        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerWorking" }));
         break;
       case "providerFailed":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "failed", { reasonCode: "provider-failed" }));
-        setRuntimeActivity((current) => [...current, `${event.providerId} failed: ${event.reason}`].slice(-8));
+        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerFailed" }));
         setStreamingText("");
         break;
       case "messageCompleted":
@@ -206,7 +208,7 @@ export function useConversationTurn({
         break;
       case "cancelled":
         failedRunIdsRef.current.delete(event.runId);
-        setRuntimeActivity((current) => [...current, "Generation cancelled"].slice(-8));
+        setRuntimeActivity((current) => appendConversationActivity(current, { type: "generationCancelled" }));
         break;
       case "failed":
         failedRunIdsRef.current.add(event.runId);
@@ -239,7 +241,7 @@ export function useConversationTurn({
       await speakText({ runId, conversationId, text: speakable });
     } catch (cause) {
       if (!speechStopRequestsRef.current.has(runId)) {
-        publishIssue(issueScope, `Speech playback failed: ${toMessage(cause)}`, speechRetry(text, conversationId));
+        publishIssue(issueScope, uiMessage("chatSpeechPlaybackFailed"), speechRetry(text, conversationId));
       }
     } finally {
       if (conversationSessionRef.current.speechRunId === runId) {
@@ -252,7 +254,7 @@ export function useConversationTurn({
       try {
         await resumeVoiceAfterSpeech(runId);
       } catch (cause) {
-        publishIssue(issueScope, `Microphone resume failed: ${toMessage(cause)}`);
+        publishIssue(issueScope, uiMessage("chatMicrophoneResumeFailed"));
       }
       speechStopRequestsRef.current.delete(runId);
     }

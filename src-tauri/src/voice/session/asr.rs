@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use zeroize::Zeroizing;
@@ -5,7 +6,8 @@ use zeroize::Zeroizing;
 use crate::redact::redact_runtime_text;
 use crate::{
     begin_simple_runtime_run, finish_runtime_run, register_active_run, remove_active_run,
-    validate_identifier, AppState, RunCancellation, TranscribeAudioInput, VoiceEvent,
+    validate_identifier, AppState, RunCancellation, TranscribeAudioChunkInput,
+    TranscribeAudioInput, VoiceEvent,
 };
 
 enum AsrRoute {
@@ -97,6 +99,88 @@ pub(crate) async fn transcribe_audio(
         .situation
         .set_microphone_state(crate::situation::contracts::MicrophoneState::Inactive);
     finish_transcription(state, input.run_id, result, cancellation, on_event)
+}
+
+pub(crate) async fn transcribe_audio_chunk(
+    state: &AppState,
+    input: TranscribeAudioChunkInput,
+    on_event: tauri::ipc::Channel<VoiceEvent>,
+) -> Result<String, String> {
+    validate_identifier(&input.run_id, "run id")?;
+    if input.sample_rate != 16_000 {
+        return Err("Streaming ASR chunks must use the canonical 16 kHz sample rate".to_string());
+    }
+    let samples = Zeroizing::new(
+        state
+            .audio_uploads
+            .consume(&input.audio_upload_id, "chat-asr-chunk")?,
+    );
+    validate_streaming_chunk(&samples, input.sample_rate)?;
+    let selected = {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| "Database lock unavailable".to_string())?;
+        state
+            .voice_profile
+            .verify_if_enabled(&connection, &samples, input.sample_rate)?;
+        select_asr(&connection)?
+    };
+
+    let cancellation = Arc::new(RunCancellation::default());
+    register_streaming_run(state, &input.run_id, cancellation.clone())?;
+    let _ = on_event.send(VoiceEvent::Transcribing {
+        run_id: input.run_id.clone(),
+    });
+    let result = transcribe_selected(
+        state,
+        &samples,
+        input.sample_rate,
+        selected,
+        cancellation.clone(),
+    )
+    .await;
+    remove_active_run(state, &input.run_id);
+    match result {
+        Ok((text, _)) => Ok(text),
+        Err(_) if cancellation.is_cancelled() => {
+            Err("Streaming transcription cancelled".to_string())
+        }
+        Err(error) => Err(redact_runtime_text(&error)),
+    }
+}
+
+fn register_streaming_run(
+    state: &AppState,
+    run_id: &str,
+    cancellation: Arc<RunCancellation>,
+) -> Result<(), String> {
+    let mut active = state
+        .active_runs
+        .lock()
+        .map_err(|_| "Run registry lock unavailable".to_string())?;
+    match active.entry(run_id.to_string()) {
+        Entry::Vacant(entry) => {
+            entry.insert(cancellation);
+        }
+        Entry::Occupied(_) => return Err("A run with this id is already active".to_string()),
+    }
+    Ok(())
+}
+
+fn validate_streaming_chunk(samples: &[f32], sample_rate: u32) -> Result<(), String> {
+    let minimum_samples = sample_rate as usize / 2;
+    let maximum_samples = sample_rate as usize * 30;
+    if samples.len() < minimum_samples
+        || samples.len() > maximum_samples
+        || samples.iter().any(|sample| !sample.is_finite())
+    {
+        return Err(
+            "Streaming ASR chunks must contain between 0.5 and 30 seconds of valid audio"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn select_asr(connection: &rusqlite::Connection) -> Result<SelectedAsr, String> {
@@ -363,5 +447,15 @@ mod tests {
         assert!(validate_asr_audio_quality(&[0.0; 16_000], 16_000, "medium").is_err());
         assert!(validate_asr_audio_quality(&[0.02; 16_000], 16_000, "medium").is_err());
         assert!(validate_asr_audio_quality(&quiet_speech, 16_000, "low").is_err());
+    }
+
+    #[test]
+    fn streaming_asr_chunk_bounds_are_finite_and_short_lived() {
+        assert!(validate_streaming_chunk(&[0.0; 8_000], 16_000).is_ok());
+        assert!(validate_streaming_chunk(&[0.0; 7_999], 16_000).is_err());
+        assert!(validate_streaming_chunk(&[0.0; 480_001], 16_000).is_err());
+        let mut invalid = vec![0.0; 8_000];
+        invalid[0] = f32::NAN;
+        assert!(validate_streaming_chunk(&invalid, 16_000).is_err());
     }
 }

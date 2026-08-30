@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { ASR_LANGUAGE_CODES } from "./asrLanguages";
+import { MAX_CONVERSATION_TIMEOUT_MS, MIN_CONVERSATION_TIMEOUT_MS } from "./conversationTimeout";
 import { runtimeFailureCodes } from "./generated/runtimeEvent";
 import { modelProvidersSettingsSchema, providerIdSchema } from "./providerSchemas";
+import { CURRENCY_CODES, DISPLAY_LANGUAGE_PREFERENCES, isSupportedTimeZone, LENGTH_UNIT_SYSTEMS, WEIGHT_UNITS } from "./regionalPreferences";
 export { modelProvidersSettingsSchema } from "./providerSchemas";
 
 export const DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS = 269_999;
@@ -63,7 +65,7 @@ export const routingSettingsSchema = z.object({
     source: z.enum(["harness", "provider"]),
     primaryProviderId: providerIdSchema.nullable(),
     fallbackProviderIds: z.array(providerIdSchema).max(20),
-    timeoutMs: z.number().int().min(1_000).max(300_000),
+    timeoutMs: z.number().int().min(MIN_CONVERSATION_TIMEOUT_MS).max(MAX_CONVERSATION_TIMEOUT_MS),
   }).strict().superRefine((route, context) => {
     if (route.source === "provider" && !route.primaryProviderId) context.addIssue({ code: "custom", message: "Individual LLM source requires a provider", path: ["primaryProviderId"] });
     if (route.source === "harness" && route.primaryProviderId !== null) context.addIssue({ code: "custom", message: "Harness source must not reference an individual provider", path: ["primaryProviderId"] });
@@ -109,6 +111,14 @@ export const securitySettingsSchema = z.object({
   diagnosticsRedaction: z.literal(true),
 }).strict();
 
+export const regionalPreferencesSchema = z.object({
+  language: z.enum(DISPLAY_LANGUAGE_PREFERENCES),
+  timeZone: z.string().max(100).refine(isSupportedTimeZone, "Unsupported time zone"),
+  lengthUnit: z.enum(LENGTH_UNIT_SYSTEMS),
+  weightUnit: z.enum(WEIGHT_UNITS),
+  currency: z.enum(CURRENCY_CODES),
+}).strict();
+
 export const situationSettingsSchema = z.object({
   enabled: z.boolean(),
   sampleIntervalMs: z.number().int().min(500).max(60_000),
@@ -120,20 +130,21 @@ export const situationSettingsSchema = z.object({
 }).strict();
 
 const settingsDocumentBaseSchema = z.object({
-  namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
+  namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "ui.preferences", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
   schemaVersion: z.literal(12),
   valueJson: z.record(z.string(), z.unknown()),
 }).strict();
 
 export function validateSettingsDocuments(documents: unknown[]): void {
-  const parsed = z.array(settingsDocumentBaseSchema).length(6).parse(documents);
+  const parsed = z.array(settingsDocumentBaseSchema).length(7).parse(documents);
   const expectedDocuments = new Set([
     "providers.model:default",
     "providers.agent:codex-sdk",
     "routing.tasks:default",
     "voice.runtime:default",
     "security.runtime:default",
+    "ui.preferences:default",
     "situation.runtime:default",
   ]);
   const namespaces = new Set(parsed.map((document) => `${document.namespace}:${document.key}`));
@@ -156,6 +167,9 @@ export function validateSettingsDocuments(documents: unknown[]): void {
         break;
       case "security.runtime":
         securitySettingsSchema.parse(document.valueJson);
+        break;
+      case "ui.preferences":
+        regionalPreferencesSchema.parse(document.valueJson);
         break;
       case "situation.runtime":
         situationSettingsSchema.parse(document.valueJson);

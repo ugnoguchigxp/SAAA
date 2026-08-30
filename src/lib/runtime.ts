@@ -15,7 +15,6 @@ import type {
   SituationSnapshot,
   SituationReviewSnapshot, CalibrationParameters, CalibrationProfile, CalibrationRun,
   TaskMode,
-  VoiceEvent,
   VoiceProfileSnapshot,
   MeetingPreflightResult,
   MeetingSegmentResult,
@@ -25,6 +24,7 @@ import type {
 } from "./contracts";
 import { validateSettingsDocuments } from "./schemas";
 export { deleteProviderApiKey, getProviderCredentialState, resolveServiceHarness, setProviderApiKey } from "./providerRuntime";
+export { transcribeAudio, transcribeAudioChunk } from "./voiceRuntime";
 
 export async function listCodexModels(): Promise<CodexModelOption[]> {
   return invoke<CodexModelOption[]>("list_codex_models");
@@ -53,20 +53,6 @@ export async function testModelProvider(provider: ModelProviderSettings): Promis
 
 export async function resolveNetworkAsr(host: string): Promise<NetworkAsrResolution> {
   return invoke<NetworkAsrResolution>("resolve_network_asr", { input: { host } });
-}
-
-export async function transcribeAudio(
-  input: { runId: string; conversationId: string; samples: Float32Array; sampleRate: number },
-  onEvent: (event: VoiceEvent) => void,
-): Promise<string> {
-  const channel = new Channel<VoiceEvent>();
-  channel.onmessage = onEvent;
-  const { samples, ...metadata } = input;
-  const audioUploadId = await stageAudioUpload(samples, "chat-asr").finally(() => samples.fill(0));
-  return invoke<string>("transcribe_audio", {
-    input: { ...metadata, audioUploadId },
-    onEvent: channel,
-  });
 }
 
 export async function speakText(input: {

@@ -3,12 +3,14 @@ import {
   isCodexAgentSettings,
   isModelProvidersSettings,
   isRoutingSettings,
+  isRegionalPreferencesSettings,
   isSecuritySettings,
   isSituationSettings,
   isVoiceSettings,
   type CodexAgentSettings,
   type ModelProvidersSettings,
   type RoutingSettings,
+  type RegionalPreferencesSettings,
   type SecuritySettings,
   type SettingsDocument,
   type SettingsNamespace,
@@ -22,6 +24,7 @@ export type SettingsDraft = {
   routing: RoutingSettings;
   voice: VoiceSettings;
   security: SecuritySettings;
+  regional: RegionalPreferencesSettings;
   situation: SituationSettings;
 };
 
@@ -33,6 +36,7 @@ export function draftFromDocuments(documents: SettingsDocument[], fallback: Sett
   const routing = find("routing.tasks", "default");
   const voice = find("voice.runtime", "default");
   const security = find("security.runtime", "default");
+  const regional = find("ui.preferences", "default");
   const situation = find("situation.runtime", "default");
   return {
     providers: model && isModelProvidersSettings(model) ? model : fallback.providers,
@@ -40,6 +44,7 @@ export function draftFromDocuments(documents: SettingsDocument[], fallback: Sett
     routing: routing && isRoutingSettings(routing) ? routing : fallback.routing,
     voice: voice && isVoiceSettings(voice) ? voice : fallback.voice,
     security: security && isSecuritySettings(security) ? security : fallback.security,
+    regional: regional && isRegionalPreferencesSettings(regional) ? regional : fallback.regional,
     situation: situation && isSituationSettings(situation) ? situation : fallback.situation,
   };
 }
@@ -55,6 +60,7 @@ export function documentsFromDraft(draft: SettingsDraft): Array<Omit<SettingsDoc
     document("routing.tasks", "default", draft.routing),
     document("voice.runtime", "default", draft.voice),
     document("security.runtime", "default", draft.security),
+    document("ui.preferences", "default", draft.regional),
     document("situation.runtime", "default", draft.situation),
   ];
 }

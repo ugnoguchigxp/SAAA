@@ -721,7 +721,7 @@ mod tests {
         let connection = Connection::open_in_memory().expect("in-memory sqlite");
         initialize_database(&connection).expect("migration succeeds");
         let documents = list_settings_documents(&connection).expect("documents load");
-        assert_eq!(documents.len(), 6);
+        assert_eq!(documents.len(), 7);
         assert!(documents
             .iter()
             .all(|document| document.schema_version == SETTINGS_SCHEMA_VERSION));
@@ -1338,7 +1338,7 @@ mod tests {
 
         initialize_database(&connection).expect("v8 migration");
         let documents = list_settings_documents(&connection).expect("strict settings load");
-        assert_eq!(documents.len(), 6);
+        assert_eq!(documents.len(), 7);
         assert!(documents.iter().all(|document| {
             document.schema_version == SETTINGS_SCHEMA_VERSION
                 && document.value_json.get("legacyField").is_none()
@@ -1864,7 +1864,7 @@ mod tests {
             .expect("version reads");
         assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         let documents = list_settings_documents(&reopened).expect("settings load");
-        assert_eq!(documents.len(), 6);
+        assert_eq!(documents.len(), 7);
         assert!(documents
             .iter()
             .all(|document| document.schema_version == SETTINGS_SCHEMA_VERSION));

@@ -34,6 +34,9 @@ test("renders voice transcription context for every conversation provider", () =
   expect(invocation.content.text).toContain("The configured agent name is {{agentNameJson}}.");
   expect(invocation.content.text).toContain("use that exact name whenever you identify or refer to yourself.");
   expect(invocation.content.text).toContain("The configured user name is {{userNameJson}}.");
+  expect(invocation.content.text).toContain("The configured regional preferences are {{regionalPreferencesJson}}.");
+  expect(invocation.content.text).toContain("Use the configured time zone when interpreting relative dates and times.");
+  expect(invocation.content.text).toContain("Use the configured units and currency when the user has not specified alternatives.");
   expect(invocation.content.text).toContain("do not infer, invent, or recall a user name");
 });
 
@@ -48,7 +51,8 @@ test("keeps the system context outside Rust program code", () => {
   expect(rustSource).toContain('include_str!("../../.s11tnext/codex-read-only.txt")');
   expect(rustSource).toContain('include_str!("../../../.s11tnext/conversation-respond.txt")');
   expect(rustSource).toContain('"developerInstructions": CODEX_READ_ONLY_SYSTEM_CONTEXT');
-  expect(rustSource).toContain("render_conversation_system_context(agent_name, user_name, input_origin, presentation_mode)");
+  expect(rustSource).toContain("render_conversation_system_context(");
+  expect(rustSource).toContain("regional_preferences::load(&connection)");
   expect(rustSource).not.toContain("Operate read-only. Do not modify files");
   expect(rustSource).not.toContain("SAAA transcribes voice input before invoking you");
 });

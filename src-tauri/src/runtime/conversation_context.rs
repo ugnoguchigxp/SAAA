@@ -1,5 +1,6 @@
 use crate::ipc_contract::ConversationMessage;
 use crate::memory;
+use crate::persistence::settings::regional_preferences::RegionalPreferences;
 
 const CONVERSATION_SYSTEM_CONTEXT: &str =
     include_str!("../../../.s11tnext/conversation-respond.txt");
@@ -8,6 +9,7 @@ pub(super) fn compose_provider_history(
     conversation_id: &str,
     agent_name: &str,
     user_name: &str,
+    regional: &RegionalPreferences,
     input_origin: &str,
     presentation_mode: &str,
     projected: Vec<memory::context_window::ProjectedContextMessage>,
@@ -17,8 +19,13 @@ pub(super) fn compose_provider_history(
         .next()
         .filter(|message| message.role == "system")
         .ok_or_else(|| "Context projection did not begin with its system policy".to_string())?;
-    let system_context =
-        render_conversation_system_context(agent_name, user_name, input_origin, presentation_mode)?;
+    let system_context = render_conversation_system_context(
+        agent_name,
+        user_name,
+        regional,
+        input_origin,
+        presentation_mode,
+    )?;
     let system_content = format!("{}\n\n{}", system_context.trim(), policy.content.trim());
     let mut history = vec![ConversationMessage {
         id: "context-system-conversation-respond".to_string(),
@@ -44,12 +51,14 @@ pub(super) fn compose_provider_history(
 fn render_conversation_system_context(
     agent_name: &str,
     user_name: &str,
+    regional: &RegionalPreferences,
     input_origin: &str,
     presentation_mode: &str,
 ) -> Result<String, String> {
-    const PLACEHOLDERS: [&str; 4] = [
+    const PLACEHOLDERS: [&str; 5] = [
         "{{agentNameJson}}",
         "{{userNameJson}}",
+        "{{regionalPreferencesJson}}",
         "{{inputOriginJson}}",
         "{{presentationModeJson}}",
     ];
@@ -61,11 +70,16 @@ fn render_conversation_system_context(
             "Conversation System Context has an invalid runtime placeholder contract".to_string(),
         );
     }
-    let encoded = [agent_name, user_name, input_origin, presentation_mode]
-        .map(serde_json::to_string)
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "Conversation runtime data could not be encoded".to_string())?;
+    let encoded = [
+        serde_json::to_string(agent_name),
+        serde_json::to_string(user_name),
+        serde_json::to_string(regional),
+        serde_json::to_string(input_origin),
+        serde_json::to_string(presentation_mode),
+    ]
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|_| "Conversation runtime data could not be encoded".to_string())?;
     Ok(PLACEHOLDERS.iter().zip(encoded).fold(
         CONVERSATION_SYSTEM_CONTEXT.to_string(),
         |context, (placeholder, value)| context.replace(placeholder, &value),
@@ -82,6 +96,7 @@ mod tests {
             "conversation-test",
             "こはく",
             "",
+            &RegionalPreferences::default(),
             "voice",
             "visual-and-spoken",
             vec![
@@ -105,6 +120,7 @@ mod tests {
             .content
             .contains("configured agent name is \"こはく\""));
         assert!(history[0].content.contains("configured user name is \"\""));
+        assert!(history[0].content.contains(r#""currency":"JPY""#));
         assert!(history[0].content.contains("input origin is \"voice\""));
         assert!(history[0]
             .content
@@ -123,11 +139,26 @@ mod tests {
 
     #[test]
     fn provider_history_json_encodes_runtime_data() {
-        let rendered =
-            render_conversation_system_context("A \"quoted\" name", "野口", "text", "visual")
-                .expect("system context renders");
+        let regional = RegionalPreferences {
+            language: "ja".to_string(),
+            time_zone: "Asia/Tokyo".to_string(),
+            length_unit: "metric".to_string(),
+            weight_unit: "kilogram".to_string(),
+            currency: "JPY".to_string(),
+        };
+        let rendered = render_conversation_system_context(
+            "A \"quoted\" name",
+            "野口",
+            &regional,
+            "text",
+            "visual",
+        )
+        .expect("system context renders");
         assert!(rendered.contains(r#"configured agent name is "A \"quoted\" name""#));
         assert!(rendered.contains(r#"configured user name is "野口""#));
+        assert!(rendered.contains(
+            r#"regional preferences are {"language":"ja","timeZone":"Asia/Tokyo","lengthUnit":"metric","weightUnit":"kilogram","currency":"JPY"}"#
+        ));
         assert!(!rendered.contains("{{"));
     }
 }

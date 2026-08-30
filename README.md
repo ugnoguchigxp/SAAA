@@ -92,7 +92,7 @@ The bundled runtime uses the package's model-facing toolset and strict Context G
 
 ## Voice profile
 
-Settings → Voice → My voice profile can configure an on-device filter that matches the current speaker against the user's enrolled voice. Enabling the filter requires at least four valid samples, each 3–12 seconds long, with a combined duration of at least 20 seconds. Up to five samples can be stored.
+Settings → Voice → My voice profile can configure an on-device filter that matches the current speaker against the user's enrolled voice. Enabling the filter requires five valid samples, each 10–12 seconds long, with a combined duration of at least 50 seconds. Five long Japanese prompts with varied pronunciation and intonation are shown in sequence. Each prompt is intentionally longer than the recording window: keep reading continuously until capture stops automatically after about 12 seconds, even though the text will not be finished.
 
 Samples are stored in the application-data directory as AES-256-GCM-encrypted WAV files. Speaker embeddings are encrypted in SQLite, while the master key is stored only in macOS Keychain. When the filter is enabled, SAAA sends audio to the local ASR server only after it passes local speaker matching. Model, key, timeout, and ambiguous-speaker failures are fail-closed; they never fall back to sending unfiltered audio.
 

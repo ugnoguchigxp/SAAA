@@ -1,0 +1,663 @@
+<article lang="ja">
+  <h1 id="adaptive-learning-concept-correction">
+    Adaptive Learning Concept 修正実装契約 — Document corrections only
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Reviewed; ready for implementation</li>
+    <li>Created: 2026-08-30</li>
+    <li>SAAA baseline: <code>0f0d2cd</code> + working tree</li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>対象: Spec docs、QA</li>
+  </ul>
+  <p>
+    本文書は、<a href="./saaa-adaptive-learning-memory-concept.html"
+      >SAAA Adaptive Learning and Selective Memory Concept</a
+    >
+    のreviewで確認された10件の欠陥だけを修正するための実装契約である。完了の定義は
+    <code>AC-00</code
+    >〜<code>AC-10</code>を依存順に完了し、Section
+    7のAcceptanceを満たすことである。
+  </p>
+  <p>
+    本契約はConcept文書と<a href="./README.html">Internal Design Documents</a>索引の2ファイルだけを
+    変更する。Rust、TypeScript、SQLite schema、Settings、テストを変更しない。Concept文書のStatusを
+    ConceptからPlanへ昇格させず、実装着手を許可しない。
+  </p>
+  <p>
+    reviewで別途提案された「idle時の反実仮想replayを学習信号の生成器に格上げする」再構成は、
+    Concept本体のarchitecture判断であり本契約に含まない。Section 3のNon-goalsとして明示する。
+  </p>
+
+  <h2 id="1-fixed-conclusion">1. 結論と固定判断</h2>
+  <pre><code class="language-text">saaa-adaptive-learning-memory-concept.html
+  ├─ 事実誤り     : baseline記述、引用title 2件
+  ├─ 削除         : Random Forest residual、Hot/Warm/Cold、open question 2件
+  ├─ 未決を固定化 : 学習器stateの再構成性、coverageの操作的定義
+  └─ 追加         : sample budget、MVP 3用語対応表、user-visible成功条件
+
+README.html
+  └─ 追加         : MVP 3実装契約、本修正契約</code></pre>
+  <ol>
+    <li>
+      検証済みの事実誤りを先に直す。設計判断の追加より優先し、<code>AC-05</code>、
+      <code>AC-08</code
+      >、<code>AC-10</code>を独立に完了できるようにする。
+    </li>
+    <li>
+      削除は理由を残す。節を消すだけにせず、Section 18の非目標へ棄却理由を移す。読者が
+      「検討されずに落ちた」と誤解しない状態にする。
+    </li>
+    <li>
+      Open questionのうち、Concept範囲で決定可能なものは決定する。実装自由項目へ降格させない。
+      <code>AC-01</code
+      >と<code>AC-03</code>が対象である。
+    </li>
+    <li>
+      MVP 3実装契約の用語を正本とする。Concept独自語は独自と明記し、対応表なしで語彙を二重化しない。
+    </li>
+    <li>
+      Concept文書のSection番号を振り直さない。新設節は既存節の下位（<code>4.1</code>、
+      <code>7.3</code>）へ入れ、既存の内部link、id、外部参照を壊さない。
+    </li>
+    <li>
+      <code>bun run spec:fix</code
+      >と<code>bun run spec:check</code>が各ticketの完了条件である。
+    </li>
+  </ol>
+
+  <h2 id="2-findings">2. 検証済みFindingsと根拠</h2>
+  <p>
+    以下はreviewで確認した10件である。「検証」はコードまたは一次情報で確認した事実、「設計」は
+    文書内部の不整合または未決事項を指す。
+  </p>
+  <table>
+    <caption>
+      Table: Review findings and evidence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">Finding</th>
+        <th scope="col">種別</th>
+        <th scope="col">根拠</th>
+        <th scope="col">Concept対象箇所</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>F1</td>
+        <td>
+          unlearningがopen questionのまま。online更新した線形modelから1例の寄与を厳密に除けない
+        </td>
+        <td>設計</td>
+        <td>§5.2「可能な範囲で」、§13.1の削除影響表示要件、§17と矛盾</td>
+        <td>§1、§5.2、§17</td>
+      </tr>
+      <tr>
+        <td>F2</td>
+        <td>必要標本数の見積もりがなく、単一userで恒久的にcold startである可能性が選択肢にない</td>
+        <td>設計</td>
+        <td>§7.1の特徴群、§10のfingerprint別分割、§9.1の疎な信号が同時に成立しない</td>
+        <td>§7、§10</td>
+      </tr>
+      <tr>
+        <td>F3</td>
+        <td>coverageが測定方法未定のままhard constraintと評価指標を兼ねている</td>
+        <td>設計</td>
+        <td>§6の目的関数と制約、§16.1のB2/B3/B4判定条件、§17に定義が先送り</td>
+        <td>§6、§17</td>
+      </tr>
+      <tr>
+        <td>F4</td>
+        <td>
+          第一引用PURPLEの前提（reference response reward、多user学習）をConceptが除外している
+        </td>
+        <td>検証</td>
+        <td>
+          arXiv 2601.12078は実在しtitle一致。rewardは<em
+            >the likelihood of the reference response</em
+          >、9タスクbenchmark横断、選択機構はPlackett-Luce
+        </td>
+        <td>§19</td>
+      </tr>
+      <tr>
+        <td>F5</td>
+        <td>Context Health REDが未実装であることをbaselineに書いていない</td>
+        <td>検証</td>
+        <td>
+          <code>context_window.rs</code
+          >のstatus判定は<code>"yellow"</code>と<code>"green"</code>のみ。
+          <code>"red"</code>を返す経路なし。minimal
+          rebuild失敗時は<code>Err</code>でturn失敗。
+          <code>turns.rs</code
+          >はhealthを観測記録するだけでstream開始を止めない
+        </td>
+        <td>§0、§12、§16.3</td>
+      </tr>
+      <tr>
+        <td>F6</td>
+        <td>Random Forest residualは採用条件が連立不能で、検証されない作業項目として残る</td>
+        <td>設計</td>
+        <td>§8.2の条件7項目とF2の標本量が両立しない。§15、§16.1、§18の記述を消費し続ける</td>
+        <td>§0、§1、§8.2、§15、§16.1、§18</td>
+      </tr>
+      <tr>
+        <td>F7</td>
+        <td>MVP 3契約との用語対応表がない。Hot/Warm/Coldの否定対象が存在しない</td>
+        <td>検証</td>
+        <td>
+          Hot/Warm/Coldは<code>mvp-3-memory-architecture-implementation-plan.html</code>にも
+          実装にも出現しない。Concept独自語は<code>MemoryPlan</code>、<code>Candidate Index</code>、
+          <code>Learning Ledger</code
+          >、<code>Route plan</code>、<code
+            >Skill Runtime State</code
+          >
+        </td>
+        <td>§4、§6.1</td>
+      </tr>
+      <tr>
+        <td>F8</td>
+        <td>§0が正本と呼ぶMVP 3実装契約が、active document索引に未登録である</td>
+        <td>検証</td>
+        <td>
+          <code>README.html</code>のActive表にConceptはあるがMVP 3実装契約がない
+        </td>
+        <td>README.html</td>
+      </tr>
+      <tr>
+        <td>F9</td>
+        <td>userから見た成功条件が書かれていない。§14は8件中6件が抑制の記述である</td>
+        <td>設計</td>
+        <td>§15の仮説は「Context routingを改善する」で止まる</td>
+        <td>§15</td>
+      </tr>
+      <tr>
+        <td>F10</td>
+        <td>引用title 2件が実在の論文と一致しない</td>
+        <td>検証</td>
+        <td>
+          2504.14225は<em
+            >Know Me, Respond to Me: Benchmarking LLMs for Dynamic User Profiling and Personalized
+            Responses at Scale</em
+          >。v206/liu23dは<em
+            >Asymptotically Unbiased Off-Policy Policy Evaluation when Reusing Old Data in
+            Nonstationary Environments</em
+          >。他7件はID、titleとも一致
+        </td>
+        <td>§19</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="3-non-goals">3. Non-goals</h2>
+  <ul>
+    <li>
+      Concept文書のStatusをPlanへ昇格させない。学習algorithm、threshold、Work Packageを決めない。
+    </li>
+    <li>
+      idle時の反実仮想replayを学習信号の生成器へ格上げする再構成を含めない。§9.2のoff-policy機構を
+      主経路から外す判断は、本契約の完了後に別のConcept revisionとして扱う。
+    </li>
+    <li>
+      MVP
+      3実装契約、<code>plan.html</code>、ADRの本文を変更しない。F5はConcept側のbaseline記述の
+      訂正であり、MVP 3のContext Health契約自体を緩めない。
+    </li>
+    <li>
+      Context Health REDの実装、health gateの追加、decision loggingの実装を行わない。F5は
+      「未強制である」と記録するだけとする。
+    </li>
+    <li>
+      <code>always-on-streaming-asr-implementation-plan.html</code>と
+      <code>settings-provider-harness-cloud-voice-implementation-plan.html</code>もREADME索引へ
+      未登録だが、本契約では扱わない。F8はConcept文書が正本として参照する範囲に限定する。
+    </li>
+    <li>Concept文書のSection番号の振り直し、章構成の入れ替え、英語化を行わない。</li>
+  </ul>
+
+  <h2 id="4-stop-conditions">4. Stop conditions</h2>
+  <ul>
+    <li>
+      <code>AC-06</code>の削除後に、Random
+      Forestへの参照が本文へ残る場合は完了としない。棄却理由が
+      §18に存在することを確認してから次へ進む。
+    </li>
+    <li>
+      <code>AC-01</code
+      >または<code>AC-03</code>が、§1の固定行と§17の削除の両方を伴わない場合は
+      完了としない。決定を追加しただけでopen questionを残す状態を禁止する。
+    </li>
+    <li>
+      <code>AC-02</code>のsample
+      budgetが、測定主体と停止条件を伴わない記述になった場合は差し戻す。
+      「十分な標本を確保する」のような判定不能な文を置かない。
+    </li>
+    <li>本契約の実施Turnで、Concept文書とREADME以外のファイルに差分が出た場合は中断する。</li>
+    <li><code>bun run spec:check</code>が警告を出す状態で次のticketへ進まない。</li>
+  </ul>
+
+  <h2 id="5-corrections">5. 各修正の内容</h2>
+
+  <h3 id="51-unlearning">5.1 F1 — 学習器stateの再構成性を固定する</h3>
+  <p>§1のTable「Concept decisions and hypotheses」へ次の行を追加する。</p>
+  <table>
+    <caption>
+      Table: Added decision row
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">Status</th>
+        <th scope="col">判断</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>学習器stateの再構成性</td>
+        <td>固定</td>
+        <td>
+          replay可能なexample
+          logと定期checkpointから常に再構成できる状態に保ち、不可逆なonline更新を 主経路にしない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    §5.2末尾の「可能な範囲で派生Candidate、Index、学習example、model revisionへのlineageを無効化し」
+    を、この決定に沿って書き換える。削除は、example logから該当exampleを除去し、直前のcheckpointから
+    replayしてmodel revisionを再生成する手続きとする。「可能な範囲で」という留保を残さない。
+  </p>
+  <p>
+    §17から「User削除要求に対する派生modelのunlearningを、再学習とrevision
+    rollbackのどちらで保証するか」 を削除する。§13.1の「削除要求はRaw
+    sourceだけでなく、派生物と学習revisionへの影響を表示できる」は
+    この決定により実装可能になるため、そのまま維持する。
+  </p>
+
+  <h3 id="52-sample-budget">5.2 F2 — Sample budgetを新設する</h3>
+  <p>§7.2の後に§7.3として新設する。次の3点を必ず含める。</p>
+  <ol>
+    <li>
+      <strong>測定対象:</strong> 既存baselineのlogから、guardで自動決定されず選択が実際に分岐する
+      turn数、§9.1上位2層に該当する強いoutcome件数、および§10が要求するprovider fingerprint別・
+      revision別・recency window別に分割した後のセルあたり有効標本数を測る。
+    </li>
+    <li>
+      <strong>測定主体:</strong> 学習器の実装前に、既存の投影経路へdecision loggingを追加して測る。
+      本契約はその実装を含まないが、これがsample budget確定の前提であることを明記する。
+    </li>
+    <li>
+      <strong>停止条件:</strong>
+      セルあたり有効標本が特徴次元数を下回る場合、線形Policyを実装しない。
+      固定Policyを結論として採用し、§15の仮説1を実装前に棄却する。
+    </li>
+  </ol>
+  <p>
+    §10の第1項目へ、単一userのdesktop clientでは恒久的にcold
+    startである可能性を、棄却可能な選択肢として 追加する。cold
+    startを一時状態とだけ扱う現在の書き方を改める。
+  </p>
+
+  <h3 id="53-coverage">5.3 F3 — coverageの操作的定義を入れる</h3>
+  <p>§6の目的関数のpre記述の後に、次の定義を追加する。</p>
+  <ul>
+    <li>
+      required information coverageは、Assist intentごとの必須スロットchecklistで表す。スロットは
+      要求の決定論的パースから導き、主体、時点、制約の対象、出典の要否を含む。
+    </li>
+    <li>
+      coverage failureは、当該スロットを充填できる候補がCandidate Indexに存在するにもかかわらず、
+      選択後のWorking Setで未充填スロットが残る状態と定義する。
+    </li>
+    <li>この定義は学習器なしでoffline計測できる。§16.1のB0からB4まで同一定義で比較する。</li>
+  </ul>
+  <p>
+    §17から「Candidate
+    setのcoverage、冗長性、矛盾、costをどの独立指標で測るか」のうちcoverageを削除する。
+    冗長性、矛盾、costは未決のまま残す。
+  </p>
+
+  <h3 id="54-purple">5.4 F4 — PURPLE注記に前提を明記する</h3>
+  <p>
+    §19の第1項目の注記を差し替える。現在の「semantic similarityだけでなくgeneration utilityから
+    profile setを選ぶ検証例」に、次の前提を追加する。
+  </p>
+  <ul>
+    <li>
+      rewardはreference responseのlikelihoodであり、正解応答が与えられたbenchmark上で成立する。
+    </li>
+    <li>学習は9個のpersonalizationタスクを横断し、単一userのonline feedbackではない。</li>
+    <li>選択機構は線形banditではなく、順序依存を扱うPlackett-Luce ranking modelである。</li>
+    <li>
+      SAAAは§9.1で信号を疎な明示feedbackと機械検証に限り、§10で横断学習を禁じるため、同一条件は
+      成立しない。本引用は仮説の成立根拠ではなく、成立条件を示す資料として扱う。
+    </li>
+  </ul>
+
+  <h3 id="55-baseline">5.5 F5 — baselineへ実装差分を追記する</h3>
+  <p>§0の第3段落へ次を追記する。</p>
+  <ul>
+    <li>
+      現行実装のContext
+      Healthは<code>green</code>と<code>yellow</code>のみを返し、RED状態は存在しない。
+    </li>
+    <li>minimal rebuildが予算内へ収まらない場合はturn自体が失敗し、REDとして観測されない。</li>
+    <li>Provider requestの開始はContext Health statusでgateされていない。</li>
+    <li>
+      したがって§12の「Context HealthがREDのEnvelopeは送信せず」と§16.3のContext Health違反0件は、
+      現時点でコード上未強制のinvariantである。§16のbaselineをこの差分の上で組む。
+    </li>
+  </ul>
+
+  <h3 id="56-random-forest">5.6 F6 — Random Forest residualを削除する</h3>
+  <p>次の6箇所を一度に処理する。部分適用を残さない。</p>
+  <ol>
+    <li>§8.2「Random Forest residual candidate」を節ごと削除する。</li>
+    <li>
+      §8.2末尾のcandidate score式から<code>+ validated bounded residual</code>を削除し、残る式を
+      §8.1の末尾へ移す。§8の見出し構成を<code>8.1</code>と<code>8.3</code>のまま残さず、
+      <code>8.2 Model lifecycle</code>へ繰り上げる。
+    </li>
+    <li>§1のTableから「非線形補正 / 検証仮説 / Random Forest residual」の行を削除する。</li>
+    <li>§15のTableから「Random Forest residualは非線形誤差を補う」の行を削除する。</li>
+    <li>
+      §16.1からB4を削除し、末尾段落の「B4が良くてもB3との差が確認できなければRandom
+      Forestは採用しない」 を削除する。baselineはB0からB3の4段とする。
+    </li>
+    <li>
+      §18の「Random ForestへRaw会話本文または巨大な疎text vectorを直接与えない」を、棄却理由付きの
+      非目標へ置換する。文面は「非線形residual補正を初期主経路にしない。単一userのデータ量では
+      chronological holdoutで増分価値を検証できないため、個人情報を含まない横断学習のPrivacy
+      contractが成立した場合のみ再検討する」とする。
+    </li>
+  </ol>
+  <p>
+    §0の冒頭「LinUCBやRandom Forestなどの個別algorithmは、本文書だけでは採用しない」からRandom
+    Forestを外し、LinUCBのみの記述にする。
+  </p>
+
+  <h3 id="57-terminology">5.7 F7 — MVP 3用語対応表を新設し、Hot/Warm/Coldを削除する</h3>
+  <p>§4の末尾に§4.1として次の表を追加する。</p>
+  <table>
+    <caption>
+      Table: Concept and MVP 3 term mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Concept term</th>
+        <th scope="col">MVP 3 term</th>
+        <th scope="col">関係</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Per-turn Working Set</td>
+        <td><code>ContextEnvelope</code></td>
+        <td>同一対象。MVP 3の型名を正本とする</td>
+      </tr>
+      <tr>
+        <td>Context Health</td>
+        <td>Context Health</td>
+        <td>同一。MVP 3 §9.3が正本</td>
+      </tr>
+      <tr>
+        <td>User Core / Working State / Continuity Capsule</td>
+        <td>同名</td>
+        <td>同一</td>
+      </tr>
+      <tr>
+        <td>Raw Event Store</td>
+        <td>Recent Raw / Recalled Raw</td>
+        <td>同一正本。MVP 3は投影経路で2種に分ける</td>
+      </tr>
+      <tr>
+        <td>Reusable Knowledge</td>
+        <td>Episode / Rule / Skill</td>
+        <td>MVP 3の3分類をConceptが束ねた呼称</td>
+      </tr>
+      <tr>
+        <td>MemoryPlan</td>
+        <td>なし</td>
+        <td>Concept独自。ContextEnvelope組み立て前のref計画</td>
+      </tr>
+      <tr>
+        <td>Candidate Index</td>
+        <td>なし</td>
+        <td>Concept独自。本文を読まずに選択可否を判断する派生projection</td>
+      </tr>
+      <tr>
+        <td>Learning Ledger / Route plan / Skill Runtime State</td>
+        <td>なし</td>
+        <td>Concept独自。MVP 3契約には対応物がない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    §6.1からHot、Warm、Coldを永続Memory typeにしないという段落を削除する。MVP 3契約にも実装にも
+    Hot/Warm/Coldは存在せず、否定対象を読者が特定できない。Candidate
+    Indexが本文cacheではなく各Turnの metadata
+    projectionであること、および前Turnで選んだMemoryを無条件に持ち越さないことは残す。
+  </p>
+
+  <h3 id="58-readme">5.8 F8 — README索引にMVP 3実装契約を登録する</h3>
+  <p>
+    <code>README.html</code>のTable「Active Internal Design
+    Documents」へ2行追加する。順序は正本の
+    階層に合わせ、<code>plan.html</code>の直後にMVP
+    3実装契約、その次にAdaptive Concept、その次に 本修正契約を置く。
+  </p>
+  <ul>
+    <li>
+      MVP 3 Memory Architecture実装契約 — 「Sessionless継続、Context
+      Health、選択的Memoryの実装契約」
+    </li>
+    <li>
+      Adaptive Learning Concept修正実装契約 — 「Concept文書のreview findings
+      10件を反映する文書修正契約」
+    </li>
+  </ul>
+
+  <h3 id="59-user-visible">5.9 F9 — userから見た成功条件を書く</h3>
+  <p>§15の冒頭に、仮説表より前に1段落を追加する。次の4点を観測可能な条件として列挙する。</p>
+  <ul>
+    <li>同じ前提をuserが繰り返し説明する回数が減る。</li>
+    <li>誤った前提に基づく応答が減る。</li>
+    <li>過去の事実を問う質問に、出典付きで答えられる割合が上がる。</li>
+    <li>foreground latencyとtoken costが悪化しない。</li>
+  </ul>
+  <p>
+    あわせて、これらが観測できない場合はarchitectureの内部的な正しさを採用理由にしないことを明記する。
+  </p>
+
+  <h3 id="510-citations">5.10 F10 — 引用titleを訂正する</h3>
+  <ul>
+    <li>
+      arXiv 2504.14225のtitleを<em
+        >Know Me, Respond to Me: Benchmarking LLMs for Dynamic User Profiling and Personalized
+        Responses at Scale</em
+      >へ訂正する。注記へ「PERSONAMEMはbenchmark名であり、改善手法ではなく評価用dataset」を加える。
+    </li>
+    <li>
+      <code>proceedings.mlr.press/v206/liu23d</code>のtitleを<em
+        >Asymptotically Unbiased Off-Policy Policy Evaluation when Reusing Old Data in Nonstationary
+        Environments</em
+      >へ訂正する。注記は§10のfingerprintを跨いだ学習例をpoolしない根拠として維持する。
+    </li>
+    <li>他7件は確認済みのため変更しない。</li>
+  </ul>
+
+  <h2 id="6-tickets">6. Tickets</h2>
+  <table>
+    <caption>
+      Table: Correction tickets
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">内容</th>
+        <th scope="col">依存</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>AC-00</td>
+        <td>
+          Concept文書§0のStatusを<code>Concept; revision 2</code>へ更新し、<code>Revised</code>行を
+          追加する。SAAA baselineを<code>0f0d2cd</code>として記録する
+        </td>
+        <td>なし</td>
+        <td>Status、Created、Revised、baselineが揃う。本文の他箇所に差分が出ない</td>
+      </tr>
+      <tr>
+        <td>AC-05</td>
+        <td>Section 5.5。§0へContext Health REDと送信gateの未実装をbaselineとして追記する</td>
+        <td>AC-00</td>
+        <td>
+          §12と§16.3のinvariantが現時点で未強制であると読める。MVP 3側のContext
+          Health契約を緩める文言がない
+        </td>
+      </tr>
+      <tr>
+        <td>AC-10</td>
+        <td>Section 5.10。§19の引用title 2件を訂正する</td>
+        <td>AC-00</td>
+        <td>2件のtitleが一次情報と一致する。注記の主張が訂正後のtitleと整合する</td>
+      </tr>
+      <tr>
+        <td>AC-08</td>
+        <td>Section 5.8。<code>README.html</code>へ2行追加する</td>
+        <td>AC-00</td>
+        <td>MVP 3実装契約と本修正契約がActive表にある。link先が解決する。他の行の順序を変えない</td>
+      </tr>
+      <tr>
+        <td>AC-06</td>
+        <td>Section 5.6。Random Forest residualを6箇所から削除し、§18へ棄却理由を移す</td>
+        <td>AC-00</td>
+        <td>
+          <code>Random Forest</code
+          >と<code>residual</code>の残存参照が§18の非目標1件だけになる。
+          §8の見出し番号が連続する。§16.1のbaselineがB0からB3の4段になる
+        </td>
+      </tr>
+      <tr>
+        <td>AC-01</td>
+        <td>Section 5.1。§1へ決定行を追加し、§5.2を書き換え、§17から1項目削除する</td>
+        <td>AC-06</td>
+        <td>
+          §5.2に「可能な範囲で」が残らない。§17にunlearning項目がない。§13.1の削除影響表示が維持される
+        </td>
+      </tr>
+      <tr>
+        <td>AC-02</td>
+        <td>Section 5.2。§7.3を新設し、§10へ恒久cold startの可能性を追加する</td>
+        <td>AC-01</td>
+        <td>
+          測定対象、測定主体、停止条件の3点が揃う。停止条件が判定可能な文になっている。
+          §7.1と§7.2のidを変更していない
+        </td>
+      </tr>
+      <tr>
+        <td>AC-03</td>
+        <td>Section 5.3。§6へcoverageの操作的定義を入れ、§17からcoverageを削除する</td>
+        <td>AC-02</td>
+        <td>
+          coverage failureがoffline判定可能な条件として定義される。§16.1のB0からB3が同一定義で
+          比較できる。§17に冗長性、矛盾、costが残る
+        </td>
+      </tr>
+      <tr>
+        <td>AC-07</td>
+        <td>Section 5.7。§4.1を新設し、§6.1からHot/Warm/Coldを削除する</td>
+        <td>AC-03</td>
+        <td>
+          Concept独自語がすべて表に載り、独自と明記される。§6.1のCandidate Index本文cache否定と
+          持ち越し禁止が残る
+        </td>
+      </tr>
+      <tr>
+        <td>AC-04</td>
+        <td>Section 5.4。§19第1項目の注記へPURPLEの前提4点を追加する</td>
+        <td>AC-10</td>
+        <td>reward源、横断学習、選択機構、SAAA側の除外が読める。仮説の成立根拠として読めない</td>
+      </tr>
+      <tr>
+        <td>AC-09</td>
+        <td>Section 5.9。§15冒頭へuser-visibleな成功条件を追加する</td>
+        <td>AC-06</td>
+        <td>4条件が観測可能な形で列挙される。内部的な正しさを採用理由にしない旨が入る</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="7-acceptance">7. Acceptance</h2>
+  <ol>
+    <li>
+      差分が<code>spec/docs/saaa-adaptive-learning-memory-concept.html</code>、
+      <code>spec/docs/README.html</code>、本文書の3ファイルに限られる。
+    </li>
+    <li>
+      <code>bun run spec:fix</code
+      >と<code>bun run spec:check</code>が警告なしで通る。
+    </li>
+    <li>
+      Concept文書のSection 0からSection
+      20の番号が保たれ、新設節が<code>4.1</code>と<code>7.3</code>だけである。
+    </li>
+    <li>
+      <code>Random Forest</code>の参照がConcept文書§18の非目標1件だけである。
+    </li>
+    <li>
+      §17のopen questionが8件から6件へ減り、削除された2件が§1または§6の決定として本文に存在する。
+    </li>
+    <li>§19の10件すべてが、ID、title、注記の主張の3点で一次情報と一致する。</li>
+    <li>
+      §0のbaseline記述が、<code>context_window.rs</code>のstatus判定と
+      <code>turns.rs</code>のstream開始条件に一致する。
+    </li>
+    <li>
+      <code>README.html</code>のActive表からMVP
+      3実装契約とConcept文書の両方へ到達できる。
+    </li>
+    <li>Concept文書のStatusがConceptのままで、実装着手を許可する文が追加されていない。</li>
+    <li>
+      MVP
+      3実装契約、<code>plan.html</code>、ADR、Rust、TypeScript、テストに差分がない。
+    </li>
+  </ol>
+
+  <h2 id="8-verification">8. Verification</h2>
+  <pre><code class="language-text">bun run spec:fix
+bun run spec:check
+git diff --stat        # 3 files only
+rg -n 'Random Forest|residual' spec/docs/saaa-adaptive-learning-memory-concept.html
+rg -n -A 20 'id="17-open-questions"' spec/docs/saaa-adaptive-learning-memory-concept.html</code></pre>
+  <p>
+    codeを変更しないため<code>bun run check</code>は本契約の完了条件に含めない。F5の記述が実装と
+    一致するかは、<code>src-tauri/src/memory/context_window.rs</code>のstatus判定と
+    <code>src-tauri/src/runtime/turns.rs</code>のstream開始箇所を読んで確認する。
+  </p>
+
+  <h2 id="9-rollback">9. Rollback</h2>
+  <ul>
+    <li>
+      各ticketは1
+      commitとし、<code>AC-</code>IDをmessageへ含める。単独revertでその修正だけを戻せる
+      状態を保つ。
+    </li>
+    <li>
+      <code>AC-06</code>は6箇所を1
+      commitで処理する。部分revertで参照が片方だけ残る状態を作らない。
+    </li>
+    <li>
+      Concept文書の判断に異議が出た場合は、本文を書き戻すのではなく、§1のStatusを固定から検証仮説へ
+      戻し、根拠を§2のFindingsへ追記する。
+    </li>
+    <li>
+      本契約の完了後、Concept文書のarchitecture再構成を行う場合は本文書をarchiveし、新しいConcept
+      revisionを正本とする。
+    </li>
+  </ul>
+</article>

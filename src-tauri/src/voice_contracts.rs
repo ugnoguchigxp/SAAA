@@ -11,6 +11,14 @@ pub(crate) struct TranscribeAudioInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscribeAudioChunkInput {
+    pub(crate) run_id: String,
+    pub(crate) audio_upload_id: String,
+    pub(crate) sample_rate: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SpeakTextInput {
     pub(crate) run_id: String,
     pub(crate) conversation_id: String,

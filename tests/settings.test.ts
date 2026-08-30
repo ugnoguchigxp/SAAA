@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { validateSettingsDocuments } from "../src/lib/schemas";
-function documents() {
-  return [
+import { defaultSettingsDraft } from "../src/features/settings/settingsDefaults";
+import {
+  conversationTimeoutMsFromSecondsInput,
+  conversationTimeoutSecondsInputValue,
+} from "../src/lib/conversationTimeout";
+function documents() { return [
     {
       namespace: "providers.model",
       key: "default",
@@ -42,9 +46,29 @@ function documents() {
       schemaVersion: 12,
       valueJson: { enabled: false, sampleIntervalMs: 2_000, calendarEnabled: false, retentionDays: 7, maxLedgerEntries: 10_000, heartbeatIntervalMs: 300_000, sensitiveApplicationCategories: true },
     },
+    { namespace: "ui.preferences", key: "default", schemaVersion: 12, valueJson: { language: "system", timeZone: "system", lengthUnit: "metric", weightUnit: "kilogram", currency: "JPY" } },
   ];
 }
 describe("settings contracts", () => {
+  test("defaults the conversation LLM timeout to 1800 seconds", () => {
+    expect(defaultSettingsDraft.routing.conversationRespond.timeoutMs).toBe(1_800_000);
+  });
+  test("accepts a configurable conversation LLM timeout up to one hour", () => {
+    const snapshot = documents();
+    const route = (snapshot[2].valueJson as { conversationRespond: { timeoutMs: number } }).conversationRespond;
+    route.timeoutMs = 1_800_000;
+    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
+    route.timeoutMs = 3_600_001;
+    expect(() => validateSettingsDocuments(snapshot)).toThrow("Too big");
+  });
+  test("converts bounded second inputs without losing millisecond-compatible values", () => {
+    expect(conversationTimeoutMsFromSecondsInput("1800")).toBe(1_800_000);
+    expect(conversationTimeoutMsFromSecondsInput("269.999")).toBe(269_999);
+    expect(conversationTimeoutSecondsInputValue(269_999)).toBe("269.999");
+    for (const invalid of ["", " 1800", "0.999", "3600.001", "1.0001", "Infinity", "text"]) {
+      expect(conversationTimeoutMsFromSecondsInput(invalid)).toBeNull();
+    }
+  });
   test("accepts the complete MVP settings snapshot", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
   });
@@ -102,7 +126,6 @@ describe("settings contracts", () => {
     const multilingual = documents();
     (multilingual[3].valueJson as { allowedLanguages: string[] }).allowedLanguages = ["ja", "en"];
     expect(() => validateSettingsDocuments(multilingual)).not.toThrow();
-
     for (const allowedLanguages of [[], ["xx"], ["ja", "ja"]]) {
       const invalid = documents();
       (invalid[3].valueJson as { allowedLanguages: string[] }).allowedLanguages = allowedLanguages;
@@ -231,19 +254,7 @@ describe("settings contracts", () => {
   test("accepts only the fixed LARM security contract", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
-    providers.push({
-      kind: "larm",
-      id: "larm-local",
-      enabled: false,
-      label: "LARM",
-      location: "local",
-      baseUrl: "http://127.0.0.1:9810",
-      tokenEnv: "LARM_API_TOKEN",
-      allocationTtlSeconds: 300,
-      allocationStartupTimeoutSeconds: 300,
-      allowFallbackByDefault: false,
-      deploymentPolicy: "existing-only",
-    });
+    providers.push({ kind: "larm", id: "larm-local", enabled: false, label: "LARM", location: "local", baseUrl: "http://127.0.0.1:9810", tokenEnv: "LARM_API_TOKEN", allocationTtlSeconds: 300, allocationStartupTimeoutSeconds: 300, allowFallbackByDefault: false, deploymentPolicy: "existing-only" });
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
     providers[1].baseUrl = "http://[::1]:9810";
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();

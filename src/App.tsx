@@ -1,29 +1,35 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useTranslation } from "react-i18next";
 import "./App.css";
 import { AppIcon } from "./components/AppIcon";
 import { ChatPage } from "./features/chat/ChatPage";
 import { useConversationTurn } from "./features/chat/useConversationTurn";
 import { MeetingPage } from "./features/meeting/MeetingPage";
-import { SettingsPage } from "./features/settings/SettingsPage";
-import { SituationPage } from "./features/situation/SituationPage";
 import { useAmbientVoiceSession } from "./features/voice/useAmbientVoiceSession";
 import { isMeetingBlocking, toMessage } from "./lib/appHelpers";
 import {
   findSettingsDocument,
+  isRegionalPreferencesSettings,
   isVoiceSettings,
   type AppSnapshot,
   type MeetingState,
 } from "./lib/contracts";
+import { applySnapshotLanguage } from "./lib/appLanguage";
+import { uiMessage } from "./i18n/presentation";
 import { resolveModelProviderStatus } from "./lib/conversationRouting";
+import type { ConversationRuntimeActivity } from "./lib/conversationActivity";
 import { initialConversationSession, type ConversationSession, type PendingConversationPrompt, type SubmitPromptOptions } from "./lib/conversationSession";
 import { getAppSnapshot, reportFrontendReady, reportOwnedSignal } from "./lib/runtime";
 
-const initialSnapshot: AppSnapshot = { settings: [], conversations: [], primaryConversationId: "", effectiveRoute: { providerId: null, label: "モデル未選択", location: null, state: "unchecked", fallbackUsed: false, reasonCode: "snapshot-loading", updatedAt: null }, larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" }, voiceProfile: { status: "empty", filterEnabled: false, runtimeAvailable: false, runtimeMessage: "Loading local speaker verification…", sampleCount: 0, targetSampleCount: 5, totalDurationMs: 0, minimumDurationMs: 20_000, threshold: 0.55, samples: [] } };
+const initialSnapshot: AppSnapshot = { settings: [], conversations: [], primaryConversationId: "", effectiveRoute: { providerId: null, label: "Model not selected", location: null, state: "unchecked", fallbackUsed: false, reasonCode: "snapshot-loading", updatedAt: null }, larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" }, voiceProfile: { status: "empty", filterEnabled: false, runtimeAvailable: false, runtimeMessage: "Loading local speaker verification…", sampleCount: 0, targetSampleCount: 5, totalDurationMs: 0, minimumDurationMs: 20_000, threshold: 0.55, samples: [] } };
+const SettingsPage = lazy(() => import("./features/settings/SettingsPage").then(({ SettingsPage }) => ({ default: SettingsPage })));
+const SituationPage = lazy(() => import("./features/situation/SituationPage").then(({ SituationPage }) => ({ default: SituationPage })));
 type Surface = "chat" | "meeting" | "situation" | "settings";
 type ErrorSlot = "app" | "conversation" | "voice";
 type ErrorSlots = Record<ErrorSlot, string | null>;
 
 function App() {
+  const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<AppSnapshot>(initialSnapshot);
   const [surface, setSurface] = useState<Surface>("chat");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -34,8 +40,7 @@ function App() {
   const conversationSessionRef = useRef<ConversationSession>(initialConversationSession);
   const submitPromptRef = useRef<(prompt: string, options?: SubmitPromptOptions) => Promise<void>>(async () => {});
   const stopSpeechRef = useRef<() => Promise<void>>(async () => {});
-  const setRuntimeActivityRef = useRef<Dispatch<SetStateAction<string[]>>>(() => {});
-
+  const setRuntimeActivityRef = useRef<Dispatch<SetStateAction<ConversationRuntimeActivity[]>>>(() => {});
   const selectedConversation = snapshot.conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
@@ -43,6 +48,10 @@ function App() {
   const voiceSettings = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "voice.runtime", "default");
     return document && isVoiceSettings(document.valueJson) ? document.valueJson : null;
+  }, [snapshot.settings]);
+  const regionalTimeZone = useMemo(() => {
+    const document = findSettingsDocument(snapshot.settings, "ui.preferences", "default");
+    return document && isRegionalPreferencesSettings(document.valueJson) ? document.valueJson.timeZone : "system";
   }, [snapshot.settings]);
   const meetingActive = isMeetingBlocking(meetingState);
   const error = errors.conversation ?? errors.voice ?? errors.app;
@@ -121,7 +130,8 @@ function App() {
       const primaryConversation = nextSnapshot.conversations.find(
         (conversation) => conversation.id === nextSnapshot.primaryConversationId,
       );
-      if (!primaryConversation) throw new Error("Primary conversation is unavailable.");
+      if (!primaryConversation) throw new Error(uiMessage("appPrimaryConversationUnavailable"));
+      applySnapshotLanguage(nextSnapshot);
       setSnapshot(nextSnapshot);
       setSelectedConversationId(primaryConversation.id);
     } catch (cause) { setAppError(toMessage(cause)); } finally { setLoading(false); }
@@ -130,6 +140,7 @@ function App() {
   async function refreshSnapshot() {
     try {
       const next = await getAppSnapshot();
+      applySnapshotLanguage(next);
       setSnapshot(next);
       setAppError(null);
     } catch (cause) {
@@ -139,7 +150,7 @@ function App() {
 
   function canChangeConversation(): boolean {
     if (conversationSessionRef.current.runId) {
-      setAppError("実行中の処理を停止してからSurfaceを切り替えてください。");
+      setAppError(uiMessage("appSurfaceSwitchBlocked"));
       return false;
     }
     setAppError(null);
@@ -152,7 +163,7 @@ function App() {
       (conversation) => conversation.id === snapshot.primaryConversationId,
     );
     if (!primaryConversation) {
-      setAppError("Primary conversation is unavailable.");
+      setAppError(uiMessage("appPrimaryConversationUnavailable"));
       return;
     }
     setSelectedConversationId(primaryConversation.id);
@@ -171,21 +182,20 @@ function App() {
     setSurface(nextSurface);
   }
 
-  if (loading) return <main className="boot-screen">SAAA Runtime を起動しています…</main>;
-
+  if (loading) return <main className="boot-screen">{t("app.booting")}</main>;
   return <main className="app-shell">
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">S</span><strong>SAAA</strong></div>
-      <nav className="primary-nav" aria-label="Primary navigation">
-        <button className={surface === "chat" ? "primary-nav-item active" : "primary-nav-item"} onClick={openChatSurface}><AppIcon name="chat" />会話</button>
-        <button className={surface === "meeting" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => void openMeetingSurface()}><AppIcon name="calendar" />ミーティング {meetingActive && <span className="meeting-active-indicator">進行中</span>}</button>
-        <button className={surface === "situation" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => openAuxiliarySurface("situation")}><AppIcon name="situation" />状況</button>
+      <nav className="primary-nav" aria-label={t("app.navigationLabel")}>
+        <button className={surface === "chat" ? "primary-nav-item active" : "primary-nav-item"} onClick={openChatSurface}><AppIcon name="chat" />{t("app.chat")}</button>
+        <button className={surface === "meeting" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => void openMeetingSurface()}><AppIcon name="calendar" />{t("app.meeting")} {meetingActive && <span className="meeting-active-indicator">{t("app.meetingActive")}</span>}</button>
+        <button className={surface === "situation" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => openAuxiliarySurface("situation")}><AppIcon name="situation" />{t("app.situation")}</button>
       </nav>
-      <button className={surface === "settings" ? "sidebar-settings active" : "sidebar-settings"} onClick={() => openAuxiliarySurface("settings")}><AppIcon name="settings" />設定</button>
+      <button className={surface === "settings" ? "sidebar-settings active" : "sidebar-settings"} onClick={() => openAuxiliarySurface("settings")}><AppIcon name="settings" />{t("app.settings")}</button>
     </aside>
 
     <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} conversationBusy={voiceProcessing || Boolean(activeRunId) || Boolean(activeTtsRunId)} onBeforeCapture={voice.suspendVoiceForMeeting} onStateChanged={setMeetingState} /></div>
-    {surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} voiceProfile={snapshot.voiceProfile} voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)} onSaved={(settings) => { setSnapshot((current) => ({ ...current, settings })); void refreshSnapshot(); }} onVoiceProfileChanged={(voiceProfile) => setSnapshot((current) => ({ ...current, voiceProfile }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <ChatPage messages={turn.messages} streamingText={turn.streamingText} interimTranscript={voice.interimTranscript} voiceState={voiceState} listeningEnabled={voice.listeningEnabled} runtimeActivity={turn.runtimeActivity} composer={composer} onComposerChange={turn.setComposer} onSubmit={(event) => void turn.handleSubmit(event)} onToggleVoice={() => void voice.toggleAmbientListening()} voiceStarting={voice.voiceStarting} meetingActive={meetingActive} activeRunId={activeRunId} modelProviderStatus={modelProviderStatus} onOpenSettings={() => openAuxiliarySurface("settings")} onOpenMeeting={() => void openMeetingSurface()} onOpenSituation={() => openAuxiliarySurface("situation")} onStopRun={() => void turn.stopActiveRun()} onStopSpeech={() => void stopSpeech()} onRetry={() => void turn.retryFailedAction()} selectedConversation={selectedConversation} activeTtsRunId={activeTtsRunId} error={error} lastPrompt={turn.lastPrompt} retryKind={turn.retryKind} /> : null}
+    <Suspense fallback={<main className="boot-screen">{t("app.booting")}</main>}>{surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} voiceProfile={snapshot.voiceProfile} voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)} onSaved={(settings) => { setSnapshot((current) => ({ ...current, settings })); void refreshSnapshot(); }} onVoiceProfileChanged={(voiceProfile) => setSnapshot((current) => ({ ...current, voiceProfile }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} timeZone={regionalTimeZone} /> : surface === "chat" ? <ChatPage messages={turn.messages} streamingText={turn.streamingText} interimTranscript={voice.interimTranscript} voiceState={voiceState} listeningEnabled={voice.listeningEnabled} runtimeActivity={turn.runtimeActivity} composer={composer} onComposerChange={turn.setComposer} onSubmit={(event) => void turn.handleSubmit(event)} onToggleVoice={() => void voice.toggleAmbientListening()} voiceStarting={voice.voiceStarting} meetingActive={meetingActive} activeRunId={activeRunId} modelProviderStatus={modelProviderStatus} onOpenSettings={() => openAuxiliarySurface("settings")} onOpenMeeting={() => void openMeetingSurface()} onOpenSituation={() => openAuxiliarySurface("situation")} onStopRun={() => void turn.stopActiveRun()} onStopSpeech={() => void stopSpeech()} onRetry={() => void turn.retryFailedAction()} selectedConversation={selectedConversation} activeTtsRunId={activeTtsRunId} error={error} lastPrompt={turn.lastPrompt} retryKind={turn.retryKind} /> : null}</Suspense>
   </main>;
 }
 

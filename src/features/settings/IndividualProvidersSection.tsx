@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   CloudAsrProviderSettings,
   CloudTtsProviderSettings,
@@ -14,6 +15,7 @@ import {
   testModelProvider,
 } from "../../lib/runtime";
 import { Field } from "./SettingsFields";
+import { localizeProviderKind, localizeProviderLabel, localizeUiMessage } from "../../i18n/presentation";
 
 export function IndividualProvidersSection({
   settings,
@@ -24,8 +26,11 @@ export function IndividualProvidersSection({
   persistedProviderIds: ReadonlySet<string>;
   onChange: (value: ModelProvidersSettings) => void;
 }) {
+  const { t } = useTranslation();
   function addProvider(capability: "llm" | "asr" | "tts") {
     const id = `cloud-${capability}-${crypto.randomUUID()}`;
+    // Persist a stable default identifier, then localize it at the display boundary.
+    // This keeps a newly added provider's default label in sync with later language changes.
     const common = { id, enabled: false, label: `Cloud ${capability.toUpperCase()}`, location: "cloud" as const };
     const provider: ModelProviderSettings = capability === "llm"
       ? { ...common, kind: "openai-compatible", endpoint: "https://api.openai.com/v1", model: "", authentication: "api-key" }
@@ -50,13 +55,13 @@ export function IndividualProvidersSection({
   return (
     <div className="settings-stack">
       <section className="settings-card">
-        <p className="eyebrow">INDIVIDUAL SERVICES</p>
-        <h3>Cloud Provider catalog</h3>
+        <p className="eyebrow">{t("settings.providers.eyebrow")}</p>
+        <h3>{t("settings.providers.title")}</h3>
         <p className="settings-help">
-          Harnessを使わないサービスだけ個別に登録します。API keyはmacOS Keychainへ保存し、設定・SQLite・診断には含めません。
+          {t("settings.providers.description")}
         </p>
         <div className="provider-card-footer">
-          <span>Provider IDは作成後に変更しません。</span>
+          <span>{t("settings.providers.stableId")}</span>
           <div>
             <button className="add-provider-button" type="button" onClick={() => addProvider("llm")}>＋ LLM</button>
             <button className="add-provider-button" type="button" onClick={() => addProvider("asr")}>＋ ASR</button>
@@ -88,19 +93,21 @@ function ProviderCard({
   onChange: (value: ModelProviderSettings) => void;
   onRemove: () => void;
 }) {
-  const [testState, setTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [testMessage, setTestMessage] = useState<string | null>(null);
+  const { t } = useTranslation();
+  const [testResult, setTestResult] = useState<
+    | { state: "idle" }
+    | { state: "testing" }
+    | { state: "success"; latency: number }
+    | { state: "error"; message: string }
+  >({ state: "idle" });
 
   async function test() {
-    setTestState("testing");
-    setTestMessage("Connecting…");
+    setTestResult({ state: "testing" });
     try {
       const result = await testModelProvider(provider);
-      setTestState(result.ok ? "success" : "error");
-      setTestMessage(`${result.message} · ${result.latencyMs} ms`);
+      setTestResult(result.ok ? { state: "success", latency: result.latencyMs } : { state: "error", message: result.message });
     } catch (cause) {
-      setTestState("error");
-      setTestMessage(cause instanceof Error ? cause.message : String(cause));
+      setTestResult({ state: "error", message: cause instanceof Error ? cause.message : String(cause) });
     }
   }
 
@@ -109,12 +116,12 @@ function ProviderCard({
     return (
       <section className="settings-card provider-card">
         <div className="card-title-row">
-          <div><h3>{provider.label}</h3><p className="muted">TTS · {provider.id}</p></div>
-          <span className="provider-test-result success">ready</span>
+          <div><h3>{localizeProviderLabel(t, provider.label)}</h3><p className="muted">TTS · {provider.id}</p></div>
+          <span className="provider-test-result success">{t("common.ready")}</span>
         </div>
         <div className="settings-form-grid">
-          <Field label="Voice"><input value={provider.voice} disabled /></Field>
-          <Field label="Output"><input value="System default" disabled /></Field>
+          <Field label={t("settings.providers.voice")}><input value={provider.voice} disabled /></Field>
+          <Field label={t("settings.providers.output")}><input value={t("common.systemDefault")} disabled /></Field>
         </div>
       </section>
     );
@@ -124,8 +131,8 @@ function ProviderCard({
       <section className="settings-card provider-card">
         <ProviderHeader provider={provider} onChange={onChange} />
         <div className="settings-form-grid">
-          <Field label="Base URL"><input value={provider.baseUrl} onChange={(event) => onChange({ ...provider, baseUrl: event.target.value })} /></Field>
-          <Field label="Runtime"><input value="LARM · existing deployment" disabled /></Field>
+          <Field label={t("settings.providers.baseUrl")}><input value={provider.baseUrl} onChange={(event) => onChange({ ...provider, baseUrl: event.target.value })} /></Field>
+          <Field label={t("settings.providers.runtime")}><input value={t("settings.providers.existingDeployment")} disabled /></Field>
         </div>
       </section>
     );
@@ -143,12 +150,12 @@ function ProviderCard({
       {provider.kind === "cloud-tts" && (
         <TtsFields provider={provider} onChange={onChange} />
       )}
-      {testMessage && <p className={`provider-test-result ${testState}`}>{testMessage}</p>}
+      {testResult.state !== "idle" && <p className={`provider-test-result ${testResult.state}`}>{testResult.state === "testing" ? t("settings.providers.connecting") : testResult.state === "success" ? t("settings.providers.connectionSucceeded", { latency: testResult.latency }) : localizeUiMessage(t, testResult.message, "settings")}</p>}
       <div className="provider-card-footer">
         <ApiKeyControl provider={provider} persisted={persisted} />
         <div>
-          <button className="text-button" type="button" disabled={testState === "testing" || (provider.authentication === "api-key" && !persisted)} onClick={() => void test()}>Test connection</button>
-          <button className="text-button danger" type="button" onClick={onRemove}>Remove provider</button>
+          <button className="text-button" type="button" disabled={testResult.state === "testing" || (provider.authentication === "api-key" && !persisted)} onClick={() => void test()}>{t("settings.providers.testConnection")}</button>
+          <button className="text-button danger" type="button" onClick={onRemove}>{t("settings.providers.removeProvider")}</button>
         </div>
       </div>
     </section>
@@ -156,11 +163,12 @@ function ProviderCard({
 }
 
 function ProviderHeader({ provider, onChange }: { provider: ModelProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
+  const { t } = useTranslation();
   return (
     <div className="card-title-row">
       <div>
-        <h3>{provider.label || "Provider"}</h3>
-        <p className="muted">{provider.kind} · {provider.id}</p>
+        <h3>{provider.label ? localizeProviderLabel(t, provider.label) : t("settings.providers.provider")}</h3>
+        <p className="muted">{localizeProviderKind(t, provider.kind)} · {provider.id}</p>
       </div>
       <label className="toggle">
         <input type="checkbox" checked={provider.enabled} onChange={(event) => onChange({ ...provider, enabled: event.target.checked })} />
@@ -177,15 +185,16 @@ function CommonCloudFields({
   provider: OpenAiCompatibleProviderSettings | CloudAsrProviderSettings | CloudTtsProviderSettings;
   onChange: (value: typeof provider) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <>
-      <Field label="Display name"><input value={provider.label} onChange={(event) => onChange({ ...provider, label: event.target.value })} /></Field>
-      <Field label="Endpoint"><input value={provider.endpoint} placeholder="https://api.example.com/v1" onChange={(event) => onChange({ ...provider, endpoint: event.target.value })} /></Field>
-      <Field label="Model"><input value={provider.model} placeholder="model name" onChange={(event) => onChange({ ...provider, model: event.target.value })} /></Field>
-      <Field label="Authentication">
+      <Field label={t("settings.providers.displayName")}><input value={provider.label} onChange={(event) => onChange({ ...provider, label: event.target.value })} /></Field>
+      <Field label={t("settings.providers.endpoint")}><input value={provider.endpoint} placeholder="https://api.example.com/v1" onChange={(event) => onChange({ ...provider, endpoint: event.target.value })} /></Field>
+      <Field label={t("settings.providers.model")}><input value={provider.model} placeholder={t("settings.providers.modelPlaceholder")} onChange={(event) => onChange({ ...provider, model: event.target.value })} /></Field>
+      <Field label={t("settings.providers.authentication")}>
         <select value={provider.authentication} onChange={(event) => onChange({ ...provider, authentication: event.target.value as "none" | "api-key" })}>
-          <option value="api-key">API key</option>
-          <option value="none">None</option>
+          <option value="api-key">{t("settings.providers.apiKey")}</option>
+          <option value="none">{t("settings.providers.none")}</option>
         </select>
       </Field>
     </>
@@ -197,12 +206,13 @@ function LlmFields({ provider, onChange }: { provider: OpenAiCompatibleProviderS
 }
 
 function AsrFields({ provider, onChange }: { provider: CloudAsrProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
+  const { t } = useTranslation();
   return (
     <div className="settings-form-grid">
       <CommonCloudFields provider={provider} onChange={onChange} />
-      <Field label="Language">
+      <Field label={t("settings.providers.language")}>
         <select value={provider.language} disabled>
-          <option value="auto">Auto detect</option>
+          <option value="auto">{t("settings.providers.autoDetect")}</option>
         </select>
       </Field>
     </div>
@@ -210,10 +220,11 @@ function AsrFields({ provider, onChange }: { provider: CloudAsrProviderSettings;
 }
 
 function TtsFields({ provider, onChange }: { provider: CloudTtsProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
+  const { t } = useTranslation();
   return (
     <div className="settings-form-grid">
       <CommonCloudFields provider={provider} onChange={onChange} />
-      <Field label="Voice"><input value={provider.voice} placeholder="voice name" onChange={(event) => onChange({ ...provider, voice: event.target.value })} /></Field>
+      <Field label={t("settings.providers.voice")}><input value={provider.voice} placeholder={t("settings.providers.voicePlaceholder")} onChange={(event) => onChange({ ...provider, voice: event.target.value })} /></Field>
     </div>
   );
 }
@@ -225,6 +236,7 @@ function ApiKeyControl({
   provider: OpenAiCompatibleProviderSettings | CloudAsrProviderSettings | CloudTtsProviderSettings;
   persisted: boolean;
 }) {
+  const { t } = useTranslation();
   const [credential, setCredential] = useState<ProviderCredentialState["state"]>("missing");
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -242,8 +254,8 @@ function ApiKeyControl({
       });
     return () => { active = false; };
   }, [persisted, provider.authentication, provider.id]);
-  if (provider.authentication !== "api-key") return <span>Authentication: none</span>;
-  if (!persisted) return <span>Provider設定を保存するとAPI keyを登録できます。</span>;
+  if (provider.authentication !== "api-key") return <span>{t("settings.providers.authNone")}</span>;
+  if (!persisted) return <span>{t("settings.providers.saveBeforeKey")}</span>;
   async function save() {
     setSaving(true);
     setCredentialError(null);
@@ -272,12 +284,12 @@ function ApiKeyControl({
   }
   return (
     <div>
-      <span>API key: {credential}</span>
-      {credentialError && <p className="provider-test-result error" aria-live="polite">{credentialError}</p>}
+      <span>{t("settings.providers.apiKeyState", { state: t(`common.${credential}`, { defaultValue: credential }) })}</span>
+      {credentialError && <p className="provider-test-result error" aria-live="polite">{localizeUiMessage(t, credentialError, "settings")}</p>}
       <div>
-        <input type="password" value={apiKey} autoComplete="off" placeholder={credential === "configured" ? "Replace API key" : "Enter API key"} onChange={(event) => setApiKey(event.target.value)} />
-        <button className="text-button" type="button" disabled={!apiKey || saving} onClick={() => void save()}>Save key</button>
-        {credential === "configured" && <button className="text-button danger" type="button" disabled={saving} onClick={() => void remove()}>Delete key</button>}
+        <input type="password" value={apiKey} autoComplete="off" placeholder={credential === "configured" ? t("settings.providers.replaceKey") : t("settings.providers.enterKey")} onChange={(event) => setApiKey(event.target.value)} />
+        <button className="text-button" type="button" disabled={!apiKey || saving} onClick={() => void save()}>{t("settings.providers.saveKey")}</button>
+        {credential === "configured" && <button className="text-button danger" type="button" disabled={saving} onClick={() => void remove()}>{t("settings.providers.deleteKey")}</button>}
       </div>
     </div>
   );

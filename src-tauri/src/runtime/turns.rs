@@ -429,10 +429,12 @@ pub(crate) async fn execute_conversation_turn(
             &now_iso(),
         );
         let identity = load_codex_settings(&connection)?;
+        let regional = crate::persistence::settings::regional_preferences::load(&connection)?;
         let history = compose_provider_history(
             &input.conversation_id,
             &identity.agent_name,
             &identity.user_name,
+            &regional,
             &input.input_origin,
             &input.presentation_mode,
             context_window.messages,

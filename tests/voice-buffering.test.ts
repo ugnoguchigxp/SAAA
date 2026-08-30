@@ -38,6 +38,19 @@ describe("voice buffering and async issue ownership", () => {
     expect(buffer.sampleCount).toBe(0);
   });
 
+  test("takes a fixed prefix without losing or duplicating a split frame", () => {
+    const buffer = new VoiceFrameBuffer();
+    const first = new Float32Array([1, 2]);
+    const second = new Float32Array([3, 4, 5]);
+    buffer.append(first);
+    buffer.append(second);
+    expect([...buffer.takeStart(3)]).toEqual([1, 2, 3]);
+    expect(buffer.sampleCount).toBe(2);
+    expect([...buffer.take()]).toEqual([4, 5]);
+    expect(first.every((sample) => sample === 0)).toBe(true);
+    expect(second.every((sample) => sample === 0)).toBe(true);
+  });
+
   test("keeps pre-roll separate from the complete detected utterance", () => {
     const preRoll = new VoiceFrameBuffer();
     const utterance = new VoiceFrameBuffer();

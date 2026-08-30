@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { uiMessage } from "../../i18n/presentation";
 import type { MeetingLane, MeetingSnapshot, MeetingState, VoiceSettings } from "../../lib/contracts";
 import {
   ensureMicrophoneAudioContextRunning,
@@ -95,7 +96,7 @@ export function useMeetingSession(
     void refreshSnapshot()
       .then((next) => {
         if (cancelled || !next) return;
-        if (next.state === "active") setHealth("capture disconnected — pause or stop to recover");
+        if (next.state === "active") setHealth("capture-disconnected");
       })
       .catch((cause) => {
         if (!cancelled) setError(toMessage(cause));
@@ -113,7 +114,7 @@ export function useMeetingSession(
         });
       } else if (event.type === "failed") {
         if (event.sessionId && event.sessionId !== snapshotRef.current.sessionId) return;
-        setError(`${event.code}: ${event.message} ${event.recovery}`);
+        setError(uiMessage("meetingRuntimeFailure"));
         void refreshSnapshot().catch(() => undefined);
       }
     }).catch((cause) => { if (!cancelled) setError(toMessage(cause)); });
@@ -198,7 +199,7 @@ export function useMeetingSession(
     };
     if (!queue.current.push(segment)) {
       setHealth("degraded");
-      setError("Meeting transcription cannot keep up. Capture was paused without evicting queued audio.");
+      setError(uiMessage("meetingTranscriptionBackpressure"));
       void pauseAfterFailure();
       return false;
     }
@@ -220,7 +221,7 @@ export function useMeetingSession(
           !currentSnapshot.captureToken
         ) {
           segment.samples.fill(0);
-          throw new Error("Meeting capture is no longer active.");
+          throw new Error(uiMessage("meetingCaptureInactive"));
         }
         let normalized = new Float32Array();
         try {
@@ -280,7 +281,7 @@ export function useMeetingSession(
   }
 
   async function attachCapture() {
-    if (!voice) throw new Error("Voice settings are unavailable.");
+    if (!voice) throw new Error(uiMessage("meetingVoiceSettingsUnavailable"));
     if (!captureLease.current) captureLease.current = acquireAudioCapture("meeting");
     const device = microphoneCaptureConstraints(voice.inputDeviceId);
     const nextStream = await requestMicrophoneStream(device);
@@ -345,7 +346,7 @@ export function useMeetingSession(
         translationEnabled: false,
       });
       if (preflight.blockingErrors.length) {
-        throw new Error(preflight.blockingErrors.map((entry) => entry.message).join(" "));
+        throw new Error(uiMessage("meetingStartFailed"));
       }
       const next = await startMeeting({
         sessionId: `meeting_${crypto.randomUUID().replace(/-/g, "")}`,
@@ -370,7 +371,7 @@ export function useMeetingSession(
       }
       const restored = await getMeetingSnapshot().catch(() => null);
       applySnapshot(restored ?? idle);
-      setError(`Meeting start failed: ${toMessage(cause)}`);
+      setError(uiMessage("meetingStartFailed"));
     } finally {
       endOperation();
     }

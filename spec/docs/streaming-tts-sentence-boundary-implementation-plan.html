@@ -1,0 +1,973 @@
+<article lang="ja">
+  <h1 id="streaming-tts-sentence-boundary-plan">
+    Streaming TTS Sentence-Boundary Pipeline 実装計画
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Proposed。実装・実機計測は未着手</li>
+    <li>Created: 2026-08-30</li>
+    <li>SAAA baseline: <code>0f0d2cd</code> + working tree</li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>
+      親計画:
+      <a href="./conversation-voice-quality-implementation-plan.html"
+        >Conversation / LLM / ASR / TTS 品質改善実装計画</a
+      >の<code>CV-05</code>
+    </li>
+    <li>対象: Conversation Runtime、TTS Runtime、Chat UI、IPC、QA</li>
+  </ul>
+  <p>
+    本文書は、LLMの回答全文が完成してからTTSを開始する現行方式を、自然な句読点単位で
+    回答生成中から読み上げる方式へ移行するための実装契約である。単に10文字ごとにTTSを呼ぶのではなく、
+    回答単位のSpeech Session、文境界accumulator、bounded render-ahead
+    queue、単一再生streamを実装する。
+  </p>
+  <p>
+    計画作成時点ではRuntime、Settings、Database、UIを変更しない。完了の定義はSection
+    13の実装ticketを 依存順に完了し、Section 14の自動GateとSection
+    15の実機Gateをすべて通すことである。
+  </p>
+
+  <h2 id="1-decision">1. 採用判断</h2>
+  <p>
+    採用する方式は「10文字固定分割」ではなく、<strong
+      >10文字を最初の発声候補になる最小値とし、 自然な句読点でチャンクを確定するadaptive sentence
+      boundary方式</strong
+    >である。
+  </p>
+  <pre><code class="language-text">LLM append-only deltas
+        ↓
+TurnEventSink（UI通知とSpeech Sessionへの一回だけの分岐）
+        ↓
+StreamingSpeechSession
+  ├─ raw Markdown accumulator
+  ├─ protected-range scanner
+  ├─ sentence boundary chunker
+  ├─ speakable-text projection
+  └─ render queue（最大2件）
+        ↓
+chunk N playback + chunk N+1 synthesis
+        ↓
+one output stream / complete / cancel / fail</code></pre>
+  <p>
+    最初の自然な文が確定した時点でTTS合成を開始し、LLMの<code>messageCompleted</code>は待たない。
+    一方で、語、URL、Markdown、数値、括弧の途中では切らず、最終イベントで残りを一度だけflushする。
+  </p>
+
+  <h2 id="2-goals-and-non-goals">2. Goals / Non-goals</h2>
+  <h3 id="21-goals">2.1 Goals</h3>
+  <ol>
+    <li>回答全文の完成前に、最初の自然な文から読み上げを開始する。</li>
+    <li>読み上げ対象の欠落、重複、順序逆転を0件にする。</li>
+    <li>句読点、Markdown、URL、数値、括弧を考慮し、不自然な位置で切らない。</li>
+    <li>再生中に次チャンクを合成し、チャンク間無音を抑える。</li>
+    <li>停止、割り込み、Provider失敗、画面遷移、app終了でsession全体を確実に取消す。</li>
+    <li>Text回答の成否とSpeechの成否を分離し、TTS失敗で完成済みTextを失敗へ戻さない。</li>
+  </ol>
+
+  <h3 id="22-non-goals">2.2 Non-goals</h3>
+  <ul>
+    <li>LLM Provider、prompt、回答内容、ASR endpointingの変更は行わない。</li>
+    <li>単語単位、token単位、10文字固定での逐次発声は実装しない。</li>
+    <li>LLMがまだ出力していない内容を予測してTTSへ渡さない。</li>
+    <li>full-duplexや未検証のbarge-inを同時に導入しない。half-duplexを維持する。</li>
+    <li>ユーザー向けSettings項目、Database migration、Settings schema更新は追加しない。</li>
+    <li>実Providerのstreaming audio protocolは前提にしない。既存のtext-to-audio契約を使う。</li>
+  </ul>
+
+  <h2 id="3-current-baseline">3. 現行Baselineと遅延要因</h2>
+  <table>
+    <caption>
+      Table: Current speech path
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区間</th>
+        <th scope="col">現状</th>
+        <th scope="col">影響</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM delta</td>
+        <td>
+          <code>useConversationTurn</code
+          >が<code>streamingText</code>へ追加するだけ
+        </td>
+        <td>画面は更新されるがTTSは開始しない</td>
+      </tr>
+      <tr>
+        <td>Speech gate</td>
+        <td>
+          <code>FinalResponseSpeechGate</code
+          >が<code>messageCompleted</code>だけを受理
+        </td>
+        <td>回答生成時間の全体が読み上げ開始遅延へ加算される</td>
+      </tr>
+      <tr>
+        <td>System TTS</td>
+        <td>回答全文を一つの<code>say</code> processへstdin送信</td>
+        <td>process起動は回答完了後</td>
+      </tr>
+      <tr>
+        <td>Cloud TTS</td>
+        <td>
+          回答全文の音声bodyを全量受信し、WAV保存後に<code>afplay</code>
+        </td>
+        <td>回答完了後にも合成、download、file syncの待ちが発生</td>
+      </tr>
+      <tr>
+        <td>状態所有</td>
+        <td>
+          Frontendの<code>speechRunId</code>とBackendの一つのchild process
+        </td>
+        <td>複数チャンクのqueue、render-ahead、session取消を表現できない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    現行testは「incomplete model deltaを合成しない」ことを成功条件としている。このtestは新契約では、
+    「自然な境界が未確定のdeltaを合成しない」「確定済みチャンクだけを一度ずつ合成する」へ置き換える。
+  </p>
+
+  <h2 id="4-fixed-contracts">4. 固定する契約と不変条件</h2>
+  <ol>
+    <li>
+      <strong>Append-only:</strong> 一つのProvider attemptが送るAssistant
+      deltaは追加専用として扱う。 Providerはoutput開始後にfallbackしない現行policyを維持する。
+    </li>
+    <li>
+      <strong>Single ownership:</strong> chunk確定位置、queue、active playback、cancel tokenの正本は
+      Backendの<code>StreamingSpeechRuntime</code>だけが持つ。
+    </li>
+    <li>
+      <strong>At-most-once enqueue:</strong>
+      一つの<code>chunkSeq</code>をrender queueへ二度入れない。
+    </li>
+    <li>
+      <strong>Ordered playback:</strong>
+      再生は<code>chunkSeq</code>の昇順だけを許可する。
+    </li>
+    <li>
+      <strong>Bounded resources:</strong> ready audioはactiveを含め最大2件、raw textは64,000文字、
+      artifactはsession所有directoryだけに制限する。
+    </li>
+    <li>
+      <strong>Text authority:</strong> 永続化されたAssistant messageが最終的な画面表示の正本であり、
+      Speech失敗や取消で書き換えない。
+    </li>
+    <li>
+      <strong>Half-duplex:</strong> 最初の音声再生前にcaptureを一度停止し、最後のchunk終了後または
+      session取消完了後に一度だけ再開する。チャンク間では再開しない。
+    </li>
+    <li>
+      <strong>No content diagnostics:</strong>
+      metricとlogへ回答本文、chunk本文、音声hashを残さない。
+    </li>
+  </ol>
+
+  <h2 id="5-target-architecture">5. Target Architecture</h2>
+  <h3 id="51-event-sink">5.1 TurnEventSink</h3>
+  <p>
+    <code>tauri::ipc::Channel&lt;RuntimeEvent&gt;</code>を直接各Providerへ渡す形を、薄い
+    <code>TurnEventSink</code
+    >で包む。既存の全LLM経路は同じ<code>send</code>を呼び、sinkが UI
+    channelへの通知とSpeech Sessionへの入力を同じ順序で行う。
+  </p>
+  <pre><code class="language-rust">struct TurnEventSink {
+    ui: tauri::ipc::Channel&lt;RuntimeEvent&gt;,
+    speech: Option&lt;SpeechSessionHandle&gt;,
+}
+
+impl TurnEventSink {
+    fn send(&amp;self, event: RuntimeEvent) -&gt; Result&lt;(), SendError&gt; {
+        match &amp;event {
+            RuntimeEvent::Delta { text, .. } =&gt; self.speech.append(text),
+            RuntimeEvent::MessageCompleted { message, .. } =&gt; {
+                self.speech.finish(&amp;message.content);
+            }
+            RuntimeEvent::Cancelled { .. } | RuntimeEvent::Failed { .. } =&gt; {
+                self.speech.cancel();
+            }
+            _ =&gt; {}
+        }
+        self.ui.send(event)
+    }
+}</code></pre>
+  <p>
+    sinkはSpeechへ同じeventを順番に観測させてからUIへ送る。Speech feedはLLM経路へerrorを返さず、
+    内部の合成・queue失敗は独立した<code>SpeechEvent::Failed</code>として通知する。UI
+    channel切断だけは現行どおりturn取消対象とし、Speech Sessionも同じgenerationで取消す。
+  </p>
+
+  <h3 id="52-runtime-owner">5.2 StreamingSpeechRuntime</h3>
+  <p>
+    <code>AppState</code
+    >へ<code>Arc&lt;StreamingSpeechRuntime&gt;</code>を一つ持たせる。runtimeは同時に 一つのactive
+    Speech Sessionだけを許可する。新しいspoken turn開始時は旧sessionの停止完了を待つ。
+  </p>
+  <pre><code class="language-rust">struct SpeechSession {
+    session_id: String,
+    source_run_id: String,
+    conversation_id: String,
+    generation: u64,
+    phase: SpeechPhase,
+    accumulator: SentenceAccumulator,
+    next_chunk_seq: u32,
+    next_play_seq: u32,
+    queued: VecDeque&lt;SpeechChunk&gt;,
+    rendered: VecDeque&lt;RenderedChunk&gt;,
+    cancellation: Arc&lt;RunCancellation&gt;,
+}
+
+enum SpeechPhase {
+    Buffering,
+    Rendering,
+    Playing,
+    Draining,
+    Completed,
+    Failed,
+    Cancelled,
+}</code></pre>
+  <p>
+    lock保持中にnetwork request、process wait、audio playbackを行わない。lock下ではstate更新と
+    queue操作だけを行い、workerへ所有権を移してから非同期処理する。
+  </p>
+
+  <h3 id="53-worker-pipeline">5.3 Renderer / Playback worker</h3>
+  <ol>
+    <li>
+      chunkerが確定したraw Markdown
+      chunkを<code>toSpeakableText</code>相当の純関数へ渡す。
+    </li>
+    <li>空になったchunkはsequenceを消費せずskipする。</li>
+    <li>rendererは次の一件を合成し、session所有の一時artifactまたはmemory bufferへ置く。</li>
+    <li>playback中にrendererが次の一件を先読みする。合成並列数は1、ready queueは最大2件とする。</li>
+    <li>playbackは一つのoutput streamをsession終了まで保持し、sequence順にappendする。</li>
+  </ol>
+  <p>
+    Cloud TTSは「回答全文の音声を全量受信」から「一つの文チャンクの音声を受信」へ変更する。 System
+    TTSはmacOSの<code>say -o</code>で次チャンクをartifactへrenderし、Cloudと同じ再生streamへ渡す。
+    一つのprocessで直接読み上げる現行経路は互換fallbackとして開発中だけ残す。
+  </p>
+
+  <h3 id="54-ui-events">5.4 Speech lifecycle events</h3>
+  <p>
+    LLM用<code>RuntimeEvent</code>へSpeechの非同期完了を混在させず、app-wideの型付き
+    <code>SpeechEvent</code
+    >を追加する。Frontendは起動時に一度subscribeし、session IDとgenerationで 古いeventを無視する。
+  </p>
+  <pre><code class="language-typescript">type SpeechEvent =
+  | { type: "preparing"; sessionId: string; sourceRunId: string }
+  | { type: "chunkQueued"; sessionId: string; chunkSeq: number }
+  | { type: "readyToPlay"; sessionId: string; chunkSeq: number }
+  | { type: "audioStarted"; sessionId: string; chunkSeq: number }
+  | { type: "completed"; sessionId: string }
+  | { type: "cancelled"; sessionId: string }
+  | { type: "failed"; sessionId: string; code: SpeechFailureCode };</code></pre>
+  <p>
+    本文、Providerの生error、endpoint、file
+    pathはeventへ含めない。UIは<code>preparing</code>から
+    <code>completed | cancelled | failed</code>まで「読み上げ中」と停止操作を表示する。
+  </p>
+
+  <h2 id="6-chunking-contract">6. Sentence Boundary Contract</h2>
+  <h3 id="61-thresholds">6.1 初期値</h3>
+  <table>
+    <caption>
+      Table: Chunking thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">値</th>
+        <th scope="col">初期値</th>
+        <th scope="col">意味</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>firstMin</code></td>
+        <td>10 speakable graphemes</td>
+        <td>最初のstrong boundaryを発声可能にする最小長</td>
+      </tr>
+      <tr>
+        <td><code>steadyMin</code></td>
+        <td>24 speakable graphemes</td>
+        <td>2件目以降の短すぎる断片を抑える目安</td>
+      </tr>
+      <tr>
+        <td><code>target</code></td>
+        <td>120 speakable graphemes</td>
+        <td>strong boundaryがない場合にweak boundaryを選び始める長さ</td>
+      </tr>
+      <tr>
+        <td><code>hardMax</code></td>
+        <td>240 speakable graphemes</td>
+        <td>句読点がなくてもboundedにする上限</td>
+      </tr>
+      <tr>
+        <td><code>idleFlush</code></td>
+        <td>400ms</td>
+        <td>LLM delta停止時、weak boundary済み断片を早めに確定する時間</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    文字数はUTF-8 byteやUTF-16 code unitではなくUnicode
+    graphemeで数える。閾値は実機計測前の初期値であり、 Section
+    15のcorpusを変えずに比較して調整する。ユーザー向け設定にはしない。
+  </p>
+
+  <h3 id="62-boundary-classes">6.2 Boundary class</h3>
+  <table>
+    <caption>
+      Table: Boundary classification
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Class</th>
+        <th scope="col">例</th>
+        <th scope="col">確定規則</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Strong</td>
+        <td>
+          <code>。</code
+          >、<code>！</code>、<code>？</code>、<code>!</code>、<code>?</code>、段落末
+        </td>
+        <td>
+          <code>firstMin</code
+          >または<code>steadyMin</code>到達後、直ちに確定
+        </td>
+      </tr>
+      <tr>
+        <td>Weak</td>
+        <td><code>、</code>、comma、semicolon、colon、自然な空白</td>
+        <td><code>target</code>到達後、またはidle時だけ確定候補</td>
+      </tr>
+      <tr>
+        <td>Forced safe</td>
+        <td><code>hardMax</code>以前の最後のsafe grapheme</td>
+        <td>句読点がない異常な長文だけに使用</td>
+      </tr>
+      <tr>
+        <td>Completion</td>
+        <td>final messageの末尾</td>
+        <td>最小長未満でも一度だけflush</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="63-protected-ranges">6.3 切断禁止範囲</h3>
+  <ul>
+    <li>Markdown fenced code、inline code、link destination、image destination</li>
+    <li>
+      <code>http://</code
+      >、<code>https://</code>、<code>www.</code>から始まるURL
+    </li>
+    <li>小数、version、日付、時刻、桁区切りを構成する数値の内部</li>
+    <li>未閉じの丸括弧、角括弧、波括弧、引用符の内部</li>
+    <li>Unicode grapheme cluster、emoji sequence、combining markの内部</li>
+    <li>英字、数字、連続する片仮名語の途中</li>
+  </ul>
+  <p>
+    scannerはraw Markdown deltaを連結して状態を保持する。deltaごとに既存の正規表現を独立適用しない。
+    たとえばcode fenceやMarkdown linkがdelta境界をまたいでも、閉じるまでは発声チャンクを確定しない。
+    切り出したraw chunkだけを読み上げ用plain textへ投影する。
+    property testでは各chunkの投影結果をcanonical whitespaceで連結し、完成全文を一括投影した結果と
+    同一になることを保証する。
+  </p>
+
+  <h3 id="64-selection-algorithm">6.4 確定algorithm</h3>
+  <pre><code class="language-text">append(delta)
+  1. raw accumulatorへ順番に追加する
+  2. scanner stateを更新し、protected range外のboundary候補を記録する
+  3. speakable projection後のgrapheme数を計測する
+  4. 最初のchunk:
+       strong boundaryかつ10文字以上 → そのboundaryまで確定
+  5. 後続chunk:
+       strong boundaryかつ24文字以上 → そのboundaryまで確定
+  6. 120文字以上:
+       最後のstrong、なければ最後のweak boundaryまで確定
+  7. 240文字到達:
+       protected range外の最後のsafe graphemeで強制確定
+  8. 確定分だけraw accumulatorから除き、chunkSeqを一つ進める
+
+finish(finalContent)
+  1. accumulated raw delta列とfinalContentを照合する
+  2. 一致 → 残りを最終flush
+  3. finalContentがdelta列をprefixとして含む → 未到着suffixを追加してflush
+  4. prefix不一致 → queued/render中を停止しspeech-sync-lostで終了</code></pre>
+  <p>
+    prefix不一致時に、すでに読んだ内容を取り消すことはできない。修正版全文を自動で最初から読み直すと重複するため、
+    Textを正本として残し、ユーザーの「読み上げを再試行」で完成済みmessageを最初から読めるようにする。
+  </p>
+
+  <h2 id="7-playback-contract">7. Render / Playback Contract</h2>
+  <h3 id="71-queue">7.1 Queue bounds</h3>
+  <ul>
+    <li>raw確定待ちchunkは最大1件、合成中1件、ready audio最大2件、再生中1件とする。</li>
+    <li>LLMが速くqueue上限へ達した場合、本文をdropせずraw accumulator側でbackpressureする。</li>
+    <li>raw accumulatorはLLM契約の64,000文字上限を超えない。超過はLLM側の失敗を優先する。</li>
+    <li>同一session内のCloud TTS合成並列数は1とし、Providerへのburst requestを防ぐ。</li>
+  </ul>
+
+  <h3 id="72-render-ahead">7.2 Render-ahead</h3>
+  <ol>
+    <li>chunk 0の合成完了直後に再生を開始する。</li>
+    <li>chunk 0再生中にchunk 1を合成する。</li>
+    <li>chunk 1を同じaudio sinkへappendし、再生終了境界でprocessを切り替えない。</li>
+    <li>chunk 2以降もready queueを最大2件に保ちながら繰り返す。</li>
+    <li>
+      LLM完了後もrender/playbackが残っていればSpeech
+      Sessionだけ<code>Draining</code>を継続する。
+    </li>
+  </ol>
+
+  <h3 id="73-cancellation">7.3 Cancellation ordering</h3>
+  <pre><code class="language-text">User stop / new voice input / new spoken turn / meeting / unmount / shutdown
+  → generationを進める
+  → cancellation tokenを発火
+  → network synthesisを中止
+  → output sinkをstop
+  → queued audioとraw accumulatorを破棄
+  → session所有artifactを削除
+  → Backendがcancelled eventを送信
+  → Frontendが必要な場合だけmicrophoneを再開</code></pre>
+  <p>
+    Frontendは<code>stop_tts</code>のcommand返却だけで停止済みとみなさず、対象sessionの
+    <code>cancelled | completed | failed</code>をgeneration guard付きで受けてUIを確定する。
+  </p>
+
+  <h3 id="74-error-policy">7.4 Error policy</h3>
+  <table>
+    <caption>
+      Table: Speech failure behavior
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Failure</th>
+        <th scope="col">Speech</th>
+        <th scope="col">Text / LLM</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>最初のchunk合成失敗</td>
+        <td>sessionをfailedにし、retry actionを表示</td>
+        <td>生成を継続し、完成Textを保存</td>
+      </tr>
+      <tr>
+        <td>途中chunk合成・再生失敗</td>
+        <td>残queueを停止し、どこからかを推測して自動再送しない</td>
+        <td>生成を継続し、完成Textを保存</td>
+      </tr>
+      <tr>
+        <td>LLM partial-output / failed</td>
+        <td>activeとqueuedを停止</td>
+        <td>現行のtyped LLM failureを表示</td>
+      </tr>
+      <tr>
+        <td>LLM user cancellation</td>
+        <td>同じsource runのSpeech Sessionを取消</td>
+        <td>現行のcancelled状態を維持</td>
+      </tr>
+      <tr>
+        <td>UI channel disconnected</td>
+        <td>sessionを取消</td>
+        <td>現行どおりturnをClientDisconnectedとして終了</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="8-ipc-and-ui">8. IPC / Frontend変更</h2>
+  <h3 id="81-start-turn">8.1 Turn開始</h3>
+  <p>
+    <code>StartTurnInput.presentationMode = visual-and-spoken</code>をBackendがSpeech Session生成の
+    明示条件として使う。Frontendは<code>autoSpeak</code>からpresentation
+    modeを決める現行責務だけを持ち、 deltaごとにTTS commandを呼ばない。
+  </p>
+
+  <h3 id="82-chat-state">8.2 Chat state</h3>
+  <ul>
+    <li><code>FinalResponseSpeechGate</code>による全文待ちを削除する。</li>
+    <li>
+      <code>messageCompleted</code
+      >からの<code>startSpeech(finalText)</code>を削除する。
+    </li>
+    <li>
+      <code>activeTtsRunId</code
+      >をBackend発行の<code>speechSessionId</code>へ置き換える。
+    </li>
+    <li>「読み上げ停止」はsource LLM runではなくSpeech Session IDを指定する。</li>
+    <li>Speech失敗時のretryは完成済みAssistant message IDを参照し、全文一括再生を行う。</li>
+    <li>会話切替やcomponent dispose時は対象sessionを取消し、古いeventをgenerationで無視する。</li>
+  </ul>
+
+  <h3 id="83-microphone">8.3 Microphone coordination</h3>
+  <p>
+    現行の<code>suspendVoiceForSpeech</code>と<code>resumeVoiceAfterSpeech</code>はsession単位へ変更する。
+    <code>SpeechEvent::audioStarted</code
+    >より前にcapture停止を完了させる必要があるため、Backendは最初のaudioをrenderした時点で
+    <code>readyToPlay</code>を送り、Frontend coordinatorの<code>voiceSuspended</code> ackを待つ。ack
+    timeout時は再生せずfailedにする。
+  </p>
+  <p>
+    実装は「Frontend suspend → Backend ack → playback」の順を採用する。BackendだけでmacOS
+    microphoneを 停止できると仮定しない。ack
+    timeout初期値は1秒とし、自己音声loop防止を開始速度より優先する。
+  </p>
+
+  <h2 id="9-file-plan">9. File-level Implementation Plan</h2>
+  <table>
+    <caption>
+      Table: Planned file changes
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">File</th>
+        <th scope="col">Action</th>
+        <th scope="col">責務</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src-tauri/src/voice/streaming_tts.rs</code></td>
+        <td>追加</td>
+        <td>runtime、session生成、append、finish、cancel、worker lifecycle</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/streaming_tts/chunker.rs</code></td>
+        <td>追加</td>
+        <td>protected-range scanner、boundary選択、最終整合</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/streaming_tts/renderer.rs</code></td>
+        <td>追加</td>
+        <td>System / Cloud text-to-audio adapter、bounded artifact</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/streaming_tts/playback.rs</code></td>
+        <td>追加</td>
+        <td>単一output stream、順序付きappend、gap計測</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/runtime/event_sink.rs</code></td>
+        <td>追加</td>
+        <td>RuntimeEventのUI送信とSpeech feedを一か所で分岐</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/cloud_tts.rs</code></td>
+        <td>修正</td>
+        <td>合成とplayer起動を分離し、chunk artifactを返す</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/system_tts.rs</code></td>
+        <td>修正</td>
+        <td>直接再生に加え、macOSでchunk audioをrenderするadapterを追加</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/session/tts.rs</code></td>
+        <td>修正・分割</td>
+        <td>完成済みmessageのretryとstreaming sessionを共通rendererへ接続</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/ipc_contract.rs</code></td>
+        <td>修正</td>
+        <td><code>SpeechEvent</code>とfailure codeの型付きcontract</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/lib.rs</code></td>
+        <td>修正・縮小</td>
+        <td>
+          <code>AppState</code>へruntimeを登録し、commandとshutdownを接続
+        </td>
+      </tr>
+      <tr>
+        <td><code>src/lib/runtime.ts</code></td>
+        <td>修正</td>
+        <td>Speech event subscription、suspend ack、session cancel IPC</td>
+      </tr>
+      <tr>
+        <td><code>src/features/chat/useConversationTurn.ts</code></td>
+        <td>修正・分割</td>
+        <td>全文待ちTTSを削除し、session eventからUI stateを更新</td>
+      </tr>
+      <tr>
+        <td><code>src/features/chat/speechPlaybackPolicy.ts</code></td>
+        <td>置換</td>
+        <td>final gateをsession lifecycle reducerとretry policyへ変更</td>
+      </tr>
+      <tr>
+        <td><code>tests/streaming-speech.test.ts</code></td>
+        <td>全面更新</td>
+        <td>句読点、完了flush、重複、cancel、古いeventのFrontend contract</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/Cargo.toml</code></td>
+        <td>必要時のみ修正</td>
+        <td>単一output stream用audio crateを追加。採用前にlicenseとbuildを確認</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    新規Rust moduleは責務別に分割し、既存のmodule size ratchetを引き上げない。
+    IPC型を変更したら<code>bun run ipc:generate</code>で生成物を更新する。
+  </p>
+
+  <h2 id="10-observability">10. Observability</h2>
+  <p>本文を保存せず、monotonic clockで以下のtimestampとcountだけをsession単位に記録する。</p>
+  <table>
+    <caption>
+      Table: Content-free speech metrics
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Metric</th>
+        <th scope="col">起点 / 終点</th>
+        <th scope="col">用途</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>first_delta_to_boundary_ms</code></td>
+        <td>最初のdelta → 最初のchunk確定</td>
+        <td>LLM文体とchunk条件による待ちを分離</td>
+      </tr>
+      <tr>
+        <td><code>boundary_to_audio_ms</code></td>
+        <td>最初のchunk確定 → 実音声開始</td>
+        <td>TTSとplaybackの純粋な起動遅延</td>
+      </tr>
+      <tr>
+        <td><code>response_start_to_audio_ms</code></td>
+        <td>最初のdelta → 実音声開始</td>
+        <td>ユーザー体感の読み上げ開始時間</td>
+      </tr>
+      <tr>
+        <td><code>chunk_gap_ms</code></td>
+        <td>chunk N音声末尾 → N+1音声先頭</td>
+        <td>render-aheadの有効性</td>
+      </tr>
+      <tr>
+        <td><code>cancel_to_silence_ms</code></td>
+        <td>取消要求 → output sink停止</td>
+        <td>割り込み安全性</td>
+      </tr>
+      <tr>
+        <td>
+          <code>chunk_count</code> /
+          <code>render_failures</code>
+        </td>
+        <td>session集計</td>
+        <td>過分割とProvider不安定性</td>
+      </tr>
+      <tr>
+        <td><code>sync_mismatch_count</code></td>
+        <td>delta列とfinal contentの不一致</td>
+        <td>append-only前提の回帰検知</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    TTS provider、voice ID、locationは既存のbounded
+    identifierだけを記録できる。回答本文、文字数以外の 内容特徴、音声artifact path、URL、error
+    bodyは記録しない。
+  </p>
+
+  <h2 id="11-test-plan">11. Test Plan</h2>
+  <h3 id="111-unit-tests">11.1 Chunker unit tests</h3>
+  <ul>
+    <li>
+      10文字未満の文は次文と結合し、10文字以上の最初の<code>。</code>で確定する。
+    </li>
+    <li>
+      日本語の<code>。！？</code>、英語の<code>.!?</code>、改行を自然な境界として扱う。
+    </li>
+    <li>
+      <code>3.14</code
+      >、<code>v1.2.3</code>、<code>10:30</code>を途中で切らない。
+    </li>
+    <li>URL、Markdown link、inline code、fenced codeが複数deltaへ分割されても途中で切らない。</li>
+    <li>括弧や引用符の中の句読点を外側の文末と誤認しない。</li>
+    <li>emoji、combining mark、surrogate相当をgrapheme途中で切らない。</li>
+    <li>句読点のない240文字超をsafe boundaryでboundedに分割する。</li>
+    <li>completion時の短い末尾を一度だけflushする。</li>
+    <li>空またはMarkdown-onlyのchunkをTTSへ送らない。</li>
+    <li>delta列とfinal contentのprefix一致、suffix補完、不一致をそれぞれ検査する。</li>
+  </ul>
+
+  <h3 id="112-runtime-tests">11.2 Runtime / queue tests</h3>
+  <ul>
+    <li>50 chunkを投入してもready queueが2件を超えない。</li>
+    <li>chunk N再生中にN+1をrenderし、再生順が必ず昇順になる。</li>
+    <li>renderer完了順を意図的に逆転させてもplayback順が逆転しない。</li>
+    <li>
+      同一delta
+      callbackの再送で同じ<code>chunkSeq</code>を二重enqueueしない。
+    </li>
+    <li>最初、中間、draining中の各cancelでnetwork、process、sink、artifactが残らない。</li>
+    <li>Cloud responseが遅い、過大、非音声、途中切断の場合にbounded failureとなる。</li>
+    <li>System renderer processが失敗してもText turnをfailedにしない。</li>
+    <li>app shutdown後にchild process、audio sink、temp artifactが残らない。</li>
+  </ul>
+
+  <h3 id="113-integration-tests">11.3 Conversation integration tests</h3>
+  <ul>
+    <li>fake SSE serverから文途中deltaを送り、最初の句点まではTTS requestが0件である。</li>
+    <li>
+      最初の自然な文が確定した直後、<code>[DONE]</code>前にTTS
+      requestが開始される。
+    </li>
+    <li>全TTS inputを連結した結果が完成済みspeakable textと一致する。</li>
+    <li>Providerがoutput開始後に失敗した場合、Speechを停止しfallbackしない現行契約を維持する。</li>
+    <li>
+      Providerがoutput開始前にfallbackした場合、失敗Provider由来のSpeech Sessionを開始しない。
+    </li>
+    <li>Text完成後にSpeechが継続してもChatはGeneratingではなくSpeakingを表示する。</li>
+    <li>Speech retryはLLMを再実行せず、完成済みAssistant messageだけを一括で読み上げる。</li>
+    <li>meeting開始、conversation切替、Mic interruptで対象sessionだけを停止する。</li>
+  </ul>
+
+  <h3 id="114-property-tests">11.4 Property / invariant tests</h3>
+  <p>
+    固定fixtureを任意のdelta境界へ分割し、どの分割でも最終chunk列が同じになることを検査する。
+    各caseで、sequence単調増加、欠落0、重複0、順序逆転0、buffer上限内をassertする。
+  </p>
+
+  <h2 id="12-rollout">12. Rollout / Rollback</h2>
+  <ol>
+    <li>
+      開発時だけ<code>SAAA_STREAMING_TTS_ENABLED=1</code>で新経路を有効化し、未指定時は現行の
+      final-only経路を使う。値は起動時に一度だけ読む。
+    </li>
+    <li>fake rendererとSystem voiceで自動test、desktop smoke、content-free latency計測を通す。</li>
+    <li>Cloud TTSを含む実Provider matrixと30分連続再生を実施する。</li>
+    <li>
+      Section 15の全Gate通過後、新経路を既定にしてfinal-only経路を一releaseだけrollback用に残す。
+    </li>
+    <li>次releaseで旧経路、環境変数、旧<code>FinalResponseSpeechGate</code>を削除する。</li>
+  </ol>
+  <p>
+    DatabaseとSettings schemaを変更しないためbinary rollbackにdata migrationは不要である。
+    rollback時はactive Speech Sessionを停止してから旧binaryを起動し、session artifact
+    cleanupを確認する。
+  </p>
+
+  <h2 id="13-tickets">13. Implementation Tickets</h2>
+  <table>
+    <caption>
+      Table: Dependency-ordered implementation tickets
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">内容</th>
+        <th scope="col">完了条件</th>
+        <th scope="col">Depends on</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>STTS-00</code></td>
+        <td>Baseline metricと現行遅延の再現fixture</td>
+        <td>final-only待ちとCloud全量bufferをtestで再現</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>STTS-01</code></td>
+        <td>SentenceAccumulatorとproperty test</td>
+        <td>句読点、protected range、final整合の全unit test Pass</td>
+        <td><code>STTS-00</code></td>
+      </tr>
+      <tr>
+        <td><code>STTS-02</code></td>
+        <td>StreamingSpeechRuntimeとsession state machine</td>
+        <td>bounded queue、sequence、cancel invariant test Pass</td>
+        <td><code>STTS-01</code></td>
+      </tr>
+      <tr>
+        <td><code>STTS-03</code></td>
+        <td>Cloud / System renderer分離</td>
+        <td>一文単位artifact、timeout、cleanup test Pass</td>
+        <td><code>STTS-02</code></td>
+      </tr>
+      <tr>
+        <td><code>STTS-04</code></td>
+        <td>単一output streamとrender-ahead</td>
+        <td>順序、gap、cancelの自動・実機Gate Pass</td>
+        <td><code>STTS-03</code></td>
+      </tr>
+      <tr>
+        <td><code>STTS-05</code></td>
+        <td>TurnEventSinkで全LLM routeを統合</td>
+        <td>OpenAI compatible、Dynamic LAN、LARM、Codexで同じfixture Pass</td>
+        <td><code>STTS-02</code></td>
+      </tr>
+      <tr>
+        <td><code>STTS-06</code></td>
+        <td>SpeechEvent IPCとChat / Mic coordinator移行</td>
+        <td>Speaking表示、stop、retry、half-duplex test Pass</td>
+        <td>
+          <code>STTS-04</code>、<code>STTS-05</code>
+        </td>
+      </tr>
+      <tr>
+        <td><code>STTS-07</code></td>
+        <td>Latency、completeness、soak evidence</td>
+        <td>Section 15の全Gate Pass、閾値と判断を記録</td>
+        <td><code>STTS-06</code></td>
+      </tr>
+      <tr>
+        <td><code>STTS-08</code></td>
+        <td>既定化と旧経路削除</td>
+        <td>rollback期間後、旧gateとdead codeを削除してfull check Pass</td>
+        <td><code>STTS-07</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="14-automated-gates">14. Automated Gates</h2>
+  <ol>
+    <li><strong>G0 Spec:</strong> <code>bun run spec:check</code>がPassする。</li>
+    <li>
+      <strong>G1 Size:</strong> <code>bun run size:check</code>でratchetを引き上げない。
+    </li>
+    <li>
+      <strong>G2 IPC:</strong> <code>bun run ipc:check</code>でRust /
+      TypeScript型が一致する。
+    </li>
+    <li><strong>G3 Frontend:</strong> chunk lifecycle、古いevent、retryのBun testがPassする。</li>
+    <li><strong>G4 Rust:</strong> chunker、queue、renderer、cancel、cleanupの全testがPassする。</li>
+    <li>
+      <strong>G5 Integration:</strong> fake SSE /
+      TTSで<code>[DONE]</code>前のTTS開始を確認する。
+    </li>
+    <li><strong>G6 Full:</strong> <code>bun run check</code>がPassする。</li>
+  </ol>
+
+  <h2 id="15-performance-gates">15. Manual / Performance Gates</h2>
+  <table>
+    <caption>
+      Table: Release thresholds
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">測定</th>
+        <th scope="col">合格閾値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>First boundary → audio</td>
+        <td>System voice、20短文、warm stream</td>
+        <td>p50 500ms以下、p95 1.2秒以下</td>
+      </tr>
+      <tr>
+        <td>First delta → audio</td>
+        <td>日本語20、英語10、同じLLM profile</td>
+        <td>現行比p50 60%以上短縮、p95悪化なし</td>
+      </tr>
+      <tr>
+        <td>Chunk gap</td>
+        <td>10 chunk回答をSystem / Cloud各10回</td>
+        <td>p95 150ms以下</td>
+      </tr>
+      <tr>
+        <td>Cancel → silence</td>
+        <td>buffering、rendering、playing、draining各25回</td>
+        <td>p95 200ms以下</td>
+      </tr>
+      <tr>
+        <td>Completeness</td>
+        <td>20 fixtureを参照speakable textと照合</td>
+        <td>欠落0、重複0、逆転0</td>
+      </tr>
+      <tr>
+        <td>Listening quality</td>
+        <td>日本語15、英語5、2名以上のblind評価</td>
+        <td>平均4.0 / 5以上、3未満0件</td>
+      </tr>
+      <tr>
+        <td>Self speech loop</td>
+        <td>TTS-only音源を30分再生</td>
+        <td>User message生成0件</td>
+      </tr>
+      <tr>
+        <td>Soak</td>
+        <td>System / Cloudで各30分、長短回答を反復</td>
+        <td>hang、orphan process、artifact残留、memory無制限増加0件</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>firstMin = 10</code
+    >は固定要件ではなく初期仮説である。自然さが3未満になる、TTS request数が
+    過大になる、またはgapが閾値を超える場合は、同じcorpusで10、16、24を比較し、最小の合格値を採用する。
+    回答完了後一括合成へ戻す判断は、render-aheadを調整してもG5を満たせない場合だけ行う。
+  </p>
+
+  <h2 id="16-risks">16. Risks / Mitigations</h2>
+  <table>
+    <caption>
+      Table: Known risks
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Risk</th>
+        <th scope="col">対策</th>
+        <th scope="col">判定</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>短文が多くTTS requestが増える</td>
+        <td>最小長、steadyMin、ready queue、合成並列1でboundedにする</td>
+        <td>gapまたはrate limit超過なら閾値を上げる</td>
+      </tr>
+      <tr>
+        <td>Markdownがdelta境界をまたぐ</td>
+        <td>raw stream scannerを状態付きにし、chunk後にplain textへ投影</td>
+        <td>property test不通過はNo-Go</td>
+      </tr>
+      <tr>
+        <td>final contentがdelta列と一致しない</td>
+        <td>prefix照合、sync-lostで停止、自動全文再読を禁止</td>
+        <td>実Providerで1件でも発生した経路はNo-Go</td>
+      </tr>
+      <tr>
+        <td>audio crate追加でbuildやdeviceが不安定</td>
+        <td>license/build spikeをSTTS-04冒頭で実施し、失敗時はmacOS native adapterを評価</td>
+        <td>単一streamを安定保持できなければG5 Fail</td>
+      </tr>
+      <tr>
+        <td>LLM完了後のSpeech eventがUIへ届かない</td>
+        <td>turn channelから独立したapp-wide typed subscriptionを使う</td>
+        <td>channel lifetime test不通過はNo-Go</td>
+      </tr>
+      <tr>
+        <td>マイク停止前に音声が出る</td>
+        <td>Frontend suspend ackをplayback開始条件にする</td>
+        <td>自己音声loopが1件でもあればNo-Go</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="17-definition-of-done">17. Definition of Done</h2>
+  <ul>
+    <li>最初の自然な句読点が確定した後、LLM回答完了前に読み上げが始まる。</li>
+    <li>10文字固定分割ではなく、Section 6のboundary contractが全LLM routeで共通適用される。</li>
+    <li>Backendがsession、chunk位置、queue、playback、cancelの唯一の正本である。</li>
+    <li>System / Cloud TTSで欠落、重複、順序逆転が0件である。</li>
+    <li>チャンク間gap、開始遅延、cancel遅延がSection 15の閾値内である。</li>
+    <li>Speech失敗、LLM失敗、取消、retryが別outcomeとして動作する。</li>
+    <li>本文を含まないmetricだけで変更前後を比較できる。</li>
+    <li>DB / Settings migrationなしでrollbackできる。</li>
+    <li>全自動Gate、実機matrix、30分soakがPassする。</li>
+    <li>旧final-only経路と開発用feature flagを期限どおり削除する。</li>
+  </ul>
+</article>

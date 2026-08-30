@@ -41,9 +41,11 @@
   "dependencies": {
     "@openai/codex-sdk": "0.144.4",
     "@tauri-apps/api": "^2",
+    "i18next": "26.3.6",
     "llm-fetch": "0.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-i18next": "17.0.9",
     "s11tnext": "0.1.2",
     "zod": "^4.4.3"
   },

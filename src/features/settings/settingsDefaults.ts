@@ -1,4 +1,5 @@
 import type { SettingsDraft } from "./settingsDraft";
+import { DEFAULT_CONVERSATION_TIMEOUT_MS } from "../../lib/conversationTimeout";
 
 export const DEFAULT_AGENT_NAME = "SAAA";
 export const DEFAULT_DYNAMIC_LAN_HOST = "localhost";
@@ -46,7 +47,7 @@ export const defaultSettingsDraft: SettingsDraft = {
       source: "harness",
       primaryProviderId: null,
       fallbackProviderIds: [],
-      timeoutMs: 30_000,
+      timeoutMs: DEFAULT_CONVERSATION_TIMEOUT_MS,
     },
     voiceTranscribe: { source: "harness", providerId: null, timeoutMs: 120_000 },
     voiceSpeak: { source: "provider", providerId: "system-tts", timeoutMs: 30_000 },
@@ -70,6 +71,13 @@ export const defaultSettingsDraft: SettingsDraft = {
   security: {
     localOnlyWhenSelected: true,
     diagnosticsRedaction: true,
+  },
+  regional: {
+    language: "system",
+    timeZone: "system",
+    lengthUnit: "metric",
+    weightUnit: "kilogram",
+    currency: "JPY",
   },
   situation: {
     enabled: false,

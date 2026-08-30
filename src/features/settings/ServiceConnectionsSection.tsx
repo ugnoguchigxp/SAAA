@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   HarnessResolution,
   ModelProviderSettings,
@@ -7,9 +8,19 @@ import type {
 } from "../../lib/contracts";
 import { resolveServiceHarness } from "../../lib/runtime";
 import { legacyDynamicLanHost } from "../../lib/providerRuntime";
+import { localizeProviderLabel, localizeStatus, localizeUiMessage } from "../../i18n/presentation";
+import {
+  conversationTimeoutMsFromSecondsInput,
+  conversationTimeoutSecondsInputValue,
+  MAX_CONVERSATION_TIMEOUT_SECONDS,
+  MIN_CONVERSATION_TIMEOUT_SECONDS,
+} from "../../lib/conversationTimeout";
 import { Field } from "./SettingsFields";
 
 type Capability = "llm" | "asr" | "tts";
+type ResolveNotice =
+  | { kind: "resolvedAll" | "resolvedPartial" }
+  | { kind: "error"; message: string };
 
 export function ServiceConnectionsSection({
   providers,
@@ -22,9 +33,10 @@ export function ServiceConnectionsSection({
   onProvidersChange: (value: ModelProvidersSettings) => void;
   onRoutingChange: (value: RoutingSettings) => void;
 }) {
+  const { t } = useTranslation();
   const [resolution, setResolution] = useState<HarnessResolution | null>(null);
   const [resolveState, setResolveState] = useState<"idle" | "resolving" | "error">("idle");
-  const [resolveMessage, setResolveMessage] = useState<string | null>(null);
+  const [resolveMessage, setResolveMessage] = useState<ResolveNotice | null>(null);
 
   const candidates = {
     llm: providers.providers.filter(isLlmProvider),
@@ -55,11 +67,11 @@ export function ServiceConnectionsSection({
       const next = await resolveServiceHarness(providers.harness.address);
       setResolution(next);
       setResolveState("idle");
-      setResolveMessage(next.state === "ready" ? "LLM・ASR・TTSを解決しました。" : "一部のサービスだけを解決しました。");
+      setResolveMessage({ kind: next.state === "ready" ? "resolvedAll" : "resolvedPartial" });
     } catch (cause) {
       setResolution(null);
       setResolveState("error");
-      setResolveMessage(cause instanceof Error ? cause.message : String(cause));
+      setResolveMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
     }
   }
 
@@ -102,23 +114,23 @@ export function ServiceConnectionsSection({
       <section className="settings-card">
         <div className="card-title-row">
           <div>
-            <p className="eyebrow">PRIMARY CONNECTION</p>
-            <h3>LLM Provider harness address</h3>
-            <p className="settings-help">一つのアドレスからLLM・ASR・TTSを個別に解決します。</p>
+            <p className="eyebrow">{t("settings.connection.eyebrow")}</p>
+            <h3>{t("settings.connection.title")}</h3>
+            <p className="settings-help">{t("settings.connection.description")}</p>
           </div>
           <span className={`provider-test-result ${resolution?.state === "ready" ? "success" : resolveState === "error" ? "error" : ""}`}>
-            {resolveState === "resolving" ? "Resolving…" : resolution?.state ?? "unchecked"}
+            {resolveState === "resolving" ? t("settings.connection.resolving") : localizeStatus(t, resolution?.state ?? "unchecked")}
           </span>
         </div>
         <div className="settings-form-grid">
-          <Field label="Harness address">
+          <Field label={t("settings.connection.harnessAddress")}>
             <input
               value={providers.harness.address}
               placeholder="http://provider.local:9810"
               onChange={(event) => changeHarnessAddress(event.target.value)}
             />
           </Field>
-          <Field label="Reasoning effort (LLM)">
+          <Field label={t("settings.connection.reasoningEffort")}>
             <select
               value={providers.reasoningEffort}
               onChange={(event) => onProvidersChange({
@@ -126,28 +138,35 @@ export function ServiceConnectionsSection({
                 reasoningEffort: event.target.value as ModelProvidersSettings["reasoningEffort"],
               })}
             >
-              <option value="low">Low</option>
-              <option value="medium">Medium (recommended)</option>
-              <option value="xhigh">Extra high</option>
+              <option value="low">{t("settings.connection.low")}</option>
+              <option value="medium">{t("settings.connection.medium")}</option>
+              <option value="xhigh">{t("settings.connection.extraHigh")}</option>
             </select>
           </Field>
+          <ConversationTimeoutField
+            timeoutMs={routing.conversationRespond.timeoutMs}
+            onChange={(timeoutMs) => onRoutingChange({
+              ...routing,
+              conversationRespond: { ...routing.conversationRespond, timeoutMs },
+            })}
+          />
         </div>
         <div className="provider-card-footer">
-          <span>{resolveMessage ?? "接続確認後、各サービスの解決状態を表示します。"}</span>
+          <span>{resolveMessage?.kind === "error" ? localizeUiMessage(t, resolveMessage.message, "settings") : resolveMessage?.kind === "resolvedAll" ? t("settings.connection.resolvedAll") : resolveMessage?.kind === "resolvedPartial" ? t("settings.connection.resolvedPartial") : t("settings.connection.resolutionHint")}</span>
           <button
             className="text-button"
             type="button"
             disabled={!providers.harness.address || resolveState === "resolving"}
             onClick={() => void resolveHarness()}
           >
-            Resolve services
+            {t("settings.connection.resolveServices")}
           </button>
         </div>
       </section>
 
       <section className="settings-card">
-        <h3>Service sources</h3>
-        <p className="settings-help">LLM・ASR・TTSはそれぞれHarnessまたは個別Providerを選べます。暗黙の切り替えは行いません。</p>
+        <h3>{t("settings.connection.sourcesTitle")}</h3>
+        <p className="settings-help">{t("settings.connection.sourcesDescription")}</p>
         <div className="settings-stack">
           <SourceRow
             capability="llm"
@@ -185,6 +204,57 @@ export function ServiceConnectionsSection({
   );
 }
 
+function ConversationTimeoutField({
+  timeoutMs,
+  onChange,
+}: {
+  timeoutMs: number;
+  onChange: (timeoutMs: number) => void;
+}) {
+  const { t } = useTranslation();
+  const canonicalValue = conversationTimeoutSecondsInputValue(timeoutMs);
+  const [inputValue, setInputValue] = useState(canonicalValue);
+  const parsedTimeoutMs = conversationTimeoutMsFromSecondsInput(inputValue);
+  const invalid = parsedTimeoutMs === null;
+
+  useEffect(() => setInputValue(canonicalValue), [canonicalValue]);
+
+  return (
+    <Field label={t("settings.connection.llmTimeoutSeconds")}>
+      <input
+        type="number"
+        min={MIN_CONVERSATION_TIMEOUT_SECONDS}
+        max={MAX_CONVERSATION_TIMEOUT_SECONDS}
+        step={0.001}
+        value={inputValue}
+        aria-describedby="llm-timeout-seconds-help"
+        aria-invalid={invalid}
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          setInputValue(next);
+          const nextTimeoutMs = conversationTimeoutMsFromSecondsInput(next);
+          if (nextTimeoutMs !== null && nextTimeoutMs !== timeoutMs) onChange(nextTimeoutMs);
+        }}
+        onBlur={() => setInputValue(
+          parsedTimeoutMs === null
+            ? canonicalValue
+            : conversationTimeoutSecondsInputValue(parsedTimeoutMs),
+        )}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") setInputValue(canonicalValue);
+        }}
+      />
+      <small
+        id="llm-timeout-seconds-help"
+        className={invalid ? "settings-field-hint error" : "settings-field-hint"}
+      >
+        {t(invalid ? "settings.connection.llmTimeoutInvalid" : "settings.connection.llmTimeoutHint")}
+      </small>
+    </Field>
+  );
+}
+
 function SourceRow({
   capability,
   label,
@@ -204,6 +274,7 @@ function SourceRow({
   onSourceChange: (capability: Capability, source: "harness" | "provider") => void;
   onProviderChange: (capability: Capability, providerId: string) => void;
 }) {
+  const { t } = useTranslation();
   const status = resolution?.services.find((service) => service.capability === capability);
   const selected = candidates.find((provider) => provider.id === providerId);
   return (
@@ -213,31 +284,31 @@ function SourceRow({
           <strong>{label}</strong>
           <p className="muted">
             {source === "harness"
-              ? status?.model ?? status?.voice ?? status?.message ?? "Harnessで保存後に解決"
-              : selected?.label ?? "個別Providerを登録してください"}
+              ? status?.model ?? status?.voice ?? (status ? localizeStatus(t, status.state) : t("settings.connection.resolveAfterSave"))
+              : selected ? localizeProviderLabel(t, selected.label) : t("settings.connection.registerProvider")}
           </p>
         </div>
         <span className={`provider-test-result ${source === "harness" && status?.state === "ready" ? "success" : ""}`}>
-          {source === "harness" ? status?.state ?? "unchecked" : selected?.enabled ? "configured" : "missing"}
+          {source === "harness" ? localizeStatus(t, status?.state ?? "unchecked") : selected?.enabled ? t("common.configured") : t("common.missing")}
         </span>
       </div>
       <div className="settings-form-grid">
-        <Field label="Source">
+        <Field label={t("settings.connection.source")}>
           <select value={source} onChange={(event) => onSourceChange(capability, event.target.value as "harness" | "provider")}>
-            <option value="harness">Provider Harness</option>
-            <option value="provider">Individual Provider</option>
+            <option value="harness">{t("settings.connection.providerHarness")}</option>
+            <option value="provider">{t("settings.connection.individualProvider")}</option>
           </select>
         </Field>
-        <Field label="Provider">
+        <Field label={t("settings.connection.provider")}>
           <select
             value={providerId ?? ""}
             disabled={source === "harness"}
             onChange={(event) => onProviderChange(capability, event.target.value)}
           >
-            <option value="">Select provider</option>
+            <option value="">{t("settings.connection.selectProvider")}</option>
             {candidates.map((provider) => (
               <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
-                {provider.label}{provider.enabled ? "" : " (disabled)"}
+                {localizeProviderLabel(t, provider.label)}{provider.enabled ? "" : t("settings.connection.disabledSuffix")}
               </option>
             ))}
           </select>

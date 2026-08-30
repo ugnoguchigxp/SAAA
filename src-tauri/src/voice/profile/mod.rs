@@ -12,11 +12,11 @@ const PROFILE_ID: &str = "default";
 const KEYCHAIN_SERVICE: &str = "com.saaa.desktop.voice-profile.v1";
 const KEYCHAIN_ACCOUNT: &str = "default-master-key-v1";
 const CANONICAL_SAMPLE_RATE: u32 = 16_000;
-const MIN_SAMPLE_SECONDS: f32 = 3.0;
+const MIN_SAMPLE_SECONDS: f32 = 10.0;
 const MAX_SAMPLE_SECONDS: f32 = 12.0;
-const MIN_READY_SAMPLES: usize = 4;
 const TARGET_SAMPLE_COUNT: usize = 5;
-const MIN_READY_DURATION_MS: u64 = 20_000;
+const MIN_READY_SAMPLES: usize = TARGET_SAMPLE_COUNT;
+const MIN_READY_DURATION_MS: u64 = 50_000;
 const DEFAULT_THRESHOLD: f32 = 0.55;
 const ENROLLMENT_CONSISTENCY_THRESHOLD: f32 = 0.35;
 const ENCRYPTION_MAGIC: &[u8; 8] = b"SAAAENC1";
@@ -138,6 +138,7 @@ impl VoiceProfileRuntime {
     }
 
     pub fn snapshot(&self, connection: &Connection) -> Result<VoiceProfileSnapshot, String> {
+        update_profile_readiness(connection)?;
         let mut snapshot = snapshot_from_connection(
             connection,
             self.extractor.is_some(),
@@ -693,6 +694,99 @@ mod tests {
             )
             .expect("metadata columns load");
         assert_eq!(metadata_columns, 2);
+    }
+
+    #[test]
+    fn enrollment_requires_five_samples_of_at_least_ten_seconds() {
+        let input = SaveVoiceEnrollmentSampleInput {
+            samples: Vec::new(),
+            audio_upload_id: "upload_test".to_string(),
+            sample_rate: CANONICAL_SAMPLE_RATE,
+            input_device_id: "microphone_test".to_string(),
+            effective_aec: false,
+        };
+        assert!(
+            validate_enrollment_input(&input, &vec![0.1; CANONICAL_SAMPLE_RATE as usize * 10],)
+                .is_ok()
+        );
+        assert!(validate_enrollment_input(
+            &input,
+            &vec![0.1; CANONICAL_SAMPLE_RATE as usize * 10 - 1],
+        )
+        .is_err());
+
+        let connection = Connection::open_in_memory().expect("database opens");
+        migrate_v10_to_v11(&connection).expect("migration succeeds");
+        connection
+            .execute(
+                "INSERT INTO voice_profiles(
+                   id,status,filter_enabled,threshold,model_sha256,embedding_dimension,created_at,updated_at
+                 ) VALUES('default','collecting',0,0.55,?1,192,'now','now')",
+                [MODEL_SHA256],
+            )
+            .expect("profile inserts");
+        for ordinal in 1..=TARGET_SAMPLE_COUNT {
+            connection
+                .execute(
+                    "INSERT INTO voice_profile_samples(
+                       id,profile_id,ordinal,relative_path,duration_ms,sample_rate,
+                       embedding_ciphertext,input_device_id,effective_aec,created_at
+                     ) VALUES(?1,'default',?2,?3,10000,16000,?4,'microphone_test',0,'now')",
+                    params![
+                        format!("sample_{ordinal}"),
+                        ordinal as i64,
+                        format!("voice-profiles/default/sample_{ordinal}.wav.enc"),
+                        vec![0_u8; 64],
+                    ],
+                )
+                .expect("sample inserts");
+            update_profile_readiness(&connection).expect("readiness updates");
+            let status: String = connection
+                .query_row(
+                    "SELECT status FROM voice_profiles WHERE id='default'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("status loads");
+            assert_eq!(
+                status,
+                if ordinal == TARGET_SAMPLE_COUNT {
+                    "ready"
+                } else {
+                    "collecting"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn quality_check_accepts_continuous_speech_without_requiring_prompt_completion() {
+        let continuous = vec![0.05_f32; CANONICAL_SAMPLE_RATE as usize * 10];
+        validate_sample_quality(&continuous).expect("continuous speech is accepted");
+
+        let mut sparse = vec![0.0_f32; CANONICAL_SAMPLE_RATE as usize * 10];
+        sparse[..CANONICAL_SAMPLE_RATE as usize * 2].fill(0.05);
+        let error = validate_sample_quality(&sparse).expect_err("sparse speech rejects");
+        assert!(error.contains("全文を読み切る必要はない"));
+        assert!(error.contains("自動停止するまで"));
+    }
+
+    #[test]
+    fn snapshot_downgrades_legacy_profiles_that_do_not_meet_the_new_minimum() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        migrate_v10_to_v11(&connection).expect("migration succeeds");
+        connection
+            .execute(
+                "INSERT INTO voice_profiles(
+                   id,status,filter_enabled,threshold,model_sha256,embedding_dimension,created_at,updated_at
+                 ) VALUES('default','ready',1,0.55,?1,192,'now','now')",
+                [MODEL_SHA256],
+            )
+            .expect("profile inserts");
+        let runtime = VoiceProfileRuntime::unavailable_for_tests(PathBuf::new());
+        let snapshot = runtime.snapshot(&connection).expect("snapshot loads");
+        assert_eq!(snapshot.status, "collecting");
+        assert!(!snapshot.filter_enabled);
     }
 
     #[test]

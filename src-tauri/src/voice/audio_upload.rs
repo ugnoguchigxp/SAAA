@@ -30,7 +30,12 @@ impl AudioUploadStore {
             .headers()
             .get(PURPOSE_HEADER)
             .and_then(|value| value.to_str().ok())
-            .filter(|value| matches!(*value, "chat-asr" | "meeting-segment" | "voice-enrollment"))
+            .filter(|value| {
+                matches!(
+                    *value,
+                    "chat-asr" | "chat-asr-chunk" | "meeting-segment" | "voice-enrollment"
+                )
+            })
             .ok_or_else(|| "Invalid audio upload purpose".to_string())?;
         let InvokeBody::Raw(bytes) = request.body() else {
             return Err("Audio upload must use binary IPC".to_string());

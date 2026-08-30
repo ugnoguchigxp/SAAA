@@ -133,7 +133,7 @@ pub(super) fn validate_enrollment_input(
     }
     let duration = samples.len() as f32 / input.sample_rate as f32;
     if !(MIN_SAMPLE_SECONDS..=MAX_SAMPLE_SECONDS).contains(&duration) {
-        return Err("Each voice sample must be between 3 and 12 seconds".to_string());
+        return Err("Each voice sample must be between 10 and 12 seconds".to_string());
     }
     if input.input_device_id.trim().is_empty() || input.input_device_id.len() > 300 {
         return Err("Enrollment input device is invalid".to_string());
@@ -163,7 +163,7 @@ pub(super) fn validate_sample_quality(samples: &[f32]) -> Result<(), String> {
     let total_frames = samples.len() / frame_size;
     if total_frames == 0 || voiced_frames as f32 / (total_frames as f32) < 0.4 {
         return Err(
-            "The sample contains too little speech. Read the full prompt without long pauses"
+            "発話として認識できた時間が短すぎます。全文を読み切る必要はないため、録音が自動停止するまで長い間を空けずに読み続けてください"
                 .to_string(),
         );
     }

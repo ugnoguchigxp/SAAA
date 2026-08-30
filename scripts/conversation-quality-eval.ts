@@ -107,6 +107,7 @@ function systemPrompt(inputOrigin: "text" | "voice" = "text"): string {
   return readFileSync(join(ROOT, ".s11tnext/conversation-respond.txt"), "utf8")
     .replace("{{agentNameJson}}", JSON.stringify("SAAA Eval Agent"))
     .replace("{{userNameJson}}", JSON.stringify(""))
+    .replace("{{regionalPreferencesJson}}", JSON.stringify({ language: "en", timeZone: "UTC", lengthUnit: "metric", weightUnit: "kilogram", currency: "USD" }))
     .replace("{{inputOriginJson}}", JSON.stringify(inputOrigin))
     .replace("{{presentationModeJson}}", JSON.stringify("visual-and-spoken"));
 }

@@ -1,5 +1,7 @@
 import type { MutableRefObject } from "react";
 import { toMessage } from "../../lib/appHelpers";
+import { uiMessage } from "../../i18n/presentation";
+import { appendConversationActivity, type ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type { ConversationSession, PendingConversationPrompt, SubmitPromptOptions } from "../../lib/conversationSession";
 import { transcribeAudio } from "../../lib/runtime";
 import type { VoiceSession, VoiceSessionEvent } from "../../lib/voiceSession";
@@ -14,9 +16,10 @@ export async function drainVoiceSegmentQueue(context: {
   applyEvent: (event: VoiceSessionEvent) => unknown;
   setTranscript: (transcript: string) => void;
   setError: (message: string) => void;
-  setRuntimeActivity: (update: (current: string[]) => string[]) => void;
+  setRuntimeActivity: (update: (current: ConversationRuntimeActivity[]) => ConversationRuntimeActivity[]) => void;
   stopSpeech: () => Promise<void>;
   submitPrompt: (prompt: string, options?: SubmitPromptOptions) => Promise<void>;
+  transcribe?: typeof transcribeAudio;
 }): Promise<void> {
   if (context.session.current.processingSegments) return;
   context.applyEvent({ type: "processingStarted" });
@@ -27,27 +30,27 @@ export async function drainVoiceSegmentQueue(context: {
       const runId = `voice_${crypto.randomUUID()}`;
       context.applyEvent({ type: "transcriptionStarted", runId });
       try {
-        const transcript = await transcribeAudio({
+        const transcript = await (context.transcribe ?? transcribeAudio)({
           runId,
           conversationId: segment.conversationId,
           samples: segment.samples,
           sampleRate: segment.sampleRate,
         }, (event) => {
-          if (context.disposed.current || context.session.current.cancellationRequested || event.runId !== runId) return;
+          if (context.disposed.current || event.runId !== runId) return;
           if (event.type === "transcriptFinal") context.setTranscript(event.text);
         });
         clearSamples(segment);
-        if (context.session.current.cancellationRequested || !transcript.trim()) continue;
+        if (!transcript.trim()) continue;
         if (context.disposed.current) continue;
         context.setTranscript(transcript);
         if (context.conversation.current.speechRunId) await context.stopSpeech();
         if (context.disposed.current) continue;
         if (context.conversation.current.runId) {
           if (context.pendingPrompts.current.length >= 2) {
-            context.setError("応答待ちの音声クエリーが上限に達したため、新しい発話は送信しませんでした。");
+            context.setError(uiMessage("chatVoicePendingLimit"));
           } else {
             context.pendingPrompts.current.push({ content: transcript, inputOrigin: "voice" });
-            context.setRuntimeActivity((current) => [...current, "Voice query queued until the active response completes"].slice(-8));
+            context.setRuntimeActivity((current) => appendConversationActivity(current, { type: "voiceQueryQueued" }));
           }
         } else {
           void context.submitPrompt(transcript, { inputOrigin: "voice" });
@@ -55,8 +58,7 @@ export async function drainVoiceSegmentQueue(context: {
       } catch (cause) {
         clearSamples(segment);
         const message = toMessage(cause);
-        if (!context.session.current.cancellationRequested
-          && !(segment.ttsActiveAtCapture && message.startsWith("TARGET_SPEAKER_REJECTED"))
+        if (!(segment.ttsActiveAtCapture && message.startsWith("TARGET_SPEAKER_REJECTED"))
           && !context.disposed.current) {
           context.setError(voiceSegmentError(message));
         }
@@ -75,9 +77,9 @@ function clearSamples(segment: { samples: Float32Array }): void {
 }
 
 function voiceSegmentError(message: string): string {
-  if (message.startsWith("TARGET_SPEAKER_REJECTED")) return "登録した本人の声として確認できなかったため、文字起こしへ送信しませんでした。";
-  if (message.startsWith("ASR_LANGUAGE_NOT_ALLOWED")) return "登録されていない言語だったため、文字起こしを会話へ送信しませんでした。";
-  if (message.startsWith("ASR_LANGUAGE_UNKNOWN")) return "使用言語を判定できなかったため、文字起こしを会話へ送信しませんでした。";
-  if (message.startsWith("ASR_NO_SPEECH")) return "発話を確認できなかったため、文字起こしへ送信しませんでした。";
+  if (message.startsWith("TARGET_SPEAKER_REJECTED")) return uiMessage("voiceTargetSpeakerRejected");
+  if (message.startsWith("ASR_LANGUAGE_NOT_ALLOWED")) return uiMessage("voiceAsrLanguageNotAllowed");
+  if (message.startsWith("ASR_LANGUAGE_UNKNOWN")) return uiMessage("voiceAsrLanguageUnknown");
+  if (message.startsWith("ASR_NO_SPEECH")) return uiMessage("voiceAsrNoSpeech");
   return message;
 }
