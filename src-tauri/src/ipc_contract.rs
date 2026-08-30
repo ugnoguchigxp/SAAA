@@ -1,9 +1,9 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::{Config, TS};
 
 macro_rules! runtime_failure_codes {
     ($( $variant:ident => $wire_value:literal ),+ $(,)?) => {
-        #[derive(Debug, Clone, Copy, Serialize, TS)]
+        #[derive(Debug, Clone, Copy, Deserialize, Serialize, TS)]
         pub(crate) enum RuntimeFailureCode {
             $(
                 #[serde(rename = $wire_value)]
@@ -33,7 +33,7 @@ runtime_failure_codes! {
     InternalError => "internal-error",
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ConversationMessage {
     pub(crate) id: String,
@@ -44,7 +44,7 @@ pub(crate) struct ConversationMessage {
     pub(crate) created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -85,6 +85,17 @@ pub(crate) enum RuntimeEvent {
     MessageCompleted {
         run_id: String,
         message: ConversationMessage,
+    },
+    SpeechStarted {
+        run_id: String,
+    },
+    SpeechEnded {
+        run_id: String,
+    },
+    SpeechFailed {
+        run_id: String,
+        message: String,
+        recovery: String,
     },
     Cancelled {
         run_id: String,

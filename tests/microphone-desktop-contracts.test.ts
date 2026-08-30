@@ -223,8 +223,10 @@ describe("macOS microphone bundle configuration", () => {
       'pendingVoicePromptsRef.current.push({ content: queued.text, inputOrigin: "voice", sourceId: queued.utteranceId })',
     );
     expect(app).toContain("voiceSettings?.autoSpeak");
-    expect(app).toContain("speechGateRef.current.accept(event)");
-    expect(app).toContain("void startSpeech(finalSpeechText, conversationId)");
+    expect(app).toContain('case "speechStarted":');
+    expect(app).toContain('case "speechEnded":');
+    expect(app).toContain('type: "speechStarted", runId: event.runId');
+    expect(app).toContain('type: "speechFinished", runId: event.runId');
     expect(app).toContain("speechResumeTokenRef.current = speechRunId");
     expect(app).toContain("speechResumeTokenRef.current !== speechRunId");
   });

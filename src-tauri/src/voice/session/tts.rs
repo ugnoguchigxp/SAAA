@@ -5,7 +5,8 @@ use crate::{
     validate_identifier, ActiveTts, AppState, RunCancellation, SpeakTextInput,
 };
 
-enum TtsRoute {
+#[derive(Clone)]
+pub(crate) enum TtsRoute {
     Harness(String),
     Cloud(crate::CloudTtsProviderSettings),
     System(crate::SystemTtsProviderSettings),
@@ -100,7 +101,7 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
     }
 }
 
-fn selected_tts_route(state: &AppState) -> Result<(TtsRoute, String, u64), String> {
+pub(crate) fn selected_tts_route(state: &AppState) -> Result<(TtsRoute, String, u64), String> {
     let connection = state
         .connection
         .lock()
@@ -278,6 +279,7 @@ pub(crate) fn stop_tts(state: &AppState, run_id: String) -> Result<(), String> {
             cancellation.cancel();
         }
     }
+    state.streaming_tts.cancel(&run_id);
     cleanup_owned_tts(state, &run_id, true);
     Ok(())
 }

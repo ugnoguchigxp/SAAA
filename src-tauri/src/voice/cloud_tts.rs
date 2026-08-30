@@ -103,7 +103,7 @@ fn prepare_cache_directory(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-async fn synthesize(
+pub(crate) async fn synthesize(
     provider: &CloudTtsProviderSettings,
     text: &str,
     timeout_ms: u64,

@@ -98,6 +98,7 @@ struct AppState {
     network_asr: voice::network_asr::NetworkAsrRuntime,
     audio_uploads: voice::audio_upload::AudioUploadStore,
     tts_process: Mutex<Option<ActiveTts>>,
+    streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime,
     situation: Arc<situation::SituationRuntime>,
     meeting: Arc<meeting::MeetingRuntime>,
     voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
@@ -337,10 +338,28 @@ async fn start_turn(
     on_event: tauri::ipc::Channel<RuntimeEvent>,
 ) -> Result<(), String> {
     validate_start_turn(&input)?;
+    let mut streaming_speech = input.presentation_mode == "visual-and-spoken";
     let cancellation = Arc::new(RunCancellation::default());
     register_active_run(&state, &input.run_id, cancellation.clone())?;
-
-    let result = execute_turn(&state, &input, &on_event, cancellation.clone(), None).await;
+    if streaming_speech {
+        if let Err(error) = state
+            .streaming_tts
+            .begin(&state, &input.run_id, on_event.clone())
+            .await
+        {
+            streaming_speech = false;
+            let _ = on_event.send(RuntimeEvent::SpeechFailed {
+                run_id: input.run_id.clone(),
+                message: redact_runtime_text(&error),
+                recovery: "Check the speech provider and try another response.".to_string(),
+            });
+        }
+    }
+    let event_sink = state.streaming_tts.event_sink(on_event, streaming_speech);
+    let result = execute_turn(&state, &input, &event_sink, cancellation.clone(), None).await;
+    if result.is_err() && streaming_speech {
+        state.streaming_tts.cancel(&input.run_id);
+    }
     if let Ok(mut active) = state.active_runs.lock() {
         active.remove(&input.run_id);
     }
@@ -357,6 +376,7 @@ fn cancel_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), S
     if let Some(cancellation) = active.get(&run_id) {
         cancellation.cancel();
     }
+    state.streaming_tts.cancel(&run_id);
     Ok(())
 }
 
@@ -531,6 +551,7 @@ fn list_messages(
 
 fn shutdown_app_state(state: &AppState) {
     state.voice_asr.shutdown();
+    state.streaming_tts.shutdown();
     if let Ok(mut process) = state.tts_process.lock() {
         if let Some(mut active) = process.take() {
             let _ = active.child.kill();
@@ -633,6 +654,7 @@ pub fn run() {
                     .map_err(std::io::Error::other)?,
                 audio_uploads: voice::audio_upload::AudioUploadStore::default(),
                 tts_process: Mutex::new(None),
+                streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
                 situation,
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
                 voice_profile,

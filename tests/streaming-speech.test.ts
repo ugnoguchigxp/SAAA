@@ -1,32 +1,37 @@
 import { describe, expect, test } from "bun:test";
-import { FinalResponseSpeechGate, speechRetry } from "../src/features/chat/speechPlaybackPolicy";
+import { initialConversationSession, transitionConversationSession } from "../src/lib/conversationSession";
 import type { RuntimeEvent } from "../src/lib/contracts";
 
-const completed = (id: string, content: string): RuntimeEvent => ({
-  type: "messageCompleted",
+const started = (): RuntimeEvent => ({
+  type: "speechStarted",
   runId: "run_1",
-  message: { id, conversationId: "conversation", role: "assistant", content, createdAt: "1" },
 });
 
-describe("gapless response speech", () => {
-  test("never synthesizes incomplete model deltas", () => {
-    const gate = new FinalResponseSpeechGate();
-    expect(gate.accept({ type: "delta", runId: "run_1", text: "incomplete" })).toBeNull();
-    expect(gate.accept({ type: "activity", runId: "run_1", kind: "tool", summary: "working" })).toBeNull();
+describe("streaming response speech", () => {
+  test("uses a dedicated speech-start event instead of a completed message", () => {
+    expect(started()).toEqual({ type: "speechStarted", runId: "run_1" });
+    const completed: RuntimeEvent = {
+      type: "messageCompleted",
+      runId: "run_1",
+      message: { id: "message_1", conversationId: "conversation", role: "assistant", content: "complete answer", createdAt: "1" },
+    };
+    expect(completed.type).toBe("messageCompleted");
   });
 
-  test("speaks the persisted final assistant message exactly once", () => {
-    const gate = new FinalResponseSpeechGate();
-    const event = completed("message_1", "complete answer");
-    expect(gate.accept(event)).toBe("complete answer");
-    expect(gate.accept(event)).toBeNull();
-  });
-
-  test("speech retry keeps the complete final response", () => {
-    expect(speechRetry("the complete final response", "conversation")).toEqual({
-      kind: "speech",
-      text: "the complete final response",
-      conversationId: "conversation",
+  test("keeps the microphone suppression state until native speech ends", () => {
+    const speaking = transitionConversationSession(initialConversationSession, {
+      type: "speechStarted",
+      runId: "run_1",
     });
+    expect(speaking.speechRunId).toBe("run_1");
+    expect(transitionConversationSession(speaking, { type: "speechFinished", runId: "run_1" }).speechRunId).toBeNull();
+  });
+
+  test("does not let a stale completion clear a newer speech session", () => {
+    const speaking = transitionConversationSession(initialConversationSession, {
+      type: "speechStarted",
+      runId: "run_2",
+    });
+    expect(transitionConversationSession(speaking, { type: "speechFinished", runId: "run_1" }).speechRunId).toBe("run_2");
   });
 });

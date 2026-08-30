@@ -4,8 +4,7 @@ import { uiMessage } from "../../i18n/presentation";
 import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
 import { appendConversationActivity, type ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type { AppSnapshot, ConversationMessage, MeetingState, RuntimeEvent, VoiceSettings } from "../../lib/contracts";
-import { cancelRun, listMessages, speakText, startTurn, stopTts } from "../../lib/runtime";
-import { toSpeakableText } from "../../lib/speakableText";
+import { cancelRun, listMessages, startTurn, stopTts } from "../../lib/runtime";
 import {
   transitionConversationSession,
   type ConversationSession,
@@ -14,10 +13,7 @@ import {
   type SubmitPromptOptions,
 } from "../../lib/conversationSession";
 import { ConversationIssueCoordinator } from "./conversationIssueCoordinator";
-import { FinalResponseSpeechGate, speechRetry, type SpeechRetry } from "./speechPlaybackPolicy";
-type RetryAction =
-  | { kind: "response"; prompt: string; inputMessageId: string; inputOrigin: InputOrigin }
-  | SpeechRetry;
+type RetryAction = { kind: "response"; prompt: string; inputMessageId: string; inputOrigin: InputOrigin };
 export function useConversationTurn({
   selectedConversationId,
   voiceSettings,
@@ -53,7 +49,6 @@ export function useConversationTurn({
   const failedRunIdsRef = useRef(new Set<string>());
   const speechStopRequestsRef = useRef(new Set<string>());
   const issueCoordinatorRef = useRef(new ConversationIssueCoordinator());
-  const speechGateRef = useRef(new FinalResponseSpeechGate());
   const disposedRef = useRef(false);
   selectedConversationIdRef.current = selectedConversationId;
   meetingStateRef.current = meetingState;
@@ -169,12 +164,14 @@ export function useConversationTurn({
     }
   }
   function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, issueScope: number) {
+    const isSpeechLifecycle = event.type === "speechStarted" || event.type === "speechEnded" || event.type === "speechFailed";
+    const ownsEvent = conversationSessionRef.current.runId === event.runId
+      || (isSpeechLifecycle && conversationSessionRef.current.speechRunId === event.runId);
     if (
       disposedRef.current ||
       selectedConversationIdRef.current !== conversationId ||
-      conversationSessionRef.current.runId !== event.runId
+      !ownsEvent
     ) return;
-    const finalSpeechText = speechGateRef.current.accept(event);
     switch (event.type) {
       case "started":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
@@ -202,8 +199,32 @@ export function useConversationTurn({
           ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", { fallbackUsed: current.effectiveRoute.fallbackUsed, reasonCode: "last-turn-completed" })
           : current);
         setStreamingText("");
-        if (finalSpeechText && voiceSettings?.autoSpeak && !isMeetingBlocking(meetingStateRef.current)) {
-          void startSpeech(finalSpeechText, conversationId);
+        break;
+      case "speechStarted":
+        conversationSessionRef.current = transitionConversationSession(
+          conversationSessionRef.current,
+          { type: "speechStarted", runId: event.runId },
+        );
+        setActiveTtsRunId(event.runId);
+        void suspendVoiceForSpeech(event.runId).catch(() => {
+          publishIssue(issueScope, uiMessage("chatSpeechPlaybackFailed"));
+        });
+        break;
+      case "speechEnded":
+        if (conversationSessionRef.current.speechRunId === event.runId) {
+          conversationSessionRef.current = transitionConversationSession(
+            conversationSessionRef.current,
+            { type: "speechFinished", runId: event.runId },
+          );
+          setActiveTtsRunId(null);
+          void resumeVoiceAfterSpeech(event.runId).catch(() => {
+            publishIssue(issueScope, uiMessage("chatMicrophoneResumeFailed"));
+          });
+        }
+        break;
+      case "speechFailed":
+        if (!speechStopRequestsRef.current.has(event.runId)) {
+          publishIssue(issueScope, uiMessage("chatSpeechPlaybackFailed"));
         }
         break;
       case "cancelled":
@@ -221,43 +242,6 @@ export function useConversationTurn({
     if (!runId) return;
     const issueScope = issueCoordinatorRef.current.begin();
     try { await cancelRun(runId); } catch (cause) { publishIssue(issueScope, toMessage(cause)); }
-  }
-  async function startSpeech(text: string, conversationId = selectedConversationId) {
-    if (disposedRef.current || !conversationId || !voiceSettings || conversationSessionRef.current.speechRunId || isMeetingBlocking(meetingStateRef.current)) return;
-    const issueScope = issueCoordinatorRef.current.begin();
-    const runId = `speech_${crypto.randomUUID()}`;
-    conversationSessionRef.current = transitionConversationSession(
-      conversationSessionRef.current,
-      { type: "speechStarted", runId },
-    );
-    setActiveTtsRunId(runId);
-    try {
-      setError(null);
-      setRetryAction(null);
-      const speakable = toSpeakableText(text);
-      if (!speakable) return;
-      await suspendVoiceForSpeech(runId);
-      if (conversationSessionRef.current.speechRunId !== runId) return;
-      await speakText({ runId, conversationId, text: speakable });
-    } catch (cause) {
-      if (!speechStopRequestsRef.current.has(runId)) {
-        publishIssue(issueScope, uiMessage("chatSpeechPlaybackFailed"), speechRetry(text, conversationId));
-      }
-    } finally {
-      if (conversationSessionRef.current.speechRunId === runId) {
-        conversationSessionRef.current = transitionConversationSession(
-          conversationSessionRef.current,
-          { type: "speechFinished", runId },
-        );
-        if (!disposedRef.current) setActiveTtsRunId(null);
-      }
-      try {
-        await resumeVoiceAfterSpeech(runId);
-      } catch (cause) {
-        publishIssue(issueScope, uiMessage("chatMicrophoneResumeFailed"));
-      }
-      speechStopRequestsRef.current.delete(runId);
-    }
   }
   async function stopSpeech(existingIssueScope?: number) {
     const runId = conversationSessionRef.current.speechRunId;
@@ -278,6 +262,11 @@ export function useConversationTurn({
           { type: "speechFinished", runId },
         );
         if (!disposedRef.current) setActiveTtsRunId(null);
+        try {
+          await resumeVoiceAfterSpeech(runId);
+        } catch (cause) {
+          publishIssue(issueScope, uiMessage("chatMicrophoneResumeFailed"));
+        }
       }
     }
   }
@@ -285,11 +274,7 @@ export function useConversationTurn({
     const action = retryAction;
     if (!action) return;
     setRetryAction(null);
-    if (action.kind === "speech") {
-      await startSpeech(action.text, action.conversationId);
-    } else {
-      await submitPrompt(action.prompt, { retryInputMessageId: action.inputMessageId, inputOrigin: action.inputOrigin });
-    }
+    await submitPrompt(action.prompt, { retryInputMessageId: action.inputMessageId, inputOrigin: action.inputOrigin });
   }
   return {
     messages,

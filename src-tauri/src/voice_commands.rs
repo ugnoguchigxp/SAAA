@@ -42,6 +42,9 @@ pub(crate) fn save_voice_enrollment_sample(
     {
         return Err("Stop speech playback before recording an enrollment sample".to_string());
     }
+    if state.streaming_tts.is_active() {
+        return Err("Stop speech playback before recording an enrollment sample".to_string());
+    }
     let connection = state
         .connection
         .lock()

@@ -198,6 +198,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         network_asr: voice::network_asr::NetworkAsrRuntime::new()?,
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
         tts_process: Mutex::new(None),
+        streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
         situation: Arc::new(situation::SituationRuntime::new(situation_settings, None)?),
         meeting: Arc::new(meeting::MeetingRuntime::new()),
         voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(

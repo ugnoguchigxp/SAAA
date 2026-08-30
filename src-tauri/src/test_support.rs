@@ -27,6 +27,7 @@ pub(crate) fn app_state(connection: Connection) -> AppState {
             .expect("Network ASR runtime initializes"),
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
         tts_process: Mutex::new(None),
+        streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
         situation: Arc::new(
             situation::SituationRuntime::new(settings, None)
                 .expect("Situation runtime initializes"),
