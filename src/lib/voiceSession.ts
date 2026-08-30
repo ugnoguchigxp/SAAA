@@ -12,7 +12,7 @@ export type VoiceSession = {
 
 export type VoiceSessionEvent =
   | { type: "actionStarted" | "actionFinished" }
-  | { type: "captureStarting" | "captureStarted" | "captureDetached" | "speechSuspended" }
+  | { type: "captureStarting" | "captureStarted" | "captureDetached" | "captureSuspended" }
   | { type: "finalizeRequested"; mode: FinalizeMode }
   | { type: "finalizeCompleted" }
   | { type: "processingStarted" | "processingFinished" }
@@ -37,7 +37,7 @@ export function transitionVoiceSession(state: VoiceSession, event: VoiceSessionE
     case "captureStarting": return { ...state, capture: "starting" };
     case "captureStarted": return { ...state, capture: "recording" };
     case "captureDetached": return { ...state, capture: "idle" };
-    case "speechSuspended": return { ...state, capture: ["starting", "recording"].includes(state.capture) ? "suspended" : state.capture };
+    case "captureSuspended": return { ...state, capture: ["starting", "recording"].includes(state.capture) ? "suspended" : state.capture };
     case "finalizeRequested":
       return state.finalizing
         ? { ...state, pendingFinalize: mergeFinalizeMode(state.pendingFinalize, event.mode) }
@@ -63,6 +63,10 @@ export function voiceCaptureState(state: VoiceSession): "idle" | "recording" | "
 
 export function voiceSessionBusy(state: VoiceSession): boolean {
   return state.actionInProgress || state.capture !== "idle" || voiceCaptureState(state) !== "idle";
+}
+
+export function voiceSessionProcessing(state: VoiceSession): boolean {
+  return state.actionInProgress || state.finalizing || state.processingSegments || state.transcriptionRunId !== null;
 }
 
 function mergeFinalizeMode(current: FinalizeMode | null, next: FinalizeMode): FinalizeMode {

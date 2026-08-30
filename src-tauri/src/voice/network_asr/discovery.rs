@@ -4,8 +4,8 @@ use url::{Host, Url};
 #[cfg(test)]
 use super::client;
 use super::{bounded_response, request_error_message, PROVIDER_ID};
-use crate::{persistence::load_voice_settings, AppState, NetworkAsrResolution, RunCancellation};
-use std::{sync::Arc, time::Duration};
+use crate::{NetworkAsrResolution, RunCancellation};
+use std::time::Duration;
 
 const ASR_PORT: u16 = 8081;
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(8);
@@ -24,15 +24,6 @@ struct ModelsResponse {
 #[derive(Debug, Deserialize)]
 struct ModelDescriptor {
     id: String,
-}
-
-pub async fn probe(state: &AppState, model: &str) -> Result<(), String> {
-    let host = configured_host(state)?;
-    let resolution = state
-        .network_asr
-        .refresh(&host, Arc::new(RunCancellation::default()))
-        .await?;
-    ensure_selected_model(&resolution, model)
 }
 
 #[cfg(test)]
@@ -99,14 +90,6 @@ pub(super) async fn resolve_at_with_client(
         endpoint: base_url,
         model: health.model,
     })
-}
-
-pub(super) fn configured_host(state: &AppState) -> Result<String, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    Ok(load_voice_settings(&connection)?.stt_host)
 }
 
 pub(crate) fn base_url_from_host(host: &str) -> Result<String, String> {

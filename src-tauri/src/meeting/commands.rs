@@ -113,16 +113,15 @@ pub(crate) async fn append_meeting_audio_segment(
     let cancellation = Arc::new(RunCancellation::default());
     let appended = state.meeting.append(&input, cancellation.clone());
     input.samples.zeroize();
-    let (model, samples) = appended?;
+    let samples = appended?;
     let samples = Zeroizing::new(samples);
     state
         .situation
         .set_microphone_state(crate::situation::contracts::MicrophoneState::SaaaTranscribing);
-    let transcription = crate::voice::network_asr::transcribe(
+    let transcription = crate::voice::session::transcribe_selected_audio(
         state,
         &samples,
         input.sample_rate,
-        &model,
         cancellation.clone(),
     )
     .await;
@@ -170,6 +169,12 @@ pub(crate) async fn append_meeting_audio_segment(
             state.meeting.abort_segment(&input);
             if cancellation.is_cancelled() {
                 Err("Transcription cancelled".to_string())
+            } else if recoverable_asr_rejection(&error) {
+                Ok(crate::meeting::SegmentResult {
+                    accepted: false,
+                    text: String::new(),
+                    language: None,
+                })
             } else {
                 record_failure("MEETING_STT_FAILED", error)
             }
@@ -189,6 +194,12 @@ pub(crate) async fn append_meeting_audio_segment(
     result
 }
 
+fn recoverable_asr_rejection(error: &str) -> bool {
+    error.starts_with("ASR_LANGUAGE_NOT_ALLOWED")
+        || error.starts_with("ASR_LANGUAGE_UNKNOWN")
+        || error.starts_with("ASR_NO_SPEECH")
+}
+
 pub(crate) async fn preview_meeting_audio_segment(
     state: &AppState,
     mut input: crate::meeting::PreviewSegmentInput,
@@ -201,7 +212,7 @@ pub(crate) async fn preview_meeting_audio_segment(
     register_active_run(state, &input.run_id, cancellation.clone())?;
     let preview = state.meeting.preview(&input.segment);
     input.segment.samples.zeroize();
-    let (model, samples) = match preview {
+    let samples = match preview {
         Ok(preview) => preview,
         Err(error) => {
             remove_active_run(state, &input.run_id);
@@ -209,11 +220,10 @@ pub(crate) async fn preview_meeting_audio_segment(
         }
     };
     let samples = Zeroizing::new(samples);
-    let transcription = crate::voice::network_asr::transcribe(
+    let transcription = crate::voice::session::transcribe_selected_audio(
         state,
         &samples,
         input.segment.sample_rate,
-        &model,
         cancellation.clone(),
     )
     .await;

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { meetingPreflight } from "../src/lib/runtime";
 describe("meeting contracts", () => {
   test("exposes the preflight command through the typed runtime boundary", () => {
     expect(typeof meetingPreflight).toBe("function");
   });
   test("submits each captured segment to ASR only once", () => {
-    const chat = readFileSync(new URL("../src/features/voice/usePushToTalk.ts", import.meta.url), "utf8");
+    const chat = ["../src/features/voice/useAmbientVoiceSession.ts", "../src/features/voice/voiceSegmentProcessor.ts"]
+      .map((path) => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
     const meeting = readFileSync(new URL("../src/features/meeting/useMeetingSession.ts", import.meta.url), "utf8");
     expect(chat).toContain("transcribeAudio({");
     expect(chat).not.toContain("previewAudio({");
@@ -17,7 +17,7 @@ describe("meeting contracts", () => {
     expect(meeting).not.toContain("previewMeetingAudioSegment({");
   });
   test("requires an explicit review with persistence details before save or discard", () => {
-    const source = readFileSync(join(import.meta.dir, "../src/features/meeting/MeetingPage.tsx"), "utf8");
+    const source = readFileSync(new URL("../src/features/meeting/MeetingPage.tsx", import.meta.url), "utf8");
     expect(source).toContain("Review before save");
     expect(source).toContain("SAAA local SQLite database");
     expect(source).toContain("Raw microphone audio is deleted and is not saved.");

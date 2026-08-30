@@ -22,7 +22,6 @@ struct Entry {
 struct Session {
     id: String,
     token: Option<String>,
-    model: String,
     entries: Vec<Entry>,
     total_text_chars: usize,
     next_sequences: HashMap<MeetingLane, u64>,
@@ -101,7 +100,7 @@ impl MeetingRuntime {
         input: &PreflightInput,
         asr_health: Result<(), String>,
     ) -> Result<PreflightResult, String> {
-        validate_device_and_model_bounds(&input.microphone_device_id, &input.stt_model)?;
+        validate_device_bounds(&input.microphone_device_id)?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         ensure(&r.state, &[MeetingState::Idle, MeetingState::Ready])?;
         r.state = MeetingState::Preflight;
@@ -116,24 +115,15 @@ impl MeetingRuntime {
         } else {
             health("ready", "Microphone permission was checked by the app")
         };
-        let stt = if input.stt_model != crate::voice::network_asr::MODEL_ID {
-            errors.push(err(
-                "MEETING_STT_MODEL_UNAVAILABLE",
-                "The configured LAN ASR model is unsupported.",
-                "Restore the default Voice ASR settings.",
-            ));
-            health("unavailable", "ASR model mismatch")
-        } else {
-            match asr_health {
-                Ok(()) => health("ready", "network-asr"),
-                Err(error) => {
-                    errors.push(err(
-                        "MEETING_STT_UNAVAILABLE",
-                        &error,
-                        "Check the LAN ASR service and retry.",
-                    ));
-                    health("unavailable", "LAN ASR unavailable")
-                }
+        let stt = match asr_health {
+            Ok(()) => health("ready", "Selected Voice ASR"),
+            Err(error) => {
+                errors.push(err(
+                    "MEETING_STT_UNAVAILABLE",
+                    &error,
+                    "Check the ASR service selected in Voice settings and retry.",
+                ));
+                health("unavailable", "Selected ASR unavailable")
             }
         };
         if input.system_audio_enabled {
@@ -170,11 +160,8 @@ impl MeetingRuntime {
         input: &StartInput,
         connection: &Mutex<Connection>,
     ) -> Result<MeetingSnapshot, String> {
-        validate_device_and_model_bounds(&input.microphone_device_id, &input.stt_model)?;
+        validate_device_bounds(&input.microphone_device_id)?;
         crate::validate_identifier(&input.session_id, "meeting session id")?;
-        if input.stt_model != crate::voice::network_asr::MODEL_ID {
-            return Err("MEETING_STT_MODEL_UNAVAILABLE: Unsupported LAN ASR model.".into());
-        }
         if input.microphone_device_id.trim().is_empty()
             || !input.microphone_enabled
             || input.system_audio_enabled
@@ -191,13 +178,12 @@ impl MeetingRuntime {
         let token = capture_token();
         {
             let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,?3,?4,NULL,'discard',?5)",params![input.session_id,if input.microphone_enabled {1} else {0},crate::voice::network_asr::PROVIDER_ID,input.stt_model,now_iso()]).map_err(crate::database_error)?;
+            conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,?3,?4,NULL,'discard',?5)",params![input.session_id,if input.microphone_enabled {1} else {0},crate::voice::network_asr::PROVIDER_ID,crate::voice::network_asr::MODEL_ID,now_iso()]).map_err(crate::database_error)?;
         }
         r.state = MeetingState::Active;
         r.session = Some(Session {
             id: input.session_id.clone(),
             token: Some(token),
-            model: input.stt_model.clone(),
             entries: Vec::new(),
             total_text_chars: 0,
             next_sequences: HashMap::new(),
@@ -266,7 +252,7 @@ impl MeetingRuntime {
         &self,
         input: &SegmentInput,
         cancellation: Arc<RunCancellation>,
-    ) -> Result<(String, Vec<f32>), String> {
+    ) -> Result<Vec<f32>, String> {
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         let active = r.state == MeetingState::Active;
         let s = r.session.as_mut().ok_or("MEETING_INVALID_STATE")?;
@@ -295,9 +281,9 @@ impl MeetingRuntime {
         s.next_sequences.insert(input.lane.clone(), following);
         s.in_flight
             .insert((input.lane.clone(), input.sequence), cancellation);
-        Ok((s.model.clone(), input.samples.clone()))
+        Ok(input.samples.clone())
     }
-    pub fn preview(&self, input: &SegmentInput) -> Result<(String, Vec<f32>), String> {
+    pub fn preview(&self, input: &SegmentInput) -> Result<Vec<f32>, String> {
         let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         let s = r.session.as_ref().ok_or("MEETING_INVALID_STATE")?;
         if r.state != MeetingState::Active
@@ -314,7 +300,7 @@ impl MeetingRuntime {
         if input.sequence != next {
             return Err("MEETING_OUT_OF_ORDER_SEGMENT".into());
         }
-        Ok((s.model.clone(), input.samples.clone()))
+        Ok(input.samples.clone())
     }
     pub fn preview_is_current(&self, input: &SegmentInput) -> bool {
         let Ok(r) = self.inner.lock() else {
@@ -512,12 +498,9 @@ impl MeetingRuntime {
     }
 }
 
-fn validate_device_and_model_bounds(device_id: &str, model: &str) -> Result<(), String> {
+fn validate_device_bounds(device_id: &str) -> Result<(), String> {
     if device_id.len() > 256 {
         return Err("Invalid microphone device id".to_string());
-    }
-    if model.trim().is_empty() || model.len() > 160 {
-        return Err("Invalid STT model".to_string());
     }
     Ok(())
 }
@@ -705,7 +688,6 @@ mod tests {
                 session: Some(Session {
                     id: "session_a".into(),
                     token: Some("capture_token".into()),
-                    model: crate::voice::network_asr::MODEL_ID.to_string(),
                     entries: Vec::new(),
                     total_text_chars: 0,
                     next_sequences: HashMap::new(),
@@ -739,17 +721,16 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_unavailable_network_asr_without_arming_capture() {
+    fn preflight_rejects_the_unavailable_selected_asr_without_arming_capture() {
         let runtime = MeetingRuntime::new();
         let result = runtime
             .preflight(
                 &PreflightInput {
                     microphone_device_id: "default".into(),
                     system_audio_enabled: false,
-                    stt_model: crate::voice::network_asr::MODEL_ID.into(),
                     translation_enabled: false,
                 },
-                Err("LAN ASR unavailable".into()),
+                Err("Selected ASR unavailable".into()),
             )
             .expect("preflight result");
         assert_eq!(result.state, MeetingState::Idle);

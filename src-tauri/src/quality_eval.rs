@@ -150,6 +150,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         match (document.namespace.as_str(), document.key.as_str()) {
             ("providers.model", "default") => {
                 document.value_json = json!({
+                    "harness": { "address": "http://localhost:9810" },
                     "providers": [{
                         "kind": "openai-compatible",
                         "id": "quality-eval",
@@ -158,10 +159,9 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
                         "location": location,
                         "endpoint": request.base_url,
                         "model": request.model,
-                        "credentialStatus": "configured"
+                        "authentication": "none"
                     }],
-                    "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
-                    "maxOutputTokens": providers::completion::DEFAULT_MAX_OUTPUT_TOKENS
+                    "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT
                 });
             }
             ("providers.agent", "codex-sdk") => {
@@ -170,9 +170,15 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
             }
             ("routing.tasks", "default") => {
                 document.value_json["conversationRespond"] = json!({
+                    "source": "provider",
                     "primaryProviderId": "quality-eval",
                     "fallbackProviderIds": [],
                     "timeoutMs": request.timeout_ms
+                });
+                document.value_json["voiceSpeak"] = json!({
+                    "source": "harness",
+                    "providerId": null,
+                    "timeoutMs": 30000
                 });
             }
             _ => {}

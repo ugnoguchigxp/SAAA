@@ -6,7 +6,7 @@ import { useConversationTurn } from "./features/chat/useConversationTurn";
 import { MeetingPage } from "./features/meeting/MeetingPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { SituationPage } from "./features/situation/SituationPage";
-import { usePushToTalk } from "./features/voice/usePushToTalk";
+import { useAmbientVoiceSession } from "./features/voice/useAmbientVoiceSession";
 import { isMeetingBlocking, toMessage } from "./lib/appHelpers";
 import {
   findSettingsDocument,
@@ -56,7 +56,7 @@ function App() {
   const setConversationError = errorSetter("conversation");
   const setVoiceError = errorSetter("voice");
 
-  const voice = usePushToTalk({
+  const voice = useAmbientVoiceSession({
     selectedConversationId,
     voiceSettings,
     meetingState,
@@ -71,7 +71,6 @@ function App() {
     selectedConversationId,
     voiceSettings,
     meetingState,
-    isVoiceBusy: voice.isBusy,
     pendingVoicePromptsRef,
     conversationSessionRef,
     suspendVoiceForSpeech: voice.suspendVoiceForSpeech,
@@ -82,7 +81,7 @@ function App() {
   submitPromptRef.current = turn.submitPrompt;
   stopSpeechRef.current = turn.stopSpeech;
   setRuntimeActivityRef.current = turn.setRuntimeActivity;
-  const { voiceBusy, voiceState } = voice;
+  const { voiceBusy, voiceProcessing, voiceState } = voice;
   const { activeRunId, activeTtsRunId, composer } = turn;
   const stopSpeech = turn.stopSpeech;
 
@@ -95,13 +94,13 @@ function App() {
         openAuxiliarySurface("settings");
       } else if (event.key === "Escape") {
         if (activeRunId) void turn.stopActiveRun();
-        if (voiceState !== "idle") void voice.toggleVoiceCapture();
+        if (voice.listeningEnabled || voiceState !== "idle") void voice.toggleAmbientListening();
         if (activeTtsRunId) void stopSpeech();
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeRunId, activeTtsRunId, surface, voiceBusy, voiceState]);
+  }, [activeRunId, activeTtsRunId, surface, voice.listeningEnabled, voiceBusy, voiceState]);
   useEffect(() => {
     const input = {
       conversationState: activeRunId ? "model-running" : composer.trim() ? "user-input" : "idle",
@@ -141,10 +140,6 @@ function App() {
   function canChangeConversation(): boolean {
     if (conversationSessionRef.current.runId) {
       setAppError("実行中の処理を停止してからSurfaceを切り替えてください。");
-      return false;
-    }
-    if (voice.isBusy()) {
-      setAppError("音声入力を停止してからSurfaceを切り替えてください。");
       return false;
     }
     setAppError(null);
@@ -189,8 +184,8 @@ function App() {
       <button className={surface === "settings" ? "sidebar-settings active" : "sidebar-settings"} onClick={() => openAuxiliarySurface("settings")}><AppIcon name="settings" />設定</button>
     </aside>
 
-    <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} chatVoiceBusy={voiceBusy || Boolean(activeRunId) || Boolean(activeTtsRunId)} onStateChanged={setMeetingState} /></div>
-    {surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} voiceProfile={snapshot.voiceProfile} voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)} onSaved={(settings) => { setSnapshot((current) => ({ ...current, settings })); void refreshSnapshot(); }} onVoiceProfileChanged={(voiceProfile) => setSnapshot((current) => ({ ...current, voiceProfile }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <ChatPage messages={turn.messages} streamingText={turn.streamingText} interimTranscript={voice.interimTranscript} voiceState={voiceState} runtimeActivity={turn.runtimeActivity} composer={composer} onComposerChange={turn.setComposer} onSubmit={(event) => void turn.handleSubmit(event)} onToggleVoice={() => void voice.toggleVoiceCapture()} voiceStarting={voice.voiceStarting} meetingActive={meetingActive} activeRunId={activeRunId} filterEnabled={snapshot.voiceProfile.filterEnabled} modelProviderStatus={modelProviderStatus} onOpenSettings={() => openAuxiliarySurface("settings")} onOpenMeeting={() => void openMeetingSurface()} onOpenSituation={() => openAuxiliarySurface("situation")} onStopRun={() => void turn.stopActiveRun()} onStopSpeech={() => void stopSpeech()} onRetry={() => void turn.retryFailedAction()} selectedConversation={selectedConversation} voiceBusy={voiceBusy} activeTtsRunId={activeTtsRunId} error={error} lastPrompt={turn.lastPrompt} retryKind={turn.retryKind} /> : null}
+    <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} conversationBusy={voiceProcessing || Boolean(activeRunId) || Boolean(activeTtsRunId)} onBeforeCapture={voice.suspendVoiceForMeeting} onStateChanged={setMeetingState} /></div>
+    {surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} voiceProfile={snapshot.voiceProfile} voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)} onSaved={(settings) => { setSnapshot((current) => ({ ...current, settings })); void refreshSnapshot(); }} onVoiceProfileChanged={(voiceProfile) => setSnapshot((current) => ({ ...current, voiceProfile }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} /> : surface === "chat" ? <ChatPage messages={turn.messages} streamingText={turn.streamingText} interimTranscript={voice.interimTranscript} voiceState={voiceState} listeningEnabled={voice.listeningEnabled} runtimeActivity={turn.runtimeActivity} composer={composer} onComposerChange={turn.setComposer} onSubmit={(event) => void turn.handleSubmit(event)} onToggleVoice={() => void voice.toggleAmbientListening()} voiceStarting={voice.voiceStarting} meetingActive={meetingActive} activeRunId={activeRunId} modelProviderStatus={modelProviderStatus} onOpenSettings={() => openAuxiliarySurface("settings")} onOpenMeeting={() => void openMeetingSurface()} onOpenSituation={() => openAuxiliarySurface("situation")} onStopRun={() => void turn.stopActiveRun()} onStopSpeech={() => void stopSpeech()} onRetry={() => void turn.retryFailedAction()} selectedConversation={selectedConversation} activeTtsRunId={activeTtsRunId} error={error} lastPrompt={turn.lastPrompt} retryKind={turn.retryKind} /> : null}
   </main>;
 }
 

@@ -1,6 +1,5 @@
-use std::env;
-
 use crate::OpenAiCompatibleProviderSettings;
+use zeroize::Zeroizing;
 
 mod probe;
 pub(crate) use probe::probe_model_provider;
@@ -80,30 +79,13 @@ fn provider_operation_url(endpoint: &str, operation: &str) -> Result<String, Str
     Ok(url.to_string())
 }
 
-pub(crate) fn provider_api_key(provider: &OpenAiCompatibleProviderSettings) -> Option<String> {
-    let suffix = provider_environment_suffix(&provider.id);
-    env::var(format!("SAAA_PROVIDER_{suffix}_API_KEY"))
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            (provider.location == "cloud")
-                .then(|| env::var("OPENAI_API_KEY").ok())
-                .flatten()
-                .filter(|value| !value.is_empty())
-        })
-}
-
-pub(crate) fn provider_environment_suffix(provider_id: &str) -> String {
-    provider_id
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
+pub(crate) fn provider_api_key(
+    provider: &OpenAiCompatibleProviderSettings,
+) -> Result<Option<Zeroizing<String>>, String> {
+    if provider.authentication == "none" {
+        return Ok(None);
+    }
+    crate::credentials::load_api_key(&provider.id)
 }
 
 #[cfg(test)]

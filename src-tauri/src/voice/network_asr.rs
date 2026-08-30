@@ -3,19 +3,18 @@ use futures_util::StreamExt;
 use reqwest::{multipart, Client, Response};
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
+use zeroize::Zeroizing;
 
 mod discovery;
 mod runtime;
 pub(crate) use discovery::base_url_from_host;
 use discovery::ensure_selected_model;
-pub use discovery::probe;
 #[cfg(test)]
 use discovery::{resolve_at, validate_base_url};
 pub(crate) use runtime::NetworkAsrRuntime;
 
 pub const PROVIDER_ID: &str = "network-asr";
 pub const MODEL_ID: &str = "qwen3-asr-1.7b";
-pub const DEFAULT_HOST: &str = "localhost";
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 const MAX_TRANSCRIPT_CHARS: usize = 16_000;
@@ -39,15 +38,15 @@ struct TranscriptionResponse {
 
 pub async fn transcribe(
     state: &AppState,
+    host: &str,
     samples: &[f32],
     sample_rate: u32,
     model: &str,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
-    let host = discovery::configured_host(state)?;
     let resolution = state
         .network_asr
-        .resolve(&host, cancellation.clone())
+        .resolve(host, cancellation.clone())
         .await?;
     ensure_selected_model(&resolution, model)?;
     let result = transcribe_at(
@@ -60,7 +59,7 @@ pub async fn transcribe(
     )
     .await;
     if result.is_err() && !cancellation.is_cancelled() {
-        state.network_asr.invalidate(&host).await;
+        state.network_asr.invalidate(host).await;
     }
     result
 }
@@ -81,7 +80,6 @@ async fn transcribe_at(
     let form = multipart::Form::new()
         .part("file", audio)
         .text("model", model.to_string())
-        .text("language", "auto")
         .text("response_format", "json");
     let request = client
         .post(format!(
@@ -124,7 +122,7 @@ pub(super) fn client() -> Result<Client, String> {
 pub(super) async fn bounded_response(
     response: Response,
     cancellation: &RunCancellation,
-) -> Result<Vec<u8>, String> {
+) -> Result<Zeroizing<Vec<u8>>, String> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
@@ -132,7 +130,7 @@ pub(super) async fn bounded_response(
         return Err("LAN ASR response exceeded the size limit".to_string());
     }
     let mut stream = response.bytes_stream();
-    let mut body = Vec::new();
+    let mut body = Zeroizing::new(Vec::new());
     loop {
         let chunk = tokio::select! {
             _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
@@ -150,14 +148,14 @@ pub(super) async fn bounded_response(
     Ok(body)
 }
 
-fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
     if samples.is_empty()
         || !(8_000..=192_000).contains(&sample_rate)
         || samples.iter().any(|sample| !sample.is_finite())
     {
         return Err("Invalid audio samples".to_string());
     }
-    let resampled = resample_pcm(samples, sample_rate, 16_000);
+    let resampled = Zeroizing::new(resample_pcm(samples, sample_rate, 16_000));
     let data_size = resampled
         .len()
         .checked_mul(2)
@@ -176,7 +174,7 @@ fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
     wav.extend_from_slice(&16_u16.to_le_bytes());
     wav.extend_from_slice(b"data");
     wav.extend_from_slice(&data_size.to_le_bytes());
-    for sample in resampled {
+    for sample in resampled.iter().copied() {
         let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
         wav.extend_from_slice(&pcm.to_le_bytes());
     }
@@ -445,7 +443,7 @@ mod tests {
             assert!(request_text.starts_with("POST /v1/audio/transcriptions HTTP/1.1"));
             assert!(request_text.contains("name=\"model\""));
             assert!(request_text.contains(MODEL_ID));
-            assert!(request_text.contains("name=\"language\""));
+            assert!(!request_text.contains("name=\"language\""));
             assert!(request_text.contains("audio/wav"));
 
             let body = r#"{"text":"dynamic_lan transcript","language":"Japanese"}"#;

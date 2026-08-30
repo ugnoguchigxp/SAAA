@@ -8,7 +8,9 @@ use crate::persistence::{
     load_codex_settings, load_model_providers, load_routing_settings, load_security_settings,
     validate_conversation_write_target,
 };
-use crate::providers::routing::{apply_runtime_provider_gates, effective_conversation_route_ids};
+use crate::providers::routing::{
+    apply_runtime_provider_gates, effective_conversation_route_ids, resolve_harness_llm_provider,
+};
 use crate::redact::{bounded_text, redact_runtime_text};
 use crate::{
     begin_provider_session, database_error, execute_codex_turn,
@@ -402,7 +404,7 @@ pub(crate) async fn execute_conversation_turn(
     on_event: &tauri::ipc::Channel<RuntimeEvent>,
     cancellation: Arc<RunCancellation>,
 ) -> Result<ConversationMessage, String> {
-    let (providers, route, security, history, context_health, configuration_fingerprint) = {
+    let (mut providers, route, security, history, context_health, configuration_fingerprint) = {
         let connection = state
             .connection
             .lock()
@@ -450,8 +452,11 @@ pub(crate) async fn execute_conversation_turn(
             configuration_fingerprint,
         )
     };
+    if route.source == "harness" {
+        resolve_harness_llm_provider(&mut providers, cancellation.clone()).await?;
+    }
     let reasoning_effort = providers.reasoning_effort.clone();
-    let max_output_tokens = providers.max_output_tokens;
+    let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
     let route_ids = apply_dynamic_lan_credential_gate(
         &providers,
         apply_runtime_provider_gates(
@@ -602,6 +607,14 @@ pub(crate) async fn execute_conversation_turn(
                 )
                 .await
             }
+            ModelProviderSettings::CloudAsr(_)
+            | ModelProviderSettings::CloudTts(_)
+            | ModelProviderSettings::SystemTts(_) => ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::Contract,
+                public_message: ProviderFailureKind::Contract.public_message(),
+                output_started: false,
+                cleanup: CleanupOutcome::NotApplicable,
+            },
         };
         match outcome {
             ProviderAttemptOutcome::Completed { content, cleanup } => {
@@ -867,7 +880,9 @@ mod tests {
                 crate::test_support::provider("direct-fallback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         let configured = vec![
             "dynamic_lan-primary".to_string(),

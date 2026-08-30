@@ -3,6 +3,17 @@ export type {
   RuntimeEvent,
   RuntimeFailureCode,
 } from "./generated/runtimeEvent";
+import { isAsrLanguageCode } from "./asrLanguages";
+import type {
+  CodexAgentSettings,
+  ModelProviderSettings,
+  ModelProvidersSettings,
+  RoutingSettings,
+  SecuritySettings,
+  SituationSettings,
+  VoiceSettings,
+} from "./settingsTypes";
+export type * from "./settingsTypes";
 
 export type TaskMode = "conversation" | "coding";
 
@@ -19,7 +30,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 11;
+  schemaVersion: 12;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };
@@ -86,6 +97,27 @@ export type ProviderTestResult = {
   latencyMs: number;
 };
 
+export type ProviderCredentialState = {
+  providerId: string;
+  state: "configured" | "missing" | "unavailable";
+};
+
+export type HarnessServiceStatus = {
+  capability: "llm" | "asr" | "tts";
+  state: "ready" | "unavailable";
+  protocol: string | null;
+  model: string | null;
+  language: string | null;
+  voice: string | null;
+  message: string;
+};
+
+export type HarnessResolution = {
+  state: "ready" | "degraded";
+  revision: string;
+  services: HarnessServiceStatus[];
+};
+
 export type NetworkAsrResolution = {
   providerId: "network-asr";
   endpoint: string;
@@ -102,144 +134,6 @@ export type VoiceEvent =
   | { type: "transcriptFinal"; runId: string; text: string }
   | { type: "cancelled"; runId: string }
   | { type: "failed"; runId: string; message: string; recovery: string };
-
-export type OpenAiCompatibleProviderSettings = {
-  kind: "openai-compatible";
-  id: string;
-  enabled: boolean;
-  label: string;
-  location: "local" | "cloud";
-  endpoint: string;
-  model: string;
-  credentialStatus: "not-configured" | "configured";
-};
-
-export type LarmProviderSettings = {
-  kind: "larm";
-  id: string;
-  enabled: boolean;
-  label: string;
-  location: "local";
-  baseUrl: string;
-  tokenEnv: "LARM_API_TOKEN";
-  allocationTtlSeconds: number;
-  allocationStartupTimeoutSeconds: number;
-  allowFallbackByDefault: false;
-  deploymentPolicy: "existing-only";
-};
-
-export type DynamicLanProviderSettings = {
-  kind: "dynamic-lan";
-  id: string;
-  enabled: boolean;
-  label: string;
-  location: "local";
-  host: string;
-};
-
-export type ModelProviderSettings =
-  | OpenAiCompatibleProviderSettings
-  | LarmProviderSettings
-  | DynamicLanProviderSettings;
-
-export type ReasoningEffort = "low" | "medium" | "xhigh";
-
-export type ModelProvidersSettings = {
-  providers: ModelProviderSettings[];
-  reasoningEffort: ReasoningEffort;
-  maxOutputTokens: number;
-};
-
-export type CodexAgentSettings = {
-  agentName: string;
-  userName: string;
-  enabled: boolean;
-  provider: "codex-sdk";
-  model: string;
-  runtimeMode: "pending-compatibility-check" | "bun" | "node-sidecar" | "app-server";
-  health: "unchecked" | "ready" | "unavailable";
-  sandboxMode: "read-only";
-  approvalPolicy: "never";
-  networkEnabled: false;
-  webSearchEnabled: false;
-  workspacePolicy: "select-per-conversation";
-};
-
-export type CodexReasoningEffort = {
-  reasoningEffort: string;
-  description: string;
-};
-
-export type CodexModelOption = {
-  id: string;
-  model: string;
-  displayName: string;
-  description: string;
-  hidden: boolean;
-  defaultReasoningEffort: string | null;
-  supportedReasoningEfforts: CodexReasoningEffort[];
-  inputModalities: string[];
-  supportsPersonality: boolean;
-  isDefault: boolean;
-};
-
-export type CodexRuntimeStatus = {
-  installed: boolean;
-  authenticated: boolean;
-  runtime: string;
-  accountType: string | null;
-  message: string;
-};
-
-export type RoutingSettings = {
-  conversationRespond: {
-    primaryProviderId: string;
-    fallbackProviderIds: string[];
-    timeoutMs: number;
-  };
-  codingAssist: {
-    providerId: "codex-sdk";
-    timeoutMs: number;
-    readOnly: true;
-    networkEnabled: false;
-    webSearchEnabled: false;
-  };
-};
-
-export type VoiceSettings = {
-  inputDeviceId: string;
-  captureMode: "push-to-talk";
-  sttHost: string;
-  sttProviderId: "network-asr";
-  sttModel: string;
-  ttsProviderId: "system-tts";
-  ttsVoice: string;
-  autoSpeak: boolean;
-  cloudFallbackEnabled: false;
-};
-
-export type TtsCapabilities = {
-  available: boolean;
-  message: string;
-  voices: Array<{ id: string; label: string; language: string | null }>;
-  outputDevices: string[];
-};
-
-export type SecuritySettings = {
-  credentialStorage: "environment";
-  localOnlyWhenSelected: boolean;
-  diagnosticsRedaction: boolean;
-};
-
-export type SituationSettings = {
-  enabled: boolean;
-  sampleIntervalMs: number;
-  calendarEnabled: boolean;
-  retentionDays: number;
-  maxLedgerEntries: number;
-  heartbeatIntervalMs: number;
-  sensitiveApplicationCategories: true;
-};
 
 export type SignalHealth = "ready" | "disabled" | "permission-denied" | "unsupported" | "degraded";
 export type ForegroundCategory = "communication" | "coding" | "writing" | "browser" | "media" | "sensitive" | "other" | "unknown";
@@ -356,13 +250,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isModelProvidersSettings(value: Record<string, unknown>): value is ModelProvidersSettings {
   return (
+    isRecord(value.harness) &&
+    typeof value.harness.address === "string" &&
     Array.isArray(value.providers) &&
     value.providers.every(isModelProviderSettings) &&
-    (value.reasoningEffort === "low" || value.reasoningEffort === "medium" || value.reasoningEffort === "xhigh") &&
-    typeof value.maxOutputTokens === "number" &&
-    Number.isInteger(value.maxOutputTokens) &&
-    value.maxOutputTokens >= 256 &&
-    value.maxOutputTokens <= 8192
+    (value.reasoningEffort === "low" || value.reasoningEffort === "medium" || value.reasoningEffort === "xhigh")
   );
 }
 
@@ -379,8 +271,29 @@ function isModelProviderSettings(value: unknown): value is ModelProviderSettings
     return (
       typeof value.endpoint === "string" &&
       typeof value.model === "string" &&
-      (value.credentialStatus === "not-configured" || value.credentialStatus === "configured")
+      (value.authentication === "none" || value.authentication === "api-key")
     );
+  }
+  if (value.kind === "cloud-asr") {
+    return (
+      value.location === "cloud" &&
+      typeof value.endpoint === "string" &&
+      typeof value.model === "string" &&
+      value.language === "auto" &&
+      (value.authentication === "none" || value.authentication === "api-key")
+    );
+  }
+  if (value.kind === "cloud-tts") {
+    return (
+      value.location === "cloud" &&
+      typeof value.endpoint === "string" &&
+      typeof value.model === "string" &&
+      typeof value.voice === "string" &&
+      (value.authentication === "none" || value.authentication === "api-key")
+    );
+  }
+  if (value.kind === "system-tts") {
+    return value.location === "local" && typeof value.voice === "string";
   }
   if (value.kind === "dynamic-lan") {
     return value.location === "local" && typeof value.host === "string";
@@ -415,14 +328,28 @@ export function isCodexAgentSettings(value: Record<string, unknown>): value is C
 }
 
 export function isRoutingSettings(value: Record<string, unknown>): value is RoutingSettings {
-  if (!isRecord(value.conversationRespond) || !isRecord(value.codingAssist)) return false;
+  if (
+    !isRecord(value.conversationRespond) ||
+    !isRecord(value.voiceTranscribe) ||
+    !isRecord(value.voiceSpeak) ||
+    !isRecord(value.codingAssist)
+  ) return false;
   const conversation = value.conversationRespond;
+  const transcribe = value.voiceTranscribe;
+  const speak = value.voiceSpeak;
   const coding = value.codingAssist;
   return (
-    typeof conversation.primaryProviderId === "string" &&
+    (conversation.source === "harness" || conversation.source === "provider") &&
+    (conversation.primaryProviderId === null || typeof conversation.primaryProviderId === "string") &&
     Array.isArray(conversation.fallbackProviderIds) &&
     conversation.fallbackProviderIds.every((id) => typeof id === "string") &&
     typeof conversation.timeoutMs === "number" &&
+    (transcribe.source === "harness" || transcribe.source === "provider") &&
+    (transcribe.providerId === null || typeof transcribe.providerId === "string") &&
+    typeof transcribe.timeoutMs === "number" &&
+    (speak.source === "harness" || speak.source === "provider") &&
+    (speak.providerId === null || typeof speak.providerId === "string") &&
+    typeof speak.timeoutMs === "number" &&
     coding.providerId === "codex-sdk" &&
     typeof coding.timeoutMs === "number" &&
     coding.readOnly === true &&
@@ -433,21 +360,24 @@ export function isRoutingSettings(value: Record<string, unknown>): value is Rout
 
 export function isVoiceSettings(value: Record<string, unknown>): value is VoiceSettings {
   return (
+    typeof value.listeningEnabled === "boolean" &&
     typeof value.inputDeviceId === "string" &&
-    value.captureMode === "push-to-talk" &&
-    typeof value.sttHost === "string" &&
-    value.sttProviderId === "network-asr" &&
-    typeof value.sttModel === "string" &&
-    value.ttsProviderId === "system-tts" &&
-    typeof value.ttsVoice === "string" &&
-    typeof value.autoSpeak === "boolean" &&
-    value.cloudFallbackEnabled === false
+    typeof value.outputDeviceId === "string" &&
+    (value.vadSensitivity === "low" || value.vadSensitivity === "medium" || value.vadSensitivity === "high") &&
+    typeof value.silenceTimeoutMs === "number" &&
+    Number.isInteger(value.silenceTimeoutMs) &&
+    value.silenceTimeoutMs >= 800 &&
+    value.silenceTimeoutMs <= 3000 &&
+    Array.isArray(value.allowedLanguages) &&
+    value.allowedLanguages.length > 0 &&
+    new Set(value.allowedLanguages).size === value.allowedLanguages.length &&
+    value.allowedLanguages.every(isAsrLanguageCode) &&
+    typeof value.autoSpeak === "boolean"
   );
 }
 
 export function isSecuritySettings(value: Record<string, unknown>): value is SecuritySettings {
   return (
-    value.credentialStorage === "environment" &&
     typeof value.localOnlyWhenSelected === "boolean" &&
     value.diagnosticsRedaction === true
   );

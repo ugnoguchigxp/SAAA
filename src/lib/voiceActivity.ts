@@ -1,5 +1,5 @@
 export const DEFAULT_VOICE_SILENCE_TIMEOUT_MS = 1_500;
-const DEFAULT_SPEECH_THRESHOLD_RMS = 0.012;
+const DEFAULT_SPEECH_THRESHOLD_RMS = 0.008;
 const DEFAULT_REQUIRED_SPEECH_MS = 240;
 const DEFAULT_CANDIDATE_RESET_MS = 200;
 
@@ -90,7 +90,13 @@ function millisecondsToSamples(milliseconds: number, sampleRate: number): number
 
 function calculateRms(frame: Float32Array): number {
   if (frame.length === 0) return 0;
+  let sum = 0;
+  for (const sample of frame) sum += sample;
+  const mean = sum / frame.length;
   let sumOfSquares = 0;
-  for (const sample of frame) sumOfSquares += sample * sample;
+  for (const sample of frame) {
+    const centered = sample - mean;
+    sumOfSquares += centered * centered;
+  }
   return Math.sqrt(sumOfSquares / frame.length);
 }

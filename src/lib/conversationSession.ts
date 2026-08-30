@@ -7,7 +7,6 @@ export type InputOrigin = "text" | "voice";
 export type PresentationMode = "visual" | "visual-and-spoken";
 export type PendingConversationPrompt = { content: string; inputOrigin: InputOrigin };
 export type SubmitPromptOptions = {
-  allowVoiceBusy?: boolean;
   retryInputMessageId?: string | null;
   inputOrigin?: InputOrigin;
 };

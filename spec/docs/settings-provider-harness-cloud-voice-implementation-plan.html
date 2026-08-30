@@ -1,0 +1,1038 @@
+<article lang="ja">
+  <h1 id="settings-provider-harness-cloud-voice-plan">
+    Provider Harness / 個別Cloud / 常時待ち受け設定 再構成実装計画
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Proposed。実装未着手</li>
+    <li>Created: 2026-08-30</li>
+    <li>SAAA baseline: <code>41636c0</code> + working tree</li>
+    <li>Database baseline: <code>PRAGMA user_version = 12</code></li>
+    <li>Settings document baseline: <code>schema_version = 11</code></li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>
+      対象: Settings、Provider Runtime、LLM / ASR / TTS routing、API key secret
+      boundary、Chat常時待ち受け、SQLite migration、QA
+    </li>
+    <li>
+      Design reference:
+      <code>spec/docs/saaa-settings-harness-concept-v1.png</code>、
+      <code>spec/docs/saaa-settings-individual-cloud-services-concept-v1.png</code>
+    </li>
+  </ul>
+  <p>
+    本文書は、LLM Provider harness addressを一つ設定するとLLM、ASR、TTSを自動解決でき、
+    必要なサービスだけ個別Cloud Providerへ上書きできる設定構成を、現行SAAAへ安全に導入するための
+    実装契約である。API keyは画面から登録できるが再表示せず、常時待ち受けはPush-to-talkではなく
+    SAAAの基本動作として扱う。
+  </p>
+  <p>
+    今回の作業は計画書の作成だけであり、本文書作成TurnではTypeScript、Rust、SQLite、Settings
+    JSON、Runtimeの製品コードを変更しない。実装完了はSection 15の全Gateを通過した時点とし、
+    UIを描画しただけ、schemaを追加しただけ、または単体テストを追加しただけでは完了としない。
+  </p>
+
+  <h2 id="1-decisions">1. 確定方針</h2>
+  <ol>
+    <li>
+      Settingsの最上位接続として<code>LLM Provider harness address</code>を一つだけ保存する。
+      保存後にBackendがLLM、ASR、TTSを個別に解決し、各capabilityの状態と実効設定を返す。
+    </li>
+    <li>
+      LLM、ASR、TTSはそれぞれ<code>Harness</code>または<code>Individual Provider</code>を独立して選べる。
+      一つのサービスをCloudへ切り替えても、他のサービスの接続元は変えない。
+    </li>
+    <li>
+      個別Cloud Providerの初期対応は、型付きのOpenAI-compatible HTTP adapterとする。
+      任意JSON、任意header、任意scriptを設定画面から注入する仕組みは作らない。
+    </li>
+    <li>
+      API key本体はmacOS Keychainへ保存する。SQLiteにはProvider metadataと認証方式だけを保存し、
+      secret、masked secret、Keychainから読み出した値を保存しない。
+    </li>
+    <li>
+      Settings UIに<code>credential保存元</code>の選択肢は置かない。API
+      key欄、設定状態、更新、削除、 接続確認だけを表示し、保存方式はアプリの安全な既定動作とする。
+    </li>
+    <li>
+      <code>maxOutputTokens</code>はUIと永続Settings contractから削除する。
+      Provider
+      protocolが上限値を必須とする場合だけadapter-ownedな内部値を使い、ユーザー設定へ戻さない。
+    </li>
+    <li>
+      Chat音声入力は常時待ち受けを基本とする。初回同意とmacOS
+      permission取得後はアプリ起動時に再開し、
+      ユーザーは一時停止できる。Push-to-talkのmode選択は表示しない。
+    </li>
+    <li>
+      常時待ち受け中もRAW audioをCloudへ常時streamしない。Local VADで確定した発話区間だけを、
+      選択中のASR adapterへ一回送信する。
+    </li>
+    <li>
+      UIの接続状態はFrontendの楽観状態ではなく、Backendが返すcredential availability、probe結果、
+      resolved service routeを正本にする。
+    </li>
+  </ol>
+
+  <h2 id="2-scope">2. Scopeと非目標</h2>
+  <h3 id="21-in-scope">2.1 In scope</h3>
+  <ul>
+    <li>Harness addressの保存、解決、再解決、capability別status表示</li>
+    <li>LLM、ASR、TTSの独立したHarness / Individual Provider切り替え</li>
+    <li>LLM / ASR / TTS用OpenAI-compatible Cloud adapter</li>
+    <li>API keyの登録、置換、削除、Keychain availability表示</li>
+    <li>Settings schema 11から12へのmigration</li>
+    <li><code>maxOutputTokens</code>の永続SettingsとUIからの削除</li>
+    <li>常時待ち受け、Local VAD、発話区間送信、一時停止と自動再開</li>
+    <li>
+      入力デバイス、利用可能な出力デバイス、VAD設定、Auto speak、Target Speaker Filterへの導線
+    </li>
+    <li>backup、diagnostics、log、IPCのsecret非露出検証</li>
+  </ul>
+
+  <h3 id="22-non-goals">2.2 Non-goals</h3>
+  <ul>
+    <li>Provider課金、利用量、請求、アカウント管理</li>
+    <li>任意Provider plugin marketplaceまたは任意code実行</li>
+    <li>API keyのCloud同期、export、backupへの同梱</li>
+    <li>RAW audioの常時Cloud streaming</li>
+    <li>Wake word必須化</li>
+    <li>Meetingへの常時VAD導入、system audio、speaker diarization、翻訳</li>
+    <li>LLM temperature、top-p、seed、max output tokenのUI追加</li>
+    <li>現時点でadapterを持たないProvider固有のRegion、Project、Deployment設定</li>
+    <li>Settings再構成に便乗したConversation、Situation、Memory UIの刷新</li>
+  </ul>
+
+  <h2 id="3-baseline">3. 現状BaselineとGap</h2>
+  <table>
+    <caption>
+      Table: Current implementation gap
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">現状</th>
+        <th scope="col">必要な変更</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Provider catalog</td>
+        <td>LLMだけが<code>ModelProviderSettings</code>として一般化されている</td>
+        <td>LLM / ASR / TTSをcapability付きのcatalogへ統合する</td>
+      </tr>
+      <tr>
+        <td>Harness</td>
+        <td><code>dynamic-lan</code>はhostからLLM一つだけを解決する</td>
+        <td>addressから3 capabilityを独立解決するversioned contractを追加する</td>
+      </tr>
+      <tr>
+        <td>ASR</td>
+        <td>
+          <code>network-asr</code
+          >と<code>qwen3-asr-1.7b</code>へ固定
+        </td>
+        <td>Harness、既存LAN、Cloud ASRを同じtyped routeから実行する</td>
+      </tr>
+      <tr>
+        <td>TTS</td>
+        <td><code>system-tts</code>とOS voiceへ固定</td>
+        <td>System TTS、Harness、Cloud TTSをtyped routeから実行する</td>
+      </tr>
+      <tr>
+        <td>Credential</td>
+        <td>environment固定で、Settingsは設定状態だけを持つ</td>
+        <td>API key mutation commandとKeychain-backed storeを追加する</td>
+      </tr>
+      <tr>
+        <td>Output limit</td>
+        <td><code>maxOutputTokens</code>がUI、Settings、requestへ伝播する</td>
+        <td>永続値とUIを削除し、必要ならadapter内部値へ限定する</td>
+      </tr>
+      <tr>
+        <td>Voice capture</td>
+        <td>
+          contract名は<code>push-to-talk</code>だが、開始後はVADで待ち受け続ける
+        </td>
+        <td>状態名、hook、UI、startupを常時待ち受けへ統一する</td>
+      </tr>
+      <tr>
+        <td>Backup</td>
+        <td>SQLite database全体をそのままbackupする</td>
+        <td>secretをSQLiteへ入れず、backupに混入しない状態を維持する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="4-target-architecture">4. Target Architecture</h2>
+  <pre><code class="language-text">Settings UI
+  ├─ Harness address
+  ├─ LLM source: Harness | Individual Provider
+  ├─ ASR source: Harness | Individual Provider
+  ├─ TTS source: Harness | Individual Provider
+  └─ API key mutation（secretはdraftへ再読込しない）
+        ↓ typed IPC
+Settings validation ────────────── Credential command
+        ↓                                  ↓
+SAAA SQLite                         macOS Keychain
+  provider metadata                  API key本体
+  source selection                   service = SAAA provider credential
+  voice preferences                  account = immutable provider id
+        ↓                                  ↓
+Service Route Resolver ← credential availability
+  ├─ Harness resolver
+  ├─ Individual LLM adapter
+  ├─ Individual ASR adapter
+  └─ Individual TTS adapter
+        ↓
+EffectiveServiceSnapshot（secretなし）
+        ↓
+Chat / Voice Runtime / Settings status</code></pre>
+  <p>
+    Provider metadataの正本はSQLite、secretの正本はKeychain、実効routeとprobe結果の正本はBackend
+    runtimeとする。同じ情報をFrontend state、SQLite、Keychainへ重複保存しない。
+  </p>
+
+  <h2 id="5-settings-contract">5. Settings schema 12</h2>
+  <h3 id="51-provider-document">5.1 <code>providers.model/default</code></h3>
+  <p>
+    既存namespaceはmigration範囲を限定するため維持するが、TypeScript / Rustの型名は
+    <code>ModelProvidersSettings</code
+    >から<code>ServiceProvidersSettings</code>へ変更する。 Persisted
+    namespace名の整理は別計画とする。
+  </p>
+  <pre><code class="language-json">{
+  "harness": {
+    "address": "http://llm-provider.local:9810"
+  },
+  "providers": [
+    {
+      "kind": "cloud-llm",
+      "id": "cloud-llm-primary",
+      "enabled": true,
+      "label": "Cloud LLM",
+      "location": "cloud",
+      "endpoint": "https://llm.example.com/v1",
+      "model": "model-name",
+      "authentication": "api-key"
+    },
+    {
+      "kind": "cloud-asr",
+      "id": "cloud-asr-primary",
+      "enabled": true,
+      "label": "Cloud ASR",
+      "location": "cloud",
+      "endpoint": "https://asr.example.com/v1",
+      "model": "speech-to-text",
+      "language": "auto",
+      "authentication": "api-key"
+    },
+    {
+      "kind": "cloud-tts",
+      "id": "cloud-tts-primary",
+      "enabled": true,
+      "label": "Cloud TTS",
+      "location": "cloud",
+      "endpoint": "https://tts.example.com/v1",
+      "model": "text-to-speech",
+      "voice": "Japanese Voice",
+      "authentication": "api-key"
+    }
+  ],
+  "reasoningEffort": "medium"
+}</code></pre>
+  <ul>
+    <li><code>maxOutputTokens</code>は存在しない。</li>
+    <li>
+      <code>apiKey</code>、masked value、Keychain item dataは存在しない。
+    </li>
+    <li>
+      Provider <code>id</code>は作成後不変とし、Keychain
+      accountの識別子として使う。
+    </li>
+    <li>Cloud endpointはHTTPS必須。userinfo、query、fragmentへcredentialを埋め込めない。</li>
+    <li>Local / LAN endpointだけはHTTPを許可し、既存private-network検証を維持する。</li>
+    <li>
+      <code>authentication</code
+      >は初期実装で<code>none</code>または<code>api-key</code>だけを許可する。
+    </li>
+  </ul>
+
+  <h3 id="52-routing-document">5.2 <code>routing.tasks/default</code></h3>
+  <pre><code class="language-json">{
+  "conversationRespond": {
+    "source": "harness",
+    "primaryProviderId": null,
+    "fallbackProviderIds": [],
+    "timeoutMs": 30000
+  },
+  "voiceTranscribe": {
+    "source": "provider",
+    "providerId": "cloud-asr-primary",
+    "timeoutMs": 120000
+  },
+  "voiceSpeak": {
+    "source": "harness",
+    "providerId": null,
+    "timeoutMs": 30000
+  },
+  "codingAssist": {
+    "providerId": "codex-sdk",
+    "timeoutMs": 120000,
+    "readOnly": true,
+    "networkEnabled": false,
+    "webSearchEnabled": false
+  }
+}</code></pre>
+  <ul>
+    <li>
+      <code>source</code
+      >は<code>harness</code>または<code>provider</code>。
+    </li>
+    <li>
+      <code>source=provider</code>のときだけ、capabilityが一致する有効なProvider
+      IDを必須とする。
+    </li>
+    <li><code>source=harness</code>のとき、個別Providerへ暗黙fallbackしない。</li>
+    <li>ASR / TTS fallbackは初期実装で作らない。切り替えはSettingsの明示操作だけにする。</li>
+  </ul>
+
+  <h3 id="53-voice-document">5.3 <code>voice.runtime/default</code></h3>
+  <pre><code class="language-json">{
+  "listeningEnabled": true,
+  "inputDeviceId": "default",
+  "outputDeviceId": "default",
+  "vadSensitivity": "medium",
+  "silenceTimeoutMs": 1500,
+  "autoSpeak": true
+}</code></pre>
+  <ul>
+    <li>
+      <code>captureMode</code
+      >、<code>sttHost</code>、<code>sttProviderId</code>、<code>sttModel</code>を削除する。
+    </li>
+    <li>
+      <code>ttsProviderId</code
+      >、<code>ttsVoice</code>はProvider catalogとrouteへ移す。
+    </li>
+    <li><code>cloudFallbackEnabled</code>は暗黙fallbackを作らないため削除する。</li>
+    <li>
+      <code>vadSensitivity</code
+      >は<code>low</code>、<code>medium</code>、<code>high</code>のpresetに限定する。
+    </li>
+    <li><code>silenceTimeoutMs</code>は800〜3000 msの範囲に限定する。</li>
+    <li>
+      <code>outputDeviceId</code>は選択中TTS
+      adapterが出力先選択を実装する場合だけ編集可能にする。 System
+      TTSが対応しない場合は<code>System default</code>をread-only表示する。
+    </li>
+  </ul>
+
+  <h3 id="54-security-document">5.4 <code>security.runtime/default</code></h3>
+  <ul>
+    <li>
+      <code>credentialStorage</code>を削除する。保存方式をユーザー選択にしない。
+    </li>
+    <li>
+      <code>localOnlyWhenSelected</code
+      >と<code>diagnosticsRedaction</code>は維持する。
+    </li>
+    <li>
+      Cloudを明示選択したserviceには<code>localOnlyWhenSelected</code>を適用しない。
+    </li>
+    <li>Local primaryからCloud fallbackを暗黙選択する既存禁止規則は維持する。</li>
+  </ul>
+
+  <h2 id="6-credential-boundary">6. API key / Keychain Contract</h2>
+  <h3 id="61-storage">6.1 保存方式</h3>
+  <ul>
+    <li>Keychain service: <code>com.saaa.provider-api-key</code></li>
+    <li>Keychain account: immutable Provider ID</li>
+    <li>Keychain value: API key bytes only</li>
+    <li>SQLite: <code>authentication=api-key</code>とProvider metadataだけ</li>
+    <li>Frontend: 保存操作中の入力値だけを一時保持し、保存後に即時clearする</li>
+    <li>Rust: <code>Zeroizing&lt;String&gt;</code>または同等のzeroize boundaryを使う</li>
+  </ul>
+
+  <h3 id="62-commands">6.2 Typed IPC</h3>
+  <pre><code class="language-text">set_provider_api_key({ providerId, apiKey })
+  → { providerId, state: "configured" }
+
+delete_provider_api_key({ providerId })
+  → { providerId, state: "not-configured" }
+
+list_provider_credential_states()
+  → [{ providerId, state: "configured" | "not-configured" | "unavailable" }]</code></pre>
+  <ul>
+    <li>API key設定commandは1〜4096 byte、control characterなし、header-safeを検証する。</li>
+    <li>command result、error、event、snapshotへAPI key値を含めない。</li>
+    <li>API keyのread commandは作らない。Backend adapterだけがKeychainから読み出せる。</li>
+    <li>
+      接続テストもProvider metadataだけをFrontendから受け、BackendがKeychainからkeyを取得する。
+    </li>
+    <li>Provider削除はKeychain item削除成功後にSQLite metadataを削除する。</li>
+    <li>
+      Keychain削除後にSQLite保存が失敗した場合、Providerは残るがcredentialなしとしてfail-closedにする。
+      Secretを復元して成功表示しない。
+    </li>
+  </ul>
+
+  <h3 id="63-secret-verification">6.3 Secret非露出Gate</h3>
+  <ul>
+    <li>SQLiteとそのbackupにfixture API key byte列が存在しない。</li>
+    <li>Diagnostics JSON、Rust log、Frontend console、IPC outputにfixture API keyが存在しない。</li>
+    <li>
+      Settings再読込後は<code>設定済み</code>だけを表示し、元値または末尾文字を表示しない。
+    </li>
+    <li>
+      Keychain unavailable / locked /
+      deniedは<code>unavailable</code>として表示し、認証なし実行へfallbackしない。
+    </li>
+  </ul>
+
+  <h2 id="7-harness-contract">7. Harness Resolution Contract</h2>
+  <h3 id="71-address">7.1 Address validation</h3>
+  <ul>
+    <li>絶対HTTP(S) URLを受け取る。</li>
+    <li>loopback、private LAN、<code>.local</code>はHTTPを許可する。</li>
+    <li>public hostはHTTPSを必須とする。</li>
+    <li>userinfo、query、fragment、credential埋め込みは禁止する。</li>
+    <li>URLは最大2048 byte。保存前に末尾slashを正規化する。</li>
+    <li>redirect、system proxy、DNS rebinding対策は既存dynamic LANと同じfail-closed方針を使う。</li>
+  </ul>
+
+  <h3 id="72-versioned-response">7.2 Versioned descriptor</h3>
+  <pre><code class="language-json">{
+  "contractVersion": "saaa-service-harness.v1",
+  "revision": "sha256-hex",
+  "services": [
+    {
+      "capability": "llm",
+      "protocol": "openai.chat-completions.v1",
+      "baseURL": "http://provider.local:8080/v1",
+      "model": "deep-reasoning-35b",
+      "healthURL": "http://provider.local:8080/health"
+    },
+    {
+      "capability": "asr",
+      "protocol": "openai.audio-transcriptions.v1",
+      "baseURL": "http://provider.local:8081/v1",
+      "model": "qwen3-asr-1.7b",
+      "language": "auto",
+      "healthURL": "http://provider.local:8081/health"
+    },
+    {
+      "capability": "tts",
+      "protocol": "openai.audio-speech.v1",
+      "baseURL": "http://provider.local:8082/v1",
+      "model": "text-to-speech",
+      "voice": "Japanese Voice",
+      "healthURL": "http://provider.local:8082/health"
+    }
+  ]
+}</code></pre>
+  <ul>
+    <li>同一capabilityの重複、未知protocol、空model、unsafe URLはcontract error。</li>
+    <li>
+      選択中のcapabilityが欠ける場合、そのserviceだけを<code>unavailable</code>にする。
+    </li>
+    <li>三つのうち一つが失敗しても、成功したdescriptorを虚偽の失敗にしない。</li>
+    <li>
+      短期credentialを返す場合はmemory内の<code>Zeroizing</code>値とし、SQLiteへ保存しない。
+    </li>
+    <li>解決結果はaddress + revisionをkeyにbounded cacheし、再接続またはexpiryで破棄する。</li>
+    <li>
+      旧<code>agent-connection.v1</code>はLLM
+      capabilityだけとして扱い、ASR/TTSがあるように見せない。
+    </li>
+  </ul>
+
+  <h3 id="73-resolution-status">7.3 UIへ返す状態</h3>
+  <pre><code class="language-text">unchecked
+  → resolving
+  → ready
+  → degraded（選択していないcapabilityだけ欠落）
+  → failed（選択中capabilityを利用不能）</code></pre>
+  <p>
+    Snapshotはcapability、provider label、model / voice、location、state、latency、updatedAt、
+    bounded reason codeだけを返す。endpoint、credential、raw server bodyは通常UIへ返さない。
+  </p>
+
+  <h2 id="8-individual-provider">8. Individual Provider Contract</h2>
+  <table>
+    <caption>
+      Table: Initial typed provider fields
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Capability</th>
+        <th scope="col">必須項目</th>
+        <th scope="col">固定する項目</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM</td>
+        <td>Label、Endpoint、Model、Authentication、API key状態</td>
+        <td>Chat Completions protocol、streaming、finish reason検証</td>
+      </tr>
+      <tr>
+        <td>ASR</td>
+        <td>Label、Endpoint、Model、Language、Authentication、API key状態</td>
+        <td>WAV upload、JSON response、Local VAD後の一発話一request</td>
+      </tr>
+      <tr>
+        <td>TTS</td>
+        <td>Label、Endpoint、Model、Voice、Authentication、API key状態</td>
+        <td>Speech endpoint、bounded audio response、既存playback queue</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>
+      Provider作成時にimmutable IDをBackendで発行する。Label変更でKeychain accountを変えない。
+    </li>
+    <li>Cloud endpointはHTTPS、Local endpointはloopback / private HTTPだけを許可する。</li>
+    <li>接続テストは各capabilityの実protocolを使い、単なるTCP connectを成功扱いしない。</li>
+    <li>ASR接続テストは無音fixtureまたはmodel/health probeを使い、ユーザー音声を送らない。</li>
+    <li>TTS接続テストは短い固定文を生成して再生前に破棄できるpreview結果とする。</li>
+    <li>Provider固有追加項目はadapter実装時にdiscriminated unionへ追加し、汎用mapで逃がさない。</li>
+  </ul>
+
+  <h2 id="9-effective-routing">9. Effective Service Routing</h2>
+  <pre><code class="language-text">Persisted source selection
+  ↓
+Validate selected capability
+  ├─ Harness → resolve descriptor → validate health / credential expiry
+  └─ Provider → load typed metadata → check Keychain → semantic probe
+  ↓
+EffectiveServiceRoute
+  capability / source / providerId / modelOrVoice / location / state / reasonCode
+  ↓
+Runtime adapter factory</code></pre>
+  <ul>
+    <li>LLM、ASR、TTSは同じsource選択規則を使うが、adapter型は混ぜない。</li>
+    <li>ASR ProviderをLLM routeへ指定するなどのcapability mismatchは保存時に拒否する。</li>
+    <li>Settings保存成功後にresolver cacheをinvalidateし、新しいrouteを一度probeする。</li>
+    <li>Probe失敗を理由に保存済み設定を別Providerへ書き換えない。</li>
+    <li>Runtime開始時にsnapshotの表示値ではなくBackendの最新effective routeを再確認する。</li>
+    <li>Cloud失敗時にHarnessへ、Harness失敗時にCloudへ暗黙fallbackしない。</li>
+  </ul>
+
+  <h2 id="10-continuous-listening">10. 常時待ち受けVoice Contract</h2>
+  <h3 id="101-state-machine">10.1 State machine</h3>
+  <pre><code class="language-text">disabled
+  └─ user enables / startup preference
+       ↓
+permission-required ── deny ──→ blocked
+       ↓ grant
+starting
+       ↓
+listening-local-vad
+  ├─ speech candidate → speech-detected → segment-finalizing
+  │                         ↓
+  │                    transcribing → listening-local-vad
+  ├─ TTS starts       → suspended-for-tts → listening-local-vad
+  ├─ Meeting starts   → suspended-for-meeting → listening-local-vad
+  ├─ user pauses      → paused
+  └─ device failure   → error → explicit retry</code></pre>
+  <ul>
+    <li>初回だけユーザー操作からmicrophone permissionを要求する。</li>
+    <li>
+      permission取得済みかつ<code>listeningEnabled=true</code>なら、app
+      snapshot読込後に自動開始する。
+    </li>
+    <li>Pauseは設定値へ反映し、再起動後も停止を尊重する。</li>
+    <li>Meeting、Enrollment、Chatは既存audio capture coordinatorで排他する。</li>
+    <li>TTS half-duplex中はASRへ送信せず、停止完了後に同じ入力deviceで再開する。</li>
+    <li>Target Speaker Filterが有効な場合は、ASR送信前のlocal gateを維持する。</li>
+    <li>空segment、speech未検出segment、queue overflow時のPCMはzeroizeして破棄する。</li>
+  </ul>
+
+  <h3 id="102-local-vad">10.2 Local VAD boundary</h3>
+  <ul>
+    <li>Microphone streamは待ち受け中に保持する。</li>
+    <li>RMS threshold、speech confirmation、silence timeoutはLocal処理だけに使う。</li>
+    <li>Cloud ASRへ送るのはspeech confirmed後に確定したbounded PCM segmentだけ。</li>
+    <li>ASR処理中も次segmentをbounded queueへ入れ、無制限bufferを作らない。</li>
+    <li>VAD値、raw RMS、PCMをSQLite、diagnostics、logへ保存しない。</li>
+  </ul>
+
+  <h3 id="103-rename">10.3 Naming cleanup</h3>
+  <ul>
+    <li>
+      <code>usePushToTalk.ts</code
+      >を<code>useContinuousVoice.ts</code>へ変更する。
+    </li>
+    <li>
+      <code>captureMode: "push-to-talk"</code>を削除し、単一の常時待ち受けcontractへ統一する。
+    </li>
+    <li>
+      Composerのmicrophone buttonは「音声入力開始」ではなく「待ち受けを一時停止 / 再開」にする。
+    </li>
+    <li>表示状態は「待ち受け中」「発話を検出」「文字起こし中」「一時停止」「利用不可」を使う。</li>
+  </ul>
+
+  <h2 id="11-settings-ui">11. Settings UI Information Architecture</h2>
+  <h3 id="111-connection">11.1 接続</h3>
+  <ul>
+    <li><code>LLM Provider harness address</code></li>
+    <li>
+      <code>接続して解決</code> / <code>再解決</code>
+    </li>
+    <li>LLM、ASR、TTSのresolved summaryとcapability別status</li>
+    <li>保存する値はaddressだけであることの説明</li>
+    <li>選択中capability欠落時の具体的なrecovery</li>
+  </ul>
+
+  <h3 id="112-individual-services">11.2 個別サービス</h3>
+  <p>
+    一覧では三つのservice summaryを表示し、一つを選ぶと詳細panelを開く。
+    三つの完全なformを常時展開して小さな入力欄を並べない。
+  </p>
+  <ul>
+    <li>ServiceごとのHarness / Individual Provider切り替え</li>
+    <li>Provider選択または新規作成</li>
+    <li>Endpoint、Model / Voice、Language、Authentication</li>
+    <li>API keyの設定状態、更新、削除</li>
+    <li>接続確認、直近latency、bounded error reason</li>
+    <li>LLMだけReasoning effortを表示する</li>
+    <li>Maximum output tokensは表示しない</li>
+  </ul>
+
+  <h3 id="113-audio-devices">11.3 音声とデバイス</h3>
+  <ul>
+    <li>常時待ち受け ON / 一時停止</li>
+    <li>現在状態とmicrophone permission</li>
+    <li>入力device</li>
+    <li>対応adapterだけ出力device</li>
+    <li>発話検出感度 preset</li>
+    <li>発話確定までの無音時間</li>
+    <li>Auto speak</li>
+    <li>Target Speaker Profileへの既存導線</li>
+    <li>Cloud ASRへ送るのはLocal VADで確定した発話区間だけという説明</li>
+  </ul>
+
+  <h3 id="114-save-behavior">11.4 保存とdirty state</h3>
+  <ul>
+    <li>Provider metadata / route / voice preferenceは既存Save Settings barで一括保存する。</li>
+    <li>API keyはSettings documentへ混ぜず、専用mutationとして即時保存する。</li>
+    <li>API key保存後にmetadataが未保存なら、そのProvider cardに明示する。</li>
+    <li>Settings保存成功後のprobe結果が失敗しても、保存成功と接続失敗を混同しない。</li>
+  </ul>
+
+  <h2 id="12-migration">12. Migration and Compatibility</h2>
+  <h3 id="121-schema-version">12.1 Version</h3>
+  <ul>
+    <li>Settings document schemaを11から12へ上げる。</li>
+    <li>
+      Database <code>user_version</code>は既存migration系列の次versionへ上げる。
+    </li>
+    <li>TypeScript、Zod、Rust serde、IPC bindingを同じcommitで更新する。</li>
+    <li>Unknown field拒否を維持し、migration後の旧field残存を許可しない。</li>
+  </ul>
+
+  <h3 id="122-data-mapping">12.2 Existing data mapping</h3>
+  <table>
+    <caption>
+      Table: Settings 11 to 12 mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">旧値</th>
+        <th scope="col">新値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>dynamic-lan.host</code></td>
+        <td><code>harness.address = http://&lt;host&gt;:9810</code></td>
+      </tr>
+      <tr>
+        <td>Dynamic LANがconversation primary</td>
+        <td><code>conversationRespond.source = harness</code></td>
+      </tr>
+      <tr>
+        <td><code>voice.sttHost</code>がHarness hostと同じ</td>
+        <td><code>voiceTranscribe.source = harness</code></td>
+      </tr>
+      <tr>
+        <td><code>voice.sttHost</code>がHarness hostと異なる</td>
+        <td>既存LAN ASR Providerを生成して<code>source = provider</code></td>
+      </tr>
+      <tr>
+        <td><code>ttsProviderId = system-tts</code></td>
+        <td>System TTS Providerを生成して<code>voiceSpeak.source = provider</code></td>
+      </tr>
+      <tr>
+        <td><code>captureMode = push-to-talk</code></td>
+        <td><code>listeningEnabled = false</code>で移行し、初回同意後に有効化</td>
+      </tr>
+      <tr>
+        <td><code>maxOutputTokens</code></td>
+        <td>削除。値を別fieldへ移さない</td>
+      </tr>
+      <tr>
+        <td><code>credentialStorage = environment</code></td>
+        <td>削除。既存environment credentialは移動・複製しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Migrationは既存利用者のマイクを無断で起動しないため、旧設定からの
+    <code>listeningEnabled</code
+    >をfalseにする。新規installと、常時待ち受けの説明に同意した利用者だけを
+    trueにする。これは常時待ち受けという製品既定と、OS
+    permissionの明示同意を両立するための一回限りの境界である。
+  </p>
+
+  <h3 id="123-backup-rollback">12.3 Backup and rollback</h3>
+  <ul>
+    <li>既存のmigration前SQLite backupを維持する。</li>
+    <li>BackupにはAPI keyが含まれないことを自動testで証明する。</li>
+    <li>Schema 12から旧binaryへdowngradeして起動することはsupportしない。</li>
+    <li>Rollbackは旧binary + migration前backupで行う。Keychain itemは自動削除しない。</li>
+    <li>Rollback後の未参照Keychain itemは専用cleanup commandまたは再upgrade後に削除する。</li>
+  </ul>
+
+  <h2 id="13-implementation-tickets">13. Implementation Tickets</h2>
+  <table>
+    <caption>
+      Table: Dependency-ordered implementation tickets
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">内容</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SPV-00</code></td>
+        <td>Baseline capture</td>
+        <td>現行check、Settings fixture、voice behavior、backup fixtureを記録</td>
+      </tr>
+      <tr>
+        <td><code>SPV-01</code></td>
+        <td>Settings schema 12とmigration</td>
+        <td>TS / Zod / Rustが同じstrict contractを読み、11 fixtureを決定的に移行</td>
+      </tr>
+      <tr>
+        <td><code>SPV-02</code></td>
+        <td>Keychain credential storeとtyped IPC</td>
+        <td>登録、更新、削除、restart、locked、missing、secret非露出testがPass</td>
+      </tr>
+      <tr>
+        <td><code>SPV-03</code></td>
+        <td>Harness v1 multi-capability resolver</td>
+        <td>LLM / ASR / TTSを独立検証し、partial failureを正しく返す</td>
+      </tr>
+      <tr>
+        <td><code>SPV-04</code></td>
+        <td>Individual LLM / ASR / TTS adapters</td>
+        <td>各adapterがtyped metadataとKeychain secretだけでprobe / runできる</td>
+      </tr>
+      <tr>
+        <td><code>SPV-05</code></td>
+        <td>Effective service routing</td>
+        <td>三つのsourceを独立選択でき、暗黙fallbackとcapability mismatchがない</td>
+      </tr>
+      <tr>
+        <td><code>SPV-06</code></td>
+        <td>Settings UI再構成</td>
+        <td>接続、個別サービス、音声とデバイスがBackend snapshotを正しく表示</td>
+      </tr>
+      <tr>
+        <td><code>SPV-07</code></td>
+        <td>常時待ち受けstate machine</td>
+        <td>同意後startup、pause、VAD、ASR queue、TTS / Meeting suspensionがPass</td>
+      </tr>
+      <tr>
+        <td><code>SPV-08</code></td>
+        <td>Backup / diagnostics / recovery hardening</td>
+        <td>secret非露出、crash recovery、Keychain failureのfail-closedを検証</td>
+      </tr>
+      <tr>
+        <td><code>SPV-09</code></td>
+        <td>Release evidence</td>
+        <td>Section 15の自動Gateと実機Gateが全てPass</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="131-ticket-details">13.1 Ticketごとの主な変更対象</h3>
+  <ul>
+    <li>
+      <code>SPV-01</code>:
+      <code>src/lib/contracts.ts</code>、<code>src/lib/schemas.ts</code>、
+      <code>src/features/settings/settingsDraft.ts</code>、<code>src-tauri/src/models.rs</code>、
+      <code>src-tauri/src/persistence/settings.rs</code>、
+      <code>src-tauri/src/persistence/settings_migration.rs</code>
+    </li>
+    <li>
+      <code>SPV-02</code>:
+      新規<code>src-tauri/src/credentials/</code>、
+      <code>src-tauri/src/lib.rs</code
+      >、<code>src/lib/runtime.ts</code>、IPC binding example
+    </li>
+    <li>
+      <code>SPV-03</code>:
+      <code>src-tauri/src/providers/dynamic_lan/</code>を直接肥大化させず、
+      新規<code>src-tauri/src/providers/harness/</code>へversioned resolverを分離
+    </li>
+    <li>
+      <code>SPV-04</code>: <code>src-tauri/src/providers/</code>、
+      <code>src-tauri/src/voice/network_asr.rs</code>、<code>src-tauri/src/voice/system_tts.rs</code>を
+      adapter境界へ整理
+    </li>
+    <li>
+      <code>SPV-05</code>: <code>src-tauri/src/providers/routing.rs</code>、
+      <code>src-tauri/src/runtime/turns.rs</code>、<code>src-tauri/src/voice_commands.rs</code>
+    </li>
+    <li>
+      <code>SPV-06</code>:
+      <code>src/features/settings/SettingsPage.tsx</code>をsection componentへ分割し、
+      <code>src/App.css</code>の既存tokenを再利用
+    </li>
+    <li>
+      <code>SPV-07</code>:
+      <code>src/features/voice/usePushToTalk.ts</code>をrenameし、
+      <code>src/lib/voiceActivity.ts</code>、<code>src/features/chat/ChatPage.tsx</code>、
+      <code>src/App.tsx</code>のstartup / pause導線を変更
+    </li>
+  </ul>
+
+  <h2 id="14-test-plan">14. Test Plan</h2>
+  <h3 id="141-contract-tests">14.1 Settings / Contract</h3>
+  <ul>
+    <li>Settings 11 fixtureが12へ移行し、旧fieldが残らない</li>
+    <li>二回migrationしても結果が変わらない</li>
+    <li>Cloud HTTP、userinfo、credential入りURL、capability mismatchを拒否</li>
+    <li>Provider ID変更、重複、削除中route参照を拒否</li>
+    <li>
+      <code>maxOutputTokens</code>を送るSchema 12 documentをunknown fieldとして拒否
+    </li>
+    <li>Frontend ZodとRust validationが同じfixture集合をPass / Failする</li>
+  </ul>
+
+  <h3 id="142-credential-tests">14.2 Credential</h3>
+  <ul>
+    <li>API key create / replace / delete / missing / denied</li>
+    <li>設定済みProviderがrestart後もKeychainから利用できる</li>
+    <li>Provider削除後にKeychain itemが残らない</li>
+    <li>Keychain削除後のSQLite failureでProviderが認証なしへfail-closedする</li>
+    <li>SQLite、backup、diagnostics、log、snapshotへfixture secretが出ない</li>
+    <li>Frontendが保存後にAPI key input stateをclearする</li>
+  </ul>
+
+  <h3 id="143-harness-tests">14.3 Harness</h3>
+  <ul>
+    <li>3 capability ready</li>
+    <li>LLMだけready、ASR / TTS missing</li>
+    <li>duplicate capability、unknown protocol、unsafe endpoint、invalid revision</li>
+    <li>timeout、redirect、oversized body、invalid JSON、health failure</li>
+    <li>cache hit、address変更、revision変更、expiry、explicit re-resolve</li>
+    <li>旧LLM-only contractをASR / TTS readyとして表示しない</li>
+  </ul>
+
+  <h3 id="144-provider-tests">14.4 Individual Provider</h3>
+  <ul>
+    <li>LLMのstream terminal、length、auth failure、timeout</li>
+    <li>ASRのbounded WAV、一発話一request、language、空transcript</li>
+    <li>TTSのbounded response、voice、cancel、playback failure</li>
+    <li>Cloud ProviderがKeychain missing時にnetwork requestを開始しない</li>
+    <li>Harness / Cloud混在で選択外Providerを呼ばない</li>
+  </ul>
+
+  <h3 id="145-voice-tests">14.5 Continuous Voice</h3>
+  <ul>
+    <li>初回permission同意前に自動captureしない</li>
+    <li>同意済み + enabledでstartup後に一度だけcapture開始</li>
+    <li>Pauseがstream、AudioContext、bufferを解放し、restart後も停止</li>
+    <li>VAD確定後もmicrophoneを保持し、次segmentを受け付ける</li>
+    <li>Cloud ASRへspeech-confirmed segment以外を送らない</li>
+    <li>TTS中、Meeting中、Enrollment中の排他とresume</li>
+    <li>Target Speaker Filter failure時にASRへ送らない</li>
+    <li>queue overflow、ASR timeout、device disconnectでPCMをzeroizeする</li>
+  </ul>
+
+  <h3 id="146-ui-tests">14.6 UI</h3>
+  <ul>
+    <li>Harness addressから3 statusへ情報階層が読める</li>
+    <li>LLMだけCloudへ変更してもASR / TTS sourceが変わらない</li>
+    <li>API keyを保存後に元値を再表示しない</li>
+    <li>保存成功とprobe失敗を別statusで表示する</li>
+    <li>Maximum output tokensとPush-to-talkがSettingsから消えている</li>
+    <li>Keyboard操作、focus、aria-live、error associationが機能する</li>
+  </ul>
+
+  <h2 id="15-acceptance-gates">15. Acceptance Gates</h2>
+  <table>
+    <caption>
+      Table: Release acceptance
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">Pass条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>G1 Build</td>
+        <td><code>bun run check</code>がPass</td>
+      </tr>
+      <tr>
+        <td>G2 Migration</td>
+        <td>Settings 11 fixture、実database copy、fresh installの三経路がSchema 12で再起動可能</td>
+      </tr>
+      <tr>
+        <td>G3 Secret</td>
+        <td>API keyがKeychain以外の永続物、backup、diagnostics、log、IPCへ出ない</td>
+      </tr>
+      <tr>
+        <td>G4 Harness</td>
+        <td>実HarnessでLLM / ASR / TTSを解決し、partial failureを正しく表示</td>
+      </tr>
+      <tr>
+        <td>G5 Mixed route</td>
+        <td>Harness LLM + Cloud ASR + System TTSなどの混在を実行し、選択外routeを呼ばない</td>
+      </tr>
+      <tr>
+        <td>G6 Continuous voice</td>
+        <td>
+          30分待ち受け、20発話、pause / resume、TTS / Meeting排他で欠落、重複、自己音声loopがない
+        </td>
+      </tr>
+      <tr>
+        <td>G7 Privacy</td>
+        <td>Cloud ASR captureでLocal VAD確定前のnetwork uploadが0件</td>
+      </tr>
+      <tr>
+        <td>G8 UI truthfulness</td>
+        <td>Backend effective stateとSettings / Chatの表示が一致し、楽観的な設定済み表示がない</td>
+      </tr>
+      <tr>
+        <td>G9 Recovery</td>
+        <td>
+          Keychain locked、Harness停止、device disconnect、app restartからfail-closedまたは再開可能
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="16-risks">16. Risks and Stop Conditions</h2>
+  <table>
+    <caption>
+      Table: Risk controls
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Risk</th>
+        <th scope="col">Control</th>
+        <th scope="col">Stop condition</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>API key漏えい</td>
+        <td>Keychain-only、zeroize、snapshot非露出、fixture scan</td>
+        <td>SQLite / backup / diagnostics / logに1 byteでもsecretが出る</td>
+      </tr>
+      <tr>
+        <td>Harness contract未合意</td>
+        <td>versioned fixtureとserver-side contractを先に固定</td>
+        <td>LLM server側が3 capability descriptorを保証できない</td>
+      </tr>
+      <tr>
+        <td>常時Cloud送信</td>
+        <td>Local VAD後だけtyped audio uploadを生成</td>
+        <td>speech確定前のPCMがnetwork boundaryを越える</td>
+      </tr>
+      <tr>
+        <td>Settings二重正本</td>
+        <td>SQLite metadata、Keychain secret、Backend effective stateを分離</td>
+        <td>Frontendだけでreadyを決める、またはcredential statusをSQLiteへ固定保存する</td>
+      </tr>
+      <tr>
+        <td>暗黙fallback</td>
+        <td>source選択をstrictにし、失敗はservice単位で返す</td>
+        <td>Cloud失敗時にHarness、またはHarness失敗時にCloudを自動実行する</td>
+      </tr>
+      <tr>
+        <td>Microphone無断起動</td>
+        <td>初回同意、permission state、旧設定migrationはdisabled</td>
+        <td>同意前またはpause保存後にcaptureが開始される</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="17-implementation-order">17. 実装順序とPR境界</h2>
+  <ol>
+    <li>
+      <code>PR-1</code>: <code>SPV-00</code> +
+      <code>SPV-01</code>。Contract / migrationだけ
+    </li>
+    <li>
+      <code>PR-2</code>:
+      <code>SPV-02</code>。Keychain / IPC / secret testsだけ
+    </li>
+    <li>
+      <code>PR-3</code>:
+      <code>SPV-03</code>。Harness resolverとfixture serverだけ
+    </li>
+    <li>
+      <code>PR-4</code>: <code>SPV-04</code> +
+      <code>SPV-05</code>。Adapter / routing
+    </li>
+    <li>
+      <code>PR-5</code>:
+      <code>SPV-06</code>。Settings UI
+    </li>
+    <li>
+      <code>PR-6</code>:
+      <code>SPV-07</code>。常時待ち受け
+    </li>
+    <li>
+      <code>PR-7</code>: <code>SPV-08</code> +
+      <code>SPV-09</code>。Recovery / release evidence
+    </li>
+  </ol>
+  <p>
+    各PRは前のPRのtyped contractだけに依存し、UIとsecret
+    store、Harnessと常時待ち受けを一つの巨大PRへ まとめない。PR-1時点では旧Runtimeをcompatibility
+    adapterで動かし、PR-4完了前に新routeを既定化しない。
+  </p>
+
+  <h2 id="18-done">18. Definition of Done</h2>
+  <ol>
+    <li>Harness addressを設定すると、LLM、ASR、TTSの解決結果をservice別に確認できる。</li>
+    <li>三つのserviceを独立してHarnessまたはIndividual Providerへ切り替えられる。</li>
+    <li>API keyをUIから登録、更新、削除でき、値はKeychain以外へ永続化されない。</li>
+    <li>Maximum output tokensとPush-to-talkがSettings contractとUIから消えている。</li>
+    <li>同意済み環境ではSAAA起動後に常時待ち受けが始まり、ユーザーが一時停止できる。</li>
+    <li>Cloud ASRへ送るのはLocal VADで確定した発話区間だけである。</li>
+    <li>Harness / Cloud / System serviceの混在routeがrestart後も同じ実効設定で動作する。</li>
+    <li>全自動Gateと実Harness、実Keychain、実microphoneによるSection 15 GateがPassする。</li>
+  </ol>
+
+  <h2 id="19-references">19. References</h2>
+  <ul>
+    <li><code>spec/docs/plan.html</code> — Voice Architecture / Settings Ownership</li>
+    <li><code>spec/docs/conversation-voice-quality-implementation-plan.html</code></li>
+    <li><code>spec/docs/target-speaker-enrollment-implementation-plan.html</code></li>
+    <li><code>src/features/settings/SettingsPage.tsx</code></li>
+    <li><code>src/features/voice/usePushToTalk.ts</code></li>
+    <li><code>src-tauri/src/persistence/settings.rs</code></li>
+    <li><code>src-tauri/src/persistence/settings_migration.rs</code></li>
+    <li><code>src-tauri/src/voice/profile/codec.rs</code></li>
+    <li><code>src-tauri/src/backup.rs</code></li>
+    <li>
+      <a href="https://developer.apple.com/documentation/security/keychain-services/">
+        Apple Keychain Services
+      </a>
+    </li>
+  </ul>
+</article>

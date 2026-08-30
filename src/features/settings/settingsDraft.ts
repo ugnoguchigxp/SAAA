@@ -59,6 +59,17 @@ export function documentsFromDraft(draft: SettingsDraft): Array<Omit<SettingsDoc
   ];
 }
 
+export function credentialCleanupProviderIds(source: SettingsDraft, draft: SettingsDraft): string[] {
+  const nextProviders = new Map(draft.providers.providers.map((provider) => [provider.id, provider]));
+  return source.providers.providers.flatMap((provider) => {
+    if (!("authentication" in provider)) return [];
+    const next = nextProviders.get(provider.id);
+    return !next || !("authentication" in next) || next.authentication !== "api-key"
+      ? [provider.id]
+      : [];
+  });
+}
+
 function document(namespace: SettingsNamespace, key: "default" | "codex-sdk", valueJson: Record<string, unknown>): Omit<SettingsDocument, "updatedAt"> {
-  return { namespace, key, schemaVersion: 11, valueJson };
+  return { namespace, key, schemaVersion: 12, valueJson };
 }

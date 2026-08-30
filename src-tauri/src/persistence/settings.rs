@@ -1,13 +1,16 @@
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
-pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 11;
+mod provider_validation;
+pub(crate) use provider_validation::validate_model_providers;
+
+pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 12;
 
 use crate::{
-    database_error, now_iso, provider_environment_suffix, providers, situation, voice,
-    CodexAgentRuntimeSettings, ModelProviderSettings, ModelProvidersSettings, RoutingSettings,
-    SaveSettingsDocumentInput, SecurityRuntimeSettings, SettingsDocument, VoiceRuntimeSettings,
-    DEFAULT_AGENT_NAME, DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME, DYNAMIC_LAN_PROVIDER_ID,
+    database_error, now_iso, providers, situation, CodexAgentRuntimeSettings,
+    ModelProviderSettings, ModelProvidersSettings, RoutingSettings, SaveSettingsDocumentInput,
+    SecurityRuntimeSettings, SettingsDocument, VoiceRuntimeSettings, DEFAULT_AGENT_NAME,
+    DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME, DYNAMIC_LAN_PROVIDER_ID,
 };
 
 pub(crate) fn load_codex_settings(
@@ -105,16 +108,25 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             "default",
             SETTINGS_SCHEMA_VERSION,
             json!({
+                "harness": {
+                    "address": format!("http://{}:9810", DEFAULT_DYNAMIC_LAN_HOST)
+                },
                 "providers": [{
                     "kind": "dynamic-lan",
                     "id": DYNAMIC_LAN_PROVIDER_ID,
-                    "enabled": false,
-                    "label": "Dynamic LAN LLM",
+                    "enabled": true,
+                    "label": "Provider Harness LLM",
                     "location": "local",
                     "host": DEFAULT_DYNAMIC_LAN_HOST
+                }, {
+                    "kind": "system-tts",
+                    "id": "system-tts",
+                    "enabled": true,
+                    "label": "System Voice",
+                    "location": "local",
+                    "voice": "default"
                 }],
-                "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
-                "maxOutputTokens": crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS
+                "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT
             }),
         ),
         (
@@ -142,8 +154,19 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             SETTINGS_SCHEMA_VERSION,
             json!({
                 "conversationRespond": {
-                    "primaryProviderId": DYNAMIC_LAN_PROVIDER_ID,
+                    "source": "harness",
+                    "primaryProviderId": null,
                     "fallbackProviderIds": [],
+                    "timeoutMs": 30000
+                },
+                "voiceTranscribe": {
+                    "source": "harness",
+                    "providerId": null,
+                    "timeoutMs": 120000
+                },
+                "voiceSpeak": {
+                    "source": "provider",
+                    "providerId": "system-tts",
                     "timeoutMs": 30000
                 },
                 "codingAssist": {
@@ -160,15 +183,13 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             "default",
             SETTINGS_SCHEMA_VERSION,
             json!({
+                "listeningEnabled": true,
                 "inputDeviceId": "default",
-                "captureMode": "push-to-talk",
-                "sttHost": voice::network_asr::DEFAULT_HOST,
-                "sttProviderId": "network-asr",
-                "sttModel": "qwen3-asr-1.7b",
-                "ttsProviderId": "system-tts",
-                "ttsVoice": "default",
-                "autoSpeak": true,
-                "cloudFallbackEnabled": false
+                "outputDeviceId": "default",
+                "vadSensitivity": "medium",
+                "silenceTimeoutMs": 1500,
+                "allowedLanguages": [crate::voice::language::DEFAULT_LANGUAGE_CODE],
+                "autoSpeak": true
             }),
         ),
         (
@@ -176,7 +197,6 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             "default",
             SETTINGS_SCHEMA_VERSION,
             json!({
-                "credentialStorage": "environment",
                 "localOnlyWhenSelected": true,
                 "diagnosticsRedaction": true
             }),
@@ -279,23 +299,42 @@ pub(crate) fn validate_settings_batch(
         .map_err(|error| format!("Invalid routing settings: {error}"))?;
     let security = serde_json::from_value::<SecurityRuntimeSettings>(security.value_json.clone())
         .map_err(|error| format!("Invalid security settings: {error}"))?;
-    let enabled_ids = providers
-        .providers
-        .iter()
-        .filter(|provider| provider.enabled())
-        .map(ModelProviderSettings::id)
-        .collect::<std::collections::HashSet<_>>();
-    if !enabled_ids.is_empty()
-        && !enabled_ids.contains(routing.conversation_respond.primary_provider_id.as_str())
-    {
-        return Err("The primary conversation provider must be enabled".to_string());
+    let uses_harness = routing.conversation_respond.source == "harness"
+        || routing.voice_transcribe.source == "harness"
+        || routing.voice_speak.source == "harness";
+    if uses_harness && providers.harness.address.trim().is_empty() {
+        return Err(
+            "Provider Harness address is required while a Harness route is selected".to_string(),
+        );
     }
-    let primary_is_dynamic_lan = providers.providers.iter().any(|provider| {
-        provider.id() == routing.conversation_respond.primary_provider_id
-            && matches!(provider, ModelProviderSettings::DynamicLan(_))
+    let enabled_provider = |provider_id: &str| {
+        providers
+            .providers
+            .iter()
+            .find(|provider| provider.id() == provider_id && provider.enabled())
+    };
+    let conversation = &routing.conversation_respond;
+    let primary_id = conversation.primary_provider_id.as_deref();
+    if conversation.source == "provider" {
+        let primary = primary_id
+            .and_then(enabled_provider)
+            .ok_or_else(|| "The individual conversation provider must be enabled".to_string())?;
+        if !matches!(
+            primary,
+            ModelProviderSettings::OpenAiCompatible(_)
+                | ModelProviderSettings::Larm(_)
+                | ModelProviderSettings::DynamicLan(_)
+        ) {
+            return Err("The selected conversation provider does not support LLM".to_string());
+        }
+    }
+    let primary_is_dynamic_lan = primary_id.is_some_and(|primary_id| {
+        providers.providers.iter().any(|provider| {
+            provider.id() == primary_id && matches!(provider, ModelProviderSettings::DynamicLan(_))
+        })
     });
     if primary_is_dynamic_lan
-        && routing.conversation_respond.timeout_ms > providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
+        && conversation.timeout_ms > providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
     {
         return Err(format!(
             "dynamic LAN conversation timeout must not exceed {} ms",
@@ -303,17 +342,28 @@ pub(crate) fn validate_settings_batch(
         ));
     }
     let mut route_ids = std::collections::HashSet::new();
-    route_ids.insert(routing.conversation_respond.primary_provider_id.as_str());
-    for provider_id in &routing.conversation_respond.fallback_provider_ids {
-        if !enabled_ids.contains(provider_id.as_str()) {
+    if let Some(primary_id) = primary_id {
+        route_ids.insert(primary_id);
+    }
+    for provider_id in &conversation.fallback_provider_ids {
+        let fallback = enabled_provider(provider_id)
+            .ok_or_else(|| format!("Fallback provider is not enabled: {provider_id}"))?;
+        if !matches!(
+            fallback,
+            ModelProviderSettings::OpenAiCompatible(_)
+                | ModelProviderSettings::Larm(_)
+                | ModelProviderSettings::DynamicLan(_)
+        ) {
             return Err(format!("Fallback provider is not enabled: {provider_id}"));
         }
         if !route_ids.insert(provider_id) {
             return Err(format!("Duplicate provider in route: {provider_id}"));
         }
-        let primary_is_local = providers.providers.iter().any(|provider| {
-            provider.id() == routing.conversation_respond.primary_provider_id
-                && provider.location() == "local"
+        let primary_is_local = primary_id.is_some_and(|primary_id| {
+            providers
+                .providers
+                .iter()
+                .any(|provider| provider.id() == primary_id && provider.location() == "local")
         });
         let fallback_is_cloud = providers
             .providers
@@ -325,163 +375,53 @@ pub(crate) fn validate_settings_batch(
             ));
         }
     }
+    if conversation.source == "harness" && !conversation.fallback_provider_ids.is_empty() {
+        return Err("Harness routes do not use individual provider fallbacks".to_string());
+    }
+    validate_voice_route_provider(
+        &routing.voice_transcribe.source,
+        routing.voice_transcribe.provider_id.as_deref(),
+        &providers.providers,
+        |provider| matches!(provider, ModelProviderSettings::CloudAsr(_)),
+        "ASR",
+    )?;
+    validate_voice_route_provider(
+        &routing.voice_speak.source,
+        routing.voice_speak.provider_id.as_deref(),
+        &providers.providers,
+        |provider| {
+            matches!(
+                provider,
+                ModelProviderSettings::CloudTts(_) | ModelProviderSettings::SystemTts(_)
+            )
+        },
+        "TTS",
+    )?;
     Ok(())
 }
 
-pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), String> {
-    if !providers::valid_conversation_reasoning_effort(&settings.reasoning_effort) {
-        return Err("Reasoning effort must be low, medium, or xhigh".to_string());
+fn validate_voice_route_provider(
+    source: &str,
+    provider_id: Option<&str>,
+    providers: &[ModelProviderSettings],
+    supports_capability: impl Fn(&ModelProviderSettings) -> bool,
+    capability: &str,
+) -> Result<(), String> {
+    if source == "harness" {
+        return (provider_id.is_none())
+            .then_some(())
+            .ok_or_else(|| format!("Harness {capability} route must not reference a provider"));
     }
-    if !(256..=8_192).contains(&settings.max_output_tokens) {
-        return Err("Maximum output tokens must be between 256 and 8192".to_string());
-    }
-    if settings.providers.is_empty() || settings.providers.len() > 20 {
-        return Err("Between 1 and 20 model providers are required".to_string());
-    }
-    let mut ids = std::collections::HashSet::new();
-    let mut credential_suffixes = std::collections::HashSet::new();
-    let mut enabled_larm_count = 0;
-    let mut enabled_dynamic_lan_count = 0;
-    for provider in &settings.providers {
-        let provider_id = provider.id();
-        if provider_id.is_empty()
-            || provider_id.len() > 80
-            || !provider_id.chars().all(|character| {
-                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
-            })
-            || !ids.insert(provider_id)
-            || !credential_suffixes.insert(provider_environment_suffix(provider_id))
-        {
-            return Err("Invalid, duplicate, or credential-ambiguous provider id".to_string());
-        }
-        if provider.label().trim().is_empty()
-            || provider.label().chars().count() > 120
-            || provider.label().chars().any(char::is_control)
-        {
-            return Err(format!("Invalid provider label: {provider_id}"));
-        }
-        if !matches!(provider.location(), "local" | "cloud") {
-            return Err(format!("Invalid provider location: {provider_id}"));
-        }
-        match provider {
-            ModelProviderSettings::OpenAiCompatible(provider) => {
-                if !matches!(
-                    provider.credential_status.as_str(),
-                    "not-configured" | "configured"
-                ) {
-                    return Err(format!("Invalid credential status: {provider_id}"));
-                }
-                if provider.endpoint.len() > 2_048
-                    || provider.model.chars().count() > 160
-                    || provider.model.chars().any(char::is_control)
-                {
-                    return Err(format!(
-                        "Provider endpoint or model is too long: {provider_id}"
-                    ));
-                }
-                if provider.enabled
-                    && (provider.endpoint.trim().is_empty() || provider.model.trim().is_empty())
-                {
-                    return Err(format!(
-                        "Enabled provider requires endpoint and model: {provider_id}"
-                    ));
-                }
-                if provider.endpoint.trim().is_empty() {
-                    continue;
-                }
-                let endpoint = url::Url::parse(&provider.endpoint)
-                    .map_err(|_| format!("Invalid provider endpoint: {provider_id}"))?;
-                if !endpoint.username().is_empty() || endpoint.password().is_some() {
-                    return Err(format!(
-                        "Provider credentials must not be embedded in the endpoint: {provider_id}"
-                    ));
-                }
-                if !matches!(endpoint.scheme(), "http" | "https") {
-                    return Err(format!(
-                        "Provider endpoint must use HTTP or HTTPS: {provider_id}"
-                    ));
-                }
-                if provider.location == "local" {
-                    if endpoint.scheme() != "http"
-                        || !match endpoint.host() {
-                            Some(url::Host::Domain(host)) => host == "localhost",
-                            Some(url::Host::Ipv4(address)) => {
-                                address.is_loopback() || address.is_private()
-                            }
-                            Some(url::Host::Ipv6(address)) => address.is_loopback(),
-                            None => false,
-                        }
-                    {
-                        return Err(format!(
-                            "Local provider must use an HTTP loopback or private-network endpoint: {provider_id}"
-                        ));
-                    }
-                } else if endpoint.scheme() != "https" {
-                    return Err(format!("Cloud provider must use HTTPS: {provider_id}"));
-                }
-            }
-            ModelProviderSettings::Larm(provider) => {
-                if provider.enabled {
-                    enabled_larm_count += 1;
-                }
-                if provider.location != "local"
-                    || provider.base_url.len() > 2_048
-                    || provider.token_env != "LARM_API_TOKEN"
-                    || !(60..=3_600).contains(&provider.allocation_ttl_seconds)
-                    || !(1..=300).contains(&provider.allocation_startup_timeout_seconds)
-                    || provider.allow_fallback_by_default
-                    || provider.deployment_policy != "existing-only"
-                {
-                    return Err(format!(
-                        "LARM provider violates the fixed security policy: {provider_id}"
-                    ));
-                }
-                let base_url = url::Url::parse(&provider.base_url)
-                    .map_err(|_| format!("Invalid LARM base URL: {provider_id}"))?;
-                let numeric_loopback = matches!(
-                    base_url.host(),
-                    Some(url::Host::Ipv4(address))
-                        if address == std::net::Ipv4Addr::LOCALHOST
-                ) || matches!(
-                    base_url.host(),
-                    Some(url::Host::Ipv6(address))
-                        if address == std::net::Ipv6Addr::LOCALHOST
-                );
-                if base_url.scheme() != "http"
-                    || !numeric_loopback
-                    || base_url.port().is_none()
-                    || !base_url.username().is_empty()
-                    || base_url.password().is_some()
-                    || base_url.query().is_some()
-                    || base_url.fragment().is_some()
-                    || base_url.path() != "/"
-                {
-                    return Err(format!(
-                        "LARM base URL must be an explicit numeric HTTP loopback origin: {provider_id}"
-                    ));
-                }
-            }
-            ModelProviderSettings::DynamicLan(provider) => {
-                if provider.enabled {
-                    enabled_dynamic_lan_count += 1;
-                }
-                if provider.location != "local"
-                    || providers::dynamic_lan::control_base_url(&provider.host).is_err()
-                {
-                    return Err(format!(
-                        "dynamic LAN provider requires only a private-network host: {provider_id}"
-                    ));
-                }
-            }
-        }
-    }
-    if enabled_larm_count > 1 {
-        return Err("Only one LARM provider may be enabled".to_string());
-    }
-    if enabled_dynamic_lan_count > 1 {
-        return Err("Only one dynamic LAN provider may be enabled".to_string());
-    }
-    Ok(())
+    let provider = provider_id
+        .and_then(|provider_id| {
+            providers
+                .iter()
+                .find(|provider| provider.id() == provider_id && provider.enabled())
+        })
+        .ok_or_else(|| format!("The individual {capability} provider must be enabled"))?;
+    supports_capability(provider)
+        .then_some(())
+        .ok_or_else(|| format!("The selected provider does not support {capability}"))
 }
 
 pub(crate) fn validate_codex_settings(settings: &CodexAgentRuntimeSettings) -> Result<(), String> {
@@ -516,25 +456,34 @@ pub(crate) fn validate_codex_settings(settings: &CodexAgentRuntimeSettings) -> R
 
 pub(crate) fn validate_routing_settings(settings: &RoutingSettings) -> Result<(), String> {
     let conversation = &settings.conversation_respond;
+    let transcribe = &settings.voice_transcribe;
+    let speak = &settings.voice_speak;
     let coding = &settings.coding_assist;
-    if conversation.primary_provider_id.is_empty()
-        || conversation.primary_provider_id.len() > 80
-        || !conversation
-            .primary_provider_id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-        || conversation.fallback_provider_ids.len() > 20
+    let valid_provider_id = |provider_id: &str| {
+        !provider_id.is_empty()
+            && provider_id.len() <= 80
+            && provider_id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+    };
+    let valid_source = |source: &str, provider_id: Option<&str>| match source {
+        "harness" => provider_id.is_none(),
+        "provider" => provider_id.is_some_and(valid_provider_id),
+        _ => false,
+    };
+    if !valid_source(
+        &conversation.source,
+        conversation.primary_provider_id.as_deref(),
+    ) || conversation.fallback_provider_ids.len() > 20
         || conversation
             .fallback_provider_ids
             .iter()
-            .any(|provider_id| {
-                provider_id.is_empty()
-                    || provider_id.len() > 80
-                    || !provider_id.chars().all(|character| {
-                        character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
-                    })
-            })
+            .any(|provider_id| !valid_provider_id(provider_id))
         || !(1_000..=300_000).contains(&conversation.timeout_ms)
+        || !valid_source(&transcribe.source, transcribe.provider_id.as_deref())
+        || !(1_000..=300_000).contains(&transcribe.timeout_ms)
+        || !valid_source(&speak.source, speak.provider_id.as_deref())
+        || !(1_000..=300_000).contains(&speak.timeout_ms)
         || coding.provider_id != "codex-sdk"
         || !(1_000..=300_000).contains(&coding.timeout_ms)
         || !coding.read_only
@@ -549,25 +498,20 @@ pub(crate) fn validate_routing_settings(settings: &RoutingSettings) -> Result<()
 pub(crate) fn validate_voice_settings(settings: &VoiceRuntimeSettings) -> Result<(), String> {
     if settings.input_device_id.trim().is_empty()
         || settings.input_device_id.len() > 300
-        || settings.capture_mode != "push-to-talk"
-        || voice::network_asr::base_url_from_host(&settings.stt_host).is_err()
-        || settings.stt_provider_id != voice::network_asr::PROVIDER_ID
-        || settings.stt_model != voice::network_asr::MODEL_ID
-        || settings.tts_provider_id != "system-tts"
-        || settings.tts_voice.trim().is_empty()
-        || settings.tts_voice.chars().count() > 160
-        || settings.cloud_fallback_enabled
+        || settings.output_device_id.trim().is_empty()
+        || settings.output_device_id.len() > 300
+        || !matches!(settings.vad_sensitivity.as_str(), "low" | "medium" | "high")
+        || !(800..=3_000).contains(&settings.silence_timeout_ms)
+        || crate::voice::language::validate_allowed_languages(&settings.allowed_languages).is_err()
     {
-        return Err("Invalid local voice settings".to_string());
+        return Err("Invalid continuous listening settings".to_string());
     }
     Ok(())
 }
 
 pub(crate) fn validate_security_settings(settings: &SecurityRuntimeSettings) -> Result<(), String> {
-    if settings.credential_storage != "environment" || !settings.diagnostics_redaction {
-        return Err(
-            "Secrets must remain outside SQLite and diagnostics must be redacted".to_string(),
-        );
+    if !settings.diagnostics_redaction {
+        return Err("Diagnostics must remain redacted".to_string());
     }
     let _ = settings.local_only_when_selected;
     Ok(())
@@ -652,7 +596,7 @@ mod tests {
         default_settings_input, direct_provider, dynamic_lan_provider, larm_provider, provider,
     };
     use crate::{
-        initialize_database, providers, voice, CodexAgentRuntimeSettings, ModelProviderSettings,
+        initialize_database, providers, CodexAgentRuntimeSettings, ModelProviderSettings,
         ModelProvidersSettings, OpenAiCompatibleProviderSettings, DYNAMIC_LAN_PROVIDER_ID,
     };
     use rusqlite::Connection;
@@ -700,7 +644,9 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![provider("local", "local")],
             reasoning_effort: "mid".to_string(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string()
+            },
         })
         .is_err());
         let mut dynamic_lan = direct_provider(DYNAMIC_LAN_PROVIDER_ID, "local");
@@ -709,7 +655,9 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(dynamic_lan)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string()
+            },
         })
         .is_ok());
         let mut public_http = direct_provider("public-http", "local");
@@ -717,7 +665,9 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(public_http)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string()
+            },
         })
         .is_err());
 
@@ -729,7 +679,9 @@ mod tests {
                 },
             )],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         assert!(validate_model_providers(&with_credentials).is_err());
         let mut disabled_with_credentials = with_credentials;
@@ -744,15 +696,19 @@ mod tests {
         let unsafe_id = ModelProvidersSettings {
             providers: vec![provider("local provider", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         assert!(validate_model_providers(&unsafe_id).is_err());
         let ambiguous_ids = ModelProvidersSettings {
             providers: vec![provider("local-a", "local"), provider("local_a", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
-        assert!(validate_model_providers(&ambiguous_ids).is_err());
+        assert!(validate_model_providers(&ambiguous_ids).is_ok());
 
         let mut documents = default_settings_input();
         documents
@@ -760,6 +716,7 @@ mod tests {
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
             .value_json = json!({
+            "harness": { "address": "http://localhost:9810" },
             "providers": [provider("local", "local"), provider("cloud", "cloud")],
             "reasoningEffort": "medium"
         });
@@ -767,6 +724,7 @@ mod tests {
             .iter_mut()
             .find(|document| document.namespace == "routing.tasks")
             .expect("routing settings");
+        routing.value_json["conversationRespond"]["source"] = json!("provider");
         routing.value_json["conversationRespond"]["primaryProviderId"] = json!("local");
         routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["cloud"]);
         assert!(validate_settings_batch(&documents).is_err());
@@ -777,6 +735,7 @@ mod tests {
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
             .value_json = json!({
+            "harness": { "address": "http://localhost:9810" },
             "providers": [
                 dynamic_lan_provider("dynamic_lan-primary"),
                 provider("local-fallback", "local")
@@ -789,6 +748,9 @@ mod tests {
             .expect("routing settings");
         documents[routing_index].value_json["conversationRespond"]["primaryProviderId"] =
             json!("dynamic_lan-primary");
+        documents[routing_index].value_json["conversationRespond"]["source"] = json!("provider");
+        documents[routing_index].value_json["voiceSpeak"]["source"] = json!("harness");
+        documents[routing_index].value_json["voiceSpeak"]["providerId"] = Value::Null;
         documents[routing_index].value_json["conversationRespond"]["fallbackProviderIds"] =
             json!(["local-fallback"]);
         assert!(validate_settings_batch(&documents).is_ok());
@@ -804,11 +766,24 @@ mod tests {
     }
 
     #[test]
+    fn harness_routes_require_a_nonempty_address() {
+        let mut documents = default_settings_input();
+        let provider_settings = documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.model")
+            .expect("provider settings");
+        provider_settings.value_json["harness"]["address"] = json!("");
+        assert!(validate_settings_batch(&documents).is_err());
+    }
+
+    #[test]
     fn larm_settings_enforce_the_fixed_loopback_security_contract() {
         let valid = ModelProvidersSettings {
             providers: vec![larm_provider("larm")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         assert!(validate_model_providers(&valid).is_ok());
         let mut ipv6 = larm_provider("larm-ipv6");
@@ -819,7 +794,9 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ipv6],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string()
+            },
         })
         .is_ok());
 
@@ -840,7 +817,9 @@ mod tests {
                 validate_model_providers(&ModelProvidersSettings {
                     providers: vec![invalid],
                     reasoning_effort: providers::default_conversation_reasoning_effort(),
-                    max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+                    harness: crate::HarnessSettings {
+                        address: "http://localhost:9810".to_string()
+                    },
                 })
                 .is_err(),
                 "invalid LARM URL was accepted: {base_url}"
@@ -850,7 +829,9 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![larm_provider("larm-a"), larm_provider("larm-b")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string()
+            },
         })
         .is_err());
     }
@@ -860,7 +841,9 @@ mod tests {
         let providers = ModelProvidersSettings {
             providers: vec![provider("Local_Custom", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         assert!(validate_model_providers(&providers).is_ok());
 
@@ -889,7 +872,9 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(provider.clone())],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string()
+            },
         })
         .is_ok());
 
@@ -897,7 +882,9 @@ mod tests {
         assert!(validate_model_providers(&ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(provider)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string()
+            },
         })
         .is_err());
 
@@ -906,31 +893,46 @@ mod tests {
             .iter_mut()
             .find(|document| document.namespace == "voice.runtime")
             .expect("voice settings");
-        voice.value_json["ttsVoice"] = json!("声".repeat(160));
-        validate_settings_document(voice).expect("localized TTS voice is accepted");
-        voice.value_json["ttsVoice"] = json!("声".repeat(161));
+        voice.value_json["inputDeviceId"] = json!("声".repeat(100));
+        validate_settings_document(voice).expect("bounded localized device id is accepted");
+        voice.value_json["inputDeviceId"] = json!("声".repeat(101));
         assert!(validate_settings_document(voice).is_err());
     }
 
     #[test]
-    fn voice_settings_require_the_fixed_network_asr_contract() {
+    fn voice_settings_require_bounded_continuous_listening_options() {
         let mut documents = default_settings_input();
         let voice = documents
             .iter_mut()
             .find(|document| document.namespace == "voice.runtime")
             .expect("voice settings");
-        voice.value_json["sttProviderId"] = json!("local-whisper");
+        voice.value_json["vadSensitivity"] = json!("maximum");
         assert_eq!(
-            validate_settings_document(voice).expect_err("local Whisper is rejected"),
-            "Invalid local voice settings"
+            validate_settings_document(voice).expect_err("unknown sensitivity is rejected"),
+            "Invalid continuous listening settings"
         );
 
+        voice.value_json["vadSensitivity"] = json!("medium");
+        voice.value_json["silenceTimeoutMs"] = json!(3_001);
+        assert!(validate_settings_document(voice).is_err());
+    }
+
+    #[test]
+    fn voice_settings_require_registered_supported_languages() {
+        let mut documents = default_settings_input();
         let voice = documents
             .iter_mut()
             .find(|document| document.namespace == "voice.runtime")
             .expect("voice settings");
-        voice.value_json["sttProviderId"] = json!(voice::network_asr::PROVIDER_ID);
-        voice.value_json["sttModel"] = json!(voice::network_asr::MODEL_ID);
-        validate_settings_document(voice).expect("LAN ASR contract is accepted");
+        voice.value_json["allowedLanguages"] = json!(["ja", "en"]);
+        validate_settings_document(voice).expect("supported languages are accepted");
+
+        for invalid in [json!([]), json!(["xx"]), json!(["ja", "ja"])] {
+            voice.value_json["allowedLanguages"] = invalid;
+            assert_eq!(
+                validate_settings_document(voice).expect_err("invalid languages are rejected"),
+                "Invalid continuous listening settings"
+            );
+        }
     }
 }

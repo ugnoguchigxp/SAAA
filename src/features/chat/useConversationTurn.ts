@@ -20,7 +20,6 @@ export function useConversationTurn({
   selectedConversationId,
   voiceSettings,
   meetingState,
-  isVoiceBusy,
   pendingVoicePromptsRef,
   conversationSessionRef,
   suspendVoiceForSpeech,
@@ -31,11 +30,10 @@ export function useConversationTurn({
   selectedConversationId: string | null;
   voiceSettings: VoiceSettings | null;
   meetingState: MeetingState;
-  isVoiceBusy: () => boolean;
   pendingVoicePromptsRef: MutableRefObject<PendingConversationPrompt[]>;
   conversationSessionRef: MutableRefObject<ConversationSession>;
-  suspendVoiceForSpeech: () => Promise<boolean>;
-  resumeVoiceAfterSpeech: () => Promise<void>;
+  suspendVoiceForSpeech: (speechRunId: string) => Promise<boolean>;
+  resumeVoiceAfterSpeech: (speechRunId: string) => Promise<void>;
   setSnapshot: Dispatch<SetStateAction<AppSnapshot>>;
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
@@ -101,7 +99,6 @@ export function useConversationTurn({
   }
   async function submitPrompt(prompt: string, options: SubmitPromptOptions = {}) {
     const {
-      allowVoiceBusy = false,
       retryInputMessageId = null,
       inputOrigin = "text",
     } = options;
@@ -110,7 +107,6 @@ export function useConversationTurn({
       || !selectedConversationId
       || !prompt.trim()
       || conversationSessionRef.current.runId
-      || (!allowVoiceBusy && isVoiceBusy())
     ) return;
     const conversationId = selectedConversationId;
     const content = prompt.trim();
@@ -166,7 +162,7 @@ export function useConversationTurn({
       const nextVoicePrompt = disposedRef.current ? undefined : pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
         if (conversationSessionRef.current.speechRunId) await stopSpeech(issueScope);
-        await submitPrompt(nextVoicePrompt.content, { allowVoiceBusy: true, inputOrigin: nextVoicePrompt.inputOrigin });
+        await submitPrompt(nextVoicePrompt.content, { inputOrigin: nextVoicePrompt.inputOrigin });
       }
     }
   }
@@ -233,15 +229,14 @@ export function useConversationTurn({
       { type: "speechStarted", runId },
     );
     setActiveTtsRunId(runId);
-    let voiceSuspended = false;
     try {
       setError(null);
       setRetryAction(null);
       const speakable = toSpeakableText(text);
       if (!speakable) return;
-      voiceSuspended = await suspendVoiceForSpeech();
+      await suspendVoiceForSpeech(runId);
       if (conversationSessionRef.current.speechRunId !== runId) return;
-      await speakText({ runId, conversationId, text: speakable, voice: voiceSettings.ttsVoice });
+      await speakText({ runId, conversationId, text: speakable });
     } catch (cause) {
       if (!speechStopRequestsRef.current.has(runId)) {
         publishIssue(issueScope, `Speech playback failed: ${toMessage(cause)}`, speechRetry(text, conversationId));
@@ -254,12 +249,10 @@ export function useConversationTurn({
         );
         if (!disposedRef.current) setActiveTtsRunId(null);
       }
-      if (voiceSuspended) {
-        try {
-          await resumeVoiceAfterSpeech();
-        } catch (cause) {
-          publishIssue(issueScope, `Microphone resume failed: ${toMessage(cause)}`);
-        }
+      try {
+        await resumeVoiceAfterSpeech(runId);
+      } catch (cause) {
+        publishIssue(issueScope, `Microphone resume failed: ${toMessage(cause)}`);
       }
       speechStopRequestsRef.current.delete(runId);
     }

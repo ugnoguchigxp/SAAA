@@ -14,6 +14,7 @@ use tauri::Manager;
 
 mod app_paths;
 mod backup;
+mod credentials;
 mod diagnostics;
 pub mod ipc_contract;
 mod meeting;
@@ -41,7 +42,6 @@ pub(crate) use models::*;
 use persistence::list_messages_from_connection;
 use persistence::migrate::backup_before_migration;
 use persistence::schema::initialize_database;
-pub(crate) use providers::openai_compatible::provider_environment_suffix;
 pub(crate) use providers::session_store::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_larm_provider_session,
     finish_provider_session, persist_conversation_success,
@@ -110,6 +110,7 @@ struct ProviderProbeStatus {
 struct ActiveTts {
     run_id: String,
     child: Child,
+    artifact: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -278,6 +279,35 @@ async fn test_model_provider(
 }
 
 #[tauri::command]
+async fn resolve_service_harness(
+    address: String,
+) -> Result<providers::service_harness::HarnessResolution, String> {
+    providers::service_harness::resolve_with_legacy_llm(&address).await
+}
+
+#[tauri::command]
+fn set_provider_api_key(
+    state: tauri::State<'_, AppState>,
+    input: credentials::SetProviderApiKeyInput,
+) -> Result<credentials::ProviderCredentialState, String> {
+    credentials::set_api_key(&state.connection, input)
+}
+
+#[tauri::command]
+fn delete_provider_api_key(
+    provider_id: String,
+) -> Result<credentials::ProviderCredentialState, String> {
+    credentials::delete_api_key(provider_id)
+}
+
+#[tauri::command]
+fn get_provider_credential_state(
+    provider_id: String,
+) -> Result<credentials::ProviderCredentialState, String> {
+    credentials::credential_state(provider_id)
+}
+
+#[tauri::command]
 fn backup_database(state: tauri::State<'_, AppState>) -> Result<LocalArtifactResult, String> {
     let created_at = now_iso();
     let directory = state.data_directory.join("backups");
@@ -330,7 +360,7 @@ async fn meeting_preflight(
     state: tauri::State<'_, AppState>,
     input: meeting::PreflightInput,
 ) -> Result<meeting::PreflightResult, String> {
-    let asr_health = voice::network_asr::probe(&state, &input.stt_model).await;
+    let asr_health = voice::session::probe_selected_asr(&state).await;
     let result = state.meeting.preflight(&input, asr_health)?;
     state.meeting.emit(meeting::MeetingEvent::StateChanged {
         session_id: None,
@@ -499,6 +529,9 @@ fn shutdown_app_state(state: &AppState) {
         if let Some(mut active) = process.take() {
             let _ = active.child.kill();
             let _ = active.child.wait();
+            if let Some(path) = active.artifact {
+                let _ = fs::remove_file(path);
+            }
         }
     }
     if let Ok(active_runs) = state.active_runs.lock() {
@@ -529,6 +562,8 @@ pub fn run() {
                 .parent()
                 .ok_or_else(|| std::io::Error::other("Database path has no parent directory"))?
                 .to_path_buf();
+            voice::cloud_tts::cleanup_cache(&voice_data_directory.join("tts-cache"))
+                .map_err(std::io::Error::other)?;
             let voice_profile = Arc::new(voice::profile::VoiceProfileRuntime::initialize(
                 voice_resource_directory,
                 voice_data_directory.clone(),
@@ -652,6 +687,10 @@ pub fn run() {
             start_turn,
             cancel_run,
             test_model_provider,
+            resolve_service_harness,
+            set_provider_api_key,
+            delete_provider_api_key,
+            get_provider_credential_state,
             resolve_network_asr,
             transcribe_audio,
             speak_text,
@@ -1082,7 +1121,6 @@ mod tests {
                 &meeting::PreflightInput {
                     microphone_device_id: "default".to_string(),
                     system_audio_enabled: false,
-                    stt_model: voice::network_asr::MODEL_ID.to_string(),
                     translation_enabled: false,
                 },
                 Ok(()),
@@ -1096,7 +1134,6 @@ mod tests {
                     microphone_device_id: "default".to_string(),
                     microphone_enabled: true,
                     system_audio_enabled: false,
-                    stt_model: voice::network_asr::MODEL_ID.to_string(),
                     translation_enabled: false,
                     persistence_mode: "discard".to_string(),
                 },
@@ -1170,7 +1207,6 @@ mod tests {
                 &meeting::PreflightInput {
                     microphone_device_id: "default".to_string(),
                     system_audio_enabled: false,
-                    stt_model: voice::network_asr::MODEL_ID.to_string(),
                     translation_enabled: false,
                 },
                 Ok(()),
@@ -1184,7 +1220,6 @@ mod tests {
                 microphone_device_id: "default".to_string(),
                 microphone_enabled: true,
                 system_audio_enabled: false,
-                stt_model: voice::network_asr::MODEL_ID.to_string(),
                 translation_enabled: false,
                 persistence_mode: "discard".to_string(),
             },
@@ -2241,19 +2276,23 @@ mod tests {
             .iter_mut()
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
-            .value_json = json!({ "providers": [{
+            .value_json = json!({
+            "harness": { "address": "http://localhost:9810" }, "providers": [{
             "kind": "openai-compatible", "id": "primary", "enabled": true, "label": "Primary", "location": "local",
-            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "credentialStatus": "not-configured"
+            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "authentication": "none"
         }, {
             "kind": "openai-compatible", "id": "fallback", "enabled": true, "label": "Fallback", "location": "local",
-            "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "credentialStatus": "not-configured"
-        }]});
+            "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "authentication": "none"
+        }], "reasoningEffort": "medium"});
         let route = documents
             .iter_mut()
             .find(|document| document.namespace == "routing.tasks")
             .expect("route settings");
+        route.value_json["conversationRespond"]["source"] = json!("provider");
         route.value_json["conversationRespond"]["primaryProviderId"] = json!("primary");
         route.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["fallback"]);
+        route.value_json["voiceSpeak"]["source"] = json!("harness");
+        route.value_json["voiceSpeak"]["providerId"] = Value::Null;
         save_settings_documents_to_connection(
             &mut state.connection.lock().expect("database lock"),
             &documents,
@@ -2398,20 +2437,24 @@ mod tests {
             .iter_mut()
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
-            .value_json = json!({ "providers": [{
+            .value_json = json!({
+            "harness": { "address": "http://localhost:9810" }, "providers": [{
             "kind": "openai-compatible", "id": "partial-primary", "enabled": true, "label": "Partial primary", "location": "local",
-            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "credentialStatus": "not-configured"
+            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "authentication": "none"
         }, {
             "kind": "openai-compatible", "id": "forbidden-fallback", "enabled": true, "label": "Forbidden fallback", "location": "local",
-            "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "credentialStatus": "not-configured"
-        }]});
+            "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "authentication": "none"
+        }], "reasoningEffort": "medium"});
         let route = documents
             .iter_mut()
             .find(|document| document.namespace == "routing.tasks")
             .expect("routing settings");
+        route.value_json["conversationRespond"]["source"] = json!("provider");
         route.value_json["conversationRespond"]["primaryProviderId"] = json!("partial-primary");
         route.value_json["conversationRespond"]["fallbackProviderIds"] =
             json!(["forbidden-fallback"]);
+        route.value_json["voiceSpeak"]["source"] = json!("harness");
+        route.value_json["voiceSpeak"]["providerId"] = Value::Null;
         save_settings_documents_to_connection(
             &mut state.connection.lock().expect("database lock"),
             &documents,
@@ -3184,19 +3227,23 @@ for line in sys.stdin:
             .iter_mut()
             .find(|document| document.namespace == "providers.model")
             .expect("provider settings")
-            .value_json = json!({ "providers": [{
+            .value_json = json!({
+            "harness": { "address": "http://localhost:9810" }, "providers": [{
                 "kind": "larm", "id": "larm-primary", "enabled": true, "label": "LARM",
                 "location": "local", "baseUrl": format!("http://{address}"),
                 "tokenEnv": "LARM_API_TOKEN", "allocationTtlSeconds": 300,
                 "allocationStartupTimeoutSeconds": 5, "allowFallbackByDefault": false,
                 "deploymentPolicy": "existing-only"
-            }] });
+            }], "reasoningEffort": "medium" });
         let routing = documents
             .iter_mut()
             .find(|document| document.namespace == "routing.tasks")
             .expect("routing settings");
+        routing.value_json["conversationRespond"]["source"] = json!("provider");
         routing.value_json["conversationRespond"]["primaryProviderId"] = json!("larm-primary");
         routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!([]);
+        routing.value_json["voiceSpeak"]["source"] = json!("harness");
+        routing.value_json["voiceSpeak"]["providerId"] = Value::Null;
         save_settings_documents_to_connection(
             &mut state.connection.lock().expect("database lock"),
             &documents,

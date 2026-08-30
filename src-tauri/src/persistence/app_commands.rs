@@ -76,6 +76,7 @@ pub(crate) fn save_settings_documents(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clear();
+    crate::providers::service_harness::clear_cache();
     if enabled {
         spawn_situation_monitor(state.connection.clone(), state.situation.clone());
     }

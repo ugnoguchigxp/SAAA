@@ -5,41 +5,41 @@ function documents() {
     {
       namespace: "providers.model",
       key: "default",
-      schemaVersion: 11,
+      schemaVersion: 12,
       valueJson: {
-        providers: [{ kind: "openai-compatible", id: "local", enabled: true, label: "Local", location: "local", endpoint: "http://127.0.0.1:11434/v1", model: "test", credentialStatus: "not-configured" }],
+        harness: { address: "http://localhost:9810" },
+        providers: [{ kind: "openai-compatible", id: "local", enabled: true, label: "Local", location: "local", endpoint: "http://127.0.0.1:11434/v1", model: "test", authentication: "none" }],
         reasoningEffort: "medium",
-        maxOutputTokens: 2048,
       },
     },
     {
       namespace: "providers.agent",
       key: "codex-sdk",
-      schemaVersion: 11,
+      schemaVersion: 12,
       valueJson: { agentName: "SAAA", userName: "", enabled: false, provider: "codex-sdk", model: "", runtimeMode: "app-server", health: "unchecked", sandboxMode: "read-only", approvalPolicy: "never", networkEnabled: false, webSearchEnabled: false, workspacePolicy: "select-per-conversation" },
     },
     {
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 11,
-      valueJson: { conversationRespond: { primaryProviderId: "local", fallbackProviderIds: [], timeoutMs: 30_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } },
+      schemaVersion: 12,
+      valueJson: { conversationRespond: { source: "provider", primaryProviderId: "local", fallbackProviderIds: [], timeoutMs: 30_000 }, voiceTranscribe: { source: "harness", providerId: null, timeoutMs: 120_000 }, voiceSpeak: { source: "harness", providerId: null, timeoutMs: 30_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } },
     },
     {
       namespace: "voice.runtime",
       key: "default",
-      schemaVersion: 11,
-      valueJson: { inputDeviceId: "default", captureMode: "push-to-talk", sttHost: "localhost", sttProviderId: "network-asr", sttModel: "qwen3-asr-1.7b", ttsProviderId: "system-tts", ttsVoice: "default", autoSpeak: true, cloudFallbackEnabled: false },
+      schemaVersion: 12,
+      valueJson: { listeningEnabled: true, inputDeviceId: "default", outputDeviceId: "default", vadSensitivity: "medium", silenceTimeoutMs: 1500, allowedLanguages: ["ja"], autoSpeak: true },
     },
     {
       namespace: "security.runtime",
       key: "default",
-      schemaVersion: 11,
-      valueJson: { credentialStorage: "environment", localOnlyWhenSelected: true, diagnosticsRedaction: true },
+      schemaVersion: 12,
+      valueJson: { localOnlyWhenSelected: true, diagnosticsRedaction: true },
     },
     {
       namespace: "situation.runtime",
       key: "default",
-      schemaVersion: 11,
+      schemaVersion: 12,
       valueJson: { enabled: false, sampleIntervalMs: 2_000, calendarEnabled: false, retentionDays: 7, maxLedgerEntries: 10_000, heartbeatIntervalMs: 300_000, sensitiveApplicationCategories: true },
     },
   ];
@@ -78,25 +78,36 @@ describe("settings contracts", () => {
     (invalid[0].valueJson as { reasoningEffort: string }).reasoningEffort = "mid";
     expect(() => validateSettingsDocuments(invalid)).toThrow("Invalid option");
   });
-  test("bounds the maximum response length", () => {
-    for (const maxOutputTokens of [256, 2048, 8192]) {
+  test("validates the provider harness address", () => {
+    for (const address of ["http://localhost:9810", "http://[fd00::1]:9810", "https://harness.example.com"]) {
       const snapshot = documents();
-      (snapshot[0].valueJson as { maxOutputTokens: number }).maxOutputTokens = maxOutputTokens;
+      (snapshot[0].valueJson as { harness: { address: string } }).harness.address = address;
       expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
     }
-    for (const maxOutputTokens of [255, 8193, 2048.5]) {
+    for (const address of ["http://example.com", "http://[2001:db8::1]", "https://user:secret@example.com"]) {
       const invalid = documents();
-      (invalid[0].valueJson as { maxOutputTokens: number }).maxOutputTokens = maxOutputTokens;
+      (invalid[0].valueJson as { harness: { address: string } }).harness.address = address;
       expect(() => validateSettingsDocuments(invalid)).toThrow();
     }
   });
-  test("requires the fixed LAN ASR provider and model", () => {
-    const localWhisper = documents();
-    (localWhisper[3].valueJson as { sttProviderId: string }).sttProviderId = "local-whisper";
-    expect(() => validateSettingsDocuments(localWhisper)).toThrow("Invalid input");
-    const wrongModel = documents();
-    (wrongModel[3].valueJson as { sttModel: string }).sttModel = "ggml-base.bin";
-    expect(() => validateSettingsDocuments(wrongModel)).toThrow("Invalid input");
+  test("bounds continuous listening endpoint settings", () => {
+    const valid = documents();
+    (valid[3].valueJson as { vadSensitivity: string; silenceTimeoutMs: number }).vadSensitivity = "high";
+    expect(() => validateSettingsDocuments(valid)).not.toThrow();
+    const invalid = documents();
+    (invalid[3].valueJson as { silenceTimeoutMs: number }).silenceTimeoutMs = 500;
+    expect(() => validateSettingsDocuments(invalid)).toThrow("Too small");
+  });
+  test("requires at least one unique supported ASR language", () => {
+    const multilingual = documents();
+    (multilingual[3].valueJson as { allowedLanguages: string[] }).allowedLanguages = ["ja", "en"];
+    expect(() => validateSettingsDocuments(multilingual)).not.toThrow();
+
+    for (const allowedLanguages of [[], ["xx"], ["ja", "ja"]]) {
+      const invalid = documents();
+      (invalid[3].valueJson as { allowedLanguages: string[] }).allowedLanguages = allowedLanguages;
+      expect(() => validateSettingsDocuments(invalid)).toThrow();
+    }
   });
   test("keeps schema 6 provider identifiers and default Codex models readable", () => {
     const snapshot = documents();
@@ -111,7 +122,7 @@ describe("settings contracts", () => {
   test("rejects credentials embedded in provider endpoints", () => {
     const snapshot = documents();
     (snapshot[0].valueJson as { providers: Array<{ endpoint: string }> }).providers[0].endpoint = "http://user:secret@127.0.0.1:11434/v1";
-    expect(() => validateSettingsDocuments(snapshot)).toThrow("Credentials must not be embedded");
+    expect(() => validateSettingsDocuments(snapshot)).toThrow("must not contain credentials");
   });
   test("accepts private-network local providers and rejects public HTTP endpoints", () => {
     const privateNetwork = documents();
@@ -153,7 +164,7 @@ describe("settings contracts", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
     providers[0] = { kind: "dynamic-lan", id: "lan-llm-dynamic", enabled: true, label: "dynamic-lan", location: "local", host: "10.0.0.42" };
-    providers.push({ kind: "openai-compatible", id: "local-fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://127.0.0.1:11435/v1", model: "test", credentialStatus: "not-configured" });
+    providers.push({ kind: "openai-compatible", id: "local-fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://127.0.0.1:11435/v1", model: "test", authentication: "none" });
     const route = (snapshot[2].valueJson as { conversationRespond: { primaryProviderId: string; fallbackProviderIds: string[] } }).conversationRespond;
     route.primaryProviderId = "lan-llm-dynamic";
     route.fallbackProviderIds = ["local-fallback"];
@@ -170,28 +181,33 @@ describe("settings contracts", () => {
     route.timeoutMs = 269_999;
     expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });
-  test("rejects unsafe or credential-ambiguous provider ids", () => {
+  test("rejects unsafe ids and keeps exact provider ids distinct", () => {
     const unsafe = documents();
     (unsafe[0].valueJson as { providers: Array<{ id: string }> }).providers[0].id = "local provider";
     expect(() => validateSettingsDocuments(unsafe)).toThrow("Provider ids may contain only");
     const ambiguous = documents();
     const providers = (ambiguous[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
     providers[0].id = "local-a";
-    providers.push({ kind: "openai-compatible", id: "local_a", enabled: false, label: "Local duplicate", location: "local", endpoint: "", model: "", credentialStatus: "not-configured" });
+    providers.push({ kind: "openai-compatible", id: "local_a", enabled: false, label: "Local duplicate", location: "local", endpoint: "", model: "", authentication: "none" });
     (ambiguous[2].valueJson as { conversationRespond: { primaryProviderId: string } }).conversationRespond.primaryProviderId = "local-a";
-    expect(() => validateSettingsDocuments(ambiguous)).toThrow("credential environment variable");
+    expect(() => validateSettingsDocuments(ambiguous)).not.toThrow();
+  });
+  test("requires an address whenever any service uses the Harness", () => {
+    const snapshot = documents();
+    (snapshot[0].valueJson as { harness: { address: string } }).harness.address = "";
+    expect(() => validateSettingsDocuments(snapshot)).toThrow("Harness address is required");
   });
   test("rejects cloud fallback behind a local-only primary", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
-    providers.push({ kind: "openai-compatible", id: "cloud", enabled: true, label: "Cloud", location: "cloud", endpoint: "https://example.com/v1", model: "test", credentialStatus: "configured" });
+    providers.push({ kind: "openai-compatible", id: "cloud", enabled: true, label: "Cloud", location: "cloud", endpoint: "https://example.com/v1", model: "test", authentication: "api-key" });
     (snapshot[2].valueJson as { conversationRespond: { fallbackProviderIds: string[] } }).conversationRespond.fallbackProviderIds = ["cloud"];
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Cloud fallback is blocked");
   });
   test("rejects duplicate fallback providers", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> }).providers;
-    providers.push({ kind: "openai-compatible", id: "fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://127.0.0.1:11435/v1", model: "local", credentialStatus: "not-configured" });
+    providers.push({ kind: "openai-compatible", id: "fallback", enabled: true, label: "Fallback", location: "local", endpoint: "http://127.0.0.1:11435/v1", model: "local", authentication: "none" });
     (snapshot[2].valueJson as { conversationRespond: { fallbackProviderIds: string[] } }).conversationRespond.fallbackProviderIds = ["fallback", "fallback"];
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Duplicate provider in route: fallback");
   });
@@ -206,10 +222,10 @@ describe("settings contracts", () => {
     (snapshot[4].valueJson as Record<string, unknown>).unexpectedPolicy = true;
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Unrecognized key");
   });
-  test("accepts schema 11 and rejects schema 10", () => {
+  test("accepts schema 12 and rejects schema 11", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
     const legacy = documents();
-    legacy[0].schemaVersion = 10;
+    legacy[0].schemaVersion = 11;
     expect(() => validateSettingsDocuments(legacy)).toThrow("Invalid input");
   });
   test("accepts only the fixed LARM security contract", () => {

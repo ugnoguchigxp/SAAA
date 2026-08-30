@@ -21,8 +21,12 @@ pub(crate) async fn probe_model_provider(
     let client = client
         .build()
         .map_err(|error| format!("Could not initialize HTTP client: {error}"))?;
+    let api_key = provider_api_key(provider)?;
+    if provider.authentication == "api-key" && api_key.is_none() {
+        return Err("API key is not configured in macOS Keychain".to_string());
+    }
     let mut request = client.get(provider_models_url(&provider.endpoint)?);
-    if let Some(api_key) = provider_api_key(provider) {
+    if let Some(api_key) = api_key.as_deref() {
         request = request.bearer_auth(api_key);
     }
     let response = request
@@ -61,7 +65,7 @@ pub(crate) async fn probe_model_provider(
     let mut request = client
         .post(provider_chat_url(&provider.endpoint)?)
         .json(&body);
-    if let Some(api_key) = provider_api_key(provider) {
+    if let Some(api_key) = api_key.as_deref() {
         request = request.bearer_auth(api_key);
     }
     let response = request

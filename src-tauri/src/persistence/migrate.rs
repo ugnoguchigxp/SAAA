@@ -571,7 +571,8 @@ pub(crate) fn migrate_legacy_settings_documents(connection: &Connection) -> rusq
     migrate_document(connection, "voice.runtime", "default", |legacy| {
         json!({
             "inputDeviceId": legacy.get("inputDeviceId").and_then(Value::as_str).unwrap_or("default"),
-            "captureMode": "push-to-talk",
+            "captureMode": "continuous",
+            "allowedLanguages": [voice::language::DEFAULT_LANGUAGE_CODE],
             "sttProviderId": "network-asr",
             "sttModel": "qwen3-asr-1.7b",
             "ttsProviderId": "system-tts",
@@ -631,8 +632,7 @@ mod tests {
     use crate::persistence::list_settings_documents;
     use crate::persistence::provider_identity::migrate_dynamic_lan_provider_identity;
     use crate::{
-        initialize_database, memory, situation, voice, DEFAULT_DYNAMIC_LAN_HOST,
-        DYNAMIC_LAN_PROVIDER_ID,
+        initialize_database, memory, situation, DEFAULT_DYNAMIC_LAN_HOST, DYNAMIC_LAN_PROVIDER_ID,
     };
     use rusqlite::Connection;
     use serde_json::{json, Value};
@@ -646,6 +646,7 @@ mod tests {
                 "UPDATE settings_documents SET value_json=?1
                  WHERE namespace='providers.model' AND key='default'",
                 [json!({
+                    "harness": { "address": "http://10.0.0.42:9810" },
                     "providers": [{
                         "kind": "dynamic-lan",
                         "id": "dynamic-lan",
@@ -665,8 +666,19 @@ mod tests {
                  WHERE namespace='routing.tasks' AND key='default'",
                 [json!({
                     "conversationRespond": {
+                        "source": "provider",
                         "primaryProviderId": "dynamic-lan",
                         "fallbackProviderIds": [],
+                        "timeoutMs": 30000
+                    },
+                    "voiceTranscribe": {
+                        "source": "harness",
+                        "providerId": null,
+                        "timeoutMs": 120000
+                    },
+                    "voiceSpeak": {
+                        "source": "harness",
+                        "providerId": null,
                         "timeoutMs": 30000
                     },
                     "codingAssist": {
@@ -736,11 +748,11 @@ mod tests {
         assert!(providers.value_json.pointer("/providers/0/model").is_none());
         assert_eq!(
             providers.value_json.pointer("/providers/0/enabled"),
-            Some(&json!(false))
+            Some(&json!(true))
         );
         assert_eq!(
             providers.value_json["providers"].as_array().map(Vec::len),
-            Some(1)
+            Some(2)
         );
         assert_eq!(
             providers.value_json.pointer("/reasoningEffort"),
@@ -754,7 +766,11 @@ mod tests {
             routing
                 .value_json
                 .pointer("/conversationRespond/primaryProviderId"),
-            Some(&json!(DYNAMIC_LAN_PROVIDER_ID))
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            routing.value_json.pointer("/conversationRespond/source"),
+            Some(&json!("harness"))
         );
         assert_eq!(
             routing
@@ -833,33 +849,30 @@ mod tests {
     }
 
     #[test]
-    fn existing_provider_settings_gain_the_output_token_default() {
+    fn existing_provider_settings_remove_the_legacy_output_token_setting() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("initial schema");
         connection
             .execute(
                 "UPDATE settings_documents
-                 SET value_json = json_remove(value_json, '$.maxOutputTokens')
+                 SET value_json = json_set(value_json, '$.maxOutputTokens', 2048)
                  WHERE namespace = 'providers.model' AND key = 'default'",
                 [],
             )
-            .expect("output token setting removes");
+            .expect("legacy output token setting writes");
 
-        initialize_database(&connection).expect("output token default migrates");
+        initialize_database(&connection).expect("legacy output token setting migrates");
 
-        let max_output_tokens: u32 = connection
+        let max_output_tokens_exists: bool = connection
             .query_row(
-                "SELECT json_extract(value_json, '$.maxOutputTokens')
+                "SELECT json_type(value_json, '$.maxOutputTokens') IS NOT NULL
                  FROM settings_documents
                  WHERE namespace = 'providers.model' AND key = 'default'",
                 [],
                 |row| row.get(0),
             )
-            .expect("output token setting reads");
-        assert_eq!(
-            max_output_tokens,
-            crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS
-        );
+            .expect("output token setting absence reads");
+        assert!(!max_output_tokens_exists);
     }
 
     #[test]
@@ -872,8 +885,8 @@ mod tests {
                  SET value_json = json_set(value_json, '$.providers[0].host', '192.168.0.130')
                  WHERE namespace = 'providers.model' AND key = 'default';
                  UPDATE settings_documents
-                 SET value_json = json_remove(value_json, '$.sttHost')
-                 WHERE namespace = 'voice.runtime' AND key = 'default';",
+                 SET value_json = json_remove(value_json, '$.harness')
+                 WHERE namespace = 'providers.model' AND key = 'default';",
             )
             .expect("migration fixture writes");
 
@@ -889,16 +902,49 @@ mod tests {
             .expect("provider host changes independently");
         initialize_database(&connection).expect("independent ASR host remains stable");
 
-        let stt_host: String = connection
+        let harness_address: String = connection
             .query_row(
-                "SELECT json_extract(value_json, '$.sttHost')
+                "SELECT json_extract(value_json, '$.harness.address')
                  FROM settings_documents
-                 WHERE namespace = 'voice.runtime' AND key = 'default'",
+                 WHERE namespace = 'providers.model' AND key = 'default'",
                 [],
                 |row| row.get(0),
             )
-            .expect("ASR host reads");
-        assert_eq!(stt_host, "192.168.0.130");
+            .expect("Harness address reads");
+        assert_eq!(harness_address, "http://192.168.0.130:9810");
+    }
+
+    #[test]
+    fn existing_voice_settings_gain_japanese_language_registration() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("initial schema");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET schema_version=11,
+                     value_json=json_set(json_remove(value_json, '$.allowedLanguages'), '$.captureMode', 'push-to-talk')
+                 WHERE namespace='voice.runtime' AND key='default'",
+                [],
+            )
+            .expect("legacy voice settings write");
+
+        initialize_database(&connection).expect("voice language setting migrates");
+
+        let (schema_version, listening_enabled, allowed_languages): (i64, bool, String) =
+            connection
+                .query_row(
+                    "SELECT schema_version,
+                        json_extract(value_json, '$.listeningEnabled'),
+                        json_extract(value_json, '$.allowedLanguages')
+                 FROM settings_documents
+                 WHERE namespace='voice.runtime' AND key='default'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("migrated voice settings read");
+        assert_eq!(schema_version, SETTINGS_SCHEMA_VERSION);
+        assert!(listening_enabled);
+        assert_eq!(allowed_languages, r#"["ja"]"#);
     }
 
     #[test]
@@ -1173,14 +1219,10 @@ mod tests {
             )
             .expect("legacy transcript remains");
         assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
-        assert_eq!(
-            voice.pointer("/sttProviderId"),
-            Some(&json!(voice::network_asr::PROVIDER_ID))
-        );
-        assert_eq!(
-            voice.pointer("/sttModel"),
-            Some(&json!(voice::network_asr::MODEL_ID))
-        );
+        assert_eq!(voice.pointer("/allowedLanguages"), Some(&json!(["ja"])));
+        assert_eq!(voice.pointer("/listeningEnabled"), Some(&json!(true)));
+        assert!(voice.pointer("/sttProviderId").is_none());
+        assert!(voice.pointer("/sttModel").is_none());
         assert!(meeting_schema.contains("network-asr"));
         assert_eq!(transcript, "kept transcript");
         connection
@@ -1274,6 +1316,14 @@ mod tests {
                 [],
             )
             .expect("legacy top-level fields write");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json=json_remove(value_json, '$.providers[1]')
+                 WHERE namespace='providers.model'",
+                [],
+            )
+            .expect("future provider fixture removes");
         connection
             .execute(
                 "UPDATE settings_documents
@@ -1409,7 +1459,10 @@ mod tests {
                     .expect("provider id remains a string")
             })
             .collect::<Vec<_>>();
-        assert_eq!(provider_ids, ["provider-a", "provider-b", "provider-c"]);
+        assert_eq!(
+            provider_ids,
+            ["provider-a", "provider-b", "provider-c", "system-tts"]
+        );
         let routing_value: String = connection
             .query_row(
                 "SELECT value_json FROM settings_documents
@@ -1791,6 +1844,14 @@ mod tests {
         connection
             .execute("UPDATE settings_documents SET schema_version = 3", [])
             .expect("settings downgrade fixture");
+        connection
+            .execute(
+                "UPDATE settings_documents
+                 SET value_json=json_remove(value_json, '$.providers[1]')
+                 WHERE namespace='providers.model'",
+                [],
+            )
+            .expect("future provider fixture removes");
         connection
             .pragma_update(None, "user_version", 3)
             .expect("fixture version sets");

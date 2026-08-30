@@ -7,7 +7,6 @@ pub(crate) struct TranscribeAudioInput {
     pub(crate) conversation_id: String,
     pub(crate) audio_upload_id: String,
     pub(crate) sample_rate: u32,
-    pub(crate) model: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -16,7 +15,6 @@ pub(crate) struct SpeakTextInput {
     pub(crate) run_id: String,
     pub(crate) conversation_id: String,
     pub(crate) text: String,
-    pub(crate) voice: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

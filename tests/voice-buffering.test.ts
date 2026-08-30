@@ -9,7 +9,6 @@ import { withTimeout } from "../src/lib/promiseTimeout";
 function segment(value: number): QueuedVoiceSegment {
   return {
     conversationId: "conversation",
-    model: "model",
     samples: new Float32Array([value]),
     sampleRate: 16_000,
     ttsActiveAtCapture: false,
@@ -37,6 +36,18 @@ describe("voice buffering and async issue ownership", () => {
     buffer.trimStartTo(3);
     expect([...buffer.take()]).toEqual([3, 4, 5]);
     expect(buffer.sampleCount).toBe(0);
+  });
+
+  test("keeps pre-roll separate from the complete detected utterance", () => {
+    const preRoll = new VoiceFrameBuffer();
+    const utterance = new VoiceFrameBuffer();
+    preRoll.append(new Float32Array([0, 1]));
+    preRoll.append(new Float32Array([2, 3]));
+    preRoll.trimStartTo(3);
+    utterance.append(preRoll.take());
+    utterance.append(new Float32Array([4, 5]));
+    expect([...utterance.take()]).toEqual([2, 3, 4, 5]);
+    expect(preRoll.sampleCount).toBe(0);
   });
 
   test("invalidates late async failures while remaining reusable after strict-effect cleanup", () => {

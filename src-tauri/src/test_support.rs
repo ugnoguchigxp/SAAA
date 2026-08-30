@@ -54,7 +54,7 @@ pub(crate) fn direct_provider(id: &str, location: &str) -> OpenAiCompatibleProvi
             "https://example.invalid/v1".to_string()
         },
         model: "test-model".to_string(),
-        credential_status: "not-configured".to_string(),
+        authentication: "none".to_string(),
     }
 }
 

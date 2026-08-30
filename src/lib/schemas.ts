@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { ASR_LANGUAGE_CODES } from "./asrLanguages";
 import { runtimeFailureCodes } from "./generated/runtimeEvent";
+import { modelProvidersSettingsSchema, providerIdSchema } from "./providerSchemas";
+export { modelProvidersSettingsSchema } from "./providerSchemas";
 
 export const DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS = 269_999;
 
@@ -34,135 +37,6 @@ export const calibrationParametersSchema = z.object({
   { message: "Input active boundary must be lower than input recent boundary" },
 );
 
-const providerIdSchema = z.string().min(1).max(80).regex(
-  /^[A-Za-z0-9_-]+$/,
-  "Provider ids may contain only ASCII letters, numbers, hyphens, and underscores",
-);
-
-const providerCommonSchema = z.object({
-  id: providerIdSchema,
-  enabled: z.boolean(),
-  label: z.string().trim().min(1).max(120),
-});
-
-function isLocalProviderHost(hostname: string): boolean {
-  if (["localhost", "[::1]"].includes(hostname)) return true;
-  const octets = hostname.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
-  return octets[0] === 10
-    || octets[0] === 127
-    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
-    || (octets[0] === 192 && octets[1] === 168);
-}
-
-const openAiCompatibleProviderSchema = providerCommonSchema.extend({
-  kind: z.literal("openai-compatible"),
-  location: z.enum(["local", "cloud"]),
-  endpoint: z.union([z.literal(""), z.string().url().max(2_048).refine((value) => value.startsWith("http://") || value.startsWith("https://"), "Endpoint must use HTTP or HTTPS")]),
-  model: z.string().trim().max(160),
-  credentialStatus: z.enum(["not-configured", "configured"]),
-}).strict();
-
-const larmProviderSchema = providerCommonSchema.extend({
-  kind: z.literal("larm"),
-  location: z.literal("local"),
-  baseUrl: z.string().url().max(2_048),
-  tokenEnv: z.literal("LARM_API_TOKEN"),
-  allocationTtlSeconds: z.number().int().min(60).max(3_600),
-  allocationStartupTimeoutSeconds: z.number().int().min(1).max(300),
-  allowFallbackByDefault: z.literal(false),
-  deploymentPolicy: z.literal("existing-only"),
-}).strict();
-
-function isDynamicLanHost(value: string): boolean {
-  if (!value || value.length > 253 || /[\s/@?#]/.test(value) || value.includes(":")) return false;
-  const octets = value.split(".").map(Number);
-  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
-    return octets[0] === 10
-      || octets[0] === 127
-      || (octets[0] === 169 && octets[1] === 254)
-      || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
-      || (octets[0] === 192 && octets[1] === 168);
-  }
-  const labels = value.split(".");
-  return (labels.length === 1 || value.toLowerCase().endsWith(".local"))
-    && labels.every((label) => label.length >= 1
-      && label.length <= 63
-      && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label));
-}
-
-const dynamic_lanProviderSchema = providerCommonSchema.extend({
-  kind: z.literal("dynamic-lan"),
-  location: z.literal("local"),
-  host: z.string().trim().refine(isDynamicLanHost, "dynamic_lan host must be a private IP, .local name, or single-label hostname without a scheme, port, or path"),
-}).strict();
-
-const providerSchema = z.discriminatedUnion("kind", [
-  openAiCompatibleProviderSchema,
-  larmProviderSchema,
-  dynamic_lanProviderSchema,
-]);
-
-export const modelProvidersSettingsSchema = z.object({
-  providers: z.array(providerSchema).min(1).max(20).superRefine((providers, context) => {
-    const ids = new Set<string>();
-    const credentialSuffixes = new Set<string>();
-    let enabledLarmProviders = 0;
-    let enabledDynamicLanProviders = 0;
-    providers.forEach((provider, index) => {
-      if (ids.has(provider.id)) {
-        context.addIssue({ code: "custom", message: `Duplicate provider id: ${provider.id}`, path: [index, "id"] });
-      }
-      ids.add(provider.id);
-      const credentialSuffix = provider.id.toUpperCase().replace(/[^A-Z0-9]/g, "_");
-      if (credentialSuffixes.has(credentialSuffix)) {
-        context.addIssue({ code: "custom", message: "Provider id maps to an existing credential environment variable", path: [index, "id"] });
-      }
-      credentialSuffixes.add(credentialSuffix);
-      if (provider.kind === "larm" && provider.enabled) enabledLarmProviders += 1;
-      if (provider.kind === "dynamic-lan" && provider.enabled) enabledDynamicLanProviders += 1;
-      if (provider.kind === "openai-compatible" && provider.enabled && (!provider.endpoint || !provider.model)) {
-        context.addIssue({ code: "custom", message: "Enabled providers require an endpoint and model", path: [index] });
-      }
-      if (provider.kind === "openai-compatible" && provider.endpoint) {
-        const endpoint = new URL(provider.endpoint);
-        if (endpoint.username || endpoint.password) {
-          context.addIssue({ code: "custom", message: "Credentials must not be embedded in endpoints", path: [index, "endpoint"] });
-        }
-        if (provider.location === "local" && (endpoint.protocol !== "http:" || !isLocalProviderHost(endpoint.hostname))) {
-          context.addIssue({ code: "custom", message: "Local providers must use an http:// loopback or private-network endpoint", path: [index, "endpoint"] });
-        }
-        if (provider.location === "cloud" && endpoint.protocol !== "https:") {
-          context.addIssue({ code: "custom", message: "Cloud providers must use HTTPS", path: [index, "endpoint"] });
-        }
-      }
-      if (provider.kind === "larm") {
-        const baseUrl = new URL(provider.baseUrl);
-        if (
-          baseUrl.protocol !== "http:" ||
-          !["127.0.0.1", "[::1]"].includes(baseUrl.hostname) ||
-          !baseUrl.port ||
-          baseUrl.username ||
-          baseUrl.password ||
-          baseUrl.search ||
-          baseUrl.hash ||
-          baseUrl.pathname !== "/"
-        ) {
-          context.addIssue({ code: "custom", message: "LARM must use an explicit HTTP numeric-loopback base URL without credentials, path, query, or fragment", path: [index, "baseUrl"] });
-        }
-      }
-    });
-    if (enabledLarmProviders > 1) {
-      context.addIssue({ code: "custom", message: "Only one LARM provider may be enabled", path: [] });
-    }
-    if (enabledDynamicLanProviders > 1) {
-      context.addIssue({ code: "custom", message: "Only one dynamic LAN provider may be enabled", path: [] });
-    }
-  }),
-  reasoningEffort: z.enum(["low", "medium", "xhigh"]),
-  maxOutputTokens: z.number().int().min(256).max(8192),
-}).strict();
-
 export const codexAgentSettingsSchema = z.object({
   agentName: z.string().trim().min(1).max(80).refine(
     (value) => ![...value].some((character) => /[\u0000-\u001F\u007F]/.test(character)),
@@ -186,10 +60,30 @@ export const codexAgentSettingsSchema = z.object({
 
 export const routingSettingsSchema = z.object({
   conversationRespond: z.object({
-    primaryProviderId: providerIdSchema,
+    source: z.enum(["harness", "provider"]),
+    primaryProviderId: providerIdSchema.nullable(),
     fallbackProviderIds: z.array(providerIdSchema).max(20),
     timeoutMs: z.number().int().min(1_000).max(300_000),
-  }).strict(),
+  }).strict().superRefine((route, context) => {
+    if (route.source === "provider" && !route.primaryProviderId) context.addIssue({ code: "custom", message: "Individual LLM source requires a provider", path: ["primaryProviderId"] });
+    if (route.source === "harness" && route.primaryProviderId !== null) context.addIssue({ code: "custom", message: "Harness source must not reference an individual provider", path: ["primaryProviderId"] });
+  }),
+  voiceTranscribe: z.object({
+    source: z.enum(["harness", "provider"]),
+    providerId: providerIdSchema.nullable(),
+    timeoutMs: z.number().int().min(1_000).max(300_000),
+  }).strict().superRefine((route, context) => {
+    if (route.source === "provider" && !route.providerId) context.addIssue({ code: "custom", message: "Individual ASR source requires a provider", path: ["providerId"] });
+    if (route.source === "harness" && route.providerId !== null) context.addIssue({ code: "custom", message: "Harness source must not reference an individual provider", path: ["providerId"] });
+  }),
+  voiceSpeak: z.object({
+    source: z.enum(["harness", "provider"]),
+    providerId: providerIdSchema.nullable(),
+    timeoutMs: z.number().int().min(1_000).max(300_000),
+  }).strict().superRefine((route, context) => {
+    if (route.source === "provider" && !route.providerId) context.addIssue({ code: "custom", message: "Individual TTS source requires a provider", path: ["providerId"] });
+    if (route.source === "harness" && route.providerId !== null) context.addIssue({ code: "custom", message: "Harness source must not reference an individual provider", path: ["providerId"] });
+  }),
   codingAssist: z.object({
     providerId: z.literal("codex-sdk"),
     timeoutMs: z.number().int().min(1_000).max(300_000),
@@ -200,22 +94,17 @@ export const routingSettingsSchema = z.object({
 }).strict();
 
 export const voiceSettingsSchema = z.object({
+  listeningEnabled: z.boolean(),
   inputDeviceId: z.string().trim().min(1).max(300),
-  captureMode: z.literal("push-to-talk"),
-  sttHost: z.string().trim().min(1).max(253).refine(
-    (value) => !value.includes("://") && !value.includes("/") && !value.includes(":"),
-    "ASR host must be a hostname or IP address without a scheme, port, or path",
-  ),
-  sttProviderId: z.literal("network-asr"),
-  sttModel: z.literal("qwen3-asr-1.7b"),
-  ttsProviderId: z.literal("system-tts"),
-  ttsVoice: z.string().trim().min(1).max(160),
+  outputDeviceId: z.string().trim().min(1).max(300),
+  vadSensitivity: z.enum(["low", "medium", "high"]),
+  silenceTimeoutMs: z.number().int().min(800).max(3000),
+  allowedLanguages: z.array(z.enum(ASR_LANGUAGE_CODES)).min(1).max(ASR_LANGUAGE_CODES.length)
+    .refine((languages) => new Set(languages).size === languages.length, "ASR languages must be unique"),
   autoSpeak: z.boolean(),
-  cloudFallbackEnabled: z.literal(false),
 }).strict();
 
 export const securitySettingsSchema = z.object({
-  credentialStorage: z.literal("environment"),
   localOnlyWhenSelected: z.boolean(),
   diagnosticsRedaction: z.literal(true),
 }).strict();
@@ -233,7 +122,7 @@ export const situationSettingsSchema = z.object({
 const settingsDocumentBaseSchema = z.object({
   namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
-  schemaVersion: z.literal(11),
+  schemaVersion: z.literal(12),
   valueJson: z.record(z.string(), z.unknown()),
 }).strict();
 
@@ -276,16 +165,26 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const providersDocument = parsed.find((document) => document.namespace === "providers.model");
   const routingDocument = parsed.find((document) => document.namespace === "routing.tasks");
   const securityDocument = parsed.find((document) => document.namespace === "security.runtime");
-  const providers = modelProvidersSettingsSchema.parse(providersDocument?.valueJson).providers;
+  const providerSettings = modelProvidersSettingsSchema.parse(providersDocument?.valueJson);
+  const providers = providerSettings.providers;
   const routing = routingSettingsSchema.parse(routingDocument?.valueJson);
   const security = securitySettingsSchema.parse(securityDocument?.valueJson);
+  const usesHarness = routing.conversationRespond.source === "harness"
+    || routing.voiceTranscribe.source === "harness"
+    || routing.voiceSpeak.source === "harness";
+  if (usesHarness && !providerSettings.harness.address.trim()) {
+    throw new Error("Provider Harness address is required while a Harness route is selected");
+  }
   const enabled = new Map(providers.filter((provider) => provider.enabled).map((provider) => [provider.id, provider]));
-  const primary = enabled.get(routing.conversationRespond.primaryProviderId);
-  if (enabled.size > 0 && !primary) throw new Error("The primary conversation provider must be enabled");
+  const primaryId = routing.conversationRespond.primaryProviderId;
+  const primary = primaryId ? enabled.get(primaryId) : undefined;
+  if (routing.conversationRespond.source === "provider" && !primary) throw new Error("The primary conversation provider must be enabled");
+  if (primary && !["openai-compatible", "larm", "dynamic-lan"].includes(primary.kind)) throw new Error("The selected conversation provider does not support LLM");
   if (primary?.kind === "dynamic-lan" && routing.conversationRespond.timeoutMs > DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS) {
     throw new Error(`dynamic LAN conversation timeout must not exceed ${DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS} ms`);
   }
-  const routeIds = new Set([routing.conversationRespond.primaryProviderId]);
+  if (routing.conversationRespond.source === "harness" && routing.conversationRespond.fallbackProviderIds.length > 0) throw new Error("Harness routes do not use individual provider fallbacks");
+  const routeIds = new Set(primaryId ? [primaryId] : []);
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
     const fallback = enabled.get(fallbackId);
     if (!fallback) throw new Error(`Fallback provider is not enabled: ${fallbackId}`);
@@ -295,4 +194,9 @@ export function validateSettingsDocuments(documents: unknown[]): void {
       throw new Error(`Cloud fallback is blocked while the local-only policy is active: ${fallbackId}`);
     }
   }
+  const asrProvider = routing.voiceTranscribe.providerId ? enabled.get(routing.voiceTranscribe.providerId) : undefined;
+  if (routing.voiceTranscribe.source === "provider" && asrProvider?.kind !== "cloud-asr") throw new Error("The selected provider does not support ASR");
+  const ttsProvider = routing.voiceSpeak.providerId ? enabled.get(routing.voiceSpeak.providerId) : undefined;
+  if (routing.voiceSpeak.source === "provider" && !ttsProvider) throw new Error("The selected TTS provider must be enabled");
+  if (ttsProvider && !["cloud-tts", "system-tts"].includes(ttsProvider.kind)) throw new Error("The selected provider does not support TTS");
 }

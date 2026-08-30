@@ -1,0 +1,44 @@
+export const ASR_LANGUAGE_CODES = [
+  "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it",
+  "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv",
+  "da", "fi", "pl", "cs", "fil", "fa", "el", "ro", "hu", "mk",
+] as const;
+
+export type AsrLanguageCode = (typeof ASR_LANGUAGE_CODES)[number];
+
+export const ASR_LANGUAGES: ReadonlyArray<{ code: AsrLanguageCode; label: string }> = [
+  { code: "ja", label: "日本語" },
+  { code: "en", label: "英語" },
+  { code: "zh", label: "中国語" },
+  { code: "yue", label: "広東語" },
+  { code: "ko", label: "韓国語" },
+  { code: "ar", label: "アラビア語" },
+  { code: "de", label: "ドイツ語" },
+  { code: "fr", label: "フランス語" },
+  { code: "es", label: "スペイン語" },
+  { code: "pt", label: "ポルトガル語" },
+  { code: "id", label: "インドネシア語" },
+  { code: "it", label: "イタリア語" },
+  { code: "ru", label: "ロシア語" },
+  { code: "th", label: "タイ語" },
+  { code: "vi", label: "ベトナム語" },
+  { code: "tr", label: "トルコ語" },
+  { code: "hi", label: "ヒンディー語" },
+  { code: "ms", label: "マレー語" },
+  { code: "nl", label: "オランダ語" },
+  { code: "sv", label: "スウェーデン語" },
+  { code: "da", label: "デンマーク語" },
+  { code: "fi", label: "フィンランド語" },
+  { code: "pl", label: "ポーランド語" },
+  { code: "cs", label: "チェコ語" },
+  { code: "fil", label: "フィリピン語" },
+  { code: "fa", label: "ペルシャ語" },
+  { code: "el", label: "ギリシャ語" },
+  { code: "ro", label: "ルーマニア語" },
+  { code: "hu", label: "ハンガリー語" },
+  { code: "mk", label: "マケドニア語" },
+];
+
+export function isAsrLanguageCode(value: unknown): value is AsrLanguageCode {
+  return typeof value === "string" && (ASR_LANGUAGE_CODES as readonly string[]).includes(value);
+}

@@ -1,7 +1,6 @@
 use futures_util::StreamExt;
 use serde_json::{json, Value};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use super::completion::{
     thinking_enabled, validate_non_stream_completion, CompletionFinish, CompletionTerminal,
@@ -225,8 +224,19 @@ pub(crate) async fn stream_model_provider_round(
         )
         .timeout(round_timeout)
         .json(&body);
-    let configured_api_key = provider_api_key(provider);
-    if let Some(api_key) = api_key.or(configured_api_key.as_deref()) {
+    let configured_api_key = if api_key.is_none() {
+        provider_api_key(provider)
+            .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Authentication, false))?
+    } else {
+        None
+    };
+    if provider.authentication == "api-key" && api_key.is_none() && configured_api_key.is_none() {
+        return Err(ProviderAttemptError::failed(
+            ProviderFailureKind::Authentication,
+            false,
+        ));
+    }
+    if let Some(api_key) = api_key.or(configured_api_key.as_deref().map(String::as_str)) {
         request = request.bearer_auth(api_key);
     }
     let response = tokio::select! {

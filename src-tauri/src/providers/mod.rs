@@ -6,11 +6,11 @@ pub(crate) mod openai_compatible;
 pub(crate) mod probe;
 mod probe_state;
 pub(crate) mod routing;
+pub(crate) mod service_harness;
 pub(crate) mod session_store;
 pub(crate) mod stream;
 
 pub(crate) const DEFAULT_CONVERSATION_REASONING_EFFORT: &str = "medium";
-
 pub(crate) fn default_conversation_reasoning_effort() -> String {
     DEFAULT_CONVERSATION_REASONING_EFFORT.to_string()
 }

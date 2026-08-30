@@ -45,7 +45,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
         location: "local".to_string(),
         endpoint: connection.endpoint().to_string(),
         model: connection.model().to_string(),
-        credential_status: "configured".to_string(),
+        authentication: "api-key".to_string(),
     };
     let outcome = stream_model_provider_with_api_key(
         &resolved,

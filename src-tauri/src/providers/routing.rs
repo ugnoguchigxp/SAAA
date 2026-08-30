@@ -1,16 +1,35 @@
 use crate::{ConversationRouteSettings, ModelProvidersSettings, SecurityRuntimeSettings};
 
+mod runtime_gates;
+mod service_harness;
+pub(crate) use runtime_gates::apply_runtime_provider_gates;
+pub(crate) use service_harness::resolve_harness_llm_provider;
+
 pub(crate) fn effective_conversation_route_ids(
     providers: &ModelProvidersSettings,
     route: &ConversationRouteSettings,
     security: &SecurityRuntimeSettings,
 ) -> Vec<String> {
+    if route.source == "harness" {
+        return providers
+            .providers
+            .iter()
+            .find(|provider| {
+                provider.id() == crate::DYNAMIC_LAN_PROVIDER_ID
+                    || matches!(provider, crate::ModelProviderSettings::DynamicLan(_))
+            })
+            .map(|provider| vec![provider.id().to_string()])
+            .unwrap_or_default();
+    }
     let primary = providers
         .providers
         .iter()
-        .find(|provider| provider.id() == route.primary_provider_id);
+        .find(|provider| Some(provider.id()) == route.primary_provider_id.as_deref());
     let primary_is_local = primary.is_some_and(|provider| provider.location() == "local");
-    std::iter::once(route.primary_provider_id.clone())
+    route
+        .primary_provider_id
+        .iter()
+        .cloned()
         .chain(route.fallback_provider_ids.iter().cloned())
         .filter(|provider_id| {
             !(security.local_only_when_selected && primary_is_local)
@@ -19,23 +38,6 @@ pub(crate) fn effective_conversation_route_ids(
                     .iter()
                     .find(|provider| provider.id() == *provider_id)
                     .is_none_or(|provider| provider.location() == "local")
-        })
-        .collect()
-}
-
-pub(crate) fn apply_runtime_provider_gates(
-    providers: &ModelProvidersSettings,
-    route_ids: Vec<String>,
-    larm_gate: &crate::providers::larm::LarmRuntimeGate,
-) -> Vec<String> {
-    route_ids
-        .into_iter()
-        .filter(|provider_id| {
-            providers
-                .providers
-                .iter()
-                .find(|provider| provider.id() == provider_id)
-                .is_none_or(|provider| provider.kind() != "larm" || larm_gate.allows_traffic())
         })
         .collect()
 }
@@ -56,15 +58,17 @@ mod tests {
                 provider("local-fallback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         let route = ConversationRouteSettings {
-            primary_provider_id: "local-primary".to_string(),
+            source: "provider".to_string(),
+            primary_provider_id: Some("local-primary".to_string()),
             fallback_provider_ids: vec!["cloud-fallback".to_string(), "local-fallback".to_string()],
             timeout_ms: 30_000,
         };
         let security = SecurityRuntimeSettings {
-            credential_storage: "environment".to_string(),
             local_only_when_selected: true,
             diagnostics_redaction: true,
         };
@@ -83,15 +87,17 @@ mod tests {
                 provider("local-fallback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         let route = ConversationRouteSettings {
-            primary_provider_id: "dynamic_lan-primary".to_string(),
+            source: "provider".to_string(),
+            primary_provider_id: Some("dynamic_lan-primary".to_string()),
             fallback_provider_ids: vec!["local-fallback".to_string()],
             timeout_ms: 30_000,
         };
         let security = SecurityRuntimeSettings {
-            credential_storage: "environment".to_string(),
             local_only_when_selected: true,
             diagnostics_redaction: true,
         };
@@ -110,7 +116,9 @@ mod tests {
                 provider("direct-rollback", "local"),
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-            max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            harness: crate::HarnessSettings {
+                address: "http://localhost:9810".to_string(),
+            },
         };
         let configured = vec!["larm-primary".to_string(), "direct-rollback".to_string()];
         assert_eq!(

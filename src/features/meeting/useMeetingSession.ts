@@ -45,6 +45,7 @@ type PendingSegment = {
 
 export function useMeetingSession(
   voice: VoiceSettings | null,
+  onBeforeCapture: () => Promise<void>,
   onStateChanged: (state: MeetingState) => void,
   setError: (value: string | null) => void,
 ) {
@@ -155,6 +156,7 @@ export function useMeetingSession(
         node.current?.port.postMessage({ type: "flush" });
       });
     }
+    if (node.current) node.current.port.onmessage = null;
     node.current?.disconnect();
     source.current?.disconnect();
     stream.current?.getTracks().forEach((track) => track.stop());
@@ -235,6 +237,7 @@ export function useMeetingSession(
             startedAtMs: segment.startedAtMs,
             durationMs: segment.durationMs,
           });
+          if (!result.accepted) continue;
           setTranscript((lines) => {
             const next = { sequence: segmentSequence, lane: "microphone" as const, text: result.text, language: result.language, partial: false };
             const index = lines.findIndex((line) => line.sequence === segmentSequence);
@@ -332,13 +335,13 @@ export function useMeetingSession(
     applySnapshot({ ...snapshotRef.current, state: "preflight", error: null });
     let startedSession: string | null = null;
     try {
+      await onBeforeCapture();
       captureLease.current = acquireAudioCapture("meeting");
       const check = await requestMicrophoneStream(microphoneCaptureConstraints(voice.inputDeviceId));
       check.getTracks().forEach((track) => track.stop());
       const preflight = await meetingPreflight({
         microphoneDeviceId: voice.inputDeviceId,
         systemAudioEnabled: false,
-        sttModel: voice.sttModel,
         translationEnabled: false,
       });
       if (preflight.blockingErrors.length) {
@@ -349,7 +352,6 @@ export function useMeetingSession(
         microphoneDeviceId: voice.inputDeviceId,
         microphoneEnabled: true,
         systemAudioEnabled: false,
-        sttModel: voice.sttModel,
         translationEnabled: false,
         persistenceMode: "discard",
       });

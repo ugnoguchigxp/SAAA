@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
-use super::openai_compatible::probe_model_provider;
-use super::stream::larm_failure_message;
+use super::{openai_compatible::probe_model_provider, stream::larm_failure_message};
 use crate::persistence::validate_model_providers;
-use crate::redact::redact_runtime_text;
 use crate::{
-    validate_identifier, AppState, ModelProviderSettings, ModelProvidersSettings,
-    ProviderTestResult, RunCancellation, TestProviderInput,
+    redact::redact_runtime_text, validate_identifier, AppState, ModelProviderSettings,
+    ModelProvidersSettings, ProviderTestResult, RunCancellation, TestProviderInput,
 };
 
 pub(crate) async fn test_model_provider(
@@ -17,14 +15,19 @@ pub(crate) async fn test_model_provider(
     provider.set_enabled(true);
     validate_identifier(provider.id(), "provider id")?;
     validate_model_providers(&ModelProvidersSettings {
+        harness: crate::HarnessSettings {
+            address: String::new(),
+        },
         providers: vec![provider.clone()],
         reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-        max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
     })?;
     let captured_configuration = super::probe_state::capture_if_current(state, &provider);
     let started = std::time::Instant::now();
     let result = match &provider {
         ModelProviderSettings::OpenAiCompatible(provider) => probe_model_provider(provider).await,
+        ModelProviderSettings::CloudAsr(provider) => crate::voice::cloud_asr::probe(provider).await,
+        ModelProviderSettings::CloudTts(provider) => crate::voice::cloud_tts::probe(provider).await,
+        ModelProviderSettings::SystemTts(_) => Ok("System text-to-speech is available".to_string()),
         ModelProviderSettings::Larm(provider) => {
             crate::providers::larm::LarmProvider::probe(&state.larm_gate, &provider.base_url)
                 .await

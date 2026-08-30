@@ -1,6 +1,5 @@
 export type QueuedVoiceSegment = {
   conversationId: string;
-  model: string;
   samples: Float32Array;
   sampleRate: number;
   ttsActiveAtCapture: boolean;

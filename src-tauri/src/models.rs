@@ -1,17 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-fn default_conversation_reasoning_effort() -> String {
-    "medium".to_string()
-}
-
-fn default_max_output_tokens() -> u32 {
-    crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS
-}
-
-fn default_stt_host() -> String {
-    crate::voice::network_asr::DEFAULT_HOST.to_string()
-}
+mod provider_settings;
+pub(crate) use provider_settings::*;
 
 fn default_codex_input_modalities() -> Vec<String> {
     vec!["text".to_string(), "image".to_string()]
@@ -146,122 +137,21 @@ pub(crate) struct CodexRuntimeStatus {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct OpenAiCompatibleProviderSettings {
-    pub(crate) id: String,
-    pub(crate) enabled: bool,
-    pub(crate) label: String,
-    pub(crate) location: String,
-    pub(crate) endpoint: String,
-    pub(crate) model: String,
-    pub(crate) credential_status: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct LarmProviderSettings {
-    pub(crate) id: String,
-    pub(crate) enabled: bool,
-    pub(crate) label: String,
-    pub(crate) location: String,
-    pub(crate) base_url: String,
-    pub(crate) token_env: String,
-    pub(crate) allocation_ttl_seconds: u32,
-    pub(crate) allocation_startup_timeout_seconds: u32,
-    pub(crate) allow_fallback_by_default: bool,
-    pub(crate) deployment_policy: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DynamicLanProviderSettings {
-    pub(crate) id: String,
-    pub(crate) enabled: bool,
-    pub(crate) label: String,
-    pub(crate) location: String,
-    pub(crate) host: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "kind", deny_unknown_fields)]
-pub(crate) enum ModelProviderSettings {
-    #[serde(rename = "openai-compatible")]
-    OpenAiCompatible(OpenAiCompatibleProviderSettings),
-    #[serde(rename = "larm")]
-    Larm(LarmProviderSettings),
-    #[serde(rename = "dynamic-lan")]
-    DynamicLan(DynamicLanProviderSettings),
-}
-
-impl ModelProviderSettings {
-    pub(crate) fn id(&self) -> &str {
-        match self {
-            Self::OpenAiCompatible(provider) => &provider.id,
-            Self::Larm(provider) => &provider.id,
-            Self::DynamicLan(provider) => &provider.id,
-        }
-    }
-
-    pub(crate) fn enabled(&self) -> bool {
-        match self {
-            Self::OpenAiCompatible(provider) => provider.enabled,
-            Self::Larm(provider) => provider.enabled,
-            Self::DynamicLan(provider) => provider.enabled,
-        }
-    }
-
-    pub(crate) fn label(&self) -> &str {
-        match self {
-            Self::OpenAiCompatible(provider) => &provider.label,
-            Self::Larm(provider) => &provider.label,
-            Self::DynamicLan(provider) => &provider.label,
-        }
-    }
-
-    pub(crate) fn location(&self) -> &str {
-        match self {
-            Self::OpenAiCompatible(provider) => &provider.location,
-            Self::Larm(provider) => &provider.location,
-            Self::DynamicLan(provider) => &provider.location,
-        }
-    }
-
-    pub(crate) fn kind(&self) -> &'static str {
-        match self {
-            Self::OpenAiCompatible(_) => "openai-compatible",
-            Self::Larm(_) => "larm",
-            // A resolved dynamic_lan descriptor executes through the OpenAI-compatible
-            // data plane; keep the persisted session kind compatible with the
-            // existing provider-session schema.
-            Self::DynamicLan(_) => "openai-compatible",
-        }
-    }
-
-    pub(crate) fn set_enabled(&mut self, enabled: bool) {
-        match self {
-            Self::OpenAiCompatible(provider) => provider.enabled = enabled,
-            Self::Larm(provider) => provider.enabled = enabled,
-            Self::DynamicLan(provider) => provider.enabled = enabled,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ModelProvidersSettings {
-    pub(crate) providers: Vec<ModelProviderSettings>,
-    #[serde(default = "default_conversation_reasoning_effort")]
-    pub(crate) reasoning_effort: String,
-    #[serde(default = "default_max_output_tokens")]
-    pub(crate) max_output_tokens: u32,
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ConversationRouteSettings {
+    pub(crate) source: String,
+    pub(crate) primary_provider_id: Option<String>,
+    pub(crate) fallback_provider_ids: Vec<String>,
+    pub(crate) timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ConversationRouteSettings {
-    pub(crate) primary_provider_id: String,
-    pub(crate) fallback_provider_ids: Vec<String>,
+pub(crate) struct VoiceRouteSettings {
+    pub(crate) source: String,
+    pub(crate) provider_id: Option<String>,
     pub(crate) timeout_ms: u64,
 }
 
@@ -281,6 +171,8 @@ pub(crate) struct CodingRouteSettings {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RoutingSettings {
     pub(crate) conversation_respond: ConversationRouteSettings,
+    pub(crate) voice_transcribe: VoiceRouteSettings,
+    pub(crate) voice_speak: VoiceRouteSettings,
     pub(crate) coding_assist: CodingRouteSettings,
 }
 
@@ -312,23 +204,20 @@ fn default_agent_name() -> String {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct VoiceRuntimeSettings {
+    pub(crate) listening_enabled: bool,
     pub(crate) input_device_id: String,
-    pub(crate) capture_mode: String,
-    #[serde(default = "default_stt_host")]
-    pub(crate) stt_host: String,
-    pub(crate) stt_provider_id: String,
-    pub(crate) stt_model: String,
-    pub(crate) tts_provider_id: String,
-    pub(crate) tts_voice: String,
+    pub(crate) output_device_id: String,
+    pub(crate) vad_sensitivity: String,
+    pub(crate) silence_timeout_ms: u32,
+    #[serde(default = "crate::voice::language::default_allowed_languages")]
+    pub(crate) allowed_languages: Vec<String>,
     pub(crate) auto_speak: bool,
-    pub(crate) cloud_fallback_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SecurityRuntimeSettings {
-    pub(crate) credential_storage: String,
     pub(crate) local_only_when_selected: bool,
     pub(crate) diagnostics_redaction: bool,
 }

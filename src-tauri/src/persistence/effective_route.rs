@@ -33,10 +33,13 @@ pub(crate) fn effective_route_snapshot(
     let providers = load_model_providers(connection)?;
     let route = load_routing_settings(connection)?.conversation_respond;
     let configuration_fingerprint = conversation_configuration_fingerprint(&providers, &route)?;
-    let configured = providers
-        .providers
-        .iter()
-        .find(|provider| provider.id() == route.primary_provider_id && provider.enabled());
+    let configured = providers.providers.iter().find(|provider| {
+        if route.source == "harness" {
+            matches!(provider, ModelProviderSettings::DynamicLan(_)) && provider.enabled()
+        } else {
+            Some(provider.id()) == route.primary_provider_id.as_deref() && provider.enabled()
+        }
+    });
     let unchecked = || EffectiveRouteSnapshot {
         provider_id: configured.map(|provider| provider.id().to_string()),
         label: configured
@@ -112,7 +115,8 @@ pub(crate) fn effective_route_snapshot(
         "failed" => "failed",
         _ => "unchecked",
     };
-    let route_fallback = provider_id != route.primary_provider_id;
+    let route_fallback = route.source == "provider"
+        && Some(provider_id.as_str()) != route.primary_provider_id.as_deref();
     let reason_code = if let Some(failure_kind) = failure_kind {
         format!("provider-{failure_kind}")
     } else if route_fallback {

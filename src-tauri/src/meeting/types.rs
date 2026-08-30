@@ -60,7 +60,6 @@ pub struct MeetingError {
 pub struct PreflightInput {
     pub microphone_device_id: String,
     pub system_audio_enabled: bool,
-    pub stt_model: String,
     pub translation_enabled: bool,
 }
 #[derive(Debug, Serialize)]
@@ -81,7 +80,6 @@ pub struct StartInput {
     pub microphone_device_id: String,
     pub microphone_enabled: bool,
     pub system_audio_enabled: bool,
-    pub stt_model: String,
     pub translation_enabled: bool,
     pub persistence_mode: String,
 }

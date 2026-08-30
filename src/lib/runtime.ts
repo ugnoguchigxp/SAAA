@@ -24,6 +24,7 @@ import type {
   TtsCapabilities,
 } from "./contracts";
 import { validateSettingsDocuments } from "./schemas";
+export { deleteProviderApiKey, getProviderCredentialState, resolveServiceHarness, setProviderApiKey } from "./providerRuntime";
 
 export async function listCodexModels(): Promise<CodexModelOption[]> {
   return invoke<CodexModelOption[]>("list_codex_models");
@@ -55,7 +56,7 @@ export async function resolveNetworkAsr(host: string): Promise<NetworkAsrResolut
 }
 
 export async function transcribeAudio(
-  input: { runId: string; conversationId: string; samples: Float32Array; sampleRate: number; model: string },
+  input: { runId: string; conversationId: string; samples: Float32Array; sampleRate: number },
   onEvent: (event: VoiceEvent) => void,
 ): Promise<string> {
   const channel = new Channel<VoiceEvent>();
@@ -72,7 +73,6 @@ export async function speakText(input: {
   runId: string;
   conversationId: string;
   text: string;
-  voice: string;
 }): Promise<void> {
   return invoke<void>("speak_text", { input });
 }
@@ -196,8 +196,8 @@ export async function clearSituationHistory(): Promise<SituationSnapshot> {
   return invoke<SituationSnapshot>("clear_situation_history");
 }
 
-export async function meetingPreflight(input: { microphoneDeviceId: string; systemAudioEnabled: boolean; sttModel: string; translationEnabled: boolean }): Promise<MeetingPreflightResult> { return invoke("meeting_preflight", { input }); }
-export async function startMeeting(input: { sessionId: string; microphoneDeviceId: string; microphoneEnabled: boolean; systemAudioEnabled: boolean; sttModel: string; translationEnabled: boolean; persistenceMode: "discard" }): Promise<MeetingSnapshot> { return invoke("start_meeting", { input }); }
+export async function meetingPreflight(input: { microphoneDeviceId: string; systemAudioEnabled: boolean; translationEnabled: boolean }): Promise<MeetingPreflightResult> { return invoke("meeting_preflight", { input }); }
+export async function startMeeting(input: { sessionId: string; microphoneDeviceId: string; microphoneEnabled: boolean; systemAudioEnabled: boolean; translationEnabled: boolean; persistenceMode: "discard" }): Promise<MeetingSnapshot> { return invoke("start_meeting", { input }); }
 export async function getMeetingSnapshot(): Promise<MeetingSnapshot> { return invoke("get_meeting_snapshot"); }
 export async function watchMeeting(subscriberId: string, onEvent: (event: MeetingEvent) => void): Promise<void> { const channel = new Channel<MeetingEvent>(); channel.onmessage = onEvent; return invoke("watch_meeting", { subscriberId, onEvent: channel }); }
 export async function unwatchMeeting(subscriberId: string): Promise<void> { return invoke("unwatch_meeting", { subscriberId }); }

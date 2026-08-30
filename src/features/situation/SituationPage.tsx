@@ -19,7 +19,7 @@ const evidenceLabels: Record<string, string> = {
   "explicit-user-input": "Explicit user input",
   "model-run-active": "Conversation generation is active",
   "agent-run-active": "Coding agent is active",
-  "saaa-capture-active": "Push-to-talk capture is active",
+  "saaa-capture-active": "Continuous voice capture is active",
   "saaa-transcription-active": "Local transcription is active",
   "sensitive-application": "Sensitive application category",
   "communication-app": "Communication application category",

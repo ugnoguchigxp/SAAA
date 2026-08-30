@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { VoiceActivityDetector } from "../src/lib/voiceActivity";
 
 const sampleRate = 1_000;
-const frame = (milliseconds: number, amplitude: number) => new Float32Array(milliseconds).fill(amplitude);
-
+const frame = (milliseconds: number, amplitude: number) => Float32Array.from({ length: milliseconds }, (_, index) => amplitude * (index % 2 === 0 ? 1 : -1));
 describe("voice activity endpointing", () => {
   test("never finalizes from silence before speech", () => {
     const detector = new VoiceActivityDetector({ sampleRate });
@@ -33,5 +32,10 @@ describe("voice activity endpointing", () => {
     detector.observe(frame(100, 0.02));
     expect(detector.observe(frame(1_499, 0)).shouldFinalize).toBe(false);
     expect(detector.observe(frame(1, 0)).shouldFinalize).toBe(true);
+  });
+
+  test("recognizes quiet but usable speech at the shared 0.008 RMS threshold", () => {
+    const detector = new VoiceActivityDetector({ sampleRate });
+    expect(detector.observe(frame(300, 0.009)).hasSpeech).toBe(true);
   });
 });
