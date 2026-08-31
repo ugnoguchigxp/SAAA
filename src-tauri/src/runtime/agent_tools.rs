@@ -1,11 +1,15 @@
 use serde_json::{json, Value};
 
+#[cfg(test)]
+use crate::memory::typed_recall::TYPED_RECALL_TOOL_NAMES;
 use crate::memory::{
     contracts::{RecallConversationInput, RECALL_TOOL_NAME},
-    typed_recall::{is_typed_recall_tool, typed_recall_tool_definitions, TYPED_RECALL_TOOL_NAMES},
+    typed_recall::{is_typed_recall_tool, typed_recall_tool_definitions},
 };
 
+#[cfg(test)]
 const MAX_TOOL_ARGUMENT_CHARS: usize = 4_096;
+#[cfg(test)]
 const MAX_TOOL_CALL_ID_BYTES: usize = 160;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,12 +20,14 @@ pub struct AgentToolCall {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub enum ToolProtocolError {
     Protocol,
     TooLarge,
 }
 
 #[derive(Debug, Default)]
+#[cfg(test)]
 pub struct ToolCallAccumulator {
     id: Option<String>,
     name: String,
@@ -29,6 +35,7 @@ pub struct ToolCallAccumulator {
     observed: bool,
 }
 
+#[cfg(test)]
 impl ToolCallAccumulator {
     pub fn absorb_stream_delta(&mut self, value: &Value) -> Result<(), ToolProtocolError> {
         let Some(tool_calls) = value.pointer("/choices/0/delta/tool_calls") else {
@@ -103,6 +110,7 @@ impl ToolCallAccumulator {
     }
 }
 
+#[cfg(test)]
 pub fn parse_non_stream_tool_call(
     value: &Value,
 ) -> Result<Option<AgentToolCall>, ToolProtocolError> {
@@ -235,6 +243,7 @@ pub fn agent_tool_definitions(
     definitions
 }
 
+#[cfg(test)]
 pub fn is_supported_agent_tool(name: &str) -> bool {
     name == RECALL_TOOL_NAME
         || is_typed_recall_tool(name)
@@ -246,6 +255,7 @@ pub fn is_typed_memory_tool(name: &str) -> bool {
     is_typed_recall_tool(name)
 }
 
+#[cfg(test)]
 pub fn append_tool_exchange(messages: &mut Vec<Value>, call: &AgentToolCall, content: String) {
     messages.push(json!({
         "role": "assistant",
@@ -276,6 +286,7 @@ pub fn tool_error_content(code: &str, message: &str) -> String {
     .to_string()
 }
 
+#[cfg(test)]
 fn merge_stable_field<F>(
     target: &mut Option<String>,
     incoming: &str,
@@ -297,6 +308,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn merge_tool_name(target: &mut String, incoming: &str) -> Result<(), ToolProtocolError> {
     if incoming.is_empty() {
         return Ok(());
@@ -324,6 +336,7 @@ fn merge_tool_name(target: &mut String, incoming: &str) -> Result<(), ToolProtoc
     Ok(())
 }
 
+#[cfg(test)]
 fn valid_tool_call_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_TOOL_CALL_ID_BYTES

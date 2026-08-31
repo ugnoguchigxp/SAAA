@@ -1,13 +1,13 @@
 use super::{
-    cosine_similarity, database_error, decode_embedding, decrypt_payload, load_master_key,
+    cosine_similarity, database_error, decode_embedding, enrollment_uses_input_device,
     VoiceProfileRuntime, CANONICAL_SAMPLE_RATE, MIN_READY_SAMPLES, MODEL_SHA256, PROFILE_ID,
 };
 use crate::voice::speaker::SpeakerExtractor;
 use rusqlite::{Connection, OptionalExtension};
 use zeroize::Zeroizing;
 
-/// Prepared once at session start. The streaming path never reads SQLite,
-/// Keychain, or profile files while audio is being processed.
+/// Prepared once at session start. The streaming path never reads SQLite or
+/// profile files while audio is being processed.
 #[allow(dead_code)]
 pub(crate) struct PreparedVoiceVerifier {
     extractor: SpeakerExtractor,
@@ -63,25 +63,26 @@ impl VoiceProfileRuntime {
                     .to_string(),
             );
         }
-        let key = Zeroizing::new(
-            load_master_key().map_err(|error| format!("TARGET_SPEAKER_UNAVAILABLE: {error}"))?,
-        );
-        let encrypted = connection.prepare("SELECT id,relative_path,embedding_ciphertext FROM voice_profile_samples WHERE profile_id=?1 ORDER BY ordinal").and_then(|mut statement| statement.query_map([PROFILE_ID], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(database_error)?;
-        if encrypted.len() < MIN_READY_SAMPLES {
+        let current_input_device =
+            crate::persistence::load_voice_settings(connection)?.input_device_id;
+        if !enrollment_uses_input_device(connection, &current_input_device)? {
+            return Err(
+                "TARGET_SPEAKER_UNAVAILABLE: The voice profile input device does not match the current microphone"
+                    .to_string(),
+            );
+        }
+        let stored = connection.prepare("SELECT id,relative_path,embedding FROM voice_profile_samples WHERE profile_id=?1 ORDER BY ordinal").and_then(|mut statement| statement.query_map([PROFILE_ID], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(database_error)?;
+        if stored.len() < MIN_READY_SAMPLES {
             return Err("TARGET_SPEAKER_UNAVAILABLE: Too few enrollment samples".to_string());
         }
-        let references = encrypted
+        let references = stored
             .into_iter()
-            .map(|(id, path, ciphertext)| {
+            .map(|(id, path, embedding)| {
                 let resolved = self.resolve_sample_path(&id, &path)?;
                 if !resolved.is_file() {
-                    return Err(
-                        "TARGET_SPEAKER_UNAVAILABLE: An encrypted voice sample is missing"
-                            .to_string(),
-                    );
+                    return Err("TARGET_SPEAKER_UNAVAILABLE: A voice sample is missing".to_string());
                 }
-                let plain = Zeroizing::new(decrypt_payload(&key, "embedding", &id, &ciphertext)?);
-                decode_embedding(&plain, extractor.dimension())
+                decode_embedding(&embedding, extractor.dimension())
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Some(PreparedVoiceVerifier {

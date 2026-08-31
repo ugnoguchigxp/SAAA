@@ -1,14 +1,17 @@
+#[cfg(test)]
 use serde_json::Value;
 
 pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 2_048;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum CompletionFinish {
     Stop,
     ToolCalls,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum CompletionTerminalError {
     PartialOutput,
     Policy,
@@ -16,10 +19,12 @@ pub(crate) enum CompletionTerminalError {
 }
 
 #[derive(Debug, Default)]
+#[cfg(test)]
 pub(crate) struct CompletionTerminal {
     finish: Option<CompletionFinish>,
 }
 
+#[cfg(test)]
 impl CompletionTerminal {
     pub(crate) fn observe(&mut self, value: &Value) -> Result<(), CompletionTerminalError> {
         if self.finish.is_some() {
@@ -48,6 +53,7 @@ impl CompletionTerminal {
     }
 }
 
+#[cfg(test)]
 fn exact_choice(value: &Value) -> Result<&serde_json::Map<String, Value>, CompletionTerminalError> {
     let choices = value
         .get("choices")
@@ -66,6 +72,7 @@ fn exact_choice(value: &Value) -> Result<&serde_json::Map<String, Value>, Comple
     Ok(choice)
 }
 
+#[cfg(test)]
 pub(crate) fn validate_non_stream_completion(
     value: &Value,
 ) -> Result<CompletionFinish, CompletionTerminalError> {
@@ -74,6 +81,7 @@ pub(crate) fn validate_non_stream_completion(
     terminal.complete()
 }
 
+#[cfg(test)]
 pub(crate) fn thinking_enabled(reasoning_effort: &str) -> bool {
     reasoning_effort != "low"
 }

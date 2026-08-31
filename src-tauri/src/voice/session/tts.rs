@@ -102,12 +102,12 @@ pub(crate) async fn speak_text(state: &AppState, input: SpeakTextInput) -> Resul
 }
 
 pub(crate) fn selected_tts_route(state: &AppState) -> Result<(TtsRoute, String, u64), String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let providers = crate::persistence::load_model_providers(&connection)?;
-    let route = crate::persistence::load_routing_settings(&connection)?.voice_speak;
+    let (providers, route) = state.sqlite_readers.read(|connection| {
+        Ok((
+            crate::persistence::load_model_providers(connection)?,
+            crate::persistence::load_routing_settings(connection)?.voice_speak,
+        ))
+    })?;
     if route.source == "harness" {
         return Ok((
             TtsRoute::Harness(providers.harness.address),

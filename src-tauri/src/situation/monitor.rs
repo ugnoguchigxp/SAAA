@@ -1,10 +1,10 @@
-use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::SituationRuntime;
+use crate::persistence::SqliteWriter;
 
 pub(crate) fn spawn_situation_monitor(
-    connection: Arc<Mutex<Connection>>,
+    connection: Arc<SqliteWriter>,
     runtime: Arc<SituationRuntime>,
 ) {
     if !runtime.enabled() || !runtime.begin_worker() {

@@ -7,6 +7,7 @@ pub mod platform;
 pub mod repository;
 mod tick;
 
+use crate::persistence::{SqliteReaders, SqliteWriter};
 #[cfg(test)]
 use classifier::classify;
 use classifier::{classify_with_parameters, shadow_policy, Hysteresis};
@@ -128,42 +129,37 @@ impl SituationRuntime {
         Ok(())
     }
 
-    pub fn set_monitoring(
-        &self,
-        connection: &Mutex<Connection>,
-        enabled: bool,
-    ) -> Result<(), String> {
+    pub fn set_monitoring(&self, connection: &SqliteWriter, enabled: bool) -> Result<(), String> {
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| "Situation runtime lock unavailable".to_string())?;
-        let database = connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        if inner.settings.enabled && !enabled && inner.quality.sample_count > 0 {
-            repository::persist_quality_window(
-                &database,
-                inner.quality_started_ms,
-                epoch_millis(),
-                &inner.calibration_rule_version,
-                &inner.quality,
-                &inner.settings,
-            )?;
-            inner.quality = QualityWindowCounters::default();
-            inner.quality_started_ms = 0;
-        }
-        let settings = repository::save_enabled(&database, enabled)?;
-        let stopped = inner.settings.enabled && !settings.enabled;
-        inner.settings = settings.clone();
-        if stopped {
-            push_event(
-                &mut inner,
-                SituationEvent::MonitoringStopped {
-                    reason: "Paused by user".to_string(),
-                },
-            );
-        }
-        drop(database);
+        connection.write(|database| {
+            if inner.settings.enabled && !enabled && inner.quality.sample_count > 0 {
+                repository::persist_quality_window(
+                    database,
+                    inner.quality_started_ms,
+                    epoch_millis(),
+                    &inner.calibration_rule_version,
+                    &inner.quality,
+                    &inner.settings,
+                )?;
+                inner.quality = QualityWindowCounters::default();
+                inner.quality_started_ms = 0;
+            }
+            let settings = repository::save_enabled(database, enabled)?;
+            let stopped = inner.settings.enabled && !settings.enabled;
+            inner.settings = settings.clone();
+            if stopped {
+                push_event(
+                    &mut inner,
+                    SituationEvent::MonitoringStopped {
+                        reason: "Paused by user".to_string(),
+                    },
+                );
+            }
+            Ok(())
+        })?;
         drop(inner);
         self.worker_wake.notify_one();
         Ok(())
@@ -171,7 +167,7 @@ impl SituationRuntime {
 
     pub fn configure_and_persist<T>(
         &self,
-        connection: &Mutex<Connection>,
+        connection: &SqliteWriter,
         settings: SituationRuntimeSettings,
         persist: impl FnOnce(&mut Connection) -> Result<T, String>,
     ) -> Result<T, String> {
@@ -180,53 +176,49 @@ impl SituationRuntime {
             .inner
             .lock()
             .map_err(|_| "Situation runtime lock unavailable".to_string())?;
-        let mut database = connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        if inner.settings.enabled && inner.quality.sample_count > 0 {
-            repository::persist_quality_window(
-                &database,
-                inner.quality_started_ms,
-                epoch_millis(),
-                &inner.calibration_rule_version,
-                &inner.quality,
-                &inner.settings,
-            )?;
-            inner.quality = QualityWindowCounters::default();
-            inner.quality_started_ms = 0;
-        }
-        let result = persist(&mut database)?;
-        let stopped = inner.settings.enabled && !settings.enabled;
-        inner.settings = settings;
-        if stopped {
-            push_event(
-                &mut inner,
-                SituationEvent::MonitoringStopped {
-                    reason: "Paused by user".to_string(),
-                },
-            );
-        }
-        drop(database);
+        let result = connection.write(|database| {
+            if inner.settings.enabled && inner.quality.sample_count > 0 {
+                repository::persist_quality_window(
+                    database,
+                    inner.quality_started_ms,
+                    epoch_millis(),
+                    &inner.calibration_rule_version,
+                    &inner.quality,
+                    &inner.settings,
+                )?;
+                inner.quality = QualityWindowCounters::default();
+                inner.quality_started_ms = 0;
+            }
+            let result = persist(database)?;
+            let stopped = inner.settings.enabled && !settings.enabled;
+            inner.settings = settings;
+            if stopped {
+                push_event(
+                    &mut inner,
+                    SituationEvent::MonitoringStopped {
+                        reason: "Paused by user".to_string(),
+                    },
+                );
+            }
+            Ok(result)
+        })?;
         drop(inner);
         self.worker_wake.notify_one();
         Ok(result)
     }
 
-    pub fn clear_history(&self, connection: &Mutex<Connection>) -> Result<(), String> {
+    pub fn clear_history(&self, connection: &SqliteWriter) -> Result<(), String> {
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| "Situation runtime lock unavailable".to_string())?;
-        let database = connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        repository::clear_history(&database)?;
+        connection.write(|database| repository::clear_history(database))?;
         inner.quality = QualityWindowCounters::default();
         inner.quality_started_ms = 0;
         Ok(())
     }
 
-    pub fn flush_quality(&self, connection: &Mutex<Connection>) -> Result<(), String> {
+    pub fn flush_quality(&self, connection: &SqliteWriter) -> Result<(), String> {
         let mut inner = self
             .inner
             .lock()
@@ -235,17 +227,16 @@ impl SituationRuntime {
             return Ok(());
         }
         let ended_at_ms = epoch_millis();
-        let database = connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        repository::persist_quality_window(
-            &database,
-            inner.quality_started_ms,
-            ended_at_ms,
-            &inner.calibration_rule_version,
-            &inner.quality,
-            &inner.settings,
-        )?;
+        connection.write(|database| {
+            repository::persist_quality_window(
+                database,
+                inner.quality_started_ms,
+                ended_at_ms,
+                &inner.calibration_rule_version,
+                &inner.quality,
+                &inner.settings,
+            )
+        })?;
         inner.quality = QualityWindowCounters::default();
         inner.quality_started_ms = 0;
         Ok(())
@@ -268,7 +259,7 @@ impl SituationRuntime {
 
     pub fn decide_calibration(
         &self,
-        connection: &Mutex<Connection>,
+        connection: &SqliteWriter,
         profile_id: &str,
         decision: &str,
         reason_code: &str,
@@ -277,23 +268,22 @@ impl SituationRuntime {
             .inner
             .lock()
             .map_err(|_| "Situation runtime lock unavailable".to_string())?;
-        let mut database = connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        if inner.quality.sample_count > 0 {
-            let ended_at_ms = epoch_millis();
-            repository::persist_quality_window(
-                &database,
-                inner.quality_started_ms,
-                ended_at_ms,
-                &inner.calibration_rule_version,
-                &inner.quality,
-                &inner.settings,
-            )?;
-            inner.quality = QualityWindowCounters::default();
-            inner.quality_started_ms = 0;
-        }
-        let active = calibration::decide(&mut database, profile_id, decision, reason_code)?;
+        let active = connection.write(|database| {
+            if inner.quality.sample_count > 0 {
+                let ended_at_ms = epoch_millis();
+                repository::persist_quality_window(
+                    database,
+                    inner.quality_started_ms,
+                    ended_at_ms,
+                    &inner.calibration_rule_version,
+                    &inner.quality,
+                    &inner.settings,
+                )?;
+                inner.quality = QualityWindowCounters::default();
+                inner.quality_started_ms = 0;
+            }
+            calibration::decide(database, profile_id, decision, reason_code)
+        })?;
         inner.calibration_parameters = active.parameters.clone();
         inner.calibration_rule_version = active.rule_version.clone();
         Ok(active)
@@ -425,7 +415,7 @@ impl SituationRuntime {
     }
 
     #[cfg(test)]
-    pub fn tick(&self, connection: &Mutex<Connection>) -> Result<(), String> {
+    pub fn tick(&self, connection: &SqliteWriter) -> Result<(), String> {
         let sample = self.sample_platform()?;
         self.tick_sampled(connection, sample)
     }
@@ -860,7 +850,8 @@ mod tests {
 
     #[test]
     fn input_activity_health_change_is_emitted_once() {
-        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        let connection =
+            SqliteWriter::from_connection(Connection::open_in_memory().expect("database opens"));
         crate::initialize_database(&connection.lock().expect("database lock"))
             .expect("database initializes");
         let runtime = SituationRuntime::new(
@@ -917,7 +908,8 @@ mod tests {
 
     #[test]
     fn owned_lifecycle_flows_through_runtime_to_ledger_and_pause_stops_writes() {
-        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        let connection =
+            SqliteWriter::from_connection(Connection::open_in_memory().expect("database opens"));
         crate::initialize_database(&connection.lock().expect("database lock"))
             .expect("database initializes");
         let settings = SituationRuntimeSettings {
@@ -955,7 +947,8 @@ mod tests {
 
     #[test]
     fn failed_ledger_write_does_not_advance_runtime_state() {
-        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        let connection =
+            SqliteWriter::from_connection(Connection::open_in_memory().expect("database opens"));
         crate::initialize_database(&connection.lock().expect("database lock"))
             .expect("database initializes");
         let runtime = SituationRuntime::new(
@@ -988,7 +981,8 @@ mod tests {
 
     #[test]
     fn failed_quality_window_is_bounded_to_two_intervals() {
-        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        let connection =
+            SqliteWriter::from_connection(Connection::open_in_memory().expect("database opens"));
         crate::initialize_database(&connection.lock().expect("database lock"))
             .expect("database initializes");
         connection

@@ -4,6 +4,21 @@ use serde_json::{json, Value};
 use super::settings::SETTINGS_SCHEMA_VERSION;
 use crate::{now_iso, DEFAULT_AGENT_NAME, DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME};
 
+pub(super) fn initialize_revision(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS settings_revision (
+           singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+           revision INTEGER NOT NULL CHECK(revision >= 0));
+         INSERT OR IGNORE INTO settings_revision(singleton, revision) VALUES(1, 0);
+         CREATE TRIGGER IF NOT EXISTS settings_revision_insert AFTER INSERT ON settings_documents
+           BEGIN UPDATE settings_revision SET revision = revision + 1 WHERE singleton = 1; END;
+         CREATE TRIGGER IF NOT EXISTS settings_revision_update AFTER UPDATE ON settings_documents
+           BEGIN UPDATE settings_revision SET revision = revision + 1 WHERE singleton = 1; END;
+         CREATE TRIGGER IF NOT EXISTS settings_revision_delete AFTER DELETE ON settings_documents
+           BEGIN UPDATE settings_revision SET revision = revision + 1 WHERE singleton = 1; END;",
+    )
+}
+
 struct StoredDocument {
     schema_version: i64,
     value: Value,

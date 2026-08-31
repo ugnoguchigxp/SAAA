@@ -118,10 +118,14 @@ impl BatchDecode for ProductionBatchDecoder {
                 Ok(BatchDecodeOutcome::Transcript { text, language })
             }
             Ok(_) => Ok(BatchDecodeOutcome::NoSpeech),
-            Err(error) if error.starts_with("ASR_NO_SPEECH") => Ok(BatchDecodeOutcome::NoSpeech),
+            Err(error) if is_no_speech_error(&error) => Ok(BatchDecodeOutcome::NoSpeech),
             Err(error) => Err(error),
         }
     }
+}
+
+fn is_no_speech_error(error: &str) -> bool {
+    error.starts_with("ASR_NO_SPEECH")
 }
 
 pub(crate) fn decoder(
@@ -179,5 +183,16 @@ mod tests {
         samples[..12 * 320].fill(0.1);
         assert!(contains_speech(&samples, 0.008));
         assert!(!contains_speech(&samples[..7_999], 0.008));
+    }
+
+    #[test]
+    fn empty_provider_transcripts_are_no_speech_not_provider_failures() {
+        assert!(is_no_speech_error(
+            "ASR_NO_SPEECH: LAN ASR completed without a transcript"
+        ));
+        assert!(is_no_speech_error(
+            "ASR_NO_SPEECH: Cloud ASR completed without a transcript"
+        ));
+        assert!(!is_no_speech_error("LAN ASR returned HTTP 503"));
     }
 }

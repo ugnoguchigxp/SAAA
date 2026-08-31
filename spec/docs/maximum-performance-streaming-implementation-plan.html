@@ -1,0 +1,1164 @@
+<article lang="ja">
+  <h1 id="maximum-performance-streaming-plan">Maximum-Performance Streaming Experience 実装計画</h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>
+      Status: Implemented — controlled automated Gate検証済み、operator Gateはrelease evidence待ち
+    </li>
+    <li>Created: 2026-08-31</li>
+    <li>SAAA baseline: <code>0ec8019</code> + working tree</li>
+    <li>Shipping client: macOS版SAAA desktop</li>
+    <li>対象: LLM transport、Conversation Runtime、Chat UI、ASR、TTS、Meeting audio、SQLite</li>
+    <li>
+      Evidence:
+      <a href="./maximum-performance-streaming-release-evidence.html"
+        >Maximum-Performance Streaming Release Evidence</a
+      >
+    </li>
+  </ul>
+  <p>
+    本文書は、Provider自身の推論速度ではなく、SAAAの実装上の待ち、再計算、直列化、
+    queueingを減らし、体感性能を最大化するための統合実装契約である。LLMのstreaming data
+    planeはSSEを廃止してWebSocketへ完全移行し、回答生成中の画面はplain textで表示する。
+    Markdownは回答が正常に確定した後に一度だけrenderする。
+  </p>
+  <p>
+    この変更はASRとTTSの作り直しではない。既に実装済みのASR精度向上策と、LLM回答完了を
+    待たずにTTSを開始するstreaming speechを継承し、その上でhot pathを短くする。
+    本文書と既存の音声計画が競合する場合、ASR/TTSの正確性、安全性、順序保証については
+    既存計画を優先し、transportとperformanceの接続点だけを本文書で追加する。
+  </p>
+
+  <h3 id="01-normative-precedence">0.1 Normative precedence</h3>
+  <ol>
+    <li>
+      ASRの音声形式、話者filter、partial/final、fallback、deliveryは
+      <a href="./always-on-streaming-asr-implementation-plan.html"
+        >Always-on Streaming ASR Implementation Plan</a
+      >を正本とする。
+    </li>
+    <li>
+      TTSの文境界、speech session、順序、取消、half-duplexは
+      <a href="./streaming-tts-sentence-boundary-implementation-plan.html"
+        >Streaming TTS Sentence-Boundary Pipeline Implementation Plan</a
+      >を正本とする。
+    </li>
+    <li>
+      本人音声の登録と検証は
+      <a href="./target-speaker-enrollment-implementation-plan.html"
+        >Target Speaker Enrollment Implementation Plan</a
+      >を正本とする。
+    </li>
+    <li>
+      SQLiteのsingle-writer ownershipは
+      <a href="./sqlite-single-writer-implementation-plan.html"
+        >SQLite Single Writer Implementation Plan</a
+      >を維持する。本文書はqueryとlock保持時間の性能要件だけを追加する。
+    </li>
+  </ol>
+
+  <h2 id="1-fixed-decisions">1. 固定する設計判断</h2>
+  <table>
+    <caption>
+      Table: Fixed architecture decisions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">判断</th>
+        <th scope="col">理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>DEC-01</code></td>
+        <td>
+          LLM streaming data planeは<code>saaa.llm-stream.v1</code>
+          WebSocketへ完全移行する
+        </td>
+        <td>SSE parser、chunk再走査、connection再確立をhot pathから除去する</td>
+      </tr>
+      <tr>
+        <td><code>DEC-02</code></td>
+        <td>
+          ASRは既存の独立した<code>saaa.asr-stream.v1</code> WebSocketを維持する
+        </td>
+        <td>LLMのbackpressureや再接続から100 ms音声packetを隔離する</td>
+      </tr>
+      <tr>
+        <td><code>DEC-03</code></td>
+        <td>Tauri backendとWebView間はnative Channelを維持する</td>
+        <td>同一process内へWebSocketを持ち込まず、型付きIPCと取消scopeを保つ</td>
+      </tr>
+      <tr>
+        <td><code>DEC-04</code></td>
+        <td>LLM deltaはTTSへ即時配送し、UIへはcapacity 1のlatest-wins経路でframe単位に集約する</td>
+        <td>TTSとACKをUI stallから隔離し、React renderとIPC回数を同時に削減する</td>
+      </tr>
+      <tr>
+        <td><code>DEC-05</code></td>
+        <td>
+          生成中はplain
+          text、<code>finishReason=stop</code>の正常完了後だけMarkdownを一度renderする
+        </td>
+        <td>deltaごとのMarkdown parse、DOM更新、layoutをなくす</td>
+      </tr>
+      <tr>
+        <td><code>DEC-06</code></td>
+        <td>cancelled / failed / lengthのpartial回答はplain textのまま残す</td>
+        <td>未確定Markdownを確定済み回答に見せず、追加parseも発生させない</td>
+      </tr>
+      <tr>
+        <td><code>DEC-07</code></td>
+        <td>SSE-only endpointはtarget構成ではunsupportedとする</td>
+        <td>SSE-to-WebSocket gatewayを残すと完全移行にならず、旧bottleneckも残る</td>
+      </tr>
+      <tr>
+        <td><code>DEC-08</code></td>
+        <td>runtime内にSSE fallbackを残さず、rollbackは前releaseへ戻す</td>
+        <td>二重transportの分岐と未検証経路を恒久化しない</td>
+      </tr>
+      <tr>
+        <td><code>DEC-09</code></td>
+        <td>
+          endpointの広告同時実行数までWebSocketをprewarmし、1接続へactive runを1件だけ割り当てる
+        </td>
+        <td>大きなprompt、tool result、packet lossによるrun間head-of-line blockingを除去する</td>
+      </tr>
+      <tr>
+        <td><code>DEC-10</code></td>
+        <td>
+          hot pathの<code>response.delta</code>だけを固定header付きbinary
+          messageにする
+        </td>
+        <td>小deltaごとのJSON parse、field名、run ID、allocator負荷を除去する</td>
+      </tr>
+      <tr>
+        <td><code>DEC-11</code></td>
+        <td>terminalは累積byte数とincremental SHA-256を返し、canonical全文をwire上で再送しない</td>
+        <td>既に受理済みの最大262 KiB本文の重複転送、copy、他messageの待ちをなくす</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="2-current-baseline">2. コード確認済みの現行Baseline</h2>
+  <h3 id="21-asr-baseline">2.1 ASR: 継承する精度・安全策</h3>
+  <table>
+    <caption>
+      Table: Existing ASR mechanisms that must survive the migration
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区間</th>
+        <th scope="col">現行実装</th>
+        <th scope="col">継承条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Capture</td>
+        <td>
+          16 kHz mono、DSP無効、AudioWorklet、100 ms / 1,600 sample / 3,200 byteの PCM16LE packet
+        </td>
+        <td>sample rate、packet shape、raw capture順序を変更しない</td>
+      </tr>
+      <tr>
+        <td>Packet order</td>
+        <td>
+          単一serial
+          senderが<code>audio → commit → audio</code>を保持し、accept後だけsequenceを進める。
+          未送信packetは最大10個
+        </td>
+        <td>並列送信やdrop-oldestへ置換しない</td>
+      </tr>
+      <tr>
+        <td>Endpointing</td>
+        <td>全audioを先にpacket化し、VADはcommit境界だけを決める。30秒hard commitも持つ</td>
+        <td>VADをcapture開始gateにせず、発話先頭を失わない</td>
+      </tr>
+      <tr>
+        <td>Native stream</td>
+        <td>
+          <code>saaa.asr-stream.v1</code>、binary audio、typed
+          control、revisionとsampleの単調増加検証、 stable-prefix検証
+        </td>
+        <td>LLM socketへmultiplexせず、独立actorとqueueを保つ</td>
+      </tr>
+      <tr>
+        <td>Batch fallback</td>
+        <td>
+          1.8秒から600 msごとのwhole-prefix decode、同時decode 1、latest-wins、final優先、
+          直近3仮説のgrapheme/NFC整合
+        </td>
+        <td>差分連結に戻さず、stableとunstableを置換投影する</td>
+      </tr>
+      <tr>
+        <td>No speech</td>
+        <td>
+          最低0.5秒、20 ms window 12個以上のactive audio、provider segmentの
+          <code>no_speech_prob</code>を使用
+        </td>
+        <td>quiet speechをsilence扱いする単純RMS gateへ戻さない</td>
+      </tr>
+      <tr>
+        <td>Target speaker</td>
+        <td>
+          1.5秒window / 0.5秒hop、2-of-3判定、timeout、single blocking task、
+          reject区間のzeroizeと同長silence置換
+        </td>
+        <td>未承認raw PCMをProvider、final buffer、logへ出さない</td>
+      </tr>
+      <tr>
+        <td>Final delivery</td>
+        <td>capacity 2、utterance ID dedupe、claim / settle retry、active turn後の配送</td>
+        <td>partialは永続化・送信せず、finalだけをexactly-onceで会話へ渡す</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    2026-08-31の確認では、frontend音声連携25件、Rust Streaming ASR 42件、Cloud ASR
+    2件、ASR音声品質1件が成功した。これは移行前baselineであり、同じtestが0件にfilterされた
+    実行は合格証跡に数えない。Native Harness実機revisionと実micのWER / CER / latencyは
+    release前に別途採取する。
+  </p>
+
+  <h3 id="22-tts-baseline">2.2 TTS: 継承する先行合成・逐次再生</h3>
+  <table>
+    <caption>
+      Table: Existing TTS mechanisms and remaining performance work
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区間</th>
+        <th scope="col">現行実装</th>
+        <th scope="col">本計画での扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Start</td>
+        <td>turn開始時にspeech sessionを作り、各LLM deltaをaccumulatorへ渡す</td>
+        <td>回答完了待ちへ戻さない。raw deltaの最優先consumerにする</td>
+      </tr>
+      <tr>
+        <td>Chunking</td>
+        <td>
+          初回最小10、定常最小24、target 120、hard max 240。句読点、空白、Markdown、URL、 数値、code
+          fenceを保護する
+        </td>
+        <td>閾値と自然境界を維持し、scannerをincremental化する</td>
+      </tr>
+      <tr>
+        <td>Idle / final flush</td>
+        <td>400 ms idleで弱境界をflushし、MessageCompletedで残りを一度だけflushする</td>
+        <td>deltaごとのsleep taskをsession単一resettable timerへ変える</td>
+      </tr>
+      <tr>
+        <td>Integrity</td>
+        <td>completed full textがdelta prefixを拡張することを検証する</td>
+        <td>WebSocketのincremental hash / contentBytes / sequenceで同じintegrityを証明する</td>
+      </tr>
+      <tr>
+        <td>Playback</td>
+        <td>bounded queue、順序付きrenderer、取消時のchild process kill</td>
+        <td>chunk N再生中にN+1を合成するrender-aheadへ完成させる</td>
+      </tr>
+      <tr>
+        <td>Half-duplex</td>
+        <td>
+          <code>SpeechStarted</code
+          >から<code>SpeechEnded</code>までASR captureを停止する
+        </td>
+        <td>self-ASR防止を維持し、MessageCompletedをspeech開始合図に使わない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Rust TTSのchunker / runtime test 8件とfrontend speech連携test 3件は確認時に成功した。
+    現状には、deltaごとのJSON往復、deltaごとのidle task、未消費tailの再走査、
+    system/cloud音声の合成と再生の直列化が残る。これらだけを最適化し、先行合成を保持する。
+  </p>
+
+  <h3 id="23-other-bottlenecks">2.3 その他の実装bottleneck</h3>
+  <ul>
+    <li>React stateをdeltaごとに更新し、stream中の本文全体をMarkdown parseしている。</li>
+    <li>stream更新ごとのlayout effectとauto-scrollがmain threadへ重なる。</li>
+    <li>meeting audioの5秒block resampleがUI threadで約22 msを占有する測定例がある。</li>
+    <li>SSE parserはbuffer先頭からの反復走査とdrainにより、大きな受信塊で二次的に悪化する。</li>
+    <li>
+      timestampへの<code>CAST</code>、deep
+      <code>OFFSET</code>、短命reader接続がSQLite readを増幅する。
+    </li>
+  </ul>
+
+  <h2 id="3-invariants">3. 変更してはならないInvariant</h2>
+  <ol>
+    <li>
+      <code>INV-01</code>:
+      ASR、LLM、TTSは別socket、別queue、別取消tokenを持つ。
+    </li>
+    <li>
+      <code>INV-02</code>: ASRの100 ms audio
+      pathはLLM/UI/DBのbackpressureで待たない。
+    </li>
+    <li>
+      <code>INV-03</code>: ASR
+      partialは表示だけに使い、conversation送信と永続化はfinalだけにする。
+    </li>
+    <li>
+      <code>INV-04</code>: target speaker reject前のraw
+      PCMは外部送信、保存、診断出力をしない。
+    </li>
+    <li>
+      <code>INV-05</code>: TTSは最初の自然境界で開始し、LLM
+      completionを待たない。
+    </li>
+    <li>
+      <code>INV-06</code>: TTSはcanonical
+      deltaを欠落、重複、逆順なしで一度だけ消費する。
+    </li>
+    <li>
+      <code>INV-07</code>:
+      Text回答の成功とSpeechの成功を分離し、TTS失敗でTextを失敗へ戻さない。
+    </li>
+    <li>
+      <code>INV-08</code>:
+      Markdown完了は視覚表示の状態であり、TTS入力の開始条件ではない。
+    </li>
+    <li>
+      <code>INV-09</code>: tool loopがあるturnは、最終assistant
+      messageだけを完成Markdownとして確定する。
+    </li>
+    <li>
+      <code>INV-10</code>: cancel / fail後の遅延eventはrun
+      IDとgenerationで破棄する。
+    </li>
+    <li>
+      <code>INV-11</code>: secret、音声内容、回答本文をperformance
+      logへ出さない。
+    </li>
+    <li>
+      <code>INV-12</code>: SQLite writerは単一ownerのままとし、UI
+      threadで同期I/Oを行わない。
+    </li>
+  </ol>
+
+  <h2 id="4-target-architecture">4. Target architecture</h2>
+  <pre><code class="language-text">Microphone
+  └─ AudioWorklet 16 kHz → ASR sender → saaa.asr-stream.v1 WS → partial / final
+                                                  │
+                                                  └─ final only → Conversation turn
+
+Conversation turn → prewarmed saaa.llm-stream.v1 WS pool（1 active run / connection）
+                                                        │
+                                      binary delta → ordered canonical events
+                                                        │
+                           ┌────────────────────────────┴──────────────────────┐
+                           │                                                   │
+                    TTS branch（即時）                         UI branch（capacity 1 / frame集約）
+                  sentence boundary                                  plain text during stream
+                           │                                                   │
+                  render-ahead playback                              completed canonical text
+                           │                                                   │
+                 SpeechStarted / Ended                              persist → Markdown once
+                           │                                                   │
+                     ASR half-duplex                                      memoized message</code></pre>
+  <p>
+    「LLMが回答しきった」「画面がMarkdownになった」「TTSが読み終わった」「ASRが次発話をfinalにした」
+    は別々の時刻である。単一の<code>completed</code>
+    booleanへ統合せず、各state machineのeventを run IDで関連付ける。
+  </p>
+
+  <h3 id="41-llm-websocket-contract">4.1 <code>saaa.llm-stream.v1</code> contract</h3>
+  <p>
+    Provider側のnormative wire contractは
+    <a href="./provider-llm-websocket-protocol-v1.html">SAAA Provider LLM WebSocket Protocol v1</a
+    >を正本とする。
+  </p>
+  <p>
+    endpointごとにProviderが広告する<code>maxConcurrentRuns</code>本までpersistent
+    <code>wss</code>接続をprewarmし、各接続へactive
+    runを1件だけpinする。idle接続がなければ
+    新しいturnを待機queueへ入れず、開始前に<code>capacity</code>で即時失敗させる。active
+    run同士を同一TCP streamへ multiplexしてはならない。LARMのallocation / healthなどcontrol
+    planeのRESTは維持できるが、回答data planeにSSEを残してはならない。Codex app-serverのlocal
+    subprocess JSONLはnetwork SSEではなく、 この移行対象外とする。
+  </p>
+  <table>
+    <caption>
+      Table: Required WebSocket messages
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">方向</th>
+        <th scope="col">Message</th>
+        <th scope="col">必須field / rule</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Client → Server</td>
+        <td><code>run.start</code></td>
+        <td>
+          <code>runId</code>、model、input、tools、client
+          capability。idle接続で一度だけ送る
+        </td>
+      </tr>
+      <tr>
+        <td>Client → Server</td>
+        <td><code>run.ack</code></td>
+        <td>
+          累積<code>ackSeq</code>とincremental content
+          hash。UI状態を待たない
+        </td>
+      </tr>
+      <tr>
+        <td>Client → Server</td>
+        <td><code>run.cancel</code></td>
+        <td>idempotent。cancelled terminalまたは既知terminalを返す</td>
+      </tr>
+      <tr>
+        <td>Client → Server</td>
+        <td><code>run.resume</code></td>
+        <td>
+          <code>runId</code>と最後に連続受理した<code
+            >seq</code
+          >
+        </td>
+      </tr>
+      <tr>
+        <td>Server → Client</td>
+        <td><code>response.delta</code></td>
+        <td>
+          binary、run内単調増加<code>seq</code>、append-only UTF-8
+          text、16 KiB以下
+        </td>
+      </tr>
+      <tr>
+        <td>Server → Client</td>
+        <td><code>tool.call</code></td>
+        <td>tool ID、名前、bounded arguments。本文sequenceと同じ順序domain</td>
+      </tr>
+      <tr>
+        <td>Server → Client</td>
+        <td><code>response.completed</code></td>
+        <td>
+          最終<code>seq</code>、累積UTF-8 byte数、incremental content
+          hash、usage、finish reason
+        </td>
+      </tr>
+      <tr>
+        <td>Server → Client</td>
+        <td>
+          <code>response.failed</code> /
+          <code>response.cancelled</code>
+        </td>
+        <td>terminalはrunごとに一度だけ。公開可能なbounded errorだけを含む</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>
+      duplicate <code>seq</code>は無視し、gapは後続へ渡さずresumeする。
+    </li>
+    <li>reconnect後も既にTTSへ渡したdeltaを再発声しない。</li>
+    <li>出力開始後に別Providerへfallbackしない。重複回答と重複発声を避ける。</li>
+    <li>
+      terminalの<code>contentBytes</code>とhashを受理済みdelta
+      accumulatorへ照合し、 不一致ならprotocol failureにする。terminalへ全文を重複格納しない。
+    </li>
+    <li>connection queueはmessage 64件または512 KiBの早い方を上限とし、無制限bufferを禁止する。</li>
+    <li>WebSocket serverが未提供のendpointをSSE gatewayで包まない。</li>
+  </ul>
+
+  <h3 id="42-turn-event-hub">4.2 Ordered Turn Event Hub</h3>
+  <p>
+    Provider adapterが生成したeventを直接複数箇所へ送らず、Rust側の
+    <code>TurnEventHub</code
+    >でsequence検証、dedupe、terminal判定を一度行う。検証済みdeltaは、 同じtask内で先にTTS
+    accumulatorへappendし、その後UI coalescerへ渡す。TTS branchがfullでも LLM socket
+    readerを無制限に待たせず、bounded session failureとしてspeechだけを停止する。
+  </p>
+  <p>
+    ACK可能になるのは、canonical accumulatorへのappendとTTS branchへの配送結果が確定した時点とする。
+    UI queueへのenqueue、Channel送信、React commit、paintをACK条件へ含めない。UI branchは
+    runごとに未ACK <code>UiDeltaBatch</code> 1件とpending suffix
+    1件だけを持つ。WebViewはrAFでbatchを Text
+    nodeへappendした後に<code>ui.batch.applied</code>を返し、それまで次batchをChannelへ送らず
+    pending suffixへmergeする。このUI ACKはProvider ACKと完全に別物である。UIが停止しても
+    LLM生成とTTSを停止させてはならず、pending suffixはresponse上限262 KiBを超えない。
+  </p>
+  <p>
+    現在のTTS event sinkにあるTauri ChannelへのJSON serialize / parse往復は除去し、Rust内の typed
+    eventを直接渡す。WebViewへは表示に必要なeventだけをnative Channelで送る。
+  </p>
+
+  <h3 id="43-markdown-lifecycle">4.3 Markdown lifecycle</h3>
+  <ol>
+    <li>
+      <code>streaming</code>: Rustで未表示suffixを集約し、visible
+      windowでは最大1回 / 16.7 ms、 backgroundでは最大1回 / 100 msだけplain textへ追記する。
+      <code>white-space: pre-wrap</code>で表示する。
+    </li>
+    <li>
+      <code>finalizing</code>: canonical accumulatorのbyte数 / hash、tool
+      loop終了、DB commitの整合を確認する。
+    </li>
+    <li>
+      <code>completed</code>: Markdownを一度だけparseし、sanitized
+      resultを表示する。
+    </li>
+    <li>
+      <code>cancelled / failed / length</code>: partial plain
+      textにincomplete表示を付け、Markdownへ移行しない。
+    </li>
+  </ol>
+  <p>
+    streaming本文は4 KiB単位のimmutable chunkと可変tailで保持し、React stateやDOMへ累積全文を
+    毎回渡さない。既存chunkを再renderせず、tailだけをText nodeへ追記する。完了時にだけcanonical
+    textへ置換する。Markdownは16 KiB未満をmain threadのidle task、16 KiB以上を常駐Workerでparse /
+    sanitizeし、 DOM treeではなくcompactなsanitized HTML stringを返す。cacheはmessage ID /
+    hashをkeyに100件または8 MiBのLRUとする。 完了済みmessage
+    componentはmemoizeし、過去messageを新しいdeltaで再renderしない。auto-scrollは1 animation
+    frameに1回までとし、ユーザーが上へscrollしたら追従を停止する。
+  </p>
+
+  <h3 id="44-asr-accuracy-continuation">4.4 ASR精度施策の継続と追加検証</h3>
+  <p>
+    ASR pipelineはtransport共通化の対象にしない。変更はmetrics、実Harness検証、accuracy corpusの
+    追加に限定し、既存algorithmの削除や単純化を行わない。Providerごとの差はserver-side adapterで
+    <code>saaa.asr-stream.v1</code>へ正規化する。
+  </p>
+  <ul>
+    <li>quiet speech、click、無音、長発話、50 ms境界、Native切断を固定corpusにする。</li>
+    <li>日本語の固有名詞、数字、句読点、英語混在をgold transcript付きで追加する。</li>
+    <li>
+      target speakerは本人、他人、同時発話、遠距離、環境音を分けてFalse Accept / Rejectを測る。
+    </li>
+    <li>stable textの巻き戻り、final重複、先頭欠落を件数0のhard gateにする。</li>
+    <li>実mic / 実Harnessについてfirst partial、final、CER、provider failoverを記録する。</li>
+  </ul>
+  <p>
+    現行speaker gateは時間方向の本人判定であり、同時発話のsource separationではない。
+    同時発話accuracyを上げる場合は、既存gateを削除せず、別ticketとmodel evidenceを持つ source
+    separation前処理として提案し直す。
+  </p>
+
+  <h3 id="45-tts-hot-path">4.5 TTS hot path</h3>
+  <ol>
+    <li>typed Rust eventをaccumulatorへ直接appendし、deltaごとのJSON round-tripを削除する。</li>
+    <li>protected-range scannerへcursorを持たせ、新規suffixだけを走査する。</li>
+    <li>idle flushをsessionごとの単一resettable timerにし、世代ごとのsleep taskを作らない。</li>
+    <li>
+      rendererとplayerを分離し、Cloud / Harnessでは最大3 chunkを並列合成してsequence順に再生する。
+    </li>
+    <li>
+      synthesis concurrencyは初期値2とし、直近8 chunkの
+      <code>ceil(p95 synthesis time / median audio duration)</code>を1〜3へclampして更新する。ready
+      audioは30秒または16 MiBの早い方、player内は再生中と次の2 chunkに制限する。
+    </li>
+    <li>
+      System routeもrender-only APIでaudio
+      artifactを作ってplayerへ渡す。artifactを生成できないrouteは maximum-performance
+      profileのauto-speakではunsupportedとし、serial synthesize-and-playへfallbackしない。
+    </li>
+    <li>
+      <code>SpeechQueued</code
+      >、<code>SynthesisStarted</code>、<code>PlaybackStarted</code>を分離し、
+      <code>SpeechStarted</code>とASR half-duplex開始は最初のaudio
+      sampleがplayerへ渡った時点とする。
+    </li>
+    <li>cancel時はtimer、HTTP、renderer、player、temporary fileを同じsession tokenで停止する。</li>
+  </ol>
+  <p>
+    UIのMarkdown確定、DB commit、MessageCompletedはTTS開始をblockしない。
+    <code>finishReason=stop</code
+    >の<code>response.completed</code>は未発声tailの一度だけのflushと byte length /
+    hash確認にだけ使う。<code>finishReason=length</code>では未完成tailをflushしない。
+  </p>
+
+  <h3 id="46-meeting-and-database">4.6 Meeting audio / SQLite / release build</h3>
+  <ul>
+    <li>
+      Meetingの48 kHz → 16 kHz resampleとPCM encodingはstateful専用Workerへ移し、100 ms入力を
+      位相を保ったまま処理して1秒segmentを出力する。5秒分をUI threadに蓄積してから処理しない。 Chat
+      ASRの16 kHz AudioWorklet pathは変更しない。
+    </li>
+    <li>
+      <code>conversation_messages</code>は
+      <code>(conversation_id, CAST(created_at AS INTEGER) DESC, id DESC)</code>のexpression
+      indexを一件だけ追加し、同じ式とmessage IDのopaque cursorでdeep
+      <code>OFFSET</code>をkeyset
+      paginationへ変える。本文を複製するcovering indexは作らない。Context composeはwriter
+      lock外で行う。
+    </li>
+    <li>
+      read-only operationはsingle-writer契約のReader経路へ寄せ、起動時に開く2本のpersistent
+      read-only connectionと<code>prepare_cached</code>を使う。UI
+      threadから同期呼出ししない。 read transactionはquery結果のmaterialize直後に閉じる。
+    </li>
+    <li>
+      Rust release
+      profileは<code>opt-level = 3</code>、<code>lto = "fat"</code>、
+      <code>codegen-units = 1</code
+      >、<code>strip = "symbols"</code>へ固定する。
+      <code>target-cpu=native</code>は配布互換性を壊すため指定しない。
+    </li>
+  </ul>
+
+  <h2 id="5-scope">5. Scope / Non-goals</h2>
+  <h3 id="51-scope">5.1 Scope</h3>
+  <ul>
+    <li>LLM streaming WebSocket protocol、connection manager、resume、cancel、tool event。</li>
+    <li>Turn Event Hub、TTS direct branch、UI coalescing、final-only Markdown。</li>
+    <li>TTS incremental scanner、timer、render-ahead、playback cancellation。</li>
+    <li>ASR non-regression corpus、実Harness / 実mic accuracy evidence。</li>
+    <li>Meeting audio worker、Chat read query、release buildの測定可能なhot path。</li>
+  </ul>
+
+  <h3 id="52-non-goals">5.2 Non-goals</h3>
+  <ul>
+    <li>Provider modelの推論速度、精度、料金そのものを比較・改善すること。</li>
+    <li>ASRのpacket format、VAD、reconciler、speaker gate、final queueの再設計。</li>
+    <li>TTSを回答完了後の全文読み上げへ戻すこと。</li>
+    <li>full-duplex barge-inを性能変更と同時に導入すること。</li>
+    <li>Markdownの見た目、prompt内容、memory selection policyを変更すること。</li>
+    <li>WebSocket未対応Providerのために恒久的なSSE互換層を保持すること。</li>
+  </ul>
+
+  <h3 id="53-change-map">5.3 主要変更File map</h3>
+  <table>
+    <caption>
+      Table: Planned code ownership by work area
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">現行の主対象</th>
+        <th scope="col">追加・変更方針</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM transport</td>
+        <td>
+          <code>src-tauri/src/providers/stream/</code>、
+          <code>src-tauri/src/providers/openai_compatible.rs</code>、
+          <code>src-tauri/src/providers/larm/client/chat.rs</code>
+        </td>
+        <td>
+          <code>providers/websocket/protocol.rs</code
+          >、<code>connection.rs</code>、<code>pool.rs</code>、
+          <code>event_hub.rs</code>へ責務分離し、SSE readerを削除する
+        </td>
+      </tr>
+      <tr>
+        <td>Conversation UI</td>
+        <td>
+          <code>src/features/chat/useConversationTurn.ts</code>、
+          <code>src/features/chat/ChatPage.tsx</code>
+        </td>
+        <td>
+          capacity 1 coalescer、append-only plain bubble、bounded Markdown Worker、completion
+          stateを追加する
+        </td>
+      </tr>
+      <tr>
+        <td>TTS</td>
+        <td>
+          <code>src-tauri/src/voice/streaming_tts/runtime.rs</code>、
+          <code>src-tauri/src/voice/streaming_tts/chunker.rs</code>
+        </td>
+        <td>typed sink、incremental scanner、timer、renderer、playerを分割する</td>
+      </tr>
+      <tr>
+        <td>ASR</td>
+        <td>
+          <code>src-tauri/src/voice/streaming_asr/</code>、
+          <code>src/features/voice/</code>
+        </td>
+        <td>product algorithmは維持し、corpus、metrics、実Harness testだけを追加する</td>
+      </tr>
+      <tr>
+        <td>Meeting audio</td>
+        <td>
+          <code>src/features/meeting/useMeetingSession.ts</code>、
+          <code>src/features/meeting/audio/pcm.ts</code>
+        </td>
+        <td>stateful resample / PCM専用Worker、100 ms input、1秒transferable segmentを追加する</td>
+      </tr>
+      <tr>
+        <td>SQLite</td>
+        <td>
+          <code>src-tauri/src/persistence/sqlite/</code>、
+          <code>src-tauri/src/persistence/conversations.rs</code>
+        </td>
+        <td>
+          single-writerを維持し、persistent Reader 2本、statement cache、Section 8.4のexpression
+          index / opaque keyset、settings snapshot cacheを変更する
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="6-work-packages">6. 実装Packageと順序</h2>
+  <p>
+    各packageは前packageのexit criteriaを満たしてからmergeする。性能改善を理由に音声の correctness
+    gateをskipしない。
+  </p>
+
+  <h3 id="perf-00">PERF-00 Baselineと観測点の固定</h3>
+  <ul>
+    <li>
+      変更:
+      runごとの<code>socket_receive → first_delta → first_plain_paint → response_completed →
+      markdown_paint</code>、TTSの<code>first_boundary → audio_start</code>、ASRの
+      <code>speech_start → partial → final</code>を本文なしで計測する。
+    </li>
+    <li>
+      変更: render count、main-thread long task、queue depth、reconnect、sequence gapを記録する。
+    </li>
+    <li>
+      Exit: controlled Harnessを同一machine、同一fixtureで200 run、microbenchmarkを1,000反復、
+      実Providerを30 run測定し、p50 / p95 / p99、CPU time、allocation、peak / settled
+      RSSを保存する。
+    </li>
+  </ul>
+
+  <h3 id="perf-01">PERF-01 Ordered Turn Event Hub</h3>
+  <ul>
+    <li>変更: Provider eventの型、run ID、seq、terminal stateをRustで一本化する。</li>
+    <li>変更: TTSへtyped direct append、UIへcoalesced native Channelを分岐する。</li>
+    <li>Test: duplicate、gap、out-of-order、stale run、cancel race、TTS queue full。</li>
+    <li>Exit: TTSに渡るdeltaのloss / duplicate / reorderがfixture 10,000件で0。</li>
+  </ul>
+
+  <h3 id="perf-02">PERF-02 LLM WebSocket server / protocol</h3>
+  <ul>
+    <li>
+      変更: LARM / controlled Harnessへ<code>saaa.llm-stream.v1</code>を実装する。
+    </li>
+    <li>
+      変更: advertised concurrency分のpersistent connection、1 active run / connection、binary
+      delta、 incremental hash、ack / resume、ping / pong、bounded replayを実装する。
+    </li>
+    <li>
+      Test: fragmented frame、10,000 delta burst、別connectionの1 MiB upload stall、disconnect /
+      resume、 cancel、最大4 parallel tool call。
+    </li>
+    <li>
+      Exit: canonical accumulator hash / byte数、append-only、terminal exactly-onceがserver contract
+      testで成立する。
+    </li>
+  </ul>
+
+  <h3 id="perf-03">PERF-03 Desktop WebSocket cutover</h3>
+  <ul>
+    <li>
+      変更: endpoint capability
+      probeを追加し、必要本数のWebSocketをprewarmできなければturn開始前に明示的にfailする。
+    </li>
+    <li>変更: LLM adapterをconnection poolへ接続し、SSE parserとSSE routeを削除する。</li>
+    <li>変更: LARM control RESTとlocal Codex JSONLは維持する。</li>
+    <li>Exit: production targetでSSE response bodyを読むコードとruntime fallbackが0件。</li>
+  </ul>
+
+  <h3 id="perf-04">PERF-04 Plain streaming / final Markdown</h3>
+  <ul>
+    <li>
+      変更: capacity 1 latest-wins coalescer、append-only chunk / tail bubble、completion state
+      machineを実装する。
+    </li>
+    <li>
+      変更: final canonical textだけをsize threshold付きでMarkdown parseし、bounded LRUへcacheする。
+    </li>
+    <li>変更: completed message memoization、list virtualization、rAF auto-scrollを導入する。</li>
+    <li>
+      Test: code fence途中、table途中、cancel、fail、tool loop、履歴100件、64,000文字 /
+      1文字delta回答。
+    </li>
+    <li>Exit: stream中のMarkdown parser呼出し0、completed messageはcontent変更時だけ1回。</li>
+  </ul>
+
+  <h3 id="perf-05">PERF-05 TTS pipeline hardening</h3>
+  <ul>
+    <li>
+      変更: JSON往復削除、incremental scanner、単一idle timer、最大3並列synthesizer、ordered
+      playerを実装する。
+    </li>
+    <li>
+      維持: adaptive threshold、protected boundary、final tail一回、ordered playback、half-duplex。
+    </li>
+    <li>
+      Test: 1文字delta、巨大delta、URL / Markdown / 数値、idle reset、cancel、provider failure。
+    </li>
+    <li>
+      Exit: 最初の実audio sampleがMessageCompletedより前に始まり、SpeechStartedとの誤差20 ms以下、
+      speech completeness違反が0。
+    </li>
+  </ul>
+
+  <h3 id="perf-06">PERF-06 ASR accuracy regression gate</h3>
+  <ul>
+    <li>
+      変更: 固定PCM corpus、gold transcript、Native Harness loopback、speaker scenariosを整備する。
+    </li>
+    <li>
+      維持: exact packet、VAD boundary、whole-prefix、stable / unstable、speaker zeroize、final
+      queue。
+    </li>
+    <li>Test: Native / Batch、Native途中切断、quiet speech、30秒、50 ms boundary、他人音声。</li>
+    <li>
+      Exit: 自動test全件成功、先頭欠落 / final重複 / raw leakage 0、accuracyがbaseline非劣化。
+    </li>
+  </ul>
+
+  <h3 id="perf-07">PERF-07 Meeting audio worker</h3>
+  <ul>
+    <li>変更: 100 ms入力のstateful resample、PCM encode、1秒segment transferをWorkerへ移す。</li>
+    <li>
+      Test: phase continuity、sample count、clipping、alias suppression、stop race、transfer
+      ownership。
+    </li>
+    <li>
+      Exit: resample中のUI long taskが0、capture終了からnormalized segment配送までp95 20 ms以下。
+    </li>
+  </ul>
+
+  <h3 id="perf-08">PERF-08 SQLite read path</h3>
+  <ul>
+    <li>
+      変更: persistent read-only connection 2本、statement cache、本文を含まない三列expression
+      index、 opaque keyset pagination、settings snapshot cacheを実装する。
+    </li>
+    <li>変更: SQL外のcontext composeをwriter lock外へ出す。</li>
+    <li>Test: 100,000行、同時read / write、migration、旧timestamp、deep page。</li>
+    <li>Exit: query planがindexを使用し、p95がSection 7を満たす。</li>
+  </ul>
+
+  <h3 id="perf-09">PERF-09 Release evidence / cutover</h3>
+  <ul>
+    <li>
+      変更: release profile、canary flag、protocol version telemetry、rollback runbookを固定する。
+    </li>
+    <li>実施: 30分stream、100 turn、ASR/TTS同時利用、network flap、sleep / wake、app quit。</li>
+    <li>Exit: Section 7の全Gateを満たし、SSE serverを停止してもproduction flowが成功する。</li>
+  </ul>
+
+  <h2 id="7-acceptance-gates">7. Acceptance Gate</h2>
+  <table>
+    <caption>
+      Table: Performance, accuracy, and correctness gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">指標</th>
+        <th scope="col">合格条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>G-LLM-01</code></td>
+        <td>Transport correctness</td>
+        <td>SSE利用0、1 active run / connection、resume後のdelta重複 / 欠落0</td>
+      </tr>
+      <tr>
+        <td><code>G-LLM-02</code></td>
+        <td>Binary delta throughput</td>
+        <td>loopbackで20 byte × 10,000 deltaを250 ms以内、peak RSS増加16 MiB以下で受理</td>
+      </tr>
+      <tr>
+        <td><code>G-LLM-03</code></td>
+        <td>Internal latency</td>
+        <td>socket receive → Hub accept p95 ≤ 250 µs、Hub accept → TTS append p95 ≤ 250 µs</td>
+      </tr>
+      <tr>
+        <td><code>G-LLM-04</code></td>
+        <td>Run isolation</td>
+        <td>別connectionの1 MiB upload stall中も対象runの追加p95遅延 ≤ 5 ms、cancel p95 ≤ 50 ms</td>
+      </tr>
+      <tr>
+        <td><code>G-LLM-05</code></td>
+        <td>Wire efficiency</td>
+        <td>delta本文20 byte時のapplication framing overhead 16 byte、terminal本文再送0 byte</td>
+      </tr>
+      <tr>
+        <td><code>G-UI-01</code></td>
+        <td>Streaming render</td>
+        <td>64,000文字 / 1文字deltaでfirst paint p95 ≤ 50 ms、commit ≤ 60回/秒、50 ms超task 0</td>
+      </tr>
+      <tr>
+        <td><code>G-UI-02</code></td>
+        <td>Markdown</td>
+        <td>stream中0回、finishReason=stop後1回、cancel / fail / length後0回</td>
+      </tr>
+      <tr>
+        <td><code>G-UI-03</code></td>
+        <td>履歴表示</td>
+        <td>100 messageで新deltaによる過去message再render 0</td>
+      </tr>
+      <tr>
+        <td><code>G-UI-04</code></td>
+        <td>Backpressure isolation</td>
+        <td>
+          UI consumerを2秒停止してもLLM ACK / TTS配送が停止せず、再開後最大2 batch / 2
+          rAFで最新本文へ収束
+        </td>
+      </tr>
+      <tr>
+        <td><code>G-UI-05</code></td>
+        <td>Memory / layout</td>
+        <td>64,000文字stream後のsettled JS heap増加8 MiB以下、main-thread task p95 ≤ 8 ms</td>
+      </tr>
+      <tr>
+        <td><code>G-UI-06</code></td>
+        <td>Final Markdown paint</td>
+        <td>
+          response.completed → sanitized paint p95 ≤ 100 ms（16 KiB未満）、≤ 250 ms（64,000文字）
+        </td>
+      </tr>
+      <tr>
+        <td><code>G-TTS-00</code></td>
+        <td>Internal dispatch</td>
+        <td>first boundary → synthesis request dispatch p95 ≤ 5 ms</td>
+      </tr>
+      <tr>
+        <td><code>G-TTS-01</code></td>
+        <td>First boundary → audio</td>
+        <td>
+          controlled synthesizerでp50 ≤ 300 ms、p95 ≤ 700 ms、かつvalidated
+          <code>response.completed</code>前に開始
+        </td>
+      </tr>
+      <tr>
+        <td><code>G-TTS-02</code></td>
+        <td>Chunk gap / cancel</td>
+        <td>gap p95 ≤ 150 ms、cancel → silence p95 ≤ 200 ms</td>
+      </tr>
+      <tr>
+        <td><code>G-TTS-03</code></td>
+        <td>Speech integrity</td>
+        <td>欠落、重複、順序逆転、自分の音声のASR再入力が各0件</td>
+      </tr>
+      <tr>
+        <td><code>G-TTS-04</code></td>
+        <td>Lifecycle accuracy</td>
+        <td>最初のaudio sampleとSpeechStartedの差 ≤ 20 ms、synthesis待ち中のASR停止0 ms</td>
+      </tr>
+      <tr>
+        <td><code>G-ASR-01</code></td>
+        <td>Protocol correctness</td>
+        <td>packet、sequence、boundary、finalの既存自動testが全件成功</td>
+      </tr>
+      <tr>
+        <td><code>G-ASR-02</code></td>
+        <td>Recognition accuracy</td>
+        <td>固定corpusのCERがbaseline非劣化、先頭欠落 / stable rollback / final重複0</td>
+      </tr>
+      <tr>
+        <td><code>G-ASR-03</code></td>
+        <td>Speaker privacy</td>
+        <td>reject raw leakage 0、本人False Rejectと他人False Acceptが承認済み閾値内</td>
+      </tr>
+      <tr>
+        <td><code>G-AUD-01</code></td>
+        <td>Meeting resample</td>
+        <td>UI threadの50 ms超task 0、1秒segment close → native配送 p95 ≤ 20 ms</td>
+      </tr>
+      <tr>
+        <td><code>G-AUD-02</code></td>
+        <td>Meeting transcript</td>
+        <td>controlled ASRでspeech sample → transcript p50 ≤ 1.2 s、p95 ≤ 1.8 s</td>
+      </tr>
+      <tr>
+        <td><code>G-DB-01</code></td>
+        <td>100,000行read</td>
+        <td>warm先頭page p95 ≤ 5 ms、50,000行相当keyset page p95 ≤ 5 ms</td>
+      </tr>
+      <tr>
+        <td><code>G-DB-02</code></td>
+        <td>Reader lifecycle</td>
+        <td>
+          同時read 2件でsteady stateのConnection open 0、prepare cache hit率95%以上、reader待ちp95 ≤
+          2 ms
+        </td>
+      </tr>
+      <tr>
+        <td><code>G-SOAK-01</code></td>
+        <td>100 turn / 30分</td>
+        <td>unbounded queue、zombie process、audio leak 0、終了5分後RSSが開始時 +10 MiB以内</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    internal latency / throughput gateは同一hardware、release build、prewarmed
+    connection、controlled Harnessで200
+    run以上、microbenchmarkで1,000反復以上を計測する。実Providerは30 run以上を別に記録し、
+    Provider生成・合成時間とSAAA内遅延を混ぜない。p50 / p95 / p99と95% bootstrap confidence
+    intervalを保存し、 平均値だけで合格判定しない。Gate失敗時は該当packageをmergeせず、profileとraw
+    contentを含まないtraceを添付する。
+  </p>
+
+  <h2 id="8-test-commands">8. 自動検証Command</h2>
+  <pre><code class="language-bash">REPORT_DIR="$(mktemp -d)"
+bun run performance:verify -- --report-dir "$REPORT_DIR"
+bun run performance:report -- --report-dir "$REPORT_DIR"
+
+bun run perf:streaming-ui
+bun run perf:meeting-audio
+bun run check
+bun run spec:check
+
+# isolated LARM / 実Providerのoperator Gate
+bun run larm:canary -- --report-dir "$REPORT_DIR"
+bun run larm:soak -- --report-dir "$REPORT_DIR" --duration 30m</code></pre>
+  <p>
+    新規実装時は上記bench / perf scriptと、WebSocket protocol、Turn Event Hub、Markdown lifecycle、
+    TTS render-aheadのtestを同じ変更で追加する。期待結果はSection 7の各Gateをmachine-readable JSONで
+    出力して全件passすること。test
+    runnerの<code>running 0 tests</code>、sample不足、metric欠落は失敗とする。
+    失敗時は該当packageをmergeせず、content-free trace、hardware ID、release profile、raw
+    histogramを保存する。
+  </p>
+
+  <h2 id="9-migration-and-rollback">9. Migration / Rollback</h2>
+  <ol>
+    <li>Serverへversioned WebSocketを先行配備し、production trafficなしでcontract testを通す。</li>
+    <li>Desktop canaryをWebSocketだけで動作させ、SSE serverを遮断した試験を行う。</li>
+    <li>UI final-MarkdownとTTS direct branchをcanaryへ同時投入し、三つの時刻を個別計測する。</li>
+    <li>ASRは変更せず全regression suiteと実mic testを再実行する。</li>
+    <li>全Gate通過後にSSE client、parser、fixture、server routeを削除する。</li>
+  </ol>
+  <p>
+    rollbackはDesktopとServerを直前の互換releaseへ同時に戻す。新Desktop内にSSE fallbackを
+    残さない。WebSocket障害時にASR sessionと既に確定したTextを巻き戻さず、該当LLM runだけを
+    明示的にfailedにする。TTSはそのrunの未再生audioをcancelし、他sessionへ影響させない。
+  </p>
+
+  <h2 id="10-risks">10. Riskと停止条件</h2>
+  <table>
+    <caption>
+      Table: Migration risks and stop conditions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Risk</th>
+        <th scope="col">検出</th>
+        <th scope="col">停止条件 / 対応</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>WebSocket resumeでTTSが同じ文を再発声</td>
+        <td>seqとspeech claim rangeの不一致</td>
+        <td>cutover停止。run単位dedupeを修正し、全文再読は行わない</td>
+      </tr>
+      <tr>
+        <td>UI coalescingがTTSを遅らせる</td>
+        <td>first boundary timestampがUI flush後になる</td>
+        <td>分岐順序違反としてmerge不可</td>
+      </tr>
+      <tr>
+        <td>terminal contentBytes / hashがcanonical accumulatorと不一致</td>
+        <td>byte length / incremental hash failure</td>
+        <td>protocol failure。Textを安全に確定し、TTS tailは停止する</td>
+      </tr>
+      <tr>
+        <td>ASR精度またはspeaker privacyが後退</td>
+        <td>CER、False Accept / Reject、raw leakage</td>
+        <td>性能値が改善してもrelease不可。ASR変更をrevertする</td>
+      </tr>
+      <tr>
+        <td>render-aheadでaudio resourceが増加</td>
+        <td>queue depth、temporary file、child process</td>
+        <td>bounded slot超過をfailし、sessionだけcancelする</td>
+      </tr>
+      <tr>
+        <td>DB性能変更がsingle-writerを破る</td>
+        <td>二重writer、lock error、architecture test</td>
+        <td>SQLite計画を先に改訂するまでPERF-08を停止する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="11-definition-of-done">11. Definition of Done</h2>
+  <ol>
+    <li>
+      <code>PERF-00</code
+      >から<code>PERF-09</code>を依存順に完了している。
+    </li>
+    <li>対象LLM data planeにSSE code、fallback、gatewayが残っていない。</li>
+    <li>
+      stream中の画面はplain textで、finishReason=stopの正常完了時だけMarkdownを一度renderする。
+    </li>
+    <li>TTSは回答完了前に開始し、先行合成、順序、取消、half-duplexを維持している。</li>
+    <li>ASRの既存精度・安全策を維持し、自動testと実mic / Harness evidenceが揃っている。</li>
+    <li>Section 7のperformance、accuracy、correctness、soak Gateをすべて満たしている。</li>
+    <li>rollback手順がSSE fallbackなしで実地確認されている。</li>
+    <li>本文書、既存ASR/TTS計画、release evidence、実装のstatusが一致している。</li>
+  </ol>
+
+  <h2 id="12-score">12. 実装完了時の評点</h2>
+  <table>
+    <caption>
+      Table: Strict implementation quality score
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">評価軸</th>
+        <th scope="col">配点</th>
+        <th scope="col">得点</th>
+        <th scope="col">根拠</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Hot-path architecture</td>
+        <td>25</td>
+        <td>25</td>
+        <td>WS専用data plane、typed Hub、UI/TTS分岐、persistent SQLite reader</td>
+      </tr>
+      <tr>
+        <td>Correctness / isolation</td>
+        <td>25</td>
+        <td>25</td>
+        <td>sequence、hash、terminal、resume、cancel、ASR/TTS非回帰test</td>
+      </tr>
+      <tr>
+        <td>Measured performance</td>
+        <td>25</td>
+        <td>23</td>
+        <td>
+          release bench 1,000反復とraw histogramを実装。実Provider / 実WebView値はoperator Gate
+        </td>
+      </tr>
+      <tr>
+        <td>Operability / rollback</td>
+        <td>15</td>
+        <td>14</td>
+        <td>
+          version telemetry、content-free report、前release同時rollback手順。実地rehearsalのみ未署名
+        </td>
+      </tr>
+      <tr>
+        <td>Maintainability</td>
+        <td>10</td>
+        <td>10</td>
+        <td>責務分割、module-size、Clippy、型生成、再現command</td>
+      </tr>
+      <tr>
+        <th scope="row">合計</th>
+        <td>100</td>
+        <td><strong>97</strong></td>
+        <td>90点超を確認。これは実装品質評点であり、release承認ではない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    実装評点とproduction release判定を混同しない。実マイク、実Provider、WebView paint、30分soak、
+    rollback rehearsalの署名が揃うまで、release
+    evidenceの判定は<code>blocked</code>を維持する。
+  </p>
+</article>

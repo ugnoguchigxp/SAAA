@@ -2,11 +2,16 @@ use rusqlite::params;
 use std::fs;
 use std::sync::Arc;
 
-use super::conversation_context::compose_provider_history;
+#[path = "start_turn.rs"]
+pub(crate) mod command;
+#[path = "conversation_context.rs"]
+mod conversation_context;
+
+use super::event_hub::RuntimeEventSender;
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent, RuntimeFailureCode};
+use crate::persistence::conversations::validate_conversation_write_target;
 use crate::persistence::{
     load_codex_settings, load_model_providers, load_routing_settings, load_security_settings,
-    validate_conversation_write_target,
 };
 use crate::providers::routing::{
     apply_runtime_provider_gates, effective_conversation_route_ids, resolve_harness_llm_provider,
@@ -21,11 +26,12 @@ use crate::{
     ProviderFailureKind, ProviderOutputPersistence, RunCancellation, StartTurnInput,
     TurnExecutionFailure,
 };
+use conversation_context::compose_provider_history;
 
 pub(crate) async fn execute_turn(
     state: &AppState,
     input: &StartTurnInput,
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
     codex_policy_override: Option<crate::runtime::contracts::RunSupervisionPolicy>,
 ) -> Result<(), TurnExecutionFailure> {
@@ -167,7 +173,7 @@ pub(crate) async fn execute_turn(
 }
 
 pub(crate) fn send_runtime_terminal_event(
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    on_event: &dyn RuntimeEventSender,
     run_id: &str,
     error: &TurnExecutionFailure,
     cancelled: bool,
@@ -237,31 +243,29 @@ pub(crate) fn finish_supervised_runtime_run(
     last_progress_at: Option<&str>,
     error: Option<&str>,
 ) -> Result<(), String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let changed = connection
-        .execute(
-            "UPDATE runtime_runs
-             SET status=?1, error_message=?2, completed_at=?3, failure_code=?4,
-                 supervisor_version=?5, last_progress_at=?6
-             WHERE id=?7 AND status='running'",
-            params![
-                status,
-                error.map(redact_runtime_text),
-                now_iso(),
-                failure_code.map(crate::runtime::contracts::RunFailureCode::as_str),
-                supervisor_version,
-                last_progress_at,
-                run_id
-            ],
-        )
-        .map_err(database_error)?;
-    if changed != 1 {
-        return Err("Runtime run was already finalized".to_string());
-    }
-    Ok(())
+    state.sqlite_writer.write(|connection| {
+        let changed = connection
+            .execute(
+                "UPDATE runtime_runs
+                 SET status=?1, error_message=?2, completed_at=?3, failure_code=?4,
+                     supervisor_version=?5, last_progress_at=?6
+                 WHERE id=?7 AND status='running'",
+                params![
+                    status,
+                    error.map(redact_runtime_text),
+                    now_iso(),
+                    failure_code.map(crate::runtime::contracts::RunFailureCode::as_str),
+                    supervisor_version,
+                    last_progress_at,
+                    run_id
+                ],
+            )
+            .map_err(database_error)?;
+        if changed != 1 {
+            return Err("Runtime run was already finalized".to_string());
+        }
+        Ok(())
+    })
 }
 
 pub(crate) fn prepare_runtime_run(
@@ -272,16 +276,15 @@ pub(crate) fn prepare_runtime_run(
         .interaction_policy
         .lock()
         .map_err(|_| "Interaction policy lock unavailable".to_string())?;
-    let task_mode: String = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?
-        .query_row(
-            "SELECT task_mode FROM conversations WHERE id = ?1",
-            params![input.conversation_id],
-            |row| row.get(0),
-        )
-        .map_err(|_| "Conversation does not exist".to_string())?;
+    let task_mode: String = state.sqlite_readers.read(|connection| {
+        connection
+            .query_row(
+                "SELECT task_mode FROM conversations WHERE id = ?1",
+                params![input.conversation_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "Conversation does not exist".to_string())
+    })?;
     validate_conversation_write_target(&input.conversation_id, &task_mode)?;
     if task_mode == "coding" && state.meeting.blocks_tts() {
         return Err(
@@ -305,79 +308,78 @@ pub(crate) fn prepare_runtime_run(
     if task_mode == "conversation" {
         memory::context_window::validate_current_instruction(input.content.trim())?;
     }
-    let mut connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let transaction = connection.transaction().map_err(database_error)?;
     let route_kind = if task_mode == "coding" {
         "coding.assist"
     } else {
         "conversation.respond"
     };
-    let now = now_iso();
-    let input_message_id = if let Some(message_id) = input.retry_input_message_id.as_deref() {
-        crate::validate_identifier(message_id, "retry input message id")?;
-        let retryable: bool = transaction
-            .query_row(
-                "SELECT EXISTS(
-                   SELECT 1 FROM conversation_messages m
-                   WHERE m.id = ?1 AND m.conversation_id = ?2 AND m.role = 'user'
-                     AND m.content = ?3
-                     AND EXISTS(
-                       SELECT 1 FROM runtime_runs r
-                       WHERE r.input_message_id = m.id AND r.status = 'failed'
-                     )
-                 )",
-                params![message_id, input.conversation_id, input.content.trim()],
-                |row| row.get(0),
-            )
-            .map_err(database_error)?;
-        if !retryable {
-            return Err("Only a failed conversation response can be retried".to_string());
-        }
-        message_id.to_string()
-    } else {
-        let message_id = new_id("message");
+    state.sqlite_writer.write(|connection| {
+        let transaction = connection.transaction().map_err(database_error)?;
+        let now = now_iso();
+        let input_message_id = if let Some(message_id) = input.retry_input_message_id.as_deref() {
+            crate::validate_identifier(message_id, "retry input message id")?;
+            let retryable: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM conversation_messages m
+                       WHERE m.id = ?1 AND m.conversation_id = ?2 AND m.role = 'user'
+                         AND m.content = ?3
+                         AND EXISTS(
+                           SELECT 1 FROM runtime_runs r
+                           WHERE r.input_message_id = m.id AND r.status = 'failed'
+                         )
+                     )",
+                    params![message_id, input.conversation_id, input.content.trim()],
+                    |row| row.get(0),
+                )
+                .map_err(database_error)?;
+            if !retryable {
+                return Err("Only a failed conversation response can be retried".to_string());
+            }
+            message_id.to_string()
+        } else {
+            let message_id = new_id("message");
+            transaction
+                .execute(
+                    "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                     VALUES (?1, ?2, 'user', ?3, ?4)",
+                    params![message_id, input.conversation_id, input.content.trim(), now],
+                )
+                .map_err(database_error)?;
+            message_id
+        };
         transaction
             .execute(
-                "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
-                 VALUES (?1, ?2, 'user', ?3, ?4)",
-                params![message_id, input.conversation_id, input.content.trim(), now],
+                "INSERT INTO runtime_runs(
+                   id,conversation_id,route_kind,status,started_at,supervisor_version,input_message_id
+                 ) VALUES(?1,?2,?3,'running',?4,?5,?6)",
+                params![
+                    input.run_id,
+                    input.conversation_id,
+                    route_kind,
+                    now,
+                    if task_mode == "coding" {
+                        Some(crate::runtime::contracts::SUPERVISOR_VERSION)
+                    } else {
+                        None
+                    },
+                    input_message_id,
+                ],
             )
             .map_err(database_error)?;
-        message_id
-    };
-    transaction
-        .execute(
-            "INSERT INTO runtime_runs(
-               id,conversation_id,route_kind,status,started_at,supervisor_version,input_message_id
-             ) VALUES(?1,?2,?3,'running',?4,?5,?6)",
-            params![
-                input.run_id,
-                input.conversation_id,
-                route_kind,
-                now,
-                if task_mode == "coding" {
-                    Some(crate::runtime::contracts::SUPERVISOR_VERSION)
-                } else {
-                    None
-                },
-                input_message_id,
-            ],
-        )
-        .map_err(database_error)?;
-    transaction
-        .execute(
-            "UPDATE conversations SET updated_at = ?1, title = COALESCE(title, ?2) WHERE id = ?3",
-            params![
-                now,
-                bounded_text(input.content.trim(), 60),
-                input.conversation_id
-            ],
-        )
-        .map_err(database_error)?;
-    transaction.commit().map_err(database_error)?;
+        transaction
+            .execute(
+                "UPDATE conversations SET updated_at = ?1, title = COALESCE(title, ?2) WHERE id = ?3",
+                params![
+                    now,
+                    bounded_text(input.content.trim(), 60),
+                    input.conversation_id
+                ],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(())
+    })?;
     Ok(task_mode)
 }
 
@@ -387,35 +389,37 @@ pub(crate) fn finish_runtime_run(
     status: &str,
     error: Option<&str>,
 ) -> Result<(), String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let changed = connection
-        .execute(
-            "UPDATE runtime_runs
-             SET status = ?1, error_message = ?2, completed_at = ?3
-             WHERE id = ?4 AND status = 'running'",
-            params![status, error.map(redact_runtime_text), now_iso(), run_id],
-        )
-        .map_err(database_error)?;
-    if changed != 1 {
-        return Err("Runtime run was already finalized".to_string());
-    }
-    Ok(())
+    state.sqlite_writer.write(|connection| {
+        let changed = connection
+            .execute(
+                "UPDATE runtime_runs
+                 SET status = ?1, error_message = ?2, completed_at = ?3
+                 WHERE id = ?4 AND status = 'running'",
+                params![status, error.map(redact_runtime_text), now_iso(), run_id],
+            )
+            .map_err(database_error)?;
+        if changed != 1 {
+            return Err("Runtime run was already finalized".to_string());
+        }
+        Ok(())
+    })
 }
 
 pub(crate) async fn execute_conversation_turn(
     state: &AppState,
     input: &StartTurnInput,
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
 ) -> Result<ConversationMessage, String> {
-    let (mut providers, route, security, history, context_health, configuration_fingerprint) = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
+    let (
+        mut providers,
+        route,
+        security,
+        identity,
+        regional,
+        loaded_context,
+        configuration_fingerprint,
+    ) = state.sqlite_readers.read(|connection| {
         let input_message_id: String = connection
             .query_row(
                 "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
@@ -423,47 +427,53 @@ pub(crate) async fn execute_conversation_turn(
                 |row| row.get(0),
             )
             .map_err(database_error)?;
-        let context_window =
-            memory::context_window::build(&connection, &input.conversation_id, &input_message_id)?;
-        let context_health = context_window.health.clone();
-        let _ = memory::control_plane::record_projection_event(
-            &connection,
+        let loaded_context =
+            memory::context_window::load(connection, &input.conversation_id, &input_message_id)?;
+        let identity = load_codex_settings(connection)?;
+        let regional = crate::persistence::settings::regional_preferences::load(connection)?;
+        let providers = load_model_providers(connection)?;
+        let route = load_routing_settings(connection)?.conversation_respond;
+        let configuration_fingerprint =
+            crate::persistence::effective_route::conversation_configuration_fingerprint(
+                &providers, &route,
+            )?;
+        Ok((
+            providers,
+            route,
+            load_security_settings(connection)?,
+            identity,
+            regional,
+            loaded_context,
+            configuration_fingerprint,
+        ))
+    })?;
+    let context_window = memory::context_window::compose(loaded_context)?;
+    let context_health = context_window.health.clone();
+    let _ = state.sqlite_writer.write(|connection| {
+        memory::control_plane::record_projection_event(
+            connection,
             context_health.status,
             context_health.projected_bytes,
             context_health.hard_limit_bytes,
             context_health.output_reserve_bytes,
             context_health.repair_count,
             &now_iso(),
-        );
-        let identity = load_codex_settings(&connection)?;
-        let regional = crate::persistence::settings::regional_preferences::load(&connection)?;
-        let history = compose_provider_history(
-            &input.conversation_id,
-            &identity.agent_name,
-            &identity.user_name,
-            &regional,
-            &input.input_origin,
-            &input.presentation_mode,
-            context_window.messages,
-        )?;
-        let providers = load_model_providers(&connection)?;
-        let route = load_routing_settings(&connection)?.conversation_respond;
-        let configuration_fingerprint =
-            crate::persistence::effective_route::conversation_configuration_fingerprint(
-                &providers, &route,
-            )?;
-        (
-            providers,
-            route,
-            load_security_settings(&connection)?,
-            history,
-            context_health,
-            configuration_fingerprint,
         )
-    };
+    });
+    let history = compose_provider_history(
+        &input.conversation_id,
+        &identity.agent_name,
+        &identity.user_name,
+        &regional,
+        &input.input_origin,
+        &input.presentation_mode,
+        context_window.messages,
+    )?;
+    let mut route = route;
     if route.source == "harness" {
-        resolve_harness_llm_provider(&mut providers, route.timeout_ms, cancellation.clone())
-            .await?;
+        route.timeout_ms =
+            resolve_harness_llm_provider(&mut providers, route.timeout_ms, cancellation.clone())
+                .await?;
     }
     let reasoning_effort = providers.reasoning_effort.clone();
     let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
@@ -778,12 +788,13 @@ mod tests {
             content: "retry this response".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
         prepare_runtime_run(&state, &first).expect("first run prepares");
         let input_message_id: String = state
-            .connection
+            .sqlite_writer
             .lock()
             .expect("database lock")
             .query_row(
@@ -793,7 +804,7 @@ mod tests {
             )
             .expect("input message reads");
         state
-            .connection
+            .sqlite_writer
             .lock()
             .expect("database lock")
             .execute(
@@ -805,12 +816,13 @@ mod tests {
         let retry = StartTurnInput {
             run_id: "run-retry".to_string(),
             retry_input_message_id: Some(input_message_id.clone()),
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
             ..first
         };
         prepare_runtime_run(&state, &retry).expect("retry prepares");
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let message_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_messages WHERE role = 'user'",

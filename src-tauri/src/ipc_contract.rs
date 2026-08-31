@@ -56,6 +56,7 @@ pub(crate) struct ConversationMessage {
 pub(crate) struct ConversationMessagePage {
     pub(crate) messages: Vec<ConversationMessage>,
     pub(crate) has_more: bool,
+    pub(crate) next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]

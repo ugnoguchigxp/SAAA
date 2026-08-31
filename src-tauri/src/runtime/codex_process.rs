@@ -5,6 +5,7 @@ use std::thread;
 
 use crate::ipc_contract::RuntimeEvent;
 use crate::process_guard::ProcessGuard;
+use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{
     now_iso, spawn_codex_app_server, validate_identifier, write_codex_handshake,
     write_codex_message, CodexReaderMessage, CodexTurnFailure, CodexTurnOutcome, RunCancellation,
@@ -24,7 +25,7 @@ pub(crate) fn run_codex_turn_process(
     model: &str,
     existing_thread_id: Option<&str>,
     timeout_ms: u64,
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    on_event: &dyn RuntimeEventSender,
     cancellation: &RunCancellation,
 ) -> Result<CodexTurnOutcome, CodexTurnFailure> {
     let policy = crate::runtime::contracts::RunSupervisionPolicy::for_route(timeout_ms).map_err(
@@ -55,7 +56,7 @@ pub(crate) fn run_codex_turn_process_with_policy(
     model: &str,
     existing_thread_id: Option<&str>,
     policy: crate::runtime::contracts::RunSupervisionPolicy,
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    on_event: &dyn RuntimeEventSender,
     cancellation: &RunCancellation,
 ) -> Result<CodexTurnOutcome, CodexTurnFailure> {
     use crate::runtime::codex_app_server::{CodexEventProjector, ProjectedCodexEvent};

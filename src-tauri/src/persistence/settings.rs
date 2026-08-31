@@ -72,11 +72,9 @@ pub(crate) fn set_voice_listening_enabled(
     state: &crate::AppState,
     enabled: bool,
 ) -> Result<SettingsDocument, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    set_voice_listening_enabled_to_connection(&connection, enabled)
+    state
+        .sqlite_writer
+        .write(|connection| set_voice_listening_enabled_to_connection(connection, enabled))
 }
 
 pub(crate) fn load_routing_settings(connection: &Connection) -> Result<RoutingSettings, String> {
@@ -584,7 +582,7 @@ pub(crate) fn list_settings_documents(
     connection: &Connection,
 ) -> Result<Vec<SettingsDocument>, String> {
     let mut statement = connection
-        .prepare(
+        .prepare_cached(
             "SELECT namespace, key, schema_version, value_json, updated_at
              FROM settings_documents ORDER BY namespace, key",
         )

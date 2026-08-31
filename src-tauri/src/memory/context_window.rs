@@ -81,6 +81,13 @@ struct SourceMessage {
     content: String,
 }
 
+pub(crate) struct LoadedContextWindow {
+    source_history_truncated: bool,
+    source: Vec<SourceMessage>,
+    current: SourceMessage,
+    memory_items: Vec<control_plane::ProjectionItem>,
+}
+
 pub(crate) fn validate_current_instruction(content: &str) -> Result<(), String> {
     current_instruction_base_bytes(content).map(|_| ())
 }
@@ -93,12 +100,41 @@ fn current_instruction_base_bytes(content: &str) -> Result<usize, String> {
     Ok(projected_bytes)
 }
 
+#[cfg(test)]
 pub fn build(
     connection: &Connection,
     conversation_id: &str,
     current_message_id: &str,
 ) -> Result<ContextWindow, String> {
-    build_with_memory(
+    compose(load_with_memory(
+        connection,
+        conversation_id,
+        current_message_id,
+        control_plane::memory_enabled(),
+    )?)
+}
+
+#[cfg(test)]
+fn build_with_memory(
+    connection: &Connection,
+    conversation_id: &str,
+    current_message_id: &str,
+    include_memory: bool,
+) -> Result<ContextWindow, String> {
+    compose(load_with_memory(
+        connection,
+        conversation_id,
+        current_message_id,
+        include_memory,
+    )?)
+}
+
+pub(crate) fn load(
+    connection: &Connection,
+    conversation_id: &str,
+    current_message_id: &str,
+) -> Result<LoadedContextWindow, String> {
+    load_with_memory(
         connection,
         conversation_id,
         current_message_id,
@@ -106,12 +142,12 @@ pub fn build(
     )
 }
 
-fn build_with_memory(
+fn load_with_memory(
     connection: &Connection,
     conversation_id: &str,
     current_message_id: &str,
     include_memory: bool,
-) -> Result<ContextWindow, String> {
+) -> Result<LoadedContextWindow, String> {
     let (current_ordinal, current_source_bytes, current_created_at): (i64, usize, String) =
         connection
             .query_row(
@@ -134,7 +170,7 @@ fn build_with_memory(
         return Err("Current instruction is too large for the safe context window".to_string());
     }
     let mut statement = connection
-        .prepare(
+        .prepare_cached(
             "SELECT id, role, content
              FROM (
                SELECT message.rowid AS ordinal, message.id, message.role,
@@ -192,13 +228,28 @@ fn build_with_memory(
         return Err("Current context message is not a valid user instruction".to_string());
     }
 
-    let base_bytes = current_instruction_base_bytes(&current.content)?;
-    let remaining = MAX_PROJECTED_INPUT_BYTES - base_bytes;
     let memory_items = if include_memory {
         control_plane::load_projection_items(connection, &current_created_at)?
     } else {
         Vec::new()
     };
+    Ok(LoadedContextWindow {
+        source_history_truncated,
+        source,
+        current,
+        memory_items,
+    })
+}
+
+pub(crate) fn compose(loaded: LoadedContextWindow) -> Result<ContextWindow, String> {
+    let LoadedContextWindow {
+        source_history_truncated,
+        source,
+        current,
+        memory_items,
+    } = loaded;
+    let base_bytes = current_instruction_base_bytes(&current.content)?;
+    let remaining = MAX_PROJECTED_INPUT_BYTES - base_bytes;
     let (memory_block, memory_item_count) =
         render_memory_projection(&memory_items, MAX_MEMORY_BYTES.min(remaining));
     let remaining_after_memory = remaining.saturating_sub(memory_block.len());

@@ -434,7 +434,9 @@ async fn wait_for_allocation_count(
 }
 
 mod scenarios;
+mod websocket;
 use scenarios::*;
+use websocket::websocket_turn;
 
 #[tokio::test]
 #[ignore = "operator-only live LARM preflight"]

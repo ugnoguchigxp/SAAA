@@ -3,7 +3,7 @@ use super::*;
 impl SituationRuntime {
     pub(crate) fn tick_sampled(
         &self,
-        connection: &Mutex<Connection>,
+        connection: &SqliteWriter,
         sample: SituationSample,
     ) -> Result<(), String> {
         let SituationSample {
@@ -138,16 +138,15 @@ impl SituationRuntime {
                 inner.calibration_rule_version.as_str(),
                 &quality,
             ));
-            let database = connection
-                .lock()
-                .map_err(|_| "Database lock unavailable".to_string())?;
-            if let Err(error) = repository::persist_entry_with_retention(
-                &database,
-                entry,
-                &inner.settings,
-                now_ms,
-                quality_window,
-            ) {
+            if let Err(error) = connection.write(|database| {
+                repository::persist_entry_with_retention(
+                    database,
+                    entry,
+                    &inner.settings,
+                    now_ms,
+                    quality_window,
+                )
+            }) {
                 if now_ms.saturating_sub(quality_started_ms)
                     >= u128::from(inner.settings.heartbeat_interval_ms).saturating_mul(2)
                 {
@@ -209,23 +208,19 @@ impl SituationRuntime {
         })
     }
 
-    pub fn snapshot_locked(
-        &self,
-        connection: &Mutex<Connection>,
-    ) -> Result<SituationSnapshot, String> {
+    pub fn snapshot_locked(&self, readers: &SqliteReaders) -> Result<SituationSnapshot, String> {
         let (monitoring_enabled, signals, state, decision, last_failure) = self.snapshot_state()?;
-        let database = connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        Ok(SituationSnapshot {
-            monitoring_enabled,
-            monitoring_active: self.is_worker_running(),
-            signals,
-            state,
-            decision,
-            last_failure,
-            history: repository::list_history(&database)?,
-            evaluation: repository::evaluation_summary(&database)?,
+        readers.read(|database| {
+            Ok(SituationSnapshot {
+                monitoring_enabled,
+                monitoring_active: self.is_worker_running(),
+                signals,
+                state,
+                decision,
+                last_failure,
+                history: repository::list_history(database)?,
+                evaluation: repository::evaluation_summary(database)?,
+            })
         })
     }
 

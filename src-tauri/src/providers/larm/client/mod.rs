@@ -15,6 +15,7 @@ use std::{
 use tokio::sync::Notify;
 use url::Url;
 
+#[cfg(test)]
 use crate::runtime::agent_tools::AgentToolCall;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -25,13 +26,18 @@ const PROBE_BODY_LIMIT: usize = 64 * 1_024;
 const CONTROL_BODY_LIMIT: usize = 256 * 1_024;
 const RELEASE_BODY_LIMIT: usize = 64 * 1_024;
 const ERROR_BODY_LIMIT: usize = 8 * 1_024;
+#[cfg(test)]
 const GATEWAY_REQUEST_LIMIT: usize = 4 * 1_024 * 1_024;
+#[cfg(test)]
 const SSE_EVENT_LIMIT: usize = 1_024 * 1_024;
+#[cfg(test)]
 const ASSISTANT_CHAR_LIMIT: usize = 64_000;
 const CAPABILITY: &str = "llm.general";
 const ROUTE: &str = "llm-default";
+#[cfg(test)]
 const VIRTUAL_MODEL: &str = "local";
 
+#[cfg(test)]
 mod chat;
 mod decode;
 
@@ -305,6 +311,12 @@ impl EphemeralCredential {
         Ok(Self(value))
     }
 
+    pub(crate) fn authorization(&self) -> Result<&str, SessionFailureKind> {
+        self.0
+            .to_str()
+            .map_err(|_| SessionFailureKind::Authentication)
+    }
+
     #[cfg(test)]
     pub(crate) fn fixture() -> Self {
         let mut value = HeaderValue::from_static("Bearer fixture-token");
@@ -361,12 +373,14 @@ pub(crate) enum CleanupResult {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct ChatMessage {
     pub(crate) role: &'static str,
     pub(crate) content: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct ChatCompletion {
     pub(crate) content: String,
     pub(crate) tool_call: Option<AgentToolCall>,
@@ -412,6 +426,7 @@ struct RenewRequest {
     ttl_seconds: u32,
 }
 
+#[cfg(test)]
 impl Serialize for ChatMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

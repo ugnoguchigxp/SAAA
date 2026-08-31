@@ -33,7 +33,7 @@ Voice chat and Meeting transcription use a local ASR server on the LAN. ASR is t
 - To use the local conversation route, a local LLM server reachable over the private network and a `LARM_API_TOKEN`
 - For voice input or Meeting, a local ASR server reachable from SAAA
 
-macOS is the primary verification target. System TTS is implemented for macOS, Linux, and Windows, but Situation foreground/input signals and secure voice-profile key storage depend on macOS facilities.
+macOS is the primary verification target. System TTS is implemented for macOS, Linux, and Windows, but Situation foreground/input signals depend on macOS facilities.
 
 ## Run locally
 
@@ -94,7 +94,7 @@ The bundled runtime uses the package's model-facing toolset and strict Context G
 
 Settings → Voice → My voice profile can configure an on-device filter that matches the current speaker against the user's enrolled voice. Enabling the filter requires five valid samples, each 10–12 seconds long, with a combined duration of at least 50 seconds. Five long Japanese prompts with varied pronunciation and intonation are shown in sequence. Each prompt is intentionally longer than the recording window: keep reading continuously until capture stops automatically after about 12 seconds, even though the text will not be finished.
 
-Samples are stored in the application-data directory as AES-256-GCM-encrypted WAV files. Speaker embeddings are encrypted in SQLite, while the master key is stored only in macOS Keychain. When the filter is enabled, SAAA sends audio to the local ASR server only after it passes local speaker matching. Model, key, timeout, and ambiguous-speaker failures are fail-closed; they never fall back to sending unfiltered audio.
+Voice samples are stored as unencrypted WAV files in the application-data directory, and speaker embeddings are stored unencrypted in SQLite. On macOS, the sample directory uses mode `0700` and sample files use mode `0600`. When the filter is enabled, SAAA sends audio to the local ASR server only after it passes local speaker matching. Model, stored-data, timeout, and ambiguous-speaker failures are fail-closed; they never fall back to sending unfiltered audio.
 
 This is a transcription privacy filter. It is not identity authentication, liveness detection, or protection against replayed recordings.
 
@@ -136,11 +136,13 @@ SAAA creates one SQLite database in the application-data directory for `com.saaa
 ~/Library/Application Support/com.saaa.desktop/saaa.sqlite3
 ```
 
-The database stores settings, conversations, completed messages, run state, and encrypted speaker embeddings. It does not store model API keys, `LARM_API_TOKEN`, or the ephemeral connection details returned by the local LLM server.
+The main database has exactly one read-write owner: a Rust `SqliteWriter` created once in the Tauri process and reused by every write path. Startup acquires an exclusive OS lock before opening SQLite, so a second SAAA process using the same data directory is rejected before it can open or migrate the database. Read-only operations use separate SQLite connections opened with both the read-only flag and `query_only=ON`; each operation runs in one read transaction so its queries share a consistent snapshot. This allows multiple readers while keeping all writes serialized through the single Writer. The adjacent `saaa.sqlite3.writer.lock` file may remain after shutdown; the OS releases its lock automatically, so it must not be deleted while SAAA is running.
 
-Settings → Privacy & Security can create a consistent SQLite backup or a redacted diagnostics JSON file. Diagnostics exclude conversation text, local paths, and credentials.
+The database stores settings, conversations, completed messages, run state, unencrypted speaker embeddings, and a bounded structured audit trail. The audit trail retains lifecycle events for seven days; events older than seven days are removed when the application opens its database at startup. It links microphone capture, ASR utterances, conversation runs, provider sessions, TTS, meetings, and settings changes by correlation and causation identifiers. It stores event names, states, timestamps, outcomes, and failure codes. It does not evaluate or store voice-quality metrics, raw audio, transcript or prompt text, model output, credentials, endpoint addresses, or ephemeral allocation/request identifiers.
 
-Database backups do not include the encrypted voice samples or the macOS Keychain key. Restoring a database backup alone therefore cannot restore a usable voice profile. SAAA also creates a pre-migration database backup automatically before opening an older schema.
+The top-level Audit log screen shows the latest 200 structured audit events in a read-only list. Settings → Privacy & Security can create a consistent SQLite backup or a redacted diagnostics JSON file. Diagnostics include the latest 1,000 structured audit events and exclude conversation text, local paths, credentials, and connection secrets.
+
+Database backups include the unencrypted speaker embeddings but not the WAV voice samples. Restoring a database backup alone therefore cannot restore a usable voice profile. SAAA also creates a pre-migration database backup automatically before opening an older schema.
 
 ## Current limitations
 

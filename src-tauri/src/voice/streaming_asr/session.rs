@@ -4,9 +4,11 @@ use std::{
     time::Duration,
 };
 
-use tauri::ipc::Channel;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use zeroize::{Zeroize, Zeroizing};
+
+#[cfg(test)]
+use tauri::ipc::Channel;
 
 use super::{
     batch_engine::{BatchEngine, DecodeKind, DecodeRequest},
@@ -15,7 +17,7 @@ use super::{
     native_connection::{NativeConnection, NativeInbound},
     speaker_gate_runtime::SpeakerGate,
 };
-use crate::RunCancellation;
+use crate::{persistence::audit::VoiceAsrAuditChannel, RunCancellation};
 
 const FINAL_TIMEOUT: Duration = Duration::from_secs(15);
 const RESULT_CAPACITY: usize = 8;
@@ -35,7 +37,7 @@ pub(crate) enum SessionCommand {
 pub(crate) struct SessionConfig {
     pub(crate) session_id: String,
     pub(crate) current_utterance_id: String,
-    pub(crate) event: Channel<VoiceAsrStreamEvent>,
+    pub(crate) event: VoiceAsrAuditChannel,
     pub(crate) batch_decoder: Arc<dyn BatchDecode>,
     pub(crate) native: Option<NativeConnection>,
     pub(crate) speaker_gate: SpeakerGate,
@@ -89,7 +91,7 @@ struct DecodeResult {
 
 struct Actor {
     session_id: String,
-    event: Channel<VoiceAsrStreamEvent>,
+    event: VoiceAsrAuditChannel,
     commands: mpsc::Receiver<SessionCommand>,
     decoder: Arc<dyn BatchDecode>,
     decode_tx: mpsc::Sender<DecodeResult>,
@@ -314,8 +316,7 @@ impl Actor {
             DecodeKind::Partial => self.current.partial_cancellation.clone(),
             DecodeKind::Final => Arc::new(RunCancellation::default()),
         };
-        self.decode_cancellations
-            .push(Arc::downgrade(&cancellation));
+        track_decode_cancellation(&mut self.decode_cancellations, &cancellation);
         let decode_slot = self.decode_slot.clone();
         let result_tx = self.decode_tx.clone();
         tokio::spawn(async move {
@@ -764,6 +765,17 @@ impl Actor {
     }
 }
 
+fn track_decode_cancellation(
+    tracked: &mut Vec<Weak<RunCancellation>>,
+    cancellation: &Arc<RunCancellation>,
+) {
+    tracked.retain(|value| value.strong_count() > 0);
+    let cancellation = Arc::downgrade(cancellation);
+    if !tracked.iter().any(|value| value.ptr_eq(&cancellation)) {
+        tracked.push(cancellation);
+    }
+}
+
 async fn next_native(native: &mut Option<NativeConnection>) -> NativeInbound {
     match native {
         Some(connection) => connection
@@ -801,15 +813,21 @@ fn failure_code(error: &str) -> VoiceAsrFailureCode {
         VoiceAsrFailureCode::StreamProtocol
     } else if error.contains("asr-stream-timeout") {
         VoiceAsrFailureCode::StreamTimeout
-    } else if error.contains("asr-final-timeout") {
+    } else if error.contains("asr-final-timeout")
+        || error.to_ascii_lowercase().contains("timed out")
+        || error.to_ascii_lowercase().contains("timeout")
+    {
         VoiceAsrFailureCode::FinalTimeout
-    } else if error.contains("asr-language-not-allowed") {
+    } else if error.contains("asr-language-not-allowed")
+        || error.contains("ASR_LANGUAGE_NOT_ALLOWED")
+        || error.contains("ASR_LANGUAGE_UNKNOWN")
+    {
         VoiceAsrFailureCode::LanguageNotAllowed
     } else if error.contains("asr-target-speaker-unavailable") {
         VoiceAsrFailureCode::TargetSpeakerUnavailable
     } else if error.contains("asr-backpressure") {
         VoiceAsrFailureCode::Backpressure
-    } else if error.contains("asr-cancelled") {
+    } else if error.contains("asr-cancelled") || error.to_ascii_lowercase().contains("cancelled") {
         VoiceAsrFailureCode::Cancelled
     } else {
         VoiceAsrFailureCode::ProviderUnavailable
@@ -978,7 +996,7 @@ mod tests {
         SessionConfig {
             session_id: "session_test".to_string(),
             current_utterance_id: "utterance_test".to_string(),
-            event,
+            event: VoiceAsrAuditChannel::plain(event),
             batch_decoder: Arc::new(FixedDecoder),
             native,
             speaker_gate: SpeakerGate::new(None, 0.008),
@@ -1387,7 +1405,7 @@ mod tests {
         let config = SessionConfig {
             session_id: "session_pcm".to_string(),
             current_utterance_id: "utterance_pcm".to_string(),
-            event,
+            event: VoiceAsrAuditChannel::plain(event),
             batch_decoder: Arc::new(RecordingDecoder { seen: seen.clone() }),
             native: None,
             speaker_gate: gate,
@@ -1445,5 +1463,19 @@ mod tests {
         assert_eq!(next_failure(0), (1, false));
         assert_eq!(next_failure(1), (2, false));
         assert_eq!(next_failure(2), (3, true));
+    }
+
+    #[test]
+    fn completed_decode_cancellations_do_not_accumulate_for_the_session_lifetime() {
+        let completed = Arc::new(RunCancellation::default());
+        let mut tracked = vec![Arc::downgrade(&completed)];
+        drop(completed);
+        let active = Arc::new(RunCancellation::default());
+
+        track_decode_cancellation(&mut tracked, &active);
+        track_decode_cancellation(&mut tracked, &active);
+
+        assert_eq!(tracked.len(), 1);
+        assert!(tracked[0].upgrade().is_some());
     }
 }

@@ -6,7 +6,7 @@ pub(crate) mod codex_process;
 pub(crate) mod codex_supervise;
 pub(crate) mod codex_turn;
 pub mod contracts;
-mod conversation_context;
+pub(crate) mod event_hub;
 pub(crate) mod run_support;
 pub mod supervisor;
 pub(crate) mod turn_types;

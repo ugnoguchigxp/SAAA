@@ -101,7 +101,7 @@ pub(crate) async fn transcribe_at(
         .map_err(|_| "LAN ASR returned an invalid transcription response".to_string())?;
     let text = result.text.trim();
     if text.is_empty() {
-        return Err("LAN ASR completed without a transcript".to_string());
+        return Err("ASR_NO_SPEECH: LAN ASR completed without a transcript".to_string());
     }
     Ok((
         bounded_text(text, MAX_TRANSCRIPT_CHARS),

@@ -1,0 +1,1082 @@
+<article lang="ja">
+  <h1 id="sqlite-single-writer-plan">
+    SQLite Single Writer実装計画 — Rust-owned reusable Writer and concurrent Readers
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Reviewed / Implementation-ready v3</li>
+    <li>Created: 2026-08-31</li>
+    <li>SAAA baseline: <code>0ec8019</code> + working tree</li>
+    <li>Database baseline: <code>PRAGMA user_version = 14</code></li>
+    <li>Settings document baseline: <code>schema_version = 13</code></li>
+    <li>Shipping target: Tauri desktop（macOS、Windows、Linux）</li>
+    <li>対象: Rust SQLite ownership、Writer、Reader、起動・終了、永続化test</li>
+  </ul>
+  <p>
+    本文書は、SAAAが所有する<code>saaa.sqlite3</code>への書込みを、単一のSAAAプロセスが保持する
+    Rust製<code>SqliteWriter</code>一インスタンスへ集約するための実装契約である。
+    実装担当がWriter方式、プロセス排他方式、Reader分離、移行順序を追加で選択しないよう、
+    型、所有権、起動順序、変更範囲、test、acceptanceを本文書で固定する。
+  </p>
+  <p>
+    完了の定義は<code>DBW-00</code>〜<code>DBW-09</code>を順に完了し、Section
+    13のAcceptance Criteriaをすべて満たすことである。本計画ではRust実装とpagination IPCを変更する。
+    table / column / data形式と<code>user_version</code>は変更せず、Section
+    8.4で固定する expression index一件だけを追加する。
+  </p>
+
+  <h2 id="1-fixed-decisions">1. 結論と固定判断</h2>
+  <pre><code class="language-text">SAAA process A
+├─ DatabaseOwnerGuard ── exclusive OS advisory lock
+├─ Arc&lt;SqliteWriter&gt; ─── the only read-write Connection
+│  └─ Mutex&lt;rusqlite::Connection&gt;
+└─ SqliteReaders ──────── two persistent read-only Connections
+   ├─ Reader 1
+   └─ Reader 2
+
+SAAA process B
+└─ DatabaseOwnerGuard acquisition fails
+   └─ must exit before Connection::open(saaa.sqlite3)</code></pre>
+  <ol>
+    <li>
+      Writerは新しいchild processまたはsidecarにしない。Tauri main process内で一度だけ生成した
+      <code>Arc&lt;SqliteWriter&gt;</code>をcommand、background task、runtimeで使い回す。
+    </li>
+    <li>
+      <code>SqliteWriter</code>だけがmain databaseのread-write
+      <code>rusqlite::Connection</code
+      >を所有する。Connectionのclone、再open、pool化を禁止する。
+    </li>
+    <li>
+      Writer内部の<code>Mutex&lt;Connection&gt;</code>で同一プロセス内の書込みを直列化する。
+      <code>AppState</code>やfeature
+      runtimeへ生のConnectionまたはMutexを公開しない。
+    </li>
+    <li>
+      DBを開く前に<code>DatabaseOwnerGuard</code>がOS advisory lockを取得する。
+      二つ目のSAAAプロセスはmain databaseを一度もopenせず、安定した
+      <code>database-already-owned</code>エラーで終了する。
+    </li>
+    <li>
+      Readerは<code>SqliteReaders</code>が<code>SQLITE_OPEN_READ_ONLY</code>と
+      <code>PRAGMA query_only=ON</code
+      >で起動時に2本だけ生成して再利用する。Reader同士および
+      ReaderとWriterはWAL上で並行実行でき、read transactionは結果materialize直後に閉じる。
+    </li>
+    <li>
+      read-modify-write、起動reconciliation、migration、整合性snapshotはWriter上で実行する。
+      純粋なSELECTだけをReaderへ移す。
+    </li>
+    <li>
+      専用Writer thread、async channel、read-write connection pool、新しいORMは導入しない。
+      read-only poolは固定2本を上限とし、既存の同期rusqlite APIをblocking worker上で使う。
+      長い前処理はWriter / Reader lock取得前に終える。
+    </li>
+    <li>
+      本変更ではschema versionを上げない。table / column / データ形式は変えず、Reader ownership、
+      cursor IPC、Section 8.4の一indexとqueryだけを変える。
+    </li>
+  </ol>
+
+  <h2 id="2-current-state">2. 現状と変更理由</h2>
+  <table>
+    <caption>
+      Table: Verified current SQLite architecture
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">現状</th>
+        <th scope="col">根拠</th>
+        <th scope="col">問題</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>起動時にmain DBを一回open</td>
+        <td><code>src-tauri/src/lib.rs::run</code></td>
+        <td>一プロセス内では一接続だが、二つ目のプロセスも同じDBをopenできる</td>
+      </tr>
+      <tr>
+        <td><code>AppState.connection: Arc&lt;Mutex&lt;Connection&gt;&gt;</code></td>
+        <td><code>src-tauri/src/lib.rs</code></td>
+        <td>書込みは直列だが、read-write capabilityが全featureへ露出している</td>
+      </tr>
+      <tr>
+        <td>WALと5秒busy timeout</td>
+        <td><code>persistence/schema.rs</code></td>
+        <td>競合を待たせるだけでWriter processの一意性を保証しない</td>
+      </tr>
+      <tr>
+        <td>複数domainが直接<code>execute</code>する</td>
+        <td>
+          <code>persistence</code
+          >、<code>runtime</code>、<code>providers</code>、
+          <code>memory</code
+          >、<code>situation</code>、<code>meeting</code>、<code
+            >voice</code
+          >
+        </td>
+        <td>単一Writer APIを通過したことを型とsource scanで確認できない</td>
+      </tr>
+      <tr>
+        <td>Readerも同じMutexを使用</td>
+        <td>snapshot、diagnostics、settings、auditのSELECT</td>
+        <td>長いSELECTがWriterを止め、複数Readerも並行実行できない</td>
+      </tr>
+      <tr>
+        <td>LARM readinessは別プロセスからDBを読む</td>
+        <td><code>scripts/larm-readiness/database.ts</code></td>
+        <td>
+          現状も<code>readonly: true</code>、<code>query_only=ON</code>であり、維持すべき正常なReader例
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    SQLite/WALは同時にcommitできるWriterを一件へ制御するが、SAAAの設計要件はSQLiteの競合解決へ
+    依存することではない。DBのread-write capabilityを一つのRust objectと一つのowner processへ
+    閉じ込め、他の処理はそのobjectを再利用することを要件とする。
+  </p>
+
+  <h2 id="3-goals">3. Goals / Non-goals</h2>
+  <h3 id="31-goals">3.1 Goals</h3>
+  <ol>
+    <li>main DBのread-write Connectionをprocess内に一件だけ存在させる。</li>
+    <li>二つ目のSAAAプロセスがmain DBへ接続する前に拒否される。</li>
+    <li>すべての書込みが同じ<code>Arc&lt;SqliteWriter&gt;</code>を再利用する。</li>
+    <li>Readerをread-only capabilityとして分離し、同時SELECTを許可する。</li>
+    <li>既存transaction、migration、backup、reconciliationの意味を維持する。</li>
+    <li>source scanとprocess testで、将来の直接open・直接共有の回帰を検出する。</li>
+  </ol>
+
+  <h3 id="32-non-goals">3.2 Non-goals</h3>
+  <ul>
+    <li>SQLiteからclient/server databaseへ変更しない。</li>
+    <li>Writerを別daemon、sidecar、network serviceにしない。</li>
+    <li>すべてのSQLを一ファイルまたは巨大なcommand enumへ移動しない。</li>
+    <li>新しいtable、column、trigger、settings documentを追加しない。</li>
+    <li>
+      Section 8.4の<code>nextCursor</code>以外のUI、IPC payload、business
+      ruleを変更しない。
+    </li>
+    <li>外部の任意processによるDB file改変をsecurity boundaryとして完全に防止しない。</li>
+    <li>Readerを3本以上へ動的拡張する汎用pool、またはread-write connection poolを導入しない。</li>
+  </ul>
+
+  <h2 id="4-invariants">4. 必須不変条件</h2>
+  <ul>
+    <li>
+      <strong>DBW-I01:</strong> production codeでmain DBをread-write openできる場所は
+      <code>persistence/sqlite/writer.rs</code>だけである。
+    </li>
+    <li>
+      <strong>DBW-I02:</strong> <code>DatabaseOwnerGuard</code>取得前にmain
+      DB、<code>-wal</code>、
+      <code>-shm</code>へ接続または更新しない。
+    </li>
+    <li>
+      <strong>DBW-I03:</strong> <code>SqliteWriter</code>はprocess
+      lifetime中に一インスタンスだけ生成し、
+      cloneするのは<code>Arc</code>だけとする。
+    </li>
+    <li>
+      <strong>DBW-I04:</strong>
+      <code>Connection</code>、<code>Mutex&lt;Connection&gt;</code>、
+      <code>MutexGuard&lt;Connection&gt;</code>をWriter methodの外へ返さない。
+    </li>
+    <li>
+      <strong>DBW-I05:</strong> Writer
+      lockを保持したまま<code>.await</code>、HTTP、child process待機、
+      audio処理、User選択待ちを行わない。
+    </li>
+    <li>
+      <strong>DBW-I06:</strong> ReaderはOS level read-only
+      flagと<code>query_only=ON</code>の両方を使う。
+    </li>
+    <li>
+      <strong>DBW-I07:</strong> read-modify-writeは一回のWriter critical
+      sectionまたはtransaction内で完了する。
+    </li>
+    <li>
+      <strong>DBW-I08:</strong> process crashでOS
+      lockは自動解放され、次回起動に手動cleanupを要求しない。
+    </li>
+    <li>
+      <strong>DBW-I09:</strong> lock contention、SQLite error、diagnosticsへdatabase absolute
+      pathを出さない。
+    </li>
+    <li>
+      <strong>DBW-I10:</strong> schema version、table / column、既存row、backup形式、readiness
+      reader契約を変えない。追加indexはSection 8.4の一件だけとする。
+    </li>
+  </ul>
+
+  <h2 id="5-architecture">5. Rust architectureと所有権</h2>
+  <h3 id="51-module-layout">5.1 Module layout</h3>
+  <pre><code class="language-text">src-tauri/src/persistence/
+├─ mod.rs
+├─ sqlite/
+│  ├─ mod.rs          # approved public surface inside crate
+│  ├─ owner.rs        # process-wide advisory lock
+│  ├─ writer.rs       # the only read-write Connection owner
+│  ├─ readers.rs      # fixed two-lane read-only Connection owner
+│  └─ tests.rs        # unit and thread concurrency tests
+├─ app_commands.rs
+├─ schema.rs
+├─ migrate.rs
+└─ ... existing repositories
+
+src-tauri/tests/
+├─ sqlite_writer_process.rs   # real subprocess ownership tests
+└─ sqlite_architecture.rs     # forbidden source pattern checks</code></pre>
+  <p>
+    <code>sqlite</code>
+    moduleはcrate内で<code>SqliteWriter</code>、<code>SqliteReaders</code>、
+    <code>DatabaseOpenError</code
+    >だけを公開する。<code>DatabaseOwnerGuard</code>とConnection
+    fieldはprivateにする。
+  </p>
+
+  <h3 id="52-owner-guard">5.2 DatabaseOwnerGuard</h3>
+  <p>
+    <code>src-tauri/Cargo.toml</code
+    >へ<code>fs2 = "0.4"</code>を追加し、
+    <code>FileExt::try_lock_exclusive</code>でdatabase pathと同じdirectoryの
+    <code>saaa.sqlite3.writer.lock</code>をlockする。lock file handleをguard内に保持し、
+    <code>SqliteWriter</code>がdropされるまで解放しない。
+  </p>
+  <ol>
+    <li>database parent directoryを既存ルールで作成・検証する。</li>
+    <li>
+      lock fileをread/write、createでopenする。Unixではmode
+      <code>0600</code>を固定する。
+    </li>
+    <li>regular file、non-symlink、current ownerを検証する。</li>
+    <li><code>try_lock_exclusive</code>を一回だけ実行する。待機やretryをしない。</li>
+    <li>
+      <code>WouldBlock</code
+      >またはlock競合を<code>DatabaseOpenError::AlreadyOwned</code>へ変換する。
+    </li>
+    <li>lock取得後にだけmain databaseの<code>Connection::open</code>へ進む。</li>
+  </ol>
+  <p>
+    lock
+    fileは正常終了時もunlinkしない。unlock後の残存fileは無害であり、unlinkと別processのopenが競合して
+    別inodeへ二重lockする事故を避ける。process crash時はOSがfile handleのlockを解放する。
+  </p>
+
+  <h3 id="53-writer">5.3 SqliteWriter</h3>
+  <pre><code class="language-rust">pub(crate) struct SqliteWriter {
+    connection: std::sync::Mutex&lt;rusqlite::Connection&gt;,
+    _owner: DatabaseOwnerGuard,
+}
+
+impl SqliteWriter {
+    pub(crate) fn open(path: &amp;Path) -&gt; Result&lt;Self, DatabaseOpenError&gt;;
+
+    pub(crate) fn write&lt;T&gt;(
+        &amp;self,
+        operation: impl FnOnce(&amp;mut Connection) -&gt; Result&lt;T, String&gt;,
+    ) -&gt; Result&lt;T, String&gt;;
+
+    pub(crate) fn write_transaction&lt;T&gt;(
+        &amp;self,
+        behavior: TransactionBehavior,
+        operation: impl FnOnce(&amp;Transaction&lt;'_&gt;) -&gt; Result&lt;T, String&gt;,
+    ) -&gt; Result&lt;T, String&gt;;
+
+    pub(crate) fn read_serialized&lt;T&gt;(
+        &amp;self,
+        operation: impl FnOnce(&amp;Connection) -&gt; Result&lt;T, String&gt;,
+    ) -&gt; Result&lt;T, String&gt;;
+}</code></pre>
+  <ul>
+    <li>
+      <code>write</code
+      >は既存repositoryが自分でtransactionを開始する移行用・複合operation用であり、
+      自動transactionを開始しない。
+    </li>
+    <li>
+      <code>write_transaction</code>は新規または単純な複数statement
+      operationへ使う。既存transactionを 二重に開始しない。
+    </li>
+    <li>
+      <code>read_serialized</code
+      >はbackup、migration判定、read-modify-writeの先行SELECTなど、Writerと同じ
+      Connectionで読む必要がある場合だけ使う。通常SELECTには使わない。
+    </li>
+    <li>
+      poisoned
+      Mutexは既存の<code>Database lock unavailable</code>相当の安定したerrorへ変換する。
+    </li>
+    <li>operation完了時にguardを必ずdropし、Connection referenceをclosure外へ持ち出さない。</li>
+  </ul>
+
+  <h3 id="54-readers">5.4 SqliteReaders</h3>
+  <pre><code class="language-rust">#[derive(Clone)]
+pub(crate) struct SqliteReaders {
+    lanes: Arc&lt;[Mutex&lt;Connection&gt;; 2]&gt;,
+    next_lane: Arc&lt;AtomicUsize&gt;,
+}
+
+impl SqliteReaders {
+    pub(crate) fn open(database_path: &amp;Path) -&gt; Result&lt;Self, String&gt;;
+    pub(crate) async fn read&lt;T, F&gt;(
+        &amp;self,
+        operation: F,
+    ) -&gt; Result&lt;T, String&gt;
+    where
+        T: Send + 'static,
+        F: FnOnce(&amp;mut Connection) -&gt; Result&lt;T, String&gt; + Send + 'static;
+}</code></pre>
+  <p>
+    <code>open</code
+    >はWriterのmigrationとinitialize完了後、起動時にread-only Connectionを2本だけ
+    openする。<code>read</code>は<code>spawn_blocking</code>内でround-robinにlaneを選び、
+    lock待ち時間をmetric化して再利用する。async executorとUI
+    threadでrusqlite処理を直接実行してはならない。 steady stateでConnectionをopen /
+    closeしてはならない。statementは
+    <code>prepare_cached</code>を使い、各operationのread
+    transactionはquery結果をmaterializeした直後に commitしてWAL checkpointを妨げない。
+  </p>
+  <pre><code class="language-sql">PRAGMA query_only = ON;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;</code></pre>
+  <p>
+    open flagは<code>OpenFlags::SQLITE_OPEN_READ_ONLY</code>だけを必須とする。Reader connectionを
+    feature codeへ公開せず、UI
+    threadから同期<code>read</code>を呼ばない。Reader lane failure時は
+    そのlaneだけを一度reopenし、連続3回失敗した場合はDB
+    readを明示的にfailする。無制限retryは禁止する。
+  </p>
+
+  <h3 id="55-app-state">5.5 AppState wiring</h3>
+  <pre><code class="language-rust">struct AppState {
+    sqlite_writer: Arc&lt;SqliteWriter&gt;,
+    sqlite_readers: SqliteReaders,
+    data_directory: PathBuf,
+    // existing non-database state...
+}</code></pre>
+  <p>
+    <code>connection: Arc&lt;Mutex&lt;Connection&gt;&gt;</code>は削除する。background workerへ渡すのは
+    <code>Arc&lt;SqliteWriter&gt;</code
+    >または<code>SqliteReaders</code>だけとする。
+    <code>SqliteWriter</code>自体をcloneせず、必ず同じArc allocationを共有する。
+  </p>
+
+  <h2 id="6-lifecycle">6. 起動、実行、終了sequence</h2>
+  <h3 id="61-startup">6.1 Startup</h3>
+  <pre><code class="language-text">resolve application_database_path
+  ↓
+create/validate parent directory
+  ↓
+DatabaseOwnerGuard::acquire(lock path)
+  ├─ AlreadyOwned → stable startup failure; DB is not opened
+  └─ acquired
+       ↓
+Connection::open(main DB read-write) exactly once
+       ↓
+backup_before_migration
+       ↓
+initialize_database / migration / reconciliation
+       ↓
+SqliteWriter owns Connection + guard
+       ↓
+open exactly two read-only Connections → SqliteReaders becomes available
+       ↓
+load startup snapshots
+       ↓
+app.manage(AppState)</code></pre>
+  <p>
+    <code>backup_before_migration</code>、<code>initialize_database</code>、
+    <code>database-ready</code> audit eventはowner
+    processだけが実行する。二つ目のprocessはbackup directory、 main DB、WALへ触れない。
+  </p>
+
+  <h3 id="62-runtime">6.2 Runtime</h3>
+  <ol>
+    <li>network、validation、audio/model処理、JSON encodeはWriter lock取得前に行う。</li>
+    <li>DBへ渡すowned valueを準備してから<code>sqlite_writer.write</code>を呼ぶ。</li>
+    <li>read-modify-writeは一closureにまとめ、途中でlockを解放しない。</li>
+    <li>transaction commitまたはrollback後、closureから即時returnする。</li>
+    <li>結果を使う非DB処理はWriter lock解放後に行う。</li>
+  </ol>
+
+  <h3 id="63-shutdown">6.3 Shutdown</h3>
+  <ol>
+    <li>新規turn、meeting、voice sessionを停止する。</li>
+    <li>既存のmeeting reconcile、situation quality flushを同じWriterで完了する。</li>
+    <li>新規readを停止し、実行中read完了後に二本のReader Connectionをcloseする。</li>
+    <li>background taskが持つ<code>Arc&lt;SqliteWriter&gt;</code>をdropする。</li>
+    <li>
+      最後のArc
+      dropでConnectionをcloseし、その後<code>DatabaseOwnerGuard</code>をunlockする。
+    </li>
+    <li>lock file自体は削除しない。</li>
+  </ol>
+  <p>
+    shutdown timeoutでprocessが終了してもOSがlockを解放するため、次回起動にstale PID判定やlock
+    file削除は 不要である。
+  </p>
+
+  <h2 id="7-write-migration">7. Writerへの移行対象</h2>
+  <table>
+    <caption>
+      Table: Write path migration matrix
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">領域</th>
+        <th scope="col">代表operation</th>
+        <th scope="col">移行方法</th>
+        <th scope="col">整合性単位</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Bootstrap</td>
+        <td>schema、migration、reconcile、default rows</td>
+        <td><code>SqliteWriter::open</code>内部のowner取得後に実行</td>
+        <td>既存startup transaction</td>
+      </tr>
+      <tr>
+        <td>Settings / Conversation</td>
+        <td>settings保存、conversation作成、message追加</td>
+        <td>app commandが共有Writerを呼ぶ</td>
+        <td>既存transactionを維持</td>
+      </tr>
+      <tr>
+        <td>Runtime / Codex</td>
+        <td>runtime run、message確定、codex thread</td>
+        <td>prepare/finalizeごとに一Writer closure</td>
+        <td>run + messageのatomicity維持</td>
+      </tr>
+      <tr>
+        <td>Provider</td>
+        <td>provider session開始・終了、probe state</td>
+        <td>session_storeのrepository関数をWriter内で呼ぶ</td>
+        <td>一session state transition</td>
+      </tr>
+      <tr>
+        <td>Memory</td>
+        <td>recall receipt/cursor、reflection job、continuity</td>
+        <td>既存transactionをWriter closureへ包む</td>
+        <td>job claim、capsule revision</td>
+      </tr>
+      <tr>
+        <td>Situation</td>
+        <td>ledger、feedback、quality、calibration</td>
+        <td>
+          <code>&amp;Mutex&lt;Connection&gt;</code
+          >引数を<code>&amp;SqliteWriter</code>へ変更
+        </td>
+        <td>sampleまたはdecision</td>
+      </tr>
+      <tr>
+        <td>Meeting</td>
+        <td>session state、transcript save/discard</td>
+        <td>MeetingRuntimeが共有Writerを受ける</td>
+        <td>session transitionまたはexplicit save</td>
+      </tr>
+      <tr>
+        <td>Voice</td>
+        <td>profile/sample、voice policy、ASR/TTS runtime run</td>
+        <td>file前処理後に短いWriter transactionを実行</td>
+        <td>DB rowとfile publicationの既存順序維持</td>
+      </tr>
+      <tr>
+        <td>Audit</td>
+        <td>frontend event、turn request、ASR metadata</td>
+        <td>全channel/contextが同じWriter Arcを保持</td>
+        <td>一event。triggerは親transaction内</td>
+      </tr>
+      <tr>
+        <td>Backup</td>
+        <td>SQLite online backup</td>
+        <td><code>read_serialized</code>でsource接続を借りる</td>
+        <td>一貫したbackup snapshot</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    domain
+    repositoryが<code>&amp;Connection</code>または<code>&amp;mut Connection</code>を受ける既存関数は、
+    Writer
+    closure内でのみ呼ばれる限り移行初期に維持してよい。ただし<code>AppState</code>、runtime
+    struct、 async task fieldにConnectionを保存してはならない。
+  </p>
+
+  <h2 id="8-reader-migration">8. Reader分離</h2>
+  <h3 id="81-pure-reads">8.1 初回にReaderへ移すoperation</h3>
+  <ul>
+    <li>settings、provider、routingの純粋なload</li>
+    <li>conversation/message listとpagination</li>
+    <li>audit event listとdiagnostics用SELECT</li>
+    <li>situation history、metrics、review snapshotの純粋なSELECT</li>
+    <li>voice profile snapshotのうちreconcileやwriteを伴わないSELECT</li>
+  </ul>
+
+  <h3 id="82-writer-reads">8.2 Writer側に残すread</h3>
+  <ul>
+    <li>migration version判定とmigration backup</li>
+    <li>run/message、job claim、state transitionのread-modify-write</li>
+    <li>backup source connection</li>
+    <li>書込み直後の返却値を同一transactionから構築するquery</li>
+    <li>startup reconciliation中のquery</li>
+  </ul>
+
+  <h3 id="83-hidden-writes">8.3 Hidden writeの除去</h3>
+  <p>
+    現行<code>get_app_snapshot</code>は<code>ensure_primary_conversation</code>によりSELECT
+    command内で INSERTしうる。primary conversationのensureをstartup
+    Writerへ固定し、snapshotを純粋なReader operationへ
+    変更する。同様に、名前が<code>load</code>、<code>get</code>、<code>snapshot</code>でもcleanup、reconcile、
+    <code>INSERT OR IGNORE</code>を行う関数はWriter側へ分類する。
+  </p>
+
+  <h3 id="84-message-keyset">8.4 Conversation message keyset</h3>
+  <p>
+    現行の<code>CAST(created_at AS INTEGER)</code> + deep
+    <code>OFFSET</code>は削除し、次のexpression indexと二つの<code
+      >prepare_cached</code
+    >
+    statementへ固定する。本文をindexへ複製するcovering indexは DB sizeとwrite
+    amplificationを増やすため禁止する。
+  </p>
+  <pre><code class="language-sql">CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_created_ms
+ON conversation_messages(conversation_id, CAST(created_at AS INTEGER) DESC, id DESC);
+
+-- first page
+SELECT id, conversation_id, role, content, created_at
+FROM conversation_messages INDEXED BY idx_conversation_messages_conversation_created_ms
+WHERE conversation_id = ?1
+ORDER BY CAST(created_at AS INTEGER) DESC, id DESC
+LIMIT ?2;
+
+-- next page; cursor = (created_at_ms, id)
+SELECT id, conversation_id, role, content, created_at
+FROM conversation_messages INDEXED BY idx_conversation_messages_conversation_created_ms
+WHERE conversation_id = ?1
+  AND (CAST(created_at AS INTEGER), id) &lt; (?2, ?3)
+ORDER BY CAST(created_at AS INTEGER) DESC, id DESC
+LIMIT ?4;</code></pre>
+  <p>
+    Rustは取得したDESC列の末尾（最古row）から次cursorを作ってから、一度だけreverseして画面の時系列順へ返す。公開cursorは
+    <code>{ version: 1, createdAtMs: i64, messageId: string }</code>をbase64url JSONへencodeしたopaque
+    <code>nextCursor</code>とする。decode後にprimary keyでmessage
+    ID、conversation ID、createdAtMsの一致を
+    検証し、改ざん・別conversation・不正versionを<code>invalid-cursor</code>で拒否する。
+    cursorなしはfirst statement、ありはnext
+    statementだけを使い、<code>OFFSET</code>へfallbackしない。
+    <code>EXPLAIN QUERY PLAN</code
+    >に当該indexの<code>SEARCH</code>があり、<code>USE TEMP B-TREE</code>が
+    ないことをarchitecture testで固定する。
+  </p>
+
+  <h2 id="9-errors">9. Error、failure、recovery contract</h2>
+  <table>
+    <caption>
+      Table: Stable database failures
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Failure</th>
+        <th scope="col">内部variant / code</th>
+        <th scope="col">挙動</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>別SAAA processがWriterを所有</td>
+        <td>
+          <code>AlreadyOwned</code> /
+          <code>database-already-owned</code>
+        </td>
+        <td>DBをopenせず二つ目のprocessを終了。retry loopなし</td>
+      </tr>
+      <tr>
+        <td>lock fileを安全にopenできない</td>
+        <td><code>OwnershipUnavailable</code></td>
+        <td>DBをopenせずstartup失敗</td>
+      </tr>
+      <tr>
+        <td>Writer Mutex poison</td>
+        <td><code>writer-unavailable</code></td>
+        <td>現在operationを失敗させ、新規writeを継続しない</td>
+      </tr>
+      <tr>
+        <td>Reader open/query失敗</td>
+        <td>既存redacted database error</td>
+        <td>そのreadだけ失敗。Writer ownershipは維持</td>
+      </tr>
+      <tr>
+        <td>process crash</td>
+        <td>OS process termination</td>
+        <td>OS lock自動解放。次回startup reconciliationを実行</td>
+      </tr>
+      <tr>
+        <td>外部の未管理Writerによる競合</td>
+        <td>SQLite busy/locked</td>
+        <td>既存errorとして失敗。SAAAは追加Writerを生成しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    二つ目のprocessを既存windowへactivateするUXは後続taskとする。single-instance
+    pluginを追加する場合も、 DB
+    ownershipの正本は<code>DatabaseOwnerGuard</code>であり、pluginだけへ依存しない。
+  </p>
+
+  <h2 id="10-file-map">10. File-by-file change map</h2>
+  <table>
+    <caption>
+      Table: Planned files
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">File</th>
+        <th scope="col">Action</th>
+        <th scope="col">内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <code>src-tauri/Cargo.toml</code> /
+          <code>Cargo.lock</code>
+        </td>
+        <td>Modify</td>
+        <td><code>fs2</code> dependencyを追加</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/persistence/sqlite/mod.rs</code></td>
+        <td>Add</td>
+        <td>Writer/Reader/errorのcrate内surface</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/persistence/sqlite/owner.rs</code></td>
+        <td>Add</td>
+        <td>lock file検証とprocess ownership</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/persistence/sqlite/writer.rs</code></td>
+        <td>Add</td>
+        <td>main DBの唯一のread-write open、bootstrap、Writer methods</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/persistence/sqlite/readers.rs</code></td>
+        <td>Add</td>
+        <td>read-only connection factory</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/persistence/schema.rs</code></td>
+        <td>Modify</td>
+        <td>Section 8.4のexpression index一件をidempotentに作成</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src-tauri/src/ipc_contract.rs</code> / conversation paginationのRust・Frontend
+          files
+        </td>
+        <td>Modify</td>
+        <td>
+          <code>offset</code>をopaque
+          <code>nextCursor</code>へ置換
+        </td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/lib.rs</code></td>
+        <td>Modify</td>
+        <td>AppStateとstartup wiringをWriter/Readersへ置換</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/persistence/*.rs</code></td>
+        <td>Modify</td>
+        <td>app commandとrepositoryをWriter/Reader経由へ移行</td>
+      </tr>
+      <tr>
+        <td>
+          <code>runtime/</code
+          >、<code>providers/</code>、<code>memory/</code>、
+          <code>situation/</code
+          >、<code>meeting/</code>、<code
+            >voice/</code
+          >
+        </td>
+        <td>Modify</td>
+        <td>Connection/Mutex引数とfieldを共有WriterまたはReadersへ置換</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/test_support.rs</code></td>
+        <td>Modify</td>
+        <td>temporary DBからtest Writer/Readersを構築</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/tests/sqlite_writer_process.rs</code></td>
+        <td>Add</td>
+        <td>実subprocessによるowner競合とcrash recovery</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/tests/sqlite_architecture.rs</code></td>
+        <td>Add</td>
+        <td>禁止patternとapproved open locationを固定</td>
+      </tr>
+      <tr>
+        <td>
+          <code>README.md</code> /
+          <code>README.ja.md</code>
+        </td>
+        <td>Modify</td>
+        <td>single Writer ownershipとread-only external inspectionを記載</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="11-tickets">11. Ordered implementation tickets</h2>
+  <h3 id="dbw-00">DBW-00 — Baselineとarchitecture guard</h3>
+  <ul>
+    <li>
+      productionのmain DB
+      open、<code>Mutex&lt;Connection&gt;</code>、書込みdomainをinventory化する。
+    </li>
+    <li>
+      <code>sqlite_architecture.rs</code
+      >を追加し、旧実装では期待どおり失敗する状態を確認する。
+    </li>
+    <li>既存test数と主要transaction testを記録する。</li>
+  </ul>
+  <p>
+    Exit: approved file以外の<code>Connection::open</code>、AppStateのraw
+    Connection、
+    <code>Arc&lt;Mutex&lt;Connection&gt;&gt;</code>を検出するtestが存在する。
+  </p>
+
+  <h3 id="dbw-01">DBW-01 — Process ownership</h3>
+  <ul>
+    <li>
+      <code>fs2</code
+      >と<code>DatabaseOwnerGuard</code>を追加する。
+    </li>
+    <li>lock path、permission、symlink、owner、error mappingをtestする。</li>
+    <li>このticketではまだAppStateを切り替えない。</li>
+  </ul>
+  <p>Exit: 二subprocessの一方だけが同じlockを取得し、owner crash後に次processが取得できる。</p>
+
+  <h3 id="dbw-02">DBW-02 — Reusable SqliteWriter</h3>
+  <ul>
+    <li>
+      <code>SqliteWriter</code
+      >を追加し、owner取得、open、backup、initializeの順序を固定する。
+    </li>
+    <li>
+      <code>write</code
+      >、<code>write_transaction</code>、<code>read_serialized</code>をtestする。
+    </li>
+    <li>複数threadが同じArcを使っても同時critical sectionが一件であることを測定する。</li>
+  </ul>
+  <p>
+    Exit: Writer Connectionのopen箇所が一件になり、100 concurrent write fixtureが全件commitする。
+  </p>
+
+  <h3 id="dbw-03">DBW-03 — AppState切替</h3>
+  <ul>
+    <li>
+      <code>AppState.connection</code
+      >を<code>sqlite_writer</code>と<code>sqlite_readers</code>へ置換する。
+    </li>
+    <li>
+      startup、shutdown、situation monitor、meeting runtime、audit channelのclone先を切り替える。
+    </li>
+    <li>test_supportが同じproduction constructorを使うよう変更する。</li>
+  </ul>
+  <p>
+    Exit: productionに<code>Arc&lt;Mutex&lt;Connection&gt;&gt;</code>が残らず、既存Rust
+    testがcompileする。
+  </p>
+
+  <h3 id="dbw-04">DBW-04 — Core persistence writes</h3>
+  <ul>
+    <li>
+      settings、conversation、runtime run、provider session、codex persistenceをWriterへ移す。
+    </li>
+    <li>既存transaction boundaryとexactly-once testを維持する。</li>
+    <li><code>get_app_snapshot</code>のhidden INSERTをstartupへ移す。</li>
+  </ul>
+  <p>
+    Exit: core app commandがraw Connectionへ到達せず、既存conversation/provider testがpassする。
+  </p>
+
+  <h3 id="dbw-05">DBW-05 — Domain writes</h3>
+  <ul>
+    <li>memory、situation、meeting、voice profile、voice behavior、auditをWriterへ移す。</li>
+    <li>file I/O、audio処理、HTTP、child process waitをWriter closure外へ出す。</li>
+    <li>background taskは同じWriter Arcをcloneする。</li>
+  </ul>
+  <p>Exit: 全domain write testがpassし、Writer lockをまたぐawaitがない。</p>
+
+  <h3 id="dbw-06">DBW-06 — Concurrent Readers</h3>
+  <ul>
+    <li>
+      <code>SqliteReaders</code>を実装し、pure readをSection 8.1の順で移す。
+    </li>
+    <li>
+      起動時に2本をopenし、steady stateのopen / close
+      0と<code>prepare_cached</code>利用をtestする。
+    </li>
+    <li>read-only flagとquery_onlyの二重防御をtestする。</li>
+    <li>Reader operationからINSERT/UPDATE/DELETE/DDLが失敗することをtestする。</li>
+    <li>
+      Section 8.4のindex、first / next prepared statement、cursor検証へ移行し、deep
+      <code>OFFSET</code>を削除する。
+    </li>
+  </ul>
+  <p>
+    Exit: 8 read taskが2 Reader laneを共有して1 Writer fixtureと同時進行し、Reader経由のwrite 0、
+    steady-state open 0、deadlock 0である。待ち時間Gateは同時read 2件のcontrolled
+    benchmarkで判定する。
+  </p>
+
+  <h3 id="dbw-07">DBW-07 — Process raceとrecovery</h3>
+  <ul>
+    <li>
+      test harness自身をsubprocess helperとして起動し、sleepではなくstdio handshakeで同期する。
+    </li>
+    <li>owner、contender、owner crash、successorのsequenceをtestする。</li>
+    <li>migration対象fixtureで、backupとmigrationをownerだけが実行することをtestする。</li>
+  </ul>
+  <p>Exit: 20回のrace testで二重open 0、manual lock cleanup 0、migration重複 0。</p>
+
+  <h3 id="dbw-08">DBW-08 — Repository gateとdocumentation</h3>
+  <ul>
+    <li>architecture testを通常の<code>cargo test</code>へ含める。</li>
+    <li>READMEへsingle Writerとread-only inspection contractを記載する。</li>
+    <li>既存LARM readiness readerが変更なく動くことを確認する。</li>
+  </ul>
+  <p>Exit: Section 13.3の全commandがpassする。</p>
+
+  <h3 id="dbw-09">DBW-09 — Short desktop acceptance</h3>
+  <ul>
+    <li>
+      通常起動、二重起動、強制終了後再起動、conversation/settings/voice/meeting保存を確認する。
+    </li>
+    <li>diagnosticsとbackupがWriter ownership下で成功することを確認する。</li>
+    <li>結果をrelease evidenceへ記録する。</li>
+  </ul>
+  <p>Exit: Section 13.2を全件passし、未完了manual itemがない。</p>
+
+  <h2 id="12-test-design">12. Test design</h2>
+  <h3 id="121-unit">12.1 Unit tests</h3>
+  <ul>
+    <li><code>writer_reuses_one_connection_across_calls</code></li>
+    <li><code>writer_serializes_concurrent_operations</code></li>
+    <li><code>writer_transaction_rolls_back_on_error</code></li>
+    <li><code>reader_is_read_only_by_open_flag</code></li>
+    <li><code>reader_query_only_rejects_temporary_and_main_writes</code></li>
+    <li><code>reader_opens_exactly_two_connections_at_startup</code></li>
+    <li><code>reader_steady_state_does_not_reopen_connections</code></li>
+    <li><code>reader_uses_prepare_cached_and_closes_transaction_promptly</code></li>
+    <li><code>reader_runs_on_blocking_pool_not_async_executor</code></li>
+    <li><code>writer_lock_is_not_held_during_reader_query</code></li>
+    <li><code>message_keyset_plan_uses_expression_index_without_temp_btree</code></li>
+    <li><code>message_cursor_rejects_tamper_and_cross_conversation_use</code></li>
+    <li><code>lock_file_is_private_regular_file</code></li>
+  </ul>
+
+  <h3 id="122-process">12.2 Subprocess tests</h3>
+  <ul>
+    <li><code>second_process_cannot_open_writer</code></li>
+    <li><code>contender_never_runs_bootstrap</code></li>
+    <li><code>crashed_owner_releases_lock</code></li>
+    <li><code>lock_file_may_remain_without_blocking_restart</code></li>
+    <li><code>migration_backup_is_created_once_under_startup_race</code></li>
+  </ul>
+  <p>
+    process testは<code>current_exe()</code>で同じtest harnessのhidden helper
+    testを起動する。 owner readyはstdoutの一行、終了はstdin EOFで制御し、固定sleepに依存しない。
+  </p>
+
+  <h3 id="123-architecture">12.3 Architecture tests</h3>
+  <ul>
+    <li>
+      productionの<code>Connection::open</code> /
+      <code>open_with_flags</code>は
+      <code>persistence/sqlite</code
+      >と別fileを対象とする<code>backup.rs</code>だけをallowlistする。
+    </li>
+    <li>
+      <code>AppState</code>とruntime structの<code
+        >Connection</code
+      >
+      fieldを禁止する。
+    </li>
+    <li>productionの<code>Arc&lt;Mutex&lt;Connection&gt;&gt;</code>を禁止する。</li>
+    <li>
+      readiness
+      runnerの<code>readonly: true</code>と<code>query_only=ON</code>をpinする。
+    </li>
+    <li>
+      conversation paginationのproduction
+      SQLで<code>OFFSET</code>を禁止し、Section 8.4のindex定義をexact
+      matchでpinする。
+    </li>
+  </ul>
+
+  <h2 id="13-verification">13. Verification and Acceptance Criteria</h2>
+  <h3 id="131-automated">13.1 Automated acceptance</h3>
+  <table>
+    <caption>
+      Table: Automated acceptance
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">条件</th>
+        <th scope="col">期待結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A-01</td>
+        <td>100 taskが同じWriterへINSERT</td>
+        <td>100 rows、busy/locked 0、重複 0</td>
+      </tr>
+      <tr>
+        <td>A-02</td>
+        <td>owner保持中にcontender processを起動</td>
+        <td>contenderは<code>database-already-owned</code>、DB open 0</td>
+      </tr>
+      <tr>
+        <td>A-03</td>
+        <td>ownerを強制終了してsuccessor起動</td>
+        <td>successorがlock取得、手動cleanup不要</td>
+      </tr>
+      <tr>
+        <td>A-04</td>
+        <td>2 persistent Readers上の8 taskと連続Writerを並行実行</td>
+        <td>全成功、Reader write 0、steady-state open 0、deadlock 0</td>
+      </tr>
+      <tr>
+        <td>A-05</td>
+        <td>migration対象DBへ二process race</td>
+        <td>migration一回、backup一件、schema current</td>
+      </tr>
+      <tr>
+        <td>A-06</td>
+        <td>architecture source scan</td>
+        <td>forbidden open、raw Connection field、旧Mutex 0</td>
+      </tr>
+      <tr>
+        <td>A-07</td>
+        <td>100,000行で先頭 / deep keyset pageを同時read 2件、各1,000反復</td>
+        <td>各p95 ≤ 5 ms、lane取得待ちp95 ≤ 2 ms、prepare cache hit率95%以上</td>
+      </tr>
+      <tr>
+        <td>A-08</td>
+        <td>既存persistence/runtime/domain tests</td>
+        <td>削除・skip・assertion弱化なしですべてpass</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="132-desktop">13.2 Short desktop acceptance</h3>
+  <ol>
+    <li>SAAAを起動し、settings変更、conversation turn、audit表示、backupを実行する。</li>
+    <li>
+      同じdata directoryで二つ目のprocessを起動し、既存processだけが継続動作することを確認する。
+    </li>
+    <li>owner processを強制終了し、直後の再起動が成功することを確認する。</li>
+    <li>再起動後にconversation、runtime run、settings、auditの整合性を確認する。</li>
+    <li>LARM readinessのread-only observationがrunning appと並行して成功することを確認する。</li>
+  </ol>
+
+  <h3 id="133-commands">13.3 Repository gates</h3>
+  <pre><code class="language-sh">cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo bench --manifest-path src-tauri/Cargo.toml --bench sqlite_read_path
+bun run test:frontend
+bun run ipc:check
+bun run build
+bun run spec:fix
+bun run spec:check
+bun run check</code></pre>
+  <p>
+    <code>bun run check</code
+    >が前段commandを再実行しても、個別failureの切り分けのため上記順序を維持する。
+    benchmarkはA-07のp50 / p95 / p99、connection open count、prepare cache hit率、lane
+    waitをJSONへ保存する。 sample不足、metric欠落、閾値超過、0 testは失敗とし、DBW-06をmergeしない。
+  </p>
+
+  <h2 id="14-rollout">14. Rollout、stop condition、rollback</h2>
+  <h3 id="141-pr-boundaries">14.1 PR boundaries</h3>
+  <ol>
+    <li>
+      PR 1:
+      <code>DBW-00</code
+      >〜<code>DBW-02</code>。新型とtestだけを追加する。
+    </li>
+    <li>
+      PR 2:
+      <code>DBW-03</code
+      >〜<code>DBW-05</code>。全write pathを切り替える。
+    </li>
+    <li>
+      PR 3:
+      <code>DBW-06</code
+      >〜<code>DBW-08</code>。Reader分離と回帰gateを完成する。
+    </li>
+    <li>
+      Acceptance run: <code>DBW-09</code>。desktop evidenceを記録する。
+    </li>
+  </ol>
+  <p>
+    PR
+    2の途中で旧<code>AppState.connection</code>と新Writerを同時にproductionへ残さない。
+    同じbinary内でmain DBの二接続Writerを作る移行期間は禁止する。
+  </p>
+
+  <h3 id="142-stop">14.2 Stop conditions</h3>
+  <ul>
+    <li>同一binaryでmain DBのread-write Connectionが二件必要になった。</li>
+    <li>Writer lockを保持したままnetworkまたはUser待ちを避けられない。</li>
+    <li>既存atomic transactionを複数Writer callへ分割する必要が生じた。</li>
+    <li>process lockが対象OSのいずれかでcrash後に自動解放されない。</li>
+    <li>Readerへ移したoperationにhidden writeまたはreconcileが見つかった。</li>
+  </ul>
+  <p>
+    Stop時は対象ticketをmergeせず、operationをWriter側へ残すか、transaction境界を再設計してから再開する。
+    single Writer invariantを緩めて進行しない。
+  </p>
+
+  <h3 id="143-rollback">14.3 Rollback</h3>
+  <ul>
+    <li>
+      table / columnとschema versionを変更しないため、直前binaryへcode
+      rollbackできる。追加expression indexは旧binaryが無視でき、rollback後も残してよい。
+    </li>
+    <li>残った<code>saaa.sqlite3.writer.lock</code>は削除不要で、旧binaryは無視する。</li>
+    <li>running processがある状態でlock fileを削除しない。</li>
+    <li>
+      データ不整合を検出した場合は既存SQLite backupから復元し、原因判明まで新binaryを停止する。
+    </li>
+    <li>
+      Reader分離だけに問題がある場合は、pure
+      readを<code>read_serialized</code>へ戻してWriter一意性を維持する。
+    </li>
+  </ul>
+
+  <h2 id="15-done">15. Definition of Done</h2>
+  <ul>
+    <li>main DBのread-write openが<code>SqliteWriter</code>一箇所だけである。</li>
+    <li>一つのprocessだけが<code>DatabaseOwnerGuard</code>を保持できる。</li>
+    <li>
+      <code>AppState</code>と全runtimeからraw Connection/Mutexが消えている。
+    </li>
+    <li>全write pathが同じ<code>Arc&lt;SqliteWriter&gt;</code>を再利用する。</li>
+    <li>pure readがread-only Connectionで並行実行できる。</li>
+    <li>二重起動、crash recovery、migration race、Reader/Writer concurrency testがpassする。</li>
+    <li>既存feature、schema、backup、readiness contractに回帰がない。</li>
+    <li>Section 13.3のrepository gateとSection 13.2のdesktop acceptanceがpassする。</li>
+  </ul>
+</article>

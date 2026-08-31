@@ -72,6 +72,7 @@ pub async fn run_json(input: &str) -> Result<String, String> {
         content: request.input,
         workspace_path: None,
         retry_input_message_id: None,
+        source_id: None,
         input_origin: request.input_origin,
         presentation_mode: "visual-and-spoken".to_string(),
     };
@@ -86,18 +87,17 @@ pub async fn run_json(input: &str) -> Result<String, String> {
     )
     .await
     .map_err(|error| error.message)?;
-    let content = state
-        .connection
-        .lock()
-        .map_err(|_| "Quality runtime database lock unavailable".to_string())?
-        .query_row(
-            "SELECT content FROM conversation_messages
-             WHERE conversation_id=?1 AND role='assistant'
-             ORDER BY rowid DESC LIMIT 1",
-            [PRIMARY_CONVERSATION_ID],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(crate::database_error)?;
+    let content = state.sqlite_readers.read(|connection| {
+        connection
+            .query_row(
+                "SELECT content FROM conversation_messages
+                 WHERE conversation_id=?1 AND role='assistant'
+                 ORDER BY rowid DESC LIMIT 1",
+                [PRIMARY_CONVERSATION_ID],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(crate::database_error)
+    })?;
     serde_json::to_string(&QualityResponse {
         content,
         latency_ms: started.elapsed().as_millis(),
@@ -186,8 +186,11 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
     }
     persistence::save_settings_documents_to_connection(&mut connection, &documents)?;
     let situation_settings = situation::repository::load_settings(&connection)?;
+    let sqlite_writer = Arc::new(persistence::SqliteWriter::from_connection(connection));
+    let sqlite_readers = persistence::SqliteReaders::serialized(sqlite_writer.clone());
     Ok(AppState {
-        connection: Arc::new(Mutex::new(connection)),
+        sqlite_writer,
+        sqlite_readers,
         data_directory: PathBuf::new(),
         context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(),
         active_runs: Mutex::new(HashMap::new()),
@@ -212,60 +215,85 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        thread,
+    use futures_util::{SinkExt, StreamExt};
+    use sha2::{Digest, Sha256};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::{
+        accept_hdr_async,
+        tungstenite::{
+            handshake::server::{Request, Response},
+            http::{header, HeaderValue},
+            Message,
+        },
     };
 
     #[tokio::test]
     async fn harness_runs_the_persisted_conversation_runtime_path() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("fixture binds");
         let address = listener.local_addr().expect("fixture address");
-        let server = thread::spawn(move || {
-            let (mut socket, _) = listener.accept().expect("fixture accepts");
-            let mut request = Vec::new();
-            let mut chunk = [0_u8; 4_096];
-            let mut expected = None;
-            loop {
-                let count = socket.read(&mut chunk).expect("fixture reads");
-                if count == 0 {
-                    break;
-                }
-                request.extend_from_slice(&chunk[..count]);
-                if expected.is_none() {
-                    if let Some(header_end) =
-                        request.windows(4).position(|part| part == b"\r\n\r\n")
-                    {
-                        let headers = String::from_utf8_lossy(&request[..header_end]);
-                        let content_length = headers
-                            .lines()
-                            .find_map(|line| {
-                                line.to_ascii_lowercase()
-                                    .strip_prefix("content-length: ")
-                                    .map(str::to_string)
-                            })
-                            .and_then(|value| value.parse::<usize>().ok())
-                            .expect("content length");
-                        expected = Some(header_end + 4 + content_length);
-                    }
-                }
-                if expected.is_some_and(|length| request.len() >= length) {
-                    break;
-                }
-            }
-            let request = String::from_utf8_lossy(&request);
-            assert!(request.contains("\"stream\":true"));
-            assert!(request.contains("\"tools\":"));
-            assert!(request.contains("SAAA Eval Agent"));
-            let body = r#"{"choices":[{"index":0,"message":{"role":"assistant","content":"runtime answer"},"finish_reason":"stop"}]}"#;
-            write!(
-                socket,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            )
-            .expect("fixture responds");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("fixture accepts");
+            let mut socket =
+                accept_hdr_async(stream, |request: &Request, mut response: Response| {
+                    assert_eq!(request.uri().path(), "/v1/llm/stream");
+                    response.headers_mut().insert(
+                        header::SEC_WEBSOCKET_PROTOCOL,
+                        HeaderValue::from_static("saaa.llm-stream.v1"),
+                    );
+                    Ok(response)
+                })
+                .await
+                .expect("WebSocket accepts");
+            socket.send(Message::Text(serde_json::json!({
+                "type":"connection.ready", "protocol":"saaa.llm-stream.v1",
+                "connectionId":"quality_eval_connection", "upstreamTransport":"native",
+                "limits":{"maxConcurrentRuns":1,"maxConnections":1,"maxActiveRunsPerConnection":1,
+                    "maxUnackedEvents":64,"maxUnackedBytes":524288,"resumeWindowMs":120000,"heartbeatIntervalMs":15000}
+            }).to_string().into())).await.expect("ready sends");
+            let Message::Text(start) = socket
+                .next()
+                .await
+                .expect("run start")
+                .expect("valid run start")
+            else {
+                panic!("expected run.start")
+            };
+            let start: serde_json::Value =
+                serde_json::from_str(start.as_str()).expect("run start JSON");
+            assert_eq!(start["type"], "run.start");
+            assert!(start["tools"].is_array());
+            assert!(start["messages"].to_string().contains("SAAA Eval Agent"));
+            let run_id = start["runId"].as_str().expect("run id");
+            socket.send(Message::Text(serde_json::json!({"type":"run.accepted","runId":run_id,"seq":1,"providerRunId":"quality_eval_provider","model":"fixture-model"}).to_string().into())).await.expect("accepted sends");
+            let content = "runtime answer";
+            let mut delta = Vec::with_capacity(16 + content.len());
+            delta.extend_from_slice(b"SAD1");
+            delta.extend_from_slice(&[1, 0]);
+            delta.extend_from_slice(&16_u16.to_be_bytes());
+            delta.extend_from_slice(&2_u64.to_be_bytes());
+            delta.extend_from_slice(content.as_bytes());
+            socket
+                .send(Message::Binary(delta.into()))
+                .await
+                .expect("delta sends");
+            socket.send(Message::Text(serde_json::json!({"type":"response.completed","runId":run_id,"seq":3,
+                "contentBytes":content.len(),"contentSha256":format!("{:x}", Sha256::digest(content.as_bytes())),
+                "finishReason":"stop","usage":null}).to_string().into())).await.expect("completed sends");
+            let Message::Text(ack) = socket
+                .next()
+                .await
+                .expect("terminal ack")
+                .expect("valid terminal ack")
+            else {
+                panic!("expected run.ack")
+            };
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(ack.as_str()).expect("ack JSON")
+                    ["ackSeq"],
+                3
+            );
         });
         let input = json!({
             "baseUrl": format!("http://{address}/v1"),
@@ -280,7 +308,7 @@ mod tests {
         let response = run_json(&input.to_string())
             .await
             .expect("runtime succeeds");
-        server.join().expect("fixture joins");
+        server.await.expect("fixture joins");
         let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
         assert_eq!(response["content"], "runtime answer");
         assert_eq!(response["runtimePath"], "execute_turn/conversation.respond");

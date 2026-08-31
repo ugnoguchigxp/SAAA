@@ -10,32 +10,35 @@ pub(super) fn capture_if_current(
     provider: &ModelProviderSettings,
 ) -> Option<ProbeConfigurationSnapshot> {
     let tested_configuration = serde_json::to_value(provider).ok()?;
-    let connection = state.connection.lock().ok()?;
-    let settings = crate::persistence::load_model_providers(&connection).ok()?;
-    let matches_saved = settings.providers.iter().any(|saved| {
-        saved.id() == provider.id()
-            && serde_json::to_value(saved).ok().as_ref() == Some(&tested_configuration)
-    });
-    if !matches_saved {
-        return None;
-    }
-    let fingerprint =
-        crate::persistence::effective_route::load_conversation_configuration_fingerprint(
-            &connection,
-        )
-        .ok()?;
-    let prior_session_rowid = connection
-        .query_row(
-            "SELECT COALESCE(MAX(rowid), 0) FROM provider_sessions
-             WHERE configuration_fingerprint=?1",
-            [&fingerprint],
-            |row| row.get(0),
-        )
-        .ok()?;
-    Some(ProbeConfigurationSnapshot {
-        fingerprint,
-        prior_session_rowid,
-    })
+    state
+        .sqlite_readers
+        .read(|connection| {
+            let settings = crate::persistence::load_model_providers(connection)?;
+            let matches_saved = settings.providers.iter().any(|saved| {
+                saved.id() == provider.id()
+                    && serde_json::to_value(saved).ok().as_ref() == Some(&tested_configuration)
+            });
+            if !matches_saved {
+                return Err("Provider configuration changed".to_string());
+            }
+            let fingerprint =
+                crate::persistence::effective_route::load_conversation_configuration_fingerprint(
+                    connection,
+                )?;
+            let prior_session_rowid = connection
+                .query_row(
+                    "SELECT COALESCE(MAX(rowid), 0) FROM provider_sessions
+                     WHERE configuration_fingerprint=?1",
+                    [&fingerprint],
+                    |row| row.get(0),
+                )
+                .map_err(crate::database_error)?;
+            Ok(ProbeConfigurationSnapshot {
+                fingerprint,
+                prior_session_rowid,
+            })
+        })
+        .ok()
 }
 
 pub(super) fn record_if_current(
@@ -50,21 +53,21 @@ pub(super) fn record_if_current(
     let Ok(tested_configuration) = serde_json::to_value(provider) else {
         return;
     };
-    let matches_saved_configuration = state.connection.lock().ok().and_then(|connection| {
-        let settings = crate::persistence::load_model_providers(&connection).ok()?;
-        let fingerprint =
-            crate::persistence::effective_route::load_conversation_configuration_fingerprint(
-                &connection,
-            )
-            .ok()?;
-        Some(
-            fingerprint == captured.fingerprint
+    let matches_saved_configuration = state
+        .sqlite_readers
+        .read(|connection| {
+            let settings = crate::persistence::load_model_providers(connection)?;
+            let fingerprint =
+                crate::persistence::effective_route::load_conversation_configuration_fingerprint(
+                    connection,
+                )?;
+            Ok(fingerprint == captured.fingerprint
                 && settings.providers.iter().any(|saved| {
                     saved.id() == provider.id()
                         && serde_json::to_value(saved).ok().as_ref() == Some(&tested_configuration)
-                }),
-        )
-    });
+                }))
+        })
+        .ok();
     if matches_saved_configuration != Some(true) {
         return;
     }
@@ -93,7 +96,7 @@ mod tests {
         crate::initialize_database(&connection).expect("database initializes");
         let state = crate::test_support::app_state(connection);
         let saved = {
-            let connection = state.connection.lock().expect("database lock");
+            let connection = state.sqlite_writer.lock().expect("database lock");
             crate::persistence::load_model_providers(&connection)
                 .expect("providers load")
                 .providers
@@ -119,7 +122,7 @@ mod tests {
         assert!(state.provider_probes.lock().expect("probe lock").is_empty());
 
         let saved = {
-            let connection = state.connection.lock().expect("database lock");
+            let connection = state.sqlite_writer.lock().expect("database lock");
             crate::persistence::load_model_providers(&connection)
                 .expect("providers load")
                 .providers
@@ -129,7 +132,7 @@ mod tests {
         };
         let captured = capture_if_current(&state, &saved);
         state
-            .connection
+            .sqlite_writer
             .lock()
             .expect("database lock")
             .execute(

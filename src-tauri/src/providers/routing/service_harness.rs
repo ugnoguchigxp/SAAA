@@ -6,45 +6,63 @@ pub(crate) async fn resolve_harness_llm_provider(
     providers: &mut ModelProvidersSettings,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
-) -> Result<(), String> {
-    let resolved = match crate::providers::service_harness::resolve_service_cancellable(
-        &providers.harness.address,
-        "llm",
-        &cancellation,
-    )
-    .await
-    {
-        Ok(service) => {
-            ModelProviderSettings::OpenAiCompatible(crate::OpenAiCompatibleProviderSettings {
-                id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
-                enabled: true,
-                label: "Provider Harness LLM".to_string(),
-                location: "local".to_string(),
-                endpoint: service.base_url,
-                model: service.model,
-                authentication: "none".to_string(),
-            })
-        }
-        Err(error) => {
-            if cancellation.is_cancelled() {
-                return Err("Cancelled by user".to_string());
+) -> Result<u64, String> {
+    let (resolved, effective_timeout_ms) =
+        match crate::providers::service_harness::resolve_service_cancellable(
+            &providers.harness.address,
+            "llm",
+            &cancellation,
+        )
+        .await
+        {
+            Ok(service) => {
+                let stream_url = match service.streaming {
+                    Some(crate::providers::service_harness::StreamingDescriptor::Llm(
+                        streaming,
+                    )) => streaming.url,
+                    _ => {
+                        return Err(
+                            "Provider Harness does not advertise saaa.llm-stream.v1".to_string()
+                        )
+                    }
+                };
+                (
+                    ModelProviderSettings::OpenAiCompatible(
+                        crate::OpenAiCompatibleProviderSettings {
+                            id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
+                            enabled: true,
+                            label: "Provider Harness LLM".to_string(),
+                            location: "local".to_string(),
+                            endpoint: stream_url,
+                            model: service.model,
+                            authentication: "none".to_string(),
+                        },
+                    ),
+                    timeout_ms,
+                )
             }
-            let Some(host) = crate::providers::service_harness::legacy_dynamic_lan_host(
-                &providers.harness.address,
-            )?
-            else {
-                return Err(error);
-            };
-            validate_legacy_dynamic_lan_timeout(timeout_ms)?;
-            ModelProviderSettings::DynamicLan(crate::DynamicLanProviderSettings {
-                id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
-                enabled: true,
-                label: "Legacy Dynamic LAN LLM".to_string(),
-                location: "local".to_string(),
-                host,
-            })
-        }
-    };
+            Err(error) => {
+                if cancellation.is_cancelled() {
+                    return Err("Cancelled by user".to_string());
+                }
+                let Some(host) = crate::providers::service_harness::legacy_dynamic_lan_host(
+                    &providers.harness.address,
+                )?
+                else {
+                    return Err(error);
+                };
+                (
+                    ModelProviderSettings::DynamicLan(crate::DynamicLanProviderSettings {
+                        id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
+                        enabled: true,
+                        label: "Legacy Dynamic LAN LLM".to_string(),
+                        location: "local".to_string(),
+                        host,
+                    }),
+                    effective_legacy_dynamic_lan_timeout(timeout_ms),
+                )
+            }
+        };
     if let Some(provider) = providers
         .providers
         .iter_mut()
@@ -54,17 +72,13 @@ pub(crate) async fn resolve_harness_llm_provider(
     } else {
         providers.providers.push(resolved);
     }
-    Ok(())
+    Ok(effective_timeout_ms)
 }
 
-fn validate_legacy_dynamic_lan_timeout(timeout_ms: u64) -> Result<(), String> {
-    if timeout_ms > crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS {
-        return Err(format!(
-            "Legacy Dynamic LAN supports an LLM timeout of at most {} ms; update the Harness or lower the timeout in Settings",
-            crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
-        ));
-    }
-    Ok(())
+fn effective_legacy_dynamic_lan_timeout(timeout_ms: u64) -> u64 {
+    // Harness settings may allow a longer modern-provider timeout before the
+    // runtime discovers that it must use the shorter-lived legacy connection.
+    timeout_ms.min(crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS)
 }
 
 #[cfg(test)]
@@ -73,12 +87,18 @@ mod tests {
     use crate::test_support::dynamic_lan_provider;
 
     #[test]
-    fn legacy_dynamic_lan_rejects_a_timeout_longer_than_its_connection_lifetime() {
-        assert!(validate_legacy_dynamic_lan_timeout(
+    fn legacy_dynamic_lan_caps_timeout_at_its_connection_lifetime() {
+        assert_eq!(effective_legacy_dynamic_lan_timeout(120_000), 120_000);
+        assert_eq!(
+            effective_legacy_dynamic_lan_timeout(
+                crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
+            ),
             crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
-        )
-        .is_ok());
-        assert!(validate_legacy_dynamic_lan_timeout(1_800_000).is_err());
+        );
+        assert_eq!(
+            effective_legacy_dynamic_lan_timeout(1_800_000),
+            crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
+        );
     }
 
     #[tokio::test]

@@ -24,8 +24,8 @@ quality-eval-harness = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-aes-gcm = "0.10"
 async-trait = "0.1"
+base64 = "0.22"
 tauri = { version = "2", features = [] }
 tauri-plugin-llm-fetch = { path = "../../llm-fetch/crates/tauri-plugin-llm-fetch" }
 serde = { version = "1", features = ["derive"] }
@@ -35,11 +35,10 @@ rusqlite = { version = "0.37", features = ["backup", "bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 chrono-tz = "0.10"
 futures-util = "0.3"
-hkdf = "0.12"
+fs2 = "0.4"
 iana-time-zone = "0.1"
 libloading = "0.8"
 libc = "0.2"
-rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 regex = "1"
 sha2 = "0.10"
@@ -59,3 +58,17 @@ security-framework = "3.7"
 
 [dev-dependencies]
 time = { version = "0.3.55", features = ["formatting"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[[bench]]
+name = "streaming_hot_path"
+harness = false
+
+[[bench]]
+name = "sqlite_read_path"
+harness = false

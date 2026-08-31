@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::ipc_contract::RuntimeEvent;
 use crate::persistence::{load_codex_settings, load_routing_settings};
+use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{
     database_error, send_runtime_terminal_event, update_runtime_provider, AppState,
     RunCancellation, StartTurnInput, TurnCompletion, TurnExecutionFailure,
@@ -19,7 +20,7 @@ pub(crate) use super::codex_process::{run_codex_turn_process, run_codex_turn_pro
 pub(crate) async fn execute_codex_turn(
     state: &AppState,
     input: &StartTurnInput,
-    on_event: &tauri::ipc::Channel<RuntimeEvent>,
+    on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
     policy_override: Option<crate::runtime::contracts::RunSupervisionPolicy>,
 ) -> Result<TurnCompletion, TurnExecutionFailure> {
@@ -38,13 +39,9 @@ pub(crate) async fn execute_codex_turn(
             "The selected Codex workspace is not a directory",
         ));
     }
-    let (settings, timeout_ms, existing_thread_id) = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        let settings = load_codex_settings(&connection)?;
-        let routing = load_routing_settings(&connection)?;
+    let (settings, timeout_ms, existing_thread_id) = state.sqlite_readers.read(|connection| {
+        let settings = load_codex_settings(connection)?;
+        let routing = load_routing_settings(connection)?;
         let thread_id = connection
             .query_row(
                 "SELECT thread_id FROM codex_threads WHERE conversation_id = ?1 AND workspace_path = ?2",
@@ -53,8 +50,8 @@ pub(crate) async fn execute_codex_turn(
             )
             .optional()
             .map_err(database_error)?;
-        (settings, routing.coding_assist.timeout_ms, thread_id)
-    };
+        Ok((settings, routing.coding_assist.timeout_ms, thread_id))
+    })?;
     if !settings.enabled {
         return Err(TurnExecutionFailure::configuration(
             "Codex is disabled in Settings",
@@ -65,7 +62,7 @@ pub(crate) async fn execute_codex_turn(
     let prompt = input.content.clone();
     let model = settings.model.clone();
     let workspace_for_worker = workspace.clone();
-    let on_event_for_worker = on_event.clone();
+    let on_event_for_worker = on_event.clone_box();
     let cancellation_for_worker = cancellation.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         if let Some(policy) = policy_override {
@@ -76,7 +73,7 @@ pub(crate) async fn execute_codex_turn(
                 &model,
                 existing_thread_id.as_deref(),
                 policy,
-                &on_event_for_worker,
+                on_event_for_worker.as_ref(),
                 &cancellation_for_worker,
             )
         } else {
@@ -87,7 +84,7 @@ pub(crate) async fn execute_codex_turn(
                 &model,
                 existing_thread_id.as_deref(),
                 timeout_ms,
-                &on_event_for_worker,
+                on_event_for_worker.as_ref(),
                 &cancellation_for_worker,
             )
         }

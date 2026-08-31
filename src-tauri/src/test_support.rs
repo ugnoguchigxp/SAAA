@@ -1,3 +1,9 @@
+use crate::{
+    meeting, memory,
+    persistence::{settings::default_settings_documents, SqliteReaders, SqliteWriter},
+    providers, situation, voice, AppState, DynamicLanProviderSettings, LarmProviderSettings,
+    ModelProviderSettings, OpenAiCompatibleProviderSettings, SaveSettingsDocumentInput,
+};
 use rusqlite::Connection;
 use std::{
     collections::HashMap,
@@ -5,17 +11,14 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
 
-use crate::{
-    meeting, memory, persistence::settings::default_settings_documents, providers, situation,
-    voice, AppState, DynamicLanProviderSettings, LarmProviderSettings, ModelProviderSettings,
-    OpenAiCompatibleProviderSettings, SaveSettingsDocumentInput,
-};
-
 pub(crate) fn app_state(connection: Connection) -> AppState {
     let settings =
         situation::repository::load_settings(&connection).expect("Situation settings load");
+    let sqlite_writer = Arc::new(SqliteWriter::from_connection(connection));
+    let sqlite_readers = SqliteReaders::serialized(sqlite_writer.clone());
     AppState {
-        connection: Arc::new(Mutex::new(connection)),
+        sqlite_writer,
+        sqlite_readers,
         data_directory: PathBuf::new(),
         context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(),
         active_runs: Mutex::new(HashMap::new()),

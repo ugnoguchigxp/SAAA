@@ -47,7 +47,7 @@ fn validate_api_key(api_key: &str) -> Result<(), String> {
 }
 
 pub(crate) fn set_api_key(
-    connection: &std::sync::Mutex<rusqlite::Connection>,
+    readers: &crate::persistence::SqliteReaders,
     input: SetProviderApiKeyInput,
 ) -> Result<ProviderCredentialState, String> {
     let SetProviderApiKeyInput {
@@ -57,10 +57,7 @@ pub(crate) fn set_api_key(
     let api_key = Zeroizing::new(api_key);
     validate_provider_id(&provider_id)?;
     validate_api_key(&api_key)?;
-    let connection = connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let providers = crate::persistence::load_model_providers(&connection)?;
+    let providers = readers.read(crate::persistence::load_model_providers)?;
     if !provider_accepts_api_key(&providers, &provider_id) {
         return Err("API keys can be stored only for a saved API-key provider".to_string());
     }

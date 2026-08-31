@@ -10,11 +10,16 @@ use super::super::contracts::{
     PendingAllocation, ReadyAllocation, ReleaseFailureKind, SelectionReason, SessionFailureKind,
 };
 use super::{
-    Cancellation, ErrorEnvelope, LarmError, LarmHttpClient, ASSISTANT_CHAR_LIMIT, CAPABILITY,
-    ERROR_BODY_LIMIT, PROBE_BODY_LIMIT, ROUTE, SSE_EVENT_LIMIT,
+    Cancellation, ErrorEnvelope, LarmError, LarmHttpClient, CAPABILITY, ERROR_BODY_LIMIT,
+    PROBE_BODY_LIMIT, ROUTE,
 };
+#[cfg(test)]
+use super::{ASSISTANT_CHAR_LIMIT, SSE_EVENT_LIMIT};
+#[cfg(test)]
 use crate::providers::completion::{CompletionTerminal, CompletionTerminalError};
+#[cfg(test)]
 use crate::providers::openai_compatible::sse_event_data;
+#[cfg(test)]
 use crate::runtime::agent_tools::{ToolCallAccumulator, ToolProtocolError};
 
 pub(crate) fn validate_allocation_common(dto: &AllocationDto) -> Result<(), LarmError> {
@@ -405,6 +410,7 @@ pub(crate) fn release_kind(kind: SessionFailureKind) -> ReleaseFailureKind {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn drain_sse(
     buffer: &mut Vec<u8>,
     output_started: bool,
@@ -437,6 +443,7 @@ pub(crate) fn drain_sse(
     Ok(events)
 }
 
+#[cfg(test)]
 pub(crate) fn project_sse<F>(
     events: Vec<String>,
     content: &mut String,
@@ -492,6 +499,7 @@ where
     Ok(false)
 }
 
+#[cfg(test)]
 pub(crate) fn completion_terminal_error(
     error: CompletionTerminalError,
     output_started: bool,
@@ -504,6 +512,7 @@ pub(crate) fn completion_terminal_error(
     LarmError::new(kind, output_started)
 }
 
+#[cfg(test)]
 pub(crate) fn tool_protocol_error(error: ToolProtocolError, output_started: bool) -> LarmError {
     let kind = match error {
         ToolProtocolError::Protocol => SessionFailureKind::Protocol,

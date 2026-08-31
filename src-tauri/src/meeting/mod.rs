@@ -1,6 +1,8 @@
 pub(crate) mod commands;
 mod types;
-use crate::{bounded_text, new_id, now_iso, redact_runtime_text, RunCancellation};
+use crate::{
+    bounded_text, new_id, now_iso, persistence::SqliteWriter, redact_runtime_text, RunCancellation,
+};
 use rusqlite::{params, Connection};
 use std::{
     collections::HashMap,
@@ -9,6 +11,7 @@ use std::{
 use tauri::ipc::Channel;
 pub use types::*;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 #[derive(Clone)]
 struct Entry {
@@ -158,7 +161,7 @@ impl MeetingRuntime {
     pub fn start(
         &self,
         input: &StartInput,
-        connection: &Mutex<Connection>,
+        connection: &SqliteWriter,
     ) -> Result<MeetingSnapshot, String> {
         validate_device_bounds(&input.microphone_device_id)?;
         crate::validate_identifier(&input.session_id, "meeting session id")?;
@@ -176,10 +179,10 @@ impl MeetingRuntime {
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         ensure(&r.state, &[MeetingState::Ready])?;
         let token = capture_token();
-        {
-            let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
+        connection.write(|conn| {
             conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,?3,?4,NULL,'discard',?5)",params![input.session_id,if input.microphone_enabled {1} else {0},crate::voice::network_asr::PROVIDER_ID,crate::voice::network_asr::MODEL_ID,now_iso()]).map_err(crate::database_error)?;
-        }
+            Ok(())
+        })?;
         r.state = MeetingState::Active;
         r.session = Some(Session {
             id: input.session_id.clone(),
@@ -192,11 +195,7 @@ impl MeetingRuntime {
         });
         Ok(snapshot(&r))
     }
-    pub fn pause(
-        &self,
-        id: &str,
-        connection: &Mutex<Connection>,
-    ) -> Result<MeetingSnapshot, String> {
+    pub fn pause(&self, id: &str, connection: &SqliteWriter) -> Result<MeetingSnapshot, String> {
         crate::validate_identifier(id, "meeting session id")?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         matching_session(&r, id)?;
@@ -211,11 +210,7 @@ impl MeetingRuntime {
         r.state = MeetingState::Paused;
         Ok(snapshot(&r))
     }
-    pub fn resume(
-        &self,
-        id: &str,
-        connection: &Mutex<Connection>,
-    ) -> Result<MeetingSnapshot, String> {
+    pub fn resume(&self, id: &str, connection: &SqliteWriter) -> Result<MeetingSnapshot, String> {
         crate::validate_identifier(id, "meeting session id")?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         matching_session(&r, id)?;
@@ -226,11 +221,7 @@ impl MeetingRuntime {
         r.state = MeetingState::Active;
         Ok(snapshot(&r))
     }
-    pub fn stop(
-        &self,
-        id: &str,
-        connection: &Mutex<Connection>,
-    ) -> Result<MeetingSnapshot, String> {
+    pub fn stop(&self, id: &str, connection: &SqliteWriter) -> Result<MeetingSnapshot, String> {
         crate::validate_identifier(id, "meeting session id")?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         matching_session(&r, id)?;
@@ -250,9 +241,9 @@ impl MeetingRuntime {
     }
     pub fn append(
         &self,
-        input: &SegmentInput,
+        input: &mut SegmentInput,
         cancellation: Arc<RunCancellation>,
-    ) -> Result<Vec<f32>, String> {
+    ) -> Result<Zeroizing<Vec<f32>>, String> {
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         let active = r.state == MeetingState::Active;
         let s = r.session.as_mut().ok_or("MEETING_INVALID_STATE")?;
@@ -281,9 +272,9 @@ impl MeetingRuntime {
         s.next_sequences.insert(input.lane.clone(), following);
         s.in_flight
             .insert((input.lane.clone(), input.sequence), cancellation);
-        Ok(input.samples.clone())
+        Ok(Zeroizing::new(std::mem::take(&mut input.samples)))
     }
-    pub fn preview(&self, input: &SegmentInput) -> Result<Vec<f32>, String> {
+    pub fn preview(&self, input: &mut SegmentInput) -> Result<Zeroizing<Vec<f32>>, String> {
         let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         let s = r.session.as_ref().ok_or("MEETING_INVALID_STATE")?;
         if r.state != MeetingState::Active
@@ -300,7 +291,7 @@ impl MeetingRuntime {
         if input.sequence != next {
             return Err("MEETING_OUT_OF_ORDER_SEGMENT".into());
         }
-        Ok(input.samples.clone())
+        Ok(Zeroizing::new(std::mem::take(&mut input.samples)))
     }
     pub fn preview_is_current(&self, input: &SegmentInput) -> bool {
         let Ok(r) = self.inner.lock() else {
@@ -380,7 +371,7 @@ impl MeetingRuntime {
         id: &str,
         code: &str,
         message: &str,
-        connection: &Mutex<Connection>,
+        connection: &SqliteWriter,
     ) -> Result<(), String> {
         crate::validate_identifier(id, "meeting session id")?;
         validate_error_code(code)?;
@@ -406,7 +397,7 @@ impl MeetingRuntime {
         });
         Ok(())
     }
-    pub fn shutdown(&self, connection: &Mutex<Connection>) {
+    pub fn shutdown(&self, connection: &SqliteWriter) {
         let session_id = if let Ok(mut runtime) = self.inner.lock() {
             if !matches!(
                 runtime.state,
@@ -429,11 +420,7 @@ impl MeetingRuntime {
             let _ = update_session_interrupted(connection, &id, &now_iso());
         }
     }
-    pub fn save(
-        &self,
-        id: &str,
-        connection: &Mutex<Connection>,
-    ) -> Result<MeetingSnapshot, String> {
+    pub fn save(&self, id: &str, connection: &SqliteWriter) -> Result<MeetingSnapshot, String> {
         crate::validate_identifier(id, "meeting session id")?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         let completed = r.state == MeetingState::Completed;
@@ -446,37 +433,38 @@ impl MeetingRuntime {
         {
             return Err("MEETING_SAVE_LIMIT_EXCEEDED".into());
         };
-        let mut conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-        let tx = conn.transaction().map_err(crate::database_error)?;
-        for e in &s.entries {
-            tx.execute("INSERT INTO meeting_transcript_entries(id,session_id,lane,sequence,original_text,original_language,started_at_ms,ended_at_ms,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![new_id("meeting_entry"),id,match e.lane {MeetingLane::Microphone=>"microphone",MeetingLane::SystemAudio=>"system-audio"},e.sequence,e.text,e.language.as_deref(),e.started_at_ms,e.ended_at_ms,now_iso()]).map_err(crate::database_error)?;
-        }
-        let changed = tx
-            .execute(
-                "UPDATE meeting_sessions SET status='saved', saved_at=?1 WHERE id=?2",
-                params![now_iso(), id],
-            )
-            .map_err(crate::database_error)?;
-        if changed != 1 {
-            return Err("MEETING_INVALID_STATE".to_string());
-        }
-        tx.commit().map_err(crate::database_error)?;
+        connection.write(|conn| {
+            let tx = conn.transaction().map_err(crate::database_error)?;
+            for e in &s.entries {
+                tx.execute("INSERT INTO meeting_transcript_entries(id,session_id,lane,sequence,original_text,original_language,started_at_ms,ended_at_ms,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![new_id("meeting_entry"),id,match e.lane {MeetingLane::Microphone=>"microphone",MeetingLane::SystemAudio=>"system-audio"},e.sequence,e.text,e.language.as_deref(),e.started_at_ms,e.ended_at_ms,now_iso()]).map_err(crate::database_error)?;
+            }
+            let changed = tx
+                .execute(
+                    "UPDATE meeting_sessions SET status='saved', saved_at=?1 WHERE id=?2",
+                    params![now_iso(), id],
+                )
+                .map_err(crate::database_error)?;
+            if changed != 1 {
+                return Err("MEETING_INVALID_STATE".to_string());
+            }
+            tx.commit().map_err(crate::database_error)
+        })?;
         r.state = MeetingState::Idle;
         r.session = None;
         Ok(snapshot(&r))
     }
-    pub fn discard(&self, id: &str, connection: &Mutex<Connection>) -> Result<(), String> {
+    pub fn discard(&self, id: &str, connection: &SqliteWriter) -> Result<(), String> {
         crate::validate_identifier(id, "meeting session id")?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         if r.session.is_none() && r.state == MeetingState::Idle {
-            let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-            let discarded: bool = conn
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM meeting_sessions WHERE id=?1 AND status='discarded')",
-                    [id],
-                    |row| row.get(0),
-                )
-                .map_err(crate::database_error)?;
+            let discarded: bool = connection.read_serialized(|conn| {
+                conn.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM meeting_sessions WHERE id=?1 AND status='discarded')",
+                        [id],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })?;
             return if discarded {
                 Ok(())
             } else {
@@ -487,8 +475,9 @@ impl MeetingRuntime {
         if s.id != id || !matches!(r.state, MeetingState::Completed | MeetingState::Failed) {
             return Err("MEETING_INVALID_STATE".into());
         };
-        let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-        let changed = conn.execute("UPDATE meeting_sessions SET status='discarded', ended_at=COALESCE(ended_at,?1) WHERE id=?2",params![now_iso(),id]).map_err(crate::database_error)?;
+        let changed = connection.write(|conn| {
+            conn.execute("UPDATE meeting_sessions SET status='discarded', ended_at=COALESCE(ended_at,?1) WHERE id=?2",params![now_iso(),id]).map_err(crate::database_error)
+        })?;
         if changed != 1 {
             return Err("MEETING_INVALID_STATE".to_string());
         }
@@ -548,64 +537,67 @@ fn cancel_segments(session: &mut Session) {
 }
 
 fn update_session_status(
-    connection: &Mutex<Connection>,
+    connection: &SqliteWriter,
     id: &str,
     status: &str,
     ended_at: Option<&str>,
 ) -> Result<(), String> {
-    let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-    let changed = conn
+    connection.write(|conn| {
+        let changed = conn
         .execute(
             "UPDATE meeting_sessions SET status=?1, ended_at=COALESCE(?2, ended_at) WHERE id=?3",
             params![status, ended_at, id],
         )
         .map_err(crate::database_error)?;
-    if changed != 1 {
-        return Err("MEETING_INVALID_STATE".to_string());
-    }
-    Ok(())
+        if changed != 1 {
+            return Err("MEETING_INVALID_STATE".to_string());
+        }
+        Ok(())
+    })
 }
 
 fn update_session_failure(
-    connection: &Mutex<Connection>,
+    connection: &SqliteWriter,
     id: &str,
     code: &str,
     ended_at: &str,
 ) -> Result<(), String> {
-    let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-    let changed = conn
-        .execute(
-            "UPDATE meeting_sessions
+    connection.write(|conn| {
+        let changed = conn
+            .execute(
+                "UPDATE meeting_sessions
              SET status='failed', ended_at=COALESCE(ended_at, ?1), error_code=?2
              WHERE id=?3",
-            params![ended_at, code, id],
-        )
-        .map_err(crate::database_error)?;
-    if changed != 1 {
-        return Err("MEETING_INVALID_STATE".to_string());
-    }
-    Ok(())
+                params![ended_at, code, id],
+            )
+            .map_err(crate::database_error)?;
+        if changed != 1 {
+            return Err("MEETING_INVALID_STATE".to_string());
+        }
+        Ok(())
+    })
 }
 
 fn update_session_interrupted(
-    connection: &Mutex<Connection>,
+    connection: &SqliteWriter,
     id: &str,
     ended_at: &str,
 ) -> Result<(), String> {
-    let conn = connection.lock().map_err(|_| "Database lock unavailable")?;
-    let changed = conn
-        .execute(
-            "UPDATE meeting_sessions
+    connection.write(|conn| {
+        let changed = conn
+            .execute(
+                "UPDATE meeting_sessions
              SET status='interrupted', ended_at=COALESCE(ended_at, ?1),
                  error_code=COALESCE(error_code, 'MEETING_INTERRUPTED')
              WHERE id=?2",
-            params![ended_at, id],
-        )
-        .map_err(crate::database_error)?;
-    if changed != 1 {
-        return Err("MEETING_INVALID_STATE".to_string());
-    }
-    Ok(())
+                params![ended_at, id],
+            )
+            .map_err(crate::database_error)?;
+        if changed != 1 {
+            return Err("MEETING_INVALID_STATE".to_string());
+        }
+        Ok(())
+    })
 }
 
 fn validate_error_code(code: &str) -> Result<(), String> {
@@ -699,7 +691,7 @@ mod tests {
         }
     }
 
-    fn meeting_connection(status: &str) -> Mutex<Connection> {
+    fn meeting_connection(status: &str) -> SqliteWriter {
         let connection = Connection::open_in_memory().expect("in-memory database");
         connection
             .execute_batch(
@@ -717,7 +709,7 @@ mod tests {
                 [status],
             )
             .expect("meeting session");
-        Mutex::new(connection)
+        SqliteWriter::from_connection(connection)
     }
 
     #[test]
@@ -763,7 +755,9 @@ mod tests {
     #[test]
     fn idempotent_pause_and_stop_do_not_accept_another_session_id() {
         let runtime = runtime_with_session(MeetingState::Paused);
-        let connection = Mutex::new(Connection::open_in_memory().expect("in-memory database"));
+        let connection = SqliteWriter::from_connection(
+            Connection::open_in_memory().expect("in-memory database"),
+        );
         assert_eq!(
             runtime.pause("other", &connection).unwrap_err(),
             "MEETING_INVALID_STATE"
@@ -789,7 +783,7 @@ mod tests {
     #[test]
     fn partial_preview_does_not_consume_sequence_and_is_dropped_after_final_starts() {
         let runtime = runtime_with_session(MeetingState::Active);
-        let input = SegmentInput {
+        let mut input = SegmentInput {
             session_id: "session_a".to_string(),
             capture_token: "capture_token".to_string(),
             lane: MeetingLane::Microphone,
@@ -801,10 +795,11 @@ mod tests {
             duration_ms: 2_000,
         };
 
-        runtime.preview(&input).expect("preview is accepted");
+        runtime.preview(&mut input).expect("preview is accepted");
+        input.samples = vec![0.0; 16_000];
         assert!(runtime.preview_is_current(&input));
         runtime
-            .append(&input, Arc::new(RunCancellation::default()))
+            .append(&mut input, Arc::new(RunCancellation::default()))
             .expect("the same sequence remains available for the final segment");
         assert!(!runtime.preview_is_current(&input));
     }
@@ -869,7 +864,9 @@ mod tests {
     #[test]
     fn failed_status_write_does_not_advance_runtime_state() {
         let runtime = runtime_with_session(MeetingState::Active);
-        let connection = Mutex::new(Connection::open_in_memory().expect("in-memory database"));
+        let connection = SqliteWriter::from_connection(
+            Connection::open_in_memory().expect("in-memory database"),
+        );
 
         assert!(runtime.pause("session_a", &connection).is_err());
 
@@ -911,7 +908,8 @@ mod tests {
 
     #[test]
     fn explicit_save_is_transactional_and_discard_keeps_transcript_memory_only() {
-        let connection = Mutex::new(Connection::open_in_memory().expect("database opens"));
+        let connection =
+            SqliteWriter::from_connection(Connection::open_in_memory().expect("database opens"));
         crate::initialize_database(&connection.lock().expect("database lock"))
             .expect("schema initializes");
         {
@@ -1019,23 +1017,25 @@ mod tests {
         };
         input.samples[0] = f32::NAN;
         assert!(runtime
-            .append(&input, Arc::new(RunCancellation::default()))
+            .append(&mut input, Arc::new(RunCancellation::default()))
             .is_err());
 
         input.samples[0] = 0.0;
         runtime
-            .append(&input, Arc::new(RunCancellation::default()))
+            .append(&mut input, Arc::new(RunCancellation::default()))
             .expect("first segment reserves");
         input.sequence = 1;
         input.started_at_ms = 1_000;
+        input.samples = vec![0.0; 8_000];
         runtime
-            .append(&input, Arc::new(RunCancellation::default()))
+            .append(&mut input, Arc::new(RunCancellation::default()))
             .expect("second segment reserves");
         input.sequence = 2;
         input.started_at_ms = 2_000;
+        input.samples = vec![0.0; 8_000];
         assert_eq!(
             runtime
-                .append(&input, Arc::new(RunCancellation::default()))
+                .append(&mut input, Arc::new(RunCancellation::default()))
                 .unwrap_err(),
             "MEETING_BACKPRESSURE"
         );

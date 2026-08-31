@@ -42,6 +42,8 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
          );
          CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_created
            ON conversation_messages(conversation_id, created_at);
+         CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_created_ms
+           ON conversation_messages(conversation_id, CAST(created_at AS INTEGER) DESC, id DESC);
          CREATE TABLE IF NOT EXISTS provider_sessions (
            id TEXT PRIMARY KEY,
            provider_id TEXT NOT NULL,
@@ -147,6 +149,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
          CREATE INDEX IF NOT EXISTS idx_meeting_transcript_session_sequence ON meeting_transcript_entries(session_id,lane,sequence);",
     )?;
 
+    super::settings_migration::initialize_revision(connection)?;
     let transaction = connection.unchecked_transaction()?;
     migrate_legacy_settings_documents(&transaction)?;
     migrate_v4_to_v5(&transaction)?;
@@ -156,7 +159,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     memory::recall::migrate_v9_to_v10(&transaction)?;
     voice::profile::migrate_v10_to_v11(&transaction)?;
     memory::control_plane::migrate_v11_to_v12(&transaction)?;
-    crate::voice_behavior::migrate(&transaction)?;
+    voice::profile::migrate_v14_to_v15(&transaction)?;
     ensure_provider_configuration_fingerprint(&transaction)?;
     transaction.execute("UPDATE settings_documents SET schema_version = 9, updated_at = ?1 WHERE schema_version < 9", params![now_iso()])?;
 
@@ -176,6 +179,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
             now_iso()
         ],
     )?;
+    crate::voice_behavior::migrate(&transaction)?;
     let memory_now = now_iso();
     memory::control_plane::ensure_continuity_state(
         &transaction,
@@ -190,6 +194,12 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     migrate_settings_to_current(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
+    super::audit::initialize_schema(&transaction)?;
+    transaction.execute(
+        "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,attributes_json)
+         VALUES(?1,?2,'app','database-ready','terminal','success','{}')",
+        params![crate::new_id("audit"), now_iso()],
+    )?;
     transaction.pragma_update(
         None,
         "user_version",

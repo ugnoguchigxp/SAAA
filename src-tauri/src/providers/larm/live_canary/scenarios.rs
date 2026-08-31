@@ -1,5 +1,5 @@
 use super::super::{
-    client::{Cancellation, ChatMessage, CleanupResult, SharedLarmClient},
+    client::{Cancellation, CleanupResult, SharedLarmClient},
     contracts::SessionFailureKind,
     AllocationCleanup, LarmProvider,
 };
@@ -7,7 +7,6 @@ use std::{
     env, fs,
     path::PathBuf,
     process::Stdio,
-    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 use tokio::process::Command;
@@ -29,25 +28,17 @@ pub(super) async fn normal_turn(
         .await
         .map_err(|_| CanaryError::Allocation)?;
     let ttl = lease.effective_ttl_seconds;
-    let messages = [ChatMessage {
-        role: "user",
-        content: prompt.to_string(),
-    }];
-    let completion = provider
-        .chat(
-            &lease,
-            &messages,
-            Duration::from_secs(120),
-            signal,
-            |_, _| Ok(()),
-        )
-        .await;
+    let completion = websocket_turn(provider, &lease, prompt, false).await;
     let release_started = Instant::now();
     if provider.release(&lease.allocation_id).await != CleanupResult::Released {
         return Err(CanaryError::Release);
     }
-    let completion = completion.map_err(|_| CanaryError::Gateway)?;
-    if expected.is_some_and(|expected| completion.content.trim() != expected) {
+    let crate::providers::llm_websocket::client::WebSocketRunResult::Completed(content) =
+        completion.map_err(|_| CanaryError::Gateway)?
+    else {
+        return Err(CanaryError::Gateway);
+    };
+    if expected.is_some_and(|expected| content.trim() != expected) {
         return Err(CanaryError::Gateway);
     }
     Ok((ttl, release_started.elapsed()))
@@ -66,31 +57,18 @@ pub(super) async fn cancelled_turn(
         .await
         .map_err(|_| CanaryError::Allocation)?;
     let ttl = lease.effective_ttl_seconds;
-    let messages = [ChatMessage {
-        role: "user",
-        content: PROMPT_CANCEL.to_string(),
-    }];
-    let result = provider
-        .chat(
-            &lease,
-            &messages,
-            Duration::from_secs(120),
-            signal,
-            |delta, _| {
-                if !delta.is_empty() && !flag.swap(true, Ordering::SeqCst) {
-                    notify.notify_waiters();
-                }
-                Ok(())
-            },
-        )
-        .await;
+    let result = websocket_turn(provider, &lease, PROMPT_CANCEL, true).await;
     let release_started = Instant::now();
     if provider.release(&lease.allocation_id).await != CleanupResult::Released {
         return Err(CanaryError::Release);
     }
     if !matches!(
         result,
-        Err(error) if error.kind == SessionFailureKind::Cancelled && error.output_started
+        Ok(
+            crate::providers::llm_websocket::client::WebSocketRunResult::Cancelled {
+                output_started: true
+            }
+        )
     ) {
         return Err(CanaryError::Cancel);
     }
@@ -204,20 +182,11 @@ pub(super) async fn ttl_release_interruption(
         .await
         .map_err(|_| CanaryError::Allocation)?;
     let ttl = lease.effective_ttl_seconds;
-    let messages = [ChatMessage {
-        role: "user",
-        content: PROMPT_EXACT_OK.to_string(),
-    }];
-    let completion = provider
-        .chat(
-            &lease,
-            &messages,
-            Duration::from_secs(120),
-            signal,
-            |_, _| Ok(()),
-        )
-        .await;
-    if completion.is_err() {
+    let completion = websocket_turn(provider, &lease, PROMPT_EXACT_OK, false).await;
+    if !matches!(
+        completion,
+        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Completed(_))
+    ) {
         let _ = provider.release(&lease.allocation_id).await;
         return Err(CanaryError::Gateway);
     }

@@ -28,6 +28,7 @@ import {
   MicrophoneCaptureError,
   requestMicrophoneStream,
 } from "../../lib/microphone";
+import { auditCaptureCancelled, auditCaptureFailed, auditCaptureStarted, auditCaptureSuspended, auditVoiceDeliveryBlocked, auditVoiceDeliveryDecision, auditVoiceDeliverySettlement } from "./voiceAudit";
 
 const ASR_SAMPLE_RATE = 16_000;
 export type VoiceCaptureState = "idle" | "recording" | "transcribing";
@@ -359,6 +360,7 @@ export function useAmbientVoiceSession({
         || voiceAsrSessionIdRef.current !== sessionId
         || !acceptedVoiceAsrSessionsRef.current.has(sessionId)
       ) {
+        auditCaptureCancelled(sessionId, voiceAsrConversationsRef.current.get(sessionId) ?? null);
         await stopVoiceAsrSession({ sessionId, finalizeCurrent: false }).catch(() => undefined);
         return;
       }
@@ -391,7 +393,9 @@ export function useAmbientVoiceSession({
         packetCount: () => voiceAsrPacketCountRef.current,
         clearTranscript: () => setInterimTranscript(""),
       });
+      auditCaptureStarted(sessionId, selectedConversationIdRef.current, voiceSessionRef.current.capture);
     } catch (cause) {
+      auditCaptureFailed(sessionId, voiceAsrConversationsRef.current.get(sessionId) ?? null, cause);
       acceptedVoiceAsrSessionsRef.current.delete(sessionId);
       voiceAsrConversationsRef.current.delete(sessionId);
       applyVoiceEvent({ type: "captureDetached" });
@@ -411,6 +415,7 @@ export function useAmbientVoiceSession({
     }
     if (!voiceStreamRef.current && voiceSessionRef.current.capture !== "starting") return false;
     suspensionReasonRef.current = reason;
+    auditCaptureSuspended(voiceAsrSessionIdRef.current, selectedConversationIdRef.current, reason);
     applyVoiceEvent({ type: "captureSuspended" });
     await detachVoiceCapture(false);
     return true;
@@ -616,6 +621,7 @@ export function useAmbientVoiceSession({
     if (!conversationId) return;
     const result = voiceFinalDeliveryRef.current.push({ sessionId: event.sessionId, utteranceId: event.utteranceId, conversationId, text: event.text });
     if (result === "full") {
+      auditVoiceDeliveryBlocked(event.sessionId, event.utteranceId, conversationId);
       setError((current) => current ?? uiMessage("chatVoicePendingLimit"));
       void terminateFailedVoiceCapture();
       return;
@@ -623,18 +629,21 @@ export function useAmbientVoiceSession({
     if (result !== "accepted") return;
     const queueBehindActiveTurn = Boolean(conversationSessionRef.current.runId);
     if (queueBehindActiveTurn && pendingVoicePromptsRef.current.length >= 2) {
+      auditVoiceDeliveryBlocked(event.sessionId, event.utteranceId, conversationId, pendingVoicePromptsRef.current.length);
       setError((current) => current ?? uiMessage("chatVoicePendingLimit"));
       void terminateFailedVoiceCapture();
       return;
     }
     const queued = voiceFinalDeliveryRef.current.claim(event.utteranceId);
     if (!queued) return;
-    const onSettled = (delivered: boolean) => voiceFinalDeliveryRef.current.settle(queued.utteranceId, delivered);
+    const onSettled = auditVoiceDeliverySettlement(queued, (delivered) => voiceFinalDeliveryRef.current.settle(queued.utteranceId, delivered));
     if (queueBehindActiveTurn) {
+      auditVoiceDeliveryDecision(queued, "queued", pendingVoicePromptsRef.current.length + 1);
       pendingVoicePromptsRef.current.push({ content: queued.text, inputOrigin: "voice", sourceId: queued.utteranceId, onSettled });
       setRuntimeActivity((current) => appendConversationActivity(current, { type: "voiceQueryQueued" }));
       return;
     }
+    auditVoiceDeliveryDecision(queued, "immediate");
     void submitPrompt(queued.text, { inputOrigin: "voice", sourceId: queued.utteranceId, onSettled });
   }
 

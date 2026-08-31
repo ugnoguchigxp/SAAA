@@ -33,6 +33,23 @@ pub(crate) async fn synthesize_to_player(
     cancellation: Arc<RunCancellation>,
     directory: &Path,
 ) -> Result<(Child, PathBuf), String> {
+    let path = render_to_artifact(provider, text, timeout_ms, cancellation, directory).await?;
+    match spawn_player(&path) {
+        Ok(child) => Ok((child, path)),
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            Err(error)
+        }
+    }
+}
+
+pub(crate) async fn render_to_artifact(
+    provider: &CloudTtsProviderSettings,
+    text: &str,
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+    directory: &Path,
+) -> Result<PathBuf, String> {
     let audio = synthesize(provider, text, timeout_ms, cancellation).await?;
     prepare_cache_directory(directory)?;
     let path = directory.join(format!("tts-{}.wav", uuid::Uuid::new_v4()));
@@ -52,13 +69,11 @@ pub(crate) async fn synthesize_to_player(
         let _ = fs::remove_file(&path);
         return Err("Could not write the TTS audio artifact".to_string());
     }
-    match spawn_player(&path) {
-        Ok(child) => Ok((child, path)),
-        Err(error) => {
-            let _ = fs::remove_file(&path);
-            Err(error)
-        }
-    }
+    Ok(path)
+}
+
+pub(crate) fn spawn_audio_player(path: &Path) -> Result<Child, String> {
+    spawn_player(path)
 }
 
 pub(crate) fn cleanup_cache(directory: &Path) -> Result<(), String> {

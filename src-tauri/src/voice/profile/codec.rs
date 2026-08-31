@@ -1,19 +1,15 @@
-use aes_gcm::{
-    aead::{Aead, KeyInit, Payload},
-    Aes256Gcm, Nonce,
-};
-use hkdf::Hkdf;
-use rand::{rngs::OsRng, RngCore};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     fs::{self, OpenOptions},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
 
 use super::*;
+use uuid::Uuid;
 
 pub fn migrate_v10_to_v11(connection: &Connection) -> rusqlite::Result<()> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -49,6 +45,124 @@ pub fn migrate_v10_to_v11(connection: &Connection) -> rusqlite::Result<()> {
            ON voice_profile_samples(profile_id,ordinal);",
     )?;
     Ok(())
+}
+
+pub fn migrate_v14_to_v15(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    let has_plain_embedding: bool = transaction.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM pragma_table_info('voice_profile_samples') WHERE name='embedding'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_plain_embedding {
+        return Ok(());
+    }
+    transaction.execute_batch(
+        "DROP INDEX IF EXISTS idx_voice_profile_samples_profile_ordinal;
+         DROP TABLE IF EXISTS voice_profile_samples;
+         DELETE FROM voice_profiles;
+         CREATE TABLE voice_profile_samples (
+           id TEXT PRIMARY KEY,
+           profile_id TEXT NOT NULL,
+           ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 5),
+           relative_path TEXT NOT NULL UNIQUE CHECK(length(relative_path) BETWEEN 1 AND 500),
+           duration_ms INTEGER NOT NULL CHECK(duration_ms BETWEEN 3000 AND 12000),
+           sample_rate INTEGER NOT NULL CHECK(sample_rate=16000),
+           embedding BLOB NOT NULL CHECK(length(embedding) BETWEEN 8 AND 16388),
+           input_device_id TEXT NOT NULL CHECK(length(input_device_id) BETWEEN 1 AND 300),
+           effective_aec INTEGER NOT NULL CHECK(effective_aec IN (0,1)),
+           created_at TEXT NOT NULL,
+           FOREIGN KEY(profile_id) REFERENCES voice_profiles(id) ON DELETE CASCADE,
+           UNIQUE(profile_id,ordinal)
+         );
+         CREATE INDEX idx_voice_profile_samples_profile_ordinal
+           ON voice_profile_samples(profile_id,ordinal);",
+    )?;
+    Ok(())
+}
+
+pub fn reconcile_voice_profile_storage(
+    connection: &Connection,
+    data_directory: &Path,
+) -> Result<(), String> {
+    let stored_samples = connection
+        .prepare("SELECT id,relative_path FROM voice_profile_samples WHERE profile_id=?1")
+        .and_then(|mut statement| {
+            statement
+                .query_map([PROFILE_ID], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(database_error)?;
+    let mut referenced_names = HashSet::new();
+    let mut can_remove_orphaned_wav = true;
+    for (sample_id, stored_path) in stored_samples {
+        match expected_sample_relative_path(&sample_id) {
+            Ok(path) if Path::new(&stored_path) == path => {
+                if let Some(name) = path.file_name() {
+                    referenced_names.insert(name.to_os_string());
+                }
+            }
+            _ => can_remove_orphaned_wav = false,
+        }
+    }
+
+    let directory = data_directory.join("voice-profiles").join(PROFILE_ID);
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect the voice-profile directory: {error}"
+            ))
+        }
+    };
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Could not inspect a voice-profile file: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Could not inspect a voice-profile file: {error}"))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name_text) = name.to_str() else {
+            continue;
+        };
+        let legacy_encrypted = name_text
+            .strip_suffix(".wav.enc")
+            .is_some_and(is_valid_sample_id);
+        let temporary = temporary_sample_id(name_text).is_some_and(is_valid_sample_id);
+        let orphaned_wav = can_remove_orphaned_wav
+            && name_text
+                .strip_suffix(".wav")
+                .is_some_and(is_valid_sample_id)
+            && !referenced_names.contains(&name);
+        if legacy_encrypted || temporary || orphaned_wav {
+            fs::remove_file(entry.path()).map_err(|error| {
+                format!("Could not reconcile an obsolete voice-profile file: {error}")
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn temporary_sample_id(name: &str) -> Option<&str> {
+    for marker in [".wav.tmp-", ".tmp-"] {
+        if let Some((sample_id, nonce)) = name.split_once(marker) {
+            if nonce.len() == 32 && nonce.chars().all(|character| character.is_ascii_hexdigit()) {
+                return Some(sample_id);
+            }
+        }
+    }
+    None
+}
+
+fn is_valid_sample_id(sample_id: &str) -> bool {
+    validate_sample_id(sample_id).is_ok()
 }
 
 pub(super) fn snapshot_from_connection(
@@ -270,85 +384,20 @@ pub(super) fn decode_embedding(
     expected_dimension: usize,
 ) -> Result<Zeroizing<Vec<f32>>, String> {
     if bytes.len() < 4 {
-        return Err("Encrypted speaker embedding is truncated".to_string());
+        return Err("Speaker embedding is truncated".to_string());
     }
     let dimension = u32::from_le_bytes(bytes[..4].try_into().expect("four-byte slice")) as usize;
     if dimension != expected_dimension || bytes.len() != 4 + dimension * 4 {
-        return Err("Encrypted speaker embedding has an incompatible dimension".to_string());
+        return Err("Speaker embedding has an incompatible dimension".to_string());
     }
     let values = bytes[4..]
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")))
         .collect::<Vec<_>>();
     if values.iter().any(|value| !value.is_finite()) {
-        return Err("Encrypted speaker embedding contains invalid values".to_string());
+        return Err("Speaker embedding contains invalid values".to_string());
     }
     Ok(Zeroizing::new(values))
-}
-
-pub(super) fn encrypt_payload(
-    master: &[u8; 32],
-    kind: &str,
-    id: &str,
-    plaintext: &[u8],
-) -> Result<Vec<u8>, String> {
-    let key = Zeroizing::new(derive_key(master, kind, id)?);
-    let cipher = Aes256Gcm::new_from_slice(&key[..])
-        .map_err(|_| "Could not initialize voice-profile encryption".to_string())?;
-    let mut nonce_bytes = [0_u8; 12];
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let aad = format!("saaa-voice-profile-v1:{kind}:{id}");
-    let ciphertext = cipher
-        .encrypt(
-            Nonce::from_slice(&nonce_bytes),
-            Payload {
-                msg: plaintext,
-                aad: aad.as_bytes(),
-            },
-        )
-        .map_err(|_| "Could not encrypt voice-profile data".to_string())?;
-    let mut output =
-        Vec::with_capacity(ENCRYPTION_MAGIC.len() + nonce_bytes.len() + ciphertext.len());
-    output.extend_from_slice(ENCRYPTION_MAGIC);
-    output.extend_from_slice(&nonce_bytes);
-    output.extend_from_slice(&ciphertext);
-    Ok(output)
-}
-
-pub(super) fn decrypt_payload(
-    master: &[u8; 32],
-    kind: &str,
-    id: &str,
-    encrypted: &[u8],
-) -> Result<Vec<u8>, String> {
-    if encrypted.len() < ENCRYPTION_MAGIC.len() + 12 + 16
-        || &encrypted[..ENCRYPTION_MAGIC.len()] != ENCRYPTION_MAGIC
-    {
-        return Err("Encrypted voice-profile data is invalid".to_string());
-    }
-    let key = Zeroizing::new(derive_key(master, kind, id)?);
-    let cipher = Aes256Gcm::new_from_slice(&key[..])
-        .map_err(|_| "Could not initialize voice-profile decryption".to_string())?;
-    let nonce_start = ENCRYPTION_MAGIC.len();
-    let nonce_end = nonce_start + 12;
-    let aad = format!("saaa-voice-profile-v1:{kind}:{id}");
-    cipher
-        .decrypt(
-            Nonce::from_slice(&encrypted[nonce_start..nonce_end]),
-            Payload {
-                msg: &encrypted[nonce_end..],
-                aad: aad.as_bytes(),
-            },
-        )
-        .map_err(|_| "Voice-profile data could not be authenticated or decrypted".to_string())
-}
-
-pub(super) fn derive_key(master: &[u8; 32], kind: &str, id: &str) -> Result<[u8; 32], String> {
-    let hkdf = Hkdf::<Sha256>::new(Some(PROFILE_ID.as_bytes()), master);
-    let mut key = [0_u8; 32];
-    hkdf.expand(format!("saaa:{kind}:{id}").as_bytes(), &mut key)
-        .map_err(|_| "Could not derive a voice-profile encryption key".to_string())?;
-    Ok(key)
 }
 
 pub(super) fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
@@ -420,16 +469,14 @@ pub(super) fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), Stri
     }
     let mut file = options
         .open(&temporary)
-        .map_err(|error| format!("Could not create the encrypted voice sample: {error}"))?;
+        .map_err(|error| format!("Could not create the voice sample: {error}"))?;
     if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
         let _ = fs::remove_file(&temporary);
-        return Err(format!(
-            "Could not persist the encrypted voice sample: {error}"
-        ));
+        return Err(format!("Could not persist the voice sample: {error}"));
     }
     fs::rename(&temporary, path).map_err(|error| {
         let _ = fs::remove_file(&temporary);
-        format!("Could not finalize the encrypted voice sample: {error}")
+        format!("Could not finalize the voice sample: {error}")
     })
 }
 
@@ -445,76 +492,11 @@ pub(super) fn validate_sample_id(sample_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-pub(super) fn load_or_create_master_key() -> Result<([u8; 32], bool), String> {
-    use security_framework::passwords::{generic_password, PasswordOptions};
-    match generic_password(PasswordOptions::new_generic_password(
-        KEYCHAIN_SERVICE,
-        KEYCHAIN_ACCOUNT,
-    )) {
-        Ok(value) => value
-            .try_into()
-            .map(|key| (key, false))
-            .map_err(|_| "The Keychain voice-profile key has an invalid length".to_string()),
-        Err(error) if error.code() == -25_300 => {
-            let mut key = [0_u8; 32];
-            OsRng.fill_bytes(&mut key);
-            security_framework::passwords::set_generic_password(
-                KEYCHAIN_SERVICE,
-                KEYCHAIN_ACCOUNT,
-                &key,
-            )
-            .map_err(|error| {
-                format!("Could not store the voice-profile key in Keychain: {error}")
-            })?;
-            Ok((key, true))
-        }
-        Err(error) => Err(format!(
-            "Could not read the voice-profile key from Keychain: {error}"
-        )),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn load_or_create_master_key() -> Result<([u8; 32], bool), String> {
-    Err("Voice-profile encryption requires macOS Keychain".to_string())
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn load_master_key() -> Result<[u8; 32], String> {
-    use security_framework::passwords::{generic_password, PasswordOptions};
-    let value = generic_password(PasswordOptions::new_generic_password(
-        KEYCHAIN_SERVICE,
-        KEYCHAIN_ACCOUNT,
-    ))
-    .map_err(|error| format!("Could not read the voice-profile key from Keychain: {error}"))?;
-    value
-        .try_into()
-        .map_err(|_| "The Keychain voice-profile key has an invalid length".to_string())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn load_master_key() -> Result<[u8; 32], String> {
-    Err("Voice-profile encryption requires macOS Keychain".to_string())
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn delete_master_key() -> Result<(), String> {
-    match security_framework::passwords::delete_generic_password(
-        KEYCHAIN_SERVICE,
-        KEYCHAIN_ACCOUNT,
-    ) {
-        Ok(()) => Ok(()),
-        Err(error) if error.code() == -25_300 => Ok(()),
-        Err(error) => Err(format!(
-            "Voice files were removed, but the profile key could not be deleted from Keychain: {error}"
-        )),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn delete_master_key() -> Result<(), String> {
-    Err("Voice-profile encryption requires macOS Keychain".to_string())
+pub(super) fn expected_sample_relative_path(sample_id: &str) -> Result<PathBuf, String> {
+    validate_sample_id(sample_id)?;
+    Ok(PathBuf::from("voice-profiles")
+        .join(PROFILE_ID)
+        .join(format!("{sample_id}.wav")))
 }
 
 pub(super) fn database_error(error: rusqlite::Error) -> String {

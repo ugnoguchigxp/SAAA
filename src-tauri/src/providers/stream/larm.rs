@@ -1,22 +1,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::Value;
-
-use super::super::session_store::{
-    mark_larm_release_pending, mark_provider_output_started, persist_larm_request_id,
-    persist_larm_selection,
-};
+use super::super::session_store::{mark_larm_release_pending, persist_larm_selection};
 use super::attempt::*;
-use super::dispatch::{available_agent_tools, execute_agent_tool, tool_was_offered};
+use super::dispatch::available_agent_tools;
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
+use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{AppState, LarmProviderSettings, RunCancellation, StartTurnInput};
 
 pub(crate) struct LarmStreamContext<'a> {
     pub(crate) state: &'a AppState,
     pub(crate) session_id: &'a str,
     pub(crate) input: &'a StartTurnInput,
-    pub(crate) on_event: &'a tauri::ipc::Channel<RuntimeEvent>,
+    pub(crate) on_event: &'a dyn RuntimeEventSender,
 }
 
 pub(crate) async fn stream_larm_provider(
@@ -28,10 +24,7 @@ pub(crate) async fn stream_larm_provider(
     cancellation: Arc<RunCancellation>,
     context: LarmStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
-    use crate::providers::larm::{
-        client::{Cancellation, ChatMessage},
-        AllocationCleanup, LarmProvider,
-    };
+    use crate::providers::larm::{client::Cancellation, AllocationCleanup, LarmProvider};
 
     let larm = match LarmProvider::for_attempt(
         &context.state.larm_gate,
@@ -54,7 +47,7 @@ pub(crate) async fn stream_larm_provider(
         flag: &cancellation.cancelled,
         notify: &cancellation.notify,
     };
-    let mut allocation = match larm.allocate_ready(cancellation_signal).await {
+    let allocation = match larm.allocate_ready(cancellation_signal).await {
         Ok(allocation) => allocation,
         Err(failure) => {
             let cleanup = match failure.cleanup {
@@ -123,150 +116,124 @@ pub(crate) async fn stream_larm_provider(
                 "user" | "transcript" => "user",
                 _ => return None,
             };
-            Some(ChatMessage {
-                role,
-                content: message.content.clone(),
-            })
+            Some(serde_json::json!({ "role": role, "content": message.content }))
         })
         .collect::<Vec<_>>();
-    let mut tool_exchanges = Vec::<Value>::new();
-    let mut total_calls = 0_usize;
-    let mut voice_calls = 0_usize;
-    let mut latest_request_id = None;
-    let chat_deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
-    let chat = loop {
-        let Some(round_timeout) = chat_deadline
-            .checked_duration_since(tokio::time::Instant::now())
-            .filter(|remaining| !remaining.is_zero())
-        else {
-            break Err(crate::providers::larm::client::LarmError::new(
-                crate::providers::larm::contracts::SessionFailureKind::Timeout,
-                false,
-            ));
-        };
-        let persistence = Some(ProviderOutputPersistence {
-            state: context.state,
-            session_id: context.session_id,
-        });
-        let tools = available_agent_tools(persistence, context.input, total_calls, voice_calls);
-        let round = larm
-            .chat_with_tools(
-                &mut allocation,
-                &messages,
-                &tool_exchanges,
-                &tools,
-                reasoning_effort,
-                max_output_tokens,
-                round_timeout,
-                cancellation_signal,
-                |delta, first| {
-                    if first
-                        && mark_provider_output_started(context.state, context.session_id).is_err()
-                    {
-                        return Err(crate::providers::larm::contracts::SessionFailureKind::Internal);
-                    }
-                    context
-                        .on_event
-                        .send(RuntimeEvent::Delta {
-                            run_id: context.input.run_id.clone(),
-                            text: delta.to_string(),
-                        })
-                        .map_err(|_| {
-                            crate::providers::larm::contracts::SessionFailureKind::ClientDisconnected
-                        })
-                },
-            )
-            .await;
-        match round {
-            Ok(mut completion) => {
-                if completion.request_id.is_some() {
-                    latest_request_id = completion.request_id.clone();
-                } else {
-                    completion.request_id = latest_request_id.clone();
-                }
-                let Some(call) = completion.tool_call.clone() else {
-                    break Ok(completion);
-                };
-                if !tool_was_offered(&tools, &call.name) {
-                    break Err(crate::providers::larm::client::LarmError::new(
-                        crate::providers::larm::contracts::SessionFailureKind::Protocol,
-                        false,
-                    ));
-                }
-                record_tool_call(&mut total_calls, &mut voice_calls, &call.name);
-                let Some(tool_timeout) =
-                    chat_deadline.checked_duration_since(tokio::time::Instant::now())
-                else {
-                    break Err(crate::providers::larm::client::LarmError::new(
-                        crate::providers::larm::contracts::SessionFailureKind::Timeout,
-                        false,
-                    ));
-                };
-                let content = tokio::select! {
-                    _ = cancellation.cancelled() => {
-                        break Err(crate::providers::larm::client::LarmError::new(
-                            crate::providers::larm::contracts::SessionFailureKind::Cancelled,
-                            false,
-                        ));
-                    }
-                    content = execute_agent_tool(persistence, context.input, &call, tool_timeout) => content,
-                };
-                crate::runtime::agent_tools::append_tool_exchange(
-                    &mut tool_exchanges,
-                    &call,
-                    content,
-                );
-            }
-            Err(error) => break Err(error),
+    let persistence = Some(ProviderOutputPersistence {
+        state: context.state,
+        session_id: context.session_id,
+    });
+    let tools = available_agent_tools(persistence, context.input, 0, 0);
+    let stream_url = match larm.websocket_stream_url() {
+        Ok(url) => url,
+        Err(kind) => {
+            let cleanup = cleanup_from_larm(larm.release(&allocation.allocation_id).await);
+            let kind = provider_failure_from_larm(kind);
+            return ProviderAttemptOutcome::Failed {
+                kind,
+                public_message: kind.public_message(),
+                output_started: false,
+                cleanup,
+            };
         }
     };
+    let authorization = match larm.websocket_authorization() {
+        Ok(value) => value,
+        Err(kind) => {
+            let cleanup = cleanup_from_larm(larm.release(&allocation.allocation_id).await);
+            let kind = provider_failure_from_larm(kind);
+            return ProviderAttemptOutcome::Failed {
+                kind,
+                public_message: kind.public_message(),
+                output_started: false,
+                cleanup,
+            };
+        }
+    };
+    let chat = crate::providers::llm_websocket::client::run(
+        crate::providers::llm_websocket::client::WebSocketRunContext {
+            stream_url: stream_url.as_str(),
+            authorization: Some(authorization),
+            allocation_id: Some(allocation.allocation_id.as_str()),
+            model: "local",
+            messages: &messages,
+            tools: &tools,
+            reasoning_effort,
+            max_output_tokens,
+            tool_timeout: Duration::from_secs(60),
+            timeout: Duration::from_millis(timeout_ms),
+            input: context.input,
+            on_event: context.on_event,
+            cancellation,
+            output_persistence: persistence,
+        },
+    )
+    .await;
 
-    let persistence_failed = match &chat {
-        Ok(completion) => {
-            let request_persistence_failed = persist_larm_request_id(
-                context.state,
-                context.session_id,
-                completion.request_id.as_ref(),
-            )
-            .is_err();
-            let release_persistence_failed =
-                mark_larm_release_pending(context.state, context.session_id).is_err();
-            request_persistence_failed || release_persistence_failed
-        }
-        Err(_) => mark_larm_release_pending(context.state, context.session_id).is_err(),
-    };
+    let persistence_failed = mark_larm_release_pending(context.state, context.session_id).is_err();
     let cleanup = cleanup_from_larm(larm.release(&allocation.allocation_id).await);
     if persistence_failed {
         return ProviderAttemptOutcome::Failed {
             kind: ProviderFailureKind::Internal,
             public_message: ProviderFailureKind::Internal.public_message(),
-            output_started: chat
-                .as_ref()
-                .map(|completion| !completion.content.is_empty())
-                .unwrap_or_else(|error| error.output_started),
+            output_started: matches!(
+                &chat,
+                Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Completed(content)
+                    | crate::providers::llm_websocket::client::WebSocketRunResult::Length(content))
+                    if !content.is_empty()
+            ),
             cleanup,
         };
     }
 
     match chat {
-        Ok(completion) => ProviderAttemptOutcome::Completed {
-            content: completion.content,
+        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Completed(content)) => {
+            ProviderAttemptOutcome::Completed { content, cleanup }
+        }
+        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Length(_)) => {
+            ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::PartialOutput,
+                public_message: ProviderFailureKind::PartialOutput.public_message(),
+                output_started: true,
+                cleanup,
+            }
+        }
+        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Failed {
+            code,
+            output_started,
+        }) => {
+            let kind = super::websocket_failure_kind(&code);
+            ProviderAttemptOutcome::Failed {
+                kind,
+                public_message: kind.public_message(),
+                output_started,
+                cleanup,
+            }
+        }
+        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Cancelled {
+            output_started,
+        }) => ProviderAttemptOutcome::Cancelled {
+            output_started,
             cleanup,
         },
         Err(error) => {
-            let kind = provider_failure_from_larm(error.kind);
-            if kind == ProviderFailureKind::Cancelled {
-                ProviderAttemptOutcome::Cancelled {
-                    output_started: error.output_started,
-                    cleanup,
+            let mapped = super::map_websocket_error(error);
+            match mapped {
+                ProviderAttemptError::Cancelled { output_started } => {
+                    ProviderAttemptOutcome::Cancelled {
+                        output_started,
+                        cleanup,
+                    }
                 }
-            } else {
-                ProviderAttemptOutcome::Failed {
+                ProviderAttemptError::Failed {
+                    kind,
+                    output_started,
+                } => ProviderAttemptOutcome::Failed {
                     kind,
                     public_message: kind.public_message(),
-                    output_started: error.output_started,
+                    output_started,
                     cleanup,
-                }
+                },
             }
         }
     }

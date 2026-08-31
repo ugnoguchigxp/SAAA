@@ -1,8 +1,7 @@
 use crate::{AppState, VoiceRuntimeSettings};
 
 use super::{
-    ensure_policy,
-    persistence::{snapshot_from, PolicyRow},
+    persistence::{load_policy, snapshot_from, PolicyRow},
     ConversationVoicePolicySnapshot, RunSpeechOverride, VoicePresentationDecision,
 };
 
@@ -57,16 +56,12 @@ fn resolved_presentation(
         }
         None => None,
     };
-    let (policy, voice) = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        (
-            ensure_policy(&connection, conversation_id)?,
-            crate::persistence::load_voice_settings(&connection)?,
-        )
-    };
+    let (policy, voice) = state.sqlite_readers.read(|connection| {
+        Ok((
+            load_policy(connection, conversation_id)?,
+            crate::persistence::load_voice_settings(connection)?,
+        ))
+    })?;
     let meeting_blocked = state.meeting.blocks_tts();
     let presentation = effective_presentation_from(
         meeting_blocked,
@@ -101,11 +96,9 @@ pub(crate) fn upper_policies_allow_speech(state: &AppState) -> Result<bool, Stri
     if state.meeting.blocks_tts() {
         return Ok(false);
     }
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    Ok(crate::persistence::load_voice_settings(&connection)?.auto_speak)
+    state
+        .sqlite_readers
+        .read(|connection| Ok(crate::persistence::load_voice_settings(connection)?.auto_speak))
 }
 
 pub(super) fn effective_presentation_from(

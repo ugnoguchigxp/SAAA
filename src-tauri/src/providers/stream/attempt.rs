@@ -1,8 +1,5 @@
-use futures_util::StreamExt;
-
 use super::super::session_store::mark_provider_output_started;
 use crate::AppState;
-use crate::RunCancellation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderFailureKind {
@@ -75,24 +72,6 @@ impl ProviderFailureKind {
         };
         BoundedProviderMessage(message)
     }
-}
-
-pub(crate) fn tool_protocol_failure(
-    error: crate::runtime::agent_tools::ToolProtocolError,
-    output_started: bool,
-) -> ProviderAttemptError {
-    let kind = match error {
-        crate::runtime::agent_tools::ToolProtocolError::Protocol => ProviderFailureKind::Protocol,
-        crate::runtime::agent_tools::ToolProtocolError::TooLarge => {
-            ProviderFailureKind::RequestTooLarge
-        }
-    };
-    ProviderAttemptError::failed(kind, output_started)
-}
-
-pub(crate) fn record_tool_call(total: &mut usize, voice: &mut usize, name: &str) {
-    *total += 1;
-    *voice += usize::from(name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,59 +205,6 @@ pub(crate) fn larm_failure_message(
     kind: crate::providers::larm::contracts::SessionFailureKind,
 ) -> &'static str {
     provider_failure_from_larm(kind).public_message().as_str()
-}
-
-pub(crate) fn classify_reqwest_error(error: &reqwest::Error) -> ProviderFailureKind {
-    if error.is_timeout() {
-        ProviderFailureKind::Timeout
-    } else if error.is_builder() {
-        ProviderFailureKind::Internal
-    } else {
-        ProviderFailureKind::Network
-    }
-}
-
-pub(crate) fn classify_provider_status(status: reqwest::StatusCode) -> ProviderFailureKind {
-    match status.as_u16() {
-        401 | 403 => ProviderFailureKind::Authentication,
-        400 | 404 | 405 | 422 => ProviderFailureKind::Contract,
-        408 | 504 => ProviderFailureKind::Timeout,
-        409 | 429 => ProviderFailureKind::Capacity,
-        413 => ProviderFailureKind::RequestTooLarge,
-        502 => ProviderFailureKind::Upstream,
-        503 => ProviderFailureKind::Unavailable,
-        500..=599 => ProviderFailureKind::Upstream,
-        _ => ProviderFailureKind::Protocol,
-    }
-}
-
-pub(crate) async fn read_provider_body_limited(
-    response: reqwest::Response,
-    limit: usize,
-    cancellation: &RunCancellation,
-    output_started: bool,
-) -> Result<Vec<u8>, ProviderAttemptError> {
-    let mut stream = response.bytes_stream();
-    let mut body = Vec::new();
-    loop {
-        let next = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled { output_started }),
-            next = stream.next() => next,
-        };
-        let Some(chunk) = next else {
-            return Ok(body);
-        };
-        let chunk = chunk.map_err(|error| {
-            ProviderAttemptError::failed(classify_reqwest_error(&error), output_started)
-        })?;
-        if body.len().saturating_add(chunk.len()) > limit {
-            return Err(ProviderAttemptError::failed(
-                ProviderFailureKind::RequestTooLarge,
-                output_started,
-            ));
-        }
-        body.extend_from_slice(&chunk);
-    }
 }
 
 #[derive(Clone, Copy)]

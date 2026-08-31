@@ -1,0 +1,1039 @@
+<article lang="ja">
+  <h1 id="provider-llm-websocket-protocol-v1">
+    SAAA Provider LLM WebSocket Protocol <code>saaa.llm-stream.v1</code>
+  </h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Reviewed / Implementation-ready v2</li>
+    <li>Created: 2026-08-31</li>
+    <li>SAAA baseline: <code>0ec8019</code> + working tree</li>
+    <li>対象: LARM、Provider Harness、Dynamic LAN Provider、SAAA desktop</li>
+    <li>WebSocket subprotocol: <code>saaa.llm-stream.v1</code></li>
+  </ul>
+  <p>
+    本文書は、SAAAとLLM Provider間の回答data planeをSSEからWebSocketへ完全移行するための normative
+    application protocolである。Provider実装者が別の判断を補わなくても相互接続できるよう、
+    discovery、handshake、wire message、run state、順序、ACK、resume、tool call、取消、
+    backpressure、上限値、適合試験を固定する。
+  </p>
+  <p>
+    本文書の「必須」「禁止」「推奨」はnormativeである。WebSocket transport自体は
+    <a href="https://www.rfc-editor.org/rfc/rfc6455">RFC 6455</a>へ従い、本文書はその上に載せる
+    SAAA固有subprotocolを定義する。
+  </p>
+
+  <h3 id="01-related-plans">0.1 関連計画</h3>
+  <ul>
+    <li>
+      親計画:
+      <a href="./maximum-performance-streaming-implementation-plan.html"
+        >Maximum-Performance Streaming Experience Implementation Plan</a
+      >
+    </li>
+    <li>
+      TTS契約:
+      <a href="./streaming-tts-sentence-boundary-implementation-plan.html"
+        >Streaming TTS Sentence-Boundary Pipeline Implementation Plan</a
+      >
+    </li>
+    <li>
+      <code>saaa.asr-stream.v1</code
+      >は別protocol・別connectionであり、本文書の対象外とする。
+    </li>
+  </ul>
+
+  <h2 id="1-fixed-decisions">1. 固定する判断</h2>
+  <table>
+    <caption>
+      Table: Provider protocol decisions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">判断</th>
+        <th scope="col">意味</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>PWS-DEC-01</code></td>
+        <td>
+          controlは1 text message = 1 JSON、hot
+          <code>response.delta</code>は固定16 byte headerのbinaryにする
+        </td>
+        <td>低頻度controlの可読性を保ち、小deltaのJSON parse、field名、run ID転送を除去する</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-02</code></td>
+        <td>
+          広告同時実行数までconnectionをprewarmし、1 connectionへactive runを1件だけ割り当てる
+        </td>
+        <td>turnごとのhandshakeとrun間head-of-line blockingを同時に除去する</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-03</code></td>
+        <td>Provider eventはrun内連続<code>seq</code>を持つ</td>
+        <td>TTSへ渡す前に重複、欠落、逆順を検出する</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-04</code></td>
+        <td>累積ACKと最低120秒のresumeを必須にする</td>
+        <td>再接続後に受理済みdeltaを再発声しない</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-05</code></td>
+        <td>tool callは完成済みargumentsを1 eventで送る</td>
+        <td>分割JSON再構築と本文混在をなくす</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-06</code></td>
+        <td>terminalは累積UTF-8 byte数とSHA-256を持ち、全文を再送しない</td>
+        <td>client accumulatorを正本にし、最大262 KiBの重複転送とcopyを除去する</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-07</code></td>
+        <td><code>permessage-deflate</code>をv1では使わない</td>
+        <td>小deltaの圧縮待ち、CPU変動、同一圧縮contextへのsecret混入を避ける</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-08</code></td>
+        <td>SSE bridgeを準拠Providerとして認めない</td>
+        <td>外側だけWebSocketで包む構成を完全移行と呼ばない</td>
+      </tr>
+      <tr>
+        <td><code>PWS-DEC-09</code></td>
+        <td>tool callは回答text開始前に最大4件まで並列化できる</td>
+        <td>独立toolのwall-clock latencyを直列和にしない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="2-scope">2. Scope / Non-goals</h2>
+  <h3 id="21-scope">2.1 Scope</h3>
+  <ul>
+    <li>assistant text delta、tool call / result、usage、正常完了、失敗、取消。</li>
+    <li>同一client process中の切断、再接続、未ACK event replay。</li>
+    <li>LARM allocation runとProvider Harness direct run。</li>
+    <li>local、LAN、remote Providerに共通するwire contract。</li>
+  </ul>
+
+  <h3 id="22-non-goals">2.2 Non-goals</h3>
+  <ul>
+    <li>ASR、TTS audio、画像、binary token、reasoning traceのtransport。</li>
+    <li>process再起動後の永続resume。</li>
+    <li>Provider側tool実行、Provider側Markdown render。</li>
+    <li>OpenAI互換SSE eventをWebSocket payloadへそのまま格納すること。</li>
+  </ul>
+
+  <h2 id="3-discovery">3. Provider discovery</h2>
+  <h3 id="31-provider-harness">3.1 Provider Harness</h3>
+  <p>
+    Harnessは<code>saaa-service-harness.v3</code>を返す。LLM serviceでは
+    <code>protocol</code
+    >と<code>streaming.protocol</code>を共に
+    <code>saaa.llm-stream.v1</code
+    >へ固定し、<code>streaming</code>を必須にする。
+  </p>
+  <pre><code class="language-json">{
+  "contractVersion": "saaa-service-harness.v3",
+  "revision": "2026-08-31.1",
+  "services": [
+    {
+      "capability": "llm",
+      "protocol": "saaa.llm-stream.v1",
+      "baseUrl": "https://provider.example/v1",
+      "model": "local",
+      "healthUrl": "https://provider.example/health",
+      "streaming": {
+        "protocol": "saaa.llm-stream.v1",
+        "url": "wss://provider.example/v1/llm/stream",
+        "encoding": "json-control+binary-delta-v1",
+        "compression": "none",
+        "maxConcurrentRuns": 8,
+        "maxConnections": 8,
+        "resumeWindowMs": 120000,
+        "upstreamTransport": "native"
+      }
+    }
+  ]
+}</code></pre>
+  <ul>
+    <li>
+      <code>url</code>はcredential、query、fragmentを含めてはならない。
+    </li>
+    <li>descriptor URLとstream URLは同一hostでなければならない。</li>
+    <li>非loopback hostでは<code>wss</code>を必須とする。</li>
+    <li>
+      <code>upstreamTransport</code
+      >は<code>native</code>または<code>websocket</code>だけを許可する。
+    </li>
+    <li>
+      <code>maxConnections</code
+      >は<code>maxConcurrentRuns</code>と同値にし、1〜8を許可する。
+    </li>
+    <li>
+      target profileのClientはadvertised connection数をProvider readiness時にprewarmする。
+      一部しか確立できない場合、利用可能slotを減らし、同じconnectionへ二つ目のactive runを載せない。
+    </li>
+  </ul>
+
+  <h3 id="32-larm">3.2 LARM</h3>
+  <p>
+    allocation、poll、renew、releaseは現行REST control planeを維持する。LLM data planeは LARM base
+    URLの<code>/v1/llm/stream</code>を使う。HTTPSはWSSへ、literal
+    loopbackのHTTPだけは
+    WSへ変換できる。<code>allocationId</code>は各<code>run.start</code>へ入れるため、connectionを
+    allocation間で再利用できる。
+  </p>
+
+  <h3 id="33-dynamic-lan">3.3 Dynamic LAN</h3>
+  <p>
+    Provider
+    descriptorの<code>protocol</code>を<code>saaa.llm-stream.v1</code>へ変更し、
+    credentialなしの<code>streamUrl</code>を返す。現在の平文HTTP +
+    Bearerはtarget profileで認めない。 非loopback LAN ProviderはTLSを用意する。
+  </p>
+
+  <h2 id="4-transport">4. Transport / Handshake</h2>
+  <ol>
+    <li>Clientは<code>Sec-WebSocket-Protocol: saaa.llm-stream.v1</code>を送る。</li>
+    <li>Serverは101 responseで同じsubprotocolをechoする。</li>
+    <li>一致しない場合、Clientはapplication messageを送らず接続を破棄する。</li>
+    <li>認証が必要なら<code>Authorization: Bearer &lt;token&gt;</code>をhandshakeへ付ける。</li>
+    <li>tokenをURL、query、cookie、subprotocol、最初のJSON messageへ入れてはならない。</li>
+    <li>ClientはWebSocket extensionをofferせず、Serverも選択してはならない。</li>
+    <li>handshakeと<code>connection.ready</code>は合計5秒以内に完了する。</li>
+  </ol>
+  <p>
+    connection共有keyは<code>(stream URL, credential fingerprint, subprotocol)</code>とする。
+    tokenが異なるrunを同じpoolへ混在させない。各connectionは同時に一つのrunだけを所有し、terminal
+    ACK後にだけidleへ戻る。Serverはhandshake時と<code>run.start</code>時にauthorizationを確認する。
+  </p>
+
+  <h3 id="41-heartbeat">4.1 Heartbeat</h3>
+  <ul>
+    <li>15秒application trafficがなければ、どちらかがRFC 6455 Pingを送る。</li>
+    <li>受信側は5秒以内に同じpayloadのPongを返す。</li>
+    <li>2回連続でPongがなければ接続を閉じ、Clientはjitter付きbackoff後にresumeする。</li>
+    <li>JSONのping / pong messageは定義しない。</li>
+  </ul>
+
+  <h2 id="5-encoding-and-limits">5. Encoding / Limits</h2>
+  <ul>
+    <li>
+      <code>response.delta</code>以外のapplication messageはUTF-8 JSON
+      objectのtext messageを使う。 JSONL、SSE framing、複数JSONの連結を禁止する。
+    </li>
+    <li>
+      <code>response.delta</code>はbinary WebSocket messageとし、WebSocket
+      libraryがfragmentを再構成した後、 次の16 byte network-byte-order headerとUTF-8
+      payloadとしてdecodeする。
+    </li>
+    <li>
+      field名はcamelCase、<code>type</code>値はdot-separated
+      lowercaseとする。
+    </li>
+    <li>unknown field、重複JSON key、NaN、Infinity、末尾dataを拒否する。</li>
+    <li>identifierは<code>[A-Za-z0-9_-]</code>だけで1〜160 byteとする。</li>
+    <li><code>seq</code>は1以上のJSON integerとする。</li>
+  </ul>
+  <pre><code class="language-text">Binary response.delta v1（16 byte header + payload）
+offset  size  field
+0       4     magic = ASCII "SAD1"
+4       1     messageType = 0x01
+5       1     flags = 0x00
+6       2     headerLength = 0x0010
+8       8     seq: unsigned u64, big endian
+16      N     append-only UTF-8 payload, 1..16,384 byte</code></pre>
+  <p>
+    binary
+    deltaはconnectionへpinされたrunに属するため<code>runId</code>を重複格納しない。magic、type、
+    flags、header length、UTF-8、payload size、期待seqのいずれかが不正なら該当runを
+    <code>protocol</code>でfailし、Close 1002する。hot pathではDOM型のJSON
+    valueを生成せず、payloadを incremental SHA-256とcanonical accumulatorへ一度だけappendする。
+  </p>
+  <p>
+    Providerは最初の非empty deltaを待たずに送る。二件目以降は、最初の未送信byteから5 ms経過、
+    未送信payloadが256 byte到達、またはupstreamがidle / terminalになった条件のうち最も早い時点で
+    一つのbinary deltaへ結合する。TTSの自然境界を跨いで追加待機せず、16,384
+    byteを超える前に分割する。 ClientはProvider不良を検出できるよう1 byte ×
+    10,000件のburstにもbounded memoryで対応する。
+  </p>
+  <table>
+    <caption>
+      Table: Fixed protocol limits
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">上限 / 下限</th>
+        <th scope="col">超過時</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Client control message</td>
+        <td>1,048,576 byte</td>
+        <td>Close 1009</td>
+      </tr>
+      <tr>
+        <td>Server message</td>
+        <td>524,288 byte</td>
+        <td>ClientがClose 1009</td>
+      </tr>
+      <tr>
+        <td><code>response.delta</code> payload</td>
+        <td>16,384 UTF-8 byte / event</td>
+        <td><code>protocol</code> failure</td>
+      </tr>
+      <tr>
+        <td>Assistant accumulator</td>
+        <td>64,000 Unicode scalar / 262,144 UTF-8 byte</td>
+        <td><code>response-too-large</code></td>
+      </tr>
+      <tr>
+        <td>Tool count</td>
+        <td>32 / run</td>
+        <td><code>invalid-request</code></td>
+      </tr>
+      <tr>
+        <td>Tool arguments</td>
+        <td>4,096 Unicode scalar / 16,384 UTF-8 byte</td>
+        <td><code>tool-arguments-too-large</code></td>
+      </tr>
+      <tr>
+        <td>Tool result</td>
+        <td>16,384 UTF-8 byte</td>
+        <td><code>tool-result-too-large</code></td>
+      </tr>
+      <tr>
+        <td>Concurrent run / connection</td>
+        <td>1</td>
+        <td><code>capacity</code></td>
+      </tr>
+      <tr>
+        <td>Prewarmed connections / endpoint</td>
+        <td>広告値1〜8</td>
+        <td>利用可能slotを縮退</td>
+      </tr>
+      <tr>
+        <td>Unacknowledged</td>
+        <td>64 eventまたは524,288 byte</td>
+        <td>該当runをpause</td>
+      </tr>
+      <tr>
+        <td>Resume retention</td>
+        <td>最低120,000 ms</td>
+        <td>resume rejected</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="6-message-model">6. Message model</h2>
+  <p>
+    connection
+    messageは<code>runId</code>と<code>seq</code>を持たない。JSONのProvider
+    run eventは 両方を必ず持つ。binary deltaはconnectionのactive runを暗黙のscopeとし、headerの<code
+      >seq</code
+    >
+    だけを持つ。Clientから送るrun
+    commandは<code>runId</code>を持つが<code>seq</code>を持たない。
+  </p>
+
+  <h3 id="61-connection-ready">6.1 <code>connection.ready</code></h3>
+  <pre><code class="language-json">{
+  "type": "connection.ready",
+  "protocol": "saaa.llm-stream.v1",
+  "connectionId": "conn_01JEXAMPLE",
+  "upstreamTransport": "native",
+  "limits": {
+    "maxConcurrentRuns": 8,
+    "maxConnections": 8,
+    "maxActiveRunsPerConnection": 1,
+    "maxUnackedEvents": 64,
+    "maxUnackedBytes": 524288,
+    "resumeWindowMs": 120000,
+    "heartbeatIntervalMs": 15000
+  }
+}</code></pre>
+  <ul>
+    <li>Serverが最初に送るapplication messageでなければならない。</li>
+    <li>
+      <code>upstreamTransport</code
+      >は<code>native</code>または<code>websocket</code>。
+    </li>
+    <li><code>maxActiveRunsPerConnection</code>は必ず1。</li>
+    <li>同じconnectionで二度送ってはならない。</li>
+  </ul>
+
+  <h3 id="62-client-messages">6.2 Client → Provider</h3>
+  <table>
+    <caption>
+      Table: Client command messages
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Type</th>
+        <th scope="col">必須field</th>
+        <th scope="col">許可状態</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>run.start</code></td>
+        <td>
+          <code>runId</code
+          >、<code>allocationId</code>、<code>model</code>、<code>messages</code>、
+          <code>tools</code
+          >、<code>reasoningEffort</code>、<code>maxOutputTokens</code>、
+          <code>toolTimeoutMs</code>
+        </td>
+        <td>Connection Ready、未使用run ID</td>
+      </tr>
+      <tr>
+        <td><code>run.ack</code></td>
+        <td>
+          <code>runId</code
+          >、<code>ackSeq</code>、<code
+            >contentSha256</code
+          >
+        </td>
+        <td>Accepted以降</td>
+      </tr>
+      <tr>
+        <td><code>run.resume</code></td>
+        <td>
+          <code>runId</code
+          >、<code>ackSeq</code>、<code
+            >contentSha256</code
+          >
+        </td>
+        <td>新connection Ready</td>
+      </tr>
+      <tr>
+        <td><code>run.cancel</code></td>
+        <td>
+          <code>runId</code>、<code
+            >reason</code
+          >
+        </td>
+        <td>terminal前。重複可能</td>
+      </tr>
+      <tr>
+        <td><code>tool.result</code></td>
+        <td>
+          <code>runId</code
+          >、<code>callId</code>、<code>inReplyToSeq</code>、
+          <code>status</code>、<code
+            >content</code
+          >
+        </td>
+        <td>Awaiting Tool Results</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="63-provider-messages">6.3 Provider → Client</h3>
+  <table>
+    <caption>
+      Table: Provider run event messages
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Type</th>
+        <th scope="col">必須field</th>
+        <th scope="col">Terminal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>run.accepted</code></td>
+        <td>
+          <code>runId</code
+          >、<code>seq</code>、<code>providerRunId</code>、<code
+            >model</code
+          >
+        </td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><code>response.delta</code></td>
+        <td>
+          binary headerの<code>seq</code>、UTF-8 payload。run
+          IDはactive connection scope
+        </td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><code>tool.call</code></td>
+        <td>
+          <code>runId</code
+          >、<code>seq</code>、<code>callId</code>、<code>name</code>、<code
+            >arguments</code
+          >
+        </td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><code>response.completed</code></td>
+        <td>
+          <code>runId</code
+          >、<code>seq</code>、<code>contentBytes</code>、<code>contentSha256</code>、
+          <code>finishReason</code>、<code
+            >usage</code
+          >
+        </td>
+        <td>Yes</td>
+      </tr>
+      <tr>
+        <td><code>response.failed</code></td>
+        <td>
+          <code>runId</code
+          >、<code>seq</code>、<code>code</code>、<code>message</code>、
+          <code>retryable</code>、<code
+            >outputStarted</code
+          >
+        </td>
+        <td>Yes</td>
+      </tr>
+      <tr>
+        <td><code>response.cancelled</code></td>
+        <td>
+          <code>runId</code
+          >、<code>seq</code>、<code
+            >outputStarted</code
+          >
+        </td>
+        <td>Yes</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>run.resumed</code
+    >と<code>run.resumeRejected</code>はresume negotiation messageであり、 replay
+    sequenceに含めない。
+  </p>
+
+  <h2 id="7-run-start">7. <code>run.start</code></h2>
+  <pre><code class="language-json">{
+  "type": "run.start",
+  "runId": "run_01JEXAMPLE",
+  "allocationId": "alloc_01JEXAMPLE",
+  "model": "local",
+  "messages": [
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "要点を説明してください。" }
+  ],
+  "tools": [],
+  "reasoningEffort": "medium",
+  "maxOutputTokens": 4096,
+  "toolTimeoutMs": 60000,
+  "maxParallelToolCalls": 4,
+  "client": {
+    "name": "saaa-desktop",
+    "version": "0.1.0",
+    "capabilities": ["ack", "resume", "binary-delta-v1", "hashed-final", "parallel-tools-v1"]
+  }
+}</code></pre>
+  <ul>
+    <li>
+      LARMでは<code>allocationId</code>にidentifier、Harness
+      directでは<code>null</code>を入れる。
+    </li>
+    <li>
+      <code>messages.role</code
+      >は<code>system</code>、<code>user</code>、<code>assistant</code>、<code>tool</code>。
+    </li>
+    <li>
+      <code>maxOutputTokens</code
+      >は1〜65,536、<code>toolTimeoutMs</code>は1,000〜120,000。
+    </li>
+    <li>
+      <code>maxParallelToolCalls</code
+      >は1〜4とし、Clientが同時実行できる上限を宣言する。
+    </li>
+    <li>
+      active
+      runがあるconnectionへの別<code>run.start</code>は<code>capacity</code>で拒否する。
+    </li>
+    <li>
+      同じ<code>runId</code>の再送は拒否し、再接続には<code>run.resume</code>を使う。
+    </li>
+  </ul>
+
+  <h2 id="8-sequence-integrity">8. Sequence / Content integrity</h2>
+  <ol>
+    <li>
+      <code>run.accepted</code
+      >を<code>seq = 1</code>とする。
+    </li>
+    <li>以後のProvider eventは1ずつ増やし、gap、重複、resetを禁止する。</li>
+    <li>
+      binary
+      <code>response.delta</code>
+      payloadはappend-onlyで、既送信textを置換・撤回しない。
+    </li>
+    <li>Clientは期待seq以外をTTS、UI、DBへ配送しない。</li>
+    <li>
+      <code>contentSha256</code>は、それまでの全delta textを順に連結したexact
+      UTF-8 byte列の SHA-256 lowercase hexとする。
+    </li>
+    <li>
+      <code>response.completed.contentBytes</code>はdelta連結のUTF-8 byte数と一致し、
+      <code>finishReason</code
+      >は<code>stop</code>または<code>length</code>を許可する。
+    </li>
+    <li>terminalはrunごとに一つだけ送り、その後のeventを禁止する。</li>
+  </ol>
+  <p>
+    最終回答を修正する可能性があるdecodingでは、確定したprefixだけをdeltaとして送る。
+    既にTTSが発声したtextをterminalで書き換えてはならない。Clientはcanonical accumulatorを
+    completion後の画面、DB、TTS tail flushへmoveし、全文copyを作らない。
+  </p>
+
+  <h2 id="9-ack-flow-control">9. ACK / Flow control</h2>
+  <pre><code class="language-json">{
+  "type": "run.ack",
+  "runId": "run_01JEXAMPLE",
+  "ackSeq": 12,
+  "contentSha256": "64-character-lowercase-sha256-hex"
+}</code></pre>
+  <ul>
+    <li>ACKはそのseqまでを連続受理した累積ACKとし、飛び越しを禁止する。</li>
+    <li>Clientは16 event受理または最初の未ACKから100 msの早い方でACKする。</li>
+    <li>terminalは処理完了後ただちにACKする。</li>
+    <li>ACK hashは<code>ackSeq</code>時点のdelta累積hashと一致させる。</li>
+    <li>古いACKは無視し、未送信seqへのACKはprotocol violationとする。</li>
+    <li>64 eventまたは524,288 byteで、そのrunの新規送信をpauseする。</li>
+    <li>pauseは別connection、Ping/Pong、cancel、ACKをblockしてはならない。</li>
+    <li>
+      upstreamをpauseできない場合、該当runだけを<code>backpressure</code>でfailする。
+    </li>
+  </ul>
+  <p>
+    SAAAはdeltaをordered Turn Event Hubのcanonical accumulatorへappendし、TTS branchへの配送結果が
+    成功またはbounded speech failureとして確定した時点でACK対象にする。UI
+    queue、Channel、React、paintは ACK条件に含めない。UIはcapacity 1のlatest-wins
+    projectionとし、2秒停止してもACKとTTSを止めない。 ACK hashはincremental
+    hasherをcloneしてfinalizeし、累積本文を再hashしてはならない。
+  </p>
+
+  <h2 id="10-resume">10. Resume</h2>
+  <pre><code class="language-json">{
+  "type": "run.resume",
+  "runId": "run_01JEXAMPLE",
+  "ackSeq": 12,
+  "contentSha256": "64-character-lowercase-sha256-hex"
+}</code></pre>
+  <ol>
+    <li>
+      Clientは新しいidle
+      connectionの<code>connection.ready</code>後に<code>run.resume</code>を送る。
+    </li>
+    <li>Providerはrun、authorization、allocation lease、ACK、hash、retentionを検証する。</li>
+    <li>
+      成功時はそのconnectionへrunをpinして<code>run.resumed</code>を返し、
+      <code>ackSeq + 1</code>から元と同じseqでreplayする。
+    </li>
+    <li>Clientはseq dedupeを通し、受理済みdeltaをTTSへ再配送しない。</li>
+    <li>terminalが未ACKなら同じterminalもreplayする。</li>
+    <li>terminal ACKまたは120秒経過後にProviderはreplay stateを破棄できる。</li>
+  </ol>
+  <p>
+    拒否codeは<code>unknown-run</code>、<code>resume-expired</code>、
+    <code>allocation-expired</code>、<code>ack-mismatch</code>、
+    <code>content-hash-mismatch</code
+    >、<code>not-authorized</code>とする。出力開始後にresumeできない
+    場合、Clientは新runや別Providerへ自動再実行せず、partial textをincompleteとして残す。
+  </p>
+
+  <h2 id="11-tool-call">11. Tool call</h2>
+  <pre><code class="language-json">{
+  "type": "tool.call",
+  "runId": "run_01JEXAMPLE",
+  "seq": 3,
+  "callId": "call_01JEXAMPLE",
+  "name": "recall_conversation",
+  "arguments": { "query": "previous decision" }
+}</code></pre>
+  <pre><code class="language-json">{
+  "type": "tool.result",
+  "runId": "run_01JEXAMPLE",
+  "callId": "call_01JEXAMPLE",
+  "inReplyToSeq": 3,
+  "status": "ok",
+  "content": "bounded tool result"
+}</code></pre>
+  <ul>
+    <li><code>run.start.tools</code>で提示された名前だけをcallできる。</li>
+    <li>
+      outstanding tool callは<code>maxParallelToolCalls</code>以下、最大4件とする。
+    </li>
+    <li>完成済み<code>arguments</code> objectを一つのeventで送る。</li>
+    <li>
+      最初の<code>response.delta</code>後に<code>tool.call</code>を送ってはならない。
+    </li>
+    <li>Clientはtool callをACKしてからresultを返す。</li>
+    <li>
+      独立callは並列実行し、resultは完了順に返してよい。Providerは全outstanding
+      callのsettle後に生成を再開する。
+    </li>
+    <li>同じcallへの同一result再送はidempotent、異なるresult再送はprotocol failure。</li>
+    <li>
+      <code>status</code
+      >は<code>ok</code>または<code>error</code>。
+    </li>
+    <li>Client writer queueの優先順は<code>run.cancel &gt; run.ack &gt; tool.result</code>とする。</li>
+    <li>timeout時はrunを<code>tool-timeout</code>でfailする。</li>
+  </ul>
+
+  <h2 id="12-state-machine">12. State machine</h2>
+  <pre><code class="language-text">Connection: Connecting → Ready → Draining → Closed
+
+Run:
+  Absent → Starting → Generating → Completed
+                         │
+                         └→ AwaitingToolResults（最大4）→ Generating
+                   ├→ Cancelled
+                   └→ Failed
+
+Disconnect:
+  Non-terminal / Terminal → Detached（最大120秒、unacked上限でpause）
+                          → Resumed または Expired</code></pre>
+  <table>
+    <caption>
+      Table: Run state transitions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">状態</th>
+        <th scope="col">入力</th>
+        <th scope="col">次状態 / 出力</th>
+        <th scope="col">禁止例</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Absent</td>
+        <td><code>run.start</code></td>
+        <td><code>run.accepted</code>またはfailed</td>
+        <td>ACK、tool.result</td>
+      </tr>
+      <tr>
+        <td>Generating</td>
+        <td>model text</td>
+        <td><code>response.delta</code></td>
+        <td>gap seq、delta撤回</td>
+      </tr>
+      <tr>
+        <td>Generating / output未開始</td>
+        <td>tool call</td>
+        <td>Awaiting Tool Results</td>
+        <td>上限超過、text開始後</td>
+      </tr>
+      <tr>
+        <td>Awaiting Tool Results</td>
+        <td><code>tool.result</code></td>
+        <td>残件ありなら待機、全settle後Generating</td>
+        <td>別call ID</td>
+      </tr>
+      <tr>
+        <td>Non-terminal</td>
+        <td><code>run.cancel</code></td>
+        <td>Cancelled</td>
+        <td>cancel後のdelta</td>
+      </tr>
+      <tr>
+        <td>Generating</td>
+        <td>model complete</td>
+        <td>Completed</td>
+        <td>contentBytes / hash不一致</td>
+      </tr>
+      <tr>
+        <td>Terminal</td>
+        <td><code>run.ack</code></td>
+        <td>retention破棄可能</td>
+        <td>新event、二つ目のterminal</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="13-terminal-errors">13. Terminal / Error</h2>
+  <pre><code class="language-json">{
+  "type": "response.completed",
+  "runId": "run_01JEXAMPLE",
+  "seq": 18,
+  "contentBytes": 39,
+  "contentSha256": "64-character-lowercase-sha256-hex",
+  "finishReason": "stop",
+  "usage": {
+    "inputTokens": 120,
+    "outputTokens": 44,
+    "totalTokens": 164
+  }
+}</code></pre>
+  <p>
+    usage不明なら<code>usage: null</code>を送る。<code>contentBytes</code>が0、delta累積byte数と不一致、
+    hash不一致の場合、Clientは保存、Markdown化、TTS tail flushを行わない。terminalに
+    <code>content</code> fieldを含めてはならない。
+  </p>
+  <p>
+    <code>finishReason=stop</code>だけを正常なMarkdown確定とTTS tail flushへ進める。
+    <code>finishReason=length</code>はcanonicalだが不完全なplain
+    textとして保存し、Markdown化と 未発声tailのflushを行わない。
+  </p>
+
+  <h3 id="131-error-codes">13.1 Run error code</h3>
+  <p>
+    許可codeは<code>invalid-request</code>、<code>request-too-large</code>、
+    <code>response-too-large</code
+    >、<code>authentication</code>、<code>not-authorized</code>、
+    <code>allocation-lost</code
+    >、<code>capacity</code>、<code>model-unavailable</code>、
+    <code>tool-arguments-too-large</code>、<code>tool-result-too-large</code>、
+    <code>tool-timeout</code
+    >、<code>backpressure</code>、<code>upstream</code>、
+    <code>timeout</code
+    >、<code>protocol</code>、<code>internal</code>とする。
+  </p>
+  <p>
+    error messageは1,024 UTF-8 byte以下の公開可能な定型文にする。prompt、本文、tool content、
+    token、内部endpoint、stack
+    traceを含めない。<code>retryable</code>がtrueでも
+    <code>outputStarted</code>がtrueならSAAAはProvider fallbackしない。
+  </p>
+
+  <h3 id="132-close-codes">13.2 Close code</h3>
+  <table>
+    <caption>
+      Table: Connection close mapping
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Code</th>
+        <th scope="col">用途</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1000</td>
+        <td>正常drain / client終了</td>
+      </tr>
+      <tr>
+        <td>1001</td>
+        <td>server shutdown</td>
+      </tr>
+      <tr>
+        <td>1002</td>
+        <td>framing / subprotocol違反</td>
+      </tr>
+      <tr>
+        <td>1003</td>
+        <td>delta以外のbinary message、またはdeltaをtextで送信</td>
+      </tr>
+      <tr>
+        <td>1007</td>
+        <td>不正UTF-8 / JSON</td>
+      </tr>
+      <tr>
+        <td>1008</td>
+        <td>schema / authorization / policy違反</td>
+      </tr>
+      <tr>
+        <td>1009</td>
+        <td>size超過</td>
+      </tr>
+      <tr>
+        <td>1011</td>
+        <td>connectionを維持できないserver障害</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    一つのrunだけのvalidation、model、tool、timeoutエラーでconnectionを閉じず、
+    <code>response.failed</code>でrunだけを終了する。
+  </p>
+
+  <h2 id="14-cancellation">14. Cancellation / Drain</h2>
+  <ul>
+    <li><code>run.cancel</code>はidempotentで、1秒以内にterminalを返す。</li>
+    <li>既にterminalなら同じterminalをreplayし、新しいcancelledを作らない。</li>
+    <li>cancel受理後はupstream generation、tool待ち、queue済みdeltaを停止する。</li>
+    <li>
+      drain中の新しいrunは<code>capacity</code>でfailし、active
+      runの完了を待つ。
+    </li>
+    <li>drain期限では各active runをfailしてからClose 1001を送る。</li>
+  </ul>
+
+  <h2 id="15-security">15. Security / Privacy</h2>
+  <ul>
+    <li>非loopbackはTLS証明書検証を必須にし、平文WSと証明書無視を禁止する。</li>
+    <li>redirectによる別hostへのcredential転送を禁止する。</li>
+    <li>prompt、delta、final、tool、Authorizationをlog / metricへ出さない。</li>
+    <li>metricはconnection / run数、latency、byte、ACK lag、replay、error codeだけにする。</li>
+    <li>connection、credential、runごとのrate / memory limitを持つ。</li>
+  </ul>
+
+  <h2 id="16-conformance">16. Provider適合試験</h2>
+  <table>
+    <caption>
+      Table: Mandatory conformance cases
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">試験</th>
+        <th scope="col">期待結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>PWS-C01</code></td>
+        <td>正しいsubprotocol / token</td>
+        <td>101、exact echo、5秒以内ready</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C02</code></td>
+        <td>subprotocolなし / 不一致</td>
+        <td>upgrade拒否、application data 0</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C03</code></td>
+        <td>tokenなし / 誤token</td>
+        <td>401 / 403、secret非表示</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C04</code></td>
+        <td>8 connection prewarm / 8 concurrent run</td>
+        <td>各connection active run 1、run間seq混在なし、terminal exactly-once</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C05</code></td>
+        <td>20 byte × 10,000 binary delta burst</td>
+        <td>通常ACK下で250 ms以内、順序維持、peak RSS増加16 MiB以下</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C06</code></td>
+        <td>duplicate / gap seq</td>
+        <td>ClientはTTSへ配送しない</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C07</code></td>
+        <td>delta 10件後切断、ACK 7からresume</td>
+        <td>8から同seqでreplay、delivery重複0</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C08</code></td>
+        <td>誤hashでresume</td>
+        <td><code>content-hash-mismatch</code>、replay 0</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C09</code></td>
+        <td>terminal後ACK前切断</td>
+        <td>同じterminalを同seqでreplay</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C10</code></td>
+        <td>4 parallel tool call / 完了順result / continuation</td>
+        <td>全result settle後、同run / 同connectionで回答継続</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C11</code></td>
+        <td>同一tool result再送</td>
+        <td>idempotent、tool再実行なし</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C12</code></td>
+        <td>最初のdelta後にtool call</td>
+        <td>Provider contract test fail</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C13</code></td>
+        <td>cancelを2回送信</td>
+        <td>1秒以内、terminal一つだけ</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C14</code></td>
+        <td>不正binary header / deltaのtext送信 / 不正JSON / unknown / oversize</td>
+        <td>1002 / 1003 / 1007 / 1008 / 1009</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C15</code></td>
+        <td>terminal contentBytes / hash改変、content field混入</td>
+        <td>保存、Markdown、TTS final flushをしない</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C16</code></td>
+        <td>ProviderをSSE upstreamへ接続</td>
+        <td>完全移行profile検査fail</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C17</code></td>
+        <td>100 turn / 30分 / network flap</td>
+        <td>unbounded memory、zombie run、重複発声、欠落0</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C18</code></td>
+        <td>別connectionで1 MiB run.start uploadをstall</td>
+        <td>対象runの追加p95遅延5 ms以下、cancel p95 50 ms以下</td>
+      </tr>
+      <tr>
+        <td><code>PWS-C19</code></td>
+        <td>ACKを停止して100 binary deltaを生成</td>
+        <td>64 event到達時に該当connectionだけpauseし、ACK後に65から再開</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="161-performance-conformance">16.1 Performance conformance</h3>
+  <p>
+    <code>PWS-C05</code
+    >、<code>PWS-C18</code>、<code>PWS-C19</code>はrelease
+    build、同一hostのcontrolled Harness、 prewarmed connectionで1,000反復以上実行し、p50 / p95 /
+    p99とpeak / settled RSSを保存する。 binary decodeはJSON DOMを生成せず、application
+    overheadはdeltaごとにexact 16 byteとする。 一件でも250 ms、16 MiB、5
+    msのGateを超えたbuildはconformantとしない。実networkの30 runは
+    Provider生成時間とSAAA内部時間を分けた補助evidenceとし、controlled Gateの代用にしない。
+  </p>
+  <pre><code class="language-bash">cargo test --manifest-path src-tauri/Cargo.toml --lib providers::websocket
+cargo bench --manifest-path src-tauri/Cargo.toml --bench streaming_hot_path
+bun run provider:ws-conformance</code></pre>
+  <p>
+    conformance
+    runnerは<code>PWS-C01</code>〜<code>PWS-C19</code>とSection
+    16.1の分布をJSONで出力する。 case欠落、sample不足、0 test、閾値超過は失敗とし、Provider /
+    Desktopのどちらもreleaseしない。
+  </p>
+
+  <h2 id="17-rollout">17. Rollout / Compatibility</h2>
+  <ol>
+    <li>Providerへ新endpointとconformance testを先行実装する。</li>
+    <li>Harness v3またはLARM readinessで<code>saaa.llm-stream.v1</code>を広告する。</li>
+    <li>
+      SAAA
+      canaryは広告数のconnectionを並列prewarmし、WebSocket未対応Providerをturn開始前にunsupportedとして止める。
+    </li>
+    <li>WebSocketだけで適合試験とASR/TTS regressionを通す。</li>
+    <li>SSE client、fixture、<code>text/event-stream</code> routeを削除する。</li>
+  </ol>
+  <p>
+    v1 messageへ意味や上限を変えるfieldを追加しない。変更が必要なら
+    <code>saaa.llm-stream.v2</code>を別subprotocolとして定義する。Clientはtarget
+    releaseが要求する 一つのversionだけをofferする。
+  </p>
+
+  <h2 id="18-definition-of-done">18. Definition of Done</h2>
+  <ol>
+    <li>ProviderとSAAAが同じgenerated schema / golden fixtureを使っている。</li>
+    <li>Section 16の全適合試験がrelease buildで成功している。</li>
+    <li>descriptor、handshake、connection.readyのversionが一致している。</li>
+    <li>advertised connectionがprewarmされ、active run / connectionが常に1である。</li>
+    <li>binary deltaのapplication overheadが16 byteで、terminal本文再送が0 byteである。</li>
+    <li>delta欠落、重複、逆順、TTS再発声が0件である。</li>
+    <li>tool、cancel、resume、terminal integrityが定義どおり動作する。</li>
+    <li>非loopbackはWSSで、secretと本文がlog / metricへ出ていない。</li>
+    <li>SAAA data planeとProvider内部にSSE bridgeが残っていない。</li>
+  </ol>
+</article>

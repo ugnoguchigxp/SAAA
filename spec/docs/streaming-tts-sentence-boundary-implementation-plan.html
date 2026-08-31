@@ -5,7 +5,7 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>Status: Reviewed / Implementation-ready v2。実装・実機計測は未着手</li>
+    <li>Status: Reviewed / Implementation-ready v3。実装・実機計測は未着手</li>
     <li>Created: 2026-08-30</li>
     <li>Reviewed: 2026-08-31</li>
     <li>SAAA baseline: <code>3ef7016</code> + working tree</li>
@@ -15,6 +15,12 @@
       <a href="./conversation-voice-quality-implementation-plan.html"
         >Conversation / LLM / ASR / TTS 品質改善実装計画</a
       >の<code>CV-05</code>
+    </li>
+    <li>
+      Performance parent:
+      <a href="./maximum-performance-streaming-implementation-plan.html"
+        >Maximum-Performance Streaming Experience 実装計画</a
+      >。transport、ACK分離、数値performance Gateは同文書を優先する
     </li>
     <li>対象: Conversation Runtime、TTS Runtime、Chat UI、IPC、QA</li>
   </ul>
@@ -33,13 +39,13 @@
   <h3 id="01-review-result">0.1 Review result</h3>
   <table>
     <caption>
-      Table: Ambiguities found and fixed by the v2 review
+      Table: Ambiguities found and fixed through the v3 review
     </caption>
     <thead>
       <tr>
         <th scope="col">Finding</th>
         <th scope="col">v1の問題</th>
-        <th scope="col">v2で固定した判断</th>
+        <th scope="col">v2 / v3で固定した判断</th>
       </tr>
     </thead>
     <tbody>
@@ -81,6 +87,11 @@
         <td>ticketが要約だけで変更順と停止条件が不足</td>
         <td>各ticketへ変更ファイル、手順、test、command、exit criteriaを追加</td>
       </tr>
+      <tr>
+        <td><code>RV-08</code></td>
+        <td>合成並列1では合成時間が音声長を超えるrouteでgapを隠せない</td>
+        <td>最大3並列render、ordered ready map、30秒 / 16 MiB上限へ固定</td>
+      </tr>
     </tbody>
   </table>
   <p>
@@ -98,16 +109,16 @@
   </p>
   <pre><code class="language-text">LLM append-only deltas
         ↓
-TurnEventSink（UI通知とSpeech Sessionへの一回だけの分岐）
+TurnEventHub（canonical検証後にSpeech即時 / UI latest-winsへ分岐）
         ↓
 StreamingSpeechSession
   ├─ raw Markdown accumulator
   ├─ protected-range scanner
   ├─ sentence boundary chunker
   ├─ speakable-text projection
-  └─ bounded slots（rendering 1 / ready 1 / in-player 2、合計最大2 chunk）
+  └─ bounded slots（rendering 1..3 / ready 0..3 / in-player 0..2、30秒 / 16 MiB以内）
         ↓
-chunk N playback + chunk N+1 synthesis
+ordered playback + adaptive parallel synthesis
         ↓
 one output stream / complete / cancel / fail</code></pre>
   <p>
@@ -210,8 +221,10 @@ one output stream / complete / cancel / fail</code></pre>
       再生は<code>chunkSeq</code>の昇順だけを許可する。
     </li>
     <li>
-      <strong>Bounded resources:</strong> <code>rendering + ready + in_player</code>は合計最大2
-      chunk、 raw textは64,000文字、artifactはsession所有directoryだけに制限する。
+      <strong>Bounded resources:</strong>
+      <code>rendering &lt;= 3</code>、<code>ready &lt;= 3</code>、
+      <code>in_player &lt;= 2</code>、audioは30秒または16 MiBの早い方、raw
+      textは64,000文字、 artifactはsession所有directoryだけに制限する。
     </li>
     <li>
       <strong>Text authority:</strong> 永続化されたAssistant messageが最終的な画面表示の正本であり、
@@ -228,49 +241,55 @@ one output stream / complete / cancel / fail</code></pre>
   </ol>
 
   <h2 id="5-target-architecture">5. Target Architecture</h2>
-  <h3 id="51-event-sink">5.1 TurnEventSink</h3>
+  <h3 id="51-event-sink">5.1 Ordered Turn Event Hub integration</h3>
   <p>
-    <code>tauri::ipc::Channel&lt;RuntimeEvent&gt;</code>を直接各Providerへ渡す形を、薄い
-    <code>TurnEventSink</code
-    >で包む。既存の全LLM経路は同じ<code>send</code>を呼び、sinkがUI
-    channelへの通知とSpeech Sessionへの入力を同じ順序で行う。
+    Provider
+    eventは親計画の<code>TurnEventHub</code>でsequence、dedupe、terminalを検証し、
+    canonical deltaをTTSへ先に、capacity 1のprojectionをUIへ後から配送する。SpeechはUI
+    enqueueやpaintを待たない。全LLM経路は同じvalidated
+    eventを使い、TTSへfinal本文のcloneを渡さない。
   </p>
   <pre><code class="language-rust">#[derive(Clone)]
-struct TurnEventSink {
-    ui: tauri::ipc::Channel&lt;RuntimeEvent&gt;,
+struct TurnEventHub {
+    ui: UiLatestProjection,
     speech: Option&lt;SpeechSessionHandle&gt;,
 }
 
-impl TurnEventSink {
-    fn send(&amp;self, event: RuntimeEvent) -&gt; tauri::Result&lt;()&gt; {
+#[derive(Clone)]
+struct CompletionProof {
+    content_bytes: usize,
+    content_sha256: [u8; 32],
+    finish_reason: FinishReason,
+}
+
+impl TurnEventHub {
+    fn accept(&amp;self, event: ValidatedTurnEvent) -&gt; Result&lt;ProviderAck, HubFailure&gt; {
         if let Some(speech) = self.speech.as_ref() {
             match &amp;event {
-                RuntimeEvent::Delta { text, .. } =&gt; speech.append(text),
-                RuntimeEvent::MessageCompleted { message, .. } =&gt; {
-                    speech.finish(message.content.clone());
+                ValidatedTurnEvent::Delta { text, .. } =&gt; speech.try_append(text)?,
+                ValidatedTurnEvent::Completed { proof, .. } =&gt; {
+                    speech.finish(proof.clone());
                 }
-                RuntimeEvent::Cancelled { .. } | RuntimeEvent::Failed { .. } =&gt; {
+                ValidatedTurnEvent::Cancelled { .. } | ValidatedTurnEvent::Failed { .. } =&gt; {
                     speech.cancel(SpeechCancelReason::SourceTurnEnded);
                 }
                 _ =&gt; {}
             }
         }
-        let result = self.ui.send(event);
-        if result.is_err() {
-            if let Some(speech) = self.speech.as_ref() {
-                speech.cancel(SpeechCancelReason::ClientGone);
-            }
-        }
-        result
+        // capacity 1の未ACK batchとpending suffixへmergeするだけ。WebView paintは待たない。
+        self.ui.try_publish_latest(event);
+        Ok(ProviderAck::accepted())
     }
 }</code></pre>
   <p>
-    <code>SpeechSessionHandle::append</code
+    <code>SpeechSessionHandle::try_append</code
     >、<code>finish</code>、<code>cancel</code>は短いlock更新と
-    <code>Notify::notify_one</code>だけを行い、戻り値を持たない。Speech
-    feedはLLM経路へerrorを返さず、
-    内部の合成・queue失敗は独立した<code>SpeechEvent::Failed</code>として通知する。UI
-    channel切断だけは現行どおりturn取消対象とし、Speech Sessionも同じgenerationで取消す。
+    <code>Notify::notify_one</code
+    >だけを行う。append拒否はTextを失敗させず、そのSpeech Sessionだけを bounded
+    failureへ移す。内部の合成・queue失敗も独立した<code>SpeechEvent::Failed</code>として通知する。
+    UIのChannel send、<code>ui.batch.applied</code>、React commit、paintはProvider
+    ACK条件に含めない。 UI channel切断時はそのclient projectionとSpeech
+    Sessionを同じgenerationで取消すが、別runへ波及させない。
     <code>Started</code
     >、<code>ProviderSelected</code>、<code>ProviderFailed</code>、
     <code>Activity</code>はSpeech stateを変更せずUIへだけ送る。LLM
@@ -309,9 +328,13 @@ impl TurnEventSink {
     source_text: String,
     accumulator: SentenceAccumulator,
     next_chunk_seq: u32,
-    rendering: Option&lt;ChunkMeta&gt;,
-    ready: Option&lt;RenderedChunk&gt;,
+    rendering: BTreeMap&lt;u32, ChunkMeta&gt;,
+    ready: BTreeMap&lt;u32, RenderedChunk&gt;,
     in_player: BTreeSet&lt;u32&gt;,
+    reserved_audio_bytes: usize,
+    reserved_audio_ms: u64,
+    adaptive_concurrency: usize,
+    route_max_concurrency: usize,
     player_started: bool,
     playback_permitted: bool,
     cancellation: Arc&lt;RunCancellation&gt;,
@@ -342,8 +365,14 @@ enum TtsRouteSnapshot {
     lock保持中にnetwork request、process wait、audio playbackを行わない。lock下ではstate更新と
     slot操作だけを行い、workerへ所有権を移してから非同期処理する。<code>rendering</code>と
     <code>ready</code
-    >は各最大1件、<code>in_player</code>は再生中1件と先読み1件の最大2件である。
-    raw delta用の非同期message
+    >は各最大3件、<code>in_player</code>は再生中1件と先読み1件の最大2件である。
+    ready / in-player / rendering reservationの合計は30秒かつ16
+    MiBを超えない。claim時のduration予約は
+    <code>min(30_000, max(1_000, speakable_graphemes * 150)) ms</code>へ固定し、render後はWAVE実測値へ
+    置換する。実測値への置換で30秒を超えるartifactは再生せず<code>audio-budget-exceeded</code>でSpeechだけを
+    failする。artifact writerはsession共有のbyte semaphoreから64 KiB単位でpermitを取得してから書き、
+    16 MiBを物理的に超える書込みを同じfailureへ変換する。permitはartifact削除時にだけ解放する。raw
+    delta用の非同期message
     queueは作らず、<code>source_text</code>を64,000文字でboundedに保つ。
   </p>
   <table>
@@ -435,11 +464,14 @@ enum TtsRouteSnapshot {
   <p>
     sessionごとにTokio supervisor taskを一つだけspawnする。supervisorは
     <code>Notify</code
-    >、<code>Option&lt;JoinHandle&lt;RenderResult&gt;&gt;</code>、Harness resolve handle、 playback observation
-    receiver、一つのidle Sleep、一つのcapture-ack Sleep、cancellation tokenを
+    >、最大3件の<code>JoinSet&lt;RenderResult&gt;</code>、Harness resolve handle、 playback
+    observation receiver、一つのidle Sleep、一つのcapture-ack Sleep、cancellation tokenを
     <code>tokio::select!</code>する。rendering slotをclaimした時だけrender
-    taskを一つspawnし、完了handleを Optionへ格納する。renderer完了用の別channelとdelta message
-    queueは作らない。
+    taskをspawnし、完了handleを JoinSetへ格納する。並列数は初期値2とし、直近8 chunkの
+    <code>ceil(p95 synthesis time / median audio duration)</code>を1〜3へclampして更新する。
+    実効値はrouteがadvertiseする<code>maxConcurrentSynthesis</code>との最小値で、未指定時は1とする。
+    maximum-performance profileは2以上を必須とし、満たさないauto-speak
+    routeを明示的にunsupportedにする。 renderer完了用の別channelとdelta message queueは作らない。
   </p>
 
   <h3 id="53-worker-pipeline">5.3 Renderer / Playback worker</h3>
@@ -477,13 +509,16 @@ trait PlaybackPort: Send + Sync {
       openとTTS合成を並行する。
     </li>
     <li>
-      rendererは一件だけをWAVE
-      artifactへ合成し、成功後に<code>ready</code>へ移す。
+      各renderer taskは一件のWAVE
+      artifactを合成し、成功後にchunkSeq付きで<code>ready</code>へ移す。
     </li>
     <li>
       最初の<code>ready</code>でFrontendのcapture停止ackを待ち、ack後にPlayerへappendする。
     </li>
-    <li>chunk N再生中はN+1をrenderして同じPlayerへappendし、N+2はN終了までclaimしない。</li>
+    <li>
+      chunk N再生中もadaptive concurrencyまで後続を並列renderする。Playerへのappendは
+      chunkSeq順とし、再生中+先読みの2件を超えない。
+    </li>
     <li>
       <code>ObservedSource</code>が最初と最後のsampleを観測し、開始・完了・gap
       metricを通知する。
@@ -548,6 +583,7 @@ type SpeechEvent =
 type SpeechFailureCode =
   | "route-unavailable"
   | "render-failed"
+  | "audio-budget-exceeded"
   | "playback-unavailable"
   | "playback-failed"
   | "capture-suspend-timeout"
@@ -847,7 +883,7 @@ enum Delimiter {
     <code>speakable_len(end_byte)</code>は
     <code>voice_text::text_for_speech(&amp;source_text[consumed_byte..end_byte])</code>のgrapheme数である。
     最初の非空chunkだけminを<code>firstMin</code>、以後は<code>steadyMin</code>にする。候補選択は
-    slotが空いた時だけ、次の優先順で一件行う。
+    claim capacityがある間、次の優先順で一件ずつ行う。
   </p>
   <pre><code class="language-text">select_next(reason)
   1. eligible strongをend_byte昇順に走査し、speakable_len &gt;= minの最初を返す
@@ -869,31 +905,33 @@ enum Delimiter {
   1. deltaが空なら何もしない
   2. source_textへdeltaを一度だけappendし、scannerを進める
   3. idle_generationを+1し、generation値をcaptureした400ms timerを一つarmする
-  4. slotが空ならselect_next(Append)を一件だけclaimする
+  4. rendering / ready / audio budgetが許す間、select_next(Append)をclaimする
 
 idle(timer_generation)
   1. session generation、idle_generation、input_closedを照合する
   2. stale timerなら何もしない
-  3. slotが空ならselect_next(Idle)を一件だけclaimする
+  3. capacityが許す間、select_next(Idle)をclaimする
 
-finish(final_content)
+finish(completion_proof)
   1. input_closedならduplicate terminalとして何もしない
-  2. final_content == source_textならそのままcloseする
-  3. final_content.starts_with(source_text)なら不足suffixだけappendしてscannerを進める
-  4. それ以外は全slotとplayerをcancelし、speech-sync-lostで終了する
-  5. EOFをscannerへ通知し、保留suffix、末尾URL、未閉じdelimiterをcompletion候補として閉じる
-  6. input_closed = trueにし、slotが空くたびselect_next(Completion)を繰り返す</code></pre>
+  2. content_bytesとincremental SHA-256をsource_textへ照合する
+  3. 不一致なら全slotとplayerをcancelし、speech-sync-lostで終了する
+  4. finish_reason == lengthなら未claim tailを消費済みにしてflushせず、既claim chunkだけdrainする
+  5. finish_reason == stopならEOFをscannerへ通知し、保留suffixをcompletion候補として閉じる
+  6. input_closed = trueにし、stopだけcapacityが空くたびselect_next(Completion)を繰り返す</code></pre>
   <p>
-    prefix不一致時に、すでに読んだ内容を取り消すことはできない。修正版全文を自動で最初から読み直すと重複するため、
+    proof不一致時に、すでに読んだ内容を取り消すことはできない。全文を自動で最初から読み直すと重複するため、
     Textを正本として残し、ユーザーの「読み上げを再試行」で完成済みmessageを最初から読めるようにする。
   </p>
   <p>
     claimしたraw範囲がprojection後に空なら<code>consumed_byte</code>だけ進め、chunk
     sequenceを消費せず 同じworker tick内で次候補を評価する。非空ならSection
-    7の<code>Claimed</code>へ遷移する。比較用<code>canonical_whitespace</code>を
-    「<code>split_whitespace().collect::&lt;String&gt;()</code>」と定義する。全chunkのprojectionをseparatorなしで
-    連結した値とfinal contentの一括projectionをそれぞれcanonicalizeし、一致しなければtest
-    failureとする。 空白差を除く欠落・重複はこのpropertyで隠さない。
+    7の<code>Claimed</code>へ遷移する。全chunkのraw source
+    rangeは重複せず昇順で、
+    <code>finishReason=stop</code
+    >では最終的に<code>source_text.len()</code>までを一度だけcoverする。
+    <code>finishReason=length</code>では未claim tailを発声しない。欠落・重複はrange
+    propertyで隠さない。
   </p>
   <p>
     candidate claim時は<code>consumed_byte = selected.end_byte</code>へ進め、
@@ -937,22 +975,26 @@ finish(final_content)
   <h2 id="7-playback-contract">7. Render / Playback Contract</h2>
   <h3 id="71-queue">7.1 Queue bounds</h3>
   <pre><code class="language-text">raw unclaimed text: source_text[consumed_byte..]（64,000文字の全体上限内）
-rendering:           Option&lt;ChunkMeta&gt;（最大1）
-ready:               Option&lt;RenderedChunk&gt;（最大1）
+rendering:           BTreeMap&lt;chunkSeq, ChunkMeta&gt;（最大3）
+ready:               BTreeMap&lt;chunkSeq, RenderedChunk&gt;（最大3、完了順は任意）
 in_player:           BTreeSet&lt;chunkSeq&gt;（再生中+rodio待機、最大2）</code></pre>
   <p>
-    確定済みraw chunk用の別queueは作らない。次chunkをclaimできる条件は
-    <code>matches!(route, Ready(_)) &amp;&amp; rendering.is_none() &amp;&amp; ready.is_none() &amp;&amp; in_player.len() &lt; 2</code>
-    である。条件を満たさない間もLLM
-    deltaは<code>source_text</code>へ追記し、scannerだけを進める。
-    slot解放通知でSection 6.5を再評価する。合成並列数はSystem / Cloudともsessionあたり1、app全体でも
-    active sessionが1件なので1を超えない。
+    確定済みraw chunk用の別queueは作らない。次chunkをclaimできる条件はrouteがReady、
+    <code>rendering.len() &lt; adaptive_concurrency</code
+    >、<code>ready.len() &lt; 3</code>、かつ
+    <code>reserved_audio_ms + candidate_duration_reservation &lt;= 30_000</code>で、byte semaphoreに64 KiB以上の
+    空きがあることとする。条件を満たさない間も LLM
+    deltaは<code>source_text</code>へ追記し、scannerだけを進める。render完了順に関係なくreadyへ
+    <code>chunkSeq</code
+    >付きで格納し、<code>next_playback_seq</code>だけをPlayerへappendする。
+    slot解放通知でSection 6.5を再評価する。
   </p>
   <pre><code class="language-rust">debug_assert!(
-    usize::from(session.rendering.is_some())
-        + usize::from(session.ready.is_some())
-        + session.in_player.len()
-        &lt;= 2
+    session.rendering.len() &lt;= 3
+        &amp;&amp; session.ready.len() &lt;= 3
+        &amp;&amp; session.in_player.len() &lt;= 2
+        &amp;&amp; session.reserved_audio_bytes &lt;= 16 * 1024 * 1024
+        &amp;&amp; session.reserved_audio_ms &lt;= 30_000
 );</code></pre>
   <p>
     このassertをclaim、render完了、append、Finished / Aborted、cancelの各state
@@ -1026,10 +1068,15 @@ in_player:           BTreeSet&lt;chunkSeq&gt;（再生中+rodio待機、最大2�
 
   <h3 id="74-render-ahead">7.4 Render-ahead</h3>
   <ol>
-    <li>chunk 0をrenderし、capture ack後にPlayerへappendする。</li>
-    <li>chunk 0のappend直後にchunk 1をclaim・renderし、同じPlayerへappendする。</li>
-    <li><code>in_player.len() == 2</code>の間はchunk 2をclaimしない。</li>
-    <li>chunk 0 Finishedでslotが空いたらchunk 2をclaimし、この順序を繰り返す。</li>
+    <li>初期concurrency 2でchunk 0と1をclaimし、独立taskでrenderする。</li>
+    <li>chunk 0がRenderedになりcapture ackを受けたらPlayerへappendする。</li>
+    <li>chunk 1が先に完了してもreadyへ保持し、chunk 0より先にappendしない。</li>
+    <li>
+      Playerには再生中と次chunkの最大2件を入れ、空slotへ常に<code>next_playback_seq</code>をappendする。
+    </li>
+    <li>
+      render / ready / audio budgetが空いたら次chunkをclaimし、適応concurrency 1〜3を維持する。
+    </li>
     <li>
       LLM完了後もrender/playbackが残っていればSpeech
       Sessionだけ<code>Draining</code>を継続する。
@@ -1077,7 +1124,7 @@ in_player:           BTreeSet&lt;chunkSeq&gt;（再生中+rodio待機、最大2�
     </li>
     <li>replay開始時も旧sessionを停止し、停止terminal後に新sessionを作る。</li>
     <li>
-      同じsourceの<code>MessageCompleted</code>はcancelではなくinput
+      同じsourceのvalidated <code>Completed { CompletionProof }</code>はcancelではなくinput
       close、<code>ProviderFailed</code>はno-opである。
     </li>
     <li>
@@ -1144,7 +1191,7 @@ in_player:           BTreeSet&lt;chunkSeq&gt;（再生中+rodio待機、最大2�
     modeを決める現行責務だけを持ち、deltaごとにTTS commandを呼ばない。feature
     flagが無効、presentation
     modeが<code>visual</code>、meetingがTTSをblockする、またはSpeech
-    subscriberが未接続ならstreaming用<code>TurnEventSink.speech = None</code>とし、Text
+    subscriberが未接続ならstreaming用<code>TurnEventHub.speech = None</code>とし、Text
     turnは従来どおり開始する。sessionはprovider attemptではなく論理source runに一つ作る。 TTS
     routing
     settingsはsession作成時に既存<code>selected_tts_route</code>相当の関数で一度だけsnapshotし、そのTTS
@@ -1164,10 +1211,19 @@ in_player:           BTreeSet&lt;chunkSeq&gt;（再生中+rodio待機、最大2�
     output前fallbackでも同じsessionを維持する。
   </p>
   <p>
+    <code>route_max_concurrency</code>はSystem / Cloudを3、HarnessをServiceDescriptorの
+    <code>maxConcurrentSynthesis</code
+    >（1〜3、欠落時1）へ固定する。最大性能profileのauto-speakは
+    2以上を必須とし、1しか提供できないHarnessはText生成を継続したまま
+    <code>route-unavailable</code>でSpeechだけを停止する。HTTP
+    429またはadvertise値を超える応答は
+    そのsessionを<code>render-failed</code>にし、直列合成へ暗黙fallbackしない。
+  </p>
+  <p>
     route解決に失敗した場合もsession
     IDを一つ発行し、<code>preparing</code>の直後に
     <code>failed(code = "route-unavailable")</code>をpublishしてruntime_runsをfailedへ確定する。
-    <code>TurnEventSink.speech</code>はNoneにしてText
+    <code>TurnEventHub.speech</code>はNoneにしてText
     turnを続行する。session作成後のSettings変更はactive sessionへ反映せず、次sessionから使う。
   </p>
   <p>
@@ -1376,7 +1432,7 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
       <tr>
         <td><code>src-tauri/src/runtime/event_sink.rs</code></td>
         <td>追加</td>
-        <td>RuntimeEventのUI送信とSpeech feedを一か所で分岐</td>
+        <td>canonical検証後にSpeech即時配送とUI latest-wins projectionを分岐</td>
       </tr>
       <tr>
         <td>
@@ -1385,7 +1441,7 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
           <code>codex_process.rs</code>
         </td>
         <td>修正</td>
-        <td>RuntimeEvent Channel引数を<code>TurnEventSink</code>へ置換</td>
+        <td>RuntimeEvent Channel引数を<code>TurnEventHub</code>へ置換</td>
       </tr>
       <tr>
         <td>
@@ -1575,7 +1631,7 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
     <li>runtime stateとfake renderer / fake playbackでqueue契約を実装する。</li>
     <li>System / Cloud rendererをWAVE artifact契約へ合わせる。</li>
     <li>rodio playback threadを接続する。</li>
-    <li>TurnEventSinkを全LLM routeへ通す。</li>
+    <li>TurnEventHubを全LLM routeへ通す。</li>
     <li>Speech IPC / frontend reducer / mic ackを接続する。</li>
     <li>実機Gate合格後に既定化し、互換期間を経て旧経路を削除する。</li>
   </ol>
@@ -1596,6 +1652,10 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
     first_delta_to_boundary_ms: Option&lt;u64&gt;,
     boundary_to_audio_ms: Option&lt;u64&gt;,
     response_start_to_audio_ms: Option&lt;u64&gt;,
+    render_synthesis_ms: Vec&lt;u64&gt;, // 最大512
+    rendered_audio_ms: Vec&lt;u64&gt;, // 最大512、同じindexが同じchunk
+    render_samples_dropped: u32,
+    max_rendering_seen: u8,
     chunk_gap_ms: Vec&lt;u64&gt;, // 最大512
     chunk_gap_samples_dropped: u32,
     cancel_to_silence_ms: Option&lt;u64&gt;,
@@ -1604,9 +1664,10 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
     sync_mismatch_count: u32,
 }</code></pre>
   <p>
-    <code>chunk_gap_ms</code>は発生順の先頭512件だけを保持し、以後は値を捨てて
-    <code>chunk_gap_samples_dropped</code>をsaturating addする。Section 15のgap Gateは10
-    chunk回答だけを使うため drop 0が前提であり、dropが1以上のbatchは測定をやり直す。
+    <code>chunk_gap_ms</code
+    >とrender/audioの対は発生順の先頭512件だけを保持し、以後は値を捨てて
+    対応する<code>*_dropped</code>をsaturating addする。Section 15のGateは20
+    chunk以下を使うためdrop 0が前提であり、dropが1以上のbatchは測定をやり直す。
   </p>
   <table>
     <caption>
@@ -1641,6 +1702,11 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
         <td>render-aheadの有効性</td>
       </tr>
       <tr>
+        <td><code>render_synthesis_ms / rendered_audio_ms / max_rendering_seen</code></td>
+        <td>chunk claim → artifact検証 / WAVE実時間 / session内同時render最大数</td>
+        <td>adaptive concurrencyの入力とSection 15の再現証跡</td>
+      </tr>
+      <tr>
         <td><code>cancel_to_silence_ms</code></td>
         <td>取消要求 → output sink停止</td>
         <td>割り込み安全性</td>
@@ -1655,8 +1721,8 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
       </tr>
       <tr>
         <td><code>sync_mismatch_count</code></td>
-        <td>delta列とfinal contentの不一致</td>
-        <td>append-only前提の回帰検知</td>
+        <td>受理deltaのUTF-8 byte数 / SHA-256とCompletionProofの不一致</td>
+        <td>append-only・terminal整合の回帰検知</td>
       </tr>
     </tbody>
   </table>
@@ -1733,6 +1799,11 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
         <td><code>Speech rendering failed</code></td>
       </tr>
       <tr>
+        <td><code>audio-budget-exceeded</code></td>
+        <td><code>provider-error</code></td>
+        <td><code>Speech audio budget exceeded</code></td>
+      </tr>
+      <tr>
         <td><code>playback-unavailable</code></td>
         <td><code>child-start-failed</code></td>
         <td><code>Speech playback unavailable</code></td>
@@ -1789,9 +1860,19 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
     <li>括弧や引用符の中の句読点を外側の文末と誤認しない。</li>
     <li>emoji、combining mark、non-BMP Unicode scalarをgrapheme途中で切らない。</li>
     <li>句読点のない240文字超をsafe boundaryでboundedに分割する。</li>
-    <li>completion時の短い末尾を一度だけflushする。</li>
+    <li>
+      <code>finishReason=stop</code>のcompletion時だけ、短い末尾を一度だけflushする。
+    </li>
     <li>空またはMarkdown-onlyのchunkをTTSへ送らない。</li>
-    <li>delta列とfinal contentのprefix一致、suffix補完、不一致をそれぞれ検査する。</li>
+    <li>
+      受理delta列のUTF-8 byte数 / incremental
+      SHA-256がCompletionProofと一致・不一致になる各場合を検査する。
+    </li>
+    <li>
+      <code>finishReason=stop</code
+      >だけが短い末尾をflushし、<code>length</code>は未claim
+      tailを発声しない。
+    </li>
     <li>ASCII句点だけをdelta末尾に置き、次deltaのlook-ahead後に初めて確定する。</li>
     <li>CRLF、連続改行、closing quote後の文末を一候補として扱う。</li>
     <li>
@@ -1809,7 +1890,8 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
   <ul>
     <li>
       50
-      chunkを投入しても<code>rendering &lt;= 1</code>、<code>ready &lt;= 1</code>、<code>in_player &lt;= 2</code>である。
+      chunkを投入しても<code>rendering &lt;= 3</code>、<code>ready &lt;= 3</code>、
+      <code>in_player &lt;= 2</code>、audio 30秒 / 16 MiB以内である。
     </li>
     <li>chunk N再生中にN+1をrenderし、再生順が必ず昇順になる。</li>
     <li>renderer完了順を意図的に逆転させてもplayback順が逆転しない。</li>
@@ -1819,6 +1901,10 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
     </li>
     <li>最初、中間、draining中の各cancelでnetwork、process、sink、artifactが残らない。</li>
     <li>Cloud responseが遅い、過大、非音声、途中切断の場合にbounded failureとなる。</li>
+    <li>
+      duration予約の置換またはartifact書込みが30秒 / 16 MiBを超える直前に
+      <code>audio-budget-exceeded</code>となり、上限超過byteとPlayer appendが0である。
+    </li>
     <li>Harness TTS resolve中もLLM deltaを受理し、resolve成功後に一度だけrouteを固定する。</li>
     <li>Harness resolve失敗はroute-unavailableとなり、Text turnの開始・完了を妨げない。</li>
     <li>System renderer processが失敗してもText turnをfailedにしない。</li>
@@ -1837,13 +1923,13 @@ type PendingSpeechFailure = { sourceRunId: string; code: SpeechFailureCode };</c
   <p>
     既存の<code>src-tauri/src/lib.rs</code>conversation test harnessへfake renderer /
     playbackを差し込み、 OpenAI compatible、Dynamic LAN、LARM、Codexの各event
-    producerを<code>TurnEventSink</code>経由で 実行する。外部networkと実audio
+    producerを<code>TurnEventHub</code>経由で 実行する。外部networkと実audio
     deviceを自動testの前提にしない。
   </p>
   <ul>
-    <li>fake SSE serverから文途中deltaを送り、最初の句点まではTTS requestが0件である。</li>
+    <li>fake Turn Event Hubから文途中deltaを送り、最初の句点まではTTS requestが0件である。</li>
     <li>
-      最初の自然な文が確定した直後、<code>[DONE]</code>前にTTS
+      最初の自然な文が確定した直後、validated <code>response.completed</code>前にTTS
       requestが開始される。
     </li>
     <li>全TTS inputを連結した結果が完成済みspeakable textと一致する。</li>
@@ -1968,7 +2054,7 @@ bun run size:check</code></pre>
       </tr>
       <tr>
         <td><code>STTS-05</code></td>
-        <td>TurnEventSinkで全LLM routeを統合</td>
+        <td>TurnEventHubで全LLM routeを統合</td>
         <td>OpenAI compatible、Dynamic LAN、LARM、Codexで同じfixture Pass</td>
         <td><code>STTS-02</code></td>
       </tr>
@@ -2128,7 +2214,7 @@ bun run size:check</code></pre>
     </li>
   </ul>
 
-  <h3 id="136-stts-05">13.6 STTS-05 — TurnEventSink integration</h3>
+  <h3 id="136-stts-05">13.6 STTS-05 — TurnEventHub integration</h3>
   <ul>
     <li>
       Files:
@@ -2137,8 +2223,8 @@ bun run size:check</code></pre>
     </li>
     <li>
       Steps: command境界でChannelとoptional SpeechSessionHandleからsinkを一つ作り、全event
-      producerの引数を置換する。
-      <code>Delta / MessageCompleted / Cancelled / Failed</code>だけをSpeechへ順序どおりobserveする。
+      producerの引数を置換する。 validated
+      <code>Delta / Completed { CompletionProof } / Cancelled / Failed</code>だけをSpeechへ順序どおりobserveする。
       <code>Started / ProviderSelected / ProviderFailed / Activity</code>はUIへだけ送る。
     </li>
     <li>
@@ -2263,8 +2349,9 @@ bun run size:check</code></pre>
       <code>bun run size:check</code>がPassし、ratchet値を引き上げていない。
     </li>
     <li>
-      <strong>G6 Integration:</strong> fake SSE / TTSの4 route fixtureで、最初のstrong
-      boundary後かつ <code>[DONE]</code>前にrender claimされる。
+      <strong>G6 Integration:</strong> fake ordered Turn Event Hub / TTSの4 route
+      fixtureで、最初のstrong boundary後かつvalidated
+      <code>response.completed</code>前にrender claimされる。
     </li>
     <li><strong>G7 Full:</strong> <code>bun run check</code>がPassする。</li>
     <li>
@@ -2290,24 +2377,44 @@ bun run size:check</code></pre>
     </thead>
     <tbody>
       <tr>
+        <td>Boundary → synthesis dispatch</td>
+        <td>controlled renderer、200 session、release build</td>
+        <td>p95 5ms以下</td>
+      </tr>
+      <tr>
         <td>First boundary → audio</td>
-        <td>System voice、20短文、warm stream</td>
-        <td>p50 500ms以下、p95 1.2秒以下</td>
+        <td>controlled System voice、20短文 × 10回、warm stream</td>
+        <td>p50 300ms以下、p95 700ms以下</td>
       </tr>
       <tr>
         <td>First delta → audio</td>
-        <td>固定corpusのfake SSEを20ms / deltaで再生し、日本語20、英語10</td>
+        <td>固定corpusをfake ordered Turn Event Hubから20ms / deltaで再生し、日本語20、英語10</td>
         <td>現行比p50 60%以上短縮、p95悪化なし</td>
       </tr>
       <tr>
         <td>Chunk gap</td>
-        <td>10 chunk回答をSystem / Cloud各10回</td>
+        <td>10 chunk回答をSystem / Cloud各25回</td>
         <td>p95 150ms以下</td>
+      </tr>
+      <tr>
+        <td>Adaptive render-ahead</td>
+        <td>合成1.8秒 / 音声1.0秒のcontrolled rendererで20 chunk × 20 session</td>
+        <td>concurrencyが2以上へ上がり、順序逆転0、chunk gap p95 150ms以下</td>
+      </tr>
+      <tr>
+        <td>Route capability</td>
+        <td>System / Cloud / Harness descriptorと実測最大同時request</td>
+        <td>最大性能profileではadvertise / 実測とも2以上、上限超過request 0</td>
       </tr>
       <tr>
         <td>Cancel → silence</td>
         <td>buffering、rendering、playing、draining各25回</td>
         <td>p95 200ms以下</td>
+      </tr>
+      <tr>
+        <td>Lifecycle accuracy</td>
+        <td>最初のaudio sample、SpeechStarted、ASR suspendを100 sessionで照合</td>
+        <td>sample → SpeechStarted 20ms以下、synthesis待ち中のASR停止0ms</td>
       </tr>
       <tr>
         <td>Completeness</td>
@@ -2350,9 +2457,9 @@ bun run size:check</code></pre>
       Section 6.7の値と一致する。Rust testでschemaと全offsetをvalidateする。
     </li>
     <li>
-      baselineと変更後は同じ<code>raw + deltaEndBytes</code>を20ms間隔でfake
-      SSEから送り、TTSだけ実providerを使う。 network LLMの速度差をlatency比較へ混ぜない。Real LLM
-      route smokeは別Gateとして成否だけ記録する。
+      baselineと変更後は同じ<code>raw + deltaEndBytes</code>を20ms間隔でfake ordered Turn
+      Event Hubから送り、TTSだけ実providerを使う。network LLMの速度差をlatency比較へ混ぜない。Real
+      LLM route smokeは別Gateとして成否だけ記録する。
     </li>
     <li>
       provider / voice / machine / macOS / build commitを固定し、各batch前のwarm-up
@@ -2397,7 +2504,7 @@ bun run size:check</code></pre>
     <tbody>
       <tr>
         <td>短文が多くTTS requestが増える</td>
-        <td>最小長、steadyMin、合計2 chunk slot、合成並列1でboundedにする</td>
+        <td>最小長、steadyMin、最大3並列、audio 30秒 / 16 MiBでboundedにする</td>
         <td>gapまたはrate limit超過なら閾値を上げる</td>
       </tr>
       <tr>
@@ -2406,8 +2513,8 @@ bun run size:check</code></pre>
         <td>property test不通過はNo-Go</td>
       </tr>
       <tr>
-        <td>final contentがdelta列と一致しない</td>
-        <td>prefix照合、sync-lostで停止、自動全文再読を禁止</td>
+        <td>terminalのbyte数 / hashが受理delta列と一致しない</td>
+        <td>incremental byte / hash照合、sync-lostで停止、自動全文再読を禁止</td>
         <td>実Providerで1件でも発生した経路はNo-Go</td>
       </tr>
       <tr>

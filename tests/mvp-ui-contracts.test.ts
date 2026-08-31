@@ -10,7 +10,7 @@ describe("MVP UI reachability contracts", () => {
       source("src/App.tsx") +
       source("src/features/chat/useConversationTurn.ts");
     expect(app).toContain(
-      'type Surface = "chat" | "meeting" | "situation" | "settings"',
+      'type Surface = "chat" | "meeting" | "situation" | "audit" | "settings"',
     );
     expect(app).toContain("workspacePath: null");
     expect(app).not.toContain("openCodingSurface");
@@ -43,7 +43,7 @@ describe("MVP UI reachability contracts", () => {
   test("keeps the active run controls reachable while navigation is requested", () => {
     const app = source("src/App.tsx");
     expect(app).toContain(
-      'function openAuxiliarySurface(nextSurface: "settings" | "situation")',
+      'function openAuxiliarySurface(nextSurface: "settings" | "situation" | "audit")',
     );
     expect(app).toContain("if (!canChangeConversation()) return;");
     expect(app).toContain('openAuxiliarySurface("settings")');

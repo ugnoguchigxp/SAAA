@@ -1399,7 +1399,9 @@ mod tests {
             .expect("v7 settings fixture writes");
         connection
             .execute_batch(
-                "DROP INDEX idx_provider_sessions_runtime_run;
+                "DROP TRIGGER IF EXISTS audit_provider_sessions_after_insert;
+             DROP TRIGGER IF EXISTS audit_provider_sessions_after_update;
+             DROP INDEX idx_provider_sessions_runtime_run;
              ALTER TABLE provider_sessions DROP COLUMN runtime_run_id;
              ALTER TABLE provider_sessions DROP COLUMN provider_kind;
              ALTER TABLE provider_sessions DROP COLUMN route_id;

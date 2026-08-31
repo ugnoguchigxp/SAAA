@@ -128,6 +128,7 @@ describe("MVP 2 / 2.5 readiness CLI", () => {
       await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "lib.rs")).text(),
       await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "app_paths.rs")).text(),
       await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "diagnostics.rs")).text(),
+      await Bun.file(join(import.meta.dir, "..", "src-tauri", "src", "database_backup.rs")).text(),
     ].join("\n");
     expect(runtime).toContain('env::var_os("SAAA_MVP2X_APP_DATA_DIR")');
     expect(runtime).toContain("validate_readiness_data_directory");

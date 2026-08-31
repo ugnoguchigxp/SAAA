@@ -1,5 +1,3 @@
-use std::cmp;
-
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::voice_text::text_for_speech;
@@ -32,10 +30,30 @@ pub(crate) enum AccumulatorError {
 #[derive(Debug, Default)]
 pub(crate) struct SentenceAccumulator {
     source: String,
+    source_chars: usize,
     consumed_byte: usize,
     first_chunk_claimed: bool,
     input_closed: bool,
     idle_generation: u64,
+    protected_tail: Option<ProtectedTail>,
+}
+
+#[derive(Debug)]
+enum ProtectedTail {
+    Fence {
+        start: usize,
+        marker: &'static str,
+        search_from: usize,
+    },
+    InlineCode {
+        start: usize,
+        marker: &'static str,
+        search_from: usize,
+    },
+    Url {
+        start: usize,
+        search_from: usize,
+    },
 }
 
 impl SentenceAccumulator {
@@ -43,11 +61,14 @@ impl SentenceAccumulator {
         if self.input_closed || delta.is_empty() {
             return Ok(());
         }
-        self.source.push_str(delta);
-        if self.source.chars().count() > MAX_SOURCE_CHARS {
+        let delta_chars = delta.chars().count();
+        if self.source_chars.saturating_add(delta_chars) > MAX_SOURCE_CHARS {
             return Err(AccumulatorError::SourceTooLarge);
         }
+        self.source.push_str(delta);
+        self.source_chars += delta_chars;
         self.idle_generation = self.idle_generation.wrapping_add(1);
+        self.update_protected_tail();
         Ok(())
     }
 
@@ -76,6 +97,13 @@ impl SentenceAccumulator {
             let end = self.select_end(reason)?;
             let raw = self.source[self.consumed_byte..end].to_string();
             self.consumed_byte = end;
+            if self
+                .protected_tail
+                .as_ref()
+                .is_some_and(|tail| tail.start() < self.consumed_byte)
+            {
+                self.protected_tail = None;
+            }
             let spoken = text_for_speech(&raw);
             if spoken.is_empty() {
                 continue;
@@ -95,6 +123,14 @@ impl SentenceAccumulator {
             return None;
         }
         let raw = &self.source[self.consumed_byte..];
+        if !self.input_closed
+            && self
+                .protected_tail
+                .as_ref()
+                .is_some_and(|tail| tail.start() == self.consumed_byte)
+        {
+            return None;
+        }
         let boundaries = scan_boundaries(raw, self.input_closed);
         let minimum = if self.first_chunk_claimed {
             STEADY_MIN
@@ -149,6 +185,99 @@ impl SentenceAccumulator {
             return Some(self.source.len());
         }
         None
+    }
+
+    fn update_protected_tail(&mut self) {
+        let mut clear = false;
+        match self.protected_tail.as_mut() {
+            Some(ProtectedTail::Fence {
+                marker,
+                search_from,
+                ..
+            }) => {
+                let pattern = format!("\n{marker}");
+                if self.source[*search_from..].contains(&pattern) {
+                    clear = true;
+                } else {
+                    *search_from = self.source.len().saturating_sub(pattern.len());
+                }
+            }
+            Some(ProtectedTail::InlineCode {
+                marker,
+                search_from,
+                ..
+            }) => {
+                if self.source[*search_from..].contains(*marker) {
+                    clear = true;
+                } else {
+                    *search_from = self.source.len().saturating_sub(marker.len());
+                }
+            }
+            Some(ProtectedTail::Url { search_from, .. }) => {
+                if self.source[*search_from..].chars().any(|character| {
+                    character.is_whitespace() || matches!(character, '<' | '>' | '"')
+                }) {
+                    clear = true;
+                } else {
+                    *search_from = self.source.len();
+                }
+            }
+            None => {}
+        }
+        if clear {
+            self.protected_tail = None;
+        }
+        if self.protected_tail.is_some() || self.consumed_byte >= self.source.len() {
+            return;
+        }
+        let raw = &self.source[self.consumed_byte..];
+        for marker in ["```", "~~~"] {
+            if raw.starts_with(marker) && !raw[marker.len()..].contains(&format!("\n{marker}")) {
+                self.protected_tail = Some(ProtectedTail::Fence {
+                    start: self.consumed_byte,
+                    marker,
+                    search_from: self.consumed_byte + marker.len(),
+                });
+                return;
+            }
+        }
+        let inline_marker = if raw.starts_with("``") {
+            Some("``")
+        } else if raw.starts_with('`') {
+            Some("`")
+        } else {
+            None
+        };
+        if let Some(marker) = inline_marker {
+            if !raw[marker.len()..].contains(marker) {
+                self.protected_tail = Some(ProtectedTail::InlineCode {
+                    start: self.consumed_byte,
+                    marker,
+                    search_from: self.consumed_byte + marker.len(),
+                });
+                return;
+            }
+        }
+        if starts_with_url(raw)
+            && !raw
+                .chars()
+                .any(|character| character.is_whitespace() || matches!(character, '<' | '>' | '"'))
+        {
+            self.protected_tail = Some(ProtectedTail::Url {
+                start: self.consumed_byte,
+                search_from: self.source.len(),
+            });
+        }
+    }
+}
+
+impl ProtectedTail {
+    fn start(&self) -> usize {
+        match self {
+            Self::Fence { start, .. }
+            | Self::InlineCode { start, .. }
+            | Self::Url { start, .. } => *start,
+        }
     }
 }
 
@@ -288,11 +417,7 @@ fn markdown_link_end(input: &str, cursor: usize) -> Option<usize> {
 
 fn url_end(input: &str, cursor: usize) -> Option<usize> {
     let suffix = &input[cursor..];
-    let lower = suffix
-        .get(..cmp::min(suffix.len(), 8))?
-        .to_ascii_lowercase();
-    if !(lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("www."))
-    {
+    if !starts_with_url(suffix) {
         return None;
     }
     let mut end = cursor;
@@ -310,6 +435,14 @@ fn url_end(input: &str, cursor: usize) -> Option<usize> {
         end -= character.len_utf8();
     }
     Some(end.max(cursor + 1))
+}
+
+fn starts_with_url(input: &str) -> bool {
+    ["http://", "https://", "www."].iter().any(|prefix| {
+        input
+            .get(..prefix.len())
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(prefix))
+    })
 }
 
 fn html_tag_end(input: &str, cursor: usize) -> Option<usize> {
@@ -515,6 +648,22 @@ mod tests {
                 .spoken,
             "途中まで続き"
         );
+    }
+
+    #[test]
+    fn sixty_four_thousand_one_character_deltas_keep_incremental_limit_accounting() {
+        let started = std::time::Instant::now();
+        let mut accumulator = SentenceAccumulator::default();
+        for _ in 0..MAX_SOURCE_CHARS {
+            accumulator
+                .append("日")
+                .expect("delta remains within limit");
+        }
+        assert_eq!(
+            accumulator.append("日"),
+            Err(AccumulatorError::SourceTooLarge)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use super::{
 use super::{BALANCED_SILENCE_TIMEOUT_MS, PATIENT_SILENCE_TIMEOUT_MS, QUICK_SILENCE_TIMEOUT_MS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PolicyRow {
+pub(crate) struct PolicyRow {
     pub(super) conversation_id: String,
     pub(super) speech_output_override: String,
     pub(super) listening_pace_override: String,
@@ -48,7 +48,14 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS idx_voice_policy_events_conversation_created
            ON conversation_voice_policy_events(conversation_id, created_at DESC);",
-    )
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO conversation_voice_policies(
+           conversation_id,speech_output_override,listening_pace_override,policy_revision,updated_at
+         ) SELECT id,'inherit','inherit',1,?1 FROM conversations WHERE task_mode='conversation'",
+        [now_iso()],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn policy_snapshot(
@@ -56,16 +63,12 @@ pub(crate) fn policy_snapshot(
     conversation_id: &str,
 ) -> Result<ConversationVoicePolicySnapshot, String> {
     validate_identifier(conversation_id, "conversation id")?;
-    let (policy, voice) = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        (
-            ensure_policy(&connection, conversation_id)?,
-            crate::persistence::load_voice_settings(&connection)?,
-        )
-    };
+    let (policy, voice) = state.sqlite_readers.read(|connection| {
+        Ok((
+            load_policy(connection, conversation_id)?,
+            crate::persistence::load_voice_settings(connection)?,
+        ))
+    })?;
     Ok(snapshot_from(state.meeting.blocks_tts(), policy, voice))
 }
 
@@ -170,72 +173,71 @@ fn apply_ui_policy(
         .interaction_policy
         .lock()
         .map_err(|_| "Interaction policy lock unavailable".to_string())?;
-    let mut connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    ensure_policy(&connection, conversation_id)?;
-    let transaction = connection.transaction().map_err(database_error)?;
-    let current = load_policy(&transaction, conversation_id)?;
-    if current.policy_revision != expected_revision {
-        return Err(
-            "VOICE_POLICY_CONFLICT: The voice policy changed. Reload and try again.".to_string(),
-        );
-    }
-    let mut next = current.clone();
-    if let Some(value) = speech_output {
-        next.speech_output_override = value.to_string();
-    }
-    if let Some(value) = listening_pace {
-        next.listening_pace_override = value.to_string();
-    }
-    let changed = next.speech_output_override != current.speech_output_override
-        || next.listening_pace_override != current.listening_pace_override;
-    if changed {
-        next.policy_revision += 1;
-        next.updated_at = now_iso();
-        let updated = transaction
-            .execute(
-                "UPDATE conversation_voice_policies
-                 SET speech_output_override=?1, listening_pace_override=?2,
-                     policy_revision=?3, updated_at=?4
-                 WHERE conversation_id=?5 AND policy_revision=?6",
-                params![
-                    next.speech_output_override,
-                    next.listening_pace_override,
-                    next.policy_revision,
-                    next.updated_at,
-                    conversation_id,
-                    current.policy_revision
-                ],
-            )
-            .map_err(database_error)?;
-        if updated != 1 {
+    state.sqlite_writer.write(|connection| {
+        ensure_policy(connection, conversation_id)?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        let current = load_policy(&transaction, conversation_id)?;
+        if current.policy_revision != expected_revision {
             return Err(
                 "VOICE_POLICY_CONFLICT: The voice policy changed. Reload and try again."
                     .to_string(),
             );
         }
-    }
-    record_event(
-        &transaction,
-        conversation_id,
-        None,
-        None,
-        None,
-        "ui",
-        &current,
-        &next,
-        if changed { "applied" } else { "unchanged" },
-    )?;
-    transaction.commit().map_err(database_error)?;
-    Ok((
-        next.speech_output_override != current.speech_output_override,
-        next.listening_pace_override != current.listening_pace_override,
-    ))
+        let mut next = current.clone();
+        if let Some(value) = speech_output {
+            next.speech_output_override = value.to_string();
+        }
+        if let Some(value) = listening_pace {
+            next.listening_pace_override = value.to_string();
+        }
+        let changed = next.speech_output_override != current.speech_output_override
+            || next.listening_pace_override != current.listening_pace_override;
+        if changed {
+            next.policy_revision += 1;
+            next.updated_at = now_iso();
+            let updated = transaction
+                .execute(
+                    "UPDATE conversation_voice_policies
+                 SET speech_output_override=?1, listening_pace_override=?2,
+                     policy_revision=?3, updated_at=?4
+                 WHERE conversation_id=?5 AND policy_revision=?6",
+                    params![
+                        next.speech_output_override,
+                        next.listening_pace_override,
+                        next.policy_revision,
+                        next.updated_at,
+                        conversation_id,
+                        current.policy_revision
+                    ],
+                )
+                .map_err(database_error)?;
+            if updated != 1 {
+                return Err(
+                    "VOICE_POLICY_CONFLICT: The voice policy changed. Reload and try again."
+                        .to_string(),
+                );
+            }
+        }
+        record_event(
+            &transaction,
+            conversation_id,
+            None,
+            None,
+            None,
+            "ui",
+            &current,
+            &next,
+            if changed { "applied" } else { "unchanged" },
+        )?;
+        transaction.commit().map_err(database_error)?;
+        Ok((
+            next.speech_output_override != current.speech_output_override,
+            next.listening_pace_override != current.listening_pace_override,
+        ))
+    })
 }
 
-pub(super) fn ensure_policy(
+pub(crate) fn ensure_policy(
     connection: &Connection,
     conversation_id: &str,
 ) -> Result<PolicyRow, String> {

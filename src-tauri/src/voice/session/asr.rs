@@ -53,25 +53,13 @@ pub(crate) async fn transcribe_selected_audio(
     sample_rate: u32,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
-    let selected = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        select_asr(&connection)?
-    };
+    let selected = state.sqlite_readers.read(select_asr)?;
     validate_asr_audio_quality(samples, sample_rate, &selected.vad_sensitivity)?;
     transcribe_selected(state, samples, sample_rate, selected, cancellation).await
 }
 
 pub(crate) async fn probe_selected_asr(state: &AppState) -> Result<(), String> {
-    let selected = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        select_asr(&connection)?
-    };
+    let selected = state.sqlite_readers.read(select_asr)?;
     match selected.route {
         AsrRoute::Cloud(provider) => crate::voice::cloud_asr::probe(&provider).await.map(|_| ()),
         AsrRoute::Harness(address) => {

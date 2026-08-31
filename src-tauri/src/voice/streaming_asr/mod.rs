@@ -6,6 +6,8 @@ mod harness_stream;
 mod manager;
 mod native_connection;
 mod reconciler;
+#[cfg(test)]
+mod regression_corpus;
 mod route;
 mod session;
 mod speaker_gate;

@@ -19,6 +19,7 @@ fn turn_input(run_id: &str) -> StartTurnInput {
         content: "静かにして".to_string(),
         workspace_path: None,
         retry_input_message_id: None,
+        source_id: None,
         input_origin: "text".to_string(),
         presentation_mode: "visual-and-spoken".to_string(),
     }
@@ -144,7 +145,7 @@ fn persistent_tool_mutation_is_idempotent_and_restored_for_the_conversation() {
         PATIENT_SILENCE_TIMEOUT_MS
     );
     let event_count: i64 = state
-        .connection
+        .sqlite_writer
         .lock()
         .expect("database locks")
         .query_row(
@@ -178,7 +179,7 @@ fn current_response_silence_does_not_persist_to_the_next_run() {
         "silent"
     );
     let audit_result: String = state
-        .connection
+        .sqlite_writer
         .lock()
         .expect("database locks")
         .query_row(
@@ -290,7 +291,7 @@ fn presentation_and_completion_fail_closed_for_invalid_run_context() {
     let input = turn_input("run_voice_context");
     begin_run(&state, &input.run_id, &input.conversation_id).expect("run begins");
     state
-        .connection
+        .sqlite_writer
         .lock()
         .expect("database locks")
         .execute(
@@ -333,7 +334,7 @@ fn database_failure_rolls_back_persistent_mute_but_keeps_this_response_silent() 
     let input = turn_input("run_voice_db_failure");
     begin_run(&state, &input.run_id, &input.conversation_id).expect("run begins");
     state
-        .connection
+        .sqlite_writer
         .lock()
         .expect("database locks")
         .execute_batch(

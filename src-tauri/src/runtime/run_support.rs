@@ -12,9 +12,9 @@ pub(crate) fn register_active_run(
     cancellation: Arc<RunCancellation>,
 ) -> Result<(), String> {
     if crate::memory::control_plane::memory_enabled() {
-        if let Ok(connection) = state.connection.lock() {
-            let _ = crate::memory::control_plane::cancel_running_jobs(&connection, &now_iso());
-        }
+        let _ = state.sqlite_writer.write(|connection| {
+            crate::memory::control_plane::cancel_running_jobs(connection, &now_iso()).map(|_| ())
+        });
     }
     let mut active = state
         .active_runs
@@ -42,28 +42,26 @@ pub(crate) fn begin_simple_runtime_run(
     route_kind: &str,
     provider_id: &str,
 ) -> Result<(), String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let conversation_exists: bool = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
-            params![conversation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
-    if !conversation_exists {
-        return Err("Conversation does not exist".to_string());
-    }
-    connection
-        .execute(
-            "INSERT INTO runtime_runs(id, conversation_id, route_kind, provider_id, status, started_at)
-             VALUES (?1, ?2, ?3, ?4, 'running', ?5)",
-            params![run_id, conversation_id, route_kind, provider_id, now_iso()],
-        )
-        .map_err(database_error)?;
-    Ok(())
+    state.sqlite_writer.write(|connection| {
+        let conversation_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+                params![conversation_id],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        if !conversation_exists {
+            return Err("Conversation does not exist".to_string());
+        }
+        connection
+            .execute(
+                "INSERT INTO runtime_runs(id, conversation_id, route_kind, provider_id, status, started_at)
+                 VALUES (?1, ?2, ?3, ?4, 'running', ?5)",
+                params![run_id, conversation_id, route_kind, provider_id, now_iso()],
+            )
+            .map_err(database_error)?;
+        Ok(())
+    })
 }
 
 pub(crate) fn validate_start_turn(input: &StartTurnInput) -> Result<(), String> {
@@ -96,18 +94,16 @@ pub(crate) fn update_runtime_provider(
     run_id: &str,
     provider_id: &str,
 ) -> Result<(), String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let changed = connection
-        .execute(
-            "UPDATE runtime_runs SET provider_id = ?1 WHERE id = ?2 AND status = 'running'",
-            params![provider_id, run_id],
-        )
-        .map_err(database_error)?;
-    if changed != 1 {
-        return Err("Runtime run is not active".to_string());
-    }
-    Ok(())
+    state.sqlite_writer.write(|connection| {
+        let changed = connection
+            .execute(
+                "UPDATE runtime_runs SET provider_id = ?1 WHERE id = ?2 AND status = 'running'",
+                params![provider_id, run_id],
+            )
+            .map_err(database_error)?;
+        if changed != 1 {
+            return Err("Runtime run is not active".to_string());
+        }
+        Ok(())
+    })
 }

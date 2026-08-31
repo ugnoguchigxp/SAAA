@@ -16,11 +16,9 @@ pub(crate) fn frontend_ready(state: &AppState) -> Result<(), String> {
     };
     validate_identifier(&marker_id, "smoke marker id")?;
     if env::var_os("SAAA_SMOKE_REQUIRE_SPEAKER").is_some() {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        let voice_profile = state.voice_profile.snapshot(&connection)?;
+        let voice_profile = state
+            .voice_profile
+            .read_with_snapshot(&state.sqlite_readers, |_connection, snapshot| Ok(snapshot))?;
         if !voice_profile.runtime_available {
             return Err(format!(
                 "Packaged speaker verification is unavailable: {}",
@@ -29,10 +27,12 @@ pub(crate) fn frontend_ready(state: &AppState) -> Result<(), String> {
         }
     }
     if env::var_os("SAAA_SMOKE_EXERCISE_SITUATION").is_some() {
-        state.situation.set_monitoring(&state.connection, true)?;
+        state.situation.set_monitoring(&state.sqlite_writer, true)?;
         let sample = state.situation.sample_platform()?;
-        state.situation.tick_sampled(&state.connection, sample)?;
-        state.situation.set_monitoring(&state.connection, false)?;
+        state.situation.tick_sampled(&state.sqlite_writer, sample)?;
+        state
+            .situation
+            .set_monitoring(&state.sqlite_writer, false)?;
     }
     fs::write(
         env::temp_dir().join(format!("saaa-frontend-{marker_id}.ready")),

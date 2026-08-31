@@ -22,10 +22,10 @@ pub(crate) use contracts::{
     tool_definition, ConversationVoicePolicySnapshot, ResetConversationVoicePolicyInput,
     UpdateConversationVoicePolicyInput, VoicePresentationDecision,
 };
-use persistence::{ensure_policy, load_policy, record_event, source_message_id};
 pub(crate) use persistence::{
-    migrate, policy_snapshot, reset_policy_from_ui, update_policy_from_ui,
+    ensure_policy, migrate, policy_snapshot, reset_policy_from_ui, update_policy_from_ui,
 };
+use persistence::{load_policy, record_event, source_message_id, PolicyRow};
 use run_state::apply_ui_speech_runtime;
 
 pub(crate) const UPDATE_VOICE_BEHAVIOR_TOOL_NAME: &str = "update_conversation_voice_behavior";
@@ -84,11 +84,7 @@ pub(crate) fn begin_run(
 ) -> Result<bool, String> {
     validate_identifier(run_id, "run id")?;
     validate_identifier(conversation_id, "conversation id")?;
-    let policy = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
+    let policy = state.sqlite_readers.read(|connection| {
         let task_mode = connection
             .query_row(
                 "SELECT task_mode FROM conversations WHERE id=?1",
@@ -99,9 +95,12 @@ pub(crate) fn begin_run(
             .map_err(database_error)?
             .ok_or_else(|| "Conversation does not exist".to_string())?;
         if task_mode != "conversation" {
-            return Ok(false);
+            return Ok(None);
         }
-        ensure_policy(&connection, conversation_id)?
+        load_policy(connection, conversation_id).map(Some)
+    })?;
+    let Some(policy) = policy else {
+        return Ok(false);
     };
     let mut runs = state
         .voice_behavior
@@ -263,22 +262,95 @@ fn apply_tool_mutation(
     starting_revision: i64,
     arguments: &VoiceToolArguments,
 ) -> Result<String, String> {
+    enum DatabaseMutation {
+        Conflict(PolicyRow),
+        Applied {
+            next: PolicyRow,
+            run_override: Option<RunSpeechOverride>,
+            speech_policy_changed: bool,
+            listening_policy_changed: bool,
+        },
+    }
+
     let policy_guard = state
         .interaction_policy
         .lock()
         .map_err(|_| "Interaction policy lock unavailable".to_string())?;
-    let mut connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    let transaction = connection.transaction().map_err(database_error)?;
-    let current = load_policy(&transaction, conversation_id)?;
-    let persistent_change = arguments
-        .speech_output
-        .as_ref()
-        .is_some_and(|change| change.scope == "conversation")
-        || arguments.listening_pace.is_some();
-    if persistent_change && current.policy_revision != starting_revision {
+    let mutation = state.sqlite_writer.write(|connection| {
+        let transaction = connection.transaction().map_err(database_error)?;
+        let current = load_policy(&transaction, conversation_id)?;
+        let persistent_change = arguments
+            .speech_output
+            .as_ref()
+            .is_some_and(|change| change.scope == "conversation")
+            || arguments.listening_pace.is_some();
+        if persistent_change && current.policy_revision != starting_revision {
+            record_event(
+                &transaction,
+                conversation_id,
+                Some(&input.run_id),
+                Some(&call.id),
+                source_message_id(&transaction, &input.run_id)?.as_deref(),
+                "tool",
+                &current,
+                &current,
+                "policy-conflict",
+            )?;
+            transaction.commit().map_err(database_error)?;
+            return Ok(DatabaseMutation::Conflict(current));
+        }
+
+        let mut next = current.clone();
+        let mut run_override = None;
+        if let Some(change) = &arguments.speech_output {
+            match (change.mode.as_str(), change.scope.as_str()) {
+                ("silent", "current_response") => run_override = Some(RunSpeechOverride::Silent),
+                ("speak", "current_response") => run_override = Some(RunSpeechOverride::Speak),
+                ("silent", "conversation") => {
+                    next.speech_output_override = "muted".to_string();
+                    run_override = Some(RunSpeechOverride::Silent);
+                }
+                ("inherit", "conversation") => {
+                    next.speech_output_override = "inherit".to_string();
+                }
+                _ => return Err("Invalid voice policy mutation".to_string()),
+            }
+        }
+        if let Some(change) = &arguments.listening_pace {
+            next.listening_pace_override = match change.mode.as_str() {
+                "default" => "inherit".to_string(),
+                value => value.to_string(),
+            };
+        }
+        let speech_policy_changed = next.speech_output_override != current.speech_output_override;
+        let listening_policy_changed =
+            next.listening_pace_override != current.listening_pace_override;
+        let changed = speech_policy_changed || listening_policy_changed;
+        if changed {
+            next.policy_revision += 1;
+            next.updated_at = now_iso();
+            let updated = transaction
+                .execute(
+                    "UPDATE conversation_voice_policies
+                     SET speech_output_override=?1, listening_pace_override=?2,
+                         policy_revision=?3, updated_at=?4
+                     WHERE conversation_id=?5 AND policy_revision=?6",
+                    params![
+                        next.speech_output_override,
+                        next.listening_pace_override,
+                        next.policy_revision,
+                        next.updated_at,
+                        conversation_id,
+                        current.policy_revision
+                    ],
+                )
+                .map_err(database_error)?;
+            if updated != 1 {
+                return Err(
+                    "Voice policy changed while the tool update was being applied".to_string(),
+                );
+            }
+        }
         record_event(
             &transaction,
             conversation_id,
@@ -287,11 +359,23 @@ fn apply_tool_mutation(
             source_message_id(&transaction, &input.run_id)?.as_deref(),
             "tool",
             &current,
-            &current,
-            "policy-conflict",
+            &next,
+            if changed || run_override.is_some() {
+                "applied"
+            } else {
+                "unchanged"
+            },
         )?;
         transaction.commit().map_err(database_error)?;
-        drop(connection);
+        Ok(DatabaseMutation::Applied {
+            next,
+            run_override,
+            speech_policy_changed,
+            listening_policy_changed,
+        })
+    })?;
+
+    if let DatabaseMutation::Conflict(current) = mutation {
         let (presentation, snapshot) =
             presentation_and_snapshot(state, Some(&input.run_id), conversation_id)?;
         drop(policy_guard);
@@ -341,71 +425,15 @@ fn apply_tool_mutation(
         });
     }
 
-    let mut next = current.clone();
-    let mut run_override = None;
-    if let Some(change) = &arguments.speech_output {
-        match (change.mode.as_str(), change.scope.as_str()) {
-            ("silent", "current_response") => run_override = Some(RunSpeechOverride::Silent),
-            ("speak", "current_response") => run_override = Some(RunSpeechOverride::Speak),
-            ("silent", "conversation") => {
-                next.speech_output_override = "muted".to_string();
-                run_override = Some(RunSpeechOverride::Silent);
-            }
-            ("inherit", "conversation") => {
-                next.speech_output_override = "inherit".to_string();
-            }
-            _ => return Err("Invalid voice policy mutation".to_string()),
-        }
-    }
-    if let Some(change) = &arguments.listening_pace {
-        next.listening_pace_override = match change.mode.as_str() {
-            "default" => "inherit".to_string(),
-            value => value.to_string(),
-        };
-    }
-    let speech_policy_changed = next.speech_output_override != current.speech_output_override;
-    let listening_policy_changed = next.listening_pace_override != current.listening_pace_override;
-    let changed = speech_policy_changed || listening_policy_changed;
-    if changed {
-        next.policy_revision += 1;
-        next.updated_at = now_iso();
-        let updated = transaction
-            .execute(
-                "UPDATE conversation_voice_policies
-                 SET speech_output_override=?1, listening_pace_override=?2,
-                     policy_revision=?3, updated_at=?4
-                 WHERE conversation_id=?5 AND policy_revision=?6",
-                params![
-                    next.speech_output_override,
-                    next.listening_pace_override,
-                    next.policy_revision,
-                    next.updated_at,
-                    conversation_id,
-                    current.policy_revision
-                ],
-            )
-            .map_err(database_error)?;
-        if updated != 1 {
-            return Err("Voice policy changed while the tool update was being applied".to_string());
-        }
-    }
-    record_event(
-        &transaction,
-        conversation_id,
-        Some(&input.run_id),
-        Some(&call.id),
-        source_message_id(&transaction, &input.run_id)?.as_deref(),
-        "tool",
-        &current,
-        &next,
-        if changed || run_override.is_some() {
-            "applied"
-        } else {
-            "unchanged"
-        },
-    )?;
-    transaction.commit().map_err(database_error)?;
-    drop(connection);
+    let DatabaseMutation::Applied {
+        next,
+        run_override,
+        speech_policy_changed,
+        listening_policy_changed,
+    } = mutation
+    else {
+        unreachable!("conflict returned above")
+    };
     if arguments.speech_output.is_some() {
         set_run_override(state, &input.run_id, run_override)?;
     }

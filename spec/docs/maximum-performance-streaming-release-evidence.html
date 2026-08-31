@@ -1,0 +1,143 @@
+<article lang="ja">
+  <h1 id="maximum-performance-release-evidence">Maximum-Performance Streaming Release Evidence</h1>
+  <dl>
+    <dt>Status</dt>
+    <dd>Implementation complete / Release blocked on operator evidence</dd>
+    <dt>Last verified</dt>
+    <dd>2026-09-01（controlled local evidence）</dd>
+    <dt>Plan</dt>
+    <dd>
+      <a href="./maximum-performance-streaming-implementation-plan.html"
+        >Maximum-Performance Streaming Experience 実装計画</a
+      >
+    </dd>
+    <dt>Protocol</dt>
+    <dd><a href="./provider-llm-websocket-protocol-v1.html">saaa.llm-stream.v1</a></dd>
+  </dl>
+  <p>
+    自動検証とoperator検証を分離する。自動検証が成功しても、実Provider、実マイク、実WebView、
+    30分soak、rollback rehearsalの代替にはしない。reportへprompt、response、音声、token、endpoint、
+    run IDを保存しない。
+  </p>
+
+  <h2 id="automated">1. Controlled automated evidence</h2>
+  <table>
+    <caption>
+      Automated evidence executed on the local release profile
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">判定</th>
+        <th scope="col">証跡</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM binary hot path</td>
+        <td>pass</td>
+        <td>
+          <code>streaming-hot-path.json</code> — 1,000反復、p50 1.116 ms、p95 1.228 ms（95%
+          bootstrap CI 1.211–1.238 ms）、p99 1.488 ms、peak RSS +0.41 MiB
+        </td>
+      </tr>
+      <tr>
+        <td>SQLite 100,000行</td>
+        <td>pass</td>
+        <td>
+          <code>sqlite-read-path.json</code> — 先頭p95 0.145 ms、deep p95 2.681 ms、cache
+          hit 99.95%、covering expression index
+        </td>
+      </tr>
+      <tr>
+        <td>Protocol / Hub / TTS / ASR / UI / Meeting</td>
+        <td>pass</td>
+        <td>
+          <code>automated-verification.json</code> — scoped 91件成功、0件失敗、0件filter-only
+        </td>
+      </tr>
+      <tr>
+        <td>Aggregate</td>
+        <td>automated pass / release blocked</td>
+        <td><code>aggregate.json</code> — operator専用14 Gateを明示</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code class="language-bash">REPORT_DIR="$(mktemp -d)"
+bun run performance:verify -- --report-dir "$REPORT_DIR"
+bun run performance:report -- --report-dir "$REPORT_DIR"
+bun run check
+bun run spec:check</code></pre>
+
+  <h2 id="operator">2. Operator-only Gate</h2>
+  <table>
+    <caption>
+      Evidence that must be collected on the release hardware
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">状態</th>
+        <th scope="col">必要証跡</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>実Provider / internal latency</td>
+        <td>pending</td>
+        <td>30 run以上、prewarmed WS、本文なしp50/p95/p99</td>
+      </tr>
+      <tr>
+        <td>実WebView UI / Markdown / Meeting</td>
+        <td>pending</td>
+        <td>paint、Long Task、heap、segment delivery</td>
+      </tr>
+      <tr>
+        <td>実ASR / TTS</td>
+        <td>pending</td>
+        <td>承認済み話者corpus、実マイク、system/cloud音声route</td>
+      </tr>
+      <tr>
+        <td>30分 / 100 turn soak</td>
+        <td>pending</td>
+        <td>network flap、sleep/wake、quit、5分settled RSS</td>
+      </tr>
+      <tr>
+        <td>Rollback rehearsal</td>
+        <td>pending</td>
+        <td>別operator署名、旧Desktop/Server artifact hash、3 turn確認</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="cutover">3. Cutover</h2>
+  <ol>
+    <li>直前releaseのDesktopとServer artifact digest、DB backup、設定exportを固定する。</li>
+    <li>Serverのversioned WebSocketをtrafficなしでcontract testし、広告本数をprewarmする。</li>
+    <li>SSE serverを停止したisolated環境でfunctional canaryを実行する。</li>
+    <li>対象DesktopとServerを同時にcanaryへ投入し、Text、TTS、ASRを別々に判定する。</li>
+    <li>全Gateと30分soakに署名後だけ対象範囲を拡大する。</li>
+  </ol>
+
+  <h2 id="rollback">4. WebSocket-only rollback</h2>
+  <ol>
+    <li>
+      新規turnの受付を止め、active LLM runだけをcancelする。ASR sessionと確定済みTextは維持する。
+    </li>
+    <li>当該runの未再生TTS artifactとprocessを破棄し、他speech sessionへ波及させない。</li>
+    <li>DesktopとServerを、事前固定した直前の互換releaseへ同時に戻す。</li>
+    <li>新Desktop内でSSE fallback、gateway、設定切替を有効化しない。</li>
+    <li>再起動後、WS接続、通常3 turn、cancel、ASR、TTS、DB整合性を確認する。</li>
+    <li>artifact hash、時刻、operator、失敗Gateだけを記録し、本文は記録しない。</li>
+  </ol>
+
+  <h2 id="decision">5. Decision</h2>
+  <dl>
+    <dt>Implementation decision</dt>
+    <dd>approved（97 / 100）</dd>
+    <dt>Production release decision</dt>
+    <dd>blocked — Section 2未署名</dd>
+    <dt>Waiver</dt>
+    <dd>0</dd>
+  </dl>
+</article>

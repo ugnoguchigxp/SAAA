@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use tauri::{
@@ -26,6 +27,15 @@ pub(crate) async fn start_voice_asr_session(
     input: StartVoiceAsrSessionInput,
     on_event: tauri::ipc::Channel<VoiceAsrStreamEvent>,
 ) -> Result<(), String> {
+    crate::persistence::audit::record_voice_asr_command(
+        &state,
+        "asr-session-start-requested",
+        &input.session_id,
+        Some(&input.conversation_id),
+        None,
+        None,
+        BTreeMap::new(),
+    );
     let reservation = state.voice_asr.reserve(
         input.session_id.clone(),
         &input.conversation_id,
@@ -80,7 +90,11 @@ pub(crate) async fn start_voice_asr_session(
     let config = SessionConfig {
         session_id: input.session_id,
         current_utterance_id,
-        event: on_event,
+        event: crate::persistence::audit::VoiceAsrAuditChannel::new(
+            on_event,
+            state.sqlite_writer.clone(),
+            input.conversation_id,
+        ),
         batch_decoder: prepared.batch_decoder,
         native,
         speaker_gate,
@@ -126,10 +140,36 @@ pub(crate) async fn commit_voice_asr_utterance(
 ) -> Result<(), String> {
     crate::validate_identifier(&input.session_id, "ASR session id")
         .map_err(|_| "asr-session-not-found".to_string())?;
-    state
+    let reason = match &input.reason {
+        super::contracts::CommitReason::Silence => "silence",
+        super::contracts::CommitReason::MaxDuration => "max-duration",
+    };
+    crate::persistence::audit::record_voice_asr_command(
+        &state,
+        "asr-commit-requested",
+        &input.session_id,
+        None,
+        None,
+        None,
+        BTreeMap::from([(
+            "commitReason".to_string(),
+            crate::persistence::audit::AuditAttributeValue::Tag(reason.to_string()),
+        )]),
+    );
+    let result = state
         .voice_asr
         .commit(&input.session_id, input.reason)
-        .await
+        .await;
+    crate::persistence::audit::record_voice_asr_command(
+        &state,
+        "asr-commit-finished",
+        &input.session_id,
+        None,
+        Some(if result.is_ok() { "success" } else { "failure" }),
+        result.as_ref().err().map(String::as_str),
+        BTreeMap::new(),
+    );
+    result
 }
 
 #[tauri::command]
@@ -139,10 +179,32 @@ pub(crate) async fn stop_voice_asr_session(
 ) -> Result<(), String> {
     crate::validate_identifier(&input.session_id, "ASR session id")
         .map_err(|_| "asr-session-not-found".to_string())?;
-    state
+    crate::persistence::audit::record_voice_asr_command(
+        &state,
+        "asr-stop-requested",
+        &input.session_id,
+        None,
+        None,
+        None,
+        BTreeMap::from([(
+            "finalizeCurrent".to_string(),
+            crate::persistence::audit::AuditAttributeValue::Boolean(input.finalize_current),
+        )]),
+    );
+    let result = state
         .voice_asr
         .stop(&input.session_id, input.finalize_current)
-        .await
+        .await;
+    crate::persistence::audit::record_voice_asr_command(
+        &state,
+        "asr-stop-finished",
+        &input.session_id,
+        None,
+        Some(if result.is_ok() { "success" } else { "failure" }),
+        result.as_ref().err().map(String::as_str),
+        BTreeMap::new(),
+    );
+    result
 }
 
 fn canonical_decimal<T>(value: &str, error: &'static str) -> Result<T, String>

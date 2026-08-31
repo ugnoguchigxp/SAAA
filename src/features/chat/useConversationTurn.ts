@@ -13,7 +13,16 @@ import {
   type SubmitPromptOptions,
 } from "../../lib/conversationSession";
 import { ConversationIssueCoordinator } from "./conversationIssueCoordinator";
+import { recordRuntimeLifecycleAudit } from "./conversationAudit";
 import { useConversationVoicePolicy } from "./useConversationVoicePolicy";
+import { useStreamingTextProjection } from "./useStreamingTextProjection";
+import {
+  beginRunPerformance,
+  recordFirstDelta,
+  recordResponseCompleted,
+  recordRunWithoutMarkdown,
+  recordSocketReceive,
+} from "./streamingPerformance";
 type RetryAction = { kind: "response"; prompt: string; inputMessageId: string; inputOrigin: InputOrigin };
 export function useConversationTurn({
   selectedConversationId,
@@ -41,7 +50,7 @@ export function useConversationTurn({
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [streamingText, setStreamingText] = useState("");
+  const { streamingText, resetStreamingText, appendStreamingText, hasStreamingText } = useStreamingTextProjection();
   const [runtimeActivity, setRuntimeActivity] = useState<ConversationRuntimeActivity[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
@@ -49,10 +58,11 @@ export function useConversationTurn({
   const voice = useConversationVoicePolicy(selectedConversationId, setError);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
-  const loadedMessageCountRef = useRef(0);
+  const nextMessageCursorRef = useRef<string | null>(null);
   const loadingOlderMessagesRef = useRef(false);
   const meetingStateRef = useRef<MeetingState>("idle");
   const failedRunIdsRef = useRef(new Set<string>());
+  const incompleteRunIdsRef = useRef(new Set<string>());
   const speechStopRequestsRef = useRef(new Set<string>());
   const issueCoordinatorRef = useRef(new ConversationIssueCoordinator());
   const disposedRef = useRef(false);
@@ -69,19 +79,17 @@ export function useConversationTurn({
       if (ttsRunId) void stopTts(ttsRunId).catch(() => undefined);
     };
   }, [conversationSessionRef]);
+
   useEffect(() => {
-    if (!selectedConversationId) {
-      setMessages([]);
-      setHasMoreMessages(false);
-      loadedMessageCountRef.current = 0;
-      return;
-    }
     setMessages([]);
     setHasMoreMessages(false);
-    loadedMessageCountRef.current = 0;
-    setStreamingText("");
+    nextMessageCursorRef.current = null;
+    incompleteRunIdsRef.current.clear();
+    resetStreamingText();
     setRuntimeActivity([]);
-    void loadMessages(selectedConversationId, issueCoordinatorRef.current.begin());
+    if (selectedConversationId) {
+      void loadMessages(selectedConversationId, issueCoordinatorRef.current.begin());
+    }
   }, [selectedConversationId]);
   function publishIssue(scope: number, message: string, retry: RetryAction | null = null) {
     if (disposedRef.current || !issueCoordinatorRef.current.isCurrent(scope)) return;
@@ -91,12 +99,12 @@ export function useConversationTurn({
   async function loadMessages(conversationId: string, issueScope: number): Promise<ConversationMessage[]> {
     const request = ++messagesRequestRef.current;
     try {
-      const page = await listMessages(conversationId, 0);
+      const page = await listMessages(conversationId, null);
       const nextMessages = page.messages;
       if (!disposedRef.current && request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
         setMessages(nextMessages);
         setHasMoreMessages(page.hasMore);
-        loadedMessageCountRef.current = nextMessages.length;
+        nextMessageCursorRef.current = page.nextCursor;
       }
       return nextMessages;
     } catch (cause) {
@@ -113,13 +121,13 @@ export function useConversationTurn({
     setLoadingOlderMessages(true);
     const issueScope = issueCoordinatorRef.current.begin();
     try {
-      const page = await listMessages(conversationId, loadedMessageCountRef.current);
+      const page = await listMessages(conversationId, nextMessageCursorRef.current);
       if (!disposedRef.current && selectedConversationIdRef.current === conversationId) {
         setMessages((current) => {
           const currentIds = new Set(current.map((message) => message.id));
           return [...page.messages.filter((message) => !currentIds.has(message.id)), ...current];
         });
-        loadedMessageCountRef.current += page.messages.length;
+        nextMessageCursorRef.current = page.nextCursor;
         setHasMoreMessages(page.hasMore);
       }
     } catch (cause) {
@@ -137,6 +145,7 @@ export function useConversationTurn({
     const {
       retryInputMessageId = null,
       inputOrigin = "text",
+      sourceId = null,
       onSettled,
     } = options;
     if (
@@ -148,6 +157,7 @@ export function useConversationTurn({
     const conversationId = selectedConversationId;
     const content = prompt.trim();
     const runId = `run_${crypto.randomUUID()}`;
+    beginRunPerformance(runId);
     const issueScope = issueCoordinatorRef.current.begin();
     const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak)
       && !isMeetingBlocking(meetingStateRef.current);
@@ -169,7 +179,8 @@ export function useConversationTurn({
         { type: "runStarted", runId },
       );
       setActiveRunId(runId);
-      setStreamingText("");
+      incompleteRunIdsRef.current.clear();
+      resetStreamingText();
       setRuntimeActivity([]);
       if (!retryInputMessageId) {
         setMessages((current) => [...current, { id: `pending_${runId}`, conversationId, role: "user", content, createdAt: String(Date.now()) }]);
@@ -180,7 +191,7 @@ export function useConversationTurn({
         await stopSpeech(issueScope);
       }
       await startTurn(
-        { runId, conversationId, content, workspacePath: null, retryInputMessageId, inputOrigin, presentationMode },
+        { runId, conversationId, content, workspacePath: null, retryInputMessageId, sourceId, inputOrigin, presentationMode },
         (event) => {
           if (event.type === "started") settleDelivery(true);
           handleRuntimeEvent(event, conversationId, issueScope);
@@ -199,9 +210,12 @@ export function useConversationTurn({
         if (!disposedRef.current) setActiveRunId(null);
       }
       if (!disposedRef.current && selectedConversationIdRef.current === conversationId) {
-        setStreamingText("");
+        const terminalIncomplete = incompleteRunIdsRef.current.delete(runId);
+        const failed = failedRunIdsRef.current.delete(runId);
+        const preserveIncomplete = hasStreamingText() && (terminalIncomplete || failed);
+        if (!preserveIncomplete) resetStreamingText();
         const nextMessages = await loadMessages(conversationId, issueScope);
-        if (failedRunIdsRef.current.delete(runId)) {
+        if (failed) {
           const input = [...nextMessages].reverse().find((message) => message.role === "user" && message.content === content);
           if (input && issueCoordinatorRef.current.isCurrent(issueScope)) {
             setRetryAction({ kind: "response", prompt: content, inputMessageId: input.id, inputOrigin });
@@ -230,6 +244,8 @@ export function useConversationTurn({
       selectedConversationIdRef.current !== conversationId ||
       !ownsEvent
     ) return;
+    if (event.type !== "delta") recordRuntimeLifecycleAudit(event, conversationId);
+    if (!isSpeechLifecycle) recordSocketReceive(event.runId);
     switch (event.type) {
       case "started":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
@@ -240,7 +256,8 @@ export function useConversationTurn({
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerSelected", providerId: event.runtimeId, fallbackUsed: event.fallbackUsed }));
         break;
       case "delta":
-        setStreamingText((current) => current + event.text);
+        recordFirstDelta(event.runId);
+        appendStreamingText(event.runId, event.text);
         break;
       case "activity":
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerWorking" }));
@@ -248,15 +265,16 @@ export function useConversationTurn({
       case "providerFailed":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "failed", { reasonCode: "provider-failed" }));
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerFailed" }));
-        setStreamingText("");
         break;
       case "messageCompleted":
+        incompleteRunIdsRef.current.delete(event.runId);
+        recordResponseCompleted(event.runId, event.message.id);
         setRetryAction(null);
         setMessages((current) => [...current.filter((message) => !message.id.startsWith("streaming_")), event.message]);
         setSnapshot((current) => current.effectiveRoute.providerId
           ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", { fallbackUsed: current.effectiveRoute.fallbackUsed, reasonCode: "last-turn-completed" })
           : current);
-        setStreamingText("");
+        resetStreamingText();
         if (event.voicePolicy) voice.setVoicePolicy(event.voicePolicy);
         else voice.clearVoicePolicy();
         break;
@@ -288,11 +306,15 @@ export function useConversationTurn({
         }
         break;
       case "cancelled":
+        recordRunWithoutMarkdown(event.runId, "cancelled");
         failedRunIdsRef.current.delete(event.runId);
+        incompleteRunIdsRef.current.add(event.runId);
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "generationCancelled" }));
         break;
       case "failed":
+        recordRunWithoutMarkdown(event.runId, "failed");
         failedRunIdsRef.current.add(event.runId);
+        incompleteRunIdsRef.current.add(event.runId);
         publishIssue(issueScope, `${event.message} ${event.recovery}`);
         break;
     }

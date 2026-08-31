@@ -1,7 +1,7 @@
 pub(crate) mod completion;
 pub(crate) mod dynamic_lan;
-#[allow(dead_code)]
 pub(crate) mod larm;
+pub(crate) mod llm_websocket;
 pub(crate) mod openai_compatible;
 pub(crate) mod probe;
 mod probe_state;

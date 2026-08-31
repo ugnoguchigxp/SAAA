@@ -1,14 +1,15 @@
 class MeetingProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.buffer = new Float32Array(2_048);
+    this.frameLength = Math.max(1, Math.round(sampleRate / 10));
+    this.buffer = new Float32Array(this.frameLength);
     this.offset = 0;
     this.port.onmessage = (event) => {
       if (event.data?.type !== "flush") return;
       if (this.offset > 0) {
         const completed = this.buffer.slice(0, this.offset);
         this.port.postMessage(completed, [completed.buffer]);
-        this.buffer = new Float32Array(2_048);
+        this.buffer = new Float32Array(this.frameLength);
         this.offset = 0;
       }
       this.port.postMessage({ type: "flushed" });
@@ -27,7 +28,7 @@ class MeetingProcessor extends AudioWorkletProcessor {
       if (this.offset === this.buffer.length) {
         const completed = this.buffer;
         this.port.postMessage(completed, [completed.buffer]);
-        this.buffer = new Float32Array(2_048);
+        this.buffer = new Float32Array(this.frameLength);
         this.offset = 0;
       }
     }

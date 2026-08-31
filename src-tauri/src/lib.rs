@@ -1,3 +1,4 @@
+#[cfg(test)]
 use rusqlite::Connection;
 use std::{
     collections::HashMap,
@@ -15,6 +16,7 @@ use tauri::Manager;
 mod app_paths;
 mod backup;
 mod credentials;
+mod database_backup;
 mod diagnostics;
 pub mod ipc_contract;
 mod meeting;
@@ -38,19 +40,18 @@ mod voice_commands;
 mod voice_contracts;
 mod voice_text;
 
-use backup::backup_connection_to;
-
 pub(crate) use models::*;
-use persistence::list_message_page_from_connection;
 #[cfg(test)]
-use persistence::list_messages_from_connection;
-use persistence::migrate::backup_before_migration;
+use persistence::conversations::list_messages_from_connection;
+#[cfg(test)]
 use persistence::schema::initialize_database;
+use persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
 pub(crate) use providers::session_store::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_larm_provider_session,
     finish_provider_session, persist_conversation_success,
 };
 pub(crate) use providers::stream::*;
+pub(crate) use redact::{bounded_text, redact_runtime_text};
 pub(crate) use runtime::codex_cli::*;
 pub(crate) use runtime::codex_turn::execute_codex_turn;
 #[cfg(test)]
@@ -77,9 +78,9 @@ use voice_commands::{
 };
 pub(crate) use voice_contracts::*;
 
-pub(crate) use redact::{bounded_text, redact_runtime_text};
-
-use ipc_contract::{ConversationMessage, ConversationMessagePage, RuntimeEvent};
+#[cfg(test)]
+use ipc_contract::RuntimeEvent;
+use ipc_contract::{ConversationMessage, ConversationMessagePage};
 use voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
     update_conversation_voice_policy,
@@ -95,7 +96,8 @@ const PRIMARY_CONVERSATION_TITLE: &str = "SAAAとの会話";
 const CODEX_READ_ONLY_SYSTEM_CONTEXT: &str = include_str!("../../.s11tnext/codex-read-only.txt");
 
 struct AppState {
-    connection: Arc<Mutex<Connection>>,
+    sqlite_writer: Arc<SqliteWriter>,
+    sqlite_readers: SqliteReaders,
     data_directory: PathBuf,
     context_still_recall: memory::context_still_recall::ContextStillRecallClient,
     active_runs: Mutex<HashMap<String, Arc<RunCancellation>>>,
@@ -171,7 +173,7 @@ fn get_app_snapshot(state: tauri::State<'_, AppState>) -> Result<AppSnapshot, St
 fn get_situation_snapshot(
     state: tauri::State<'_, AppState>,
 ) -> Result<situation::contracts::SituationSnapshot, String> {
-    state.situation.snapshot_locked(&state.connection)
+    state.situation.snapshot_locked(&state.sqlite_readers)
 }
 
 #[tauri::command]
@@ -179,9 +181,11 @@ fn set_situation_monitoring(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<situation::contracts::SituationSnapshot, String> {
-    state.situation.set_monitoring(&state.connection, enabled)?;
+    state
+        .situation
+        .set_monitoring(&state.sqlite_writer, enabled)?;
     if enabled {
-        spawn_situation_monitor(state.connection.clone(), state.situation.clone());
+        spawn_situation_monitor(state.sqlite_writer.clone(), state.situation.clone());
     }
     get_situation_snapshot(state)
 }
@@ -199,37 +203,32 @@ fn submit_situation_feedback(
     state: tauri::State<'_, AppState>,
     input: situation::contracts::SituationFeedbackInput,
 ) -> Result<situation::contracts::SituationSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    situation::repository::submit_feedback(&connection, &input)?;
-    drop(connection);
-    state.situation.snapshot_locked(&state.connection)
+    state
+        .sqlite_writer
+        .write(|connection| situation::repository::submit_feedback(connection, &input))?;
+    state.situation.snapshot_locked(&state.sqlite_readers)
 }
 
 #[tauri::command]
 fn clear_situation_history(
     state: tauri::State<'_, AppState>,
 ) -> Result<situation::contracts::SituationSnapshot, String> {
-    state.situation.clear_history(&state.connection)?;
-    state.situation.snapshot_locked(&state.connection)
+    state.situation.clear_history(&state.sqlite_writer)?;
+    state.situation.snapshot_locked(&state.sqlite_readers)
 }
 
 #[tauri::command]
 fn get_situation_review_snapshot(
     state: tauri::State<'_, AppState>,
 ) -> Result<situation::contracts::SituationReviewSnapshot, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    Ok(situation::contracts::SituationReviewSnapshot {
-        active_profile: situation::calibration::active_profile(&connection)?,
-        quality: situation::repository::quality_metrics(&connection)?,
-        feedback_queue: situation::repository::feedback_queue(&connection)?,
-        latest_run: situation::calibration::latest_run(&connection)?,
-        candidates: situation::calibration::candidates(&connection)?,
+    state.sqlite_readers.read(|connection| {
+        Ok(situation::contracts::SituationReviewSnapshot {
+            active_profile: situation::calibration::active_profile(connection)?,
+            quality: situation::repository::quality_metrics(connection)?,
+            feedback_queue: situation::repository::feedback_queue(connection)?,
+            latest_run: situation::calibration::latest_run(connection)?,
+            candidates: situation::calibration::candidates(connection)?,
+        })
     })
 }
 
@@ -238,11 +237,9 @@ fn create_situation_calibration_candidate(
     state: tauri::State<'_, AppState>,
     parameters: situation::contracts::CalibrationParameters,
 ) -> Result<situation::calibration::CalibrationProfile, String> {
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    situation::calibration::create_candidate(&connection, parameters)
+    state
+        .sqlite_writer
+        .write(|connection| situation::calibration::create_candidate(connection, parameters))
 }
 
 #[tauri::command]
@@ -251,17 +248,24 @@ async fn run_situation_calibration(
     profile_id: String,
 ) -> Result<situation::calibration::CalibrationRun, String> {
     validate_identifier(&profile_id, "calibration profile id")?;
-    let connection = state.connection.clone();
+    let readers = state.sqlite_readers.clone();
+    let writer = state.sqlite_writer.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let connection = connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        let profile = situation::calibration::profile_by_id(&connection, &profile_id)?;
+        let profile = readers
+            .read(|connection| situation::calibration::profile_by_id(connection, &profile_id))?;
         if profile.status != "candidate" {
             return Err("Only candidate profiles can be replayed".to_string());
         }
         let metrics = situation::calibration::replay_metrics(&profile)?;
-        situation::calibration::save_run(&connection, &profile_id, "completed", Some(metrics), None)
+        writer.write(|connection| {
+            situation::calibration::save_run(
+                connection,
+                &profile_id,
+                "completed",
+                Some(metrics),
+                None,
+            )
+        })
     })
     .await
     .map_err(|error| format!("Situation calibration worker failed: {error}"))?
@@ -274,9 +278,12 @@ fn decide_situation_calibration(
     decision: String,
     reason_code: String,
 ) -> Result<situation::contracts::SituationReviewSnapshot, String> {
-    state
-        .situation
-        .decide_calibration(&state.connection, &profile_id, &decision, &reason_code)?;
+    state.situation.decide_calibration(
+        &state.sqlite_writer,
+        &profile_id,
+        &decision,
+        &reason_code,
+    )?;
     get_situation_review_snapshot(state)
 }
 
@@ -305,7 +312,7 @@ fn set_provider_api_key(
     state: tauri::State<'_, AppState>,
     input: credentials::SetProviderApiKeyInput,
 ) -> Result<credentials::ProviderCredentialState, String> {
-    credentials::set_api_key(&state.connection, input)
+    credentials::set_api_key(&state.sqlite_readers, input)
 }
 
 #[tauri::command]
@@ -323,61 +330,11 @@ fn get_provider_credential_state(
 }
 
 #[tauri::command]
-fn backup_database(state: tauri::State<'_, AppState>) -> Result<LocalArtifactResult, String> {
-    let created_at = now_iso();
-    let directory = state.data_directory.join("backups");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Could not create the backup directory: {error}"))?;
-    let path = directory.join(format!("saaa-{created_at}.sqlite3"));
-    let source = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    backup_connection_to(&source, &path)?;
-    Ok(LocalArtifactResult {
-        path: path.to_string_lossy().into_owned(),
-        created_at,
-    })
-}
-
-#[tauri::command]
-async fn start_turn(
+fn record_frontend_audit_event(
     state: tauri::State<'_, AppState>,
-    input: StartTurnInput,
-    on_event: tauri::ipc::Channel<RuntimeEvent>,
+    input: persistence::audit::FrontendAuditEventInput,
 ) -> Result<(), String> {
-    validate_start_turn(&input)?;
-    let (mut streaming_speech, speech_enabled) =
-        voice_behavior::begin_turn_speech_policy(&state, &input)?;
-    let cancellation = Arc::new(RunCancellation::default());
-    if let Err(error) = register_active_run(&state, &input.run_id, cancellation.clone()) {
-        voice_behavior::end_run(&state, &input.run_id);
-        return Err(error);
-    }
-    if streaming_speech {
-        if let Err(error) = state
-            .streaming_tts
-            .begin(&state, &input.run_id, speech_enabled, on_event.clone())
-            .await
-        {
-            streaming_speech = false;
-            let _ = on_event.send(RuntimeEvent::SpeechFailed {
-                run_id: input.run_id.clone(),
-                message: redact_runtime_text(&error),
-                recovery: "Check the speech provider and try another response.".to_string(),
-            });
-        }
-    }
-    let event_sink = state.streaming_tts.event_sink(on_event, streaming_speech);
-    let result = execute_turn(&state, &input, &event_sink, cancellation.clone(), None).await;
-    if result.is_err() && streaming_speech {
-        state.streaming_tts.cancel(&input.run_id);
-    }
-    if let Ok(mut active) = state.active_runs.lock() {
-        active.remove(&input.run_id);
-    }
-    voice_behavior::end_run(&state, &input.run_id);
-    result.map_err(|error| redact_runtime_text(&error.message))
+    persistence::audit::record_frontend_event(&state, &input)
 }
 
 #[tauri::command]
@@ -557,22 +514,25 @@ fn append_message(
 }
 
 #[tauri::command]
-fn list_messages(
+async fn list_messages(
     state: tauri::State<'_, AppState>,
     input: ListMessagesInput,
 ) -> Result<ConversationMessagePage, String> {
     const MESSAGE_PAGE_SIZE: u64 = 10;
     validate_identifier(&input.conversation_id, "conversation id")?;
-    let connection = state
-        .connection
-        .lock()
-        .map_err(|_| "Database lock unavailable".to_string())?;
-    list_message_page_from_connection(
-        &connection,
-        &input.conversation_id,
-        input.offset,
-        MESSAGE_PAGE_SIZE,
-    )
+    let readers = state.sqlite_readers.clone();
+    let conversation_id = input.conversation_id;
+    let cursor = input.cursor;
+    readers
+        .read_async(move |connection| {
+            list_message_page_from_connection(
+                connection,
+                &conversation_id,
+                cursor.as_deref(),
+                MESSAGE_PAGE_SIZE,
+            )
+        })
+        .await
 }
 
 #[tauri::command]
@@ -594,8 +554,8 @@ fn shutdown_app_state(state: &AppState) {
             cancellation.cancel();
         }
     }
-    state.meeting.shutdown(&state.connection);
-    let _ = state.situation.flush_quality(&state.connection);
+    state.meeting.shutdown(&state.sqlite_writer);
+    let _ = state.situation.flush_quality(&state.sqlite_writer);
     state
         .situation
         .set_microphone_state(situation::contracts::MicrophoneState::Inactive);
@@ -645,16 +605,29 @@ pub fn run() {
             if bundled_web_fetch.is_file() {
                 let _ = runtime::web_fetch::BUNDLED_WEB_FETCH_PATH.set(bundled_web_fetch);
             }
-            let connection = Connection::open(&database_path)?;
-            backup_before_migration(&connection, &database_path).map_err(std::io::Error::other)?;
-            initialize_database(&connection)?;
-            let situation_settings =
-                situation::repository::load_settings(&connection).map_err(std::io::Error::other)?;
-            let latest_situation =
-                situation::repository::latest_entry(&connection).map_err(std::io::Error::other)?;
-            let active_profile = situation::calibration::active_profile(&connection)
+            let sqlite_writer = Arc::new(SqliteWriter::open(&database_path)?);
+            let sqlite_readers =
+                SqliteReaders::open(&database_path).map_err(std::io::Error::other)?;
+            sqlite_writer
+                .write(|connection| voice_profile.reconcile_readiness(connection))
                 .map_err(std::io::Error::other)?;
-            let connection = Arc::new(Mutex::new(connection));
+            sqlite_writer
+                .write(|connection| {
+                    voice::profile::reconcile_voice_profile_storage(
+                        connection,
+                        &voice_data_directory,
+                    )
+                })
+                .map_err(std::io::Error::other)?;
+            let (situation_settings, latest_situation, active_profile) = sqlite_readers
+                .read(|connection| {
+                    Ok((
+                        situation::repository::load_settings(connection)?,
+                        situation::repository::latest_entry(connection)?,
+                        situation::calibration::active_profile(connection)?,
+                    ))
+                })
+                .map_err(std::io::Error::other)?;
             let situation = Arc::new(
                 situation::SituationRuntime::new(
                     situation_settings.clone(),
@@ -666,10 +639,11 @@ pub fn run() {
                 .set_calibration_profile(active_profile)
                 .map_err(std::io::Error::other)?;
             if situation_settings.enabled {
-                spawn_situation_monitor(connection.clone(), situation.clone());
+                spawn_situation_monitor(sqlite_writer.clone(), situation.clone());
             }
             app.manage(AppState {
-                connection,
+                sqlite_writer,
+                sqlite_readers,
                 data_directory: voice_data_directory,
                 context_still_recall:
                     memory::context_still_recall::ContextStillRecallClient::from_environment(),
@@ -730,7 +704,8 @@ pub fn run() {
             read_voice_enrollment_sample,
             frontend_ready,
             export_diagnostics,
-            backup_database,
+            persistence::audit::list_audit_events,
+            database_backup::backup_database,
             get_situation_snapshot,
             get_situation_review_snapshot,
             set_situation_monitoring,
@@ -742,7 +717,8 @@ pub fn run() {
             clear_situation_history,
             list_codex_models,
             get_codex_status,
-            start_turn,
+            runtime::turns::command::start_turn,
+            record_frontend_audit_event,
             cancel_run,
             test_model_provider,
             resolve_service_harness,
@@ -787,6 +763,7 @@ mod tests {
     use super::*;
     use crate::persistence::save_settings_documents_to_connection;
     use crate::test_support::*;
+    use futures_util::{SinkExt, StreamExt};
     use rusqlite::params;
     use serde_json::{json, Value};
     use std::{
@@ -796,6 +773,337 @@ mod tests {
         sync::mpsc,
         thread,
     };
+    use tokio_tungstenite::tungstenite::{
+        handshake::server::{Request as WebSocketRequest, Response as WebSocketResponse},
+        http::{header, HeaderValue},
+        Message as WebSocketMessage,
+    };
+
+    enum LlmWebSocketStep {
+        Delta(&'static str),
+        ToolCall {
+            call_id: &'static str,
+            name: &'static str,
+            arguments: Value,
+        },
+        ExpectToolResult,
+        Complete,
+        Disconnect,
+        DisconnectAndResume,
+        Fail(&'static str),
+        Delay(u64),
+    }
+
+    async fn spawn_llm_websocket_fixture(
+        steps: Vec<LlmWebSocketStep>,
+    ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+        use sha2::{Digest, Sha256};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("WebSocket fixture binds");
+        let address = listener.local_addr().expect("fixture address");
+        let captures = Arc::new(Mutex::new(Vec::new()));
+        let server_captures = captures.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("fixture accepts");
+            let mut socket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                |request: &WebSocketRequest, mut response: WebSocketResponse| {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get(header::SEC_WEBSOCKET_PROTOCOL)
+                            .and_then(|value| value.to_str().ok()),
+                        Some(providers::llm_websocket::protocol::SUBPROTOCOL),
+                    );
+                    response.headers_mut().insert(
+                        header::SEC_WEBSOCKET_PROTOCOL,
+                        HeaderValue::from_static(providers::llm_websocket::protocol::SUBPROTOCOL),
+                    );
+                    Ok(response)
+                },
+            )
+            .await
+            .expect("fixture handshake");
+            socket
+                .send(WebSocketMessage::Text(
+                    json!({
+                        "type": "connection.ready",
+                        "protocol": "saaa.llm-stream.v1",
+                        "connectionId": "conn_fixture",
+                        "upstreamTransport": "native",
+                        "limits": {
+                            "maxConcurrentRuns": 1,
+                            "maxConnections": 1,
+                            "maxActiveRunsPerConnection": 1,
+                            "maxUnackedEvents": 64,
+                            "maxUnackedBytes": 524288,
+                            "resumeWindowMs": 120000,
+                            "heartbeatIntervalMs": 15000
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("ready sends");
+            let start = socket
+                .next()
+                .await
+                .expect("run.start arrives")
+                .expect("run.start reads");
+            let WebSocketMessage::Text(start) = start else {
+                panic!("run.start is text");
+            };
+            server_captures
+                .lock()
+                .expect("capture lock")
+                .push(start.to_string());
+            let start: Value = serde_json::from_str(start.as_str()).expect("run.start JSON");
+            let run_id = start["runId"].as_str().expect("run id").to_string();
+            socket
+                .send(WebSocketMessage::Text(
+                    json!({
+                        "type": "run.accepted",
+                        "runId": run_id,
+                        "seq": 1,
+                        "providerRunId": "provider_fixture",
+                        "model": "fixture"
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("accepted sends");
+            let mut seq = 1_u64;
+            let mut content = String::new();
+            let mut replay_deltas = Vec::<(u64, &'static str)>::new();
+            for step in steps {
+                match step {
+                    LlmWebSocketStep::Delta(delta) => {
+                        seq += 1;
+                        content.push_str(delta);
+                        replay_deltas.push((seq, delta));
+                        let mut frame = Vec::with_capacity(16 + delta.len());
+                        frame.extend_from_slice(b"SAD1");
+                        frame.extend_from_slice(&[1, 0]);
+                        frame.extend_from_slice(&16_u16.to_be_bytes());
+                        frame.extend_from_slice(&seq.to_be_bytes());
+                        frame.extend_from_slice(delta.as_bytes());
+                        if socket
+                            .send(WebSocketMessage::Binary(frame.into()))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    LlmWebSocketStep::ToolCall {
+                        call_id,
+                        name,
+                        arguments,
+                    } => {
+                        seq += 1;
+                        socket
+                            .send(WebSocketMessage::Text(
+                                json!({
+                                    "type": "tool.call",
+                                    "runId": run_id,
+                                    "seq": seq,
+                                    "callId": call_id,
+                                    "name": name,
+                                    "arguments": arguments,
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .expect("tool call sends");
+                    }
+                    LlmWebSocketStep::ExpectToolResult => loop {
+                        let message = socket
+                            .next()
+                            .await
+                            .expect("tool result arrives")
+                            .expect("tool result reads");
+                        let WebSocketMessage::Text(message) = message else {
+                            continue;
+                        };
+                        server_captures
+                            .lock()
+                            .expect("capture lock")
+                            .push(message.to_string());
+                        if message.contains("\"type\":\"tool.result\"") {
+                            break;
+                        }
+                    },
+                    LlmWebSocketStep::Complete => {
+                        seq += 1;
+                        let hash = Sha256::digest(content.as_bytes());
+                        socket
+                            .send(WebSocketMessage::Text(
+                                json!({
+                                    "type": "response.completed",
+                                    "runId": run_id,
+                                    "seq": seq,
+                                    "contentBytes": content.len(),
+                                    "contentSha256": format!("{hash:x}"),
+                                    "finishReason": "stop",
+                                    "usage": null
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .ok();
+                    }
+                    LlmWebSocketStep::Disconnect => {
+                        let _ = socket.close(None).await;
+                        return;
+                    }
+                    LlmWebSocketStep::DisconnectAndResume => {
+                        let _ = socket.close(None).await;
+                        let (stream, _) = listener.accept().await.expect("resume accepts");
+                        socket = tokio_tungstenite::accept_hdr_async(
+                            stream,
+                            |request: &WebSocketRequest, mut response: WebSocketResponse| {
+                                assert_eq!(
+                                    request
+                                        .headers()
+                                        .get(header::SEC_WEBSOCKET_PROTOCOL)
+                                        .and_then(|value| value.to_str().ok()),
+                                    Some(providers::llm_websocket::protocol::SUBPROTOCOL),
+                                );
+                                response.headers_mut().insert(
+                                    header::SEC_WEBSOCKET_PROTOCOL,
+                                    HeaderValue::from_static(
+                                        providers::llm_websocket::protocol::SUBPROTOCOL,
+                                    ),
+                                );
+                                Ok(response)
+                            },
+                        )
+                        .await
+                        .expect("resume handshake");
+                        socket
+                            .send(WebSocketMessage::Text(
+                                json!({
+                                    "type": "connection.ready",
+                                    "protocol": "saaa.llm-stream.v1",
+                                    "connectionId": "conn_fixture_resume",
+                                    "upstreamTransport": "native",
+                                    "limits": {
+                                        "maxConcurrentRuns": 1,
+                                        "maxConnections": 1,
+                                        "maxActiveRunsPerConnection": 1,
+                                        "maxUnackedEvents": 64,
+                                        "maxUnackedBytes": 524288,
+                                        "resumeWindowMs": 120000,
+                                        "heartbeatIntervalMs": 15000
+                                    }
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .expect("resume ready sends");
+                        let resume = socket
+                            .next()
+                            .await
+                            .expect("run.resume arrives")
+                            .expect("run.resume reads");
+                        let WebSocketMessage::Text(resume) = resume else {
+                            panic!("run.resume is text");
+                        };
+                        server_captures
+                            .lock()
+                            .expect("capture lock")
+                            .push(resume.to_string());
+                        let resume: Value =
+                            serde_json::from_str(resume.as_str()).expect("run.resume JSON");
+                        let ack_seq = resume["ackSeq"].as_u64().expect("ack seq");
+                        assert!(ack_seq <= seq);
+                        socket
+                            .send(WebSocketMessage::Ping(b"resume-probe".to_vec().into()))
+                            .await
+                            .expect("resume ping sends");
+                        assert!(matches!(
+                            socket.next().await,
+                            Some(Ok(WebSocketMessage::Pong(payload)))
+                                if payload.as_ref() == b"resume-probe"
+                        ));
+                        socket
+                            .send(WebSocketMessage::Text(
+                                json!({
+                                    "type": "run.resumed",
+                                    "runId": run_id,
+                                    "replayFromSeq": ack_seq + 1
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .expect("run.resumed sends");
+                        if ack_seq < 1 {
+                            socket
+                                .send(WebSocketMessage::Text(
+                                    json!({
+                                        "type": "run.accepted",
+                                        "runId": run_id,
+                                        "seq": 1,
+                                        "providerRunId": "provider_fixture",
+                                        "model": "fixture"
+                                    })
+                                    .to_string()
+                                    .into(),
+                                ))
+                                .await
+                                .expect("accepted replays");
+                        }
+                        for (replay_seq, delta) in replay_deltas
+                            .iter()
+                            .filter(|(replay_seq, _)| *replay_seq > ack_seq)
+                        {
+                            let mut frame = Vec::with_capacity(16 + delta.len());
+                            frame.extend_from_slice(b"SAD1");
+                            frame.extend_from_slice(&[1, 0]);
+                            frame.extend_from_slice(&16_u16.to_be_bytes());
+                            frame.extend_from_slice(&replay_seq.to_be_bytes());
+                            frame.extend_from_slice(delta.as_bytes());
+                            socket
+                                .send(WebSocketMessage::Binary(frame.into()))
+                                .await
+                                .expect("delta replays");
+                        }
+                    }
+                    LlmWebSocketStep::Fail(code) => {
+                        seq += 1;
+                        socket
+                            .send(WebSocketMessage::Text(
+                                json!({
+                                    "type": "response.failed",
+                                    "runId": run_id,
+                                    "seq": seq,
+                                    "code": code,
+                                    "message": "fixture failure",
+                                    "retryable": false,
+                                    "outputStarted": !content.is_empty()
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .expect("failure sends");
+                    }
+                    LlmWebSocketStep::Delay(milliseconds) => {
+                        tokio::time::sleep(Duration::from_millis(milliseconds)).await;
+                    }
+                }
+            }
+        });
+        (format!("ws://{address}/v1/llm/stream"), captures, server)
+    }
 
     fn begin_test_provider_session(
         state: &AppState,
@@ -805,7 +1113,7 @@ mod tests {
     ) -> Result<String, String> {
         let fingerprint = {
             let connection = state
-                .connection
+                .sqlite_writer
                 .lock()
                 .map_err(|_| "Database lock unavailable".to_string())?;
             crate::persistence::effective_route::load_conversation_configuration_fingerprint(
@@ -861,7 +1169,7 @@ mod tests {
         assert!(second.is_cancelled());
         let snapshot = state
             .situation
-            .snapshot_locked(&state.connection)
+            .snapshot_locked(&state.sqlite_readers)
             .expect("situation snapshot");
         assert_eq!(
             snapshot.signals.microphone.state,
@@ -919,7 +1227,7 @@ mod tests {
         )
         .is_err());
 
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let (status, provider_id): (String, String) = connection
             .query_row(
                 "SELECT status, provider_id FROM runtime_runs WHERE id='run-finalize'",
@@ -979,7 +1287,7 @@ mod tests {
                     .expect("provider session starts");
             finish_dynamic_lan_provider_session(&state, &session_id, "completed", None, cleanup)
                 .expect("dynamic_lan session finalizes");
-            let connection = state.connection.lock().expect("database lock");
+            let connection = state.sqlite_writer.lock().expect("database lock");
             let (release_status, release_kind): (String, Option<String>) = connection
                 .query_row(
                     "SELECT release_status, release_failure_kind FROM provider_sessions WHERE id=?1",
@@ -1133,12 +1441,13 @@ mod tests {
             content: "must not persist".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
 
         let error = prepare_runtime_run(&state, &input).expect_err("legacy turn is rejected");
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let message_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_messages WHERE content = 'must not persist'",
@@ -1193,7 +1502,7 @@ mod tests {
                     translation_enabled: false,
                     persistence_mode: "discard".to_string(),
                 },
-                &state.connection,
+                &state.sqlite_writer,
             )
             .expect("meeting starts");
         let input = StartTurnInput {
@@ -1202,12 +1511,13 @@ mod tests {
             content: "inspect only".to_string(),
             workspace_path: Some("/tmp/fixture".to_string()),
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
 
         let error = prepare_runtime_run(&state, &input).expect_err("coding turn is blocked");
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let message_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = 'meeting-blocked-coding'",
@@ -1250,6 +1560,7 @@ mod tests {
             content: "inspect only".to_string(),
             workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -1282,7 +1593,7 @@ mod tests {
         )
         .expect_err("meeting start is blocked");
         let snapshot = state.meeting.snapshot().expect("meeting snapshot loads");
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let meeting_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM meeting_sessions", [], |row| {
                 row.get(0)
@@ -1316,6 +1627,7 @@ mod tests {
             content: "normal request".to_string(),
             workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -1325,6 +1637,7 @@ mod tests {
             content: "coding request".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -1335,7 +1648,7 @@ mod tests {
         assert!(prepare_runtime_run(&state, &coding)
             .expect_err("coding workspace is required")
             .contains("Select a workspace"));
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let message_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_messages
@@ -1368,12 +1681,13 @@ mod tests {
             content: content.clone(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
 
         let error = prepare_runtime_run(&state, &input).expect_err("oversized turn is rejected");
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let message_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_messages WHERE content = ?1",
@@ -1433,34 +1747,14 @@ mod tests {
 
     #[tokio::test]
     async fn openai_compatible_stream_fixture_projects_deltas() {
-        use std::io::{Read, Write as _};
-        use std::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
-        let address = listener.local_addr().expect("fixture address");
-        let request_body = Arc::new(Mutex::new(String::new()));
-        let request_body_for_server = request_body.clone();
-        let server = thread::spawn(move || {
-            let (mut socket, _) = listener.accept().expect("fixture accepts request");
-            let mut request = vec![0; 16_384];
-            let size = socket.read(&mut request).expect("fixture reads request");
-            *request_body_for_server.lock().expect("request lock") =
-                String::from_utf8_lossy(&request[..size]).into_owned();
-            let response = concat!(
-                "HTTP/1.1 200 OK\r\n",
-                "Content-Type: text/event-stream\r\n",
-                "Connection: close\r\n\r\n",
-                "data: {\"choices\":[{\"delta\":{\"content\":\"hello \"}}]}\r\n\r\n",
-                "data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\n",
-                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-                "data: [DONE]\n\n"
-            );
-            socket
-                .write_all(response.as_bytes())
-                .expect("fixture writes response");
-        });
+        let (endpoint, request_body, server) = spawn_llm_websocket_fixture(vec![
+            LlmWebSocketStep::Delta("hello "),
+            LlmWebSocketStep::Delta("world"),
+            LlmWebSocketStep::Complete,
+        ])
+        .await;
         let provider = OpenAiCompatibleProviderSettings {
-            endpoint: format!("http://{address}/v1"),
+            endpoint,
             ..direct_provider("stream-fixture", "local")
         };
         let input = StartTurnInput {
@@ -1469,6 +1763,7 @@ mod tests {
             content: "hello".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -1509,24 +1804,12 @@ mod tests {
         let ProviderAttemptOutcome::Completed { content, .. } = content else {
             panic!("provider stream should complete");
         };
-        server.join().expect("fixture server joins");
+        server.await.expect("fixture server joins");
         assert_eq!(content, "hello world");
-        assert!(request_body
-            .lock()
-            .expect("request lock")
-            .contains("POST /v1/chat/completions"));
-        assert!(request_body
-            .lock()
-            .expect("request lock")
-            .contains("\"reasoning_effort\":\"low\""));
-        let request = request_body.lock().expect("request lock").clone();
-        assert!(request.contains("\"max_tokens\":2048"));
-        assert!(request.contains("\"enable_thinking\":false"));
-        assert!(request_body
-            .lock()
-            .expect("request lock")
-            .to_ascii_lowercase()
-            .contains("authorization: bearer ephemeral-connection-token"));
+        let request = request_body.lock().expect("request lock")[0].clone();
+        assert!(request.contains("\"type\":\"run.start\""));
+        assert!(request.contains("\"reasoningEffort\":\"low\""));
+        assert!(request.contains("\"maxOutputTokens\":2048"));
         assert_eq!(
             projected
                 .lock()
@@ -1539,7 +1822,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dynamic_lan_stream_policy_rejects_a_non_sse_completion() {
+    async fn websocket_resume_preserves_exact_delta_order_without_replay() {
+        let (endpoint, captures, server) = spawn_llm_websocket_fixture(vec![
+            LlmWebSocketStep::Delta("before "),
+            LlmWebSocketStep::DisconnectAndResume,
+            LlmWebSocketStep::Delta("after"),
+            LlmWebSocketStep::Complete,
+        ])
+        .await;
+        let provider = OpenAiCompatibleProviderSettings {
+            endpoint,
+            ..direct_provider("resume-fixture", "local")
+        };
+        let input = StartTurnInput {
+            run_id: "run-resume-fixture".to_string(),
+            conversation_id: "conversation-resume-fixture".to_string(),
+            content: "resume".to_string(),
+            workspace_path: None,
+            retry_input_message_id: None,
+            source_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
+        };
+        let deltas = Arc::new(Mutex::new(Vec::<String>::new()));
+        let projected = deltas.clone();
+        let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(value) = body {
+                if value.contains("\"type\":\"delta\"") {
+                    projected.lock().expect("delta lock").push(value);
+                }
+            }
+            Ok(())
+        });
+        let outcome = stream_model_provider(
+            &provider,
+            &[],
+            5_000,
+            ModelStreamContext {
+                reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+                max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+                input: &input,
+                on_event: &channel,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: None,
+            },
+        )
+        .await;
+        server.await.expect("resume fixture joins");
+        assert!(matches!(
+            outcome,
+            ProviderAttemptOutcome::Completed { ref content, .. } if content == "before after"
+        ));
+        let projected = deltas.lock().expect("delta lock").join("\n");
+        assert_eq!(projected.matches("before ").count(), 1);
+        assert_eq!(projected.matches("after").count(), 1);
+        assert!(captures
+            .lock()
+            .expect("capture lock")
+            .iter()
+            .any(|message| message.contains("\"type\":\"run.resume\"")
+                && message.contains("\"ackSeq\":0")));
+    }
+
+    #[tokio::test]
+    async fn dynamic_lan_stream_policy_rejects_a_non_websocket_completion() {
         use std::io::{Read, Write as _};
         use std::net::TcpListener;
 
@@ -1567,6 +1913,7 @@ mod tests {
             content: "test".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -1598,7 +1945,7 @@ mod tests {
         assert!(matches!(
             outcome,
             ProviderAttemptOutcome::Failed {
-                kind: ProviderFailureKind::Protocol,
+                kind: ProviderFailureKind::Contract | ProviderFailureKind::Network,
                 output_started: false,
                 ..
             }
@@ -1607,100 +1954,17 @@ mod tests {
 
     #[tokio::test]
     async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
-        use std::io::{Read, Write as _};
-        use std::net::{TcpListener, TcpStream};
-
-        fn read_request(socket: &mut TcpStream) -> String {
-            let mut bytes = Vec::new();
-            let mut buffer = [0_u8; 8_192];
-            let mut expected = None;
-            loop {
-                let size = socket.read(&mut buffer).expect("fixture reads request");
-                assert!(size > 0, "request closed before its body completed");
-                bytes.extend_from_slice(&buffer[..size]);
-                if expected.is_none() {
-                    if let Some(boundary) = bytes.windows(4).position(|value| value == b"\r\n\r\n")
-                    {
-                        let headers = String::from_utf8_lossy(&bytes[..boundary]);
-                        let content_length = headers
-                            .lines()
-                            .find_map(|line| {
-                                line.split_once(':').and_then(|(name, value)| {
-                                    name.eq_ignore_ascii_case("content-length")
-                                        .then(|| value.trim().parse::<usize>().ok())
-                                        .flatten()
-                                })
-                            })
-                            .expect("content length exists");
-                        expected = Some(boundary + 4 + content_length);
-                    }
-                }
-                if expected.is_some_and(|length| bytes.len() >= length) {
-                    return String::from_utf8(bytes).expect("request is UTF-8");
-                }
-            }
-        }
-
-        fn request_json(request: &str) -> Value {
-            let (_, body) = request.split_once("\r\n\r\n").expect("request has body");
-            serde_json::from_str(body).expect("request body is JSON")
-        }
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
-        let address = listener.local_addr().expect("fixture address");
-        let captures = Arc::new(Mutex::new(Vec::<String>::new()));
-        let captures_for_server = captures.clone();
-        let first_delta = json!({
-            "choices": [{"delta": {"tool_calls": [{
-                "index": 0,
-                "id": "call_recall_1",
-                "type": "function",
-                "function": {"name": "recall_conversation", "arguments": "{\"query\":\""}
-            }]}}]
-        });
-        let second_delta = json!({
-            "choices": [{"delta": {"tool_calls": [{
-                "index": 0,
-                "function": {"arguments": "SQLite\"}"}
-            }]}}]
-        });
-        let server = thread::spawn(move || {
-            let responses = [
-                format!(
-                    concat!(
-                        "HTTP/1.1 200 OK\r\n",
-                        "Content-Type: text/event-stream\r\n",
-                        "Connection: close\r\n\r\n",
-                        "data: {}\n\n",
-                        "data: {}\n\n",
-                        "data: {}\n\n",
-                        "data: [DONE]\n\n"
-                    ),
-                    first_delta,
-                    second_delta,
-                    json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
-                ),
-                concat!(
-                    "HTTP/1.1 200 OK\r\n",
-                    "Content-Type: text/event-stream\r\n",
-                    "Connection: close\r\n\r\n",
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"履歴を確認しました\"}}]}\n\n",
-                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-                    "data: [DONE]\n\n"
-                )
-                .to_string(),
-            ];
-            for response in responses {
-                let (mut socket, _) = listener.accept().expect("fixture accepts request");
-                captures_for_server
-                    .lock()
-                    .expect("capture lock")
-                    .push(read_request(&mut socket));
-                socket
-                    .write_all(response.as_bytes())
-                    .expect("fixture writes response");
-            }
-        });
+        let (endpoint, captures, server) = spawn_llm_websocket_fixture(vec![
+            LlmWebSocketStep::ToolCall {
+                call_id: "call_recall_1",
+                name: "recall_conversation",
+                arguments: json!({ "query": "SQLite" }),
+            },
+            LlmWebSocketStep::ExpectToolResult,
+            LlmWebSocketStep::Delta("履歴を確認しました"),
+            LlmWebSocketStep::Complete,
+        ])
+        .await;
 
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
@@ -1721,6 +1985,7 @@ mod tests {
             content: "前の話を思い出して".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -1733,12 +1998,12 @@ mod tests {
         )
         .expect("provider session starts");
         let history = list_messages_from_connection(
-            &state.connection.lock().expect("database lock"),
+            &state.sqlite_writer.lock().expect("database lock"),
             &input.conversation_id,
         )
         .expect("history loads");
         let provider = OpenAiCompatibleProviderSettings {
-            endpoint: format!("http://{address}/v1"),
+            endpoint,
             ..direct_provider("recall-fixture", "local")
         };
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
@@ -1759,15 +2024,15 @@ mod tests {
             },
         )
         .await;
-        server.join().expect("fixture server joins");
+        server.await.expect("fixture server joins");
 
         let ProviderAttemptOutcome::Completed { content, .. } = outcome else {
             panic!("tool-assisted provider stream should complete");
         };
         assert_eq!(content, "履歴を確認しました");
         let captures = captures.lock().expect("capture lock");
-        assert_eq!(captures.len(), 2);
-        let first = request_json(&captures[0]);
+        assert_eq!(captures.len(), 3);
+        let first: Value = serde_json::from_str(&captures[0]).expect("run.start JSON");
         assert_eq!(first["tools"].as_array().expect("tools array").len(), 4);
         assert_eq!(
             first
@@ -1781,21 +2046,15 @@ mod tests {
                 .and_then(Value::as_str),
             Some("update_conversation_voice_behavior")
         );
-        let second = request_json(&captures[1]);
-        let messages = second["messages"].as_array().expect("messages array");
-        assert!(messages.iter().any(|message| {
-            message["role"] == "tool"
-                && message["content"]
-                    .as_str()
-                    .is_some_and(|content| content.contains("SQLite の検索方式"))
-        }));
-        assert!(!messages.iter().any(|message| {
-            message["role"] == "tool"
-                && message["content"]
-                    .as_str()
-                    .is_some_and(|content| content.contains("前の話を思い出して"))
-        }));
-        let connection = state.connection.lock().expect("database lock");
+        let tool_result: Value = serde_json::from_str(&captures[2]).expect("tool result JSON");
+        assert_eq!(tool_result["type"], "tool.result");
+        assert!(tool_result["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("SQLite の検索方式")));
+        assert!(!tool_result["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("前の話を思い出して")));
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let receipts: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_recall_receipts WHERE runtime_run_id=?1",
@@ -1817,6 +2076,7 @@ mod tests {
             content: "quiet please".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual-and-spoken".to_string(),
         };
@@ -1898,6 +2158,7 @@ mod tests {
             content: "remember a rule".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2008,6 +2269,7 @@ mod tests {
             content: "remember".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2041,6 +2303,7 @@ mod tests {
             content: "remember".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2072,7 +2335,7 @@ mod tests {
         );
         assert!(limited.contains("call-limit-exceeded"));
         let attempts: i64 = state
-            .connection
+            .sqlite_writer
             .lock()
             .expect("database lock")
             .query_row(
@@ -2087,39 +2350,19 @@ mod tests {
 
     #[tokio::test]
     async fn recall_tool_rounds_share_one_provider_timeout_budget() {
-        use std::io::{Read, Write as _};
-        use std::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
-        let address = listener.local_addr().expect("fixture address");
-        let server = thread::spawn(move || {
-            let tool_response = concat!(
-                "HTTP/1.1 200 OK\r\n",
-                "Content-Type: text/event-stream\r\n",
-                "Connection: close\r\n\r\n",
-                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{",
-                "\"index\":0,\"id\":\"call_timeout\",\"type\":\"function\",",
-                "\"function\":{\"name\":\"recall_conversation\",",
-                "\"arguments\":\"{\\\"query\\\":\\\"missing\\\"}\"}}]}}]}\n\n",
-                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-                "data: [DONE]\n\n"
-            );
-            let final_response = concat!(
-                "HTTP/1.1 200 OK\r\n",
-                "Content-Type: text/event-stream\r\n",
-                "Connection: close\r\n\r\n",
-                "data: {\"choices\":[{\"delta\":{\"content\":\"too late\"}}]}\n\n",
-                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-                "data: [DONE]\n\n"
-            );
-            for response in [tool_response, final_response] {
-                let (mut socket, _) = listener.accept().expect("fixture accepts request");
-                let mut request = [0_u8; 32 * 1_024];
-                let _ = socket.read(&mut request).expect("fixture reads request");
-                thread::sleep(Duration::from_millis(350));
-                let _ = socket.write_all(response.as_bytes());
-            }
-        });
+        let (endpoint, _, server) = spawn_llm_websocket_fixture(vec![
+            LlmWebSocketStep::Delay(350),
+            LlmWebSocketStep::ToolCall {
+                call_id: "call_timeout",
+                name: "recall_conversation",
+                arguments: json!({"query": "missing"}),
+            },
+            LlmWebSocketStep::ExpectToolResult,
+            LlmWebSocketStep::Delay(350),
+            LlmWebSocketStep::Delta("too late"),
+            LlmWebSocketStep::Complete,
+        ])
+        .await;
 
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
@@ -2130,6 +2373,7 @@ mod tests {
             content: "remember".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2142,12 +2386,12 @@ mod tests {
         )
         .expect("provider session starts");
         let history = list_messages_from_connection(
-            &state.connection.lock().expect("database lock"),
+            &state.sqlite_writer.lock().expect("database lock"),
             &input.conversation_id,
         )
         .expect("history loads");
         let provider = OpenAiCompatibleProviderSettings {
-            endpoint: format!("http://{address}/v1"),
+            endpoint,
             ..direct_provider("timeout-fixture", "local")
         };
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
@@ -2168,7 +2412,7 @@ mod tests {
             },
         )
         .await;
-        server.join().expect("fixture server joins");
+        server.await.expect("fixture server joins");
         assert!(matches!(
             outcome,
             ProviderAttemptOutcome::Failed {
@@ -2181,32 +2425,14 @@ mod tests {
 
     #[tokio::test]
     async fn provider_stream_stops_when_the_tauri_consumer_disconnects() {
-        use std::io::{Read, Write as _};
-        use std::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
-        let address = listener.local_addr().expect("fixture address");
-        let server = thread::spawn(move || {
-            let (mut socket, _) = listener.accept().expect("fixture accepts request");
-            let mut request = [0; 4_096];
-            let _ = socket.read(&mut request).expect("fixture reads request");
-            socket
-                .write_all(
-                    concat!(
-                        "HTTP/1.1 200 OK\r\n",
-                        "Content-Type: text/event-stream\r\n",
-                        "Connection: close\r\n\r\n",
-                        "data: {\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}\n\n",
-                        "data: {\"choices\":[{\"delta\":{\"content\":\"ignored\"}}]}\n\n",
-                        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-                        "data: [DONE]\n\n"
-                    )
-                    .as_bytes(),
-                )
-                .expect("fixture writes response");
-        });
+        let (endpoint, _, server) = spawn_llm_websocket_fixture(vec![
+            LlmWebSocketStep::Delta("visible"),
+            LlmWebSocketStep::Delta("ignored"),
+            LlmWebSocketStep::Complete,
+        ])
+        .await;
         let provider = OpenAiCompatibleProviderSettings {
-            endpoint: format!("http://{address}/v1"),
+            endpoint,
             ..direct_provider("consumer-disconnect", "local")
         };
         let input = StartTurnInput {
@@ -2215,6 +2441,7 @@ mod tests {
             content: "hello".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2234,7 +2461,7 @@ mod tests {
             },
         )
         .await;
-        server.join().expect("fixture server joins");
+        server.await.expect("fixture server joins");
         assert!(matches!(
             outcome,
             ProviderAttemptOutcome::Failed {
@@ -2296,6 +2523,7 @@ mod tests {
             content: "hello".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2319,7 +2547,7 @@ mod tests {
         assert!(matches!(
             outcome,
             ProviderAttemptOutcome::Failed {
-                kind: ProviderFailureKind::Protocol,
+                kind: ProviderFailureKind::Contract | ProviderFailureKind::Network,
                 output_started: false,
                 ..
             }
@@ -2329,40 +2557,13 @@ mod tests {
 
     #[tokio::test]
     async fn conversation_route_falls_back_and_persists_completed_message() {
-        use std::io::{Read, Write as _};
-        use std::net::TcpListener;
-
-        fn fixture_server(
-            response: &'static str,
-        ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
-            let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
-            let address = listener.local_addr().expect("fixture address");
-            let handle = thread::spawn(move || {
-                let (mut socket, _) = listener.accept().expect("fixture accepts request");
-                let mut request = [0; 16_384];
-                let _ = socket.read(&mut request).expect("fixture reads request");
-                socket
-                    .write_all(response.as_bytes())
-                    .expect("fixture writes response");
-            });
-            (address, handle)
-        }
-
-        let (primary_address, primary_server) = fixture_server(concat!(
-            "HTTP/1.1 503 Service Unavailable\r\n",
-            "Content-Type: text/plain\r\n",
-            "Content-Length: 15\r\n",
-            "Connection: close\r\n\r\n",
-            "primary is down"
-        ));
-        let (fallback_address, fallback_server) = fixture_server(concat!(
-            "HTTP/1.1 200 OK\r\n",
-            "Content-Type: text/event-stream\r\n",
-            "Connection: close\r\n\r\n",
-            "data: {\"choices\":[{\"delta\":{\"content\":\"fallback ok\"}}]}\n\n",
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        ));
+        let (primary_endpoint, _, primary_server) =
+            spawn_llm_websocket_fixture(vec![LlmWebSocketStep::Fail("model-unavailable")]).await;
+        let (fallback_endpoint, _, fallback_server) = spawn_llm_websocket_fixture(vec![
+            LlmWebSocketStep::Delta("fallback ok"),
+            LlmWebSocketStep::Complete,
+        ])
+        .await;
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
         let state = app_state(connection);
@@ -2381,10 +2582,10 @@ mod tests {
             .value_json = json!({
             "harness": { "address": "http://localhost:9810" }, "providers": [{
             "kind": "openai-compatible", "id": "primary", "enabled": true, "label": "Primary", "location": "local",
-            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "authentication": "none"
+            "endpoint": primary_endpoint.replacen("ws://", "http://", 1).trim_end_matches("/llm/stream"), "model": "primary-model", "authentication": "none"
         }, {
             "kind": "openai-compatible", "id": "fallback", "enabled": true, "label": "Fallback", "location": "local",
-            "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "authentication": "none"
+            "endpoint": fallback_endpoint.replacen("ws://", "http://", 1).trim_end_matches("/llm/stream"), "model": "fallback-model", "authentication": "none"
         }], "reasoningEffort": "medium"});
         let route = documents
             .iter_mut()
@@ -2396,7 +2597,7 @@ mod tests {
         route.value_json["voiceSpeak"]["source"] = json!("harness");
         route.value_json["voiceSpeak"]["providerId"] = Value::Null;
         save_settings_documents_to_connection(
-            &mut state.connection.lock().expect("database lock"),
+            &mut state.sqlite_writer.lock().expect("database lock"),
             &documents,
         )
         .expect("settings save");
@@ -2406,6 +2607,7 @@ mod tests {
             content: "test fallback".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2415,7 +2617,7 @@ mod tests {
         let completed_states_for_channel = completed_states.clone();
         let delta_states = Arc::new(Mutex::new(Vec::<i64>::new()));
         let delta_states_for_channel = delta_states.clone();
-        let database_for_channel = state.connection.clone();
+        let database_for_channel = state.sqlite_writer.clone();
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
             if let tauri::ipc::InvokeResponseBody::Json(value) = body {
                 if value.contains("\"type\":\"messageCompleted\"") {
@@ -2461,10 +2663,10 @@ mod tests {
         )
         .await
         .expect("fallback completes");
-        primary_server.join().expect("primary server joins");
-        fallback_server.join().expect("fallback server joins");
+        primary_server.await.expect("primary server joins");
+        fallback_server.await.expect("fallback server joins");
         let messages = list_messages_from_connection(
-            &state.connection.lock().expect("database lock"),
+            &state.sqlite_writer.lock().expect("database lock"),
             &input.conversation_id,
         )
         .expect("messages load");
@@ -2486,27 +2688,14 @@ mod tests {
 
     #[tokio::test]
     async fn partial_provider_stream_never_reaches_the_fallback_provider() {
-        use std::io::{ErrorKind, Read, Write as _};
+        use std::io::ErrorKind;
         use std::net::TcpListener;
 
-        let primary = TcpListener::bind("127.0.0.1:0").expect("primary binds");
-        let primary_address = primary.local_addr().expect("primary address");
-        let primary_server = thread::spawn(move || {
-            let (mut socket, _) = primary.accept().expect("primary accepts request");
-            let mut request = [0; 8_192];
-            let _ = socket.read(&mut request).expect("primary reads request");
-            socket
-                .write_all(
-                    concat!(
-                        "HTTP/1.1 200 OK\r\n",
-                        "Content-Type: text/event-stream\r\n",
-                        "Connection: close\r\n\r\n",
-                        "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
-                    )
-                    .as_bytes(),
-                )
-                .expect("primary writes partial response");
-        });
+        let (primary_endpoint, _, primary_server) = spawn_llm_websocket_fixture(vec![
+            LlmWebSocketStep::Delta("partial"),
+            LlmWebSocketStep::Disconnect,
+        ])
+        .await;
 
         let fallback = TcpListener::bind("127.0.0.1:0").expect("fallback binds");
         let fallback_address = fallback.local_addr().expect("fallback address");
@@ -2542,7 +2731,7 @@ mod tests {
             .value_json = json!({
             "harness": { "address": "http://localhost:9810" }, "providers": [{
             "kind": "openai-compatible", "id": "partial-primary", "enabled": true, "label": "Partial primary", "location": "local",
-            "endpoint": format!("http://{primary_address}/v1"), "model": "primary-model", "authentication": "none"
+            "endpoint": primary_endpoint.replacen("ws://", "http://", 1).trim_end_matches("/llm/stream"), "model": "primary-model", "authentication": "none"
         }, {
             "kind": "openai-compatible", "id": "forbidden-fallback", "enabled": true, "label": "Forbidden fallback", "location": "local",
             "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "authentication": "none"
@@ -2558,7 +2747,7 @@ mod tests {
         route.value_json["voiceSpeak"]["source"] = json!("harness");
         route.value_json["voiceSpeak"]["providerId"] = Value::Null;
         save_settings_documents_to_connection(
-            &mut state.connection.lock().expect("database lock"),
+            &mut state.sqlite_writer.lock().expect("database lock"),
             &documents,
         )
         .expect("settings save");
@@ -2568,6 +2757,7 @@ mod tests {
             content: "partial test".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -2581,11 +2771,11 @@ mod tests {
         )
         .await
         .expect_err("partial stream fails the turn");
-        primary_server.join().expect("primary server joins");
+        primary_server.await.expect("primary server joins");
         fallback_server.join().expect("fallback server joins");
 
         assert!(!fallback_hit.load(Ordering::SeqCst));
-        let connection = state.connection.lock().expect("database lock");
+        let connection = state.sqlite_writer.lock().expect("database lock");
         let assistant_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM conversation_messages
@@ -3003,7 +3193,7 @@ for line in sys.stdin:
                 Vec::<(String, String, String, Option<String>)>::new(),
             ));
         let committed_terminal_states_for_channel = committed_terminal_states.clone();
-        let database_for_channel = state.connection.clone();
+        let database_for_channel = state.sqlite_writer.clone();
         let atomic_channel: tauri::ipc::Channel<RuntimeEvent> =
             tauri::ipc::Channel::new(move |body| {
                 if let tauri::ipc::InvokeResponseBody::Json(value) = body {
@@ -3044,6 +3234,7 @@ for line in sys.stdin:
             content: "ATOMIC".to_string(),
             workspace_path: Some(directory.path().to_string_lossy().into_owned()),
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -3068,7 +3259,7 @@ for line in sys.stdin:
                 None
             )]
         );
-        let database = state.connection.lock().expect("database lock");
+        let database = state.sqlite_writer.lock().expect("database lock");
         let (status, supervisor_version, assistant_count): (String, String, i64) = database
             .query_row(
                 "SELECT r.status,r.supervisor_version,
@@ -3087,7 +3278,7 @@ for line in sys.stdin:
         let run_atomic_scenario =
             |run_id: &str, scenario: &str, cancellation: Arc<RunCancellation>| {
                 {
-                    let mut database = state.connection.lock().expect("database lock");
+                    let mut database = state.sqlite_writer.lock().expect("database lock");
                     let mut documents = default_settings_input();
                     let codex = documents
                         .iter_mut()
@@ -3104,6 +3295,7 @@ for line in sys.stdin:
                     content: scenario.to_string(),
                     workspace_path: Some(directory.path().to_string_lossy().into_owned()),
                     retry_input_message_id: None,
+                    source_id: None,
                     input_origin: "text".to_string(),
                     presentation_mode: "visual".to_string(),
                 };
@@ -3223,8 +3415,7 @@ for line in sys.stdin:
     #[tokio::test]
     async fn larm_turn_commits_before_events_and_keeps_success_when_release_fails() {
         use std::ffi::OsString;
-        use std::io::{Read, Write as _};
-        use std::net::TcpListener;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         struct EnvGuard {
             key: &'static str,
@@ -3250,7 +3441,9 @@ for line in sys.stdin:
         let _environment_lock = providers::larm::test_environment_lock().lock().await;
         let _token = EnvGuard::set("LARM_API_TOKEN", "fixture-token");
 
-        let listener = TcpListener::bind("127.0.0.1:0").expect("fake LARM binds");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("fake LARM binds");
         let address = listener.local_addr().expect("fake LARM address");
         let requests = Arc::new(Mutex::new(Vec::<String>::new()));
         let server_requests = requests.clone();
@@ -3268,54 +3461,169 @@ for line in sys.stdin:
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{allocation}",
             allocation.len()
         );
-        let tool_stream_body = concat!(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{",
-            "\"index\":0,\"id\":\"call_larm_turn\",\"type\":\"function\",",
-            "\"function\":{\"name\":\"recall_conversation\",",
-            "\"arguments\":\"{\\\"query\\\":\\\"missing-history\\\"}\"}}]}}]}\n\n",
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-        let tool_stream_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Request-ID: req_tool\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{tool_stream_body}",
-            tool_stream_body.len()
-        );
-        let stream_body = concat!(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"LARM ok\"}}]}\n\n",
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-        let stream_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Request-ID: req_turn\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{stream_body}",
-            stream_body.len()
-        );
         let release_error =
             r#"{"error":{"code":"internal_error","message":"fixture release failure"}}"#;
         let release_response = format!(
             "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{release_error}",
             release_error.len()
         );
-        let server = thread::spawn(move || {
-            for response in [
-                allocate_response,
-                tool_stream_response,
-                stream_response,
-                release_response,
-            ] {
-                let (mut socket, _) = listener.accept().expect("fake LARM accepts");
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .expect("fake LARM read timeout");
-                let mut request = vec![0_u8; 64 * 1_024];
-                let size = socket.read(&mut request).expect("fake LARM reads");
-                server_requests
-                    .lock()
-                    .expect("request lock")
-                    .push(String::from_utf8_lossy(&request[..size]).into_owned());
-                socket
-                    .write_all(response.as_bytes())
-                    .expect("fake LARM writes");
+        let server = tokio::spawn(async move {
+            use sha2::{Digest, Sha256};
+
+            let (mut allocate_socket, _) = listener.accept().await.expect("allocation accepts");
+            let mut request = vec![0_u8; 64 * 1_024];
+            let size = allocate_socket
+                .read(&mut request)
+                .await
+                .expect("allocation request reads");
+            server_requests
+                .lock()
+                .expect("request lock")
+                .push(String::from_utf8_lossy(&request[..size]).into_owned());
+            allocate_socket
+                .write_all(allocate_response.as_bytes())
+                .await
+                .expect("allocation response writes");
+
+            let (stream, _) = listener.accept().await.expect("WebSocket accepts");
+            let handshake_requests = server_requests.clone();
+            let mut socket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                move |request: &WebSocketRequest, mut response: WebSocketResponse| {
+                    let mut captured = format!("GET {} HTTP/1.1\r\n", request.uri());
+                    for (name, value) in request.headers() {
+                        captured.push_str(name.as_str());
+                        captured.push_str(": ");
+                        captured.push_str(value.to_str().unwrap_or("<binary>"));
+                        captured.push_str("\r\n");
+                    }
+                    handshake_requests
+                        .lock()
+                        .expect("request lock")
+                        .push(captured);
+                    response.headers_mut().insert(
+                        header::SEC_WEBSOCKET_PROTOCOL,
+                        HeaderValue::from_static(providers::llm_websocket::protocol::SUBPROTOCOL),
+                    );
+                    Ok(response)
+                },
+            )
+            .await
+            .expect("WebSocket handshake");
+            socket
+                .send(WebSocketMessage::Text(
+                    json!({
+                        "type": "connection.ready",
+                        "protocol": "saaa.llm-stream.v1",
+                        "connectionId": "conn_larm_fixture",
+                        "upstreamTransport": "native",
+                        "limits": {
+                            "maxConcurrentRuns": 1,
+                            "maxConnections": 1,
+                            "maxActiveRunsPerConnection": 1,
+                            "maxUnackedEvents": 64,
+                            "maxUnackedBytes": 524288,
+                            "resumeWindowMs": 120000,
+                            "heartbeatIntervalMs": 15000
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("ready sends");
+            let start = socket
+                .next()
+                .await
+                .expect("run.start arrives")
+                .expect("run.start reads");
+            let WebSocketMessage::Text(start) = start else {
+                panic!("run.start is text");
+            };
+            server_requests
+                .lock()
+                .expect("request lock")
+                .push(start.to_string());
+            let start: Value = serde_json::from_str(start.as_str()).expect("run.start JSON");
+            let run_id = start["runId"].as_str().expect("run id");
+            socket
+                .send(WebSocketMessage::Text(
+                    json!({
+                        "type": "run.accepted", "runId": run_id, "seq": 1,
+                        "providerRunId": "provider_larm_fixture", "model": "local"
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("accepted sends");
+            socket
+                .send(WebSocketMessage::Text(
+                    json!({
+                        "type": "tool.call", "runId": run_id, "seq": 2,
+                        "callId": "call_larm_turn", "name": "recall_conversation",
+                        "arguments": {"query": "missing-history"}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("tool call sends");
+            loop {
+                let message = socket
+                    .next()
+                    .await
+                    .expect("tool result arrives")
+                    .expect("tool result reads");
+                let WebSocketMessage::Text(message) = message else {
+                    continue;
+                };
+                if message.contains("\"type\":\"tool.result\"") {
+                    server_requests
+                        .lock()
+                        .expect("request lock")
+                        .push(message.to_string());
+                    break;
+                }
             }
+            let content = "LARM ok";
+            let mut frame = Vec::with_capacity(16 + content.len());
+            frame.extend_from_slice(b"SAD1");
+            frame.extend_from_slice(&[1, 0]);
+            frame.extend_from_slice(&16_u16.to_be_bytes());
+            frame.extend_from_slice(&3_u64.to_be_bytes());
+            frame.extend_from_slice(content.as_bytes());
+            socket
+                .send(WebSocketMessage::Binary(frame.into()))
+                .await
+                .expect("delta sends");
+            let hash = Sha256::digest(content.as_bytes());
+            socket
+                .send(WebSocketMessage::Text(
+                    json!({
+                        "type": "response.completed", "runId": run_id, "seq": 4,
+                        "contentBytes": content.len(), "contentSha256": format!("{hash:x}"),
+                        "finishReason": "stop", "usage": null
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("completion sends");
+
+            let (mut release_socket, _) = listener.accept().await.expect("release accepts");
+            let size = release_socket
+                .read(&mut request)
+                .await
+                .expect("release request reads");
+            server_requests
+                .lock()
+                .expect("request lock")
+                .push(String::from_utf8_lossy(&request[..size]).into_owned());
+            release_socket
+                .write_all(release_response.as_bytes())
+                .await
+                .expect("release response writes");
         });
 
         let connection = Connection::open_in_memory().expect("database opens");
@@ -3347,14 +3655,14 @@ for line in sys.stdin:
         routing.value_json["voiceSpeak"]["source"] = json!("harness");
         routing.value_json["voiceSpeak"]["providerId"] = Value::Null;
         save_settings_documents_to_connection(
-            &mut state.connection.lock().expect("database lock"),
+            &mut state.sqlite_writer.lock().expect("database lock"),
             &documents,
         )
         .expect("settings save");
 
         let event_states = Arc::new(Mutex::new(Vec::<String>::new()));
         let callback_states = event_states.clone();
-        let callback_database = state.connection.clone();
+        let callback_database = state.sqlite_writer.clone();
         let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
             let tauri::ipc::InvokeResponseBody::Json(event) = body else {
                 return Ok(());
@@ -3413,6 +3721,7 @@ for line in sys.stdin:
             content: "fixture prompt".to_string(),
             workspace_path: None,
             retry_input_message_id: None,
+            source_id: None,
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -3425,7 +3734,7 @@ for line in sys.stdin:
         )
         .await
         .expect("LARM turn completes");
-        server.join().expect("fake LARM joins");
+        server.await.expect("fake LARM joins");
 
         assert_eq!(
             *event_states.lock().expect("state lock"),
@@ -3436,16 +3745,17 @@ for line in sys.stdin:
             ]
         );
         let captures = requests.lock().expect("request lock");
-        assert_eq!(captures.len(), 4);
-        assert!(captures.iter().all(|request| request
-            .to_ascii_lowercase()
-            .contains("authorization: bearer fixture-token")));
-        assert!(captures[1].contains("x-larm-allocation-id: alloc_turn"));
-        assert!(captures[1].contains("\"name\":\"recall_conversation\""));
-        assert!(captures[2].contains("\"role\":\"tool\""));
-        assert!(captures[2].contains("continuity-no-hit"));
+        assert_eq!(captures.len(), 5);
+        for index in [0, 1, 4] {
+            assert!(captures[index]
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fixture-token"));
+        }
+        assert!(captures[2].contains("\"allocationId\":\"alloc_turn\""));
+        assert!(captures[2].contains("\"name\":\"recall_conversation\""));
+        assert!(captures[3].contains("continuity-no-hit"));
         let telemetry: (String, String, i64, String, String, Option<String>, String) = state
-            .connection
+            .sqlite_writer
             .lock()
             .expect("database lock")
             .query_row(
@@ -3474,7 +3784,7 @@ for line in sys.stdin:
                 0,
                 "primary".to_string(),
                 "deferred-to-ttl".to_string(),
-                Some("req_turn".to_string()),
+                None,
                 "upstream".to_string()
             )
         );

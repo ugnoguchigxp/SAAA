@@ -83,7 +83,7 @@ pub(crate) async fn transcribe(
         );
     }
     if text.is_empty() {
-        return Err("Cloud ASR completed without a transcript".to_string());
+        return Err("ASR_NO_SPEECH: Cloud ASR completed without a transcript".to_string());
     }
     Ok((
         bounded_text(text, 16_000),

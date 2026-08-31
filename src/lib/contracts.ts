@@ -140,6 +140,24 @@ export type LocalArtifactResult = {
   createdAt: string;
 };
 
+export type AuditEvent = {
+  sequence: number;
+  id: string;
+  occurredAt: string;
+  component: "app" | "frontend" | "microphone" | "voice-asr" | "conversation" | "provider" | "tts" | "meeting" | "settings" | "voice-policy" | "situation";
+  eventName: string;
+  phase: "request" | "start" | "state" | "progress" | "decision" | "terminal" | "error";
+  outcome: "success" | "failure" | "cancelled" | "interrupted" | "degraded" | "blocked" | null;
+  correlationId: string | null;
+  causationId: string | null;
+  conversationId: string | null;
+  runtimeRunId: string | null;
+  sessionId: string | null;
+  subjectId: string | null;
+  failureCode: string | null;
+  attributes: Record<string, boolean | number | string>;
+};
+
 export type SignalHealth = "ready" | "disabled" | "permission-denied" | "unsupported" | "degraded";
 export type ForegroundCategory = "communication" | "coding" | "writing" | "browser" | "media" | "sensitive" | "other" | "unknown";
 export type ConversationSignalState = "idle" | "user-input" | "model-running" | "agent-running";

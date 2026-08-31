@@ -1,0 +1,93 @@
+[
+  {
+    "id": "ja-proper-noun-number-mixed",
+    "category": "transcript",
+    "seed": 1,
+    "durationMs": 2000,
+    "amplitude": 5000,
+    "gold": "OpenAIのGPT-5で、9月1日に三件確認します。",
+    "providerFinal": "OpenAIのGPT-5で、9月1日に三件確認します。",
+    "expectedPcmSha256": "2d29a73c8bddd957c84291b60d5ee50477f1656e2b67f151a4319d8f5ff68f03"
+  },
+  {
+    "id": "quiet-speech",
+    "category": "transcript",
+    "seed": 2,
+    "durationMs": 1800,
+    "amplitude": 300,
+    "gold": "小さな声でも先頭から認識します。",
+    "providerFinal": "小さな声でも先頭から認識します。",
+    "expectedPcmSha256": "d8ff4f672bcc3afb3c20ab31849b80750380f97f595210aa15778cc261de632e"
+  },
+  {
+    "id": "click-only",
+    "category": "click",
+    "seed": 3,
+    "durationMs": 1000,
+    "amplitude": 0,
+    "gold": "",
+    "providerFinal": "",
+    "expectedPcmSha256": "f9b1f6692f048eae0975bb66d0ac59678fcb60bf3f3e3b5935f6e60851304ab5"
+  },
+  {
+    "id": "silence",
+    "category": "no-speech",
+    "seed": 4,
+    "durationMs": 3000,
+    "amplitude": 0,
+    "gold": "",
+    "providerFinal": "",
+    "expectedPcmSha256": "55873fecc61a79e87ca550c7072e38ccdd7ecb600ace286fe4717952a97c42b0"
+  },
+  {
+    "id": "long-thirty-seconds",
+    "category": "transcript",
+    "seed": 5,
+    "durationMs": 30000,
+    "amplitude": 4000,
+    "gold": "三十秒の長い発話を最後まで一度だけ確定します。",
+    "providerFinal": "三十秒の長い発話を最後まで一度だけ確定します。",
+    "expectedPcmSha256": "217e566366fb11c4b2a2ff8c8971fbc072ec40c49038918b2b488482ef5de48f"
+  },
+  {
+    "id": "fifty-millisecond-boundary",
+    "category": "boundary",
+    "seed": 6,
+    "durationMs": 1600,
+    "amplitude": 3000,
+    "boundaryOffsetMs": 50,
+    "gold": "境界の直前から発話します。",
+    "providerFinal": "境界の直前から発話します。",
+    "expectedPcmSha256": "4d2bc7278d9236b1a2ff09886831dfcb0b7109ee436359eace2b495cf0d9b7b2"
+  },
+  {
+    "id": "other-speaker",
+    "category": "speaker-reject",
+    "seed": 7,
+    "durationMs": 2000,
+    "amplitude": 7000,
+    "gold": "",
+    "providerFinal": "",
+    "expectedPcmSha256": "1f12ae3308d5bd04fef10031a0cbc00bd8fe52d3dff1a21ffeaea2b58da81463"
+  },
+  {
+    "id": "simultaneous-speakers",
+    "category": "speaker-reject",
+    "seed": 8,
+    "durationMs": 2000,
+    "amplitude": 7000,
+    "gold": "",
+    "providerFinal": "",
+    "expectedPcmSha256": "5a3f8a60e697f8e57f6e04b14b98e4e9512fa40563b6def74a51e0edecec0b22"
+  },
+  {
+    "id": "native-disconnect-batch-final",
+    "category": "native-disconnect",
+    "seed": 9,
+    "durationMs": 2000,
+    "amplitude": 4000,
+    "gold": "切断後も全体を再認識して確定します。",
+    "providerFinal": "切断後も全体を再認識して確定します。",
+    "expectedPcmSha256": "5fcbadc33f37f4c7011648758f60e8f4926bc592885cba9327288a40f7d5dc30"
+  }
+]

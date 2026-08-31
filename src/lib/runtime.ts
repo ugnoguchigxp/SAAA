@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { stageAudioUpload } from "./audioIpc";
 import type {
   AppSnapshot,
+  AuditEvent,
   CodexModelOption,
   CodexRuntimeStatus,
   Conversation,
@@ -35,7 +36,7 @@ export async function getCodexStatus(): Promise<CodexRuntimeStatus> {
 }
 
 export async function startTurn(
-  input: { runId: string; conversationId: string; content: string; workspacePath: string | null; retryInputMessageId?: string | null; inputOrigin: "text" | "voice"; presentationMode: "visual" | "visual-and-spoken" },
+  input: { runId: string; conversationId: string; content: string; workspacePath: string | null; retryInputMessageId?: string | null; sourceId?: string | null; inputOrigin: "text" | "voice"; presentationMode: "visual" | "visual-and-spoken" },
   onEvent: (event: RuntimeEvent) => void,
 ): Promise<void> {
   const channel = new Channel<RuntimeEvent>();
@@ -116,6 +117,10 @@ export async function exportDiagnostics(): Promise<LocalArtifactResult> {
   return invoke<LocalArtifactResult>("export_diagnostics");
 }
 
+export async function listAuditEvents(): Promise<AuditEvent[]> {
+  return invoke<AuditEvent[]>("list_audit_events");
+}
+
 export async function backupDatabase(): Promise<LocalArtifactResult> {
   return invoke<LocalArtifactResult>("backup_database");
 }
@@ -139,9 +144,9 @@ export async function createConversation(taskMode: TaskMode): Promise<Conversati
   });
 }
 
-export async function listMessages(conversationId: string, offset: number): Promise<{ messages: ConversationMessage[]; hasMore: boolean }> {
-  return invoke<{ messages: ConversationMessage[]; hasMore: boolean }>("list_messages", {
-    input: { conversationId, offset },
+export async function listMessages(conversationId: string, cursor: string | null): Promise<{ messages: ConversationMessage[]; hasMore: boolean; nextCursor: string | null }> {
+  return invoke<{ messages: ConversationMessage[]; hasMore: boolean; nextCursor: string | null }>("list_messages", {
+    input: { conversationId, cursor },
   });
 }
 

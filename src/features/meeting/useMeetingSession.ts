@@ -19,10 +19,8 @@ import {
   unwatchMeeting,
   watchMeeting,
 } from "../../lib/runtime";
-import { appendFrames } from "./audio/pcm";
 import { SegmentQueue } from "./audio/segmentQueue";
 import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
-import { resamplePcm } from "../../lib/audioResampling";
 
 const MEETING_SAMPLE_RATE = 16_000;
 
@@ -39,10 +37,13 @@ type Line = { sequence: number; lane: MeetingLane; text: string; language: strin
 type PendingSegment = {
   sequence: number;
   samples: Float32Array;
-  sampleRate: number;
   startedAtMs: number;
   durationMs: number;
 };
+
+type MeetingAudioWorkerEvent =
+  | { type: "segment"; samples: Float32Array; startedAtMs: number; durationMs: number }
+  | { type: "flushed" };
 
 export function useMeetingSession(
   voice: VoiceSettings | null,
@@ -61,10 +62,8 @@ export function useMeetingSession(
   const context = useRef<AudioContext | null>(null);
   const source = useRef<MediaStreamAudioSourceNode | null>(null);
   const node = useRef<AudioWorkletNode | null>(null);
+  const normalizationWorker = useRef<Worker | null>(null);
   const flushResolver = useRef<(() => void) | null>(null);
-  const frames = useRef<Float32Array[]>([]);
-  const frameSamples = useRef(0);
-  const frameStartedAtMs = useRef<number | null>(null);
   const queue = useRef(new SegmentQueue<PendingSegment>(2, (segment) => segment.samples.fill(0)));
   const processing = useRef<Promise<void> | null>(null);
   const sequence = useRef(0);
@@ -141,7 +140,11 @@ export function useMeetingSession(
   }, [snapshot.state]);
 
   async function detachCapture(clearPending: boolean) {
-    if (clearPending) flushResolver.current?.();
+    if (clearPending) {
+      flushResolver.current?.();
+      normalizationWorker.current?.terminate();
+      normalizationWorker.current = null;
+    }
     if (!clearPending && node.current) {
       await new Promise<void>((resolve) => {
         let completed = false;
@@ -158,6 +161,7 @@ export function useMeetingSession(
       });
     }
     if (node.current) node.current.port.onmessage = null;
+    if (normalizationWorker.current) normalizationWorker.current.onmessage = null;
     node.current?.disconnect();
     source.current?.disconnect();
     stream.current?.getTracks().forEach((track) => track.stop());
@@ -166,35 +170,24 @@ export function useMeetingSession(
     source.current = null;
     if (context.current) await context.current.close().catch(() => undefined);
     context.current = null;
+    normalizationWorker.current?.terminate();
+    normalizationWorker.current = null;
     captureLease.current?.();
     captureLease.current = null;
     if (clearPending) {
-      for (const frame of frames.current) frame.fill(0);
-      frames.current = [];
-      frameSamples.current = 0;
-      frameStartedAtMs.current = null;
       queue.current.clear();
     }
   }
 
-  function enqueueBuffered(sampleRate: number, minimumDurationMs: number): boolean {
-    if (frameSamples.current === 0) return false;
-    const capturedStartedAtMs = frameStartedAtMs.current;
-    const samples = appendFrames(new Float32Array(), frames.current);
-    for (const frame of frames.current) frame.fill(0);
-    frames.current = [];
-    frameSamples.current = 0;
-    frameStartedAtMs.current = null;
-    const durationMs = Math.round((samples.length / sampleRate) * 1_000);
-    if (durationMs < minimumDurationMs) {
+  function enqueueNormalized(samples: Float32Array, startedAtMs: number, durationMs: number): boolean {
+    if (durationMs < 1_000) {
       samples.fill(0);
       return false;
     }
     const segment: PendingSegment = {
       sequence: sequence.current,
       samples,
-      sampleRate,
-      startedAtMs: capturedStartedAtMs ?? Math.max(0, Date.now() - started.current - durationMs),
+      startedAtMs,
       durationMs,
     };
     if (!queue.current.push(segment)) {
@@ -223,17 +216,13 @@ export function useMeetingSession(
           segment.samples.fill(0);
           throw new Error(uiMessage("meetingCaptureInactive"));
         }
-        let normalized = new Float32Array();
         try {
-          normalized = resamplePcm(segment.samples, segment.sampleRate, MEETING_SAMPLE_RATE);
-          segment.samples.fill(0);
-          segment.samples = new Float32Array();
           const result = await appendMeetingAudioSegment({
             sessionId: currentSnapshot.sessionId,
             captureToken: currentSnapshot.captureToken,
             lane: "microphone",
             sequence: segmentSequence,
-            samples: normalized,
+            samples: segment.samples,
             sampleRate: MEETING_SAMPLE_RATE,
             startedAtMs: segment.startedAtMs,
             durationMs: segment.durationMs,
@@ -255,7 +244,7 @@ export function useMeetingSession(
           await pauseAfterFailure();
           throw cause;
         } finally {
-          normalized.fill(0);
+          segment.samples.fill(0);
         }
       }
     })();
@@ -292,21 +281,28 @@ export function useMeetingSession(
       await nextContext.audioWorklet.addModule("/audio/meeting-processor.js");
       const nextSource = nextContext.createMediaStreamSource(nextStream);
       const nextNode = new AudioWorkletNode(nextContext, "meeting-processor");
+      const nextWorker = new Worker(new URL("./audio/meetingAudio.worker.ts", import.meta.url), { type: "module" });
       source.current = nextSource;
       node.current = nextNode;
-      nextNode.port.onmessage = (event: MessageEvent<Float32Array | { type: "flushed" }>) => {
-        if (!(event.data instanceof Float32Array)) {
-          if (event.data.type === "flushed") flushResolver.current?.();
+      normalizationWorker.current = nextWorker;
+      nextWorker.onmessage = (event: MessageEvent<MeetingAudioWorkerEvent>) => {
+        if (event.data.type === "flushed") {
+          flushResolver.current?.();
           return;
         }
-        if (frameSamples.current === 0) {
-          frameStartedAtMs.current = Math.max(0, Date.now() - started.current);
+        enqueueNormalized(event.data.samples, event.data.startedAtMs, event.data.durationMs);
+      };
+      nextWorker.postMessage({
+        type: "configure",
+        sourceRate: nextContext.sampleRate,
+        startedAtMs: Math.max(0, Date.now() - started.current),
+      });
+      nextNode.port.onmessage = (event: MessageEvent<Float32Array | { type: "flushed" }>) => {
+        if (!(event.data instanceof Float32Array)) {
+          if (event.data.type === "flushed") nextWorker.postMessage({ type: "flush" });
+          return;
         }
-        frames.current.push(event.data);
-        frameSamples.current += event.data.length;
-        if (frameSamples.current >= nextContext.sampleRate * 5) {
-          enqueueBuffered(nextContext.sampleRate, 5_000);
-        }
+        nextWorker.postMessage({ type: "samples", samples: event.data }, [event.data.buffer]);
       };
       nextSource.connect(nextNode);
       nextNode.connect(nextContext.destination);
@@ -414,10 +410,8 @@ export function useMeetingSession(
     const current = snapshotRef.current;
     if (!current.sessionId || !beginOperation()) return;
     try {
-      const sampleRate = context.current?.sampleRate;
       setHealth("stopping");
       await detachCapture(false);
-      if (sampleRate) enqueueBuffered(sampleRate, 1_000);
       await drainQueue().catch(() => undefined);
       queue.current.clear();
       applySnapshot(await stopMeeting(current.sessionId));

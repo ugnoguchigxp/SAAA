@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub(crate) mod client;
 pub(crate) mod contracts;
 #[cfg(test)]
@@ -5,9 +7,11 @@ mod live_canary;
 pub(crate) mod session;
 
 use client::{
-    AllocationStart, Cancellation, ChatCompletion, ChatMessage, CleanupResult, EphemeralCredential,
-    LarmError, LarmHttpClient, OperationProgress, SharedLarmClient,
+    AllocationStart, Cancellation, CleanupResult, EphemeralCredential, LarmError, LarmHttpClient,
+    OperationProgress, SharedLarmClient,
 };
+#[cfg(test)]
+use client::{ChatCompletion, ChatMessage};
 use contracts::{BoundedIdentifier, ReadyAllocation, ReleaseFailureKind, SessionFailureKind};
 use session::{AllocationSession, SessionEffect, SessionPhase, SessionSignal};
 use std::{ops::Deref, sync::Arc, time::Duration};
@@ -155,6 +159,33 @@ impl<'a> LarmProvider<'a> {
     ) -> Result<(), SessionFailureKind> {
         let client = gate.client()?;
         LarmHttpClient::new_probe(client, base_url)?.probe().await
+    }
+
+    pub(crate) fn websocket_stream_url(&self) -> Result<url::Url, SessionFailureKind> {
+        let mut url = url::Url::parse(&self.base_url).map_err(|_| SessionFailureKind::Contract)?;
+        let scheme = match url.scheme() {
+            "https" => "wss",
+            "http"
+                if url.host().is_some_and(|host| match host {
+                    url::Host::Domain(value) => value == "localhost",
+                    url::Host::Ipv4(value) => value.is_loopback(),
+                    url::Host::Ipv6(value) => value.is_loopback(),
+                }) =>
+            {
+                "ws"
+            }
+            _ => return Err(SessionFailureKind::Contract),
+        };
+        url.set_scheme(scheme)
+            .map_err(|_| SessionFailureKind::Contract)?;
+        url.set_path("/v1/llm/stream");
+        url.set_query(None);
+        url.set_fragment(None);
+        Ok(url)
+    }
+
+    pub(crate) fn websocket_authorization(&self) -> Result<&str, SessionFailureKind> {
+        self.credential.authorization()
     }
 
     pub(crate) async fn allocate_ready(
@@ -412,6 +443,7 @@ impl<'a> LarmProvider<'a> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn chat<F>(
         &self,
         lease: &ReadyLease,
@@ -436,6 +468,7 @@ impl<'a> LarmProvider<'a> {
             .await
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn chat_with_tools<F>(
         &self,

@@ -166,7 +166,7 @@ pub(super) fn load_items<P: rusqlite::Params>(
     parameters: P,
     output: &mut Vec<ProjectionItem>,
 ) -> Result<(), String> {
-    let mut statement = connection.prepare(sql).map_err(database_error)?;
+    let mut statement = connection.prepare_cached(sql).map_err(database_error)?;
     let rows = statement
         .query_map(parameters, |row| {
             let memory_class: String = row.get(0)?;

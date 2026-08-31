@@ -54,6 +54,7 @@ h3 { margin-bottom: 0; font-size: .78rem; }
 .badge.local { color: #b6d5ff; background: #1d3656; }
 .badge.warning { color: #f3d399; background: #4a351a; }
 .message-area { min-height: 0; overflow-y: auto; padding: 32px clamp(36px, 7vw, 112px); }
+.message-area > .message { content-visibility: auto; contain-intrinsic-size: auto 140px; }
 .history-loading { margin: 0 0 14px; color: #8796a9; font-size: .68rem; text-align: center; }
 .empty-state { width: min(700px, 100%); min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; padding: 24px 0 38px; text-align: center; }
 .empty-state > h2 { font-size: clamp(1.65rem, 3vw, 2.35rem); line-height: 1.25; letter-spacing: -.025em; }
@@ -81,6 +82,7 @@ h3 { margin-bottom: 0; font-size: .78rem; }
 .markdown-content pre code { padding: 0; background: transparent; white-space: pre; }
 .markdown-content a { color: #81d8ca; }
 .message.streaming { border: 1px solid #395b60; }
+.message.incomplete { border: 1px solid #8a6a31; }
 .transcript-unstable { color: #8c9cb0; }
 .transcript-route { display: block; margin-top: 7px; color: #718397; font-size: .62rem; }
 .message.transcript.degraded { border-color: #8a6a31; }

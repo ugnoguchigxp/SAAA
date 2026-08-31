@@ -8,7 +8,7 @@ fn default_codex_input_modalities() -> Vec<String> {
     vec!["text".to_string(), "image".to_string()]
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsDocument {
     pub(crate) namespace: String,
@@ -68,7 +68,7 @@ pub(crate) struct AppendMessageInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ListMessagesInput {
     pub(crate) conversation_id: String,
-    pub(crate) offset: u64,
+    pub(crate) cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -244,6 +244,8 @@ pub(crate) struct StartTurnInput {
     pub(crate) workspace_path: Option<String>,
     #[serde(default)]
     pub(crate) retry_input_message_id: Option<String>,
+    #[serde(default)]
+    pub(crate) source_id: Option<String>,
     pub(crate) input_origin: String,
     pub(crate) presentation_mode: String,
 }

@@ -32,11 +32,7 @@ pub(crate) async fn prepare(
     state: &AppState,
     conversation_id: &str,
 ) -> Result<PreparedSession, String> {
-    let (selected, verifier) = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
+    let (selected, verifier) = state.sqlite_readers.read(|connection| {
         let exists = connection
             .query_row(
                 "SELECT 1 FROM conversations WHERE id=?1",
@@ -49,13 +45,11 @@ pub(crate) async fn prepare(
         if !exists {
             return Err("Conversation does not exist".to_string());
         }
-        (
-            select_asr(&connection)?,
-            state
-                .voice_profile
-                .prepare_streaming_verifier(&connection)?,
-        )
-    };
+        Ok((
+            select_asr(connection)?,
+            state.voice_profile.prepare_streaming_verifier(connection)?,
+        ))
+    })?;
 
     let timeout_ms = selected.timeout_ms;
     let allowed_languages = selected.allowed_languages;

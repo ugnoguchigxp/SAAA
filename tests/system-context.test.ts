@@ -53,7 +53,7 @@ test("keeps the system context outside Rust program code", () => {
   expect(rustSource).toContain('include_str!("../../../.s11tnext/conversation-respond.txt")');
   expect(rustSource).toContain('"developerInstructions": CODEX_READ_ONLY_SYSTEM_CONTEXT');
   expect(rustSource).toContain("render_conversation_system_context(");
-  expect(rustSource).toContain("regional_preferences::load(&connection)");
+  expect(rustSource).toContain("regional_preferences::load(connection)");
   expect(rustSource).not.toContain("Operate read-only. Do not modify files");
   expect(rustSource).not.toContain("SAAA transcribes voice input before invoking you");
 });

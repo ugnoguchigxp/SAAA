@@ -1,12 +1,9 @@
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::json;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use super::{
-    drain_sse_events, provider_api_key, provider_chat_url, provider_models_url, sse_event_data,
-};
-use crate::providers::completion::{thinking_enabled, CompletionFinish, CompletionTerminal};
+use super::{provider_api_key, provider_models_url};
 use crate::OpenAiCompatibleProviderSettings;
 
 pub(crate) async fn probe_model_provider(
@@ -45,92 +42,55 @@ pub(crate) async fn probe_model_provider(
         ));
     }
 
-    let mut body = json!({
-        "model": provider.model,
-        "messages": [
-            { "role": "system", "content": "Reply briefly." },
-            { "role": "user", "content": "Connectivity check" }
-        ],
-        "stream": true,
-        "reasoning_effort": crate::providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
-        "max_tokens": 64
-    });
-    if provider.location == "local" {
-        body["chat_template_kwargs"] = json!({
-            "enable_thinking": thinking_enabled(
-                crate::providers::DEFAULT_CONVERSATION_REASONING_EFFORT
-            )
-        });
+    let stream_url = crate::providers::stream::provider_stream_url(&provider.endpoint)
+        .map_err(|_| "Provider does not advertise a valid LLM WebSocket endpoint".to_string())?;
+    let authorization = api_key.as_deref().map(|value| format!("Bearer {value}"));
+    let messages = vec![
+        json!({ "role": "system", "content": "Reply briefly." }),
+        json!({ "role": "user", "content": "Connectivity check" }),
+    ];
+    let input = crate::StartTurnInput {
+        run_id: format!("probe_{}", uuid::Uuid::new_v4().simple()),
+        conversation_id: "provider_probe".to_string(),
+        content: "Connectivity check".to_string(),
+        workspace_path: None,
+        retry_input_message_id: None,
+        source_id: None,
+        input_origin: "text".to_string(),
+        presentation_mode: "visual".to_string(),
+    };
+    let sink = tauri::ipc::Channel::new(|_| Ok(()));
+    let result = crate::providers::llm_websocket::client::run(
+        crate::providers::llm_websocket::client::WebSocketRunContext {
+            stream_url: stream_url.as_str(),
+            authorization: authorization.as_deref(),
+            allocation_id: None,
+            model: &provider.model,
+            messages: &messages,
+            tools: &[],
+            reasoning_effort: crate::providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+            max_output_tokens: 64,
+            tool_timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(10),
+            input: &input,
+            on_event: &sink,
+            cancellation: Arc::new(crate::RunCancellation::default()),
+            output_persistence: None,
+        },
+    )
+    .await
+    .map_err(|error| format!("WebSocket generation probe failed: {error:?}"))?;
+    if !matches!(
+        result,
+        crate::providers::llm_websocket::client::WebSocketRunResult::Completed(ref content)
+            if !content.trim().is_empty()
+    ) {
+        return Err("Provider WebSocket probe did not complete a text response".to_string());
     }
-    let mut request = client
-        .post(provider_chat_url(&provider.endpoint)?)
-        .json(&body);
-    if let Some(api_key) = api_key.as_deref() {
-        request = request.bearer_auth(api_key);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("Generation probe failed: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "Provider generation probe returned HTTP {}",
-            response.status()
-        ));
-    }
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !content_type.starts_with("text/event-stream") {
-        return Err("Provider generation probe did not return an SSE stream".to_string());
-    }
-    validate_probe_stream(read_probe_body(response).await?)?;
     Ok(format!(
         "Model {} is listed and completed a generation probe",
         provider.model
     ))
-}
-
-fn validate_probe_stream(mut body: Vec<u8>) -> Result<(), String> {
-    if !body.ends_with(b"\n\n") && !body.ends_with(b"\r\n\r\n") {
-        body.extend_from_slice(b"\n\n");
-    }
-    let events = drain_sse_events(&mut body, 1_048_576)
-        .map_err(|_| "Provider generation probe returned invalid SSE framing".to_string())?;
-    let mut terminal = CompletionTerminal::default();
-    let mut content_seen = false;
-    let mut done_seen = false;
-    for event in events {
-        let Some(data) = sse_event_data(&event) else {
-            continue;
-        };
-        let data = data.trim();
-        if data == "[DONE]" {
-            done_seen = true;
-            break;
-        }
-        let value: serde_json::Value = serde_json::from_str(data)
-            .map_err(|_| "Provider generation probe returned invalid event JSON".to_string())?;
-        terminal.observe(&value).map_err(|_| {
-            "Provider generation probe returned an invalid finish reason".to_string()
-        })?;
-        content_seen |= value
-            .pointer("/choices/0/delta/content")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|content| !content.trim().is_empty());
-    }
-    if !done_seen
-        || terminal.complete().map_err(|_| {
-            "Provider generation probe ended without a terminal finish reason".to_string()
-        })? != CompletionFinish::Stop
-        || !content_seen
-    {
-        return Err("Provider generation probe did not complete a text response".to_string());
-    }
-    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,27 +121,4 @@ async fn read_probe_body(response: reqwest::Response) -> Result<Vec<u8>, String>
         body.extend_from_slice(&chunk);
     }
     Ok(body)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_probe_stream;
-
-    #[test]
-    fn production_probe_requires_text_stop_and_done() {
-        let valid = concat!(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-        assert!(validate_probe_stream(valid.as_bytes().to_vec()).is_ok());
-
-        for invalid in [
-            "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
-            "data: {\"choices\":[{\"delta\":{\"content\":\"unterminated\"}}]}\n\ndata: [DONE]\n\n",
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
-        ] {
-            assert!(validate_probe_stream(invalid.as_bytes().to_vec()).is_err());
-        }
-    }
 }
