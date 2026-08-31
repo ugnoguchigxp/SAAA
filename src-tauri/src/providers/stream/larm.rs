@@ -130,7 +130,8 @@ pub(crate) async fn stream_larm_provider(
         })
         .collect::<Vec<_>>();
     let mut tool_exchanges = Vec::<Value>::new();
-    let mut tool_calls_this_attempt = 0_usize;
+    let mut total_calls = 0_usize;
+    let mut voice_calls = 0_usize;
     let mut latest_request_id = None;
     let chat_deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
     let chat = loop {
@@ -147,7 +148,7 @@ pub(crate) async fn stream_larm_provider(
             state: context.state,
             session_id: context.session_id,
         });
-        let tools = available_agent_tools(persistence, context.input, tool_calls_this_attempt);
+        let tools = available_agent_tools(persistence, context.input, total_calls, voice_calls);
         let round = larm
             .chat_with_tools(
                 &mut allocation,
@@ -192,7 +193,7 @@ pub(crate) async fn stream_larm_provider(
                         false,
                     ));
                 }
-                tool_calls_this_attempt += 1;
+                record_tool_call(&mut total_calls, &mut voice_calls, &call.name);
                 let Some(tool_timeout) =
                     chat_deadline.checked_duration_since(tokio::time::Instant::now())
                 else {

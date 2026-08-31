@@ -77,5 +77,5 @@ export function credentialCleanupProviderIds(source: SettingsDraft, draft: Setti
 }
 
 function document(namespace: SettingsNamespace, key: "default" | "codex-sdk", valueJson: Record<string, unknown>): Omit<SettingsDocument, "updatedAt"> {
-  return { namespace, key, schemaVersion: 12, valueJson };
+  return { namespace, key, schemaVersion: 13, valueJson };
 }

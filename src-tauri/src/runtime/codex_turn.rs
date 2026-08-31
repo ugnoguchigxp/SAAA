@@ -102,6 +102,11 @@ pub(crate) async fn execute_codex_turn(
             let _ = on_event.send(RuntimeEvent::MessageCompleted {
                 run_id: input.run_id.clone(),
                 message,
+                presentation: crate::ipc_contract::VoicePresentationDecision {
+                    decision: "silent".to_string(),
+                    reason_code: "route_blocked".to_string(),
+                },
+                voice_policy: None,
             });
             Ok(TurnCompletion)
         }

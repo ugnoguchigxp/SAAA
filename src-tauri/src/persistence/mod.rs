@@ -8,9 +8,11 @@ pub(crate) mod schema;
 pub(crate) mod settings;
 mod settings_migration;
 
+#[cfg(test)]
+pub(crate) use conversations::list_messages_from_connection;
 pub(crate) use conversations::{
-    ensure_primary_conversation, list_conversations_from_connection, list_messages_from_connection,
-    validate_conversation_write_target,
+    ensure_primary_conversation, list_conversations_from_connection,
+    list_message_page_from_connection, validate_conversation_write_target,
 };
 pub(crate) use settings::{
     list_settings_documents, load_codex_settings, load_model_providers, load_routing_settings,

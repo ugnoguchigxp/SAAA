@@ -19,6 +19,7 @@ export class VoiceAsrPacketizer {
     }
     this.carry.fill(0);
     this.carry = merged.slice(offset);
+    merged.fill(0);
     return packets;
   }
 
@@ -28,7 +29,9 @@ export class VoiceAsrPacketizer {
     padded.set(this.carry);
     this.carry.fill(0);
     this.carry = new Float32Array();
-    return encodePcm16(padded);
+    const packet = encodePcm16(padded);
+    padded.fill(0);
+    return packet;
   }
 
   reset(): void { this.carry.fill(0); this.carry = new Float32Array(); }
@@ -40,7 +43,8 @@ export function encodePcm16(samples: Float32Array): Uint8Array {
   const view = new DataView(bytes.buffer);
   for (let index = 0; index < samples.length; index += 1) {
     const sample = Math.max(-1, Math.min(1, samples[index] ?? 0));
-    view.setInt16(index * 2, Math.round(sample * 32_767), true);
+    const scaled = sample < 0 ? sample * 32_768 : sample * 32_767;
+    view.setInt16(index * 2, Math.round(scaled), true);
   }
   return bytes;
 }

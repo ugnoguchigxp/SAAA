@@ -15,7 +15,8 @@ pub(crate) fn release_block(raw_pcm16le: &mut [u8], votes: &[Vote]) -> Vec<u8> {
     raw_pcm16le.fill(0);
     vec![0; raw_pcm16le.len()]
 }
-pub(crate) fn block_accepts(scores: &[Result<f32, ()>], threshold: f32) -> bool {
+#[cfg(test)]
+fn block_accepts(scores: &[Result<f32, ()>], threshold: f32) -> bool {
     scores
         .iter()
         .filter(|score| matches!(score, Ok(value) if *value >= threshold))
@@ -32,5 +33,12 @@ mod tests {
         assert!(raw.iter().all(|b| *b == 0));
         assert!(sanitized.iter().all(|b| *b == 0));
         assert!(!block_accepts(&[Ok(0.7), Err(()), Ok(0.1)], 0.55));
+    }
+    #[test]
+    fn two_of_three_votes_release_the_original_block() {
+        let mut raw = vec![7; BLOCK_SAMPLES * 2];
+        let sanitized = release_block(&mut raw, &[Vote::Pass, Vote::Reject, Vote::Pass]);
+        assert_eq!(sanitized, vec![7; BLOCK_SAMPLES * 2]);
+        assert!(block_accepts(&[Ok(0.7), Err(()), Ok(0.8)], 0.55));
     }
 }

@@ -219,8 +219,9 @@ pub fn recall_tool_definition() -> Value {
 pub fn agent_tool_definitions(
     include_conversation: bool,
     include_typed_memory: bool,
+    include_voice_behavior: bool,
 ) -> Vec<Value> {
-    let mut definitions = Vec::with_capacity(6);
+    let mut definitions = Vec::with_capacity(7);
     if include_conversation {
         definitions.push(recall_tool_definition());
     }
@@ -228,6 +229,9 @@ pub fn agent_tool_definitions(
         definitions.extend(typed_recall_tool_definitions());
     }
     definitions.extend(crate::runtime::web_fetch::tool_definitions());
+    if include_voice_behavior {
+        definitions.push(crate::voice_behavior::tool_definition());
+    }
     definitions
 }
 
@@ -235,6 +239,7 @@ pub fn is_supported_agent_tool(name: &str) -> bool {
     name == RECALL_TOOL_NAME
         || is_typed_recall_tool(name)
         || crate::runtime::web_fetch::is_web_fetch_tool(name)
+        || name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
 }
 
 pub fn is_typed_memory_tool(name: &str) -> bool {
@@ -308,6 +313,9 @@ fn merge_tool_name(target: &mut String, incoming: &str) -> Result<(), ToolProtoc
     if !std::iter::once(RECALL_TOOL_NAME)
         .chain(TYPED_RECALL_TOOL_NAMES)
         .chain(crate::runtime::web_fetch::WEB_FETCH_TOOL_NAMES)
+        .chain(std::iter::once(
+            crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME,
+        ))
         .any(|name| name.starts_with(&candidate))
     {
         return Err(ToolProtocolError::Protocol);
@@ -364,9 +372,9 @@ mod tests {
 
     #[test]
     fn typed_memory_catalog_is_exposed_only_when_enabled() {
-        let local_only = agent_tool_definitions(true, false);
+        let local_only = agent_tool_definitions(true, false, false);
         assert_eq!(local_only.len(), 3);
-        let all = agent_tool_definitions(true, true);
+        let all = agent_tool_definitions(true, true, false);
         let names = all
             .iter()
             .map(|definition| {
@@ -387,8 +395,15 @@ mod tests {
                 "fetch_content"
             ]
         );
-        assert_eq!(agent_tool_definitions(false, true).len(), 5);
-        assert_eq!(agent_tool_definitions(false, false).len(), 2);
+        assert_eq!(agent_tool_definitions(false, true, false).len(), 5);
+        assert_eq!(agent_tool_definitions(false, false, false).len(), 2);
+        assert_eq!(
+            agent_tool_definitions(false, false, true)
+                .last()
+                .and_then(|definition| definition.pointer("/function/name"))
+                .and_then(Value::as_str),
+            Some("update_conversation_voice_behavior")
+        );
     }
 
     #[test]

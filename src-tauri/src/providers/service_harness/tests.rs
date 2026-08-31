@@ -94,6 +94,77 @@ fn asr_descriptor_requires_automatic_language_detection() {
     assert!(validate_descriptor(&base, &descriptor).is_ok());
 }
 
+fn v2_asr_descriptor(base: &str, stream_url: &str) -> HarnessDescriptor {
+    HarnessDescriptor {
+        contract_version: "saaa-service-harness.v2".to_string(),
+        revision: "native-test-r1".to_string(),
+        services: vec![ServiceDescriptor {
+            capability: "asr".to_string(),
+            protocol: "openai.audio-transcriptions.v1".to_string(),
+            base_url: format!("{base}v1"),
+            model: "m".to_string(),
+            language: Some("auto".to_string()),
+            voice: None,
+            health_url: format!("{base}health"),
+            streaming: Some(AsrStreamingDescriptor {
+                protocol: "saaa.asr-stream.v1".to_string(),
+                url: stream_url.to_string(),
+                sample_rate: 16_000,
+                encoding: "pcm_s16le".to_string(),
+                packet_milliseconds: 100,
+            }),
+        }],
+    }
+}
+
+#[test]
+fn v2_streaming_requires_the_exact_protocol_and_same_secure_host() {
+    let local = url::Url::parse("http://provider.local:9810/").unwrap();
+    let valid = v2_asr_descriptor(
+        "http://provider.local:9810/",
+        "ws://provider.local:9810/asr-stream",
+    );
+    assert!(validate_descriptor(&local, &valid).is_ok());
+
+    let mut wrong_protocol = valid.clone();
+    wrong_protocol.services[0]
+        .streaming
+        .as_mut()
+        .unwrap()
+        .protocol = "vendor.stream.v1".to_string();
+    assert!(validate_descriptor(&local, &wrong_protocol).is_err());
+
+    let cross_host = v2_asr_descriptor(
+        "http://provider.local:9810/",
+        "ws://other.local:9810/asr-stream",
+    );
+    assert!(validate_descriptor(&local, &cross_host).is_err());
+
+    let public = url::Url::parse("https://provider.example/").unwrap();
+    let insecure_public = v2_asr_descriptor(
+        "https://provider.example/",
+        "ws://provider.example/asr-stream",
+    );
+    assert!(validate_descriptor(&public, &insecure_public).is_err());
+}
+
+#[test]
+fn v1_rejects_streaming_and_v2_rejects_unknown_fields() {
+    let base = url::Url::parse("http://provider.local:9810/").unwrap();
+    let mut v1 = v2_asr_descriptor(
+        "http://provider.local:9810/",
+        "ws://provider.local:9810/asr-stream",
+    );
+    v1.contract_version = "saaa-service-harness.v1".to_string();
+    assert!(validate_descriptor(&base, &v1).is_err());
+    assert!(serde_json::from_str::<HarnessDescriptor>(
+        r#"{
+      "contractVersion":"saaa-service-harness.v2","revision":"r1","unknown":true,"services":[]
+    }"#
+    )
+    .is_err());
+}
+
 #[tokio::test]
 async fn resolution_marks_a_service_unavailable_when_its_health_check_fails() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

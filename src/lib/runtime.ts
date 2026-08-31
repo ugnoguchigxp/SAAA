@@ -24,7 +24,6 @@ import type {
 } from "./contracts";
 import { validateSettingsDocuments } from "./schemas";
 export { deleteProviderApiKey, getProviderCredentialState, resolveServiceHarness, setProviderApiKey } from "./providerRuntime";
-export { transcribeAudio, transcribeAudioChunk } from "./voiceRuntime";
 export { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } from "./voiceAsrRuntime";
 
 export async function listCodexModels(): Promise<CodexModelOption[]> {
@@ -130,14 +129,20 @@ export async function saveSettingsDocuments(
   });
 }
 
+export async function setVoiceListeningEnabled(enabled: boolean): Promise<SettingsDocument> {
+  return invoke<SettingsDocument>("set_voice_listening_enabled", { input: { enabled } });
+}
+
 export async function createConversation(taskMode: TaskMode): Promise<Conversation> {
   return invoke<Conversation>("create_conversation", {
     input: { taskMode, title: null },
   });
 }
 
-export async function listMessages(conversationId: string): Promise<ConversationMessage[]> {
-  return invoke<ConversationMessage[]>("list_messages", { conversationId });
+export async function listMessages(conversationId: string, offset: number): Promise<{ messages: ConversationMessage[]; hasMore: boolean }> {
+  return invoke<{ messages: ConversationMessage[]; hasMore: boolean }>("list_messages", {
+    input: { conversationId, offset },
+  });
 }
 
 export async function appendMessage(input: {

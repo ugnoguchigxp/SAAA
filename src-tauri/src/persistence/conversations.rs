@@ -1,11 +1,12 @@
 use rusqlite::{params, Connection};
 
-use crate::ipc_contract::ConversationMessage;
+use crate::ipc_contract::{ConversationMessage, ConversationMessagePage};
 use crate::{
     database_error, memory, now_iso, validate_identifier, Conversation, PRIMARY_CONVERSATION_ID,
     PRIMARY_CONVERSATION_TITLE,
 };
 
+#[cfg(test)]
 pub(crate) fn list_messages_from_connection(
     connection: &Connection,
     conversation_id: &str,
@@ -57,6 +58,45 @@ pub(crate) fn list_messages_from_connection(
         }
     }
     Ok(messages)
+}
+
+pub(crate) fn list_message_page_from_connection(
+    connection: &Connection,
+    conversation_id: &str,
+    offset: u64,
+    page_size: u64,
+) -> Result<ConversationMessagePage, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, conversation_id, role, content, created_at
+             FROM (
+               SELECT rowid AS ordinal, id, conversation_id, role, content, created_at
+               FROM conversation_messages
+               WHERE conversation_id = ?1
+               ORDER BY CAST(created_at AS INTEGER) DESC, rowid DESC
+               LIMIT ?2 OFFSET ?3
+             )
+             ORDER BY CAST(created_at AS INTEGER) ASC, ordinal ASC",
+        )
+        .map_err(database_error)?;
+    let mut messages = statement
+        .query_map(params![conversation_id, page_size + 1, offset], |row| {
+            Ok(ConversationMessage {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                role: row.get(2)?,
+                content: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    let has_more = messages.len() > page_size as usize;
+    if has_more {
+        messages.remove(0);
+    }
+    Ok(ConversationMessagePage { messages, has_more })
 }
 
 pub(crate) fn ensure_primary_conversation(connection: &Connection) -> Result<Conversation, String> {
@@ -248,5 +288,68 @@ mod tests {
                 .expect_err("legacy normal write is rejected")
                 .contains("primary conversation")
         );
+    }
+
+    #[test]
+    fn message_pages_start_at_the_latest_ten_and_load_older_messages_in_tens() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        connection
+            .execute(
+                "INSERT INTO conversations(id, task_mode, created_at, updated_at)
+                 VALUES ('conversation_history', 'coding', '1', '1')",
+                [],
+            )
+            .expect("conversation inserts");
+        for index in 1..=25 {
+            connection
+                .execute(
+                    "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                     VALUES (?1, 'conversation_history', 'user', ?2, ?3)",
+                    params![format!("message_{index}"), format!("message {index}"), index.to_string()],
+                )
+                .expect("message inserts");
+        }
+
+        let latest = list_message_page_from_connection(&connection, "conversation_history", 0, 10)
+            .expect("latest page loads");
+        let earlier =
+            list_message_page_from_connection(&connection, "conversation_history", 10, 10)
+                .expect("earlier page loads");
+        let oldest = list_message_page_from_connection(&connection, "conversation_history", 20, 10)
+            .expect("oldest page loads");
+
+        assert_eq!(
+            latest
+                .messages
+                .first()
+                .map(|message| message.content.as_str()),
+            Some("message 16")
+        );
+        assert_eq!(
+            latest
+                .messages
+                .last()
+                .map(|message| message.content.as_str()),
+            Some("message 25")
+        );
+        assert!(latest.has_more);
+        assert_eq!(
+            earlier
+                .messages
+                .first()
+                .map(|message| message.content.as_str()),
+            Some("message 6")
+        );
+        assert_eq!(
+            earlier
+                .messages
+                .last()
+                .map(|message| message.content.as_str()),
+            Some("message 15")
+        );
+        assert!(earlier.has_more);
+        assert_eq!(oldest.messages.len(), 5);
+        assert!(!oldest.has_more);
     }
 }

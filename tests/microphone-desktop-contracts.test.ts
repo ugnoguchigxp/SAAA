@@ -15,6 +15,7 @@ function chatVoiceSource(): string {
     ),
     readFileSync(join(import.meta.dir, "../src/features/voice/voiceAsrPacketizer.ts"), "utf8"),
     readFileSync(join(import.meta.dir, "../src/features/voice/voiceAsrPacketSender.ts"), "utf8"),
+    readFileSync(join(import.meta.dir, "../src/features/voice/voiceSegmentBoundary.ts"), "utf8"),
     readFileSync(
       join(import.meta.dir, "../src/features/chat/ChatPage.tsx"),
       "utf8",
@@ -44,18 +45,21 @@ describe("macOS microphone bundle configuration", () => {
     );
     expect(info).toContain("NSMicrophoneUsageDescription");
     expect(entitlements).toContain("com.apple.security.device.audio-input");
+    expect(config.bundle.macOS.infoPlist).toBe("Info.plist");
     expect(config.bundle.macOS.entitlements).toBe("Entitlements.plist");
   });
 
   test("verifies the packaged purpose string in desktop smoke", () => {
-    const smoke = readFileSync(
+    const smoke = [readFileSync(
       join(import.meta.dir, "../scripts/desktop-smoke.ts"),
       "utf8",
-    );
+    ), readFileSync(join(import.meta.dir, "../scripts/macos-bundle-smoke.ts"), "utf8")].join("\n");
     expect(smoke).toContain('"NSMicrophoneUsageDescription"');
     expect(smoke).toContain(
       "packaged Info.plist has no microphone usage description",
     );
+    expect(smoke).toContain("packaged app identity does not match tauri.conf.json");
+    expect(smoke).toContain("signed app has no audio-input entitlement");
   });
 
   test("routes every frontend microphone entry point through the checked boundary", () => {
@@ -135,7 +139,7 @@ describe("macOS microphone bundle configuration", () => {
     );
     expect(app).toContain('applyEvent({ type: "captureStarting" })');
     expect(app).toContain("await finishVoiceCapture(false)");
-    expect(app).toContain("void finishVoiceCapture(true)");
+    expect(app).toContain("void finishVoiceCapture(true, reason)");
   });
 
   test("auto-finalizes each chat voice segment while keeping the microphone open", () => {
@@ -157,13 +161,17 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain(
       "const observation = context.activityDetector.current?.observe(event.data)",
     );
-    expect(app).toContain("observation.shouldFinalize");
+    expect(app).toContain("voiceSegmentCommitReason(observation, context.packetCount())");
+    expect(app).toContain("observation?.hasSpeech && observation.shouldFinalize");
     expect(app).toContain("context.packetFrame(event.data)");
     expect(app).toContain("VoiceAsrPacketizer");
     expect(app).toContain("VoiceAsrPacketSender");
     expect(app).toContain("voiceAsrPacketizerRef.current.append(frame)");
-    expect(app).toContain("void finishVoiceCapture(true)");
-    expect(app).toContain("await sender.enqueueCommit(\"silence\")");
+    expect(app).toContain("void finishVoiceCapture(true, reason)");
+    expect(app).toContain("const commit = sender.enqueueCommit(reason)");
+    expect(app.indexOf("voiceAsrPacketCountRef.current = 0")).toBeLessThan(
+      app.indexOf("await commit"),
+    );
     expect(chatPage).toContain('t("chat.listeningHint"');
     expect(chatPage).toContain('t("chat.micPause")');
     expect(chatPage).not.toContain("filterEnabled");
@@ -178,7 +186,7 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain("export function useAmbientVoiceSession");
     expect(app).toContain("void attachVoiceCapture()");
     expect(app).toContain("voiceSessionProcessing");
-    expect(app).toContain("if (!enabled) void pauseAmbientCapture()");
+    expect(app).toContain("if (!enabled) void pauseAmbientCapture(false)");
     expect(app).toContain("|| !context.listeningEnabled.current");
     expect(app).toContain("restartCaptureForInputDeviceChange(inputDeviceId)");
     expect(app).toContain("voiceSettingsRef.current?.inputDeviceId !== inputDeviceId");
@@ -200,6 +208,46 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain('disabled={!composer.trim() || !selectedConversation}');
   });
 
+  test("requests first-use permission from the user action and persists pause/resume immediately", () => {
+    const app = chatVoiceSource();
+    const toggle = app.slice(
+      app.indexOf("async function toggleAmbientListening("),
+      app.indexOf("async function restartCaptureForInputDeviceChange"),
+    );
+    expect(toggle.indexOf("requestMicrophoneStream(")).toBeLessThan(
+      toggle.indexOf("persistListeningEnabled(true)"),
+    );
+    expect(toggle).toContain("persistListeningEnabled(false)");
+    expect(app).toContain("setVoiceListeningEnabled(enabled)");
+  });
+
+  test("closes ASR after microphone startup failure and retries one stale session once", () => {
+    const app = chatVoiceSource();
+    const attach = app.slice(
+      app.indexOf("async function attachVoiceCapture()"),
+      app.indexOf("async function suspendVoice"),
+    );
+    expect(attach).toContain('toMessage(cause) !== "asr-session-exists"');
+    expect(attach).toContain("await start(true)");
+    expect(attach).toContain("await detachVoiceCapture(false)");
+    expect(attach).toContain('applyVoiceEvent({ type: "captureDetached" })');
+    expect(attach.indexOf("voiceAsrSessionIdRef.current = sessionId")).toBeLessThan(
+      attach.indexOf("await start(false)"),
+    );
+    expect(attach).toContain("voiceAsrSessionIdRef.current !== sessionId");
+    expect(attach).toContain("!acceptedVoiceAsrSessionsRef.current.has(sessionId)");
+  });
+
+  test("resolves stop barriers even after a conversation rejects the old session", () => {
+    const app = chatVoiceSource();
+    const handler = app.slice(
+      app.indexOf("function handleVoiceAsrEvent("),
+      app.indexOf("async function terminateFailedVoiceCapture"),
+    );
+    expect(handler.indexOf("voiceAsrStopWaitersRef.current.get(event.sessionId)?.resolve()"))
+      .toBeLessThan(handler.indexOf("acceptedVoiceAsrSessionsRef.current.has(event.sessionId)"));
+  });
+
   test("hands microphone ownership to Meeting before preflight capture", () => {
     const meeting = readFileSync(
       join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
@@ -217,10 +265,10 @@ describe("macOS microphone bundle configuration", () => {
   test("keeps automatic voice turns connected to LLM submission and response speech", () => {
     const app = chatVoiceSource();
     expect(app).toContain(
-      'void submitPrompt(queued.text, { inputOrigin: "voice" })',
+      'void submitPrompt(queued.text, { inputOrigin: "voice", sourceId: queued.utteranceId, onSettled })',
     );
     expect(app).toContain(
-      'pendingVoicePromptsRef.current.push({ content: queued.text, inputOrigin: "voice", sourceId: queued.utteranceId })',
+      'pendingVoicePromptsRef.current.push({ content: queued.text, inputOrigin: "voice", sourceId: queued.utteranceId, onSettled })',
     );
     expect(app).toContain("voiceSettings?.autoSpeak");
     expect(app).toContain('case "speechStarted":');
@@ -234,13 +282,13 @@ describe("macOS microphone bundle configuration", () => {
   test("stops future capture without discarding finalized transcription", () => {
     const app = chatVoiceSource();
     const pause = app.slice(
-      app.indexOf("async function pauseAmbientCapture()"),
+      app.indexOf("async function pauseAmbientCapture("),
       app.indexOf("async function attachVoiceCapture()"),
     );
     expect(pause).toContain("await finishVoiceCapture(false)");
     expect(pause).not.toContain("cancelRun");
     expect(pause).not.toContain("voiceSegmentQueueRef.current.clear()");
-    expect(app).toContain('void submitPrompt(queued.text, { inputOrigin: "voice" })');
+    expect(app).toContain('void submitPrompt(queued.text, { inputOrigin: "voice", sourceId: queued.utteranceId, onSettled })');
   });
 
   test("sends chat PCM through the bounded raw ASR sender", () => {
@@ -248,6 +296,7 @@ describe("macOS microphone bundle configuration", () => {
     expect(app).toContain("voiceAsrPacketizerRef.current.append(frame)");
     expect(app).toContain("sender.enqueueAudio(packet)");
     expect(app).toContain("voiceAsrPacketizerRef.current.flushPadded()");
+    expect(app).toContain("event.data.fill(0)");
   });
 
   test("blocks chat capture while Meeting is still in preflight", () => {

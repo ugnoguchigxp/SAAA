@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyMacBundle } from "./macos-bundle-smoke";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const buildArguments = process.platform === "darwin"
@@ -11,16 +12,10 @@ const build = Bun.spawn(buildArguments, { cwd: root, stdout: "inherit", stderr: 
 if (await build.exited !== 0) process.exit(1);
 
 if (process.platform === "darwin") {
-  const infoPlist = join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/Info.plist");
-  const plistCheck = Bun.spawn(
-    ["/usr/bin/plutil", "-extract", "NSMicrophoneUsageDescription", "raw", "-o", "-", infoPlist],
-    { cwd: root, stdout: "pipe", stderr: "inherit" },
-  );
-  const microphonePurpose = (await new Response(plistCheck.stdout).text()).trim();
-  if (await plistCheck.exited !== 0 || microphonePurpose.length === 0) {
-    console.error("Desktop smoke failed: packaged Info.plist has no microphone usage description.");
+  await verifyMacBundle(root).catch((cause) => {
+    console.error(cause instanceof Error ? cause.message : String(cause));
     process.exit(1);
-  }
+  });
 }
 
 const executable = process.platform === "darwin"

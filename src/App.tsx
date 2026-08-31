@@ -19,7 +19,7 @@ import { uiMessage } from "./i18n/presentation";
 import { resolveModelProviderStatus } from "./lib/conversationRouting";
 import type { ConversationRuntimeActivity } from "./lib/conversationActivity";
 import { initialConversationSession, type ConversationSession, type PendingConversationPrompt, type SubmitPromptOptions } from "./lib/conversationSession";
-import { getAppSnapshot, reportFrontendReady, reportOwnedSignal } from "./lib/runtime";
+import { getAppSnapshot, reportFrontendReady, reportOwnedSignal, setVoiceListeningEnabled } from "./lib/runtime";
 
 const initialSnapshot: AppSnapshot = { settings: [], conversations: [], primaryConversationId: "", effectiveRoute: { providerId: null, label: "Model not selected", location: null, state: "unchecked", fallbackUsed: false, reasonCode: "snapshot-loading", updatedAt: null }, larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" }, voiceProfile: { status: "empty", filterEnabled: false, runtimeAvailable: false, runtimeMessage: "Loading local speaker verification…", sampleCount: 0, targetSampleCount: 5, totalDurationMs: 0, minimumDurationMs: 20_000, threshold: 0.55, samples: [] } };
 const SettingsPage = lazy(() => import("./features/settings/SettingsPage").then(({ SettingsPage }) => ({ default: SettingsPage })));
@@ -40,6 +40,8 @@ function App() {
   const conversationSessionRef = useRef<ConversationSession>(initialConversationSession);
   const submitPromptRef = useRef<(prompt: string, options?: SubmitPromptOptions) => Promise<void>>(async () => {});
   const stopSpeechRef = useRef<() => Promise<void>>(async () => {});
+  const suspendVoiceForSpeechRef = useRef<(runId: string) => Promise<boolean>>(async () => false);
+  const resumeVoiceAfterSpeechRef = useRef<(runId: string) => Promise<void>>(async () => {});
   const setRuntimeActivityRef = useRef<Dispatch<SetStateAction<ConversationRuntimeActivity[]>>>(() => {});
   const selectedConversation = snapshot.conversations.find(
     (conversation) => conversation.id === selectedConversationId,
@@ -65,9 +67,21 @@ function App() {
   const setConversationError = errorSetter("conversation");
   const setVoiceError = errorSetter("voice");
 
+  const turn = useConversationTurn({
+    selectedConversationId,
+    voiceSettings,
+    meetingState,
+    pendingVoicePromptsRef,
+    conversationSessionRef,
+    suspendVoiceForSpeech: (runId) => suspendVoiceForSpeechRef.current(runId),
+    resumeVoiceAfterSpeech: (runId) => resumeVoiceAfterSpeechRef.current(runId),
+    setSnapshot,
+    setError: setConversationError,
+  });
   const voice = useAmbientVoiceSession({
     selectedConversationId,
     voiceSettings,
+    voicePolicy: turn.voicePolicy,
     meetingState,
     conversationSessionRef,
     pendingVoicePromptsRef,
@@ -75,18 +89,18 @@ function App() {
     setRuntimeActivity: (value) => setRuntimeActivityRef.current(value),
     stopSpeech: () => stopSpeechRef.current(),
     submitPrompt: (prompt, options) => submitPromptRef.current(prompt, options),
+    persistListeningEnabled: async (enabled) => {
+      const document = await setVoiceListeningEnabled(enabled);
+      setSnapshot((current) => ({
+        ...current,
+        settings: current.settings.some((item) => item.namespace === document.namespace && item.key === document.key)
+          ? current.settings.map((item) => item.namespace === document.namespace && item.key === document.key ? document : item)
+          : [...current.settings, document],
+      }));
+    },
   });
-  const turn = useConversationTurn({
-    selectedConversationId,
-    voiceSettings,
-    meetingState,
-    pendingVoicePromptsRef,
-    conversationSessionRef,
-    suspendVoiceForSpeech: voice.suspendVoiceForSpeech,
-    resumeVoiceAfterSpeech: voice.resumeVoiceAfterSpeech,
-    setSnapshot,
-    setError: setConversationError,
-  });
+  suspendVoiceForSpeechRef.current = voice.suspendVoiceForSpeech;
+  resumeVoiceAfterSpeechRef.current = voice.resumeVoiceAfterSpeech;
   submitPromptRef.current = turn.submitPrompt;
   stopSpeechRef.current = turn.stopSpeech;
   setRuntimeActivityRef.current = turn.setRuntimeActivity;
@@ -195,7 +209,7 @@ function App() {
     </aside>
 
     <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} conversationBusy={voiceProcessing || Boolean(activeRunId) || Boolean(activeTtsRunId)} onBeforeCapture={voice.suspendVoiceForMeeting} onStateChanged={setMeetingState} /></div>
-    <Suspense fallback={<main className="boot-screen">{t("app.booting")}</main>}>{surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} voiceProfile={snapshot.voiceProfile} voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)} onSaved={(settings) => { setSnapshot((current) => ({ ...current, settings })); void refreshSnapshot(); }} onVoiceProfileChanged={(voiceProfile) => setSnapshot((current) => ({ ...current, voiceProfile }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} timeZone={regionalTimeZone} /> : surface === "chat" ? <ChatPage messages={turn.messages} streamingText={turn.streamingText} interimTranscript={voice.interimTranscript} voiceState={voiceState} listeningEnabled={voice.listeningEnabled} runtimeActivity={turn.runtimeActivity} composer={composer} onComposerChange={turn.setComposer} onSubmit={(event) => void turn.handleSubmit(event)} onToggleVoice={() => void voice.toggleAmbientListening()} voiceStarting={voice.voiceStarting} meetingActive={meetingActive} activeRunId={activeRunId} modelProviderStatus={modelProviderStatus} onOpenSettings={() => openAuxiliarySurface("settings")} onOpenMeeting={() => void openMeetingSurface()} onOpenSituation={() => openAuxiliarySurface("situation")} onStopRun={() => void turn.stopActiveRun()} onStopSpeech={() => void stopSpeech()} onRetry={() => void turn.retryFailedAction()} selectedConversation={selectedConversation} activeTtsRunId={activeTtsRunId} error={error} lastPrompt={turn.lastPrompt} retryKind={turn.retryKind} /> : null}</Suspense>
+    <Suspense fallback={<main className="boot-screen">{t("app.booting")}</main>}>{surface === "settings" ? <SettingsPage documents={snapshot.settings} larmRuntime={snapshot.larmRuntime} voiceProfile={snapshot.voiceProfile} voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)} voiceListeningEnabled={voice.listeningEnabled} voiceListeningBusy={voice.voiceActionInProgress} voiceAvailability={voice.voiceAvailability} voiceError={errors.voice} onToggleVoiceListening={(enabled) => void voice.toggleAmbientListening(enabled)} onSaved={(settings) => { setSnapshot((current) => ({ ...current, settings })); void refreshSnapshot(); }} onVoiceProfileChanged={(voiceProfile) => setSnapshot((current) => ({ ...current, voiceProfile }))} /> : surface === "situation" ? <SituationPage onSettingsChanged={refreshSnapshot} timeZone={regionalTimeZone} /> : surface === "chat" ? <ChatPage messages={turn.messages} hasMoreMessages={turn.hasMoreMessages} loadingOlderMessages={turn.loadingOlderMessages} onLoadOlderMessages={turn.loadOlderMessages} streamingText={turn.streamingText} interimTranscript={voice.interimTranscript} voiceState={voiceState} listeningEnabled={voice.listeningEnabled} runtimeActivity={turn.runtimeActivity} composer={composer} onComposerChange={turn.setComposer} onSubmit={(event) => void turn.handleSubmit(event)} onToggleVoice={() => void voice.toggleAmbientListening()} voiceStarting={voice.voiceStarting} meetingActive={meetingActive} activeRunId={activeRunId} modelProviderStatus={modelProviderStatus} onOpenSettings={() => openAuxiliarySurface("settings")} onOpenMeeting={() => void openMeetingSurface()} onOpenSituation={() => openAuxiliarySurface("situation")} onStopRun={() => void turn.stopActiveRun()} onStopSpeech={() => void stopSpeech()} onRetry={() => void turn.retryFailedAction()} selectedConversation={selectedConversation} activeTtsRunId={activeTtsRunId} error={error} lastPrompt={turn.lastPrompt} retryKind={turn.retryKind} voicePolicy={turn.voicePolicy} voicePolicyUpdating={turn.voicePolicyUpdating} onSetConversationSpeechOutput={(value) => void turn.setConversationSpeechOutput(value)} onSetConversationListeningPace={(value) => void turn.setConversationListeningPace(value)} onResetConversationVoiceOverrides={() => void turn.resetConversationVoiceOverrides()} /> : null}</Suspense>
   </main>;
 }
 

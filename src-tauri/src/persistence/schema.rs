@@ -156,6 +156,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     memory::recall::migrate_v9_to_v10(&transaction)?;
     voice::profile::migrate_v10_to_v11(&transaction)?;
     memory::control_plane::migrate_v11_to_v12(&transaction)?;
+    crate::voice_behavior::migrate(&transaction)?;
     ensure_provider_configuration_fingerprint(&transaction)?;
     transaction.execute("UPDATE settings_documents SET schema_version = 9, updated_at = ?1 WHERE schema_version < 9", params![now_iso()])?;
 

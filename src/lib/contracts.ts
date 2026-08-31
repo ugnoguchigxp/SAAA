@@ -1,7 +1,9 @@
 export type {
   ConversationMessage,
+  ConversationVoicePolicySnapshot,
   RuntimeEvent,
   RuntimeFailureCode,
+  VoicePresentationDecision,
 } from "./generated/runtimeEvent";
 import { isAsrLanguageCode } from "./asrLanguages";
 import {
@@ -39,7 +41,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 12;
+  schemaVersion: 13;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };
@@ -137,12 +139,6 @@ export type LocalArtifactResult = {
   path: string;
   createdAt: string;
 };
-
-export type VoiceEvent =
-  | { type: "transcribing"; runId: string }
-  | { type: "transcriptFinal"; runId: string; text: string }
-  | { type: "cancelled"; runId: string }
-  | { type: "failed"; runId: string; message: string; recovery: string };
 
 export type SignalHealth = "ready" | "disabled" | "permission-denied" | "unsupported" | "degraded";
 export type ForegroundCategory = "communication" | "coding" | "writing" | "browser" | "media" | "sensitive" | "other" | "unknown";

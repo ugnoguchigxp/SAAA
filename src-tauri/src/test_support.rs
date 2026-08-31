@@ -28,6 +28,7 @@ pub(crate) fn app_state(connection: Connection) -> AppState {
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
         tts_process: Mutex::new(None),
         streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+        voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),
         situation: Arc::new(
             situation::SituationRuntime::new(settings, None)
                 .expect("Situation runtime initializes"),

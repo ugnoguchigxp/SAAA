@@ -1,6 +1,5 @@
 import type { MutableRefObject } from "react";
 import { isMeetingBlocking } from "../../lib/appHelpers";
-import { uiMessage } from "../../i18n/presentation";
 import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
 import type { MeetingState, VoiceSettings } from "../../lib/contracts";
 import {
@@ -12,8 +11,8 @@ import {
 } from "../../lib/microphone";
 import { VoiceActivityDetector } from "../../lib/voiceActivity";
 import type { VoiceSessionEvent } from "../../lib/voiceSession";
-
-const MAX_VOICE_SEGMENT_SECONDS = 30;
+import type { CommitReason } from "./voiceAsrPacketSender";
+import { voiceSegmentCommitReason } from "./voiceSegmentBoundary";
 
 function detector(settings: VoiceSettings, sampleRate: number): VoiceActivityDetector {
   const speechThresholdRms = settings.vadSensitivity === "high" ? 0.006 : settings.vadSensitivity === "low" ? 0.012 : 0.008;
@@ -34,11 +33,10 @@ export async function attachAmbientVoiceCapture(context: {
   activityDetector: MutableRefObject<VoiceActivityDetector | null>;
   captureLease: MutableRefObject<(() => void) | null>;
   applyEvent: (event: VoiceSessionEvent) => unknown;
-  finishSegment: () => void;
+  finishSegment: (reason: CommitReason) => void;
   packetFrame: (frame: Float32Array) => void;
   packetCount: () => number;
   clearTranscript: () => void;
-  setError: (message: string) => void;
 }): Promise<void> {
   if (context.disposed.current || context.stream.current || context.captureLease.current) return;
   if (!context.listeningEnabled.current || isMeetingBlocking(context.meetingState.current)) return;
@@ -108,12 +106,14 @@ export async function attachAmbientVoiceCapture(context: {
         if (event.data.type === "flushed") context.flushResolver.current?.();
         return;
       }
-      // ASR receives every frame before VAD; VAD only decides commit boundaries.
-      context.packetFrame(event.data);
-      const observation = context.activityDetector.current?.observe(event.data);
-      if (observation?.hasSpeech && (observation.shouldFinalize || context.packetCount() >= MAX_VOICE_SEGMENT_SECONDS * 10)) {
-        context.finishSegment();
-        return;
+      try {
+        // ASR receives every frame before VAD; VAD only decides commit boundaries.
+        context.packetFrame(event.data);
+        const observation = context.activityDetector.current?.observe(event.data);
+        const reason = voiceSegmentCommitReason(observation, context.packetCount());
+        if (reason) context.finishSegment(reason);
+      } finally {
+        event.data.fill(0);
       }
     };
     source.connect(node);
@@ -132,10 +132,7 @@ export async function attachAmbientVoiceCapture(context: {
     }
     await disposeOwnedCapture();
     if (context.disposed.current) return;
-    context.setError(cause instanceof MicrophoneCaptureError
-      ? cause.message
-      : uiMessage("chatVoiceCaptureInitializationFailed"));
-    context.applyEvent({ type: "captureDetached" });
+    throw cause;
   }
 }
 

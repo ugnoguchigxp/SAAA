@@ -14,6 +14,8 @@ describe("streaming response speech", () => {
       type: "messageCompleted",
       runId: "run_1",
       message: { id: "message_1", conversationId: "conversation", role: "assistant", content: "complete answer", createdAt: "1" },
+      presentation: { decision: "speak", reasonCode: "global_default" },
+      voicePolicy: null,
     };
     expect(completed.type).toBe("messageCompleted");
   });

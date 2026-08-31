@@ -14,8 +14,8 @@
     "test": "bun run test:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
     "size:check": "bun scripts/module-size.ts check",
     "check": "bun run size:check && bun run s11tnext:check && bun run quality:check && bun run ipc:check && bun run typecheck && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && bun run test",
-    "ipc:generate": "cargo run --manifest-path src-tauri/Cargo.toml --example export_ipc_bindings",
-    "ipc:check": "cargo test --manifest-path src-tauri/Cargo.toml --test ipc_contract_bindings",
+    "ipc:generate": "cargo run --manifest-path src-tauri/Cargo.toml --example export_ipc_bindings && cargo run --manifest-path src-tauri/Cargo.toml --example export_voice_asr_bindings",
+    "ipc:check": "cargo test --manifest-path src-tauri/Cargo.toml --test ipc_contract_bindings --test voice_asr_contract_bindings",
     "s11tnext:lint": "s11tnext lint --release-profile development",
     "s11tnext:build": "s11tnext build --release-profile development && bun scripts/render-system-contexts.ts",
     "s11tnext:check": "s11tnext build --check --release-profile development && bun scripts/render-system-contexts.ts --check",
@@ -46,6 +46,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-i18next": "17.0.9",
+    "react-markdown": "^10.1.0",
     "s11tnext": "0.1.2",
     "zod": "^4.4.3"
   },

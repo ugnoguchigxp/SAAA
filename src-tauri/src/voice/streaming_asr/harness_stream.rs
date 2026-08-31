@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
+    connect_async_with_config,
+    tungstenite::{
+        client::IntoClientRequest, http::HeaderValue, protocol::WebSocketConfig, Message,
+    },
     MaybeTlsStream, WebSocketStream,
 };
 
@@ -13,7 +15,11 @@ pub(crate) const PACKET_BYTES: usize = 3_200;
 pub(crate) const MAX_TEXT_BYTES: usize = 65_536;
 
 #[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum ClientEvent<'a> {
     Start {
         contract_version: &'static str,
@@ -35,7 +41,12 @@ pub(crate) enum ClientEvent<'a> {
     },
 }
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub(crate) enum ProviderEvent {
     Ready {
         session_id: String,
@@ -115,20 +126,17 @@ pub(crate) async fn connect(
     descriptor: &AsrStreamingDescriptor,
 ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String> {
     validate_descriptor(descriptor)?;
-    let mut request = descriptor
-        .url
-        .clone()
-        .into_client_request()
-        .map_err(|_| "asr-stream-protocol".to_string())?;
-    request.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        HeaderValue::from_static(STREAM_PROTOCOL),
-    );
-    let (socket, response) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), connect_async(request))
-            .await
-            .map_err(|_| "asr-stream-timeout".to_string())?
-            .map_err(|_| "asr-stream-protocol".to_string())?;
+    let request = stream_request(descriptor)?;
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_TEXT_BYTES))
+        .max_frame_size(Some(MAX_TEXT_BYTES));
+    let (socket, response) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        connect_async_with_config(request, Some(config), false),
+    )
+    .await
+    .map_err(|_| "asr-stream-timeout".to_string())?
+    .map_err(|_| "asr-stream-protocol".to_string())?;
     if response
         .headers()
         .get("Sec-WebSocket-Protocol")
@@ -138,6 +146,22 @@ pub(crate) async fn connect(
         return Err("asr-stream-protocol".to_string());
     }
     Ok(socket)
+}
+
+fn stream_request(
+    descriptor: &AsrStreamingDescriptor,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, String> {
+    validate_descriptor(descriptor)?;
+    let mut request = descriptor
+        .url
+        .clone()
+        .into_client_request()
+        .map_err(|_| "asr-stream-protocol".to_string())?;
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static(STREAM_PROTOCOL),
+    );
+    Ok(request)
 }
 pub(crate) fn audio_message(bytes: Vec<u8>) -> Result<Message, String> {
     if bytes.len() == PACKET_BYTES {
@@ -163,9 +187,63 @@ mod tests {
         })
         .unwrap();
         assert!(event.contains(STREAM_PROTOCOL));
+        assert!(event.contains("\"contractVersion\""));
+    }
+    #[test]
+    fn websocket_request_requires_the_exact_subprotocol() {
+        let descriptor = AsrStreamingDescriptor {
+            protocol: STREAM_PROTOCOL.to_string(),
+            url: "ws://127.0.0.1:9810/asr".to_string(),
+            sample_rate: 16_000,
+            encoding: "pcm_s16le".to_string(),
+            packet_milliseconds: 100,
+        };
+        let request = stream_request(&descriptor).unwrap();
+        assert_eq!(
+            request.headers().get("Sec-WebSocket-Protocol").unwrap(),
+            STREAM_PROTOCOL
+        );
     }
     #[test]
     fn rejects_unknown_provider_event() {
         assert!(decode_provider_event(br#"{"type":"wat"}"#).is_err());
+    }
+    #[test]
+    fn rejects_unknown_fields_and_oversized_text_frames() {
+        assert!(decode_provider_event(
+            br#"{"type":"ready","sessionId":"s","utteranceId":"u","extra":true}"#
+        )
+        .is_err());
+        assert!(decode_provider_event(&vec![b'x'; MAX_TEXT_BYTES + 1]).is_err());
+    }
+    #[test]
+    fn commit_and_stop_are_typed_and_audio_is_exactly_one_packet() {
+        let commit = encode_client_event(&ClientEvent::Commit {
+            utterance_id: "u1",
+            next_utterance_id: "u2",
+            end_sample: 1_600,
+        })
+        .unwrap();
+        assert!(commit.contains("\"endSample\":1600"));
+        assert!(audio_message(vec![0; PACKET_BYTES]).is_ok());
+        assert!(audio_message(vec![0; PACKET_BYTES - 1]).is_err());
+    }
+    #[test]
+    fn decodes_partial_final_and_no_speech_with_camel_case_samples() {
+        let partial = decode_provider_event(br#"{"type":"partial","sessionId":"s","utteranceId":"u","revision":1,"startSample":0,"endSample":1600,"stableText":"a","unstableText":"b","language":"en"}"#).unwrap();
+        assert!(matches!(
+            partial,
+            ProviderEvent::Partial {
+                end_sample: 1_600,
+                ..
+            }
+        ));
+        let final_event = decode_provider_event(br#"{"type":"final","sessionId":"s","utteranceId":"u","revision":2,"startSample":0,"endSample":1600,"text":"ab","language":"en"}"#).unwrap();
+        assert!(matches!(
+            final_event,
+            ProviderEvent::Final { revision: 2, .. }
+        ));
+        let no_speech = decode_provider_event(br#"{"type":"noSpeech","sessionId":"s","utteranceId":"u","revision":1,"startSample":0,"endSample":1600}"#).unwrap();
+        assert!(matches!(no_speech, ProviderEvent::NoSpeech { .. }));
     }
 }

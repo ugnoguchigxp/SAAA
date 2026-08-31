@@ -5,7 +5,7 @@ mod provider_validation;
 pub(crate) mod regional_preferences;
 pub(crate) use provider_validation::validate_model_providers;
 
-pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 12;
+pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 13;
 const DEFAULT_CONVERSATION_TIMEOUT_MS: u64 = 1_800_000;
 const MAX_CONVERSATION_TIMEOUT_MS: u64 = 3_600_000;
 
@@ -42,6 +42,41 @@ pub(crate) fn load_voice_settings(connection: &Connection) -> Result<VoiceRuntim
         .map_err(|error| format!("Could not decode voice settings: {error}"))?;
     validate_voice_settings(&settings)?;
     Ok(settings)
+}
+
+pub(crate) fn set_voice_listening_enabled_to_connection(
+    connection: &Connection,
+    enabled: bool,
+) -> Result<SettingsDocument, String> {
+    let mut document = read_settings_document(connection, "voice.runtime", "default")?;
+    let mut settings = serde_json::from_value::<VoiceRuntimeSettings>(document.value_json.clone())
+        .map_err(|error| format!("Could not decode voice settings: {error}"))?;
+    settings.listening_enabled = enabled;
+    validate_voice_settings(&settings)?;
+    document.value_json = serde_json::to_value(settings)
+        .map_err(|error| format!("Could not encode voice settings: {error}"))?;
+    let value_text = serde_json::to_string(&document.value_json)
+        .map_err(|error| format!("Could not encode voice settings: {error}"))?;
+    connection
+        .execute(
+            "UPDATE settings_documents
+             SET schema_version=?1, value_json=?2, updated_at=?3
+             WHERE namespace='voice.runtime' AND key='default'",
+            params![SETTINGS_SCHEMA_VERSION, value_text, now_iso()],
+        )
+        .map_err(database_error)?;
+    read_settings_document(connection, "voice.runtime", "default")
+}
+
+pub(crate) fn set_voice_listening_enabled(
+    state: &crate::AppState,
+    enabled: bool,
+) -> Result<SettingsDocument, String> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| "Database lock unavailable".to_string())?;
+    set_voice_listening_enabled_to_connection(&connection, enabled)
 }
 
 pub(crate) fn load_routing_settings(connection: &Connection) -> Result<RoutingSettings, String> {
@@ -186,7 +221,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             "default",
             SETTINGS_SCHEMA_VERSION,
             json!({
-                "listeningEnabled": true,
+                "listeningEnabled": false,
                 "inputDeviceId": "default",
                 "outputDeviceId": "default",
                 "vadSensitivity": "medium",
@@ -623,6 +658,24 @@ mod tests {
         assert_eq!(
             routing.3.pointer("/conversationRespond/timeoutMs"),
             Some(&json!(1_800_000))
+        );
+    }
+
+    #[test]
+    fn ambient_listening_requires_consent_and_persists_immediately() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let defaults = load_voice_settings(&connection).expect("voice settings load");
+        assert!(!defaults.listening_enabled);
+
+        let enabled = set_voice_listening_enabled_to_connection(&connection, true)
+            .expect("listening preference saves");
+        assert_eq!(enabled.value_json["listeningEnabled"], true);
+        assert_eq!(enabled.schema_version, SETTINGS_SCHEMA_VERSION);
+        assert!(
+            load_voice_settings(&connection)
+                .expect("updated voice settings load")
+                .listening_enabled
         );
     }
 

@@ -5,10 +5,17 @@ export type ConversationSession = {
 
 export type InputOrigin = "text" | "voice";
 export type PresentationMode = "visual" | "visual-and-spoken";
-export type PendingConversationPrompt = { content: string; inputOrigin: InputOrigin; sourceId?: string };
+export type PendingConversationPrompt = {
+  content: string;
+  inputOrigin: InputOrigin;
+  sourceId?: string;
+  onSettled?: (delivered: boolean) => void;
+};
 export type SubmitPromptOptions = {
   retryInputMessageId?: string | null;
   inputOrigin?: InputOrigin;
+  sourceId?: string;
+  onSettled?: (delivered: boolean) => void;
 };
 
 export type ConversationSessionEvent =

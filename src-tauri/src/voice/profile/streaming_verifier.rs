@@ -16,11 +16,11 @@ pub(crate) struct PreparedVoiceVerifier {
 }
 #[allow(dead_code)]
 impl PreparedVoiceVerifier {
-    pub(crate) fn score(&self, samples_16k: Vec<f32>) -> Result<f32, String> {
+    pub(crate) fn score(&self, samples_16k: Zeroizing<Vec<f32>>) -> Result<f32, String> {
         if samples_16k.len() > CANONICAL_SAMPLE_RATE as usize * 2 {
             return Err("TARGET_SPEAKER_REJECTED: speaker window is too long".to_string());
         }
-        let candidate = Zeroizing::new(self.extractor.embed(samples_16k)?);
+        let candidate = Zeroizing::new(self.extractor.embed(samples_16k.to_vec())?);
         let score = self
             .references
             .iter()
@@ -31,6 +31,10 @@ impl PreparedVoiceVerifier {
         } else {
             Err("TARGET_SPEAKER_REJECTED: speaker score is invalid".to_string())
         }
+    }
+
+    pub(crate) fn threshold(&self) -> f32 {
+        self.threshold
     }
 }
 impl VoiceProfileRuntime {

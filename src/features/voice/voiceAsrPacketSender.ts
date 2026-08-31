@@ -13,16 +13,31 @@ export class VoiceAsrPacketSender {
   private commitControl: Promise<void> | null = null;
   private stopControl: Promise<void> | null = null;
   private failure: Error | null = null;
+  private pendingAudio = 0;
+  private activeAudio: Uint8Array | null = null;
+  private acceptingAudio = true;
   constructor(private readonly api: SenderApi, private readonly onFailure: (error: Error) => void = () => {}) {}
 
   enqueueAudio(bytes: Uint8Array): void {
-    if (bytes.byteLength !== AUDIO_PACKET_BYTES) throw new Error("ASR packet has an invalid byte length.");
-    if (this.failure) throw this.failure;
-    if (this.operations.filter((operation) => operation.type === "audio").length >= 10) {
+    if (bytes.byteLength !== AUDIO_PACKET_BYTES) {
+      bytes.fill(0);
+      throw new Error("ASR packet has an invalid byte length.");
+    }
+    if (this.failure) {
+      bytes.fill(0);
+      throw this.failure;
+    }
+    if (!this.acceptingAudio) {
+      bytes.fill(0);
+      throw new Error("ASR_SESSION_STOPPING");
+    }
+    if (this.pendingAudio >= 10) {
       const error = new Error("ASR_BACKPRESSURE");
+      bytes.fill(0);
       this.fail(error);
       throw error;
     }
+    this.pendingAudio += 1;
     this.operations.push({ type: "audio", bytes });
     void this.drain();
   }
@@ -31,6 +46,7 @@ export class VoiceAsrPacketSender {
     return this.enqueueControl("commit", reason);
   }
   enqueueStop(finalizeCurrent: boolean): Promise<void> {
+    this.acceptingAudio = false;
     if (this.stopControl) return this.stopControl;
     return this.enqueueControl("stop", finalizeCurrent);
   }
@@ -58,12 +74,19 @@ export class VoiceAsrPacketSender {
     try { while (this.operations.length) {
       const operation = this.operations.shift()!;
       active = operation;
-      if (operation.type === "audio") { await this.api.append(this.sequence, operation.bytes); this.sequence += 1; }
+      if (operation.type === "audio") {
+        this.activeAudio = operation.bytes;
+        await this.api.append(this.sequence, operation.bytes);
+        operation.bytes.fill(0);
+        this.activeAudio = null;
+        if (this.failure) throw this.failure;
+        this.sequence += 1;
+        this.pendingAudio -= 1;
+      }
       else if (operation.type === "commit") {
-        // The backend owns final recognition after it accepts this command.
-        // Waiting for that network-bound work would block fresh microphone
-        // packets and defeat continuous capture, so only serialize dispatch.
-        void this.api.commit(operation.reason).catch((cause) => this.fail(cause instanceof Error ? cause : new Error(String(cause))));
+        // The backend resolves commit as soon as its bounded actor queue accepts
+        // the utterance. This is the ordering barrier; final recognition remains asynchronous.
+        await this.api.commit(operation.reason);
         operation.resolve();
         this.commitControl = null;
       }
@@ -71,19 +94,23 @@ export class VoiceAsrPacketSender {
       active = null;
     } } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
-      if (active?.type !== "audio") active?.reject(error);
+      if (active?.type === "audio") active.bytes.fill(0);
+      else active?.reject(error);
       this.fail(error);
     } finally { this.draining = false; }
   }
   private fail(error: Error): void {
     if (this.failure) return;
     this.failure = error;
+    this.activeAudio?.fill(0);
+    this.activeAudio = null;
     this.operations.splice(0).forEach((operation) => {
       if (operation.type === "audio") operation.bytes.fill(0);
       else operation.reject(error);
     });
     this.commitControl = null;
     this.stopControl = null;
+    this.pendingAudio = 0;
     this.onFailure(error);
   }
 }

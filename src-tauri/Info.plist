@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>SAAA uses the microphone only when you explicitly start voice input or meeting transcription.</string>
+  <string>SAAA uses the microphone after you enable always-on listening, start voice input, or begin meeting transcription.</string>
 </dict>
 </plist>

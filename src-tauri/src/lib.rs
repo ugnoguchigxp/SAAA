@@ -32,6 +32,8 @@ mod situation;
 mod test_support;
 mod util;
 mod voice;
+pub mod voice_asr_contract;
+mod voice_behavior;
 mod voice_commands;
 mod voice_contracts;
 mod voice_text;
@@ -39,6 +41,8 @@ mod voice_text;
 use backup::backup_connection_to;
 
 pub(crate) use models::*;
+use persistence::list_message_page_from_connection;
+#[cfg(test)]
 use persistence::list_messages_from_connection;
 use persistence::migrate::backup_before_migration;
 use persistence::schema::initialize_database;
@@ -69,13 +73,17 @@ use voice_commands::{
     delete_voice_enrollment_sample, delete_voice_profile, get_voice_profile_snapshot,
     list_tts_capabilities, read_voice_enrollment_sample, resolve_network_asr,
     save_voice_enrollment_sample, set_target_speaker_filter_enabled, speak_text,
-    stage_audio_upload, stop_tts, transcribe_audio, transcribe_audio_chunk,
+    stage_audio_upload, stop_tts,
 };
 pub(crate) use voice_contracts::*;
 
 pub(crate) use redact::{bounded_text, redact_runtime_text};
 
-use ipc_contract::{ConversationMessage, RuntimeEvent};
+use ipc_contract::{ConversationMessage, ConversationMessagePage, RuntimeEvent};
+use voice_behavior::{
+    get_conversation_voice_policy, reset_conversation_voice_policy,
+    update_conversation_voice_policy,
+};
 
 const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 const DYNAMIC_LAN_PROVIDER_ID: &str = "lan-llm-dynamic";
@@ -99,6 +107,7 @@ struct AppState {
     audio_uploads: voice::audio_upload::AudioUploadStore,
     tts_process: Mutex<Option<ActiveTts>>,
     streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime,
+    voice_behavior: voice_behavior::VoiceBehaviorRuntime,
     situation: Arc<situation::SituationRuntime>,
     meeting: Arc<meeting::MeetingRuntime>,
     voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
@@ -338,13 +347,17 @@ async fn start_turn(
     on_event: tauri::ipc::Channel<RuntimeEvent>,
 ) -> Result<(), String> {
     validate_start_turn(&input)?;
-    let mut streaming_speech = input.presentation_mode == "visual-and-spoken";
+    let (mut streaming_speech, speech_enabled) =
+        voice_behavior::begin_turn_speech_policy(&state, &input)?;
     let cancellation = Arc::new(RunCancellation::default());
-    register_active_run(&state, &input.run_id, cancellation.clone())?;
+    if let Err(error) = register_active_run(&state, &input.run_id, cancellation.clone()) {
+        voice_behavior::end_run(&state, &input.run_id);
+        return Err(error);
+    }
     if streaming_speech {
         if let Err(error) = state
             .streaming_tts
-            .begin(&state, &input.run_id, on_event.clone())
+            .begin(&state, &input.run_id, speech_enabled, on_event.clone())
             .await
         {
             streaming_speech = false;
@@ -363,6 +376,7 @@ async fn start_turn(
     if let Ok(mut active) = state.active_runs.lock() {
         active.remove(&input.run_id);
     }
+    voice_behavior::end_run(&state, &input.run_id);
     result.map_err(|error| redact_runtime_text(&error.message))
 }
 
@@ -519,6 +533,14 @@ fn save_settings_documents(
 }
 
 #[tauri::command]
+fn set_voice_listening_enabled(
+    state: tauri::State<'_, AppState>,
+    input: SetVoiceListeningEnabledInput,
+) -> Result<SettingsDocument, String> {
+    persistence::settings::set_voice_listening_enabled(&state, input.enabled)
+}
+
+#[tauri::command]
 fn create_conversation(
     state: tauri::State<'_, AppState>,
     input: CreateConversationInput,
@@ -537,14 +559,20 @@ fn append_message(
 #[tauri::command]
 fn list_messages(
     state: tauri::State<'_, AppState>,
-    conversation_id: String,
-) -> Result<Vec<ConversationMessage>, String> {
-    validate_identifier(&conversation_id, "conversation id")?;
+    input: ListMessagesInput,
+) -> Result<ConversationMessagePage, String> {
+    const MESSAGE_PAGE_SIZE: u64 = 10;
+    validate_identifier(&input.conversation_id, "conversation id")?;
     let connection = state
         .connection
         .lock()
         .map_err(|_| "Database lock unavailable".to_string())?;
-    list_messages_from_connection(&connection, &conversation_id)
+    list_message_page_from_connection(
+        &connection,
+        &input.conversation_id,
+        input.offset,
+        MESSAGE_PAGE_SIZE,
+    )
 }
 
 #[tauri::command]
@@ -655,6 +683,7 @@ pub fn run() {
                 audio_uploads: voice::audio_upload::AudioUploadStore::default(),
                 tts_process: Mutex::new(None),
                 streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+                voice_behavior: voice_behavior::VoiceBehaviorRuntime::default(),
                 situation,
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
                 voice_profile,
@@ -721,8 +750,6 @@ pub fn run() {
             delete_provider_api_key,
             get_provider_credential_state,
             resolve_network_asr,
-            transcribe_audio_chunk,
-            transcribe_audio,
             start_voice_asr_session,
             append_voice_asr_audio,
             commit_voice_asr_utterance,
@@ -743,9 +770,13 @@ pub fn run() {
             save_meeting_transcript,
             discard_meeting,
             save_settings_documents,
+            set_voice_listening_enabled,
             create_conversation,
             list_messages,
-            append_message
+            append_message,
+            get_conversation_voice_policy,
+            update_conversation_voice_policy,
+            reset_conversation_voice_policy
         ])
         .run(tauri::generate_context!())
         .expect("error while running SAAA");
@@ -1045,15 +1076,6 @@ mod tests {
         assert_eq!(selected["selectionReasonCode"], "primary");
         assert!(selected.get("allocationId").is_none());
         assert!(selected.get("requestId").is_none());
-
-        let voice = serde_json::to_value(VoiceEvent::TranscriptFinal {
-            run_id: "voice_contract".to_string(),
-            text: "transcript".to_string(),
-        })
-        .expect("voice event serializes");
-        assert_eq!(voice["type"], "transcriptFinal");
-        assert_eq!(voice["runId"], "voice_contract");
-        assert!(voice.get("run_id").is_none());
     }
 
     #[test]
@@ -1746,12 +1768,18 @@ mod tests {
         let captures = captures.lock().expect("capture lock");
         assert_eq!(captures.len(), 2);
         let first = request_json(&captures[0]);
-        assert_eq!(first["tools"].as_array().expect("tools array").len(), 3);
+        assert_eq!(first["tools"].as_array().expect("tools array").len(), 4);
         assert_eq!(
             first
                 .pointer("/tools/0/function/name")
                 .and_then(Value::as_str),
             Some("recall_conversation")
+        );
+        assert_eq!(
+            first
+                .pointer("/tools/3/function/name")
+                .and_then(Value::as_str),
+            Some("update_conversation_voice_behavior")
         );
         let second = request_json(&captures[1]);
         let messages = second["messages"].as_array().expect("messages array");
@@ -1776,6 +1804,45 @@ mod tests {
             )
             .expect("receipt count reads");
         assert_eq!(receipts, 1);
+    }
+
+    #[test]
+    fn voice_policy_tool_quota_is_independent_from_other_agent_tools() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let state = app_state(connection);
+        let input = StartTurnInput {
+            run_id: "run-voice-quota".to_string(),
+            conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
+            content: "quiet please".to_string(),
+            workspace_path: None,
+            retry_input_message_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual-and-spoken".to_string(),
+        };
+        let persistence = Some(ProviderOutputPersistence {
+            state: &state,
+            session_id: "unused-session",
+        });
+
+        let after_general_quota = available_agent_tools(
+            persistence,
+            &input,
+            memory::contracts::MAX_RECALL_CALLS_PER_TURN,
+            0,
+        );
+        assert_eq!(after_general_quota.len(), 1);
+        assert!(tool_was_offered(
+            &after_general_quota,
+            voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
+        ));
+
+        let after_voice_quota = available_agent_tools(persistence, &input, 1, 1);
+        assert!(!tool_was_offered(
+            &after_voice_quota,
+            voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
+        ));
+        assert!(tool_was_offered(&after_voice_quota, "recall_conversation"));
     }
 
     #[tokio::test]
@@ -1838,7 +1905,7 @@ mod tests {
             state: &state,
             session_id: "unused-session",
         });
-        let names = available_agent_tools(persistence, &input, 0)
+        let names = available_agent_tools(persistence, &input, 0, 0)
             .into_iter()
             .map(|definition| {
                 definition
@@ -1856,7 +1923,8 @@ mod tests {
                 "recall_rule",
                 "recall_skill",
                 "web_search",
-                "fetch_content"
+                "fetch_content",
+                "update_conversation_voice_behavior"
             ]
         );
 

@@ -77,6 +77,24 @@ impl ProviderFailureKind {
     }
 }
 
+pub(crate) fn tool_protocol_failure(
+    error: crate::runtime::agent_tools::ToolProtocolError,
+    output_started: bool,
+) -> ProviderAttemptError {
+    let kind = match error {
+        crate::runtime::agent_tools::ToolProtocolError::Protocol => ProviderFailureKind::Protocol,
+        crate::runtime::agent_tools::ToolProtocolError::TooLarge => {
+            ProviderFailureKind::RequestTooLarge
+        }
+    };
+    ProviderAttemptError::failed(kind, output_started)
+}
+
+pub(crate) fn record_tool_call(total: &mut usize, voice: &mut usize, name: &str) {
+    *total += 1;
+    *voice += usize::from(name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BoundedProviderMessage(&'static str);
 

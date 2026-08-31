@@ -1661,7 +1661,134 @@ bun run spec:check</code></pre>
     <li>実装後に本文書へ実測値、利用可能Harness revision、未対応事項を追記する。</li>
   </ul>
 
-  <h2 id="16-references">16. Evidence and references</h2>
+  <h2 id="16-implementation-results">16. 実装結果 — 2026-08-31</h2>
+  <p>
+    <strong>判定:</strong> Desktop repositoryで完結するNative client、batch agreement、speaker
+    gate、Frontend projection、LLM delivery、legacy Chat
+    ASR削除は実装済みである。一方、利用可能な外部Native Harness
+    revisionが提供されておらず、実マイクを使ったp95測定も未実施であるため、本文書はまだアーカイブしない。
+  </p>
+
+  <h3 id="161-delivered">16.1 実装済み範囲</h3>
+  <ul>
+    <li>
+      16 kHz PCMをVADより前に100 ms packet化し、sequence付きraw IPCからbounded session
+      actorへ送る経路を接続した。
+    </li>
+    <li>
+      Harness v2の<code>saaa.asr-stream.v1</code>をsubprotocol、5秒handshake、1秒send
+      timeout、65,536 byte受信上限、typed event検証付きで実装した。
+    </li>
+    <li>
+      Native失敗時の一度だけのdegrade、whole-prefix batch agreement、final優先、3回連続失敗のfatal
+      cleanupを実装した。
+    </li>
+    <li>
+      target-speakerの1,500 ms window、500 ms hop、2-of-3 voting、reject時の同長silence置換とraw
+      zeroizeを実装した。
+    </li>
+    <li>
+      stable/unstable置換表示、30秒無音を含む強制commit、commit ordering barrier、final
+      dedupe、downstream受付またはretry移管まで保持するcapacity 2のdeliveryを実装した。
+    </li>
+    <li>
+      legacy staged Chat ASR command、chat用audio upload
+      purpose、単純chunk連結runtimeを削除した。Meetingとvoice enrollmentのbatch uploadは維持した。
+    </li>
+    <li>
+      実装後のcode reviewで、開始中cancel、停止後frame、Native event channel切断、recoverable
+      Provider error、遅延commit ACK、話者照合timeout、旧generation
+      ACKの競合を修正した。Channel切断と開始予約は fail-closed / RAII
+      cleanupとし、Provider任意error本文はFrontendへ出さない。
+    </li>
+    <li>
+      Rustのinput、event、failure
+      codeへ<code>ts-rs::TS</code>をderiveし、TypeScript契約の手書き複製を
+      廃止した。送信済みPCM、遅着PCM、Float32一時buffer、話者照合windowも所有終了時にzeroizeする。
+    </li>
+  </ul>
+
+  <h3 id="162-measurements">16.2 実測と短時間fixture</h3>
+  <table>
+    <caption>
+      Table: 2026-08-31 short-run results
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">結果</th>
+        <th scope="col">判定</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ASR Rust targeted suite</td>
+        <td>local WebSocket serverを含む41件、test本体約0.22秒</td>
+        <td>Pass</td>
+      </tr>
+      <tr>
+        <td>Frontend ASR boundary suite</td>
+        <td>
+          sender、packetizer、projection、delivery、30秒境界、desktop contractの35件、約0.18秒
+        </td>
+        <td>Pass</td>
+      </tr>
+      <tr>
+        <td>Mock Native first partial / final</td>
+        <td>loopback WebSocketで各1秒以内をtest timeoutとして確認</td>
+        <td>Pass。ただし単発値でありp95ではない</td>
+      </tr>
+      <tr>
+        <td>50 ms controlled final boundary</td>
+        <td>800 / 1,600 sample境界を交互に10発話、duplicate finalも注入</td>
+        <td>final欠落0、重複0</td>
+      </tr>
+      <tr>
+        <td>PCM privacy fixture</td>
+        <td>all-speakersは全sample一致、target-speaker rejectはraw pattern流出0</td>
+        <td>Pass</td>
+      </tr>
+      <tr>
+        <td>Packaged desktop smoke</td>
+        <td>macOS debug bundle起動、Frontend ready、同梱speaker runtime確認</td>
+        <td>Pass</td>
+      </tr>
+      <tr>
+        <td>実マイク / application p95</td>
+        <td>Native Harness endpoint未提供のため未測定</td>
+        <td>Archive gate未達</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="163-gates">16.3 Repository gateと外部依存</h3>
+  <ul>
+    <li>
+      <code>ipc:generate</code>、binding check、TypeScript typecheck、Rust fmt /
+      all-target clippy、Frontend 204件 / Rust 405件（10件ignored）のtest、quality check、production
+      build、spec check、packaged desktop smokeはPassした。
+    </li>
+    <li>
+      <code>size:check</code>はASR外の並行差分を含む既存5
+      moduleのratchet超過でFailしている。baselineは更新していない。
+    </li>
+    <li>
+      利用可能Native Harness revision: <strong>なし</strong>。Desktop fixtureは
+      <code>saaa.asr-stream.v1</code>のloopback mockであり、配備可能server
+      revisionではない。
+    </li>
+    <li>
+      未対応事項はvendor固有streaming adapter、外部Harness
+      canary、実マイクp95である。vendor固有adapterと長時間soakは本計画の対象外である。
+    </li>
+  </ul>
+  <p>
+    アーカイブ条件は、配備可能なHarness revisionを記録して各modeの5分以内acceptanceを行い、Section
+    13のrepository gateをすべてPassさせることである。Native宣言を外したHarness v2、Harness
+    v1、個別Cloud ASRはbatch agreementへ戻るため、rollback経路は維持されている。
+  </p>
+
+  <h2 id="17-references">17. Evidence and references</h2>
   <ul>
     <li><code>src-tauri/src/providers/service_harness.rs</code> — 現行Harness v1 validation</li>
     <li><code>src-tauri/src/voice/cloud_asr.rs</code> — 現行batch ASR client</li>

@@ -78,6 +78,7 @@ impl<'a> LarmHttpClient<'a> {
         if !tools.is_empty() {
             request["tools"] = Value::Array(tools.to_vec());
             request["tool_choice"] = Value::String("auto".to_string());
+            request["parallel_tool_calls"] = Value::Bool(false);
         }
         let body = serde_json::to_vec(&request)
             .map_err(|_| LarmError::new(SessionFailureKind::Internal, false))?;

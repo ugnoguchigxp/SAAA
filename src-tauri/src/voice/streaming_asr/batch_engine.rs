@@ -69,19 +69,20 @@ impl BatchEngine {
         });
         (projection, next)
     }
+    pub(crate) fn on_partial_failed(&mut self, end_sample: u64) -> Option<DecodeRequest> {
+        self.in_flight = None;
+        self.pending_end.take().and_then(|pending| {
+            (pending > end_sample)
+                .then(|| self.start(DecodeKind::Partial, pending))
+                .flatten()
+        })
+    }
     pub(crate) fn commit(&mut self, utterance_end: u64) -> DecodeRequest {
         self.generation += 1;
         self.in_flight = None;
         self.pending_end = None;
         self.start(DecodeKind::Final, utterance_end)
             .expect("final request always starts")
-    }
-    pub(crate) fn reset_utterance(&mut self) {
-        self.in_flight = None;
-        self.pending_end = None;
-        self.next_partial_at = BATCH_MIN_SAMPLES;
-        self.hypotheses.clear();
-        self.stable_units = 0;
     }
     fn start(&mut self, kind: DecodeKind, end_sample: u64) -> Option<DecodeRequest> {
         if end_sample == 0 {
@@ -132,5 +133,33 @@ mod tests {
         let final_request = engine.commit(40_000);
         assert_eq!(final_request.kind, DecodeKind::Final);
         assert!(engine.on_audio(50_000).is_none());
+    }
+
+    #[test]
+    fn a_failed_partial_still_runs_the_latest_queued_prefix() {
+        let mut engine = BatchEngine::default();
+        let first = engine.on_audio(BATCH_MIN_SAMPLES).unwrap();
+        assert!(engine
+            .on_audio(BATCH_MIN_SAMPLES + BATCH_HOP_SAMPLES)
+            .is_none());
+        let next = engine.on_partial_failed(first.end_sample).unwrap();
+        assert_eq!(next.end_sample, BATCH_MIN_SAMPLES + BATCH_HOP_SAMPLES);
+    }
+    #[test]
+    fn retains_at_most_three_whole_prefix_hypotheses_without_concatenation() {
+        let mut engine = BatchEngine::default();
+        for text in [
+            "クロードコ",
+            "クロードコード",
+            "クロードコードです",
+            "クロードコードです。",
+        ] {
+            let projection = engine.apply_hypothesis(text).unwrap();
+            assert_eq!(
+                format!("{}{}", projection.stable, projection.unstable),
+                text
+            );
+        }
+        assert_eq!(engine.hypotheses.len(), 3);
     }
 }

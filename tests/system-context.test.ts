@@ -38,6 +38,7 @@ test("renders voice transcription context for every conversation provider", () =
   expect(invocation.content.text).toContain("Use the configured time zone when interpreting relative dates and times.");
   expect(invocation.content.text).toContain("Use the configured units and currency when the user has not specified alternatives.");
   expect(invocation.content.text).toContain("do not infer, invent, or recall a user name");
+  expect(invocation.content.text).toContain("Do not use Markdown headings or headline-style lines.");
 });
 
 test("keeps the system context outside Rust program code", () => {

@@ -1,5 +1,6 @@
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
+use zeroize::Zeroize;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ComparableUnit {
@@ -10,6 +11,15 @@ pub(crate) struct ComparableUnit {
 pub(crate) struct ComparableTranscript {
     pub(crate) raw: String,
     pub(crate) units: Vec<ComparableUnit>,
+}
+
+impl Drop for ComparableTranscript {
+    fn drop(&mut self) {
+        self.raw.zeroize();
+        for unit in &mut self.units {
+            unit.key.zeroize();
+        }
+    }
 }
 
 pub(crate) fn comparable_transcript(raw: &str) -> ComparableTranscript {
@@ -84,5 +94,19 @@ mod tests {
         let (_, stable, unstable) = reconcile(&[first], 0, latest).unwrap();
         assert_eq!(stable, "クロードコ");
         assert_eq!(unstable, "ード");
+    }
+    #[test]
+    fn handles_latin_punctuation_and_conflicting_history_without_regression() {
+        let latin = comparable_transcript("hello, world!");
+        let latest = comparable_transcript("hello, world again!");
+        let (_, stable, unstable) = reconcile(&[latin], 0, latest).unwrap();
+        assert_eq!(format!("{stable}{unstable}"), "hello, world again!");
+
+        let first = comparable_transcript("abc x");
+        let second = comparable_transcript("abc y");
+        let latest = comparable_transcript("abc z");
+        let (units, stable, _) = reconcile(&[first, second], 0, latest).unwrap();
+        assert_eq!(stable, "abc ");
+        assert_eq!(units, 4);
     }
 }

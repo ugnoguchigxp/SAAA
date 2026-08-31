@@ -32,6 +32,7 @@
     "active": true,
     "targets": "all",
     "macOS": {
+      "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
     },
     "resources": {

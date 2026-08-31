@@ -60,7 +60,7 @@ export const defaultSettingsDraft: SettingsDraft = {
     },
   },
   voice: {
-    listeningEnabled: true,
+    listeningEnabled: false,
     inputDeviceId: "default",
     outputDeviceId: "default",
     vadSensitivity: "medium",

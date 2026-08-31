@@ -10,9 +10,9 @@ use serde_json::Value;
 use std::{collections::HashSet, env};
 
 pub const CONTEXT_POLICY_VERSION: i64 = 1;
-// `user_version` is the application database version. Version 13 is consumed by
-// Settings schema 12 (Provider Harness, service routes, and continuous voice).
-pub const MEMORY_SCHEMA_VERSION: i64 = 13;
+// `user_version` is the application database version. Version 14 adds the
+// conversation-scoped voice behavior policy and its bounded audit events.
+pub const MEMORY_SCHEMA_VERSION: i64 = 14;
 const MAX_ITEM_JSON_BYTES: usize = 4_000;
 const MAX_SEMANTIC_KEY_BYTES: usize = 128;
 const MAX_OBSERVABILITY_EVENTS: usize = 10_000;

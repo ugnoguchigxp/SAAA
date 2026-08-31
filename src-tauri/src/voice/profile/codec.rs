@@ -170,6 +170,7 @@ pub(super) fn validate_sample_quality(samples: &[f32]) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(super) fn voiced_windows(samples: &[f32]) -> Result<Vec<Vec<f32>>, String> {
     if samples.len() < CANONICAL_SAMPLE_RATE as usize {
         return Err(

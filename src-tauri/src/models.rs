@@ -33,6 +33,12 @@ pub(crate) struct SaveSettingsDocumentsInput {
     pub(crate) documents: Vec<SaveSettingsDocumentInput>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SetVoiceListeningEnabledInput {
+    pub(crate) enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Conversation {
@@ -56,6 +62,13 @@ pub(crate) struct AppendMessageInput {
     pub(crate) conversation_id: String,
     pub(crate) role: String,
     pub(crate) content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ListMessagesInput {
+    pub(crate) conversation_id: String,
+    pub(crate) offset: u64,
 }
 
 #[derive(Debug, Serialize)]

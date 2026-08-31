@@ -943,7 +943,7 @@ mod tests {
                 )
                 .expect("migrated voice settings read");
         assert_eq!(schema_version, SETTINGS_SCHEMA_VERSION);
-        assert!(listening_enabled);
+        assert!(!listening_enabled);
         assert_eq!(allowed_languages, r#"["ja"]"#);
     }
 
@@ -1220,7 +1220,7 @@ mod tests {
             .expect("legacy transcript remains");
         assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
         assert_eq!(voice.pointer("/allowedLanguages"), Some(&json!(["ja"])));
-        assert_eq!(voice.pointer("/listeningEnabled"), Some(&json!(true)));
+        assert_eq!(voice.pointer("/listeningEnabled"), Some(&json!(false)));
         assert!(voice.pointer("/sttProviderId").is_none());
         assert!(voice.pointer("/sttModel").is_none());
         assert!(meeting_schema.contains("network-asr"));

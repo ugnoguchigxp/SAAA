@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::time::Duration;
 
+use crate::runtime::agent_tools;
 use crate::StartTurnInput;
 
 use super::attempt::*;
@@ -9,10 +10,9 @@ pub(crate) fn available_agent_tools(
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     input: &StartTurnInput,
     calls_this_attempt: usize,
+    voice_calls_this_attempt: usize,
 ) -> Vec<Value> {
-    if calls_this_attempt >= crate::memory::contracts::MAX_RECALL_CALLS_PER_TURN {
-        return Vec::new();
-    }
+    let non_voice_calls = calls_this_attempt.saturating_sub(voice_calls_this_attempt);
     let include_conversation = output_persistence.is_some_and(|persistence| {
         persistence
             .state
@@ -26,7 +26,15 @@ pub(crate) fn available_agent_tools(
     });
     let include_typed_memory = output_persistence
         .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
-    crate::runtime::agent_tools::agent_tool_definitions(include_conversation, include_typed_memory)
+    let mut definitions = if non_voice_calls < crate::memory::contracts::MAX_RECALL_CALLS_PER_TURN {
+        agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false)
+    } else {
+        Vec::new()
+    };
+    if voice_calls_this_attempt == 0 && output_persistence.is_some() {
+        definitions.push(crate::voice_behavior::tool_definition());
+    }
+    definitions
 }
 
 pub(crate) fn tool_was_offered(definitions: &[Value], name: &str) -> bool {
@@ -35,12 +43,28 @@ pub(crate) fn tool_was_offered(definitions: &[Value], name: &str) -> bool {
     })
 }
 
+pub(crate) fn attach_agent_tools(body: &mut Value, tools: &[Value]) {
+    if tools.is_empty() {
+        return;
+    }
+    body["tools"] = Value::Array(tools.to_vec());
+    body["tool_choice"] = serde_json::json!("auto");
+    body["parallel_tool_calls"] = serde_json::json!(false);
+}
+
 pub(crate) async fn execute_agent_tool(
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     input: &StartTurnInput,
     call: &crate::runtime::agent_tools::AgentToolCall,
     timeout: Duration,
 ) -> String {
+    if call.name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME {
+        return crate::voice_behavior::execute_tool_for_state(
+            output_persistence.map(|persistence| persistence.state),
+            input,
+            call,
+        );
+    }
     if crate::runtime::web_fetch::is_web_fetch_tool(&call.name) {
         return crate::runtime::web_fetch::execute(call, timeout).await;
     }
@@ -126,17 +150,4 @@ pub(crate) fn execute_recall_tool(
             crate::runtime::agent_tools::tool_error_content(error.code.as_str(), error.message)
         }
     }
-}
-
-pub(crate) fn tool_protocol_failure(
-    error: crate::runtime::agent_tools::ToolProtocolError,
-    output_started: bool,
-) -> ProviderAttemptError {
-    let kind = match error {
-        crate::runtime::agent_tools::ToolProtocolError::Protocol => ProviderFailureKind::Protocol,
-        crate::runtime::agent_tools::ToolProtocolError::TooLarge => {
-            ProviderFailureKind::RequestTooLarge
-        }
-    };
-    ProviderAttemptError::failed(kind, output_started)
 }

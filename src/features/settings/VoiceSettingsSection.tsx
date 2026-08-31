@@ -9,17 +9,26 @@ import { ASR_LANGUAGES, type AsrLanguageCode } from "../../lib/asrLanguages";
 import { Field, Metric } from "./SettingsFields";
 import { VoiceProfileCard } from "./VoiceProfileCard";
 import { localizeUiMessage } from "../../i18n/presentation";
+import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 
 export function VoiceSettingsSection({
   voice,
   profile,
   enrollmentBlocked,
+  listeningBusy,
+  availability,
+  listeningError,
+  onToggleListening,
   onChange,
   onProfileChanged,
 }: {
   voice: VoiceSettings;
   profile: VoiceProfileSnapshot;
   enrollmentBlocked: boolean;
+  listeningBusy: boolean;
+  availability: AmbientVoiceAvailability;
+  listeningError: string | null;
+  onToggleListening: (enabled: boolean) => void;
   onChange: (value: VoiceSettings) => void;
   onProfileChanged: (profile: VoiceProfileSnapshot) => void;
 }) {
@@ -56,9 +65,8 @@ export function VoiceSettingsSection({
             <input
               type="checkbox"
               checked={voice.listeningEnabled}
-              onChange={(event) =>
-                onChange({ ...voice, listeningEnabled: event.target.checked })
-              }
+              disabled={listeningBusy}
+              onChange={(event) => onToggleListening(event.target.checked)}
             />
             <span />
           </label>
@@ -66,13 +74,16 @@ export function VoiceSettingsSection({
         <div className="settings-summary-grid">
           <Metric
             label={t("voice.listening")}
-            value={voice.listeningEnabled ? t("settings.general.alwaysOn") : t("common.paused")}
+            value={t(`voice.status.${availability}`)}
           />
           <Metric label={t("voice.detection")} value={t("voice.localVad")} />
           <Metric label={t("voice.cloudUpload")} value={t("voice.continuousChunks")} />
           <Metric label={t("voice.activation")} value={t("voice.automatic")} />
         </div>
         <p className="settings-help">{t("voice.permissionHelp")}</p>
+        {listeningError && (
+          <p className="provider-test-result error">{localizeUiMessage(t, listeningError, "voice")}</p>
+        )}
       </section>
 
       <section className="settings-card">

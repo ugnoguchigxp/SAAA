@@ -4,6 +4,7 @@ mod asr;
 mod tts;
 
 pub(crate) use asr::{
-    probe_selected_asr, transcribe_audio, transcribe_audio_chunk, transcribe_selected_audio,
+    harness_asr_provider, probe_selected_asr, select_asr, transcribe_selected_audio,
+    vad_rms_threshold, AsrRoute,
 };
 pub(crate) use tts::{selected_tts_route, speak_text, stop_tts, TtsRoute};

@@ -1,14 +1,15 @@
-#[allow(dead_code)]
 mod batch_engine;
+mod batch_runtime;
 pub(crate) mod commands;
-mod contracts;
-#[allow(dead_code)]
+pub(crate) mod contracts;
 mod harness_stream;
 mod manager;
-#[allow(dead_code)]
+mod native_connection;
 mod reconciler;
-#[allow(dead_code)]
+mod route;
+mod session;
 mod speaker_gate;
+mod speaker_gate_runtime;
 pub(crate) use commands::{
     append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
     stop_voice_asr_session,

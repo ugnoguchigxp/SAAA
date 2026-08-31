@@ -102,9 +102,16 @@ pub(crate) async fn execute_turn(
         });
     let finalization = match &result {
         Ok(message) => {
+            let (presentation, voice_policy) = crate::voice_behavior::completion_state(
+                state,
+                &input.run_id,
+                &input.conversation_id,
+            );
             let _ = on_event.send(RuntimeEvent::MessageCompleted {
                 run_id: input.run_id.clone(),
                 message: message.clone(),
+                presentation,
+                voice_policy,
             });
             Ok(())
         }

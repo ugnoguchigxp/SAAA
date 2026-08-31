@@ -504,6 +504,7 @@ impl VoiceProfileRuntime {
     }
 
     /// Verifies every voiced window and fails closed before ASR when filtering is enabled.
+    #[allow(dead_code)]
     pub fn verify_if_enabled(
         &self,
         connection: &Connection,

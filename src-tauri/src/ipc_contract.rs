@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::{Config, TS};
+use ts_rs::TS;
+
+pub(crate) use crate::voice_behavior::{
+    ConversationVoicePolicySnapshot, VoicePresentationDecision,
+};
+
+mod bindings;
+pub use bindings::typescript_bindings;
 
 macro_rules! runtime_failure_codes {
     ($( $variant:ident => $wire_value:literal ),+ $(,)?) => {
@@ -44,6 +51,13 @@ pub(crate) struct ConversationMessage {
     pub(crate) created_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConversationMessagePage {
+    pub(crate) messages: Vec<ConversationMessage>,
+    pub(crate) has_more: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(
     tag = "type",
@@ -85,6 +99,8 @@ pub(crate) enum RuntimeEvent {
     MessageCompleted {
         run_id: String,
         message: ConversationMessage,
+        presentation: VoicePresentationDecision,
+        voice_policy: Option<Box<ConversationVoicePolicySnapshot>>,
     },
     SpeechStarted {
         run_id: String,
@@ -106,26 +122,4 @@ pub(crate) enum RuntimeEvent {
         message: String,
         recovery: String,
     },
-}
-
-fn export_declaration<T: TS>() -> String {
-    format!("export {}", T::decl(&Config::default()))
-}
-
-pub fn typescript_bindings() -> String {
-    let failure_codes = RuntimeFailureCode::ALL
-        .iter()
-        .map(|code| serde_json::to_string(code).expect("runtime failure code serializes"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "// Generated from src-tauri/src/ipc_contract.rs. Do not edit by hand.\n\
-         // Run `bun run ipc:generate` after changing the Rust IPC contract.\n\n\
-         {}\n\n\
-         export const runtimeFailureCodes = [{failure_codes}] as const;\n\
-         export type RuntimeFailureCode = (typeof runtimeFailureCodes)[number];\n\n\
-         {}\n",
-        export_declaration::<ConversationMessage>(),
-        export_declaration::<RuntimeEvent>(),
-    )
 }

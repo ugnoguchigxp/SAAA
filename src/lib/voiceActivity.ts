@@ -43,6 +43,10 @@ export class VoiceActivityDetector {
     this.candidateResetSamples = millisecondsToSamples(candidateResetMs, sampleRate);
   }
 
+  hasDetectedSpeech(): boolean {
+    return this.speechDetected;
+  }
+
   observe(frame: Float32Array): VoiceActivityObservation {
     const rms = calculateRms(frame);
     if (this.finalized || frame.length === 0) {

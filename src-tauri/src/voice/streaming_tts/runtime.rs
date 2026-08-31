@@ -34,6 +34,7 @@ struct SpeechSession {
     child: Arc<Mutex<Option<Child>>>,
     closed: bool,
     started: bool,
+    enabled: bool,
 }
 
 enum SpeechWork {
@@ -98,8 +99,17 @@ impl StreamingSpeechRuntime {
                                 }
                             });
                         }
-                        RuntimeEvent::MessageCompleted { run_id, message } if streaming_speech => {
-                            if speech_runtime.finish(run_id, &message.content).is_err() {
+                        RuntimeEvent::MessageCompleted {
+                            run_id,
+                            message,
+                            presentation,
+                            ..
+                        } if streaming_speech => {
+                            if presentation.decision == "speak" {
+                                if speech_runtime.finish(run_id, &message.content).is_err() {
+                                    speech_runtime.cancel(run_id);
+                                }
+                            } else {
                                 speech_runtime.cancel(run_id);
                             }
                         }
@@ -122,6 +132,7 @@ impl StreamingSpeechRuntime {
         &self,
         state: &AppState,
         run_id: &str,
+        enabled: bool,
         on_event: tauri::ipc::Channel<RuntimeEvent>,
     ) -> Result<(), String> {
         if state.meeting.blocks_tts() {
@@ -149,6 +160,7 @@ impl StreamingSpeechRuntime {
                 child: child.clone(),
                 closed: false,
                 started: false,
+                enabled,
             },
         );
         drop(sessions);
@@ -189,7 +201,7 @@ impl StreamingSpeechRuntime {
         let Some(session) = sessions.get_mut(run_id) else {
             return Ok(AppendOutcome::default());
         };
-        if session.closed || session.cancellation.is_cancelled() {
+        if session.closed || session.cancellation.is_cancelled() || !session.enabled {
             return Ok(AppendOutcome::default());
         }
         session
@@ -228,6 +240,7 @@ impl StreamingSpeechRuntime {
         };
         if session.closed
             || session.cancellation.is_cancelled()
+            || !session.enabled
             || session.accumulator.idle_generation() != expected_generation
         {
             return Ok(AppendOutcome::default());
@@ -258,7 +271,7 @@ impl StreamingSpeechRuntime {
         let Some(session) = sessions.get_mut(run_id) else {
             return Ok(());
         };
-        if session.closed {
+        if session.closed || !session.enabled {
             return Ok(());
         }
         session
@@ -279,6 +292,18 @@ impl StreamingSpeechRuntime {
             let _ = work.send(SpeechWork::Finish).await;
         });
         Ok(())
+    }
+
+    pub(crate) fn set_enabled(&self, run_id: &str, enabled: bool) {
+        if !enabled {
+            self.cancel(run_id);
+            return;
+        }
+        if let Ok(mut sessions) = self.sessions.lock() {
+            if let Some(session) = sessions.get_mut(run_id) {
+                session.enabled = true;
+            }
+        }
     }
 
     pub(crate) fn cancel(&self, run_id: &str) {
@@ -467,5 +492,34 @@ fn wait_for_child(
             return Ok(status);
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabling_a_session_cancels_and_removes_it() {
+        let runtime = StreamingSpeechRuntime::default();
+        let (work, _receiver) = mpsc::channel(1);
+        let cancellation = Arc::new(RunCancellation::default());
+        runtime.sessions.lock().expect("sessions lock").insert(
+            "run-disable".to_string(),
+            SpeechSession {
+                accumulator: SentenceAccumulator::default(),
+                work,
+                cancellation: cancellation.clone(),
+                child: Arc::new(Mutex::new(None)),
+                closed: false,
+                started: false,
+                enabled: true,
+            },
+        );
+
+        runtime.set_enabled("run-disable", false);
+
+        assert!(cancellation.is_cancelled());
+        assert!(!runtime.is_active());
     }
 }

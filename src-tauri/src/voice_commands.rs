@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     voice, AppState, NetworkAsrResolution, ResolveNetworkAsrInput, RunCancellation, SpeakTextInput,
-    TranscribeAudioChunkInput, TranscribeAudioInput, TtsCapabilities, VoiceEvent,
+    TtsCapabilities,
 };
 
 #[tauri::command]
@@ -116,24 +116,6 @@ pub(crate) async fn resolve_network_asr(
         .network_asr
         .refresh(&input.host, Arc::new(RunCancellation::default()))
         .await
-}
-
-#[tauri::command]
-pub(crate) async fn transcribe_audio(
-    state: tauri::State<'_, AppState>,
-    input: TranscribeAudioInput,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    voice::session::transcribe_audio(&state, input, on_event).await
-}
-
-#[tauri::command]
-pub(crate) async fn transcribe_audio_chunk(
-    state: tauri::State<'_, AppState>,
-    input: TranscribeAudioChunkInput,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    voice::session::transcribe_audio_chunk(&state, input, on_event).await
 }
 
 #[tauri::command]

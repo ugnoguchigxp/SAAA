@@ -116,7 +116,8 @@ pub(crate) async fn stream_model_provider_inner(
             Some(json!({ "role": role, "content": message.content }))
         })
         .collect::<Vec<_>>();
-    let mut tool_calls_this_attempt = 0_usize;
+    let mut total_calls = 0_usize;
+    let mut voice_calls = 0_usize;
     let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         let round_timeout = deadline
@@ -126,7 +127,8 @@ pub(crate) async fn stream_model_provider_inner(
         let tools = available_agent_tools(
             context.output_persistence,
             context.input,
-            tool_calls_this_attempt,
+            total_calls,
+            voice_calls,
         );
         match stream_model_provider_round(
             &client,
@@ -153,7 +155,7 @@ pub(crate) async fn stream_model_provider_inner(
                         false,
                     ));
                 }
-                tool_calls_this_attempt += 1;
+                record_tool_call(&mut total_calls, &mut voice_calls, &call.name);
                 let tool_timeout = deadline
                     .checked_duration_since(tokio::time::Instant::now())
                     .filter(|remaining| !remaining.is_zero())
@@ -213,10 +215,7 @@ pub(crate) async fn stream_model_provider_round(
         body["chat_template_kwargs"] =
             json!({ "enable_thinking": thinking_enabled(reasoning_effort) });
     }
-    if !tools.is_empty() {
-        body["tools"] = Value::Array(tools.to_vec());
-        body["tool_choice"] = json!("auto");
-    }
+    attach_agent_tools(&mut body, tools);
     let mut request = client
         .post(
             provider_chat_url(&provider.endpoint)

@@ -64,7 +64,7 @@ pub async fn transcribe(
     result
 }
 
-async fn transcribe_at(
+pub(crate) async fn transcribe_at(
     client: &Client,
     base_url: &str,
     samples: &[f32],

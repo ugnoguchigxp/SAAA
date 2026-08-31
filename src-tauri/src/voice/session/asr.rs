@@ -1,189 +1,20 @@
-use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
-use zeroize::Zeroizing;
+use crate::{AppState, RunCancellation};
 
-use crate::redact::redact_runtime_text;
-use crate::{
-    begin_simple_runtime_run, finish_runtime_run, register_active_run, remove_active_run,
-    validate_identifier, AppState, RunCancellation, TranscribeAudioChunkInput,
-    TranscribeAudioInput, VoiceEvent,
-};
-
-enum AsrRoute {
+pub(crate) enum AsrRoute {
     Harness(String),
     Cloud(crate::CloudAsrProviderSettings),
 }
 
-struct SelectedAsr {
-    route: AsrRoute,
-    provider_id: String,
-    timeout_ms: u64,
-    allowed_languages: Vec<String>,
-    vad_sensitivity: String,
+pub(crate) struct SelectedAsr {
+    pub(crate) route: AsrRoute,
+    pub(crate) timeout_ms: u64,
+    pub(crate) allowed_languages: Vec<String>,
+    pub(crate) vad_sensitivity: String,
 }
 
-pub(crate) async fn transcribe_audio(
-    state: &AppState,
-    input: TranscribeAudioInput,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    validate_identifier(&input.run_id, "run id")?;
-    validate_identifier(&input.conversation_id, "conversation id")?;
-    if input.sample_rate != 16_000 {
-        return Err("Recorded audio must use the canonical 16 kHz sample rate".to_string());
-    }
-    let samples = Zeroizing::new(
-        state
-            .audio_uploads
-            .consume(&input.audio_upload_id, "chat-asr")?,
-    );
-    if samples.is_empty() || samples.iter().any(|sample| !sample.is_finite()) {
-        return Err("Recorded audio is empty or invalid".to_string());
-    }
-    if samples.len() > input.sample_rate as usize * 120 {
-        return Err("Recording exceeds the two minute limit".to_string());
-    }
-    let (verification, selected) = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        (
-            state
-                .voice_profile
-                .verify_if_enabled(&connection, &samples, input.sample_rate),
-            select_asr(&connection)?,
-        )
-    };
-    validate_asr_audio_quality(&samples, input.sample_rate, &selected.vad_sensitivity)?;
-    if let Err(error) = verification {
-        let _ = on_event.send(VoiceEvent::Failed {
-            run_id: input.run_id.clone(),
-            message: error.clone(),
-            recovery: "Use the enrolled microphone and speak clearly, or disable the target-speaker filter in Settings.".to_string(),
-        });
-        return Err(error);
-    }
-
-    let cancellation = Arc::new(RunCancellation::default());
-    register_active_run(state, &input.run_id, cancellation.clone())?;
-    if let Err(error) = begin_simple_runtime_run(
-        state,
-        &input.run_id,
-        &input.conversation_id,
-        "voice.transcribe",
-        &selected.provider_id,
-    ) {
-        remove_active_run(state, &input.run_id);
-        return Err(error);
-    }
-    let _ = on_event.send(VoiceEvent::Transcribing {
-        run_id: input.run_id.clone(),
-    });
-    state
-        .situation
-        .set_microphone_state(crate::situation::contracts::MicrophoneState::SaaaTranscribing);
-
-    let result = transcribe_selected(
-        state,
-        &samples,
-        input.sample_rate,
-        selected,
-        cancellation.clone(),
-    )
-    .await
-    .map(|(text, _)| text);
-    remove_active_run(state, &input.run_id);
-    state
-        .situation
-        .set_microphone_state(crate::situation::contracts::MicrophoneState::Inactive);
-    finish_transcription(state, input.run_id, result, cancellation, on_event)
-}
-
-pub(crate) async fn transcribe_audio_chunk(
-    state: &AppState,
-    input: TranscribeAudioChunkInput,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    validate_identifier(&input.run_id, "run id")?;
-    if input.sample_rate != 16_000 {
-        return Err("Streaming ASR chunks must use the canonical 16 kHz sample rate".to_string());
-    }
-    let samples = Zeroizing::new(
-        state
-            .audio_uploads
-            .consume(&input.audio_upload_id, "chat-asr-chunk")?,
-    );
-    validate_streaming_chunk(&samples, input.sample_rate)?;
-    let selected = {
-        let connection = state
-            .connection
-            .lock()
-            .map_err(|_| "Database lock unavailable".to_string())?;
-        state
-            .voice_profile
-            .verify_if_enabled(&connection, &samples, input.sample_rate)?;
-        select_asr(&connection)?
-    };
-
-    let cancellation = Arc::new(RunCancellation::default());
-    register_streaming_run(state, &input.run_id, cancellation.clone())?;
-    let _ = on_event.send(VoiceEvent::Transcribing {
-        run_id: input.run_id.clone(),
-    });
-    let result = transcribe_selected(
-        state,
-        &samples,
-        input.sample_rate,
-        selected,
-        cancellation.clone(),
-    )
-    .await;
-    remove_active_run(state, &input.run_id);
-    match result {
-        Ok((text, _)) => Ok(text),
-        Err(_) if cancellation.is_cancelled() => {
-            Err("Streaming transcription cancelled".to_string())
-        }
-        Err(error) => Err(redact_runtime_text(&error)),
-    }
-}
-
-fn register_streaming_run(
-    state: &AppState,
-    run_id: &str,
-    cancellation: Arc<RunCancellation>,
-) -> Result<(), String> {
-    let mut active = state
-        .active_runs
-        .lock()
-        .map_err(|_| "Run registry lock unavailable".to_string())?;
-    match active.entry(run_id.to_string()) {
-        Entry::Vacant(entry) => {
-            entry.insert(cancellation);
-        }
-        Entry::Occupied(_) => return Err("A run with this id is already active".to_string()),
-    }
-    Ok(())
-}
-
-fn validate_streaming_chunk(samples: &[f32], sample_rate: u32) -> Result<(), String> {
-    let minimum_samples = sample_rate as usize / 2;
-    let maximum_samples = sample_rate as usize * 30;
-    if samples.len() < minimum_samples
-        || samples.len() > maximum_samples
-        || samples.iter().any(|sample| !sample.is_finite())
-    {
-        return Err(
-            "Streaming ASR chunks must contain between 0.5 and 30 seconds of valid audio"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-fn select_asr(connection: &rusqlite::Connection) -> Result<SelectedAsr, String> {
+pub(crate) fn select_asr(connection: &rusqlite::Connection) -> Result<SelectedAsr, String> {
     let voice = crate::persistence::load_voice_settings(connection)?;
     let providers = crate::persistence::load_model_providers(connection)?;
     let settings = crate::persistence::load_routing_settings(connection)?.voice_transcribe;
@@ -208,13 +39,8 @@ fn select_asr(connection: &rusqlite::Connection) -> Result<SelectedAsr, String> 
             .ok_or_else(|| "The selected ASR provider is unavailable".to_string())?;
         AsrRoute::Cloud(provider)
     };
-    let provider_id = match &route {
-        AsrRoute::Harness(_) => "provider-harness-asr".to_string(),
-        AsrRoute::Cloud(provider) => provider.id.clone(),
-    };
     Ok(SelectedAsr {
         route,
-        provider_id,
         timeout_ms: settings.timeout_ms,
         allowed_languages: voice.allowed_languages,
         vad_sensitivity: voice.vad_sensitivity,
@@ -268,7 +94,7 @@ pub(crate) async fn probe_selected_asr(state: &AppState) -> Result<(), String> {
     }
 }
 
-fn harness_asr_provider(
+pub(crate) fn harness_asr_provider(
     service: crate::providers::service_harness::ServiceDescriptor,
 ) -> crate::CloudAsrProviderSettings {
     crate::CloudAsrProviderSettings {
@@ -352,60 +178,13 @@ async fn transcribe_selected(
     Ok(result)
 }
 
-fn finish_transcription(
-    state: &AppState,
-    run_id: String,
-    result: Result<String, String>,
-    cancellation: Arc<RunCancellation>,
-    on_event: tauri::ipc::Channel<VoiceEvent>,
-) -> Result<String, String> {
-    match result {
-        Ok(transcript) => {
-            finish_runtime_run(state, &run_id, "completed", None)?;
-            let _ = on_event.send(VoiceEvent::TranscriptFinal {
-                run_id,
-                text: transcript.clone(),
-            });
-            Ok(transcript)
-        }
-        Err(_) if cancellation.is_cancelled() => {
-            finish_runtime_run(state, &run_id, "cancelled", Some("Cancelled by user"))?;
-            let _ = on_event.send(VoiceEvent::Cancelled { run_id });
-            Err("Transcription cancelled".to_string())
-        }
-        Err(error) => {
-            let error = redact_runtime_text(&error);
-            finish_runtime_run(state, &run_id, "failed", Some(&error))?;
-            let recovery = if error.starts_with("ASR_LANGUAGE_NOT_ALLOWED") {
-                "Register the language in Voice settings if you want SAAA to transcribe it."
-            } else if error.starts_with("ASR_LANGUAGE_UNKNOWN") {
-                "Speak clearly in one of the languages registered in Voice settings."
-            } else if error.starts_with("ASR_NO_SPEECH") {
-                "Speak closer to the microphone and retry."
-            } else {
-                "Check the selected ASR service and credential, then retry."
-            };
-            let _ = on_event.send(VoiceEvent::Failed {
-                run_id,
-                message: error.clone(),
-                recovery: recovery.to_string(),
-            });
-            Err(error)
-        }
-    }
-}
-
 fn validate_asr_audio_quality(
     samples: &[f32],
     sample_rate: u32,
     vad_sensitivity: &str,
 ) -> Result<(), String> {
     const MIN_SPEECH_MS: usize = 240;
-    let minimum_speech_rms = match vad_sensitivity {
-        "high" => 0.006,
-        "low" => 0.012,
-        _ => 0.008,
-    };
+    let minimum_speech_rms = vad_rms_threshold(vad_sensitivity);
     if samples.len() < sample_rate as usize / 2 {
         return Err("ASR_NO_SPEECH: Recorded audio is too short".to_string());
     }
@@ -433,6 +212,14 @@ fn validate_asr_audio_quality(
     Ok(())
 }
 
+pub(crate) fn vad_rms_threshold(vad_sensitivity: &str) -> f32 {
+    match vad_sensitivity {
+        "high" => 0.006,
+        "low" => 0.012,
+        _ => 0.008,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,15 +234,5 @@ mod tests {
         assert!(validate_asr_audio_quality(&[0.0; 16_000], 16_000, "medium").is_err());
         assert!(validate_asr_audio_quality(&[0.02; 16_000], 16_000, "medium").is_err());
         assert!(validate_asr_audio_quality(&quiet_speech, 16_000, "low").is_err());
-    }
-
-    #[test]
-    fn streaming_asr_chunk_bounds_are_finite_and_short_lived() {
-        assert!(validate_streaming_chunk(&[0.0; 8_000], 16_000).is_ok());
-        assert!(validate_streaming_chunk(&[0.0; 7_999], 16_000).is_err());
-        assert!(validate_streaming_chunk(&[0.0; 480_001], 16_000).is_err());
-        let mut invalid = vec![0.0; 8_000];
-        invalid[0] = f32::NAN;
-        assert!(validate_streaming_chunk(&invalid, 16_000).is_err());
     }
 }

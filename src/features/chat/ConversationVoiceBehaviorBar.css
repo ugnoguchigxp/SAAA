@@ -1,0 +1,32 @@
+.voice-behavior-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  min-height: 2.75rem;
+  padding: 0.45rem 1.25rem;
+  border-bottom: 1px solid #252d38;
+  background: #131c24;
+  color: #aeb9c8;
+  font-size: 0.82rem;
+}
+
+.voice-behavior-state {
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  background: #25303b;
+  color: #eef2f7;
+  font-weight: 650;
+}
+
+.voice-behavior-state.silent { background: #4a351a; }
+.voice-pace-control { display: inline-flex; align-items: center; gap: 0.4rem; }
+.voice-pace-effect { color: #8795a7; }
+.voice-pace-control select {
+  min-height: 2rem;
+  border: 1px solid #343e4a;
+  border-radius: 0.5rem;
+  background: #171d26;
+  color: #eef2f7;
+  padding: 0 0.45rem;
+}

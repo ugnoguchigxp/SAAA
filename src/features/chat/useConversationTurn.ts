@@ -13,6 +13,7 @@ import {
   type SubmitPromptOptions,
 } from "../../lib/conversationSession";
 import { ConversationIssueCoordinator } from "./conversationIssueCoordinator";
+import { useConversationVoicePolicy } from "./useConversationVoicePolicy";
 type RetryAction = { kind: "response"; prompt: string; inputMessageId: string; inputOrigin: InputOrigin };
 export function useConversationTurn({
   selectedConversationId,
@@ -36,6 +37,8 @@ export function useConversationTurn({
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
@@ -43,8 +46,11 @@ export function useConversationTurn({
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
+  const voice = useConversationVoicePolicy(selectedConversationId, setError);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
+  const loadedMessageCountRef = useRef(0);
+  const loadingOlderMessagesRef = useRef(false);
   const meetingStateRef = useRef<MeetingState>("idle");
   const failedRunIdsRef = useRef(new Set<string>());
   const speechStopRequestsRef = useRef(new Set<string>());
@@ -64,8 +70,15 @@ export function useConversationTurn({
     };
   }, [conversationSessionRef]);
   useEffect(() => {
-    if (!selectedConversationId) { setMessages([]); return; }
+    if (!selectedConversationId) {
+      setMessages([]);
+      setHasMoreMessages(false);
+      loadedMessageCountRef.current = 0;
+      return;
+    }
     setMessages([]);
+    setHasMoreMessages(false);
+    loadedMessageCountRef.current = 0;
     setStreamingText("");
     setRuntimeActivity([]);
     void loadMessages(selectedConversationId, issueCoordinatorRef.current.begin());
@@ -78,9 +91,12 @@ export function useConversationTurn({
   async function loadMessages(conversationId: string, issueScope: number): Promise<ConversationMessage[]> {
     const request = ++messagesRequestRef.current;
     try {
-      const nextMessages = await listMessages(conversationId);
+      const page = await listMessages(conversationId, 0);
+      const nextMessages = page.messages;
       if (!disposedRef.current && request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
         setMessages(nextMessages);
+        setHasMoreMessages(page.hasMore);
+        loadedMessageCountRef.current = nextMessages.length;
       }
       return nextMessages;
     } catch (cause) {
@@ -88,6 +104,29 @@ export function useConversationTurn({
         publishIssue(issueScope, toMessage(cause));
       }
       return [];
+    }
+  }
+  async function loadOlderMessages(): Promise<void> {
+    const conversationId = selectedConversationIdRef.current;
+    if (!conversationId || loadingOlderMessagesRef.current || !hasMoreMessages) return;
+    loadingOlderMessagesRef.current = true;
+    setLoadingOlderMessages(true);
+    const issueScope = issueCoordinatorRef.current.begin();
+    try {
+      const page = await listMessages(conversationId, loadedMessageCountRef.current);
+      if (!disposedRef.current && selectedConversationIdRef.current === conversationId) {
+        setMessages((current) => {
+          const currentIds = new Set(current.map((message) => message.id));
+          return [...page.messages.filter((message) => !currentIds.has(message.id)), ...current];
+        });
+        loadedMessageCountRef.current += page.messages.length;
+        setHasMoreMessages(page.hasMore);
+      }
+    } catch (cause) {
+      publishIssue(issueScope, toMessage(cause));
+    } finally {
+      loadingOlderMessagesRef.current = false;
+      if (!disposedRef.current && selectedConversationIdRef.current === conversationId) setLoadingOlderMessages(false);
     }
   }
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -98,6 +137,7 @@ export function useConversationTurn({
     const {
       retryInputMessageId = null,
       inputOrigin = "text",
+      onSettled,
     } = options;
     if (
       disposedRef.current
@@ -112,6 +152,14 @@ export function useConversationTurn({
     const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak)
       && !isMeetingBlocking(meetingStateRef.current);
     const presentationMode = shouldStreamSpeech ? "visual-and-spoken" : "visual";
+    let delivered = false;
+    let deliverySettled = false;
+    let handedToRetry = false;
+    const settleDelivery = (accepted: boolean) => {
+      if (deliverySettled) return;
+      deliverySettled = true;
+      onSettled?.(accepted);
+    };
     try {
       setError(null);
       setRetryAction(null);
@@ -133,8 +181,12 @@ export function useConversationTurn({
       }
       await startTurn(
         { runId, conversationId, content, workspacePath: null, retryInputMessageId, inputOrigin, presentationMode },
-        (event) => handleRuntimeEvent(event, conversationId, issueScope),
+        (event) => {
+          if (event.type === "started") settleDelivery(true);
+          handleRuntimeEvent(event, conversationId, issueScope);
+        },
       );
+      delivered = true;
     } catch (cause) {
       failedRunIdsRef.current.add(runId);
       publishIssue(issueScope, toMessage(cause));
@@ -153,13 +205,19 @@ export function useConversationTurn({
           const input = [...nextMessages].reverse().find((message) => message.role === "user" && message.content === content);
           if (input && issueCoordinatorRef.current.isCurrent(issueScope)) {
             setRetryAction({ kind: "response", prompt: content, inputMessageId: input.id, inputOrigin });
+            handedToRetry = true;
           }
         }
       }
+      settleDelivery(delivered || handedToRetry);
       const nextVoicePrompt = disposedRef.current ? undefined : pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
         if (conversationSessionRef.current.speechRunId) await stopSpeech(issueScope);
-        await submitPrompt(nextVoicePrompt.content, { inputOrigin: nextVoicePrompt.inputOrigin });
+        await submitPrompt(nextVoicePrompt.content, {
+          inputOrigin: nextVoicePrompt.inputOrigin,
+          sourceId: nextVoicePrompt.sourceId,
+          onSettled: nextVoicePrompt.onSettled,
+        });
       }
     }
   }
@@ -199,6 +257,8 @@ export function useConversationTurn({
           ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", { fallbackUsed: current.effectiveRoute.fallbackUsed, reasonCode: "last-turn-completed" })
           : current);
         setStreamingText("");
+        if (event.voicePolicy) voice.setVoicePolicy(event.voicePolicy);
+        else voice.clearVoicePolicy();
         break;
       case "speechStarted":
         conversationSessionRef.current = transitionConversationSession(
@@ -278,6 +338,9 @@ export function useConversationTurn({
   }
   return {
     messages,
+    hasMoreMessages,
+    loadingOlderMessages,
+    loadOlderMessages,
     composer,
     setComposer,
     activeRunId,
@@ -292,5 +355,10 @@ export function useConversationTurn({
     submitPrompt,
     stopActiveRun,
     stopSpeech,
+    voicePolicy: voice.voicePolicy,
+    voicePolicyUpdating: voice.voicePolicyUpdating,
+    setConversationSpeechOutput: voice.setConversationSpeechOutput,
+    setConversationListeningPace: voice.setConversationListeningPace,
+    resetConversationVoiceOverrides: voice.resetConversationVoiceOverrides,
   };
 }

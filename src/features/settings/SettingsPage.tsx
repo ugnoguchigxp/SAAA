@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   LarmRuntimeStatus,
@@ -25,6 +25,7 @@ import { Field, Metric } from "./SettingsFields";
 import { defaultSettingsDraft, DEFAULT_AGENT_NAME } from "./settingsDefaults";
 import { credentialCleanupProviderIds, documentsFromDraft, draftFromDocuments, type SettingsDraft } from "./settingsDraft";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
+import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 
 type SettingsTab = "general" | "connection" | "providers" | "voice" | "situation" | "security";
 type SaveNotice =
@@ -36,15 +37,25 @@ export function SettingsPage({
   larmRuntime: _larmRuntime,
   voiceProfile,
   voiceEnrollmentBlocked,
+  voiceListeningEnabled,
+  voiceListeningBusy,
+  voiceAvailability,
+  voiceError,
   onSaved,
   onVoiceProfileChanged,
+  onToggleVoiceListening,
 }: {
   documents: SettingsDocument[];
   larmRuntime: LarmRuntimeStatus;
   voiceProfile: VoiceProfileSnapshot;
   voiceEnrollmentBlocked: boolean;
+  voiceListeningEnabled: boolean;
+  voiceListeningBusy: boolean;
+  voiceAvailability: AmbientVoiceAvailability;
+  voiceError: string | null;
   onSaved: (documents: SettingsDocument[]) => void;
   onVoiceProfileChanged: (profile: VoiceProfileSnapshot) => void;
+  onToggleVoiceListening: (enabled: boolean) => void;
 }) {
   const { t, i18n } = useTranslation();
   const tabs: Array<{ id: SettingsTab; label: string; detail: string }> = [
@@ -57,12 +68,16 @@ export function SettingsPage({
   ];
   const source = useMemo(() => draftFromDocuments(documents, defaultSettingsDraft), [documents]);
   const [draft, setDraft] = useState<SettingsDraft>(source);
+  const previousSourceRef = useRef(source);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [connectionSettingsValid, setConnectionSettingsValid] = useState(true);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<SaveNotice | null>(null);
   useEffect(() => {
-    setDraft(source);
+    setDraft((current) => JSON.stringify(current) === JSON.stringify(previousSourceRef.current)
+      ? source
+      : { ...current, voice: { ...current.voice, listeningEnabled: source.voice.listeningEnabled } });
+    previousSourceRef.current = source;
     void setDisplayLanguagePreference(source.regional.language);
     setSaveState("idle");
     setSaveMessage(null);
@@ -145,11 +160,15 @@ export function SettingsPage({
           )}
           {activeTab === "voice" && (
             <VoiceSettingsSection
-              voice={draft.voice}
+              voice={{ ...draft.voice, listeningEnabled: voiceListeningEnabled }}
               profile={voiceProfile}
               enrollmentBlocked={voiceEnrollmentBlocked}
+              listeningBusy={voiceListeningBusy}
+              availability={voiceAvailability}
+              listeningError={voiceError}
+              onToggleListening={onToggleVoiceListening}
               onProfileChanged={onVoiceProfileChanged}
-              onChange={(voice) => setDraft((current) => ({ ...current, voice }))}
+              onChange={(voice) => setDraft((current) => ({ ...current, voice: { ...voice, listeningEnabled: current.voice.listeningEnabled } }))}
             />
           )}
           {activeTab === "situation" && (

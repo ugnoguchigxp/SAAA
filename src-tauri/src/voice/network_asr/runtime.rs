@@ -87,7 +87,7 @@ impl NetworkAsrRuntime {
         }
     }
 
-    pub(super) fn client(&self) -> &Client {
+    pub(crate) fn client(&self) -> &Client {
         &self.client
     }
 }

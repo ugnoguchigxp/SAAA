@@ -172,9 +172,9 @@ fn migrate_routing_document(value: &mut Value) {
     );
 }
 
-fn migrated_voice_document(value: &Value) -> Value {
+fn migrated_voice_document(value: &Value, require_fresh_consent: bool) -> Value {
     json!({
-        "listeningEnabled": value.get("listeningEnabled").and_then(Value::as_bool).unwrap_or(true),
+        "listeningEnabled": if require_fresh_consent { false } else { value.get("listeningEnabled").and_then(Value::as_bool).unwrap_or(false) },
         "inputDeviceId": value.get("inputDeviceId").and_then(Value::as_str).unwrap_or("default"),
         "outputDeviceId": value.get("outputDeviceId").and_then(Value::as_str).unwrap_or("default"),
         "vadSensitivity": value.get("vadSensitivity").and_then(Value::as_str).unwrap_or("medium"),
@@ -243,7 +243,8 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
         }
     }
     if let Some(voice) = old_voice {
-        let migrated = migrated_voice_document(&voice.value);
+        let migrated =
+            migrated_voice_document(&voice.value, voice.schema_version < SETTINGS_SCHEMA_VERSION);
         if voice.schema_version < SETTINGS_SCHEMA_VERSION || migrated != voice.value {
             write_document(connection, "voice.runtime", "default", &migrated)?;
         }
@@ -289,10 +290,13 @@ mod tests {
         assert_eq!(provider["providers"][0]["authentication"], "api-key");
         assert!(provider["providers"][0].get("credentialStatus").is_none());
 
-        let voice = migrated_voice_document(&json!({
-            "inputDeviceId": "mic", "captureMode": "push-to-talk", "ttsVoice": "Kyoko"
-        }));
-        assert_eq!(voice["listeningEnabled"], true);
+        let voice = migrated_voice_document(
+            &json!({
+                "inputDeviceId": "mic", "captureMode": "push-to-talk", "ttsVoice": "Kyoko"
+            }),
+            true,
+        );
+        assert_eq!(voice["listeningEnabled"], false);
         assert_eq!(voice["allowedLanguages"], json!(["ja"]));
         assert!(voice.get("captureMode").is_none());
         assert!(voice.get("ttsVoice").is_none());
@@ -303,6 +307,26 @@ mod tests {
         });
         migrate_security_document(&mut security);
         assert!(security.get("credentialStorage").is_none());
+    }
+
+    #[test]
+    fn schema_upgrade_requires_fresh_ambient_listening_consent() {
+        let migrated = migrated_voice_document(
+            &json!({
+                "listeningEnabled": true,
+                "inputDeviceId": "default",
+                "outputDeviceId": "default",
+                "vadSensitivity": "medium",
+                "silenceTimeoutMs": 1500,
+                "allowedLanguages": ["ja"],
+                "autoSpeak": true
+            }),
+            true,
+        );
+        assert_eq!(migrated["listeningEnabled"], false);
+
+        let current = migrated_voice_document(&migrated, false);
+        assert_eq!(current["listeningEnabled"], false);
     }
 
     #[test]

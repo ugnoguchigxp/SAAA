@@ -49,8 +49,9 @@ describe("target-speaker voice profile", () => {
   test("keeps listening active while serializing ASR and LLM work", async () => {
     const modules = ["useAmbientVoiceSession.ts", "ambientVoiceCapture.ts", "voiceAsrPacketSender.ts"];
     const app = (await Promise.all(modules.map((file) => readFile(new URL(`../src/features/voice/${file}`, import.meta.url), "utf8")))).join("\n");
-    expect(app).toContain("finishVoiceCapture(true)");
-    expect(app).toContain("await sender.enqueueCommit(\"silence\")");
+    expect(app).toContain("finishVoiceCapture(true, reason)");
+    expect(app).toContain("const commit = sender.enqueueCommit(reason)");
+    expect(app).toContain("await commit");
     expect(app).toContain("new VoiceAsrPacketSender");
     expect(app).toContain("voiceFinalDeliveryRef.current.push");
     expect(app).toContain("pendingVoicePromptsRef.current.length >= 2");
