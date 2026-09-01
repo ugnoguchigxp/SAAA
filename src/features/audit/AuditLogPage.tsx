@@ -4,24 +4,10 @@ import { useTranslation } from "react-i18next";
 import type { AuditEvent } from "../../lib/contracts";
 import { listAuditEvents } from "../../lib/runtime";
 import "./AuditLogPage.css";
+import { auditTimestampIso, formatAuditTimestamp } from "./auditTimestamp";
 
 const auditTableFeatures = tableFeatures({});
 const auditColumnHelper = createColumnHelper<typeof auditTableFeatures, AuditEvent>();
-
-function occurredAtIso(value: AuditEvent["occurredAt"]) {
-  return new Date(value).toISOString();
-}
-
-function formatOccurredAt(value: AuditEvent["occurredAt"], locale: string) {
-  return new Intl.DateTimeFormat(locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(occurredAtIso(value)));
-}
 
 function MetadataField({ label, value }: { label: string; value: string | number | null }) {
   return (
@@ -80,7 +66,7 @@ export function AuditLogPage() {
           header: t("audit.columns.occurredAt"),
           cell: ({ getValue }) => {
             const occurredAt = getValue();
-            return <time dateTime={occurredAtIso(occurredAt)}>{formatOccurredAt(occurredAt, locale)}</time>;
+            return <time dateTime={auditTimestampIso(occurredAt)}>{formatAuditTimestamp(occurredAt, locale)}</time>;
           },
         }),
         auditColumnHelper.accessor("component", {
@@ -217,7 +203,7 @@ export function AuditLogPage() {
                   <MetadataField label={t("audit.drawer.sequence")} value={selectedEvent.sequence} />
                   <MetadataField
                     label={t("audit.columns.occurredAt")}
-                    value={formatOccurredAt(selectedEvent.occurredAt, locale)}
+                    value={formatAuditTimestamp(selectedEvent.occurredAt, locale)}
                   />
                   <MetadataField label={t("audit.columns.component")} value={selectedEvent.component} />
                   <MetadataField label={t("audit.columns.phase")} value={selectedEvent.phase} />

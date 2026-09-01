@@ -1,20 +1,14 @@
-#![allow(dead_code)]
-
 pub(crate) mod client;
 pub(crate) mod contracts;
 #[cfg(test)]
 mod live_canary;
-pub(crate) mod session;
 
 use client::{
     AllocationStart, Cancellation, CleanupResult, EphemeralCredential, LarmError, LarmHttpClient,
     OperationProgress, SharedLarmClient,
 };
-#[cfg(test)]
-use client::{ChatCompletion, ChatMessage};
 use contracts::{BoundedIdentifier, ReadyAllocation, ReleaseFailureKind, SessionFailureKind};
-use session::{AllocationSession, SessionEffect, SessionPhase, SessionSignal};
-use std::{ops::Deref, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 pub(crate) const CONTRACT_COMMIT: &str = "7dca7c3";
 
@@ -108,29 +102,6 @@ pub(crate) struct AllocationFailure {
     pub(crate) cleanup: AllocationCleanup,
 }
 
-#[derive(Debug)]
-pub(crate) struct ReadyLease {
-    allocation: ReadyAllocation,
-    received_at: tokio::time::Instant,
-}
-
-impl ReadyLease {
-    fn received(allocation: ReadyAllocation) -> Self {
-        Self {
-            allocation,
-            received_at: tokio::time::Instant::now(),
-        }
-    }
-}
-
-impl Deref for ReadyLease {
-    type Target = ReadyAllocation;
-
-    fn deref(&self) -> &Self::Target {
-        &self.allocation
-    }
-}
-
 impl<'a> LarmProvider<'a> {
     pub(crate) fn for_attempt(
         gate: &'a LarmRuntimeGate,
@@ -191,7 +162,7 @@ impl<'a> LarmProvider<'a> {
     pub(crate) async fn allocate_ready(
         &self,
         cancellation: Cancellation<'_>,
-    ) -> Result<ReadyLease, AllocationFailure> {
+    ) -> Result<ReadyAllocation, AllocationFailure> {
         let started = tokio::time::Instant::now();
         let first = self.allocate_ready_once(cancellation, started).await;
         if first.as_ref().is_err_and(|failure| {
@@ -208,7 +179,7 @@ impl<'a> LarmProvider<'a> {
         &self,
         cancellation: Cancellation<'_>,
         started: tokio::time::Instant,
-    ) -> Result<ReadyLease, AllocationFailure> {
+    ) -> Result<ReadyAllocation, AllocationFailure> {
         let http = self.http().map_err(|kind| AllocationFailure {
             kind,
             cleanup: AllocationCleanup::NotStarted,
@@ -221,20 +192,6 @@ impl<'a> LarmProvider<'a> {
                 cleanup: AllocationCleanup::NotStarted,
             });
         }
-        let mut session =
-            AllocationSession::new(0, self.startup_timeout_seconds).map_err(|_| {
-                AllocationFailure {
-                    kind: SessionFailureKind::Internal,
-                    cleanup: AllocationCleanup::NotStarted,
-                }
-            })?;
-        session
-            .transition(SessionSignal::Start)
-            .map_err(|_| AllocationFailure {
-                kind: SessionFailureKind::Internal,
-                cleanup: AllocationCleanup::NotStarted,
-            })?;
-
         if cancellation.is_cancelled() {
             return Err(AllocationFailure {
                 kind: SessionFailureKind::Cancelled,
@@ -267,17 +224,8 @@ impl<'a> LarmProvider<'a> {
         };
         match start {
             AllocationStart::Ready(allocation) => {
-                let effects = session
-                    .transition(SessionSignal::AllocateReady {
-                        now_ms: elapsed_ms(started),
-                        allocation: allocation.clone(),
-                    })
-                    .map_err(|_| AllocationFailure {
-                        kind: SessionFailureKind::Protocol,
-                        cleanup: AllocationCleanup::NotStarted,
-                    })?;
-                if session.phase() == SessionPhase::Ready && effects.is_empty() {
-                    Ok(ReadyLease::received(allocation))
+                if elapsed_ms(started) < startup_deadline_ms {
+                    Ok(allocation)
                 } else {
                     Err(self
                         .cleanup_failure(
@@ -290,36 +238,9 @@ impl<'a> LarmProvider<'a> {
             }
             AllocationStart::Pending(pending) => {
                 let mut poll_index = 0_u64;
-                let effects = session
-                    .transition(SessionSignal::AllocatePending {
-                        now_ms: elapsed_ms(started),
-                        pending: pending.clone(),
-                        jitter_percent: poll_jitter_percent(
-                            pending.operation_id.as_str(),
-                            poll_index,
-                        ),
-                    })
-                    .map_err(|_| AllocationFailure {
-                        kind: SessionFailureKind::Protocol,
-                        cleanup: AllocationCleanup::NotStarted,
-                    })?;
-                let mut effect = effects.into_iter().next();
                 loop {
-                    let Some(SessionEffect::SchedulePoll {
-                        after_ms,
-                        deadline_ms,
-                        ..
-                    }) = effect
-                    else {
-                        return Err(self
-                            .cleanup_failure(
-                                &http,
-                                pending.cleanup_allocation_id.as_ref(),
-                                SessionFailureKind::Protocol,
-                            )
-                            .await);
-                    };
-                    if elapsed_ms(started) >= deadline_ms {
+                    let now_ms = elapsed_ms(started);
+                    if now_ms >= startup_deadline_ms {
                         return Err(self
                             .cleanup_failure(
                                 &http,
@@ -328,6 +249,11 @@ impl<'a> LarmProvider<'a> {
                             )
                             .await);
                     }
+                    let after_ms = poll_delay_ms(
+                        poll_index,
+                        poll_jitter_percent(pending.operation_id.as_str(), poll_index),
+                        startup_deadline_ms - now_ms,
+                    );
                     tokio::select! {
                         _ = cancellation.cancelled() => {
                             return Err(self.cleanup_failure(
@@ -339,7 +265,7 @@ impl<'a> LarmProvider<'a> {
                         _ = tokio::time::sleep(Duration::from_millis(after_ms)) => {}
                     }
                     let now_ms = elapsed_ms(started);
-                    if now_ms >= deadline_ms {
+                    if now_ms >= startup_deadline_ms {
                         return Err(self
                             .cleanup_failure(
                                 &http,
@@ -350,7 +276,7 @@ impl<'a> LarmProvider<'a> {
                     }
                     let operation = tokio::select! {
                         _ = cancellation.cancelled() => Err(LarmError::new(SessionFailureKind::Cancelled, false)),
-                        _ = tokio::time::sleep(Duration::from_millis(deadline_ms - now_ms)) => {
+                        _ = tokio::time::sleep(Duration::from_millis(startup_deadline_ms - now_ms)) => {
                             Err(LarmError::new(SessionFailureKind::Timeout, false))
                         }
                         result = http.get_operation(
@@ -362,17 +288,6 @@ impl<'a> LarmProvider<'a> {
                     match operation {
                         Ok(OperationProgress::Pending) => {
                             poll_index = poll_index.saturating_add(1);
-                            effect = session
-                                .transition(SessionSignal::PollPending {
-                                    now_ms: elapsed_ms(started),
-                                    pending: pending.clone(),
-                                    jitter_percent: poll_jitter_percent(
-                                        pending.operation_id.as_str(),
-                                        poll_index,
-                                    ),
-                                })
-                                .ok()
-                                .and_then(|effects| effects.into_iter().next());
                         }
                         Ok(OperationProgress::Succeeded) => {
                             let Some(allocation_id) = pending.cleanup_allocation_id.as_ref() else {
@@ -382,7 +297,7 @@ impl<'a> LarmProvider<'a> {
                                 });
                             };
                             let now_ms = elapsed_ms(started);
-                            if now_ms >= deadline_ms {
+                            if now_ms >= startup_deadline_ms {
                                 return Err(self
                                     .cleanup_failure(
                                         &http,
@@ -393,25 +308,15 @@ impl<'a> LarmProvider<'a> {
                             }
                             let ready = tokio::select! {
                                 _ = cancellation.cancelled() => Err(LarmError::new(SessionFailureKind::Cancelled, false)),
-                                _ = tokio::time::sleep(Duration::from_millis(deadline_ms - now_ms)) => {
+                                _ = tokio::time::sleep(Duration::from_millis(startup_deadline_ms - now_ms)) => {
                                     Err(LarmError::new(SessionFailureKind::Timeout, false))
                                 }
                                 result = http.get_allocation(allocation_id, cancellation) => result,
                             };
                             match ready {
                                 Ok(allocation) => {
-                                    let effects = session
-                                        .transition(SessionSignal::PollReady {
-                                            now_ms: elapsed_ms(started),
-                                            allocation: allocation.clone(),
-                                        })
-                                        .map_err(|_| AllocationFailure {
-                                            kind: SessionFailureKind::Protocol,
-                                            cleanup: AllocationCleanup::NotStarted,
-                                        })?;
-                                    if session.phase() == SessionPhase::Ready && effects.is_empty()
-                                    {
-                                        return Ok(ReadyLease::received(allocation));
+                                    if elapsed_ms(started) < startup_deadline_ms {
+                                        return Ok(allocation);
                                     }
                                     return Err(self
                                         .cleanup_failure(
@@ -443,69 +348,6 @@ impl<'a> LarmProvider<'a> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) async fn chat<F>(
-        &self,
-        lease: &ReadyLease,
-        messages: &[ChatMessage],
-        timeout: Duration,
-        cancellation: Cancellation<'_>,
-        on_delta: F,
-    ) -> Result<ChatCompletion, LarmError>
-    where
-        F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
-    {
-        self.http()
-            .map_err(|kind| LarmError::new(kind, false))?
-            .chat(
-                &lease.allocation,
-                lease.received_at,
-                messages,
-                timeout,
-                cancellation,
-                on_delta,
-            )
-            .await
-    }
-
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn chat_with_tools<F>(
-        &self,
-        lease: &mut ReadyLease,
-        messages: &[ChatMessage],
-        tool_exchanges: &[serde_json::Value],
-        tools: &[serde_json::Value],
-        reasoning_effort: &str,
-        max_output_tokens: u32,
-        timeout: Duration,
-        cancellation: Cancellation<'_>,
-        on_delta: F,
-    ) -> Result<ChatCompletion, LarmError>
-    where
-        F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
-    {
-        let completion = self
-            .http()
-            .map_err(|kind| LarmError::new(kind, false))?
-            .chat_with_tools(
-                &lease.allocation,
-                lease.received_at,
-                messages,
-                tool_exchanges,
-                tools,
-                reasoning_effort,
-                max_output_tokens,
-                timeout,
-                cancellation,
-                on_delta,
-            )
-            .await?;
-        lease.allocation = completion.renewed_allocation.clone();
-        lease.received_at = completion.lease_received_at;
-        Ok(completion)
-    }
-
     pub(crate) async fn release(&self, allocation_id: &BoundedIdentifier) -> CleanupResult {
         match self.http() {
             Ok(http) => http.release(allocation_id).await,
@@ -516,15 +358,13 @@ impl<'a> LarmProvider<'a> {
     #[cfg(test)]
     pub(crate) async fn renew_for_canary(
         &self,
-        lease: &ReadyLease,
+        allocation: &ReadyAllocation,
         cancellation: Cancellation<'_>,
-    ) -> Result<ReadyLease, LarmError> {
-        let allocation = self
-            .http()
+    ) -> Result<ReadyAllocation, LarmError> {
+        self.http()
             .map_err(|kind| LarmError::new(kind, false))?
-            .renew(&lease.allocation, cancellation, false)
-            .await?;
-        Ok(ReadyLease::received(allocation))
+            .renew(allocation, cancellation, false)
+            .await
     }
 
     fn http(&self) -> Result<LarmHttpClient<'_>, SessionFailureKind> {
@@ -564,6 +404,16 @@ fn poll_jitter_percent(operation_id: &str, poll_index: u64) -> i8 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     i8::try_from(hash % 41).unwrap_or(20) - 20
+}
+
+fn poll_delay_ms(poll_index: u64, jitter_percent: i8, remaining_ms: u64) -> u64 {
+    let base_ms = match poll_index {
+        0 => 250,
+        1 => 500,
+        _ => 1_000,
+    };
+    let adjusted_ms = (i64::from(base_ms) * (100 + i64::from(jitter_percent)) / 100) as u64;
+    adjusted_ms.min(remaining_ms)
 }
 
 fn release_kind(kind: SessionFailureKind) -> ReleaseFailureKind {
@@ -623,14 +473,13 @@ mod tests {
     }
 
     #[test]
-    fn contract_and_session_modules_have_no_io_dependencies() {
-        for source in [include_str!("contracts.rs"), include_str!("session.rs")] {
-            for forbidden in ["reqwest::", "rusqlite::", "tauri::", "std::fs", "std::net"] {
-                assert!(
-                    !source.contains(forbidden),
-                    "pure LARM module contains forbidden dependency: {forbidden}"
-                );
-            }
+    fn contracts_have_no_io_dependencies() {
+        let source = include_str!("contracts.rs");
+        for forbidden in ["reqwest::", "rusqlite::", "tauri::", "std::fs", "std::net"] {
+            assert!(
+                !source.contains(forbidden),
+                "pure LARM contracts contain forbidden dependency: {forbidden}"
+            );
         }
     }
 

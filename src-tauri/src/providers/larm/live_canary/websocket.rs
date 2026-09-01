@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use super::{CanaryError, LarmProvider};
 
@@ -30,7 +29,7 @@ impl crate::runtime::event_hub::RuntimeEventSender for CanaryEvents {
 
 pub(super) async fn websocket_turn(
     provider: &LarmProvider<'_>,
-    lease: &super::super::ReadyLease,
+    allocation: &super::super::contracts::ReadyAllocation,
     prompt: &str,
     cancel_on_delta: bool,
 ) -> Result<crate::providers::llm_websocket::client::WebSocketRunResult, CanaryError> {
@@ -50,25 +49,29 @@ pub(super) async fn websocket_turn(
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
-    let messages = [serde_json::json!({ "role": "user", "content": prompt })];
+    let history = [crate::ipc_contract::ConversationMessage {
+        id: "message_larm_canary".to_string(),
+        conversation_id: input.conversation_id.clone(),
+        role: "user".to_string(),
+        content: prompt.to_string(),
+        created_at: "canary".to_string(),
+    }];
     let stream_url = provider
         .websocket_stream_url()
         .map_err(|_| CanaryError::Contract)?;
     let authorization = provider
         .websocket_authorization()
         .map_err(|_| CanaryError::Authentication)?;
-    crate::providers::llm_websocket::client::run(
-        crate::providers::llm_websocket::client::WebSocketRunContext {
-            stream_url: stream_url.as_str(),
-            authorization: Some(authorization),
-            allocation_id: Some(lease.allocation_id.as_str()),
-            model: "local",
-            messages: &messages,
-            tools: &[],
+    crate::providers::stream::run_model_websocket(
+        stream_url.as_str(),
+        Some(authorization),
+        Some(allocation.allocation_id.as_str()),
+        "local",
+        &history,
+        120_000,
+        crate::providers::stream::ModelStreamContext {
             reasoning_effort: crate::providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
             max_output_tokens: crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
-            tool_timeout: Duration::from_secs(60),
-            timeout: Duration::from_secs(120),
             input: &input,
             on_event: &events,
             cancellation,

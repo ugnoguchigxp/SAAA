@@ -1,3 +1,4 @@
+use crate::RunCancellation;
 use reqwest::{header::HeaderValue, Method, StatusCode};
 use serde::Deserialize;
 use serde_json::json;
@@ -6,20 +7,19 @@ use url::Url;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::RunCancellation;
-
+mod auth;
 mod http;
+mod urls;
 mod validate;
 
-pub(crate) use http::control_credential_available;
+use auth::*;
 use http::*;
-pub(crate) use validate::control_base_url;
+use urls::*;
+pub(crate) use urls::{control_base_url, url_is_local};
 use validate::*;
-
 pub(crate) const CONTROL_PORT: u16 = 9810;
 pub(crate) const AGENT_PROFILE: &str = "deep-reasoning-35b";
 pub(crate) const AUDIENCE: &str = "saaa-desktop";
-const PROFILE_CAPABILITY: &str = "llm.reasoning";
 const API_TOKEN_ENV: &str = "LARM_API_TOKEN";
 const CLIENT_ID: &str = "saaa-desktop";
 const CONNECTION_TTL_SECONDS: u32 = 300;
@@ -77,6 +77,8 @@ impl DynamicLanError {
 #[serde(rename_all = "camelCase")]
 struct AgentProfiles {
     contract_version: String,
+    #[serde(default)]
+    default_agent_profile: Option<String>,
     profiles: Vec<AgentProfile>,
     audiences: Vec<String>,
 }
@@ -91,7 +93,18 @@ struct AgentProfile {
 struct ProfileProvider {
     name: String,
     capability: String,
+    #[serde(default)]
+    supported_capabilities: Vec<String>,
     protocol: String,
+    model: String,
+    #[serde(default)]
+    streaming_protocol: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct SelectedProfile {
+    id: String,
+    capability: String,
     model: String,
 }
 
@@ -159,17 +172,39 @@ struct ProviderDescriptor {
     port: u16,
     base_url: String,
     model: String,
+    streaming: ProviderStreamingDescriptor,
     health: ProviderHealthDescriptor,
-    credential: ProviderCredential,
+    #[serde(default)]
+    credential: Option<ProviderCredential>,
     configuration: ProviderConfiguration,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderStreamingDescriptor {
+    protocol: String,
+    url: String,
+    upstream_transport: String,
+    #[serde(default)]
+    encoding: Option<String>,
+    #[serde(default)]
+    compression: Option<String>,
+    #[serde(default)]
+    max_concurrent_runs: Option<u8>,
+    #[serde(default)]
+    max_connections: Option<u8>,
+    #[serde(default)]
+    resume_window_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProviderCredential {
     r#type: String,
+    #[serde(default)]
     token: String,
-    expires_at: String,
+    #[serde(default)]
+    expires_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -191,8 +226,8 @@ struct ProviderHealth {
 struct ProviderConfiguration {
     kind: String,
     fields: ProviderConfigurationFields,
-    #[serde(rename = "secretFields")]
-    secret_fields: ProviderSecretFields,
+    #[serde(default, rename = "secretFields")]
+    secret_fields: Option<ProviderSecretFields>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,7 +240,8 @@ struct ProviderConfigurationFields {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProviderSecretFields {
-    api_key: String,
+    #[serde(default)]
+    api_key: Option<String>,
 }
 
 struct JsonResponse<T> {
@@ -224,6 +260,7 @@ struct ConnectionIdentity {
     catalog_revision: String,
     profile_revision: String,
     audience_revision: String,
+    profile: SelectedProfile,
     created_at: chrono::DateTime<chrono::FixedOffset>,
     expires_at: chrono::DateTime<chrono::FixedOffset>,
 }
@@ -231,12 +268,13 @@ struct ConnectionIdentity {
 pub(crate) struct DynamicLanConnection {
     client: reqwest::Client,
     control_base: Url,
-    control_credential: HeaderValue,
+    control_credential: Option<HeaderValue>,
     identity: ConnectionIdentity,
     audience: String,
     endpoint: String,
+    stream_url: String,
     model: String,
-    api_key: Zeroizing<String>,
+    api_key: Option<Zeroizing<String>>,
     prior_release_failure: Option<ErrorKind>,
 }
 
@@ -299,7 +337,7 @@ impl DynamicLanConnection {
     async fn resolve_once(
         client: reqwest::Client,
         control_base: Url,
-        control_credential: HeaderValue,
+        control_credential: Option<HeaderValue>,
         cancellation: Arc<RunCancellation>,
     ) -> Result<Self, DynamicLanError> {
         let control_is_loopback = url_is_loopback(&control_base);
@@ -309,19 +347,19 @@ impl DynamicLanConnection {
             control_base
                 .join("v1/agent-profiles")
                 .map_err(contract_error)?,
-            &control_credential,
+            control_credential.as_ref(),
             None,
             None,
             &cancellation,
         )
         .await?;
         validate_config_revision(profiles.config_revision.as_deref())?;
-        validate_profiles(&profiles.value)?;
+        let selected_profile = validate_profiles(&profiles.value)?;
         let audience = select_audience(&profiles.value.audiences)?.to_string();
 
         let idempotency_key = format!("saaa-{}", Uuid::new_v4().simple());
         let create_body = json!({
-            "agentProfile": AGENT_PROFILE,
+            "agentProfile": selected_profile.id.as_str(),
             "audience": audience.as_str(),
             "client": CLIENT_ID,
             "ttlSeconds": CONNECTION_TTL_SECONDS,
@@ -335,7 +373,7 @@ impl DynamicLanConnection {
             &client,
             Method::POST,
             create_url,
-            &control_credential,
+            control_credential.as_ref(),
             Some(("idempotency-key", idempotency_key.as_str())),
             Some(&create_body),
             &cancellation,
@@ -348,13 +386,17 @@ impl DynamicLanConnection {
             return Err(contract_error(()));
         }
         let mut state = created.value;
-        let identity = match validate_initial_state(&state, &audience) {
+        let identity = match validate_initial_state(&state, &audience, &selected_profile) {
             Ok(identity) => identity,
             Err(error) => {
                 if let Ok(url) = connection_resource_url(&control_base, &state.id) {
-                    return Err(
-                        error_after_release(error, &client, &url, &control_credential).await,
-                    );
+                    return Err(error_after_release(
+                        error,
+                        &client,
+                        &url,
+                        control_credential.as_ref(),
+                    )
+                    .await);
                 }
                 return Err(error);
             }
@@ -370,7 +412,7 @@ impl DynamicLanConnection {
                     error,
                     &client,
                     &connection_url,
-                    &control_credential,
+                    control_credential.as_ref(),
                 )
                 .await);
             }
@@ -393,7 +435,7 @@ impl DynamicLanConnection {
                         error,
                         &client,
                         &connection_url,
-                        &control_credential,
+                        control_credential.as_ref(),
                     )
                     .await);
                 }
@@ -406,7 +448,7 @@ impl DynamicLanConnection {
                         error,
                         &client,
                         &connection_url,
-                        &control_credential,
+                        control_credential.as_ref(),
                     )
                     .await);
                 }
@@ -415,7 +457,7 @@ impl DynamicLanConnection {
                         contract_error(()),
                         &client,
                         &connection_url,
-                        &control_credential,
+                        control_credential.as_ref(),
                     )
                     .await);
                 }
@@ -430,7 +472,7 @@ impl DynamicLanConnection {
                     error,
                     &client,
                     &connection_url,
-                    &control_credential,
+                    control_credential.as_ref(),
                 )
                 .await);
             }
@@ -440,7 +482,7 @@ impl DynamicLanConnection {
                     error,
                     &client,
                     &connection_url,
-                    &control_credential,
+                    control_credential.as_ref(),
                 )
                 .await);
             }
@@ -453,7 +495,7 @@ impl DynamicLanConnection {
                     error,
                     &client,
                     &connection_url,
-                    &control_credential,
+                    control_credential.as_ref(),
                 )
                 .await);
             }
@@ -461,7 +503,7 @@ impl DynamicLanConnection {
                 &client,
                 Method::GET,
                 connection_url.clone(),
-                &control_credential,
+                control_credential.as_ref(),
                 None,
                 None,
                 &cancellation,
@@ -475,7 +517,7 @@ impl DynamicLanConnection {
                             error,
                             &client,
                             &connection_url,
-                            &control_credential,
+                            control_credential.as_ref(),
                         )
                         .await);
                     }
@@ -487,7 +529,7 @@ impl DynamicLanConnection {
                         error,
                         &client,
                         &connection_url,
-                        &control_credential,
+                        control_credential.as_ref(),
                     )
                     .await);
                 }
@@ -497,7 +539,7 @@ impl DynamicLanConnection {
         let descriptor = match claim_and_probe(
             &client,
             &control_base,
-            &control_credential,
+            control_credential.as_ref(),
             &identity,
             &audience,
             control_is_loopback,
@@ -511,7 +553,7 @@ impl DynamicLanConnection {
                     error,
                     &client,
                     &connection_url,
-                    &control_credential,
+                    control_credential.as_ref(),
                 )
                 .await);
             }
@@ -524,8 +566,12 @@ impl DynamicLanConnection {
             identity,
             audience,
             endpoint: descriptor.configuration.fields.base_url,
+            stream_url: descriptor.streaming.url,
             model: descriptor.configuration.fields.model,
-            api_key: Zeroizing::new(descriptor.credential.token),
+            api_key: descriptor
+                .credential
+                .filter(|credential| credential.r#type == "bearer")
+                .map(|credential| Zeroizing::new(credential.token)),
             prior_release_failure: None,
         })
     }
@@ -534,12 +580,24 @@ impl DynamicLanConnection {
         &self.endpoint
     }
 
+    pub(crate) fn stream_url(&self) -> &str {
+        &self.stream_url
+    }
+
+    pub(crate) fn allocation_id(&self) -> &str {
+        &self.identity.allocation_id
+    }
+
+    pub(crate) fn stream_protocol(&self) -> &str {
+        "saaa.llm-stream.v1"
+    }
+
     pub(crate) fn model(&self) -> &str {
         &self.model
     }
 
-    pub(crate) fn api_key(&self) -> &str {
-        self.api_key.as_str()
+    pub(crate) fn api_key(&self) -> Option<&str> {
+        self.api_key.as_ref().map(|value| value.as_str())
     }
 
     pub(crate) fn prior_release_failure(&self) -> Option<ErrorKind> {
@@ -579,7 +637,7 @@ impl DynamicLanConnection {
             &self.client,
             Method::POST,
             connection_renew_url(&self.control_base, &self.identity.id)?,
-            &self.control_credential,
+            self.control_credential.as_ref(),
             Some(("idempotency-key", renew_key.as_str())),
             Some(&json!({ "ttlSeconds": CONNECTION_TTL_SECONDS })),
             &cancellation,
@@ -592,7 +650,7 @@ impl DynamicLanConnection {
         let descriptor = claim_and_probe(
             &self.client,
             &self.control_base,
-            &self.control_credential,
+            self.control_credential.as_ref(),
             &next_identity,
             &self.audience,
             url_is_loopback(&self.control_base),
@@ -601,14 +659,18 @@ impl DynamicLanConnection {
         .await?;
         self.identity = next_identity;
         self.endpoint = descriptor.configuration.fields.base_url;
+        self.stream_url = descriptor.streaming.url;
         self.model = descriptor.configuration.fields.model;
-        self.api_key = Zeroizing::new(descriptor.credential.token);
+        self.api_key = descriptor
+            .credential
+            .filter(|credential| credential.r#type == "bearer")
+            .map(|credential| Zeroizing::new(credential.token));
         Ok(())
     }
 
     pub(crate) async fn release(&self) -> Result<(), DynamicLanError> {
         let url = connection_resource_url(&self.control_base, &self.identity.id)?;
-        release_connection(&self.client, &url, &self.control_credential).await
+        release_connection(&self.client, &url, self.control_credential.as_ref()).await
     }
 }
 
@@ -622,13 +684,13 @@ fn contract_error<T>(_: T) -> DynamicLanError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::header::CONTENT_TYPE;
     use serde_json::Value;
     use std::env;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
 
+    const PROFILE_CAPABILITY: &str = "llm.reasoning";
     const TEST_REVISION: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
     fn test_timestamps() -> (String, String) {
@@ -678,6 +740,11 @@ mod tests {
             catalog_revision: TEST_REVISION.to_string(),
             profile_revision: TEST_REVISION.to_string(),
             audience_revision: TEST_REVISION.to_string(),
+            profile: SelectedProfile {
+                id: AGENT_PROFILE.to_string(),
+                capability: PROFILE_CAPABILITY.to_string(),
+                model: AGENT_PROFILE.to_string(),
+            },
             created_at: chrono::DateTime::parse_from_rfc3339(created_at)
                 .expect("created timestamp"),
             expires_at: chrono::DateTime::parse_from_rfc3339(expires_at).expect("expiry timestamp"),
@@ -702,6 +769,16 @@ mod tests {
                 "port": port,
                 "baseUrl": base_url,
                 "model": AGENT_PROFILE,
+                "streaming": {
+                    "protocol": "saaa.llm-stream.v1",
+                    "url": format!("ws://{host}:{port}/v1/llm/stream"),
+                    "encoding": "json-control+binary-delta-v1",
+                    "compression": "none",
+                    "maxConcurrentRuns": 2,
+                    "maxConnections": 2,
+                    "resumeWindowMs": 120_000,
+                    "upstreamTransport": "native"
+                },
                 "health": {
                     "url": format!("http://{host}:{port}/v1/agent-connections/aconn_test/providers/llm/health"),
                     "kind": "semantic-inference",
@@ -722,6 +799,19 @@ mod tests {
                 }
             }]
         })
+    }
+
+    fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str) -> Value {
+        let mut claim = claim_json(host, port, audience, expires_at);
+        let provider = claim["providers"][0]
+            .as_object_mut()
+            .expect("provider object");
+        provider.remove("credential");
+        provider["configuration"]
+            .as_object_mut()
+            .expect("configuration object")
+            .remove("secretFields");
+        claim
     }
 
     #[test]
@@ -778,29 +868,97 @@ mod tests {
     }
 
     #[test]
-    fn requires_one_exact_deep_reasoning_profile() {
+    fn accepts_the_legacy_profile_when_no_default_is_advertised() {
         let profile = || AgentProfile {
             id: AGENT_PROFILE.to_string(),
             providers: vec![ProfileProvider {
                 name: "llm".to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
+                supported_capabilities: Vec::new(),
                 protocol: "openai.chat-completions.v1".to_string(),
                 model: AGENT_PROFILE.to_string(),
+                streaming_protocol: None,
             }],
         };
         let profiles = AgentProfiles {
             contract_version: "agent-connection.v1".to_string(),
+            default_agent_profile: None,
             profiles: vec![profile()],
             audiences: vec!["saaa-desktop".to_string()],
         };
-        assert!(validate_profiles(&profiles).is_ok());
+        assert_eq!(
+            validate_profiles(&profiles).expect("legacy profile remains compatible"),
+            SelectedProfile {
+                id: AGENT_PROFILE.to_string(),
+                capability: PROFILE_CAPABILITY.to_string(),
+                model: AGENT_PROFILE.to_string(),
+            }
+        );
 
         let duplicate = AgentProfiles {
             contract_version: profiles.contract_version.clone(),
+            default_agent_profile: None,
             profiles: vec![profile(), profile()],
             audiences: profiles.audiences.clone(),
         };
         assert!(validate_profiles(&duplicate).is_err());
+    }
+
+    #[test]
+    fn selects_the_advertised_default_compatible_profile() {
+        let profiles = serde_json::from_value::<AgentProfiles>(json!({
+            "contractVersion": "agent-connection.v1",
+            "defaultAgentProfile": "coding-default",
+            "profiles": [{
+                "id": "coding-default",
+                "providers": [{
+                    "name": "llm",
+                    "capability": "llm.coding",
+                    "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
+                    "protocol": "openai.chat-completions.v1",
+                    "model": "coding-default",
+                    "streamingProtocol": "saaa.llm-stream.v1"
+                }]
+            }],
+            "audiences": [AUDIENCE]
+        }))
+        .expect("current agent profile descriptor decodes");
+
+        assert_eq!(
+            validate_profiles(&profiles).expect("compatible default profile is selected"),
+            SelectedProfile {
+                id: "coding-default".to_string(),
+                capability: "llm.coding".to_string(),
+                model: "coding-default".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn selected_profile_can_bind_a_different_public_model() {
+        let profiles = serde_json::from_value::<AgentProfiles>(json!({
+            "contractVersion": "agent-connection.v1",
+            "profiles": [{
+                "id": AGENT_PROFILE,
+                "providers": [{
+                    "name": "llm",
+                    "capability": PROFILE_CAPABILITY,
+                    "protocol": "openai.chat-completions.v1",
+                    "model": "coding-default"
+                }]
+            }],
+            "audiences": [AUDIENCE]
+        }))
+        .expect("compatibility alias descriptor decodes");
+
+        assert_eq!(
+            validate_profiles(&profiles).expect("compatibility alias is selected"),
+            SelectedProfile {
+                id: AGENT_PROFILE.to_string(),
+                capability: PROFILE_CAPABILITY.to_string(),
+                model: "coding-default".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -837,9 +995,83 @@ mod tests {
         let descriptor = validate_claim(claim("10.0.0.42"), &identity, AUDIENCE, false)
             .expect("private HTTP descriptor is accepted");
         assert_eq!(descriptor.base_url, "http://10.0.0.42:9810/v1");
+        assert_eq!(
+            descriptor.streaming.url,
+            "ws://10.0.0.42:9810/v1/llm/stream"
+        );
         assert!(validate_claim(claim("127.0.0.1"), &identity, AUDIENCE, false).is_err());
         let wrong_identity = test_identity("different-id", &created_at, &expires_at);
         assert!(validate_claim(claim("10.0.0.42"), &wrong_identity, AUDIENCE, false).is_err());
+    }
+
+    #[test]
+    fn claim_requires_a_same_origin_native_stream_descriptor() {
+        let (created_at, expires_at) = test_timestamps();
+        let identity = test_identity("aconn_test", &created_at, &expires_at);
+
+        let mut missing = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+        missing["providers"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("streaming");
+        assert!(serde_json::from_value::<ConnectionClaim>(missing).is_err());
+
+        let mut cross_host = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+        cross_host["providers"][0]["streaming"]["url"] = json!("ws://10.0.0.43:9810/v1/llm/stream");
+        let cross_host = serde_json::from_value::<ConnectionClaim>(cross_host).unwrap();
+        assert!(validate_claim(cross_host, &identity, AUDIENCE, false).is_err());
+
+        let mut wrong_path = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+        wrong_path["providers"][0]["streaming"]["url"] =
+            json!("ws://10.0.0.42:9810/v1/chat/completions");
+        let wrong_path = serde_json::from_value::<ConnectionClaim>(wrong_path).unwrap();
+        assert!(validate_claim(wrong_path, &identity, AUDIENCE, false).is_err());
+    }
+
+    #[test]
+    fn claim_accepts_stream_protocol_top_level_and_compact_stream_metadata() {
+        let (created_at, expires_at) = test_timestamps();
+        let identity = test_identity("aconn_test", &created_at, &expires_at);
+        let mut value = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+        value["providers"][0]["protocol"] = json!("saaa.llm-stream.v1");
+        let streaming = value["providers"][0]["streaming"].as_object_mut().unwrap();
+        for optional in [
+            "encoding",
+            "compression",
+            "maxConcurrentRuns",
+            "maxConnections",
+            "resumeWindowMs",
+        ] {
+            streaming.remove(optional);
+        }
+        let claim = serde_json::from_value::<ConnectionClaim>(value).unwrap();
+
+        let descriptor = validate_claim(claim, &identity, AUDIENCE, false)
+            .expect("compact WebSocket claim remains sufficient");
+
+        assert_eq!(descriptor.protocol, "saaa.llm-stream.v1");
+        assert_eq!(descriptor.streaming.upstream_transport, "native");
+    }
+
+    #[test]
+    fn claim_accepts_explicit_no_auth_without_a_secret_pointer() {
+        let (created_at, expires_at) = test_timestamps();
+        let identity = test_identity("aconn_test", &created_at, &expires_at);
+        let mut value = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+        value["providers"][0]["credential"] = json!({ "type": "none" });
+        value["providers"][0]["configuration"]
+            .as_object_mut()
+            .expect("configuration object")
+            .remove("secretFields");
+        let claim = serde_json::from_value::<ConnectionClaim>(value.clone()).unwrap();
+        let descriptor = validate_claim(claim, &identity, AUDIENCE, false)
+            .expect("explicit anonymous claim is accepted");
+        assert_eq!(descriptor.credential.unwrap().r#type, "none");
+
+        value["providers"][0]["configuration"]["secretFields"] =
+            json!({ "apiKey": "credential.token" });
+        let inconsistent = serde_json::from_value::<ConnectionClaim>(value).unwrap();
+        assert!(validate_claim(inconsistent, &identity, AUDIENCE, false).is_err());
     }
 
     #[test]
@@ -893,7 +1125,7 @@ mod tests {
             &client,
             Method::GET,
             Url::parse(&format!("http://{address}/v1/agent-profiles")).expect("test URL"),
-            &provider_credential("test-control-token").expect("test credential"),
+            Some(&provider_credential("test-control-token").expect("test credential")),
             None,
             None,
             &RunCancellation::default(),
@@ -931,7 +1163,7 @@ mod tests {
             &client,
             &Url::parse(&format!("http://{address}/v1/agent-connections/aconn_test"))
                 .expect("release URL"),
-            &provider_credential("test-control-token").expect("test credential"),
+            Some(&provider_credential("test-control-token").expect("test credential")),
         )
         .await;
         server.join().expect("server joins");
@@ -1091,8 +1323,12 @@ mod tests {
             connection.endpoint(),
             format!("http://127.0.0.1:{}/v1", address.port())
         );
+        assert_eq!(
+            connection.stream_url(),
+            format!("ws://127.0.0.1:{}/v1/llm/stream", address.port())
+        );
         assert_eq!(connection.model(), AGENT_PROFILE);
-        assert_eq!(connection.api_key(), "short-lived-provider-token");
+        assert_eq!(connection.api_key(), Some("short-lived-provider-token"));
         connection.release().await.expect("connection releases");
         server.join().expect("server joins");
 
@@ -1117,6 +1353,177 @@ mod tests {
         assert!(requests[3]
             .to_ascii_lowercase()
             .contains("authorization: bearer short-lived-provider-token"));
+
+        if let Some(token) = previous_token {
+            env::set_var(API_TOKEN_ENV, token);
+        } else {
+            env::remove_var(API_TOKEN_ENV);
+        }
+    }
+
+    #[tokio::test]
+    async fn resolves_the_advertised_default_profile_through_state_and_claim() {
+        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let previous_token = env::var(API_TOKEN_ENV).ok();
+        env::remove_var(API_TOKEN_ENV);
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
+        let address = listener.local_addr().expect("listener address");
+        let (created_at, expires_at) = test_timestamps();
+        let (captured_tx, captured_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            for index in 0..5 {
+                let (mut stream, _) = listener.accept().expect("request accepted");
+                captured_tx
+                    .send(read_request(&mut stream))
+                    .expect("request captured");
+                let body = match index {
+                    0 => json!({
+                        "contractVersion": "agent-connection.v1",
+                        "defaultAgentProfile": "coding-default",
+                        "profiles": [{
+                            "id": "coding-default",
+                            "providers": [{
+                                "name": "llm",
+                                "capability": "llm.coding",
+                                "supportedCapabilities": [
+                                    "llm.coding",
+                                    "llm.general",
+                                    "llm.reasoning"
+                                ],
+                                "protocol": "openai.chat-completions.v1",
+                                "model": "coding-default",
+                                "streamingProtocol": "saaa.llm-stream.v1"
+                            }]
+                        }],
+                        "audiences": [AUDIENCE]
+                    }),
+                    1 => {
+                        let mut state = connection_state_json(
+                            "aconn_test",
+                            "ready",
+                            AUDIENCE,
+                            &created_at,
+                            &expires_at,
+                        );
+                        state["agentProfile"] = json!("coding-default");
+                        state["providers"][0]["capability"] = json!("llm.coding");
+                        state["providers"][0]["route"] = json!("llm-default");
+                        state["providers"][0]["publicModel"] = json!("coding-default");
+                        state
+                    }
+                    2 => {
+                        let mut claim =
+                            claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at);
+                        claim["providers"][0]["capability"] = json!("llm.coding");
+                        claim["providers"][0]["model"] = json!("coding-default");
+                        claim["providers"][0]["configuration"]["fields"]["model"] =
+                            json!("coding-default");
+                        claim
+                    }
+                    3 => json!({ "ready": true, "acceptingRequests": true }),
+                    4 => Value::Null,
+                    _ => unreachable!(),
+                };
+                if index == 4 {
+                    write_response(&mut stream, "204 No Content", "", "");
+                } else {
+                    write_response(&mut stream, "200 OK", "application/json", &body.to_string());
+                }
+            }
+        });
+
+        let connection = DynamicLanConnection::resolve_at(
+            Url::parse(&format!("http://{address}/")).expect("control URL"),
+            Arc::new(RunCancellation::default()),
+        )
+        .await
+        .expect("current default profile resolves");
+        assert_eq!(connection.model(), "coding-default");
+        connection.release().await.expect("connection releases");
+        server.join().expect("server joins");
+
+        let requests = captured_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(requests.len(), 5);
+        assert!(requests[1].contains("\"agentProfile\":\"coding-default\""));
+        assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
+        assert!(requests[4].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
+
+        if let Some(token) = previous_token {
+            env::set_var(API_TOKEN_ENV, token);
+        } else {
+            env::remove_var(API_TOKEN_ENV);
+        }
+    }
+
+    #[tokio::test]
+    async fn resolves_and_releases_without_control_or_provider_credentials() {
+        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let previous_token = env::var(API_TOKEN_ENV).ok();
+        env::remove_var(API_TOKEN_ENV);
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
+        let address = listener.local_addr().expect("listener address");
+        let (created_at, expires_at) = test_timestamps();
+        let (captured_tx, captured_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            for index in 0..5 {
+                let (mut stream, _) = listener.accept().expect("request accepted");
+                captured_tx
+                    .send(read_request(&mut stream))
+                    .expect("request captured");
+                let body = match index {
+                    0 => json!({
+                        "contractVersion": "agent-connection.v1",
+                        "profiles": [{
+                            "id": AGENT_PROFILE,
+                            "providers": [{
+                                "name": "llm",
+                                "capability": PROFILE_CAPABILITY,
+                                "protocol": "saaa.llm-stream.v1",
+                                "model": AGENT_PROFILE
+                            }]
+                        }],
+                        "audiences": [AUDIENCE]
+                    })
+                    .to_string(),
+                    1 => connection_state_json(
+                        "aconn_test",
+                        "ready",
+                        AUDIENCE,
+                        &created_at,
+                        &expires_at,
+                    )
+                    .to_string(),
+                    2 => anonymous_claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at)
+                        .to_string(),
+                    3 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
+                    4 => String::new(),
+                    _ => unreachable!(),
+                };
+                if index == 4 {
+                    write_response(&mut stream, "204 No Content", "", "");
+                } else {
+                    write_response(&mut stream, "200 OK", "application/json", &body);
+                }
+            }
+        });
+
+        let connection = DynamicLanConnection::resolve_at(
+            Url::parse(&format!("http://{address}/")).expect("control URL"),
+            Arc::new(RunCancellation::default()),
+        )
+        .await
+        .expect("anonymous connection resolves");
+        assert_eq!(connection.api_key(), None);
+        connection.release().await.expect("connection releases");
+        server.join().expect("server joins");
+
+        let requests = captured_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(requests.len(), 5);
+        for request in requests {
+            assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        }
 
         if let Some(token) = previous_token {
             env::set_var(API_TOKEN_ENV, token);
@@ -1307,61 +1714,63 @@ mod tests {
         let connection = DynamicLanConnection::resolve(&host, Arc::new(RunCancellation::default()))
             .await
             .expect("live dynamic_lan connection resolves");
-        let chat_url = Url::parse(connection.endpoint())
-            .expect("claimed endpoint is valid")
-            .join("chat/completions")
-            .expect("chat URL joins");
-        let response = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .expect("live client builds")
-            .post(chat_url)
-            .bearer_auth(connection.api_key())
-            .timeout(Duration::from_secs(60))
-            .json(&json!({
-                "model": connection.model(),
-                "messages": [{ "role": "user", "content": "Reply with exactly: SAAA_DYNAMIC_OK" }],
-                "stream": true,
-                "max_tokens": 64,
-                "reasoning_effort": "low"
-            }))
-            .send()
-            .await;
+        let authorization = connection
+            .api_key()
+            .map(|credential| format!("Bearer {credential}"));
+        let prompt = "Reply with exactly: SAAA_DYNAMIC_OK";
+        let messages = [json!({ "role": "user", "content": prompt })];
+        let input = crate::StartTurnInput {
+            run_id: format!("run_dynamic_canary_{}", Uuid::new_v4().simple()),
+            conversation_id: "conversation_dynamic_canary".to_string(),
+            content: prompt.to_string(),
+            workspace_path: None,
+            retry_input_message_id: None,
+            source_id: None,
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
+        };
+        let events = LiveCanaryEvents;
+        let result = crate::providers::llm_websocket::client::run(
+            crate::providers::llm_websocket::client::WebSocketRunContext {
+                stream_url: connection.stream_url(),
+                authorization: authorization.as_deref(),
+                allocation_id: Some(connection.allocation_id()),
+                model: connection.model(),
+                messages: &messages,
+                tools: &[],
+                reasoning_effort: "low",
+                max_output_tokens: 512,
+                tool_timeout: Duration::from_secs(60),
+                timeout: Duration::from_secs(120),
+                input: &input,
+                on_event: &events,
+                cancellation: Arc::new(RunCancellation::default()),
+                output_persistence: None,
+            },
+        )
+        .await;
         let release = connection.release().await;
-        let response = response.expect("claimed provider request completes");
-        let status = response.status();
-        assert!(status.is_success(), "claimed provider returned {status}");
-        let content_type = response
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        assert!(
-            content_type.starts_with("text/event-stream"),
-            "claimed provider must return SSE"
-        );
-        let body = read_limited(response, &RunCancellation::default())
-            .await
-            .expect("provider SSE reads");
-        let body = std::str::from_utf8(&body).expect("provider SSE is UTF-8");
-        assert!(body.lines().any(|line| line.trim() == "data: [DONE]"));
-        let completion = body
-            .lines()
-            .filter_map(|line| line.strip_prefix("data:"))
-            .map(str::trim)
-            .filter(|data| *data != "[DONE]")
-            .filter_map(|data| serde_json::from_str::<Value>(data).ok())
-            .filter_map(|value| {
-                value
-                    .pointer("/choices/0/delta/content")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .collect::<String>();
+        let completed = result.expect("claimed WebSocket provider request completes");
+        let crate::providers::llm_websocket::client::WebSocketRunResult::Completed(completion) =
+            completed
+        else {
+            panic!("claimed WebSocket provider must complete normally: {completed:?}");
+        };
         assert!(!completion.trim().is_empty());
         release.expect("live connection releases");
+    }
+
+    #[derive(Clone, Copy)]
+    struct LiveCanaryEvents;
+
+    impl crate::runtime::event_hub::RuntimeEventSender for LiveCanaryEvents {
+        fn send(&self, _event: crate::ipc_contract::RuntimeEvent) -> tauri::Result<()> {
+            Ok(())
+        }
+
+        fn clone_box(&self) -> Box<dyn crate::runtime::event_hub::RuntimeEventSender> {
+            Box::new(*self)
+        }
     }
 
     fn read_request(stream: &mut std::net::TcpStream) -> String {

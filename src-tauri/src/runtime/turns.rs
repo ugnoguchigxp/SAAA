@@ -477,14 +477,10 @@ pub(crate) async fn execute_conversation_turn(
     }
     let reasoning_effort = providers.reasoning_effort.clone();
     let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
-    let route_ids = apply_dynamic_lan_credential_gate(
+    let route_ids = apply_runtime_provider_gates(
         &providers,
-        apply_runtime_provider_gates(
-            &providers,
-            effective_conversation_route_ids(&providers, &route, &security),
-            &state.larm_gate,
-        ),
-        crate::providers::dynamic_lan::control_credential_available(),
+        effective_conversation_route_ids(&providers, &route, &security),
+        &state.larm_gate,
     );
     if route_ids.is_empty() && !state.larm_gate.allows_traffic() {
         return Err(state.larm_gate.public_message().to_string());
@@ -729,23 +725,6 @@ pub(crate) async fn execute_conversation_turn(
     }
 }
 
-fn apply_dynamic_lan_credential_gate(
-    providers: &crate::ModelProvidersSettings,
-    mut route_ids: Vec<String>,
-    credential_available: bool,
-) -> Vec<String> {
-    if route_ids.len() > 1 && !credential_available {
-        route_ids.retain(|provider_id| {
-            providers
-                .providers
-                .iter()
-                .find(|provider| provider.id() == provider_id)
-                .is_none_or(|provider| !matches!(provider, ModelProviderSettings::DynamicLan(_)))
-        });
-    }
-    route_ids
-}
-
 pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {
     !output_started
         && matches!(
@@ -892,31 +871,5 @@ mod tests {
             ProviderFailureKind::Authentication,
             false
         ));
-    }
-
-    #[test]
-    fn missing_dynamic_lan_credential_prefers_the_configured_direct_route() {
-        let providers = crate::ModelProvidersSettings {
-            providers: vec![
-                crate::test_support::dynamic_lan_provider("dynamic_lan-primary"),
-                crate::test_support::provider("direct-fallback", "local"),
-            ],
-            reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-            harness: crate::HarnessSettings {
-                address: "http://localhost:9810".to_string(),
-            },
-        };
-        let configured = vec![
-            "dynamic_lan-primary".to_string(),
-            "direct-fallback".to_string(),
-        ];
-        assert_eq!(
-            apply_dynamic_lan_credential_gate(&providers, configured.clone(), false),
-            ["direct-fallback"]
-        );
-        assert_eq!(
-            apply_dynamic_lan_credential_gate(&providers, configured, true),
-            ["dynamic_lan-primary", "direct-fallback"]
-        );
     }
 }

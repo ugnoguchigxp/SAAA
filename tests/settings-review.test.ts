@@ -10,6 +10,7 @@ describe("reviewed settings boundaries", () => {
     expect(legacyDynamicLanHost("https://provider.example")).toBeNull();
     expect(legacyDynamicLanHost("http://provider.local:9811")).toBeNull();
     expect(legacyDynamicLanHost("http://provider.local:9810/harness")).toBeNull();
+    expect(legacyDynamicLanHost("http://example.com:9810")).toBeNull();
     expect(legacyDynamicLanHost("http://[::1]:9810")).toBeNull();
   });
 

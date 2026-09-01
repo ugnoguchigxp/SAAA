@@ -43,16 +43,21 @@ pub(crate) async fn stream_dynamic_lan_provider(
         enabled: true,
         label: provider.label.clone(),
         location: "local".to_string(),
-        endpoint: connection.endpoint().to_string(),
+        endpoint: connection.stream_url().to_string(),
         model: connection.model().to_string(),
-        authentication: "api-key".to_string(),
+        authentication: if connection.api_key().is_some() {
+            "api-key"
+        } else {
+            "none"
+        }
+        .to_string(),
     };
     let outcome = stream_model_provider_with_api_key(
         &resolved,
         history,
         timeout_ms,
-        Some(connection.api_key()),
-        true,
+        connection.api_key(),
+        Some(connection.allocation_id()),
         context,
     )
     .await;

@@ -1,19 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { HarnessResolution, ProviderCredentialState } from "./contracts";
 
-export function legacyDynamicLanHost(address: string): string | null {
-  try {
-    const url = new URL(address);
-    return url.protocol === "http:"
-      && url.port === "9810"
-      && url.pathname === "/"
-      && !url.hostname.includes(":")
-      ? url.hostname
-      : null;
-  } catch {
-    return null;
-  }
-}
+export { legacyDynamicLanHost } from "./localProviderAddress";
 
 export async function resolveServiceHarness(address: string): Promise<HarnessResolution> {
   return invoke<HarnessResolution>("resolve_service_harness", { address });

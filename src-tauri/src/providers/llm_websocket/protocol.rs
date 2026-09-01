@@ -18,29 +18,38 @@ pub(crate) struct RunStart<'a> {
     #[serde(rename = "type")]
     pub(crate) message_type: &'static str,
     pub(crate) run_id: &'a str,
-    pub(crate) allocation_id: Option<&'a str>,
+    pub(crate) allocation_id: &'a str,
     pub(crate) model: &'a str,
     pub(crate) messages: &'a [Value],
     pub(crate) tools: &'a [Value],
-    pub(crate) reasoning_effort: &'a str,
+    pub(crate) reasoning: Reasoning<'a>,
     pub(crate) max_output_tokens: u32,
-    pub(crate) tool_timeout_ms: u64,
-    pub(crate) max_parallel_tool_calls: u8,
-    pub(crate) client: ClientCapabilities,
+    pub(crate) max_tool_calls: u8,
+    pub(crate) timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub(crate) struct Reasoning<'a> {
+    pub(crate) effort: &'a str,
 }
 
 impl<'a> RunStart<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         run_id: &'a str,
-        allocation_id: Option<&'a str>,
+        allocation_id: &'a str,
         model: &'a str,
         messages: &'a [Value],
         tools: &'a [Value],
         reasoning_effort: &'a str,
         max_output_tokens: u32,
-        tool_timeout_ms: u64,
+        timeout_ms: u64,
     ) -> Self {
+        let reasoning_effort = match reasoning_effort {
+            "none" | "low" | "medium" | "high" => reasoning_effort,
+            "xhigh" => "high",
+            _ => "medium",
+        };
         Self {
             message_type: "run.start",
             run_id,
@@ -48,35 +57,12 @@ impl<'a> RunStart<'a> {
             model,
             messages,
             tools,
-            reasoning_effort,
+            reasoning: Reasoning {
+                effort: reasoning_effort,
+            },
             max_output_tokens,
-            tool_timeout_ms,
-            max_parallel_tool_calls: 4,
-            client: ClientCapabilities::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ClientCapabilities {
-    name: &'static str,
-    version: &'static str,
-    capabilities: [&'static str; 5],
-}
-
-impl Default for ClientCapabilities {
-    fn default() -> Self {
-        Self {
-            name: "saaa-desktop",
-            version: env!("CARGO_PKG_VERSION"),
-            capabilities: [
-                "ack",
-                "resume",
-                "binary-delta-v1",
-                "hashed-final",
-                "parallel-tools-v1",
-            ],
+            max_tool_calls: if tools.is_empty() { 0 } else { 32 },
+            timeout_ms,
         }
     }
 }
@@ -97,6 +83,7 @@ pub(crate) struct RunResume<'a> {
     #[serde(rename = "type")]
     message_type: &'static str,
     run_id: &'a str,
+    allocation_id: &'a str,
     ack_seq: u64,
     content_sha256: &'a str,
 }
@@ -149,40 +136,22 @@ pub(crate) enum FinishReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResumeNegotiation {
     Resumed,
-    Rejected,
 }
 
 pub(crate) fn validate_resume_negotiation(
     text: &str,
     run_id: &str,
-    replay_from_seq: u64,
+    expected_ack_seq: u64,
 ) -> Result<ResumeNegotiation, ProtocolError> {
     reject_duplicate_keys(text)?;
     let envelope: Envelope = serde_json::from_str(text).map_err(|_| ProtocolError::Json)?;
     match envelope.message_type.as_str() {
         "run.resumed" => {
             let message: RunResumed = parse(text)?;
-            if message.run_id != run_id || message.replay_from_seq != replay_from_seq {
+            if message.run_id != run_id || message.ack_seq != expected_ack_seq {
                 return Err(ProtocolError::StaleRun);
             }
             Ok(ResumeNegotiation::Resumed)
-        }
-        "run.resumeRejected" => {
-            let message: RunResumeRejected = parse(text)?;
-            if message.run_id != run_id
-                || !matches!(
-                    message.code.as_str(),
-                    "unknown-run"
-                        | "resume-expired"
-                        | "allocation-expired"
-                        | "ack-mismatch"
-                        | "content-hash-mismatch"
-                        | "not-authorized"
-                )
-            {
-                return Err(ProtocolError::Schema);
-            }
-            Ok(ResumeNegotiation::Rejected)
         }
         _ => Err(ProtocolError::Schema),
     }
@@ -301,11 +270,16 @@ impl OrderedRun {
         &self.run_id
     }
 
-    pub(crate) fn resume<'a>(&'a self, checkpoint: &'a AcknowledgedCheckpoint) -> RunResume<'a> {
+    pub(crate) fn resume<'a>(
+        &'a self,
+        allocation_id: &'a str,
+        checkpoint: &'a AcknowledgedCheckpoint,
+    ) -> RunResume<'a> {
         debug_assert!(checkpoint.seq <= self.last_accepted_seq);
         RunResume {
             message_type: "run.resume",
             run_id: &self.run_id,
+            allocation_id,
             ack_seq: checkpoint.seq,
             content_sha256: &checkpoint.content_sha256,
         }
@@ -314,12 +288,6 @@ impl OrderedRun {
     fn accept_accepted(&mut self, text: &str) -> Result<ProviderEvent, ProtocolError> {
         let message: RunAccepted = parse(text)?;
         self.validate_run(&message.run_id)?;
-        if !valid_identifier(&message.provider_run_id)
-            || message.model.is_empty()
-            || message.model.len() > 160
-        {
-            return Err(ProtocolError::Schema);
-        }
         if let Some(duplicate) = self.sequence_result(message.seq)? {
             return Ok(duplicate);
         }
@@ -334,10 +302,13 @@ impl OrderedRun {
         self.ensure_accepted()?;
         let message: ToolCall = parse(text)?;
         self.validate_run(&message.run_id)?;
+        reject_duplicate_keys(&message.arguments)?;
+        let arguments =
+            serde_json::from_str::<Value>(&message.arguments).map_err(|_| ProtocolError::Schema)?;
         if !valid_identifier(&message.call_id)
             || !valid_identifier(&message.name)
-            || !message.arguments.is_object()
-            || serde_json::to_vec(&message.arguments).map_or(true, |value| value.len() > 65_536)
+            || !arguments.is_object()
+            || message.arguments.len() > MAX_CONTENT_BYTES
             || !self.content.is_empty()
         {
             return Err(ProtocolError::Schema);
@@ -350,7 +321,7 @@ impl OrderedRun {
             seq: message.seq,
             call_id: message.call_id,
             name: message.name,
-            arguments: message.arguments,
+            arguments,
         })
     }
 
@@ -370,9 +341,12 @@ impl OrderedRun {
             || message.content_sha256 != self.content_hash()
             || message.usage.as_ref().is_some_and(|usage| {
                 usage
-                    .input_tokens
-                    .checked_add(usage.output_tokens)
-                    .is_none_or(|total| total != usage.total_tokens)
+                    .prompt_tokens
+                    .zip(usage.completion_tokens)
+                    .zip(usage.total_tokens)
+                    .is_some_and(|((prompt, completion), total)| {
+                        prompt.checked_add(completion) != Some(total)
+                    })
             })
         {
             return Err(ProtocolError::ContentIntegrity);
@@ -391,19 +365,21 @@ impl OrderedRun {
         if let Some(duplicate) = self.sequence_result(message.seq)? {
             return Ok(duplicate);
         }
-        if !valid_error_code(&message.code)
-            || message.message.is_empty()
-            || message.message.len() > 1_024
-            || message.message.chars().any(char::is_control)
+        if message.content_bytes != self.content.len()
+            || message.content_sha256 != self.content_hash()
+            || !valid_error_code(&message.error.code)
+            || message.error.message.is_empty()
+            || message.error.message.len() > 512
+            || message.error.message.chars().any(char::is_control)
         {
-            return Err(ProtocolError::Schema);
+            return Err(ProtocolError::ContentIntegrity);
         }
-        let _retryable = message.retryable;
+        let _retryable = message.error.retryable;
         self.commit_terminal(message.seq)?;
         Ok(ProviderEvent::Failed {
             seq: message.seq,
-            code: message.code,
-            output_started: message.output_started,
+            code: message.error.code,
+            output_started: message.content_bytes > 0,
         })
     }
 
@@ -414,10 +390,15 @@ impl OrderedRun {
         if let Some(duplicate) = self.sequence_result(message.seq)? {
             return Ok(duplicate);
         }
+        if message.content_bytes != self.content.len()
+            || message.content_sha256 != self.content_hash()
+        {
+            return Err(ProtocolError::ContentIntegrity);
+        }
         self.commit_terminal(message.seq)?;
         Ok(ProviderEvent::Cancelled {
             seq: message.seq,
-            output_started: message.output_started,
+            output_started: message.content_bytes > 0,
         })
     }
 
@@ -483,8 +464,6 @@ struct RunAccepted {
     _message_type: String,
     run_id: String,
     seq: u64,
-    provider_run_id: String,
-    model: String,
 }
 
 #[derive(Deserialize)]
@@ -493,16 +472,7 @@ struct RunResumed {
     #[serde(rename = "type")]
     _message_type: String,
     run_id: String,
-    replay_from_seq: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RunResumeRejected {
-    #[serde(rename = "type")]
-    _message_type: String,
-    run_id: String,
-    code: String,
+    ack_seq: u64,
 }
 
 #[derive(Deserialize)]
@@ -514,7 +484,7 @@ struct ToolCall {
     seq: u64,
     call_id: String,
     name: String,
-    arguments: Value,
+    arguments: String,
 }
 
 #[derive(Deserialize)]
@@ -533,9 +503,9 @@ struct ResponseCompleted {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Usage {
-    input_tokens: u64,
-    output_tokens: u64,
-    total_tokens: u64,
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+    total_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -545,10 +515,17 @@ struct ResponseFailed {
     _message_type: String,
     run_id: String,
     seq: u64,
+    content_bytes: usize,
+    content_sha256: String,
+    error: ResponseError,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResponseError {
     code: String,
     message: String,
     retryable: bool,
-    output_started: bool,
 }
 
 #[derive(Deserialize)]
@@ -558,7 +535,8 @@ struct ResponseCancelled {
     _message_type: String,
     run_id: String,
     seq: u64,
-    output_started: bool,
+    content_bytes: usize,
+    content_sha256: String,
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> Result<T, ProtocolError> {
@@ -651,32 +629,30 @@ impl<'de> Visitor<'de> for NoDuplicateVisitor {
 }
 
 fn valid_identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 160
+    value.len() <= 192
         && value
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
 }
 
 fn valid_error_code(value: &str) -> bool {
     matches!(
         value,
         "invalid-request"
-            | "request-too-large"
             | "response-too-large"
-            | "authentication"
-            | "not-authorized"
-            | "allocation-lost"
             | "capacity"
             | "model-unavailable"
-            | "tool-arguments-too-large"
-            | "tool-result-too-large"
+            | "provider-error"
+            | "provider-timeout"
+            | "tool-error"
             | "tool-timeout"
             | "backpressure"
-            | "upstream"
-            | "timeout"
-            | "protocol"
-            | "internal"
+            | "allocation-inactive"
+            | "internal-error"
     )
 }
 
@@ -694,11 +670,40 @@ mod tests {
         frame
     }
 
+    #[test]
+    fn run_start_serializes_the_current_strict_contract() {
+        let messages = [serde_json::json!({ "role": "user", "content": "hello" })];
+        let start = RunStart::new(
+            "run_1",
+            "alloc_1",
+            "coding-default",
+            &messages,
+            &[],
+            "xhigh",
+            128,
+            5_000,
+        );
+
+        assert_eq!(
+            serde_json::to_value(start).expect("run.start serializes"),
+            serde_json::json!({
+                "type": "run.start",
+                "runId": "run_1",
+                "allocationId": "alloc_1",
+                "model": "coding-default",
+                "messages": [{ "role": "user", "content": "hello" }],
+                "tools": [],
+                "reasoning": { "effort": "high" },
+                "maxOutputTokens": 128,
+                "maxToolCalls": 0,
+                "timeoutMs": 5_000
+            })
+        );
+    }
+
     fn accepted(run: &mut OrderedRun) {
-        run.accept_text(
-            r#"{"type":"run.accepted","runId":"run_1","seq":1,"providerRunId":"provider_1","model":"local"}"#,
-        )
-        .expect("accepted");
+        run.accept_text(r#"{"type":"run.accepted","runId":"run_1","seq":1}"#)
+            .expect("accepted");
     }
 
     #[test]
@@ -772,7 +777,7 @@ mod tests {
         );
         assert_eq!(
             run.accept_text(
-                r#"{"type":"response.cancelled","runId":"run_2","seq":2,"outputStarted":false}"#
+                r#"{"type":"response.cancelled","runId":"run_2","seq":2,"contentBytes":0,"contentSha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}"#
             ),
             Err(ProtocolError::StaleRun),
         );
@@ -838,7 +843,7 @@ mod tests {
         accepted(&mut run);
         let hash = run.content_hash();
         let terminal = format!(
-            r#"{{"type":"response.completed","runId":"run_1","seq":2,"contentBytes":0,"contentSha256":"{hash}","finishReason":"stop","usage":{{"inputTokens":2,"outputTokens":3,"totalTokens":6}}}}"#,
+            r#"{{"type":"response.completed","runId":"run_1","seq":2,"contentBytes":0,"contentSha256":"{hash}","finishReason":"stop","usage":{{"promptTokens":2,"completionTokens":3,"totalTokens":6}}}}"#,
         );
         assert_eq!(
             run.accept_text(&terminal),
@@ -850,7 +855,7 @@ mod tests {
     fn resume_negotiation_requires_exact_run_and_replay_sequence() {
         assert_eq!(
             validate_resume_negotiation(
-                r#"{"type":"run.resumed","runId":"run_1","replayFromSeq":42}"#,
+                r#"{"type":"run.resumed","runId":"run_1","ackSeq":42}"#,
                 "run_1",
                 42,
             ),
@@ -858,19 +863,11 @@ mod tests {
         );
         assert_eq!(
             validate_resume_negotiation(
-                r#"{"type":"run.resumed","runId":"run_1","replayFromSeq":41}"#,
+                r#"{"type":"run.resumed","runId":"run_1","ackSeq":41}"#,
                 "run_1",
                 42,
             ),
             Err(ProtocolError::StaleRun),
-        );
-        assert_eq!(
-            validate_resume_negotiation(
-                r#"{"type":"run.resumeRejected","runId":"run_1","code":"resume-expired"}"#,
-                "run_1",
-                42,
-            ),
-            Ok(ResumeNegotiation::Rejected),
         );
     }
 }

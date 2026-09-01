@@ -119,9 +119,7 @@ pub(crate) enum SessionFailureKind {
     Protocol,
     RequestTooLarge,
     Internal,
-    ClientDisconnected,
     Cancelled,
-    PartialOutput,
     Policy,
     Capacity,
     Unavailable,
@@ -141,10 +139,6 @@ impl SessionFailureKind {
             Self::Network | Self::Timeout | Self::Upstream | Self::AllocationLost
         )
     }
-
-    pub(crate) fn permits_stream_renew_retry(self) -> bool {
-        matches!(self, Self::Network | Self::Timeout | Self::Upstream)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,7 +155,6 @@ pub(crate) enum ReleaseFailureKind {
 pub(crate) struct ReadyAllocation {
     pub(crate) allocation_id: BoundedIdentifier,
     pub(crate) selected_runtime_id: BoundedIdentifier,
-    pub(crate) binding_fingerprint: BoundedIdentifier,
     binding_identity: String,
     pub(crate) effective_ttl_seconds: u32,
     pub(crate) fallback_used: bool,
@@ -169,30 +162,9 @@ pub(crate) struct ReadyAllocation {
 }
 
 impl ReadyAllocation {
-    pub(crate) fn new(
-        allocation_id: impl Into<String>,
-        selected_runtime_id: impl Into<String>,
-        binding_fingerprint: impl Into<String>,
-        effective_ttl_seconds: u32,
-        fallback_used: bool,
-        selection_reason: SelectionReason,
-    ) -> Result<Self, ContractError> {
-        let binding_fingerprint = binding_fingerprint.into();
-        Self::new_with_binding_identity(
-            allocation_id,
-            selected_runtime_id,
-            binding_fingerprint.clone(),
-            binding_fingerprint,
-            effective_ttl_seconds,
-            fallback_used,
-            selection_reason,
-        )
-    }
-
     pub(crate) fn new_with_binding_identity(
         allocation_id: impl Into<String>,
         selected_runtime_id: impl Into<String>,
-        binding_fingerprint: impl Into<String>,
         binding_identity: impl Into<String>,
         effective_ttl_seconds: u32,
         fallback_used: bool,
@@ -214,7 +186,6 @@ impl ReadyAllocation {
         Ok(Self {
             allocation_id: BoundedIdentifier::new(allocation_id)?,
             selected_runtime_id: BoundedIdentifier::new(selected_runtime_id)?,
-            binding_fingerprint: BoundedIdentifier::new(binding_fingerprint)?,
             binding_identity,
             effective_ttl_seconds,
             fallback_used,
@@ -222,6 +193,7 @@ impl ReadyAllocation {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn same_binding_as(&self, other: &Self) -> bool {
         self.allocation_id == other.allocation_id
             && self.selected_runtime_id == other.selected_runtime_id

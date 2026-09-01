@@ -2,7 +2,6 @@ use futures_util::StreamExt;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
-use std::time::Duration;
 use url::Url;
 
 use super::super::contracts::{
@@ -13,14 +12,6 @@ use super::{
     Cancellation, ErrorEnvelope, LarmError, LarmHttpClient, CAPABILITY, ERROR_BODY_LIMIT,
     PROBE_BODY_LIMIT, ROUTE,
 };
-#[cfg(test)]
-use super::{ASSISTANT_CHAR_LIMIT, SSE_EVENT_LIMIT};
-#[cfg(test)]
-use crate::providers::completion::{CompletionTerminal, CompletionTerminalError};
-#[cfg(test)]
-use crate::providers::openai_compatible::sse_event_data;
-#[cfg(test)]
-use crate::runtime::agent_tools::{ToolCallAccumulator, ToolProtocolError};
 
 pub(crate) fn validate_allocation_common(dto: &AllocationDto) -> Result<(), LarmError> {
     BoundedIdentifier::new(dto.id.clone())
@@ -167,26 +158,6 @@ pub(crate) fn classify_operation_error_code(code: &str) -> SessionFailureKind {
     }
 }
 
-pub(crate) fn binding_fingerprint(binding: &AllocationBindingDto) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in format!(
-        "{}\0{}\0{}\0{}\0{}\0{}\0{}",
-        binding.capability,
-        binding.route,
-        binding.runtime,
-        binding.node,
-        binding.status,
-        binding.candidate_rank,
-        binding.fallback
-    )
-    .bytes()
-    {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("binding_{hash:016x}")
-}
-
 pub(crate) fn binding_identity(binding: &AllocationBindingDto) -> String {
     let fields = [
         binding.capability.as_str(),
@@ -231,6 +202,7 @@ pub(crate) fn parse_base_url(value: &str) -> Result<Url, SessionFailureKind> {
     Ok(url)
 }
 
+#[cfg(test)]
 pub(crate) fn media_type(value: &str) -> String {
     value
         .split(';')
@@ -381,20 +353,6 @@ pub(crate) fn classify_transport(error: &reqwest::Error) -> SessionFailureKind {
     }
 }
 
-pub(crate) fn should_retry_stream_renew(kind: SessionFailureKind, previous_retries: u8) -> bool {
-    kind.permits_stream_renew_retry() && previous_retries == 0
-}
-
-pub(crate) fn lease_deadlines(
-    received_at: tokio::time::Instant,
-    effective_ttl_seconds: u32,
-) -> (Option<tokio::time::Instant>, tokio::time::Instant) {
-    let ttl_seconds = u64::from(effective_ttl_seconds);
-    let ttl = Duration::from_secs(ttl_seconds);
-    let renew_after = Duration::from_secs(ttl_seconds * 4 / 5);
-    (Some(received_at + renew_after), received_at + ttl)
-}
-
 pub(crate) fn release_kind(kind: SessionFailureKind) -> ReleaseFailureKind {
     match kind {
         SessionFailureKind::Authentication => ReleaseFailureKind::Authentication,
@@ -408,117 +366,6 @@ pub(crate) fn release_kind(kind: SessionFailureKind) -> ReleaseFailureKind {
         SessionFailureKind::Timeout => ReleaseFailureKind::Timeout,
         _ => ReleaseFailureKind::Internal,
     }
-}
-
-#[cfg(test)]
-pub(crate) fn drain_sse(
-    buffer: &mut Vec<u8>,
-    output_started: bool,
-) -> Result<Vec<String>, LarmError> {
-    let mut events = Vec::new();
-    loop {
-        let lf = buffer.windows(2).position(|window| window == b"\n\n");
-        let crlf = buffer.windows(4).position(|window| window == b"\r\n\r\n");
-        let boundary = match (lf, crlf) {
-            (Some(lf), Some(crlf)) if lf < crlf => Some((lf, 2)),
-            (Some(_), Some(crlf)) => Some((crlf, 4)),
-            (Some(lf), None) => Some((lf, 2)),
-            (None, Some(crlf)) => Some((crlf, 4)),
-            (None, None) => None,
-        };
-        let Some((index, delimiter_length)) = boundary else {
-            break;
-        };
-        if index > SSE_EVENT_LIMIT {
-            return Err(LarmError::new(
-                SessionFailureKind::RequestTooLarge,
-                output_started,
-            ));
-        }
-        let drained = buffer.drain(..index + delimiter_length).collect::<Vec<_>>();
-        let event = String::from_utf8(drained[..index].to_vec())
-            .map_err(|_| LarmError::new(SessionFailureKind::Protocol, output_started))?;
-        events.push(event);
-    }
-    Ok(events)
-}
-
-#[cfg(test)]
-pub(crate) fn project_sse<F>(
-    events: Vec<String>,
-    content: &mut String,
-    content_chars: &mut usize,
-    output_started: &mut bool,
-    on_delta: &mut F,
-    tool_calls: &mut ToolCallAccumulator,
-    terminal: &mut CompletionTerminal,
-) -> Result<bool, LarmError>
-where
-    F: FnMut(&str, bool) -> Result<(), SessionFailureKind>,
-{
-    for event in events {
-        let Some(data) = sse_event_data(&event) else {
-            continue;
-        };
-        let data = data.trim();
-        if data == "[DONE]" {
-            terminal
-                .complete()
-                .map_err(|error| completion_terminal_error(error, *output_started))?;
-            return Ok(true);
-        }
-        let value: Value = serde_json::from_str(data)
-            .map_err(|_| LarmError::new(SessionFailureKind::Protocol, *output_started))?;
-        terminal
-            .observe(&value)
-            .map_err(|error| completion_terminal_error(error, *output_started))?;
-        tool_calls
-            .absorb_stream_delta(&value)
-            .map_err(|error| tool_protocol_error(error, *output_started))?;
-        if let Some(delta) = value
-            .pointer("/choices/0/delta/content")
-            .and_then(Value::as_str)
-        {
-            let delta_chars = delta.chars().count();
-            if delta_chars == 0 {
-                continue;
-            }
-            if *content_chars + delta_chars > ASSISTANT_CHAR_LIMIT {
-                return Err(LarmError::new(
-                    SessionFailureKind::RequestTooLarge,
-                    *output_started,
-                ));
-            }
-            let first = !*output_started;
-            on_delta(delta, first).map_err(|kind| LarmError::new(kind, true))?;
-            content.push_str(delta);
-            *content_chars += delta_chars;
-            *output_started = true;
-        }
-    }
-    Ok(false)
-}
-
-#[cfg(test)]
-pub(crate) fn completion_terminal_error(
-    error: CompletionTerminalError,
-    output_started: bool,
-) -> LarmError {
-    let kind = match error {
-        CompletionTerminalError::PartialOutput => SessionFailureKind::PartialOutput,
-        CompletionTerminalError::Policy => SessionFailureKind::Policy,
-        CompletionTerminalError::Protocol => SessionFailureKind::Protocol,
-    };
-    LarmError::new(kind, output_started)
-}
-
-#[cfg(test)]
-pub(crate) fn tool_protocol_error(error: ToolProtocolError, output_started: bool) -> LarmError {
-    let kind = match error {
-        ToolProtocolError::Protocol => SessionFailureKind::Protocol,
-        ToolProtocolError::TooLarge => SessionFailureKind::RequestTooLarge,
-    };
-    LarmError::new(kind, output_started)
 }
 
 impl LarmHttpClient<'_> {
@@ -545,11 +392,9 @@ impl LarmHttpClient<'_> {
             .map_err(|_| LarmError::new(SessionFailureKind::Protocol, false))?;
         let allocation_id = BoundedIdentifier::new(dto.id)
             .map_err(|_| LarmError::new(SessionFailureKind::Protocol, false))?;
-        let fingerprint = binding_fingerprint(binding);
         ReadyAllocation::new_with_binding_identity(
             allocation_id.as_str(),
             runtime.as_str(),
-            fingerprint,
             binding_identity(binding),
             self.ttl_seconds,
             binding.fallback,

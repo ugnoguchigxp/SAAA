@@ -43,10 +43,14 @@ function readBenchmark(path: string): BenchmarkReport {
 
 function sourceContract(): { passed: boolean; checks: Record<string, boolean> } {
   const larm = readFileSync(join(ROOT, "src-tauri/src/providers/larm/client/mod.rs"), "utf8");
+  const larmDecode = readFileSync(join(ROOT, "src-tauri/src/providers/larm/client/decode.rs"), "utf8");
   const openAi = readFileSync(join(ROOT, "src-tauri/src/providers/openai_compatible.rs"), "utf8");
   const stream = readFileSync(join(ROOT, "src-tauri/src/providers/stream/mod.rs"), "utf8");
   const checks = {
-    larmLegacyChatIsTestOnly: /#\[cfg\(test\)\]\s*mod chat;/u.test(larm),
+    larmLegacySseRemoved: !existsSync(join(ROOT, "src-tauri/src/providers/larm/client/chat.rs"))
+      && !larm.includes("mod chat;")
+      && !larmDecode.includes("drain_sse")
+      && !larmDecode.includes("project_sse"),
     openAiSseProjectionIsTestOnly: /#\[cfg\(test\)\][\s\S]{0,500}fn sse_event_data/u.test(openAi),
     productionStreamUsesWebSocket: stream.includes("llm_websocket"),
     protocolVersionPinned: readFileSync(join(ROOT, "src-tauri/src/providers/llm_websocket/protocol.rs"), "utf8")

@@ -1,10 +1,15 @@
-use url::{Host, Url};
+use url::Url;
 
+use super::urls::{url_is_local, url_is_loopback};
 use super::{
-    contract_error, AgentProfiles, ConnectionClaim, ConnectionIdentity, ConnectionState,
-    DynamicLanError, ErrorKind, ProviderDescriptor, AGENT_PROFILE, AUDIENCE,
-    CLOCK_SKEW_TOLERANCE_SECONDS, CONNECTION_TTL_SECONDS, CONTROL_PORT, PROFILE_CAPABILITY,
+    contract_error, valid_provider_auth, AgentProfiles, ConnectionClaim, ConnectionIdentity,
+    ConnectionState, DynamicLanError, ErrorKind, ProviderDescriptor, SelectedProfile,
+    AGENT_PROFILE, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS, CONNECTION_TTL_SECONDS, CONTROL_PORT,
 };
+
+fn valid_llm_protocol(value: &str) -> bool {
+    matches!(value, "openai.chat-completions.v1" | "saaa.llm-stream.v1")
+}
 
 pub(crate) fn validate_config_revision(revision: Option<&str>) -> Result<(), DynamicLanError> {
     let revision = revision.ok_or_else(|| contract_error(()))?;
@@ -22,8 +27,9 @@ pub(crate) fn validate_revision(revision: &str) -> Result<(), DynamicLanError> {
 pub(crate) fn validate_initial_state(
     state: &ConnectionState,
     expected_audience: &str,
+    expected_profile: &SelectedProfile,
 ) -> Result<ConnectionIdentity, DynamicLanError> {
-    validate_state_shape(state, expected_audience)?;
+    validate_state_shape(state, expected_audience, expected_profile)?;
     let created_at =
         chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
     let expires_at =
@@ -43,6 +49,7 @@ pub(crate) fn validate_initial_state(
         catalog_revision: state.catalog_revision.clone(),
         profile_revision: state.profile_revision.clone(),
         audience_revision: state.audience_revision.clone(),
+        profile: expected_profile.clone(),
         created_at,
         expires_at,
     })
@@ -53,7 +60,7 @@ pub(crate) fn validate_successor_state(
     expected: &ConnectionIdentity,
     expected_audience: &str,
 ) -> Result<(), DynamicLanError> {
-    validate_state_shape(state, expected_audience)?;
+    validate_state_shape(state, expected_audience, &expected.profile)?;
     let created_at =
         chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
     let expires_at =
@@ -82,7 +89,7 @@ pub(crate) fn validate_renewed_state(
     expected: &ConnectionIdentity,
     expected_audience: &str,
 ) -> Result<ConnectionIdentity, DynamicLanError> {
-    validate_state_shape(state, expected_audience)?;
+    validate_state_shape(state, expected_audience, &expected.profile)?;
     let created_at =
         chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
     let expires_at =
@@ -117,6 +124,7 @@ pub(crate) fn validate_renewed_state(
         catalog_revision: state.catalog_revision.clone(),
         profile_revision: state.profile_revision.clone(),
         audience_revision: state.audience_revision.clone(),
+        profile: expected.profile.clone(),
         created_at,
         expires_at,
     })
@@ -125,11 +133,12 @@ pub(crate) fn validate_renewed_state(
 pub(crate) fn validate_state_shape(
     state: &ConnectionState,
     expected_audience: &str,
+    expected_profile: &SelectedProfile,
 ) -> Result<(), DynamicLanError> {
     validate_connection_id(&state.id)?;
     if !valid_bounded_identifier(&state.allocation_id, 192)
         || !valid_bounded_identifier(&state.boot_epoch, 192)
-        || state.agent_profile != AGENT_PROFILE
+        || state.agent_profile != expected_profile.id
         || state.audience != expected_audience
         || state.providers.len() != 1
     {
@@ -141,9 +150,9 @@ pub(crate) fn validate_state_shape(
     let provider = &state.providers[0];
     let terminal = matches!(state.status.as_str(), "failed" | "released" | "expired");
     if provider.name != "llm"
-        || provider.capability != PROFILE_CAPABILITY
-        || provider.protocol != "openai.chat-completions.v1"
-        || provider.public_model != AGENT_PROFILE
+        || provider.capability != expected_profile.capability
+        || !valid_llm_protocol(&provider.protocol)
+        || provider.public_model != expected_profile.model
         || !valid_bounded_identifier(&provider.route, 160)
         || !matches!(
             provider.readiness.as_str(),
@@ -189,30 +198,65 @@ pub(crate) fn validate_create_location(
     }
 }
 
-pub(crate) fn validate_profiles(profiles: &AgentProfiles) -> Result<(), DynamicLanError> {
+pub(crate) fn validate_profiles(
+    profiles: &AgentProfiles,
+) -> Result<SelectedProfile, DynamicLanError> {
     if profiles.contract_version != "agent-connection.v1" {
+        return Err(contract_error(()));
+    }
+    let profile_id = profiles
+        .default_agent_profile
+        .as_deref()
+        .unwrap_or(AGENT_PROFILE);
+    if !valid_bounded_identifier(profile_id, 160) {
         return Err(contract_error(()));
     }
     let mut matching = profiles
         .profiles
         .iter()
-        .filter(|profile| profile.id == AGENT_PROFILE);
+        .filter(|profile| profile.id == profile_id);
     let profile = matching.next().ok_or_else(|| {
         DynamicLanError::new(
             ErrorKind::Contract,
-            "dynamic_lan does not advertise the required deep-reasoning provider profile.",
+            "dynamic_lan does not advertise its selected provider profile.",
         )
     })?;
+    let provider = profile
+        .providers
+        .first()
+        .ok_or_else(|| contract_error(()))?;
+    let supported_capabilities_are_valid = provider.supported_capabilities.is_empty()
+        || (provider
+            .supported_capabilities
+            .iter()
+            .all(|capability| valid_llm_capability(capability))
+            && provider
+                .supported_capabilities
+                .iter()
+                .any(|capability| capability == &provider.capability));
     if matching.next().is_some()
         || profile.providers.len() != 1
-        || profile.providers[0].name != "llm"
-        || profile.providers[0].capability != PROFILE_CAPABILITY
-        || profile.providers[0].protocol != "openai.chat-completions.v1"
-        || profile.providers[0].model != AGENT_PROFILE
+        || provider.name != "llm"
+        || !valid_llm_capability(&provider.capability)
+        || !supported_capabilities_are_valid
+        || !valid_llm_protocol(&provider.protocol)
+        || !valid_bounded_identifier(&provider.model, 160)
+        || provider
+            .streaming_protocol
+            .as_deref()
+            .is_some_and(|protocol| protocol != "saaa.llm-stream.v1")
     {
         return Err(contract_error(()));
     }
-    Ok(())
+    Ok(SelectedProfile {
+        id: profile.id.clone(),
+        capability: provider.capability.clone(),
+        model: provider.model.clone(),
+    })
+}
+
+fn valid_llm_capability(value: &str) -> bool {
+    matches!(value, "llm.reasoning" | "llm.general" | "llm.coding")
 }
 
 pub(crate) fn select_audience(audiences: &[String]) -> Result<&str, DynamicLanError> {
@@ -247,8 +291,8 @@ pub(crate) fn validate_claim(
     }
     let mut matching = claim.providers.into_iter().filter(|provider| {
         provider.name == "llm"
-            && provider.capability == PROFILE_CAPABILITY
-            && provider.protocol == "openai.chat-completions.v1"
+            && provider.capability == expected.profile.capability
+            && valid_llm_protocol(&provider.protocol)
     });
     let descriptor = matching.next().ok_or_else(|| contract_error(()))?;
     if matching.next().is_some() {
@@ -260,9 +304,23 @@ pub(crate) fn validate_claim(
     let expected_port = base_url
         .port_or_known_default()
         .ok_or_else(|| contract_error(()))?;
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&descriptor.credential.expires_at)
-        .map_err(contract_error)?;
     let expected_health_url = provider_health_url(&base_url, &expected.id, &descriptor.name)?;
+    let stream_url = Url::parse(&descriptor.streaming.url).map_err(contract_error)?;
+    let stream_limits_are_valid = descriptor
+        .streaming
+        .max_concurrent_runs
+        .is_none_or(|value| (1..=8).contains(&value))
+        && descriptor
+            .streaming
+            .max_connections
+            .is_none_or(|value| (1..=8).contains(&value))
+        && match (
+            descriptor.streaming.max_concurrent_runs,
+            descriptor.streaming.max_connections,
+        ) {
+            (Some(runs), Some(connections)) => runs == connections,
+            _ => true,
+        };
     if descriptor.api_style != "openai"
         || expected_scheme != "http"
         || descriptor.scheme != expected_scheme
@@ -276,26 +334,44 @@ pub(crate) fn validate_claim(
         || base_url.password().is_some()
         || !url_is_local(&base_url)
         || (!control_is_loopback && url_is_loopback(&base_url))
-        || descriptor.model != AGENT_PROFILE
+        || descriptor.model != expected.profile.model
+        || descriptor.streaming.protocol != "saaa.llm-stream.v1"
+        || descriptor.streaming.url.len() > 2_048
+        || !matches!(
+            descriptor.streaming.upstream_transport.as_str(),
+            "native" | "websocket"
+        )
+        || descriptor
+            .streaming
+            .encoding
+            .as_deref()
+            .is_some_and(|value| value != "json-control+binary-delta-v1")
+        || descriptor
+            .streaming
+            .compression
+            .as_deref()
+            .is_some_and(|value| value != "none")
+        || !stream_limits_are_valid
+        || descriptor
+            .streaming
+            .resume_window_ms
+            .is_some_and(|value| value < 120_000)
+        || stream_url.scheme() != "ws"
+        || stream_url.host_str() != base_url.host_str()
+        || stream_url.port_or_known_default() != base_url.port_or_known_default()
+        || stream_url.path() != "/v1/llm/stream"
+        || stream_url.query().is_some()
+        || stream_url.fragment().is_some()
+        || !stream_url.username().is_empty()
+        || stream_url.password().is_some()
         || descriptor.health.url != expected_health_url.as_str()
         || descriptor.health.kind != "semantic-inference"
         || descriptor.health.max_age_ms == 0
         || descriptor.health.max_age_ms > 60_000
-        || descriptor.credential.r#type != "bearer"
-        || descriptor.credential.token.is_empty()
-        || descriptor.credential.token.len() > 4_096
-        || descriptor
-            .credential
-            .token
-            .bytes()
-            .any(|byte| byte.is_ascii_whitespace())
-        || expires_at <= chrono::Utc::now()
-        || expires_at != claim_expires_at
-        || expires_at != expected.expires_at
+        || !valid_provider_auth(&descriptor, claim_expires_at)
         || descriptor.configuration.kind != "openai-provider-v1"
         || descriptor.configuration.fields.base_url != descriptor.base_url
         || descriptor.configuration.fields.model != descriptor.model
-        || descriptor.configuration.secret_fields.api_key != "credential.token"
     {
         let message = if !control_is_loopback && url_is_loopback(&base_url) {
             "dynamic_lan returned a same-host provider address; configure a LAN audience for SAAA."
@@ -305,68 +381,6 @@ pub(crate) fn validate_claim(
         return Err(DynamicLanError::new(ErrorKind::Contract, message));
     }
     Ok(descriptor)
-}
-
-pub(crate) fn control_base_url(host: &str) -> Result<Url, DynamicLanError> {
-    let host = host.trim();
-    if host.is_empty()
-        || host.len() > 253
-        || host.starts_with('-')
-        || host.contains(['/', '@', '?', '#'])
-        || host.chars().any(char::is_whitespace)
-        || host.contains(':')
-    {
-        return Err(DynamicLanError::new(
-            ErrorKind::Contract,
-            "dynamic_lan host must be a hostname or private IP address without a scheme, port, or path.",
-        ));
-    }
-    let url = Url::parse(&format!("http://{host}:{CONTROL_PORT}/")).map_err(contract_error)?;
-    if !url_is_local(&url) {
-        return Err(DynamicLanError::new(
-            ErrorKind::Contract,
-            "dynamic_lan host must be a loopback, private-network, .local, or single-label host.",
-        ));
-    }
-    Ok(url)
-}
-
-pub(crate) fn url_is_local(url: &Url) -> bool {
-    match url.host() {
-        Some(Host::Domain(host)) => valid_local_hostname(host),
-        Some(Host::Ipv4(address)) => {
-            address.is_loopback() || address.is_private() || address.is_link_local()
-        }
-        Some(Host::Ipv6(address)) => {
-            address.is_loopback()
-                || (address.segments()[0] & 0xfe00) == 0xfc00
-                || (address.segments()[0] & 0xffc0) == 0xfe80
-        }
-        None => false,
-    }
-}
-
-pub(crate) fn valid_local_hostname(host: &str) -> bool {
-    let labels = host.split('.').collect::<Vec<_>>();
-    (labels.len() == 1 || host.ends_with(".local"))
-        && labels.iter().all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
-}
-
-pub(crate) fn url_is_loopback(url: &Url) -> bool {
-    match url.host() {
-        Some(Host::Domain(host)) => host == "localhost",
-        Some(Host::Ipv4(address)) => address.is_loopback(),
-        Some(Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
-    }
 }
 
 pub(crate) fn validate_connection_id(id: &str) -> Result<(), DynamicLanError> {

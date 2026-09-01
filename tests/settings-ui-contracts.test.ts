@@ -30,18 +30,25 @@ describe("settings provider UI contracts", () => {
     expect(japanese).toContain('llmTimeoutSeconds: "LLMタイムアウト（秒）"');
   });
 
-  test("configures the Harness address and limits legacy dynamic discovery to compatible addresses", () => {
+  test("configures Agent Connection and limits LAN discovery to compatible addresses", () => {
     const settings = source("src/features/settings/ServiceConnectionsSection.tsx");
     const japanese = source("src/i18n/locales/ja.ts");
-    const runtime = source("src/lib/providerRuntime.ts");
+    const runtime = [
+      source("src/lib/providerRuntime.ts"),
+      source("src/lib/localProviderAddress.ts"),
+    ].join("\n");
     const dynamicLan = [
       source("src-tauri/src/providers/dynamic_lan/mod.rs"),
       source("src-tauri/src/providers/dynamic_lan/http.rs"),
+      source("src-tauri/src/providers/dynamic_lan/urls.rs"),
       source("src-tauri/src/providers/dynamic_lan/validate.rs"),
     ].join("\n");
     expect(settings).toContain('Field label={t("settings.connection.harnessAddress")}');
     expect(settings).toContain('t("settings.connection.description")');
-    expect(japanese).toContain("一つのアドレスからLLM・ASR・TTSを個別に解決");
+    expect(japanese).toContain("ローカルLANでは認証なしで利用でき");
+    expect(japanese).toContain("接続を確認");
+    expect(japanese).toContain("Agent Connectionのclaim・LLMヘルスチェックに成功");
+    expect(settings).toContain('next.revision === "agent-connection.v1"');
     expect(settings).toContain("legacyDynamicLanHost(address)");
     expect(runtime).toContain("new URL(address)");
     expect(runtime).toContain('url.protocol === "http:"');
@@ -54,5 +61,8 @@ describe("settings provider UI contracts", () => {
     expect(dynamicLan).toContain('.extend(["v1", "agent-connections", id])');
     expect(dynamicLan).toContain('.push("claim")');
     expect(dynamicLan).toContain('"openai-provider-v1"');
+    expect(dynamicLan).toContain('stream_url: descriptor.streaming.url');
+    expect(dynamicLan).toContain('stream_url.path() != "/v1/llm/stream"');
+    expect(dynamicLan).toContain("Err(env::VarError::NotPresent) => return Ok(None)");
   });
 });

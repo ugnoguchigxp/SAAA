@@ -199,31 +199,27 @@ async fn fetch_descriptor(base: &url::Url) -> Result<HarnessDescriptor, String> 
 }
 
 pub(crate) async fn resolve_with_legacy_llm(address: &str) -> Result<HarnessResolution, String> {
-    match resolve(address).await {
-        Ok(resolution) => Ok(resolution),
-        Err(primary_error) => {
-            let Some(host) = legacy_dynamic_lan_host(address)? else {
-                return Err(primary_error);
-            };
-            let connection = crate::providers::dynamic_lan::DynamicLanConnection::resolve(
-                &host,
-                Arc::new(RunCancellation::default()),
-            )
-            .await
-            .map_err(|_| primary_error)?;
-            let model = connection.model().to_string();
-            let _ = connection.release().await;
-            Ok(HarnessResolution {
-                state: "degraded",
-                revision: "agent-connection.v1".to_string(),
-                services: vec![
-                    ready_status("llm", "openai.chat-completions.v1", model, None, None),
-                    missing_status("asr"),
-                    missing_status("tts"),
-                ],
-            })
-        }
-    }
+    let Some(host) = legacy_dynamic_lan_host(address)? else {
+        return resolve(address).await;
+    };
+    let connection = crate::providers::dynamic_lan::DynamicLanConnection::resolve(
+        &host,
+        Arc::new(RunCancellation::default()),
+    )
+    .await
+    .map_err(|error| error.public_message().to_string())?;
+    let model = connection.model().to_string();
+    let protocol = connection.stream_protocol().to_string();
+    let _ = connection.release().await;
+    Ok(HarnessResolution {
+        state: "degraded",
+        revision: "agent-connection.v1".to_string(),
+        services: vec![
+            ready_status("llm", &protocol, model, None, None),
+            missing_status("asr"),
+            missing_status("tts"),
+        ],
+    })
 }
 
 pub(crate) fn legacy_dynamic_lan_host(address: &str) -> Result<Option<String>, String> {
@@ -248,24 +244,13 @@ fn validate_address(address: &str) -> Result<url::Url, String> {
     {
         return Err("Harness address must not contain credentials, query, or fragment".to_string());
     }
-    if url.scheme() == "http" && !is_private_harness_host(&url) {
+    if url.scheme() == "http" && !crate::providers::dynamic_lan::url_is_local(&url) {
         return Err("Public Harness addresses must use HTTPS".to_string());
     }
     if !url.path().ends_with('/') {
         url.set_path(&format!("{}/", url.path()));
     }
     Ok(url)
-}
-
-fn is_private_harness_host(url: &url::Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(host)) => {
-            host == "localhost" || host.ends_with(".local") || !host.contains('.')
-        }
-        Some(url::Host::Ipv4(address)) => address.is_loopback() || address.is_private(),
-        Some(url::Host::Ipv6(address)) => address.is_loopback() || address.is_unique_local(),
-        None => false,
-    }
 }
 
 fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Result<(), String> {

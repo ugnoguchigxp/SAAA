@@ -4,7 +4,7 @@ function documents() { return [
     {
       namespace: "providers.model",
       key: "default",
-      schemaVersion: 13,
+      schemaVersion: 14,
       valueJson: {
         harness: { address: "http://localhost:9810" },
         providers: [{ kind: "openai-compatible", id: "local", enabled: true, label: "Local", location: "local", endpoint: "http://127.0.0.1:11434/v1", model: "test", authentication: "none" }],
@@ -14,34 +14,34 @@ function documents() { return [
     {
       namespace: "providers.agent",
       key: "codex-sdk",
-      schemaVersion: 13,
+      schemaVersion: 14,
       valueJson: { agentName: "SAAA", userName: "", enabled: false, provider: "codex-sdk", model: "", runtimeMode: "app-server", health: "unchecked", sandboxMode: "read-only", approvalPolicy: "never", networkEnabled: false, webSearchEnabled: false, workspacePolicy: "select-per-conversation" },
     },
     {
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 13,
+      schemaVersion: 14,
       valueJson: { conversationRespond: { source: "provider", primaryProviderId: "local", fallbackProviderIds: [], timeoutMs: 30_000 }, voiceTranscribe: { source: "harness", providerId: null, timeoutMs: 120_000 }, voiceSpeak: { source: "harness", providerId: null, timeoutMs: 30_000 }, codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false } },
     },
     {
       namespace: "voice.runtime",
       key: "default",
-      schemaVersion: 13,
+      schemaVersion: 14,
       valueJson: { listeningEnabled: true, inputDeviceId: "default", outputDeviceId: "default", vadSensitivity: "medium", silenceTimeoutMs: 1500, allowedLanguages: ["ja"], autoSpeak: true },
     },
     {
       namespace: "security.runtime",
       key: "default",
-      schemaVersion: 13,
+      schemaVersion: 14,
       valueJson: { localOnlyWhenSelected: true, diagnosticsRedaction: true },
     },
     {
       namespace: "situation.runtime",
       key: "default",
-      schemaVersion: 13,
+      schemaVersion: 14,
       valueJson: { enabled: false, sampleIntervalMs: 2_000, calendarEnabled: false, retentionDays: 7, maxLedgerEntries: 10_000, heartbeatIntervalMs: 300_000, sensitiveApplicationCategories: true },
     },
-    { namespace: "ui.preferences", key: "default", schemaVersion: 13, valueJson: { language: "system", timeZone: "system", lengthUnit: "metric", weightUnit: "kilogram", currency: "JPY" } },
+    { namespace: "ui.preferences", key: "default", schemaVersion: 14, valueJson: { language: "system", timeZone: "system", lengthUnit: "metric", weightUnit: "kilogram", currency: "JPY" } },
   ];
 }
 describe("settings contracts", () => {
@@ -79,7 +79,13 @@ describe("settings contracts", () => {
     expect(() => validateSettingsDocuments(invalid)).toThrow("Invalid option");
   });
   test("validates the provider harness address", () => {
-    for (const address of ["http://localhost:9810", "http://[fd00::1]:9810", "https://harness.example.com"]) {
+    for (const address of [
+      "http://localhost:9810",
+      "http://169.254.1.1:9810",
+      "http://[fd00::1]:9810",
+      "http://[fe80::1]:9810",
+      "https://harness.example.com",
+    ]) {
       const snapshot = documents();
       (snapshot[0].valueJson as { harness: { address: string } }).harness.address = address;
       expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
@@ -221,10 +227,10 @@ describe("settings contracts", () => {
     (snapshot[4].valueJson as Record<string, unknown>).unexpectedPolicy = true;
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Unrecognized key");
   });
-  test("accepts schema 13 and rejects schema 12", () => {
+  test("accepts schema 14 and rejects schema 13", () => {
     expect(() => validateSettingsDocuments(documents())).not.toThrow();
     const legacy = documents();
-    legacy[0].schemaVersion = 12;
+    legacy[0].schemaVersion = 13;
     expect(() => validateSettingsDocuments(legacy)).toThrow("Invalid input");
   });
   test("accepts only the fixed LARM security contract", () => {

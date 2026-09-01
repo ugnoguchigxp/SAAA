@@ -31,7 +31,7 @@ pub(crate) async fn stream_model_provider(
     timeout_ms: u64,
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
-    stream_model_provider_with_api_key(provider, history, timeout_ms, None, false, context).await
+    stream_model_provider_with_api_key(provider, history, timeout_ms, None, None, context).await
 }
 
 pub(crate) async fn stream_model_provider_with_api_key(
@@ -39,27 +39,33 @@ pub(crate) async fn stream_model_provider_with_api_key(
     history: &[ConversationMessage],
     timeout_ms: u64,
     api_key: Option<&str>,
-    require_event_stream: bool,
+    allocation_id: Option<&str>,
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
-    match stream_model_provider_inner(
-        provider,
-        history,
-        timeout_ms,
-        api_key,
-        require_event_stream,
-        context,
+    provider_attempt_outcome(
+        stream_model_provider_inner(
+            provider,
+            history,
+            timeout_ms,
+            api_key,
+            allocation_id,
+            context,
+        )
+        .await,
+        CleanupOutcome::NotApplicable,
     )
-    .await
-    {
-        Ok(content) => ProviderAttemptOutcome::Completed {
-            content,
-            cleanup: CleanupOutcome::NotApplicable,
-        },
+}
+
+fn provider_attempt_outcome(
+    result: Result<String, ProviderAttemptError>,
+    cleanup: CleanupOutcome,
+) -> ProviderAttemptOutcome {
+    match result {
+        Ok(content) => ProviderAttemptOutcome::Completed { content, cleanup },
         Err(ProviderAttemptError::Cancelled { output_started }) => {
             ProviderAttemptOutcome::Cancelled {
                 output_started,
-                cleanup: CleanupOutcome::NotApplicable,
+                cleanup,
             }
         }
         Err(ProviderAttemptError::Failed {
@@ -69,7 +75,7 @@ pub(crate) async fn stream_model_provider_with_api_key(
             kind,
             public_message: kind.public_message(),
             output_started,
-            cleanup: CleanupOutcome::NotApplicable,
+            cleanup,
         },
     }
 }
@@ -79,7 +85,7 @@ pub(crate) async fn stream_model_provider_inner(
     history: &[ConversationMessage],
     timeout_ms: u64,
     api_key: Option<&str>,
-    _require_event_stream: bool,
+    allocation_id: Option<&str>,
     context: ModelStreamContext<'_>,
 ) -> Result<String, ProviderAttemptError> {
     if context.cancellation.is_cancelled() {
@@ -87,19 +93,6 @@ pub(crate) async fn stream_model_provider_inner(
             output_started: false,
         });
     }
-    let messages = history
-        .iter()
-        .filter_map(|message| {
-            let role = match message.role.as_str() {
-                "system" => "system",
-                "assistant" => "assistant",
-                "user" | "transcript" => "user",
-                _ => return None,
-            };
-            Some(json!({ "role": role, "content": message.content }))
-        })
-        .collect::<Vec<_>>();
-    let tools = available_agent_tools(context.output_persistence, context.input, 0, 0);
     let stream_url = provider_stream_url(&provider.endpoint)
         .map_err(|kind| ProviderAttemptError::failed(kind, false))?;
     let configured_api_key = if api_key.is_none() {
@@ -117,12 +110,51 @@ pub(crate) async fn stream_model_provider_inner(
             false,
         ));
     }
-    let result = crate::providers::llm_websocket::client::run(
+    map_websocket_result(
+        run_model_websocket(
+            stream_url.as_str(),
+            authorization.as_deref(),
+            allocation_id,
+            &provider.model,
+            history,
+            timeout_ms,
+            context,
+        )
+        .await,
+    )
+}
+
+pub(crate) async fn run_model_websocket(
+    stream_url: &str,
+    authorization: Option<&str>,
+    allocation_id: Option<&str>,
+    model: &str,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    context: ModelStreamContext<'_>,
+) -> Result<
+    crate::providers::llm_websocket::client::WebSocketRunResult,
+    crate::providers::llm_websocket::client::WebSocketRunError,
+> {
+    let messages = history
+        .iter()
+        .filter_map(|message| {
+            let role = match message.role.as_str() {
+                "system" => "system",
+                "assistant" => "assistant",
+                "user" | "transcript" => "user",
+                _ => return None,
+            };
+            Some(json!({ "role": role, "content": message.content }))
+        })
+        .collect::<Vec<_>>();
+    let tools = available_agent_tools(context.output_persistence, context.input, 0, 0);
+    crate::providers::llm_websocket::client::run(
         crate::providers::llm_websocket::client::WebSocketRunContext {
-            stream_url: stream_url.as_str(),
-            authorization: authorization.as_deref(),
-            allocation_id: None,
-            model: &provider.model,
+            stream_url,
+            authorization,
+            allocation_id,
+            model,
             messages: &messages,
             tools: &tools,
             reasoning_effort: context.reasoning_effort,
@@ -136,7 +168,15 @@ pub(crate) async fn stream_model_provider_inner(
         },
     )
     .await
-    .map_err(map_websocket_error)?;
+}
+
+fn map_websocket_result(
+    result: Result<
+        crate::providers::llm_websocket::client::WebSocketRunResult,
+        crate::providers::llm_websocket::client::WebSocketRunError,
+    >,
+) -> Result<String, ProviderAttemptError> {
+    let result = result.map_err(map_websocket_error)?;
     match result {
         crate::providers::llm_websocket::client::WebSocketRunResult::Completed(content) => {
             Ok(content)
@@ -155,6 +195,16 @@ pub(crate) async fn stream_model_provider_inner(
             output_started,
         } => Err(ProviderAttemptError::Cancelled { output_started }),
     }
+}
+
+pub(crate) fn websocket_attempt_outcome(
+    result: Result<
+        crate::providers::llm_websocket::client::WebSocketRunResult,
+        crate::providers::llm_websocket::client::WebSocketRunError,
+    >,
+    cleanup: CleanupOutcome,
+) -> ProviderAttemptOutcome {
+    provider_attempt_outcome(map_websocket_result(result), cleanup)
 }
 
 pub(crate) fn provider_stream_url(endpoint: &str) -> Result<url::Url, ProviderFailureKind> {
@@ -203,17 +253,14 @@ fn map_websocket_error(
 
 fn websocket_failure_kind(code: &str) -> ProviderFailureKind {
     match code {
-        "authentication" | "not-authorized" => ProviderFailureKind::Authentication,
-        "invalid-request" | "protocol" => ProviderFailureKind::Protocol,
-        "request-too-large"
-        | "response-too-large"
-        | "tool-arguments-too-large"
-        | "tool-result-too-large" => ProviderFailureKind::RequestTooLarge,
-        "allocation-lost" => ProviderFailureKind::AllocationLost,
+        "invalid-request" => ProviderFailureKind::Protocol,
+        "response-too-large" => ProviderFailureKind::RequestTooLarge,
+        "allocation-inactive" => ProviderFailureKind::AllocationLost,
         "capacity" => ProviderFailureKind::Capacity,
         "model-unavailable" => ProviderFailureKind::Unavailable,
-        "timeout" | "tool-timeout" => ProviderFailureKind::Timeout,
-        "upstream" | "backpressure" => ProviderFailureKind::Upstream,
+        "provider-timeout" | "tool-timeout" => ProviderFailureKind::Timeout,
+        "provider-error" | "backpressure" | "tool-error" => ProviderFailureKind::Upstream,
+        "internal-error" => ProviderFailureKind::Internal,
         _ => ProviderFailureKind::Internal,
     }
 }

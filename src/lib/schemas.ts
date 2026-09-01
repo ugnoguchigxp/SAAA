@@ -134,7 +134,7 @@ export const situationSettingsSchema = z.object({
 const settingsDocumentBaseSchema = z.object({
   namespace: z.enum(["providers.model", "providers.agent", "routing.tasks", "voice.runtime", "security.runtime", "ui.preferences", "situation.runtime"]),
   key: z.enum(["default", "codex-sdk"]),
-  schemaVersion: z.literal(13),
+  schemaVersion: z.literal(14),
   valueJson: z.record(z.string(), z.unknown()),
 }).strict();
 

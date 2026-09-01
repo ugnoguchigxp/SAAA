@@ -21,6 +21,16 @@ describe("localized UI presentation", () => {
       .toBe("音声処理が混み合っているため、最新の発話は送信しませんでした。");
     expect(localizeUiMessage(i18n.t, "ASR_LANGUAGE_UNKNOWN: fixture", "voice"))
       .toBe("使用言語を判定できなかったため、発話を送信しませんでした。");
+    expect(localizeUiMessage(
+      i18n.t,
+      "LARM_API_TOKEN is invalid.",
+      "settings",
+    )).toBe("設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。認証なしで使う場合は環境変数を削除してください。");
+    expect(localizeUiMessage(
+      i18n.t,
+      "dynamic_lan rejected the connection authorization.",
+      "settings",
+    )).toBe("Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。");
   });
 
   test("does not expose untrusted backend error text in either language", async () => {

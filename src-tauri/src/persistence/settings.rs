@@ -5,7 +5,7 @@ mod provider_validation;
 pub(crate) mod regional_preferences;
 pub(crate) use provider_validation::validate_model_providers;
 
-pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 13;
+pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 14;
 const DEFAULT_CONVERSATION_TIMEOUT_MS: u64 = 1_800_000;
 const MAX_CONVERSATION_TIMEOUT_MS: u64 = 3_600_000;
 

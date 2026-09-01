@@ -1,9 +1,8 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::super::session_store::{mark_larm_release_pending, persist_larm_selection};
 use super::attempt::*;
-use super::dispatch::available_agent_tools;
+use super::{run_model_websocket, websocket_attempt_outcome, ModelStreamContext};
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
 use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{AppState, LarmProviderSettings, RunCancellation, StartTurnInput};
@@ -107,23 +106,10 @@ pub(crate) async fn stream_larm_provider(
         };
     }
 
-    let messages = history
-        .iter()
-        .filter_map(|message| {
-            let role = match message.role.as_str() {
-                "system" => "system",
-                "assistant" => "assistant",
-                "user" | "transcript" => "user",
-                _ => return None,
-            };
-            Some(serde_json::json!({ "role": role, "content": message.content }))
-        })
-        .collect::<Vec<_>>();
     let persistence = Some(ProviderOutputPersistence {
         state: context.state,
         session_id: context.session_id,
     });
-    let tools = available_agent_tools(persistence, context.input, 0, 0);
     let stream_url = match larm.websocket_stream_url() {
         Ok(url) => url,
         Err(kind) => {
@@ -150,18 +136,16 @@ pub(crate) async fn stream_larm_provider(
             };
         }
     };
-    let chat = crate::providers::llm_websocket::client::run(
-        crate::providers::llm_websocket::client::WebSocketRunContext {
-            stream_url: stream_url.as_str(),
-            authorization: Some(authorization),
-            allocation_id: Some(allocation.allocation_id.as_str()),
-            model: "local",
-            messages: &messages,
-            tools: &tools,
+    let chat = run_model_websocket(
+        stream_url.as_str(),
+        Some(authorization),
+        Some(allocation.allocation_id.as_str()),
+        "local",
+        history,
+        timeout_ms,
+        ModelStreamContext {
             reasoning_effort,
             max_output_tokens,
-            tool_timeout: Duration::from_secs(60),
-            timeout: Duration::from_millis(timeout_ms),
             input: context.input,
             on_event: context.on_event,
             cancellation,
@@ -186,57 +170,7 @@ pub(crate) async fn stream_larm_provider(
         };
     }
 
-    match chat {
-        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Completed(content)) => {
-            ProviderAttemptOutcome::Completed { content, cleanup }
-        }
-        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Length(_)) => {
-            ProviderAttemptOutcome::Failed {
-                kind: ProviderFailureKind::PartialOutput,
-                public_message: ProviderFailureKind::PartialOutput.public_message(),
-                output_started: true,
-                cleanup,
-            }
-        }
-        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Failed {
-            code,
-            output_started,
-        }) => {
-            let kind = super::websocket_failure_kind(&code);
-            ProviderAttemptOutcome::Failed {
-                kind,
-                public_message: kind.public_message(),
-                output_started,
-                cleanup,
-            }
-        }
-        Ok(crate::providers::llm_websocket::client::WebSocketRunResult::Cancelled {
-            output_started,
-        }) => ProviderAttemptOutcome::Cancelled {
-            output_started,
-            cleanup,
-        },
-        Err(error) => {
-            let mapped = super::map_websocket_error(error);
-            match mapped {
-                ProviderAttemptError::Cancelled { output_started } => {
-                    ProviderAttemptOutcome::Cancelled {
-                        output_started,
-                        cleanup,
-                    }
-                }
-                ProviderAttemptError::Failed {
-                    kind,
-                    output_started,
-                } => ProviderAttemptOutcome::Failed {
-                    kind,
-                    public_message: kind.public_message(),
-                    output_started,
-                    cleanup,
-                },
-            }
-        }
-    }
+    websocket_attempt_outcome(chat, cleanup)
 }
 
 pub(crate) fn cleanup_from_larm(

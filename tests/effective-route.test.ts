@@ -58,7 +58,7 @@ describe("effective provider route", () => {
       {
         namespace: "providers.model",
         key: "default",
-        schemaVersion: 13,
+        schemaVersion: 14,
         valueJson: {
           harness: { address: "http://localhost:9810" },
           providers: [
@@ -90,7 +90,7 @@ describe("effective provider route", () => {
       {
         namespace: "routing.tasks",
         key: "default",
-        schemaVersion: 13,
+        schemaVersion: 14,
         valueJson: {
           conversationRespond: {
             source: "provider",

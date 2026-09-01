@@ -266,7 +266,14 @@ mod tests {
             assert!(start["tools"].is_array());
             assert!(start["messages"].to_string().contains("SAAA Eval Agent"));
             let run_id = start["runId"].as_str().expect("run id");
-            socket.send(Message::Text(serde_json::json!({"type":"run.accepted","runId":run_id,"seq":1,"providerRunId":"quality_eval_provider","model":"fixture-model"}).to_string().into())).await.expect("accepted sends");
+            socket
+                .send(Message::Text(
+                    serde_json::json!({"type":"run.accepted","runId":run_id,"seq":1})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .expect("accepted sends");
             let content = "runtime answer";
             let mut delta = Vec::with_capacity(16 + content.len());
             delta.extend_from_slice(b"SAD1");

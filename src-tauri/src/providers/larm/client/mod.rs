@@ -15,9 +15,6 @@ use std::{
 use tokio::sync::Notify;
 use url::Url;
 
-#[cfg(test)]
-use crate::runtime::agent_tools::AgentToolCall;
-
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -26,19 +23,8 @@ const PROBE_BODY_LIMIT: usize = 64 * 1_024;
 const CONTROL_BODY_LIMIT: usize = 256 * 1_024;
 const RELEASE_BODY_LIMIT: usize = 64 * 1_024;
 const ERROR_BODY_LIMIT: usize = 8 * 1_024;
-#[cfg(test)]
-const GATEWAY_REQUEST_LIMIT: usize = 4 * 1_024 * 1_024;
-#[cfg(test)]
-const SSE_EVENT_LIMIT: usize = 1_024 * 1_024;
-#[cfg(test)]
-const ASSISTANT_CHAR_LIMIT: usize = 64_000;
 const CAPABILITY: &str = "llm.general";
 const ROUTE: &str = "llm-default";
-#[cfg(test)]
-const VIRTUAL_MODEL: &str = "local";
-
-#[cfg(test)]
-mod chat;
 mod decode;
 
 pub(crate) use decode::*;
@@ -211,7 +197,6 @@ impl SharedLarmClient {
         active.ok_or(SessionFailureKind::Contract)
     }
 }
-
 #[cfg(test)]
 fn metric_series_has_sensitive_label(series: &str) -> Result<bool, SessionFailureKind> {
     let Some(open) = series.find('{') else {
@@ -372,23 +357,6 @@ pub(crate) enum CleanupResult {
     DeferredToTtl(ReleaseFailureKind),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-#[cfg(test)]
-pub(crate) struct ChatMessage {
-    pub(crate) role: &'static str,
-    pub(crate) content: String,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-#[cfg(test)]
-pub(crate) struct ChatCompletion {
-    pub(crate) content: String,
-    pub(crate) tool_call: Option<AgentToolCall>,
-    pub(crate) request_id: Option<BoundedIdentifier>,
-    pub(crate) renewed_allocation: ReadyAllocation,
-    pub(crate) lease_received_at: tokio::time::Instant,
-}
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) struct LarmError {
     pub(crate) kind: SessionFailureKind,
@@ -420,24 +388,11 @@ struct AllocationRequirement<'a> {
     route: &'a str,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RenewRequest {
     ttl_seconds: u32,
-}
-
-#[cfg(test)]
-impl Serialize for ChatMessage {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("ChatMessage", 2)?;
-        state.serialize_field("role", self.role)?;
-        state.serialize_field("content", &self.content)?;
-        state.end()
-    }
 }
 
 #[derive(Deserialize)]
@@ -448,7 +403,6 @@ struct ErrorEnvelope {
 #[derive(Deserialize)]
 struct ErrorValue {
     code: String,
-    #[allow(dead_code)]
     message: String,
 }
 
@@ -636,6 +590,7 @@ impl<'a> LarmHttpClient<'a> {
         Ok(ready)
     }
 
+    #[cfg(test)]
     pub(crate) async fn renew(
         &self,
         allocation: &ReadyAllocation,
@@ -749,36 +704,6 @@ impl<'a> LarmHttpClient<'a> {
         }
     }
 
-    async fn send_with_allocation(
-        &self,
-        body: &[u8],
-        allocation_id: &str,
-        timeout: Duration,
-        cancellation: Cancellation<'_>,
-    ) -> Result<reqwest::Response, LarmError> {
-        if cancellation.is_cancelled() {
-            return Err(LarmError::new(SessionFailureKind::Cancelled, false));
-        }
-        let credential = self
-            .credential
-            .ok_or_else(|| LarmError::new(SessionFailureKind::Authentication, false))?;
-        let request = self
-            .client
-            .post(
-                self.url("v1/chat/completions")
-                    .map_err(|kind| LarmError::new(kind, false))?,
-            )
-            .header(AUTHORIZATION, credential.0.clone())
-            .header("x-larm-allocation-id", allocation_id)
-            .header(CONTENT_TYPE, "application/json")
-            .timeout(timeout)
-            .body(body.to_vec());
-        tokio::select! {
-            _ = cancellation.cancelled() => Err(LarmError::new(SessionFailureKind::Cancelled, false)),
-            response = request.send() => response.map_err(|error| LarmError::new(classify_transport(&error), false)),
-        }
-    }
-
     fn url(&self, path: &str) -> Result<Url, SessionFailureKind> {
         self.base_url
             .join(path)
@@ -790,7 +715,6 @@ impl<'a> LarmHttpClient<'a> {
 mod tests {
     use super::super::contracts::SelectionReason;
     use super::*;
-    use crate::runtime::agent_tools::ToolCallAccumulator;
     use std::{
         collections::VecDeque,
         io::{ErrorKind, Read, Write},
@@ -903,7 +827,7 @@ mod tests {
                     }) {
                         break;
                     }
-                    if request.len() > GATEWAY_REQUEST_LIMIT + 16 * 1_024 {
+                    if request.len() > CONTROL_BODY_LIMIT + 16 * 1_024 {
                         break;
                     }
                 }
@@ -1097,339 +1021,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ready_stream_release_uses_fixed_contract_and_bounded_headers() {
-        let allocation = ready_json("alloc_1", "runtime_1", false, "primary-live");
-        let stream = concat!(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-        let mut chat_response = response("200 OK", "text/event-stream", stream);
-        let header_end = chat_response
-            .windows(4)
-            .position(|window| window == b"\r\n\r\n")
-            .expect("header boundary");
-        chat_response.splice(
-            header_end..header_end,
-            b"\r\nX-Request-ID: req_1".iter().copied(),
-        );
-        let server = FakeServer::start(vec![
-            response("200 OK", "application/json", &allocation),
-            chat_response,
-            response("200 OK", "application/json", &allocation),
-        ]);
-        let shared = SharedLarmClient::build().expect("client builds");
-        let credential = credential();
-        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
-            .expect("client config");
-        let (flag, notify) = cancellation();
-        let cancellation = Cancellation {
-            flag: &flag,
-            notify: &notify,
-        };
-        let allocation = match client
-            .allocate(cancellation)
-            .await
-            .expect("allocation ready")
-        {
-            AllocationStart::Ready(allocation) => allocation,
-            AllocationStart::Pending(_) => panic!("unexpected pending allocation"),
-        };
-        let mut deltas = Vec::new();
-        let completion = client
-            .chat(
-                &allocation,
-                tokio::time::Instant::now(),
-                &[ChatMessage {
-                    role: "user",
-                    content: "fixture prompt".to_string(),
-                }],
-                Duration::from_secs(5),
-                cancellation,
-                |delta, first| {
-                    deltas.push((delta.to_string(), first));
-                    Ok(())
-                },
-            )
-            .await
-            .expect("chat completes");
-        assert_eq!(completion.content, "hello");
-        assert_eq!(
-            completion
-                .request_id
-                .as_ref()
-                .map(BoundedIdentifier::as_str),
-            Some("req_1")
-        );
-        assert_eq!(deltas, vec![("hello".to_string(), true)]);
-        assert_eq!(
-            client.release(&allocation.allocation_id).await,
-            CleanupResult::Released
-        );
-
-        let captures = server.captures();
-        assert_eq!(captures.len(), 3);
-        assert!(
-            captures[0].contains("POST /v1/allocations HTTP/1.1"),
-            "unexpected allocation request: {:?}",
-            captures[0]
-        );
-        assert!(captures[0]
-            .to_ascii_lowercase()
-            .contains("authorization: bearer test-token"));
-        assert!(captures[0].contains("\"allowFallback\":false"));
-        assert!(captures[0].contains("\"deploymentPolicy\":\"existing-only\""));
-        assert!(captures[1].contains("x-larm-allocation-id: alloc_1"));
-        assert!(captures[1].contains("\"model\":\"local\""));
-        assert!(captures[1].contains("\"reasoning_effort\":\"medium\""));
-        assert!(captures[1].contains("\"max_tokens\":2048"));
-        assert!(captures[1].contains("\"enable_thinking\":true"));
-        assert!(captures[2].contains("DELETE /v1/allocations/alloc_1 HTTP/1.1"));
-    }
-
-    #[tokio::test]
-    async fn larm_gateway_projects_recall_tool_calls_and_serializes_tool_exchanges() {
-        let first = serde_json::json!({
-            "choices": [{"delta": {"tool_calls": [{
-                "index": 0,
-                "id": "call_larm_recall",
-                "function": {
-                    "name": "recall_conversation",
-                    "arguments": "{\"time\":{\"kind\":\"preset\","
-                }
-            }]}}]
-        });
-        let second = serde_json::json!({
-            "choices": [{"delta": {"tool_calls": [{
-                "index": 0,
-                "function": {"arguments": "\"preset\":\"yesterday\"}}"}
-            }]}}]
-        });
-        let terminal = serde_json::json!({
-            "choices": [{"delta": {}, "finish_reason": "tool_calls"}]
-        });
-        let stream =
-            format!("data: {first}\n\ndata: {second}\n\ndata: {terminal}\n\ndata: [DONE]\n\n");
-        let server = FakeServer::start(vec![response("200 OK", "text/event-stream", &stream)]);
-        let shared = SharedLarmClient::build().expect("client builds");
-        let credential = credential();
-        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
-            .expect("client config");
-        let allocation = client
-            .ready_allocation(
-                serde_json::from_str(&ready_json(
-                    "alloc_tool",
-                    "runtime_tool",
-                    false,
-                    "primary-live",
-                ))
-                .expect("fixture decodes"),
-            )
-            .expect("allocation validates");
-        let (flag, notify) = cancellation();
-        let tool_exchange = serde_json::json!({
-            "role": "tool",
-            "tool_call_id": "call_previous",
-            "content": "{\"reasonCode\":\"continuity-no-hit\"}"
-        });
-        let tools = [crate::runtime::agent_tools::recall_tool_definition()];
-        let completion = client
-            .chat_with_tools(
-                &allocation,
-                tokio::time::Instant::now(),
-                &[ChatMessage {
-                    role: "user",
-                    content: "昨日の話".to_string(),
-                }],
-                &[tool_exchange],
-                &tools,
-                "xhigh",
-                crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
-                Duration::from_secs(5),
-                Cancellation {
-                    flag: &flag,
-                    notify: &notify,
-                },
-                |_, _| Ok(()),
-            )
-            .await
-            .expect("tool call completes");
-        assert!(completion.content.is_empty());
-        let call = completion.tool_call.expect("tool call projects");
-        assert_eq!(call.id, "call_larm_recall");
-        assert_eq!(call.name, "recall_conversation");
-        assert_eq!(
-            crate::runtime::agent_tools::parse_recall_arguments(&call.arguments)
-                .expect("arguments decode")
-                .time,
-            Some(crate::memory::contracts::RecallTimeFilter::Preset {
-                preset: crate::memory::contracts::RecallTimePreset::Yesterday
-            })
-        );
-
-        let captures = server.captures();
-        assert_eq!(captures.len(), 1);
-        assert!(captures[0].contains("\"name\":\"recall_conversation\""));
-        assert!(captures[0].contains("\"tool_choice\":\"auto\""));
-        assert!(captures[0].contains("\"tool_call_id\":\"call_previous\""));
-        assert!(captures[0].contains("\"reasoning_effort\":\"xhigh\""));
-        assert!(captures[0].contains("\"max_tokens\":2048"));
-        assert!(captures[0].contains("\"enable_thinking\":true"));
-    }
-
-    #[tokio::test]
-    async fn larm_stream_disconnect_after_delta_is_marked_partial_and_never_done() {
-        let partial = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n";
-        let server = FakeServer::start(vec![response("200 OK", "text/event-stream", partial)]);
-        let shared = SharedLarmClient::build().expect("client builds");
-        let credential = credential();
-        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
-            .expect("client config");
-        let allocation_dto: AllocationDto = serde_json::from_str(&ready_json(
-            "alloc_partial",
-            "runtime_partial",
-            false,
-            "primary-live",
-        ))
-        .expect("fixture decodes");
-        let allocation = client
-            .ready_allocation(allocation_dto)
-            .expect("allocation validates");
-        let (flag, notify) = cancellation();
-        let mut deltas = Vec::new();
-        let error = client
-            .chat(
-                &allocation,
-                tokio::time::Instant::now(),
-                &[ChatMessage {
-                    role: "user",
-                    content: "fixture".to_string(),
-                }],
-                Duration::from_secs(5),
-                Cancellation {
-                    flag: &flag,
-                    notify: &notify,
-                },
-                |delta, _| {
-                    deltas.push(delta.to_string());
-                    Ok(())
-                },
-            )
-            .await
-            .expect_err("missing DONE is a partial failure");
-        assert_eq!(deltas, vec!["partial"]);
-        assert_eq!(error.kind, SessionFailureKind::Network);
-        assert!(error.output_started);
-    }
-
-    #[tokio::test]
-    async fn gateway_rejects_an_unknown_content_type() {
-        let server = FakeServer::start(vec![response("200 OK", "text/plain", "data: [DONE]\n\n")]);
-        let shared = SharedLarmClient::build().expect("client builds");
-        let credential = credential();
-        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
-            .expect("client config");
-        let allocation = client
-            .ready_allocation(
-                serde_json::from_str(&ready_json(
-                    "alloc_content_type",
-                    "runtime_content_type",
-                    false,
-                    "primary-live",
-                ))
-                .expect("fixture decodes"),
-            )
-            .expect("allocation validates");
-        let (flag, notify) = cancellation();
-        let error = client
-            .chat(
-                &allocation,
-                tokio::time::Instant::now(),
-                &[ChatMessage {
-                    role: "user",
-                    content: "fixture".to_string(),
-                }],
-                Duration::from_secs(5),
-                Cancellation {
-                    flag: &flag,
-                    notify: &notify,
-                },
-                |_, _| Ok(()),
-            )
-            .await
-            .expect_err("unknown content type is rejected");
-        assert_eq!(error.kind, SessionFailureKind::Protocol);
-        assert!(!error.output_started);
-    }
-
-    #[tokio::test]
-    async fn gateway_rejects_non_stream_success_and_expired_lease_before_network() {
-        let json = r#"{"choices":[{"message":{"content":"must not be accepted"}}]}"#;
-        let server = FakeServer::start(vec![response("200 OK", "application/json", json)]);
-        let shared = SharedLarmClient::build().expect("client builds");
-        let credential = credential();
-        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
-            .expect("client config");
-        let allocation = client
-            .ready_allocation(
-                serde_json::from_str(&ready_json(
-                    "alloc_non_stream",
-                    "runtime_non_stream",
-                    false,
-                    "primary-live",
-                ))
-                .expect("fixture decodes"),
-            )
-            .expect("allocation validates");
-        let (flag, notify) = cancellation();
-        let cancellation = Cancellation {
-            flag: &flag,
-            notify: &notify,
-        };
-        let error = client
-            .chat(
-                &allocation,
-                tokio::time::Instant::now(),
-                &[ChatMessage {
-                    role: "user",
-                    content: "fixture".to_string(),
-                }],
-                Duration::from_secs(5),
-                cancellation,
-                |_, _| Ok(()),
-            )
-            .await
-            .expect_err("stream request rejects a non-stream success response");
-        assert_eq!(error.kind, SessionFailureKind::Protocol);
-
-        let expired = tokio::time::Instant::now() - Duration::from_secs(301);
-        let error = client
-            .chat(
-                &allocation,
-                expired,
-                &[ChatMessage {
-                    role: "user",
-                    content: "fixture".to_string(),
-                }],
-                Duration::from_secs(5),
-                cancellation,
-                |_, _| Ok(()),
-            )
-            .await
-            .expect_err("expired allocation is rejected before a second request");
-        assert_eq!(error.kind, SessionFailureKind::AllocationLost);
-        assert_eq!(server.captures().len(), 1);
-    }
-
-    #[test]
-    fn lease_schedule_is_anchored_to_allocation_response_receipt() {
-        let received_at = tokio::time::Instant::now();
-        let (renew_at, expires_at) = lease_deadlines(received_at, 60);
-        assert_eq!(renew_at, Some(received_at + Duration::from_secs(48)));
-        assert_eq!(expires_at, received_at + Duration::from_secs(60));
-    }
-
-    #[tokio::test]
     async fn pending_operation_can_be_polled_to_the_same_ready_allocation() {
         let pending = ready_json("alloc_2", "runtime_2", false, "primary-live")
             .replace("\"status\":\"ready\"", "\"status\":\"pending\"")
@@ -1538,46 +1129,6 @@ mod tests {
             .await
             .expect_err("oversized response is rejected");
         assert_eq!(error.kind, SessionFailureKind::RequestTooLarge);
-    }
-
-    #[tokio::test]
-    async fn oversized_sse_event_is_rejected_as_a_bounded_failure() {
-        let event = format!("data: {}", "x".repeat(SSE_EVENT_LIMIT + 1));
-        let server = FakeServer::start(vec![response("200 OK", "text/event-stream", &event)]);
-        let shared = SharedLarmClient::build().expect("client builds");
-        let credential = credential();
-        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
-            .expect("client config");
-        let allocation_dto: AllocationDto = serde_json::from_str(&ready_json(
-            "alloc_oversized_event",
-            "runtime_oversized_event",
-            false,
-            "primary-live",
-        ))
-        .expect("fixture decodes");
-        let allocation = client
-            .ready_allocation(allocation_dto)
-            .expect("allocation validates");
-        let (flag, notify) = cancellation();
-        let error = client
-            .chat(
-                &allocation,
-                tokio::time::Instant::now(),
-                &[ChatMessage {
-                    role: "user",
-                    content: "fixture".to_string(),
-                }],
-                Duration::from_secs(5),
-                Cancellation {
-                    flag: &flag,
-                    notify: &notify,
-                },
-                |_, _| Ok(()),
-            )
-            .await
-            .expect_err("oversized event is rejected");
-        assert_eq!(error.kind, SessionFailureKind::RequestTooLarge);
-        assert!(!error.output_started);
     }
 
     #[tokio::test]
@@ -1699,46 +1250,10 @@ mod tests {
     }
 
     #[test]
-    fn stream_renew_retry_is_independent_of_first_delta_timing() {
-        for kind in [
-            SessionFailureKind::Network,
-            SessionFailureKind::Timeout,
-            SessionFailureKind::Upstream,
-        ] {
-            assert!(should_retry_stream_renew(kind, 0));
-            assert!(!should_retry_stream_renew(kind, 1));
-        }
-        for kind in [
-            SessionFailureKind::Authentication,
-            SessionFailureKind::Contract,
-            SessionFailureKind::Protocol,
-            SessionFailureKind::AllocationLost,
-        ] {
-            assert!(!should_retry_stream_renew(kind, 0));
-        }
-    }
-
-    #[test]
-    fn selection_reason_is_bounded_by_conversion() {
-        let binding = super::super::contracts::AllocationBindingDto {
-            capability: CAPABILITY.to_string(),
-            route: ROUTE.to_string(),
-            runtime: "runtime_1".to_string(),
-            node: "node_1".to_string(),
-            status: "HOT".to_string(),
-            candidate_rank: 1,
-            fallback: false,
-            selection_reason: "a-new-server-reason".to_string(),
-        };
-        assert!(binding_fingerprint(&binding).starts_with("binding_"));
-    }
-
-    #[test]
-    fn binding_invariance_uses_exact_identity_not_only_the_display_fingerprint() {
+    fn renewal_binding_invariance_uses_exact_identity() {
         let first = ReadyAllocation::new_with_binding_identity(
             "alloc_1",
             "runtime_1",
-            "binding_same",
             "exact_identity_a",
             300,
             false,
@@ -1748,7 +1263,6 @@ mod tests {
         let second = ReadyAllocation::new_with_binding_identity(
             "alloc_1",
             "runtime_1",
-            "binding_same",
             "exact_identity_b",
             300,
             false,
@@ -1756,33 +1270,6 @@ mod tests {
         )
         .expect("second allocation validates");
         assert!(!first.same_binding_as(&second));
-    }
-
-    #[test]
-    fn sse_limit_is_enforced_per_event_and_callback_failure_is_partial() {
-        let event = format!("data: {}\n\n", "x".repeat(600 * 1_024));
-        let mut buffer = [event.as_bytes(), event.as_bytes()].concat();
-        let events = drain_sse(&mut buffer, false).expect("bounded events drain");
-        assert_eq!(events.len(), 2);
-        assert!(buffer.is_empty());
-
-        let mut content = String::new();
-        let mut content_chars = 0;
-        let mut output_started = false;
-        let mut tool_calls = ToolCallAccumulator::default();
-        let mut terminal = crate::providers::completion::CompletionTerminal::default();
-        let error = project_sse(
-            vec!["data: {\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}".to_string()],
-            &mut content,
-            &mut content_chars,
-            &mut output_started,
-            &mut |_, _| Err(SessionFailureKind::ClientDisconnected),
-            &mut tool_calls,
-            &mut terminal,
-        )
-        .expect_err("consumer failure stops projection");
-        assert_eq!(error.kind, SessionFailureKind::ClientDisconnected);
-        assert!(error.output_started);
     }
 
     #[test]
@@ -1804,49 +1291,5 @@ mod tests {
                 "invalid timestamp accepted: {value}"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn oversized_gateway_request_is_rejected_before_network() {
-        let server = FakeServer::start(vec![response(
-            "500 Internal Server Error",
-            "application/json",
-            r#"{"error":{"code":"internal_error","message":"must not be reached"}}"#,
-        )]);
-        let shared = SharedLarmClient::build().expect("client builds");
-        let credential = credential();
-        let client = LarmHttpClient::new(&shared, &server.base_url, &credential, 300)
-            .expect("client config");
-        let allocation_dto: AllocationDto = serde_json::from_str(&ready_json(
-            "alloc_oversized_request",
-            "runtime_oversized_request",
-            false,
-            "primary-live",
-        ))
-        .expect("fixture decodes");
-        let allocation = client
-            .ready_allocation(allocation_dto)
-            .expect("allocation validates");
-        let messages = [ChatMessage {
-            role: "user",
-            content: "x".repeat(GATEWAY_REQUEST_LIMIT),
-        }];
-        let (flag, notify) = cancellation();
-        let error = client
-            .chat(
-                &allocation,
-                tokio::time::Instant::now(),
-                &messages,
-                Duration::from_secs(5),
-                Cancellation {
-                    flag: &flag,
-                    notify: &notify,
-                },
-                |_, _| Ok(()),
-            )
-            .await
-            .expect_err("oversized request is rejected");
-        assert_eq!(error.kind, SessionFailureKind::RequestTooLarge);
-        assert!(server.captures().is_empty(), "request reached the network");
     }
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isDynamicLanHost, isLocalProviderHost } from "./localProviderAddress";
 
 export const providerIdSchema = z.string().min(1).max(80).regex(
   /^[A-Za-z0-9_-]+$/,
@@ -10,20 +11,6 @@ const providerCommonSchema = z.object({
   enabled: z.boolean(),
   label: z.string().min(1).max(120).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Provider labels must not have surrounding whitespace or control characters"),
 });
-
-function isLocalProviderHost(hostname: string): boolean {
-  if (hostname.startsWith("[") && hostname.endsWith("]")) {
-    const address = hostname.slice(1, -1);
-    return address === "::1" || /^(?:fc|fd)[0-9a-f]{2}:/i.test(address);
-  }
-  if (hostname === "localhost" || hostname.endsWith(".local") || !hostname.includes(".")) return true;
-  const octets = hostname.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
-  return octets[0] === 10
-    || octets[0] === 127
-    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
-    || (octets[0] === 192 && octets[1] === 168);
-}
 
 const openAiCompatibleProviderSchema = providerCommonSchema.extend({
   kind: z.literal("openai-compatible"),
@@ -67,23 +54,6 @@ const larmProviderSchema = providerCommonSchema.extend({
   allowFallbackByDefault: z.literal(false),
   deploymentPolicy: z.literal("existing-only"),
 }).strict();
-
-function isDynamicLanHost(value: string): boolean {
-  if (!value || value.length > 253 || /[\s/@?#]/.test(value) || value.includes(":")) return false;
-  const octets = value.split(".").map(Number);
-  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
-    return octets[0] === 10
-      || octets[0] === 127
-      || (octets[0] === 169 && octets[1] === 254)
-      || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
-      || (octets[0] === 192 && octets[1] === 168);
-  }
-  const labels = value.split(".");
-  return (labels.length === 1 || value.toLowerCase().endsWith(".local"))
-    && labels.every((label) => label.length >= 1
-      && label.length <= 63
-      && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label));
-}
 
 const dynamicLanProviderSchema = providerCommonSchema.extend({
   kind: z.literal("dynamic-lan"),

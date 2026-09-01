@@ -34,6 +34,8 @@ const messageKeys = {
   meetingVoiceSettingsUnavailable: "errors.meeting.voiceSettingsUnavailable",
   meetingStartFailed: "errors.meeting.startFailed",
   meetingRuntimeFailure: "errors.meeting.runtimeFailure",
+  settingsAgentConnectionTokenInvalid: "settings.connection.agentConnectionTokenInvalid",
+  settingsAgentConnectionAuthorizationRejected: "settings.connection.agentConnectionAuthorizationRejected",
 } as const;
 
 export type UiMessageName = keyof typeof messageKeys;
@@ -66,6 +68,8 @@ const legacyMessageNames: Record<string, UiMessageName> = {
   "Audio processor startup timed out": "voiceProfileProcessorTimeout",
   "No audio was recorded.": "voiceProfileNoAudio",
   "音声が記録されませんでした。": "voiceProfileNoAudio",
+  "LARM_API_TOKEN is invalid.": "settingsAgentConnectionTokenInvalid",
+  "dynamic_lan rejected the connection authorization.": "settingsAgentConnectionAuthorizationRejected",
 };
 
 const microphoneMessageNames: Array<[RegExp, string]> = [

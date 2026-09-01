@@ -20,7 +20,7 @@ import { Field } from "./SettingsFields";
 
 type Capability = "llm" | "asr" | "tts";
 type ResolveNotice =
-  | { kind: "resolvedAll" | "resolvedPartial" }
+  | { kind: "resolvedAll" | "resolvedPartial" | "agentConnectionReady" }
   | { kind: "error"; message: string };
 
 export function ServiceConnectionsSection({
@@ -70,7 +70,11 @@ export function ServiceConnectionsSection({
       const next = await resolveServiceHarness(providers.harness.address);
       setResolution(next);
       setResolveState("idle");
-      setResolveMessage({ kind: next.state === "ready" ? "resolvedAll" : "resolvedPartial" });
+      setResolveMessage({
+        kind: next.revision === "agent-connection.v1"
+          ? "agentConnectionReady"
+          : next.state === "ready" ? "resolvedAll" : "resolvedPartial",
+      });
     } catch (cause) {
       setResolution(null);
       setResolveState("error");
@@ -157,7 +161,7 @@ export function ServiceConnectionsSection({
           />
         </div>
         <div className="provider-card-footer">
-          <span>{resolveMessage?.kind === "error" ? localizeUiMessage(t, resolveMessage.message, "settings") : resolveMessage?.kind === "resolvedAll" ? t("settings.connection.resolvedAll") : resolveMessage?.kind === "resolvedPartial" ? t("settings.connection.resolvedPartial") : t("settings.connection.resolutionHint")}</span>
+          <span>{resolveMessage?.kind === "error" ? localizeUiMessage(t, resolveMessage.message, "settings") : resolveMessage?.kind === "agentConnectionReady" ? t("settings.connection.agentConnectionReady") : resolveMessage?.kind === "resolvedAll" ? t("settings.connection.resolvedAll") : resolveMessage?.kind === "resolvedPartial" ? t("settings.connection.resolvedPartial") : t("settings.connection.resolutionHint")}</span>
           <button
             className="text-button"
             type="button"

@@ -2,7 +2,12 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
 use super::settings::SETTINGS_SCHEMA_VERSION;
-use crate::{now_iso, DEFAULT_AGENT_NAME, DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME};
+use crate::{
+    now_iso, DEFAULT_AGENT_NAME, DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME,
+    DYNAMIC_LAN_PROVIDER_ID,
+};
+
+const STRICT_PROVIDER_AND_VOICE_SHAPE_VERSION: i64 = 13;
 
 pub(super) fn initialize_revision(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
@@ -187,6 +192,67 @@ fn migrate_routing_document(value: &mut Value) {
     );
 }
 
+fn migrate_obsolete_direct_lan_route(providers: &Value, routing: &mut Value) {
+    let Some(conversation) = routing
+        .get_mut("conversationRespond")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if conversation.get("source").and_then(Value::as_str) != Some("provider") {
+        return;
+    }
+    let Some(primary_id) = conversation
+        .get("primaryProviderId")
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let Some(items) = providers.get("providers").and_then(Value::as_array) else {
+        return;
+    };
+    let Some(dynamic) = items.iter().find(|provider| {
+        provider.get("id").and_then(Value::as_str) == Some(DYNAMIC_LAN_PROVIDER_ID)
+            && provider.get("kind").and_then(Value::as_str) == Some("dynamic-lan")
+            && provider.get("enabled").and_then(Value::as_bool) == Some(true)
+    }) else {
+        return;
+    };
+    let Some(dynamic_host) = dynamic.get("host").and_then(Value::as_str) else {
+        return;
+    };
+    let harness_matches = providers
+        .pointer("/harness/address")
+        .and_then(Value::as_str)
+        .and_then(|address| url::Url::parse(address).ok())
+        .is_some_and(|url| {
+            url.scheme() == "http"
+                && url.host_str() == Some(dynamic_host)
+                && url.port() == Some(crate::providers::dynamic_lan::CONTROL_PORT)
+                && url.path() == "/"
+        });
+    let direct_matches = items
+        .iter()
+        .find(|provider| provider.get("id").and_then(Value::as_str) == Some(primary_id))
+        .filter(|provider| {
+            provider.get("kind").and_then(Value::as_str) == Some("openai-compatible")
+                && provider.get("location").and_then(Value::as_str) == Some("local")
+                && provider.get("enabled").and_then(Value::as_bool) == Some(true)
+        })
+        .and_then(|provider| provider.get("endpoint").and_then(Value::as_str))
+        .and_then(|endpoint| url::Url::parse(endpoint).ok())
+        .is_some_and(|url| {
+            url.scheme() == "http"
+                && url.host_str() == Some(dynamic_host)
+                && url.port_or_known_default() == Some(8_080)
+        });
+    if harness_matches && direct_matches {
+        conversation.insert("source".to_string(), Value::String("harness".to_string()));
+        conversation.insert("primaryProviderId".to_string(), Value::Null);
+        conversation.insert("fallbackProviderIds".to_string(), json!([]));
+    }
+}
+
 fn migrated_voice_document(value: &Value, require_fresh_consent: bool) -> Value {
     json!({
         "listeningEnabled": if require_fresh_consent { false } else { value.get("listeningEnabled").and_then(Value::as_bool).unwrap_or(false) },
@@ -234,7 +300,7 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
 
     if let Some(mut providers) = read_document(connection, "providers.model", "default")? {
         let before = providers.value.clone();
-        let legacy_shape = providers.schema_version < SETTINGS_SCHEMA_VERSION
+        let legacy_shape = providers.schema_version < STRICT_PROVIDER_AND_VOICE_SHAPE_VERSION
             || providers.value.get("maxOutputTokens").is_some()
             || providers
                 .value
@@ -252,14 +318,21 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
     }
     if let Some(mut routing) = read_document(connection, "routing.tasks", "default")? {
         let before = routing.value.clone();
+        if routing.schema_version < SETTINGS_SCHEMA_VERSION {
+            if let Some(providers) = read_document(connection, "providers.model", "default")? {
+                migrate_obsolete_direct_lan_route(&providers.value, &mut routing.value);
+            }
+        }
         migrate_routing_document(&mut routing.value);
         if routing.schema_version < SETTINGS_SCHEMA_VERSION || routing.value != before {
             write_document(connection, "routing.tasks", "default", &routing.value)?;
         }
     }
     if let Some(voice) = old_voice {
-        let migrated =
-            migrated_voice_document(&voice.value, voice.schema_version < SETTINGS_SCHEMA_VERSION);
+        let migrated = migrated_voice_document(
+            &voice.value,
+            voice.schema_version < STRICT_PROVIDER_AND_VOICE_SHAPE_VERSION,
+        );
         if voice.schema_version < SETTINGS_SCHEMA_VERSION || migrated != voice.value {
             write_document(connection, "voice.runtime", "default", &migrated)?;
         }
@@ -399,5 +472,182 @@ mod tests {
             .expect("fixture reads");
         assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), value);
         assert_eq!(updated_at, "unchanged");
+    }
+
+    #[test]
+    fn schema_fourteen_moves_the_obsolete_same_host_direct_route_to_agent_connection() {
+        let providers = json!({
+            "harness": { "address": "http://192.168.0.130:9810" },
+            "providers": [{
+                "kind": "dynamic-lan", "id": DYNAMIC_LAN_PROVIDER_ID, "enabled": true,
+                "label": "Agent Connection", "location": "local", "host": "192.168.0.130"
+            }, {
+                "kind": "openai-compatible", "id": "lan-qwen-direct", "enabled": true,
+                "label": "Old direct route", "location": "local",
+                "endpoint": "http://192.168.0.130:8080/v1", "model": "old",
+                "authentication": "none"
+            }]
+        });
+        let mut routing = json!({
+            "conversationRespond": {
+                "source": "provider", "primaryProviderId": "lan-qwen-direct",
+                "fallbackProviderIds": [], "timeoutMs": 240_000
+            }
+        });
+
+        migrate_obsolete_direct_lan_route(&providers, &mut routing);
+
+        assert_eq!(routing["conversationRespond"]["source"], "harness");
+        assert_eq!(
+            routing["conversationRespond"]["primaryProviderId"],
+            Value::Null
+        );
+        assert_eq!(
+            routing["conversationRespond"]["fallbackProviderIds"],
+            json!([])
+        );
+        assert_eq!(routing["conversationRespond"]["timeoutMs"], 240_000);
+    }
+
+    #[test]
+    fn schema_fourteen_preserves_unrelated_direct_routes() {
+        let providers = json!({
+            "harness": { "address": "http://192.168.0.130:9810" },
+            "providers": [{
+                "kind": "dynamic-lan", "id": DYNAMIC_LAN_PROVIDER_ID, "enabled": true,
+                "label": "Agent Connection", "location": "local", "host": "192.168.0.130"
+            }, {
+                "kind": "openai-compatible", "id": "other", "enabled": true,
+                "label": "Other", "location": "local",
+                "endpoint": "http://192.168.0.131:8080/v1", "model": "model",
+                "authentication": "none"
+            }]
+        });
+        let mut routing = json!({
+            "conversationRespond": {
+                "source": "provider", "primaryProviderId": "other",
+                "fallbackProviderIds": [], "timeoutMs": 30_000
+            }
+        });
+        let before = routing.clone();
+
+        migrate_obsolete_direct_lan_route(&providers, &mut routing);
+
+        assert_eq!(routing, before);
+    }
+
+    #[test]
+    fn schema_thirteen_documents_are_persisted_with_the_agent_connection_route() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE settings_documents (
+                   namespace TEXT NOT NULL, key TEXT NOT NULL, schema_version INTEGER NOT NULL,
+                   value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+                   PRIMARY KEY(namespace, key)
+                 );",
+            )
+            .expect("settings table creates");
+        let providers = json!({
+            "harness": { "address": "http://192.168.0.130:9810" },
+            "providers": [{
+                "kind": "dynamic-lan", "id": DYNAMIC_LAN_PROVIDER_ID, "enabled": true,
+                "label": "Provider Harness LLM", "location": "local", "host": "192.168.0.130"
+            }, {
+                "kind": "openai-compatible", "id": "lan-qwen-direct", "enabled": true,
+                "label": "Old direct route", "location": "local",
+                "endpoint": "http://192.168.0.130:8080/v1", "model": "old",
+                "authentication": "none"
+            }],
+            "reasoningEffort": "medium"
+        });
+        let routing = json!({
+            "conversationRespond": {
+                "source": "provider", "primaryProviderId": "lan-qwen-direct",
+                "fallbackProviderIds": [], "timeoutMs": 240_000
+            }
+        });
+        for (namespace, value) in [("providers.model", providers), ("routing.tasks", routing)] {
+            connection
+                .execute(
+                    "INSERT INTO settings_documents(namespace,key,schema_version,value_json,updated_at)
+                     VALUES(?1,'default',13,?2,'before')",
+                    params![namespace, value.to_string()],
+                )
+                .unwrap();
+        }
+
+        migrate_settings_to_current(&connection).expect("migration succeeds");
+
+        let (version, raw): (i64, String) = connection
+            .query_row(
+                "SELECT schema_version,value_json FROM settings_documents
+                 WHERE namespace='routing.tasks' AND key='default'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let routing: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(version, SETTINGS_SCHEMA_VERSION);
+        assert_eq!(routing["conversationRespond"]["source"], "harness");
+        assert_eq!(
+            routing["conversationRespond"]["primaryProviderId"],
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn schema_fourteen_does_not_reenable_providers_or_revoke_existing_voice_consent() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE settings_documents (
+                   namespace TEXT NOT NULL, key TEXT NOT NULL, schema_version INTEGER NOT NULL,
+                   value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+                   PRIMARY KEY(namespace, key)
+                 );",
+            )
+            .expect("settings table creates");
+        let providers = json!({
+            "harness": { "address": "http://provider.local:9810" },
+            "providers": [{
+                "kind": "dynamic-lan", "id": DYNAMIC_LAN_PROVIDER_ID, "enabled": false,
+                "label": "Keep disabled", "location": "local", "host": "provider.local"
+            }],
+            "reasoningEffort": "medium"
+        });
+        let voice = json!({
+            "listeningEnabled": true, "inputDeviceId": "default", "outputDeviceId": "default",
+            "vadSensitivity": "medium", "silenceTimeoutMs": 1500,
+            "allowedLanguages": ["ja"], "autoSpeak": true
+        });
+        for (namespace, value) in [("providers.model", providers), ("voice.runtime", voice)] {
+            connection
+                .execute(
+                    "INSERT INTO settings_documents(namespace,key,schema_version,value_json,updated_at)
+                     VALUES(?1,'default',13,?2,'before')",
+                    params![namespace, value.to_string()],
+                )
+                .unwrap();
+        }
+
+        migrate_settings_to_current(&connection).expect("migration succeeds");
+
+        let read = |namespace: &str| -> Value {
+            connection
+                .query_row(
+                    "SELECT value_json FROM settings_documents WHERE namespace=?1 AND key='default'",
+                    [namespace],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(|raw| serde_json::from_str(&raw).unwrap())
+                .unwrap()
+        };
+        assert_eq!(read("providers.model")["providers"][0]["enabled"], false);
+        assert_eq!(
+            read("providers.model")["providers"][0]["label"],
+            "Keep disabled"
+        );
+        assert_eq!(read("voice.runtime")["listeningEnabled"], true);
     }
 }

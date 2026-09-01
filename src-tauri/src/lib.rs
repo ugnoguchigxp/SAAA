@@ -867,9 +867,7 @@ mod tests {
                     json!({
                         "type": "run.accepted",
                         "runId": run_id,
-                        "seq": 1,
-                        "providerRunId": "provider_fixture",
-                        "model": "fixture"
+                        "seq": 1
                     })
                     .to_string()
                     .into(),
@@ -913,7 +911,8 @@ mod tests {
                                     "seq": seq,
                                     "callId": call_id,
                                     "name": name,
-                                    "arguments": arguments,
+                                    "arguments": serde_json::to_string(&arguments)
+                                        .expect("tool arguments serialize"),
                                 })
                                 .to_string()
                                 .into(),
@@ -1038,7 +1037,7 @@ mod tests {
                                 json!({
                                     "type": "run.resumed",
                                     "runId": run_id,
-                                    "replayFromSeq": ack_seq + 1
+                                    "ackSeq": ack_seq
                                 })
                                 .to_string()
                                 .into(),
@@ -1051,9 +1050,7 @@ mod tests {
                                     json!({
                                         "type": "run.accepted",
                                         "runId": run_id,
-                                        "seq": 1,
-                                        "providerRunId": "provider_fixture",
-                                        "model": "fixture"
+                                        "seq": 1
                                     })
                                     .to_string()
                                     .into(),
@@ -1079,16 +1076,20 @@ mod tests {
                     }
                     LlmWebSocketStep::Fail(code) => {
                         seq += 1;
+                        let hash = Sha256::digest(content.as_bytes());
                         socket
                             .send(WebSocketMessage::Text(
                                 json!({
                                     "type": "response.failed",
                                     "runId": run_id,
                                     "seq": seq,
-                                    "code": code,
-                                    "message": "fixture failure",
-                                    "retryable": false,
-                                    "outputStarted": !content.is_empty()
+                                    "contentBytes": content.len(),
+                                    "contentSha256": format!("{hash:x}"),
+                                    "error": {
+                                        "code": code,
+                                        "message": "fixture failure",
+                                        "retryable": false
+                                    }
                                 })
                                 .to_string()
                                 .into(),
@@ -1790,7 +1791,7 @@ mod tests {
             &history,
             5_000,
             Some("ephemeral-connection-token"),
-            false,
+            Some("alloc_stream_fixture"),
             ModelStreamContext {
                 reasoning_effort: "low",
                 max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
@@ -1808,7 +1809,8 @@ mod tests {
         assert_eq!(content, "hello world");
         let request = request_body.lock().expect("request lock")[0].clone();
         assert!(request.contains("\"type\":\"run.start\""));
-        assert!(request.contains("\"reasoningEffort\":\"low\""));
+        assert!(request.contains("\"allocationId\":\"alloc_stream_fixture\""));
+        assert!(request.contains("\"reasoning\":{\"effort\":\"low\"}"));
         assert!(request.contains("\"maxOutputTokens\":2048"));
         assert_eq!(
             projected
@@ -1930,7 +1932,7 @@ mod tests {
             &history,
             5_000,
             Some("ephemeral-connection-token"),
-            true,
+            None,
             ModelStreamContext {
                 reasoning_effort: "low",
                 max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
@@ -3549,8 +3551,7 @@ for line in sys.stdin:
             socket
                 .send(WebSocketMessage::Text(
                     json!({
-                        "type": "run.accepted", "runId": run_id, "seq": 1,
-                        "providerRunId": "provider_larm_fixture", "model": "local"
+                        "type": "run.accepted", "runId": run_id, "seq": 1
                     })
                     .to_string()
                     .into(),
@@ -3562,7 +3563,7 @@ for line in sys.stdin:
                     json!({
                         "type": "tool.call", "runId": run_id, "seq": 2,
                         "callId": "call_larm_turn", "name": "recall_conversation",
-                        "arguments": {"query": "missing-history"}
+                        "arguments": "{\"query\":\"missing-history\"}"
                     })
                     .to_string()
                     .into(),

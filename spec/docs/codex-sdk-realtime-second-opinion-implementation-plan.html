@@ -1,0 +1,1205 @@
+<article lang="ja">
+  <h1 id="codex-sdk-realtime-second-opinion-plan">Codex SDK Realtime Second Opinion 実装計画</h1>
+
+  <h2 id="0-document-role">0. 文書の役割</h2>
+  <ul>
+    <li>Status: Proposed — 実装未着手</li>
+    <li>Created: 2026-09-01</li>
+    <li>SAAA baseline: <code>bc4a2d0</code></li>
+    <li>対象client: macOS版SAAA desktop</li>
+    <li>
+      対象: LLM Provider設定、Codex認証、Codex App Server runtime、会話別session、 second-opinion
+      UI、streaming、永続化、性能計測
+    </li>
+  </ul>
+  <p>
+    本文書は、ChatGPT / Codex subscriptionで認証したCodexを、通常会話の回答を置き換えない 「second
+    opinion」として最速で利用可能にする実装契約である。OpenAI API key、Responses API、 usage-based
+    API課金は使用しない。
+  </p>
+  <p>
+    UI上は既存設定との一貫性を優先して<q>Codex SDK</q> Providerと表示する。ただし実行時の hot
+    pathは、<code>@openai/codex-sdk</code>が利用するCodex executableを配布境界とし、
+    rich client向けの公式interfaceであるCodex App ServerへRustから直接接続する。 TypeScript
+    SDKのrunごとのprocess起動を会話hot pathには置かない。
+  </p>
+
+  <h3 id="01-normative-precedence">0.1 Normative precedence</h3>
+  <ol>
+    <li>
+      通常LLM、UI、TTSのdelta配送と完了後Markdownは
+      <a href="./maximum-performance-streaming-implementation-plan.html"
+        >Maximum-Performance Streaming Experience 実装計画</a
+      >を正本とする。Codex固有transportだけを本文書で上書きする。
+    </li>
+    <li>
+      通常会話のSessionless継続、Context Health、Memory選択は
+      <a href="./mvp-3-memory-architecture-implementation-plan.html"
+        >MVP 3 Memory Architecture実装契約</a
+      >を正本とする。Codex sessionへそのContextWindowを再投影しない。
+    </li>
+    <li>
+      SQLite connection ownershipは
+      <a href="./sqlite-single-writer-implementation-plan.html">SQLite Single Writer実装計画</a
+      >を維持する。deltaごとのDB書込みは禁止する。
+    </li>
+    <li>
+      Codexのprotocol、認証、thread lifecycleについては
+      <a href="https://learn.chatgpt.com/docs/app-server">OpenAI Codex App Server公式仕様</a>
+      を正本とし、SDKの適用範囲は
+      <a href="https://learn.chatgpt.com/docs/codex-sdk">OpenAI Codex SDK公式仕様</a>
+      に従う。
+    </li>
+  </ol>
+
+  <h2 id="1-goal-and-non-goals">1. Goalと非Goal</h2>
+  <h3 id="11-goal">1.1 Goal</h3>
+  <ul>
+    <li>LLM Provider設定内に固定のCodex SDK sectionを追加する。</li>
+    <li>Codex executable、App Server、ChatGPT subscription認証状態を画面で確認できる。</li>
+    <li>未認証の場合はSAAAからChatGPT browser loginを開始できる。</li>
+    <li>通常回答に対し、ユーザーが明示操作でCodexのsecond opinionを要求できる。</li>
+    <li>Codexの最初のtext deltaを受信直後に既存Tauri Channelへ流す。</li>
+    <li>同じSAAA会話では同じCodex threadをresumeし、process再起動後も継続する。</li>
+    <li>Codexの履歴と通常会話の最適化済みContextWindowを相互に汚染しない。</li>
+  </ul>
+
+  <h3 id="12-non-goals">1.2 今回の非Goal</h3>
+  <ul>
+    <li>Codexを通常会話のprimary providerまたは自動fallbackへ追加しない。</li>
+    <li>いつCodexを呼ぶべきかの自動判定、回答の採点、統合、勝者選択は実装しない。</li>
+    <li>通常会話の全履歴やMemory projectionをCodexへ毎turn再送しない。</li>
+    <li>Codex内部のContextWindowをtoken単位で削除、並べ替え、要約しない。</li>
+    <li>OpenAI API key、Responses API、Realtime API、SSEを追加しない。</li>
+    <li>実験扱いのApp Server TCP WebSocket listenerをshipping経路にしない。</li>
+    <li>Codexにwrite、shell、network、web searchを許可しない。</li>
+    <li>second opinionの自動読み上げは行わない。初版はvisual-onlyとする。</li>
+  </ul>
+
+  <h2 id="2-fixed-decisions">2. 固定する設計判断</h2>
+  <table>
+    <caption>
+      Table: Fixed Codex second-opinion decisions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">判断</th>
+        <th scope="col">理由</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CDX-01</code></td>
+        <td>認証modeは<code>chatgpt</code>だけを利用可能と判定する</td>
+        <td>subscription利用を保証し、API従量課金へ誤って流さない</td>
+      </tr>
+      <tr>
+        <td><code>CDX-02</code></td>
+        <td>Codexはprimary routingから独立した明示的second-opinion actionにする</td>
+        <td>local LLMのsessionless ContextWindow設計を変えない</td>
+      </tr>
+      <tr>
+        <td><code>CDX-03</code></td>
+        <td>Codex App ServerをSAAA processごとに1つ常駐させる</td>
+        <td>turnごとのprocess起動、初期化、認証確認をTTFT前から除去する</td>
+      </tr>
+      <tr>
+        <td><code>CDX-04</code></td>
+        <td>transportはlocal stdio JSONL / JSON-RPC 2.0とする</td>
+        <td>公式のdefaultかつsupported経路で、loopback socket、port、HTTP upgradeを不要にする</td>
+      </tr>
+      <tr>
+        <td><code>CDX-05</code></td>
+        <td>
+          SAAA会話とCodex threadを<code>conversation × purpose</code>で1対1に対応させる
+        </td>
+        <td>同一sessionを維持しながらcoding assistとの誤共有を防ぐ</td>
+      </tr>
+      <tr>
+        <td><code>CDX-06</code></td>
+        <td>各turnは今回の質問、primary回答、任意の短い指示だけを送る</td>
+        <td>通常会話全体の再送をなくし、Codex自身のthread履歴を正本にする</td>
+      </tr>
+      <tr>
+        <td><code>CDX-07</code></td>
+        <td>
+          second opinionは専用tableへ保存し、<code>conversation_messages</code>へ入れない
+        </td>
+        <td>通常LLMのContextWindowとMemory学習にCodex回答を混入させない</td>
+      </tr>
+      <tr>
+        <td><code>CDX-08</code></td>
+        <td><code>item/agentMessage/delta</code>をcopy回数を増やさず即時投影する</td>
+        <td>Provider推論以外のfirst-visible-token遅延を最小化する</td>
+      </tr>
+      <tr>
+        <td><code>CDX-09</code></td>
+        <td><code>item/completed</code>を本文のauthoritative finalとする</td>
+        <td>delta欠落やprotocol差異をterminalで検出し、破損本文を確定しない</td>
+      </tr>
+      <tr>
+        <td><code>CDX-10</code></td>
+        <td>cancelは共有processをkillせず<code>turn/interrupt</code>を送る</td>
+        <td>他会話と認証状態を巻き込まず、threadの再利用性を保つ</td>
+      </tr>
+      <tr>
+        <td><code>CDX-11</code></td>
+        <td>model変更は新規sessionだけへ適用し、既存threadを暗黙変更しない</td>
+        <td>継続sessionの再現性と履歴の一貫性を保つ</td>
+      </tr>
+      <tr>
+        <td><code>CDX-12</code></td>
+        <td>Context compactionは観測するが、SAAAから操作しない</td>
+        <td>Codex側のContextWindowはCodexのsession lifecycleに委ねる</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="3-official-constraints">3. 公式仕様から導く制約</h2>
+  <table>
+    <caption>
+      Table: OpenAI contract and SAAA consequence
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">公式contract</th>
+        <th scope="col">SAAAでの扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          App Serverはauth、conversation history、approval、streamed eventを持つrich
+          client向けinterface
+        </td>
+        <td>desktop統合はSDKのone-shot runでなくApp Serverを採用する</td>
+      </tr>
+      <tr>
+        <td><code>initialize</code>はtransport connectionごとに一度だけ</td>
+        <td>常駐actorの起動時だけhandshakeし、各turnでは繰り返さない</td>
+      </tr>
+      <tr>
+        <td>stdioはnewline-delimited JSON、WebSocket listenerはexperimental / unsupported</td>
+        <td>shippingはstdin/stdout pipeだけとし、WebSocketは検討対象から外す</td>
+      </tr>
+      <tr>
+        <td>
+          <code>thread/start</code
+          >、<code>thread/resume</code>、<code>turn/start</code>で継続する
+        </td>
+        <td>Codex thread IDを永続化し、app再起動後はresumeする</td>
+      </tr>
+      <tr>
+        <td><code>item/agentMessage/delta</code>はagent textへ追記する</td>
+        <td>生成中plain textへ逐次追加し、React側はframe単位でcoalesceする</td>
+      </tr>
+      <tr>
+        <td><code>item/completed</code>のitemがauthoritative state</td>
+        <td>terminal時に累積deltaと照合し、確定Markdownを一度だけrenderする</td>
+      </tr>
+      <tr>
+        <td><code>contextCompaction</code> itemが履歴compactionを通知する</td>
+        <td>countと時刻だけdiagnosticsへ記録し、内容を独自再構築しない</td>
+      </tr>
+      <tr>
+        <td>ChatGPT managed authはtokenを保存し自動refreshする</td>
+        <td>SAAAはtokenを受取らず、auth URLと状態だけを扱う</td>
+      </tr>
+      <tr>
+        <td><code>account/read</code>はaccount typeとplan detailsを返す</td>
+        <td><code>account.type === "chatgpt"</code>だけをsubscription eligibleにする</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="4-current-baseline">4. コード確認済みの現行Baselineと課題</h2>
+  <table>
+    <caption>
+      Table: Current implementation gaps at baseline bc4a2d0
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">場所</th>
+        <th scope="col">現行</th>
+        <th scope="col">課題</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>package.json</code></td>
+        <td><code>@openai/codex-sdk 0.144.4</code>を固定済み</td>
+        <td>smoke test以外のProvider UI・会話接続がない</td>
+      </tr>
+      <tr>
+        <td><code>scripts/codex-sdk-smoke.ts</code></td>
+        <td>SDK instance作成だけを確認する</td>
+        <td>認証、thread、delta、再開、cancelを検証しない</td>
+      </tr>
+      <tr>
+        <td><code>runtime/codex_process.rs</code></td>
+        <td>Codex turnごとにApp Server childをspawnする</td>
+        <td>process cold startとinitializeが毎回TTFTへ加算される</td>
+      </tr>
+      <tr>
+        <td><code>runtime/codex_cli.rs</code></td>
+        <td>statusとmodel listでも別々のchildをspawnして終了する</td>
+        <td>設定画面の連続確認が高コストで、会話runtimeと状態が一致しない</td>
+      </tr>
+      <tr>
+        <td><code>runtime/codex_cli.rs</code></td>
+        <td>accountがnullでなければauthenticatedとする</td>
+        <td>API key認証も通るためsubscription-only要件を満たさない</td>
+      </tr>
+      <tr>
+        <td><code>runtime/codex_app_server.rs</code></td>
+        <td><code>item/agentMessage/delta</code>を既にAssistantDeltaへ投影する</td>
+        <td>delta projectionは再利用可能だがper-turn processへ結合している</td>
+      </tr>
+      <tr>
+        <td><code>runtime/codex_cli.rs</code></td>
+        <td>stdout総量を4 MiBで打ち切るreaderを使う</td>
+        <td>常駐processでは累積上限に到達して正常runtimeが停止する</td>
+      </tr>
+      <tr>
+        <td><code>persistence/schema.rs</code></td>
+        <td><code>codex_threads</code>はconversation IDだけがprimary key</td>
+        <td>coding assistとsecond opinionを同じ会話で分離できない</td>
+      </tr>
+      <tr>
+        <td><code>runtime/codex_persist.rs</code></td>
+        <td>Codex成功回答を通常messageへ保存しMemory jobもenqueueする</td>
+        <td>second opinionへ流用するとlocal ContextWindowを汚染する</td>
+      </tr>
+      <tr>
+        <td><code>runtime/turns.rs</code></td>
+        <td>通常会話は最適化済みMemory projectionをProvider historyへcomposeする</td>
+        <td>sessionを保持するCodexへ同じ方式を重ねると履歴が重複する</td>
+      </tr>
+      <tr>
+        <td><code>settingsTypes.ts</code></td>
+        <td>Codex設定は<code>providers.agent/codex-sdk</code>に分離済み</td>
+        <td>status型がinstalled / authenticated程度でeligibilityを表せない</td>
+      </tr>
+      <tr>
+        <td><code>IndividualProvidersSection.tsx</code></td>
+        <td>LLM / ASR / TTSの可変Provider cardだけを表示する</td>
+        <td>Codexの固定card、ChatGPT login、plan表示がない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="5-context-and-session-model">5. Local ContextWindowとCodex sessionの分離</h2>
+  <table>
+    <caption>
+      Table: Different continuity models
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">観点</th>
+        <th scope="col">通常local LLM</th>
+        <th scope="col">Codex second opinion</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>継続性の正本</td>
+        <td>SAAA DB、Memory、毎turn再構成するContextWindow</td>
+        <td>Codex App Serverの永続thread</td>
+      </tr>
+      <tr>
+        <td>session</td>
+        <td>Provider sessionを前提にしない</td>
+        <td>会話ごとに同一threadをresumeする</td>
+      </tr>
+      <tr>
+        <td>過去context</td>
+        <td>SAAAが選択、要約、予算制御する</td>
+        <td>Codex自身が保持し、必要時にcompactionする</td>
+      </tr>
+      <tr>
+        <td>毎turnのinput</td>
+        <td>system context + projected messages + current input</td>
+        <td>current question + primary answer + optional instruction</td>
+      </tr>
+      <tr>
+        <td>回答保存</td>
+        <td><code>conversation_messages</code>とMemory control plane</td>
+        <td><code>second_opinion_responses</code>だけ</td>
+      </tr>
+      <tr>
+        <td>reset</td>
+        <td>次turnでContextWindowを再構成できる</td>
+        <td>thread全体を明示的に新規作成する以外は変更しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    初回も過去の通常会話全件はbootstrapしない。ユーザーが対象にした現在の質問とprimary回答だけを
+    self-contained packetとして送る。2回目以降も新しい対象pairだけを送るため、Codex threadの履歴と
+    SAAAの通常履歴が二重に積み上がらない。primary回答を更新して再実行する場合は新しいresponse
+    recordを 作り、同じrequest IDの再送は行わない。
+  </p>
+
+  <h2 id="6-target-architecture">6. Target architecture</h2>
+  <pre><code>User clicks “Codexで確認”
+  → React validates completed primary response
+  → start_codex_second_opinion(Tauri command, Channel)
+  → SQLite single writer creates runtime run + response shell
+  → CodexAppServerRuntime gets/resumes conversation thread
+  → turn/start over persistent stdin JSONL
+  → stdout reader receives item/agentMessage/delta
+  → RunSink → TurnEventHub → Tauri Channel
+  → frame-coalesced plain-text render
+  → item/completed validates canonical text
+  → turn/completed → one terminal DB transaction
+  → one-time Markdown render</code></pre>
+
+  <h3 id="61-runtime-ownership">6.1 Runtime ownership</h3>
+  <ul>
+    <li>
+      <code>AppState</code
+      >へ<code>Arc&lt;CodexAppServerRuntime&gt;</code>を1つ保持する。
+    </li>
+    <li>Codexがenabledならapp setup後にbackgroundでeager startする。</li>
+    <li>disabledでも設定画面のstatus確認またはlogin操作でlazy startできる。</li>
+    <li>child generationを採番し、process再起動前のrequest / turn eventを破棄する。</li>
+    <li>
+      app shutdown時は新規受付を止め、active turnをinterruptし、stdin close後にchildを回収する。
+    </li>
+  </ul>
+
+  <h3 id="62-actor-components">6.2 Actor component</h3>
+  <table>
+    <caption>
+      Table: Persistent App Server actor responsibilities
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">component</th>
+        <th scope="col">責務</th>
+        <th scope="col">bounded条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Lifecycle actor</td>
+        <td>spawn、single initialize、health、restart、shutdown</td>
+        <td>同時childはgenerationごとに1つ</td>
+      </tr>
+      <tr>
+        <td>Writer</td>
+        <td>JSON-RPC requestとnotificationをstdinへ直列化</td>
+        <td>bounded queue、overflowは即時busy error</td>
+      </tr>
+      <tr>
+        <td>Reader</td>
+        <td>1行ずつJSON parseし、responseとnotificationを振分け</td>
+        <td>1行1 MiB、control item 256 KiB、本文64 KiB上限</td>
+      </tr>
+      <tr>
+        <td>Request registry</td>
+        <td>request IDをoneshot responderへ対応</td>
+        <td>deadline到達時に必ずremove</td>
+      </tr>
+      <tr>
+        <td>Turn registry</td>
+        <td><code>threadId + turnId</code>をRunSinkへ対応</td>
+        <td>1 threadにつきactive turn 1件</td>
+      </tr>
+      <tr>
+        <td>Status cache</td>
+        <td>auth mode、plan、rate limit、model catalogを保持</td>
+        <td>token、email、本文をdiskやlogへ保存しない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    現行の<code>MAX_CODEX_STDOUT_BYTES</code>によるprocess全生存期間の累積4
+    MiB制限は廃止する。
+    代わりにmessage単位、field単位、turn本文単位の上限を設ける。これにより長時間常駐と memory
+    safetyを両立する。
+  </p>
+  <p>
+    初版の同時実行はthreadごとに1件、App Server全体で2件を上限とする。上限到達時は
+    latencyが読めない内部queueへ積まず、retry可能なbusy stateを即時返す。status、cancel、 auth
+    notificationはturn枠を消費しない。
+  </p>
+
+  <h2 id="7-provider-settings">7. LLM Provider設定</h2>
+  <h3 id="71-fixed-provider-card">7.1 Codex SDK固定card</h3>
+  <p>
+    <code>Settings → LLM Provider</code>の先頭に、削除不可の<q
+      >Codex SDK — Second opinion</q
+    >
+    cardを追加する。内部の保存先は既存どおり<code>providers.agent/codex-sdk</code>とし、
+    statelessな<code>providers.model</code> unionへ無理に追加しない。
+  </p>
+  <table>
+    <caption>
+      Table: Codex SDK card fields and actions
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">field / action</th>
+        <th scope="col">表示・動作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>有効化</td>
+        <td>second-opinion actionの表示とruntime eager startを切り替える</td>
+      </tr>
+      <tr>
+        <td>Runtime</td>
+        <td>Codex executable version、App Server ready / starting / failedを表示する</td>
+      </tr>
+      <tr>
+        <td>認証</td>
+        <td>未認証、ChatGPT認証済み、非対応のAPI key認証、確認失敗を区別する</td>
+      </tr>
+      <tr>
+        <td>Subscription</td>
+        <td>
+          <code>planType</code>を表示し、ChatGPT認証以外は利用不可とする
+        </td>
+      </tr>
+      <tr>
+        <td>Model</td>
+        <td>認証済み時だけ公式model listを表示し、新規session用modelを保存する</td>
+      </tr>
+      <tr>
+        <td>利用状況</td>
+        <td>rate limitが取得できた場合だけused percentとreset時刻を表示する</td>
+      </tr>
+      <tr>
+        <td>状態を確認</td>
+        <td>共有runtimeで<code>account/read</code>と必要なstatusを更新する</td>
+      </tr>
+      <tr>
+        <td>ChatGPTでサインイン</td>
+        <td><code>account/login/start(type=chatgpt)</code>のauth URLをsystem browserで開く</td>
+      </tr>
+      <tr>
+        <td>Codex sessionを新しくする</td>
+        <td>会話画面側の明示操作とし、対象会話の次回だけ新規threadを作る</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    endpoint、API key、fallback順位、primary route、削除buttonは表示しない。
+    <code>ServiceConnectionsSection</code>の通常LLM候補にもCodexを出さない。
+  </p>
+
+  <h3 id="72-status-contract">7.2 Status contract</h3>
+  <p><code>CodexRuntimeStatus</code>を次の意味へ拡張する。</p>
+  <ul>
+    <li>
+      <code>state</code>: unavailable / starting / signed-out /
+      incompatible-auth / ready / degraded
+    </li>
+    <li>
+      <code>installed</code
+      >、<code>runtimeVersion</code>、<code
+        >processReady</code
+      >
+    </li>
+    <li>
+      <code>authenticated</code
+      >と<code>subscriptionEligible</code>を別fieldにする
+    </li>
+    <li>
+      <code>authMode</code
+      >、<code>planType</code>、<code>checkedAt</code>
+    </li>
+    <li>
+      <code>rateLimits</code>は取得できない場合nullとし、認証readyを妨げない
+    </li>
+    <li><code>messageCode</code>を返し、frontendのja / en翻訳で表示する</li>
+  </ul>
+  <p>
+    statusはruntime stateでありsettings文書へ永続化しない。現行の
+    <code>CodexAgentSettings.health</code>はschema
+    migrationで削除し、古い値は読込み時に無視する。
+  </p>
+
+  <h2 id="8-authentication">8. Subscription-only認証</h2>
+  <h3 id="81-eligibility">8.1 利用可能判定</h3>
+  <ol>
+    <li>App Serverがinitializedである。</li>
+    <li><code>account/read(refreshToken=false)</code>が成功する。</li>
+    <li>
+      <code>result.account.type</code
+      >が厳密に<code>chatgpt</code>である。
+    </li>
+    <li>
+      <code>planType</code
+      >が取得できれば表示する。未知の将来plan名は拒否せず文字数を検証する。
+    </li>
+  </ol>
+  <p>
+    <code>apiKey</code
+    >、<code>chatgptAuthTokens</code>、Amazon Bedrock、そのほか未知のaccount typeは
+    <q>認証済みだがSAAAのCodex subscription要件には非対応</q>と表示し、turn開始を拒否する。
+    SAAAはAPI keyの入力、保存、環境変数fallbackを実装しない。
+  </p>
+
+  <h3 id="82-login-flow">8.2 Login flow</h3>
+  <ol>
+    <li>
+      <code>account/login/start</code
+      >へ<code>type=chatgpt</code>を送る。
+    </li>
+    <li>返されたHTTPSの<code>authUrl</code>だけをsystem browserで開く。</li>
+    <li><code>loginId</code>をmemory上で保持し、重複loginを禁止する。</li>
+    <li>
+      <code>account/login/completed</code
+      >と<code>account/updated</code>を待つ。
+    </li>
+    <li>
+      成功後に<code>account/read</code>を再実行し、subscription
+      eligibilityを確定する。
+    </li>
+    <li>画面を閉じた場合はlogin自体を暗黙cancelしない。明示cancelだけを送る。</li>
+  </ol>
+  <p>
+    access token、refresh token、callback query、account
+    emailはSAAAのDB、diagnostics、logへ保存しない。 token lifecycleはChatGPT managed
+    authを所有するApp Serverへ委譲する。
+  </p>
+
+  <h2 id="9-second-opinion-contract">9. Second-opinion request contract</h2>
+  <h3 id="91-ui-entry">9.1 UI entry</h3>
+  <ul>
+    <li>正常完了したprimary assistant回答のfooterへ<q>Codexで確認</q>を追加する。</li>
+    <li>Codexがdisabledまたはnot readyならbuttonから設定cardの状態へ案内する。</li>
+    <li>同じprimary回答にrunning responseがある間は二重開始できない。</li>
+    <li>完了後はprimary回答の直下へ独立した<q>Codex second opinion</q> cardを表示する。</li>
+    <li>取消・再試行・session新規作成をprimary turnとは独立して行う。</li>
+  </ul>
+
+  <h3 id="92-ipc-input">9.2 IPC input</h3>
+  <p>
+    新規command
+    <code>start_codex_second_opinion</code>は全文historyをfrontendから受け取らない。
+    最小入力を次に固定する。
+  </p>
+  <ul>
+    <li><code>runId</code></li>
+    <li><code>conversationId</code></li>
+    <li><code>sourceUserMessageId</code></li>
+    <li><code>sourceAssistantMessageId</code></li>
+    <li><code>instruction</code>: optional、最大2,000 Unicode scalar</li>
+    <li><code>channel</code>: typed second-opinion event Channel</li>
+  </ul>
+  <p>
+    backendは2つのmessageが同じconversationに属し、user → assistantの順で、assistant responseが
+    正常完了済みであることをDBから検証する。本文はDBから読み、frontendが別会話本文を注入できないようにする。
+  </p>
+
+  <h3 id="93-prompt-envelope">9.3 Turn input envelope</h3>
+  <p>Codexへ送るtextは固定templateとし、毎turn次だけを含める。</p>
+  <ol>
+    <li>このthreadがSAAAのsecond opinion専用であるという固定instruction</li>
+    <li>現在のuser question</li>
+    <li>primary assistant answer</li>
+    <li>ユーザーが入力した任意の短い確認観点</li>
+  </ol>
+  <p>
+    過去のSAAA message、Memory summary、agent persona、system contextは含めない。 question 16,000
+    scalar、primary answer 64,000 scalar、envelope全体96 KiBを上限とし、超過時は
+    勝手にtruncateせず<code>request-too-large</code>で拒否する。
+  </p>
+
+  <h2 id="10-thread-lifecycle">10. Codex thread lifecycle</h2>
+  <ol>
+    <li>対象会話の<code>purpose=second-opinion</code> sessionをSQLiteから探す。</li>
+    <li>
+      存在しなければ安全なcwdで<code>thread/start</code>し、thread
+      IDとmodelを保存する。
+    </li>
+    <li>
+      存在し、現在のApp Server generationで未loadなら、記録済みmodelを維持して
+      <code>thread/resume</code>する。
+    </li>
+    <li>
+      現在のgenerationでload済みなら<code>thread/resume</code>を省き、直接
+      <code>turn/start</code>へ進む。
+    </li>
+    <li>
+      <code>turn/start</code>成功後にturn IDをactive registryへ登録する。
+    </li>
+    <li><code>turn/completed</code>でregistryを必ず解放する。</li>
+  </ol>
+  <p>
+    coding conversationでは選択済みworkspaceをcwdに使える。通常conversationでは、second opinionを
+    workspace選択でblockしないよう、SAAA app-data配下の空かつread-only用途の専用directoryを使う。
+    pathはcanonicalizeし、symlink escapeを拒否する。sandboxはread-only、approvalはnever、networkと
+    web searchはfalseを維持する。
+  </p>
+  <p>
+    設定modelが変わっても既存threadへ一時的なmodel overrideを送らない。UIに
+    <q>現在のsession: model X / 新規session: model Y</q>を表示し、明示的なsession
+    reset後にだけYを使う。
+  </p>
+
+  <h2 id="11-streaming-and-performance">11. Streamingと性能契約</h2>
+  <h3 id="111-event-projection">11.1 Event projection</h3>
+  <table>
+    <caption>
+      Table: App Server event projection
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">App Server</th>
+        <th scope="col">SAAA</th>
+        <th scope="col">処理</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>turn/started</code></td>
+        <td><code>started</code></td>
+        <td>turn IDを記録。UI loadingはcommand受付時点から既に表示する</td>
+      </tr>
+      <tr>
+        <td><code>item/agentMessage/delta</code></td>
+        <td><code>assistant-delta</code></td>
+        <td>受信順に即時append。DB、Markdown、全文cloneを行わない</td>
+      </tr>
+      <tr>
+        <td><code>item/completed(agentMessage)</code></td>
+        <td>internal canonical final</td>
+        <td>累積本文と照合し、上限とUTF-8を再検証する</td>
+      </tr>
+      <tr>
+        <td><code>contextCompaction</code></td>
+        <td>diagnostic counter</td>
+        <td>countと時刻だけを記録する</td>
+      </tr>
+      <tr>
+        <td><code>turn/completed</code></td>
+        <td><code>completed / failed / cancelled</code></td>
+        <td>exactly-once terminal、DB確定、完了時だけMarkdown render</td>
+      </tr>
+      <tr>
+        <td>tool / file-change / command item</td>
+        <td>policy violation</td>
+        <td>初版では実行・表示せず、turnをinterruptして失敗確定する</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="112-hot-path">11.2 Hot path規則</h3>
+  <ul>
+    <li>reader threadはJSON decode、field validation、RunSink enqueueまでに限定する。</li>
+    <li>TTS fan-outを行わないため、second opinion deltaはUI laneだけへ送る。</li>
+    <li>UIはcapacity 1のlatest snapshotまたは既存frame coalescerで1 frame最大1回renderする。</li>
+    <li>生成中はplain text、正常完了時だけMarkdown ASTを一度構築する。</li>
+    <li>deltaごとにSQLite、audit、console log、analytics、React state全文copyを行わない。</li>
+    <li>unknown notificationはbounded metadataだけ記録し、active turnを不用意に失敗させない。</li>
+  </ul>
+
+  <h3 id="113-latency-budget">11.3 Latency measurement and budget</h3>
+  <table>
+    <caption>
+      Table: Warm-path SAAA-added latency budget
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">区間</th>
+        <th scope="col">metric</th>
+        <th scope="col">acceptance</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>click → backend accepted</td>
+        <td><code>ui_to_command_ms</code></td>
+        <td>p95 ≤ 10 ms</td>
+      </tr>
+      <tr>
+        <td>accepted → <code>turn/start</code> write完了</td>
+        <td><code>dispatch_overhead_ms</code></td>
+        <td>warm resume p95 ≤ 5 ms、DB readを含むp95 ≤ 15 ms</td>
+      </tr>
+      <tr>
+        <td>stdout delta read → Channel enqueue</td>
+        <td><code>delta_projection_ms</code></td>
+        <td>p95 ≤ 1 ms、p99 ≤ 3 ms</td>
+      </tr>
+      <tr>
+        <td>Channel receive → paint</td>
+        <td><code>delta_to_paint_ms</code></td>
+        <td>p95 ≤ 20 ms</td>
+      </tr>
+      <tr>
+        <td>Provider first delta</td>
+        <td><code>codex_ttft_ms</code></td>
+        <td>観測値として記録し、SAAA回帰判定から分離する</td>
+      </tr>
+      <tr>
+        <td>process cold start</td>
+        <td><code>runtime_ready_ms</code></td>
+        <td>app起動時にprewarmし、通常click pathへ含めない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    TTFTはTime To First Token、すなわちユーザー操作から最初の表示可能text deltaまでの時間である。
+    実測ではprovider推論時間とSAAA-added時間を別spanにし、providerの揺らぎでlocal回帰を隠さない。
+  </p>
+
+  <h2 id="12-persistence">12. Persistenceとmigration</h2>
+  <h3 id="121-schema">12.1 Database schema</h3>
+  <p>
+    DB <code>user_version</code>を15から16へ上げ、transactional
+    migrationを追加する。
+  </p>
+  <ul>
+    <li>
+      <code>codex_threads</code>を再構築し、keyを
+      <code>(conversation_id, purpose)</code>へ変更する。
+    </li>
+    <li>
+      <code>purpose</code
+      >は初版で<code>coding-assist</code>または<code>second-opinion</code>。
+      既存rowは<code>coding-assist</code>へ移行する。
+    </li>
+    <li>
+      thread ID unique、model、workspace path、compaction count、created / updated / last
+      resumedを保持する。
+    </li>
+    <li>
+      <code>second_opinion_responses</code>を追加し、response ID、conversation ID、source
+      user / assistant message ID、runtime run ID、Codex thread / turn ID、status、content、failure
+      code、timestampsを保持する。
+    </li>
+    <li>
+      <code>runtime_runs.route_kind</code
+      >へ<code>conversation.second-opinion</code>を追加するため、 CHECK constraintを含むtable
+      rebuild migrationを行う。
+    </li>
+    <li>
+      <code>second_opinion_responses</code>からsource messageへのforeign
+      keyを設定し、conversation delete時はcascadeする。
+    </li>
+  </ul>
+  <p>
+    terminal transactionはcanonical本文、response status、runtime run status、Codex thread
+    metadataを 一括更新する。Memory control
+    planeの<code>record_completed_turn</code>は呼ばない。
+  </p>
+
+  <h3 id="122-settings-migration">12.2 Settings schema</h3>
+  <p>Settings schemaを13から14へ上げる。</p>
+  <ul>
+    <li>
+      <code>provider="codex-sdk"</code>、sandbox、approval、network、web
+      searchの固定値を維持する。
+    </li>
+    <li>
+      <code>runtimeMode</code
+      >は<code>app-server</code>だけへ正規化する。
+    </li>
+    <li>永続<code>health</code>を削除する。</li>
+    <li>
+      <code>usage="second-opinion"</code>を追加し、将来のprimary
+      routingへの誤流入をschemaで拒否する。
+    </li>
+    <li>旧設定は欠落fieldを補い、unknown fieldは既存migration policyに従って除去する。</li>
+  </ul>
+
+  <h2 id="13-state-and-errors">13. State、取消、回復</h2>
+  <h3 id="131-state-machine">13.1 Response state machine</h3>
+  <pre><code>idle → validating → queued → starting-thread | resuming-thread
+     → running → completed
+               ↘ cancelling → cancelled
+               ↘ failed
+
+禁止: completed / cancelled / failed → running
+retry: terminal response → new response ID / new runtime run ID</code></pre>
+
+  <h3 id="132-failure-policy">13.2 Failure policy</h3>
+  <table>
+    <caption>
+      Table: Failure handling
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">failure</th>
+        <th scope="col">扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>not installed / spawn failure</td>
+        <td>Provider cardをunavailableにし、primary回答は変更しない</td>
+      </tr>
+      <tr>
+        <td>signed out / incompatible auth</td>
+        <td>turn開始前に拒否し、ChatGPT loginまたはauth変更を案内する</td>
+      </tr>
+      <tr>
+        <td>process crash before first delta</td>
+        <td>runtimeを1回再起動しthread resumeを試す。同じturnを自動再送しない</td>
+      </tr>
+      <tr>
+        <td>process crash after first delta</td>
+        <td>partial-output failure。本文はplain textで残し、自動retryしない</td>
+      </tr>
+      <tr>
+        <td>thread not found / corrupt</td>
+        <td>明示確認後のnew sessionで回復。過去sessionを暗黙破棄しない</td>
+      </tr>
+      <tr>
+        <td>rate limit</td>
+        <td>reset時刻があれば表示し、primary routeへfallbackしない</td>
+      </tr>
+      <tr>
+        <td>protocol line / content too large</td>
+        <td>active turnを失敗、runtime generationを隔離して再起動する</td>
+      </tr>
+      <tr>
+        <td>UI disconnect</td>
+        <td>turnをinterruptし、terminal DB確定までbackendがownershipを持つ</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    exactly-once terminal
+    guardは<code>runtime_runs.status='running'</code>の条件付きUPDATEで維持する。
+    app再起動時にrunningのresponseとrunをinterruptedへreconcileする。
+  </p>
+
+  <h2 id="14-security-and-privacy">14. Securityとprivacy</h2>
+  <ul>
+    <li>Codexへ送信する直前に、対象質問とprimary回答が外部serviceへ送られることをUIに明示する。</li>
+    <li>初版はread-only sandbox、approval never、network off、web search offをhard-codeする。</li>
+    <li>
+      tool call、file mutation、command execution要求をProvider errorでなくpolicy
+      violationとして監査する。
+    </li>
+    <li>stdioはchild pipeだけに接続し、port listenerを開かない。</li>
+    <li>JSON-RPC error本文、path、account情報は既存redactionを通す。</li>
+    <li>prompt / response本文をperformance trace、audit attributes、crash reportへ入れない。</li>
+    <li>
+      auth URLはHTTPS、host allowlist、最大長、control characterなしを検証してからbrowserで開く。
+    </li>
+    <li>SAAAはCodex token fileを読取、複製、backup、diagnostics exportしない。</li>
+  </ul>
+
+  <h2 id="15-implementation-phases">15. 実装Phase</h2>
+  <h3 id="150-file-map">15.0 主な変更対象</h3>
+  <table>
+    <caption>
+      Table: Planned file-level change map
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">file / module</th>
+        <th scope="col">変更</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src-tauri/src/runtime/codex_runtime.rs</code>（新規）</td>
+        <td>常駐child、lifecycle、writer / reader、request / turn registry、status cache</td>
+      </tr>
+      <tr>
+        <td>
+          <code>runtime/codex_cli.rs</code>、<code>codex_process.rs</code>
+        </td>
+        <td>per-call spawnを除去し、protocol encode / decodeとprocess bootstrapへ縮小する</td>
+      </tr>
+      <tr>
+        <td><code>runtime/codex_second_opinion.rs</code>（新規）</td>
+        <td>source検証、prompt envelope、thread lifecycle、stream projection、cancel</td>
+      </tr>
+      <tr>
+        <td>
+          <code>runtime/codex_persist.rs</code>、<code>persistence/schema.rs</code>
+        </td>
+        <td>purpose付きthread、専用response、terminal transaction、DB 16 migration</td>
+      </tr>
+      <tr>
+        <td>
+          <code>ipc_contract.rs</code>、<code>runtime/contracts.rs</code>
+        </td>
+        <td>status、login、second-opinion input / event / responseのRust正本</td>
+      </tr>
+      <tr>
+        <td>
+          <code>settingsTypes.ts</code
+          >、<code>settingsDraft.ts</code>、<code
+            >schemas.ts</code
+          >
+        </td>
+        <td>settings 14、runtime status分離、generated IPC binding追従</td>
+      </tr>
+      <tr>
+        <td>
+          <code>CodexSdkProviderCard.tsx</code>（新規）、<code
+            >IndividualProvidersSection.tsx</code
+          >
+        </td>
+        <td>固定Provider card、ChatGPT login、plan / model / rate-limit表示</td>
+      </tr>
+      <tr>
+        <td>
+          <code>ChatMessages.tsx</code
+          >、<code>useCodexSecondOpinion.ts</code>（新規）
+        </td>
+        <td>明示action、独立stream card、cancel / retry / new-session UI</td>
+      </tr>
+      <tr>
+        <td><code>src/lib/runtime.ts</code>、ja / en locale</td>
+        <td>Tauri command wrapperと全状態の人間向け表示</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="151-phase-a">Phase A — Contractとmigration</h3>
+  <ol>
+    <li>
+      App Serverのversion固有TypeScript / JSON Schemaをfixture用に生成し、対応versionを固定する。
+    </li>
+    <li>IPC型、status型、second-opinion event型、failure codeをRustから生成する。</li>
+    <li>DB version 16 migrationとsettings schema 14 migrationを実装する。</li>
+    <li>既存coding-assist threadが失われないmigration testを追加する。</li>
+  </ol>
+  <p>Acceptance: old DB fixtureを開いてcoding assistが継続し、rollback前backupから復元できる。</p>
+
+  <h3 id="152-phase-b">Phase B — Persistent runtime</h3>
+  <ol>
+    <li>
+      <code>CodexAppServerRuntime</code>、writer、reader、request / turn
+      registryを実装する。
+    </li>
+    <li>status、model list、login、rate limitsを共有runtimeへ移す。</li>
+    <li>process lifetime総量上限をmessage / turn単位上限へ置換する。</li>
+    <li>crash generation、restart、shutdown、orphan response回収を実装する。</li>
+  </ol>
+  <p>Acceptance: 100 turnのprotocol harnessでchild spawn 1回、initialize 1回、response leak 0。</p>
+
+  <h3 id="153-phase-c">Phase C — Provider設定</h3>
+  <ol>
+    <li><code>CodexSdkProviderCard</code>をProvider tabへ追加する。</li>
+    <li>auth modeとsubscription eligibilityを分けて表示する。</li>
+    <li>ChatGPT browser login、status refresh、model selection、rate limit表示を接続する。</li>
+    <li>ja / en copy、keyboard、screen reader、loading / error stateを追加する。</li>
+  </ol>
+  <p>Acceptance: API key認証状態では明確に利用不可となり、ChatGPT認証時だけreadyになる。</p>
+
+  <h3 id="154-phase-d">Phase D — Second-opinion route</h3>
+  <ol>
+    <li>source message validationと専用request envelopeを実装する。</li>
+    <li>conversation × purposeのthread start / resumeとmodel pinningを実装する。</li>
+    <li>専用response persistenceを実装し、Memory enqueueを禁止するtestを追加する。</li>
+    <li>interrupt、partial failure、new sessionを実装する。</li>
+  </ol>
+  <p>
+    Acceptance: 同じ会話は同じthread、別会話は別threadを使い、通常ContextWindowのfixtureが不変。
+  </p>
+
+  <h3 id="155-phase-e">Phase E — Streaming UIとperformance</h3>
+  <ol>
+    <li>primary回答footerとsecond-opinion cardを追加する。</li>
+    <li>既存plain-text streaming bufferと完了後Markdown pathを再利用する。</li>
+    <li>
+      latency spans、queue depth、restart count、compaction countをcontent-free metricで追加する。
+    </li>
+    <li>warm / cold / long response / cancel / 100-turn soakを実行する。</li>
+  </ol>
+  <p>
+    Acceptance: Section 11.3のlocal latency Gateを全て満たし、delta中DB writeとMarkdown parseが0。
+  </p>
+
+  <h2 id="16-test-and-release-gates">16. Testとrelease Gate</h2>
+  <table>
+    <caption>
+      Table: Required implementation gates
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">検証</th>
+        <th scope="col">合格条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>G0 Spec</code></td>
+        <td><code>bun run spec:check</code></td>
+        <td>warningを含め0件</td>
+      </tr>
+      <tr>
+        <td><code>G1 Schema</code></td>
+        <td>Rust / TS IPC binding、settings 13→14、DB 15→16</td>
+        <td>generated diff確認、旧DB preservation、downgrade backup手順あり</td>
+      </tr>
+      <tr>
+        <td><code>G2 Auth</code></td>
+        <td>null、ChatGPT、API key、expired、login cancel fixture</td>
+        <td>ChatGPTだけeligible、secret persistence 0</td>
+      </tr>
+      <tr>
+        <td><code>G3 Protocol</code></td>
+        <td>fragmented read、malformed JSON、unknown event、oversize、request timeout</td>
+        <td>deadlock、panic、unbounded allocation、registry leak 0</td>
+      </tr>
+      <tr>
+        <td><code>G4 Session</code></td>
+        <td>start、resume、app restart、model change、new session、compaction</td>
+        <td>thread混線0、暗黙reset 0、model pinning一致</td>
+      </tr>
+      <tr>
+        <td><code>G5 Isolation</code></td>
+        <td>通常message、ContextWindow、Memory jobのbefore / after比較</td>
+        <td>second opinionによる差分0</td>
+      </tr>
+      <tr>
+        <td><code>G6 Streaming</code></td>
+        <td>delta order、Unicode分割、terminal canonical、cancel、partial</td>
+        <td>欠落・重複0、terminal exactly once</td>
+      </tr>
+      <tr>
+        <td><code>G7 Performance</code></td>
+        <td>release build、warm 100 run、cold 20 run、WebView paint trace</td>
+        <td>Section 11.3を満たし、per-turn spawn 0</td>
+      </tr>
+      <tr>
+        <td><code>G8 Soak</code></td>
+        <td>100 turnまたは60分、cancel 10%、process crash injection</td>
+        <td>memory傾向増加なし、stuck run 0、child zombie 0</td>
+      </tr>
+      <tr>
+        <td><code>G9 Security</code></td>
+        <td>tool / write / network要求、URL injection、log / diagnostics inspection</td>
+        <td>policy bypass 0、secret / content leak 0</td>
+      </tr>
+      <tr>
+        <td><code>G10 Desktop</code></td>
+        <td>実ChatGPT subscriptionでlogin、2会話、restart、cancel、rate limit表示</td>
+        <td>operator checklist全項目Pass</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    unit testだけではreleaseしない。G10は実subscription、実Codex App Server、shipping macOS
+    buildで行う。 account固有情報と回答本文をrelease
+    evidenceへ記録せず、hash、status、timing集計だけを残す。
+  </p>
+
+  <h2 id="17-rollout-and-rollback">17. Rolloutとrollback</h2>
+  <ol>
+    <li>初期値disabledでshipし、Provider cardから明示的に有効化する。</li>
+    <li>内部canaryではsettings / authだけを先に有効化し、turn actionをfeature flagで分離する。</li>
+    <li>次にexplicit second opinionだけを有効化する。自動呼出しはこの計画に含めない。</li>
+    <li>
+      failure rate、runtime restart、local latency、rate limitをcontent-free metricで監視する。
+    </li>
+  </ol>
+  <p>
+    即時rollbackはfeature flagでbuttonとeager startを無効化し、Codex session dataは保持する。 DB
+    migration後のbinary rollbackはmigration前に作る既存backupを使う。Codex thread logやtokenをSAAAが
+    削除するrollbackは行わない。
+  </p>
+
+  <h2 id="18-definition-of-done">18. Definition of Done</h2>
+  <ul>
+    <li>
+      Provider tabにCodex SDK cardがあり、installed、runtime、ChatGPT認証、planを正しく区別できる。
+    </li>
+    <li>API key認証ではsecond opinionを開始できず、OpenAI APIへのfallbackもない。</li>
+    <li>App Serverは常駐し、warm turnごとのprocess spawn / initialize / auth readが0である。</li>
+    <li>同じSAAA会話は同じCodex threadをresumeし、app restart後も継続する。</li>
+    <li>
+      通常ContextWindow、conversation messages、Memory jobへCodex second opinionが混ざらない。
+    </li>
+    <li>deltaはSection 11の予算でplain text表示され、正常完了時だけMarkdownへ切り替わる。</li>
+    <li>cancel、crash、partial、rate limit、thread消失が正しいterminal stateになる。</li>
+    <li>read-only、no approval、no network、no web searchがprotocolとtestの両方で固定される。</li>
+    <li>G0〜G10が全てPassし、release evidenceにcontent-free結果が残る。</li>
+  </ul>
+
+  <h2 id="19-plan-review-score">19. 実装計画書の厳格評点</h2>
+  <table>
+    <caption>
+      Table: Plan quality score as of 2026-09-01
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">評価軸</th>
+        <th scope="col">配点</th>
+        <th scope="col">評点</th>
+        <th scope="col">根拠</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>要件適合</td>
+        <td>20</td>
+        <td>20</td>
+        <td>subscription-only、設定、認証確認、second opinionを固定した</td>
+      </tr>
+      <tr>
+        <td>Session / Context分離</td>
+        <td>20</td>
+        <td>20</td>
+        <td>二つの継続model、保存先、入力envelope、resetを分離した</td>
+      </tr>
+      <tr>
+        <td>性能設計</td>
+        <td>20</td>
+        <td>19</td>
+        <td>常駐stdio、即時delta、frame coalescing、数値Gateを定義した</td>
+      </tr>
+      <tr>
+        <td>信頼性・安全性</td>
+        <td>15</td>
+        <td>14</td>
+        <td>bounded actor、terminal guard、crash、auth、policyを定義した</td>
+      </tr>
+      <tr>
+        <td>実装可能性</td>
+        <td>15</td>
+        <td>14</td>
+        <td>現行fileと再利用点、migration、Phase、acceptanceへ対応付けた</td>
+      </tr>
+      <tr>
+        <td>検証可能性</td>
+        <td>10</td>
+        <td>10</td>
+        <td>protocol、session、isolation、性能、実subscription Gateを定義した</td>
+      </tr>
+      <tr>
+        <th scope="row">合計</th>
+        <td>100</td>
+        <td><strong>97</strong></td>
+        <td>90点超。実装完了点ではなく、実装開始可能な計画品質の評点</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    減点3点は、Codex Provider自身のTTFT、subscription rate limit、将来のApp Server protocol変更を
+    SAAA側で完全には制御できないためである。version pin、generated schema、provider時間とlocal時間の
+    分離、実account Gateにより、実装開始時点で残せる不確実性として管理する。
+  </p>
+  <p>
+    97点は計画の網羅性と検証可能性の評価であり、機能が97点で完成したことを意味しない。
+    実装後はG0〜G10の実測結果で再採点し、Critical Gateが一つでもFailなら最大89点とする。
+  </p>
+
+  <h2 id="20-official-references">20. 公式Reference</h2>
+  <ul>
+    <li>
+      <a href="https://learn.chatgpt.com/docs/app-server">Codex App Server</a> — rich client、
+      transport、initialize、thread / turn、stream event、認証、rate limitの正本
+    </li>
+    <li>
+      <a href="https://learn.chatgpt.com/docs/codex-sdk">Codex SDK</a> — SDKのautomation用途と
+      executable利用境界の正本
+    </li>
+  </ul>
+</article>

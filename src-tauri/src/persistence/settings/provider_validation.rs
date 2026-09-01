@@ -74,20 +74,7 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                 }
                 if provider.location == "local" {
                     if endpoint.scheme() != "http"
-                        || !match endpoint.host() {
-                            Some(url::Host::Domain(host)) => {
-                                host == "localhost"
-                                    || host.ends_with(".local")
-                                    || !host.contains('.')
-                            }
-                            Some(url::Host::Ipv4(address)) => {
-                                address.is_loopback() || address.is_private()
-                            }
-                            Some(url::Host::Ipv6(address)) => {
-                                address.is_loopback() || address.is_unique_local()
-                            }
-                            None => false,
-                        }
+                        || !crate::providers::dynamic_lan::url_is_local(&endpoint)
                     {
                         return Err(format!(
                             "Local provider must use an HTTP loopback or private-network endpoint: {provider_id}"
@@ -220,18 +207,8 @@ fn validate_harness_address(address: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
-    if url.scheme() == "http" {
-        let is_private = match url.host() {
-            Some(url::Host::Domain(host)) => {
-                host == "localhost" || host.ends_with(".local") || !host.contains('.')
-            }
-            Some(url::Host::Ipv4(address)) => address.is_loopback() || address.is_private(),
-            Some(url::Host::Ipv6(address)) => address.is_loopback() || address.is_unique_local(),
-            None => false,
-        };
-        if !is_private {
-            return Err("Public harness addresses must use HTTPS".to_string());
-        }
+    if url.scheme() == "http" && !crate::providers::dynamic_lan::url_is_local(&url) {
+        return Err("Public harness addresses must use HTTPS".to_string());
     }
     Ok(())
 }
@@ -295,5 +272,20 @@ mod tests {
         };
         value.model = " model".to_string();
         assert!(validate_model_providers(&settings(provider)).is_err());
+    }
+
+    #[test]
+    fn harness_http_policy_uses_the_shared_local_address_rules() {
+        for address in [
+            "http://169.254.1.1:9810/",
+            "http://[fe80::1]:9810/",
+            "http://provider.local:9810/",
+        ] {
+            assert!(
+                validate_harness_address(address).is_ok(),
+                "rejected {address}"
+            );
+        }
+        assert!(validate_harness_address("http://example.com:9810/").is_err());
     }
 }

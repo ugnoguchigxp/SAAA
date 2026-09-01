@@ -56,6 +56,13 @@
         >SQLite Single Writer Implementation Plan</a
       >を維持する。本文書はqueryとlock保持時間の性能要件だけを追加する。
     </li>
+    <li>
+      ChatGPT subscriptionで利用するCodex second opinionのsession、認証、transportは
+      <a href="./codex-sdk-realtime-second-opinion-implementation-plan.html"
+        >Codex SDK Realtime Second Opinion実装計画</a
+      >を正本とする。local child processとのstdio JSONLはProvider network transportではないため、
+      本文書の<code>saaa.llm-stream.v1</code> WebSocket-only要件の対象外とする。
+    </li>
   </ol>
 
   <h2 id="1-fixed-decisions">1. 固定する設計判断</h2>

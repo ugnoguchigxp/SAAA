@@ -20,7 +20,7 @@ use zeroize::Zeroizing;
 pub(crate) async fn claim_and_probe(
     client: &reqwest::Client,
     control_base: &Url,
-    control_credential: &HeaderValue,
+    control_credential: Option<&HeaderValue>,
     identity: &ConnectionIdentity,
     audience: &str,
     control_is_loopback: bool,
@@ -49,12 +49,17 @@ pub(crate) async fn probe_provider_health(
     descriptor: &ProviderDescriptor,
     cancellation: &RunCancellation,
 ) -> Result<(), DynamicLanError> {
-    let credential = provider_credential(&descriptor.credential.token)?;
+    let credential = descriptor
+        .credential
+        .as_ref()
+        .filter(|credential| credential.r#type == "bearer")
+        .map(|credential| provider_credential(&credential.token))
+        .transpose()?;
     let health = send_json_response::<ProviderHealth>(
         client,
         Method::GET,
         Url::parse(&descriptor.health.url).map_err(contract_error)?,
-        &credential,
+        credential.as_ref(),
         None,
         None,
         cancellation,
@@ -83,15 +88,15 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
     client: &reqwest::Client,
     method: Method,
     url: Url,
-    credential: &HeaderValue,
+    credential: Option<&HeaderValue>,
     extra_header: Option<(&str, &str)>,
     body: Option<&Value>,
     cancellation: &RunCancellation,
 ) -> Result<JsonResponse<T>, DynamicLanError> {
-    let mut request = client
-        .request(method, url)
-        .header(AUTHORIZATION, credential.clone())
-        .timeout(REQUEST_TIMEOUT);
+    let mut request = client.request(method, url).timeout(REQUEST_TIMEOUT);
+    if let Some(credential) = credential {
+        request = request.header(AUTHORIZATION, credential.clone());
+    }
     if let Some((name, value)) = extra_header {
         request = request.header(name, value);
     }
@@ -179,15 +184,13 @@ pub(crate) fn bounded_header(
 pub(crate) async fn release_connection(
     client: &reqwest::Client,
     url: &Url,
-    credential: &HeaderValue,
+    credential: Option<&HeaderValue>,
 ) -> Result<(), DynamicLanError> {
-    let response = client
-        .delete(url.clone())
-        .header(AUTHORIZATION, credential.clone())
-        .timeout(RELEASE_TIMEOUT)
-        .send()
-        .await
-        .map_err(classify_transport)?;
+    let mut request = client.delete(url.clone()).timeout(RELEASE_TIMEOUT);
+    if let Some(credential) = credential {
+        request = request.header(AUTHORIZATION, credential.clone());
+    }
+    let response = request.send().await.map_err(classify_transport)?;
     if response.status() == StatusCode::NO_CONTENT {
         Ok(())
     } else {
@@ -199,7 +202,7 @@ pub(crate) async fn error_after_release(
     mut error: DynamicLanError,
     client: &reqwest::Client,
     url: &Url,
-    credential: &HeaderValue,
+    credential: Option<&HeaderValue>,
 ) -> DynamicLanError {
     if let Err(release_error) = release_connection(client, url, credential).await {
         error.release_failure = Some(release_error.kind);
@@ -229,28 +232,20 @@ pub(crate) async fn read_limited(
     }
 }
 
-pub(crate) fn control_credential() -> Result<HeaderValue, DynamicLanError> {
-    let token = Zeroizing::new(env::var(API_TOKEN_ENV).map_err(|_| {
-        DynamicLanError::new(
-            ErrorKind::Authentication,
-            "LARM_API_TOKEN is required to resolve dynamic LAN provider settings.",
-        )
-    })?);
-    if token.is_empty()
-        || token.len() > 4_096
-        || token.bytes().any(|byte| byte.is_ascii_whitespace())
-    {
-        return Err(DynamicLanError::new(
-            ErrorKind::Authentication,
-            "LARM_API_TOKEN is invalid.",
-        ));
-    }
+pub(crate) fn control_credential() -> Result<Option<HeaderValue>, DynamicLanError> {
+    let token = match env::var(API_TOKEN_ENV) {
+        Ok(token) => Zeroizing::new(token),
+        Err(env::VarError::NotPresent) => return Ok(None),
+        Err(env::VarError::NotUnicode(_)) => {
+            return Err(DynamicLanError::new(
+                ErrorKind::Authentication,
+                "LARM_API_TOKEN is invalid.",
+            ));
+        }
+    };
     provider_credential(token.as_str())
+        .map(Some)
         .map_err(|_| DynamicLanError::new(ErrorKind::Authentication, "LARM_API_TOKEN is invalid."))
-}
-
-pub(crate) fn control_credential_available() -> bool {
-    control_credential().is_ok()
 }
 
 pub(crate) fn provider_credential(token: &str) -> Result<HeaderValue, DynamicLanError> {
@@ -292,7 +287,7 @@ pub(crate) fn classify_status(status: StatusCode, code: &str) -> DynamicLanError
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
         return DynamicLanError::new(
             ErrorKind::Authentication,
-            "dynamic_lan rejected LARM_API_TOKEN.",
+            "dynamic_lan rejected the connection authorization.",
         );
     }
     if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) {
@@ -333,7 +328,7 @@ pub(crate) fn classify_api_error(code: &str) -> DynamicLanError {
         ),
         "connection_auth_not_configured" | "unauthorized" | "forbidden" => DynamicLanError::new(
             ErrorKind::Authentication,
-            "dynamic_lan rejected LARM_API_TOKEN.",
+            "dynamic_lan rejected the connection authorization.",
         ),
         "provider_semantic_not_ready" | "connection_not_ready" => DynamicLanError::new(
             ErrorKind::Unavailable,

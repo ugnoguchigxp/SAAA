@@ -31,7 +31,7 @@ use super::protocol::{
     OrderedRun, ProtocolError, ProviderEvent, ResumeNegotiation, RunStart, SUBPROTOCOL,
 };
 use crate::{
-    ipc_contract::{RuntimeEvent, RuntimeFailureCode},
+    ipc_contract::RuntimeEvent,
     providers::stream::{execute_agent_tool, tool_was_offered, ProviderOutputPersistence},
     runtime::{agent_tools::AgentToolCall, event_hub::RuntimeEventSender},
     RunCancellation, StartTurnInput,
@@ -372,14 +372,18 @@ async fn connect_socket(
 async fn resume_connection(
     stream_url: &str,
     authorization: Option<&str>,
+    allocation_id: &str,
     ordered: &OrderedRun,
     acknowledged: &AcknowledgedCheckpoint,
 ) -> Result<PooledConnection, WebSocketRunError> {
     for _ in 0..2 {
         let mut connection = acquire_connection(stream_url, authorization).await?;
-        if send_json(&mut connection.socket, &ordered.resume(acknowledged))
-            .await
-            .is_err()
+        if send_json(
+            &mut connection.socket,
+            &ordered.resume(allocation_id, acknowledged),
+        )
+        .await
+        .is_err()
         {
             continue;
         }
@@ -406,17 +410,10 @@ async fn resume_connection(
             }
         };
         let Some(response) = response else { continue };
-        match validate_resume_negotiation(
-            response.as_str(),
-            ordered.run_id(),
-            acknowledged.seq.saturating_add(1),
-        )
-        .map_err(|_| WebSocketRunError::new(WebSocketRunErrorKind::Protocol))?
+        match validate_resume_negotiation(response.as_str(), ordered.run_id(), acknowledged.seq)
+            .map_err(|_| WebSocketRunError::new(WebSocketRunErrorKind::Protocol))?
         {
             ResumeNegotiation::Resumed => return Ok(connection),
-            ResumeNegotiation::Rejected => {
-                return Err(WebSocketRunError::new(WebSocketRunErrorKind::Protocol));
-            }
         }
     }
     Err(WebSocketRunError::new(WebSocketRunErrorKind::Network))
@@ -426,6 +423,7 @@ async fn acknowledge_terminal(
     mut connection: PooledConnection,
     stream_url: &str,
     authorization: Option<&str>,
+    allocation_id: &str,
     ordered: &OrderedRun,
     acknowledged: &AcknowledgedCheckpoint,
 ) -> Result<(), WebSocketRunError> {
@@ -435,8 +433,14 @@ async fn acknowledge_terminal(
     }
     drop(connection);
     tokio::time::timeout(Duration::from_secs(5), async {
-        let mut resumed =
-            resume_connection(stream_url, authorization, ordered, acknowledged).await?;
+        let mut resumed = resume_connection(
+            stream_url,
+            authorization,
+            allocation_id,
+            ordered,
+            acknowledged,
+        )
+        .await?;
         let _ = send_ack(&mut resumed.socket, ordered).await?;
         Ok::<(), WebSocketRunError>(())
     })
@@ -448,6 +452,9 @@ pub(crate) async fn run(
     context: WebSocketRunContext<'_>,
 ) -> Result<WebSocketRunResult, WebSocketRunError> {
     validate_stream_url(context.stream_url)?;
+    let allocation_id = context
+        .allocation_id
+        .unwrap_or(context.input.run_id.as_str());
     let deadline = tokio::time::Instant::now() + context.timeout;
     let mut connection = tokio::select! {
         biased;
@@ -462,17 +469,18 @@ pub(crate) async fn run(
 
     let start = RunStart::new(
         &context.input.run_id,
-        context.allocation_id,
+        allocation_id,
         context.model,
         context.messages,
         context.tools,
         context.reasoning_effort,
         context.max_output_tokens,
         context
-            .tool_timeout
+            .timeout
             .as_millis()
             .try_into()
-            .unwrap_or(u64::MAX),
+            .unwrap_or(3_300_000_u64)
+            .min(3_300_000),
     );
     tokio::select! {
         biased;
@@ -538,8 +546,8 @@ pub(crate) async fn run(
                     message_type: "tool.result",
                     run_id: &context.input.run_id,
                     call_id: &result.call_id,
-                    in_reply_to_seq: result.in_reply_to_seq,
-                    status: "ok",
+                    tool_call_seq: result.in_reply_to_seq,
+                    status: "completed",
                     content: &result.content,
                 }).await.map_err(|error| error.with_output_started(output_started))?;
             }
@@ -560,6 +568,7 @@ pub(crate) async fn run(
                             resumed = resume_connection(
                                 context.stream_url,
                                 context.authorization,
+                                allocation_id,
                                 &ordered,
                                 &acknowledged,
                             ) => resumed.map_err(|error| error.with_output_started(output_started))?,
@@ -604,6 +613,7 @@ pub(crate) async fn run(
                             resumed = resume_connection(
                                 context.stream_url,
                                 context.authorization,
+                                allocation_id,
                                 &ordered,
                                 &acknowledged,
                             ) => resumed.map_err(|error| error.with_output_started(output_started))?,
@@ -691,6 +701,7 @@ pub(crate) async fn run(
                             connection,
                             context.stream_url,
                             context.authorization,
+                            allocation_id,
                             &ordered,
                             &acknowledged,
                         ).await
@@ -713,6 +724,7 @@ pub(crate) async fn run(
                             connection,
                             context.stream_url,
                             context.authorization,
+                            allocation_id,
                             &ordered,
                             &acknowledged,
                         ).await
@@ -725,6 +737,7 @@ pub(crate) async fn run(
                             connection,
                             context.stream_url,
                             context.authorization,
+                            allocation_id,
                             &ordered,
                             &acknowledged,
                         ).await
@@ -760,19 +773,11 @@ fn validate_stream_url(value: &str) -> Result<(), WebSocketRunError> {
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
-        || (url.scheme() == "ws" && !url.host().is_some_and(loopback_host))
+        || (url.scheme() == "ws" && !crate::providers::dynamic_lan::url_is_local(&url))
     {
         return Err(WebSocketRunError::new(WebSocketRunErrorKind::Contract));
     }
     Ok(())
-}
-
-fn loopback_host(host: url::Host<&str>) -> bool {
-    match host {
-        url::Host::Domain(value) => value == "localhost",
-        url::Host::Ipv4(value) => value.is_loopback(),
-        url::Host::Ipv6(value) => value.is_loopback(),
-    }
 }
 
 fn validate_ready(message: Message) -> Result<ReadyLimits, WebSocketRunError> {
@@ -896,19 +901,15 @@ struct ToolResultMessage<'a> {
     message_type: &'static str,
     run_id: &'a str,
     call_id: &'a str,
-    in_reply_to_seq: u64,
+    tool_call_seq: u64,
     status: &'static str,
     content: &'a str,
-}
-
-#[allow(dead_code)]
-fn _runtime_failure_code_marker() -> RuntimeFailureCode {
-    RuntimeFailureCode::ProtocolError
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest as _;
     use tokio::net::TcpListener;
     use tokio_tungstenite::{
         accept_hdr_async,
@@ -959,6 +960,33 @@ mod tests {
             validate_ready(duplicate).unwrap_err().kind,
             WebSocketRunErrorKind::Protocol
         );
+    }
+
+    #[test]
+    fn plaintext_websocket_is_limited_to_local_network_hosts() {
+        for value in [
+            "ws://localhost:9810/v1/llm/stream",
+            "ws://192.168.0.130:9810/v1/llm/stream",
+            "ws://10.0.0.42:9810/v1/llm/stream",
+            "ws://provider.local:9810/v1/llm/stream",
+            "ws://dynamic-lan:9810/v1/llm/stream",
+            "ws://[fd00::42]:9810/v1/llm/stream",
+        ] {
+            assert!(validate_stream_url(value).is_ok(), "{value}");
+        }
+        for value in [
+            "ws://8.8.8.8/v1/llm/stream",
+            "ws://example.com/v1/llm/stream",
+            "ws://user@example.com/v1/llm/stream",
+            "ws://192.168.0.130/v1/llm/stream?token=secret",
+        ] {
+            assert_eq!(
+                validate_stream_url(value).unwrap_err().kind,
+                WebSocketRunErrorKind::Contract,
+                "{value}"
+            );
+        }
+        assert!(validate_stream_url("wss://example.com/v1/llm/stream").is_ok());
     }
 
     #[test]
@@ -1060,9 +1088,7 @@ mod tests {
                     serde_json::json!({
                         "type": "run.accepted",
                         "runId": run_id,
-                        "seq": 1,
-                        "providerRunId": "provider_failed_fixture",
-                        "model": "local"
+                        "seq": 1
                     })
                     .to_string()
                     .into(),
@@ -1076,10 +1102,13 @@ mod tests {
                         "type": "response.failed",
                         "runId": run_id,
                         "seq": 3,
-                        "code": "upstream",
-                        "message": "Provider failed.",
-                        "retryable": true,
-                        "outputStarted": false
+                        "contentBytes": 7,
+                        "contentSha256": format!("{:x}", sha2::Sha256::digest(b"visible")),
+                        "error": {
+                            "code": "provider-error",
+                            "message": "Provider failed.",
+                            "retryable": true
+                        }
                     })
                     .to_string()
                     .into(),
@@ -1096,7 +1125,7 @@ mod tests {
         let result = run(WebSocketRunContext {
             stream_url: &format!("ws://{address}/v1/llm/stream"),
             authorization: None,
-            allocation_id: None,
+            allocation_id: Some("alloc_test"),
             model: "local",
             messages: &messages,
             tools: &[],
@@ -1114,7 +1143,7 @@ mod tests {
         assert_eq!(
             result,
             WebSocketRunResult::Failed {
-                code: "upstream".to_string(),
+                code: "provider-error".to_string(),
                 output_started: true,
             }
         );
@@ -1136,9 +1165,7 @@ mod tests {
                     serde_json::json!({
                         "type": "run.accepted",
                         "runId": run_id,
-                        "seq": 1,
-                        "providerRunId": "provider_cancel_fixture",
-                        "model": "local"
+                        "seq": 1
                     })
                     .to_string()
                     .into(),
@@ -1158,7 +1185,8 @@ mod tests {
                         "type": "response.cancelled",
                         "runId": run_id,
                         "seq": 3,
-                        "outputStarted": false
+                        "contentBytes": 4,
+                        "contentSha256": format!("{:x}", sha2::Sha256::digest(b"late"))
                     })
                     .to_string()
                     .into(),
@@ -1186,7 +1214,7 @@ mod tests {
         let result = run(WebSocketRunContext {
             stream_url: &format!("ws://{address}/v1/llm/stream"),
             authorization: None,
-            allocation_id: None,
+            allocation_id: Some("alloc_test"),
             model: "local",
             messages: &messages,
             tools: &[],
@@ -1204,7 +1232,7 @@ mod tests {
         assert_eq!(
             result,
             WebSocketRunResult::Cancelled {
-                output_started: false,
+                output_started: true,
             }
         );
         assert_eq!(dispatched.load(AtomicOrdering::Relaxed), 0);
@@ -1224,9 +1252,7 @@ mod tests {
                     serde_json::json!({
                         "type": "run.accepted",
                         "runId": run_id,
-                        "seq": 1,
-                        "providerRunId": "provider_gap_fixture",
-                        "model": "local"
+                        "seq": 1
                     })
                     .to_string()
                     .into(),
@@ -1246,7 +1272,7 @@ mod tests {
                     serde_json::json!({
                         "type": "run.resumed",
                         "runId": run_id,
-                        "replayFromSeq": 1
+                        "ackSeq": 0
                     })
                     .to_string()
                     .into(),
@@ -1258,9 +1284,7 @@ mod tests {
                     serde_json::json!({
                         "type": "run.accepted",
                         "runId": run_id,
-                        "seq": 1,
-                        "providerRunId": "provider_gap_fixture",
-                        "model": "local"
+                        "seq": 1
                     })
                     .to_string()
                     .into(),
@@ -1298,7 +1322,7 @@ mod tests {
         let result = run(WebSocketRunContext {
             stream_url: &format!("ws://{address}/v1/llm/stream"),
             authorization: None,
-            allocation_id: None,
+            allocation_id: Some("alloc_test"),
             model: "local",
             messages: &messages,
             tools: &[],
@@ -1362,9 +1386,7 @@ mod tests {
                         serde_json::json!({
                             "type": "run.accepted",
                             "runId": run_id,
-                            "seq": 1,
-                            "providerRunId": format!("provider_{turn}"),
-                            "model": "local"
+                            "seq": 1
                         })
                         .to_string()
                         .into(),
@@ -1419,7 +1441,7 @@ mod tests {
             let result = run(WebSocketRunContext {
                 stream_url: &stream_url,
                 authorization: None,
-                allocation_id: None,
+                allocation_id: Some("alloc_test"),
                 model: "local",
                 messages: &messages,
                 tools: &[],

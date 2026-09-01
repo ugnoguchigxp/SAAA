@@ -189,10 +189,6 @@
       "total": 431,
       "production": 431
     },
-    "src-tauri/src/providers/larm/client/chat.rs": {
-      "total": 233,
-      "production": 233
-    },
     "src-tauri/src/providers/larm/client/decode.rs": {
       "total": 604,
       "production": 604
@@ -216,10 +212,6 @@
     "src-tauri/src/providers/larm/mod.rs": {
       "total": 674,
       "production": 548
-    },
-    "src-tauri/src/providers/larm/session.rs": {
-      "total": 1162,
-      "production": 630
     },
     "src-tauri/src/providers/mod.rs": {
       "total": 19,
