@@ -1,5 +1,4 @@
-export const ASR_SAMPLE_RATE = 16_000;
-export const AUDIO_PACKET_SAMPLES = 1_600;
+const AUDIO_PACKET_SAMPLES = 1_600;
 export const AUDIO_PACKET_BYTES = 3_200;
 
 /** Converts Worklet Float32 frames to exact 100 ms PCM16LE packets. */
@@ -37,7 +36,7 @@ export class VoiceAsrPacketizer {
   reset(): void { this.carry.fill(0); this.carry = new Float32Array(); }
 }
 
-export function encodePcm16(samples: Float32Array): Uint8Array {
+function encodePcm16(samples: Float32Array): Uint8Array {
   if (samples.length !== AUDIO_PACKET_SAMPLES) throw new Error("ASR packets must be exactly 1,600 samples.");
   const bytes = new Uint8Array(AUDIO_PACKET_BYTES);
   const view = new DataView(bytes.buffer);

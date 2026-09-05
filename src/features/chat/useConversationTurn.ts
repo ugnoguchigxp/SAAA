@@ -3,7 +3,7 @@ import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
 import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
 import { appendConversationActivity, type ConversationRuntimeActivity } from "../../lib/conversationActivity";
-import type { AppSnapshot, ConversationMessage, MeetingState, RuntimeEvent, VoiceSettings } from "../../lib/contracts";
+import type { AppSnapshot, ConversationMessage, MeetingState, RuntimeEvent, VoiceSettings, WebSocketConnectionState } from "../../lib/contracts";
 import { cancelRun, listMessages, startTurn, stopTts } from "../../lib/runtime";
 import {
   transitionConversationSession,
@@ -55,6 +55,7 @@ export function useConversationTurn({
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
+  const [webSocketState, setWebSocketState] = useState<WebSocketConnectionState>("disconnected");
   const voice = useConversationVoicePolicy(selectedConversationId, setError);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
@@ -79,7 +80,6 @@ export function useConversationTurn({
       if (ttsRunId) void stopTts(ttsRunId).catch(() => undefined);
     };
   }, [conversationSessionRef]);
-
   useEffect(() => {
     setMessages([]);
     setHasMoreMessages(false);
@@ -87,6 +87,7 @@ export function useConversationTurn({
     incompleteRunIdsRef.current.clear();
     resetStreamingText();
     setRuntimeActivity([]);
+    setWebSocketState("disconnected");
     if (selectedConversationId) {
       void loadMessages(selectedConversationId, issueCoordinatorRef.current.begin());
     }
@@ -246,6 +247,7 @@ export function useConversationTurn({
     ) return;
     if (event.type !== "delta") recordRuntimeLifecycleAudit(event, conversationId);
     if (!isSpeechLifecycle) recordSocketReceive(event.runId);
+    if (event.type === "messageCompleted" || event.type === "cancelled" || event.type === "failed") setWebSocketState("disconnected");
     switch (event.type) {
       case "started":
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
@@ -255,6 +257,7 @@ export function useConversationTurn({
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { fallbackUsed: event.fallbackUsed, reasonCode: event.selectionReasonCode === "other" ? "provider-selected-other" : "turn-active" }));
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerSelected", providerId: event.runtimeId, fallbackUsed: event.fallbackUsed }));
         break;
+      case "webSocketStateChanged": setWebSocketState(event.state); break;
       case "delta":
         recordFirstDelta(event.runId);
         appendStreamingText(event.runId, event.text);
@@ -373,6 +376,7 @@ export function useConversationTurn({
     retryKind: retryAction?.kind ?? null,
     retryFailedAction,
     activeTtsRunId,
+    webSocketState,
     handleSubmit,
     submitPrompt,
     stopActiveRun,

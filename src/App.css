@@ -28,7 +28,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .primary-nav-item:hover, .sidebar-settings:hover { color: #eef4f8; background: #1d2430; }
 .primary-nav-item.active, .sidebar-settings.active { color: #f4f7fa; background: #252c38; }
 .secondary-button, .save-button, .send-button, .voice-button { border: 0; border-radius: 10px; }
-.sidebar-settings { margin-top: auto; border-top: 1px solid #252d38; border-radius: 0 0 10px 10px; padding-top: 18px; }
 .status-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #65d6b8; }
 
 .chat-panel { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; background: radial-gradient(circle at 50% 38%, rgb(24 34 44 / .34), transparent 36%), #0d1118; }

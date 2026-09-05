@@ -27,7 +27,7 @@ tauri-build = { version = "2", features = [] }
 async-trait = "0.1"
 base64 = "0.22"
 tauri = { version = "2", features = [] }
-tauri-plugin-llm-fetch = { path = "../../llm-fetch/crates/tauri-plugin-llm-fetch" }
+tauri-plugin-llm-fetch = { git = "https://github.com/ugnoguchigxp/LLM-fetch.git", rev = "76b0fcff8ed7db3a306212aca8c5759b6f814fa6" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ts-rs = "12.0.1"

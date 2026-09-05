@@ -23,7 +23,7 @@ import { IndividualProvidersSection } from "./IndividualProvidersSection";
 import { ServiceConnectionsSection } from "./ServiceConnectionsSection";
 import { Field, Metric } from "./SettingsFields";
 import { defaultSettingsDraft, DEFAULT_AGENT_NAME } from "./settingsDefaults";
-import { credentialCleanupProviderIds, documentsFromDraft, draftFromDocuments, type SettingsDraft } from "./settingsDraft";
+import { credentialCleanupProviderIds, documentsFromDraft, draftFromDocuments, reconcileSavedDraft, type SettingsDraft } from "./settingsDraft";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 
@@ -68,7 +68,11 @@ export function SettingsPage({
   ];
   const source = useMemo(() => draftFromDocuments(documents, defaultSettingsDraft), [documents]);
   const [draft, setDraft] = useState<SettingsDraft>(source);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const previousSourceRef = useRef(source);
+  const saveGeneration = useRef(0);
+  const draftEditGeneration = useRef(0);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [connectionSettingsValid, setConnectionSettingsValid] = useState(true);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -79,8 +83,6 @@ export function SettingsPage({
       : { ...current, voice: { ...current.voice, listeningEnabled: source.voice.listeningEnabled } });
     previousSourceRef.current = source;
     void setDisplayLanguagePreference(source.regional.language);
-    setSaveState("idle");
-    setSaveMessage(null);
   }, [source]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(source);
   const persistedProviderIds = useMemo(
@@ -89,20 +91,36 @@ export function SettingsPage({
   );
   const activeTabMeta = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
 
+  function changeDraft(update: SettingsDraft | ((current: SettingsDraft) => SettingsDraft)) {
+    draftEditGeneration.current += 1;
+    setDraft(update);
+    setSaveMessage(null);
+    setSaveState((current) => current === "saving" ? current : "idle");
+  }
+
   async function save() {
+    const generation = ++saveGeneration.current;
+    const submitted = draftRef.current;
+    const submittedFingerprint = JSON.stringify(submitted);
+    const submittedEditGeneration = draftEditGeneration.current;
     setSaveState("saving");
     setSaveMessage(null);
     try {
-      const credentialCleanup = credentialCleanupProviderIds(source, draft);
-      const saved = await saveSettingsDocuments(documentsFromDraft(draft));
+      const credentialCleanup = credentialCleanupProviderIds(source, submitted);
+      const saved = await saveSettingsDocuments(documentsFromDraft(submitted));
+      if (generation !== saveGeneration.current) return;
+      setDraft((current) => reconcileSavedDraft(current, submittedFingerprint, saved));
       onSaved(saved);
       const cleanupResults = await Promise.allSettled(
         credentialCleanup.map((providerId) => deleteProviderApiKey(providerId)),
       );
       const cleanupFailures = cleanupResults.filter((result) => result.status === "rejected").length;
-      setSaveState("saved");
-      setSaveMessage({ kind: "saved", cleanupFailures, savedAt: Date.now() });
+      if (generation !== saveGeneration.current) return;
+      const unchanged = draftEditGeneration.current === submittedEditGeneration;
+      setSaveState(unchanged ? "saved" : "idle");
+      setSaveMessage(unchanged ? { kind: "saved", cleanupFailures, savedAt: Date.now() } : null);
     } catch (cause) {
+      if (generation !== saveGeneration.current) return;
       setSaveState("error");
       setSaveMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
     }
@@ -110,6 +128,8 @@ export function SettingsPage({
 
   function discard() {
     setDraft(source);
+    setSaveState("idle");
+    setSaveMessage(null);
     void setDisplayLanguagePreference(source.regional.language);
   }
 
@@ -141,13 +161,13 @@ export function SettingsPage({
         </nav>
         <div className="settings-content">
           <header className="settings-content-header"><h2>{activeTabMeta.label}</h2><p>{activeTabMeta.detail}</p></header>
-          {activeTab === "general" && <GeneralSection draft={draft} onChange={setDraft} />}
+          {activeTab === "general" && <GeneralSection draft={draft} onChange={changeDraft} />}
           {activeTab === "connection" && (
             <ServiceConnectionsSection
               providers={draft.providers}
               routing={draft.routing}
-              onProvidersChange={(providers) => setDraft((current) => ({ ...current, providers }))}
-              onRoutingChange={(routing) => setDraft((current) => ({ ...current, routing }))}
+              onProvidersChange={(providers) => changeDraft((current) => ({ ...current, providers }))}
+              onRoutingChange={(routing) => changeDraft((current) => ({ ...current, routing }))}
               onValidityChange={setConnectionSettingsValid}
             />
           )}
@@ -155,7 +175,7 @@ export function SettingsPage({
             <IndividualProvidersSection
               settings={draft.providers}
               persistedProviderIds={persistedProviderIds}
-              onChange={(providers) => setDraft((current) => ({ ...current, providers }))}
+              onChange={(providers) => changeDraft((current) => ({ ...current, providers }))}
             />
           )}
           {activeTab === "voice" && (
@@ -168,14 +188,14 @@ export function SettingsPage({
               listeningError={voiceError}
               onToggleListening={onToggleVoiceListening}
               onProfileChanged={onVoiceProfileChanged}
-              onChange={(voice) => setDraft((current) => ({ ...current, voice: { ...voice, listeningEnabled: current.voice.listeningEnabled } }))}
+              onChange={(voice) => changeDraft((current) => ({ ...current, voice: { ...voice, listeningEnabled: current.voice.listeningEnabled } }))}
             />
           )}
           {activeTab === "situation" && (
-            <SituationSection situation={draft.situation} onChange={(situation) => setDraft((current) => ({ ...current, situation }))} />
+            <SituationSection situation={draft.situation} onChange={(situation) => changeDraft((current) => ({ ...current, situation }))} />
           )}
           {activeTab === "security" && (
-            <SecuritySection security={draft.security} onChange={(security) => setDraft((current) => ({ ...current, security }))} />
+            <SecuritySection security={draft.security} onChange={(security) => changeDraft((current) => ({ ...current, security }))} />
           )}
         </div>
       </div>

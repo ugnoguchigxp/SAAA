@@ -1,4 +1,5 @@
 pub(crate) mod commands;
+mod speaker;
 mod types;
 use crate::{
     bounded_text, new_id, now_iso, persistence::SqliteWriter, redact_runtime_text, RunCancellation,
@@ -30,6 +31,7 @@ struct Session {
     next_sequences: HashMap<MeetingLane, u64>,
     in_flight: HashMap<(MeetingLane, u64), Arc<RunCancellation>>,
     error: Option<MeetingError>,
+    speaker_filter: Option<Arc<speaker::SpeakerFilter>>,
 }
 pub struct MeetingRuntime {
     inner: Mutex<RuntimeInner>,
@@ -38,6 +40,8 @@ pub struct MeetingRuntime {
 struct RuntimeInner {
     state: MeetingState,
     session: Option<Session>,
+    prepared_speaker_filter: Option<Arc<speaker::SpeakerFilter>>,
+    prepared_microphone_device_id: Option<String>,
 }
 
 impl MeetingRuntime {
@@ -46,6 +50,8 @@ impl MeetingRuntime {
             inner: Mutex::new(RuntimeInner {
                 state: MeetingState::Idle,
                 session: None,
+                prepared_speaker_filter: None,
+                prepared_microphone_device_id: None,
             }),
             subscribers: Mutex::new(HashMap::new()),
         }
@@ -102,11 +108,16 @@ impl MeetingRuntime {
         &self,
         input: &PreflightInput,
         asr_health: Result<(), String>,
+        speaker_scorer: Result<
+            Option<Arc<dyn crate::voice::streaming_asr::speaker_gate_runtime::SpeakerScorer>>,
+            String,
+        >,
     ) -> Result<PreflightResult, String> {
         validate_device_bounds(&input.microphone_device_id)?;
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         ensure(&r.state, &[MeetingState::Idle, MeetingState::Ready])?;
         r.state = MeetingState::Preflight;
+        r.prepared_microphone_device_id = Some(input.microphone_device_id.clone());
         let mut errors = Vec::new();
         let microphone = if input.microphone_device_id.trim().is_empty() {
             errors.push(err(
@@ -129,6 +140,21 @@ impl MeetingRuntime {
                 health("unavailable", "Selected ASR unavailable")
             }
         };
+        let target_speaker_requested = !matches!(&speaker_scorer, Ok(None));
+        match speaker_scorer {
+            Ok(scorer) => {
+                r.prepared_speaker_filter =
+                    scorer.map(|scorer| Arc::new(speaker::SpeakerFilter::new(scorer)))
+            }
+            Err(error) => {
+                r.prepared_speaker_filter = None;
+                errors.push(err(
+                    "MEETING_TARGET_SPEAKER_UNAVAILABLE",
+                    &error,
+                    "Check the target-speaker profile and microphone, then retry.",
+                ));
+            }
+        }
         if input.system_audio_enabled {
             errors.push(err(
                 "MEETING_SYSTEM_AUDIO_UNAVAILABLE",
@@ -155,6 +181,12 @@ impl MeetingRuntime {
             stt,
             translation: health("disabled", "Unavailable in this build"),
             shipping_capabilities: capabilities(),
+            transcription_scope: if target_speaker_requested {
+                "target-speaker"
+            } else {
+                "all-speakers"
+            }
+            .to_string(),
             blocking_errors: errors,
         })
     }
@@ -178,12 +210,17 @@ impl MeetingRuntime {
         }
         let mut r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         ensure(&r.state, &[MeetingState::Ready])?;
+        if r.prepared_microphone_device_id.as_deref() != Some(&input.microphone_device_id) {
+            return Err("MEETING_DEVICE_UNAVAILABLE: Microphone changed after preflight".into());
+        }
         let token = capture_token();
         connection.write(|conn| {
             conn.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,translation_provider_id,persistence_mode,started_at) VALUES (?1,'active',?2,0,?3,?4,NULL,'discard',?5)",params![input.session_id,if input.microphone_enabled {1} else {0},crate::voice::network_asr::PROVIDER_ID,crate::voice::network_asr::MODEL_ID,now_iso()]).map_err(crate::database_error)?;
             Ok(())
         })?;
         r.state = MeetingState::Active;
+        let speaker_filter = r.prepared_speaker_filter.take();
+        r.prepared_microphone_device_id = None;
         r.session = Some(Session {
             id: input.session_id.clone(),
             token: Some(token),
@@ -192,6 +229,7 @@ impl MeetingRuntime {
             next_sequences: HashMap::new(),
             in_flight: HashMap::new(),
             error: None,
+            speaker_filter,
         });
         Ok(snapshot(&r))
     }
@@ -274,37 +312,6 @@ impl MeetingRuntime {
             .insert((input.lane.clone(), input.sequence), cancellation);
         Ok(Zeroizing::new(std::mem::take(&mut input.samples)))
     }
-    pub fn preview(&self, input: &mut SegmentInput) -> Result<Zeroizing<Vec<f32>>, String> {
-        let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
-        let s = r.session.as_ref().ok_or("MEETING_INVALID_STATE")?;
-        if r.state != MeetingState::Active
-            || s.id != input.session_id
-            || s.token.as_deref() != Some(&input.capture_token)
-        {
-            return Err("MEETING_INVALID_CAPTURE_TOKEN".into());
-        }
-        if input.lane != MeetingLane::Microphone {
-            return Err("MEETING_SYSTEM_AUDIO_UNAVAILABLE".into());
-        }
-        validate_segment_bounds(input)?;
-        let next = s.next_sequences.get(&input.lane).copied().unwrap_or(0);
-        if input.sequence != next {
-            return Err("MEETING_OUT_OF_ORDER_SEGMENT".into());
-        }
-        Ok(Zeroizing::new(std::mem::take(&mut input.samples)))
-    }
-    pub fn preview_is_current(&self, input: &SegmentInput) -> bool {
-        let Ok(r) = self.inner.lock() else {
-            return false;
-        };
-        let Some(s) = r.session.as_ref() else {
-            return false;
-        };
-        r.state == MeetingState::Active
-            && s.id == input.session_id
-            && s.token.as_deref() == Some(&input.capture_token)
-            && s.next_sequences.get(&input.lane).copied().unwrap_or(0) == input.sequence
-    }
     pub fn finish_segment(
         &self,
         input: &SegmentInput,
@@ -365,6 +372,18 @@ impl MeetingRuntime {
                     .remove(&(input.lane.clone(), input.sequence));
             }
         }
+    }
+    fn speaker_filter(
+        &self,
+        input: &SegmentInput,
+    ) -> Result<Option<Arc<speaker::SpeakerFilter>>, String> {
+        let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
+        let session = r
+            .session
+            .as_ref()
+            .filter(|session| session.id == input.session_id)
+            .ok_or("MEETING_INVALID_STATE")?;
+        Ok(session.speaker_filter.clone())
     }
     pub fn fail(
         &self,
@@ -487,6 +506,18 @@ impl MeetingRuntime {
     }
 }
 
+fn publish_state(
+    state: &crate::AppState,
+    snapshot: &MeetingSnapshot,
+    microphone: crate::situation::contracts::MicrophoneState,
+) {
+    state.meeting.emit(MeetingEvent::StateChanged {
+        session_id: snapshot.session_id.clone(),
+        state: snapshot.state.clone(),
+    });
+    state.situation.set_microphone_state(microphone);
+}
+
 fn validate_device_bounds(device_id: &str) -> Result<(), String> {
     if device_id.len() > 256 {
         return Err("Invalid microphone device id".to_string());
@@ -495,24 +526,19 @@ fn validate_device_bounds(device_id: &str) -> Result<(), String> {
 }
 
 fn validate_segment_bounds(input: &SegmentInput) -> Result<(), String> {
-    if !(8_000..=96_000).contains(&input.sample_rate)
-        || !(1_000..=15_000).contains(&input.duration_ms)
-        || input.samples.is_empty()
-        || input.samples.len() > input.sample_rate as usize * 15
+    const EXPECTED_SAMPLES: usize = 16_000;
+    const SAMPLE_TOLERANCE: usize = 320;
+    if input.sample_rate != 16_000
+        || input.duration_ms != 1_000
+        || !(EXPECTED_SAMPLES - SAMPLE_TOLERANCE..=EXPECTED_SAMPLES + SAMPLE_TOLERANCE)
+            .contains(&input.samples.len())
         || input.samples.iter().any(|sample| !sample.is_finite())
-    {
-        return Err("MEETING_INVALID_STATE: Invalid segment bounds".into());
-    }
-    let expected = u64::from(input.sample_rate) * u64::from(input.duration_ms) / 1_000;
-    let actual = input.samples.len() as u64;
-    let tolerance = u64::from(input.sample_rate / 50).max(256);
-    if actual.abs_diff(expected) > tolerance
         || input
             .started_at_ms
             .checked_add(u64::from(input.duration_ms))
             .is_none()
     {
-        return Err("MEETING_INVALID_STATE: Segment timing does not match samples".into());
+        return Err("MEETING_INVALID_STATE: Invalid segment bounds".into());
     }
     Ok(())
 }
@@ -647,6 +673,16 @@ fn snapshot(r: &RuntimeInner) -> MeetingSnapshot {
         state: r.state.clone(),
         capture_token: s.and_then(|s| s.token.clone()),
         entries: s.map(|s| s.entries.len()).unwrap_or(0),
+        transcription_scope: if s
+            .and_then(|session| session.speaker_filter.as_ref())
+            .is_some()
+            || (s.is_none() && r.prepared_speaker_filter.is_some())
+        {
+            "target-speaker"
+        } else {
+            "all-speakers"
+        }
+        .to_string(),
         capabilities: capabilities(),
         error: s.and_then(|s| s.error.clone()),
     }
@@ -660,6 +696,16 @@ pub fn reconcile(connection: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FixedScorer;
+    impl crate::voice::streaming_asr::speaker_gate_runtime::SpeakerScorer for FixedScorer {
+        fn score(&self, _samples: Zeroizing<Vec<f32>>) -> Result<f32, String> {
+            Ok(0.9)
+        }
+        fn threshold(&self) -> f32 {
+            0.5
+        }
+    }
 
     #[test]
     fn meeting_events_serialize_camel_case_fields() {
@@ -685,7 +731,10 @@ mod tests {
                     next_sequences: HashMap::new(),
                     in_flight: HashMap::new(),
                     error: None,
+                    speaker_filter: None,
                 }),
+                prepared_speaker_filter: None,
+                prepared_microphone_device_id: None,
             }),
             subscribers: Mutex::new(HashMap::new()),
         }
@@ -723,6 +772,7 @@ mod tests {
                     translation_enabled: false,
                 },
                 Err("Selected ASR unavailable".into()),
+                Ok(None),
             )
             .expect("preflight result");
         assert_eq!(result.state, MeetingState::Idle);
@@ -734,11 +784,53 @@ mod tests {
     }
 
     #[test]
+    fn preflight_exposes_target_scope_and_blocks_an_unavailable_profile() {
+        let runtime = MeetingRuntime::new();
+        let ready = runtime
+            .preflight(
+                &PreflightInput {
+                    microphone_device_id: "default".into(),
+                    system_audio_enabled: false,
+                    translation_enabled: false,
+                },
+                Ok(()),
+                Ok(Some(Arc::new(FixedScorer))),
+            )
+            .expect("target-speaker preflight");
+        assert_eq!(ready.state, MeetingState::Ready);
+        assert_eq!(ready.transcription_scope, "target-speaker");
+        assert_eq!(
+            runtime.snapshot().expect("snapshot").transcription_scope,
+            "target-speaker"
+        );
+
+        let unavailable = runtime
+            .preflight(
+                &PreflightInput {
+                    microphone_device_id: "default".into(),
+                    system_audio_enabled: false,
+                    translation_enabled: false,
+                },
+                Ok(()),
+                Err("profile mismatch".into()),
+            )
+            .expect("unavailable profile result");
+        assert_eq!(unavailable.state, MeetingState::Idle);
+        assert_eq!(unavailable.transcription_scope, "target-speaker");
+        assert!(unavailable
+            .blocking_errors
+            .iter()
+            .any(|error| error.code == "MEETING_TARGET_SPEAKER_UNAVAILABLE"));
+    }
+
+    #[test]
     fn active_meeting_policy_blocks_tts() {
         let runtime = MeetingRuntime {
             inner: Mutex::new(RuntimeInner {
                 state: MeetingState::Active,
                 session: None,
+                prepared_speaker_filter: None,
+                prepared_microphone_device_id: None,
             }),
             subscribers: Mutex::new(HashMap::new()),
         };
@@ -781,30 +873,6 @@ mod tests {
     }
 
     #[test]
-    fn partial_preview_does_not_consume_sequence_and_is_dropped_after_final_starts() {
-        let runtime = runtime_with_session(MeetingState::Active);
-        let mut input = SegmentInput {
-            session_id: "session_a".to_string(),
-            capture_token: "capture_token".to_string(),
-            lane: MeetingLane::Microphone,
-            sequence: 0,
-            samples: vec![0.0; 16_000],
-            audio_upload_id: String::new(),
-            sample_rate: 8_000,
-            started_at_ms: 0,
-            duration_ms: 2_000,
-        };
-
-        runtime.preview(&mut input).expect("preview is accepted");
-        input.samples = vec![0.0; 16_000];
-        assert!(runtime.preview_is_current(&input));
-        runtime
-            .append(&mut input, Arc::new(RunCancellation::default()))
-            .expect("the same sequence remains available for the final segment");
-        assert!(!runtime.preview_is_current(&input));
-    }
-
-    #[test]
     fn pause_updates_persisted_state_and_cancels_segments() {
         let runtime = runtime_with_session(MeetingState::Active);
         let cancellation = Arc::new(RunCancellation::default());
@@ -841,7 +909,7 @@ mod tests {
             sequence: 0,
             samples: vec![0.0; 8_000],
             audio_upload_id: String::new(),
-            sample_rate: 8_000,
+            sample_rate: 16_000,
             started_at_ms: 0,
             duration_ms: 1_000,
         };
@@ -1009,9 +1077,9 @@ mod tests {
             capture_token: "capture_token".to_string(),
             lane: MeetingLane::Microphone,
             sequence: 0,
-            samples: vec![0.0; 8_000],
+            samples: vec![0.0; 16_000],
             audio_upload_id: String::new(),
-            sample_rate: 8_000,
+            sample_rate: 16_000,
             started_at_ms: 0,
             duration_ms: 1_000,
         };
@@ -1026,13 +1094,13 @@ mod tests {
             .expect("first segment reserves");
         input.sequence = 1;
         input.started_at_ms = 1_000;
-        input.samples = vec![0.0; 8_000];
+        input.samples = vec![0.0; 16_000];
         runtime
             .append(&mut input, Arc::new(RunCancellation::default()))
             .expect("second segment reserves");
         input.sequence = 2;
         input.started_at_ms = 2_000;
-        input.samples = vec![0.0; 8_000];
+        input.samples = vec![0.0; 16_000];
         assert_eq!(
             runtime
                 .append(&mut input, Arc::new(RunCancellation::default()))

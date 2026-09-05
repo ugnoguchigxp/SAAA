@@ -383,6 +383,7 @@ pub(crate) fn prepare_runtime_run(
     Ok(task_mode)
 }
 
+#[cfg(test)]
 pub(crate) fn finish_runtime_run(
     state: &AppState,
     run_id: &str,
@@ -449,17 +450,19 @@ pub(crate) async fn execute_conversation_turn(
     })?;
     let context_window = memory::context_window::compose(loaded_context)?;
     let context_health = context_window.health.clone();
-    let _ = state.sqlite_writer.write(|connection| {
-        memory::control_plane::record_projection_event(
-            connection,
-            context_health.status,
-            context_health.projected_bytes,
-            context_health.hard_limit_bytes,
-            context_health.output_reserve_bytes,
-            context_health.repair_count,
-            &now_iso(),
-        )
-    });
+    if memory::control_plane::memory_enabled() {
+        let _ = state.sqlite_writer.write(|connection| {
+            memory::control_plane::record_projection_event(
+                connection,
+                context_health.status,
+                context_health.projected_bytes,
+                context_health.hard_limit_bytes,
+                context_health.output_reserve_bytes,
+                context_health.repair_count,
+                &now_iso(),
+            )
+        });
+    }
     let history = compose_provider_history(
         &input.conversation_id,
         &identity.agent_name,

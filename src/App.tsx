@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo, useRef, useState, type Dispatch, type Set
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { AppIcon } from "./components/AppIcon";
+import { WebSocketSidebarFooter } from "./components/WebSocketConnectionIndicator";
 import { ChatPage } from "./features/chat/ChatPage";
 import { useConversationTurn } from "./features/chat/useConversationTurn";
 import { MeetingPage } from "./features/meeting/MeetingPage";
@@ -9,18 +10,17 @@ import { useAmbientVoiceSession } from "./features/voice/useAmbientVoiceSession"
 import { isMeetingBlocking, toMessage } from "./lib/appHelpers";
 import {
   findSettingsDocument,
-  isRegionalPreferencesSettings,
-  isVoiceSettings,
-  type AppSnapshot,
-  type MeetingState,
+  type AppSnapshot, type MeetingState,
 } from "./lib/contracts";
+import { regionalPreferencesSchema, voiceSettingsSchema } from "./lib/schemas";
 import { applySnapshotLanguage } from "./lib/appLanguage";
 import { uiMessage } from "./i18n/presentation";
 import { resolveModelProviderStatus } from "./lib/conversationRouting";
 import type { ConversationRuntimeActivity } from "./lib/conversationActivity";
 import { initialConversationSession, type ConversationSession, type PendingConversationPrompt, type SubmitPromptOptions } from "./lib/conversationSession";
-import { getAppSnapshot, reportFrontendReady, reportOwnedSignal, setVoiceListeningEnabled } from "./lib/runtime";
+import { getAppSnapshot, reportFrontendReady, setVoiceListeningEnabled } from "./lib/runtime";
 import { useAppErrors } from "./useAppErrors";
+import { useOwnedSignalHeartbeat } from "./useOwnedSignalHeartbeat";
 import { AuditLogPage, SettingsPage, SituationPage } from "./appPages";
 
 type Surface = "chat" | "meeting" | "situation" | "audit" | "settings"; const initialSnapshot: AppSnapshot = { settings: [], conversations: [], primaryConversationId: "", effectiveRoute: { providerId: null, label: "Model not selected", location: null, state: "unchecked", fallbackUsed: false, reasonCode: "snapshot-loading", updatedAt: null }, larmRuntime: { state: "disabled", message: "LARM runtime state is loading.", contractCommit: "unknown" }, voiceProfile: { status: "empty", filterEnabled: false, runtimeAvailable: false, runtimeMessage: "Loading local speaker verification…", sampleCount: 0, targetSampleCount: 5, totalDurationMs: 0, minimumDurationMs: 20_000, threshold: 0.55, samples: [] } };
@@ -46,11 +46,13 @@ function App() {
   const modelProviderStatus = useMemo(() => resolveModelProviderStatus(snapshot), [snapshot]);
   const voiceSettings = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "voice.runtime", "default");
-    return document && isVoiceSettings(document.valueJson) ? document.valueJson : null;
+    const parsed = voiceSettingsSchema.safeParse(document?.valueJson);
+    return parsed.success ? parsed.data : null;
   }, [snapshot.settings]);
   const regionalTimeZone = useMemo(() => {
     const document = findSettingsDocument(snapshot.settings, "ui.preferences", "default");
-    return document && isRegionalPreferencesSettings(document.valueJson) ? document.valueJson.timeZone : "system";
+    const parsed = regionalPreferencesSchema.safeParse(document?.valueJson);
+    return parsed.success ? parsed.data.timeZone : "system";
   }, [snapshot.settings]);
   const meetingActive = isMeetingBlocking(meetingState);
   const turn = useConversationTurn({
@@ -110,17 +112,7 @@ function App() {
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [activeRunId, activeTtsRunId, surface, voice.listeningEnabled, voiceBusy, voiceState]);
-  useEffect(() => {
-    const input = {
-      conversationState: activeRunId ? "model-running" : composer.trim() ? "user-input" : "idle",
-      microphoneState: meetingState === "active" ? "saaa-capturing" : voiceState === "recording" ? "saaa-capturing" : voiceState === "transcribing" ? "saaa-transcribing" : "inactive",
-      audioState: activeTtsRunId ? "saaa-speaking" : "silent",
-    } as const;
-    void reportOwnedSignal(input).catch(() => undefined);
-    if (input.conversationState === "idle" && input.microphoneState === "inactive" && input.audioState === "silent") return;
-    const heartbeat = window.setInterval(() => { void reportOwnedSignal(input).catch(() => undefined); }, 2_000);
-    return () => window.clearInterval(heartbeat);
-  }, [activeRunId, activeTtsRunId, composer, meetingState, voiceState]);
+  useOwnedSignalHeartbeat({ activeRunId, activeTtsRunId, composer, meetingState, voiceState });
 
   async function initialize() {
     try {
@@ -158,7 +150,12 @@ function App() {
   }
 
   function openChatSurface() {
-    if (!canChangeConversation()) return;
+    if (conversationSessionRef.current.runId) {
+      setAppError(null);
+      setSurface("chat");
+      return;
+    }
+    setAppError(null);
     const primaryConversation = snapshot.conversations.find(
       (conversation) => conversation.id === snapshot.primaryConversationId,
     );
@@ -191,7 +188,7 @@ function App() {
         <button className={surface === "meeting" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => void openMeetingSurface()}><AppIcon name="calendar" />{t("app.meeting")} {meetingActive && <span className="meeting-active-indicator">{t("app.meetingActive")}</span>}</button>
         <button className={surface === "situation" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => openAuxiliarySurface("situation")}><AppIcon name="situation" />{t("app.situation")}</button><button className={surface === "audit" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => openAuxiliarySurface("audit")}><AppIcon name="audit" />{t("app.audit")}</button>
       </nav>
-      <button className={surface === "settings" ? "sidebar-settings active" : "sidebar-settings"} onClick={() => openAuxiliarySurface("settings")}><AppIcon name="settings" />{t("app.settings")}</button>
+      <WebSocketSidebarFooter state={turn.webSocketState} settingsActive={surface === "settings"} onOpenSettings={() => openAuxiliarySurface("settings")} />
     </aside>
 
     <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} conversationBusy={voiceProcessing || Boolean(activeRunId) || Boolean(activeTtsRunId)} onBeforeCapture={voice.suspendVoiceForMeeting} onStateChanged={setMeetingState} /></div>

@@ -98,27 +98,6 @@ export type CodexAgentSettings = {
   workspacePolicy: "select-per-conversation";
 };
 
-export type CodexReasoningEffort = { reasoningEffort: string; description: string };
-export type CodexModelOption = {
-  id: string;
-  model: string;
-  displayName: string;
-  description: string;
-  hidden: boolean;
-  defaultReasoningEffort: string | null;
-  supportedReasoningEfforts: CodexReasoningEffort[];
-  inputModalities: string[];
-  supportsPersonality: boolean;
-  isDefault: boolean;
-};
-export type CodexRuntimeStatus = {
-  installed: boolean;
-  authenticated: boolean;
-  runtime: string;
-  accountType: string | null;
-  message: string;
-};
-
 export type RoutingSettings = {
   conversationRespond: { source: "harness" | "provider"; primaryProviderId: string | null; fallbackProviderIds: string[]; timeoutMs: number };
   voiceTranscribe: { source: "harness" | "provider"; providerId: string | null; timeoutMs: number };
@@ -136,12 +115,6 @@ export type VoiceSettings = {
   autoSpeak: boolean;
 };
 
-export type TtsCapabilities = {
-  available: boolean;
-  message: string;
-  voices: Array<{ id: string; label: string; language: string | null }>;
-  outputDevices: string[];
-};
 export type SecuritySettings = { localOnlyWhenSelected: boolean; diagnosticsRedaction: boolean };
 export type DisplayLanguagePreference = "system" | "en" | "ja";
 export type LengthUnitSystem = "metric" | "imperial";

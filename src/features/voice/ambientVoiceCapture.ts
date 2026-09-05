@@ -11,7 +11,7 @@ import {
 } from "../../lib/microphone";
 import { VoiceActivityDetector } from "../../lib/voiceActivity";
 import type { VoiceSessionEvent } from "../../lib/voiceSession";
-import type { CommitReason } from "./voiceAsrPacketSender";
+import type { CommitReason } from "../../lib/generated/voiceAsr";
 import { voiceSegmentCommitReason } from "./voiceSegmentBoundary";
 
 function detector(settings: VoiceSettings, sampleRate: number): VoiceActivityDetector {

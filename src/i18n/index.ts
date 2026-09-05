@@ -5,7 +5,7 @@ import { en } from "./locales/en";
 import { ja } from "./locales/ja";
 
 export const APP_LANGUAGE_STORAGE_KEY = "saaa.display-language";
-export const APP_LANGUAGES = ["en", "ja"] as const;
+const APP_LANGUAGES = ["en", "ja"] as const;
 export type AppLanguage = (typeof APP_LANGUAGES)[number];
 
 export function normalizeAppLanguage(language: string | null | undefined): AppLanguage {
@@ -56,7 +56,7 @@ void i18n.use(initReactI18next).init({
 i18n.on("languageChanged", persistLanguage);
 applyDocumentLanguage(i18n.resolvedLanguage ?? i18n.language);
 
-export function setAppLanguage(language: AppLanguage): Promise<unknown> {
+function setAppLanguage(language: AppLanguage): Promise<unknown> {
   return i18n.changeLanguage(language);
 }
 

@@ -43,7 +43,7 @@ describe("target-speaker voice profile", () => {
     expect(installer).toContain("archive_sha=\"812b144d");
     expect(installer).toContain("model_sha=\"f682b514");
     expect(tauri).toContain('"resources/voice/": "voice/"');
-    expect(backend).toContain("verify_if_enabled");
+    expect(backend).toContain("prepare_streaming_verifier");
     expect(backend).toContain("TARGET_SPEAKER_REJECTED");
     expect(backend).not.toMatch(/security_framework|load_master_key|encrypt_payload|decrypt_payload/);
     for (const marker of ['format!("{sample_id}.wav")', "embedding BLOB NOT NULL", "migrate_v14_to_v15"]) expect(backend).toContain(marker);

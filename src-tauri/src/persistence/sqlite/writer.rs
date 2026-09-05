@@ -1,5 +1,7 @@
 use super::owner::{DatabaseOwnerGuard, OwnershipError};
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::Connection;
+#[cfg(test)]
+use rusqlite::{Transaction, TransactionBehavior};
 #[cfg(test)]
 use std::sync::{LockResult, MutexGuard};
 use std::{error::Error, fmt, path::Path, sync::Mutex};
@@ -71,6 +73,7 @@ impl SqliteWriter {
         operation(&mut connection)
     }
 
+    #[cfg(test)]
     pub(crate) fn write_transaction<T>(
         &self,
         behavior: TransactionBehavior,

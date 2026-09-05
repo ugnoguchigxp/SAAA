@@ -1,0 +1,11 @@
+.sidebar-footer { display: grid; gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid #252d38; }
+.sidebar-settings { margin: 0; }
+.websocket-indicator { min-width: 0; display: flex; align-items: center; gap: 10px; padding: 9px 13px; border: 1px solid #29323e; border-radius: 10px; color: #8996a7; background: #11161e; }
+.websocket-status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #ef6f7d; box-shadow: 0 0 0 3px rgb(239 111 125 / .1); }
+.websocket-status-copy { min-width: 0; display: grid; gap: 2px; }
+.websocket-status-copy span { color: #718095; font-size: .57rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.websocket-status-copy strong { overflow: hidden; color: #d4dde8; font-size: .69rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.websocket-indicator.connecting .websocket-status-dot { background: #e9bc61; box-shadow: 0 0 0 3px rgb(233 188 97 / .1); animation: websocket-pulse 1.35s ease-in-out infinite; }
+.websocket-indicator.connected .websocket-status-dot { background: #55d69e; box-shadow: 0 0 0 3px rgb(85 214 158 / .1); }
+@keyframes websocket-pulse { 50% { opacity: .45; transform: scale(.82); } }
+@media (prefers-reduced-motion: reduce) { .websocket-indicator.connecting .websocket-status-dot { animation: none; } }

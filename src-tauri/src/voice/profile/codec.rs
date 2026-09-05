@@ -284,43 +284,6 @@ pub(super) fn validate_sample_quality(samples: &[f32]) -> Result<(), String> {
     Ok(())
 }
 
-#[allow(dead_code)]
-pub(super) fn voiced_windows(samples: &[f32]) -> Result<Vec<Vec<f32>>, String> {
-    if samples.len() < CANONICAL_SAMPLE_RATE as usize {
-        return Err(
-            "TARGET_SPEAKER_REJECTED: At least one second of speech is required".to_string(),
-        );
-    }
-    let window_size = CANONICAL_SAMPLE_RATE as usize * 2;
-    let hop_size = CANONICAL_SAMPLE_RATE as usize;
-    if samples.len() <= window_size {
-        if root_mean_square(samples) < 0.006 {
-            return Err("TARGET_SPEAKER_REJECTED: No usable speech was detected".to_string());
-        }
-        return Ok(vec![samples.to_vec()]);
-    }
-    let mut windows = Vec::new();
-    let mut start = 0;
-    while start < samples.len() {
-        let end = (start + window_size).min(samples.len());
-        if end - start < CANONICAL_SAMPLE_RATE as usize {
-            break;
-        }
-        let window = &samples[start..end];
-        if root_mean_square(window) >= 0.006 {
-            windows.push(window.to_vec());
-        }
-        if end == samples.len() {
-            break;
-        }
-        start += hop_size;
-    }
-    if windows.is_empty() {
-        return Err("TARGET_SPEAKER_REJECTED: No usable speech was detected".to_string());
-    }
-    Ok(windows)
-}
-
 pub(super) fn resample_mono(
     samples: &[f32],
     from_rate: u32,

@@ -96,7 +96,7 @@ Settings → Voice → My voice profile can configure an on-device filter that m
 
 Voice samples are stored as unencrypted WAV files in the application-data directory, and speaker embeddings are stored unencrypted in SQLite. On macOS, the sample directory uses mode `0700` and sample files use mode `0600`. When the filter is enabled, SAAA sends audio to the local ASR server only after it passes local speaker matching. Model, stored-data, timeout, and ambiguous-speaker failures are fail-closed; they never fall back to sending unfiltered audio.
 
-This is a transcription privacy filter. It is not identity authentication, liveness detection, or protection against replayed recordings.
+This filter applies to both Voice chat and Meeting transcription. It is a transcription privacy filter, not identity authentication, liveness detection, replay protection, speaker diarization, or simultaneous-speaker separation.
 
 ## Develop and verify
 

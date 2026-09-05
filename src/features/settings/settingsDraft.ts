@@ -1,12 +1,5 @@
 import {
   findSettingsDocument,
-  isCodexAgentSettings,
-  isModelProvidersSettings,
-  isRoutingSettings,
-  isRegionalPreferencesSettings,
-  isSecuritySettings,
-  isSituationSettings,
-  isVoiceSettings,
   type CodexAgentSettings,
   type ModelProvidersSettings,
   type RoutingSettings,
@@ -17,6 +10,15 @@ import {
   type SituationSettings,
   type VoiceSettings,
 } from "../../lib/contracts";
+import {
+  codexAgentSettingsSchema,
+  modelProvidersSettingsSchema,
+  regionalPreferencesSchema,
+  routingSettingsSchema,
+  securitySettingsSchema,
+  situationSettingsSchema,
+  voiceSettingsSchema,
+} from "../../lib/schemas";
 
 export type SettingsDraft = {
   providers: ModelProvidersSettings;
@@ -38,14 +40,21 @@ export function draftFromDocuments(documents: SettingsDocument[], fallback: Sett
   const security = find("security.runtime", "default");
   const regional = find("ui.preferences", "default");
   const situation = find("situation.runtime", "default");
+  const parsedModel = modelProvidersSettingsSchema.safeParse(model);
+  const parsedCodex = codexAgentSettingsSchema.safeParse(codex);
+  const parsedRouting = routingSettingsSchema.safeParse(routing);
+  const parsedVoice = voiceSettingsSchema.safeParse(voice);
+  const parsedSecurity = securitySettingsSchema.safeParse(security);
+  const parsedRegional = regionalPreferencesSchema.safeParse(regional);
+  const parsedSituation = situationSettingsSchema.safeParse(situation);
   return {
-    providers: model && isModelProvidersSettings(model) ? model : fallback.providers,
-    codex: codex && isCodexAgentSettings(codex) ? codex : fallback.codex,
-    routing: routing && isRoutingSettings(routing) ? routing : fallback.routing,
-    voice: voice && isVoiceSettings(voice) ? voice : fallback.voice,
-    security: security && isSecuritySettings(security) ? security : fallback.security,
-    regional: regional && isRegionalPreferencesSettings(regional) ? regional : fallback.regional,
-    situation: situation && isSituationSettings(situation) ? situation : fallback.situation,
+    providers: parsedModel.success ? parsedModel.data : fallback.providers,
+    codex: parsedCodex.success ? parsedCodex.data : fallback.codex,
+    routing: parsedRouting.success ? parsedRouting.data : fallback.routing,
+    voice: parsedVoice.success ? parsedVoice.data : fallback.voice,
+    security: parsedSecurity.success ? parsedSecurity.data : fallback.security,
+    regional: parsedRegional.success ? parsedRegional.data : fallback.regional,
+    situation: parsedSituation.success ? parsedSituation.data : fallback.situation,
   };
 }
 
@@ -63,6 +72,16 @@ export function documentsFromDraft(draft: SettingsDraft): Array<Omit<SettingsDoc
     document("ui.preferences", "default", draft.regional),
     document("situation.runtime", "default", draft.situation),
   ];
+}
+
+export function reconcileSavedDraft(
+  current: SettingsDraft,
+  submittedFingerprint: string,
+  saved: SettingsDocument[],
+): SettingsDraft {
+  return JSON.stringify(current) === submittedFingerprint
+    ? draftFromDocuments(saved, current)
+    : current;
 }
 
 export function credentialCleanupProviderIds(source: SettingsDraft, draft: SettingsDraft): string[] {

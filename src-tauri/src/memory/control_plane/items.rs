@@ -1,32 +1,11 @@
 use rusqlite::{params, Connection};
+#[cfg(test)]
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::*;
 
-pub(super) fn enqueue_job(
-    connection: &Connection,
-    job_kind: &str,
-    source_window_id: Option<&str>,
-    now: &str,
-) -> Result<(), String> {
-    if !TURN_JOB_KINDS.contains(&job_kind) && job_kind != "outbox_delivery" {
-        return Err("Unsupported memory job kind".into());
-    }
-    let seed = format!("{job_kind}:{}", source_window_id.unwrap_or("none"));
-    let id = format!("memory_job_{}", &sha256_hex(seed.as_bytes())[..32]);
-    connection
-        .execute(
-            "INSERT INTO memory_reflection_jobs(
-               id,job_kind,source_window_id,status,created_at,updated_at
-             ) VALUES(?1,?2,?3,'queued',?4,?4)
-             ON CONFLICT(job_kind,source_window_id) DO NOTHING",
-            params![id, job_kind, source_window_id, now],
-        )
-        .map_err(database_error)?;
-    Ok(())
-}
-
+#[cfg(test)]
 #[derive(Debug)]
 pub(super) struct SourceMessage {
     pub(super) ordinal: i64,
@@ -37,6 +16,7 @@ pub(super) struct SourceMessage {
     pub(super) created_at: String,
 }
 
+#[cfg(test)]
 pub(super) fn load_source_message(
     connection: &Connection,
     id: &str,
@@ -64,6 +44,7 @@ pub(super) fn load_source_message(
         .ok_or_else(|| "Memory source message is unavailable".to_string())
 }
 
+#[cfg(test)]
 pub(super) fn load_source_window_by_ref(
     connection: &Connection,
     source_ref: &str,
@@ -86,6 +67,7 @@ pub(super) fn load_source_window_by_ref(
         .map_err(database_error)
 }
 
+#[cfg(test)]
 pub(super) fn digest_source_messages(start: &SourceMessage, end: &SourceMessage) -> String {
     let mut hasher = Sha256::new();
     for message in [start, end] {
@@ -102,6 +84,7 @@ pub(super) fn digest_source_messages(start: &SourceMessage, end: &SourceMessage)
     format!("{:x}", hasher.finalize())
 }
 
+#[cfg(test)]
 pub(super) fn require_available_source(
     connection: &Connection,
     source_window_id: &str,
@@ -121,9 +104,12 @@ pub(super) fn require_available_source(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) const PROFILE_KINDS: &[&str] = &["preference", "communication", "accessibility"];
+#[cfg(test)]
 pub(super) const WORKING_KINDS: &[&str] =
     &["open_loop", "commitment", "constraint", "pending_decision"];
+#[cfg(test)]
 pub(super) const CAPSULE_KINDS: &[&str] = &[
     "active_referent",
     "constraint",
@@ -132,6 +118,7 @@ pub(super) const CAPSULE_KINDS: &[&str] = &[
     "recent_decision",
 ];
 
+#[cfg(test)]
 pub(super) fn validate_item(
     item_kind: &str,
     semantic_key: &str,
@@ -151,6 +138,7 @@ pub(super) fn validate_item(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn validate_optional_timestamp(value: Option<&str>) -> Result<(), String> {
     if value.is_some_and(|value| {
         value.is_empty() || value.len() > 32 || !value.bytes().all(|byte| byte.is_ascii_digit())
@@ -211,29 +199,16 @@ pub(super) fn load_items<P: rusqlite::Params>(
     Ok(())
 }
 
-pub(super) fn trim_observability_events(
-    connection: &Connection,
-    table: &str,
-) -> Result<(), String> {
-    let sql = match table {
-        "memory_decision_events" => {
-            "DELETE FROM memory_decision_events WHERE id IN (
-               SELECT id FROM memory_decision_events
-               ORDER BY CAST(created_at AS INTEGER) DESC,id DESC
-               LIMIT -1 OFFSET ?1
-             )"
-        }
-        "context_projection_events" => {
+pub(super) fn trim_projection_events(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute(
             "DELETE FROM context_projection_events WHERE id IN (
                SELECT id FROM context_projection_events
                ORDER BY CAST(created_at AS INTEGER) DESC,id DESC
                LIMIT -1 OFFSET ?1
-             )"
-        }
-        _ => return Err("Invalid observability event table".into()),
-    };
-    connection
-        .execute(sql, params![MAX_OBSERVABILITY_EVENTS])
+             )",
+            params![MAX_OBSERVABILITY_EVENTS],
+        )
         .map_err(database_error)?;
     Ok(())
 }

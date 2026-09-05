@@ -1,78 +1,37 @@
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Command,
     sync::{Arc, OnceLock},
 };
 
-use crate::{RunCancellation, TtsCapabilities, TtsVoiceDescriptor};
+use serde::Deserialize;
+
+use crate::RunCancellation;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-pub(crate) struct SpawnedTts {
-    pub(crate) child: Child,
-}
-
-pub(crate) fn capabilities() -> TtsCapabilities {
-    match cached_platform_voices() {
-        Ok(voices) => TtsCapabilities {
-            available: true,
-            message: "System speech synthesis is available".to_string(),
-            voices,
-            output_devices: vec!["default".to_string()],
-        },
-        Err(message) => TtsCapabilities {
-            available: false,
-            message,
-            voices: Vec::new(),
-            output_devices: vec!["default".to_string()],
-        },
-    }
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformVoice {
+    id: String,
 }
 
 pub(crate) fn validate_voice(voice: &str) -> Result<(), String> {
     if voice == "default" {
         return Ok(());
     }
-    let capabilities = capabilities();
-    if capabilities.available && capabilities.voices.iter().any(|item| item.id == voice) {
+    if cached_platform_voices().is_ok_and(|voices| voices.iter().any(|item| item.id == voice)) {
         Ok(())
     } else {
         Err(format!("System TTS voice is unavailable: {voice}"))
     }
 }
 
-fn cached_platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
-    static VOICES: OnceLock<Result<Vec<TtsVoiceDescriptor>, String>> = OnceLock::new();
+fn cached_platform_voices() -> Result<Vec<PlatformVoice>, String> {
+    static VOICES: OnceLock<Result<Vec<PlatformVoice>, String>> = OnceLock::new();
     VOICES.get_or_init(platform_voices).clone()
-}
-
-pub(crate) fn spawn_tts_process(text: &str, voice: &str) -> Result<SpawnedTts, String> {
-    validate_voice(voice)?;
-    let mut command = platform_command(voice)?;
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(spawn_error)?;
-    let write_result = child
-        .stdin
-        .take()
-        .ok_or_else(|| "System TTS input pipe was unavailable".to_string())
-        .and_then(|mut stdin| {
-            stdin
-                .write_all(text.as_bytes())
-                .map_err(|error| format!("Could not send text to system TTS: {error}"))
-        });
-    if let Err(error) = write_result {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
-    Ok(SpawnedTts { child })
 }
 
 pub(crate) async fn render_tts_artifact(
@@ -194,45 +153,7 @@ fn render_command(_voice: &str, _path: &Path) -> Result<tokio::process::Command,
 }
 
 #[cfg(target_os = "macos")]
-fn platform_command(voice: &str) -> Result<Command, String> {
-    let mut command = Command::new("say");
-    if voice != "default" {
-        command.arg("-v").arg(voice);
-    }
-    Ok(command)
-}
-
-#[cfg(target_os = "linux")]
-fn platform_command(voice: &str) -> Result<Command, String> {
-    let mut command = Command::new("espeak-ng");
-    if voice != "default" {
-        command.arg("-v").arg(voice);
-    }
-    command.arg("--stdin");
-    Ok(command)
-}
-
-#[cfg(target_os = "windows")]
-fn platform_command(voice: &str) -> Result<Command, String> {
-    let mut command = Command::new("powershell.exe");
-    command
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; if($env:SAAA_TTS_VOICE -ne 'default'){$s.SelectVoice($env:SAAA_TTS_VOICE)}; $s.Speak([Console]::In.ReadToEnd())",
-        ])
-        .env("SAAA_TTS_VOICE", voice);
-    Ok(command)
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn platform_command(_voice: &str) -> Result<Command, String> {
-    Err("System TTS is not supported on this platform".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
+fn platform_voices() -> Result<Vec<PlatformVoice>, String> {
     let output = Command::new("say")
         .args(["-v", "?"])
         .output()
@@ -254,7 +175,7 @@ fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn parse_macos_voice(line: &str) -> Option<TtsVoiceDescriptor> {
+fn parse_macos_voice(line: &str) -> Option<PlatformVoice> {
     let marker = line.find(" #")?;
     let identity = line[..marker].trim_end();
     let language_start = identity.rfind(char::is_whitespace)? + 1;
@@ -263,15 +184,11 @@ fn parse_macos_voice(line: &str) -> Option<TtsVoiceDescriptor> {
     if id.is_empty() || language.len() < 2 {
         return None;
     }
-    Some(TtsVoiceDescriptor {
-        id: id.to_string(),
-        label: id.to_string(),
-        language: Some(language.to_string()),
-    })
+    Some(PlatformVoice { id: id.to_string() })
 }
 
 #[cfg(target_os = "linux")]
-fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
+fn platform_voices() -> Result<Vec<PlatformVoice>, String> {
     let output = Command::new("espeak-ng")
         .arg("--voices")
         .output()
@@ -286,12 +203,10 @@ fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
         .skip(1)
         .filter_map(|line| {
             let columns = line.split_whitespace().collect::<Vec<_>>();
-            let language = columns.get(1)?;
+            columns.get(1)?;
             let id = columns.get(3).or_else(|| columns.get(1))?;
-            Some(TtsVoiceDescriptor {
+            Some(PlatformVoice {
                 id: (*id).to_string(),
-                label: (*id).to_string(),
-                language: Some((*language).to_string()),
             })
         })
         .collect::<Vec<_>>();
@@ -303,7 +218,7 @@ fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
+fn platform_voices() -> Result<Vec<PlatformVoice>, String> {
     let output = Command::new("powershell.exe").args([
         "-NoProfile", "-NonInteractive", "-Command",
         "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; @($s.GetInstalledVoices()|%{$_.VoiceInfo}|%{@{id=$_.Name;label=$_.Description;language=$_.Culture.Name}})|ConvertTo-Json -Compress",
@@ -322,7 +237,7 @@ fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn platform_voices() -> Result<Vec<TtsVoiceDescriptor>, String> {
+fn platform_voices() -> Result<Vec<PlatformVoice>, String> {
     Err("System TTS is not supported on this platform".to_string())
 }
 
@@ -340,16 +255,5 @@ mod tests {
     fn parses_multiword_macos_voice_names() {
         let voice = parse_macos_voice("Grandma (German (Germany))  de_DE    # Hallo!").unwrap();
         assert_eq!(voice.id, "Grandma (German (Germany))");
-        assert_eq!(voice.language.as_deref(), Some("de_DE"));
-    }
-
-    #[test]
-    fn speaks_from_stdin_without_rendering_a_temporary_wave() {
-        let mut spawned = spawn_tts_process("[[slnc 10]]", "default").expect("system TTS starts");
-        assert!(spawned
-            .child
-            .wait()
-            .expect("system TTS completes")
-            .success());
     }
 }

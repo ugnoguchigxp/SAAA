@@ -2,8 +2,8 @@ import type { SettingsDraft } from "./settingsDraft";
 import { DEFAULT_CONVERSATION_TIMEOUT_MS } from "../../lib/conversationTimeout";
 
 export const DEFAULT_AGENT_NAME = "SAAA";
-export const DEFAULT_DYNAMIC_LAN_HOST = "localhost";
-export const DYNAMIC_LAN_PROVIDER_ID = "lan-llm-dynamic";
+const DEFAULT_DYNAMIC_LAN_HOST = "localhost";
+const DYNAMIC_LAN_PROVIDER_ID = "lan-llm-dynamic";
 
 export const defaultSettingsDraft: SettingsDraft = {
   providers: {

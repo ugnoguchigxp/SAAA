@@ -10,6 +10,9 @@ export function recordRuntimeLifecycleAudit(event: RuntimeEvent, conversationId:
     case "providerSelected":
       recordAuditEvent({ ...common, component: "provider", eventName: "runtime-provider-selected", phase: "decision", outcome: "success", subjectId: event.runtimeId, attributes: { providerId: event.providerId, providerKind: event.providerKind, routeId: event.routeId, fallbackUsed: event.fallbackUsed, selectionReason: event.selectionReasonCode } });
       break;
+    case "webSocketStateChanged":
+      recordAuditEvent({ ...common, component: "provider", eventName: "websocket-state-changed", phase: "progress", outcome: event.state === "disconnected" ? "failure" : "success", subjectId: event.runId, attributes: { state: event.state } });
+      break;
     case "activity":
       recordAuditEvent({ ...common, component: "provider", eventName: "runtime-activity-received", phase: "progress", subjectId: event.runId });
       break;

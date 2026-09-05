@@ -1,0 +1,10 @@
+[
+  { "name": "local loopback HTTP", "location": "local", "endpoint": "http://127.0.0.1:8080/v1", "valid": true },
+  { "name": "local mDNS HTTP", "location": "local", "endpoint": "http://model.local:8080/v1", "valid": true },
+  { "name": "cloud HTTPS", "location": "cloud", "endpoint": "https://model.example/v1", "valid": true },
+  { "name": "malformed URL", "location": "local", "endpoint": "http://[", "valid": false },
+  { "name": "public local HTTP", "location": "local", "endpoint": "http://203.0.113.1/v1", "valid": false },
+  { "name": "cloud HTTP", "location": "cloud", "endpoint": "http://model.example/v1", "valid": false },
+  { "name": "embedded credentials", "location": "cloud", "endpoint": "https://user:secret@model.example/v1", "valid": false },
+  { "name": "query string", "location": "cloud", "endpoint": "https://model.example/v1?key=value", "valid": false }
+]

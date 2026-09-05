@@ -1,10 +1,9 @@
 use rusqlite::{params, Connection};
 
 use crate::ipc_contract::ConversationMessage;
-use crate::{
-    database_error, memory, now_iso, validate_identifier, Conversation, PRIMARY_CONVERSATION_ID,
-    PRIMARY_CONVERSATION_TITLE,
-};
+use crate::{database_error, validate_identifier, Conversation, PRIMARY_CONVERSATION_ID};
+#[cfg(test)]
+use crate::{memory, now_iso, PRIMARY_CONVERSATION_TITLE};
 
 #[cfg(test)]
 pub(crate) fn list_messages_from_connection(
@@ -68,6 +67,7 @@ pub(super) fn validate_message(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn ensure_primary_conversation(connection: &Connection) -> Result<Conversation, String> {
     let now = now_iso();
     connection

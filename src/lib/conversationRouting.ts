@@ -1,10 +1,10 @@
 import {
   findSettingsDocument,
-  isModelProvidersSettings,
   type AppSnapshot,
   type EffectiveRouteSnapshot,
   type SettingsDocument,
 } from "./contracts";
+import { modelProvidersSettingsSchema } from "./providerSchemas";
 
 export function findPrimaryRoute(documents: SettingsDocument[]): string {
   const routing = findSettingsDocument(documents, "routing.tasks", "default");
@@ -35,8 +35,9 @@ export function updateEffectiveRoute(
   options: { fallbackUsed?: boolean; reasonCode: string },
 ): AppSnapshot {
   const document = findSettingsDocument(snapshot.settings, "providers.model", "default");
-  const provider = document && isModelProvidersSettings(document.valueJson)
-    ? document.valueJson.providers.find((candidate) => candidate.id === providerId)
+  const parsed = modelProvidersSettingsSchema.safeParse(document?.valueJson);
+  const provider = parsed.success
+    ? parsed.data.providers.find((candidate) => candidate.id === providerId)
     : undefined;
   const routeFallback = providerId !== findPrimaryRoute(snapshot.settings);
   return {

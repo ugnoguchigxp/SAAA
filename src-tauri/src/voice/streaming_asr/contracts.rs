@@ -41,6 +41,7 @@ macro_rules! voice_asr_failure_codes {
         }
 
         impl VoiceAsrFailureCode {
+            #[cfg(test)]
             const ALL: &'static [Self] = &[$(Self::$variant),+];
         }
     };
@@ -62,7 +63,10 @@ voice_asr_failure_codes! {
     Cancelled => "asr-cancelled",
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "fields are consumed through serialized IPC events"
+)]
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(
     tag = "type",
@@ -135,21 +139,16 @@ fn export_declaration<T: TS>() -> String {
 }
 
 pub(crate) fn typescript_bindings() -> String {
-    let failure_codes = VoiceAsrFailureCode::ALL
-        .iter()
-        .map(|code| serde_json::to_string(code).expect("voice ASR failure code serializes"))
-        .collect::<Vec<_>>()
-        .join(", ");
     format!(
         "// Generated from src-tauri/src/voice/streaming_asr/contracts.rs. Do not edit by hand.\n\
          // Run `bun run ipc:generate` after changing the Rust voice ASR contract.\n\n\
-         export const voiceAsrFailureCodes = [{failure_codes}] as const;\n\
-         export type VoiceAsrFailureCode = (typeof voiceAsrFailureCodes)[number];\n\n\
+         {}\n\n\
          {}\n\n\
          {}\n\n\
          {}\n\n\
          {}\n\n\
          {}\n",
+        export_declaration::<VoiceAsrFailureCode>(),
         export_declaration::<VoiceAsrStreamEvent>(),
         export_declaration::<CommitReason>(),
         export_declaration::<StartVoiceAsrSessionInput>(),

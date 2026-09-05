@@ -5,19 +5,6 @@ function source(path: string): string {
   return readFileSync(join(import.meta.dir, "..", path), "utf8");
 }
 describe("MVP UI reachability contracts", () => {
-  test("removes the Coding surface and always starts normal conversation turns", () => {
-    const app =
-      source("src/App.tsx") +
-      source("src/features/chat/useConversationTurn.ts");
-    expect(app).toContain(
-      'type Surface = "chat" | "meeting" | "situation" | "audit" | "settings"',
-    );
-    expect(app).toContain("workspacePath: null");
-    expect(app).not.toContain("openCodingSurface");
-    expect(app).not.toContain("createCodingConversation");
-    expect(app).not.toContain("Coding thread");
-    expect(app).not.toContain("Codex ready");
-  });
   test("exposes one continuous normal conversation", () => {
     const app = source("src/App.tsx");
     const contracts = source("src/lib/contracts.ts");
@@ -29,9 +16,7 @@ describe("MVP UI reachability contracts", () => {
     expect(app).not.toContain("最近の会話");
   });
   test("keeps normal Chat workspace-free and Meeting transitions safe", () => {
-    const app =
-      source("src/App.tsx") +
-      source("src/features/chat/useConversationTurn.ts");
+    const app = source("src/App.tsx") + source("src/features/chat/useConversationTurn.ts") + source("src/useOwnedSignalHeartbeat.ts");
     expect(app).toContain("workspacePath: null");
     expect(app).toContain('conversationState: activeRunId ? "model-running"');
     expect(app).not.toContain("workspacePath.trim()");
@@ -42,10 +27,21 @@ describe("MVP UI reachability contracts", () => {
   });
   test("keeps the active run controls reachable while navigation is requested", () => {
     const app = source("src/App.tsx");
+    const openChatSurface = app.slice(
+      app.indexOf("function openChatSurface()"),
+      app.indexOf("async function openMeetingSurface()"),
+    );
+    const openAuxiliarySurface = app.slice(
+      app.indexOf('function openAuxiliarySurface(nextSurface: "settings" | "situation" | "audit")'),
+      app.indexOf('if (loading) return'),
+    );
     expect(app).toContain(
       'function openAuxiliarySurface(nextSurface: "settings" | "situation" | "audit")',
     );
-    expect(app).toContain("if (!canChangeConversation()) return;");
+    expect(openChatSurface).toContain("if (conversationSessionRef.current.runId)");
+    expect(openChatSurface).toContain('setSurface("chat")');
+    expect(openChatSurface).not.toContain("canChangeConversation()");
+    expect(openAuxiliarySurface).toContain("if (!canChangeConversation()) return;");
     expect(app).toContain('openAuxiliarySurface("settings")');
     expect(app).toContain('openAuxiliarySurface("situation")');
     expect(app).not.toContain(
@@ -85,7 +81,7 @@ describe("MVP UI reachability contracts", () => {
       "userName: draft.codex.userName.trim()",
     );
   });
-  test("transcribes captured audio continuously without treating chunks as final events", () => {
+  test("uses one bounded final-segment path for Meeting transcription", () => {
     const contracts = source("src/lib/contracts.ts");
     const voice = source("src/features/voice/useAmbientVoiceSession.ts");
     const transcriber = source("src/features/voice/voiceAsrPacketSender.ts");
@@ -94,9 +90,8 @@ describe("MVP UI reachability contracts", () => {
     expect(voice).toContain("packetVoiceFrame");
     expect(transcriber).toContain("enqueueAudio");
     expect(transcriber).toContain("this.operations.push");
-    expect(contracts).toContain('type: "transcriptPartial"');
-    expect(meeting).toContain(
-      'event.type === "transcriptPartial" || event.type === "transcriptFinal"',
-    );
+    expect(contracts).not.toContain('type: "transcriptPartial"');
+    expect(meeting).toContain('event.type === "transcriptFinal"');
+    expect(meeting).not.toContain("previewMeetingAudioSegment");
   });
 });

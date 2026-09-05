@@ -2,20 +2,15 @@ use rusqlite::params;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
-use crate::{
-    database_error, now_iso, validate_identifier, AppState, RunCancellation, StartTurnInput,
-};
+#[cfg(test)]
+use crate::now_iso;
+use crate::{database_error, validate_identifier, AppState, RunCancellation, StartTurnInput};
 
 pub(crate) fn register_active_run(
     state: &AppState,
     run_id: &str,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(), String> {
-    if crate::memory::control_plane::memory_enabled() {
-        let _ = state.sqlite_writer.write(|connection| {
-            crate::memory::control_plane::cancel_running_jobs(connection, &now_iso()).map(|_| ())
-        });
-    }
     let mut active = state
         .active_runs
         .lock()
@@ -29,12 +24,7 @@ pub(crate) fn register_active_run(
     Ok(())
 }
 
-pub(crate) fn remove_active_run(state: &AppState, run_id: &str) {
-    if let Ok(mut active) = state.active_runs.lock() {
-        active.remove(run_id);
-    }
-}
-
+#[cfg(test)]
 pub(crate) fn begin_simple_runtime_run(
     state: &AppState,
     run_id: &str,

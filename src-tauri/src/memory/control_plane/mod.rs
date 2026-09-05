@@ -1,11 +1,13 @@
 //! SQLite-owned control plane for sessionless continuity and local memory work.
 //! Raw conversation text remains owned exclusively by `conversation_messages`.
 //!
-//! Candidate mutation and worker APIs are staged behind `SAAA_MEMORY_ENABLED` until
-//! the review UI and idle resource-signal adapters are connected.
-#![allow(dead_code)]
+//! Projection stays disabled unless `SAAA_MEMORY_ENABLED=1`.
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+#[cfg(test)]
+use rusqlite::OptionalExtension;
+#[cfg(test)]
+use rusqlite::Transaction;
+use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::{collections::HashSet, env};
 
@@ -13,16 +15,12 @@ pub const CONTEXT_POLICY_VERSION: i64 = 1;
 // `user_version` is the application database version. Version 15 replaces
 // encrypted voice-profile storage with private, local plaintext storage.
 pub const MEMORY_SCHEMA_VERSION: i64 = 15;
+#[cfg(test)]
 const MAX_ITEM_JSON_BYTES: usize = 4_000;
+#[cfg(test)]
 const MAX_SEMANTIC_KEY_BYTES: usize = 128;
 const MAX_OBSERVABILITY_EVENTS: usize = 10_000;
-const TURN_JOB_KINDS: [&str; 4] = [
-    "capsule_refresh",
-    "profile_candidate",
-    "experience_reflection",
-    "working_state_cleanup",
-];
-
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceWindow {
     pub id: String,
@@ -43,6 +41,7 @@ pub struct ProjectionItem {
     pub valid_until: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapsuleItemInput {
     pub item_kind: String,
@@ -53,6 +52,7 @@ pub struct CapsuleItemInput {
     pub valid_until: Option<String>,
 }
 
+#[cfg(test)]
 pub struct WorkingStateInput<'a> {
     pub item_kind: &'a str,
     pub semantic_key: &'a str,
@@ -60,15 +60,6 @@ pub struct WorkingStateInput<'a> {
     pub priority: i64,
     pub source_window_id: &'a str,
     pub valid_until: Option<&'a str>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MemoryJob {
-    pub id: String,
-    pub job_kind: String,
-    pub source_window_id: Option<String>,
-    pub attempt_count: i64,
-    pub lease_until: Option<String>,
 }
 
 pub fn memory_enabled() -> bool {
@@ -100,6 +91,7 @@ pub fn ensure_continuity_state(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn record_completed_turn(
     transaction: &Transaction<'_>,
     start_message_id: &str,
@@ -160,54 +152,17 @@ pub fn record_completed_turn(
     if persisted != window {
         return Err("Memory source window idempotency conflict".into());
     }
-    for job_kind in TURN_JOB_KINDS {
-        enqueue_job(transaction, job_kind, Some(&window.id), now)?;
-    }
     Ok(window)
 }
 
-pub fn recover_interrupted_jobs(connection: &Connection, now: &str) -> rusqlite::Result<usize> {
+pub fn cancel_unhandled_jobs(connection: &Connection, now: &str) -> rusqlite::Result<usize> {
     connection.execute(
         "UPDATE memory_reflection_jobs
-             SET status='queued', lease_until=NULL, next_attempt_at=?1,
-                 result_code='restart-recovered', updated_at=?1
-             WHERE status='running'",
+             SET status='cancelled', lease_until=NULL, next_attempt_at=NULL,
+                 result_code='worker-unavailable', updated_at=?1
+             WHERE status IN ('queued','running')",
         params![now],
     )
-}
-
-pub fn record_decision_event(
-    connection: &Connection,
-    decision_kind: &str,
-    result_code: &str,
-    item_count: usize,
-    now: &str,
-) -> Result<(), String> {
-    if decision_kind.is_empty()
-        || decision_kind.len() > 64
-        || result_code.is_empty()
-        || result_code.len() > 64
-    {
-        return Err("Invalid bounded memory decision event".into());
-    }
-    let digest =
-        sha256_hex(format!("decision:{decision_kind}:{result_code}:{item_count}:{now}").as_bytes());
-    connection
-        .execute(
-            "INSERT OR IGNORE INTO memory_decision_events(
-               id,decision_kind,result_code,item_count,created_at
-             ) VALUES(?1,?2,?3,?4,?5)",
-            params![
-                format!("memory_decision_{}", &digest[..32]),
-                decision_kind,
-                result_code,
-                item_count,
-                now
-            ],
-        )
-        .map_err(database_error)?;
-    trim_observability_events(connection, "memory_decision_events")?;
-    Ok(())
 }
 
 pub fn record_projection_event(
@@ -245,119 +200,11 @@ pub fn record_projection_event(
             ],
         )
         .map_err(database_error)?;
-    trim_observability_events(connection, "context_projection_events")?;
+    trim_projection_events(connection)?;
     Ok(())
 }
 
-pub fn cancel_running_jobs(connection: &Connection, now: &str) -> Result<usize, String> {
-    connection
-        .execute(
-            "UPDATE memory_reflection_jobs
-             SET status='queued', lease_until=NULL, next_attempt_at=?1,
-                 result_code='foreground-resumed', updated_at=?1
-             WHERE status='running'",
-            params![now],
-        )
-        .map_err(database_error)
-}
-
-pub fn claim_next_job(
-    connection: &mut Connection,
-    now: &str,
-    lease_until: &str,
-) -> Result<Option<MemoryJob>, String> {
-    let transaction = connection.transaction().map_err(database_error)?;
-    transaction
-        .execute(
-            "UPDATE memory_reflection_jobs
-             SET status='queued',lease_until=NULL,next_attempt_at=?1,
-                 result_code='lease-expired',updated_at=?1
-             WHERE status='running' AND lease_until IS NOT NULL AND lease_until <= ?1",
-            params![now],
-        )
-        .map_err(database_error)?;
-    transaction
-        .execute(
-            "UPDATE memory_reflection_jobs
-             SET status='failed',lease_until=NULL,result_code='attempts-exhausted',updated_at=?1
-             WHERE status='queued' AND attempt_count >= 10",
-            params![now],
-        )
-        .map_err(database_error)?;
-    let candidate: Option<String> = transaction
-        .query_row(
-            "SELECT id FROM memory_reflection_jobs
-             WHERE status='queued' AND attempt_count < 10
-               AND (next_attempt_at IS NULL OR next_attempt_at <= ?1)
-             ORDER BY created_at, id LIMIT 1",
-            params![now],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(database_error)?;
-    let Some(id) = candidate else {
-        transaction.commit().map_err(database_error)?;
-        return Ok(None);
-    };
-    let changed = transaction
-        .execute(
-            "UPDATE memory_reflection_jobs
-             SET status='running', attempt_count=attempt_count+1, lease_until=?1,
-                 result_code=NULL, updated_at=?2
-             WHERE id=?3 AND status='queued'",
-            params![lease_until, now, id],
-        )
-        .map_err(database_error)?;
-    if changed != 1 {
-        return Err("Memory job claim lost its atomic candidate".into());
-    }
-    let job = transaction
-        .query_row(
-            "SELECT id,job_kind,source_window_id,attempt_count,lease_until
-             FROM memory_reflection_jobs WHERE id=?1",
-            params![id],
-            |row| {
-                Ok(MemoryJob {
-                    id: row.get(0)?,
-                    job_kind: row.get(1)?,
-                    source_window_id: row.get(2)?,
-                    attempt_count: row.get(3)?,
-                    lease_until: row.get(4)?,
-                })
-            },
-        )
-        .map_err(database_error)?;
-    transaction.commit().map_err(database_error)?;
-    Ok(Some(job))
-}
-
-pub fn finish_job(
-    connection: &Connection,
-    job_id: &str,
-    status: &str,
-    result_code: &str,
-    now: &str,
-) -> Result<(), String> {
-    if !matches!(status, "completed" | "skipped" | "failed" | "cancelled")
-        || result_code.is_empty()
-        || result_code.len() > 64
-    {
-        return Err("Invalid memory job terminal result".into());
-    }
-    let changed = connection
-        .execute(
-            "UPDATE memory_reflection_jobs
-             SET status=?1, result_code=?2, lease_until=NULL, updated_at=?3
-             WHERE id=?4 AND status='running'",
-            params![status, result_code, now, job_id],
-        )
-        .map_err(database_error)?;
-    if changed != 1 {
-        return Err("Memory job is not running".into());
-    }
-    Ok(())
-}
-
+#[cfg(test)]
 pub fn insert_profile_candidate(
     connection: &Connection,
     item_kind: &str,
@@ -385,6 +232,7 @@ pub fn insert_profile_candidate(
     Ok(id)
 }
 
+#[cfg(test)]
 pub fn confirm_profile_candidate(
     connection: &mut Connection,
     item_id: &str,
@@ -418,6 +266,7 @@ pub fn confirm_profile_candidate(
     transaction.commit().map_err(database_error)
 }
 
+#[cfg(test)]
 pub fn put_working_state(
     connection: &mut Connection,
     input: WorkingStateInput<'_>,
@@ -471,6 +320,7 @@ pub fn put_working_state(
     Ok(id)
 }
 
+#[cfg(test)]
 pub fn resolve_working_state(
     connection: &Connection,
     semantic_key: &str,
@@ -485,6 +335,7 @@ pub fn resolve_working_state(
         .map_err(database_error)
 }
 
+#[cfg(test)]
 pub fn expire_working_state(connection: &Connection, now: &str) -> Result<usize, String> {
     connection
         .execute(
@@ -495,6 +346,7 @@ pub fn expire_working_state(connection: &Connection, now: &str) -> Result<usize,
         .map_err(database_error)
 }
 
+#[cfg(test)]
 pub fn activate_capsule_revision(
     connection: &mut Connection,
     source_max_created_at: &str,
@@ -759,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_turn_is_idempotent_and_enqueues_distinct_domain_jobs() {
+    fn completed_turn_is_idempotent_without_creating_unhandled_jobs() {
         let mut connection = database();
         let first = completed_source(&mut connection);
         let transaction = connection.transaction().expect("transaction starts");
@@ -779,14 +631,7 @@ mod tests {
                 row.get(0)
             })
             .expect("job count");
-        let distinct_kinds: i64 = connection
-            .query_row(
-                "SELECT COUNT(DISTINCT job_kind) FROM memory_reflection_jobs",
-                [],
-                |row| row.get(0),
-            )
-            .expect("job kinds count");
-        assert_eq!((source_count, job_count, distinct_kinds), (1, 4, 4));
+        assert_eq!((source_count, job_count), (1, 0));
 
         connection
             .execute_batch(
@@ -979,41 +824,14 @@ mod tests {
     }
 
     #[test]
-    fn job_claim_cancel_and_restart_recovery_are_durable() {
-        let mut connection = database();
-        completed_source(&mut connection);
-        let claimed = claim_next_job(&mut connection, T1, T2)
-            .expect("claim succeeds")
-            .expect("job exists");
-        assert_eq!(claimed.attempt_count, 1);
-        finish_job(&connection, &claimed.id, "completed", "completed", T1).expect("job completes");
-        claim_next_job(&mut connection, T1, T2)
-            .expect("second claim succeeds")
-            .expect("second job exists");
+    fn startup_cancels_jobs_that_have_no_worker() {
+        let connection = database();
+        connection.execute("INSERT INTO memory_reflection_jobs(id,job_kind,status,created_at,updated_at) VALUES('queued','capsule_refresh','queued',?1,?1),('running','capsule_refresh','running',?1,?1)", [T1]).expect("jobs insert");
         assert_eq!(
-            cancel_running_jobs(&connection, T1).expect("job cancels"),
-            1
+            cancel_unhandled_jobs(&connection, T2).expect("jobs cancel"),
+            2
         );
-
-        connection
-            .execute(
-                "UPDATE memory_reflection_jobs SET status='running'
-                 WHERE id=(SELECT id FROM memory_reflection_jobs WHERE status='queued' LIMIT 1)",
-                [],
-            )
-            .expect("running job simulates restart");
-        assert_eq!(
-            recover_interrupted_jobs(&connection, T2).expect("jobs recover"),
-            1
-        );
-        let recovered: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM memory_reflection_jobs
-                 WHERE status='queued' AND result_code='restart-recovered'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("recovered jobs count");
-        assert_eq!(recovered, 1);
+        let cancelled: i64 = connection.query_row("SELECT COUNT(*) FROM memory_reflection_jobs WHERE status='cancelled' AND result_code='worker-unavailable'", [], |row| row.get(0)).expect("cancelled jobs count");
+        assert_eq!(cancelled, 2);
     }
 }

@@ -29,11 +29,12 @@ const idle: MeetingSnapshot = {
   state: "idle",
   captureToken: null,
   entries: 0,
+  transcriptionScope: "all-speakers",
   capabilities: { microphone: true, systemAudio: false, overlay: false, translation: false },
   error: null,
 };
 
-type Line = { sequence: number; lane: MeetingLane; text: string; language: string | null; partial?: boolean };
+type Line = { sequence: number; lane: MeetingLane; text: string; language: string | null };
 type PendingSegment = {
   sequence: number;
   samples: Float32Array;
@@ -104,11 +105,11 @@ export function useMeetingSession(
       if (cancelled) return;
       if (event.type === "stateChanged") {
         void refreshSnapshot().catch((cause) => setError(toMessage(cause)));
-      } else if (event.type === "transcriptPartial" || event.type === "transcriptFinal") {
+      } else if (event.type === "transcriptFinal") {
         if (event.sessionId !== snapshotRef.current.sessionId) return;
         setTranscript((lines) => {
           const index = lines.findIndex((line) => line.sequence === event.sequence);
-          const next = { sequence: event.sequence, lane: event.lane, text: event.text, language: event.language, partial: event.type === "transcriptPartial" };
+          const next = { sequence: event.sequence, lane: event.lane, text: event.text, language: event.language };
           return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
         });
       } else if (event.type === "failed") {
@@ -229,7 +230,7 @@ export function useMeetingSession(
           });
           if (!result.accepted) continue;
           setTranscript((lines) => {
-            const next = { sequence: segmentSequence, lane: "microphone" as const, text: result.text, language: result.language, partial: false };
+            const next = { sequence: segmentSequence, lane: "microphone" as const, text: result.text, language: result.language };
             const index = lines.findIndex((line) => line.sequence === segmentSequence);
             return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
           });

@@ -9,12 +9,6 @@ describe("voice session state machine", () => {
     expect(transitionVoiceSession(queued, { type: "finalizeRequested", mode: "continue" }).pendingFinalize).toBe("stop");
   });
 
-  test("ignores stale transcription completion", () => {
-    const running = transitionVoiceSession(initialVoiceSession, { type: "transcriptionStarted", runId: "voice_1" });
-    expect(transitionVoiceSession(running, { type: "transcriptionFinished", runId: "old" })).toEqual(running);
-    expect(transitionVoiceSession(running, { type: "transcriptionFinished", runId: "voice_1" }).transcriptionRunId).toBeNull();
-  });
-
   test("derives public busy state from the single snapshot", () => {
     const recording = transitionVoiceSession(initialVoiceSession, { type: "captureStarted" });
     expect(voiceCaptureState(recording)).toBe("recording");
@@ -29,7 +23,13 @@ describe("voice session state machine", () => {
   test("does not treat ambient capture alone as turn processing", () => {
     const recording = transitionVoiceSession(initialVoiceSession, { type: "captureStarted" });
     expect(voiceSessionProcessing(recording)).toBe(false);
-    const transcribing = transitionVoiceSession(recording, { type: "transcriptionStarted", runId: "voice_1" });
-    expect(voiceSessionProcessing(transcribing)).toBe(true);
+    const finalizing = transitionVoiceSession(recording, { type: "finalizeRequested", mode: "stop" });
+    expect(voiceSessionProcessing(finalizing)).toBe(true);
+    const detached = transitionVoiceSession(finalizing, { type: "captureDetached" });
+    expect(voiceCaptureState(detached)).toBe("transcribing");
+    expect(voiceSessionBusy(detached)).toBe(true);
+    const completed = transitionVoiceSession(detached, { type: "finalizeCompleted" });
+    expect(voiceCaptureState(completed)).toBe("idle");
+    expect(voiceSessionBusy(completed)).toBe(false);
   });
 });

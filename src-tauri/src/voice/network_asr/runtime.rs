@@ -39,14 +39,6 @@ impl NetworkAsrRuntime {
         self.resolve_with_policy(host, cancellation, false).await
     }
 
-    pub(crate) async fn refresh(
-        &self,
-        host: &str,
-        cancellation: Arc<RunCancellation>,
-    ) -> Result<NetworkAsrResolution, String> {
-        self.resolve_with_policy(host, cancellation, true).await
-    }
-
     async fn resolve_with_policy(
         &self,
         host: &str,

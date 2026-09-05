@@ -200,7 +200,6 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         larm_gate: providers::larm::LarmRuntimeGate::Disabled,
         network_asr: voice::network_asr::NetworkAsrRuntime::new()?,
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-        tts_process: Mutex::new(None),
         streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
         voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),
         situation: Arc::new(situation::SituationRuntime::new(situation_settings, None)?),

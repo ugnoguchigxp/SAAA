@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   HarnessResolution,
@@ -29,17 +29,29 @@ export function ServiceConnectionsSection({
   onProvidersChange,
   onRoutingChange,
   onValidityChange,
+  resolveHarnessAddress = resolveServiceHarness,
 }: {
   providers: ModelProvidersSettings;
   routing: RoutingSettings;
   onProvidersChange: (value: ModelProvidersSettings) => void;
   onRoutingChange: (value: RoutingSettings) => void;
   onValidityChange: (valid: boolean) => void;
+  resolveHarnessAddress?: typeof resolveServiceHarness;
 }) {
   const { t } = useTranslation();
   const [resolution, setResolution] = useState<HarnessResolution | null>(null);
   const [resolveState, setResolveState] = useState<"idle" | "resolving" | "error">("idle");
   const [resolveMessage, setResolveMessage] = useState<ResolveNotice | null>(null);
+  const resolveGeneration = useRef(0);
+  const harnessAddressRef = useRef(providers.harness.address);
+  harnessAddressRef.current = providers.harness.address;
+
+  useEffect(() => {
+    resolveGeneration.current += 1;
+    setResolution(null);
+    setResolveState("idle");
+    setResolveMessage(null);
+  }, [providers.harness.address]);
 
   const candidates = {
     llm: providers.providers.filter(isLlmProvider),
@@ -48,6 +60,7 @@ export function ServiceConnectionsSection({
   };
 
   function changeHarnessAddress(address: string) {
+    resolveGeneration.current += 1;
     const host = legacyDynamicLanHost(address);
     onProvidersChange({
       ...providers,
@@ -64,10 +77,13 @@ export function ServiceConnectionsSection({
   }
 
   async function resolveHarness() {
+    const generation = ++resolveGeneration.current;
+    const address = providers.harness.address;
     setResolveState("resolving");
     setResolveMessage(null);
     try {
-      const next = await resolveServiceHarness(providers.harness.address);
+      const next = await resolveHarnessAddress(address);
+      if (generation !== resolveGeneration.current || address !== harnessAddressRef.current) return;
       setResolution(next);
       setResolveState("idle");
       setResolveMessage({
@@ -76,6 +92,7 @@ export function ServiceConnectionsSection({
           : next.state === "ready" ? "resolvedAll" : "resolvedPartial",
       });
     } catch (cause) {
+      if (generation !== resolveGeneration.current || address !== harnessAddressRef.current) return;
       setResolution(null);
       setResolveState("error");
       setResolveMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });

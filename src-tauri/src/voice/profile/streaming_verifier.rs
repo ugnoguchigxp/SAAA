@@ -8,13 +8,11 @@ use zeroize::Zeroizing;
 
 /// Prepared once at session start. The streaming path never reads SQLite or
 /// profile files while audio is being processed.
-#[allow(dead_code)]
 pub(crate) struct PreparedVoiceVerifier {
     extractor: SpeakerExtractor,
     references: Vec<Zeroizing<Vec<f32>>>,
     threshold: f32,
 }
-#[allow(dead_code)]
 impl PreparedVoiceVerifier {
     pub(crate) fn score(&self, samples_16k: Zeroizing<Vec<f32>>) -> Result<f32, String> {
         if samples_16k.len() > CANONICAL_SAMPLE_RATE as usize * 2 {

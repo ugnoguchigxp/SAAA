@@ -38,7 +38,3 @@ export const ASR_LANGUAGES: ReadonlyArray<{ code: AsrLanguageCode; label: string
   { code: "hu", label: "ハンガリー語" },
   { code: "mk", label: "マケドニア語" },
 ];
-
-export function isAsrLanguageCode(value: unknown): value is AsrLanguageCode {
-  return typeof value === "string" && (ASR_LANGUAGE_CODES as readonly string[]).includes(value);
-}

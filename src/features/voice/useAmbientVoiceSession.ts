@@ -18,7 +18,7 @@ import {
 import { attachAmbientVoiceCapture, resetVoiceActivityDetector } from "./ambientVoiceCapture";
 import { VoiceAsrPacketizer } from "./voiceAsrPacketizer";
 import { VoiceAsrPacketSender } from "./voiceAsrPacketSender";
-import type { CommitReason } from "./voiceAsrPacketSender";
+import type { CommitReason } from "../../lib/generated/voiceAsr";
 import { initialVoiceAsrProjection, projectVoiceAsrEvent } from "./voiceAsrProjection";
 import { VoiceFinalDeliveryQueue } from "./voiceFinalDeliveryQueue";
 import type { VoiceAsrStreamEvent } from "../../lib/generated/voiceAsr";

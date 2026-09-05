@@ -249,6 +249,14 @@ fn validate_cloud_provider(
 mod tests {
     use super::*;
 
+    #[derive(serde::Deserialize)]
+    struct EndpointCase {
+        name: String,
+        location: String,
+        endpoint: String,
+        valid: bool,
+    }
+
     fn settings(provider: ModelProviderSettings) -> ModelProvidersSettings {
         ModelProvidersSettings {
             harness: crate::HarnessSettings {
@@ -287,5 +295,27 @@ mod tests {
             );
         }
         assert!(validate_harness_address("http://example.com:9810/").is_err());
+    }
+
+    #[test]
+    fn provider_endpoints_match_the_shared_frontend_contract() {
+        let fixtures: Vec<EndpointCase> = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/fixtures/provider-validation.json"
+        )))
+        .expect("shared endpoint fixtures parse");
+        for fixture in fixtures {
+            let mut provider = crate::test_support::provider("fixture", &fixture.location);
+            let ModelProviderSettings::OpenAiCompatible(value) = &mut provider else {
+                unreachable!("fixture provider is OpenAI-compatible");
+            };
+            value.endpoint = fixture.endpoint;
+            assert_eq!(
+                validate_model_providers(&settings(provider)).is_ok(),
+                fixture.valid,
+                "{}",
+                fixture.name
+            );
+        }
     }
 }

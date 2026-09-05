@@ -3,7 +3,7 @@ use rusqlite::params;
 use crate::ipc_contract::ConversationMessage;
 use crate::redact::redact_runtime_text;
 use crate::{
-    database_error, memory, new_id, now_iso, AppState, CodexTurnOutcome, StartTurnInput,
+    database_error, new_id, now_iso, AppState, CodexTurnOutcome, StartTurnInput,
     TurnExecutionFailure,
 };
 
@@ -107,56 +107,6 @@ pub(crate) fn persist_codex_success(
             .map_err(database_error)?;
         if changed != 1 {
             return Err("Runtime run was already finalized".to_string());
-        }
-        if memory::control_plane::memory_enabled()
-            && transaction
-                .execute_batch("SAVEPOINT memory_turn_enqueue")
-                .is_ok()
-        {
-            let memory_now = now_iso();
-            let memory_result = transaction
-                .query_row(
-                    "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
-                    params![input.run_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .map_err(database_error)
-                .and_then(|input_message_id| {
-                    memory::control_plane::record_completed_turn(
-                        &transaction,
-                        &input_message_id,
-                        &message.id,
-                        &memory_now,
-                    )
-                });
-            match memory_result {
-                Ok(_) => {
-                    if transaction
-                        .execute_batch("RELEASE memory_turn_enqueue")
-                        .is_ok()
-                    {
-                        let _ = memory::control_plane::record_decision_event(
-                            &transaction,
-                            "turn-enqueue",
-                            "queued",
-                            4,
-                            &memory_now,
-                        );
-                    }
-                }
-                Err(_) => {
-                    let _ = transaction.execute_batch(
-                        "ROLLBACK TO memory_turn_enqueue; RELEASE memory_turn_enqueue",
-                    );
-                    let _ = memory::control_plane::record_decision_event(
-                        &transaction,
-                        "turn-enqueue",
-                        "failed",
-                        0,
-                        &memory_now,
-                    );
-                }
-            }
         }
         transaction.commit().map_err(database_error)?;
         Ok(message)

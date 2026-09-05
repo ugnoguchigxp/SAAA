@@ -193,7 +193,7 @@ impl SituationRuntime {
         Ok(())
     }
 
-    #[allow(dead_code)] // Used by database-isolated runtime tests; app commands use snapshot_locked.
+    #[cfg(test)]
     pub fn snapshot(&self, connection: &Connection) -> Result<SituationSnapshot, String> {
         let (monitoring_enabled, signals, state, decision, last_failure) = self.snapshot_state()?;
         Ok(SituationSnapshot {

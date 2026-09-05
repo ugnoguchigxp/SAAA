@@ -1,5 +1,5 @@
 import type { VoiceActivityObservation } from "../../lib/voiceActivity";
-import type { CommitReason } from "./voiceAsrPacketSender";
+import type { CommitReason } from "../../lib/generated/voiceAsr";
 
 const MAX_VOICE_SEGMENT_PACKETS = 30 * 10;
 

@@ -121,10 +121,6 @@
       "total": 1018,
       "production": 661
     },
-    "src-tauri/src/memory/idle.rs": {
-      "total": 98,
-      "production": 54
-    },
     "src-tauri/src/memory/mod.rs": {
       "total": 8,
       "production": 8
@@ -358,8 +354,8 @@
       "production": 37
     },
     "src-tauri/src/voice/mod.rs": {
-      "total": 6,
-      "production": 6
+      "total": 12,
+      "production": 12
     },
     "src-tauri/src/voice/network_asr.rs": {
       "total": 377,
@@ -404,10 +400,6 @@
     "src/features/chat/useConversationTurn.ts": {
       "total": 356,
       "production": 356
-    },
-    "src/features/meeting/audio/pcm.ts": {
-      "total": 15,
-      "production": 15
     },
     "src/features/meeting/audio/segmentQueue.ts": {
       "total": 8,

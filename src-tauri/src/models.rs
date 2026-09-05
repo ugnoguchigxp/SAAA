@@ -4,10 +4,6 @@ use serde_json::Value;
 mod provider_settings;
 pub(crate) use provider_settings::*;
 
-fn default_codex_input_modalities() -> Vec<String> {
-    vec!["text".to_string(), "image".to_string()]
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsDocument {
@@ -49,19 +45,12 @@ pub(crate) struct Conversation {
     pub(crate) updated_at: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateConversationInput {
     pub(crate) title: Option<String>,
     pub(crate) task_mode: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct AppendMessageInput {
-    pub(crate) conversation_id: String,
-    pub(crate) role: String,
-    pub(crate) content: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,53 +89,6 @@ pub(crate) struct LarmRuntimeStatus {
     pub(crate) state: &'static str,
     pub(crate) message: &'static str,
     pub(crate) contract_commit: &'static str,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodexReasoningEffort {
-    pub(crate) reasoning_effort: String,
-    pub(crate) description: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodexModelOption {
-    pub(crate) id: String,
-    pub(crate) model: String,
-    #[serde(default)]
-    pub(crate) display_name: String,
-    #[serde(default)]
-    pub(crate) description: String,
-    #[serde(default)]
-    pub(crate) hidden: bool,
-    #[serde(default)]
-    pub(crate) default_reasoning_effort: Option<String>,
-    #[serde(default)]
-    pub(crate) supported_reasoning_efforts: Vec<CodexReasoningEffort>,
-    #[serde(default = "default_codex_input_modalities")]
-    pub(crate) input_modalities: Vec<String>,
-    #[serde(default)]
-    pub(crate) supports_personality: bool,
-    #[serde(default)]
-    pub(crate) is_default: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodexModelPage {
-    pub(crate) data: Vec<CodexModelOption>,
-    pub(crate) next_cursor: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodexRuntimeStatus {
-    pub(crate) installed: bool,
-    pub(crate) authenticated: bool,
-    pub(crate) runtime: String,
-    pub(crate) account_type: Option<String>,
-    pub(crate) message: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -263,12 +205,6 @@ pub(crate) struct ProviderTestResult {
     pub(crate) ok: bool,
     pub(crate) message: String,
     pub(crate) latency_ms: u128,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ResolveNetworkAsrInput {
-    pub(crate) host: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

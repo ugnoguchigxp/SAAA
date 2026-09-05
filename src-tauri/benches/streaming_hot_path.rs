@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-
+#[allow(dead_code)]
 #[path = "../src/providers/llm_websocket/protocol.rs"]
 mod protocol;
 

@@ -7,4 +7,4 @@ pub(crate) use asr::{
     harness_asr_provider, probe_selected_asr, select_asr, transcribe_selected_audio,
     vad_rms_threshold, AsrRoute,
 };
-pub(crate) use tts::{selected_tts_route, speak_text, stop_tts, TtsRoute};
+pub(crate) use tts::{selected_tts_route, stop_tts, TtsRoute};

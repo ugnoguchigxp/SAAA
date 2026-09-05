@@ -43,6 +43,7 @@ pub struct MeetingSnapshot {
     pub state: MeetingState,
     pub capture_token: Option<String>,
     pub entries: usize,
+    pub transcription_scope: String,
     pub capabilities: MeetingCapabilities,
     pub error: Option<MeetingError>,
 }
@@ -71,6 +72,7 @@ pub struct PreflightResult {
     pub stt: Health,
     pub translation: Health,
     pub shipping_capabilities: MeetingCapabilities,
+    pub transcription_scope: String,
     pub blocking_errors: Vec<MeetingError>,
 }
 #[derive(Debug, Deserialize)]
@@ -98,13 +100,6 @@ pub struct SegmentInput {
     pub duration_ms: u32,
 }
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewSegmentInput {
-    pub run_id: String,
-    #[serde(flatten)]
-    pub segment: SegmentInput,
-}
-#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionInput {
     pub session_id: String,
@@ -130,13 +125,6 @@ pub enum MeetingEvent {
         state: MeetingState,
     },
     TranscriptFinal {
-        session_id: String,
-        lane: MeetingLane,
-        sequence: u64,
-        text: String,
-        language: Option<String>,
-    },
-    TranscriptPartial {
         session_id: String,
         lane: MeetingLane,
         sequence: u64,

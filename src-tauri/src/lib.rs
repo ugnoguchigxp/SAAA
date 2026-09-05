@@ -1,10 +1,10 @@
 #[cfg(test)]
 use rusqlite::Connection;
+#[cfg(test)]
+use std::fs;
 use std::{
     collections::HashMap,
-    fs,
     path::PathBuf,
-    process::Child,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -37,7 +37,6 @@ mod voice;
 pub mod voice_asr_contract;
 mod voice_behavior;
 mod voice_commands;
-mod voice_contracts;
 mod voice_text;
 
 pub(crate) use models::*;
@@ -62,8 +61,10 @@ pub(crate) use runtime::codex_turn::{
 pub(crate) use runtime::run_support::*;
 pub(crate) use runtime::turn_types::*;
 #[cfg(test)]
+pub(crate) use runtime::turns::finish_runtime_run;
+#[cfg(test)]
 pub(crate) use runtime::turns::prepare_runtime_run;
-pub(crate) use runtime::turns::{execute_turn, finish_runtime_run, send_runtime_terminal_event};
+pub(crate) use runtime::turns::{execute_turn, send_runtime_terminal_event};
 pub(crate) use situation::spawn_situation_monitor;
 pub(crate) use util::{database_error, new_id, now_iso, validate_identifier};
 use voice::streaming_asr::{
@@ -72,15 +73,15 @@ use voice::streaming_asr::{
 };
 use voice_commands::{
     delete_voice_enrollment_sample, delete_voice_profile, get_voice_profile_snapshot,
-    list_tts_capabilities, read_voice_enrollment_sample, resolve_network_asr,
-    save_voice_enrollment_sample, set_target_speaker_filter_enabled, speak_text,
+    read_voice_enrollment_sample, save_voice_enrollment_sample, set_target_speaker_filter_enabled,
     stage_audio_upload, stop_tts,
 };
-pub(crate) use voice_contracts::*;
 
 #[cfg(test)]
+use ipc_contract::ConversationMessage;
+use ipc_contract::ConversationMessagePage;
+#[cfg(test)]
 use ipc_contract::RuntimeEvent;
-use ipc_contract::{ConversationMessage, ConversationMessagePage};
 use voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
     update_conversation_voice_policy,
@@ -107,7 +108,6 @@ struct AppState {
     larm_gate: providers::larm::LarmRuntimeGate,
     network_asr: voice::network_asr::NetworkAsrRuntime,
     audio_uploads: voice::audio_upload::AudioUploadStore,
-    tts_process: Mutex<Option<ActiveTts>>,
     streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime,
     voice_behavior: voice_behavior::VoiceBehaviorRuntime,
     situation: Arc<situation::SituationRuntime>,
@@ -122,12 +122,6 @@ struct ProviderProbeStatus {
     checked_at: String,
     configuration_fingerprint: String,
     prior_session_rowid: i64,
-}
-
-struct ActiveTts {
-    run_id: String,
-    child: Child,
-    artifact: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -357,7 +351,25 @@ async fn meeting_preflight(
     input: meeting::PreflightInput,
 ) -> Result<meeting::PreflightResult, String> {
     let asr_health = voice::session::probe_selected_asr(&state).await;
-    let result = state.meeting.preflight(&input, asr_health)?;
+    let voice_profile = state.voice_profile.clone();
+    let microphone_device_id = input.microphone_device_id.clone();
+    let speaker_scorer = state.sqlite_readers.read_async(move |connection| {
+        let verifier = voice_profile.prepare_streaming_verifier(connection)?;
+        if verifier.is_some()
+            && persistence::load_voice_settings(connection)?.input_device_id
+                != microphone_device_id
+        {
+            return Err("TARGET_SPEAKER_UNAVAILABLE: Meeting microphone does not match the configured voice input".to_string());
+        }
+        Ok(verifier.map(|value| {
+            Arc::new(
+                voice::streaming_asr::speaker_gate_runtime::PreparedSpeakerScorer::new(value),
+            ) as Arc<dyn voice::streaming_asr::speaker_gate_runtime::SpeakerScorer>
+        }))
+    }).await;
+    let result = state
+        .meeting
+        .preflight(&input, asr_health, speaker_scorer)?;
     state.meeting.emit(meeting::MeetingEvent::StateChanged {
         session_id: None,
         state: result.state.clone(),
@@ -406,14 +418,6 @@ async fn append_meeting_audio_segment(
 }
 
 #[tauri::command]
-async fn preview_meeting_audio_segment(
-    state: tauri::State<'_, AppState>,
-    input: meeting::PreviewSegmentInput,
-) -> Result<(), String> {
-    meeting::commands::preview_meeting_audio_segment(&state, input).await
-}
-
-#[tauri::command]
 fn save_meeting_transcript(
     state: tauri::State<'_, AppState>,
     input: meeting::SessionInput,
@@ -451,37 +455,6 @@ fn unwatch_meeting(state: tauri::State<'_, AppState>, subscriber_id: String) -> 
 }
 
 #[tauri::command]
-async fn list_codex_models() -> Result<Vec<CodexModelOption>, String> {
-    match tauri::async_runtime::spawn_blocking(fetch_codex_models).await {
-        Ok(result) => result.map_err(|error| redact_runtime_text(&error)),
-        Err(error) => Err(redact_runtime_text(&format!(
-            "Codex model lookup task failed: {error}"
-        ))),
-    }
-}
-
-#[tauri::command]
-async fn get_codex_status() -> CodexRuntimeStatus {
-    match tauri::async_runtime::spawn_blocking(fetch_codex_status).await {
-        Ok(Ok(status)) => status,
-        Ok(Err(error)) => CodexRuntimeStatus {
-            installed: false,
-            authenticated: false,
-            runtime: "unavailable".to_string(),
-            account_type: None,
-            message: redact_runtime_text(&error),
-        },
-        Err(error) => CodexRuntimeStatus {
-            installed: false,
-            authenticated: false,
-            runtime: "unavailable".to_string(),
-            account_type: None,
-            message: redact_runtime_text(&format!("Codex health check failed: {error}")),
-        },
-    }
-}
-
-#[tauri::command]
 fn save_settings_documents(
     state: tauri::State<'_, AppState>,
     input: SaveSettingsDocumentsInput,
@@ -495,22 +468,6 @@ fn set_voice_listening_enabled(
     input: SetVoiceListeningEnabledInput,
 ) -> Result<SettingsDocument, String> {
     persistence::settings::set_voice_listening_enabled(&state, input.enabled)
-}
-
-#[tauri::command]
-fn create_conversation(
-    state: tauri::State<'_, AppState>,
-    input: CreateConversationInput,
-) -> Result<Conversation, String> {
-    persistence::app_commands::create_conversation(&state, input)
-}
-
-#[tauri::command]
-fn append_message(
-    state: tauri::State<'_, AppState>,
-    input: AppendMessageInput,
-) -> Result<ConversationMessage, String> {
-    persistence::app_commands::append_message(&state, input)
 }
 
 #[tauri::command]
@@ -540,15 +497,6 @@ async fn list_messages(
 fn shutdown_app_state(state: &AppState) {
     state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
-    if let Ok(mut process) = state.tts_process.lock() {
-        if let Some(mut active) = process.take() {
-            let _ = active.child.kill();
-            let _ = active.child.wait();
-            if let Some(path) = active.artifact {
-                let _ = fs::remove_file(path);
-            }
-        }
-    }
     if let Ok(active_runs) = state.active_runs.lock() {
         for cancellation in active_runs.values() {
             cancellation.cancel();
@@ -655,7 +603,6 @@ pub fn run() {
                 network_asr: voice::network_asr::NetworkAsrRuntime::new()
                     .map_err(std::io::Error::other)?,
                 audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-                tts_process: Mutex::new(None),
                 streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
                 voice_behavior: voice_behavior::VoiceBehaviorRuntime::default(),
                 situation,
@@ -715,8 +662,6 @@ pub fn run() {
             run_situation_calibration,
             decide_situation_calibration,
             clear_situation_history,
-            list_codex_models,
-            get_codex_status,
             runtime::turns::command::start_turn,
             record_frontend_audit_event,
             cancel_run,
@@ -725,13 +670,10 @@ pub fn run() {
             set_provider_api_key,
             delete_provider_api_key,
             get_provider_credential_state,
-            resolve_network_asr,
             start_voice_asr_session,
             append_voice_asr_audio,
             commit_voice_asr_utterance,
             stop_voice_asr_session,
-            speak_text,
-            list_tts_capabilities,
             stop_tts,
             meeting_preflight,
             start_meeting,
@@ -742,14 +684,11 @@ pub fn run() {
             resume_meeting,
             stop_meeting,
             append_meeting_audio_segment,
-            preview_meeting_audio_segment,
             save_meeting_transcript,
             discard_meeting,
             save_settings_documents,
             set_voice_listening_enabled,
-            create_conversation,
             list_messages,
-            append_message,
             get_conversation_voice_policy,
             update_conversation_voice_policy,
             reset_conversation_voice_policy
@@ -1331,32 +1270,6 @@ mod tests {
     }
 
     #[test]
-    fn auxiliary_codex_reader_bounds_and_decodes_stdout() {
-        let (receiver, reader) = spawn_bounded_codex_reader(std::io::Cursor::new(
-            b"{\"id\":2,\"result\":{}}\n".to_vec(),
-        ));
-        assert_eq!(
-            receiver
-                .recv_timeout(Duration::from_millis(50))
-                .expect("reader returns a message")
-                .expect("message decodes")["id"],
-            2
-        );
-        drop(receiver);
-        reader.join().expect("reader joins");
-
-        let oversized = vec![b'x'; MAX_CODEX_STDOUT_BYTES as usize + 1];
-        let (receiver, reader) = spawn_bounded_codex_reader(std::io::Cursor::new(oversized));
-        assert!(receiver
-            .recv_timeout(Duration::from_millis(250))
-            .expect("reader returns a bounded failure")
-            .expect_err("oversized output is rejected")
-            .contains("4 MiB"));
-        drop(receiver);
-        reader.join().expect("oversized reader joins");
-    }
-
-    #[test]
     fn runtime_and_voice_events_serialize_camel_case_fields() {
         let runtime = serde_json::to_value(RuntimeEvent::Started {
             run_id: "run_contract".to_string(),
@@ -1490,6 +1403,7 @@ mod tests {
                     translation_enabled: false,
                 },
                 Ok(()),
+                Ok(None),
             )
             .expect("meeting preflight succeeds");
         state
@@ -1578,6 +1492,7 @@ mod tests {
                     translation_enabled: false,
                 },
                 Ok(()),
+                Ok(None),
             )
             .expect("meeting preflight succeeds");
 
@@ -2211,13 +2126,30 @@ mod tests {
         use std::net::TcpListener;
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+        listener.set_nonblocking(true).expect("fixture is bounded");
         let address = listener.local_addr().expect("fixture address");
         let (release_sender, release_receiver) = mpsc::channel();
         let server = thread::spawn(move || {
-            let (mut socket, _) = listener.accept().expect("fixture accepts request");
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let mut socket = loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+                    Err(error) => panic!("fixture accept failed: {error}"),
+                }
+            };
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("fixture read is bounded");
             let mut request = [0_u8; 4 * 1_024];
-            let _ = socket.read(&mut request).expect("fixture reads request");
-            release_receiver.recv().expect("fixture release arrives");
+            let _ = socket.read(&mut request);
+            let _ = release_receiver.recv_timeout(Duration::from_secs(2));
         });
 
         let directory = tempfile::tempdir().expect("run directory creates");
@@ -2860,32 +2792,6 @@ mod tests {
             .success());
     }
 
-    #[test]
-    fn codex_model_page_uses_backward_compatible_modalities() {
-        let mut page: CodexModelPage = serde_json::from_value(json!({
-            "data": [{
-                "id": "gpt-test",
-                "model": "gpt-test",
-                "displayName": "GPT Test",
-                "description": "Test model",
-                "hidden": false,
-                "defaultReasoningEffort": "medium",
-                "supportedReasoningEfforts": [],
-                "supportsPersonality": true,
-                "isDefault": true
-            }],
-            "nextCursor": null
-        }))
-        .expect("model page decodes");
-
-        assert_eq!(page.data.len(), 1);
-        assert_eq!(page.data[0].input_modalities, ["text", "image"]);
-        assert!(page.data[0].is_default);
-        validate_codex_model_option(&page.data[0]).expect("bounded model is valid");
-        page.data[0].description = "x".repeat(2_001);
-        assert!(validate_codex_model_option(&page.data[0]).is_err());
-    }
-
     #[cfg(unix)]
     #[test]
     fn codex_app_server_contract_covers_start_stream_resume_and_cancel() {
@@ -3404,16 +3310,6 @@ for line in sys.stdin:
             .any(|event| { event.contains("SAAA_OK") && event.contains("\"type\":\"delta\"") }));
     }
 
-    #[test]
-    #[ignore = "requires a local Codex runtime and authentication"]
-    fn codex_model_lookup_returns_visible_models() {
-        let models = fetch_codex_models().expect("Codex models load");
-
-        assert!(!models.is_empty());
-        assert!(models.iter().all(|model| !model.hidden));
-        assert!(models.iter().any(|model| model.is_default));
-    }
-
     #[tokio::test]
     async fn larm_turn_commits_before_events_and_keeps_success_when_release_fails() {
         use std::ffi::OsString;
@@ -3794,9 +3690,6 @@ for line in sys.stdin:
     #[test]
     #[ignore = "requires a local Codex runtime, authentication, and network access"]
     fn codex_live_read_only_turn_completes() {
-        let status = fetch_codex_status().expect("Codex status loads");
-        assert!(status.installed);
-        assert!(status.authenticated, "{}", status.message);
         let workspace = tempfile::tempdir().expect("temporary workspace");
         let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
         let outcome = run_codex_turn_process(
@@ -3823,9 +3716,6 @@ for line in sys.stdin:
     #[test]
     #[ignore = "requires a local Codex runtime, authentication, and network access"]
     fn codex_live_read_only_turn_cancels_after_turn_start() {
-        let status = fetch_codex_status().expect("Codex status loads");
-        assert!(status.installed);
-        assert!(status.authenticated, "{}", status.message);
         let workspace = tempfile::tempdir().expect("temporary workspace");
         let cancellation = Arc::new(RunCancellation::default());
         let cancellation_for_events = cancellation.clone();

@@ -11,7 +11,7 @@ pub(crate) mod settings;
 mod settings_migration;
 pub(crate) mod sqlite;
 pub(crate) use conversation_page::list_message_page_from_connection;
-pub(crate) use conversations::{ensure_primary_conversation, list_conversations_from_connection};
+pub(crate) use conversations::list_conversations_from_connection;
 pub(crate) use settings::{
     list_settings_documents, load_codex_settings, load_model_providers, load_routing_settings,
     load_security_settings, load_voice_settings, save_settings_documents_to_connection,

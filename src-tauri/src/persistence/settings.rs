@@ -398,7 +398,9 @@ pub(crate) fn validate_settings_batch(
                 | ModelProviderSettings::Larm(_)
                 | ModelProviderSettings::DynamicLan(_)
         ) {
-            return Err(format!("Fallback provider is not enabled: {provider_id}"));
+            return Err(format!(
+                "Fallback provider does not support LLM: {provider_id}"
+            ));
         }
         if !route_ids.insert(provider_id) {
             return Err(format!("Duplicate provider in route: {provider_id}"));

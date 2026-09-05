@@ -1,16 +1,18 @@
-use rusqlite::{params, TransactionBehavior};
+#[cfg(test)]
+use rusqlite::params;
 
-use super::conversations::validate_conversation_write_target;
+#[cfg(test)]
+use super::conversations::ensure_primary_conversation;
 use super::effective_route::effective_route_snapshot;
 use super::{
-    ensure_primary_conversation, list_conversations_from_connection,
-    save_settings_documents_to_connection, validate_settings_batch, validate_settings_document,
+    list_conversations_from_connection, save_settings_documents_to_connection,
+    validate_settings_batch, validate_settings_document,
 };
-use crate::ipc_contract::ConversationMessage;
+#[cfg(test)]
+use crate::{database_error, new_id, now_iso, Conversation, CreateConversationInput};
 use crate::{
-    database_error, new_id, now_iso, spawn_situation_monitor, validate_identifier, AppSnapshot,
-    AppState, AppendMessageInput, Conversation, CreateConversationInput, LarmRuntimeStatus,
-    SaveSettingsDocumentsInput, SettingsDocument,
+    spawn_situation_monitor, AppSnapshot, AppState, LarmRuntimeStatus, SaveSettingsDocumentsInput,
+    SettingsDocument,
 };
 
 pub(crate) fn get_app_snapshot(state: &AppState) -> Result<AppSnapshot, String> {
@@ -80,6 +82,7 @@ pub(crate) fn save_settings_documents(
     Ok(saved)
 }
 
+#[cfg(test)]
 pub(crate) fn create_conversation(
     state: &AppState,
     input: CreateConversationInput,
@@ -126,68 +129,6 @@ pub(crate) fn create_conversation(
             .map_err(database_error)?;
         Ok(conversation)
     })
-}
-
-pub(crate) fn append_message(
-    state: &AppState,
-    input: AppendMessageInput,
-) -> Result<ConversationMessage, String> {
-    validate_identifier(&input.conversation_id, "conversation id")?;
-    let content = input.content.trim();
-    if content.is_empty() {
-        return Err("Message cannot be empty".to_string());
-    }
-    if content.chars().count() > 16_000 {
-        return Err("Message exceeds the 16,000 character limit".to_string());
-    }
-    if !matches!(
-        input.role.as_str(),
-        "user" | "assistant" | "system" | "transcript"
-    ) {
-        return Err("Unsupported message role".to_string());
-    }
-
-    let message = ConversationMessage {
-        id: new_id("message"),
-        conversation_id: input.conversation_id,
-        role: input.role,
-        content: content.to_string(),
-        created_at: now_iso(),
-    };
-    state.sqlite_writer.write_transaction(
-        TransactionBehavior::Deferred,
-        |transaction| {
-            let task_mode: String = transaction
-                .query_row(
-                    "SELECT task_mode FROM conversations WHERE id = ?1",
-                    params![message.conversation_id],
-                    |row| row.get(0),
-                )
-                .map_err(|_| "Conversation does not exist".to_string())?;
-            validate_conversation_write_target(&message.conversation_id, &task_mode)?;
-            transaction
-                .execute(
-                    "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![
-                        message.id,
-                        message.conversation_id,
-                        message.role,
-                        message.content,
-                        message.created_at,
-                    ],
-                )
-                .map_err(database_error)?;
-            transaction
-                .execute(
-                    "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
-                    params![message.created_at, message.conversation_id],
-                )
-                .map_err(database_error)?;
-            Ok(())
-        },
-    )?;
-    Ok(message)
 }
 
 #[cfg(test)]

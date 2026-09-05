@@ -31,7 +31,7 @@ use super::protocol::{
     OrderedRun, ProtocolError, ProviderEvent, ResumeNegotiation, RunStart, SUBPROTOCOL,
 };
 use crate::{
-    ipc_contract::RuntimeEvent,
+    ipc_contract::{RuntimeEvent, WebSocketConnectionState},
     providers::stream::{execute_agent_tool, tool_was_offered, ProviderOutputPersistence},
     runtime::{agent_tools::AgentToolCall, event_hub::RuntimeEventSender},
     RunCancellation, StartTurnInput,
@@ -448,8 +448,26 @@ async fn acknowledge_terminal(
     .map_err(|_| WebSocketRunError::new(WebSocketRunErrorKind::Timeout))?
 }
 
+fn emit_websocket_state(context: &WebSocketRunContext<'_>, state: WebSocketConnectionState) {
+    let _ = context.on_event.send(RuntimeEvent::WebSocketStateChanged {
+        run_id: context.input.run_id.clone(),
+        state,
+    });
+}
+
 pub(crate) async fn run(
     context: WebSocketRunContext<'_>,
+) -> Result<WebSocketRunResult, WebSocketRunError> {
+    emit_websocket_state(&context, WebSocketConnectionState::Connecting);
+    let result = run_connected(&context).await;
+    if result.is_err() {
+        emit_websocket_state(&context, WebSocketConnectionState::Disconnected);
+    }
+    result
+}
+
+async fn run_connected(
+    context: &WebSocketRunContext<'_>,
 ) -> Result<WebSocketRunResult, WebSocketRunError> {
     validate_stream_url(context.stream_url)?;
     let allocation_id = context
@@ -459,6 +477,10 @@ pub(crate) async fn run(
     let mut connection = tokio::select! {
         biased;
         _ = context.cancellation.cancelled() => {
+            emit_websocket_state(
+                context,
+                WebSocketConnectionState::Disconnected,
+            );
             return Ok(WebSocketRunResult::Cancelled { output_started: false });
         }
         _ = tokio::time::sleep_until(deadline) => {
@@ -466,6 +488,7 @@ pub(crate) async fn run(
         }
         connection = acquire_connection(context.stream_url, context.authorization) => connection?,
     };
+    emit_websocket_state(context, WebSocketConnectionState::Connected);
 
     let start = RunStart::new(
         &context.input.run_id,
@@ -485,6 +508,10 @@ pub(crate) async fn run(
     tokio::select! {
         biased;
         _ = context.cancellation.cancelled() => {
+            emit_websocket_state(
+                context,
+                WebSocketConnectionState::Disconnected,
+            );
             return Ok(WebSocketRunResult::Cancelled { output_started: false });
         }
         _ = tokio::time::sleep_until(deadline) => {
@@ -556,9 +583,17 @@ pub(crate) async fn run(
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
                         crate::runtime::event_hub::performance::record_reconnect();
                         drop(connection);
+                        emit_websocket_state(
+                            context,
+                            WebSocketConnectionState::Connecting,
+                        );
                         connection = tokio::select! {
                             biased;
                             _ = context.cancellation.cancelled() => {
+                                emit_websocket_state(
+                                    context,
+                                    WebSocketConnectionState::Disconnected,
+                                );
                                 return Ok(WebSocketRunResult::Cancelled { output_started });
                             }
                             _ = tokio::time::sleep_until(deadline) => {
@@ -573,6 +608,10 @@ pub(crate) async fn run(
                                 &acknowledged,
                             ) => resumed.map_err(|error| error.with_output_started(output_started))?,
                         };
+                        emit_websocket_state(
+                            context,
+                            WebSocketConnectionState::Connected,
+                        );
                         last_ack_at = tokio::time::Instant::now();
                         continue;
                     }
@@ -589,7 +628,10 @@ pub(crate) async fn run(
                         continue;
                     }
                     Message::Pong(_) => continue,
-                    Message::Close(_) => unreachable!("close frames resume before projection"),
+                    Message::Close(_) => {
+                        return Err(WebSocketRunError::new(WebSocketRunErrorKind::Protocol)
+                            .with_output_started(output_started));
+                    }
                     Message::Frame(_) => return Err(
                         WebSocketRunError::new(WebSocketRunErrorKind::Protocol)
                             .with_output_started(output_started)
@@ -601,9 +643,17 @@ pub(crate) async fn run(
                         crate::runtime::event_hub::performance::record_sequence_gap();
                         crate::runtime::event_hub::performance::record_reconnect();
                         drop(connection);
+                        emit_websocket_state(
+                            context,
+                            WebSocketConnectionState::Connecting,
+                        );
                         connection = tokio::select! {
                             biased;
                             _ = context.cancellation.cancelled() => {
+                                emit_websocket_state(
+                                    context,
+                                    WebSocketConnectionState::Disconnected,
+                                );
                                 return Ok(WebSocketRunResult::Cancelled { output_started });
                             }
                             _ = tokio::time::sleep_until(deadline) => {
@@ -618,6 +668,10 @@ pub(crate) async fn run(
                                 &acknowledged,
                             ) => resumed.map_err(|error| error.with_output_started(output_started))?,
                         };
+                        emit_websocket_state(
+                            context,
+                            WebSocketConnectionState::Connected,
+                        );
                         last_ack_at = tokio::time::Instant::now();
                         continue;
                     }
@@ -916,6 +970,28 @@ mod tests {
         tungstenite::handshake::server::{Request, Response},
     };
 
+    #[derive(Clone, Default)]
+    struct StateRecordingSender(Arc<std::sync::Mutex<Vec<WebSocketConnectionState>>>);
+
+    impl StateRecordingSender {
+        fn states(&self) -> Vec<WebSocketConnectionState> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    impl RuntimeEventSender for StateRecordingSender {
+        fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {
+            if let RuntimeEvent::WebSocketStateChanged { state, .. } = event {
+                self.0.lock().unwrap().push(state);
+            }
+            Ok(())
+        }
+
+        fn clone_box(&self) -> Box<dyn RuntimeEventSender> {
+            Box::new(self.clone())
+        }
+    }
+
     fn ready_message(max_connections: usize) -> Message {
         Message::Text(
             serde_json::json!({
@@ -987,6 +1063,38 @@ mod tests {
             );
         }
         assert!(validate_stream_url("wss://example.com/v1/llm/stream").is_ok());
+    }
+
+    #[tokio::test]
+    async fn invalid_endpoint_reports_connecting_then_disconnected() {
+        let input = test_input("run_invalid_endpoint");
+        let sink = StateRecordingSender::default();
+        let result = run(WebSocketRunContext {
+            stream_url: "https://example.com/v1/llm/stream",
+            authorization: None,
+            allocation_id: None,
+            model: "local",
+            messages: &[],
+            tools: &[],
+            reasoning_effort: "medium",
+            max_output_tokens: 64,
+            tool_timeout: Duration::from_secs(1),
+            timeout: Duration::from_secs(1),
+            input: &input,
+            on_event: &sink,
+            cancellation: Arc::new(RunCancellation::default()),
+            output_persistence: None,
+        })
+        .await;
+
+        assert_eq!(result.unwrap_err().kind, WebSocketRunErrorKind::Contract);
+        assert_eq!(
+            sink.states(),
+            [
+                WebSocketConnectionState::Connecting,
+                WebSocketConnectionState::Disconnected,
+            ]
+        );
     }
 
     #[test]
@@ -1121,7 +1229,7 @@ mod tests {
 
         let input = test_input("run_failed_output_fixture");
         let messages = [serde_json::json!({ "role": "user", "content": "fixture" })];
-        let sink = tauri::ipc::Channel::new(|_| Ok(()));
+        let sink = StateRecordingSender::default();
         let result = run(WebSocketRunContext {
             stream_url: &format!("ws://{address}/v1/llm/stream"),
             authorization: None,
@@ -1147,12 +1255,35 @@ mod tests {
                 output_started: true,
             }
         );
+        assert_eq!(
+            sink.states(),
+            [
+                WebSocketConnectionState::Connecting,
+                WebSocketConnectionState::Connected,
+            ]
+        );
         server.await.unwrap();
     }
 
     #[tokio::test]
     async fn cancellation_drops_late_delta_after_run_cancel() {
         use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        #[derive(Clone)]
+        struct DeltaCountingSender(Arc<AtomicUsize>);
+
+        impl RuntimeEventSender for DeltaCountingSender {
+            fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {
+                if matches!(event, RuntimeEvent::Delta { .. }) {
+                    self.0.fetch_add(1, AtomicOrdering::Relaxed);
+                }
+                Ok(())
+            }
+
+            fn clone_box(&self) -> Box<dyn RuntimeEventSender> {
+                Box::new(self.clone())
+            }
+        }
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1204,11 +1335,7 @@ mod tests {
             trigger.cancel();
         });
         let dispatched = Arc::new(AtomicUsize::new(0));
-        let observed = dispatched.clone();
-        let sink = tauri::ipc::Channel::new(move |_| {
-            observed.fetch_add(1, AtomicOrdering::Relaxed);
-            Ok(())
-        });
+        let sink = DeltaCountingSender(dispatched.clone());
         let input = test_input("run_cancel_output_fixture");
         let messages = [serde_json::json!({ "role": "user", "content": "fixture" })];
         let result = run(WebSocketRunContext {

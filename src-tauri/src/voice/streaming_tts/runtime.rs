@@ -27,9 +27,8 @@ const MAX_READY_CHUNKS: usize = 3;
 const MAX_READY_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
 const MAX_READY_AUDIO_MS: u64 = 30_000;
 
-/// Owns the sentence accumulator and a single serial renderer for every spoken turn.
-/// It deliberately does not share the legacy one-shot `tts_process`: a streamed turn
-/// can continue to accept deltas while the previous sentence is playing.
+/// Owns the sentence accumulator and renderer queue for every spoken turn so new
+/// deltas can arrive while the previous sentence is playing.
 #[derive(Clone, Default)]
 pub(crate) struct StreamingSpeechRuntime {
     sessions: Arc<Mutex<HashMap<String, SpeechSession>>>,

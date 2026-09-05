@@ -2,24 +2,7 @@ use std::sync::Arc;
 use zeroize::Zeroize;
 
 use crate::redact::redact_runtime_text;
-use crate::{
-    database_error, register_active_run, remove_active_run, validate_identifier, AppState,
-    RunCancellation,
-};
-
-fn publish_state(
-    state: &AppState,
-    snapshot: &crate::meeting::MeetingSnapshot,
-    microphone: crate::situation::contracts::MicrophoneState,
-) {
-    state
-        .meeting
-        .emit(crate::meeting::MeetingEvent::StateChanged {
-            session_id: snapshot.session_id.clone(),
-            state: snapshot.state.clone(),
-        });
-    state.situation.set_microphone_state(microphone);
-}
+use crate::{database_error, AppState, RunCancellation};
 
 pub(crate) fn start_meeting_inner(
     state: &AppState,
@@ -29,14 +12,6 @@ pub(crate) fn start_meeting_inner(
         .interaction_policy
         .lock()
         .map_err(|_| "Interaction policy lock unavailable".to_string())?;
-    let tts_process = state
-        .tts_process
-        .lock()
-        .map_err(|_| "TTS process lock unavailable".to_string())?;
-    if tts_process.is_some() {
-        return Err("MEETING_POLICY_TTS_BLOCKED: Stop speech and retry.".to_string());
-    }
-    drop(tts_process);
     let coding_run_active: bool = state.sqlite_readers.read(|connection| {
         connection
             .query_row(
@@ -53,7 +28,7 @@ pub(crate) fn start_meeting_inner(
         return Err("MEETING_POLICY_AGENT_BLOCKED: Stop the Coding Agent and retry.".to_string());
     }
     let snapshot = state.meeting.start(input, &state.sqlite_writer)?;
-    publish_state(
+    super::publish_state(
         state,
         &snapshot,
         crate::situation::contracts::MicrophoneState::SaaaCapturing,
@@ -68,7 +43,7 @@ pub(crate) fn pause_meeting(
     let snapshot = state
         .meeting
         .pause(&input.session_id, &state.sqlite_writer)?;
-    publish_state(
+    super::publish_state(
         state,
         &snapshot,
         crate::situation::contracts::MicrophoneState::Inactive,
@@ -83,7 +58,7 @@ pub(crate) fn resume_meeting(
     let snapshot = state
         .meeting
         .resume(&input.session_id, &state.sqlite_writer)?;
-    publish_state(
+    super::publish_state(
         state,
         &snapshot,
         crate::situation::contracts::MicrophoneState::SaaaCapturing,
@@ -98,7 +73,7 @@ pub(crate) fn stop_meeting(
     let snapshot = state
         .meeting
         .stop(&input.session_id, &state.sqlite_writer)?;
-    publish_state(
+    super::publish_state(
         state,
         &snapshot,
         crate::situation::contracts::MicrophoneState::Inactive,
@@ -120,6 +95,17 @@ pub(crate) async fn append_meeting_audio_segment(
     state
         .situation
         .set_microphone_state(crate::situation::contracts::MicrophoneState::SaaaTranscribing);
+    if !super::speaker::matches(state, &input, &samples).await {
+        state.meeting.abort_segment(&input);
+        state
+            .situation
+            .set_microphone_state(crate::situation::contracts::MicrophoneState::SaaaCapturing);
+        return Ok(crate::meeting::SegmentResult {
+            accepted: false,
+            text: String::new(),
+            language: None,
+        });
+    }
     let transcription = crate::voice::session::transcribe_selected_audio(
         state,
         &samples,
@@ -202,53 +188,6 @@ fn recoverable_asr_rejection(error: &str) -> bool {
         || error.starts_with("ASR_NO_SPEECH")
 }
 
-pub(crate) async fn preview_meeting_audio_segment(
-    state: &AppState,
-    mut input: crate::meeting::PreviewSegmentInput,
-) -> Result<(), String> {
-    validate_identifier(&input.run_id, "run id")?;
-    input.segment.samples = state
-        .audio_uploads
-        .consume(&input.segment.audio_upload_id, "meeting-segment")?;
-    let cancellation = Arc::new(RunCancellation::default());
-    register_active_run(state, &input.run_id, cancellation.clone())?;
-    let preview = state.meeting.preview(&mut input.segment);
-    input.segment.samples.zeroize();
-    let samples = match preview {
-        Ok(preview) => preview,
-        Err(error) => {
-            remove_active_run(state, &input.run_id);
-            return Err(error);
-        }
-    };
-    let transcription = crate::voice::session::transcribe_selected_audio(
-        state,
-        &samples,
-        input.segment.sample_rate,
-        cancellation.clone(),
-    )
-    .await;
-    remove_active_run(state, &input.run_id);
-    match transcription {
-        Ok((text, language)) => {
-            if state.meeting.preview_is_current(&input.segment) {
-                state
-                    .meeting
-                    .emit(crate::meeting::MeetingEvent::TranscriptPartial {
-                        session_id: input.segment.session_id,
-                        lane: input.segment.lane,
-                        sequence: input.segment.sequence,
-                        text,
-                        language,
-                    });
-            }
-            Ok(())
-        }
-        Err(_) if cancellation.is_cancelled() => Err("Meeting preview cancelled".to_string()),
-        Err(error) => Err(redact_runtime_text(&error)),
-    }
-}
-
 pub(crate) fn save_meeting_transcript(
     state: &AppState,
     input: crate::meeting::SessionInput,
@@ -256,7 +195,7 @@ pub(crate) fn save_meeting_transcript(
     let snapshot = state
         .meeting
         .save(&input.session_id, &state.sqlite_writer)?;
-    publish_state(
+    super::publish_state(
         state,
         &snapshot,
         crate::situation::contracts::MicrophoneState::Inactive,

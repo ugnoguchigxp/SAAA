@@ -1,6 +1,5 @@
 import { AUDIO_PACKET_BYTES } from "./voiceAsrPacketizer";
-
-export type CommitReason = "silence" | "max-duration";
+import type { CommitReason } from "../../lib/generated/voiceAsr";
 type Control = { resolve: () => void; reject: (error: Error) => void };
 type Operation = { type: "audio"; bytes: Uint8Array } | ({ type: "commit"; reason: CommitReason } & Control) | ({ type: "stop"; finalizeCurrent: boolean } & Control);
 type SenderApi = { append: (sequence: number, bytes: Uint8Array) => Promise<void>; commit: (reason: CommitReason) => Promise<void>; stop: (finalizeCurrent: boolean) => Promise<void> };

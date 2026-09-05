@@ -5,26 +5,19 @@ export type VoiceSession = {
   capture: "idle" | "starting" | "recording" | "suspended";
   finalizing: boolean;
   pendingFinalize: FinalizeMode | null;
-  transcriptionRunId: string | null;
-  processingSegments: boolean;
 };
 
 export type VoiceSessionEvent =
   | { type: "actionStarted" | "actionFinished" }
   | { type: "captureStarting" | "captureStarted" | "captureDetached" | "captureSuspended" }
   | { type: "finalizeRequested"; mode: FinalizeMode }
-  | { type: "finalizeCompleted" }
-  | { type: "processingStarted" | "processingFinished" }
-  | { type: "transcriptionStarted"; runId: string }
-  | { type: "transcriptionFinished"; runId: string };
+  | { type: "finalizeCompleted" };
 
 export const initialVoiceSession: VoiceSession = {
   actionInProgress: false,
   capture: "idle",
   finalizing: false,
   pendingFinalize: null,
-  transcriptionRunId: null,
-  processingSegments: false,
 };
 
 export function transitionVoiceSession(state: VoiceSession, event: VoiceSessionEvent): VoiceSession {
@@ -40,28 +33,21 @@ export function transitionVoiceSession(state: VoiceSession, event: VoiceSessionE
         ? { ...state, pendingFinalize: mergeFinalizeMode(state.pendingFinalize, event.mode) }
         : { ...state, finalizing: true };
     case "finalizeCompleted": return { ...state, finalizing: false, pendingFinalize: null };
-    case "processingStarted": return { ...state, processingSegments: true };
-    case "processingFinished": return { ...state, processingSegments: false };
-    case "transcriptionStarted": return { ...state, transcriptionRunId: event.runId };
-    case "transcriptionFinished":
-      return state.transcriptionRunId === event.runId
-        ? { ...state, transcriptionRunId: null }
-        : state;
   }
 }
 
 export function voiceCaptureState(state: VoiceSession): "idle" | "recording" | "transcribing" {
   if (state.capture === "recording") return "recording";
-  if (state.finalizing || state.processingSegments || state.transcriptionRunId) return "transcribing";
+  if (state.finalizing) return "transcribing";
   return "idle";
 }
 
 export function voiceSessionBusy(state: VoiceSession): boolean {
-  return state.actionInProgress || state.capture !== "idle" || voiceCaptureState(state) !== "idle";
+  return voiceSessionProcessing(state) || state.capture !== "idle";
 }
 
 export function voiceSessionProcessing(state: VoiceSession): boolean {
-  return state.actionInProgress || state.finalizing || state.processingSegments || state.transcriptionRunId !== null;
+  return state.actionInProgress || state.finalizing;
 }
 
 function mergeFinalizeMode(current: FinalizeMode | null, next: FinalizeMode): FinalizeMode {

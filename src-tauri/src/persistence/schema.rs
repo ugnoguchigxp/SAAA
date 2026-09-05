@@ -186,7 +186,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
         PRIMARY_CONVERSATION_ID,
         &memory_now,
     )?;
-    memory::control_plane::recover_interrupted_jobs(&transaction, &memory_now)?;
+    memory::control_plane::cancel_unhandled_jobs(&transaction, &memory_now)?;
     migrate_pristine_provider_defaults_to_dynamic_lan(&transaction)?;
     migrate_direct_dynamic_lan_provider_to_discovery(&transaction)?;
     migrate_dynamic_lan_provider_identity(&transaction)?;

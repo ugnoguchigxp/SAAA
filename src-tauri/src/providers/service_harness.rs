@@ -64,7 +64,6 @@ pub(crate) struct LlmStreamingDescriptor {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct ResolvedAsrService {
     pub(crate) batch: ServiceDescriptor,
     pub(crate) streaming: Option<AsrStreamingDescriptor>,
@@ -104,7 +103,6 @@ pub(crate) async fn resolve_service(
 
 /// Resolves the batch ASR endpoint and, when advertised by a v2 harness, its
 /// compatible native stream endpoint from the same validated descriptor.
-#[allow(dead_code)]
 pub(crate) async fn resolve_asr_service(address: &str) -> Result<ResolvedAsrService, String> {
     let descriptor = load_descriptor(address, true).await?;
     let service = descriptor

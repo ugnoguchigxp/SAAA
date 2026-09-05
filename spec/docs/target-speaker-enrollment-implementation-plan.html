@@ -73,7 +73,7 @@ Candidate VAD
       既存の未filter音声経路へ自動fallbackしない。
     </li>
     <li>FilterがOFFのときだけ現行の音声入力経路を維持する。rollbackで登録音声を自動削除しない。</li>
-    <li>通常Chatだけを対象とし、Meetingの複数話者文字起こしへ同じfilterを適用しない。</li>
+    <li>通常ChatとMeetingを対象とし、FilterがONのときはASR送信前に同じ登録話者検証を適用する。</li>
     <li>
       保存音声、embedding、similarity scoreを本人認証、決済、権限昇格、security
       decisionへ使用しない。
@@ -1090,7 +1090,9 @@ speaker.asr-receipt-missing</code></pre>
     <li>Keychain accessを失った状態でFilterが未filter経路へfallbackしない。</li>
     <li>個別sample削除後にprofileが再構築され、必要件数未満ならFilterがOFFになる。</li>
     <li>全profile削除後にfile、row、embedding、Keychain itemが残らない。</li>
-    <li>Meetingの複数話者captureが従来どおり動作し、Target Speaker Filterに影響されない。</li>
+    <li>
+      MeetingでもFilterがONなら非登録話者の音声がASRへ送信されず、同時発話の話者分離は保証しない。
+    </li>
   </ol>
 
   <h2 id="21-delivery-gates">21. Delivery Gates</h2>

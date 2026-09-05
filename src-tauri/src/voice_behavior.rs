@@ -22,10 +22,12 @@ pub(crate) use contracts::{
     tool_definition, ConversationVoicePolicySnapshot, ResetConversationVoicePolicyInput,
     UpdateConversationVoicePolicyInput, VoicePresentationDecision,
 };
-pub(crate) use persistence::{
-    ensure_policy, migrate, policy_snapshot, reset_policy_from_ui, update_policy_from_ui,
-};
+#[cfg(test)]
+pub(crate) use persistence::ensure_policy;
 use persistence::{load_policy, record_event, source_message_id, PolicyRow};
+pub(crate) use persistence::{
+    migrate, policy_snapshot, reset_policy_from_ui, update_policy_from_ui,
+};
 use run_state::apply_ui_speech_runtime;
 
 pub(crate) const UPDATE_VOICE_BEHAVIOR_TOOL_NAME: &str = "update_conversation_voice_behavior";
@@ -375,64 +377,66 @@ fn apply_tool_mutation(
         })
     })?;
 
-    if let DatabaseMutation::Conflict(current) = mutation {
-        let (presentation, snapshot) =
-            presentation_and_snapshot(state, Some(&input.run_id), conversation_id)?;
-        drop(policy_guard);
-        return encode_tool_result(VoiceToolResult {
-            applied: false,
-            policy_revision: current.policy_revision,
-            outcomes: VoiceToolOutcomes {
-                speech_output: if arguments
-                    .speech_output
-                    .as_ref()
-                    .is_some_and(|change| change.mode == "silent")
-                {
-                    "applied-current-response-only"
-                } else if arguments.speech_output.is_some() {
-                    "conflict"
-                } else {
-                    "unchanged"
+    let (next, run_override, speech_policy_changed, listening_policy_changed) = match mutation {
+        DatabaseMutation::Conflict(current) => {
+            let (presentation, snapshot) =
+                presentation_and_snapshot(state, Some(&input.run_id), conversation_id)?;
+            drop(policy_guard);
+            return encode_tool_result(VoiceToolResult {
+                applied: false,
+                policy_revision: current.policy_revision,
+                outcomes: VoiceToolOutcomes {
+                    speech_output: if arguments
+                        .speech_output
+                        .as_ref()
+                        .is_some_and(|change| change.mode == "silent")
+                    {
+                        "applied-current-response-only"
+                    } else if arguments.speech_output.is_some() {
+                        "conflict"
+                    } else {
+                        "unchanged"
+                    },
+                    listening_pace: if arguments.listening_pace.is_some() {
+                        "conflict"
+                    } else {
+                        "unchanged"
+                    },
                 },
-                listening_pace: if arguments.listening_pace.is_some() {
-                    "conflict"
-                } else {
-                    "unchanged"
+                effective: VoiceToolEffective {
+                    speech_output: presentation.decision,
+                    speech_reason_code: presentation.reason_code,
+                    listening_pace: snapshot.effective_listening_pace,
                 },
-            },
-            effective: VoiceToolEffective {
-                speech_output: presentation.decision,
-                speech_reason_code: presentation.reason_code,
-                listening_pace: snapshot.effective_listening_pace,
-            },
-            takes_effect: VoiceToolTakesEffect {
-                speech_output: if arguments
-                    .speech_output
-                    .as_ref()
-                    .is_some_and(|change| change.mode == "silent")
-                {
-                    "current_response"
-                } else {
-                    "unchanged"
+                takes_effect: VoiceToolTakesEffect {
+                    speech_output: if arguments
+                        .speech_output
+                        .as_ref()
+                        .is_some_and(|change| change.mode == "silent")
+                    {
+                        "current_response"
+                    } else {
+                        "unchanged"
+                    },
+                    listening_pace: "unchanged",
                 },
-                listening_pace: "unchanged",
-            },
-            error: Some(VoiceToolError {
-                code: "policy-conflict",
-                message:
-                    "The voice policy changed after this turn started. The newer setting was kept.",
-            }),
-        });
-    }
-
-    let DatabaseMutation::Applied {
-        next,
-        run_override,
-        speech_policy_changed,
-        listening_policy_changed,
-    } = mutation
-    else {
-        unreachable!("conflict returned above")
+                error: Some(VoiceToolError {
+                    code: "policy-conflict",
+                    message: "The voice policy changed after this turn started. The newer setting was kept.",
+                }),
+            });
+        }
+        DatabaseMutation::Applied {
+            next,
+            run_override,
+            speech_policy_changed,
+            listening_policy_changed,
+        } => (
+            next,
+            run_override,
+            speech_policy_changed,
+            listening_policy_changed,
+        ),
     };
     if arguments.speech_output.is_some() {
         set_run_override(state, &input.run_id, run_override)?;

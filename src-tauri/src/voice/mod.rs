@@ -1,6 +1,11 @@
 pub mod audio_upload;
+pub mod cloud_asr;
+pub mod cloud_tts;
+pub mod language;
 pub mod network_asr;
 pub mod profile;
-mod services;
+pub mod session;
+pub mod speaker;
+pub mod streaming_asr;
 pub(crate) mod streaming_tts;
-pub use services::{cloud_asr, cloud_tts, language, session, speaker, streaming_asr, system_tts};
+pub mod system_tts;

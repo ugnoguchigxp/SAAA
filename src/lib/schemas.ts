@@ -12,7 +12,7 @@ export { modelProvidersSettingsSchema } from "./providerSchemas";
 
 export const runtimeFailureCodeSchema = z.enum(runtimeFailureCodes);
 
-export const signalHealthSchema = z.enum([
+const signalHealthSchema = z.enum([
   "ready",
   "disabled",
   "permission-denied",
@@ -153,38 +153,15 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   if (namespaces.size !== expectedDocuments.size || [...namespaces].some((value) => !expectedDocuments.has(value))) {
     throw new Error("Each supported settings document must appear exactly once");
   }
-  parsed.forEach((document) => {
-    switch (document.namespace) {
-      case "providers.model":
-        modelProvidersSettingsSchema.parse(document.valueJson);
-        break;
-      case "providers.agent":
-        codexAgentSettingsSchema.parse(document.valueJson);
-        break;
-      case "routing.tasks":
-        routingSettingsSchema.parse(document.valueJson);
-        break;
-      case "voice.runtime":
-        voiceSettingsSchema.parse(document.valueJson);
-        break;
-      case "security.runtime":
-        securitySettingsSchema.parse(document.valueJson);
-        break;
-      case "ui.preferences":
-        regionalPreferencesSchema.parse(document.valueJson);
-        break;
-      case "situation.runtime":
-        situationSettingsSchema.parse(document.valueJson);
-        break;
-    }
-  });
-  const providersDocument = parsed.find((document) => document.namespace === "providers.model");
-  const routingDocument = parsed.find((document) => document.namespace === "routing.tasks");
-  const securityDocument = parsed.find((document) => document.namespace === "security.runtime");
-  const providerSettings = modelProvidersSettingsSchema.parse(providersDocument?.valueJson);
+  const values = new Map(parsed.map((document) => [document.namespace, document.valueJson]));
+  const providerSettings = modelProvidersSettingsSchema.parse(values.get("providers.model"));
+  codexAgentSettingsSchema.parse(values.get("providers.agent"));
+  const routing = routingSettingsSchema.parse(values.get("routing.tasks"));
+  voiceSettingsSchema.parse(values.get("voice.runtime"));
+  const security = securitySettingsSchema.parse(values.get("security.runtime"));
+  regionalPreferencesSchema.parse(values.get("ui.preferences"));
+  situationSettingsSchema.parse(values.get("situation.runtime"));
   const providers = providerSettings.providers;
-  const routing = routingSettingsSchema.parse(routingDocument?.valueJson);
-  const security = securitySettingsSchema.parse(securityDocument?.valueJson);
   const usesHarness = routing.conversationRespond.source === "harness"
     || routing.voiceTranscribe.source === "harness"
     || routing.voiceSpeak.source === "harness";
@@ -204,6 +181,9 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
     const fallback = enabled.get(fallbackId);
     if (!fallback) throw new Error(`Fallback provider is not enabled: ${fallbackId}`);
+    if (!["openai-compatible", "larm", "dynamic-lan"].includes(fallback.kind)) {
+      throw new Error(`Fallback provider does not support LLM: ${fallbackId}`);
+    }
     if (routeIds.has(fallbackId)) throw new Error(`Duplicate provider in route: ${fallbackId}`);
     routeIds.add(fallbackId);
     if (security.localOnlyWhenSelected && primary?.location === "local" && fallback.location === "cloud") {

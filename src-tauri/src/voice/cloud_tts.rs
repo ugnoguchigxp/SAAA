@@ -26,23 +26,6 @@ pub(crate) async fn probe(provider: &CloudTtsProviderSettings) -> Result<String,
     Ok("Cloud TTS generated a bounded audio preview".to_string())
 }
 
-pub(crate) async fn synthesize_to_player(
-    provider: &CloudTtsProviderSettings,
-    text: &str,
-    timeout_ms: u64,
-    cancellation: Arc<RunCancellation>,
-    directory: &Path,
-) -> Result<(Child, PathBuf), String> {
-    let path = render_to_artifact(provider, text, timeout_ms, cancellation, directory).await?;
-    match spawn_player(&path) {
-        Ok(child) => Ok((child, path)),
-        Err(error) => {
-            let _ = fs::remove_file(&path);
-            Err(error)
-        }
-    }
-}
-
 pub(crate) async fn render_to_artifact(
     provider: &CloudTtsProviderSettings,
     text: &str,

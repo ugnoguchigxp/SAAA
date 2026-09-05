@@ -386,119 +386,6 @@ impl VoiceProfileRuntime {
         fs::read(absolute_path).map_err(|error| format!("Could not read the voice sample: {error}"))
     }
 
-    /// Verifies every voiced window and fails closed before ASR when filtering is enabled.
-    #[allow(dead_code)]
-    pub fn verify_if_enabled(
-        &self,
-        connection: &Connection,
-        samples: &[f32],
-        sample_rate: u32,
-    ) -> Result<Option<f32>, String> {
-        let profile: Option<(String, bool, f32, String, i64)> = connection
-            .query_row(
-                "SELECT status,filter_enabled,threshold,model_sha256,embedding_dimension
-                 FROM voice_profiles WHERE id=?1",
-                [PROFILE_ID],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(database_error)?;
-        let Some((status, filter_enabled, threshold, model_sha256, embedding_dimension)) = profile
-        else {
-            return Ok(None);
-        };
-        if !filter_enabled {
-            return Ok(None);
-        }
-        if samples.len() > sample_rate as usize * 30 {
-            return Err(
-                "TARGET_SPEAKER_REJECTED: Filtered utterances are limited to thirty seconds"
-                    .to_string(),
-            );
-        }
-        if status != "ready" {
-            return Err(
-                "TARGET_SPEAKER_UNAVAILABLE: The enabled voice profile is not ready".to_string(),
-            );
-        }
-        let extractor = self
-            .extractor
-            .as_ref()
-            .ok_or_else(|| format!("TARGET_SPEAKER_UNAVAILABLE: {}", self.runtime_message))?;
-        if model_sha256 != MODEL_SHA256 || embedding_dimension != extractor.dimension() as i64 {
-            return Err(
-                "TARGET_SPEAKER_UNAVAILABLE: The voice profile model is incompatible; delete it and enroll again"
-                    .to_string(),
-            );
-        }
-        let stored_embeddings = connection
-            .prepare(
-                "SELECT id,relative_path,embedding FROM voice_profile_samples
-                 WHERE profile_id=?1 ORDER BY ordinal",
-            )
-            .and_then(|mut statement| {
-                statement
-                    .query_map([PROFILE_ID], |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, Vec<u8>>(2)?,
-                        ))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()
-            })
-            .map_err(database_error)?;
-        if stored_embeddings.len() < MIN_READY_SAMPLES {
-            return Err("TARGET_SPEAKER_UNAVAILABLE: Too few enrollment samples".to_string());
-        }
-        let references = stored_embeddings
-            .into_iter()
-            .map(|(id, relative_path, stored)| {
-                let path = self
-                    .resolve_sample_path(&id, &relative_path)
-                    .map_err(|error| format!("TARGET_SPEAKER_UNAVAILABLE: {error}"))?;
-                if !path.is_file() {
-                    return Err("TARGET_SPEAKER_UNAVAILABLE: A voice sample is missing".to_string());
-                }
-                decode_embedding(&stored, extractor.dimension())
-                    .map_err(|error| format!("TARGET_SPEAKER_UNAVAILABLE: {error}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let canonical = Zeroizing::new(
-            resample_mono(samples, sample_rate, CANONICAL_SAMPLE_RATE)
-                .map_err(|error| format!("TARGET_SPEAKER_REJECTED: {error}"))?,
-        );
-        let windows = voiced_windows(&canonical)?;
-        let mut minimum_score = 1.0_f32;
-        for window in windows {
-            let candidate = Zeroizing::new(
-                extractor
-                    .embed(window)
-                    .map_err(|error| format!("TARGET_SPEAKER_REJECTED: {error}"))?,
-            );
-            let score = references
-                .iter()
-                .map(|reference| cosine_similarity(reference, &candidate))
-                .fold(f32::NEG_INFINITY, f32::max);
-            if !score.is_finite() || score < threshold {
-                return Err(
-                    "TARGET_SPEAKER_REJECTED: The recording does not match the enrolled voice profile"
-                        .to_string(),
-                );
-            }
-            minimum_score = minimum_score.min(score);
-        }
-        Ok(Some(minimum_score))
-    }
-
     fn resolve_sample_path(&self, sample_id: &str, stored_path: &str) -> Result<PathBuf, String> {
         let expected = expected_sample_relative_path(sample_id)?;
         if Path::new(stored_path) != expected {
@@ -859,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_filter_rejects_unbounded_audio_before_model_or_asr() {
+    fn enabled_filter_requires_available_streaming_verifier() {
         let connection = Connection::open_in_memory().expect("database opens");
         migrate_plain_voice_profile_schema(&connection);
         connection
@@ -872,9 +759,10 @@ mod tests {
             .expect("profile inserts");
         let runtime = VoiceProfileRuntime::unavailable_for_tests(PathBuf::new());
         let error = runtime
-            .verify_if_enabled(&connection, &vec![0.1; 16_000 * 31], 16_000)
-            .expect_err("long audio rejects");
-        assert!(error.starts_with("TARGET_SPEAKER_REJECTED"));
+            .prepare_streaming_verifier(&connection)
+            .err()
+            .expect("unavailable verifier rejects");
+        assert!(error.starts_with("TARGET_SPEAKER_UNAVAILABLE"));
     }
 
     #[test]

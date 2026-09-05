@@ -70,22 +70,26 @@ const providerSchema = z.discriminatedUnion("kind", [
   dynamicLanProviderSchema,
 ]);
 
-function isSafeEndpoint(value: string): boolean {
+function isSafeEndpoint(endpoint: URL): boolean {
+  return !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash;
+}
+
+function parsedUrl(value: string): URL | null {
   try {
-    const endpoint = new URL(value);
-    return !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash;
+    return new URL(value);
   } catch {
-    return false;
+    return null;
   }
 }
 
 const harnessAddressSchema = z.union([z.literal(""), z.string().url().max(2_048)]).superRefine((value, context) => {
   if (!value) return;
-  if (!isSafeEndpoint(value)) {
+  const address = parsedUrl(value);
+  if (!address) return;
+  if (!isSafeEndpoint(address)) {
     context.addIssue({ code: "custom", message: "Harness address must not contain credentials, a query, or a fragment" });
     return;
   }
-  const address = new URL(value);
   if (address.protocol !== "http:" && address.protocol !== "https:") {
     context.addIssue({ code: "custom", message: "Harness address must use HTTP or HTTPS" });
   }
@@ -107,17 +111,20 @@ export const modelProvidersSettingsSchema = z.object({
       if (provider.kind === "dynamic-lan" && provider.enabled) enabledDynamicLanProviders += 1;
       if (provider.kind === "openai-compatible" && provider.enabled && (!provider.endpoint || !provider.model)) context.addIssue({ code: "custom", message: "Enabled providers require an endpoint and model", path: [index] });
       if (provider.kind === "openai-compatible" && provider.endpoint) {
-        const endpoint = new URL(provider.endpoint);
-        if (!isSafeEndpoint(provider.endpoint)) context.addIssue({ code: "custom", message: "Provider endpoints must not contain credentials, query, or fragment", path: [index, "endpoint"] });
+        const endpoint = parsedUrl(provider.endpoint);
+        if (!endpoint) return;
+        if (!isSafeEndpoint(endpoint)) context.addIssue({ code: "custom", message: "Provider endpoints must not contain credentials, query, or fragment", path: [index, "endpoint"] });
         if (provider.location === "local" && (endpoint.protocol !== "http:" || !isLocalProviderHost(endpoint.hostname))) context.addIssue({ code: "custom", message: "Local providers must use an http:// loopback or private-network endpoint", path: [index, "endpoint"] });
         if (provider.location === "cloud" && endpoint.protocol !== "https:") context.addIssue({ code: "custom", message: "Cloud providers must use HTTPS", path: [index, "endpoint"] });
       }
       if ((provider.kind === "cloud-asr" || provider.kind === "cloud-tts") && provider.endpoint) {
-        const endpoint = new URL(provider.endpoint);
-        if (endpoint.protocol !== "https:" || !isSafeEndpoint(provider.endpoint)) context.addIssue({ code: "custom", message: "Cloud providers must use a credential-free HTTPS endpoint without query or fragment", path: [index, "endpoint"] });
+        const endpoint = parsedUrl(provider.endpoint);
+        if (!endpoint) return;
+        if (endpoint.protocol !== "https:" || !isSafeEndpoint(endpoint)) context.addIssue({ code: "custom", message: "Cloud providers must use a credential-free HTTPS endpoint without query or fragment", path: [index, "endpoint"] });
       }
       if (provider.kind === "larm") {
-        const baseUrl = new URL(provider.baseUrl);
+        const baseUrl = parsedUrl(provider.baseUrl);
+        if (!baseUrl) return;
         if (baseUrl.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(baseUrl.hostname) || !baseUrl.port || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash || baseUrl.pathname !== "/") {
           context.addIssue({ code: "custom", message: "LARM must use an explicit HTTP numeric-loopback base URL without credentials, path, query, or fragment", path: [index, "baseUrl"] });
         }

@@ -1,9 +1,4 @@
-use std::sync::Arc;
-
-use crate::{
-    voice, AppState, NetworkAsrResolution, ResolveNetworkAsrInput, RunCancellation, SpeakTextInput,
-    TtsCapabilities,
-};
+use crate::{voice, AppState};
 
 #[tauri::command]
 pub(crate) fn get_voice_profile_snapshot(
@@ -31,14 +26,6 @@ pub(crate) fn save_voice_enrollment_sample(
         return Err(
             "Voice enrollment is unavailable while a meeting is active or paused".to_string(),
         );
-    }
-    if state
-        .tts_process
-        .lock()
-        .map(|value| value.is_some())
-        .unwrap_or(true)
-    {
-        return Err("Stop speech playback before recording an enrollment sample".to_string());
     }
     if state.streaming_tts.is_active() {
         return Err("Stop speech playback before recording an enrollment sample".to_string());
@@ -85,30 +72,6 @@ pub(crate) fn read_voice_enrollment_sample(
         .voice_profile
         .read_sample(&state.sqlite_readers, &sample_id)
         .map(tauri::ipc::Response::new)
-}
-
-#[tauri::command]
-pub(crate) async fn resolve_network_asr(
-    state: tauri::State<'_, AppState>,
-    input: ResolveNetworkAsrInput,
-) -> Result<NetworkAsrResolution, String> {
-    state
-        .network_asr
-        .refresh(&input.host, Arc::new(RunCancellation::default()))
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn speak_text(
-    state: tauri::State<'_, AppState>,
-    input: SpeakTextInput,
-) -> Result<(), String> {
-    voice::session::speak_text(&state, input).await
-}
-
-#[tauri::command]
-pub(crate) fn list_tts_capabilities() -> TtsCapabilities {
-    voice::system_tts::capabilities()
 }
 
 #[tauri::command]

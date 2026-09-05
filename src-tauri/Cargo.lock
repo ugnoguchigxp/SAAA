@@ -3751,6 +3751,7 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-llm-fetch"
 version = "0.1.0"
+source = "git+https://github.com/ugnoguchigxp/LLM-fetch.git?rev=76b0fcff8ed7db3a306212aca8c5759b6f814fa6#76b0fcff8ed7db3a306212aca8c5759b6f814fa6"
 dependencies = [
  "base64 0.22.1",
  "bytes",
