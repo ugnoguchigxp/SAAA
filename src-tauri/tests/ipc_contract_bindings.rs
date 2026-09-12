@@ -16,3 +16,13 @@ fn generated_runtime_event_binding_is_current() {
         "generated RuntimeEvent binding is stale; run `bun run ipc:generate`"
     );
 }
+
+#[test]
+fn generated_ui_binding_is_current() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated/generativeUi.ts");
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        saaa_lib::ipc_contract::ui_typescript_bindings()
+    );
+}

@@ -1,0 +1,6 @@
+{
+  "command": "cargo test --manifest-path src-tauri/Cargo.toml voice::http_audio::live::live_tts_playback_and_asr -- --ignored --exact --nocapture",
+  "exitCode": 0,
+  "credentialPersisted": false,
+  "input": "fixed synthetic Japanese speech; no microphone"
+}

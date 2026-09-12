@@ -7,5 +7,10 @@ fn main() {
     fs::create_dir_all(output_path.parent().expect("binding path has a parent"))
         .expect("generated binding directory is created");
     fs::write(&output_path, output).expect("generated RuntimeEvent binding is written");
+    fs::write(
+        output_path.with_file_name("generativeUi.ts"),
+        saaa_lib::ipc_contract::ui_typescript_bindings(),
+    )
+    .expect("UI bindings are written");
     println!("generated {}", output_path.display());
 }

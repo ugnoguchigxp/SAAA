@@ -57,29 +57,10 @@ pub(crate) async fn prepare(
     let scorer =
         verifier.map(|value| Arc::new(PreparedSpeakerScorer::new(value)) as Arc<dyn SpeakerScorer>);
     let (batch_route, native) = match selected.route {
-        AsrRoute::Cloud(provider) => {
-            crate::voice::cloud_asr::probe(&provider)
-                .await
-                .map_err(|_| "asr-provider-unavailable".to_string())?;
-            (BatchRoute::Cloud(provider), None)
-        }
+        AsrRoute::Cloud(provider) => (BatchRoute::Cloud(provider), None),
         AsrRoute::Harness(address) => {
             match crate::providers::service_harness::resolve_asr_service(&address).await {
-                Ok(service) => {
-                    let native = service.streaming.map(|descriptor| NativeRoute {
-                        descriptor,
-                        model: service.batch.model.clone(),
-                        language: service
-                            .batch
-                            .language
-                            .clone()
-                            .unwrap_or_else(|| "auto".to_string()),
-                    });
-                    (
-                        BatchRoute::Cloud(harness_asr_provider(service.batch)),
-                        native,
-                    )
-                }
+                Ok(service) => (BatchRoute::Cloud(harness_asr_provider(service.batch)), None),
                 Err(primary_error) => {
                     let Some(host) =
                         crate::providers::service_harness::legacy_dynamic_lan_host(&address)?

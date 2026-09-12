@@ -31,6 +31,11 @@ describe("localized UI presentation", () => {
       "dynamic_lan rejected the connection authorization.",
       "settings",
     )).toBe("Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。");
+    expect(localizeUiMessage(
+      i18n.t,
+      "Agent Session creation did not advertise a supported event stream URL",
+      "settings",
+    )).toBe("セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。");
   });
 
   test("does not expose untrusted backend error text in either language", async () => {

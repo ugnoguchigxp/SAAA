@@ -1,0 +1,103 @@
+[
+  {
+    "case": "health-before",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "errorCode": null,
+    "elapsedMs": 1188.9
+  },
+  {
+    "case": "ready",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 18,
+    "errorCode": null,
+    "elapsedMs": 18.1
+  },
+  {
+    "case": "authenticated-model-catalog",
+    "status": 404,
+    "contentType": "application/json",
+    "bytes": 52,
+    "errorCode": "not_found",
+    "elapsedMs": 11.9
+  },
+  {
+    "case": "authenticated-activity",
+    "status": 404,
+    "contentType": "application/json",
+    "bytes": 52,
+    "errorCode": "not_found",
+    "elapsedMs": 9.5
+  },
+  {
+    "case": "ordinary-chat-json",
+    "status": 400,
+    "contentType": "application/json",
+    "bytes": 85,
+    "errorCode": "allocation_required",
+    "elapsedMs": 12.1
+  },
+  {
+    "case": "ordinary-tts-wav",
+    "status": 400,
+    "contentType": "application/json",
+    "bytes": 85,
+    "errorCode": "allocation_required",
+    "elapsedMs": 11.8
+  },
+  {
+    "case": "ordinary-asr-fixed-tone",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 25,
+    "errorCode": null,
+    "textPresent": true,
+    "textNonempty": false,
+    "elapsedMs": 434.7
+  },
+  {
+    "case": "dynamic-create",
+    "status": 201,
+    "contentType": "application/json",
+    "bytes": 848,
+    "errorCode": null,
+    "elapsedMs": 338.0
+  },
+  {
+    "case": "dynamic-claim",
+    "status": 400,
+    "contentType": "application/json",
+    "bytes": 70,
+    "errorCode": "invalid_request",
+    "elapsedMs": 11.0
+  },
+  {
+    "case": "dynamic-release-finally",
+    "status": 204,
+    "contentType": null,
+    "bytes": 0,
+    "elapsedMs": 12.9
+  },
+  {
+    "case": "dynamic-state-after-release",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 895,
+    "errorCode": null,
+    "elapsedMs": 11.6
+  },
+  {
+    "case": "cleanup-state",
+    "status": "released"
+  },
+  {
+    "case": "health-after",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "errorCode": null,
+    "elapsedMs": 10.2
+  }
+]

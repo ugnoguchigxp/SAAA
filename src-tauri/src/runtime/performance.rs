@@ -111,7 +111,8 @@ pub(crate) fn snapshot() -> Value {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     json!({
-        "protocol": crate::providers::llm_websocket::protocol::SUBPROTOCOL,
+        "protocol": "openai.chat-completions.v1",
+        "http": crate::providers::http_metrics::snapshot(),
         "socketReceiveToHubAccept": percentiles(&metrics.socket_to_hub_ns),
         "hubAcceptToTtsAppend": percentiles(&metrics.hub_to_tts_ns),
         "ttsBoundaryToDispatch": percentiles(&metrics.tts_boundary_to_dispatch_ns),

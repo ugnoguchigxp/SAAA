@@ -35,6 +35,16 @@ pub(crate) fn available_agent_tools(
     if voice_calls_this_attempt == 0 && output_persistence.is_some() {
         definitions.push(crate::voice_behavior::tool_definition());
     }
+    if calls_this_attempt < 12
+        && output_persistence.is_some_and(|p| {
+            p.state
+                .sqlite_readers
+                .read(crate::generative_ui::store::enabled)
+                .unwrap_or(false)
+        })
+    {
+        definitions.extend(crate::generative_ui::tools::definitions());
+    }
     definitions
 }
 
@@ -50,6 +60,13 @@ pub(crate) async fn execute_agent_tool(
     call: &crate::runtime::agent_tools::AgentToolCall,
     timeout: Duration,
 ) -> String {
+    if crate::generative_ui::tools::NAMES.contains(&call.name.as_str()) {
+        return crate::generative_ui::tools::execute(
+            output_persistence.map(|p| p.state),
+            input,
+            call,
+        );
+    }
     if call.name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME {
         return crate::voice_behavior::execute_tool_for_state(
             output_persistence.map(|persistence| persistence.state),

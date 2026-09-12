@@ -18,6 +18,7 @@ pub fn typescript_bindings() -> String {
     format!(
         "// Generated from src-tauri/src/ipc_contract.rs. Do not edit by hand.\n\
          // Run `bun run ipc:generate` after changing the Rust IPC contract.\n\n\
+         import type {{ ContentPart }} from \"./generativeUi\";\n\n\
          {}\n\n\
          export const runtimeFailureCodes = [{failure_codes}] as const;\n\
          export type RuntimeFailureCode = (typeof runtimeFailureCodes)[number];\n\n\
@@ -29,4 +30,16 @@ pub fn typescript_bindings() -> String {
         export_declaration::<ConversationVoicePolicySnapshot>(),
         export_declaration::<RuntimeEvent>(),
     )
+}
+
+pub fn ui_typescript_bindings() -> String {
+    let types = [
+        export_declaration::<crate::generative_ui::contracts::ContentPart>(),
+        export_declaration::<crate::generative_ui::contracts::UiNode>(),
+        export_declaration::<crate::generative_ui::contracts::UiData>(),
+        export_declaration::<crate::generative_ui::contracts::UiInstance>(),
+        export_declaration::<crate::generative_ui::contracts::SavedView>(),
+    ]
+    .join("\n\n");
+    format!("// Generated from Rust generative_ui/contracts.rs. Do not edit.\n{types}\n")
 }

@@ -732,8 +732,12 @@ async fn run_connected(
                         let persistence = context.output_persistence;
                         let input = context.input;
                         let timeout = context.tool_timeout;
+                        let ui_events = context.on_event.clone_box();
                         tool_futures.push(Box::pin(async move {
                             let content = execute_agent_tool(persistence, input, &call, timeout).await;
+                            if crate::generative_ui::tools::NAMES.contains(&call.name.as_str()) && serde_json::from_str::<serde_json::Value>(&content).ok().is_some_and(|v|v["messageId"].is_string()) {
+                                let _ = ui_events.send(RuntimeEvent::Activity {run_id:input.run_id.clone(),kind:"ui-presented".into(),summary:"An inline view is available.".into()});
+                            }
                             ToolResult { call_id, in_reply_to_seq: seq, content }
                         }));
                     }

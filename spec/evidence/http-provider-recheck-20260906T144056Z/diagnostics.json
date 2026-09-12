@@ -1,0 +1,123 @@
+[
+  {
+    "case": "health-before",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "321461a52c9bb35ad144f27e62cd86eea012898a",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-672f9702-84a1-412c-a9c9-f3831f9ba285",
+    "errorCode": null,
+    "elapsedMs": 876.0
+  },
+  {
+    "case": "ready",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 18,
+    "errorCode": null,
+    "elapsedMs": 9.0
+  },
+  {
+    "case": "authenticated-model-catalog",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 462,
+    "errorCode": null,
+    "elapsedMs": 481.4
+  },
+  {
+    "case": "authenticated-activity",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 327,
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-672f9702-84a1-412c-a9c9-f3831f9ba285",
+    "errorCode": null,
+    "elapsedMs": 11.9
+  },
+  {
+    "case": "ordinary-chat-json",
+    "status": 502,
+    "contentType": "application/json; charset=UTF-8",
+    "bytes": 169,
+    "errorCode": "upstream_response_invalid",
+    "elapsedMs": 918.9
+  },
+  {
+    "case": "ordinary-tts-wav",
+    "status": 200,
+    "contentType": "audio/wav",
+    "bytes": 62508,
+    "elapsedMs": 180.8
+  },
+  {
+    "case": "ordinary-asr-fixed-tone",
+    "status": 502,
+    "contentType": "application/json; charset=UTF-8",
+    "bytes": 151,
+    "errorCode": "upstream_response_invalid",
+    "elapsedMs": 255.4
+  },
+  {
+    "case": "dynamic-create",
+    "status": 201,
+    "contentType": "application/json",
+    "bytes": 848,
+    "bootEpoch": "epoch-672f9702-84a1-412c-a9c9-f3831f9ba285",
+    "errorCode": null,
+    "elapsedMs": 679.3
+  },
+  {
+    "case": "dynamic-claim",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 1542,
+    "errorCode": null,
+    "elapsedMs": 12.3
+  },
+  {
+    "case": "claimed-chat-sse",
+    "transportError": "ConnectionResetError",
+    "elapsedMs": 646.8
+  },
+  {
+    "case": "dynamic-release",
+    "status": 204,
+    "contentType": null,
+    "bytes": 0,
+    "elapsedMs": 10.8
+  },
+  {
+    "case": "released-credential-health",
+    "status": 401,
+    "contentType": "application/json",
+    "bytes": 86,
+    "errorCode": "unauthorized",
+    "elapsedMs": 10.3
+  },
+  {
+    "case": "dynamic-state-after-release",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 895,
+    "bootEpoch": "epoch-672f9702-84a1-412c-a9c9-f3831f9ba285",
+    "errorCode": null,
+    "elapsedMs": 9.9
+  },
+  {
+    "case": "cleanup-state",
+    "status": "released"
+  },
+  {
+    "case": "health-after",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "321461a52c9bb35ad144f27e62cd86eea012898a",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-672f9702-84a1-412c-a9c9-f3831f9ba285",
+    "errorCode": null,
+    "elapsedMs": 10.1
+  }
+]

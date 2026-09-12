@@ -1,9 +1,13 @@
-import { memo, useEffect, useState } from "react";
+import { lazy, Suspense, memo, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ConversationMessage } from "../../lib/contracts";
 import { renderFinalMarkdown } from "./finalMarkdown";
 import type { StreamingTextProjection } from "./streamingTextBuffer";
 import { recordMarkdownPaint } from "./streamingPerformance";
+
+import { UiBoundary } from "./ui/UiBoundary";
+
+const InlineUi = lazy(() => import("./ui/InlineUi"));
 
 const MarkdownMessage = memo(function MarkdownMessage({ messageId, content }: { messageId: string; content: string }) {
   const [html, setHtml] = useState<string | null>(null);
@@ -27,9 +31,12 @@ const MarkdownMessage = memo(function MarkdownMessage({ messageId, content }: { 
 
 export const CompletedMessage = memo(function CompletedMessage({ message }: { message: ConversationMessage }) {
   const { t } = useTranslation();
-  return <article className={`message ${message.role}`}>
+  return <article className={`message ${message.role}${message.parts?.some(part => part.type === "ui") ? " has-ui" : ""}`}>
     <span className="message-role">{message.role === "user" ? t("chat.you") : t("chat.assistant")}</span>
-    {message.role === "assistant" ? <MarkdownMessage messageId={message.id} content={message.content} /> : <p>{message.content}</p>}
+    {message.parts?.length ? message.parts.map((part, index) => part.type === "ui"
+      ? <UiBoundary key={part.instanceId} fallback={<p>{part.summary} · {t("genui.unavailable")}</p>}><Suspense fallback={<p>{part.summary}</p>}><InlineUi instanceId={part.instanceId} conversationId={message.conversationId} summary={part.summary} /></Suspense></UiBoundary>
+      : <MarkdownMessage key={index} messageId={`${message.id}:${index}`} content={part.text} />)
+      : message.role === "assistant" ? <MarkdownMessage messageId={message.id} content={message.content} /> : <p>{message.content}</p>}
   </article>;
 });
 

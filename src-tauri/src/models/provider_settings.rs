@@ -18,6 +18,20 @@ pub(crate) struct OpenAiCompatibleProviderSettings {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentSessionProviderSettings {
+    pub(crate) id: String,
+    pub(crate) enabled: bool,
+    pub(crate) label: String,
+    pub(crate) location: String,
+    pub(crate) base_url: String,
+    pub(crate) model: String,
+    pub(crate) models_path: String,
+    pub(crate) sessions_path: String,
+    pub(crate) authentication: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CloudAsrProviderSettings {
     pub(crate) id: String,
     pub(crate) enabled: bool,
@@ -39,7 +53,13 @@ pub(crate) struct CloudTtsProviderSettings {
     pub(crate) endpoint: String,
     pub(crate) model: String,
     pub(crate) voice: String,
+    #[serde(default = "default_tts_format")]
+    pub(crate) response_format: String,
     pub(crate) authentication: String,
+}
+
+pub(crate) fn default_tts_format() -> String {
+    "wav".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -82,6 +102,8 @@ pub(crate) struct DynamicLanProviderSettings {
 pub(crate) enum ModelProviderSettings {
     #[serde(rename = "openai-compatible")]
     OpenAiCompatible(OpenAiCompatibleProviderSettings),
+    #[serde(rename = "agent-session")]
+    AgentSession(AgentSessionProviderSettings),
     #[serde(rename = "cloud-asr")]
     CloudAsr(CloudAsrProviderSettings),
     #[serde(rename = "cloud-tts")]
@@ -98,6 +120,7 @@ impl ModelProviderSettings {
     pub(crate) fn id(&self) -> &str {
         match self {
             Self::OpenAiCompatible(provider) => &provider.id,
+            Self::AgentSession(provider) => &provider.id,
             Self::CloudAsr(provider) => &provider.id,
             Self::CloudTts(provider) => &provider.id,
             Self::SystemTts(provider) => &provider.id,
@@ -109,6 +132,7 @@ impl ModelProviderSettings {
     pub(crate) fn enabled(&self) -> bool {
         match self {
             Self::OpenAiCompatible(provider) => provider.enabled,
+            Self::AgentSession(provider) => provider.enabled,
             Self::CloudAsr(provider) => provider.enabled,
             Self::CloudTts(provider) => provider.enabled,
             Self::SystemTts(provider) => provider.enabled,
@@ -120,6 +144,7 @@ impl ModelProviderSettings {
     pub(crate) fn label(&self) -> &str {
         match self {
             Self::OpenAiCompatible(provider) => &provider.label,
+            Self::AgentSession(provider) => &provider.label,
             Self::CloudAsr(provider) => &provider.label,
             Self::CloudTts(provider) => &provider.label,
             Self::SystemTts(provider) => &provider.label,
@@ -131,6 +156,7 @@ impl ModelProviderSettings {
     pub(crate) fn location(&self) -> &str {
         match self {
             Self::OpenAiCompatible(provider) => &provider.location,
+            Self::AgentSession(provider) => &provider.location,
             Self::CloudAsr(provider) => &provider.location,
             Self::CloudTts(provider) => &provider.location,
             Self::SystemTts(provider) => &provider.location,
@@ -142,6 +168,10 @@ impl ModelProviderSettings {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::OpenAiCompatible(_) => "openai-compatible",
+            // Agent Session providers own and release a remote session per SAAA
+            // attempt. Persist them under the direct-provider session kind until
+            // the diagnostics schema has a distinct non-allocation kind.
+            Self::AgentSession(_) => "openai-compatible",
             Self::CloudAsr(_) => "cloud-asr",
             Self::CloudTts(_) => "cloud-tts",
             Self::SystemTts(_) => "system-tts",
@@ -156,6 +186,7 @@ impl ModelProviderSettings {
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
         match self {
             Self::OpenAiCompatible(provider) => provider.enabled = enabled,
+            Self::AgentSession(provider) => provider.enabled = enabled,
             Self::CloudAsr(provider) => provider.enabled = enabled,
             Self::CloudTts(provider) => provider.enabled = enabled,
             Self::SystemTts(provider) => provider.enabled = enabled,

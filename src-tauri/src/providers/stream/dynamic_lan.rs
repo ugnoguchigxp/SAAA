@@ -43,7 +43,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
         enabled: true,
         label: provider.label.clone(),
         location: "local".to_string(),
-        endpoint: connection.stream_url().to_string(),
+        endpoint: connection.endpoint().to_string(),
         model: connection.model().to_string(),
         authentication: if connection.api_key().is_some() {
             "api-key"

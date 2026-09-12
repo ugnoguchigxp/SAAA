@@ -20,9 +20,19 @@ const openAiCompatibleProviderSchema = providerCommonSchema.extend({
   authentication: z.enum(["none", "api-key"]),
 }).strict();
 
+const agentSessionProviderSchema = providerCommonSchema.extend({
+  kind: z.literal("agent-session"),
+  location: z.enum(["local", "cloud"]),
+  baseUrl: z.string().url().max(2_048),
+  model: z.string().max(256).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Model names must not have surrounding whitespace or control characters"),
+  modelsPath: z.string().min(1).max(2_048),
+  sessionsPath: z.string().min(1).max(2_048),
+  authentication: z.enum(["none", "api-key"]),
+}).strict();
+
 const cloudAsrProviderSchema = providerCommonSchema.extend({
   kind: z.literal("cloud-asr"),
-  location: z.literal("cloud"),
+  location: z.enum(["local", "cloud"]),
   endpoint: z.string().url().max(2_048),
   model: z.string().min(1).max(160).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Model names must not have surrounding whitespace or control characters"),
   language: z.literal("auto"),
@@ -31,7 +41,8 @@ const cloudAsrProviderSchema = providerCommonSchema.extend({
 
 const cloudTtsProviderSchema = providerCommonSchema.extend({
   kind: z.literal("cloud-tts"),
-  location: z.literal("cloud"),
+  responseFormat: z.enum(["wav", "pcm"]).default("wav"),
+  location: z.enum(["local", "cloud"]),
   endpoint: z.string().url().max(2_048),
   model: z.string().min(1).max(160).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Model names must not have surrounding whitespace or control characters"),
   voice: z.string().min(1).max(160).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Voice names must not have surrounding whitespace or control characters"),
@@ -63,6 +74,7 @@ const dynamicLanProviderSchema = providerCommonSchema.extend({
 
 const providerSchema = z.discriminatedUnion("kind", [
   openAiCompatibleProviderSchema,
+  agentSessionProviderSchema,
   cloudAsrProviderSchema,
   cloudTtsProviderSchema,
   systemTtsProviderSchema,
@@ -79,6 +91,20 @@ function parsedUrl(value: string): URL | null {
     return new URL(value);
   } catch {
     return null;
+  }
+}
+
+function isSafeRelativeProviderPath(value: string, allowQuery: boolean): boolean {
+  if (!value.startsWith("/") || value.startsWith("//") || /[\u0000-\u001f\u007f]/.test(value)) return false;
+  try {
+    const parsed = new URL(value, "http://provider.invalid");
+    return parsed.origin === "http://provider.invalid"
+      && !parsed.username
+      && !parsed.password
+      && !parsed.hash
+      && (allowQuery || !parsed.search);
+  } catch {
+    return false;
   }
 }
 
@@ -117,10 +143,20 @@ export const modelProvidersSettingsSchema = z.object({
         if (provider.location === "local" && (endpoint.protocol !== "http:" || !isLocalProviderHost(endpoint.hostname))) context.addIssue({ code: "custom", message: "Local providers must use an http:// loopback or private-network endpoint", path: [index, "endpoint"] });
         if (provider.location === "cloud" && endpoint.protocol !== "https:") context.addIssue({ code: "custom", message: "Cloud providers must use HTTPS", path: [index, "endpoint"] });
       }
+      if (provider.kind === "agent-session") {
+        if (provider.enabled && !provider.model) context.addIssue({ code: "custom", message: "Enabled Agent Session providers require a model", path: [index, "model"] });
+        const baseUrl = parsedUrl(provider.baseUrl);
+        if (!baseUrl) return;
+        if (!isSafeEndpoint(baseUrl) || baseUrl.pathname !== "/") context.addIssue({ code: "custom", message: "Agent Session base URL must be an origin without credentials, path, query, or fragment", path: [index, "baseUrl"] });
+        if (provider.location === "local" && (baseUrl.protocol !== "http:" || !isLocalProviderHost(baseUrl.hostname))) context.addIssue({ code: "custom", message: "Local Agent Session providers must use an http:// loopback or private-network base URL", path: [index, "baseUrl"] });
+        if (provider.location === "cloud" && baseUrl.protocol !== "https:") context.addIssue({ code: "custom", message: "Cloud Agent Session providers must use HTTPS", path: [index, "baseUrl"] });
+        if (!isSafeRelativeProviderPath(provider.modelsPath, true) || !new URL(provider.modelsPath, baseUrl).searchParams.get("runtime")) context.addIssue({ code: "custom", message: "Agent Session model paths must be relative and include a runtime query parameter", path: [index, "modelsPath"] });
+        if (!isSafeRelativeProviderPath(provider.sessionsPath, false)) context.addIssue({ code: "custom", message: "Agent Session session paths must be relative and must not include a query or fragment", path: [index, "sessionsPath"] });
+      }
       if ((provider.kind === "cloud-asr" || provider.kind === "cloud-tts") && provider.endpoint) {
         const endpoint = parsedUrl(provider.endpoint);
         if (!endpoint) return;
-        if (endpoint.protocol !== "https:" || !isSafeEndpoint(endpoint)) context.addIssue({ code: "custom", message: "Cloud providers must use a credential-free HTTPS endpoint without query or fragment", path: [index, "endpoint"] });
+        if (!isSafeEndpoint(endpoint) || (provider.location === "cloud" && endpoint.protocol !== "https:") || (provider.location === "local" && !isLocalProviderHost(endpoint.hostname))) context.addIssue({ code: "custom", message: "HTTP audio providers require a safe local URL or a cloud HTTPS URL", path: [index, "endpoint"] });
       }
       if (provider.kind === "larm") {
         const baseUrl = parsedUrl(provider.baseUrl);
@@ -133,5 +169,5 @@ export const modelProvidersSettingsSchema = z.object({
     if (enabledLarmProviders > 1) context.addIssue({ code: "custom", message: "Only one LARM provider may be enabled", path: [] });
     if (enabledDynamicLanProviders > 1) context.addIssue({ code: "custom", message: "Only one dynamic LAN provider may be enabled", path: [] });
   }),
-  reasoningEffort: z.enum(["low", "medium", "xhigh"]),
+  reasoningEffort: z.enum(["provider-default", "low", "medium", "xhigh"]),
 }).strict();

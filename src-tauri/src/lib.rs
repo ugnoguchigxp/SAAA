@@ -18,6 +18,7 @@ mod backup;
 mod credentials;
 mod database_backup;
 mod diagnostics;
+mod generative_ui;
 pub mod ipc_contract;
 mod meeting;
 mod memory;
@@ -689,6 +690,18 @@ pub fn run() {
             save_settings_documents,
             set_voice_listening_enabled,
             list_messages,
+            generative_ui::history::list_message_window,
+            generative_ui::get_ui_enabled,
+            generative_ui::set_ui_enabled,
+            generative_ui::get_ui_instance,
+            generative_ui::query_ui_source,
+            generative_ui::save_ui_instance_state,
+            generative_ui::publish_ui_view,
+            generative_ui::search_ui_views,
+            generative_ui::archive_ui_view,
+            generative_ui::open_ui_view,
+            generative_ui::snapshot_ui_view,
+            generative_ui::cancel_ui_run,
             get_conversation_voice_policy,
             update_conversation_voice_policy,
             reset_conversation_voice_policy
@@ -718,7 +731,7 @@ mod tests {
         Message as WebSocketMessage,
     };
 
-    enum LlmWebSocketStep {
+    enum LlmHttpStep {
         Delta(&'static str),
         ToolCall {
             call_id: &'static str,
@@ -728,321 +741,93 @@ mod tests {
         ExpectToolResult,
         Complete,
         Disconnect,
-        DisconnectAndResume,
-        Fail(&'static str),
+        Fail,
         Delay(u64),
     }
 
-    async fn spawn_llm_websocket_fixture(
-        steps: Vec<LlmWebSocketStep>,
+    async fn spawn_llm_http_fixture(
+        steps: Vec<LlmHttpStep>,
     ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
-        use sha2::{Digest, Sha256};
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("WebSocket fixture binds");
-        let address = listener.local_addr().expect("fixture address");
-        let captures = Arc::new(Mutex::new(Vec::new()));
-        let server_captures = captures.clone();
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("fixture accepts");
-            let mut socket = tokio_tungstenite::accept_hdr_async(
-                stream,
-                |request: &WebSocketRequest, mut response: WebSocketResponse| {
-                    assert_eq!(
-                        request
-                            .headers()
-                            .get(header::SEC_WEBSOCKET_PROTOCOL)
-                            .and_then(|value| value.to_str().ok()),
-                        Some(providers::llm_websocket::protocol::SUBPROTOCOL),
-                    );
-                    response.headers_mut().insert(
-                        header::SEC_WEBSOCKET_PROTOCOL,
-                        HeaderValue::from_static(providers::llm_websocket::protocol::SUBPROTOCOL),
-                    );
-                    Ok(response)
-                },
-            )
-            .await
-            .expect("fixture handshake");
-            socket
-                .send(WebSocketMessage::Text(
-                    json!({
-                        "type": "connection.ready",
-                        "protocol": "saaa.llm-stream.v1",
-                        "connectionId": "conn_fixture",
-                        "upstreamTransport": "native",
-                        "limits": {
-                            "maxConcurrentRuns": 1,
-                            "maxConnections": 1,
-                            "maxActiveRunsPerConnection": 1,
-                            "maxUnackedEvents": 64,
-                            "maxUnackedBytes": 524288,
-                            "resumeWindowMs": 120000,
-                            "heartbeatIntervalMs": 15000
-                        }
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("ready sends");
-            let start = socket
-                .next()
-                .await
-                .expect("run.start arrives")
-                .expect("run.start reads");
-            let WebSocketMessage::Text(start) = start else {
-                panic!("run.start is text");
-            };
-            server_captures
-                .lock()
-                .expect("capture lock")
-                .push(start.to_string());
-            let start: Value = serde_json::from_str(start.as_str()).expect("run.start JSON");
-            let run_id = start["runId"].as_str().expect("run id").to_string();
-            socket
-                .send(WebSocketMessage::Text(
-                    json!({
-                        "type": "run.accepted",
-                        "runId": run_id,
-                        "seq": 1
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("accepted sends");
-            let mut seq = 1_u64;
-            let mut content = String::new();
-            let mut replay_deltas = Vec::<(u64, &'static str)>::new();
-            for step in steps {
-                match step {
-                    LlmWebSocketStep::Delta(delta) => {
-                        seq += 1;
-                        content.push_str(delta);
-                        replay_deltas.push((seq, delta));
-                        let mut frame = Vec::with_capacity(16 + delta.len());
-                        frame.extend_from_slice(b"SAD1");
-                        frame.extend_from_slice(&[1, 0]);
-                        frame.extend_from_slice(&16_u16.to_be_bytes());
-                        frame.extend_from_slice(&seq.to_be_bytes());
-                        frame.extend_from_slice(delta.as_bytes());
-                        if socket
-                            .send(WebSocketMessage::Binary(frame.into()))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    LlmWebSocketStep::ToolCall {
-                        call_id,
-                        name,
-                        arguments,
-                    } => {
-                        seq += 1;
-                        socket
-                            .send(WebSocketMessage::Text(
-                                json!({
-                                    "type": "tool.call",
-                                    "runId": run_id,
-                                    "seq": seq,
-                                    "callId": call_id,
-                                    "name": name,
-                                    "arguments": serde_json::to_string(&arguments)
-                                        .expect("tool arguments serialize"),
-                                })
-                                .to_string()
-                                .into(),
-                            ))
-                            .await
-                            .expect("tool call sends");
-                    }
-                    LlmWebSocketStep::ExpectToolResult => loop {
-                        let message = socket
-                            .next()
-                            .await
-                            .expect("tool result arrives")
-                            .expect("tool result reads");
-                        let WebSocketMessage::Text(message) = message else {
-                            continue;
-                        };
-                        server_captures
-                            .lock()
-                            .expect("capture lock")
-                            .push(message.to_string());
-                        if message.contains("\"type\":\"tool.result\"") {
-                            break;
-                        }
-                    },
-                    LlmWebSocketStep::Complete => {
-                        seq += 1;
-                        let hash = Sha256::digest(content.as_bytes());
-                        socket
-                            .send(WebSocketMessage::Text(
-                                json!({
-                                    "type": "response.completed",
-                                    "runId": run_id,
-                                    "seq": seq,
-                                    "contentBytes": content.len(),
-                                    "contentSha256": format!("{hash:x}"),
-                                    "finishReason": "stop",
-                                    "usage": null
-                                })
-                                .to_string()
-                                .into(),
-                            ))
-                            .await
-                            .ok();
-                    }
-                    LlmWebSocketStep::Disconnect => {
-                        let _ = socket.close(None).await;
-                        return;
-                    }
-                    LlmWebSocketStep::DisconnectAndResume => {
-                        let _ = socket.close(None).await;
-                        let (stream, _) = listener.accept().await.expect("resume accepts");
-                        socket = tokio_tungstenite::accept_hdr_async(
-                            stream,
-                            |request: &WebSocketRequest, mut response: WebSocketResponse| {
-                                assert_eq!(
-                                    request
-                                        .headers()
-                                        .get(header::SEC_WEBSOCKET_PROTOCOL)
-                                        .and_then(|value| value.to_str().ok()),
-                                    Some(providers::llm_websocket::protocol::SUBPROTOCOL),
-                                );
-                                response.headers_mut().insert(
-                                    header::SEC_WEBSOCKET_PROTOCOL,
-                                    HeaderValue::from_static(
-                                        providers::llm_websocket::protocol::SUBPROTOCOL,
-                                    ),
-                                );
-                                Ok(response)
-                            },
-                        )
-                        .await
-                        .expect("resume handshake");
-                        socket
-                            .send(WebSocketMessage::Text(
-                                json!({
-                                    "type": "connection.ready",
-                                    "protocol": "saaa.llm-stream.v1",
-                                    "connectionId": "conn_fixture_resume",
-                                    "upstreamTransport": "native",
-                                    "limits": {
-                                        "maxConcurrentRuns": 1,
-                                        "maxConnections": 1,
-                                        "maxActiveRunsPerConnection": 1,
-                                        "maxUnackedEvents": 64,
-                                        "maxUnackedBytes": 524288,
-                                        "resumeWindowMs": 120000,
-                                        "heartbeatIntervalMs": 15000
-                                    }
-                                })
-                                .to_string()
-                                .into(),
-                            ))
-                            .await
-                            .expect("resume ready sends");
-                        let resume = socket
-                            .next()
-                            .await
-                            .expect("run.resume arrives")
-                            .expect("run.resume reads");
-                        let WebSocketMessage::Text(resume) = resume else {
-                            panic!("run.resume is text");
-                        };
-                        server_captures
-                            .lock()
-                            .expect("capture lock")
-                            .push(resume.to_string());
-                        let resume: Value =
-                            serde_json::from_str(resume.as_str()).expect("run.resume JSON");
-                        let ack_seq = resume["ackSeq"].as_u64().expect("ack seq");
-                        assert!(ack_seq <= seq);
-                        socket
-                            .send(WebSocketMessage::Ping(b"resume-probe".to_vec().into()))
-                            .await
-                            .expect("resume ping sends");
-                        assert!(matches!(
-                            socket.next().await,
-                            Some(Ok(WebSocketMessage::Pong(payload)))
-                                if payload.as_ref() == b"resume-probe"
-                        ));
-                        socket
-                            .send(WebSocketMessage::Text(
-                                json!({
-                                    "type": "run.resumed",
-                                    "runId": run_id,
-                                    "ackSeq": ack_seq
-                                })
-                                .to_string()
-                                .into(),
-                            ))
-                            .await
-                            .expect("run.resumed sends");
-                        if ack_seq < 1 {
-                            socket
-                                .send(WebSocketMessage::Text(
-                                    json!({
-                                        "type": "run.accepted",
-                                        "runId": run_id,
-                                        "seq": 1
-                                    })
-                                    .to_string()
-                                    .into(),
-                                ))
-                                .await
-                                .expect("accepted replays");
-                        }
-                        for (replay_seq, delta) in replay_deltas
-                            .iter()
-                            .filter(|(replay_seq, _)| *replay_seq > ack_seq)
-                        {
-                            let mut frame = Vec::with_capacity(16 + delta.len());
-                            frame.extend_from_slice(b"SAD1");
-                            frame.extend_from_slice(&[1, 0]);
-                            frame.extend_from_slice(&16_u16.to_be_bytes());
-                            frame.extend_from_slice(&replay_seq.to_be_bytes());
-                            frame.extend_from_slice(delta.as_bytes());
-                            socket
-                                .send(WebSocketMessage::Binary(frame.into()))
-                                .await
-                                .expect("delta replays");
-                        }
-                    }
-                    LlmWebSocketStep::Fail(code) => {
-                        seq += 1;
-                        let hash = Sha256::digest(content.as_bytes());
-                        socket
-                            .send(WebSocketMessage::Text(
-                                json!({
-                                    "type": "response.failed",
-                                    "runId": run_id,
-                                    "seq": seq,
-                                    "contentBytes": content.len(),
-                                    "contentSha256": format!("{hash:x}"),
-                                    "error": {
-                                        "code": code,
-                                        "message": "fixture failure",
-                                        "retryable": false
-                                    }
-                                })
-                                .to_string()
-                                .into(),
-                            ))
-                            .await
-                            .expect("failure sends");
-                    }
-                    LlmWebSocketStep::Delay(milliseconds) => {
-                        tokio::time::sleep(Duration::from_millis(milliseconds)).await;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn accept(
+            listener: &tokio::net::TcpListener,
+            captures: &Arc<Mutex<Vec<String>>>,
+        ) -> tokio::net::TcpStream {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            loop {
+                let mut buffer = [0; 8192];
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+                if let Some(end) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
+                    let header = String::from_utf8_lossy(&bytes[..end]);
+                    assert!(header.starts_with("POST /v1/chat/completions HTTP/1.1"));
+                    let length = header
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .and_then(|v| v.parse::<usize>().ok())
+                        })
+                        .unwrap();
+                    if bytes.len() >= end + 4 + length {
+                        captures.lock().unwrap().push(
+                            String::from_utf8(bytes[end + 4..end + 4 + length].to_vec()).unwrap(),
+                        );
+                        break;
                     }
                 }
             }
+            socket
+        }
+        async fn start(socket: &mut tokio::net::TcpStream) {
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await.unwrap();
+        }
+        async fn event(socket: &mut tokio::net::TcpStream, delta: Value, finish: Value) -> bool {
+            let text = format!(
+                "data: {}\n\n",
+                json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+            );
+            socket.write_all(text.as_bytes()).await.is_ok()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let captures = Arc::new(Mutex::new(Vec::new()));
+        let captured = captures.clone();
+        let server = tokio::spawn(async move {
+            let mut socket = accept(&listener, &captured).await;
+            if let Some(LlmHttpStep::Fail) = steps.first() {
+                socket.write_all(b"HTTP/1.1 503 Unavailable\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+                return;
+            }
+            start(&mut socket).await;
+            for step in steps {
+                match step {
+                    LlmHttpStep::Delta(text) => { if !event(&mut socket,json!({"content":text}),Value::Null).await {return;} }
+                    LlmHttpStep::ToolCall {call_id,name,arguments} => {
+                        if !event(&mut socket,json!({"tool_calls":[{"index":0,"id":call_id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),Value::Null).await {return;}
+                    }
+                    LlmHttpStep::ExpectToolResult => {
+                        event(&mut socket,json!({}),json!("tool_calls")).await;
+                        socket.write_all(b"data: [DONE]\n\n").await.unwrap();
+                        drop(socket);
+                        socket=accept(&listener,&captured).await;
+                        let body: Value=serde_json::from_str(captured.lock().unwrap().last().unwrap()).unwrap();
+                        assert_eq!(body["messages"].as_array().unwrap().last().unwrap()["role"],"tool");
+                        start(&mut socket).await;
+                    }
+                    LlmHttpStep::Complete => {
+                        event(&mut socket,json!({}),json!("stop")).await;
+                        let _=socket.write_all(b"data: [DONE]\n\n").await;
+                    }
+                    LlmHttpStep::Disconnect => return,
+                    LlmHttpStep::Fail => panic!("failure must precede output"),
+                    LlmHttpStep::Delay(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
+                }
+            }
         });
-        (format!("ws://{address}/v1/llm/stream"), captures, server)
+        (format!("http://{address}/v1"), captures, server)
     }
 
     fn begin_test_provider_session(
@@ -1663,10 +1448,10 @@ mod tests {
 
     #[tokio::test]
     async fn openai_compatible_stream_fixture_projects_deltas() {
-        let (endpoint, request_body, server) = spawn_llm_websocket_fixture(vec![
-            LlmWebSocketStep::Delta("hello "),
-            LlmWebSocketStep::Delta("world"),
-            LlmWebSocketStep::Complete,
+        let (endpoint, request_body, server) = spawn_llm_http_fixture(vec![
+            LlmHttpStep::Delta("hello "),
+            LlmHttpStep::Delta("world"),
+            LlmHttpStep::Complete,
         ])
         .await;
         let provider = OpenAiCompatibleProviderSettings {
@@ -1684,6 +1469,7 @@ mod tests {
             presentation_mode: "visual".to_string(),
         };
         let history = vec![ConversationMessage {
+            parts: None,
             id: "message-fixture".to_string(),
             conversation_id: input.conversation_id.clone(),
             role: "user".to_string(),
@@ -1723,10 +1509,10 @@ mod tests {
         server.await.expect("fixture server joins");
         assert_eq!(content, "hello world");
         let request = request_body.lock().expect("request lock")[0].clone();
-        assert!(request.contains("\"type\":\"run.start\""));
-        assert!(request.contains("\"allocationId\":\"alloc_stream_fixture\""));
-        assert!(request.contains("\"reasoning\":{\"effort\":\"low\"}"));
-        assert!(request.contains("\"maxOutputTokens\":2048"));
+        assert!(request.contains("\"stream\":true"));
+        assert!(!request.contains("allocationId"));
+        assert!(request.contains("\"reasoning_effort\":\"low\""));
+        assert!(request.contains("\"max_tokens\":2048"));
         assert_eq!(
             projected
                 .lock()
@@ -1739,12 +1525,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn websocket_resume_preserves_exact_delta_order_without_replay() {
-        let (endpoint, captures, server) = spawn_llm_websocket_fixture(vec![
-            LlmWebSocketStep::Delta("before "),
-            LlmWebSocketStep::DisconnectAndResume,
-            LlmWebSocketStep::Delta("after"),
-            LlmWebSocketStep::Complete,
+    async fn http_disconnect_preserves_partial_output_without_regeneration() {
+        let (endpoint, captures, server) = spawn_llm_http_fixture(vec![
+            LlmHttpStep::Delta("before "),
+            LlmHttpStep::Disconnect,
+            LlmHttpStep::Delta("after"),
+            LlmHttpStep::Complete,
         ])
         .await;
         let provider = OpenAiCompatibleProviderSettings {
@@ -1788,21 +1574,19 @@ mod tests {
         server.await.expect("resume fixture joins");
         assert!(matches!(
             outcome,
-            ProviderAttemptOutcome::Completed { ref content, .. } if content == "before after"
+            ProviderAttemptOutcome::Failed {
+                output_started: true,
+                ..
+            }
         ));
         let projected = deltas.lock().expect("delta lock").join("\n");
         assert_eq!(projected.matches("before ").count(), 1);
-        assert_eq!(projected.matches("after").count(), 1);
-        assert!(captures
-            .lock()
-            .expect("capture lock")
-            .iter()
-            .any(|message| message.contains("\"type\":\"run.resume\"")
-                && message.contains("\"ackSeq\":0")));
+        assert_eq!(projected.matches("after").count(), 0);
+        assert_eq!(captures.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn dynamic_lan_stream_policy_rejects_a_non_websocket_completion() {
+    async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests() {
         use std::io::{Read, Write as _};
         use std::net::TcpListener;
 
@@ -1835,6 +1619,7 @@ mod tests {
             presentation_mode: "visual".to_string(),
         };
         let history = vec![ConversationMessage {
+            parts: None,
             id: "message-dynamic_lan-sse-policy".to_string(),
             conversation_id: input.conversation_id.clone(),
             role: "user".to_string(),
@@ -1862,7 +1647,7 @@ mod tests {
         assert!(matches!(
             outcome,
             ProviderAttemptOutcome::Failed {
-                kind: ProviderFailureKind::Contract | ProviderFailureKind::Network,
+                kind: ProviderFailureKind::Protocol | ProviderFailureKind::Network,
                 output_started: false,
                 ..
             }
@@ -1871,15 +1656,15 @@ mod tests {
 
     #[tokio::test]
     async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
-        let (endpoint, captures, server) = spawn_llm_websocket_fixture(vec![
-            LlmWebSocketStep::ToolCall {
+        let (endpoint, captures, server) = spawn_llm_http_fixture(vec![
+            LlmHttpStep::ToolCall {
                 call_id: "call_recall_1",
                 name: "recall_conversation",
                 arguments: json!({ "query": "SQLite" }),
             },
-            LlmWebSocketStep::ExpectToolResult,
-            LlmWebSocketStep::Delta("履歴を確認しました"),
-            LlmWebSocketStep::Complete,
+            LlmHttpStep::ExpectToolResult,
+            LlmHttpStep::Delta("履歴を確認しました"),
+            LlmHttpStep::Complete,
         ])
         .await;
 
@@ -1948,7 +1733,7 @@ mod tests {
         };
         assert_eq!(content, "履歴を確認しました");
         let captures = captures.lock().expect("capture lock");
-        assert_eq!(captures.len(), 3);
+        assert_eq!(captures.len(), 2);
         let first: Value = serde_json::from_str(&captures[0]).expect("run.start JSON");
         assert_eq!(first["tools"].as_array().expect("tools array").len(), 4);
         assert_eq!(
@@ -1963,8 +1748,9 @@ mod tests {
                 .and_then(Value::as_str),
             Some("update_conversation_voice_behavior")
         );
-        let tool_result: Value = serde_json::from_str(&captures[2]).expect("tool result JSON");
-        assert_eq!(tool_result["type"], "tool.result");
+        let continuation: Value = serde_json::from_str(&captures[1]).expect("continuation JSON");
+        let tool_result = continuation["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(tool_result["role"], "tool");
         assert!(tool_result["content"]
             .as_str()
             .is_some_and(|content| content.contains("SQLite の検索方式")));
@@ -2284,17 +2070,17 @@ mod tests {
 
     #[tokio::test]
     async fn recall_tool_rounds_share_one_provider_timeout_budget() {
-        let (endpoint, _, server) = spawn_llm_websocket_fixture(vec![
-            LlmWebSocketStep::Delay(350),
-            LlmWebSocketStep::ToolCall {
+        let (endpoint, _, server) = spawn_llm_http_fixture(vec![
+            LlmHttpStep::Delay(350),
+            LlmHttpStep::ToolCall {
                 call_id: "call_timeout",
                 name: "recall_conversation",
                 arguments: json!({"query": "missing"}),
             },
-            LlmWebSocketStep::ExpectToolResult,
-            LlmWebSocketStep::Delay(350),
-            LlmWebSocketStep::Delta("too late"),
-            LlmWebSocketStep::Complete,
+            LlmHttpStep::ExpectToolResult,
+            LlmHttpStep::Delay(350),
+            LlmHttpStep::Delta("too late"),
+            LlmHttpStep::Complete,
         ])
         .await;
 
@@ -2351,7 +2137,7 @@ mod tests {
             outcome,
             ProviderAttemptOutcome::Failed {
                 kind: ProviderFailureKind::Timeout,
-                output_started: false,
+                output_started: true,
                 ..
             }
         ));
@@ -2359,10 +2145,10 @@ mod tests {
 
     #[tokio::test]
     async fn provider_stream_stops_when_the_tauri_consumer_disconnects() {
-        let (endpoint, _, server) = spawn_llm_websocket_fixture(vec![
-            LlmWebSocketStep::Delta("visible"),
-            LlmWebSocketStep::Delta("ignored"),
-            LlmWebSocketStep::Complete,
+        let (endpoint, _, server) = spawn_llm_http_fixture(vec![
+            LlmHttpStep::Delta("visible"),
+            LlmHttpStep::Delta("ignored"),
+            LlmHttpStep::Complete,
         ])
         .await;
         let provider = OpenAiCompatibleProviderSettings {
@@ -2492,10 +2278,10 @@ mod tests {
     #[tokio::test]
     async fn conversation_route_falls_back_and_persists_completed_message() {
         let (primary_endpoint, _, primary_server) =
-            spawn_llm_websocket_fixture(vec![LlmWebSocketStep::Fail("model-unavailable")]).await;
-        let (fallback_endpoint, _, fallback_server) = spawn_llm_websocket_fixture(vec![
-            LlmWebSocketStep::Delta("fallback ok"),
-            LlmWebSocketStep::Complete,
+            spawn_llm_http_fixture(vec![LlmHttpStep::Fail]).await;
+        let (fallback_endpoint, _, fallback_server) = spawn_llm_http_fixture(vec![
+            LlmHttpStep::Delta("fallback ok"),
+            LlmHttpStep::Complete,
         ])
         .await;
         let connection = Connection::open_in_memory().expect("database opens");
@@ -2625,11 +2411,9 @@ mod tests {
         use std::io::ErrorKind;
         use std::net::TcpListener;
 
-        let (primary_endpoint, _, primary_server) = spawn_llm_websocket_fixture(vec![
-            LlmWebSocketStep::Delta("partial"),
-            LlmWebSocketStep::Disconnect,
-        ])
-        .await;
+        let (primary_endpoint, _, primary_server) =
+            spawn_llm_http_fixture(vec![LlmHttpStep::Delta("partial"), LlmHttpStep::Disconnect])
+                .await;
 
         let fallback = TcpListener::bind("127.0.0.1:0").expect("fallback binds");
         let fallback_address = fallback.local_addr().expect("fallback address");

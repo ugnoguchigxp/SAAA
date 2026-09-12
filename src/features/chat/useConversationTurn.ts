@@ -1,10 +1,11 @@
+import { useMessageHistory } from "./useMessageHistory";
 import { type Dispatch, type FormEvent, type MutableRefObject, type SetStateAction, useEffect, useRef, useState } from "react";
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
 import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
 import { appendConversationActivity, type ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type { AppSnapshot, ConversationMessage, MeetingState, RuntimeEvent, VoiceSettings, WebSocketConnectionState } from "../../lib/contracts";
-import { cancelRun, listMessages, startTurn, stopTts } from "../../lib/runtime";
+import { cancelRun, startTurn, stopTts } from "../../lib/runtime";
 import {
   transitionConversationSession,
   type ConversationSession,
@@ -45,9 +46,8 @@ export function useConversationTurn({
   setSnapshot: Dispatch<SetStateAction<AppSnapshot>>;
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const history = useMessageHistory();
+  const { messages, setMessages, hasMoreMessages, hasNewerMessages, loadingOlderMessages, loadingNewerMessages } = history;
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const { streamingText, resetStreamingText, appendStreamingText, hasStreamingText } = useStreamingTextProjection();
@@ -59,8 +59,6 @@ export function useConversationTurn({
   const voice = useConversationVoicePolicy(selectedConversationId, setError);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
-  const nextMessageCursorRef = useRef<string | null>(null);
-  const loadingOlderMessagesRef = useRef(false);
   const meetingStateRef = useRef<MeetingState>("idle");
   const failedRunIdsRef = useRef(new Set<string>());
   const incompleteRunIdsRef = useRef(new Set<string>());
@@ -81,9 +79,7 @@ export function useConversationTurn({
     };
   }, [conversationSessionRef]);
   useEffect(() => {
-    setMessages([]);
-    setHasMoreMessages(false);
-    nextMessageCursorRef.current = null;
+    history.reset(selectedConversationId);
     incompleteRunIdsRef.current.clear();
     resetStreamingText();
     setRuntimeActivity([]);
@@ -100,13 +96,7 @@ export function useConversationTurn({
   async function loadMessages(conversationId: string, issueScope: number): Promise<ConversationMessage[]> {
     const request = ++messagesRequestRef.current;
     try {
-      const page = await listMessages(conversationId, null);
-      const nextMessages = page.messages;
-      if (!disposedRef.current && request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
-        setMessages(nextMessages);
-        setHasMoreMessages(page.hasMore);
-        nextMessageCursorRef.current = page.nextCursor;
-      }
+      const nextMessages = await history.latest(conversationId);
       return nextMessages;
     } catch (cause) {
       if (!disposedRef.current && request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
@@ -116,28 +106,22 @@ export function useConversationTurn({
     }
   }
   async function loadOlderMessages(): Promise<void> {
-    const conversationId = selectedConversationIdRef.current;
-    if (!conversationId || loadingOlderMessagesRef.current || !hasMoreMessages) return;
-    loadingOlderMessagesRef.current = true;
-    setLoadingOlderMessages(true);
-    const issueScope = issueCoordinatorRef.current.begin();
-    try {
-      const page = await listMessages(conversationId, nextMessageCursorRef.current);
-      if (!disposedRef.current && selectedConversationIdRef.current === conversationId) {
-        setMessages((current) => {
-          const currentIds = new Set(current.map((message) => message.id));
-          return [...page.messages.filter((message) => !currentIds.has(message.id)), ...current];
-        });
-        nextMessageCursorRef.current = page.nextCursor;
-        setHasMoreMessages(page.hasMore);
-      }
-    } catch (cause) {
-      publishIssue(issueScope, toMessage(cause));
-    } finally {
-      loadingOlderMessagesRef.current = false;
-      if (!disposedRef.current && selectedConversationIdRef.current === conversationId) setLoadingOlderMessages(false);
-    }
+    if (!hasMoreMessages) return;
+    try { await history.load("before"); } catch (cause) { publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause)); }
   }
+  async function loadNewerMessages(): Promise<void> {
+    if (!hasNewerMessages) return;
+    try { await history.load("after"); } catch (cause) { publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause)); }
+  }
+  useEffect(() => {
+    const changed = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === selectedConversationIdRef.current && selectedConversationIdRef.current) {
+        void loadMessages(selectedConversationIdRef.current, issueCoordinatorRef.current.begin());
+      }
+    };
+    window.addEventListener("saaa:ui-history", changed);
+    return () => window.removeEventListener("saaa:ui-history", changed);
+  }, []);
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await submitPrompt(composer);
@@ -183,7 +167,7 @@ export function useConversationTurn({
       incompleteRunIdsRef.current.clear();
       resetStreamingText();
       setRuntimeActivity([]);
-      if (!retryInputMessageId) {
+      if (!retryInputMessageId && !history.isBrowsingOlder()) {
         setMessages((current) => [...current, { id: `pending_${runId}`, conversationId, role: "user", content, createdAt: String(Date.now()) }]);
       }
       setComposer("");
@@ -263,6 +247,7 @@ export function useConversationTurn({
         appendStreamingText(event.runId, event.text);
         break;
       case "activity":
+        if (event.kind === "ui-presented") { void loadMessages(conversationId, issueScope); break; }
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerWorking" }));
         break;
       case "providerFailed":
@@ -273,11 +258,12 @@ export function useConversationTurn({
         incompleteRunIdsRef.current.delete(event.runId);
         recordResponseCompleted(event.runId, event.message.id);
         setRetryAction(null);
-        setMessages((current) => [...current.filter((message) => !message.id.startsWith("streaming_")), event.message]);
+        setMessages((current) => history.isBrowsingOlder() ? current : [...current.filter((message) => !message.id.startsWith("streaming_") && message.id !== event.message.id), event.message]);
         setSnapshot((current) => current.effectiveRoute.providerId
           ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", { fallbackUsed: current.effectiveRoute.fallbackUsed, reasonCode: "last-turn-completed" })
           : current);
         resetStreamingText();
+        if (selectedConversationIdRef.current) void loadMessages(selectedConversationIdRef.current, issueScope);
         if (event.voicePolicy) voice.setVoicePolicy(event.voicePolicy);
         else voice.clearVoicePolicy();
         break;
@@ -364,6 +350,9 @@ export function useConversationTurn({
   return {
     messages,
     hasMoreMessages,
+    hasNewerMessages,
+    loadingNewerMessages,
+    loadNewerMessages,
     loadingOlderMessages,
     loadOlderMessages,
     composer,

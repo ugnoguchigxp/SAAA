@@ -1,0 +1,195 @@
+<article lang="ja">
+  <h1 id="generative-inline-ui-implementation">会話内UIの実装結果</h1>
+  <p>
+    2026-09-12。初期導入範囲の実装を追加した。機能は既定OFFの試用版として提供する。実モデルの生成成功率とTauri上の詳細な性能測定は完了しておらず、一般公開の合格判定には含めない。
+  </p>
+  <p>
+    <a href="./generative-inline-ui-review.html">コードレビューと修正結果（2026-09-12）</a
+    >に、追加で修正した不具合と最新の検証結果を記録した。
+  </p>
+  <h2 id="usage">使い方</h2>
+  <ol>
+    <li>会話画面上部の「会話内の道具（試用）」を有効にする。</li>
+    <li>
+      ツール呼び出しに対応したOpenAI互換接続、またはAgentSession
+      WebSocket接続で「この会話の実行状況をダッシュボードで見せて」と依頼する。
+    </li>
+    <li>
+      「一覧を右へ、件数を左へ」などの変更を会話で依頼する。編集は新しい版として表示され、過去の画面は変わらない。
+    </li>
+    <li>
+      名前を入力して「画面を保存」、または会話で保存を依頼する。「保存した画面」から検索して再表示できる。
+    </li>
+    <li>
+      「この時点の情報を残す」で取得値を固定する。「保存一覧から除く」は過去の会話参照を残したまま一覧から除く。
+    </li>
+  </ol>
+  <p>
+    今回確認した選択中のAgentSession SSE接続は、turn
+    APIにUIツール定義を渡せない。SAAA側のUI生成ツールはこの接続方式では動作しない。画面に接続条件を表示し、既存のルート設定は変更していない。
+  </p>
+  <h2 id="implementation">実装した範囲</h2>
+  <ul>
+    <li>
+      text／ui Content
+      Part、旧履歴との互換、UI生成後の会話更新通知、要約によるテキスト投影。UI定義を通常のテキスト差分やTTSへ流さない。
+    </li>
+    <li>
+      present_ui、get_ui、save_ui、search_ui、open_ui。会話・実行スコープ検査、同一run／callの重複排除、最大3画面／turn、生成失敗2回で修正終了。
+    </li>
+    <li>
+      SQLiteのView・追記型Revision・Instance・Snapshot・外部操作状態。編集と公開の競合検査、明示保存、日本語部分一致検索、再利用、アーカイブ、未保存の孤立View回収。
+    </li>
+    <li>
+      Stack、Grid、Cell、Text、Metric、Table、Chart、Status、Actions、ModelStatus。12列配置と狭幅での縦配置、表の絞り込み・並べ替え・ページ送り。
+    </li>
+    <li>
+      許可済みデータ取得、15秒の共有取得、画面外と非表示ウィンドウでの新規取得停止、取得失敗表示、再表示時の状態復元。
+    </li>
+    <li>
+      同じ会話の実行停止。実行状態と有効なキャンセルハンドルを確認し、要求IDによる重複排除と監査記録を行う。Snapshotから操作できない。
+    </li>
+    <li>
+      履歴の前後cursor取得、初回30件・保持上限150件、メッセージ仮想化、フォーカス中の行の保持、高さ測定。従来のlist_messages
+      APIも維持する。
+    </li>
+  </ul>
+  <h2 id="data">取得できる情報</h2>
+  <table>
+    <caption>
+      初期版のsourceと範囲
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">source</th>
+        <th scope="col">内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">runtime.summary</th>
+        <td>この会話の実行中・完了・失敗・合計件数。</td>
+      </tr>
+      <tr>
+        <th scope="row">runtime.runs</th>
+        <td>この会話の直近100実行。ID、プロバイダー、状態、開始時刻。</td>
+      </tr>
+      <tr>
+        <th scope="row">larm.status</th>
+        <td>この会話の直近100件のプロバイダーセッション履歴。全モデルの稼働台帳ではない。</td>
+      </tr>
+      <tr>
+        <th scope="row">runtime.history</th>
+        <td>実行開始数を分単位で集計。記録がある直近60分のバケットを時刻軸で表示する。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    CPU温度、推論速度、全モデル一覧、モデルそのものの停止、外部MCPの任意実行は接続していない。接続していない値を生成したり、0で補ったりしない。
+  </p>
+  <h2 id="renderer">OpenUIの採否と計画からの変更</h2>
+  <p>
+    OpenUI
+    0.2.15で独自部品libraryの試作・解析テストを行ったが、本番bundle生成が約4GBのメモリ上限で停止する事象を3回再現した。計画の撤退条件に従い、本番描画はSAAAの限定JSON定義とSemanticRendererへ切り替えた。同じ部品・状態管理・取得境界を使う。OpenUIは試作の開発依存に限定し、本番のimport経路には含めない。
+  </p>
+  <p>
+    代替方式のVite
+    buildは約1秒で完了した。InlineUiの遅延ロード部分は約12KB、gzipで約4KB。メインbundleには500KB超過の警告がある。数値はこの開発機でのbuild記録であり、ユーザー操作時間やRSS測定の代わりにはしない。
+  </p>
+  <ul>
+    <li>
+      版1の定義は検証済みJSON文字列で保存する。試作の限定OpenUI記法も読めるが、モデルにはJSONを要求する。未知版は要約と再試行へ戻す。
+    </li>
+    <li>
+      初期版はUIひとつを独立したassistantメッセージとして原子的に保存する。文章と複数UIを一つのDB行へ混在させる方式にはしていない。
+    </li>
+    <li>
+      SnapshotはInstance内の上限1MiBのJSONにまとめる。初期sourceはDBからの会話別集計に限るため、共有取得キーは会話IDとsource
+      IDとする。
+    </li>
+    <li>新しい前後取得APIを別moduleへ追加した。既存の片方向cursor APIの契約を変更しない。</li>
+    <li>
+      別Composer、Patch言語、途中UIストリーム、Native Featureへの昇格は計画どおり初期導入の対象外。
+    </li>
+  </ul>
+  <h2 id="verification">検証と残る条件</h2>
+  <p>
+    証跡は<code>spec/evidence/generative-ui/</code>に保存する。変更前の全体checkと差分を記録し、既存の別作業差分を保持した。最終のbun
+    run checkは成功し、Frontend 234件、Rust 485件が通過、Rust 11件は既存のignore対象。bun run
+    buildも成功した。集計はverification.json、全ログはcheck-final.logとbuild-final.logに残す。
+  </p>
+  <table>
+    <caption>
+      自動検証と実環境検証の区別
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">結果・証跡</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">DB・Runtime</th>
+        <td>
+          旧履歴、原子的保存、Revision競合、Snapshot不変性、インスタンス分離、スコープ、重複tool、修正上限、停止監査、アーカイブ・削除回収、10万件cursor履歴をテスト。HTTPの実装fixtureでUI生成toolとテキスト応答の分離も確認。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Frontend</th>
+        <td>
+          定義境界、エスケープ、状態保存・失敗後再試行、共有取得・非表示停止・遅延結果破棄、履歴上限を自動テスト。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ブラウザー表示</th>
+        <td>
+          固定データの150メッセージ・10
+          UIで保存、絞り込み復元、幅360pxの横はみ出しなしを確認。末尾では10メッセージのみmountし、取得カウンター24が次の周期を超えて増えず、先頭へ戻ると27になった。入力した名前も復元。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">デスクトップ</th>
+        <td>
+          packaged appの起動・frontend
+          ready・既存音声／situationのsmokeを実行。GenUI全操作のTauri実機シナリオとは区別する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">実モデル</th>
+        <td>
+          接続中のローカル互換APIへ合成promptで試験したが、ornith-1.0-9b-4bitは50秒でタイムアウト。保存済みQwen接続先も到達できず、120ケースの生成・編集成功率は未測定。live-probe.jsonに記録。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">性能目標</th>
+        <td>
+          10万件DBとbounded windowは検証済み。Tauriでのanchor誤差8px以下、再mount p95
+          200ms以下、往復時RSS安定は未測定。一般公開の合格とは扱わない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    停止する場合は「会話内の道具（試用）」をOFFにする。新規生成・データ取得・操作を停止し、既存の文章とUI要約、保存した定義は残る。旧binaryへのdowngrade互換は保証していない。
+  </p>
+  <h2 id="files">主な実装箇所</h2>
+  <ul>
+    <li>
+      <code>src-tauri/src/generative_ui/</code>：契約、検証、保存、tool、source、操作、履歴。
+    </li>
+    <li><code>src/features/chat/ui/</code>：描画、部品、状態、取得、可視性、保存一覧。</li>
+    <li>
+      <code>src/features/chat/VirtualMessages.tsx</code
+      >、<code>useMessageHistory.ts</code>：履歴仮想化と保持上限。
+    </li>
+    <li>
+      <code>scripts/generative-ui-preview.tsx</code
+      >：固定データの目視検証fixture。製品エントリには含めない。
+    </li>
+  </ul>
+  <p>
+    <a href="./generative-inline-ui-implementation-plan.html">当初の実装計画</a
+    >に採用基準と一般公開前の検証条件を残す。
+  </p>
+</article>

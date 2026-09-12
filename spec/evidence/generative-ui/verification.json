@@ -1,0 +1,52 @@
+{
+  "date": "2026-09-12",
+  "renderer": "SAAA semantic JSON v1",
+  "openui": {
+    "version": "0.2.15",
+    "adoptedForProduction": false,
+    "reason": "Production bundling reproducibly exceeded approximately 4 GB V8 heap; retained as development spike only."
+  },
+  "checks": {
+    "bun run check": "pass",
+    "frontend": {
+      "passed": 234,
+      "failed": 0
+    },
+    "rust": {
+      "passed": 485,
+      "failed": 0,
+      "ignored": 11
+    },
+    "bun run build": "pass",
+    "bundle": {
+      "InlineUiKB": 11.44,
+      "InlineUiGzipKB": 4.16,
+      "mainKB": 521.31,
+      "viteSeconds": 1.05
+    },
+    "bun run desktop:smoke": "pass (final source; packaged frontend ready)",
+    "spec": "pass (0 errors, 0 warnings)",
+    "finalFrontendRefCorrection": "typecheck + frontend 234 tests + packaged build/smoke pass"
+  },
+  "browserFixture": {
+    "messages": 150,
+    "uiInstances": 10,
+    "offscreenMountedMessages": 10,
+    "offscreenQueriesBefore": 24,
+    "offscreenQueriesAfterNextPollingInterval": 24,
+    "queriesOnReturn": 27,
+    "filterRestored": "Qwen",
+    "nameRestored": true,
+    "containerWidth": 360,
+    "containerScrollWidth": 360
+  },
+  "unverified": [
+    "Actual model generation/edit success rate: local ornith request timed out after 50 seconds.",
+    "Full GenUI scenario inside packaged Tauri webview.",
+    "Tauri p95 remount latency, RSS stability, quantitative prepend anchor error."
+  ],
+  "contextStill": {
+    "context_compile": 1,
+    "compile_eval": 1
+  }
+}

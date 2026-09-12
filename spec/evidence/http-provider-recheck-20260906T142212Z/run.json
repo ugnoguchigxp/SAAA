@@ -1,0 +1,24 @@
+{
+  "startedAt": "2026-09-06T14:22:12.984750+00:00",
+  "target": "http://192.168.0.130:9810",
+  "scope": "HTTP三APIとdynamic claimの再検証",
+  "applicationSettingsChanged": false,
+  "finishedAt": "2026-09-06T14:23:17.229537+00:00",
+  "outcome": "blocked-by-deployed-contract",
+  "observedRelease": "01667fe1a4f9acc18794ae9fd4264487c1063647",
+  "repositoryHead": "94d6ab2ad31b7359563eef751e420e63b207ecbc",
+  "expectedApprovedRelease": null,
+  "commands": [
+    {
+      "command": "python3 spec/evidence/http-provider-recheck-20260906T142212Z/diagnose.py",
+      "exitCode": 0,
+      "meaning": "diagnostic execution completed, not acceptance pass"
+    },
+    {
+      "command": "SAAA_DYNAMIC_LAN_HOST=192.168.0.130 cargo test --manifest-path src-tauri/Cargo.toml providers::dynamic_lan::tests::live_dynamic_lan_claim_and_chat -- --ignored --exact",
+      "exitCode": 101,
+      "passed": 0,
+      "failed": 1
+    }
+  ]
+}

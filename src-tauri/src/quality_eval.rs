@@ -214,16 +214,9 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::{SinkExt, StreamExt};
-    use sha2::{Digest, Sha256};
-    use tokio::net::TcpListener;
-    use tokio_tungstenite::{
-        accept_hdr_async,
-        tungstenite::{
-            handshake::server::{Request, Response},
-            http::{header, HeaderValue},
-            Message,
-        },
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
     };
 
     #[tokio::test]
@@ -233,73 +226,38 @@ mod tests {
             .expect("fixture binds");
         let address = listener.local_addr().expect("fixture address");
         let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("fixture accepts");
-            let mut socket =
-                accept_hdr_async(stream, |request: &Request, mut response: Response| {
-                    assert_eq!(request.uri().path(), "/v1/llm/stream");
-                    response.headers_mut().insert(
-                        header::SEC_WEBSOCKET_PROTOCOL,
-                        HeaderValue::from_static("saaa.llm-stream.v1"),
-                    );
-                    Ok(response)
-                })
-                .await
-                .expect("WebSocket accepts");
-            socket.send(Message::Text(serde_json::json!({
-                "type":"connection.ready", "protocol":"saaa.llm-stream.v1",
-                "connectionId":"quality_eval_connection", "upstreamTransport":"native",
-                "limits":{"maxConcurrentRuns":1,"maxConnections":1,"maxActiveRunsPerConnection":1,
-                    "maxUnackedEvents":64,"maxUnackedBytes":524288,"resumeWindowMs":120000,"heartbeatIntervalMs":15000}
-            }).to_string().into())).await.expect("ready sends");
-            let Message::Text(start) = socket
-                .next()
-                .await
-                .expect("run start")
-                .expect("valid run start")
-            else {
-                panic!("expected run.start")
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let start: serde_json::Value = loop {
+                let mut buffer = [0; 8192];
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+                if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                    let header = String::from_utf8_lossy(&bytes[..end]);
+                    assert!(header.starts_with("POST /v1/chat/completions HTTP/1.1"));
+                    let length = header
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .and_then(|v| v.parse::<usize>().ok())
+                        })
+                        .unwrap();
+                    if bytes.len() >= end + 4 + length {
+                        break serde_json::from_slice(&bytes[end + 4..end + 4 + length]).unwrap();
+                    }
+                }
             };
-            let start: serde_json::Value =
-                serde_json::from_str(start.as_str()).expect("run start JSON");
-            assert_eq!(start["type"], "run.start");
+            assert_eq!(start["stream"], true);
             assert!(start["tools"].is_array());
             assert!(start["messages"].to_string().contains("SAAA Eval Agent"));
-            let run_id = start["runId"].as_str().expect("run id");
-            socket
-                .send(Message::Text(
-                    serde_json::json!({"type":"run.accepted","runId":run_id,"seq":1})
-                        .to_string()
-                        .into(),
-                ))
-                .await
-                .expect("accepted sends");
-            let content = "runtime answer";
-            let mut delta = Vec::with_capacity(16 + content.len());
-            delta.extend_from_slice(b"SAD1");
-            delta.extend_from_slice(&[1, 0]);
-            delta.extend_from_slice(&16_u16.to_be_bytes());
-            delta.extend_from_slice(&2_u64.to_be_bytes());
-            delta.extend_from_slice(content.as_bytes());
-            socket
-                .send(Message::Binary(delta.into()))
-                .await
-                .expect("delta sends");
-            socket.send(Message::Text(serde_json::json!({"type":"response.completed","runId":run_id,"seq":3,
-                "contentBytes":content.len(),"contentSha256":format!("{:x}", Sha256::digest(content.as_bytes())),
-                "finishReason":"stop","usage":null}).to_string().into())).await.expect("completed sends");
-            let Message::Text(ack) = socket
-                .next()
-                .await
-                .expect("terminal ack")
-                .expect("valid terminal ack")
-            else {
-                panic!("expected run.ack")
-            };
-            assert_eq!(
-                serde_json::from_str::<serde_json::Value>(ack.as_str()).expect("ack JSON")
-                    ["ackSeq"],
-                3
+            let body = format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                json!({"model":"fixture-model","choices":[{"index":0,"delta":{"content":"runtime answer"},"finish_reason":"stop"}]})
             );
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            socket.write_all(response.as_bytes()).await.unwrap();
         });
         let input = json!({
             "baseUrl": format!("http://{address}/v1"),

@@ -1,7 +1,9 @@
 // Generated from src-tauri/src/ipc_contract.rs. Do not edit by hand.
 // Run `bun run ipc:generate` after changing the Rust IPC contract.
 
-export type ConversationMessage = { id: string, conversationId: string, role: "user" | "assistant" | "system" | "transcript", content: string, createdAt: string, };
+import type { ContentPart } from "./generativeUi";
+
+export type ConversationMessage = { id: string, conversationId: string, role: "user" | "assistant" | "system" | "transcript", content: string, parts?: Array<ContentPart>, createdAt: string, };
 
 export const runtimeFailureCodes = ["runtime_error", "configuration-error", "child-start-failed", "request-timeout", "progress-timeout", "terminal-timeout", "hard-timeout", "child-exited", "protocol-error", "policy-violation", "provider-error", "response-too-large", "internal-error"] as const;
 export type RuntimeFailureCode = (typeof runtimeFailureCodes)[number];

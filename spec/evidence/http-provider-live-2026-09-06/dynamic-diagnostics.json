@@ -1,0 +1,85 @@
+[
+  {
+    "case": "health-before",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "01667fe1a4f9acc18794ae9fd4264487c1063647",
+    "configRevision": "a6f05db3de06b17262d21bbd78c805e83ad50c8f3705fe472364bfd71dd05798",
+    "bootEpoch": "epoch-035dd538-ae2e-4467-ac51-cb40437a7318",
+    "errorCode": null,
+    "elapsedMs": 1149.1
+  },
+  {
+    "case": "ready",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 18,
+    "errorCode": null,
+    "elapsedMs": 10.5
+  },
+  {
+    "case": "dynamic-create",
+    "status": 201,
+    "contentType": "application/json",
+    "bytes": 848,
+    "bootEpoch": "epoch-035dd538-ae2e-4467-ac51-cb40437a7318",
+    "errorCode": null,
+    "elapsedMs": 373.4
+  },
+  {
+    "case": "dynamic-claim",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 1791,
+    "errorCode": null,
+    "elapsedMs": 16.4
+  },
+  {
+    "case": "claimed-chat-sse",
+    "status": 400,
+    "contentType": "application/json",
+    "bytes": 108,
+    "errorCode": "streaming_requires_websocket",
+    "elapsedMs": 12.4
+  },
+  {
+    "case": "dynamic-release",
+    "status": 204,
+    "contentType": null,
+    "bytes": 0,
+    "elapsedMs": 11.2
+  },
+  {
+    "case": "released-credential-health",
+    "status": 401,
+    "contentType": "application/json",
+    "bytes": 86,
+    "errorCode": "unauthorized",
+    "elapsedMs": 9.7
+  },
+  {
+    "case": "dynamic-state-after-release",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 895,
+    "bootEpoch": "epoch-035dd538-ae2e-4467-ac51-cb40437a7318",
+    "errorCode": null,
+    "elapsedMs": 9.5
+  },
+  {
+    "case": "cleanup-state",
+    "status": "released"
+  },
+  {
+    "case": "health-after",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "01667fe1a4f9acc18794ae9fd4264487c1063647",
+    "configRevision": "a6f05db3de06b17262d21bbd78c805e83ad50c8f3705fe472364bfd71dd05798",
+    "bootEpoch": "epoch-035dd538-ae2e-4467-ac51-cb40437a7318",
+    "errorCode": null,
+    "elapsedMs": 9.4
+  }
+]

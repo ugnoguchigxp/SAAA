@@ -39,7 +39,7 @@ pub(crate) async fn stream_model_provider_with_api_key(
     history: &[ConversationMessage],
     timeout_ms: u64,
     api_key: Option<&str>,
-    allocation_id: Option<&str>,
+    _allocation_id: Option<&str>,
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
     provider_attempt_outcome(
@@ -48,7 +48,7 @@ pub(crate) async fn stream_model_provider_with_api_key(
             history,
             timeout_ms,
             api_key,
-            allocation_id,
+            _allocation_id,
             context,
         )
         .await,
@@ -93,8 +93,6 @@ pub(crate) async fn stream_model_provider_inner(
             output_started: false,
         });
     }
-    let stream_url = provider_stream_url(&provider.endpoint)
-        .map_err(|kind| ProviderAttemptError::failed(kind, false))?;
     let configured_api_key = if api_key.is_none() {
         provider_api_key(provider)
             .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Authentication, false))?
@@ -110,18 +108,16 @@ pub(crate) async fn stream_model_provider_inner(
             false,
         ));
     }
-    map_websocket_result(
-        run_model_websocket(
-            stream_url.as_str(),
-            authorization.as_deref(),
-            allocation_id,
-            &provider.model,
-            history,
-            timeout_ms,
-            context,
-        )
-        .await,
+    let _ = allocation_id; // Lease identity belongs to bootstrap, never the HTTP body.
+    crate::providers::chat_completions::run(
+        &provider.endpoint,
+        authorization.as_deref(),
+        &provider.model,
+        history,
+        timeout_ms,
+        context,
     )
+    .await
 }
 
 pub(crate) async fn run_model_websocket(
@@ -207,6 +203,7 @@ pub(crate) fn websocket_attempt_outcome(
     provider_attempt_outcome(map_websocket_result(result), cleanup)
 }
 
+#[cfg(test)]
 pub(crate) fn provider_stream_url(endpoint: &str) -> Result<url::Url, ProviderFailureKind> {
     let mut url = url::Url::parse(endpoint).map_err(|_| ProviderFailureKind::Contract)?;
     if matches!(url.scheme(), "ws" | "wss") {

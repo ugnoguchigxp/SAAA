@@ -72,12 +72,14 @@ pub(crate) fn enforce_allowed_language(
     allowed: &[String],
 ) -> Result<(), String> {
     validate_allowed_languages(allowed)?;
-    let detected = detected
+    // Standard transcription JSON may contain only text. Apply the language
+    // allowlist when metadata is actually supplied; do not invent a detection.
+    let Some(detected) = detected
         .map(str::trim)
         .filter(|language| !language.is_empty())
-        .ok_or_else(|| {
-            "ASR_LANGUAGE_UNKNOWN: The ASR service did not return a detected language".to_string()
-        })?;
+    else {
+        return Ok(());
+    };
     let mut codes = Vec::new();
     for language in detected.split(',') {
         let code = canonical_code(language).ok_or_else(|| {
@@ -126,9 +128,7 @@ mod tests {
         assert!(enforce_allowed_language(Some("Japanese,English"), &allowed)
             .expect_err("partially registered speech is rejected")
             .starts_with("ASR_LANGUAGE_NOT_ALLOWED"));
-        assert!(enforce_allowed_language(None, &allowed)
-            .expect_err("missing language is rejected")
-            .starts_with("ASR_LANGUAGE_UNKNOWN"));
+        assert!(enforce_allowed_language(None, &allowed).is_ok());
         assert!(enforce_allowed_language(Some("Klingon"), &allowed)
             .expect_err("unknown language is rejected")
             .starts_with("ASR_LANGUAGE_UNKNOWN"));

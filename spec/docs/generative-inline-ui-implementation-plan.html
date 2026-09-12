@@ -1,0 +1,601 @@
+<article lang="ja">
+  <h1 id="generative-inline-ui-plan">SAAA Generative Inline UI 実装計画</h1>
+  <p>
+    作成日：2026-09-12。状態：初期導入の実装を追加済み。本書は着手時の計画と採用・公開基準を残す。実装方式の変更、実施した検証、未検証項目は<a
+      href="./generative-inline-ui-implementation.html"
+      >実装結果</a
+    >を参照。
+  </p>
+
+  <h2 id="outcome">1. 到達する体験と対象範囲</h2>
+  <p>
+    ユーザーが「状態をダッシュボードで見せて」と話すと、説明文とUIが会話の同じ流れに表示される。その場で絞り込みや更新を行い、「一覧を右へ」などの依頼で配置を修正できる。「これを保存して」と言えば名前を付けて再利用できる。サイドペインへの移動を必須にしない。
+  </p>
+  <ul>
+    <li>
+      LLMは情報の選択・グループ・順序・強調を決める。CSS、DOMの細部、任意のReact／HTML／JavaScriptは生成させない。
+    </li>
+    <li>
+      外観、余白、文字サイズ、配色、レスポンシブ挙動はSAAA側の責務とする。部品は既存のCSS・翻訳・アクセシビリティの方式に合わせる。
+    </li>
+    <li>
+      業務データの正本は既存サービスまたは永続ストアとする。LLMが大量データや計測値を創作・転記する経路は作らない。
+    </li>
+    <li>
+      今回の導入範囲は会話のContent
+      Part、UIの保存、限定したデータ接続、表示・操作・編集・再利用、履歴の性能改善とする。
+    </li>
+    <li>
+      Native
+      Featureへの昇格、NightWorkersへの自動実装依頼、別モデルのComposer、Patch言語、任意MCP接続、外部サービス管理APIの新設は初期導入の対象外。別のCodexタスクへメッセージは送らない。
+    </li>
+  </ul>
+
+  <h2 id="baseline">2. 確認済みの現状と変更境界</h2>
+  <table>
+    <caption>
+      既存実装の再利用と拡張箇所
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">箇所</th>
+        <th scope="col">現状</th>
+        <th scope="col">変更方針</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>src-tauri/src/ipc_contract.rs</code></th>
+        <td>ConversationMessageはcontent文字列を持つ。</td>
+        <td>後方互換のContent Partを追加する。Rustを正本に生成バインディングを更新する。</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src/features/chat/ChatMessages.tsx</code></th>
+        <td>完了済みassistantをMarkdownとして描画する。</td>
+        <td>text／uiを順番に描画する。既存Markdown経路を再利用する。</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src/features/chat/ChatPage.tsx</code></th>
+        <td>取得済みメッセージをmapで全件描画し、先頭追加時に高さ差で補正する。</td>
+        <td>専用Inline UI境界を追加し、後続段階でメッセージ単位の仮想化へ移行する。</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src/features/chat/useConversationTurn.ts</code></th>
+        <td>履歴とストリーミングテキストを管理する。</td>
+        <td>
+          UI結果と会話の関連付け、キャンセル、再取得を扱う。DSLを通常のテキストbufferへ流さない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src-tauri/src/persistence/conversation_page.rs</code></th>
+        <td>作成時刻とIDによるcursor paginationがある。</td>
+        <td>
+          新設しない。Content
+          Partをページ単位でまとめて読む。履歴のメモリ解放・再取得を後から追加する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src-tauri/src/persistence/sqlite/writer.rs</code></th>
+        <td>SQLiteのwriter実装がある。</td>
+        <td>既存writer経路でUIと会話を整合的に保存する。ReactからDBへ直接書かない。</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src-tauri/src/runtime/agent_tools.rs</code></th>
+        <td>会話からtoolを呼ぶ既存経路がある。</td>
+        <td>present_uiなどの限定toolを追加する。Providerのtool対応状況を実装開始時に確認する。</td>
+      </tr>
+      <tr>
+        <th scope="row"><code>src-tauri/src/providers/larm/</code></th>
+        <td>主に推論用allocationの取得・更新・解放を扱う。</td>
+        <td>
+          既存の取得可能な状態を利用する。全モデル一覧、CPU温度、速度履歴、モデル停止は接続済みとみなさない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    依存関係にはReact 19、Tauri 2、Zod 4、TanStack Tableがある。OpenUIとTanStack
+    Virtualは今回の導入候補である。shadcnへの移行は行わない。作業ツリーには別作業の差分があるため、実装開始時に差分と既存テスト結果を記録し、関連のない変更を取り込まない。認証方式、Provider
+    transport、音声入力基盤は変更しない。DB・IPCの追加変更は本書の明示的な対象とする。
+  </p>
+
+  <h2 id="architecture">3. 責務分担と実行経路</h2>
+  <pre><code class="language-text">User → Conversation Agent → present_ui
+  → 定義・source・actionの検証 → SQLiteへ会話とUIを保存
+  → Content Part → SAAA Inline UI Host → OpenUI Adapter → SAAA Components
+
+SAAA Components → 許可済みQuery／Action ID → Tauri IPC
+  → SAAAの実行境界 → 既存サービス／永続ストア
+
+UI Host → Instance State／Visibility／Data Cache
+再表示 → 固定Revision + Instance State + SnapshotまたはLive Data</code></pre>
+  <p>
+    OpenUIは解析・描画のadapterに閉じ込める。UI定義にはrenderer種別、DSL版、component
+    library版を保存する。OpenUI由来の型を会話・DBの公開契約へ露出させない。初期段階で独自の汎用ASTや第二のDSLは作らず、版付きの定義文字列を保存する。将来別rendererへ移る場合も既存定義の互換adapterまたは明示的な変換を必要とし、自動的に互換になるとは扱わない。
+  </p>
+  <p>
+    Queryのキャッシュキーはsource
+    ID、正規化した引数、接続先の識別・設定世代とする。複数のUIが同じsourceを利用した場合はin-flight取得と定期更新を共有する。OpenUI内部のpollingとSAAA側のpollingを重複させず、SAAAが購読と取得間隔を管理する。
+  </p>
+
+  <h2 id="message-contract">4. 会話と生成の契約</h2>
+  <pre><code class="language-typescript">// 概念契約。Rust定義からIPC用TypeScriptを生成する。
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "ui"; instanceId: string; viewId: string;
+      revision: number; summary: string };
+
+// 既存contentはテキスト投影として残す。
+// partsがない旧メッセージはtext partひとつとして解釈する。</code></pre>
+  <ul>
+    <li>
+      partsを表示の正本とし、contentはテキスト部分とUI要約からバックエンドで導出する。二つを独立に更新しない。既存履歴を一括変換しなくても読めるようにする。
+    </li>
+    <li>
+      要約はTTS、検索、コピー、描画失敗時に使用する。DSLや大量のテーブルデータを読み上げない。履歴のモデル入力も要約と参照を用い、編集対象の定義だけ必要時に追加する。
+    </li>
+    <li>
+      Phase 1はpresent_ui
+      toolの完全な引数を受領・検証してから表示する。toolは定義、要約、source参照を受け、生成済みIDを返す。表示位置はtool結果を会話へ投影する地点で決める。
+    </li>
+    <li>
+      検証済み定義、初回Revision、Instance、Content Partを同一transactionで保存する。再送時はrun
+      IDとtool call IDで重複作成を防ぐ。旧messageCompleted契約も更新し、UIだけの回答を失わない。
+    </li>
+    <li>
+      定義の最大サイズ64
+      KiB、コンポーネント数100、深さ12、source数8、UI数3／messageを初期上限案とする。Phase
+      0で実例を測定して確定する。エラーは未知部品・型不一致・上限超過などの構造化情報として返す。
+    </li>
+    <li>
+      不正定義の自動修正は1回まで。失敗時は要約と再試行操作を表示し、正常な文章を消さない。未知版、欠損Revision、renderer例外も同じ境界で処理する。
+    </li>
+    <li>
+      後続のストリーミングUIは別の構造化eventで追加する。途中定義では外部QueryとMutationを実行しない。完了後に検証し、成功した定義のみ保存・有効化する。キャンセルした断片をSaved
+      Viewにしない。
+    </li>
+  </ul>
+
+  <h2 id="components">5. 初期コンポーネントと表示規則</h2>
+  <p>
+    初期語彙はStack、Grid、Cell、Text、Metric、Table、Chart、Status、Actions、ModelStatusの10種類を上限の目安とする。ModelStatusは標準配置で状態を示す高レベル部品とする。Form、Tabs、Timeline、Confirmなどは実ユースケースができた段階で追加する。Chartはまず時系列lineだけとし、系列・単位・取得時刻をsourceの型で定める。
+  </p>
+  <ul>
+    <li>
+      Gridは12列、Cellのspanは3／4／6／8／12に制限する。初期は行span・固定高さ・自由な座標指定を許可しない。
+    </li>
+    <li>
+      LLMは単一のspanと表示順序を選ぶ。狭いコンテナでは1列へ落とし、読み上げ順と見た目の順を一致させる。ウィンドウ幅だけでなく会話領域の実幅を使う。
+    </li>
+    <li>
+      文章の読みやすい最大幅を維持しつつ、UIは会話領域の利用可能幅まで広げる。Tableの横スクロールは部品内に閉じ込める。
+    </li>
+    <li>
+      Tableはsource参照、許可された列、sort／filter／pageを受ける。Chartは実在するデータのみ描画する。未取得・未対応の値は「取得できません」とし、0や架空の系列で埋めない。
+    </li>
+    <li>
+      キーボードで操作できるラベルとフォーカス表示を用意する。生成部品の文字列は既存の日本語／英語UIに対応し、数値の単位・時刻表示はSAAA側で整える。
+    </li>
+  </ul>
+
+  <h2 id="persistence">6. 永続化とRevision</h2>
+  <table>
+    <caption>
+      追加する論理テーブルと不変条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">テーブル案</th>
+        <th scope="col">主な項目</th>
+        <th scope="col">規則</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">conversation_message_parts</th>
+        <td>message_id、ordinal、type、payload_json、schema_version</td>
+        <td>
+          messageとordinalを一意にする。UI
+          payloadはInstanceとRevisionを参照する。ページ取得時に一括で読む。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ui_views</th>
+        <td>
+          id、name、description、tags、status、current_revision、published_revision、timestamps
+        </td>
+        <td>ephemeral／draft／published／archived。再利用一覧に出すのは明示的に保存したView。</td>
+      </tr>
+      <tr>
+        <th scope="row">ui_view_revisions</th>
+        <td>
+          view_id、revision、renderer、dsl_version、library_version、definition、reason、created_at
+        </td>
+        <td>view_idとrevisionを一意にする。追記専用。過去の定義を書き換えない。</td>
+      </tr>
+      <tr>
+        <th scope="row">ui_instances</th>
+        <td>id、view_id、revision、mode、state_version、state_json、updated_at</td>
+        <td>
+          各表示に別IDを割り当てる。stateはタブ・sort・filterなどの操作状態だけで、業務データの正本にしない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ui_snapshots</th>
+        <td>instance_id、source_id、source_schema_version、captured_at、data_json</td>
+        <td>snapshotの表示データを固定する。liveのキャッシュと混同しない。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    これらは論理設計であり、具体的なDDLとmigration番号は実装時点のschemaへ合わせる。外部キー、JSON検証、最大サイズを定める。巨大なSnapshotは無制限にJSONへ詰めず、初期は1
+    MiB／Instanceを上限案とし、超過時は明示的な件数制限または生成失敗を返す。データを黙って切り捨てない。
+  </p>
+  <p>
+    Ephemeralも会話に残るため定義を保存する。「保存」は再利用可能なViewへ登録する操作を指す。会話削除時は当該Instance・Snapshotを削除し、どこからも参照されない未保存Viewを回収する。Saved
+    Viewは残す。Archiveは検索の通常結果から除く操作とし、過去の会話参照を壊さない。
+  </p>
+  <p>
+    編集要求は対象instanceId、base
+    revision、現在の定義、関連sourceの型、直近の変更要求を入力とする。参照先が曖昧なら対象をユーザーが選べるようにする。全会話履歴はUI編集用には再投入しない。初期は定義の全文再生成とし、compare-and-swapで競合を検出する。
+  </p>
+  <p>
+    編集結果は新Revisionと新しい会話内Instanceとして表示する。過去メッセージのRevisionは変えない。公開済みViewの編集はDraftとし、再保存時だけpublished_revisionを進める。保存済みViewの呼び出しはpublished_revisionを固定して新Instanceを作る。liveでも固定されるのはレイアウトの版であり、データだけ現在値になる。
+  </p>
+  <p>
+    画面操作状態はinstanceIdとrevisionをキーに外部ストアへ置く。永続化はdebounceし、unmount前にもflushする。フォームを導入する際は保存対象を限定し、認証情報はstate_jsonへ保存しない。revisionが変われば互換なstateだけ移行する。
+  </p>
+
+  <h2 id="data-actions">7. データと操作の境界</h2>
+  <p>
+    source registryはID、引数schema、結果schema、取得関数、許可する更新間隔を持つ。action
+    registryはID、引数schema、対象source、利用条件、実行関数を持つ。LLMがURL・SQL・IPC
+    command名を自由指定する経路は作らない。フロントエンドの検証に加えRust側でもsource、action、引数、現在の設定と操作対象を確認する。
+  </p>
+  <ul>
+    <li>
+      Phase
+      1では読み取りと明示的なRefreshだけを有効にする。LARMの初期画面は実在する接続・実行・割り当て状態から構成する。CPU／memory／tok/sの取得契約がなければその部品を出さない。
+    </li>
+    <li>
+      モデル停止とallocation解放は同じ意味ではない。モデル全体の停止を既存releaseへ読み替えない。管理APIが未提供なら停止機能を未実装として残す。
+    </li>
+    <li>
+      Mutationは明示的なユーザー操作または既存Agentの実行ポリシーに従って開始する。mount、restore、stream更新からは実行しない。ボタンと会話経由の操作は同じ実行サービスへ合流する。
+    </li>
+    <li>
+      操作はinstance、revision、action、対象ID、期待する状態、request
+      IDを持つ。実行中は重複送信を防ぎ、必要な確認は操作の性質と既存ポリシーに従う。すべてのクリックでLLMや追加確認を呼ばない。
+    </li>
+    <li>
+      通信切断で結果が不明になったMutationを自動再送しない。backendの冪等性契約または状態再取得で結果を確定する。操作結果は既存audit経路に記録し、会話には実行結果の短い記録を残す。
+    </li>
+    <li>
+      Snapshotは読み取り専用。操作が必要なら現在状態を取得するLive
+      Instanceを新しく開く。Liveには「現在の情報」と最終取得日時を表示する。取得失敗時は前回値と失敗状態を区別する。
+    </li>
+  </ul>
+
+  <h2 id="lifecycle">8. 表示ライフサイクルと履歴性能</h2>
+  <p>
+    Phase 1からUI Hostを設け、Phase
+    2で画面内判定と外部stateを導入する。初期はactive／suspended／unmountedの3状態でよい。HOT／WARM／COLDはその説明用の呼称とし、別の状態機械を増やさない。未取得の履歴はSQLiteにだけ存在する。
+  </p>
+  <ul>
+    <li>active：画面内のUI。許可されたQueryとユーザー操作を利用できる。</li>
+    <li>
+      suspended：近傍だが画面外。新規Query・polling・購読・animationを止める。共有sourceに別のactive購読者があればその通信は維持する。
+    </li>
+    <li>
+      unmounted：遠いUI。rendererを破棄し、外部stateと高さ推定だけ保持する。画面外になっても送信済みMutationを取り消した扱いにはせず、backendで結果を記録する。
+    </li>
+    <li>
+      アプリが背景になった場合も更新を停止する。最後の購読者が離れた時にin-flight
+      Queryを可能ならcancelし、取消不能なら結果の反映を世代番号で制御する。
+    </li>
+    <li>
+      TanStack
+      Virtualはmessage単位に適用する。過大な単一messageにはUI数・データ数上限を設け、表のページングで抑える。フォーカス中の入力は保持し、入力を失うunmountを避ける。
+    </li>
+    <li>
+      先頭への履歴追加は安定したmessage
+      IDと先頭可視要素のoffsetでanchorを維持する。末尾追従はユーザーが末尾にいる場合だけ行い、UIの遅延描画・幅変更にも対応する。
+    </li>
+    <li>
+      高さcacheはinstance、revision、幅bucket、表示に影響するstate世代、theme／font世代をキーにする。実測で補正し、粗い推定が外れても累積してscrollがずれないようにする。
+    </li>
+    <li>
+      DOM仮想化と履歴メモリ上限は別に実装する。初期取得30 messages、保持上限150
+      messagesを初期案とし、上下の再取得境界を管理する。上限超過時の解放後も新しい側へ戻れるよう、既存cursor
+      APIに必要最小限の方向指定またはanchor取得を追加する。
+    </li>
+    <li>content-visibilityは計測との整合を確認できた場合だけ補助に使う。必須依存にしない。</li>
+  </ul>
+
+  <h2 id="search">9. Saved View検索</h2>
+  <p>
+    名前、説明、タグ、更新日時をSQLiteへ保存し、通常の一覧・名前検索から始める。FTS5を導入する場合は日本語の「前に作ったローカルLLMの画面」で目的のViewへ到達できるかをfixtureで検証する。標準tokenizerだけで日本語検索を満たすとは仮定せず、実際に同梱するSQLiteの機能を確認してtrigramや正規化検索を選ぶ。初期に検索基盤を新設しすぎない。ContextStillによるsemantic
+    retrievalは後続候補であり、Viewの正本は引き続きSQLiteとする。
+  </p>
+
+  <h2 id="phases">10. 実装工程と完了条件</h2>
+  <table>
+    <caption>
+      依存順に進める実装単位
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">工程</th>
+        <th scope="col">成果物</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Phase 0：技術試作と基準確定</th>
+        <td>
+          固定版OpenUI adapter、mock source、標準ModelStatusとGrid構成、測定fixture、LARM
+          capability一覧。
+        </td>
+        <td>
+          React 19／Zod 4／Tauri
+          WebViewとの互換性、DSL検証、状態復元、通信停止、バンドル影響を確認。採用ゲートを記録し、初期上限を確定する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Phase 1A：会話・保存契約</th>
+        <td>
+          DB migration、Content Part、版付きRevisionとInstance、要約投影、IPC生成、feature flag。
+        </td>
+        <td>
+          旧履歴を表示できる。会話とUIの保存が原子的で、同じ結果の再受信でも重複しない。再起動後に固定定義を復元できる。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Phase 1B：読み取り専用の縦断経路</th>
+        <td>present_ui、Inline UI Host、初期部品、source registry、Refresh、エラー代替表示。</td>
+        <td>
+          「LARMの状態を見せて」で取得可能な実データを表示する。接続不能時も会話が継続し、架空の数値を出さない。UI生成失敗時にテキストへ戻れる。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Phase 2A：編集・保存・再利用</th>
+        <td>編集tool、Revision競合検出、明示保存、一覧・検索、Snapshot、Instance外部state。</td>
+        <td>
+          「一覧を右へ→保存→別会話から呼び出し」が通る。過去Revisionは不変。同じViewを二か所で開いてもfilterが混ざらない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Phase 2B：Liveと限定操作</th>
+        <td>Visibility gate、共有Query cache、通信停止、action registry、audit記録。</td>
+        <td>
+          画面外では新規取得が止まり、再表示で復元する。許可外操作と重複操作を拒否できる。実サービスに契約のある操作だけ公開する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Phase 3：長い会話への対応</th>
+        <td>TanStack Virtual、前後再取得、履歴解放、高さcache、scroll anchor。</td>
+        <td>
+          10万messageのDB
+          fixtureを全件ロードせず閲覧できる。既定上限内のメモリ保持、入力維持、末尾追従、先頭追加の回帰を検証する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Phase 4：計測に基づく改善</th>
+        <td>必要なら構造化stream、別Composer、Patch、検索改善。</td>
+        <td>
+          入力・出力・修正・遅延を含む総コストが既存方式より改善する。小型モデルで成立するかは測定で判断する。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Phase 0 → 1A → 1B → 2A → 2B → 3の順で進める。Phase 4は初期リリースの必須条件にしない。Phase
+    1Bは試用版、Phase
+    3までの検証完了を一般利用の基準とする。LARM管理API不足は対応する操作だけの未対応として記録し、読み取りや保存まで停止しない。
+  </p>
+  <p>
+    実装の分割候補は、<code>src/features/chat/ui/</code>にHost／adapter／部品／stateを、<code>src-tauri/src/persistence/ui_views.rs</code>などに保存処理を、<code>src-tauri/src/runtime/ui/</code>にtoolとsource／actionの境界を置く。これらは新規パス案であり、既存module-size制約に合わせて分割する。巨大なChatPageや汎用tool
+    executorへ全機能を追加しない。
+  </p>
+
+  <h2 id="adoption-gate">11. OpenUIの採用・撤退条件</h2>
+  <p>
+    OpenUIの公開仕様では独自library、Renderer、Query／Mutation、initialState／onStateUpdateが提供されている。一方、直接的なsuspend
+    propは公開Renderer
+    APIにない。SAAAのHostで取得制御を実現できるかを必須検証とする。パッケージはlatest追従にせず、試作で確認した版とlockfileを固定する。
+  </p>
+  <table>
+    <caption>
+      Phase 0で測る採用基準。数値は製品目標であり実測結果ではない
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">合格条件</th>
+        <th scope="col">不合格時</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">制御と互換性</th>
+        <td>
+          独自libraryだけで描画し、許可外toolは0件実行。Tauriで描画・restore・unmountが成立。必須ケースは全件成功。
+        </td>
+        <td>依存追加を本採用しない。少数のJSON schemaと同じSAAA部品を使うadapterへ切り替える。</td>
+      </tr>
+      <tr>
+        <th scope="row">生成と編集</th>
+        <td>
+          新規20件・編集20件の固定ケースを実利用予定modelごとに3回測定。初回有効率95%以上、修正1回込みで99%以上。未達modelではGenUIを有効化しない。
+        </td>
+        <td>
+          語彙とlayoutを縮小して再測定。それでも未達ならSemantic View中心のJSON方式と比較する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">状態復元</th>
+        <td>
+          filter、sort、page、選択状態が再mount・再起動で復元し、同じViewの別Instanceへ漏れない。
+        </td>
+        <td>自前部品へのstate移管で解決できなければ不採用。</td>
+      </tr>
+      <tr>
+        <th scope="row">通信停止</th>
+        <td>
+          10
+          UIを表示履歴に残しても画面外の新規取得は0。共有sourceは一つの取得周期。同時Mutationの誤再送0。
+        </td>
+        <td>Query実行をSAAA部品へ移す。runtimeが許可外通信を止められなければ不採用。</td>
+      </tr>
+      <tr>
+        <th scope="row">総コスト</th>
+        <td>
+          同じ部品・データ参照を使う最小JSON方式と比較し、入力／出力token、修正回数、生成時間、初回描画時間、bundle差を記録する。
+        </td>
+        <td>
+          出力tokenだけで採用しない。OpenUIの機能上の利益が運用コストを上回る根拠を記録できなければJSON方式を選ぶ。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    候補が不採用でもContent
+    Part、View／Instance、source／action、Snapshotの契約は維持する。代替JSON方式はLLMに任意コードを書かせるものではなく、同じ許可部品の選択・配置を型付きデータで表す。Native
+    Featureへの変換は実装成果の受入後、別計画で評価する。
+  </p>
+
+  <h2 id="verification">12. 検証計画</h2>
+  <table>
+    <caption>
+      認証不要の固定テストを先に実装し、実機とモデル検証を分ける
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">ケース</th>
+        <th scope="col">期待結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">DB／IPC</th>
+        <td>旧DB migration、空parts、重複結果、保存途中失敗、会話削除、未知版、Revision競合。</td>
+        <td>
+          旧履歴が読める。孤立参照・二重作成・過去Revision変更がない。未知版でも要約を表示できる。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Runtime</th>
+        <td>
+          tool断片、無効定義、未知source、上限超過、キャンセル、UIだけの回答、Providerのtool非対応。
+        </td>
+        <td>検証前の外部実行0件。失敗は通常会話へ影響を広げない。DSLがTTSへ入らない。</td>
+      </tr>
+      <tr>
+        <th scope="row">データ／操作</th>
+        <td>
+          取得遅延、offline、source設定変更、同時購読、非表示化、古い対象、二重click、結果不明のMutation。
+        </td>
+        <td>
+          staleと失敗を明示。世代違いの結果を反映しない。許可外実行0件。Mutationの不用意な再送0件。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">保存／編集</th>
+        <td>同一Viewの二つのInstance、再起動、Draft編集、再公開、Snapshot再表示、日本語検索。</td>
+        <td>
+          操作状態が独立し、過去の見た目とSnapshot値が不変。保存したViewを検索で再発見できる。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">表示</th>
+        <td>日本語／英語、会話幅360／768／1200 px、キーボード操作、長い表、renderer例外。</td>
+        <td>ページ全体の横はみ出しがない。操作に到達できる。例外は該当UIだけを要約へ置換する。</td>
+      </tr>
+      <tr>
+        <th scope="row">履歴性能</th>
+        <td>
+          10万messages、10個のLive
+          UIを含む履歴、先頭追加、後方復帰、stream、幅変更、フォーカス中の入力。
+        </td>
+        <td>
+          初期保持30・上限150を守る。表示DOMはviewportとoverscan中心。再取得で履歴を欠落・重複させない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    性能計測は同一macOS機、同一release
+    build、同一fixtureで実施する。非表示化から次の取得周期までに新規通信が止まることを必須条件にする。先頭追加後のanchor誤差8
+    px以下、データ取得を除くUI再mountのp95 200 ms以下を初期目標とし、Phase
+    0で機種・標本数とともに確定する。RSSは単純にDOM件数と同一視せず、往復スクロールを繰り返して継続増加がないことを確認する。未達を実測値なしで合格にしない。
+  </p>
+  <p>
+    新規のtargeted
+    testsは<code>tests/generative-ui-contracts.test.ts</code>、<code>tests/generative-ui-state.test.ts</code>、<code>tests/generative-ui-lifecycle.test.ts</code>、<code>tests/conversation-virtualization.test.ts</code>を候補名とする。Rust側は<code>generative_ui</code>をテスト名の共通prefixに使い、migration・tool・操作境界を実DB／mock
+    serviceで検証する。これらのテストは現在未作成である。
+  </p>
+  <pre><code class="language-sh"># 各工程で対応するテストを作成してから実行する
+bun test tests/generative-ui-contracts.test.ts tests/generative-ui-state.test.ts tests/generative-ui-lifecycle.test.ts
+bun test tests/conversation-virtualization.test.ts
+cargo test --manifest-path src-tauri/Cargo.toml generative_ui
+
+# IPC契約変更後
+bun run ipc:generate
+bun run ipc:check
+
+# 統合時の既存gate
+bun run check
+bun run build
+bun run spec:check</code></pre>
+  <p>
+    実Provider検証は固定テストと分け、model名・版・prompt／library版・source・接続条件を記録する。LARM未接続ならmock成功を実機成功としない。既存の<code>bun run desktop:smoke</code>を基礎に、必要なGenUI操作を追加する。通信停止、スクロール、フォーカスはjsdomだけでは保証できないためTauri実機で確認する。
+  </p>
+  <p>
+    失敗時は同じ条件で再現し、原因を修正して該当ケースと関連回帰だけを再実行する。既存差分由来の失敗は開始前の結果と比較し、今回の成功に含めない。OpenUI固有の必須条件を満たせなければPhase
+    0の代替へ戻す。接続不能などの外部要因は未検証項目として残し、合格扱いをしない。
+  </p>
+
+  <h2 id="rollout">13. 有効化、停止、完了報告</h2>
+  <p>
+    新規生成を制御するfeature flagを既定OFFで導入し、Phase
+    1Bを通過した環境で試用する。描画機能とQuery／Mutation有効化は分けて制御する。停止時は新規生成・外部操作を止め、既存Content
+    Partは要約表示で読める状態を維持する。DBを逆migrationで破壊しない。旧binaryへのdowngrade互換を保証する場合は別途検証が必要であり、初期の復旧手段は同じbinaryでのflag無効化とする。
+  </p>
+  <p>
+    実装証跡は<code>spec/evidence/generative-ui/</code>へ、baseline、使用版、fixture、テスト結果、モデル評価、性能結果、画面例をまとめる。完了報告には工程ごとの合否、未対応source／action、未検証の実機条件、残る制約、OpenUI採用または代替の根拠を残す。単に画面が表示できたことだけで保存・通信停止・履歴性能まで完了したとは扱わない。
+  </p>
+
+  <h2 id="references">14. 根拠と関連仕様</h2>
+  <ul>
+    <li>
+      <a href="https://github.com/thesysdev/openui">OpenUI公式リポジトリ</a
+      >：対象プロジェクト、MIT、パッケージ構成。2026-09-12の採用評価で確認。
+    </li>
+    <li>
+      <a href="https://www.openui.com/docs/openui-lang/renderer">OpenUI Renderer</a
+      >：独自library、stateの復元、toolProvider、error処理。
+    </li>
+    <li>
+      <a href="https://www.openui.com/docs/openui-lang/queries-mutations">OpenUI Query／Mutation</a
+      >：tool連携と実行契機。SAAA側の実行境界を省略できる根拠にはしない。
+    </li>
+    <li>
+      <a href="https://www.openui.com/docs/openui-lang/benchmarks">OpenUI Benchmarks</a
+      >：公式の比較情報。SAAAの総コストは独自測定する。
+    </li>
+    <li>
+      <a href="./sqlite-single-writer-implementation-plan.html">SQLite Single Writer計画</a
+      >：永続化の既存方針。
+    </li>
+    <li>
+      <a href="./maximum-performance-streaming-implementation-plan.html">Streaming性能計画</a
+      >：既存の会話表示・音声経路との整合。
+    </li>
+    <li>
+      <a href="./mvp-2.6-larm-operations-runbook.html">LARM Operations Runbook</a
+      >：既存の接続・運用境界。
+    </li>
+  </ul>
+</article>

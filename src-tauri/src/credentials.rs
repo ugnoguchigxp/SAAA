@@ -73,6 +73,9 @@ fn provider_accepts_api_key(providers: &crate::ModelProvidersSettings, provider_
         crate::ModelProviderSettings::OpenAiCompatible(provider) => {
             provider.id == provider_id && provider.authentication == "api-key"
         }
+        crate::ModelProviderSettings::AgentSession(provider) => {
+            provider.id == provider_id && provider.authentication == "api-key"
+        }
         crate::ModelProviderSettings::CloudAsr(provider) => {
             provider.id == provider_id && provider.authentication == "api-key"
         }

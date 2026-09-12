@@ -239,11 +239,26 @@ pub(crate) fn persist_conversation_success(
     input: &StartTurnInput,
     content: &str,
 ) -> Result<ConversationMessage, String> {
-    let content = bounded_text(content.trim(), 64_000);
+    let fallback = if content.trim().is_empty() {
+        state.sqlite_readers.read(|c| {
+        c.query_row("SELECT json_extract(result_json,'$.summary') FROM ui_tool_results WHERE run_id=?1 AND json_extract(result_json,'$.summary') IS NOT NULL ORDER BY rowid DESC LIMIT 1", [&input.run_id], |r| r.get::<_,String>(0)).map_err(database_error)
+    }).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let content = bounded_text(
+        if content.trim().is_empty() {
+            &fallback
+        } else {
+            content.trim()
+        },
+        64_000,
+    );
     if content.is_empty() {
         return Err("Assistant message cannot be empty".to_string());
     }
     let message = ConversationMessage {
+        parts: None,
         id: new_id("message"),
         conversation_id: input.conversation_id.clone(),
         role: "assistant".to_string(),

@@ -1,0 +1,3870 @@
+diff --git a/spec/docs/README.html b/spec/docs/README.html
+index 545744a..02da039 100644
+--- a/spec/docs/README.html
++++ b/spec/docs/README.html
+@@ -24,6 +24,14 @@
+       </tr>
+     </thead>
+     <tbody>
++      <tr>
++        <td>
++          <a href="./generative-inline-ui-implementation-plan.html"
++            >SAAA Generative Inline UI 実装計画</a
++          >
++        </td>
++        <td>会話内UIの生成・操作・保存、OpenUI採否、Revisionと履歴性能の段階的導入計画</td>
++      </tr>
+       <tr>
+         <td><a href="./plan.html">Situation-Aware Ambient Agent Runtime</a></td>
+         <td>製品全体のshared conceptと長期構想</td>
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index 9a4ed60..f1e3e4d 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -32,6 +32,28 @@ dependencies = [
+  "alloc-no-stdlib",
+ ]
+ 
++[[package]]
++name = "alsa"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ed7572b7ba83a31e20d1b48970ee402d2e3e0537dcfe0a3ff4d6eb7508617d43"
++dependencies = [
++ "alsa-sys",
++ "bitflags 2.13.1",
++ "cfg-if",
++ "libc",
++]
++
++[[package]]
++name = "alsa-sys"
++version = "0.3.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "db8fee663d06c4e303404ef5f40488a53e062f89ba8bfed81f42325aafad1527"
++dependencies = [
++ "libc",
++ "pkg-config",
++]
++
+ [[package]]
+ name = "android_system_properties"
+ version = "0.1.6"
+@@ -105,6 +127,24 @@ version = "0.22.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+ 
++[[package]]
++name = "bindgen"
++version = "0.72.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
++dependencies = [
++ "bitflags 2.13.1",
++ "cexpr",
++ "clang-sys",
++ "itertools",
++ "proc-macro2",
++ "quote",
++ "regex",
++ "rustc-hash",
++ "shlex 1.3.0",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "bit-set"
+ version = "0.8.0"
+@@ -293,7 +333,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0ad534f4357a5264cce5019c989cf66a4f0dc4e0d1b1d15f8aacec0ff7360273"
+ dependencies = [
+  "find-msvc-tools",
+- "shlex",
++ "jobserver",
++ "libc",
++ "shlex 2.0.1",
+ ]
+ 
+ [[package]]
+@@ -302,6 +344,15 @@ version = "1.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
+ 
++[[package]]
++name = "cexpr"
++version = "0.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
++dependencies = [
++ "nom",
++]
++
+ [[package]]
+ name = "cfb"
+ version = "0.7.3"
+@@ -368,6 +419,17 @@ dependencies = [
+  "phf 0.12.1",
+ ]
+ 
++[[package]]
++name = "clang-sys"
++version = "1.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
++dependencies = [
++ "glob",
++ "libc",
++ "libloading 0.8.9",
++]
++
+ [[package]]
+ name = "combine"
+ version = "4.6.8"
+@@ -434,6 +496,49 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "coreaudio-rs"
++version = "0.11.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "321077172d79c662f64f5071a03120748d5bb652f5231570141be24cfcd2bace"
++dependencies = [
++ "bitflags 1.3.2",
++ "core-foundation-sys",
++ "coreaudio-sys",
++]
++
++[[package]]
++name = "coreaudio-sys"
++version = "0.2.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b9b4739a805a62757a83e5654fa3faabec0442666b263bb2287d5a8185bfd953"
++dependencies = [
++ "bindgen",
++]
++
++[[package]]
++name = "cpal"
++version = "0.15.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "873dab07c8f743075e57f524c583985fbaf745602acbe916a01539364369a779"
++dependencies = [
++ "alsa",
++ "core-foundation-sys",
++ "coreaudio-rs",
++ "dasp_sample",
++ "jni",
++ "js-sys",
++ "libc",
++ "mach2",
++ "ndk 0.8.0",
++ "ndk-context",
++ "oboe",
++ "wasm-bindgen",
++ "wasm-bindgen-futures",
++ "web-sys",
++ "windows 0.54.0",
++]
++
+ [[package]]
+ name = "cpufeatures"
+ version = "0.2.17"
+@@ -568,6 +673,12 @@ dependencies = [
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "dasp_sample"
++version = "0.11.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
++
+ [[package]]
+ name = "data-encoding"
+ version = "2.11.1"
+@@ -800,6 +911,12 @@ version = "1.0.20"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+ 
++[[package]]
++name = "either"
++version = "1.18.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
++
+ [[package]]
+ name = "embed-resource"
+ version = "3.0.11"
+@@ -1685,6 +1802,15 @@ version = "2.12.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
+ 
++[[package]]
++name = "itertools"
++version = "0.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
++dependencies = [
++ "either",
++]
++
+ [[package]]
+ name = "itoa"
+ version = "1.0.18"
+@@ -1811,6 +1937,16 @@ dependencies = [
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "jobserver"
++version = "0.1.35"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
++dependencies = [
++ "getrandom 0.4.3",
++ "libc",
++]
++
+ [[package]]
+ name = "js-sys"
+ version = "0.3.104"
+@@ -1967,6 +2103,15 @@ version = "0.1.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+ 
++[[package]]
++name = "mach2"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
++dependencies = [
++ "libc",
++]
++
+ [[package]]
+ name = "markup5ever"
+ version = "0.38.0"
+@@ -2009,6 +2154,12 @@ dependencies = [
+  "unicase",
+ ]
+ 
++[[package]]
++name = "minimal-lexical"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
++
+ [[package]]
+ name = "miniz_oxide"
+ version = "0.8.9"
+@@ -2051,6 +2202,20 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "ndk"
++version = "0.8.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2076a31b7010b17a38c01907c45b945e8f11495ee4dd588309718901b1f7a5b7"
++dependencies = [
++ "bitflags 2.13.1",
++ "jni-sys 0.3.1",
++ "log",
++ "ndk-sys 0.5.0+25.2.9519653",
++ "num_enum",
++ "thiserror 1.0.69",
++]
++
+ [[package]]
+ name = "ndk"
+ version = "0.9.0"
+@@ -2060,12 +2225,27 @@ dependencies = [
+  "bitflags 2.13.1",
+  "jni-sys 0.3.1",
+  "log",
+- "ndk-sys",
++ "ndk-sys 0.6.0+11769913",
+  "num_enum",
+  "raw-window-handle",
+  "thiserror 1.0.69",
+ ]
+ 
++[[package]]
++name = "ndk-context"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
++
++[[package]]
++name = "ndk-sys"
++version = "0.5.0+25.2.9519653"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8c196769dd60fd4f363e11d948139556a344e79d451aeb2fa2fd040738ef7691"
++dependencies = [
++ "jni-sys 0.3.1",
++]
++
+ [[package]]
+ name = "ndk-sys"
+ version = "0.6.0+11769913"
+@@ -2081,6 +2261,16 @@ version = "1.0.6"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+ 
++[[package]]
++name = "nom"
++version = "7.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
++dependencies = [
++ "memchr",
++ "minimal-lexical",
++]
++
+ [[package]]
+ name = "ntapi"
+ version = "0.4.3"
+@@ -2096,6 +2286,17 @@ version = "0.2.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+ 
++[[package]]
++name = "num-derive"
++version = "0.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "num-traits"
+ version = "0.2.19"
+@@ -2332,6 +2533,29 @@ dependencies = [
+  "objc2-foundation",
+ ]
+ 
++[[package]]
++name = "oboe"
++version = "0.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e8b61bebd49e5d43f5f8cc7ee2891c16e0f41ec7954d36bcb6c14c5e0de867fb"
++dependencies = [
++ "jni",
++ "ndk 0.8.0",
++ "ndk-context",
++ "num-derive",
++ "num-traits",
++ "oboe-sys",
++]
++
++[[package]]
++name = "oboe-sys"
++version = "0.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6c8bb09a4a2b1d668170cfe0a7d5bc103f8999fb316c98099b6a9939c9f2e79d"
++dependencies = [
++ "cc",
++]
++
+ [[package]]
+ name = "once_cell"
+ version = "1.21.4"
+@@ -2895,6 +3119,15 @@ dependencies = [
+  "windows-sys 0.52.0",
+ ]
+ 
++[[package]]
++name = "rodio"
++version = "0.20.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e7ceb6607dd738c99bc8cb28eff249b7cd5c8ec88b9db96c0608c1480d140fb1"
++dependencies = [
++ "cpal",
++]
++
+ [[package]]
+ name = "rusqlite"
+ version = "0.37.0"
+@@ -3001,6 +3234,7 @@ dependencies = [
+  "objc2-core-graphics",
+  "regex",
+  "reqwest 0.12.28",
++ "rodio",
+  "rusqlite",
+  "security-framework",
+  "serde",
+@@ -3332,6 +3566,12 @@ dependencies = [
+  "digest 0.10.7",
+ ]
+ 
++[[package]]
++name = "shlex"
++version = "1.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
++
+ [[package]]
+ name = "shlex"
+ version = "2.0.1"
+@@ -3390,7 +3630,7 @@ checksum = "aac18da81ebbf05109ab275b157c22a653bb3c12cf884450179942f81bcbf6c3"
+ dependencies = [
+  "bytemuck",
+  "js-sys",
+- "ndk",
++ "ndk 0.9.0",
+  "objc2",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+@@ -3546,7 +3786,7 @@ dependencies = [
+  "ntapi",
+  "objc2-core-foundation",
+  "objc2-io-kit",
+- "windows",
++ "windows 0.61.3",
+ ]
+ 
+ [[package]]
+@@ -3583,8 +3823,8 @@ dependencies = [
+  "jni",
+  "libc",
+  "log",
+- "ndk",
+- "ndk-sys",
++ "ndk 0.9.0",
++ "ndk-sys 0.6.0+11769913",
+  "objc2",
+  "objc2-app-kit",
+  "objc2-foundation",
+@@ -3596,7 +3836,7 @@ dependencies = [
+  "tao-macros",
+  "unicode-segmentation",
+  "url",
+- "windows",
++ "windows 0.61.3",
+  "windows-core 0.61.2",
+  "windows-version",
+  "x11-dl",
+@@ -3667,7 +3907,7 @@ dependencies = [
+  "webkit2gtk",
+  "webview2-com",
+  "window-vibrancy",
+- "windows",
++ "windows 0.61.3",
+ ]
+ 
+ [[package]]
+@@ -3797,7 +4037,7 @@ dependencies = [
+  "url",
+  "webkit2gtk",
+  "webview2-com",
+- "windows",
++ "windows 0.61.3",
+ ]
+ 
+ [[package]]
+@@ -3822,7 +4062,7 @@ dependencies = [
+  "url",
+  "webkit2gtk",
+  "webview2-com",
+- "windows",
++ "windows 0.61.3",
+  "wry",
+ ]
+ 
+@@ -4704,7 +4944,7 @@ checksum = "7130243a7a5b33c54a444e54842e6a9e133de08b5ad7b5861cd8ed9a6a5bc96a"
+ dependencies = [
+  "webview2-com-macros",
+  "webview2-com-sys",
+- "windows",
++ "windows 0.61.3",
+  "windows-core 0.61.2",
+  "windows-implement",
+  "windows-interface",
+@@ -4728,7 +4968,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "381336cfffd772377d291702245447a5251a2ffa5bad679c99e61bc48bacbf9c"
+ dependencies = [
+  "thiserror 2.0.20",
+- "windows",
++ "windows 0.61.3",
+  "windows-core 0.61.2",
+ ]
+ 
+@@ -4778,6 +5018,16 @@ dependencies = [
+  "windows-version",
+ ]
+ 
++[[package]]
++name = "windows"
++version = "0.54.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9252e5725dbed82865af151df558e754e4a3c2c30818359eb17465f1346a1b49"
++dependencies = [
++ "windows-core 0.54.0",
++ "windows-targets 0.52.6",
++]
++
+ [[package]]
+ name = "windows"
+ version = "0.61.3"
+@@ -4800,6 +5050,16 @@ dependencies = [
+  "windows-core 0.61.2",
+ ]
+ 
++[[package]]
++name = "windows-core"
++version = "0.54.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "12661b9c89351d684a50a8a643ce5f608e20243b9fb84687800163429f161d65"
++dependencies = [
++ "windows-result 0.1.2",
++ "windows-targets 0.52.6",
++]
++
+ [[package]]
+ name = "windows-core"
+ version = "0.61.2"
+@@ -4881,6 +5141,15 @@ dependencies = [
+  "windows-link 0.1.3",
+ ]
+ 
++[[package]]
++name = "windows-result"
++version = "0.1.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5e383302e8ec8515204254685643de10811af0ed97ea37210dc26fb0032647f8"
++dependencies = [
++ "windows-targets 0.52.6",
++]
++
+ [[package]]
+ name = "windows-result"
+ version = "0.3.4"
+@@ -5158,7 +5427,7 @@ dependencies = [
+  "javascriptcore-rs",
+  "jni",
+  "libc",
+- "ndk",
++ "ndk 0.9.0",
+  "objc2",
+  "objc2-app-kit",
+  "objc2-core-foundation",
+@@ -5176,7 +5445,7 @@ dependencies = [
+  "webkit2gtk",
+  "webkit2gtk-sys",
+  "webview2-com",
+- "windows",
++ "windows 0.61.3",
+  "windows-core 0.61.2",
+  "windows-version",
+  "x11-dl",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index e062f94..6571aa0 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -40,6 +40,7 @@ iana-time-zone = "0.1"
+ libloading = "0.8"
+ libc = "0.2"
+ reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
++rodio = { version = "0.20.1", default-features = false }
+ regex = "1"
+ sha2 = "0.10"
+ tempfile = "3"
+diff --git a/src-tauri/src/credentials.rs b/src-tauri/src/credentials.rs
+index 90f1437..ff982cf 100644
+--- a/src-tauri/src/credentials.rs
++++ b/src-tauri/src/credentials.rs
+@@ -73,6 +73,9 @@ fn provider_accepts_api_key(providers: &crate::ModelProvidersSettings, provider_
+         crate::ModelProviderSettings::OpenAiCompatible(provider) => {
+             provider.id == provider_id && provider.authentication == "api-key"
+         }
++        crate::ModelProviderSettings::AgentSession(provider) => {
++            provider.id == provider_id && provider.authentication == "api-key"
++        }
+         crate::ModelProviderSettings::CloudAsr(provider) => {
+             provider.id == provider_id && provider.authentication == "api-key"
+         }
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index ab74321..b7986c2 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -718,7 +718,7 @@ mod tests {
+         Message as WebSocketMessage,
+     };
+ 
+-    enum LlmWebSocketStep {
++    enum LlmHttpStep {
+         Delta(&'static str),
+         ToolCall {
+             call_id: &'static str,
+@@ -728,321 +728,93 @@ mod tests {
+         ExpectToolResult,
+         Complete,
+         Disconnect,
+-        DisconnectAndResume,
+-        Fail(&'static str),
++        Fail,
+         Delay(u64),
+     }
+ 
+-    async fn spawn_llm_websocket_fixture(
+-        steps: Vec<LlmWebSocketStep>,
++    async fn spawn_llm_http_fixture(
++        steps: Vec<LlmHttpStep>,
+     ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+-        use sha2::{Digest, Sha256};
+-
+-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+-            .await
+-            .expect("WebSocket fixture binds");
+-        let address = listener.local_addr().expect("fixture address");
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++        async fn accept(
++            listener: &tokio::net::TcpListener,
++            captures: &Arc<Mutex<Vec<String>>>,
++        ) -> tokio::net::TcpStream {
++            let (mut socket, _) = listener.accept().await.unwrap();
++            let mut bytes = Vec::new();
++            loop {
++                let mut buffer = [0; 8192];
++                let count = socket.read(&mut buffer).await.unwrap();
++                assert!(count > 0);
++                bytes.extend_from_slice(&buffer[..count]);
++                if let Some(end) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
++                    let header = String::from_utf8_lossy(&bytes[..end]);
++                    assert!(header.starts_with("POST /v1/chat/completions HTTP/1.1"));
++                    let length = header
++                        .lines()
++                        .find_map(|line| {
++                            line.to_ascii_lowercase()
++                                .strip_prefix("content-length: ")
++                                .and_then(|v| v.parse::<usize>().ok())
++                        })
++                        .unwrap();
++                    if bytes.len() >= end + 4 + length {
++                        captures.lock().unwrap().push(
++                            String::from_utf8(bytes[end + 4..end + 4 + length].to_vec()).unwrap(),
++                        );
++                        break;
++                    }
++                }
++            }
++            socket
++        }
++        async fn start(socket: &mut tokio::net::TcpStream) {
++            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await.unwrap();
++        }
++        async fn event(socket: &mut tokio::net::TcpStream, delta: Value, finish: Value) -> bool {
++            let text = format!(
++                "data: {}\n\n",
++                json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
++            );
++            socket.write_all(text.as_bytes()).await.is_ok()
++        }
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = listener.local_addr().unwrap();
+         let captures = Arc::new(Mutex::new(Vec::new()));
+-        let server_captures = captures.clone();
++        let captured = captures.clone();
+         let server = tokio::spawn(async move {
+-            let (stream, _) = listener.accept().await.expect("fixture accepts");
+-            let mut socket = tokio_tungstenite::accept_hdr_async(
+-                stream,
+-                |request: &WebSocketRequest, mut response: WebSocketResponse| {
+-                    assert_eq!(
+-                        request
+-                            .headers()
+-                            .get(header::SEC_WEBSOCKET_PROTOCOL)
+-                            .and_then(|value| value.to_str().ok()),
+-                        Some(providers::llm_websocket::protocol::SUBPROTOCOL),
+-                    );
+-                    response.headers_mut().insert(
+-                        header::SEC_WEBSOCKET_PROTOCOL,
+-                        HeaderValue::from_static(providers::llm_websocket::protocol::SUBPROTOCOL),
+-                    );
+-                    Ok(response)
+-                },
+-            )
+-            .await
+-            .expect("fixture handshake");
+-            socket
+-                .send(WebSocketMessage::Text(
+-                    json!({
+-                        "type": "connection.ready",
+-                        "protocol": "saaa.llm-stream.v1",
+-                        "connectionId": "conn_fixture",
+-                        "upstreamTransport": "native",
+-                        "limits": {
+-                            "maxConcurrentRuns": 1,
+-                            "maxConnections": 1,
+-                            "maxActiveRunsPerConnection": 1,
+-                            "maxUnackedEvents": 64,
+-                            "maxUnackedBytes": 524288,
+-                            "resumeWindowMs": 120000,
+-                            "heartbeatIntervalMs": 15000
+-                        }
+-                    })
+-                    .to_string()
+-                    .into(),
+-                ))
+-                .await
+-                .expect("ready sends");
+-            let start = socket
+-                .next()
+-                .await
+-                .expect("run.start arrives")
+-                .expect("run.start reads");
+-            let WebSocketMessage::Text(start) = start else {
+-                panic!("run.start is text");
+-            };
+-            server_captures
+-                .lock()
+-                .expect("capture lock")
+-                .push(start.to_string());
+-            let start: Value = serde_json::from_str(start.as_str()).expect("run.start JSON");
+-            let run_id = start["runId"].as_str().expect("run id").to_string();
+-            socket
+-                .send(WebSocketMessage::Text(
+-                    json!({
+-                        "type": "run.accepted",
+-                        "runId": run_id,
+-                        "seq": 1
+-                    })
+-                    .to_string()
+-                    .into(),
+-                ))
+-                .await
+-                .expect("accepted sends");
+-            let mut seq = 1_u64;
+-            let mut content = String::new();
+-            let mut replay_deltas = Vec::<(u64, &'static str)>::new();
++            let mut socket = accept(&listener, &captured).await;
++            if let Some(LlmHttpStep::Fail) = steps.first() {
++                socket.write_all(b"HTTP/1.1 503 Unavailable\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
++                return;
++            }
++            start(&mut socket).await;
+             for step in steps {
+                 match step {
+-                    LlmWebSocketStep::Delta(delta) => {
+-                        seq += 1;
+-                        content.push_str(delta);
+-                        replay_deltas.push((seq, delta));
+-                        let mut frame = Vec::with_capacity(16 + delta.len());
+-                        frame.extend_from_slice(b"SAD1");
+-                        frame.extend_from_slice(&[1, 0]);
+-                        frame.extend_from_slice(&16_u16.to_be_bytes());
+-                        frame.extend_from_slice(&seq.to_be_bytes());
+-                        frame.extend_from_slice(delta.as_bytes());
+-                        if socket
+-                            .send(WebSocketMessage::Binary(frame.into()))
+-                            .await
+-                            .is_err()
+-                        {
+-                            return;
+-                        }
++                    LlmHttpStep::Delta(text) => { if !event(&mut socket,json!({"content":text}),Value::Null).await {return;} }
++                    LlmHttpStep::ToolCall {call_id,name,arguments} => {
++                        if !event(&mut socket,json!({"tool_calls":[{"index":0,"id":call_id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),Value::Null).await {return;}
+                     }
+-                    LlmWebSocketStep::ToolCall {
+-                        call_id,
+-                        name,
+-                        arguments,
+-                    } => {
+-                        seq += 1;
+-                        socket
+-                            .send(WebSocketMessage::Text(
+-                                json!({
+-                                    "type": "tool.call",
+-                                    "runId": run_id,
+-                                    "seq": seq,
+-                                    "callId": call_id,
+-                                    "name": name,
+-                                    "arguments": serde_json::to_string(&arguments)
+-                                        .expect("tool arguments serialize"),
+-                                })
+-                                .to_string()
+-                                .into(),
+-                            ))
+-                            .await
+-                            .expect("tool call sends");
++                    LlmHttpStep::ExpectToolResult => {
++                        event(&mut socket,json!({}),json!("tool_calls")).await;
++                        socket.write_all(b"data: [DONE]\n\n").await.unwrap();
++                        drop(socket);
++                        socket=accept(&listener,&captured).await;
++                        let body: Value=serde_json::from_str(captured.lock().unwrap().last().unwrap()).unwrap();
++                        assert_eq!(body["messages"].as_array().unwrap().last().unwrap()["role"],"tool");
++                        start(&mut socket).await;
+                     }
+-                    LlmWebSocketStep::ExpectToolResult => loop {
+-                        let message = socket
+-                            .next()
+-                            .await
+-                            .expect("tool result arrives")
+-                            .expect("tool result reads");
+-                        let WebSocketMessage::Text(message) = message else {
+-                            continue;
+-                        };
+-                        server_captures
+-                            .lock()
+-                            .expect("capture lock")
+-                            .push(message.to_string());
+-                        if message.contains("\"type\":\"tool.result\"") {
+-                            break;
+-                        }
+-                    },
+-                    LlmWebSocketStep::Complete => {
+-                        seq += 1;
+-                        let hash = Sha256::digest(content.as_bytes());
+-                        socket
+-                            .send(WebSocketMessage::Text(
+-                                json!({
+-                                    "type": "response.completed",
+-                                    "runId": run_id,
+-                                    "seq": seq,
+-                                    "contentBytes": content.len(),
+-                                    "contentSha256": format!("{hash:x}"),
+-                                    "finishReason": "stop",
+-                                    "usage": null
+-                                })
+-                                .to_string()
+-                                .into(),
+-                            ))
+-                            .await
+-                            .ok();
+-                    }
+-                    LlmWebSocketStep::Disconnect => {
+-                        let _ = socket.close(None).await;
+-                        return;
+-                    }
+-                    LlmWebSocketStep::DisconnectAndResume => {
+-                        let _ = socket.close(None).await;
+-                        let (stream, _) = listener.accept().await.expect("resume accepts");
+-                        socket = tokio_tungstenite::accept_hdr_async(
+-                            stream,
+-                            |request: &WebSocketRequest, mut response: WebSocketResponse| {
+-                                assert_eq!(
+-                                    request
+-                                        .headers()
+-                                        .get(header::SEC_WEBSOCKET_PROTOCOL)
+-                                        .and_then(|value| value.to_str().ok()),
+-                                    Some(providers::llm_websocket::protocol::SUBPROTOCOL),
+-                                );
+-                                response.headers_mut().insert(
+-                                    header::SEC_WEBSOCKET_PROTOCOL,
+-                                    HeaderValue::from_static(
+-                                        providers::llm_websocket::protocol::SUBPROTOCOL,
+-                                    ),
+-                                );
+-                                Ok(response)
+-                            },
+-                        )
+-                        .await
+-                        .expect("resume handshake");
+-                        socket
+-                            .send(WebSocketMessage::Text(
+-                                json!({
+-                                    "type": "connection.ready",
+-                                    "protocol": "saaa.llm-stream.v1",
+-                                    "connectionId": "conn_fixture_resume",
+-                                    "upstreamTransport": "native",
+-                                    "limits": {
+-                                        "maxConcurrentRuns": 1,
+-                                        "maxConnections": 1,
+-                                        "maxActiveRunsPerConnection": 1,
+-                                        "maxUnackedEvents": 64,
+-                                        "maxUnackedBytes": 524288,
+-                                        "resumeWindowMs": 120000,
+-                                        "heartbeatIntervalMs": 15000
+-                                    }
+-                                })
+-                                .to_string()
+-                                .into(),
+-                            ))
+-                            .await
+-                            .expect("resume ready sends");
+-                        let resume = socket
+-                            .next()
+-                            .await
+-                            .expect("run.resume arrives")
+-                            .expect("run.resume reads");
+-                        let WebSocketMessage::Text(resume) = resume else {
+-                            panic!("run.resume is text");
+-                        };
+-                        server_captures
+-                            .lock()
+-                            .expect("capture lock")
+-                            .push(resume.to_string());
+-                        let resume: Value =
+-                            serde_json::from_str(resume.as_str()).expect("run.resume JSON");
+-                        let ack_seq = resume["ackSeq"].as_u64().expect("ack seq");
+-                        assert!(ack_seq <= seq);
+-                        socket
+-                            .send(WebSocketMessage::Ping(b"resume-probe".to_vec().into()))
+-                            .await
+-                            .expect("resume ping sends");
+-                        assert!(matches!(
+-                            socket.next().await,
+-                            Some(Ok(WebSocketMessage::Pong(payload)))
+-                                if payload.as_ref() == b"resume-probe"
+-                        ));
+-                        socket
+-                            .send(WebSocketMessage::Text(
+-                                json!({
+-                                    "type": "run.resumed",
+-                                    "runId": run_id,
+-                                    "ackSeq": ack_seq
+-                                })
+-                                .to_string()
+-                                .into(),
+-                            ))
+-                            .await
+-                            .expect("run.resumed sends");
+-                        if ack_seq < 1 {
+-                            socket
+-                                .send(WebSocketMessage::Text(
+-                                    json!({
+-                                        "type": "run.accepted",
+-                                        "runId": run_id,
+-                                        "seq": 1
+-                                    })
+-                                    .to_string()
+-                                    .into(),
+-                                ))
+-                                .await
+-                                .expect("accepted replays");
+-                        }
+-                        for (replay_seq, delta) in replay_deltas
+-                            .iter()
+-                            .filter(|(replay_seq, _)| *replay_seq > ack_seq)
+-                        {
+-                            let mut frame = Vec::with_capacity(16 + delta.len());
+-                            frame.extend_from_slice(b"SAD1");
+-                            frame.extend_from_slice(&[1, 0]);
+-                            frame.extend_from_slice(&16_u16.to_be_bytes());
+-                            frame.extend_from_slice(&replay_seq.to_be_bytes());
+-                            frame.extend_from_slice(delta.as_bytes());
+-                            socket
+-                                .send(WebSocketMessage::Binary(frame.into()))
+-                                .await
+-                                .expect("delta replays");
+-                        }
+-                    }
+-                    LlmWebSocketStep::Fail(code) => {
+-                        seq += 1;
+-                        let hash = Sha256::digest(content.as_bytes());
+-                        socket
+-                            .send(WebSocketMessage::Text(
+-                                json!({
+-                                    "type": "response.failed",
+-                                    "runId": run_id,
+-                                    "seq": seq,
+-                                    "contentBytes": content.len(),
+-                                    "contentSha256": format!("{hash:x}"),
+-                                    "error": {
+-                                        "code": code,
+-                                        "message": "fixture failure",
+-                                        "retryable": false
+-                                    }
+-                                })
+-                                .to_string()
+-                                .into(),
+-                            ))
+-                            .await
+-                            .expect("failure sends");
+-                    }
+-                    LlmWebSocketStep::Delay(milliseconds) => {
+-                        tokio::time::sleep(Duration::from_millis(milliseconds)).await;
++                    LlmHttpStep::Complete => {
++                        event(&mut socket,json!({}),json!("stop")).await;
++                        let _=socket.write_all(b"data: [DONE]\n\n").await;
+                     }
++                    LlmHttpStep::Disconnect => return,
++                    LlmHttpStep::Fail => panic!("failure must precede output"),
++                    LlmHttpStep::Delay(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
+                 }
+             }
+         });
+-        (format!("ws://{address}/v1/llm/stream"), captures, server)
++        (format!("http://{address}/v1"), captures, server)
+     }
+ 
+     fn begin_test_provider_session(
+@@ -1663,10 +1435,10 @@ mod tests {
+ 
+     #[tokio::test]
+     async fn openai_compatible_stream_fixture_projects_deltas() {
+-        let (endpoint, request_body, server) = spawn_llm_websocket_fixture(vec![
+-            LlmWebSocketStep::Delta("hello "),
+-            LlmWebSocketStep::Delta("world"),
+-            LlmWebSocketStep::Complete,
++        let (endpoint, request_body, server) = spawn_llm_http_fixture(vec![
++            LlmHttpStep::Delta("hello "),
++            LlmHttpStep::Delta("world"),
++            LlmHttpStep::Complete,
+         ])
+         .await;
+         let provider = OpenAiCompatibleProviderSettings {
+@@ -1723,10 +1495,10 @@ mod tests {
+         server.await.expect("fixture server joins");
+         assert_eq!(content, "hello world");
+         let request = request_body.lock().expect("request lock")[0].clone();
+-        assert!(request.contains("\"type\":\"run.start\""));
+-        assert!(request.contains("\"allocationId\":\"alloc_stream_fixture\""));
+-        assert!(request.contains("\"reasoning\":{\"effort\":\"low\"}"));
+-        assert!(request.contains("\"maxOutputTokens\":2048"));
++        assert!(request.contains("\"stream\":true"));
++        assert!(!request.contains("allocationId"));
++        assert!(request.contains("\"reasoning_effort\":\"low\""));
++        assert!(request.contains("\"max_tokens\":2048"));
+         assert_eq!(
+             projected
+                 .lock()
+@@ -1739,12 +1511,12 @@ mod tests {
+     }
+ 
+     #[tokio::test]
+-    async fn websocket_resume_preserves_exact_delta_order_without_replay() {
+-        let (endpoint, captures, server) = spawn_llm_websocket_fixture(vec![
+-            LlmWebSocketStep::Delta("before "),
+-            LlmWebSocketStep::DisconnectAndResume,
+-            LlmWebSocketStep::Delta("after"),
+-            LlmWebSocketStep::Complete,
++    async fn http_disconnect_preserves_partial_output_without_regeneration() {
++        let (endpoint, captures, server) = spawn_llm_http_fixture(vec![
++            LlmHttpStep::Delta("before "),
++            LlmHttpStep::Disconnect,
++            LlmHttpStep::Delta("after"),
++            LlmHttpStep::Complete,
+         ])
+         .await;
+         let provider = OpenAiCompatibleProviderSettings {
+@@ -1788,21 +1560,19 @@ mod tests {
+         server.await.expect("resume fixture joins");
+         assert!(matches!(
+             outcome,
+-            ProviderAttemptOutcome::Completed { ref content, .. } if content == "before after"
++            ProviderAttemptOutcome::Failed {
++                output_started: true,
++                ..
++            }
+         ));
+         let projected = deltas.lock().expect("delta lock").join("\n");
+         assert_eq!(projected.matches("before ").count(), 1);
+-        assert_eq!(projected.matches("after").count(), 1);
+-        assert!(captures
+-            .lock()
+-            .expect("capture lock")
+-            .iter()
+-            .any(|message| message.contains("\"type\":\"run.resume\"")
+-                && message.contains("\"ackSeq\":0")));
++        assert_eq!(projected.matches("after").count(), 0);
++        assert_eq!(captures.lock().unwrap().len(), 1);
+     }
+ 
+     #[tokio::test]
+-    async fn dynamic_lan_stream_policy_rejects_a_non_websocket_completion() {
++    async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests() {
+         use std::io::{Read, Write as _};
+         use std::net::TcpListener;
+ 
+@@ -1862,7 +1632,7 @@ mod tests {
+         assert!(matches!(
+             outcome,
+             ProviderAttemptOutcome::Failed {
+-                kind: ProviderFailureKind::Contract | ProviderFailureKind::Network,
++                kind: ProviderFailureKind::Protocol | ProviderFailureKind::Network,
+                 output_started: false,
+                 ..
+             }
+@@ -1871,15 +1641,15 @@ mod tests {
+ 
+     #[tokio::test]
+     async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
+-        let (endpoint, captures, server) = spawn_llm_websocket_fixture(vec![
+-            LlmWebSocketStep::ToolCall {
++        let (endpoint, captures, server) = spawn_llm_http_fixture(vec![
++            LlmHttpStep::ToolCall {
+                 call_id: "call_recall_1",
+                 name: "recall_conversation",
+                 arguments: json!({ "query": "SQLite" }),
+             },
+-            LlmWebSocketStep::ExpectToolResult,
+-            LlmWebSocketStep::Delta("履歴を確認しました"),
+-            LlmWebSocketStep::Complete,
++            LlmHttpStep::ExpectToolResult,
++            LlmHttpStep::Delta("履歴を確認しました"),
++            LlmHttpStep::Complete,
+         ])
+         .await;
+ 
+@@ -1948,7 +1718,7 @@ mod tests {
+         };
+         assert_eq!(content, "履歴を確認しました");
+         let captures = captures.lock().expect("capture lock");
+-        assert_eq!(captures.len(), 3);
++        assert_eq!(captures.len(), 2);
+         let first: Value = serde_json::from_str(&captures[0]).expect("run.start JSON");
+         assert_eq!(first["tools"].as_array().expect("tools array").len(), 4);
+         assert_eq!(
+@@ -1963,8 +1733,9 @@ mod tests {
+                 .and_then(Value::as_str),
+             Some("update_conversation_voice_behavior")
+         );
+-        let tool_result: Value = serde_json::from_str(&captures[2]).expect("tool result JSON");
+-        assert_eq!(tool_result["type"], "tool.result");
++        let continuation: Value = serde_json::from_str(&captures[1]).expect("continuation JSON");
++        let tool_result = continuation["messages"].as_array().unwrap().last().unwrap();
++        assert_eq!(tool_result["role"], "tool");
+         assert!(tool_result["content"]
+             .as_str()
+             .is_some_and(|content| content.contains("SQLite の検索方式")));
+@@ -2284,17 +2055,17 @@ mod tests {
+ 
+     #[tokio::test]
+     async fn recall_tool_rounds_share_one_provider_timeout_budget() {
+-        let (endpoint, _, server) = spawn_llm_websocket_fixture(vec![
+-            LlmWebSocketStep::Delay(350),
+-            LlmWebSocketStep::ToolCall {
++        let (endpoint, _, server) = spawn_llm_http_fixture(vec![
++            LlmHttpStep::Delay(350),
++            LlmHttpStep::ToolCall {
+                 call_id: "call_timeout",
+                 name: "recall_conversation",
+                 arguments: json!({"query": "missing"}),
+             },
+-            LlmWebSocketStep::ExpectToolResult,
+-            LlmWebSocketStep::Delay(350),
+-            LlmWebSocketStep::Delta("too late"),
+-            LlmWebSocketStep::Complete,
++            LlmHttpStep::ExpectToolResult,
++            LlmHttpStep::Delay(350),
++            LlmHttpStep::Delta("too late"),
++            LlmHttpStep::Complete,
+         ])
+         .await;
+ 
+@@ -2351,7 +2122,7 @@ mod tests {
+             outcome,
+             ProviderAttemptOutcome::Failed {
+                 kind: ProviderFailureKind::Timeout,
+-                output_started: false,
++                output_started: true,
+                 ..
+             }
+         ));
+@@ -2359,10 +2130,10 @@ mod tests {
+ 
+     #[tokio::test]
+     async fn provider_stream_stops_when_the_tauri_consumer_disconnects() {
+-        let (endpoint, _, server) = spawn_llm_websocket_fixture(vec![
+-            LlmWebSocketStep::Delta("visible"),
+-            LlmWebSocketStep::Delta("ignored"),
+-            LlmWebSocketStep::Complete,
++        let (endpoint, _, server) = spawn_llm_http_fixture(vec![
++            LlmHttpStep::Delta("visible"),
++            LlmHttpStep::Delta("ignored"),
++            LlmHttpStep::Complete,
+         ])
+         .await;
+         let provider = OpenAiCompatibleProviderSettings {
+@@ -2492,10 +2263,10 @@ mod tests {
+     #[tokio::test]
+     async fn conversation_route_falls_back_and_persists_completed_message() {
+         let (primary_endpoint, _, primary_server) =
+-            spawn_llm_websocket_fixture(vec![LlmWebSocketStep::Fail("model-unavailable")]).await;
+-        let (fallback_endpoint, _, fallback_server) = spawn_llm_websocket_fixture(vec![
+-            LlmWebSocketStep::Delta("fallback ok"),
+-            LlmWebSocketStep::Complete,
++            spawn_llm_http_fixture(vec![LlmHttpStep::Fail]).await;
++        let (fallback_endpoint, _, fallback_server) = spawn_llm_http_fixture(vec![
++            LlmHttpStep::Delta("fallback ok"),
++            LlmHttpStep::Complete,
+         ])
+         .await;
+         let connection = Connection::open_in_memory().expect("database opens");
+@@ -2625,11 +2396,9 @@ mod tests {
+         use std::io::ErrorKind;
+         use std::net::TcpListener;
+ 
+-        let (primary_endpoint, _, primary_server) = spawn_llm_websocket_fixture(vec![
+-            LlmWebSocketStep::Delta("partial"),
+-            LlmWebSocketStep::Disconnect,
+-        ])
+-        .await;
++        let (primary_endpoint, _, primary_server) =
++            spawn_llm_http_fixture(vec![LlmHttpStep::Delta("partial"), LlmHttpStep::Disconnect])
++                .await;
+ 
+         let fallback = TcpListener::bind("127.0.0.1:0").expect("fallback binds");
+         let fallback_address = fallback.local_addr().expect("fallback address");
+diff --git a/src-tauri/src/models/provider_settings.rs b/src-tauri/src/models/provider_settings.rs
+index 69069a7..c23b300 100644
+--- a/src-tauri/src/models/provider_settings.rs
++++ b/src-tauri/src/models/provider_settings.rs
+@@ -16,6 +16,20 @@ pub(crate) struct OpenAiCompatibleProviderSettings {
+     pub(crate) authentication: String,
+ }
+ 
++#[derive(Debug, Clone, Deserialize, Serialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub(crate) struct AgentSessionProviderSettings {
++    pub(crate) id: String,
++    pub(crate) enabled: bool,
++    pub(crate) label: String,
++    pub(crate) location: String,
++    pub(crate) base_url: String,
++    pub(crate) model: String,
++    pub(crate) models_path: String,
++    pub(crate) sessions_path: String,
++    pub(crate) authentication: String,
++}
++
+ #[derive(Debug, Clone, Deserialize, Serialize)]
+ #[serde(rename_all = "camelCase", deny_unknown_fields)]
+ pub(crate) struct CloudAsrProviderSettings {
+@@ -39,9 +53,15 @@ pub(crate) struct CloudTtsProviderSettings {
+     pub(crate) endpoint: String,
+     pub(crate) model: String,
+     pub(crate) voice: String,
++    #[serde(default = "default_tts_format")]
++    pub(crate) response_format: String,
+     pub(crate) authentication: String,
+ }
+ 
++pub(crate) fn default_tts_format() -> String {
++    "wav".to_string()
++}
++
+ #[derive(Debug, Clone, Deserialize, Serialize)]
+ #[serde(rename_all = "camelCase", deny_unknown_fields)]
+ pub(crate) struct SystemTtsProviderSettings {
+@@ -82,6 +102,8 @@ pub(crate) struct DynamicLanProviderSettings {
+ pub(crate) enum ModelProviderSettings {
+     #[serde(rename = "openai-compatible")]
+     OpenAiCompatible(OpenAiCompatibleProviderSettings),
++    #[serde(rename = "agent-session")]
++    AgentSession(AgentSessionProviderSettings),
+     #[serde(rename = "cloud-asr")]
+     CloudAsr(CloudAsrProviderSettings),
+     #[serde(rename = "cloud-tts")]
+@@ -98,6 +120,7 @@ impl ModelProviderSettings {
+     pub(crate) fn id(&self) -> &str {
+         match self {
+             Self::OpenAiCompatible(provider) => &provider.id,
++            Self::AgentSession(provider) => &provider.id,
+             Self::CloudAsr(provider) => &provider.id,
+             Self::CloudTts(provider) => &provider.id,
+             Self::SystemTts(provider) => &provider.id,
+@@ -109,6 +132,7 @@ impl ModelProviderSettings {
+     pub(crate) fn enabled(&self) -> bool {
+         match self {
+             Self::OpenAiCompatible(provider) => provider.enabled,
++            Self::AgentSession(provider) => provider.enabled,
+             Self::CloudAsr(provider) => provider.enabled,
+             Self::CloudTts(provider) => provider.enabled,
+             Self::SystemTts(provider) => provider.enabled,
+@@ -120,6 +144,7 @@ impl ModelProviderSettings {
+     pub(crate) fn label(&self) -> &str {
+         match self {
+             Self::OpenAiCompatible(provider) => &provider.label,
++            Self::AgentSession(provider) => &provider.label,
+             Self::CloudAsr(provider) => &provider.label,
+             Self::CloudTts(provider) => &provider.label,
+             Self::SystemTts(provider) => &provider.label,
+@@ -131,6 +156,7 @@ impl ModelProviderSettings {
+     pub(crate) fn location(&self) -> &str {
+         match self {
+             Self::OpenAiCompatible(provider) => &provider.location,
++            Self::AgentSession(provider) => &provider.location,
+             Self::CloudAsr(provider) => &provider.location,
+             Self::CloudTts(provider) => &provider.location,
+             Self::SystemTts(provider) => &provider.location,
+@@ -142,6 +168,10 @@ impl ModelProviderSettings {
+     pub(crate) fn kind(&self) -> &'static str {
+         match self {
+             Self::OpenAiCompatible(_) => "openai-compatible",
++            // Agent Session providers own and release a remote session per SAAA
++            // attempt. Persist them under the direct-provider session kind until
++            // the diagnostics schema has a distinct non-allocation kind.
++            Self::AgentSession(_) => "openai-compatible",
+             Self::CloudAsr(_) => "cloud-asr",
+             Self::CloudTts(_) => "cloud-tts",
+             Self::SystemTts(_) => "system-tts",
+@@ -156,6 +186,7 @@ impl ModelProviderSettings {
+     pub(crate) fn set_enabled(&mut self, enabled: bool) {
+         match self {
+             Self::OpenAiCompatible(provider) => provider.enabled = enabled,
++            Self::AgentSession(provider) => provider.enabled = enabled,
+             Self::CloudAsr(provider) => provider.enabled = enabled,
+             Self::CloudTts(provider) => provider.enabled = enabled,
+             Self::SystemTts(provider) => provider.enabled = enabled,
+diff --git a/src-tauri/src/persistence/settings.rs b/src-tauri/src/persistence/settings.rs
+index c2fa7e6..99b7c84 100644
+--- a/src-tauri/src/persistence/settings.rs
++++ b/src-tauri/src/persistence/settings.rs
+@@ -366,6 +366,7 @@ pub(crate) fn validate_settings_batch(
+         if !matches!(
+             primary,
+             ModelProviderSettings::OpenAiCompatible(_)
++                | ModelProviderSettings::AgentSession(_)
+                 | ModelProviderSettings::Larm(_)
+                 | ModelProviderSettings::DynamicLan(_)
+         ) {
+@@ -395,6 +396,7 @@ pub(crate) fn validate_settings_batch(
+         if !matches!(
+             fallback,
+             ModelProviderSettings::OpenAiCompatible(_)
++                | ModelProviderSettings::AgentSession(_)
+                 | ModelProviderSettings::Larm(_)
+                 | ModelProviderSettings::DynamicLan(_)
+         ) {
+diff --git a/src-tauri/src/persistence/settings/provider_validation.rs b/src-tauri/src/persistence/settings/provider_validation.rs
+index 9051e0b..4b1b3dd 100644
+--- a/src-tauri/src/persistence/settings/provider_validation.rs
++++ b/src-tauri/src/persistence/settings/provider_validation.rs
+@@ -2,7 +2,7 @@ use crate::{ModelProviderSettings, ModelProvidersSettings};
+ 
+ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), String> {
+     if !crate::providers::valid_conversation_reasoning_effort(&settings.reasoning_effort) {
+-        return Err("Reasoning effort must be low, medium, or xhigh".to_string());
++        return Err("Reasoning effort must be provider-default, low, medium, or xhigh".to_string());
+     }
+     validate_harness_address(&settings.harness.address)?;
+     if settings.providers.is_empty() || settings.providers.len() > 20 {
+@@ -84,6 +84,67 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
+                     return Err(format!("Cloud provider must use HTTPS: {provider_id}"));
+                 }
+             }
++            ModelProviderSettings::AgentSession(provider) => {
++                if !matches!(provider.authentication.as_str(), "none" | "api-key")
++                    || provider.base_url.len() > 2_048
++                    || provider.model.trim() != provider.model
++                    || provider.model.chars().count() > 256
++                    || provider.model.chars().any(char::is_control)
++                    || provider.models_path.len() > 2_048
++                    || provider.sessions_path.len() > 2_048
++                {
++                    return Err(format!(
++                        "Invalid Agent Session provider metadata: {provider_id}"
++                    ));
++                }
++                if provider.enabled && provider.model.is_empty() {
++                    return Err(format!(
++                        "Enabled Agent Session provider requires a model: {provider_id}"
++                    ));
++                }
++                let base_url = url::Url::parse(&provider.base_url)
++                    .map_err(|_| format!("Invalid Agent Session base URL: {provider_id}"))?;
++                if !base_url.username().is_empty()
++                    || base_url.password().is_some()
++                    || base_url.query().is_some()
++                    || base_url.fragment().is_some()
++                    || base_url.path() != "/"
++                {
++                    return Err(format!(
++                        "Agent Session base URL must be an origin: {provider_id}"
++                    ));
++                }
++                if provider.location == "local" {
++                    if base_url.scheme() != "http"
++                        || !crate::providers::dynamic_lan::url_is_local(&base_url)
++                    {
++                        return Err(format!("Local Agent Session provider must use an HTTP loopback or private-network base URL: {provider_id}"));
++                    }
++                } else if base_url.scheme() != "https" {
++                    return Err(format!(
++                        "Cloud Agent Session provider must use HTTPS: {provider_id}"
++                    ));
++                }
++                let models_url = validate_agent_session_path(
++                    provider_id,
++                    &base_url,
++                    &provider.models_path,
++                    true,
++                )?;
++                if models_url
++                    .query_pairs()
++                    .find(|(key, _)| key == "runtime")
++                    .is_none_or(|(_, value)| value.is_empty())
++                {
++                    return Err(format!("Agent Session model path requires a runtime query parameter: {provider_id}"));
++                }
++                validate_agent_session_path(
++                    provider_id,
++                    &base_url,
++                    &provider.sessions_path,
++                    false,
++                )?;
++            }
+             ModelProviderSettings::CloudAsr(provider) => {
+                 validate_cloud_provider(
+                     provider_id,
+@@ -106,6 +167,9 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
+                     &provider.model,
+                     &provider.authentication,
+                 )?;
++                if !matches!(provider.response_format.as_str(), "wav" | "pcm") {
++                    return Err(format!("TTS format must be wav or pcm: {provider_id}"));
++                }
+                 if provider.voice.trim().is_empty()
+                     || provider.voice.trim() != provider.voice
+                     || provider.voice.chars().count() > 160
+@@ -188,6 +252,33 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
+     Ok(())
+ }
+ 
++fn validate_agent_session_path(
++    provider_id: &str,
++    base_url: &url::Url,
++    path: &str,
++    allow_query: bool,
++) -> Result<url::Url, String> {
++    if path.is_empty()
++        || !path.starts_with('/')
++        || path.starts_with("//")
++        || path.chars().any(char::is_control)
++    {
++        return Err(format!("Invalid Agent Session path: {provider_id}"));
++    }
++    let resolved = base_url
++        .join(path)
++        .map_err(|_| format!("Invalid Agent Session path: {provider_id}"))?;
++    if resolved.origin() != base_url.origin()
++        || !resolved.username().is_empty()
++        || resolved.password().is_some()
++        || resolved.fragment().is_some()
++        || (!allow_query && resolved.query().is_some())
++    {
++        return Err(format!("Unsafe Agent Session path: {provider_id}"));
++    }
++    Ok(resolved)
++}
++
+ fn validate_harness_address(address: &str) -> Result<(), String> {
+     if address.is_empty() {
+         return Ok(());
+@@ -220,7 +311,7 @@ fn validate_cloud_provider(
+     model: &str,
+     authentication: &str,
+ ) -> Result<(), String> {
+-    if location != "cloud"
++    if !matches!(location, "local" | "cloud")
+         || endpoint.len() > 2_048
+         || model.trim().is_empty()
+         || model.trim() != model
+@@ -232,7 +323,10 @@ fn validate_cloud_provider(
+     }
+     let endpoint = url::Url::parse(endpoint)
+         .map_err(|_| format!("Invalid cloud provider endpoint: {provider_id}"))?;
+-    if endpoint.scheme() != "https"
++    if (location == "cloud" && endpoint.scheme() != "https")
++        || (location == "local"
++            && (!matches!(endpoint.scheme(), "http" | "https")
++                || !crate::providers::dynamic_lan::url_is_local(&endpoint)))
+         || !endpoint.username().is_empty()
+         || endpoint.password().is_some()
+         || endpoint.query().is_some()
+diff --git a/src-tauri/src/providers/completion.rs b/src-tauri/src/providers/completion.rs
+index 8e75b61..a2453e8 100644
+--- a/src-tauri/src/providers/completion.rs
++++ b/src-tauri/src/providers/completion.rs
+@@ -1,3 +1,12 @@
++pub(crate) const DEFAULT_CONVERSATION_REASONING_EFFORT: &str = "medium";
++pub(crate) fn default_conversation_reasoning_effort() -> String {
++    DEFAULT_CONVERSATION_REASONING_EFFORT.to_string()
++}
++
++pub(crate) fn valid_conversation_reasoning_effort(value: &str) -> bool {
++    matches!(value, "provider-default" | "low" | "medium" | "xhigh")
++}
++
+ #[cfg(test)]
+ use serde_json::Value;
+ 
+diff --git a/src-tauri/src/providers/dynamic_lan/mod.rs b/src-tauri/src/providers/dynamic_lan/mod.rs
+index b1cd93f..a312884 100644
+--- a/src-tauri/src/providers/dynamic_lan/mod.rs
++++ b/src-tauri/src/providers/dynamic_lan/mod.rs
+@@ -9,6 +9,7 @@ use zeroize::Zeroizing;
+ 
+ mod auth;
+ mod http;
++pub(crate) mod probe;
+ mod urls;
+ mod validate;
+ 
+@@ -97,8 +98,6 @@ struct ProfileProvider {
+     supported_capabilities: Vec<String>,
+     protocol: String,
+     model: String,
+-    #[serde(default)]
+-    streaming_protocol: Option<String>,
+ }
+ 
+ #[derive(Debug, Clone, Eq, PartialEq)]
+@@ -172,31 +171,14 @@ struct ProviderDescriptor {
+     port: u16,
+     base_url: String,
+     model: String,
+-    streaming: ProviderStreamingDescriptor,
++    #[serde(default)]
++    streaming: Option<ProviderStreamingDescriptor>,
+     health: ProviderHealthDescriptor,
+     #[serde(default)]
+     credential: Option<ProviderCredential>,
+     configuration: ProviderConfiguration,
+ }
+ 
+-#[derive(Debug, Deserialize)]
+-#[serde(rename_all = "camelCase")]
+-struct ProviderStreamingDescriptor {
+-    protocol: String,
+-    url: String,
+-    upstream_transport: String,
+-    #[serde(default)]
+-    encoding: Option<String>,
+-    #[serde(default)]
+-    compression: Option<String>,
+-    #[serde(default)]
+-    max_concurrent_runs: Option<u8>,
+-    #[serde(default)]
+-    max_connections: Option<u8>,
+-    #[serde(default)]
+-    resume_window_ms: Option<u64>,
+-}
+-
+ #[derive(Debug, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ struct ProviderCredential {
+@@ -272,7 +254,6 @@ pub(crate) struct DynamicLanConnection {
+     identity: ConnectionIdentity,
+     audience: String,
+     endpoint: String,
+-    stream_url: String,
+     model: String,
+     api_key: Option<Zeroizing<String>>,
+     prior_release_failure: Option<ErrorKind>,
+@@ -566,7 +547,6 @@ impl DynamicLanConnection {
+             identity,
+             audience,
+             endpoint: descriptor.configuration.fields.base_url,
+-            stream_url: descriptor.streaming.url,
+             model: descriptor.configuration.fields.model,
+             api_key: descriptor
+                 .credential
+@@ -580,16 +560,12 @@ impl DynamicLanConnection {
+         &self.endpoint
+     }
+ 
+-    pub(crate) fn stream_url(&self) -> &str {
+-        &self.stream_url
+-    }
+-
+     pub(crate) fn allocation_id(&self) -> &str {
+         &self.identity.allocation_id
+     }
+ 
+     pub(crate) fn stream_protocol(&self) -> &str {
+-        "saaa.llm-stream.v1"
++        "openai.chat-completions.v1"
+     }
+ 
+     pub(crate) fn model(&self) -> &str {
+@@ -659,7 +635,7 @@ impl DynamicLanConnection {
+         .await?;
+         self.identity = next_identity;
+         self.endpoint = descriptor.configuration.fields.base_url;
+-        self.stream_url = descriptor.streaming.url;
++
+         self.model = descriptor.configuration.fields.model;
+         self.api_key = descriptor
+             .credential
+@@ -877,7 +853,6 @@ mod tests {
+                 supported_capabilities: Vec::new(),
+                 protocol: "openai.chat-completions.v1".to_string(),
+                 model: AGENT_PROFILE.to_string(),
+-                streaming_protocol: None,
+             }],
+         };
+         let profiles = AgentProfiles {
+@@ -996,7 +971,10 @@ mod tests {
+             .expect("private HTTP descriptor is accepted");
+         assert_eq!(descriptor.base_url, "http://10.0.0.42:9810/v1");
+         assert_eq!(
+-            descriptor.streaming.url,
++            descriptor
++                .streaming
++                .as_ref()
++                .map_or_else(String::new, |value| value.url.clone()),
+             "ws://10.0.0.42:9810/v1/llm/stream"
+         );
+         assert!(validate_claim(claim("127.0.0.1"), &identity, AUDIENCE, false).is_err());
+@@ -1005,7 +983,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn claim_requires_a_same_origin_native_stream_descriptor() {
++    fn http_claim_accepts_no_ws_but_checks_advertised_urls() {
+         let (created_at, expires_at) = test_timestamps();
+         let identity = test_identity("aconn_test", &created_at, &expires_at);
+ 
+@@ -1014,7 +992,13 @@ mod tests {
+             .as_object_mut()
+             .unwrap()
+             .remove("streaming");
+-        assert!(serde_json::from_value::<ConnectionClaim>(missing).is_err());
++        assert!(validate_claim(
++            serde_json::from_value(missing).unwrap(),
++            &identity,
++            AUDIENCE,
++            false
++        )
++        .is_ok());
+ 
+         let mut cross_host = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+         cross_host["providers"][0]["streaming"]["url"] = json!("ws://10.0.0.43:9810/v1/llm/stream");
+@@ -1050,7 +1034,10 @@ mod tests {
+             .expect("compact WebSocket claim remains sufficient");
+ 
+         assert_eq!(descriptor.protocol, "saaa.llm-stream.v1");
+-        assert_eq!(descriptor.streaming.upstream_transport, "native");
++        assert_eq!(
++            descriptor.streaming.as_ref().unwrap().upstream_transport,
++            "native"
++        );
+     }
+ 
+     #[test]
+@@ -1273,7 +1260,7 @@ mod tests {
+         let (created_at, expires_at) = test_timestamps();
+         let (captured_tx, captured_rx) = mpsc::channel();
+         let server = std::thread::spawn(move || {
+-            for index in 0..5 {
++            for index in 0..6 {
+                 let (mut stream, _) = listener.accept().expect("request accepted");
+                 let request = read_request(&mut stream);
+                 captured_tx.send(request.clone()).expect("request captured");
+@@ -1300,13 +1287,27 @@ mod tests {
+                         &expires_at,
+                     )
+                     .to_string(),
+-                    2 => claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at).to_string(),
++                    2 => {
++                        let mut claim =
++                            claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at);
++                        claim["providers"][0]
++                            .as_object_mut()
++                            .unwrap()
++                            .remove("streaming");
++                        claim.to_string()
++                    }
+                     3 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
+-                    4 => String::new(),
++                    4 => format!(
++                        "data: {}\n\ndata: [DONE]\n\n",
++                        json!({"model": AGENT_PROFILE, "choices":[{"index":0,"delta":{"content":"HTTP claim works"},"finish_reason":"stop"}]})
++                    ),
++                    5 => String::new(),
+                     _ => unreachable!(),
+                 };
+-                if index == 4 {
++                if index == 5 {
+                     write_response(&mut stream, "204 No Content", "", "");
++                } else if index == 4 {
++                    write_response(&mut stream, "200 OK", "text/event-stream", &body);
+                 } else {
+                     write_response(&mut stream, "200 OK", "application/json", &body);
+                 }
+@@ -1323,17 +1324,42 @@ mod tests {
+             connection.endpoint(),
+             format!("http://127.0.0.1:{}/v1", address.port())
+         );
+-        assert_eq!(
+-            connection.stream_url(),
+-            format!("ws://127.0.0.1:{}/v1/llm/stream", address.port())
+-        );
+         assert_eq!(connection.model(), AGENT_PROFILE);
+         assert_eq!(connection.api_key(), Some("short-lived-provider-token"));
++        let input = crate::StartTurnInput {
++            run_id: "claim-fixture".into(),
++            conversation_id: "claim-fixture".into(),
++            content: "test".into(),
++            workspace_path: None,
++            retry_input_message_id: None,
++            source_id: None,
++            input_origin: "text".into(),
++            presentation_mode: "visual".into(),
++        };
++        let authorization = format!("Bearer {}", connection.api_key().unwrap());
++        let result = crate::providers::chat_completions::run(
++            connection.endpoint(),
++            Some(&authorization),
++            connection.model(),
++            &[],
++            5000,
++            crate::providers::stream::ModelStreamContext {
++                reasoning_effort: "low",
++                max_output_tokens: 64,
++                input: &input,
++                on_event: &LiveCanaryEvents,
++                cancellation: Arc::default(),
++                output_persistence: None,
++            },
++        )
++        .await
++        .unwrap();
++        assert_eq!(result, "HTTP claim works");
+         connection.release().await.expect("connection releases");
+         server.join().expect("server joins");
+ 
+         let requests = captured_rx.try_iter().collect::<Vec<_>>();
+-        assert_eq!(requests.len(), 5);
++        assert_eq!(requests.len(), 6);
+         assert!(requests[0].starts_with("GET /v1/agent-profiles HTTP/1.1"));
+         assert!(requests[1].starts_with("POST /v1/agent-connections HTTP/1.1"));
+         assert!(requests[1].contains("\"agentProfile\":\"deep-reasoning-35b\""));
+@@ -1344,8 +1370,8 @@ mod tests {
+             .contains("idempotency-key:"));
+         assert!(requests[3]
+             .starts_with("GET /v1/agent-connections/aconn_test/providers/llm/health HTTP/1.1"));
+-        assert!(requests[4].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
+-        for index in [0, 1, 2, 4] {
++        assert!(requests[5].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
++        for index in [0, 1, 2, 5] {
+             assert!(requests[index]
+                 .to_ascii_lowercase()
+                 .contains("authorization: bearer test-control-token"));
+@@ -1354,6 +1380,11 @@ mod tests {
+             .to_ascii_lowercase()
+             .contains("authorization: bearer short-lived-provider-token"));
+ 
++        assert!(requests[4].starts_with("POST /v1/chat/completions HTTP/1.1"));
++        assert!(requests[4]
++            .to_ascii_lowercase()
++            .contains("authorization: bearer short-lived-provider-token"));
++        assert!(!requests[4].contains("test-control-token"));
+         if let Some(token) = previous_token {
+             env::set_var(API_TOKEN_ENV, token);
+         } else {
+@@ -1718,7 +1749,6 @@ mod tests {
+             .api_key()
+             .map(|credential| format!("Bearer {credential}"));
+         let prompt = "Reply with exactly: SAAA_DYNAMIC_OK";
+-        let messages = [json!({ "role": "user", "content": prompt })];
+         let input = crate::StartTurnInput {
+             run_id: format!("run_dynamic_canary_{}", Uuid::new_v4().simple()),
+             conversation_id: "conversation_dynamic_canary".to_string(),
+@@ -1730,32 +1760,31 @@ mod tests {
+             presentation_mode: "visual".to_string(),
+         };
+         let events = LiveCanaryEvents;
+-        let result = crate::providers::llm_websocket::client::run(
+-            crate::providers::llm_websocket::client::WebSocketRunContext {
+-                stream_url: connection.stream_url(),
+-                authorization: authorization.as_deref(),
+-                allocation_id: Some(connection.allocation_id()),
+-                model: connection.model(),
+-                messages: &messages,
+-                tools: &[],
++        let history = [crate::ipc_contract::ConversationMessage {
++            id: "probe".into(),
++            conversation_id: input.conversation_id.clone(),
++            role: "user".into(),
++            content: prompt.into(),
++            created_at: String::new(),
++        }];
++        let result = crate::providers::chat_completions::run(
++            connection.endpoint(),
++            authorization.as_deref(),
++            connection.model(),
++            &history,
++            120_000,
++            crate::providers::stream::ModelStreamContext {
+                 reasoning_effort: "low",
+                 max_output_tokens: 512,
+-                tool_timeout: Duration::from_secs(60),
+-                timeout: Duration::from_secs(120),
+                 input: &input,
+                 on_event: &events,
+-                cancellation: Arc::new(RunCancellation::default()),
++                cancellation: Arc::default(),
+                 output_persistence: None,
+             },
+         )
+         .await;
+         let release = connection.release().await;
+-        let completed = result.expect("claimed WebSocket provider request completes");
+-        let crate::providers::llm_websocket::client::WebSocketRunResult::Completed(completion) =
+-            completed
+-        else {
+-            panic!("claimed WebSocket provider must complete normally: {completed:?}");
+-        };
++        let completion = result.expect("claimed HTTP provider request completes");
+         assert!(!completion.trim().is_empty());
+         release.expect("live connection releases");
+     }
+diff --git a/src-tauri/src/providers/dynamic_lan/urls.rs b/src-tauri/src/providers/dynamic_lan/urls.rs
+index 12720cf..2246dbf 100644
+--- a/src-tauri/src/providers/dynamic_lan/urls.rs
++++ b/src-tauri/src/providers/dynamic_lan/urls.rs
+@@ -1,3 +1,12 @@
++#[derive(Debug, serde::Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub(super) struct ProviderStreamingDescriptor {
++    pub(super) url: String,
++    #[cfg(test)]
++    #[serde(default)]
++    pub(super) upstream_transport: String,
++}
++
+ use url::{Host, Url};
+ 
+ use super::{contract_error, DynamicLanError, ErrorKind, CONTROL_PORT};
+diff --git a/src-tauri/src/providers/dynamic_lan/validate.rs b/src-tauri/src/providers/dynamic_lan/validate.rs
+index 23ba0bf..1fe85da 100644
+--- a/src-tauri/src/providers/dynamic_lan/validate.rs
++++ b/src-tauri/src/providers/dynamic_lan/validate.rs
+@@ -241,10 +241,6 @@ pub(crate) fn validate_profiles(
+         || !supported_capabilities_are_valid
+         || !valid_llm_protocol(&provider.protocol)
+         || !valid_bounded_identifier(&provider.model, 160)
+-        || provider
+-            .streaming_protocol
+-            .as_deref()
+-            .is_some_and(|protocol| protocol != "saaa.llm-stream.v1")
+     {
+         return Err(contract_error(()));
+     }
+@@ -305,22 +301,23 @@ pub(crate) fn validate_claim(
+         .port_or_known_default()
+         .ok_or_else(|| contract_error(()))?;
+     let expected_health_url = provider_health_url(&base_url, &expected.id, &descriptor.name)?;
+-    let stream_url = Url::parse(&descriptor.streaming.url).map_err(contract_error)?;
+-    let stream_limits_are_valid = descriptor
+-        .streaming
+-        .max_concurrent_runs
+-        .is_none_or(|value| (1..=8).contains(&value))
+-        && descriptor
+-            .streaming
+-            .max_connections
+-            .is_none_or(|value| (1..=8).contains(&value))
+-        && match (
+-            descriptor.streaming.max_concurrent_runs,
+-            descriptor.streaming.max_connections,
+-        ) {
+-            (Some(runs), Some(connections)) => runs == connections,
+-            _ => true,
+-        };
++    // HTTP inference ignores WS transport/encoding/resume capabilities. Validate
++    // an advertised URL's boundary without requiring that optional advertisement.
++    if let Some(streaming) = &descriptor.streaming {
++        let stream_url = Url::parse(&streaming.url).map_err(contract_error)?;
++        if stream_url.scheme() != "ws"
++            || stream_url.host_str() != base_url.host_str()
++            || stream_url.port_or_known_default() != base_url.port_or_known_default()
++            || stream_url.path() != "/v1/llm/stream"
++            || stream_url.query().is_some()
++            || stream_url.fragment().is_some()
++            || !stream_url.username().is_empty()
++            || stream_url.password().is_some()
++            || streaming.url.len() > 2048
++        {
++            return Err(contract_error(()));
++        }
++    }
+     if descriptor.api_style != "openai"
+         || expected_scheme != "http"
+         || descriptor.scheme != expected_scheme
+@@ -335,35 +332,6 @@ pub(crate) fn validate_claim(
+         || !url_is_local(&base_url)
+         || (!control_is_loopback && url_is_loopback(&base_url))
+         || descriptor.model != expected.profile.model
+-        || descriptor.streaming.protocol != "saaa.llm-stream.v1"
+-        || descriptor.streaming.url.len() > 2_048
+-        || !matches!(
+-            descriptor.streaming.upstream_transport.as_str(),
+-            "native" | "websocket"
+-        )
+-        || descriptor
+-            .streaming
+-            .encoding
+-            .as_deref()
+-            .is_some_and(|value| value != "json-control+binary-delta-v1")
+-        || descriptor
+-            .streaming
+-            .compression
+-            .as_deref()
+-            .is_some_and(|value| value != "none")
+-        || !stream_limits_are_valid
+-        || descriptor
+-            .streaming
+-            .resume_window_ms
+-            .is_some_and(|value| value < 120_000)
+-        || stream_url.scheme() != "ws"
+-        || stream_url.host_str() != base_url.host_str()
+-        || stream_url.port_or_known_default() != base_url.port_or_known_default()
+-        || stream_url.path() != "/v1/llm/stream"
+-        || stream_url.query().is_some()
+-        || stream_url.fragment().is_some()
+-        || !stream_url.username().is_empty()
+-        || stream_url.password().is_some()
+         || descriptor.health.url != expected_health_url.as_str()
+         || descriptor.health.kind != "semantic-inference"
+         || descriptor.health.max_age_ms == 0
+diff --git a/src-tauri/src/providers/mod.rs b/src-tauri/src/providers/mod.rs
+index e9b21e0..54985b8 100644
+--- a/src-tauri/src/providers/mod.rs
++++ b/src-tauri/src/providers/mod.rs
+@@ -1,5 +1,9 @@
++pub(crate) mod agent_session;
++pub(crate) mod chat_completions;
+ pub(crate) mod completion;
+ pub(crate) mod dynamic_lan;
++pub(crate) mod http;
++pub(crate) mod http_metrics;
+ pub(crate) mod larm;
+ pub(crate) mod llm_websocket;
+ pub(crate) mod openai_compatible;
+@@ -9,12 +13,7 @@ pub(crate) mod routing;
+ pub(crate) mod service_harness;
+ pub(crate) mod session_store;
+ pub(crate) mod stream;
+-
+-pub(crate) const DEFAULT_CONVERSATION_REASONING_EFFORT: &str = "medium";
+-pub(crate) fn default_conversation_reasoning_effort() -> String {
+-    DEFAULT_CONVERSATION_REASONING_EFFORT.to_string()
+-}
+-
+-pub(crate) fn valid_conversation_reasoning_effort(value: &str) -> bool {
+-    matches!(value, "low" | "medium" | "xhigh")
+-}
++pub(crate) use completion::{
++    default_conversation_reasoning_effort, valid_conversation_reasoning_effort,
++    DEFAULT_CONVERSATION_REASONING_EFFORT,
++};
+diff --git a/src-tauri/src/providers/openai_compatible.rs b/src-tauri/src/providers/openai_compatible.rs
+index 6707935..70a168d 100644
+--- a/src-tauri/src/providers/openai_compatible.rs
++++ b/src-tauri/src/providers/openai_compatible.rs
+@@ -2,33 +2,33 @@ use crate::OpenAiCompatibleProviderSettings;
+ use zeroize::Zeroizing;
+ 
+ mod probe;
+-pub(crate) use probe::probe_model_provider;
++pub(crate) use probe::{probe_model_provider, probe_model_provider_with_api_key};
+ 
+-#[cfg(test)]
+-/// Projects one SSE event according to the event-stream specification. Multiple
+-/// `data:` fields belong to the same event and are joined with a newline; treating
+-/// them as independent JSON documents silently accepts truncated provider output.
+-pub(crate) fn sse_event_data(event: &str) -> Option<String> {
+-    let fields = event.lines().filter_map(|line| {
+-        let value = line.strip_prefix("data:")?;
+-        Some(value.strip_prefix(' ').unwrap_or(value))
+-    });
+-    let data = fields.collect::<Vec<_>>();
+-    (!data.is_empty()).then(|| data.join("\n"))
+-}
+-
+-pub(crate) fn provider_models_url(endpoint: &str) -> Result<String, String> {
+-    provider_operation_url(endpoint, "models")
+-}
+-
+-fn provider_operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
++pub(crate) fn provider_operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
+     let mut url =
+         url::Url::parse(endpoint).map_err(|_| "Provider endpoint is invalid".to_string())?;
++    if !matches!(url.scheme(), "http" | "https")
++        || url.host_str().is_none()
++        || !url.username().is_empty()
++        || url.password().is_some()
++        || url.query().is_some()
++        || url.fragment().is_some()
++    {
++        return Err(
++            "Provider base URL must be HTTP(S) without credentials, query or fragment".to_string(),
++        );
++    }
+     let mut path = url.path().trim_end_matches('/').to_string();
+-    if path.ends_with("/chat/completions") {
+-        path.truncate(path.len() - "/chat/completions".len());
+-    } else if path.ends_with("/models") {
+-        path.truncate(path.len() - "/models".len());
++    for suffix in [
++        "/chat/completions",
++        "/audio/transcriptions",
++        "/audio/speech",
++        "/models",
++    ] {
++        if path.ends_with(suffix) {
++            path.truncate(path.len() - suffix.len());
++            break;
++        }
+     }
+     if !path.ends_with("/v1") {
+         path.push_str("/v1");
+@@ -53,14 +53,30 @@ pub(crate) fn provider_api_key(
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-
+     #[test]
+-    fn sse_data_fields_are_joined_as_one_event() {
+-        let event = "event: message\ndata: {\"choices\":[\ndata: {\"index\":0,\"delta\":{}}]}";
+-        assert_eq!(
+-            sse_event_data(event).as_deref(),
+-            Some("{\"choices\":[\n{\"index\":0,\"delta\":{}}]}")
+-        );
+-        assert_eq!(sse_event_data(": heartbeat"), None);
++    fn legacy_operation_urls_preserve_proxy_prefix_and_origin() {
++        for endpoint in [
++            "http://localhost:8000/proxy",
++            "http://localhost:8000/proxy/v1/",
++            "http://localhost:8000/proxy/v1/chat/completions",
++            "http://localhost:8000/proxy/v1/models",
++            "http://localhost:8000/proxy/v1/audio/transcriptions",
++            "http://localhost:8000/proxy/v1/audio/speech",
++        ] {
++            for operation in ["chat/completions", "audio/transcriptions", "audio/speech"] {
++                assert_eq!(
++                    provider_operation_url(endpoint, operation).unwrap(),
++                    format!("http://localhost:8000/proxy/v1/{operation}")
++                );
++            }
++        }
++        for endpoint in [
++            "ws://localhost/v1",
++            "http://token@localhost/v1",
++            "http://localhost/v1?token=secret",
++            "http://localhost/v1#fragment",
++        ] {
++            assert!(provider_operation_url(endpoint, "chat/completions").is_err());
++        }
+     }
+ }
+diff --git a/src-tauri/src/providers/openai_compatible/probe.rs b/src-tauri/src/providers/openai_compatible/probe.rs
+index f6e4a80..4dabe28 100644
+--- a/src-tauri/src/providers/openai_compatible/probe.rs
++++ b/src-tauri/src/providers/openai_compatible/probe.rs
+@@ -1,54 +1,17 @@
+-use futures_util::StreamExt;
+-use serde::Deserialize;
+-use serde_json::json;
+-use std::{sync::Arc, time::Duration};
++use std::sync::Arc;
+ 
+-use super::{provider_api_key, provider_models_url};
+ use crate::OpenAiCompatibleProviderSettings;
+ 
+ pub(crate) async fn probe_model_provider(
+     provider: &OpenAiCompatibleProviderSettings,
+ ) -> Result<String, String> {
+-    let mut client = reqwest::Client::builder()
+-        .timeout(Duration::from_secs(10))
+-        .redirect(reqwest::redirect::Policy::none());
+-    if provider.location == "local" {
+-        client = client.no_proxy();
+-    }
+-    let client = client
+-        .build()
+-        .map_err(|error| format!("Could not initialize HTTP client: {error}"))?;
+-    let api_key = provider_api_key(provider)?;
+-    if provider.authentication == "api-key" && api_key.is_none() {
+-        return Err("API key is not configured in macOS Keychain".to_string());
+-    }
+-    let mut request = client.get(provider_models_url(&provider.endpoint)?);
+-    if let Some(api_key) = api_key.as_deref() {
+-        request = request.bearer_auth(api_key);
+-    }
+-    let response = request
+-        .send()
+-        .await
+-        .map_err(|error| format!("Connection failed: {error}"))?;
+-    if !response.status().is_success() {
+-        return Err(format!("Provider returned HTTP {}", response.status()));
+-    }
+-    let models: ModelsResponse = serde_json::from_slice(&read_probe_body(response).await?)
+-        .map_err(|_| "Provider returned an invalid /v1/models response".to_string())?;
+-    if !models.data.iter().any(|model| model.id == provider.model) {
+-        return Err(format!(
+-            "Configured model {} is not listed by the provider",
+-            provider.model
+-        ));
+-    }
++    probe_model_provider_with_api_key(provider, None).await
++}
+ 
+-    let stream_url = crate::providers::stream::provider_stream_url(&provider.endpoint)
+-        .map_err(|_| "Provider does not advertise a valid LLM WebSocket endpoint".to_string())?;
+-    let authorization = api_key.as_deref().map(|value| format!("Bearer {value}"));
+-    let messages = vec![
+-        json!({ "role": "system", "content": "Reply briefly." }),
+-        json!({ "role": "user", "content": "Connectivity check" }),
+-    ];
++pub(crate) async fn probe_model_provider_with_api_key(
++    provider: &OpenAiCompatibleProviderSettings,
++    api_key: Option<&str>,
++) -> Result<String, String> {
+     let input = crate::StartTurnInput {
+         run_id: format!("probe_{}", uuid::Uuid::new_v4().simple()),
+         conversation_id: "provider_probe".to_string(),
+@@ -60,65 +23,47 @@ pub(crate) async fn probe_model_provider(
+         presentation_mode: "visual".to_string(),
+     };
+     let sink = tauri::ipc::Channel::new(|_| Ok(()));
+-    let result = crate::providers::llm_websocket::client::run(
+-        crate::providers::llm_websocket::client::WebSocketRunContext {
+-            stream_url: stream_url.as_str(),
+-            authorization: authorization.as_deref(),
+-            allocation_id: None,
+-            model: &provider.model,
+-            messages: &messages,
+-            tools: &[],
+-            reasoning_effort: crate::providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
++    let history = [crate::ipc_contract::ConversationMessage {
++        id: "probe-message".into(),
++        conversation_id: input.conversation_id.clone(),
++        role: "user".into(),
++        content: input.content.clone(),
++        created_at: String::new(),
++    }];
++    let stored_key = if api_key.is_none() {
++        super::provider_api_key(provider)?
++    } else {
++        None
++    };
++    let key = api_key.or(stored_key.as_deref().map(String::as_str));
++    if provider.authentication == "api-key" && key.is_none() {
++        return Err("API key is not configured in macOS Keychain".into());
++    }
++    let authorization = key.map(|key| format!("Bearer {key}"));
++    let result = crate::providers::chat_completions::run_mode(
++        &provider.endpoint,
++        authorization.as_deref(),
++        &provider.model,
++        &history,
++        10_000,
++        crate::providers::stream::ModelStreamContext {
++            reasoning_effort: "provider-default",
+             max_output_tokens: 64,
+-            tool_timeout: Duration::from_secs(10),
+-            timeout: Duration::from_secs(10),
+             input: &input,
+             on_event: &sink,
+             cancellation: Arc::new(crate::RunCancellation::default()),
+             output_persistence: None,
+         },
++        crate::providers::chat_completions::RequestMode::JsonProbe,
+     )
+-    .await
+-    .map_err(|error| format!("WebSocket generation probe failed: {error:?}"))?;
+-    if !matches!(
+-        result,
+-        crate::providers::llm_websocket::client::WebSocketRunResult::Completed(ref content)
+-            if !content.trim().is_empty()
+-    ) {
+-        return Err("Provider WebSocket probe did not complete a text response".to_string());
+-    }
+-    Ok(format!(
+-        "Model {} is listed and completed a generation probe",
+-        provider.model
+-    ))
+-}
+-
+-#[derive(Debug, Deserialize)]
+-struct ModelsResponse {
+-    data: Vec<ModelDescriptor>,
+-}
+-
+-#[derive(Debug, Deserialize)]
+-struct ModelDescriptor {
+-    id: String,
+-}
+-
+-async fn read_probe_body(response: reqwest::Response) -> Result<Vec<u8>, String> {
+-    const LIMIT: usize = 1_048_576;
+-    if response
+-        .content_length()
+-        .is_some_and(|length| length > LIMIT as u64)
+-    {
+-        return Err("Provider probe response exceeded the size limit".to_string());
+-    }
+-    let mut stream = response.bytes_stream();
+-    let mut body = Vec::new();
+-    while let Some(chunk) = stream.next().await {
+-        let chunk = chunk.map_err(|error| format!("Could not read provider response: {error}"))?;
+-        if body.len().saturating_add(chunk.len()) > LIMIT {
+-            return Err("Provider probe response exceeded the size limit".to_string());
++    .await;
++    match result {
++        Ok(content) if !content.trim().is_empty() => {
++            Ok("Provider completed an HTTP Chat Completions generation probe".to_string())
++        }
++        Err(crate::providers::stream::ProviderAttemptError::Failed { kind, .. }) => {
++            Err(kind.public_message().as_str().to_string())
+         }
+-        body.extend_from_slice(&chunk);
++        _ => Err("Provider did not complete the HTTP generation probe".to_string()),
+     }
+-    Ok(body)
+ }
+diff --git a/src-tauri/src/providers/probe.rs b/src-tauri/src/providers/probe.rs
+index 61299a7..92a73a1 100644
+--- a/src-tauri/src/providers/probe.rs
++++ b/src-tauri/src/providers/probe.rs
+@@ -1,16 +1,14 @@
+-use std::sync::Arc;
+-
++use super::agent_session::probe_agent_session_provider as probe_agent_session;
+ use super::{openai_compatible::probe_model_provider, stream::larm_failure_message};
+ use crate::persistence::validate_model_providers;
+ use crate::{
+     redact::redact_runtime_text, validate_identifier, AppState, ModelProviderSettings,
+-    ModelProvidersSettings, ProviderTestResult, RunCancellation, TestProviderInput,
++    ModelProvidersSettings, ProviderTestResult, TestProviderInput,
+ };
+ 
+-pub(crate) async fn test_model_provider(
+-    state: &AppState,
+-    input: TestProviderInput,
+-) -> Result<ProviderTestResult, String> {
++type TestResult = Result<ProviderTestResult, String>;
++
++pub(crate) async fn test_model_provider(state: &AppState, input: TestProviderInput) -> TestResult {
+     let mut provider = input.provider;
+     provider.set_enabled(true);
+     validate_identifier(provider.id(), "provider id")?;
+@@ -25,6 +23,7 @@ pub(crate) async fn test_model_provider(
+     let started = std::time::Instant::now();
+     let result = match &provider {
+         ModelProviderSettings::OpenAiCompatible(provider) => probe_model_provider(provider).await,
++        ModelProviderSettings::AgentSession(provider) => probe_agent_session(provider).await,
+         ModelProviderSettings::CloudAsr(provider) => crate::voice::cloud_asr::probe(provider).await,
+         ModelProviderSettings::CloudTts(provider) => crate::voice::cloud_tts::probe(provider).await,
+         ModelProviderSettings::SystemTts(_) => Ok("System text-to-speech is available".to_string()),
+@@ -35,26 +34,7 @@ pub(crate) async fn test_model_provider(
+                 .map_err(|kind| larm_failure_message(kind).to_string())
+         }
+         ModelProviderSettings::DynamicLan(provider) => {
+-            match crate::providers::dynamic_lan::DynamicLanConnection::resolve(
+-                &provider.host,
+-                Arc::new(RunCancellation::default()),
+-            )
+-            .await
+-            {
+-                Ok(connection) => {
+-                    let message = format!(
+-                        "dynamic_lan dynamically resolved model {} at {}",
+-                        connection.model(),
+-                        connection.endpoint()
+-                    );
+-                    connection
+-                        .release()
+-                        .await
+-                        .map(|_| message)
+-                        .map_err(|error| error.public_message().to_string())
+-                }
+-                Err(error) => Err(error.public_message().to_string()),
+-            }
++            super::dynamic_lan::probe::probe(provider).await
+         }
+     };
+     let tested = ProviderTestResult {
+diff --git a/src-tauri/src/providers/routing/service_harness.rs b/src-tauri/src/providers/routing/service_harness.rs
+index 4ae294d..773942e 100644
+--- a/src-tauri/src/providers/routing/service_harness.rs
++++ b/src-tauri/src/providers/routing/service_harness.rs
+@@ -33,32 +33,18 @@ pub(crate) async fn resolve_harness_llm_provider(
+         )
+         .await
+         {
+-            Ok(service) => {
+-                let stream_url = match service.streaming {
+-                    Some(crate::providers::service_harness::StreamingDescriptor::Llm(
+-                        streaming,
+-                    )) => streaming.url,
+-                    _ => {
+-                        return Err(
+-                            "Provider Harness does not advertise saaa.llm-stream.v1".to_string()
+-                        )
+-                    }
+-                };
+-                (
+-                    ModelProviderSettings::OpenAiCompatible(
+-                        crate::OpenAiCompatibleProviderSettings {
+-                            id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
+-                            enabled: true,
+-                            label: "Provider Harness LLM".to_string(),
+-                            location: "local".to_string(),
+-                            endpoint: stream_url,
+-                            model: service.model,
+-                            authentication: "none".to_string(),
+-                        },
+-                    ),
+-                    timeout_ms,
+-                )
+-            }
++            Ok(service) => (
++                ModelProviderSettings::OpenAiCompatible(crate::OpenAiCompatibleProviderSettings {
++                    id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
++                    enabled: true,
++                    label: "Provider Harness LLM".to_string(),
++                    location: "local".to_string(),
++                    endpoint: service.base_url,
++                    model: service.model,
++                    authentication: "none".to_string(),
++                }),
++                timeout_ms,
++            ),
+             Err(error) => return Err(error),
+         };
+     replace_harness_provider(providers, resolved);
+diff --git a/src-tauri/src/providers/service_harness.rs b/src-tauri/src/providers/service_harness.rs
+index 22814d8..f11d3a4 100644
+--- a/src-tauri/src/providers/service_harness.rs
++++ b/src-tauri/src/providers/service_harness.rs
+@@ -66,7 +66,6 @@ pub(crate) struct LlmStreamingDescriptor {
+ #[derive(Debug, Clone)]
+ pub(crate) struct ResolvedAsrService {
+     pub(crate) batch: ServiceDescriptor,
+-    pub(crate) streaming: Option<AsrStreamingDescriptor>,
+ }
+ 
+ #[derive(Debug, Serialize)]
+@@ -101,8 +100,7 @@ pub(crate) async fn resolve_service(
+     resolve_service_inner(address, capability).await
+ }
+ 
+-/// Resolves the batch ASR endpoint and, when advertised by a v2 harness, its
+-/// compatible native stream endpoint from the same validated descriptor.
++/// Resolves the validated HTTP batch ASR endpoint.
+ pub(crate) async fn resolve_asr_service(address: &str) -> Result<ResolvedAsrService, String> {
+     let descriptor = load_descriptor(address, true).await?;
+     let service = descriptor
+@@ -111,13 +109,7 @@ pub(crate) async fn resolve_asr_service(address: &str) -> Result<ResolvedAsrServ
+         .find(|service| service.capability == "asr")
+         .ok_or_else(|| "Provider Harness does not advertise asr".to_string())?;
+     health::probe(&service).await?;
+-    Ok(ResolvedAsrService {
+-        streaming: match service.streaming.clone() {
+-            Some(StreamingDescriptor::Asr(descriptor)) => Some(descriptor),
+-            _ => None,
+-        },
+-        batch: service,
+-    })
++    Ok(ResolvedAsrService { batch: service })
+ }
+ 
+ pub(crate) async fn resolve_service_cancellable(
+@@ -266,7 +258,10 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
+     let mut capabilities = HashSet::new();
+     for service in &descriptor.services {
+         let expected_protocol = match service.capability.as_str() {
+-            "llm" if descriptor.contract_version == "saaa-service-harness.v3" => {
++            "llm"
++                if descriptor.contract_version == "saaa-service-harness.v3"
++                    && service.protocol == "saaa.llm-stream.v1" =>
++            {
+                 "saaa.llm-stream.v1"
+             }
+             "llm" => "openai.chat-completions.v1",
+@@ -306,7 +301,7 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
+                     .streaming
+                     .as_ref()
+                     .is_some_and(|streaming| !matches!(streaming, StreamingDescriptor::Asr(_))))
+-            || (descriptor.contract_version == "saaa-service-harness.v3"
++            || (service.protocol == "saaa.llm-stream.v1"
+                 && service.capability == "llm"
+                 && service
+                     .streaming
+diff --git a/src-tauri/src/providers/stream/attempt.rs b/src-tauri/src/providers/stream/attempt.rs
+index 14ff1f6..8646e3b 100644
+--- a/src-tauri/src/providers/stream/attempt.rs
++++ b/src-tauri/src/providers/stream/attempt.rs
+@@ -65,7 +65,9 @@ impl ProviderFailureKind {
+             Self::AllocationLost => "The selected local runtime allocation is no longer available.",
+             Self::AllocationOutcomeUnknown => "The local runtime allocation outcome is unknown.",
+             Self::NotReady => "The selected local runtime did not become ready in time.",
+-            Self::PartialOutput => "Provider output ended after a partial response.",
++            Self::PartialOutput => {
++                "Provider reached the output token limit; the response is incomplete."
++            }
+             Self::ClientDisconnected => "The response consumer disconnected.",
+             Self::Cancelled => "Provider execution was cancelled.",
+             Self::Internal => "SAAA could not complete the provider attempt.",
+diff --git a/src-tauri/src/providers/stream/dynamic_lan.rs b/src-tauri/src/providers/stream/dynamic_lan.rs
+index 7a88fca..ea86901 100644
+--- a/src-tauri/src/providers/stream/dynamic_lan.rs
++++ b/src-tauri/src/providers/stream/dynamic_lan.rs
+@@ -43,7 +43,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
+         enabled: true,
+         label: provider.label.clone(),
+         location: "local".to_string(),
+-        endpoint: connection.stream_url().to_string(),
++        endpoint: connection.endpoint().to_string(),
+         model: connection.model().to_string(),
+         authentication: if connection.api_key().is_some() {
+             "api-key"
+diff --git a/src-tauri/src/providers/stream/mod.rs b/src-tauri/src/providers/stream/mod.rs
+index 8b133a3..8f6bf62 100644
+--- a/src-tauri/src/providers/stream/mod.rs
++++ b/src-tauri/src/providers/stream/mod.rs
+@@ -39,7 +39,7 @@ pub(crate) async fn stream_model_provider_with_api_key(
+     history: &[ConversationMessage],
+     timeout_ms: u64,
+     api_key: Option<&str>,
+-    allocation_id: Option<&str>,
++    _allocation_id: Option<&str>,
+     context: ModelStreamContext<'_>,
+ ) -> ProviderAttemptOutcome {
+     provider_attempt_outcome(
+@@ -48,7 +48,7 @@ pub(crate) async fn stream_model_provider_with_api_key(
+             history,
+             timeout_ms,
+             api_key,
+-            allocation_id,
++            _allocation_id,
+             context,
+         )
+         .await,
+@@ -93,8 +93,6 @@ pub(crate) async fn stream_model_provider_inner(
+             output_started: false,
+         });
+     }
+-    let stream_url = provider_stream_url(&provider.endpoint)
+-        .map_err(|kind| ProviderAttemptError::failed(kind, false))?;
+     let configured_api_key = if api_key.is_none() {
+         provider_api_key(provider)
+             .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Authentication, false))?
+@@ -110,18 +108,16 @@ pub(crate) async fn stream_model_provider_inner(
+             false,
+         ));
+     }
+-    map_websocket_result(
+-        run_model_websocket(
+-            stream_url.as_str(),
+-            authorization.as_deref(),
+-            allocation_id,
+-            &provider.model,
+-            history,
+-            timeout_ms,
+-            context,
+-        )
+-        .await,
++    let _ = allocation_id; // Lease identity belongs to bootstrap, never the HTTP body.
++    crate::providers::chat_completions::run(
++        &provider.endpoint,
++        authorization.as_deref(),
++        &provider.model,
++        history,
++        timeout_ms,
++        context,
+     )
++    .await
+ }
+ 
+ pub(crate) async fn run_model_websocket(
+@@ -207,6 +203,7 @@ pub(crate) fn websocket_attempt_outcome(
+     provider_attempt_outcome(map_websocket_result(result), cleanup)
+ }
+ 
++#[cfg(test)]
+ pub(crate) fn provider_stream_url(endpoint: &str) -> Result<url::Url, ProviderFailureKind> {
+     let mut url = url::Url::parse(endpoint).map_err(|_| ProviderFailureKind::Contract)?;
+     if matches!(url.scheme(), "ws" | "wss") {
+diff --git a/src-tauri/src/quality_eval.rs b/src-tauri/src/quality_eval.rs
+index 34b12cd..fdb9cfd 100644
+--- a/src-tauri/src/quality_eval.rs
++++ b/src-tauri/src/quality_eval.rs
+@@ -214,16 +214,9 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use futures_util::{SinkExt, StreamExt};
+-    use sha2::{Digest, Sha256};
+-    use tokio::net::TcpListener;
+-    use tokio_tungstenite::{
+-        accept_hdr_async,
+-        tungstenite::{
+-            handshake::server::{Request, Response},
+-            http::{header, HeaderValue},
+-            Message,
+-        },
++    use tokio::{
++        io::{AsyncReadExt, AsyncWriteExt},
++        net::TcpListener,
+     };
+ 
+     #[tokio::test]
+@@ -233,73 +226,38 @@ mod tests {
+             .expect("fixture binds");
+         let address = listener.local_addr().expect("fixture address");
+         let server = tokio::spawn(async move {
+-            let (stream, _) = listener.accept().await.expect("fixture accepts");
+-            let mut socket =
+-                accept_hdr_async(stream, |request: &Request, mut response: Response| {
+-                    assert_eq!(request.uri().path(), "/v1/llm/stream");
+-                    response.headers_mut().insert(
+-                        header::SEC_WEBSOCKET_PROTOCOL,
+-                        HeaderValue::from_static("saaa.llm-stream.v1"),
+-                    );
+-                    Ok(response)
+-                })
+-                .await
+-                .expect("WebSocket accepts");
+-            socket.send(Message::Text(serde_json::json!({
+-                "type":"connection.ready", "protocol":"saaa.llm-stream.v1",
+-                "connectionId":"quality_eval_connection", "upstreamTransport":"native",
+-                "limits":{"maxConcurrentRuns":1,"maxConnections":1,"maxActiveRunsPerConnection":1,
+-                    "maxUnackedEvents":64,"maxUnackedBytes":524288,"resumeWindowMs":120000,"heartbeatIntervalMs":15000}
+-            }).to_string().into())).await.expect("ready sends");
+-            let Message::Text(start) = socket
+-                .next()
+-                .await
+-                .expect("run start")
+-                .expect("valid run start")
+-            else {
+-                panic!("expected run.start")
++            let (mut socket, _) = listener.accept().await.unwrap();
++            let mut bytes = Vec::new();
++            let start: serde_json::Value = loop {
++                let mut buffer = [0; 8192];
++                let count = socket.read(&mut buffer).await.unwrap();
++                assert!(count > 0);
++                bytes.extend_from_slice(&buffer[..count]);
++                if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
++                    let header = String::from_utf8_lossy(&bytes[..end]);
++                    assert!(header.starts_with("POST /v1/chat/completions HTTP/1.1"));
++                    let length = header
++                        .lines()
++                        .find_map(|line| {
++                            line.to_ascii_lowercase()
++                                .strip_prefix("content-length: ")
++                                .and_then(|v| v.parse::<usize>().ok())
++                        })
++                        .unwrap();
++                    if bytes.len() >= end + 4 + length {
++                        break serde_json::from_slice(&bytes[end + 4..end + 4 + length]).unwrap();
++                    }
++                }
+             };
+-            let start: serde_json::Value =
+-                serde_json::from_str(start.as_str()).expect("run start JSON");
+-            assert_eq!(start["type"], "run.start");
++            assert_eq!(start["stream"], true);
+             assert!(start["tools"].is_array());
+             assert!(start["messages"].to_string().contains("SAAA Eval Agent"));
+-            let run_id = start["runId"].as_str().expect("run id");
+-            socket
+-                .send(Message::Text(
+-                    serde_json::json!({"type":"run.accepted","runId":run_id,"seq":1})
+-                        .to_string()
+-                        .into(),
+-                ))
+-                .await
+-                .expect("accepted sends");
+-            let content = "runtime answer";
+-            let mut delta = Vec::with_capacity(16 + content.len());
+-            delta.extend_from_slice(b"SAD1");
+-            delta.extend_from_slice(&[1, 0]);
+-            delta.extend_from_slice(&16_u16.to_be_bytes());
+-            delta.extend_from_slice(&2_u64.to_be_bytes());
+-            delta.extend_from_slice(content.as_bytes());
+-            socket
+-                .send(Message::Binary(delta.into()))
+-                .await
+-                .expect("delta sends");
+-            socket.send(Message::Text(serde_json::json!({"type":"response.completed","runId":run_id,"seq":3,
+-                "contentBytes":content.len(),"contentSha256":format!("{:x}", Sha256::digest(content.as_bytes())),
+-                "finishReason":"stop","usage":null}).to_string().into())).await.expect("completed sends");
+-            let Message::Text(ack) = socket
+-                .next()
+-                .await
+-                .expect("terminal ack")
+-                .expect("valid terminal ack")
+-            else {
+-                panic!("expected run.ack")
+-            };
+-            assert_eq!(
+-                serde_json::from_str::<serde_json::Value>(ack.as_str()).expect("ack JSON")
+-                    ["ackSeq"],
+-                3
++            let body = format!(
++                "data: {}\n\ndata: [DONE]\n\n",
++                json!({"model":"fixture-model","choices":[{"index":0,"delta":{"content":"runtime answer"},"finish_reason":"stop"}]})
+             );
++            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
++            socket.write_all(response.as_bytes()).await.unwrap();
+         });
+         let input = json!({
+             "baseUrl": format!("http://{address}/v1"),
+diff --git a/src-tauri/src/runtime/performance.rs b/src-tauri/src/runtime/performance.rs
+index 0e9e824..6647a73 100644
+--- a/src-tauri/src/runtime/performance.rs
++++ b/src-tauri/src/runtime/performance.rs
+@@ -111,7 +111,8 @@ pub(crate) fn snapshot() -> Value {
+         .lock()
+         .unwrap_or_else(std::sync::PoisonError::into_inner);
+     json!({
+-        "protocol": crate::providers::llm_websocket::protocol::SUBPROTOCOL,
++        "protocol": "openai.chat-completions.v1",
++        "http": crate::providers::http_metrics::snapshot(),
+         "socketReceiveToHubAccept": percentiles(&metrics.socket_to_hub_ns),
+         "hubAcceptToTtsAppend": percentiles(&metrics.hub_to_tts_ns),
+         "ttsBoundaryToDispatch": percentiles(&metrics.tts_boundary_to_dispatch_ns),
+diff --git a/src-tauri/src/runtime/turns.rs b/src-tauri/src/runtime/turns.rs
+index 44adb6f..8343575 100644
+--- a/src-tauri/src/runtime/turns.rs
++++ b/src-tauri/src/runtime/turns.rs
+@@ -491,7 +491,7 @@ pub(crate) async fn execute_conversation_turn(
+     let mut failures = Vec::new();
+     let mut context_health_emitted = false;
+ 
+-    for provider_id in route_ids {
++    for (attempt_index, provider_id) in route_ids.into_iter().enumerate() {
+         if cancellation.is_cancelled() {
+             return Err("Cancelled by user".to_string());
+         }
+@@ -504,6 +504,9 @@ pub(crate) async fn execute_conversation_turn(
+             failures.push(format!("{provider_id}: provider is disabled or missing"));
+             continue;
+         };
++        if attempt_index > 0 && matches!(provider, ModelProviderSettings::Larm(_)) {
++            return Err("Legacy LARM WebSocket transport must be selected explicitly as the primary provider.".to_string());
++        }
+         update_runtime_provider(state, &input.run_id, provider.id())?;
+         let session_id = begin_provider_session(
+             state,
+@@ -589,6 +592,25 @@ pub(crate) async fn execute_conversation_turn(
+                 )
+                 .await
+             }
++            ModelProviderSettings::AgentSession(provider) => {
++                crate::providers::agent_session::stream_agent_session_provider(
++                    provider,
++                    &history,
++                    route.timeout_ms,
++                    ModelStreamContext {
++                        reasoning_effort: &reasoning_effort,
++                        max_output_tokens,
++                        input,
++                        on_event,
++                        cancellation: cancellation.clone(),
++                        output_persistence: Some(ProviderOutputPersistence {
++                            state,
++                            session_id: &session_id,
++                        }),
++                    },
++                )
++                .await
++            }
+             ModelProviderSettings::Larm(provider) => {
+                 stream_larm_provider(
+                     provider,
+@@ -745,14 +767,11 @@ pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_starte
+ }
+ 
+ fn provider_route_fallback_allowed(
+-    provider: &ModelProviderSettings,
++    _provider: &ModelProviderSettings,
+     kind: ProviderFailureKind,
+     output_started: bool,
+ ) -> bool {
+     provider_fallback_allowed(kind, output_started)
+-        || (!output_started
+-            && matches!(provider, ModelProviderSettings::DynamicLan(_))
+-            && kind == ProviderFailureKind::Authentication)
+ }
+ 
+ #[cfg(test)]
+@@ -856,10 +875,10 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn dynamic_lan_authentication_can_fall_back_before_output_only() {
++    fn authentication_never_switches_providers() {
+         let dynamic_lan = crate::test_support::dynamic_lan_provider("dynamic_lan-primary");
+         let direct = crate::test_support::provider("direct-primary", "local");
+-        assert!(provider_route_fallback_allowed(
++        assert!(!provider_route_fallback_allowed(
+             &dynamic_lan,
+             ProviderFailureKind::Authentication,
+             false
+diff --git a/src-tauri/src/voice/cloud_asr.rs b/src-tauri/src/voice/cloud_asr.rs
+index 6c3f498..c99c9c5 100644
+--- a/src-tauri/src/voice/cloud_asr.rs
++++ b/src-tauri/src/voice/cloud_asr.rs
+@@ -7,7 +7,7 @@ use crate::{bounded_text, CloudAsrProviderSettings, RunCancellation};
+ use zeroize::Zeroizing;
+ 
+ const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
+-const TRANSCRIPTION_RESPONSE_FORMAT: &str = "verbose_json";
++const TRANSCRIPTION_RESPONSE_FORMAT: &str = "json";
+ 
+ #[derive(Debug, Deserialize)]
+ struct TranscriptionResponse {
+@@ -23,20 +23,16 @@ struct TranscriptionSegment {
+ }
+ 
+ pub(crate) async fn probe(provider: &CloudAsrProviderSettings) -> Result<String, String> {
+-    let client = client(Duration::from_secs(10))?;
+-    let api_key = credential(provider)?;
+-    let mut request = client.get(operation_url(&provider.endpoint, "models")?);
+-    if let Some(api_key) = api_key.as_deref() {
+-        request = request.bearer_auth(api_key.as_str());
+-    }
+-    let response = request
+-        .send()
+-        .await
+-        .map_err(|_| "Could not connect to the Cloud ASR provider".to_string())?;
+-    if !response.status().is_success() {
+-        return Err(format!("Cloud ASR returned HTTP {}", response.status()));
++    let samples: Vec<f32> = (0..1600)
++        .map(|index| ((index as f32 * 440.0 * std::f32::consts::TAU / 16000.0).sin()) * 0.1)
++        .collect();
++    match transcribe(provider, &samples, 16_000, 10_000, Arc::default()).await {
++        Ok(_) => Ok("HTTP ASR accepted a fixed WAV upload".to_string()),
++        Err(error) if error.starts_with("ASR_NO_SPEECH:") => {
++            Ok("HTTP ASR accepted a fixed WAV upload (no speech)".to_string())
++        }
++        Err(error) => Err(error),
+     }
+-    Ok("Cloud ASR endpoint and credential are reachable".to_string())
+ }
+ 
+ pub(crate) async fn transcribe(
+@@ -46,34 +42,71 @@ pub(crate) async fn transcribe(
+     timeout_ms: u64,
+     cancellation: Arc<RunCancellation>,
+ ) -> Result<(String, Option<String>), String> {
++    transcribe_with_api_key(
++        provider,
++        samples,
++        sample_rate,
++        timeout_ms,
++        cancellation,
++        None,
++    )
++    .await
++}
++
++pub(crate) async fn transcribe_with_api_key(
++    provider: &CloudAsrProviderSettings,
++    samples: &[f32],
++    sample_rate: u32,
++    timeout_ms: u64,
++    cancellation: Arc<RunCancellation>,
++    claim_key: Option<&str>,
++) -> Result<(String, Option<String>), String> {
++    let request_started = std::time::Instant::now();
++    if cancellation.is_cancelled() {
++        return Err("Transcription cancelled".into());
++    }
++    if samples.len() > sample_rate as usize * 600 {
++        return Err("ASR audio exceeds ten minutes".into());
++    }
+     let wav = crate::voice::network_asr::encode_wav(samples, sample_rate)?;
+-    let audio = multipart::Part::bytes(wav)
+-        .file_name("speech.wav")
+-        .mime_str("audio/wav")
+-        .map_err(|_| "Could not encode the ASR upload".to_string())?;
+-    let form = multipart::Form::new()
+-        .part("file", audio)
+-        .text("model", provider.model.clone())
+-        .text("response_format", TRANSCRIPTION_RESPONSE_FORMAT);
+-    let client = client(Duration::from_millis(timeout_ms))?;
+-    let api_key = credential(provider)?;
+-    let mut request = client
+-        .post(operation_url(&provider.endpoint, "audio/transcriptions")?)
+-        .multipart(form);
+-    if let Some(api_key) = api_key.as_deref() {
+-        request = request.bearer_auth(api_key.as_str());
++    if samples.iter().all(|sample| sample.abs() <= f32::EPSILON) {
++        return Err("ASR_NO_SPEECH: The audio is silent".into());
+     }
+-    let response = tokio::select! {
+-        _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
+-        response = request.send() => response.map_err(|error| {
+-            if error.is_timeout() { "Cloud ASR request timed out" } else { "Cloud ASR request failed" }.to_string()
+-        })?,
++    let client = client(Duration::from_millis(timeout_ms))?;
++    let configured_key = if claim_key.is_none() {
++        credential(provider)?
++    } else {
++        None
+     };
+-    let status = response.status();
+-    let body = bounded_body(response, &cancellation).await?;
+-    if !status.is_success() {
+-        return Err(format!("Cloud ASR returned HTTP {}", status.as_u16()));
+-    }
++    let api_key = claim_key.or(configured_key.as_deref().map(String::as_str));
++    let url = operation_url(&provider.endpoint, "audio/transcriptions")?;
++    let operation = async {
++        let response = crate::providers::http::send_with(
++            || {
++                let audio = multipart::Part::bytes(wav.clone())
++                    .file_name("speech.wav")
++                    .mime_str("audio/wav")
++                    .map_err(|_| crate::providers::stream::ProviderFailureKind::Contract)?;
++                let form = multipart::Form::new()
++                    .part("file", audio)
++                    .text("model", provider.model.clone())
++                    .text("response_format", TRANSCRIPTION_RESPONSE_FORMAT);
++                let mut request = client.post(&url).multipart(form);
++                if let Some(api_key) = api_key {
++                    request = request.bearer_auth(api_key);
++                }
++                Ok(request)
++            },
++            &cancellation,
++            true,
++        )
++        .await
++        .map_err(|kind| kind.public_message().as_str().to_string())?;
++        bounded_body(response, &cancellation).await
++    };
++    let body = tokio::time::timeout(Duration::from_millis(timeout_ms), operation)
++        .await
++        .map_err(|_| "HTTP ASR request timed out".to_string())??;
+     let result: TranscriptionResponse = serde_json::from_slice(&body)
+         .map_err(|_| "Cloud ASR returned an invalid transcription response".to_string())?;
+     let text = result.text.trim();
+@@ -85,6 +118,7 @@ pub(crate) async fn transcribe(
+     if text.is_empty() {
+         return Err("ASR_NO_SPEECH: Cloud ASR completed without a transcript".to_string());
+     }
++    crate::providers::http_metrics::record("asrUploadToFinalText", request_started.elapsed());
+     Ok((
+         bounded_text(text, 16_000),
+         result.language.map(|language| bounded_text(&language, 80)),
+@@ -121,16 +155,7 @@ fn client(timeout: Duration) -> Result<reqwest::Client, String> {
+ }
+ 
+ fn operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
+-    let mut url =
+-        url::Url::parse(endpoint).map_err(|_| "Cloud ASR endpoint is invalid".to_string())?;
+-    let mut path = url.path().trim_end_matches('/').to_string();
+-    if !path.ends_with("/v1") {
+-        path.push_str("/v1");
+-    }
+-    path.push('/');
+-    path.push_str(operation);
+-    url.set_path(&path);
+-    Ok(url.to_string())
++    crate::providers::openai_compatible::provider_operation_url(endpoint, operation)
+ }
+ 
+ async fn bounded_body(
+@@ -165,8 +190,12 @@ mod tests {
+     use super::*;
+ 
+     #[test]
+-    fn detection_metadata_is_requested() {
+-        assert_eq!(TRANSCRIPTION_RESPONSE_FORMAT, "verbose_json");
++    fn text_only_json_is_supported() {
++        assert_eq!(TRANSCRIPTION_RESPONSE_FORMAT, "json");
++        let result: TranscriptionResponse = serde_json::from_str(r#"{"text":"日本語"}"#).unwrap();
++        assert_eq!(result.text, "日本語");
++        assert!(result.language.is_none());
++        assert!(!response_is_no_speech(&result.segments));
+     }
+ 
+     #[test]
+diff --git a/src-tauri/src/voice/cloud_tts.rs b/src-tauri/src/voice/cloud_tts.rs
+index d194d6d..cffbd6f 100644
+--- a/src-tauri/src/voice/cloud_tts.rs
++++ b/src-tauri/src/voice/cloud_tts.rs
+@@ -107,34 +107,72 @@ pub(crate) async fn synthesize(
+     timeout_ms: u64,
+     cancellation: Arc<RunCancellation>,
+ ) -> Result<Zeroizing<Vec<u8>>, String> {
++    let response = request_audio(provider, text, timeout_ms, cancellation.clone()).await?;
++    validate_audio_headers(&response, &provider.response_format)?;
++    let audio = bounded_audio(response, &cancellation, &provider.response_format).await?;
++    if provider.response_format == "pcm" {
++        let mut wav = Zeroizing::new(Vec::with_capacity(44 + audio.len()));
++        wav.extend_from_slice(b"RIFF");
++        wav.extend_from_slice(&(36 + audio.len() as u32).to_le_bytes());
++        wav.extend_from_slice(b"WAVEfmt ");
++        wav.extend_from_slice(&16_u32.to_le_bytes());
++        wav.extend_from_slice(&1_u16.to_le_bytes());
++        wav.extend_from_slice(&1_u16.to_le_bytes());
++        wav.extend_from_slice(&24_000_u32.to_le_bytes());
++        wav.extend_from_slice(&48_000_u32.to_le_bytes());
++        wav.extend_from_slice(&2_u16.to_le_bytes());
++        wav.extend_from_slice(&16_u16.to_le_bytes());
++        wav.extend_from_slice(b"data");
++        wav.extend_from_slice(&(audio.len() as u32).to_le_bytes());
++        wav.extend_from_slice(&audio);
++        return Ok(wav);
++    }
++    Ok(audio)
++}
++
++pub(crate) async fn request_audio(
++    provider: &CloudTtsProviderSettings,
++    text: &str,
++    timeout_ms: u64,
++    cancellation: Arc<RunCancellation>,
++) -> Result<reqwest::Response, String> {
++    request_audio_with_api_key(provider, text, timeout_ms, cancellation, None).await
++}
++
++pub(crate) async fn request_audio_with_api_key(
++    provider: &CloudTtsProviderSettings,
++    text: &str,
++    timeout_ms: u64,
++    cancellation: Arc<RunCancellation>,
++    claim_key: Option<&str>,
++) -> Result<reqwest::Response, String> {
+     let client = reqwest::Client::builder()
+         .connect_timeout(Duration::from_secs(5))
+         .timeout(Duration::from_millis(timeout_ms))
+         .redirect(reqwest::redirect::Policy::none())
+         .build()
+         .map_err(|_| "Could not initialize the Cloud TTS client".to_string())?;
+-    let api_key = credential(provider)?;
++    let configured_key = if claim_key.is_none() {
++        credential(provider)?
++    } else {
++        None
++    };
++    let api_key = claim_key.or(configured_key.as_deref().map(String::as_str));
+     let mut request = client
+         .post(operation_url(&provider.endpoint)?)
+         .json(&json!({
+             "model": provider.model,
+             "input": text,
+             "voice": provider.voice,
+-            "response_format": "wav"
++            "response_format": provider.response_format
+         }));
+-    if let Some(api_key) = api_key.as_deref() {
+-        request = request.bearer_auth(api_key.as_str());
+-    }
+-    let response = tokio::select! {
+-        _ = cancellation.cancelled() => return Err("Speech cancelled".to_string()),
+-        response = request.send() => response.map_err(|error| {
+-            if error.is_timeout() { "Cloud TTS request timed out" } else { "Cloud TTS request failed" }.to_string()
+-        })?,
+-    };
+-    if !response.status().is_success() {
+-        return Err(format!("Cloud TTS returned HTTP {}", response.status()));
++    if let Some(api_key) = api_key {
++        request = request.bearer_auth(api_key);
+     }
+-    bounded_audio(response, &cancellation).await
++    let response = crate::providers::http::send(request, &cancellation, true)
++        .await
++        .map_err(|kind| kind.public_message().as_str().to_string())?;
++    Ok(response)
+ }
+ 
+ fn credential(
+@@ -149,20 +187,46 @@ fn credential(
+ }
+ 
+ fn operation_url(endpoint: &str) -> Result<String, String> {
+-    let mut url =
+-        url::Url::parse(endpoint).map_err(|_| "Cloud TTS endpoint is invalid".to_string())?;
+-    let mut path = url.path().trim_end_matches('/').to_string();
+-    if !path.ends_with("/v1") {
+-        path.push_str("/v1");
++    crate::providers::openai_compatible::provider_operation_url(endpoint, "audio/speech")
++}
++
++pub(crate) fn validate_audio_headers(
++    response: &reqwest::Response,
++    format: &str,
++) -> Result<(), String> {
++    if let Some(value) = response.headers().get(reqwest::header::CONTENT_TYPE) {
++        let media = value
++            .to_str()
++            .map_err(|_| "Invalid audio Content-Type".to_string())?
++            .split(';')
++            .next()
++            .unwrap_or_default()
++            .trim();
++        let accepted = match format {
++            "wav" => matches!(
++                media,
++                "audio/wav" | "audio/x-wav" | "audio/wave" | "application/octet-stream"
++            ),
++            "pcm" => matches!(media, "audio/pcm" | "application/octet-stream"),
++            _ => false,
++        };
++        if !accepted {
++            return Err("TTS response Content-Type disagrees with the requested format".into());
++        }
+     }
+-    path.push_str("/audio/speech");
+-    url.set_path(&path);
+-    Ok(url.to_string())
++    if response
++        .content_length()
++        .is_some_and(|bytes| bytes > MAX_AUDIO_BYTES as u64)
++    {
++        return Err("TTS audio exceeded the size limit".into());
++    }
++    Ok(())
+ }
+ 
+ async fn bounded_audio(
+     response: reqwest::Response,
+     cancellation: &RunCancellation,
++    format: &str,
+ ) -> Result<Zeroizing<Vec<u8>>, String> {
+     if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+         let content_type = content_type
+@@ -192,9 +256,9 @@ async fn bounded_audio(
+         }
+         audio.extend_from_slice(&chunk);
+     }
+-    if !is_wav(&audio) {
+-        return Err("Cloud TTS did not return valid WAV audio".to_string());
+-    }
++    let mut decoder = crate::voice::http_audio::decode::Decoder::new(format)?;
++    decoder.push(&audio)?;
++    decoder.finish()?;
+     Ok(audio)
+ }
+ 
+@@ -203,6 +267,7 @@ fn is_audio_content_type(value: &str) -> bool {
+     media_type.starts_with("audio/") || media_type == "application/octet-stream"
+ }
+ 
++#[cfg(test)]
+ fn is_wav(audio: &[u8]) -> bool {
+     audio.len() >= 12 && &audio[..4] == b"RIFF" && &audio[8..12] == b"WAVE"
+ }
+diff --git a/src-tauri/src/voice/language.rs b/src-tauri/src/voice/language.rs
+index 6dd9c3f..1e35ad3 100644
+--- a/src-tauri/src/voice/language.rs
++++ b/src-tauri/src/voice/language.rs
+@@ -72,12 +72,14 @@ pub(crate) fn enforce_allowed_language(
+     allowed: &[String],
+ ) -> Result<(), String> {
+     validate_allowed_languages(allowed)?;
+-    let detected = detected
++    // Standard transcription JSON may contain only text. Apply the language
++    // allowlist when metadata is actually supplied; do not invent a detection.
++    let Some(detected) = detected
+         .map(str::trim)
+         .filter(|language| !language.is_empty())
+-        .ok_or_else(|| {
+-            "ASR_LANGUAGE_UNKNOWN: The ASR service did not return a detected language".to_string()
+-        })?;
++    else {
++        return Ok(());
++    };
+     let mut codes = Vec::new();
+     for language in detected.split(',') {
+         let code = canonical_code(language).ok_or_else(|| {
+@@ -126,9 +128,7 @@ mod tests {
+         assert!(enforce_allowed_language(Some("Japanese,English"), &allowed)
+             .expect_err("partially registered speech is rejected")
+             .starts_with("ASR_LANGUAGE_NOT_ALLOWED"));
+-        assert!(enforce_allowed_language(None, &allowed)
+-            .expect_err("missing language is rejected")
+-            .starts_with("ASR_LANGUAGE_UNKNOWN"));
++        assert!(enforce_allowed_language(None, &allowed).is_ok());
+         assert!(enforce_allowed_language(Some("Klingon"), &allowed)
+             .expect_err("unknown language is rejected")
+             .starts_with("ASR_LANGUAGE_UNKNOWN"));
+diff --git a/src-tauri/src/voice/mod.rs b/src-tauri/src/voice/mod.rs
+index 8999d58..aa150b0 100644
+--- a/src-tauri/src/voice/mod.rs
++++ b/src-tauri/src/voice/mod.rs
+@@ -1,6 +1,7 @@
+ pub mod audio_upload;
+ pub mod cloud_asr;
+ pub mod cloud_tts;
++pub(crate) mod http_audio;
+ pub mod language;
+ pub mod network_asr;
+ pub mod profile;
+diff --git a/src-tauri/src/voice/streaming_asr/route.rs b/src-tauri/src/voice/streaming_asr/route.rs
+index f8efdf2..08ca0ac 100644
+--- a/src-tauri/src/voice/streaming_asr/route.rs
++++ b/src-tauri/src/voice/streaming_asr/route.rs
+@@ -57,29 +57,10 @@ pub(crate) async fn prepare(
+     let scorer =
+         verifier.map(|value| Arc::new(PreparedSpeakerScorer::new(value)) as Arc<dyn SpeakerScorer>);
+     let (batch_route, native) = match selected.route {
+-        AsrRoute::Cloud(provider) => {
+-            crate::voice::cloud_asr::probe(&provider)
+-                .await
+-                .map_err(|_| "asr-provider-unavailable".to_string())?;
+-            (BatchRoute::Cloud(provider), None)
+-        }
++        AsrRoute::Cloud(provider) => (BatchRoute::Cloud(provider), None),
+         AsrRoute::Harness(address) => {
+             match crate::providers::service_harness::resolve_asr_service(&address).await {
+-                Ok(service) => {
+-                    let native = service.streaming.map(|descriptor| NativeRoute {
+-                        descriptor,
+-                        model: service.batch.model.clone(),
+-                        language: service
+-                            .batch
+-                            .language
+-                            .clone()
+-                            .unwrap_or_else(|| "auto".to_string()),
+-                    });
+-                    (
+-                        BatchRoute::Cloud(harness_asr_provider(service.batch)),
+-                        native,
+-                    )
+-                }
++                Ok(service) => (BatchRoute::Cloud(harness_asr_provider(service.batch)), None),
+                 Err(primary_error) => {
+                     let Some(host) =
+                         crate::providers::service_harness::legacy_dynamic_lan_host(&address)?
+diff --git a/src-tauri/src/voice/streaming_tts/runtime.rs b/src-tauri/src/voice/streaming_tts/runtime.rs
+index 6c0c125..d10fbc6 100644
+--- a/src-tauri/src/voice/streaming_tts/runtime.rs
++++ b/src-tauri/src/voice/streaming_tts/runtime.rs
+@@ -360,6 +360,9 @@ async fn render_session_inner(
+     context: &mut RenderSessionContext,
+ ) -> Result<(), String> {
+     context.route = resolve_render_route(&context.route, &context.cancellation).await?;
++    if let TtsRoute::Cloud(provider) = &context.route {
++        return render_http_session(receiver, context, provider).await;
++    }
+     let mut queued = VecDeque::<(u64, String, Instant)>::new();
+     let mut rendering = FuturesUnordered::<RenderFuture>::new();
+     let mut ready = BTreeMap::<u64, RenderedChunk>::new();
+@@ -511,6 +514,50 @@ async fn render_session_inner(
+     Ok(())
+ }
+ 
++async fn render_http_session(
++    receiver: &mut mpsc::Receiver<SpeechWork>,
++    context: &RenderSessionContext,
++    provider: &crate::CloudTtsProviderSettings,
++) -> Result<(), String> {
++    let mut first_phrase = true;
++    loop {
++        let work = tokio::select! { biased;
++            _ = context.cancellation.cancelled() => return Ok(()),
++            work = receiver.recv() => work,
++        };
++        let Some(SpeechWork::Chunk { text, boundary_at }) = work else {
++            return Ok(());
++        };
++        let situation = context.situation.clone();
++        let on_event = context.on_event.clone();
++        let run_id = context.run_id.clone();
++        let cancellation = context.cancellation.clone();
++        let is_first = first_phrase;
++        crate::voice::http_audio::play(
++            provider,
++            &text,
++            context.timeout_ms,
++            context.cancellation.clone(),
++            move || {
++                if cancellation.is_cancelled() {
++                    return;
++                }
++                crate::providers::http_metrics::record(
++                    "ttsBoundaryToFirstMixerSample",
++                    boundary_at.elapsed(),
++                );
++                if is_first {
++                    situation
++                        .set_audio_state(crate::situation::contracts::AudioState::SaaaSpeaking);
++                    let _ = on_event.send(RuntimeEvent::SpeechStarted { run_id });
++                }
++            },
++        )
++        .await?;
++        first_phrase = false;
++    }
++}
++
+ async fn resolve_render_route(
+     route: &TtsRoute,
+     cancellation: &RunCancellation,
+@@ -524,6 +571,7 @@ async fn resolve_render_route(
+             )
+             .await?;
+             Ok(TtsRoute::Cloud(crate::CloudTtsProviderSettings {
++                response_format: "wav".to_string(),
+                 id: "provider-harness-tts".to_string(),
+                 enabled: true,
+                 label: "Provider Harness TTS".to_string(),
+diff --git a/src/App.tsx b/src/App.tsx
+index 3fe73e1..cea0afe 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -2,7 +2,7 @@ import { Suspense, useEffect, useMemo, useRef, useState, type Dispatch, type Set
+ import { useTranslation } from "react-i18next";
+ import "./App.css";
+ import { AppIcon } from "./components/AppIcon";
+-import { WebSocketSidebarFooter } from "./components/WebSocketConnectionIndicator";
++import { ConversationSidebarFooter } from "./components/WebSocketConnectionIndicator";
+ import { ChatPage } from "./features/chat/ChatPage";
+ import { useConversationTurn } from "./features/chat/useConversationTurn";
+ import { MeetingPage } from "./features/meeting/MeetingPage";
+@@ -188,7 +188,7 @@ function App() {
+         <button className={surface === "meeting" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => void openMeetingSurface()}><AppIcon name="calendar" />{t("app.meeting")} {meetingActive && <span className="meeting-active-indicator">{t("app.meetingActive")}</span>}</button>
+         <button className={surface === "situation" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => openAuxiliarySurface("situation")}><AppIcon name="situation" />{t("app.situation")}</button><button className={surface === "audit" ? "primary-nav-item active" : "primary-nav-item"} onClick={() => openAuxiliarySurface("audit")}><AppIcon name="audit" />{t("app.audit")}</button>
+       </nav>
+-      <WebSocketSidebarFooter state={turn.webSocketState} settingsActive={surface === "settings"} onOpenSettings={() => openAuxiliarySurface("settings")} />
++      <ConversationSidebarFooter active={Boolean(turn.activeRunId)} settingsActive={surface === "settings"} onOpenSettings={() => openAuxiliarySurface("settings")} />
+     </aside>
+ 
+     <div className="meeting-surface-host" hidden={surface !== "meeting"}><MeetingPage voiceSettings={voiceSettings} conversationBusy={voiceProcessing || Boolean(activeRunId) || Boolean(activeTtsRunId)} onBeforeCapture={voice.suspendVoiceForMeeting} onStateChanged={setMeetingState} /></div>
+diff --git a/src/components/WebSocketConnectionIndicator.tsx b/src/components/WebSocketConnectionIndicator.tsx
+index 5e55dfe..72824d0 100644
+--- a/src/components/WebSocketConnectionIndicator.tsx
++++ b/src/components/WebSocketConnectionIndicator.tsx
+@@ -53,3 +53,15 @@ export function WebSocketSidebarFooter({
+     </button>
+   </div>;
+ }
++
++export function ConversationSidebarFooter({ active, settingsActive, onOpenSettings }: {
++  active: boolean; settingsActive: boolean; onOpenSettings: () => void;
++}) {
++  const { t } = useTranslation();
++  return <div className="sidebar-footer">
++    <div role="status" aria-live="polite" className="conversation-status">{t(active ? "app.conversationActive" : "app.conversationIdle")}</div>
++    <button className={settingsActive ? "sidebar-settings active" : "sidebar-settings"} onClick={onOpenSettings}>
++      <AppIcon name="settings" />{t("app.settings")}
++    </button>
++  </div>;
++}
+diff --git a/src/features/settings/IndividualProvidersSection.tsx b/src/features/settings/IndividualProvidersSection.tsx
+index 4174546..a89c407 100644
+--- a/src/features/settings/IndividualProvidersSection.tsx
++++ b/src/features/settings/IndividualProvidersSection.tsx
+@@ -1,6 +1,7 @@
+ import { useEffect, useState } from "react";
+ import { useTranslation } from "react-i18next";
+ import type {
++  AgentSessionProviderSettings,
+   CloudAsrProviderSettings,
+   CloudTtsProviderSettings,
+   ModelProviderSettings,
+@@ -27,12 +28,26 @@ export function IndividualProvidersSection({
+   onChange: (value: ModelProvidersSettings) => void;
+ }) {
+   const { t } = useTranslation();
+-  function addProvider(capability: "llm" | "asr" | "tts") {
+-    const id = `cloud-${capability}-${crypto.randomUUID()}`;
++  function addProvider(capability: "llm" | "agent-llm" | "asr" | "tts") {
++    const isAgentSession = capability === "agent-llm";
++    const id = `${isAgentSession ? "agent" : "cloud"}-${capability}-${crypto.randomUUID()}`;
+     // Persist a stable default identifier, then localize it at the display boundary.
+     // This keeps a newly added provider's default label in sync with later language changes.
+     const common = { id, enabled: false, label: `Cloud ${capability.toUpperCase()}`, location: "cloud" as const };
+-    const provider: ModelProviderSettings = capability === "llm"
++    const provider: ModelProviderSettings = isAgentSession
++      ? {
++          id,
++          enabled: false,
++          label: "Agent Session LLM",
++          location: "local",
++          kind: "agent-session",
++          baseUrl: "http://127.0.0.1:44449",
++          model: "",
++          modelsPath: "/v1/agents/models?runtime=muse",
++          sessionsPath: "/v1/agents/sessions",
++          authentication: "none",
++        }
++      : capability === "llm"
+       ? { ...common, kind: "openai-compatible", endpoint: "https://api.openai.com/v1", model: "", authentication: "api-key" }
+       : capability === "asr"
+         ? { ...common, kind: "cloud-asr", endpoint: "https://api.openai.com/v1", model: "", language: "auto", authentication: "api-key" }
+@@ -64,6 +79,7 @@ export function IndividualProvidersSection({
+           <span>{t("settings.providers.stableId")}</span>
+           <div>
+             <button className="add-provider-button" type="button" onClick={() => addProvider("llm")}>＋ LLM</button>
++            <button className="add-provider-button" type="button" onClick={() => addProvider("agent-llm")}>＋ Agent LLM</button>
+             <button className="add-provider-button" type="button" onClick={() => addProvider("asr")}>＋ ASR</button>
+             <button className="add-provider-button" type="button" onClick={() => addProvider("tts")}>＋ TTS</button>
+           </div>
+@@ -144,6 +160,9 @@ function ProviderCard({
+       {provider.kind === "openai-compatible" && (
+         <LlmFields provider={provider} onChange={onChange} />
+       )}
++      {provider.kind === "agent-session" && (
++        <AgentSessionFields provider={provider} onChange={onChange} />
++      )}
+       {provider.kind === "cloud-asr" && (
+         <AsrFields provider={provider} onChange={onChange} />
+       )}
+@@ -189,6 +208,7 @@ function CommonCloudFields({
+   return (
+     <>
+       <Field label={t("settings.providers.displayName")}><input value={provider.label} onChange={(event) => onChange({ ...provider, label: event.target.value })} /></Field>
++      <Field label={t("settings.providers.location")}><select value={provider.location} onChange={(event) => onChange({ ...provider, location: event.target.value as "local" | "cloud" })}><option value="local">{t("common.localProcessing")}</option><option value="cloud">{t("common.cloudProcessing")}</option></select></Field>
+       <Field label={t("settings.providers.endpoint")}><input value={provider.endpoint} placeholder="https://api.example.com/v1" onChange={(event) => onChange({ ...provider, endpoint: event.target.value })} /></Field>
+       <Field label={t("settings.providers.model")}><input value={provider.model} placeholder={t("settings.providers.modelPlaceholder")} onChange={(event) => onChange({ ...provider, model: event.target.value })} /></Field>
+       <Field label={t("settings.providers.authentication")}>
+@@ -205,6 +225,25 @@ function LlmFields({ provider, onChange }: { provider: OpenAiCompatibleProviderS
+   return <div className="settings-form-grid"><CommonCloudFields provider={provider} onChange={onChange} /></div>;
+ }
+ 
++function AgentSessionFields({ provider, onChange }: { provider: AgentSessionProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
++  const { t } = useTranslation();
++  return (
++    <div className="settings-form-grid">
++      <Field label={t("settings.providers.displayName")}><input value={provider.label} onChange={(event) => onChange({ ...provider, label: event.target.value })} /></Field>
++      <Field label={t("settings.providers.baseUrl")}><input value={provider.baseUrl} placeholder="http://127.0.0.1:44449" onChange={(event) => onChange({ ...provider, baseUrl: event.target.value })} /></Field>
++      <Field label={t("settings.providers.model")}><input value={provider.model} placeholder={t("settings.providers.modelPlaceholder")} onChange={(event) => onChange({ ...provider, model: event.target.value })} /></Field>
++      <Field label={t("settings.providers.modelsPath")}><input value={provider.modelsPath} placeholder="/v1/agents/models?runtime=agent" onChange={(event) => onChange({ ...provider, modelsPath: event.target.value })} /></Field>
++      <Field label={t("settings.providers.sessionsPath")}><input value={provider.sessionsPath} placeholder="/v1/agents/sessions" onChange={(event) => onChange({ ...provider, sessionsPath: event.target.value })} /></Field>
++      <Field label={t("settings.providers.authentication")}>
++        <select value={provider.authentication} onChange={(event) => onChange({ ...provider, authentication: event.target.value as "none" | "api-key" })}>
++          <option value="api-key">{t("settings.providers.apiKey")}</option>
++          <option value="none">{t("settings.providers.none")}</option>
++        </select>
++      </Field>
++    </div>
++  );
++}
++
+ function AsrFields({ provider, onChange }: { provider: CloudAsrProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
+   const { t } = useTranslation();
+   return (
+@@ -225,6 +264,7 @@ function TtsFields({ provider, onChange }: { provider: CloudTtsProviderSettings;
+     <div className="settings-form-grid">
+       <CommonCloudFields provider={provider} onChange={onChange} />
+       <Field label={t("settings.providers.voice")}><input value={provider.voice} placeholder={t("settings.providers.voicePlaceholder")} onChange={(event) => onChange({ ...provider, voice: event.target.value })} /></Field>
++      <Field label={t("settings.providers.audioFormat")}><select value={provider.responseFormat ?? "wav"} onChange={(event) => onChange({ ...provider, responseFormat: event.target.value as "wav" | "pcm" })}><option value="wav">WAV</option><option value="pcm">PCM · 24 kHz · mono · s16le</option></select></Field>
+     </div>
+   );
+ }
+@@ -233,7 +273,7 @@ function ApiKeyControl({
+   provider,
+   persisted,
+ }: {
+-  provider: OpenAiCompatibleProviderSettings | CloudAsrProviderSettings | CloudTtsProviderSettings;
++  provider: OpenAiCompatibleProviderSettings | AgentSessionProviderSettings | CloudAsrProviderSettings | CloudTtsProviderSettings;
+   persisted: boolean;
+ }) {
+   const { t } = useTranslation();
+diff --git a/src/features/settings/ServiceConnectionsSection.tsx b/src/features/settings/ServiceConnectionsSection.tsx
+index bbbe969..951500f 100644
+--- a/src/features/settings/ServiceConnectionsSection.tsx
++++ b/src/features/settings/ServiceConnectionsSection.tsx
+@@ -162,6 +162,7 @@ export function ServiceConnectionsSection({
+                 reasoningEffort: event.target.value as ModelProvidersSettings["reasoningEffort"],
+               })}
+             >
++              <option value="provider-default">{t("settings.connection.providerDefault")}</option>
+               <option value="low">{t("settings.connection.low")}</option>
+               <option value="medium">{t("settings.connection.medium")}</option>
+               <option value="xhigh">{t("settings.connection.extraHigh")}</option>
+@@ -358,5 +359,5 @@ function SourceRow({
+ }
+ 
+ function isLlmProvider(provider: ModelProviderSettings): boolean {
+-  return provider.kind === "openai-compatible" || provider.kind === "larm";
++  return provider.kind === "openai-compatible" || provider.kind === "agent-session" || provider.kind === "larm";
+ }
+diff --git a/src/i18n/locales/en.ts b/src/i18n/locales/en.ts
+index 4f8b834..5c1186a 100644
+--- a/src/i18n/locales/en.ts
++++ b/src/i18n/locales/en.ts
+@@ -35,6 +35,8 @@ export const en = {
+     notConfigured: "Not configured",
+   },
+   app: {
++    conversationActive: "Processing response",
++    conversationIdle: "Ready for a message",
+     booting: "Starting SAAA Runtime…",
+     navigationLabel: "Primary navigation",
+     chat: "Chat",
+@@ -205,7 +207,9 @@ export const en = {
+     tabs: {
+       general: { label: "General", detail: "Language, regional formats, and identity" },
+       connection: { label: "Service connection", detail: "Harness and service sources" },
+-      providers: { label: "Individual services", detail: "Cloud LLM, ASR and TTS" },
++      providers: {
++      location: "Location",
++      audioFormat: "Audio format", label: "Individual services", detail: "Cloud LLM, ASR and TTS" },
+       voice: { label: "Voice & devices", detail: "Always-on listening and audio" },
+       situation: { label: "Situation", detail: "Shadow observation controls" },
+       security: { label: "Privacy & Security", detail: "Local-first controls" },
+@@ -265,6 +269,7 @@ export const en = {
+       description: "Port 9810 validates an Agent Connection directly and uses the WebSocket advertised by its claim. Local-LAN connections work without authentication; Bearer authentication is used only when LARM_API_TOKEN is set. Other addresses resolve services through the Harness.",
+       resolving: "Resolving…",
+       harnessAddress: "Harness address",
++      providerDefault: "Omit (HTTP provider default)",
+       reasoningEffort: "Reasoning effort (LLM)",
+       llmTimeoutSeconds: "LLM timeout (seconds)",
+       llmTimeoutHint: "1–3600 seconds. New settings default to 1800 seconds.",
+@@ -293,8 +298,8 @@ export const en = {
+     },
+     providers: {
+       eyebrow: "INDIVIDUAL SERVICES",
+-      title: "Cloud Provider catalog",
+-      description: "Register only services that do not use the Harness. API keys are stored in macOS Keychain and excluded from settings, SQLite, and diagnostics.",
++      title: "Individual Provider catalog",
++      description: "Register services that do not use the Harness. API keys are stored in macOS Keychain and excluded from settings, SQLite, and diagnostics.",
+       stableId: "Provider IDs cannot be changed after creation.",
+       defaultName: "Cloud {{capability}}",
+       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "System voice" },
+@@ -303,6 +308,8 @@ export const en = {
+       voice: "Voice",
+       output: "Output",
+       baseUrl: "Base URL",
++      modelsPath: "Models path (GET)",
++      sessionsPath: "Session creation path (POST)",
+       runtime: "Runtime",
+       existingDeployment: "LARM · existing deployment",
+       testConnection: "Test connection",
+@@ -327,10 +334,11 @@ export const en = {
+       deleteKey: "Delete key",
+       kinds: {
+         "openai-compatible": "OpenAI-compatible LLM",
+-        "cloud-asr": "Cloud ASR",
+-        "cloud-tts": "Cloud TTS",
++        "agent-session": "Agent Session LLM",
++        "cloud-asr": "HTTP ASR",
++        "cloud-tts": "HTTP TTS",
+         "system-tts": "System TTS",
+-        larm: "LARM",
++        larm: "LARM (legacy WS migration testing)",
+         "dynamic-lan": "Dynamic LAN",
+       },
+     },
+@@ -566,6 +574,8 @@ export const en = {
+   },
+   errors: {
+     app: {
++    conversationActive: "Processing response",
++    conversationIdle: "Ready for a message",
+       primaryConversationUnavailable: "The main conversation is unavailable. Restart SAAA and try again.",
+       operationFailed: "SAAA could not complete that operation. Try again.",
+     },
+@@ -591,7 +601,10 @@ export const en = {
+       runtimeFailure: "The meeting runtime reported a failure. Check the meeting settings and try again.",
+       operationFailed: "The meeting operation could not be completed. Try again.",
+     },
+-    settings: { operationFailed: "The setting could not be updated. Check the values and try again." },
++    settings: {
++      agentSessionEventStreamMissing: "Session creation succeeded, but no supported event stream endpoint was returned. Check the provider's SSE or WebSocket contract.",
++      operationFailed: "The setting could not be updated. Check the values and try again.",
++    },
+     situation: { operationFailed: "Situation could not complete that operation. Try again." },
+     voice: {
+       targetSpeakerRejected: "The voice could not be confirmed as the enrolled speaker, so it was not transcribed.",
+diff --git a/src/i18n/locales/ja.ts b/src/i18n/locales/ja.ts
+index a98420a..0e9267b 100644
+--- a/src/i18n/locales/ja.ts
++++ b/src/i18n/locales/ja.ts
+@@ -35,6 +35,8 @@ export const ja = {
+     notConfigured: "未設定",
+   },
+   app: {
++    conversationActive: "応答を処理中",
++    conversationIdle: "会話入力待ち",
+     booting: "SAAA Runtime を起動しています…",
+     navigationLabel: "メインナビゲーション",
+     chat: "会話",
+@@ -205,7 +207,9 @@ export const ja = {
+     tabs: {
+       general: { label: "一般", detail: "言語・地域形式・名前" },
+       connection: { label: "サービス接続", detail: "Harnessとサービスの接続元" },
+-      providers: { label: "個別サービス", detail: "クラウドのLLM・ASR・TTS" },
++      providers: {
++      location: "接続先",
++      audioFormat: "音声形式", label: "個別サービス", detail: "ローカル・クラウドのHTTP LLM・ASR・TTS" },
+       voice: { label: "音声とデバイス", detail: "常時待ち受けとオーディオ" },
+       situation: { label: "状況", detail: "シャドウ観測の設定" },
+       security: { label: "プライバシーとセキュリティ", detail: "ローカル優先の制御" },
+@@ -265,6 +269,7 @@ export const ja = {
+       description: "ポート9810ではAgent Connectionを直接検証し、claimで通知されたWebSocketへ接続します。ローカルLANでは認証なしで利用でき、LARM_API_TOKENがある場合だけBearer認証を使用します。その他のアドレスではHarnessから各サービスを解決します。",
+       resolving: "解決中…",
+       harnessAddress: "Harnessのアドレス",
++      providerDefault: "指定しない（HTTP Providerの既定値）",
+       reasoningEffort: "推論の強さ（LLM）",
+       llmTimeoutSeconds: "LLMタイムアウト（秒）",
+       llmTimeoutHint: "1〜3600秒。新規設定の既定値は1800秒です。",
+@@ -293,16 +298,18 @@ export const ja = {
+     },
+     providers: {
+       eyebrow: "個別サービス",
+-      title: "クラウドプロバイダー一覧",
+-      description: "Harnessを使わないサービスだけ個別に登録します。APIキーはmacOS Keychainへ保存し、設定・SQLite・診断情報には含めません。",
++      title: "個別プロバイダー一覧",
++      description: "Harnessを使わないサービスを個別に登録します。APIキーはmacOS Keychainへ保存し、設定・SQLite・診断情報には含めません。",
+       stableId: "プロバイダーIDは作成後に変更できません。",
+-      defaultName: "クラウド{{capability}}",
++      defaultName: "HTTP {{capability}}",
+       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "システム音声" },
+       connecting: "接続中…",
+       connectionSucceeded: "接続に成功 · {{latency}} ms",
+       voice: "音声",
+       output: "出力",
+       baseUrl: "ベースURL",
++      modelsPath: "モデル一覧パス（GET）",
++      sessionsPath: "セッション作成パス（POST）",
+       runtime: "ランタイム",
+       existingDeployment: "LARM · 既存のデプロイ",
+       testConnection: "接続をテスト",
+@@ -327,10 +334,11 @@ export const ja = {
+       deleteKey: "キーを削除",
+       kinds: {
+         "openai-compatible": "OpenAI互換LLM",
+-        "cloud-asr": "クラウドASR",
+-        "cloud-tts": "クラウドTTS",
++        "agent-session": "Agent Session LLM",
++        "cloud-asr": "HTTP ASR",
++        "cloud-tts": "HTTP TTS",
+         "system-tts": "システムTTS",
+-        larm: "LARM",
++        larm: "LARM（旧WS・移行検証用）",
+         "dynamic-lan": "動的LAN",
+       },
+     },
+@@ -566,6 +574,8 @@ export const ja = {
+   },
+   errors: {
+     app: {
++    conversationActive: "応答を処理中",
++    conversationIdle: "会話入力待ち",
+       primaryConversationUnavailable: "メインの会話を利用できません。SAAAを再起動してからもう一度お試しください。",
+       operationFailed: "SAAAはこの操作を完了できませんでした。もう一度お試しください。",
+     },
+@@ -591,7 +601,10 @@ export const ja = {
+       runtimeFailure: "ミーティングのランタイムで失敗が発生しました。ミーティング設定を確認してからもう一度お試しください。",
+       operationFailed: "ミーティングの操作を完了できませんでした。もう一度お試しください。",
+     },
+-    settings: { operationFailed: "設定を更新できませんでした。内容を確認してからもう一度お試しください。" },
++    settings: {
++      agentSessionEventStreamMissing: "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。",
++      operationFailed: "設定を更新できませんでした。内容を確認してからもう一度お試しください。",
++    },
+     situation: { operationFailed: "Situationの操作を完了できませんでした。もう一度お試しください。" },
+     voice: {
+       targetSpeakerRejected: "登録した本人の声として確認できなかったため、文字起こしへ送信しませんでした。",
+diff --git a/src/i18n/presentation.ts b/src/i18n/presentation.ts
+index d9e4a91..0c45cb9 100644
+--- a/src/i18n/presentation.ts
++++ b/src/i18n/presentation.ts
+@@ -36,6 +36,7 @@ const messageKeys = {
+   meetingRuntimeFailure: "errors.meeting.runtimeFailure",
+   settingsAgentConnectionTokenInvalid: "settings.connection.agentConnectionTokenInvalid",
+   settingsAgentConnectionAuthorizationRejected: "settings.connection.agentConnectionAuthorizationRejected",
++  settingsAgentSessionEventStreamMissing: "errors.settings.agentSessionEventStreamMissing",
+ } as const;
+ 
+ export type UiMessageName = keyof typeof messageKeys;
+@@ -70,6 +71,7 @@ const legacyMessageNames: Record<string, UiMessageName> = {
+   "音声が記録されませんでした。": "voiceProfileNoAudio",
+   "LARM_API_TOKEN is invalid.": "settingsAgentConnectionTokenInvalid",
+   "dynamic_lan rejected the connection authorization.": "settingsAgentConnectionAuthorizationRejected",
++  "Agent Session creation did not advertise a supported event stream URL": "settingsAgentSessionEventStreamMissing",
+ };
+ 
+ const microphoneMessageNames: Array<[RegExp, string]> = [
+@@ -202,7 +204,7 @@ export function localizeMeetingLane(t: TFunction, lane: string): string {
+ }
+ 
+ export function localizeProviderKind(t: TFunction, kind: string): string {
+-  const known = ["openai-compatible", "cloud-asr", "cloud-tts", "system-tts", "larm", "dynamic-lan"];
++  const known = ["openai-compatible", "agent-session", "cloud-asr", "cloud-tts", "system-tts", "larm", "dynamic-lan"];
+   return known.includes(kind) ? t(`settings.providers.kinds.${kind}`) : t("common.unknown");
+ }
+ 
+diff --git a/src/lib/providerSchemas.ts b/src/lib/providerSchemas.ts
+index 63fb044..55de3a7 100644
+--- a/src/lib/providerSchemas.ts
++++ b/src/lib/providerSchemas.ts
+@@ -20,9 +20,19 @@ const openAiCompatibleProviderSchema = providerCommonSchema.extend({
+   authentication: z.enum(["none", "api-key"]),
+ }).strict();
+ 
++const agentSessionProviderSchema = providerCommonSchema.extend({
++  kind: z.literal("agent-session"),
++  location: z.enum(["local", "cloud"]),
++  baseUrl: z.string().url().max(2_048),
++  model: z.string().max(256).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Model names must not have surrounding whitespace or control characters"),
++  modelsPath: z.string().min(1).max(2_048),
++  sessionsPath: z.string().min(1).max(2_048),
++  authentication: z.enum(["none", "api-key"]),
++}).strict();
++
+ const cloudAsrProviderSchema = providerCommonSchema.extend({
+   kind: z.literal("cloud-asr"),
+-  location: z.literal("cloud"),
++  location: z.enum(["local", "cloud"]),
+   endpoint: z.string().url().max(2_048),
+   model: z.string().min(1).max(160).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Model names must not have surrounding whitespace or control characters"),
+   language: z.literal("auto"),
+@@ -31,7 +41,8 @@ const cloudAsrProviderSchema = providerCommonSchema.extend({
+ 
+ const cloudTtsProviderSchema = providerCommonSchema.extend({
+   kind: z.literal("cloud-tts"),
+-  location: z.literal("cloud"),
++  responseFormat: z.enum(["wav", "pcm"]).default("wav"),
++  location: z.enum(["local", "cloud"]),
+   endpoint: z.string().url().max(2_048),
+   model: z.string().min(1).max(160).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Model names must not have surrounding whitespace or control characters"),
+   voice: z.string().min(1).max(160).refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), "Voice names must not have surrounding whitespace or control characters"),
+@@ -63,6 +74,7 @@ const dynamicLanProviderSchema = providerCommonSchema.extend({
+ 
+ const providerSchema = z.discriminatedUnion("kind", [
+   openAiCompatibleProviderSchema,
++  agentSessionProviderSchema,
+   cloudAsrProviderSchema,
+   cloudTtsProviderSchema,
+   systemTtsProviderSchema,
+@@ -82,6 +94,20 @@ function parsedUrl(value: string): URL | null {
+   }
+ }
+ 
++function isSafeRelativeProviderPath(value: string, allowQuery: boolean): boolean {
++  if (!value.startsWith("/") || value.startsWith("//") || /[\u0000-\u001f\u007f]/.test(value)) return false;
++  try {
++    const parsed = new URL(value, "http://provider.invalid");
++    return parsed.origin === "http://provider.invalid"
++      && !parsed.username
++      && !parsed.password
++      && !parsed.hash
++      && (allowQuery || !parsed.search);
++  } catch {
++    return false;
++  }
++}
++
+ const harnessAddressSchema = z.union([z.literal(""), z.string().url().max(2_048)]).superRefine((value, context) => {
+   if (!value) return;
+   const address = parsedUrl(value);
+@@ -117,10 +143,20 @@ export const modelProvidersSettingsSchema = z.object({
+         if (provider.location === "local" && (endpoint.protocol !== "http:" || !isLocalProviderHost(endpoint.hostname))) context.addIssue({ code: "custom", message: "Local providers must use an http:// loopback or private-network endpoint", path: [index, "endpoint"] });
+         if (provider.location === "cloud" && endpoint.protocol !== "https:") context.addIssue({ code: "custom", message: "Cloud providers must use HTTPS", path: [index, "endpoint"] });
+       }
++      if (provider.kind === "agent-session") {
++        if (provider.enabled && !provider.model) context.addIssue({ code: "custom", message: "Enabled Agent Session providers require a model", path: [index, "model"] });
++        const baseUrl = parsedUrl(provider.baseUrl);
++        if (!baseUrl) return;
++        if (!isSafeEndpoint(baseUrl) || baseUrl.pathname !== "/") context.addIssue({ code: "custom", message: "Agent Session base URL must be an origin without credentials, path, query, or fragment", path: [index, "baseUrl"] });
++        if (provider.location === "local" && (baseUrl.protocol !== "http:" || !isLocalProviderHost(baseUrl.hostname))) context.addIssue({ code: "custom", message: "Local Agent Session providers must use an http:// loopback or private-network base URL", path: [index, "baseUrl"] });
++        if (provider.location === "cloud" && baseUrl.protocol !== "https:") context.addIssue({ code: "custom", message: "Cloud Agent Session providers must use HTTPS", path: [index, "baseUrl"] });
++        if (!isSafeRelativeProviderPath(provider.modelsPath, true) || !new URL(provider.modelsPath, baseUrl).searchParams.get("runtime")) context.addIssue({ code: "custom", message: "Agent Session model paths must be relative and include a runtime query parameter", path: [index, "modelsPath"] });
++        if (!isSafeRelativeProviderPath(provider.sessionsPath, false)) context.addIssue({ code: "custom", message: "Agent Session session paths must be relative and must not include a query or fragment", path: [index, "sessionsPath"] });
++      }
+       if ((provider.kind === "cloud-asr" || provider.kind === "cloud-tts") && provider.endpoint) {
+         const endpoint = parsedUrl(provider.endpoint);
+         if (!endpoint) return;
+-        if (endpoint.protocol !== "https:" || !isSafeEndpoint(endpoint)) context.addIssue({ code: "custom", message: "Cloud providers must use a credential-free HTTPS endpoint without query or fragment", path: [index, "endpoint"] });
++        if (!isSafeEndpoint(endpoint) || (provider.location === "cloud" && endpoint.protocol !== "https:") || (provider.location === "local" && !isLocalProviderHost(endpoint.hostname))) context.addIssue({ code: "custom", message: "HTTP audio providers require a safe local URL or a cloud HTTPS URL", path: [index, "endpoint"] });
+       }
+       if (provider.kind === "larm") {
+         const baseUrl = parsedUrl(provider.baseUrl);
+@@ -133,5 +169,5 @@ export const modelProvidersSettingsSchema = z.object({
+     if (enabledLarmProviders > 1) context.addIssue({ code: "custom", message: "Only one LARM provider may be enabled", path: [] });
+     if (enabledDynamicLanProviders > 1) context.addIssue({ code: "custom", message: "Only one dynamic LAN provider may be enabled", path: [] });
+   }),
+-  reasoningEffort: z.enum(["low", "medium", "xhigh"]),
++  reasoningEffort: z.enum(["provider-default", "low", "medium", "xhigh"]),
+ }).strict();
+diff --git a/src/lib/schemas.ts b/src/lib/schemas.ts
+index 29b7cc8..71a67e0 100644
+--- a/src/lib/schemas.ts
++++ b/src/lib/schemas.ts
+@@ -172,7 +172,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
+   const primaryId = routing.conversationRespond.primaryProviderId;
+   const primary = primaryId ? enabled.get(primaryId) : undefined;
+   if (routing.conversationRespond.source === "provider" && !primary) throw new Error("The primary conversation provider must be enabled");
+-  if (primary && !["openai-compatible", "larm", "dynamic-lan"].includes(primary.kind)) throw new Error("The selected conversation provider does not support LLM");
++  if (primary && !["openai-compatible", "agent-session", "larm", "dynamic-lan"].includes(primary.kind)) throw new Error("The selected conversation provider does not support LLM");
+   if (primary?.kind === "dynamic-lan" && routing.conversationRespond.timeoutMs > LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS) {
+     throw new Error(`dynamic LAN conversation timeout must not exceed ${LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS} ms`);
+   }
+@@ -181,7 +181,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
+   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
+     const fallback = enabled.get(fallbackId);
+     if (!fallback) throw new Error(`Fallback provider is not enabled: ${fallbackId}`);
+-    if (!["openai-compatible", "larm", "dynamic-lan"].includes(fallback.kind)) {
++    if (!["openai-compatible", "agent-session", "larm", "dynamic-lan"].includes(fallback.kind)) {
+       throw new Error(`Fallback provider does not support LLM: ${fallbackId}`);
+     }
+     if (routeIds.has(fallbackId)) throw new Error(`Duplicate provider in route: ${fallbackId}`);
+diff --git a/src/lib/settingsTypes.ts b/src/lib/settingsTypes.ts
+index 21d59c3..ea2059e 100644
+--- a/src/lib/settingsTypes.ts
++++ b/src/lib/settingsTypes.ts
+@@ -11,12 +11,25 @@ export type OpenAiCompatibleProviderSettings = {
+   authentication: "none" | "api-key";
+ };
+ 
++export type AgentSessionProviderSettings = {
++  kind: "agent-session";
++  id: string;
++  enabled: boolean;
++  label: string;
++  location: "local" | "cloud";
++  baseUrl: string;
++  model: string;
++  modelsPath: string;
++  sessionsPath: string;
++  authentication: "none" | "api-key";
++};
++
+ export type CloudAsrProviderSettings = {
+   kind: "cloud-asr";
+   id: string;
+   enabled: boolean;
+   label: string;
+-  location: "cloud";
++  location: "local" | "cloud";
+   endpoint: string;
+   model: string;
+   language: "auto";
+@@ -25,10 +38,11 @@ export type CloudAsrProviderSettings = {
+ 
+ export type CloudTtsProviderSettings = {
+   kind: "cloud-tts";
++  responseFormat?: "wav" | "pcm";
+   id: string;
+   enabled: boolean;
+   label: string;
+-  location: "cloud";
++  location: "local" | "cloud";
+   endpoint: string;
+   model: string;
+   voice: string;
+@@ -69,13 +83,14 @@ export type DynamicLanProviderSettings = {
+ 
+ export type ModelProviderSettings =
+   | OpenAiCompatibleProviderSettings
++  | AgentSessionProviderSettings
+   | CloudAsrProviderSettings
+   | CloudTtsProviderSettings
+   | SystemTtsProviderSettings
+   | LarmProviderSettings
+   | DynamicLanProviderSettings;
+ 
+-export type ReasoningEffort = "low" | "medium" | "xhigh";
++export type ReasoningEffort = "provider-default" | "low" | "medium" | "xhigh";
+ 
+ export type ModelProvidersSettings = {
+   harness: { address: string };
+diff --git a/tests/settings-regressions.test.ts b/tests/settings-regressions.test.ts
+index 3f125b5..c2620f2 100644
+--- a/tests/settings-regressions.test.ts
++++ b/tests/settings-regressions.test.ts
+@@ -44,6 +44,28 @@ describe("settings regressions", () => {
+     );
+   });
+ 
++  test("allows an Agent Session provider as the selected LLM route", () => {
++    const draft = structuredClone(defaultSettingsDraft);
++    draft.providers.providers.push({
++      kind: "agent-session",
++      id: "muse-agent",
++      enabled: true,
++      label: "Muse Agent",
++      location: "local",
++      baseUrl: "http://127.0.0.1:44449",
++      model: "muse/muse-spark-1.3-contributor",
++      modelsPath: "/v1/agents/models?runtime=muse",
++      sessionsPath: "/v1/agents/sessions",
++      authentication: "none",
++    });
++    draft.routing.conversationRespond = {
++      ...draft.routing.conversationRespond,
++      source: "provider",
++      primaryProviderId: "muse-agent",
++    };
++    expect(() => validateSettingsDocuments(documentsFromDraft(draft))).not.toThrow();
++  });
++
+   test("applies normalized saves only when the submitted draft is still current", () => {
+     const submitted = structuredClone(defaultSettingsDraft);
+     submitted.codex.agentName = " Renamed ";
+diff --git a/tests/settings-review.test.ts b/tests/settings-review.test.ts
+index 06af0aa..c8f6e42 100644
+--- a/tests/settings-review.test.ts
++++ b/tests/settings-review.test.ts
+@@ -58,6 +58,27 @@ describe("reviewed settings boundaries", () => {
+     expect(() => modelProvidersSettingsSchema.parse(settings)).toThrow("surrounding whitespace");
+   });
+ 
++  test("accepts an Agent Session LLM with explicit discovery and session paths", () => {
++    const settings = structuredClone(defaultSettingsDraft.providers);
++    settings.providers.push({
++      kind: "agent-session",
++      id: "muse-agent",
++      enabled: true,
++      label: "Muse Agent",
++      location: "local",
++      baseUrl: "http://127.0.0.1:44449",
++      model: "muse/muse-spark-1.3-contributor",
++      modelsPath: "/v1/agents/models?runtime=muse",
++      sessionsPath: "/v1/agents/sessions",
++      authentication: "none",
++    });
++    expect(() => modelProvidersSettingsSchema.parse(settings)).not.toThrow();
++    const provider = settings.providers.at(-1);
++    if (provider?.kind !== "agent-session") throw new Error("Agent Session fixture missing");
++    provider.modelsPath = "//other.example/v1/agents/models?runtime=muse";
++    expect(() => modelProvidersSettingsSchema.parse(settings)).toThrow();
++  });
++
+   test("requires ASR providers to auto-detect before applying the language allowlist", () => {
+     const settings = structuredClone(defaultSettingsDraft.providers);
+     const asr = {
+@@ -77,3 +98,20 @@ describe("reviewed settings boundaries", () => {
+     expect(() => modelProvidersSettingsSchema.parse(settings)).toThrow();
+   });
+ });
++
++describe("HTTP audio provider settings", () => {
++  test("reads existing WAV settings and accepts local PCM without WS fields", () => {
++    for (const [kind, extra] of [["cloud-asr", { language: "auto" }], ["cloud-tts", { voice: "local-voice" }]] as const) {
++      const settings = structuredClone(defaultSettingsDraft.providers);
++      const provider = { kind, id: `http-${kind}`, enabled: true, label: "Local HTTP", location: "local", endpoint: "http://127.0.0.1:9000/proxy/v1", model: "local-model", authentication: "none", ...extra };
++      const parsed = modelProvidersSettingsSchema.parse({ ...settings, providers: [provider] });
++      if (parsed.providers[0]?.kind === "cloud-tts") expect(parsed.providers[0].responseFormat).toBe("wav");
++      if (kind === "cloud-tts") {
++        expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, responseFormat: "pcm" }] })).not.toThrow();
++        expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, responseFormat: "mp3" }] })).toThrow();
++      }
++      expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, endpoint: "http://public.example/v1" }] })).toThrow();
++      expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, endpoint: "http://token@localhost/v1" }] })).toThrow();
++    }
++  });
++});
+diff --git a/tests/settings-ui-contracts.test.ts b/tests/settings-ui-contracts.test.ts
+index f2340c4..de3bc4e 100644
+--- a/tests/settings-ui-contracts.test.ts
++++ b/tests/settings-ui-contracts.test.ts
+@@ -61,7 +61,7 @@ describe("settings provider UI contracts", () => {
+     expect(dynamicLan).toContain('.extend(["v1", "agent-connections", id])');
+     expect(dynamicLan).toContain('.push("claim")');
+     expect(dynamicLan).toContain('"openai-provider-v1"');
+-    expect(dynamicLan).toContain('stream_url: descriptor.streaming.url');
++    expect(dynamicLan).toContain('endpoint: descriptor.configuration.fields.base_url');
+     expect(dynamicLan).toContain('stream_url.path() != "/v1/llm/stream"');
+     expect(dynamicLan).toContain("Err(env::VarError::NotPresent) => return Ok(None)");
+   });
+diff --git a/tests/ui-presentation-i18n.test.ts b/tests/ui-presentation-i18n.test.ts
+index 7bc61c5..8396d72 100644
+--- a/tests/ui-presentation-i18n.test.ts
++++ b/tests/ui-presentation-i18n.test.ts
+@@ -31,6 +31,11 @@ describe("localized UI presentation", () => {
+       "dynamic_lan rejected the connection authorization.",
+       "settings",
+     )).toBe("Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。");
++    expect(localizeUiMessage(
++      i18n.t,
++      "Agent Session creation did not advertise a supported event stream URL",
++      "settings",
++    )).toBe("セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。");
+   });
+ 
+   test("does not expose untrusted backend error text in either language", async () => {

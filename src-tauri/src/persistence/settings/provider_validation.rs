@@ -2,7 +2,7 @@ use crate::{ModelProviderSettings, ModelProvidersSettings};
 
 pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Result<(), String> {
     if !crate::providers::valid_conversation_reasoning_effort(&settings.reasoning_effort) {
-        return Err("Reasoning effort must be low, medium, or xhigh".to_string());
+        return Err("Reasoning effort must be provider-default, low, medium, or xhigh".to_string());
     }
     validate_harness_address(&settings.harness.address)?;
     if settings.providers.is_empty() || settings.providers.len() > 20 {
@@ -84,6 +84,67 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                     return Err(format!("Cloud provider must use HTTPS: {provider_id}"));
                 }
             }
+            ModelProviderSettings::AgentSession(provider) => {
+                if !matches!(provider.authentication.as_str(), "none" | "api-key")
+                    || provider.base_url.len() > 2_048
+                    || provider.model.trim() != provider.model
+                    || provider.model.chars().count() > 256
+                    || provider.model.chars().any(char::is_control)
+                    || provider.models_path.len() > 2_048
+                    || provider.sessions_path.len() > 2_048
+                {
+                    return Err(format!(
+                        "Invalid Agent Session provider metadata: {provider_id}"
+                    ));
+                }
+                if provider.enabled && provider.model.is_empty() {
+                    return Err(format!(
+                        "Enabled Agent Session provider requires a model: {provider_id}"
+                    ));
+                }
+                let base_url = url::Url::parse(&provider.base_url)
+                    .map_err(|_| format!("Invalid Agent Session base URL: {provider_id}"))?;
+                if !base_url.username().is_empty()
+                    || base_url.password().is_some()
+                    || base_url.query().is_some()
+                    || base_url.fragment().is_some()
+                    || base_url.path() != "/"
+                {
+                    return Err(format!(
+                        "Agent Session base URL must be an origin: {provider_id}"
+                    ));
+                }
+                if provider.location == "local" {
+                    if base_url.scheme() != "http"
+                        || !crate::providers::dynamic_lan::url_is_local(&base_url)
+                    {
+                        return Err(format!("Local Agent Session provider must use an HTTP loopback or private-network base URL: {provider_id}"));
+                    }
+                } else if base_url.scheme() != "https" {
+                    return Err(format!(
+                        "Cloud Agent Session provider must use HTTPS: {provider_id}"
+                    ));
+                }
+                let models_url = validate_agent_session_path(
+                    provider_id,
+                    &base_url,
+                    &provider.models_path,
+                    true,
+                )?;
+                if models_url
+                    .query_pairs()
+                    .find(|(key, _)| key == "runtime")
+                    .is_none_or(|(_, value)| value.is_empty())
+                {
+                    return Err(format!("Agent Session model path requires a runtime query parameter: {provider_id}"));
+                }
+                validate_agent_session_path(
+                    provider_id,
+                    &base_url,
+                    &provider.sessions_path,
+                    false,
+                )?;
+            }
             ModelProviderSettings::CloudAsr(provider) => {
                 validate_cloud_provider(
                     provider_id,
@@ -106,6 +167,9 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                     &provider.model,
                     &provider.authentication,
                 )?;
+                if !matches!(provider.response_format.as_str(), "wav" | "pcm") {
+                    return Err(format!("TTS format must be wav or pcm: {provider_id}"));
+                }
                 if provider.voice.trim().is_empty()
                     || provider.voice.trim() != provider.voice
                     || provider.voice.chars().count() > 160
@@ -188,6 +252,33 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
     Ok(())
 }
 
+fn validate_agent_session_path(
+    provider_id: &str,
+    base_url: &url::Url,
+    path: &str,
+    allow_query: bool,
+) -> Result<url::Url, String> {
+    if path.is_empty()
+        || !path.starts_with('/')
+        || path.starts_with("//")
+        || path.chars().any(char::is_control)
+    {
+        return Err(format!("Invalid Agent Session path: {provider_id}"));
+    }
+    let resolved = base_url
+        .join(path)
+        .map_err(|_| format!("Invalid Agent Session path: {provider_id}"))?;
+    if resolved.origin() != base_url.origin()
+        || !resolved.username().is_empty()
+        || resolved.password().is_some()
+        || resolved.fragment().is_some()
+        || (!allow_query && resolved.query().is_some())
+    {
+        return Err(format!("Unsafe Agent Session path: {provider_id}"));
+    }
+    Ok(resolved)
+}
+
 fn validate_harness_address(address: &str) -> Result<(), String> {
     if address.is_empty() {
         return Ok(());
@@ -220,7 +311,7 @@ fn validate_cloud_provider(
     model: &str,
     authentication: &str,
 ) -> Result<(), String> {
-    if location != "cloud"
+    if !matches!(location, "local" | "cloud")
         || endpoint.len() > 2_048
         || model.trim().is_empty()
         || model.trim() != model
@@ -232,7 +323,10 @@ fn validate_cloud_provider(
     }
     let endpoint = url::Url::parse(endpoint)
         .map_err(|_| format!("Invalid cloud provider endpoint: {provider_id}"))?;
-    if endpoint.scheme() != "https"
+    if (location == "cloud" && endpoint.scheme() != "https")
+        || (location == "local"
+            && (!matches!(endpoint.scheme(), "http" | "https")
+                || !crate::providers::dynamic_lan::url_is_local(&endpoint)))
         || !endpoint.username().is_empty()
         || endpoint.password().is_some()
         || endpoint.query().is_some()

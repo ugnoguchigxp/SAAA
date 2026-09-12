@@ -1,0 +1,27 @@
+[
+  {
+    "command": "bun run build",
+    "exitCode": 0,
+    "log": "build.log"
+  },
+  {
+    "command": "bun run spec:check",
+    "exitCode": 0,
+    "log": "spec-check.log"
+  },
+  {
+    "command": "bun run larm:preflight",
+    "exitCode": 64,
+    "log": "larm-preflight.log"
+  },
+  {
+    "command": "bun run larm:canary",
+    "exitCode": 64,
+    "log": "larm-canary.log"
+  },
+  {
+    "command": "bun run larm:report",
+    "exitCode": 64,
+    "log": "larm-report.log"
+  }
+]

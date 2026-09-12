@@ -1,4 +1,6 @@
+import { uiEnglish } from "../../features/chat/ui/translations";
 export const en = {
+  genui: uiEnglish,
   common: {
     appName: "SAAA",
     language: "Language",
@@ -35,6 +37,8 @@ export const en = {
     notConfigured: "Not configured",
   },
   app: {
+    conversationActive: "Processing response",
+    conversationIdle: "Ready for a message",
     booting: "Starting SAAA Runtime…",
     navigationLabel: "Primary navigation",
     chat: "Chat",
@@ -205,7 +209,9 @@ export const en = {
     tabs: {
       general: { label: "General", detail: "Language, regional formats, and identity" },
       connection: { label: "Service connection", detail: "Harness and service sources" },
-      providers: { label: "Individual services", detail: "Cloud LLM, ASR and TTS" },
+      providers: {
+      location: "Location",
+      audioFormat: "Audio format", label: "Individual services", detail: "Cloud LLM, ASR and TTS" },
       voice: { label: "Voice & devices", detail: "Always-on listening and audio" },
       situation: { label: "Situation", detail: "Shadow observation controls" },
       security: { label: "Privacy & Security", detail: "Local-first controls" },
@@ -265,6 +271,7 @@ export const en = {
       description: "Port 9810 validates an Agent Connection directly and uses the WebSocket advertised by its claim. Local-LAN connections work without authentication; Bearer authentication is used only when LARM_API_TOKEN is set. Other addresses resolve services through the Harness.",
       resolving: "Resolving…",
       harnessAddress: "Harness address",
+      providerDefault: "Omit (HTTP provider default)",
       reasoningEffort: "Reasoning effort (LLM)",
       llmTimeoutSeconds: "LLM timeout (seconds)",
       llmTimeoutHint: "1–3600 seconds. New settings default to 1800 seconds.",
@@ -293,8 +300,8 @@ export const en = {
     },
     providers: {
       eyebrow: "INDIVIDUAL SERVICES",
-      title: "Cloud Provider catalog",
-      description: "Register only services that do not use the Harness. API keys are stored in macOS Keychain and excluded from settings, SQLite, and diagnostics.",
+      title: "Individual Provider catalog",
+      description: "Register services that do not use the Harness. API keys are stored in macOS Keychain and excluded from settings, SQLite, and diagnostics.",
       stableId: "Provider IDs cannot be changed after creation.",
       defaultName: "Cloud {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "System voice" },
@@ -303,6 +310,8 @@ export const en = {
       voice: "Voice",
       output: "Output",
       baseUrl: "Base URL",
+      modelsPath: "Models path (GET)",
+      sessionsPath: "Session creation path (POST)",
       runtime: "Runtime",
       existingDeployment: "LARM · existing deployment",
       testConnection: "Test connection",
@@ -327,10 +336,11 @@ export const en = {
       deleteKey: "Delete key",
       kinds: {
         "openai-compatible": "OpenAI-compatible LLM",
-        "cloud-asr": "Cloud ASR",
-        "cloud-tts": "Cloud TTS",
+        "agent-session": "Agent Session LLM",
+        "cloud-asr": "HTTP ASR",
+        "cloud-tts": "HTTP TTS",
         "system-tts": "System TTS",
-        larm: "LARM",
+        larm: "LARM (legacy WS migration testing)",
         "dynamic-lan": "Dynamic LAN",
       },
     },
@@ -566,6 +576,8 @@ export const en = {
   },
   errors: {
     app: {
+    conversationActive: "Processing response",
+    conversationIdle: "Ready for a message",
       primaryConversationUnavailable: "The main conversation is unavailable. Restart SAAA and try again.",
       operationFailed: "SAAA could not complete that operation. Try again.",
     },
@@ -591,7 +603,10 @@ export const en = {
       runtimeFailure: "The meeting runtime reported a failure. Check the meeting settings and try again.",
       operationFailed: "The meeting operation could not be completed. Try again.",
     },
-    settings: { operationFailed: "The setting could not be updated. Check the values and try again." },
+    settings: {
+      agentSessionEventStreamMissing: "Session creation succeeded, but no supported event stream endpoint was returned. Check the provider's SSE or WebSocket contract.",
+      operationFailed: "The setting could not be updated. Check the values and try again.",
+    },
     situation: { operationFailed: "Situation could not complete that operation. Try again." },
     voice: {
       targetSpeakerRejected: "The voice could not be confirmed as the enrolled speaker, so it was not transcribed.",

@@ -44,6 +44,28 @@ describe("settings regressions", () => {
     );
   });
 
+  test("allows an Agent Session provider as the selected LLM route", () => {
+    const draft = structuredClone(defaultSettingsDraft);
+    draft.providers.providers.push({
+      kind: "agent-session",
+      id: "muse-agent",
+      enabled: true,
+      label: "Muse Agent",
+      location: "local",
+      baseUrl: "http://127.0.0.1:44449",
+      model: "muse/muse-spark-1.3-contributor",
+      modelsPath: "/v1/agents/models?runtime=muse",
+      sessionsPath: "/v1/agents/sessions",
+      authentication: "none",
+    });
+    draft.routing.conversationRespond = {
+      ...draft.routing.conversationRespond,
+      source: "provider",
+      primaryProviderId: "muse-agent",
+    };
+    expect(() => validateSettingsDocuments(documentsFromDraft(draft))).not.toThrow();
+  });
+
   test("applies normalized saves only when the submitted draft is still current", () => {
     const submitted = structuredClone(defaultSettingsDraft);
     submitted.codex.agentName = " Renamed ";

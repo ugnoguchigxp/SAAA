@@ -36,6 +36,7 @@ const messageKeys = {
   meetingRuntimeFailure: "errors.meeting.runtimeFailure",
   settingsAgentConnectionTokenInvalid: "settings.connection.agentConnectionTokenInvalid",
   settingsAgentConnectionAuthorizationRejected: "settings.connection.agentConnectionAuthorizationRejected",
+  settingsAgentSessionEventStreamMissing: "errors.settings.agentSessionEventStreamMissing",
 } as const;
 
 export type UiMessageName = keyof typeof messageKeys;
@@ -70,6 +71,7 @@ const legacyMessageNames: Record<string, UiMessageName> = {
   "音声が記録されませんでした。": "voiceProfileNoAudio",
   "LARM_API_TOKEN is invalid.": "settingsAgentConnectionTokenInvalid",
   "dynamic_lan rejected the connection authorization.": "settingsAgentConnectionAuthorizationRejected",
+  "Agent Session creation did not advertise a supported event stream URL": "settingsAgentSessionEventStreamMissing",
 };
 
 const microphoneMessageNames: Array<[RegExp, string]> = [
@@ -202,7 +204,7 @@ export function localizeMeetingLane(t: TFunction, lane: string): string {
 }
 
 export function localizeProviderKind(t: TFunction, kind: string): string {
-  const known = ["openai-compatible", "cloud-asr", "cloud-tts", "system-tts", "larm", "dynamic-lan"];
+  const known = ["openai-compatible", "agent-session", "cloud-asr", "cloud-tts", "system-tts", "larm", "dynamic-lan"];
   return known.includes(kind) ? t(`settings.providers.kinds.${kind}`) : t("common.unknown");
 }
 

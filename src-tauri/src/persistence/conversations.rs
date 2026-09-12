@@ -26,6 +26,7 @@ pub(crate) fn list_messages_from_connection(
     let messages = statement
         .query_map(params![conversation_id], |row| {
             Ok(ConversationMessage {
+                parts: None,
                 id: row.get(0)?,
                 conversation_id: row.get(1)?,
                 role: row.get(2)?,

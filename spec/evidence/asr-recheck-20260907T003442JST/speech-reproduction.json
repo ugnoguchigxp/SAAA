@@ -1,0 +1,50 @@
+[
+  {
+    "case": "health-before",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "44cf6c9a95e4ce22c4f02e0a11f8571f0e79baef",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-cba7d521-58a1-4ba9-bcac-05baab4393ba",
+    "errorCode": null,
+    "elapsedMs": 823.0
+  },
+  {
+    "case": "synthetic-japanese-source",
+    "status": 200,
+    "contentType": "audio/wav",
+    "bytes": 62508,
+    "wav": {
+      "channels": 1,
+      "sampleRate": 24000,
+      "sampleWidthBytes": 2,
+      "frames": 31232,
+      "durationSeconds": 1.3013333333333332
+    },
+    "elapsedMs": 157.0
+  },
+  {
+    "case": "asr-japanese-speech",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 54,
+    "errorCode": null,
+    "textPresent": true,
+    "textNonempty": true,
+    "elapsedMs": 520.5,
+    "normalizedMatch": false,
+    "expectedContentMatched": false
+  },
+  {
+    "case": "health-after",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "44cf6c9a95e4ce22c4f02e0a11f8571f0e79baef",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-cba7d521-58a1-4ba9-bcac-05baab4393ba",
+    "errorCode": null,
+    "elapsedMs": 11.8
+  }
+]

@@ -28,6 +28,7 @@ pub(super) fn compose_provider_history(
     )?;
     let system_content = format!("{}\n\n{}", system_context.trim(), policy.content.trim());
     let mut history = vec![ConversationMessage {
+        parts: None,
         id: "context-system-conversation-respond".to_string(),
         conversation_id: conversation_id.to_string(),
         role: "system".to_string(),
@@ -38,6 +39,7 @@ pub(super) fn compose_provider_history(
         projected
             .enumerate()
             .map(|(index, message)| ConversationMessage {
+                parts: None,
                 id: format!("context-projection-{}", index + 1),
                 conversation_id: conversation_id.to_string(),
                 role: message.role,

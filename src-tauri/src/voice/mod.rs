@@ -1,6 +1,7 @@
 pub mod audio_upload;
 pub mod cloud_asr;
 pub mod cloud_tts;
+pub(crate) mod http_audio;
 pub mod language;
 pub mod network_asr;
 pub mod profile;

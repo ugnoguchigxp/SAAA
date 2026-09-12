@@ -1,0 +1,269 @@
+<article lang="ja">
+  <h1 id="http-provider-live-verification">HTTP Provider実機検証：経過と残件</h1>
+  <h2 id="asr-recheck-0907">9月7日00:34 JST以降：ASRの非発話502が解消</h2>
+  <p>
+    再起動後のASR確認依頼に対し、Macから同じ9810番のHTTP APIを検証した。
+    稼働releaseは44cf6c9a95e4ce22c4f02e0a11f8571f0e79baef、
+    bootEpochはepoch-cba7d521-58a1-4ba9-bcac-05baab4393ba。 daemonの起動日時は2026-09-06 15:14:43
+    UTCで、再起動を確認した。 release pointerとリポジトリHEADも同じcommitだった。
+  </p>
+  <ul>
+    <li>440 Hz固定音・0.25秒：HTTP 200、textは空。334.1 ms。前回の502は再現しなかった。</li>
+    <li>無音・0.25秒：HTTP 200、textは空。302.0 ms。</li>
+    <li>
+      固定の日本語合成音声：HTTP 200、空でないtext。1回目1574.2 ms、文字列不一致の再現確認1回は520.5
+      ms。
+      再現確認では入力文「疎通確認です。」に対して「素通確認です。」となり、漢字の認識誤りが残った。
+    </li>
+  </ul>
+  <p>
+    HTTP疎通と非発話時の応答は正常化した。日本語の文字起こしは応答するが、この固定音声では原文一致を満たしていない。
+    合成音声とASRを組み合わせた1例であり、人の発話や騒音下の認識品質全般を合格とは判断しない。
+    時間は単発の観測値で、p50／p95ではない。
+  </p>
+  <p>
+    今回はASRのHTTP
+    APIを直接検証した。入力生成だけに既存TTSを使い、マイク録音、保存済み会話、設定変更、LLM再検証は行っていない。
+    SAAAの画面・録音操作までの確認は含まない。 証拠は<code>spec/evidence/asr-recheck-20260907T003442JST/</code>の
+    asr-results.json、speech-reproduction.json、asr.log、run.jsonに保存した。
+    check_asr.pyとspeech_reproduction.pyはともに終了コード0で診断完了。
+    原文一致はfalseとして記録し、認識品質を成功扱いにはしていない。
+  </p>
+  <h2 id="recheck-2341">23:41 JST以降の再検証：新releaseへ切り替わり</h2>
+  <p>
+    最新の再検証では321461a52c9bb35ad144f27e62cd86eea012898aが稼働していた。
+    /health、larm-current、release-manifest.json、LARMリポジトリHEADが一致した。
+    configRevisionは9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429、
+    bootEpochはepoch-672f9702-84a1-412c-a9c9-f3831f9ba285。
+    観測した配備manifestとの一致を確認したもので、別途承認された期待commitの検証ではない。
+  </p>
+  <table>
+    <caption>
+      新releaseでの再検証結果
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">通常LLM JSON</th>
+        <td>
+          HTTP
+          502、upstream_response_invalid。短い固定promptで1回再現確認しても同じ。公開契約に一致しないchat
+          completionというProvider側のエラー。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">LLM SSE</th>
+        <td>
+          claim経路、および通常Bearerでreasoning_effort=lowを送る経路でConnectionResetError。daemonの該当時刻のgateway_stream_protocol_errorはreason=invalid_chunk。SAAAのdynamic
+          liveテストもContract、output_started=falseで1件失敗。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">TTS WAV</th>
+        <td>
+          HTTP 200。24 kHz・mono・PCM16、31,232 samples、約1.301秒の音声。SAAAのHTTP
+          client、逐次decode、native mixerを通して再生完了。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ASR・合成した日本語発話</th>
+        <td>
+          TTSで生成した固定文を送るとHTTP
+          200、空でないtext。SAAAのcloud_asr処理でも成功。マイク録音や会話履歴は使用していない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">ASR・固定440 Hz音</th>
+        <td>
+          HTTP
+          502、upstream_response_invalid。前回の空text成功から変化した。無発話時の応答契約は未達で、原因fieldまでは特定していない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Connectionと認証</th>
+        <td>
+          claim成功、DELETE 204、status=released、解放済みcredentialのProvider
+          healthは401。modelsとactivityも200になった。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    前回のstreaming_requires_websocketとallocation_requiredは解消した。 残っているのはLLM応答・SSE
+    chunk、およびASRの非発話入力時の契約エラーである。
+    LARM側ではupstream応答の生成・正規化と公開契約の検査を確認する必要がある。
+    SAAA側で契約検査を緩めたり、WSや別モデルへfallbackして成功扱いにはしていない。
+  </p>
+  <p>
+    明示実行専用のvoice::http_audio::live::live_tts_playback_and_asrを追加した。
+    SAAA_HTTP_LIVE_BASE_URL=http://192.168.0.130:9810/v1とメモリ内のLARM_API_TOKENを使い、 cargo
+    test --manifest-path src-tauri/Cargo.toml voice::http_audio::live::live_tts_playback_and_asr --
+    --ignored --exact --nocaptureで1件成功・終了コード0。
+    通常のテストでは音声出力・実Provider呼び出しを避けるためignoreされるが、今回の実行ではskipしていない。
+    追加時にlanguage設定漏れのcompileエラーがあり、autoを設定して再実行した。
+  </p>
+  <p>
+    SAAAの実機音声テストではTTS要求から最初のnative mixer sampleまで673 ms、 ASR
+    uploadから空でないtextまで586 msだった。1回だけの観測値で、p50／p95や
+    変更前後比較ではない。mixerへのsample供給を物理スピーカーからの発音時刻とは扱わない。
+    ASR→LLM→TTSの会話完走、tool往復、実機の割り込み・復旧、音声品質の評価は未完了。
+  </p>
+  <p>
+    証拠は<code>spec/evidence/http-provider-recheck-20260906T144056Z/</code>に保存した。
+    diagnostics.jsonは三APIとclaim、followup.jsonは失敗の再現とWAV形式・日本語ASR、
+    dynamic-claim.logはSAAAのLLM失敗、saaa-audio-live.logはSAAAの音声成功、
+    stream-error-events.jsonlは本文を除外したdaemonのエラー種別である。
+    診断スクリプトの終了コード0は診断完了を意味し、全APIの合格ではない。
+    追加テスト後のvoice回帰107件とclippyは成功した。通常のvoice回帰では実機専用テスト1件をignoreし、上記の明示実行で別途成功を確認した。
+  </p>
+  <h2 id="initial-history">以下は初回検証と前回再検証の記録</h2>
+  <p>
+    2026-09-06、ユーザーの再開指示を受けてMacから192.168.0.130:9810を検証した。
+    ホストへは接続できるが、稼働中のreleaseはHTTP統一対応前だった。
+    SAAA–LARM実機統合は未達。配備、モデル、認証設定、SAAAの保存済みrouteは変更していない。
+  </p>
+  <h2 id="recheck-2322">23:22 JSTの再検証：稼働releaseは変化なし</h2>
+  <p>
+    ユーザーの再検証指示により、2026-09-06 23:22 JSTに同じ接続先を再検証した。
+    /healthのreleaseCommit、configRevision、bootEpochは前回と同一だった。
+    larm-currentも01667fe1a4f9を参照し、daemonの起動日時は2026-09-01 07:38:30 UTCのまま。
+    LARMリポジトリHEADは94d6ab2ad31b7359563eef751e420e63b207ecbcへ更新されていたが、
+    そのソース更新は稼働中のreleaseには反映されていなかった。
+  </p>
+  <p>
+    通常LLM JSONとTTS WAVは再びHTTP 400のallocation_required、claimによるLLM SSEは HTTP
+    400のstreaming_requires_websocketだった。固定音声のASRはHTTP 200で空のtextを返した。
+    診断用Connectionは204で解放され、状態releasedとcredentialによるhealthの401を確認した。 SAAA
+    Rustのlive_dynamic_lan_claim_and_chatも再実行し、1件失敗・終了コード101だった。
+    配備・設定変更、WSへのfallbackは行っていない。HTTP統合は引き続き未達。
+  </p>
+  <p>
+    再実行したコマンドは、SAAA_DYNAMIC_LAN_HOST=192.168.0.130 cargo test --manifest-path
+    src-tauri/Cargo.toml providers::dynamic_lan::tests::live_dynamic_lan_claim_and_chat -- --ignored
+    --exact と、python3 spec/evidence/http-provider-recheck-20260906T142212Z/diagnose.py。
+    後者の終了コード0は診断完了のみを意味する。 証拠は<code>spec/evidence/http-provider-recheck-20260906T142212Z/</code>の
+    diagnostics.json、diagnostics.log、dynamic-claim.log、run.jsonへ別途保存した。
+  </p>
+  <h2 id="release">初回検証時の接続先とrelease</h2>
+  <p>
+    /healthと/readyはHTTP 200。稼働commitは01667fe1a4f9acc18794ae9fd4264487c1063647 （feat: restore
+    SAAA ASR service harness）。/srv/ai/apps/larm-currentの参照先と
+    release-manifest.jsonも同じcommitだった。manifestの作成日時は2026-09-01T07:37:22Z。
+    調査時点のLARMリポジトリHEADは605bd8bf3de0abb8f44a77d5b107783d42e65f4d （refactor: retire
+    proprietary websocket transport）で、稼働releaseとは異なる。
+    HEADを承認済みの期待releaseとみなしたわけではなく、期待releaseの指定・一致判定は未完了。
+  </p>
+  <p>
+    configRevisionはa6f05db3de06b17262d21bbd78c805e83ad50c8f3705fe472364bfd71dd05798、
+    bootEpochはepoch-035dd538-ae2e-4467-ac51-cb40437a7318。
+    診断の前後で変化はなかった。larm-native-qwen-provider.serviceも稼働していた。
+  </p>
+  <h2 id="results">実処理の結果</h2>
+  <table>
+    <caption>
+      各要求の結果と判定範囲
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">対象</th>
+        <th scope="col">結果</th>
+        <th scope="col">判定</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">SAAA Rustのdynamic claim→HTTP会話</th>
+        <td>1件実行、1件失敗。ProviderFailureKind::Contract、output_started=false。</td>
+        <td>claim取得後のHTTP会話開始で失敗。独自WSへのfallbackは行わなかった。</td>
+      </tr>
+      <tr>
+        <th scope="row">claim credentialによるChat Completions SSE</th>
+        <td>HTTP 400、streaming_requires_websocket。</td>
+        <td>ホストがSSEを受理しないことを直接確認。SAAAのSSE parserに到達する前の失敗。</td>
+      </tr>
+      <tr>
+        <th scope="row">通常BearerによるChat Completions JSON</th>
+        <td>HTTP 400、allocation_required。</td>
+        <td>通常HTTP Providerとしてのallocation不要な推論は未提供。</td>
+      </tr>
+      <tr>
+        <th scope="row">通常Bearerによるaudio/speech</th>
+        <td>HTTP 400、allocation_required。</td>
+        <td>音声bodyを取得できず、decode・再生・割り込みは未検証。</td>
+      </tr>
+      <tr>
+        <th scope="row">audio/transcriptionsのmultipart</th>
+        <td>HTTP 200、JSONのtextあり・空文字。要求から応答完了まで434.7 ms。</td>
+        <td>
+          16 kHz・mono・PCM16の固定440
+          Hz音、0.25秒を送信。アップロード契約の疎通のみ確認。人の発話認識の品質評価ではない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">診断用Connectionのcleanup</th>
+        <td>DELETEは204、後続GETのstatusはreleased。解放後のcredentialでProvider healthは401。</td>
+        <td>診断スクリプトが作成したConnectionの解放・credential失効を確認。</td>
+      </tr>
+      <tr>
+        <th scope="row">認証付きmodels／activity</th>
+        <td>両方ともHTTP 404、not_found。</td>
+        <td>
+          参考診断。models一覧の欠如を推論不可の根拠にせず、上記の実推論要求も実行した。全体のidle・残留資源は未確認。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="evidence">実行コマンドと証拠</h2>
+  <ul>
+    <li>
+      SAAA_DYNAMIC_LAN_HOST=192.168.0.130 cargo test --manifest-path src-tauri/Cargo.toml
+      providers::dynamic_lan::tests::live_dynamic_lan_claim_and_chat -- --ignored --exact
+      ：終了コード101、1件失敗。 Rust実行ログ（<code>spec/evidence/http-provider-live-2026-09-06/dynamic-claim.log</code>）。
+    </li>
+    <li>
+      python3 spec/evidence/http-provider-live-2026-09-06/diagnose.py：終了コード0。
+      通常三API診断（<code>spec/evidence/http-provider-live-2026-09-06/diagnostics.json</code>）。
+      このスクリプトの0は診断記録の完了を意味し、HTTP統合の合格ではない。
+    </li>
+    <li>
+      初回の補助スクリプトはclaimにformatを指定せずinvalid_requestとなった。 SAAA production
+      clientにはformat指定があるため、これは補助スクリプト側の誤り。
+      指定を修正してdynamic部分のみ1回再実行した。
+    </li>
+    <li>
+      python3 spec/evidence/http-provider-live-2026-09-06/diagnose.py --dynamic-only：終了コード0。
+      claim・SSE・cleanup診断（<code>spec/evidence/http-provider-live-2026-09-06/dynamic-diagnostics.json</code>）。
+      SSEの失敗を合格に変更していない。
+    </li>
+  </ul>
+  <p>
+    通常Bearerの試験にはホストに設定済みのLARM_API_TOKENをSSH経由でメモリ内だけに読み込んだ。
+    management tokenは使っていない。redirectとproxyを使用せず、claimの接続先originも検査した。
+    credential、応答本文、文字起こし、音声を証拠ファイルへ保存していない。
+    SAAAの会話履歴やマイク入力は送信していない。
+  </p>
+  <h2 id="remaining">配備後に再開する項目</h2>
+  <p>
+    LARM担当による承認済みHTTP対応releaseの配備と、期待commitの確定が必要。
+    この検証ではroot配備・service再起動・engine変更を行っていない。 保存済みの会話routeは独立Agent
+    Session、音声出力はSystem Voiceだったため、
+    それらを切り替えずにHTTP対象へ明示的な診断要求を送った。アプリの通常画面での音声会話完走は未確認。
+  </p>
+  <p>
+    配備後はSAAAのJSON／SSEとtool往復、ASR→LLM→TTSの実再生、割り込み、
+    復旧後の次turn、Connectionのcleanupを検証する。
+    ASR／TTS用Profile・claimの設定route接続と旧larm:preflight／canary／reportのHTTP用更新も残っている。
+    今回は旧WS runnerをHTTP合格判定として実行していない。
+  </p>
+  <p>
+    cold／warm、単独／競合の反復測定、p50／p95、実スピーカーの再生開始、発話終了から再生開始、
+    日本語の読み・韻律、engine側cancelは未測定。ASRの1回の応答時間を性能baselineや速度目標の達成とは扱わない。
+    <a href="http-provider-standardization-implementation.html">前回の実装・ローカル検証記録</a
+    >も参照。
+  </p>
+</article>

@@ -11,12 +11,25 @@ export type OpenAiCompatibleProviderSettings = {
   authentication: "none" | "api-key";
 };
 
+export type AgentSessionProviderSettings = {
+  kind: "agent-session";
+  id: string;
+  enabled: boolean;
+  label: string;
+  location: "local" | "cloud";
+  baseUrl: string;
+  model: string;
+  modelsPath: string;
+  sessionsPath: string;
+  authentication: "none" | "api-key";
+};
+
 export type CloudAsrProviderSettings = {
   kind: "cloud-asr";
   id: string;
   enabled: boolean;
   label: string;
-  location: "cloud";
+  location: "local" | "cloud";
   endpoint: string;
   model: string;
   language: "auto";
@@ -25,10 +38,11 @@ export type CloudAsrProviderSettings = {
 
 export type CloudTtsProviderSettings = {
   kind: "cloud-tts";
+  responseFormat?: "wav" | "pcm";
   id: string;
   enabled: boolean;
   label: string;
-  location: "cloud";
+  location: "local" | "cloud";
   endpoint: string;
   model: string;
   voice: string;
@@ -69,13 +83,14 @@ export type DynamicLanProviderSettings = {
 
 export type ModelProviderSettings =
   | OpenAiCompatibleProviderSettings
+  | AgentSessionProviderSettings
   | CloudAsrProviderSettings
   | CloudTtsProviderSettings
   | SystemTtsProviderSettings
   | LarmProviderSettings
   | DynamicLanProviderSettings;
 
-export type ReasoningEffort = "low" | "medium" | "xhigh";
+export type ReasoningEffort = "provider-default" | "low" | "medium" | "xhigh";
 
 export type ModelProvidersSettings = {
   harness: { address: string };

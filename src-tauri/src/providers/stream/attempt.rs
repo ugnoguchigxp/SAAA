@@ -65,7 +65,9 @@ impl ProviderFailureKind {
             Self::AllocationLost => "The selected local runtime allocation is no longer available.",
             Self::AllocationOutcomeUnknown => "The local runtime allocation outcome is unknown.",
             Self::NotReady => "The selected local runtime did not become ready in time.",
-            Self::PartialOutput => "Provider output ended after a partial response.",
+            Self::PartialOutput => {
+                "Provider reached the output token limit; the response is incomplete."
+            }
             Self::ClientDisconnected => "The response consumer disconnected.",
             Self::Cancelled => "Provider execution was cancelled.",
             Self::Internal => "SAAA could not complete the provider attempt.",

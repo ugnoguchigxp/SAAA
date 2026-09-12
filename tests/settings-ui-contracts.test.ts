@@ -61,7 +61,7 @@ describe("settings provider UI contracts", () => {
     expect(dynamicLan).toContain('.extend(["v1", "agent-connections", id])');
     expect(dynamicLan).toContain('.push("claim")');
     expect(dynamicLan).toContain('"openai-provider-v1"');
-    expect(dynamicLan).toContain('stream_url: descriptor.streaming.url');
+    expect(dynamicLan).toContain('endpoint: descriptor.configuration.fields.base_url');
     expect(dynamicLan).toContain('stream_url.path() != "/v1/llm/stream"');
     expect(dynamicLan).toContain("Err(env::VarError::NotPresent) => return Ok(None)");
   });

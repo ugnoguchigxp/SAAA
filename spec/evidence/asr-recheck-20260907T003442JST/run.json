@@ -1,0 +1,19 @@
+{
+  "finishedAt": "2026-09-06T15:37:54.031135+00:00",
+  "target": "http://192.168.0.130:9810/v1/audio/transcriptions",
+  "observedRelease": "44cf6c9a95e4ce22c4f02e0a11f8571f0e79baef",
+  "result": "HTTP and empty-text responses passed; synthetic speech content mismatch",
+  "commands": [
+    {
+      "command": "python3 spec/evidence/asr-recheck-20260907T003442JST/check_asr.py",
+      "exitCode": 0
+    },
+    {
+      "command": "python3 spec/evidence/asr-recheck-20260907T003442JST/speech_reproduction.py",
+      "exitCode": 0
+    }
+  ],
+  "applicationSettingsChanged": false,
+  "microphoneUsed": false,
+  "llmRetested": false
+}

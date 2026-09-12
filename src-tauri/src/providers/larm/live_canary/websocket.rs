@@ -50,6 +50,7 @@ pub(super) async fn websocket_turn(
         presentation_mode: "visual".to_string(),
     };
     let history = [crate::ipc_contract::ConversationMessage {
+        parts: None,
         id: "message_larm_canary".to_string(),
         conversation_id: input.conversation_id.clone(),
         role: "user".to_string(),

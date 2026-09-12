@@ -1,0 +1,208 @@
+<article lang="ja">
+  <h1 id="http-provider-standardization-implementation">
+    OpenAI互換HTTP Providerへの移行：実装記録
+  </h1>
+  <p>
+    作成日：2026-09-06。到達状態：HTTPの主要経路を実装済み。SAAA先行整備の全完了、およびSAAA–LARM実機統合完了は未宣言。
+  </p>
+  <p>
+    当初のユーザー指示により、ホスト準備が必要な接続・実機・性能検証を延期した。
+    その後の再開指示による<a href="http-provider-live-verification-2026-09-06.html"
+      >実機再検証では新releaseで音声経路成功・LLM失敗を確認</a
+    >した。 以下の検証結果は先行して完了したローカル検証の記録である。
+  </p>
+  <h2 id="scope">対象と変更前の保全</h2>
+  <p>
+    通常LLM、動的claim由来LLM、HTTP ASR、HTTP
+    TTS、設定、接続確認、会話表示、キャンセルを変更した。Rust／Tauri、Keychain、会話履歴、memory／recall、toolの許可境界を維持した。LARMの配備、root
+    activator、engine、モデル、ContextStill Queueは変更していない。
+  </p>
+  <p>
+    開始時点で19ファイルの追跡済み差分（307行追加／49行削除）と、未追跡のAgent
+    Session実装があった。既存差分と未追跡ファイルを作業開始時に別途保存し、Agent
+    Sessionは独立機能として残した。
+  </p>
+  <h2 id="implemented">実装済みの経路</h2>
+  <table>
+    <caption>
+      APIごとの実装と境界
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">API</th>
+        <th scope="col">実装</th>
+        <th scope="col">制限</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">POST /v1/chat/completions</th>
+        <td>
+          会話はstream=trueのSSE。接続確認はstream=falseのJSON。同じclient、URL、認証、HTTP
+          error分類、finish判定を使う。通常ProviderはModels／Session／Activity／WS不要。
+        </td>
+        <td>
+          一要求一choice。応答にmodelがある場合は設定modelとの一致を要求する。複数候補、画像・音声content、独自reasoning
+          eventは対象外。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">SSEとtool</th>
+        <td>
+          UTF-8分割、LF／CRLF／CR、comment、複数event、role-only、空delta、usage-only、未知追加fieldに対応。finishと[DONE]を確認し、途中EOF、不正JSON、lengthを成功にしない。toolはindexとIDでargumentsを構成し、全callを検証してから既存の許可・quotaに従って実行する。assistant
+          tool_callsとtool結果を次のHTTP要求へ渡す。
+        </td>
+        <td>
+          tool実行開始または表示開始後のtransport再試行は禁止。reasoningは表示・TTSへ流さない。ACK、resume、Last-Event-IDは使わない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">POST /v1/audio/transcriptions</th>
+        <td>
+          multipartのfile／model／response_format=json。16 kHz・mono・PCM16
+          WAVへ既存処理で変換する。textだけのJSONを受理。言語情報がある場合だけ登録言語を検証する。無音・空の文字起こしをASR_NO_SPEECHとして扱う。
+        </td>
+        <td>
+          language／segments／no_speech_probがなければ推測しない。最大10分の入力、応答64
+          KiB。Realtimeの連続音声APIは実装していない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">POST /v1/audio/speech</th>
+        <td>
+          model／input／voice／response_formatを送り、独自stream fieldを送らない。WAV／raw
+          PCMの逐次受信を50 ms単位にまとめ、ファイル完成前にnative mixerへ渡す。句の順序とbounded
+          queueを維持する。
+        </td>
+        <td>
+          WAVはPCM16、1～2ch、8～192 kHz。raw PCMは24 kHz・mono・s16leの明示契約。圧縮音声、float
+          WAV、Realtime TTSは非対応。raw byte列だけではProviderの実sample rateを証明できない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    TTSの音声出力にはrodio 0.20.1を追加した。既存のartifact保存は維持する。会話のHTTP
+    TTSはartifact保存を前処理にしない。HTTP句は順次合成・再生するため、従来のファイル方式の適応的な並列先読みはこの経路では使わない。buffered
+    Providerでも同じ経路が動くが、分割受信だけではengineの生成時間は短縮されない。
+  </p>
+  <h2 id="configuration">設定の後方読み取り</h2>
+  <p>
+    kind、provider ID、endpoint、model、認証の既存形式を維持する。HTTP
+    ASR／TTSにもlocalを選べるようにした。localは既存のローカルhost検証、cloudはHTTPS検証を適用する。tokenを設定JSONへ追加しない。通常ProviderにWS
+    URL、allocation ID、protocolの入力は要求しない。
+  </p>
+  <p>
+    URLの解決は一か所に集約した。旧設定の操作URL（chat/completions、models、audio/transcriptions、audio/speech）は読み取り時にbaseへ解釈し、同一originとproxy
+    prefixを保持する。末尾のv1を重複させない。例：http://localhost:9000/proxy/v1/audio/speechからASRへは/proxy/v1/audio/transcriptionsとなる。保存済みendpointを破壊的に書き換えない。
+  </p>
+  <p>
+    TTSの追加field responseFormatは省略時wav。選択肢はwav／pcmのみ。PCM artifactも24
+    kHzを維持する。reasoningEffortの既存値と既定mediumを保持し、HTTP向けにprovider-default（reasoning_effortを送らない）を追加した。指定した機能がProviderから拒否された場合は失敗にし、別設定で黙って再送しない。token上限は既存値をmax_tokensで送る。structured
+    outputを使用する既存の通常Provider production処理は確認されていない。
+  </p>
+  <h2 id="recovery">認証、復旧、割り込み</h2>
+  <p>
+    HTTP
+    redirectを禁止し、別originへcredentialを転送しない。429／503のみ最大3回まで、Retry-Afterまたは短いbackoffで再試行する。Retry-Afterが5秒を超える場合は早期再送せず状態を返す。待機はcancel可能。401／403／設定不正で認証を解除せず、Providerも切り替えない。既存の動的Provider認証失敗に対するfallback例外を削除した。
+  </p>
+  <p>
+    動的LLMは従来のProfile→Connection→ready→claim、epoch・期限・renew・releaseを使用し、claimのHTTP
+    base URL、固定model、短期credentialを共通clientへ渡す。WS広告は任意となり、native
+    upstreamやACK／resume能力でHTTPの可否を判定しない。存在する広告URLの境界検証は維持する。認証・audience・固定model・leaseの検証は緩めていない。
+  </p>
+  <p>
+    表示開始前とtool実行前後を区別する。tool開始前にもprovider
+    outputの永続化境界を確定し、後段のtransport障害でtoolを二重実行しない。キャンセルでHTTP
+    future、未再生の句、native再生を停止する。run
+    IDによる既存の表示境界を保持し、キャンセル後の前turnのdeltaを次turnへ追加しない。client停止とengine計算停止は別で、engine側停止保証は未検証。
+  </p>
+  <h2 id="migration">残存WS依存</h2>
+  <ul>
+    <li>
+      通常OpenAI互換LLM、dynamic-lan LLＭ、通常HTTP
+      ASR／TTSは独自WS不要。通常画面のWS未接続表示を会話の処理中／入力待ち表示へ置き換えた。
+    </li>
+    <li>
+      ASR Harnessの通常選択からnative WSを外した。既存の発話区間・VAD・push-to-talkとHTTP
+      batch字幕処理は残す。字幕は部分音声を繰り返しアップロードして更新する既存方式であり、連続入力のRealtime
+      ASRとは呼ばない。native WSの確定文字列・遅延特性は引き継がない。
+    </li>
+    <li>
+      旧allocation型kind=larm、独立Agent Session、native ASRの旧client／protocolテスト、旧LARM live
+      runnerにはWSコードが残る。旧LARMを画面上で移行検証用と明示し、fallback先としての自動実行を禁止した。独立Agent
+      Sessionの作業中変更は保持した。
+    </li>
+    <li>旧static :44448へのfallbackやport監視は追加していない。</li>
+  </ul>
+  <h2 id="verification">検証とbaseline</h2>
+  <p>
+    変更前：providers::は83成功・5既存ignore、frontendは222成功。ignoreは実Providerを必要とする既存live
+    testであり成功件数に含めない。変更後はproviders::が92成功・5既存ignore、voice::が107成功、frontendが223成功。bun
+    run check、build、spec:checkも終了コード0。正確なコマンドと終了コードは
+    主要検証結果（<code>spec/evidence/http-provider-2026-09-06/verification-main.json</code>）と
+    ビルド・補助コマンド結果（<code>spec/evidence/http-provider-2026-09-06/verification-artifacts.json</code>）に保存した。filterで0件になったintegration
+    executableをProvider検証の成功件数に数えない。
+  </p>
+  <p>
+    larm:preflight／canary／reportは必須のreport-dir指定がないため終了コード64で停止した。実機検証は行っておらず、これらを合格として扱わない。
+  </p>
+  <p>
+    実socket
+    fixtureでは通常SSE、JSON、recall往復、UTF-8分割、usage-only、途中EOF、不正JSON、length、401、429／503、model不一致、応答前後のcancel、前turn混入防止、claim→HTTP→release、WAV／PCMの途中受信、buffered
+    artifact、ASR
+    text-only／無音、既存設定を確認する。音声fixtureは実スピーカーを鳴らさず、再生可能packetがHTTP
+    body完了前に出ることを確認する。
+  </p>
+  <h2 id="performance">性能の測定範囲</h2>
+  <p>
+    LLM要求から最初のcontent、ASR uploadから確定text、TTS
+    header受信から最初のdecode可能音声、TTS要求から最初のnative mixer
+    sampleなどを、本文・token・URLを保存せず直近200件のp50／p95として記録する。role、reasoning、heartbeatは最初のcontentに数えない。native
+    mixerへの最初のsample供給は、物理スピーカーからの発音時刻そのものではない。
+  </p>
+  <p>
+    同model・prompt・音声・GPUによる変更前後比較は未測定。cold／warm、単独／競合、発話終了から実再生開始、音質・日本語韻律の実機確認も未測定。許容遅延は実機baseline採取後に設定する。fixtureの成功や診断用の集計から、実engineの高速化や数値目標の達成は宣言しない。
+  </p>
+  <h2 id="remaining">未達条件とLARM側への必要事項</h2>
+  <p>
+    LARMのHTTP標準化仕様を読み取り確認した時点では、提供側もLLMの先行実装段階で、ASR／TTSのallocation不要なmodel解決と実機確認は未完了だった。音声の動的接続契約は推測で追加せず、ホスト側の準備と契約確定後に接続する。
+  </p>
+  <ul>
+    <li>
+      現在のdynamic-lan
+      bootstrap実装はLLM一ProviderのProfile／claim契約を前提とする。ASR／TTSの共通HTTP処理は短期credentialを直接受け取れるが、音声のProfile選択・claim・leaseと設定routeへの接続は未完了。ASR／TTSを含む最新版のHTTP
+      Profile／claim、固定model、voice、音声format、credential期限の契約に合わせて追加する。
+    </li>
+    <li>
+      larm:preflight／canary／reportの旧allocation／WS用評価をHTTP三APIと期待releaseの評価へ変更する作業が残る。旧runnerの合格をHTTP統合の合格には使わない。動的LLM専用のlive
+      canaryはHTTPへ更新したが、三API統合の代用ではない。
+    </li>
+    <li>
+      LARM提供側は承認release、HTTP三API、Profile／claim／認証、engineのcancel・資源管理を提供する必要がある。SAAA側から配備・engine変更はしていない。
+    </li>
+    <li>
+      実機で会話・tool、ASR→LLM→TTS、割り込み、Provider復旧後の次turn、release／残留Connection、期待release、実音声品質と遅延を確認するまで、実機統合完了とはしない。
+    </li>
+    <li>ContextStillのjob結果保存、Queue回復、release収束は今回の変更対象外。</li>
+  </ul>
+  <h2 id="references">参照したAPI契約</h2>
+  <ul>
+    <li>
+      <a
+        href="https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events"
+        >OpenAI Chat Completions streaming events</a
+      >
+    </li>
+    <li>
+      <a href="https://developers.openai.com/api/docs/guides/speech-to-text"
+        >OpenAI speech-to-text</a
+      >
+    </li>
+    <li>
+      <a href="https://developers.openai.com/api/docs/guides/text-to-speech"
+        >OpenAI text-to-speech</a
+      >
+    </li>
+  </ul>
+</article>

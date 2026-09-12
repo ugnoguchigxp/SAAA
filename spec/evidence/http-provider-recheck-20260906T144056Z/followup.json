@@ -1,0 +1,62 @@
+[
+  {
+    "case": "health-before-followup",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "321461a52c9bb35ad144f27e62cd86eea012898a",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-672f9702-84a1-412c-a9c9-f3831f9ba285",
+    "errorCode": null,
+    "elapsedMs": 904.5
+  },
+  {
+    "case": "json-reproduction-once",
+    "status": 502,
+    "contentType": "application/json; charset=UTF-8",
+    "bytes": 169,
+    "errorCode": "upstream_response_invalid",
+    "errorMessage": "upstream returned a chat completion that does not match the public contract",
+    "elapsedMs": 1894.7
+  },
+  {
+    "case": "sse-with-saaa-reasoning-effort",
+    "transportError": "ConnectionResetError",
+    "elapsedMs": 1001.8
+  },
+  {
+    "case": "tts-wav-format",
+    "status": 200,
+    "contentType": "audio/wav",
+    "bytes": 62508,
+    "wav": {
+      "channels": 1,
+      "sampleRate": 24000,
+      "sampleWidthBytes": 2,
+      "frames": 31232,
+      "durationSeconds": 1.3013333333333332
+    },
+    "elapsedMs": 191.6
+  },
+  {
+    "case": "asr-synthetic-japanese-speech",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 54,
+    "errorCode": null,
+    "textPresent": true,
+    "textNonempty": true,
+    "elapsedMs": 534.5
+  },
+  {
+    "case": "health-after-followup",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "321461a52c9bb35ad144f27e62cd86eea012898a",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-672f9702-84a1-412c-a9c9-f3831f9ba285",
+    "errorCode": null,
+    "elapsedMs": 10.1
+  }
+]

@@ -46,6 +46,7 @@
   "dependencies": {
     "@openai/codex-sdk": "0.144.4",
     "@tanstack/react-table": "^9.2.4",
+    "@tanstack/react-virtual": "3.14.12",
     "@tauri-apps/api": "^2",
     "i18next": "26.3.6",
     "llm-fetch": "0.1.0",
@@ -64,6 +65,7 @@
     "s11tnext-cli": "0.1.2",
     "spec-html": "0.1.6",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "@openuidev/react-lang": "0.2.15"
   }
 }

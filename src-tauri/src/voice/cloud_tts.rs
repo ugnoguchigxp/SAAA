@@ -107,34 +107,72 @@ pub(crate) async fn synthesize(
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
+    let response = request_audio(provider, text, timeout_ms, cancellation.clone()).await?;
+    validate_audio_headers(&response, &provider.response_format)?;
+    let audio = bounded_audio(response, &cancellation, &provider.response_format).await?;
+    if provider.response_format == "pcm" {
+        let mut wav = Zeroizing::new(Vec::with_capacity(44 + audio.len()));
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + audio.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&24_000_u32.to_le_bytes());
+        wav.extend_from_slice(&48_000_u32.to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(audio.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&audio);
+        return Ok(wav);
+    }
+    Ok(audio)
+}
+
+pub(crate) async fn request_audio(
+    provider: &CloudTtsProviderSettings,
+    text: &str,
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+) -> Result<reqwest::Response, String> {
+    request_audio_with_api_key(provider, text, timeout_ms, cancellation, None).await
+}
+
+pub(crate) async fn request_audio_with_api_key(
+    provider: &CloudTtsProviderSettings,
+    text: &str,
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+    claim_key: Option<&str>,
+) -> Result<reqwest::Response, String> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_millis(timeout_ms))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not initialize the Cloud TTS client".to_string())?;
-    let api_key = credential(provider)?;
+    let configured_key = if claim_key.is_none() {
+        credential(provider)?
+    } else {
+        None
+    };
+    let api_key = claim_key.or(configured_key.as_deref().map(String::as_str));
     let mut request = client
         .post(operation_url(&provider.endpoint)?)
         .json(&json!({
             "model": provider.model,
             "input": text,
             "voice": provider.voice,
-            "response_format": "wav"
+            "response_format": provider.response_format
         }));
-    if let Some(api_key) = api_key.as_deref() {
-        request = request.bearer_auth(api_key.as_str());
+    if let Some(api_key) = api_key {
+        request = request.bearer_auth(api_key);
     }
-    let response = tokio::select! {
-        _ = cancellation.cancelled() => return Err("Speech cancelled".to_string()),
-        response = request.send() => response.map_err(|error| {
-            if error.is_timeout() { "Cloud TTS request timed out" } else { "Cloud TTS request failed" }.to_string()
-        })?,
-    };
-    if !response.status().is_success() {
-        return Err(format!("Cloud TTS returned HTTP {}", response.status()));
-    }
-    bounded_audio(response, &cancellation).await
+    let response = crate::providers::http::send(request, &cancellation, true)
+        .await
+        .map_err(|kind| kind.public_message().as_str().to_string())?;
+    Ok(response)
 }
 
 fn credential(
@@ -149,20 +187,46 @@ fn credential(
 }
 
 fn operation_url(endpoint: &str) -> Result<String, String> {
-    let mut url =
-        url::Url::parse(endpoint).map_err(|_| "Cloud TTS endpoint is invalid".to_string())?;
-    let mut path = url.path().trim_end_matches('/').to_string();
-    if !path.ends_with("/v1") {
-        path.push_str("/v1");
+    crate::providers::openai_compatible::provider_operation_url(endpoint, "audio/speech")
+}
+
+pub(crate) fn validate_audio_headers(
+    response: &reqwest::Response,
+    format: &str,
+) -> Result<(), String> {
+    if let Some(value) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+        let media = value
+            .to_str()
+            .map_err(|_| "Invalid audio Content-Type".to_string())?
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim();
+        let accepted = match format {
+            "wav" => matches!(
+                media,
+                "audio/wav" | "audio/x-wav" | "audio/wave" | "application/octet-stream"
+            ),
+            "pcm" => matches!(media, "audio/pcm" | "application/octet-stream"),
+            _ => false,
+        };
+        if !accepted {
+            return Err("TTS response Content-Type disagrees with the requested format".into());
+        }
     }
-    path.push_str("/audio/speech");
-    url.set_path(&path);
-    Ok(url.to_string())
+    if response
+        .content_length()
+        .is_some_and(|bytes| bytes > MAX_AUDIO_BYTES as u64)
+    {
+        return Err("TTS audio exceeded the size limit".into());
+    }
+    Ok(())
 }
 
 async fn bounded_audio(
     response: reqwest::Response,
     cancellation: &RunCancellation,
+    format: &str,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
     if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
         let content_type = content_type
@@ -192,9 +256,9 @@ async fn bounded_audio(
         }
         audio.extend_from_slice(&chunk);
     }
-    if !is_wav(&audio) {
-        return Err("Cloud TTS did not return valid WAV audio".to_string());
-    }
+    let mut decoder = crate::voice::http_audio::decode::Decoder::new(format)?;
+    decoder.push(&audio)?;
+    decoder.finish()?;
     Ok(audio)
 }
 
@@ -203,6 +267,7 @@ fn is_audio_content_type(value: &str) -> bool {
     media_type.starts_with("audio/") || media_type == "application/octet-stream"
 }
 
+#[cfg(test)]
 fn is_wav(audio: &[u8]) -> bool {
     audio.len() >= 12 && &audio[..4] == b"RIFF" && &audio[8..12] == b"WAVE"
 }

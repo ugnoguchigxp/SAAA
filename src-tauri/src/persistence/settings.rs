@@ -366,6 +366,7 @@ pub(crate) fn validate_settings_batch(
         if !matches!(
             primary,
             ModelProviderSettings::OpenAiCompatible(_)
+                | ModelProviderSettings::AgentSession(_)
                 | ModelProviderSettings::Larm(_)
                 | ModelProviderSettings::DynamicLan(_)
         ) {
@@ -395,6 +396,7 @@ pub(crate) fn validate_settings_batch(
         if !matches!(
             fallback,
             ModelProviderSettings::OpenAiCompatible(_)
+                | ModelProviderSettings::AgentSession(_)
                 | ModelProviderSettings::Larm(_)
                 | ModelProviderSettings::DynamicLan(_)
         ) {

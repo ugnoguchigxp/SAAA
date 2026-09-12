@@ -1,16 +1,14 @@
-use std::sync::Arc;
-
+use super::agent_session::probe_agent_session_provider as probe_agent_session;
 use super::{openai_compatible::probe_model_provider, stream::larm_failure_message};
 use crate::persistence::validate_model_providers;
 use crate::{
     redact::redact_runtime_text, validate_identifier, AppState, ModelProviderSettings,
-    ModelProvidersSettings, ProviderTestResult, RunCancellation, TestProviderInput,
+    ModelProvidersSettings, ProviderTestResult, TestProviderInput,
 };
 
-pub(crate) async fn test_model_provider(
-    state: &AppState,
-    input: TestProviderInput,
-) -> Result<ProviderTestResult, String> {
+type TestResult = Result<ProviderTestResult, String>;
+
+pub(crate) async fn test_model_provider(state: &AppState, input: TestProviderInput) -> TestResult {
     let mut provider = input.provider;
     provider.set_enabled(true);
     validate_identifier(provider.id(), "provider id")?;
@@ -25,6 +23,7 @@ pub(crate) async fn test_model_provider(
     let started = std::time::Instant::now();
     let result = match &provider {
         ModelProviderSettings::OpenAiCompatible(provider) => probe_model_provider(provider).await,
+        ModelProviderSettings::AgentSession(provider) => probe_agent_session(provider).await,
         ModelProviderSettings::CloudAsr(provider) => crate::voice::cloud_asr::probe(provider).await,
         ModelProviderSettings::CloudTts(provider) => crate::voice::cloud_tts::probe(provider).await,
         ModelProviderSettings::SystemTts(_) => Ok("System text-to-speech is available".to_string()),
@@ -35,26 +34,7 @@ pub(crate) async fn test_model_provider(
                 .map_err(|kind| larm_failure_message(kind).to_string())
         }
         ModelProviderSettings::DynamicLan(provider) => {
-            match crate::providers::dynamic_lan::DynamicLanConnection::resolve(
-                &provider.host,
-                Arc::new(RunCancellation::default()),
-            )
-            .await
-            {
-                Ok(connection) => {
-                    let message = format!(
-                        "dynamic_lan dynamically resolved model {} at {}",
-                        connection.model(),
-                        connection.endpoint()
-                    );
-                    connection
-                        .release()
-                        .await
-                        .map(|_| message)
-                        .map_err(|error| error.public_message().to_string())
-                }
-                Err(error) => Err(error.public_message().to_string()),
-            }
+            super::dynamic_lan::probe::probe(provider).await
         }
     };
     let tested = ProviderTestResult {

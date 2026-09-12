@@ -162,6 +162,7 @@ export function ServiceConnectionsSection({
                 reasoningEffort: event.target.value as ModelProvidersSettings["reasoningEffort"],
               })}
             >
+              <option value="provider-default">{t("settings.connection.providerDefault")}</option>
               <option value="low">{t("settings.connection.low")}</option>
               <option value="medium">{t("settings.connection.medium")}</option>
               <option value="xhigh">{t("settings.connection.extraHigh")}</option>
@@ -358,5 +359,5 @@ function SourceRow({
 }
 
 function isLlmProvider(provider: ModelProviderSettings): boolean {
-  return provider.kind === "openai-compatible" || provider.kind === "larm";
+  return provider.kind === "openai-compatible" || provider.kind === "agent-session" || provider.kind === "larm";
 }

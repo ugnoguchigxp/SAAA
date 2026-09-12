@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
+  AgentSessionProviderSettings,
   CloudAsrProviderSettings,
   CloudTtsProviderSettings,
   ModelProviderSettings,
@@ -27,12 +28,26 @@ export function IndividualProvidersSection({
   onChange: (value: ModelProvidersSettings) => void;
 }) {
   const { t } = useTranslation();
-  function addProvider(capability: "llm" | "asr" | "tts") {
-    const id = `cloud-${capability}-${crypto.randomUUID()}`;
+  function addProvider(capability: "llm" | "agent-llm" | "asr" | "tts") {
+    const isAgentSession = capability === "agent-llm";
+    const id = `${isAgentSession ? "agent" : "cloud"}-${capability}-${crypto.randomUUID()}`;
     // Persist a stable default identifier, then localize it at the display boundary.
     // This keeps a newly added provider's default label in sync with later language changes.
     const common = { id, enabled: false, label: `Cloud ${capability.toUpperCase()}`, location: "cloud" as const };
-    const provider: ModelProviderSettings = capability === "llm"
+    const provider: ModelProviderSettings = isAgentSession
+      ? {
+          id,
+          enabled: false,
+          label: "Agent Session LLM",
+          location: "local",
+          kind: "agent-session",
+          baseUrl: "http://127.0.0.1:44449",
+          model: "",
+          modelsPath: "/v1/agents/models?runtime=muse",
+          sessionsPath: "/v1/agents/sessions",
+          authentication: "none",
+        }
+      : capability === "llm"
       ? { ...common, kind: "openai-compatible", endpoint: "https://api.openai.com/v1", model: "", authentication: "api-key" }
       : capability === "asr"
         ? { ...common, kind: "cloud-asr", endpoint: "https://api.openai.com/v1", model: "", language: "auto", authentication: "api-key" }
@@ -64,6 +79,7 @@ export function IndividualProvidersSection({
           <span>{t("settings.providers.stableId")}</span>
           <div>
             <button className="add-provider-button" type="button" onClick={() => addProvider("llm")}>＋ LLM</button>
+            <button className="add-provider-button" type="button" onClick={() => addProvider("agent-llm")}>＋ Agent LLM</button>
             <button className="add-provider-button" type="button" onClick={() => addProvider("asr")}>＋ ASR</button>
             <button className="add-provider-button" type="button" onClick={() => addProvider("tts")}>＋ TTS</button>
           </div>
@@ -144,6 +160,9 @@ function ProviderCard({
       {provider.kind === "openai-compatible" && (
         <LlmFields provider={provider} onChange={onChange} />
       )}
+      {provider.kind === "agent-session" && (
+        <AgentSessionFields provider={provider} onChange={onChange} />
+      )}
       {provider.kind === "cloud-asr" && (
         <AsrFields provider={provider} onChange={onChange} />
       )}
@@ -189,6 +208,7 @@ function CommonCloudFields({
   return (
     <>
       <Field label={t("settings.providers.displayName")}><input value={provider.label} onChange={(event) => onChange({ ...provider, label: event.target.value })} /></Field>
+      <Field label={t("settings.providers.location")}><select value={provider.location} onChange={(event) => onChange({ ...provider, location: event.target.value as "local" | "cloud" })}><option value="local">{t("common.localProcessing")}</option><option value="cloud">{t("common.cloudProcessing")}</option></select></Field>
       <Field label={t("settings.providers.endpoint")}><input value={provider.endpoint} placeholder="https://api.example.com/v1" onChange={(event) => onChange({ ...provider, endpoint: event.target.value })} /></Field>
       <Field label={t("settings.providers.model")}><input value={provider.model} placeholder={t("settings.providers.modelPlaceholder")} onChange={(event) => onChange({ ...provider, model: event.target.value })} /></Field>
       <Field label={t("settings.providers.authentication")}>
@@ -203,6 +223,25 @@ function CommonCloudFields({
 
 function LlmFields({ provider, onChange }: { provider: OpenAiCompatibleProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
   return <div className="settings-form-grid"><CommonCloudFields provider={provider} onChange={onChange} /></div>;
+}
+
+function AgentSessionFields({ provider, onChange }: { provider: AgentSessionProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="settings-form-grid">
+      <Field label={t("settings.providers.displayName")}><input value={provider.label} onChange={(event) => onChange({ ...provider, label: event.target.value })} /></Field>
+      <Field label={t("settings.providers.baseUrl")}><input value={provider.baseUrl} placeholder="http://127.0.0.1:44449" onChange={(event) => onChange({ ...provider, baseUrl: event.target.value })} /></Field>
+      <Field label={t("settings.providers.model")}><input value={provider.model} placeholder={t("settings.providers.modelPlaceholder")} onChange={(event) => onChange({ ...provider, model: event.target.value })} /></Field>
+      <Field label={t("settings.providers.modelsPath")}><input value={provider.modelsPath} placeholder="/v1/agents/models?runtime=agent" onChange={(event) => onChange({ ...provider, modelsPath: event.target.value })} /></Field>
+      <Field label={t("settings.providers.sessionsPath")}><input value={provider.sessionsPath} placeholder="/v1/agents/sessions" onChange={(event) => onChange({ ...provider, sessionsPath: event.target.value })} /></Field>
+      <Field label={t("settings.providers.authentication")}>
+        <select value={provider.authentication} onChange={(event) => onChange({ ...provider, authentication: event.target.value as "none" | "api-key" })}>
+          <option value="api-key">{t("settings.providers.apiKey")}</option>
+          <option value="none">{t("settings.providers.none")}</option>
+        </select>
+      </Field>
+    </div>
+  );
 }
 
 function AsrFields({ provider, onChange }: { provider: CloudAsrProviderSettings; onChange: (value: ModelProviderSettings) => void }) {
@@ -225,6 +264,7 @@ function TtsFields({ provider, onChange }: { provider: CloudTtsProviderSettings;
     <div className="settings-form-grid">
       <CommonCloudFields provider={provider} onChange={onChange} />
       <Field label={t("settings.providers.voice")}><input value={provider.voice} placeholder={t("settings.providers.voicePlaceholder")} onChange={(event) => onChange({ ...provider, voice: event.target.value })} /></Field>
+      <Field label={t("settings.providers.audioFormat")}><select value={provider.responseFormat ?? "wav"} onChange={(event) => onChange({ ...provider, responseFormat: event.target.value as "wav" | "pcm" })}><option value="wav">WAV</option><option value="pcm">PCM · 24 kHz · mono · s16le</option></select></Field>
     </div>
   );
 }
@@ -233,7 +273,7 @@ function ApiKeyControl({
   provider,
   persisted,
 }: {
-  provider: OpenAiCompatibleProviderSettings | CloudAsrProviderSettings | CloudTtsProviderSettings;
+  provider: OpenAiCompatibleProviderSettings | AgentSessionProviderSettings | CloudAsrProviderSettings | CloudTtsProviderSettings;
   persisted: boolean;
 }) {
   const { t } = useTranslation();

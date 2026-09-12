@@ -1,0 +1,45 @@
+{
+  "startedAt": "2026-09-06T14:41:09.292214+00:00",
+  "target": "http://192.168.0.130:9810",
+  "applicationSettingsChanged": false,
+  "finishedAt": "2026-09-06T14:48:24.492930+00:00",
+  "outcome": "partial-audio-passed-llm-and-asr-nonspeech-failed",
+  "observedRelease": "321461a52c9bb35ad144f27e62cd86eea012898a",
+  "releaseManifestMatched": true,
+  "expectedApprovedRelease": null,
+  "commands": [
+    {
+      "command": "python3 spec/evidence/http-provider-recheck-20260906T144056Z/diagnose.py",
+      "exitCode": 0,
+      "meaning": "diagnostic execution completed; not all cases passed"
+    },
+    {
+      "command": "python3 spec/evidence/http-provider-recheck-20260906T144056Z/followup.py",
+      "exitCode": 0,
+      "meaning": "diagnostic execution completed; not all cases passed"
+    },
+    {
+      "command": "SAAA_DYNAMIC_LAN_HOST=192.168.0.130 cargo test --manifest-path src-tauri/Cargo.toml providers::dynamic_lan::tests::live_dynamic_lan_claim_and_chat -- --ignored --exact",
+      "exitCode": 101,
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml voice::http_audio::live::live_tts_playback_and_asr -- --ignored --exact --nocapture",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml voice::",
+      "exitCode": 0,
+      "passed": 107,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+      "exitCode": 0
+    }
+  ]
+}

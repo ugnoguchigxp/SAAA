@@ -1,0 +1,22 @@
+[
+  {
+    "command": "cargo test --manifest-path src-tauri/Cargo.toml providers::",
+    "exitCode": 0,
+    "log": "providers.log"
+  },
+  {
+    "command": "cargo test --manifest-path src-tauri/Cargo.toml voice::",
+    "exitCode": 0,
+    "log": "voice.log"
+  },
+  {
+    "command": "bun run test:frontend",
+    "exitCode": 0,
+    "log": "frontend.log"
+  },
+  {
+    "command": "bun run check",
+    "exitCode": 0,
+    "log": "check.log"
+  }
+]

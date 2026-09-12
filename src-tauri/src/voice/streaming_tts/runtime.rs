@@ -360,6 +360,9 @@ async fn render_session_inner(
     context: &mut RenderSessionContext,
 ) -> Result<(), String> {
     context.route = resolve_render_route(&context.route, &context.cancellation).await?;
+    if let TtsRoute::Cloud(provider) = &context.route {
+        return render_http_session(receiver, context, provider).await;
+    }
     let mut queued = VecDeque::<(u64, String, Instant)>::new();
     let mut rendering = FuturesUnordered::<RenderFuture>::new();
     let mut ready = BTreeMap::<u64, RenderedChunk>::new();
@@ -511,6 +514,50 @@ async fn render_session_inner(
     Ok(())
 }
 
+async fn render_http_session(
+    receiver: &mut mpsc::Receiver<SpeechWork>,
+    context: &RenderSessionContext,
+    provider: &crate::CloudTtsProviderSettings,
+) -> Result<(), String> {
+    let mut first_phrase = true;
+    loop {
+        let work = tokio::select! { biased;
+            _ = context.cancellation.cancelled() => return Ok(()),
+            work = receiver.recv() => work,
+        };
+        let Some(SpeechWork::Chunk { text, boundary_at }) = work else {
+            return Ok(());
+        };
+        let situation = context.situation.clone();
+        let on_event = context.on_event.clone();
+        let run_id = context.run_id.clone();
+        let cancellation = context.cancellation.clone();
+        let is_first = first_phrase;
+        crate::voice::http_audio::play(
+            provider,
+            &text,
+            context.timeout_ms,
+            context.cancellation.clone(),
+            move || {
+                if cancellation.is_cancelled() {
+                    return;
+                }
+                crate::providers::http_metrics::record(
+                    "ttsBoundaryToFirstMixerSample",
+                    boundary_at.elapsed(),
+                );
+                if is_first {
+                    situation
+                        .set_audio_state(crate::situation::contracts::AudioState::SaaaSpeaking);
+                    let _ = on_event.send(RuntimeEvent::SpeechStarted { run_id });
+                }
+            },
+        )
+        .await?;
+        first_phrase = false;
+    }
+}
+
 async fn resolve_render_route(
     route: &TtsRoute,
     cancellation: &RunCancellation,
@@ -524,6 +571,7 @@ async fn resolve_render_route(
             )
             .await?;
             Ok(TtsRoute::Cloud(crate::CloudTtsProviderSettings {
+                response_format: "wav".to_string(),
                 id: "provider-harness-tts".to_string(),
                 enabled: true,
                 label: "Provider Harness TTS".to_string(),

@@ -1,0 +1,71 @@
+[
+  {
+    "case": "health-before",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "44cf6c9a95e4ce22c4f02e0a11f8571f0e79baef",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-cba7d521-58a1-4ba9-bcac-05baab4393ba",
+    "errorCode": null,
+    "elapsedMs": 891.2
+  },
+  {
+    "case": "asr-tone",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 11,
+    "errorCode": null,
+    "textPresent": true,
+    "textNonempty": false,
+    "elapsedMs": 334.1,
+    "expectedContentMatched": true
+  },
+  {
+    "case": "asr-silence",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 11,
+    "errorCode": null,
+    "textPresent": true,
+    "textNonempty": false,
+    "elapsedMs": 302.0,
+    "expectedContentMatched": true
+  },
+  {
+    "case": "synthetic-japanese-source",
+    "status": 200,
+    "contentType": "audio/wav",
+    "bytes": 62508,
+    "wav": {
+      "channels": 1,
+      "sampleRate": 24000,
+      "sampleWidthBytes": 2,
+      "frames": 31232,
+      "durationSeconds": 1.3013333333333332
+    },
+    "elapsedMs": 160.6
+  },
+  {
+    "case": "asr-japanese-speech",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 54,
+    "errorCode": null,
+    "textPresent": true,
+    "textNonempty": true,
+    "elapsedMs": 1574.2,
+    "expectedContentMatched": false
+  },
+  {
+    "case": "health-after",
+    "status": 200,
+    "contentType": "application/json",
+    "bytes": 233,
+    "releaseCommit": "44cf6c9a95e4ce22c4f02e0a11f8571f0e79baef",
+    "configRevision": "9faf778a1cc37aa7bcfeadc171484db1e7e42f7d7e59fbd995f5be0d099a1429",
+    "bootEpoch": "epoch-cba7d521-58a1-4ba9-bcac-05baab4393ba",
+    "errorCode": null,
+    "elapsedMs": 32.8
+  }
+]

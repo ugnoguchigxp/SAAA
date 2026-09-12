@@ -72,6 +72,7 @@ fn load_descending(
         .map_err(database_error)?;
     let map_row = |row: &rusqlite::Row<'_>| {
         Ok(ConversationMessage {
+            parts: None,
             id: row.get(0)?,
             conversation_id: row.get(1)?,
             role: row.get(2)?,
@@ -100,6 +101,8 @@ fn load_descending(
             .collect::<Result<Vec<_>, _>>()
             .map_err(database_error)?,
     };
+    let mut rows = rows;
+    crate::generative_ui::store::hydrate(connection, &mut rows)?;
     for message in &rows {
         super::conversations::validate_message(message, conversation_id)?;
     }

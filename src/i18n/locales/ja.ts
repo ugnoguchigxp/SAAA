@@ -1,4 +1,6 @@
+import { uiJapanese } from "../../features/chat/ui/translations";
 export const ja = {
+  genui: uiJapanese,
   common: {
     appName: "SAAA",
     language: "言語",
@@ -35,6 +37,8 @@ export const ja = {
     notConfigured: "未設定",
   },
   app: {
+    conversationActive: "応答を処理中",
+    conversationIdle: "会話入力待ち",
     booting: "SAAA Runtime を起動しています…",
     navigationLabel: "メインナビゲーション",
     chat: "会話",
@@ -205,7 +209,9 @@ export const ja = {
     tabs: {
       general: { label: "一般", detail: "言語・地域形式・名前" },
       connection: { label: "サービス接続", detail: "Harnessとサービスの接続元" },
-      providers: { label: "個別サービス", detail: "クラウドのLLM・ASR・TTS" },
+      providers: {
+      location: "接続先",
+      audioFormat: "音声形式", label: "個別サービス", detail: "ローカル・クラウドのHTTP LLM・ASR・TTS" },
       voice: { label: "音声とデバイス", detail: "常時待ち受けとオーディオ" },
       situation: { label: "状況", detail: "シャドウ観測の設定" },
       security: { label: "プライバシーとセキュリティ", detail: "ローカル優先の制御" },
@@ -265,6 +271,7 @@ export const ja = {
       description: "ポート9810ではAgent Connectionを直接検証し、claimで通知されたWebSocketへ接続します。ローカルLANでは認証なしで利用でき、LARM_API_TOKENがある場合だけBearer認証を使用します。その他のアドレスではHarnessから各サービスを解決します。",
       resolving: "解決中…",
       harnessAddress: "Harnessのアドレス",
+      providerDefault: "指定しない（HTTP Providerの既定値）",
       reasoningEffort: "推論の強さ（LLM）",
       llmTimeoutSeconds: "LLMタイムアウト（秒）",
       llmTimeoutHint: "1〜3600秒。新規設定の既定値は1800秒です。",
@@ -293,16 +300,18 @@ export const ja = {
     },
     providers: {
       eyebrow: "個別サービス",
-      title: "クラウドプロバイダー一覧",
-      description: "Harnessを使わないサービスだけ個別に登録します。APIキーはmacOS Keychainへ保存し、設定・SQLite・診断情報には含めません。",
+      title: "個別プロバイダー一覧",
+      description: "Harnessを使わないサービスを個別に登録します。APIキーはmacOS Keychainへ保存し、設定・SQLite・診断情報には含めません。",
       stableId: "プロバイダーIDは作成後に変更できません。",
-      defaultName: "クラウド{{capability}}",
+      defaultName: "HTTP {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "システム音声" },
       connecting: "接続中…",
       connectionSucceeded: "接続に成功 · {{latency}} ms",
       voice: "音声",
       output: "出力",
       baseUrl: "ベースURL",
+      modelsPath: "モデル一覧パス（GET）",
+      sessionsPath: "セッション作成パス（POST）",
       runtime: "ランタイム",
       existingDeployment: "LARM · 既存のデプロイ",
       testConnection: "接続をテスト",
@@ -327,10 +336,11 @@ export const ja = {
       deleteKey: "キーを削除",
       kinds: {
         "openai-compatible": "OpenAI互換LLM",
-        "cloud-asr": "クラウドASR",
-        "cloud-tts": "クラウドTTS",
+        "agent-session": "Agent Session LLM",
+        "cloud-asr": "HTTP ASR",
+        "cloud-tts": "HTTP TTS",
         "system-tts": "システムTTS",
-        larm: "LARM",
+        larm: "LARM（旧WS・移行検証用）",
         "dynamic-lan": "動的LAN",
       },
     },
@@ -566,6 +576,8 @@ export const ja = {
   },
   errors: {
     app: {
+    conversationActive: "応答を処理中",
+    conversationIdle: "会話入力待ち",
       primaryConversationUnavailable: "メインの会話を利用できません。SAAAを再起動してからもう一度お試しください。",
       operationFailed: "SAAAはこの操作を完了できませんでした。もう一度お試しください。",
     },
@@ -591,7 +603,10 @@ export const ja = {
       runtimeFailure: "ミーティングのランタイムで失敗が発生しました。ミーティング設定を確認してからもう一度お試しください。",
       operationFailed: "ミーティングの操作を完了できませんでした。もう一度お試しください。",
     },
-    settings: { operationFailed: "設定を更新できませんでした。内容を確認してからもう一度お試しください。" },
+    settings: {
+      agentSessionEventStreamMissing: "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。",
+      operationFailed: "設定を更新できませんでした。内容を確認してからもう一度お試しください。",
+    },
     situation: { operationFailed: "Situationの操作を完了できませんでした。もう一度お試しください。" },
     voice: {
       targetSpeakerRejected: "登録した本人の声として確認できなかったため、文字起こしへ送信しませんでした。",

@@ -172,7 +172,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const primaryId = routing.conversationRespond.primaryProviderId;
   const primary = primaryId ? enabled.get(primaryId) : undefined;
   if (routing.conversationRespond.source === "provider" && !primary) throw new Error("The primary conversation provider must be enabled");
-  if (primary && !["openai-compatible", "larm", "dynamic-lan"].includes(primary.kind)) throw new Error("The selected conversation provider does not support LLM");
+  if (primary && !["openai-compatible", "agent-session", "larm", "dynamic-lan"].includes(primary.kind)) throw new Error("The selected conversation provider does not support LLM");
   if (primary?.kind === "dynamic-lan" && routing.conversationRespond.timeoutMs > LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS) {
     throw new Error(`dynamic LAN conversation timeout must not exceed ${LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS} ms`);
   }
@@ -181,7 +181,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
     const fallback = enabled.get(fallbackId);
     if (!fallback) throw new Error(`Fallback provider is not enabled: ${fallbackId}`);
-    if (!["openai-compatible", "larm", "dynamic-lan"].includes(fallback.kind)) {
+    if (!["openai-compatible", "agent-session", "larm", "dynamic-lan"].includes(fallback.kind)) {
       throw new Error(`Fallback provider does not support LLM: ${fallbackId}`);
     }
     if (routeIds.has(fallbackId)) throw new Error(`Duplicate provider in route: ${fallbackId}`);

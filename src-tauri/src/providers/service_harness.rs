@@ -66,7 +66,6 @@ pub(crate) struct LlmStreamingDescriptor {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedAsrService {
     pub(crate) batch: ServiceDescriptor,
-    pub(crate) streaming: Option<AsrStreamingDescriptor>,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,8 +100,7 @@ pub(crate) async fn resolve_service(
     resolve_service_inner(address, capability).await
 }
 
-/// Resolves the batch ASR endpoint and, when advertised by a v2 harness, its
-/// compatible native stream endpoint from the same validated descriptor.
+/// Resolves the validated HTTP batch ASR endpoint.
 pub(crate) async fn resolve_asr_service(address: &str) -> Result<ResolvedAsrService, String> {
     let descriptor = load_descriptor(address, true).await?;
     let service = descriptor
@@ -111,13 +109,7 @@ pub(crate) async fn resolve_asr_service(address: &str) -> Result<ResolvedAsrServ
         .find(|service| service.capability == "asr")
         .ok_or_else(|| "Provider Harness does not advertise asr".to_string())?;
     health::probe(&service).await?;
-    Ok(ResolvedAsrService {
-        streaming: match service.streaming.clone() {
-            Some(StreamingDescriptor::Asr(descriptor)) => Some(descriptor),
-            _ => None,
-        },
-        batch: service,
-    })
+    Ok(ResolvedAsrService { batch: service })
 }
 
 pub(crate) async fn resolve_service_cancellable(
@@ -266,7 +258,10 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
     let mut capabilities = HashSet::new();
     for service in &descriptor.services {
         let expected_protocol = match service.capability.as_str() {
-            "llm" if descriptor.contract_version == "saaa-service-harness.v3" => {
+            "llm"
+                if descriptor.contract_version == "saaa-service-harness.v3"
+                    && service.protocol == "saaa.llm-stream.v1" =>
+            {
                 "saaa.llm-stream.v1"
             }
             "llm" => "openai.chat-completions.v1",
@@ -306,7 +301,7 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
                     .streaming
                     .as_ref()
                     .is_some_and(|streaming| !matches!(streaming, StreamingDescriptor::Asr(_))))
-            || (descriptor.contract_version == "saaa-service-harness.v3"
+            || (service.protocol == "saaa.llm-stream.v1"
                 && service.capability == "llm"
                 && service
                     .streaming

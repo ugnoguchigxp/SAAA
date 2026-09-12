@@ -491,7 +491,7 @@ pub(crate) async fn execute_conversation_turn(
     let mut failures = Vec::new();
     let mut context_health_emitted = false;
 
-    for provider_id in route_ids {
+    for (attempt_index, provider_id) in route_ids.into_iter().enumerate() {
         if cancellation.is_cancelled() {
             return Err("Cancelled by user".to_string());
         }
@@ -504,6 +504,9 @@ pub(crate) async fn execute_conversation_turn(
             failures.push(format!("{provider_id}: provider is disabled or missing"));
             continue;
         };
+        if attempt_index > 0 && matches!(provider, ModelProviderSettings::Larm(_)) {
+            return Err("Legacy LARM WebSocket transport must be selected explicitly as the primary provider.".to_string());
+        }
         update_runtime_provider(state, &input.run_id, provider.id())?;
         let session_id = begin_provider_session(
             state,
@@ -572,6 +575,25 @@ pub(crate) async fn execute_conversation_turn(
         let outcome = match &provider {
             ModelProviderSettings::OpenAiCompatible(provider) => {
                 stream_model_provider(
+                    provider,
+                    &history,
+                    route.timeout_ms,
+                    ModelStreamContext {
+                        reasoning_effort: &reasoning_effort,
+                        max_output_tokens,
+                        input,
+                        on_event,
+                        cancellation: cancellation.clone(),
+                        output_persistence: Some(ProviderOutputPersistence {
+                            state,
+                            session_id: &session_id,
+                        }),
+                    },
+                )
+                .await
+            }
+            ModelProviderSettings::AgentSession(provider) => {
+                crate::providers::agent_session::stream_agent_session_provider(
                     provider,
                     &history,
                     route.timeout_ms,
@@ -745,14 +767,11 @@ pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_starte
 }
 
 fn provider_route_fallback_allowed(
-    provider: &ModelProviderSettings,
+    _provider: &ModelProviderSettings,
     kind: ProviderFailureKind,
     output_started: bool,
 ) -> bool {
     provider_fallback_allowed(kind, output_started)
-        || (!output_started
-            && matches!(provider, ModelProviderSettings::DynamicLan(_))
-            && kind == ProviderFailureKind::Authentication)
 }
 
 #[cfg(test)]
@@ -856,10 +875,10 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_lan_authentication_can_fall_back_before_output_only() {
+    fn authentication_never_switches_providers() {
         let dynamic_lan = crate::test_support::dynamic_lan_provider("dynamic_lan-primary");
         let direct = crate::test_support::provider("direct-primary", "local");
-        assert!(provider_route_fallback_allowed(
+        assert!(!provider_route_fallback_allowed(
             &dynamic_lan,
             ProviderFailureKind::Authentication,
             false

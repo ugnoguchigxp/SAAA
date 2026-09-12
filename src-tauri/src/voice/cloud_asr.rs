@@ -7,7 +7,7 @@ use crate::{bounded_text, CloudAsrProviderSettings, RunCancellation};
 use zeroize::Zeroizing;
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
-const TRANSCRIPTION_RESPONSE_FORMAT: &str = "verbose_json";
+const TRANSCRIPTION_RESPONSE_FORMAT: &str = "json";
 
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
@@ -23,20 +23,16 @@ struct TranscriptionSegment {
 }
 
 pub(crate) async fn probe(provider: &CloudAsrProviderSettings) -> Result<String, String> {
-    let client = client(Duration::from_secs(10))?;
-    let api_key = credential(provider)?;
-    let mut request = client.get(operation_url(&provider.endpoint, "models")?);
-    if let Some(api_key) = api_key.as_deref() {
-        request = request.bearer_auth(api_key.as_str());
+    let samples: Vec<f32> = (0..1600)
+        .map(|index| ((index as f32 * 440.0 * std::f32::consts::TAU / 16000.0).sin()) * 0.1)
+        .collect();
+    match transcribe(provider, &samples, 16_000, 10_000, Arc::default()).await {
+        Ok(_) => Ok("HTTP ASR accepted a fixed WAV upload".to_string()),
+        Err(error) if error.starts_with("ASR_NO_SPEECH:") => {
+            Ok("HTTP ASR accepted a fixed WAV upload (no speech)".to_string())
+        }
+        Err(error) => Err(error),
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|_| "Could not connect to the Cloud ASR provider".to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("Cloud ASR returned HTTP {}", response.status()));
-    }
-    Ok("Cloud ASR endpoint and credential are reachable".to_string())
 }
 
 pub(crate) async fn transcribe(
@@ -46,34 +42,71 @@ pub(crate) async fn transcribe(
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
+    transcribe_with_api_key(
+        provider,
+        samples,
+        sample_rate,
+        timeout_ms,
+        cancellation,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn transcribe_with_api_key(
+    provider: &CloudAsrProviderSettings,
+    samples: &[f32],
+    sample_rate: u32,
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+    claim_key: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    let request_started = std::time::Instant::now();
+    if cancellation.is_cancelled() {
+        return Err("Transcription cancelled".into());
+    }
+    if samples.len() > sample_rate as usize * 600 {
+        return Err("ASR audio exceeds ten minutes".into());
+    }
     let wav = crate::voice::network_asr::encode_wav(samples, sample_rate)?;
-    let audio = multipart::Part::bytes(wav)
-        .file_name("speech.wav")
-        .mime_str("audio/wav")
-        .map_err(|_| "Could not encode the ASR upload".to_string())?;
-    let form = multipart::Form::new()
-        .part("file", audio)
-        .text("model", provider.model.clone())
-        .text("response_format", TRANSCRIPTION_RESPONSE_FORMAT);
+    if samples.iter().all(|sample| sample.abs() <= f32::EPSILON) {
+        return Err("ASR_NO_SPEECH: The audio is silent".into());
+    }
     let client = client(Duration::from_millis(timeout_ms))?;
-    let api_key = credential(provider)?;
-    let mut request = client
-        .post(operation_url(&provider.endpoint, "audio/transcriptions")?)
-        .multipart(form);
-    if let Some(api_key) = api_key.as_deref() {
-        request = request.bearer_auth(api_key.as_str());
-    }
-    let response = tokio::select! {
-        _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
-        response = request.send() => response.map_err(|error| {
-            if error.is_timeout() { "Cloud ASR request timed out" } else { "Cloud ASR request failed" }.to_string()
-        })?,
+    let configured_key = if claim_key.is_none() {
+        credential(provider)?
+    } else {
+        None
     };
-    let status = response.status();
-    let body = bounded_body(response, &cancellation).await?;
-    if !status.is_success() {
-        return Err(format!("Cloud ASR returned HTTP {}", status.as_u16()));
-    }
+    let api_key = claim_key.or(configured_key.as_deref().map(String::as_str));
+    let url = operation_url(&provider.endpoint, "audio/transcriptions")?;
+    let operation = async {
+        let response = crate::providers::http::send_with(
+            || {
+                let audio = multipart::Part::bytes(wav.clone())
+                    .file_name("speech.wav")
+                    .mime_str("audio/wav")
+                    .map_err(|_| crate::providers::stream::ProviderFailureKind::Contract)?;
+                let form = multipart::Form::new()
+                    .part("file", audio)
+                    .text("model", provider.model.clone())
+                    .text("response_format", TRANSCRIPTION_RESPONSE_FORMAT);
+                let mut request = client.post(&url).multipart(form);
+                if let Some(api_key) = api_key {
+                    request = request.bearer_auth(api_key);
+                }
+                Ok(request)
+            },
+            &cancellation,
+            true,
+        )
+        .await
+        .map_err(|kind| kind.public_message().as_str().to_string())?;
+        bounded_body(response, &cancellation).await
+    };
+    let body = tokio::time::timeout(Duration::from_millis(timeout_ms), operation)
+        .await
+        .map_err(|_| "HTTP ASR request timed out".to_string())??;
     let result: TranscriptionResponse = serde_json::from_slice(&body)
         .map_err(|_| "Cloud ASR returned an invalid transcription response".to_string())?;
     let text = result.text.trim();
@@ -85,6 +118,7 @@ pub(crate) async fn transcribe(
     if text.is_empty() {
         return Err("ASR_NO_SPEECH: Cloud ASR completed without a transcript".to_string());
     }
+    crate::providers::http_metrics::record("asrUploadToFinalText", request_started.elapsed());
     Ok((
         bounded_text(text, 16_000),
         result.language.map(|language| bounded_text(&language, 80)),
@@ -121,16 +155,7 @@ fn client(timeout: Duration) -> Result<reqwest::Client, String> {
 }
 
 fn operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
-    let mut url =
-        url::Url::parse(endpoint).map_err(|_| "Cloud ASR endpoint is invalid".to_string())?;
-    let mut path = url.path().trim_end_matches('/').to_string();
-    if !path.ends_with("/v1") {
-        path.push_str("/v1");
-    }
-    path.push('/');
-    path.push_str(operation);
-    url.set_path(&path);
-    Ok(url.to_string())
+    crate::providers::openai_compatible::provider_operation_url(endpoint, operation)
 }
 
 async fn bounded_body(
@@ -165,8 +190,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detection_metadata_is_requested() {
-        assert_eq!(TRANSCRIPTION_RESPONSE_FORMAT, "verbose_json");
+    fn text_only_json_is_supported() {
+        assert_eq!(TRANSCRIPTION_RESPONSE_FORMAT, "json");
+        let result: TranscriptionResponse = serde_json::from_str(r#"{"text":"日本語"}"#).unwrap();
+        assert_eq!(result.text, "日本語");
+        assert!(result.language.is_none());
+        assert!(!response_is_no_speech(&result.segments));
     }
 
     #[test]

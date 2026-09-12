@@ -241,10 +241,6 @@ pub(crate) fn validate_profiles(
         || !supported_capabilities_are_valid
         || !valid_llm_protocol(&provider.protocol)
         || !valid_bounded_identifier(&provider.model, 160)
-        || provider
-            .streaming_protocol
-            .as_deref()
-            .is_some_and(|protocol| protocol != "saaa.llm-stream.v1")
     {
         return Err(contract_error(()));
     }
@@ -305,22 +301,23 @@ pub(crate) fn validate_claim(
         .port_or_known_default()
         .ok_or_else(|| contract_error(()))?;
     let expected_health_url = provider_health_url(&base_url, &expected.id, &descriptor.name)?;
-    let stream_url = Url::parse(&descriptor.streaming.url).map_err(contract_error)?;
-    let stream_limits_are_valid = descriptor
-        .streaming
-        .max_concurrent_runs
-        .is_none_or(|value| (1..=8).contains(&value))
-        && descriptor
-            .streaming
-            .max_connections
-            .is_none_or(|value| (1..=8).contains(&value))
-        && match (
-            descriptor.streaming.max_concurrent_runs,
-            descriptor.streaming.max_connections,
-        ) {
-            (Some(runs), Some(connections)) => runs == connections,
-            _ => true,
-        };
+    // HTTP inference ignores WS transport/encoding/resume capabilities. Validate
+    // an advertised URL's boundary without requiring that optional advertisement.
+    if let Some(streaming) = &descriptor.streaming {
+        let stream_url = Url::parse(&streaming.url).map_err(contract_error)?;
+        if stream_url.scheme() != "ws"
+            || stream_url.host_str() != base_url.host_str()
+            || stream_url.port_or_known_default() != base_url.port_or_known_default()
+            || stream_url.path() != "/v1/llm/stream"
+            || stream_url.query().is_some()
+            || stream_url.fragment().is_some()
+            || !stream_url.username().is_empty()
+            || stream_url.password().is_some()
+            || streaming.url.len() > 2048
+        {
+            return Err(contract_error(()));
+        }
+    }
     if descriptor.api_style != "openai"
         || expected_scheme != "http"
         || descriptor.scheme != expected_scheme
@@ -335,35 +332,6 @@ pub(crate) fn validate_claim(
         || !url_is_local(&base_url)
         || (!control_is_loopback && url_is_loopback(&base_url))
         || descriptor.model != expected.profile.model
-        || descriptor.streaming.protocol != "saaa.llm-stream.v1"
-        || descriptor.streaming.url.len() > 2_048
-        || !matches!(
-            descriptor.streaming.upstream_transport.as_str(),
-            "native" | "websocket"
-        )
-        || descriptor
-            .streaming
-            .encoding
-            .as_deref()
-            .is_some_and(|value| value != "json-control+binary-delta-v1")
-        || descriptor
-            .streaming
-            .compression
-            .as_deref()
-            .is_some_and(|value| value != "none")
-        || !stream_limits_are_valid
-        || descriptor
-            .streaming
-            .resume_window_ms
-            .is_some_and(|value| value < 120_000)
-        || stream_url.scheme() != "ws"
-        || stream_url.host_str() != base_url.host_str()
-        || stream_url.port_or_known_default() != base_url.port_or_known_default()
-        || stream_url.path() != "/v1/llm/stream"
-        || stream_url.query().is_some()
-        || stream_url.fragment().is_some()
-        || !stream_url.username().is_empty()
-        || stream_url.password().is_some()
         || descriptor.health.url != expected_health_url.as_str()
         || descriptor.health.kind != "semantic-inference"
         || descriptor.health.max_age_ms == 0

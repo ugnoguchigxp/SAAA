@@ -33,32 +33,18 @@ pub(crate) async fn resolve_harness_llm_provider(
         )
         .await
         {
-            Ok(service) => {
-                let stream_url = match service.streaming {
-                    Some(crate::providers::service_harness::StreamingDescriptor::Llm(
-                        streaming,
-                    )) => streaming.url,
-                    _ => {
-                        return Err(
-                            "Provider Harness does not advertise saaa.llm-stream.v1".to_string()
-                        )
-                    }
-                };
-                (
-                    ModelProviderSettings::OpenAiCompatible(
-                        crate::OpenAiCompatibleProviderSettings {
-                            id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
-                            enabled: true,
-                            label: "Provider Harness LLM".to_string(),
-                            location: "local".to_string(),
-                            endpoint: stream_url,
-                            model: service.model,
-                            authentication: "none".to_string(),
-                        },
-                    ),
-                    timeout_ms,
-                )
-            }
+            Ok(service) => (
+                ModelProviderSettings::OpenAiCompatible(crate::OpenAiCompatibleProviderSettings {
+                    id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
+                    enabled: true,
+                    label: "Provider Harness LLM".to_string(),
+                    location: "local".to_string(),
+                    endpoint: service.base_url,
+                    model: service.model,
+                    authentication: "none".to_string(),
+                }),
+                timeout_ms,
+            ),
             Err(error) => return Err(error),
         };
     replace_harness_provider(providers, resolved);

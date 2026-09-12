@@ -7,6 +7,7 @@ import type { StreamingTextProjection } from "./streamingTextBuffer";
 
 export type ChatPageProps = {
   messages: ConversationMessage[]; hasMoreMessages: boolean; loadingOlderMessages: boolean;
+  hasNewerMessages?: boolean; loadingNewerMessages?: boolean; onLoadNewerMessages?: () => Promise<void>;
   onLoadOlderMessages: () => Promise<void>; streamingText: StreamingTextProjection;
   interimTranscript: { text: string; projection: VoiceAsrProjection }; voiceState: VoiceCaptureState;
   listeningEnabled: boolean; runtimeActivity: ConversationRuntimeActivity[]; composer: string;

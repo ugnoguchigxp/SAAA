@@ -6,7 +6,7 @@ pub(crate) use crate::voice_behavior::{
 };
 
 mod bindings;
-pub use bindings::typescript_bindings;
+pub use bindings::{typescript_bindings, ui_typescript_bindings};
 mod websocket_state;
 pub(crate) use websocket_state::WebSocketConnectionState;
 
@@ -42,16 +42,8 @@ runtime_failure_codes! {
     InternalError => "internal-error",
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ConversationMessage {
-    pub(crate) id: String,
-    pub(crate) conversation_id: String,
-    #[ts(type = "\"user\" | \"assistant\" | \"system\" | \"transcript\"")]
-    pub(crate) role: String,
-    pub(crate) content: String,
-    pub(crate) created_at: String,
-}
+mod conversation_message;
+pub(crate) use conversation_message::ConversationMessage;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

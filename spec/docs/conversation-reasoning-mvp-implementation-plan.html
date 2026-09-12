@@ -1,0 +1,654 @@
+<article lang="ja">
+  <h1 id="conversation-reasoning-mvp">会話ランタイム + MCP推論サービス MVP実装計画</h1>
+  <p>
+    作成日: 2026-09-12。状態: 実装前の提案。基準:
+    <code>5a91753</code> と作成時のworking
+    tree。本書の作成は機能の実装・性能検証・リリース完了を意味しない。
+  </p>
+
+  <h2 id="outcome">1. MVPで確かめること</h2>
+  <p>
+    音声要求を受けたら短く反応し、MCP経由の推論結果を正しく読み上げる。ユーザーの停止操作や追加入力で古い処理を中断し、古い回答を再生しない。最初に定型相槌版を成立させ、その後に2B程度の分類モデルを比較評価する。大型モデルの回答を小型モデルで言い換える工程は設けない。
+  </p>
+  <p>
+    最初の利用例は「この会話で説明した条件を踏まえて、SQLiteとPostgreSQLを比較して」のような、渡された文脈だけで判断できる依頼とする。「今のDB構成」など、実際に取得していない情報を知っている前提で回答しない。
+  </p>
+  <table>
+    <caption>
+      表1: 段階と完了の意味
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">段階</th>
+        <th scope="col">成果</th>
+        <th scope="col">完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MVP-A: 必須</td>
+        <td>定型相槌、MCP推論、直接読み上げ、キャンセル、測定</td>
+        <td>CR-00〜CR-05の自動検証と実接続・実機評価を通過</td>
+      </tr>
+      <tr>
+        <td>MVP-B: 比較実験</td>
+        <td>2B程度の意味分類を追加</td>
+        <td>CR-06の採否条件で採用または不採用を決定。不採用でもMVP-Aは成立</td>
+      </tr>
+      <tr>
+        <td>後続</td>
+        <td>音声による自然な割り込み、検索の反復、長文逐次応答</td>
+        <td>本書の完了条件に含めず、それぞれ別の実装範囲として扱う</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="baseline">2. 現在の接続点</h2>
+  <p>
+    以下は作成時にソースを確認した接続候補である。Provider・音声・UIなどに既存の未コミット変更があるため、着手時に差分を再確認する。既存変更の巻き戻しや、計画に合わせた全体リファクタは行わない。
+  </p>
+  <table>
+    <caption>
+      表2: 既存実装と変更方針
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">場所</th>
+        <th scope="col">確認できた役割</th>
+        <th scope="col">MVPでの接続</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src-tauri/src/runtime/start_turn.rs</code></td>
+        <td>run登録、RunCancellation、TTS開始・後始末</td>
+        <td>既存runを親として推論と音声の子処理を管理する</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/runtime/turns.rs</code></td>
+        <td>会話経路、文脈、Provider実行、終端処理</td>
+        <td>実験対象の音声runだけを専用モジュールへ分岐。通常経路の終端・保存契約を再利用</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/runtime/conversation_context.rs</code></td>
+        <td>会話文脈とsystem contextの組み立て</td>
+        <td>同じ投影結果から版付きの推論入力を作る</td>
+      </tr>
+      <tr>
+        <td>
+          <code>src-tauri/src/runtime/event_hub.rs</code> /
+          <code>runtime/performance.rs</code>
+        </td>
+        <td>TTSとUIへのイベント配送、内容を含まない性能集計</td>
+        <td>相槌と本回答を区別し、測定点を追加する</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/voice/streaming_tts/runtime.rs</code></td>
+        <td>文区切り、レンダリング・再生キュー、キャンセル</td>
+        <td>発話の所有者を検証して既存TTSへ投入。別プレイヤーを作らない</td>
+      </tr>
+      <tr>
+        <td><code>src/features/chat/useConversationTurn.ts</code></td>
+        <td>停止、イベント所有者判定、音声待ち行列、TTS中の入力休止</td>
+        <td>追加入力の引継ぎと、相槌終了時の入力再開を整合させる</td>
+      </tr>
+      <tr>
+        <td><code>src/features/voice/voiceFinalDeliveryQueue.ts</code></td>
+        <td>確定発話の重複排除と配送確認</td>
+        <td>同一utteranceを二重保存・二重委譲しない</td>
+      </tr>
+      <tr>
+        <td><code>src-tauri/src/memory/context_still_recall.rs</code></td>
+        <td>ContextStill専用MCP接続。protocolVersionは2025-03-26</td>
+        <td>
+          認証・サイズ制限・テスト手法を参考にする。専用URL制約やprotocolVersionを変更して流用しない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    現時点で推論専用MCP接続が既に存在するとは扱わない。また、TTS中の音声入力休止があるため、キャンセル機構の存在だけを根拠にfull-duplexの音声割り込み対応済みとはしない。
+  </p>
+
+  <h2 id="scope">3. 実装範囲と責務</h2>
+  <pre><code class="language-text">確定ASR / 既存の入力制御
+  ↓
+SAAA会話ランタイム（状態と発話権の正本）
+  ├─ 定型相槌の予約・再生・停止
+  ├─ 文脈の投影、版管理、結果検証、履歴保存
+  ├─ 任意の小型分類モデル（MVP-B）
+  └─ MCP tools/call: reasoning.answer
+       ↓
+     Reasoning Service（独立プロセス）
+       ↓
+     設定済みのLocal LLM Harness / Provider
+       ↓
+     検証済みResponse Plan + speechText
+       ↓
+SAAAが版・発話権を再確認 → 既存TTS / Chat</code></pre>
+  <ul>
+    <li>
+      SAAAが決めるもの:
+      発話開始と停止、委譲、締切、文脈、結果採用、保存、再試行。小型モデルは助言のみ。
+    </li>
+    <li>
+      Reasoning Serviceが決めるもの:
+      指定された制約下での回答、確認質問、不足情報の明示。モデル選択と常駐はProvider側の運用責務。
+    </li>
+    <li>
+      対象:
+      明示的に有効化した音声会話。通常のテキスト会話、Coding、Meeting、Situationの自動介入は既存経路を維持する。
+    </li>
+    <li>
+      範囲外:
+      DB移行、新たな長期記憶、汎用MCP設定画面、モデル起動管理、Cloud自動フォールバック、任意ツール実行、音声認識方式の置換、生成UIとの統合。
+    </li>
+    <li>
+      2Bへの自由回答許可、数値confidenceによる自動承認、相槌の繰返し生成、推論内部テキストの読み上げは行わない。
+    </li>
+  </ul>
+  <p>
+    「検索・操作を含む要求を従来と同等に処理する」ことはMVP-Aの保証に含めない。Serviceは外部ツールを持たず、渡された文脈で足りなければ確認または不足を返す。実験経路であることを表示し、必要な場合は利用者が通常経路へ切り替えられるようにする。
+  </p>
+
+  <h2 id="configuration">4. 配置と有効化</h2>
+  <p>
+    提案する配置は、SAAA側に<code>src-tauri/src/runtime/conversation_controller/</code>と<code>src-tauri/src/providers/reasoning_mcp/</code>、独立サービスに<code>services/reasoning-mcp/</code>である。いずれも新設候補であり、存在する実装を示すものではない。サービスは独立Rust
+    crateを基本とし、MCP
+    SDKの版と必要な依存はCR-01で疎通確認して固定する。SAAA本体からサービスやモデルを起動しない。
+  </p>
+  <table>
+    <caption>
+      表3: 新設する開発用設定案
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">設定</th>
+        <th scope="col">値・用途</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SAAA_CONVERSATION_REASONING_MODE</code></td>
+        <td>
+          <code>off</code
+          >を既定とし、<code>deterministic</code>、<code>classifier</code>を選択。起動時に固定
+        </td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_MCP_URL</code></td>
+        <td>明示的な推論専用接続先。ContextStillのendpointを流用しない</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_MCP_TOKEN</code></td>
+        <td>必要な場合のBearer。環境から取得し、ログ・SQLite・UIには出さない</td>
+      </tr>
+      <tr>
+        <td>Service側設定</td>
+        <td>
+          モデル接続先・モデルID・認証・接続解放をProvider
+          adapterへ集約。固定のOpenAI互換接続を最初の検証経路にし、Harness固有のlease取得は実接続前に適合確認する
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    localhostまたは明示したprivate接続先を使い、リダイレクトやCloudへの自動切替はしない。既存のlocal-only方針をServiceにも渡して強制し、同じ方針を守れない接続はreadyとしない。具体的なホスト、モデルID、メモリ容量は未確定であり、2B/27Bというサイズだけで適合扱いしない。
+  </p>
+  <p>
+    起動後に接続を検証して再利用する。設定不正は既存経路を破壊せず、実験経路をunavailableと表示する。実験要求を受理した後に失敗した場合は、勝手に別モデルで回答せず、失敗と再試行操作を返す。
+  </p>
+
+  <h2 id="contract">5. reasoning.answer v1契約</h2>
+  <p>
+    新規の推論接続ではMCP
+    <code>2025-06-18</code>を最初の相互運用プロファイルとし、Streamable
+    HTTPでinitialize、initialized通知、tools/list、tools/call、キャンセルを確認する。これは最新版の指定ではなく、本MVPの固定した検証対象である。対応しないServiceは接続検証で失敗させる。既存ContextStill接続の版は維持する。
+  </p>
+  <p>
+    出力はMCPの<code>outputSchema</code>と<code>structuredContent</code>で契約化し、互換用のtext
+    blockには同じオブジェクトをJSONで格納する。SAAAはstructuredContentだけを回答の正本として検証する。これらはMCPの構造化出力機能であり、モデル生成の正しさを保証するものではない。<a
+      href="https://modelcontextprotocol.io/specification/2025-06-18/server/tools"
+      >MCP Tools仕様</a
+    >
+  </p>
+  <h3 id="request">5.1 入力例</h3>
+  <pre><code class="language-json">{
+  "schemaVersion": "reasoning-answer-v1",
+  "conversationId": "conversation-1",
+  "turnId": "run-2",
+  "requestId": "request-3",
+  "contextRevision": 4,
+  "request": "この会話で説明した用途ならSQLiteとPostgreSQLのどちらが適切？",
+  "context": {
+    "messages": [{"role": "user", "content": "単一ユーザーでローカル運用です"}],
+    "evidence": [],
+    "truncated": false
+  },
+  "constraints": {"language": "ja", "localOnly": true, "maxSpeechChars": 240},
+  "budget": {"timeoutMs": 15000}
+}</code></pre>
+  <p>
+    <code>turnId</code
+    >は既存run_idを利用し、新しい永続ターンID体系を作らない。requestIdは各呼び出しで新規発行する。contextRevisionは会話ごとのランタイム内カウンタとし、追加入力、停止、会話切替で採用権を失効させる。再起動をまたぐ結果受理はしない。
+  </p>
+  <p>
+    文脈は既存の投影と制約を再利用し、現在要求はrequestに一度だけ入れる。履歴内の同一要求は重複させない。最新の明示条件を優先し、取得済み根拠にはIDと由来を付ける。MVP-Aは新しい検索を開始しない。根拠は命令へ昇格させず、system方針はServiceの固定テンプレートとして別管理する。
+  </p>
+  <h3 id="response">5.2 正常出力例</h3>
+  <pre><code class="language-json">{
+  "schemaVersion": "reasoning-answer-v1",
+  "conversationId": "conversation-1",
+  "turnId": "run-2",
+  "requestId": "request-3",
+  "contextRevision": 4,
+  "intent": "answer",
+  "speechText": "この会話で挙げた条件なら、SQLiteが候補です。単一ユーザーのローカル用途で、運用を簡単にできます。同時書き込みなどの要件は別途確認が必要です。",
+  "keyPoints": ["単一ユーザー", "ローカル運用"],
+  "evidenceIds": [],
+  "limitations": ["実際のDB構成は取得していない"]
+}</code></pre>
+  <p>
+    intentはanswer、clarify、insufficient_contextの3種類。clarifyのspeechTextは一つの確認質問、insufficient_contextは不足事項を伝える文章とする。confidenceとcanSpeakImmediatelyは設けない。これら3種類は成功した回答結果であり、接続障害とは区別する。
+  </p>
+  <p>
+    初期上限は入力全体64KiB、応答全体16KiB、履歴32件、evidence8件、speechText240
+    Unicode文字、keyPoints5件・各160文字、limitations5件・各160文字とする。文字数とUTF-8
+    byte上限は別々に検証する。さらにProviderの実context
+    windowから出力枠を差し引いたtoken予算で入力を制限する。現在要求だけで上限を超える場合は黙って切らずinput_too_largeとする。
+  </p>
+  <p>
+    全objectで未知フィールドを拒否し、必須値・enum・各上限・空本文・ID一致・evidenceIdsの参照先を検証する。Providerの完了理由が途中打切り、終端欠落、tool
+    callの場合は成功にしない。Serviceはモデル出力を検証し、不正JSONを最大1回だけ同じ締切内で再生成できる。SAAAは壊れたJSONから本文を抽出して読み上げない。
+  </p>
+  <p>
+    初期版のChat本文はspeechTextと同一とし、別の要約生成はしない。keyPoints等は検証・評価用のメモリ内情報とする。長い説明や途中のトークン読み上げは後続とし、最初の版では完全な結果検証後にTTSへ渡す。
+  </p>
+
+  <h2 id="lifecycle">6. 会話・発話ライフサイクル</h2>
+  <p>
+    推論状態と再生状態を分ける。推論はidle、pending、accepted、failed、cancelled。再生はsilent、ack_pending、ack_playing、answer_pending、answer_playing。並行する相槌を一つの排他的action
+    enumに押し込まない。状態更新と結果採用は既存run管理に結び付けた一つの直列化された更新経路で行う。
+  </p>
+  <ol>
+    <li>
+      確定ASRのutteranceを一度だけ受理・保存し、runと版を確定する。文脈構築と並行して相槌のタイマーを予約する。相槌生成のためにLLMを待たない。
+    </li>
+    <li>
+      既存の発話権・Meeting・mute制約を確認する。受理後250msで未完了なら「確認します」を最大1回だけ再生する。実音響の安定性を確認するまではキャッシュ音声を必須にしない。
+    </li>
+    <li>
+      本回答が相槌開始前に届けば相槌を取り消す。再生中なら未再生の相槌を取り除き、既に始まった短い相槌の終了後に本回答を流す。二重再生しない。
+    </li>
+    <li>
+      結果採用時、TTS
+      enqueue時、実再生開始直前の各時点でrun・request・版・発話権を確認する。result到着とcancelが競合しても失効した音声を開始しない。
+    </li>
+    <li>
+      停止または追加入力では、先に旧版を失効させ、相槌タイマー・TTSキュー・再生を停止する。その後にMCPキャンセルを送る。サーバーの停止応答を待って画面や音声を止める設計にしない。
+    </li>
+    <li>
+      追加入力を旧要求の次のuser
+      messageとして保持し、新runで会話全体を再投影する。旧要求の文字列を推測で上書きしない。旧runはcancelled、新runは独立した終端を持つ。
+    </li>
+    <li>
+      表示・保存済みの回答への割り込みでは履歴を消さず、再生だけを停止する。採用前に失効した結果はassistant回答として保存しない。
+    </li>
+  </ol>
+  <p>
+    MCPキャンセルは進行中requestのIDを指定する通知として送り、ServiceからProviderの生成キャンセルと接続解放へ伝える。遅着結果の採用禁止はSAAA側でも保証する。<a
+      href="https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/cancellation"
+      >MCP Cancellation仕様</a
+    >
+  </p>
+  <p>
+    相槌は通常のassistant Deltaに混ぜず、一時的なspeech
+    itemとして扱う。通常のmessageCompletedやrun終了を発行しない。TTSのspeechStarted/Endedと入力休止・再開は既存の管理を通す。親runの下で相槌と本回答を識別するspeech
+    item IDを追加し、生成IPC型が変わる場合は型生成とUI consumerを同時に更新する。
+  </p>
+  <p>
+    MVP-AではTTS中の音声割り込みを保証しない。停止ボタン・テキスト追加入力は必須とし、音声入力が再開している推論待ち期間の確定発話も処理する。相槌中に声を重ねたケースは実機評価で取りこぼしとして記録する。入力休止を外す変更には、エコー・誤VAD・話者照合を含む独立した検証が必要になる。
+  </p>
+
+  <h2 id="failure">7. 締切・障害・保存</h2>
+  <p>
+    初期値として推論全体の締切を要求受理から15秒、接続検証を3秒とする。Providerの待ち行列と再生成も15秒に含め、SAAAの単調時計を最終判定に使う。1会話につき有効な推論は1件、MVP-Aではアプリ全体も同時1件とし、Serviceはcancel後も残る旧計算を無制限に積まない。
+  </p>
+  <p>
+    入力例のtimeoutMsは上限値であり、実際の送信時には文脈構築などの経過時間を差し引いた残り時間を渡す。Serviceで生成を開始する時点でも待ち行列の経過時間を差し引く。MCP接続のやり直しによって締切を延長しない。
+  </p>
+  <table>
+    <caption>
+      表4: 失敗時の契約
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">条件</th>
+        <th scope="col">処理</th>
+        <th scope="col">利用者への結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>接続不能・認証失敗・非対応schema</td>
+        <td>readyにしない。進行中ならrunをfailedで一度だけ終端</td>
+        <td>原因を伏せず短い状態表示。資格情報や内部応答は出さない</td>
+      </tr>
+      <tr>
+        <td>タイムアウト・busy・途中切断</td>
+        <td>計算停止要求、失効、リソース解放。クライアントの自動再送なし</td>
+        <td>「回答を取得できませんでした」と再試行操作。相槌を繰り返さない</td>
+      </tr>
+      <tr>
+        <td>不正出力・長さ超過・未知根拠ID</td>
+        <td>invalid_response。部分本文を採用しない</td>
+        <td>回答失敗として再試行可能</td>
+      </tr>
+      <tr>
+        <td>停止・会話切替・ウィンドウ終了</td>
+        <td>cancelledとして失効。遅着イベントを破棄</td>
+        <td>キャンセルを接続障害として表示しない</td>
+      </tr>
+      <tr>
+        <td>相槌のTTS失敗</td>
+        <td>相槌を打切り、推論は継続</td>
+        <td>処理中の表示を維持。本回答は通常の音声方針で処理</td>
+      </tr>
+      <tr>
+        <td>本回答のTTS失敗・mute・Meeting制約</td>
+        <td>採用済み本文と会話を保持。音声だけ失敗または抑止</td>
+        <td>テキストで回答を確認できる</td>
+      </tr>
+      <tr>
+        <td>履歴保存失敗</td>
+        <td>既存の保存失敗契約へ接続。成功完了を偽装しない</td>
+        <td>入力・応答の保持状況と再試行可能性を表示</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    再試行は新requestIdと新runで実行し、既存inputMessageIdを再利用してuser
+    messageを増やさない。相槌を会話履歴や長期記憶に保存しない。DB schema変更は予定せず、既存run
+    ledgerの終端契約を利用する。
+  </p>
+
+  <h2 id="tasks">8. 実装順序と完了条件</h2>
+  <table>
+    <caption>
+      表5: 実装作業
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID / 依存</th>
+        <th scope="col">成果物</th>
+        <th scope="col">確認と完了条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>CR-00 / なし</td>
+        <td>既存差分の再確認、A0測定、計測イベント定義、実接続profileの記録</td>
+        <td>
+          同じASR・TTS・モデル・文脈で比較できる。時計・実音声開始の測定方法を固定。実接続なしでもfakeで進められる
+        </td>
+      </tr>
+      <tr>
+        <td>CR-01 / CR-00</td>
+        <td>v1 JSON Schema、入出力fixture、独立Reasoning Service、固定Provider adapter</td>
+        <td>
+          実MCP handshakeとtools/list/call、正常・不正結果・cancelの契約テスト。モデル未接続時もfake
+          adapterで成功。実Provider完了判定を検証
+        </td>
+      </tr>
+      <tr>
+        <td>CR-02 / CR-01</td>
+        <td>SAAA専用MCP client、設定・接続検証、文脈snapshot、実験経路への分岐</td>
+        <td>
+          fake
+          Serviceで会話入力→応答保存まで接続。モデルIDがSAAAのルーティング条件になっていない。offで既存経路に回帰なし
+        </td>
+      </tr>
+      <tr>
+        <td>CR-03 / CR-02</td>
+        <td>ランタイム状態、相槌scheduler、TTS所有権、追加入力・停止の連携</td>
+        <td>
+          fake
+          clockで競合順序を再現し、二重音声・二重終端・遅着採用が0件。入力配送の重複と欠落を検証
+        </td>
+      </tr>
+      <tr>
+        <td>CR-04 / CR-03</td>
+        <td>Chat処理中・失敗・再試行表示、診断指標、MCP対応の評価runner</td>
+        <td>
+          相槌を履歴に保存せず、実験接続を既存LLM
+          WebSocketとして誤表示しない。ログに本文・tokenなし。IPC生成物が同期
+        </td>
+      </tr>
+      <tr>
+        <td>CR-05 / CR-04</td>
+        <td>A0/A1の実測report、実機停止試験、30分soak、導入・無効化手順</td>
+        <td>表6・表7を満たせばMVP-A完了。fake成功だけでは実接続完了にしない</td>
+      </tr>
+      <tr>
+        <td>CR-06 / CR-05</td>
+        <td>任意の小型分類adapter、shadow評価、A2比較report</td>
+        <td>第10節に従い採用または不採用を記録。採用する場合のみclassifier設定を利用可能にする</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    作業は依存順に進める。各段階をレビュー可能な差分に分け、CR-03完了前に実験経路を既定有効にしない。所要時間はCR-01でProvider対応・依存選定・実機条件を確認してから見積もる。現時点で人日や実測性能を確約しない。
+  </p>
+
+  <h2 id="validation">9. 検証・採否基準</h2>
+  <p>
+    A0は現在の単一モデル経路、A1は定型相槌+MCP、A2は分類モデル+MCPとする。A0/A1の推論モデル、量子化、sampling、入力文脈、出力長上限を揃え、起動直後とwarmを分離する。warmは50固定ケースを3回ずつ実行し、順序を交互にする。既存の品質評価60ケースも回帰確認に使い、MCPを通らない既存runnerだけで新経路の品質を証明しない。
+  </p>
+  <table>
+    <caption>
+      表6: 初期の性能・品質基準（未測定）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">指標</th>
+        <th scope="col">定義・目標</th>
+        <th scope="col">未達時</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>最初の音声</td>
+        <td>
+          発話終了→最初の可聴音声。warm p50 500ms以内、p95 800ms以内。muteは対象外として件数を記録
+        </td>
+        <td>ASR確定・相槌予約・TTS待ちを分解。計測起点をASR確定へすり替えない</td>
+      </tr>
+      <tr>
+        <td>本回答の最初の音声</td>
+        <td>発話終了→speechTextの可聴開始。warm p95 8秒以内、かつA0比で増加が1秒以内</td>
+        <td>
+          完全JSON待ちやProvider
+          queueを特定。未達なら利用可能なMVPとして有効化せず、別途逐次応答を設計
+        </td>
+      </tr>
+      <tr>
+        <td>停止</td>
+        <td>停止イベント受理→音が止まるまでp95 200ms以内。推論サーバーの停止時間とは別集計</td>
+        <td>player停止とキュー失効を修正。音声入力からの検知遅延は後続範囲</td>
+      </tr>
+      <tr>
+        <td>正しさ</td>
+        <td>固定の競合・障害試験で古い結果採用、二重回答、結論入り相槌、入力欠落が0件</td>
+        <td>MVP-A未完了として修正</td>
+      </tr>
+      <tr>
+        <td>回答品質</td>
+        <td>
+          同一rubricでA0との差が100点換算2点以内の低下。重大な条件反転・数値改変・未取得情報の断定が0件
+        </td>
+        <td>構造化指示・入力投影を修正。人が全失敗例と最低20件の対応回答を確認</td>
+      </tr>
+      <tr>
+        <td>安定性</td>
+        <td>
+          30分soakでqueue上限超過、run/sessionの残留増加、再接続後の古い音声、回復不能状態が0件
+        </td>
+        <td>実接続完了とせず、該当障害と修正後の再測定を記録</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    性能値は実機未測定の初期採否基準であり、達成見込みを保証するものではない。測定後に基準を変更する場合は、理由と利用体験への影響をreportへ明記する。
+  </p>
+  <p>
+    追加timestampはspeech_end、asr_final、request_accepted、context_ready、reasoning_sent、reasoning_received、result_accepted、ack_audio_started、answer_audio_started、cancel_received、audio_stopped。内部は単調時計で計測し、ASR側の音声時刻を対応付ける。既存のplayer
+    spawn指標を可聴開始と同一視せず、実機では録音またはloopback測定で確認する。Cloud
+    ASR/TTSを選択した試験はlocal profileと分ける。
+  </p>
+  <table>
+    <caption>
+      表7: 必須の振る舞い試験
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ケース</th>
+        <th scope="col">期待結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>結果が250ms前 / 相槌開始直前 / 再生中に到着</td>
+        <td>相槌省略または一度の再生。本回答を重複・混合しない</td>
+      </tr>
+      <tr>
+        <td>cancelと応答が同時、cancel後に旧応答、TTS生成後にcancel</td>
+        <td>失効後の結果は保存・再生されない。確定済み履歴は消えない</td>
+      </tr>
+      <tr>
+        <td>推論中に条件追加、同一ASR finalを再配送</td>
+        <td>新文脈で一度だけ実行。旧回答を流さず、user messageを重複保存しない</td>
+      </tr>
+      <tr>
+        <td>接続失敗、401、busy、切断、15秒超過、未知tool、壊れたJSON</td>
+        <td>有限時間で規定の失敗。再試行で入力が増殖しない</td>
+      </tr>
+      <tr>
+        <td>会話切替、window終了、mute、Meeting開始</td>
+        <td>所有者と音声方針が一致。相槌にも制約が適用される</td>
+      </tr>
+      <tr>
+        <td>Providerがキャンセルを無視</td>
+        <td>SAAAの再生停止と結果破棄は成立。Serviceの残留数を記録して無制限に再投入しない</td>
+      </tr>
+      <tr>
+        <td>「移行する。いや、しない」「停止方法を説明して」「ありがとう、でも条件が違う」</td>
+        <td>部分一致で停止・挨拶扱いにせず推論へ渡す</td>
+      </tr>
+      <tr>
+        <td>TTS中に利用者が発話</td>
+        <td>現行入力休止による制限と欠落を記録。自然な音声割り込み合格に数えない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    新規の<code>scripts/conversation-reasoning-eval.ts</code>に<code>fixture</code>と<code>live</code>の明示モードを設ける計画とする。fixtureはfake
+    Serviceとfake
+    clockで資格情報なしに動作、liveは明示した接続profileだけを使う。reportは件数、分位点、失敗分類、構成、revisionを保存し、通常診断に本文や認証情報を含めない。固定合成ケースの入力はfixtureとして管理する。
+  </p>
+  <p>実装後に実行するコマンドは次のとおり。新設予定のコマンドは各成果物が作られてから使用する。</p>
+  <ul>
+    <li>
+      新設予定: <code>bun scripts/conversation-reasoning-eval.ts fixture</code> —
+      表7の再現可能なケースがすべて成功する。
+    </li>
+    <li>
+      新設予定: <code>cargo test --manifest-path services/reasoning-mcp/Cargo.toml</code> — ServiceのMCPとProvider
+      adapter契約が成功する。
+    </li>
+    <li>
+      新設予定: <code>bun scripts/conversation-reasoning-eval.ts live</code> —
+      明示profileで表6のreportを生成する。未設定なら未実施として失敗し、fakeで代替しない。
+    </li>
+    <li>
+      IPC変更時: <code>bun run ipc:generate</code>。context変更時:
+      <code>bun run s11tnext:build</code>。生成物を更新してから検査する。
+    </li>
+    <li>
+      全体確認:
+      <code>bun run check</code
+      >、<code>bun run build</code>、<code>bun run desktop:smoke</code> —
+      成功終了し、通常経路にも回帰がない。
+    </li>
+    <li>
+      文書確認: <code>bun run spec:fix</code>、<code
+        >bun run spec:check</code
+      >
+      — 文書検査が成功し、変更差分を確認する。
+    </li>
+  </ul>
+  <p>
+    既存変更に由来する失敗は変更前後を比較して切り分ける。未実施・未達・既存失敗をPassに置換しない。今回の計画作成では文書検査だけを行い、上記の機能・性能テストは実施しない。
+  </p>
+
+  <h2 id="classifier">10. MVP-B: 小型モデルの追加条件</h2>
+  <p>
+    2B程度のモデルをProvider側で常駐させ、最初はshadowで分類結果だけを記録する。出力は<code>route: delegate | simple_reply</code>と<code>replyKey: greeting | acknowledgement | null</code>に限定し、自由文とツール呼び出しを受け取らない。相槌は引き続きランタイムが予約する。
+  </p>
+  <p>
+    simple_replyを採用できるのは、ランタイムの厳格な全体一致ルールで既に許可された挨拶・受領応答だけとする。条件追加や質問が混在する場合はdelegateへ戻す。小型モデルによる未許可要求の格下げを認めないため、この段階の分類による速度改善は限定的であることを明示する。
+  </p>
+  <p>
+    分類の上限は受理から150ms。不正出力・切断・期限超過はdelegateへ戻す。比較試験では意味が紛らわしい100例を3回実行し、委譲漏れ0件、回答品質の重大回帰0件、最初の音声p95のA1比増加100ms以内を要求する。同じGPUで大型モデルが稼働中の条件も測る。
+  </p>
+  <p>
+    採用には、上記に加えて50組の会話比較を順序を伏せて利用者が評価し、A2が好ましい割合60%以上となることを初期基準とする。改善がなければA1を維持する。2Bを導入したという事実をMVPの成功条件にしない。自由回答や広い意味ルーティングへ拡張する場合は、別途許可範囲と誤分類の評価を設計する。
+  </p>
+
+  <h2 id="release">11. 導入・戻し方と未確定事項</h2>
+  <p>
+    導入はoffで配布可能な実装を作り、fake試験、単一のlocal
+    profile、実機評価の順に進める。実験を止める場合は進行runとTTSを停止し、modeをoffへ戻して再起動する。既存の会話・設定・履歴を消す必要はない。別サービス側の残留計算も確認する。
+  </p>
+  <p>
+    完了reportにはCRごとの結果、SAAAとServiceのrevision、実Providerとモデル・量子化・ハードウェア、warm/cold、A0/A1/A2の比較、失敗と再測定、既知の制限を残す。MVP-Aの動作確認と2B採用判断を分けて記録する。
+  </p>
+  <ul>
+    <li>
+      CR-00で確定: 実機、ASR/TTS経路、比較用モデル、音声測定手段。なくてもfixture実装は進められる。
+    </li>
+    <li>
+      CR-01で確定: ServiceのMCP
+      SDK、独立crateの依存、実Providerの構造化出力・キャンセル能力、接続取得と解放。外部Providerに変更が必要ならその成果物を依存として明記する。
+    </li>
+    <li>
+      CR-05で判断:
+      完全なJSON検証後の読み上げで本回答遅延を満たせるか。満たせない場合、相槌速度だけを理由に出荷しない。
+    </li>
+    <li>CR-06で判断: 小型モデルの常駐コストに見合う会話改善があるか。</li>
+  </ul>
+  <p>
+    本書は計画作成の成果であり、接続先の起動や他のCodexタスクへの依頼を行うものではない。実装開始後は本書の範囲で進め、外部サービスの契約不一致が見つかった時点で具体的な差分を記録する。
+  </p>
+
+  <h2 id="references">12. 関連資料</h2>
+  <ul>
+    <li>
+      <a href="./conversation-voice-quality-implementation-plan.html">会話・音声品質の既存計画</a> —
+      終端、キャンセル、実機評価の既存方針
+    </li>
+    <li>
+      <a href="./streaming-tts-sentence-boundary-implementation-plan.html">Streaming TTS計画</a> —
+      既存の文区切りと再生
+    </li>
+    <li>
+      <a href="./always-on-streaming-asr-implementation-plan.html">Streaming ASR計画</a> —
+      確定発話と入力ライフサイクル
+    </li>
+    <li>
+      <a href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
+        >MCP 2025-06-18 Transports</a
+      >
+      — 本MVPが検証対象とするHTTP transport
+    </li>
+  </ul>
+</article>

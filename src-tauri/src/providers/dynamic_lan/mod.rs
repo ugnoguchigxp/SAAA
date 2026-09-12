@@ -9,6 +9,7 @@ use zeroize::Zeroizing;
 
 mod auth;
 mod http;
+pub(crate) mod probe;
 mod urls;
 mod validate;
 
@@ -97,8 +98,6 @@ struct ProfileProvider {
     supported_capabilities: Vec<String>,
     protocol: String,
     model: String,
-    #[serde(default)]
-    streaming_protocol: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -172,29 +171,12 @@ struct ProviderDescriptor {
     port: u16,
     base_url: String,
     model: String,
-    streaming: ProviderStreamingDescriptor,
+    #[serde(default)]
+    streaming: Option<ProviderStreamingDescriptor>,
     health: ProviderHealthDescriptor,
     #[serde(default)]
     credential: Option<ProviderCredential>,
     configuration: ProviderConfiguration,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProviderStreamingDescriptor {
-    protocol: String,
-    url: String,
-    upstream_transport: String,
-    #[serde(default)]
-    encoding: Option<String>,
-    #[serde(default)]
-    compression: Option<String>,
-    #[serde(default)]
-    max_concurrent_runs: Option<u8>,
-    #[serde(default)]
-    max_connections: Option<u8>,
-    #[serde(default)]
-    resume_window_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -272,7 +254,6 @@ pub(crate) struct DynamicLanConnection {
     identity: ConnectionIdentity,
     audience: String,
     endpoint: String,
-    stream_url: String,
     model: String,
     api_key: Option<Zeroizing<String>>,
     prior_release_failure: Option<ErrorKind>,
@@ -566,7 +547,6 @@ impl DynamicLanConnection {
             identity,
             audience,
             endpoint: descriptor.configuration.fields.base_url,
-            stream_url: descriptor.streaming.url,
             model: descriptor.configuration.fields.model,
             api_key: descriptor
                 .credential
@@ -580,16 +560,12 @@ impl DynamicLanConnection {
         &self.endpoint
     }
 
-    pub(crate) fn stream_url(&self) -> &str {
-        &self.stream_url
-    }
-
     pub(crate) fn allocation_id(&self) -> &str {
         &self.identity.allocation_id
     }
 
     pub(crate) fn stream_protocol(&self) -> &str {
-        "saaa.llm-stream.v1"
+        "openai.chat-completions.v1"
     }
 
     pub(crate) fn model(&self) -> &str {
@@ -659,7 +635,7 @@ impl DynamicLanConnection {
         .await?;
         self.identity = next_identity;
         self.endpoint = descriptor.configuration.fields.base_url;
-        self.stream_url = descriptor.streaming.url;
+
         self.model = descriptor.configuration.fields.model;
         self.api_key = descriptor
             .credential
@@ -877,7 +853,6 @@ mod tests {
                 supported_capabilities: Vec::new(),
                 protocol: "openai.chat-completions.v1".to_string(),
                 model: AGENT_PROFILE.to_string(),
-                streaming_protocol: None,
             }],
         };
         let profiles = AgentProfiles {
@@ -996,7 +971,10 @@ mod tests {
             .expect("private HTTP descriptor is accepted");
         assert_eq!(descriptor.base_url, "http://10.0.0.42:9810/v1");
         assert_eq!(
-            descriptor.streaming.url,
+            descriptor
+                .streaming
+                .as_ref()
+                .map_or_else(String::new, |value| value.url.clone()),
             "ws://10.0.0.42:9810/v1/llm/stream"
         );
         assert!(validate_claim(claim("127.0.0.1"), &identity, AUDIENCE, false).is_err());
@@ -1005,7 +983,7 @@ mod tests {
     }
 
     #[test]
-    fn claim_requires_a_same_origin_native_stream_descriptor() {
+    fn http_claim_accepts_no_ws_but_checks_advertised_urls() {
         let (created_at, expires_at) = test_timestamps();
         let identity = test_identity("aconn_test", &created_at, &expires_at);
 
@@ -1014,7 +992,13 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("streaming");
-        assert!(serde_json::from_value::<ConnectionClaim>(missing).is_err());
+        assert!(validate_claim(
+            serde_json::from_value(missing).unwrap(),
+            &identity,
+            AUDIENCE,
+            false
+        )
+        .is_ok());
 
         let mut cross_host = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
         cross_host["providers"][0]["streaming"]["url"] = json!("ws://10.0.0.43:9810/v1/llm/stream");
@@ -1050,7 +1034,10 @@ mod tests {
             .expect("compact WebSocket claim remains sufficient");
 
         assert_eq!(descriptor.protocol, "saaa.llm-stream.v1");
-        assert_eq!(descriptor.streaming.upstream_transport, "native");
+        assert_eq!(
+            descriptor.streaming.as_ref().unwrap().upstream_transport,
+            "native"
+        );
     }
 
     #[test]
@@ -1273,7 +1260,7 @@ mod tests {
         let (created_at, expires_at) = test_timestamps();
         let (captured_tx, captured_rx) = mpsc::channel();
         let server = std::thread::spawn(move || {
-            for index in 0..5 {
+            for index in 0..6 {
                 let (mut stream, _) = listener.accept().expect("request accepted");
                 let request = read_request(&mut stream);
                 captured_tx.send(request.clone()).expect("request captured");
@@ -1300,13 +1287,27 @@ mod tests {
                         &expires_at,
                     )
                     .to_string(),
-                    2 => claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at).to_string(),
+                    2 => {
+                        let mut claim =
+                            claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at);
+                        claim["providers"][0]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("streaming");
+                        claim.to_string()
+                    }
                     3 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
-                    4 => String::new(),
+                    4 => format!(
+                        "data: {}\n\ndata: [DONE]\n\n",
+                        json!({"model": AGENT_PROFILE, "choices":[{"index":0,"delta":{"content":"HTTP claim works"},"finish_reason":"stop"}]})
+                    ),
+                    5 => String::new(),
                     _ => unreachable!(),
                 };
-                if index == 4 {
+                if index == 5 {
                     write_response(&mut stream, "204 No Content", "", "");
+                } else if index == 4 {
+                    write_response(&mut stream, "200 OK", "text/event-stream", &body);
                 } else {
                     write_response(&mut stream, "200 OK", "application/json", &body);
                 }
@@ -1323,17 +1324,42 @@ mod tests {
             connection.endpoint(),
             format!("http://127.0.0.1:{}/v1", address.port())
         );
-        assert_eq!(
-            connection.stream_url(),
-            format!("ws://127.0.0.1:{}/v1/llm/stream", address.port())
-        );
         assert_eq!(connection.model(), AGENT_PROFILE);
         assert_eq!(connection.api_key(), Some("short-lived-provider-token"));
+        let input = crate::StartTurnInput {
+            run_id: "claim-fixture".into(),
+            conversation_id: "claim-fixture".into(),
+            content: "test".into(),
+            workspace_path: None,
+            retry_input_message_id: None,
+            source_id: None,
+            input_origin: "text".into(),
+            presentation_mode: "visual".into(),
+        };
+        let authorization = format!("Bearer {}", connection.api_key().unwrap());
+        let result = crate::providers::chat_completions::run(
+            connection.endpoint(),
+            Some(&authorization),
+            connection.model(),
+            &[],
+            5000,
+            crate::providers::stream::ModelStreamContext {
+                reasoning_effort: "low",
+                max_output_tokens: 64,
+                input: &input,
+                on_event: &LiveCanaryEvents,
+                cancellation: Arc::default(),
+                output_persistence: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, "HTTP claim works");
         connection.release().await.expect("connection releases");
         server.join().expect("server joins");
 
         let requests = captured_rx.try_iter().collect::<Vec<_>>();
-        assert_eq!(requests.len(), 5);
+        assert_eq!(requests.len(), 6);
         assert!(requests[0].starts_with("GET /v1/agent-profiles HTTP/1.1"));
         assert!(requests[1].starts_with("POST /v1/agent-connections HTTP/1.1"));
         assert!(requests[1].contains("\"agentProfile\":\"deep-reasoning-35b\""));
@@ -1344,8 +1370,8 @@ mod tests {
             .contains("idempotency-key:"));
         assert!(requests[3]
             .starts_with("GET /v1/agent-connections/aconn_test/providers/llm/health HTTP/1.1"));
-        assert!(requests[4].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
-        for index in [0, 1, 2, 4] {
+        assert!(requests[5].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
+        for index in [0, 1, 2, 5] {
             assert!(requests[index]
                 .to_ascii_lowercase()
                 .contains("authorization: bearer test-control-token"));
@@ -1354,6 +1380,11 @@ mod tests {
             .to_ascii_lowercase()
             .contains("authorization: bearer short-lived-provider-token"));
 
+        assert!(requests[4].starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert!(requests[4]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer short-lived-provider-token"));
+        assert!(!requests[4].contains("test-control-token"));
         if let Some(token) = previous_token {
             env::set_var(API_TOKEN_ENV, token);
         } else {
@@ -1718,7 +1749,6 @@ mod tests {
             .api_key()
             .map(|credential| format!("Bearer {credential}"));
         let prompt = "Reply with exactly: SAAA_DYNAMIC_OK";
-        let messages = [json!({ "role": "user", "content": prompt })];
         let input = crate::StartTurnInput {
             run_id: format!("run_dynamic_canary_{}", Uuid::new_v4().simple()),
             conversation_id: "conversation_dynamic_canary".to_string(),
@@ -1730,32 +1760,32 @@ mod tests {
             presentation_mode: "visual".to_string(),
         };
         let events = LiveCanaryEvents;
-        let result = crate::providers::llm_websocket::client::run(
-            crate::providers::llm_websocket::client::WebSocketRunContext {
-                stream_url: connection.stream_url(),
-                authorization: authorization.as_deref(),
-                allocation_id: Some(connection.allocation_id()),
-                model: connection.model(),
-                messages: &messages,
-                tools: &[],
+        let history = [crate::ipc_contract::ConversationMessage {
+            parts: None,
+            id: "probe".into(),
+            conversation_id: input.conversation_id.clone(),
+            role: "user".into(),
+            content: prompt.into(),
+            created_at: String::new(),
+        }];
+        let result = crate::providers::chat_completions::run(
+            connection.endpoint(),
+            authorization.as_deref(),
+            connection.model(),
+            &history,
+            120_000,
+            crate::providers::stream::ModelStreamContext {
                 reasoning_effort: "low",
                 max_output_tokens: 512,
-                tool_timeout: Duration::from_secs(60),
-                timeout: Duration::from_secs(120),
                 input: &input,
                 on_event: &events,
-                cancellation: Arc::new(RunCancellation::default()),
+                cancellation: Arc::default(),
                 output_persistence: None,
             },
         )
         .await;
         let release = connection.release().await;
-        let completed = result.expect("claimed WebSocket provider request completes");
-        let crate::providers::llm_websocket::client::WebSocketRunResult::Completed(completion) =
-            completed
-        else {
-            panic!("claimed WebSocket provider must complete normally: {completed:?}");
-        };
+        let completion = result.expect("claimed HTTP provider request completes");
         assert!(!completion.trim().is_empty());
         release.expect("live connection releases");
     }

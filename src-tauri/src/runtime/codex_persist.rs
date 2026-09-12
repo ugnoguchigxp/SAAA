@@ -67,6 +67,7 @@ pub(crate) fn persist_codex_success(
             workspace,
         )?;
         let message = ConversationMessage {
+            parts: None,
             id: new_id("message"),
             conversation_id: input.conversation_id.clone(),
             role: "assistant".to_string(),

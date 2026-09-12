@@ -1,0 +1,30 @@
+{
+  "scope": "Generative inline UI and its conversation/persistence integrations",
+  "frontendTests": 251,
+  "rustTests": 489,
+  "rustIgnored": 11,
+  "browser": {
+    "fixtureMessagesRetained": 150,
+    "prependRows": 30,
+    "beforeY": -154,
+    "afterFirstPrependY": -153.9765625,
+    "afterSecondPrependY": -153.953125,
+    "originalBugAfterY": 100.1328125,
+    "widthSequence": [
+      1000,
+      360,
+      1000
+    ],
+    "afterNarrowY": -153.9453125,
+    "afterWideY": -153.9765625,
+    "filterRestored": "Qwen",
+    "consoleErrorsAndWarnings": []
+  },
+  "contextStill": {
+    "context_compile": 1,
+    "compile_eval": 1
+  },
+  "build": "passed",
+  "desktopSmoke": "passed: packaged frontend ready",
+  "specCheck": "Passed final whole-document check: 0 errors, 0 warnings. Unrelated formatting was resolved separately; only the review document was formatted here."
+}

@@ -180,6 +180,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
         ],
     )?;
     crate::voice_behavior::migrate(&transaction)?;
+    crate::generative_ui::store::migrate(&transaction)?;
     let memory_now = now_iso();
     memory::control_plane::ensure_continuity_state(
         &transaction,

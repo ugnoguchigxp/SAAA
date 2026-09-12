@@ -58,6 +58,27 @@ describe("reviewed settings boundaries", () => {
     expect(() => modelProvidersSettingsSchema.parse(settings)).toThrow("surrounding whitespace");
   });
 
+  test("accepts an Agent Session LLM with explicit discovery and session paths", () => {
+    const settings = structuredClone(defaultSettingsDraft.providers);
+    settings.providers.push({
+      kind: "agent-session",
+      id: "muse-agent",
+      enabled: true,
+      label: "Muse Agent",
+      location: "local",
+      baseUrl: "http://127.0.0.1:44449",
+      model: "muse/muse-spark-1.3-contributor",
+      modelsPath: "/v1/agents/models?runtime=muse",
+      sessionsPath: "/v1/agents/sessions",
+      authentication: "none",
+    });
+    expect(() => modelProvidersSettingsSchema.parse(settings)).not.toThrow();
+    const provider = settings.providers.at(-1);
+    if (provider?.kind !== "agent-session") throw new Error("Agent Session fixture missing");
+    provider.modelsPath = "//other.example/v1/agents/models?runtime=muse";
+    expect(() => modelProvidersSettingsSchema.parse(settings)).toThrow();
+  });
+
   test("requires ASR providers to auto-detect before applying the language allowlist", () => {
     const settings = structuredClone(defaultSettingsDraft.providers);
     const asr = {
@@ -75,5 +96,22 @@ describe("reviewed settings boundaries", () => {
     expect(() => modelProvidersSettingsSchema.parse(settings)).not.toThrow();
     asr.language = "ja";
     expect(() => modelProvidersSettingsSchema.parse(settings)).toThrow();
+  });
+});
+
+describe("HTTP audio provider settings", () => {
+  test("reads existing WAV settings and accepts local PCM without WS fields", () => {
+    for (const [kind, extra] of [["cloud-asr", { language: "auto" }], ["cloud-tts", { voice: "local-voice" }]] as const) {
+      const settings = structuredClone(defaultSettingsDraft.providers);
+      const provider = { kind, id: `http-${kind}`, enabled: true, label: "Local HTTP", location: "local", endpoint: "http://127.0.0.1:9000/proxy/v1", model: "local-model", authentication: "none", ...extra };
+      const parsed = modelProvidersSettingsSchema.parse({ ...settings, providers: [provider] });
+      if (parsed.providers[0]?.kind === "cloud-tts") expect(parsed.providers[0].responseFormat).toBe("wav");
+      if (kind === "cloud-tts") {
+        expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, responseFormat: "pcm" }] })).not.toThrow();
+        expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, responseFormat: "mp3" }] })).toThrow();
+      }
+      expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, endpoint: "http://public.example/v1" }] })).toThrow();
+      expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, endpoint: "http://token@localhost/v1" }] })).toThrow();
+    }
   });
 });

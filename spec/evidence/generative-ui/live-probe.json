@@ -1,0 +1,7 @@
+{
+  "elapsedSeconds": 50.016849756240845,
+  "model": "ornith-1.0-9b-4bit",
+  "response": {
+    "error": "timed out"
+  }
+}
