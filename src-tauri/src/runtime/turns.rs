@@ -6,6 +6,8 @@ use std::sync::Arc;
 pub(crate) mod command;
 #[path = "conversation_context.rs"]
 mod conversation_context;
+#[path = "conversation_controller/mod.rs"]
+mod conversation_controller;
 
 use super::event_hub::RuntimeEventSender;
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent, RuntimeFailureCode};
@@ -27,6 +29,7 @@ use crate::{
     TurnExecutionFailure,
 };
 use conversation_context::compose_provider_history;
+use conversation_controller::execute as execute_reasoning;
 
 pub(crate) async fn execute_turn(
     state: &AppState,
@@ -472,6 +475,9 @@ pub(crate) async fn execute_conversation_turn(
         &input.presentation_mode,
         context_window.messages,
     )?;
+    if let Some(client) = crate::providers::reasoning_mcp::for_turn(input, &cancellation).await? {
+        return execute_reasoning(state, input, &history, on_event, cancellation, &client).await;
+    }
     let mut route = route;
     if route.source == "harness" {
         route.timeout_ms =

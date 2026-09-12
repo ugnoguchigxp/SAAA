@@ -83,13 +83,25 @@ impl StreamingSpeechRuntime {
         run_id: &str,
         enabled: bool,
         on_event: tauri::ipc::Channel<RuntimeEvent>,
+        voice_conversation: Option<&str>,
     ) -> Result<(), String> {
         if state.meeting.blocks_tts() {
             return Err(
                 "MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string(),
             );
         }
-        let (route, _provider_id, timeout_ms) = selected_tts_route(state)?;
+        let (route, _provider_id, timeout_ms) = if let Some(conversation) =
+            voice_conversation.filter(|_| crate::larm_voice::enabled())
+        {
+            let ready = crate::larm_voice::current(conversation).await?;
+            (
+                TtsRoute::Larm(ready.session.clone()),
+                "larm-session-tts".into(),
+                15_000,
+            )
+        } else {
+            selected_tts_route(state)?
+        };
         let mut sessions = self
             .sessions
             .lock()
@@ -273,6 +285,11 @@ impl StreamingSpeechRuntime {
     }
 
     pub(crate) fn cancel(&self, run_id: &str) {
+        self.cancel_one(&format!("{run_id}_ack"));
+        self.cancel_one(run_id);
+    }
+
+    fn cancel_one(&self, run_id: &str) {
         let session = self
             .sessions
             .lock()
@@ -360,8 +377,8 @@ async fn render_session_inner(
     context: &mut RenderSessionContext,
 ) -> Result<(), String> {
     context.route = resolve_render_route(&context.route, &context.cancellation).await?;
-    if let TtsRoute::Cloud(provider) = &context.route {
-        return render_http_session(receiver, context, provider).await;
+    if matches!(&context.route, TtsRoute::Cloud(_) | TtsRoute::Larm(_)) {
+        return render_http_session(receiver, context).await;
     }
     let mut queued = VecDeque::<(u64, String, Instant)>::new();
     let mut rendering = FuturesUnordered::<RenderFuture>::new();
@@ -517,7 +534,6 @@ async fn render_session_inner(
 async fn render_http_session(
     receiver: &mut mpsc::Receiver<SpeechWork>,
     context: &RenderSessionContext,
-    provider: &crate::CloudTtsProviderSettings,
 ) -> Result<(), String> {
     let mut first_phrase = true;
     loop {
@@ -533,27 +549,42 @@ async fn render_http_session(
         let run_id = context.run_id.clone();
         let cancellation = context.cancellation.clone();
         let is_first = first_phrase;
-        crate::voice::http_audio::play(
-            provider,
-            &text,
-            context.timeout_ms,
-            context.cancellation.clone(),
-            move || {
-                if cancellation.is_cancelled() {
-                    return;
-                }
-                crate::providers::http_metrics::record(
-                    "ttsBoundaryToFirstMixerSample",
-                    boundary_at.elapsed(),
-                );
-                if is_first {
-                    situation
-                        .set_audio_state(crate::situation::contracts::AudioState::SaaaSpeaking);
-                    let _ = on_event.send(RuntimeEvent::SpeechStarted { run_id });
-                }
-            },
-        )
-        .await?;
+        let on_started = move || {
+            if cancellation.is_cancelled() {
+                return;
+            }
+            crate::providers::http_metrics::record(
+                "ttsBoundaryToFirstMixerSample",
+                boundary_at.elapsed(),
+            );
+            if is_first {
+                situation.set_audio_state(crate::situation::contracts::AudioState::SaaaSpeaking);
+                let _ = on_event.send(RuntimeEvent::SpeechStarted { run_id });
+            }
+        };
+        match &context.route {
+            TtsRoute::Cloud(provider) => {
+                crate::voice::http_audio::play(
+                    provider,
+                    &text,
+                    context.timeout_ms,
+                    context.cancellation.clone(),
+                    on_started,
+                )
+                .await?
+            }
+            TtsRoute::Larm(session) => {
+                crate::voice::http_audio::play_larm(
+                    session,
+                    &text,
+                    context.timeout_ms,
+                    context.cancellation.clone(),
+                    on_started,
+                )
+                .await?
+            }
+            _ => return Err("Invalid HTTP speech route".into()),
+        }
         first_phrase = false;
     }
 }
@@ -619,7 +650,7 @@ fn render_future(
                 )
                 .await?
             }
-            TtsRoute::Harness(_) => {
+            TtsRoute::Harness(_) | TtsRoute::Larm(_) => {
                 return Err("Unresolved Harness TTS render route".to_string());
             }
         };

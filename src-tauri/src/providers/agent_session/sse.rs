@@ -17,6 +17,10 @@ use crate::providers::{
     stream::{CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind},
 };
 
+mod ui_bridge;
+#[cfg(test)]
+mod workflow_tests;
+
 const MAX_SSE_EVENT_BYTES: usize = 1_048_576;
 const MAX_RECONNECTS: usize = 3;
 
@@ -52,6 +56,7 @@ struct StreamState {
     content_chars: usize,
     output_started: bool,
     last_cursor: Option<String>,
+    projection: ui_bridge::Projection,
 }
 
 enum ReadResult {
@@ -98,13 +103,129 @@ pub(super) async fn run_agent_session_sse(
     if context.cancellation.is_cancelled() {
         return super::cancelled(false);
     }
-    let turn = match start_turn(client, provider, session, history, api_key).await {
-        Ok(turn) => turn,
-        Err(ProviderFailureKind::Cancelled) => return super::cancelled(false),
+    let deadline = TokioInstant::now() + Duration::from_millis(timeout_ms);
+    let mut input = match render_turn_input(history) {
+        Ok(input) => input,
         Err(kind) => return failed(kind, false),
     };
-    let deadline = TokioInstant::now() + Duration::from_millis(timeout_ms);
-    let mut state = StreamState::default();
+    let enabled = context.output_persistence.is_some_and(|p| {
+        p.state
+            .sqlite_readers
+            .read(crate::generative_ui::store::enabled)
+            .unwrap_or(false)
+    });
+    let marker = format!("<saaa-ui-{}>", uuid::Uuid::new_v4().simple());
+    if enabled {
+        input = ui_bridge::initial_input(&input, &marker);
+    }
+    if input.len() > 1_000_000 {
+        return failed(ProviderFailureKind::RequestTooLarge, false);
+    }
+    let mut cursor = None;
+    let mut output_started = false;
+    for round in 0..=12 {
+        let turn = tokio::select! {
+            biased;
+            _ = context.cancellation.cancelled() => return super::cancelled(output_started),
+            _ = tokio::time::sleep_until(deadline) => return failed(ProviderFailureKind::Timeout, output_started),
+            result = start_turn(client, provider, session, &input, api_key) => match result {
+                Ok(turn) => turn,
+                Err(kind) => return failed(kind, output_started),
+            }
+        };
+        let mut state = StreamState {
+            last_cursor: cursor.take(),
+            output_started,
+            projection: ui_bridge::Projection::new(enabled.then(|| marker.clone())),
+            ..Default::default()
+        };
+        let outcome = read_turn(
+            client,
+            provider,
+            session,
+            &events_url,
+            &turn,
+            deadline,
+            api_key,
+            &context,
+            &mut state,
+        )
+        .await;
+        cursor = state.last_cursor;
+        output_started = state.output_started;
+        let ProviderAttemptOutcome::Completed { content, cleanup } = outcome else {
+            return outcome;
+        };
+        if !state.projection.is_control() {
+            return ProviderAttemptOutcome::Completed { content, cleanup };
+        }
+        if round == 12 {
+            return failed(ProviderFailureKind::Protocol, output_started);
+        }
+        if context.cancellation.is_cancelled() {
+            return super::cancelled(output_started);
+        }
+        if TokioInstant::now() >= deadline {
+            return failed(ProviderFailureKind::Timeout, output_started);
+        }
+        let result = match ui_bridge::decode(&content, &marker) {
+            Ok(mut call) => {
+                call.id = format!("sse-ui-{marker}-{round}");
+                let result = crate::generative_ui::tools::execute(
+                    context.output_persistence.map(|p| p.state),
+                    context.input,
+                    &call,
+                );
+                let value = serde_json::from_str::<Value>(&result)
+                    .unwrap_or(json!({"error":"Invalid result"}));
+                let presented = value["messageId"].is_string();
+                if presented || (call.name == "save_ui" && value.get("error").is_none()) {
+                    // Persisted mutations must prevent fallback from repeating side effects.
+                    if !output_started
+                        && context
+                            .output_persistence
+                            .is_some_and(|p| p.mark_started().is_err())
+                    {
+                        return failed(ProviderFailureKind::Internal, true);
+                    }
+                    output_started = true;
+                    if presented
+                        && context
+                            .on_event
+                            .send(RuntimeEvent::Activity {
+                                run_id: context.input.run_id.clone(),
+                                kind: "ui-presented".into(),
+                                summary: "An inline view is available.".into(),
+                            })
+                            .is_err()
+                    {
+                        return failed(ProviderFailureKind::ClientDisconnected, true);
+                    }
+                }
+                json!({"name":call.name,"result":value})
+            }
+            Err(()) => return failed(ProviderFailureKind::Protocol, output_started),
+        };
+        input = ui_bridge::result_input(result, &marker, 11 - round);
+        if input.len() > 1_000_000 {
+            return failed(ProviderFailureKind::RequestTooLarge, output_started);
+        }
+    }
+    failed(ProviderFailureKind::Protocol, output_started)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn read_turn(
+    client: &Client,
+    provider: &AgentSessionProviderSettings,
+    session: &SessionResponse,
+    events_url: &Url,
+    turn: &TurnResponse,
+    deadline: TokioInstant,
+    api_key: Option<&str>,
+    context: &ModelStreamContext<'_>,
+    state: &mut StreamState,
+) -> ProviderAttemptOutcome {
     let mut reconnects = 0;
     let result = loop {
         let request = authorized(
@@ -128,7 +249,7 @@ pub(super) async fn run_agent_session_sse(
         if !is_event_stream(&response) {
             break ReadResult::Failed(ProviderFailureKind::Protocol);
         }
-        match read_connection(response, session, &turn.id, deadline, &context, &mut state).await {
+        match read_connection(response, session, &turn.id, deadline, context, state).await {
             ReadResult::Reconnect if reconnects < MAX_RECONNECTS && state.last_cursor.is_some() => {
                 reconnects += 1;
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -155,10 +276,9 @@ async fn start_turn(
     client: &Client,
     provider: &AgentSessionProviderSettings,
     session: &SessionResponse,
-    history: &[ConversationMessage],
+    input: &str,
     api_key: Option<&str>,
 ) -> Result<TurnResponse, ProviderFailureKind> {
-    let input = render_turn_input(history)?;
     let request = authorized(
         client.post(session_operation_url(provider, &session.id, "turns")?),
         api_key,
@@ -286,6 +406,9 @@ fn accept_event(
         if cursor.is_empty() || cursor.len() > 4_096 || cursor.chars().any(char::is_control) {
             return Some(ReadResult::Failed(ProviderFailureKind::Protocol));
         }
+        if state.last_cursor.as_deref() == Some(cursor.as_str()) {
+            return None;
+        }
         state.last_cursor = Some(cursor);
     }
     let event_turn_id = event.turn_id.as_deref()?;
@@ -299,7 +422,7 @@ fn accept_event(
         }
         "turn.completed" if state.content.is_empty() => Some(ReadResult::Terminal(failed(
             ProviderFailureKind::Protocol,
-            false,
+            state.output_started,
         ))),
         "turn.completed" => Some(ReadResult::Terminal(ProviderAttemptOutcome::Completed {
             content: std::mem::take(&mut state.content),
@@ -338,6 +461,15 @@ fn append_text(
     {
         return Some(ReadResult::Failed(ProviderFailureKind::RequestTooLarge));
     }
+    state.content.push_str(text);
+    state.content_chars += chars;
+    let visible = match state.projection.push(text) {
+        Ok(text) => text,
+        Err(()) => return Some(ReadResult::Failed(ProviderFailureKind::RequestTooLarge)),
+    };
+    if visible.is_empty() {
+        return None;
+    }
     if !state.output_started {
         if context
             .output_persistence
@@ -347,14 +479,12 @@ fn append_text(
         }
         state.output_started = true;
     }
-    state.content.push_str(text);
-    state.content_chars += chars;
     if context
         .on_event
         .send_received(
             RuntimeEvent::Delta {
                 run_id: context.input.run_id.clone(),
-                text: text.to_string(),
+                text: visible,
             },
             Instant::now(),
         )
@@ -511,6 +641,16 @@ mod tests {
             &mut state,
         )
         .is_none());
+        // Some SSE servers replay the last event itself when reconnecting.
+        assert!(accept_event(
+            event("message.delta", "c1", json!({ "text": "ready" })),
+            &session,
+            "agt_1",
+            &context,
+            &mut state,
+        )
+        .is_none());
+        assert_eq!(state.content, "ready");
         let terminal = accept_event(
             event("turn.completed", "c2", json!({})),
             &session,

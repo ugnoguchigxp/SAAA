@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "reasoning-answer-v1",
+  "conversationId": "conversation_fixture",
+  "turnId": "run_fixture",
+  "requestId": "request_fixture",
+  "contextRevision": 1,
+  "request": "この条件で比較してください",
+  "context": { "messages": [], "evidence": [], "truncated": false },
+  "constraints": { "language": "ja", "localOnly": true, "maxSpeechChars": 240 },
+  "budget": { "timeoutMs": 15000 }
+}

@@ -1,0 +1,362 @@
+<article lang="ja">
+  <h1 id="reasoning-mvp-implementation">会話ランタイム + MCP推論 初期実装</h1>
+  <p>
+    更新: 2026-09-12。状態:
+    opt-inの初期実装。LARMセッション経路を追加済み。実LARM接続は名前解決失敗で未検証、実音声・2B比較評価は未実施。<a
+      href="./conversation-reasoning-mvp-implementation-plan.html"
+      >MVP実装計画</a
+    >のうち、契約・推論経路・相槌・停止・fixture検証を実装した段階であり、MVP-Aの実機完了条件を満たしたとの判定ではない。
+  </p>
+  <h2 id="implemented">1. 実装したこと</h2>
+  <ul>
+    <li>
+      <code>crates/reasoning-contract/</code>: SAAAとServiceが共有するv1入出力型、JSON
+      Schema、文字数・byte上限、参照根拠と相関IDの検証。
+    </li>
+    <li>
+      <code>services/reasoning-mcp/</code>: 独立したRustサービス。Streamable
+      HTTPのJSON応答を使い、initialize、tools/list、reasoning.answer、通知によるキャンセルを提供。LARMモードではアプリ内loopbackで起動し、共有Sessionのclaimからモデル名・接続先・tokenを取得する。
+    </li>
+    <li>
+      <code>src-tauri/src/providers/reasoning_mcp/</code>:
+      モデル名を持たない専用クライアント。初回handshakeの再利用、JSON/SSE応答受信、総量上限、15秒以内の締切、キャンセル通知、応答検証。
+    </li>
+    <li>
+      <code>src-tauri/src/runtime/conversation_controller/</code>:
+      既存の確定音声入力から会話文脈を投影し、検証したspeechTextだけを既存の保存処理とTTSへ渡す。キャンセルと回答採用を直列化する。
+    </li>
+    <li>
+      <code>src-tauri/src/runtime/reasoning_ack.rs</code>:
+      250ms後も未完了なら一度だけ定型相槌。独立した一時speech
+      sessionで既存TTSを使い、履歴には保存しない。相槌終了後に本回答を再生する。
+    </li>
+    <li>
+      追加入力:
+      有効な推論runだけを中断し、既存の最大2件の待ち行列で次の入力を保持。通常の会話経路の待ち方は変えない。
+    </li>
+    <li>
+      診断:
+      <code>reasoningRequestToValidatedAnswer</code>を既存の本文非保存メトリクスへ追加。実音響のfirst
+      audioとは区別する。
+    </li>
+  </ul>
+  <h2 id="larm-session-contract">LARM接続契約（2026-09-12受領）</h2>
+  <p>
+    今後の接続実装は以下を正とする。接続先は<code>http://gnosis.local:9810</code>。
+    ユーザー提供のLARMリリース識別子は<code>be5e86272165f4e13e69f4da204b1425486c6070</code>。 4
+    Provider同時readyと解放後のtoken失効はLARM側の報告であり、SAAA側の実接続検証は未実施。
+  </p>
+  <ol>
+    <li>
+      SAAA音声会話セッションの開始時に一つのAgent
+      Connectionを作成し、ASR・TTS・Decision・推論で共有する。
+      <code>POST /v1/agent-connections</code
+      >に下記JSONと一意な<code>Idempotency-Key: saaa-session-&lt;ID&gt;</code>を送る。
+      現行LANのライフサイクルAPIには長期Bearerは不要。201または202を成功として扱う。
+    </li>
+    <li>
+      返却idで<code>GET /v1/agent-connections/{id}</code>を1秒間隔、最大300秒pollする。
+      pending・probingは待機、readyでclaimへ進み、failed・released・expiredは終了する。他Providerを強制preemptしない。
+    </li>
+    <li>
+      <code>POST /v1/agent-connections/{id}/claim</code
+      >へ<code>{"format":"openai-provider-v1"}</code>を送る。 providersはnameで対応付ける。全4
+      Providerの設定とhealth検証が揃うまでセッションを利用可能にしない。
+    </li>
+    <li>
+      各呼び出しは<code>configuration.fields.baseURL</code>、<code>configuration.fields.model</code>、
+      <code>credential.token</code
+      >を使う。tokenはProvider専用Bearerであり、他Providerへ流用しない。
+      バックエンドportとモデル名を呼び出しコードに固定しない。
+    </li>
+    <li>
+      <code>health.url</code
+      >を当該Providerのtokenで確認する。ready・acceptingRequests・probe.validatedがすべてtrue、
+      probe.protocolがProviderのprotocolと一致することを要求し、結果の有効期間はhealth.maxAgeMsに従う。
+    </li>
+    <li>
+      expiresAt前に<code>POST /v1/agent-connections/{id}/renew</code>へ<code>{"ttlSeconds":600}</code>と
+      一意な<code>Idempotency-Key: saaa-renew-&lt;ID&gt;</code>を送る。
+      renewで旧tokenが即失効するため、新規Provider要求の受付を止め、実行中要求の終了またはキャンセルを待つ。
+      同じConnectionを再claimし、health検証後に4 Providerの設定を原子的に差し替えて受付を再開する。
+      更新失敗時に旧tokenへ戻さず、セッションを失敗として解放する。
+    </li>
+    <li>
+      正常終了・途中失敗・起動タイムアウト・キャンセルのいずれでも、取得済みidに対してfinally相当で
+      <code>DELETE /v1/agent-connections/{id}</code>を実行する。正常応答は204。
+      解放失敗を記録し、解放確認なしに成功扱いにしない。
+    </li>
+  </ol>
+  <pre><code class="language-json">{
+  "agentProfile": "saaa-qwen38-kv-mem",
+  "explicitAgentProfile": true,
+  "audience": "saaa-desktop",
+  "client": "saaa-coding-agent",
+  "ttlSeconds": 600,
+  "allowFallback": false,
+  "deploymentPolicy": "existing-only"
+}</code></pre>
+  <table>
+    <caption>
+      接続名と呼び出し契約（モデル欄は参考値。実行時はclaim値）
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">name</th>
+        <th scope="col">protocol</th>
+        <th scope="col">モデル</th>
+        <th scope="col">baseURLからのパス</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>tts</td>
+        <td>openai.audio-speech.v1</td>
+        <td>voicevox-core</td>
+        <td>/audio/speech</td>
+      </tr>
+      <tr>
+        <td>asr</td>
+        <td>openai.audio-transcriptions.v1</td>
+        <td>qwen3-asr-1.7b</td>
+        <td>/audio/transcriptions</td>
+      </tr>
+      <tr>
+        <td>decision-default</td>
+        <td>openai.chat-completions.v1</td>
+        <td>decision-default</td>
+        <td>/chat/completions</td>
+      </tr>
+      <tr>
+        <td>llm</td>
+        <td>openai.chat-completions.v1</td>
+        <td>qwen3.8-kv-mem</td>
+        <td>/chat/completions</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    ASRはfile・model・response_format=jsonのmultipart。TTSはmodel・input・voice=Kasukabe_Tsumugi・response_format=wavのJSON。
+    LLMとDecisionはmessagesを持つChat Completionsで、stream=trueでは互換SSEを使う。
+    本プリセットのASRを既存のWebSocket音声入力protocolに対応していると仮定しない。
+  </p>
+  <p>
+    KV:memの通常Chat Completionsではsnapshotを使用しない。作成済みContext Viewを利用する場合のみ、
+    <code>x-larm-allocation-id</code
+    >にclaim.allocationId、<code>x-larm-context-view-id</code>に当該View IDを渡す。
+    Viewがない場合は通常推論とする。現行MCP adapterが要求するJSON
+    Schema出力は今回の接続仕様だけでは保証されず、実接続で別途検証する。
+  </p>
+  <h2 id="larm-mode-setup">LARMモードの起動と所有期間</h2>
+  <pre><code class="language-bash">SAAA_CONVERSATION_REASONING_MODE=larm bun run start</code></pre>
+  <p>
+    接続先の既定値はgnosis.local:9810。必要なら<code>SAAA_LARM_CONTROL_URL</code>でローカルの制御APIを指定する。
+    接続URL・モデル・Provider
+    tokenを個別に環境変数へ設定する必要はない。モデルと認証はclaim値のみを使う。
+    新モードはopt-inで、既定のoffと既存のテキスト会話経路は維持する。
+  </p>
+  <ul>
+    <li>
+      <code>crates/larm-session/</code>: 接続作成・poll・4 Providerの検証・health
+      cache・renew・release。要求中のread guardと更新時のwrite lockでtokenの世代混在を防ぐ。
+    </li>
+    <li>
+      <code>src-tauri/src/providers/larm_voice/</code>:
+      音声会話のownerを管理し、同じSessionをASR・TTS・Decision・アプリ内MCPに渡す。MCPはランダムなloopback
+      portと専用Bearerを使い、Provider tokenはRust側のメモリ内に保持する。
+    </li>
+    <li>
+      音声ONの最初のASR開始前に4
+      Providerを準備する。ASRの一時停止・相槌・発話ごとの再開では接続を作り直さない。
+    </li>
+    <li>
+      音声OFFでは確定済み音声の配送とTTS完了を待って解放する。会話切替・画面破棄・アプリ正常終了・起動失敗でも解放処理を実行する。解放失敗は成功扱いにせず通知またはログに残す。
+    </li>
+    <li>
+      有効期限の90秒前からrenewを開始し、実行中のProvider要求が終わるまで待つ。renew待ちの呼び出し元がキャンセルされても再claimと更新処理は完了させる。
+    </li>
+    <li>
+      Managed
+      ContextのView作成は今回の範囲に含めない。作成済みViewを渡す経路がない現在は通常推論を使い、snapshot使用を表示・計測上も主張しない。
+    </li>
+  </ul>
+  <p>
+    検証: 接続管理fixture 11件、LARM
+    claimからMCP回答までの結合テスト、音声ownerの競合・再試行7件、終了待機3件を追加。
+    2026-09-12の実接続試行はgnosis.localの名前解決で失敗し、Connection作成に到達していない。
+    再試行は<code>cargo test --manifest-path crates/larm-session/Cargo.toml --test live -- --ignored --nocapture</code>。 このテストは4
+    Providerへの要求、TTS音声のASRへの再入力、release後401を確認し、要求失敗時もreleaseを実行する。
+    スピーカー・マイクの音響遅延を測るテストではない。
+  </p>
+  <h2 id="service-setup">2. 推論サービスの接続設定</h2>
+  <p>
+    以下は従来のdeterministicモード向け、固定接続によるfixture検証用の設定。LARMモードではこの別プロセス起動と固定Provider設定は不要。
+  </p>
+  <table>
+    <caption>
+      表1: サービス側の環境変数
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">変数</th>
+        <th scope="col">設定する内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SAAA_REASONING_PROVIDER_URL</code></td>
+        <td>
+          末尾まで含むchat completions URL。例:
+          <code>http://127.0.0.1:8080/v1/chat/completions</code>。localhost、private IP、loopback IPのみ。
+        </td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_PROVIDER_MODEL</code></td>
+        <td>LARMから提供されたモデルID。具体的なモデル名・サイズに依存する分岐はない。</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_PROVIDER_TOKEN</code></td>
+        <td>上流で必要な場合のBearer認証情報。</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_MCP_TOKEN</code></td>
+        <td>SAAAとの間で共用する16文字以上のBearer。実運用では十分にランダムな値を使う。</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_BIND</code></td>
+        <td>
+          省略時は<code>127.0.0.1:8791</code>。初期版ではloopbackへのbindだけを許可。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code class="language-bash">cargo run --manifest-path services/reasoning-mcp/Cargo.toml</code></pre>
+  <p>
+    上流には非streamingのchat completionsとJSON
+    Schema出力を要求する。モデル出力から相関IDを生成させず、サービスが元の要求へ結び付ける。Providerの終端がstop以外、tool
+    call、不正JSON、超過文字数、未知の根拠IDの場合は回答として返さない。上流固有のエラー本文はクライアントに転送しない。
+  </p>
+  <h2 id="desktop-setup">3. SAAA側の設定</h2>
+  <table>
+    <caption>
+      表2: SAAA起動時の環境変数
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">変数</th>
+        <th scope="col">値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SAAA_CONVERSATION_REASONING_MODE</code></td>
+        <td>
+          <code>off</code
+          >が既定。<code>larm</code>でAgent
+          Connection経路、<code>deterministic</code>で外部MCPの固定接続経路を有効化。<code>classifier</code>による分類の採用は未提供。
+        </td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_MCP_URL</code></td>
+        <td>ローカルサービスの場合は<code>http://127.0.0.1:8791/mcp</code>。</td>
+      </tr>
+      <tr>
+        <td><code>SAAA_REASONING_MCP_TOKEN</code></td>
+        <td>サービス側と同じ値。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    設定は起動時に固定する。有効化後の最初の要求で接続を検証し、warm
+    pathでは再利用する。失敗時はそのrunを失敗として表示し、自動で別Providerへ送らない。無効化は停止操作後にmodeをoffへ戻し、SAAAを再起動する。履歴やDBを削除する必要はない。
+  </p>
+  <p>
+    UIの経路名はReasoning
+    MCPとなり、既存Providerの失敗によるfallback扱いにはしない。テキスト会話、Coding、Meeting、既存のContextStill接続のprotocolVersionは変更していない。
+  </p>
+  <h2 id="larm-boundary">4. LARM側との境界と残作業</h2>
+  <ul>
+    <li>
+      LARMモードは共有Agent
+      Connection経由、従来のdeterministicモードは固定接続によるfixture経路として区別する。実機での4
+      Provider応答とJSON Schema対応は接続可能な環境で確認が必要。
+    </li>
+    <li>
+      2B
+      Decisionの呼び出しはshadow実行として実装済み。最大3秒・応答16KiB以内で型を検証し、分類別の時間を記録する。本回答が先に完了したらshadowを打ち切り、音声を待たせない。採用基準を満たすまで分類結果は回答・経路に反映しない。
+    </li>
+    <li>
+      上流HTTP要求のdropによる切断までは伝播する。GPU上の生成が実際に停止すること、残留計算が増えないことはLARM側の動作に依存し、実接続試験が必要。
+    </li>
+    <li>
+      Serviceの上流入力は24KiB、出力予算は1024 tokensの初期制限。モデル固有のtokenizer・context
+      window検証と予算調整は未接続。小さいcontextや推論tokenを多く消費するモデルで完了できるとは保証しない。
+    </li>
+    <li>
+      既存の会話投影からuser/assistant履歴を渡す。新しい検索、tool execution、長期記憶のsystem
+      messageへの昇格は行わない。文脈が足りなければ確認または不足情報を返す。
+    </li>
+    <li>
+      相槌は最大2秒待ちで停止し、終了通知が確認できない場合は本回答をテキストに限定する。2Bで本回答を書き換える処理はない。
+    </li>
+    <li>
+      実音声のVADからの自然な割り込みは未対応。TTS中に音声入力を休止する既存方針を維持する。停止操作と入力受付中の追加入力を対象とする。
+    </li>
+    <li>
+      文脈構築前を含む発話終了からの全区間測定、実音響のfirst
+      audio、A0/A1比較、30分soak、実接続のrelease判定は未完了。
+    </li>
+  </ul>
+  <h2 id="validation">5. 検証</h2>
+  <pre><code class="language-bash">bun scripts/conversation-reasoning-eval.ts fixture
+bun run check
+bun run build
+bun run desktop:smoke</code></pre>
+  <p>
+    fixture
+    runnerは合成入力とloopbackサーバーだけを使う。共有契約、実HTTPでのhandshake・回答・キャンセル・容量制限・タイムアウト・不正応答、SAAAの保存境界、相槌の予約、追加入力の上限を検証する。liveモードを指定すると未実装として失敗し、fixtureの結果を実モデルの性能として表示しない。
+  </p>
+  <p>
+    レビュー後の検証結果は次節に記録する。初期実装時にはfixture runner、全体check、build、
+    desktop:smokeでdesktop readyを確認済み。fixtureの成功は実接続・実音響の成功を意味しない。
+  </p>
+  <h2 id="review-20260912">2026-09-12 コードレビューと修正</h2>
+  <p>
+    修正後は<code>RUST_TEST_THREADS=1 bun run check</code>成功。Frontend
+    264件、Rust単体508件成功・12件ignore、IPC・品質契約・Clippy・ドキュメントテストも成功。
+    接続管理11件、共有契約3件、Service
+    6件と各crateのClippyを確認した。build、desktop:smoke、spec:checkも成功。
+    buildには既存の500kB超chunk警告が残る。ビルドとcheckの並行実行では成果物が競合したため、最終checkは単独で再実行している。
+    確認した範囲で未修正のコード指摘はない。gnosis.localの名前解決、実ProviderのJSON
+    Schema対応、実音響・長時間運転は引き続き実機での検証対象。
+  </p>
+  <ul>
+    <li>
+      Connection作成応答の待機を打ち切っても、返却されたidの解放を継続する。closeの呼び出し元が消えても解放を続け、解放失敗時のSession参照を保持して再試行できるようにした。
+    </li>
+    <li>
+      音声ON直後のOFF、会話切替、開始・終了IPCの到着順逆転を処理する。終了未確認のownerがある間は次のConnectionを作成しない。起動中のOFFは直ちに中止し、通常のUI終了待機には60秒の上限を設けた。
+    </li>
+    <li>
+      TTSには開始時のSession参照を直接渡す。Provider応答の受信後は再生完了を待たずにtokenの使用guardを解放する。音声出力の待ち行列が停止した場合も受信の締切でguardを解放する。ASRの締切には接続取得を含める。renew応答のConnection
+      idも検証する。
+    </li>
+    <li>
+      相槌の2秒制限に準備時間を含め、停止操作で準備待ちも中断する。回答検証までのメトリクスから相槌終了待ちを除いた。
+    </li>
+    <li>
+      会話履歴を共有の24KiBモデル入力予算に合わせて古い順に減らす。現在の質問を切り詰めず、質問だけで超過する場合は明示的に失敗させる。追加入力は同じ会話のrunだけを置換対象とする。
+    </li>
+    <li>
+      claim由来のASR・TTS専用tokenを送るHTTPクライアントではproxyを無効にする。通常のCloud設定への影響がないこともloopback試験で確認する。
+    </li>
+  </ul>
+  <h2 id="references">6. 採用した通信仕様</h2>
+  <p>
+    <a href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
+      >MCP 2025-06-18 transport</a
+    >、<a href="https://modelcontextprotocol.io/specification/2025-06-18/server/tools"
+      >構造化tool result</a
+    >に合わせた専用profile。汎用MCPサーバー実装や最新全機能への適合を主張するものではない。
+  </p>
+</article>

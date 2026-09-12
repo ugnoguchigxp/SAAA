@@ -39,13 +39,14 @@ export function updateEffectiveRoute(
   const provider = parsed.success
     ? parsed.data.providers.find((candidate) => candidate.id === providerId)
     : undefined;
-  const routeFallback = providerId !== findPrimaryRoute(snapshot.settings);
+  const reasoning = providerId === "reasoning-mcp";
+  const routeFallback = !reasoning && providerId !== findPrimaryRoute(snapshot.settings);
   return {
     ...snapshot,
     effectiveRoute: {
       providerId,
-      label: provider?.label || providerId,
-      location: provider?.location ?? null,
+      label: reasoning ? "Reasoning MCP" : provider?.label || providerId,
+      location: reasoning ? "local" : provider?.location ?? null,
       state,
       fallbackUsed: Boolean(options.fallbackUsed) || routeFallback,
       reasonCode: routeFallback ? "fallback-route" : options.reasonCode,

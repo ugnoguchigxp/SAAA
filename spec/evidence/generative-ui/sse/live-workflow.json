@@ -1,0 +1,7 @@
+{
+  "elapsedMs": 3811,
+  "model": "muse/muse-spark-1.3-contributor",
+  "outcome": "Failed { kind: Upstream, public_message: BoundedProviderMessage(\"Provider could not complete the upstream request.\"), output_started: false, cleanup: Released }",
+  "toolResults": [],
+  "transport": "AgentSession SSE"
+}

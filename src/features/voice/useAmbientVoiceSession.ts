@@ -1,3 +1,5 @@
+import { useLarmVoiceLifetime } from "./useLarmVoiceLifetime";
+import { cancelReasoningRun } from "../../lib/reasoningRunControl";
 import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect, useRef, useState } from "react";
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
@@ -77,6 +79,7 @@ export function useAmbientVoiceSession({
 }) {
   const [voiceSession, setVoiceSession] = useState(initialVoiceSession);
   const [listeningEnabled, setListeningEnabled] = useState(false);
+  const updateLarmLifetime = useLarmVoiceLifetime(listeningEnabled, selectedConversationId, () => voiceSessionProcessing(voiceSessionRef.current) || acceptedVoiceAsrSessionsRef.current.size > 0 || !!conversationSessionRef.current.runId || pendingVoicePromptsRef.current.length > 0, (message) => setError((current) => current ?? message));
   const [interimTranscript, setInterimTranscript] = useState("");
   const [asrProjection, setAsrProjection] = useState(initialVoiceAsrProjection);
   const voiceSessionRef = useRef(initialVoiceSession);
@@ -221,7 +224,7 @@ export function useAmbientVoiceSession({
 
   function updateListeningEnabled(enabled: boolean) {
     listeningEnabledRef.current = enabled;
-    setListeningEnabled(enabled);
+    updateLarmLifetime(enabled); setListeningEnabled(enabled);
   }
 
   async function toggleAmbientListening(requestedEnabled?: boolean) {
@@ -641,6 +644,7 @@ export function useAmbientVoiceSession({
       auditVoiceDeliveryDecision(queued, "queued", pendingVoicePromptsRef.current.length + 1);
       pendingVoicePromptsRef.current.push({ content: queued.text, inputOrigin: "voice", sourceId: queued.utteranceId, onSettled });
       setRuntimeActivity((current) => appendConversationActivity(current, { type: "voiceQueryQueued" }));
+      void cancelReasoningRun(conversationSessionRef.current.runId).catch(() => undefined);
       return;
     }
     auditVoiceDeliveryDecision(queued, "immediate");

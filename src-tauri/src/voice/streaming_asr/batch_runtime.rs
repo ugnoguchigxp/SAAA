@@ -26,6 +26,7 @@ pub(crate) trait BatchDecode: Send + Sync {
 
 #[derive(Clone)]
 pub(crate) enum BatchRoute {
+    Larm(Arc<saaa_larm_session::Session>),
     Cloud(CloudAsrProviderSettings),
     LegacyNetwork {
         client: Client,
@@ -80,6 +81,9 @@ impl BatchDecode for ProductionBatchDecoder {
         let timeout = Duration::from_millis(self.timeout_ms.min(15_000));
         let result = tokio::time::timeout(timeout, async {
             match &self.route {
+                BatchRoute::Larm(session) => {
+                    crate::larm_voice::audio::transcribe(session, &samples, cancellation).await
+                }
                 BatchRoute::Cloud(provider) => {
                     crate::voice::cloud_asr::transcribe(
                         provider,

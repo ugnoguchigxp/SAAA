@@ -26,11 +26,19 @@ pub(crate) async fn start_turn(
         return Err(error);
     }
     if streaming_speech {
-        if let Err(error) = state
-            .streaming_tts
-            .begin(&state, &input.run_id, speech_enabled, on_event.clone())
-            .await
-        {
+        let begin = state.streaming_tts.begin(
+            &state,
+            &input.run_id,
+            speech_enabled,
+            on_event.clone(),
+            (input.input_origin == "voice").then_some(input.conversation_id.as_str()),
+        );
+        let result = tokio::select! { biased;
+            _ = cancellation.cancelled() => Err("Speech cancelled".to_string()),
+            result = begin => result,
+        };
+        if let Err(error) = result {
+            state.streaming_tts.cancel(&input.run_id);
             streaming_speech = false;
             let _ = on_event.send(RuntimeEvent::SpeechFailed {
                 run_id: input.run_id.clone(),

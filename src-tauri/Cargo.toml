@@ -24,6 +24,10 @@ quality-eval-harness = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+saaa-larm-session = { path = "../crates/larm-session" }
+saaa-reasoning-mcp = { path = "../services/reasoning-mcp" }
+axum = "0.8"
+saaa-reasoning-contract = { path = "../crates/reasoning-contract" }
 async-trait = "0.1"
 base64 = "0.22"
 tauri = { version = "2", features = [] }

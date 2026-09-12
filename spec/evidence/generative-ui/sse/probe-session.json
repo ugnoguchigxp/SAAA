@@ -1,0 +1,15 @@
+{
+  "id": "ags_14dc3741a2fe49339dca32d09c909aff",
+  "runtime": "muse",
+  "model": "muse/muse-spark-1.3-contributor",
+  "status": "idle",
+  "approval_policy": "strict",
+  "workspace": {
+    "mode": "isolated"
+  },
+  "events_url": "/v1/agents/sessions/ags_14dc3741a2fe49339dca32d09c909aff/events",
+  "cursor": "eyJuYXRpdmUiOiIiLCJydW50aW1lIjoibXVzZSIsInNlc3Npb24iOiJhZ3NfMTRkYzM3NDFhMmZlNDkzMzlkY2EzMmQwOWM5MDlhZmYiLCJ2IjoxfQ.Aj-trB6ppIFaBQc6cN_BuV1mmraBBDAxN4_sxzn5s4Y",
+  "created_at": 1789200027308,
+  "updated_at": 1789200027308,
+  "released_at": null
+}

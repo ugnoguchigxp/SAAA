@@ -146,12 +146,13 @@ pub(crate) async fn request_audio_with_api_key(
     cancellation: Arc<RunCancellation>,
     claim_key: Option<&str>,
 ) -> Result<reqwest::Response, String> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_millis(timeout_ms))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "Could not initialize the Cloud TTS client".to_string())?;
+    let client = super::http_audio::client::build(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_millis(timeout_ms))
+            .redirect(reqwest::redirect::Policy::none()),
+        claim_key.is_some(),
+    )?;
     let configured_key = if claim_key.is_none() {
         credential(provider)?
     } else {

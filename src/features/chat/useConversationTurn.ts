@@ -1,3 +1,5 @@
+import { cancelReasoningRun } from "../../lib/reasoningRunControl";
+import { markReasoningRun, endReasoningRun, queueReasoningReplacement, markReasoningCancellation, clearReasoningCancellation, reasoningCancellationRequested } from "../../lib/reasoningRun";
 import { useMessageHistory } from "./useMessageHistory";
 import { type Dispatch, type FormEvent, type MutableRefObject, type SetStateAction, useEffect, useRef, useState } from "react";
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
@@ -133,6 +135,12 @@ export function useConversationTurn({
       sourceId = null,
       onSettled,
     } = options;
+    const replacement = !disposedRef.current && selectedConversationId
+      ? queueReasoningReplacement(conversationSessionRef.current.runId, prompt, pendingVoicePromptsRef.current, options, selectedConversationId) : null;
+    if (replacement) {
+      if (replacement === "queued") { setComposer(""); await cancelReasoningRun(conversationSessionRef.current.runId).catch((cause) => publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause))); }
+      return;
+    }
     if (
       disposedRef.current
       || !selectedConversationId
@@ -184,9 +192,9 @@ export function useConversationTurn({
       );
       delivered = true;
     } catch (cause) {
-      failedRunIdsRef.current.add(runId);
-      publishIssue(issueScope, toMessage(cause));
+      if (!reasoningCancellationRequested(runId)) { failedRunIdsRef.current.add(runId); publishIssue(issueScope, toMessage(cause)); }
     } finally {
+      endReasoningRun(runId);
       if (conversationSessionRef.current.runId === runId) {
         conversationSessionRef.current = transitionConversationSession(
           conversationSessionRef.current,
@@ -234,6 +242,7 @@ export function useConversationTurn({
     if (event.type === "messageCompleted" || event.type === "cancelled" || event.type === "failed") setWebSocketState("disconnected");
     switch (event.type) {
       case "started":
+        if (event.route === "conversation.reasoning") markReasoningRun(event.runId, conversationId);
         setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerStarted", providerId: event.providerId }));
         break;
@@ -295,12 +304,14 @@ export function useConversationTurn({
         }
         break;
       case "cancelled":
+        markReasoningCancellation(event.runId);
         recordRunWithoutMarkdown(event.runId, "cancelled");
         failedRunIdsRef.current.delete(event.runId);
         incompleteRunIdsRef.current.add(event.runId);
         setRuntimeActivity((current) => appendConversationActivity(current, { type: "generationCancelled" }));
         break;
       case "failed":
+        if (reasoningCancellationRequested(event.runId)) break;
         recordRunWithoutMarkdown(event.runId, "failed");
         failedRunIdsRef.current.add(event.runId);
         incompleteRunIdsRef.current.add(event.runId);
@@ -312,7 +323,8 @@ export function useConversationTurn({
     const runId = conversationSessionRef.current.runId;
     if (!runId) return;
     const issueScope = issueCoordinatorRef.current.begin();
-    try { await cancelRun(runId); } catch (cause) { publishIssue(issueScope, toMessage(cause)); }
+    markReasoningCancellation(runId);
+    try { await cancelRun(runId); } catch (cause) { clearReasoningCancellation(runId); publishIssue(issueScope, toMessage(cause)); }
   }
   async function stopSpeech(existingIssueScope?: number) {
     const runId = conversationSessionRef.current.speechRunId;

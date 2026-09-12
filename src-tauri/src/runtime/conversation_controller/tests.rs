@@ -1,0 +1,134 @@
+use super::*;
+#[test]
+fn cancelled_run_cannot_accept_output() {
+    let cancellation = RunCancellation::default();
+    cancellation.cancel();
+    let mut accepted = false;
+    assert!(cancellation
+        .with_active(|| {
+            accepted = true;
+            Ok(())
+        })
+        .is_err());
+    assert!(!accepted);
+}
+#[test]
+fn projection_removes_only_current_user_message() {
+    let input: StartTurnInput = serde_json::from_value(serde_json::json!({
+        "runId":"run_test","conversationId":"conversation_test","content":"比較して",
+        "workspacePath":null,"retryInputMessageId":null,"sourceId":null,"inputOrigin":"voice","presentationMode":"visual"
+    })).unwrap();
+    let history: Vec<ConversationMessage> = ["比較して", "追加条件です", "比較して"]
+        .into_iter()
+        .enumerate()
+        .map(|(i, content)| ConversationMessage {
+            parts: None,
+            id: format!("message_{i}"),
+            conversation_id: input.conversation_id.clone(),
+            role: "user".into(),
+            content: content.into(),
+            created_at: "now".into(),
+        })
+        .collect();
+    let projected = project(&input, &history).unwrap();
+    assert_eq!(projected.context.messages.len(), 2);
+    assert_eq!(projected.context.messages[0].content, "比較して");
+    assert_eq!(projected.request, "比較して");
+}
+
+#[tokio::test]
+async fn reasoning_roundtrip_commits_only_valid_answer() {
+    use crate::providers::reasoning_mcp::{tests::fixture, Client};
+    for mode in ["good", "stale"] {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::initialize_database(&connection).unwrap();
+        let state = crate::test_support::app_state(connection);
+        let input:StartTurnInput=serde_json::from_value(serde_json::json!({
+            "runId":"run_reasoning_test","conversationId":crate::PRIMARY_CONVERSATION_ID,"content":"比較してください",
+            "inputOrigin":"voice","presentationMode":"visual"
+        })).unwrap();
+        crate::runtime::turns::prepare_runtime_run(&state, &input).unwrap();
+        let server = fixture(mode).await;
+        let client = Client::new(&server.url, "fixture-token-long-enough".into()).unwrap();
+        let channel = tauri::ipc::Channel::<RuntimeEvent>::new(|_| Ok(()));
+        let result = execute(&state, &input, &[], &channel, Arc::default(), &client).await;
+        assert_eq!(result.is_ok(), mode == "good", "{result:?}");
+        let count = state
+            .sqlite_readers
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM conversation_messages WHERE role='assistant'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(crate::database_error)
+            })
+            .unwrap();
+        assert_eq!(count, if mode == "good" { 1 } else { 0 });
+    }
+}
+
+#[tokio::test]
+async fn reasoning_ack_is_skipped_for_fast_result_and_polled_with_slow_result() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+    let ack = AtomicBool::new(false);
+    assert_eq!(
+        with_ack(
+            async { 42 },
+            async {
+                ack.store(true, Ordering::SeqCst);
+            },
+            Duration::from_millis(5)
+        )
+        .await,
+        42
+    );
+    assert!(!ack.load(Ordering::SeqCst));
+    let ready = tokio::sync::Notify::new();
+    let result = with_ack(
+        async {
+            ready.notified().await;
+            42
+        },
+        async {
+            ack.store(true, Ordering::SeqCst);
+            ready.notify_one();
+        },
+        Duration::from_millis(5),
+    );
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), result)
+            .await
+            .unwrap(),
+        42
+    );
+    assert!(ack.load(Ordering::SeqCst));
+}
+
+#[test]
+fn projection_trims_to_the_actual_provider_budget_without_truncating_the_request() {
+    let input: StartTurnInput = serde_json::from_value(serde_json::json!({
+        "runId":"run_test","conversationId":"conversation_test","content":"現在の条件で比較して",
+        "inputOrigin":"voice","presentationMode":"visual"
+    }))
+    .unwrap();
+    let history = (0..20)
+        .map(|i| ConversationMessage {
+            parts: None,
+            id: format!("message_{i}"),
+            conversation_id: input.conversation_id.clone(),
+            role: "assistant".into(),
+            content: "日本語の会話履歴。".repeat(200),
+            created_at: "now".into(),
+        })
+        .collect::<Vec<_>>();
+    let request = project(&input, &history).unwrap();
+    assert!(request.model_input_fits());
+    assert!(request.context.truncated);
+    assert!(request.context.messages.len() < history.len());
+    assert_eq!(request.request, input.content);
+    let mut oversized = input;
+    oversized.content = "あ".repeat(10_000);
+    assert!(project(&oversized, &[]).is_err());
+}

@@ -72,7 +72,7 @@ pub(crate) async fn transcribe_with_api_key(
     if samples.iter().all(|sample| sample.abs() <= f32::EPSILON) {
         return Err("ASR_NO_SPEECH: The audio is silent".into());
     }
-    let client = client(Duration::from_millis(timeout_ms))?;
+    let client = client(Duration::from_millis(timeout_ms), claim_key.is_some())?;
     let configured_key = if claim_key.is_none() {
         credential(provider)?
     } else {
@@ -145,13 +145,14 @@ fn credential(
         .map(Some)
 }
 
-fn client(timeout: Duration) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "Could not initialize the Cloud ASR client".to_string())
+fn client(timeout: Duration, claim_scoped: bool) -> Result<reqwest::Client, String> {
+    super::http_audio::client::build(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none()),
+        claim_scoped,
+    )
 }
 
 fn operation_url(endpoint: &str, operation: &str) -> Result<String, String> {

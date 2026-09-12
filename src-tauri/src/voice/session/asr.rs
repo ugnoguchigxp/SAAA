@@ -15,10 +15,21 @@ pub(crate) struct SelectedAsr {
 }
 
 pub(crate) fn select_asr(connection: &rusqlite::Connection) -> Result<SelectedAsr, String> {
+    select_route(connection, false)
+}
+pub(crate) fn select_streaming_asr(
+    connection: &rusqlite::Connection,
+) -> Result<SelectedAsr, String> {
+    select_route(connection, crate::larm_voice::enabled())
+}
+fn select_route(
+    connection: &rusqlite::Connection,
+    larm_session: bool,
+) -> Result<SelectedAsr, String> {
     let voice = crate::persistence::load_voice_settings(connection)?;
     let providers = crate::persistence::load_model_providers(connection)?;
     let settings = crate::persistence::load_routing_settings(connection)?.voice_transcribe;
-    let route = if settings.source == "harness" {
+    let route = if larm_session || settings.source == "harness" {
         AsrRoute::Harness(providers.harness.address)
     } else {
         let provider_id = settings

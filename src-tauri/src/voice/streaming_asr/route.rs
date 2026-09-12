@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     providers::service_harness::AsrStreamingDescriptor,
-    voice::session::{harness_asr_provider, select_asr, vad_rms_threshold, AsrRoute},
+    voice::session::{harness_asr_provider, select_streaming_asr, vad_rms_threshold, AsrRoute},
     AppState, RunCancellation,
 };
 
@@ -46,7 +46,7 @@ pub(crate) async fn prepare(
             return Err("Conversation does not exist".to_string());
         }
         Ok((
-            select_asr(connection)?,
+            select_streaming_asr(connection)?,
             state.voice_profile.prepare_streaming_verifier(connection)?,
         ))
     })?;
@@ -56,34 +56,46 @@ pub(crate) async fn prepare(
     let vad_threshold = vad_rms_threshold(&selected.vad_sensitivity);
     let scorer =
         verifier.map(|value| Arc::new(PreparedSpeakerScorer::new(value)) as Arc<dyn SpeakerScorer>);
-    let (batch_route, native) = match selected.route {
-        AsrRoute::Cloud(provider) => (BatchRoute::Cloud(provider), None),
-        AsrRoute::Harness(address) => {
-            match crate::providers::service_harness::resolve_asr_service(&address).await {
-                Ok(service) => (BatchRoute::Cloud(harness_asr_provider(service.batch)), None),
-                Err(primary_error) => {
-                    let Some(host) =
-                        crate::providers::service_harness::legacy_dynamic_lan_host(&address)?
-                    else {
-                        return Err(if primary_error.starts_with("asr-") {
-                            primary_error
-                        } else {
-                            "asr-provider-unavailable".to_string()
-                        });
-                    };
-                    let resolution = state
-                        .network_asr
-                        .resolve(&host, Arc::new(RunCancellation::default()))
-                        .await
-                        .map_err(|_| "asr-provider-unavailable".to_string())?;
-                    (
-                        BatchRoute::LegacyNetwork {
-                            client: state.network_asr.client().clone(),
-                            endpoint: resolution.endpoint,
-                            model: resolution.model,
-                        },
-                        None,
-                    )
+    let (batch_route, native) = if crate::larm_voice::enabled() {
+        (
+            BatchRoute::Larm(
+                crate::larm_voice::current(conversation_id)
+                    .await?
+                    .session
+                    .clone(),
+            ),
+            None,
+        )
+    } else {
+        match selected.route {
+            AsrRoute::Cloud(provider) => (BatchRoute::Cloud(provider), None),
+            AsrRoute::Harness(address) => {
+                match crate::providers::service_harness::resolve_asr_service(&address).await {
+                    Ok(service) => (BatchRoute::Cloud(harness_asr_provider(service.batch)), None),
+                    Err(primary_error) => {
+                        let Some(host) =
+                            crate::providers::service_harness::legacy_dynamic_lan_host(&address)?
+                        else {
+                            return Err(if primary_error.starts_with("asr-") {
+                                primary_error
+                            } else {
+                                "asr-provider-unavailable".to_string()
+                            });
+                        };
+                        let resolution = state
+                            .network_asr
+                            .resolve(&host, Arc::new(RunCancellation::default()))
+                            .await
+                            .map_err(|_| "asr-provider-unavailable".to_string())?;
+                        (
+                            BatchRoute::LegacyNetwork {
+                                client: state.network_asr.client().clone(),
+                                endpoint: resolution.endpoint,
+                                model: resolution.model,
+                            },
+                            None,
+                        )
+                    }
                 }
             }
         }

@@ -1,5 +1,7 @@
 #[path = "performance.rs"]
 pub(crate) mod performance;
+#[path = "reasoning_ack.rs"]
+mod reasoning_ack;
 
 use std::time::{Duration, Instant};
 use std::{
@@ -38,6 +40,15 @@ pub(crate) trait RuntimeEventSender: Send + Sync {
         self.send(event)
     }
     fn clone_box(&self) -> Box<dyn RuntimeEventSender>;
+    fn acknowledge<'a>(
+        &'a self,
+        _state: &'a crate::AppState,
+        _run_id: &'a str,
+        _conversation_id: &'a str,
+        _cancellation: Arc<crate::RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async {})
+    }
 }
 
 impl RuntimeEventSender for tauri::ipc::Channel<RuntimeEvent> {
@@ -54,6 +65,7 @@ impl RuntimeEventSender for tauri::ipc::Channel<RuntimeEvent> {
 /// deltas before UI delivery, so WebView stalls cannot delay sentence scanning.
 #[derive(Clone)]
 pub(crate) struct TurnEventHub {
+    ui: tauri::ipc::Channel<RuntimeEvent>,
     speech: StreamingSpeechRuntime,
     streaming_speech: bool,
     ui_queue: Arc<UiQueue>,
@@ -70,8 +82,9 @@ impl TurnEventHub {
             notify: Arc::new(Notify::new()),
             failed: AtomicBool::new(false),
         });
-        Self::spawn_ui_delivery(ui, Arc::downgrade(&ui_queue));
+        Self::spawn_ui_delivery(ui.clone(), Arc::downgrade(&ui_queue));
         Self {
+            ui,
             speech,
             streaming_speech,
             ui_queue,
@@ -219,6 +232,21 @@ impl TurnEventHub {
 }
 
 impl RuntimeEventSender for TurnEventHub {
+    fn acknowledge<'a>(
+        &'a self,
+        state: &'a crate::AppState,
+        run_id: &'a str,
+        conversation_id: &'a str,
+        cancellation: Arc<crate::RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(reasoning_ack::speak(
+            self,
+            state,
+            run_id,
+            conversation_id,
+            cancellation,
+        ))
+    }
     fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {
         self.dispatch(event, None)
     }

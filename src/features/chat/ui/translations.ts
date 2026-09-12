@@ -1,5 +1,5 @@
 export const uiEnglish = {
-  compatibility: 'Conversation generation requires an OpenAI-compatible tool-calling connection or AgentSession WebSocket. AgentSession SSE does not accept UI tools.',
+  compatibility: 'Generate, edit, save, and reopen views through your current conversation connection, including AgentSession SSE.',
   archive: 'Remove from saved views',
   enable: 'Inline tools (preview)', saved: 'Saved views', search: 'Search saved views', open: 'Open', close: 'Close',
   loading: 'Loading…', unavailable: 'Could not load this view. Your conversation is still available.', retry: 'Retry',
@@ -13,7 +13,7 @@ export const uiEnglish = {
   editHint: 'To edit this view, ask in the conversation.', conflict: 'This view has changed. Reopen it before editing.',
 };
 export const uiJapanese: typeof uiEnglish = {
-  compatibility: '会話からの生成には、ツール呼び出し対応のOpenAI互換接続、またはAgentSession WebSocket接続が必要です。AgentSession SSE接続では生成できません。',
+  compatibility: '現在の会話接続で、UIの生成・編集・保存・再利用ができます。AgentSession SSEにも対応しています。',
   archive: '保存一覧から除く',
   enable: '会話内の道具（試用）', saved: '保存した画面', search: '保存した画面を検索', open: '開く', close: '閉じる',
   loading: '読み込み中…', unavailable: '画面を読み込めませんでした。会話は引き続き利用できます。', retry: '再試行',

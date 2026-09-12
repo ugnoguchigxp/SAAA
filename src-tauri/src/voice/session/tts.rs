@@ -2,6 +2,7 @@ use crate::{validate_identifier, AppState};
 
 #[derive(Clone)]
 pub(crate) enum TtsRoute {
+    Larm(std::sync::Arc<saaa_larm_session::Session>),
     Harness(String),
     Cloud(crate::CloudTtsProviderSettings),
     System(crate::SystemTtsProviderSettings),

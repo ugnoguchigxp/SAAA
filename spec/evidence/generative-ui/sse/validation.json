@@ -1,0 +1,14 @@
+{
+  "date": "2026-09-12",
+  "baseCommit": "240c7471a638634ba5b8cd031f6bf976a1f72726",
+  "rustValidation": "Isolated copy of base commit plus SSE changes; unrelated concurrent work excluded",
+  "rustLibrary": {"passed": 494, "failed": 0, "ignored": 11},
+  "finalAgentSessionTests": {"passed": 9, "failed": 0, "ignoredLiveTest": 1},
+  "frontendTests": {"passed": 252, "failed": 0},
+  "build": "passed in isolated copy",
+  "clippyAllTargets": "passed in isolated copy with -D warnings",
+  "specCheck": "passed",
+  "moduleSizeCheck": "passed",
+  "liveWorkflow": "blocked by provider subscription quota; see live-workflow.json and probe-events.txt",
+  "liveModelQualityBenchmark": "not run"
+}

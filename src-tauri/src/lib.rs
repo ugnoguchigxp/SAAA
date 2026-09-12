@@ -1,3 +1,5 @@
+#[path = "providers/larm_voice/mod.rs"]
+mod larm_voice;
 #[cfg(test)]
 use rusqlite::Connection;
 #[cfg(test)]
@@ -127,12 +129,17 @@ struct ProviderProbeStatus {
 
 #[derive(Default)]
 struct RunCancellation {
+    acceptance: Mutex<()>,
     cancelled: AtomicBool,
     notify: tokio::sync::Notify,
 }
 
 impl RunCancellation {
     pub(crate) fn cancel(&self) {
+        let _acceptance = self
+            .acceptance
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !self.cancelled.swap(true, Ordering::SeqCst) {
             self.notify.notify_waiters();
             self.notify.notify_one();
@@ -141,6 +148,20 @@ impl RunCancellation {
 
     pub(crate) fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn with_active<T>(
+        &self,
+        action: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let _acceptance = self
+            .acceptance
+            .lock()
+            .map_err(|_| "Run acceptance lock unavailable")?;
+        if self.is_cancelled() {
+            return Err("Cancelled by user".into());
+        }
+        action()
     }
 
     async fn cancelled(&self) {
@@ -515,6 +536,9 @@ fn shutdown_app_state(state: &AppState) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Snapshot the opt-in configuration once; failures are reported on use.
+    let _ = providers::reasoning_mcp::configured("voice");
+    let _ = larm_voice::enabled();
     tauri::Builder::default()
         .plugin(tauri_plugin_llm_fetch::init())
         .setup(|app| {
@@ -689,6 +713,8 @@ pub fn run() {
             discard_meeting,
             save_settings_documents,
             set_voice_listening_enabled,
+            larm_voice::begin_larm_voice_session,
+            larm_voice::end_larm_voice_session,
             list_messages,
             generative_ui::history::list_message_window,
             generative_ui::get_ui_enabled,
@@ -706,8 +732,13 @@ pub fn run() {
             update_conversation_voice_policy,
             reset_conversation_voice_policy
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running SAAA");
+        .build(tauri::generate_context!())
+        .expect("error while building SAAA")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                tauri::async_runtime::block_on(larm_voice::shutdown());
+            }
+        });
 }
 
 #[cfg(test)]

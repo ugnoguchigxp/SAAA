@@ -9,6 +9,7 @@ pub(crate) mod llm_websocket;
 pub(crate) mod openai_compatible;
 pub(crate) mod probe;
 mod probe_state;
+pub(crate) mod reasoning_mcp;
 pub(crate) mod routing;
 pub(crate) mod service_harness;
 pub(crate) mod session_store;

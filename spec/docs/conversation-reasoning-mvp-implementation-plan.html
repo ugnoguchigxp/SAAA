@@ -1,11 +1,25 @@
 <article lang="ja">
   <h1 id="conversation-reasoning-mvp">会話ランタイム + MCP推論サービス MVP実装計画</h1>
   <p>
-    作成日: 2026-09-12。状態: 実装前の提案。基準:
+    作成日: 2026-09-12。状態: 初期実装済み・実接続未検証。基準:
     <code>5a91753</code> と作成時のworking
     tree。本書の作成は機能の実装・性能検証・リリース完了を意味しない。
   </p>
 
+  <p>
+    初期実装の範囲・設定・残作業は<a href="./conversation-reasoning-mvp-implementation.html"
+      >実装記録</a
+    >を参照。CR-05および2B実接続の完了判定はまだ行っていない。
+  </p>
+  <p>
+    2026-09-12追記: LARM接続は<a
+      href="./conversation-reasoning-mvp-implementation.html#larm-session-contract"
+      >受領済みのAgent Connection契約</a
+    >を前提とする。 セッション所有の接続管理、4
+    Providerのclaimと専用token、health、renew時の要求調停と原子的更新、終了時releaseを実装済み。実接続は名前解決の回復後に検証する。
+    自動検証にはProvider順序変更、欠落・重複、専用token、health期限、起動失敗時release、renew直後の旧token不使用、更新失敗時の受付停止を含める。
+    その後にSAAAからASR・TTS・2B・27Bを通した実接続を評価する。
+  </p>
   <h2 id="outcome">1. MVPで確かめること</h2>
   <p>
     音声要求を受けたら短く反応し、MCP経由の推論結果を正しく読み上げる。ユーザーの停止操作や追加入力で古い処理を中断し、古い回答を再生しない。最初に定型相槌版を成立させ、その後に2B程度の分類モデルを比較評価する。大型モデルの回答を小型モデルで言い換える工程は設けない。
