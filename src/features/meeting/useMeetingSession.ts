@@ -1,6 +1,12 @@
+import { useCommittedCallback } from "../../useCommittedCallback";
 import { useEffect, useRef, useState } from "react";
 import { uiMessage } from "../../i18n/presentation";
-import type { MeetingLane, MeetingSnapshot, MeetingState, VoiceSettings } from "../../lib/contracts";
+import type {
+  MeetingLane,
+  MeetingSnapshot,
+  MeetingState,
+  VoiceSettings,
+} from "../../lib/contracts";
 import {
   ensureMicrophoneAudioContextRunning,
   microphoneCaptureConstraints,
@@ -90,6 +96,8 @@ export function useMeetingSession(
     return next;
   }
 
+  const reportError = useCommittedCallback(setError);
+  const notifyState = useCommittedCallback(onStateChanged);
   useEffect(() => {
     let cancelled = false;
     const subscriberId = `meeting_subscriber_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -99,33 +107,42 @@ export function useMeetingSession(
         if (next.state === "active") setHealth("capture-disconnected");
       })
       .catch((cause) => {
-        if (!cancelled) setError(toMessage(cause));
+        if (!cancelled) reportError(toMessage(cause));
       });
     const watchRegistration = watchMeeting(subscriberId, (event) => {
       if (cancelled) return;
       if (event.type === "stateChanged") {
-        void refreshSnapshot().catch((cause) => setError(toMessage(cause)));
+        void refreshSnapshot().catch((cause) => reportError(toMessage(cause)));
       } else if (event.type === "transcriptFinal") {
         if (event.sessionId !== snapshotRef.current.sessionId) return;
         setTranscript((lines) => {
           const index = lines.findIndex((line) => line.sequence === event.sequence);
-          const next = { sequence: event.sequence, lane: event.lane, text: event.text, language: event.language };
-          return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
+          const next = {
+            sequence: event.sequence,
+            lane: event.lane,
+            text: event.text,
+            language: event.language,
+          };
+          return index < 0
+            ? [...lines, next]
+            : lines.map((line, lineIndex) => (lineIndex === index ? next : line));
         });
       } else if (event.type === "failed") {
         if (event.sessionId && event.sessionId !== snapshotRef.current.sessionId) return;
-        setError(uiMessage("meetingRuntimeFailure"));
+        reportError(uiMessage("meetingRuntimeFailure"));
         void refreshSnapshot().catch(() => undefined);
       }
-    }).catch((cause) => { if (!cancelled) setError(toMessage(cause)); });
+    }).catch((cause) => {
+      if (!cancelled) reportError(toMessage(cause));
+    });
     return () => {
       cancelled = true;
       snapshotRevision.current += 1;
       void watchRegistration.then(() => unwatchMeeting(subscriberId)).catch(() => undefined);
       void detachCapture(true);
-      onStateChanged("idle");
+      notifyState("idle");
     };
-  }, []);
+  }, [reportError, notifyState]);
 
   useEffect(() => {
     onStateChanged(snapshot.state);
@@ -180,7 +197,11 @@ export function useMeetingSession(
     }
   }
 
-  function enqueueNormalized(samples: Float32Array, startedAtMs: number, durationMs: number): boolean {
+  function enqueueNormalized(
+    samples: Float32Array,
+    startedAtMs: number,
+    durationMs: number,
+  ): boolean {
     if (durationMs < 1_000) {
       samples.fill(0);
       return false;
@@ -230,9 +251,16 @@ export function useMeetingSession(
           });
           if (!result.accepted) continue;
           setTranscript((lines) => {
-            const next = { sequence: segmentSequence, lane: "microphone" as const, text: result.text, language: result.language };
+            const next = {
+              sequence: segmentSequence,
+              lane: "microphone" as const,
+              text: result.text,
+              language: result.language,
+            };
             const index = lines.findIndex((line) => line.sequence === segmentSequence);
-            return index < 0 ? [...lines, next] : lines.map((line, lineIndex) => lineIndex === index ? next : line);
+            return index < 0
+              ? [...lines, next]
+              : lines.map((line, lineIndex) => (lineIndex === index ? next : line));
           });
         } catch (cause) {
           const latest = await getMeetingSnapshot().catch(() => null);
@@ -282,7 +310,9 @@ export function useMeetingSession(
       await nextContext.audioWorklet.addModule("/audio/meeting-processor.js");
       const nextSource = nextContext.createMediaStreamSource(nextStream);
       const nextNode = new AudioWorkletNode(nextContext, "meeting-processor");
-      const nextWorker = new Worker(new URL("./audio/meetingAudio.worker.ts", import.meta.url), { type: "module" });
+      const nextWorker = new Worker(new URL("./audio/meetingAudio.worker.ts", import.meta.url), {
+        type: "module",
+      });
       source.current = nextSource;
       node.current = nextNode;
       normalizationWorker.current = nextWorker;
@@ -335,7 +365,9 @@ export function useMeetingSession(
     try {
       await onBeforeCapture();
       captureLease.current = acquireAudioCapture("meeting");
-      const check = await requestMicrophoneStream(microphoneCaptureConstraints(voice.inputDeviceId));
+      const check = await requestMicrophoneStream(
+        microphoneCaptureConstraints(voice.inputDeviceId),
+      );
       check.getTracks().forEach((track) => track.stop());
       const preflight = await meetingPreflight({
         microphoneDeviceId: voice.inputDeviceId,
@@ -454,7 +486,19 @@ export function useMeetingSession(
     }
   }
 
-  return { snapshot, transcript, elapsed, health, working, start, pause, resume, stop, save, discard };
+  return {
+    snapshot,
+    transcript,
+    elapsed,
+    health,
+    working,
+    start,
+    pause,
+    resume,
+    stop,
+    save,
+    discard,
+  };
 }
 
 function toMessage(cause: unknown): string {

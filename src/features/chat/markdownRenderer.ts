@@ -1,5 +1,6 @@
 const SAFE_PROTOCOL = /^(?:https?:|mailto:)/i;
-const INLINE_TOKEN = /`([^`\n]+)`|\[([^\]\n]{1,1024})\]\(([^)\s]{1,2048})\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|~~([^~\n]+)~~/g;
+const INLINE_TOKEN =
+  /`([^`\n]+)`|\[([^\]\n]{1,1024})\]\(([^)\s]{1,2048})\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|~~([^~\n]+)~~/g;
 
 function escapeHtml(value: string): string {
   return value
@@ -35,12 +36,19 @@ function renderInline(value: string): string {
 }
 
 function isTableDivider(line: string): boolean {
-  const cells = line.trim().replace(/^\||\|$/g, "").split("|");
+  const cells = line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|");
   return cells.length > 0 && cells.every((cell) => /^\s*:?-{3,}:?\s*$/.test(cell));
 }
 
 function tableCells(line: string): string[] {
-  return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+  return line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((cell) => cell.trim());
 }
 
 /**
@@ -78,7 +86,9 @@ export function renderSafeMarkdown(content: string): string {
         rows.push(tableCells(lines[index]));
         index += 1;
       }
-      blocks.push(`<table><thead><tr>${headers.map((cell) => `<th>${renderInline(cell)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${headers.map((_, cellIndex) => `<td>${renderInline(row[cellIndex] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      blocks.push(
+        `<table><thead><tr>${headers.map((cell) => `<th>${renderInline(cell)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${headers.map((_, cellIndex) => `<td>${renderInline(row[cellIndex] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`,
+      );
       continue;
     }
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
@@ -118,16 +128,21 @@ export function renderSafeMarkdown(content: string): string {
         quote.push(part[1]);
         index += 1;
       }
-      blocks.push(`<blockquote><p>${renderInline(quote.join("\n")).replace(/\n/g, "<br>")}</p></blockquote>`);
+      blocks.push(
+        `<blockquote><p>${renderInline(quote.join("\n")).replace(/\n/g, "<br>")}</p></blockquote>`,
+      );
       continue;
     }
     const paragraph = [line];
     index += 1;
-    while (index < lines.length && lines[index].trim()
-      && !/^\s*```/.test(lines[index])
-      && !/^(#{1,6})\s+/.test(lines[index])
-      && !/^\s*(?:[-*+]|\d+[.)])\s+/.test(lines[index])
-      && !/^\s*>/.test(lines[index])) {
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !/^\s*```/.test(lines[index]) &&
+      !/^(#{1,6})\s+/.test(lines[index]) &&
+      !/^\s*(?:[-*+]|\d+[.)])\s+/.test(lines[index]) &&
+      !/^\s*>/.test(lines[index])
+    ) {
       paragraph.push(lines[index]);
       index += 1;
     }

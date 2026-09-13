@@ -1,4 +1,6 @@
 use std::env;
+mod credentials;
+mod urls;
 
 pub(crate) fn bounded_text(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
@@ -22,7 +24,7 @@ fn redact_with_secrets(value: &str, mut secrets: Vec<String>) -> String {
     for secret in secrets {
         redacted = redacted.replace(&secret, "[REDACTED]");
     }
-    bounded_text(&redacted, 2_000)
+    bounded_text(&credentials::redact(&redacted), 2_000)
 }
 
 #[cfg(test)]
@@ -38,6 +40,38 @@ mod tests {
         assert!(!redacted.contains("super-secret-test-value"));
         assert!(redacted.contains("[REDACTED]"));
         assert!(redacted.chars().count() <= 2_000);
+    }
+
+    #[test]
+    fn response_credentials_are_removed_without_erasing_recovery_information() {
+        let value = "Authentication failed: Bearer ephemeral-example; api_key=key-example https://user:pass@example.org/retry?token=query-example retry in 2s";
+        let result = redact_with_secrets(value, vec![]);
+        for secret in [
+            "ephemeral-example",
+            "key-example",
+            "query-example",
+            "user:pass",
+        ] {
+            assert!(!result.contains(secret));
+        }
+        assert!(result.contains("Authentication failed"));
+        assert!(result.contains("retry in 2s"));
+        assert!(result.contains("example.org/retry"));
+    }
+
+    #[test]
+    fn json_credentials_never_reach_ui_errors() {
+        let input = r#"Provider error: {"access_token":"review secret", "nested":{"api_key":"quote\"and\\suffix"}, "password":"a b", "reason":"authentication failed", "retryAfter":2}"#;
+        let result = redact_with_secrets(input, vec![]);
+        for secret in ["review secret", "quote", "suffix", "a b"] {
+            assert!(!result.contains(secret), "credential survived: {result}");
+        }
+        assert!(result.contains("authentication failed"));
+        assert!(result.contains("retryAfter"));
+        let parsed: serde_json::Value =
+            serde_json::from_str(result.strip_prefix("Provider error: ").unwrap()).unwrap();
+        assert_eq!(parsed["access_token"], "[REDACTED]");
+        assert_eq!(parsed["nested"]["api_key"], "[REDACTED]");
     }
 
     #[test]

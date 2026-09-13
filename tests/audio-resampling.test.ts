@@ -5,10 +5,10 @@ describe("audio resampling", () => {
   test("preserves speech-band energy while suppressing downsampling aliases", () => {
     const sourceRate = 48_000;
     const targetRate = 16_000;
-    const sine = (frequency: number) => Float32Array.from(
-      { length: sourceRate / 5 },
-      (_, index) => Math.sin(2 * Math.PI * frequency * index / sourceRate),
-    );
+    const sine = (frequency: number) =>
+      Float32Array.from({ length: sourceRate / 5 }, (_, index) =>
+        Math.sin((2 * Math.PI * frequency * index) / sourceRate),
+      );
     const rms = (values: Float32Array) => {
       const stable = values.slice(32, -32);
       return Math.sqrt(stable.reduce((sum, value) => sum + value * value, 0) / stable.length);

@@ -230,10 +230,12 @@ mod tests {
         };
         let cancelled = Arc::new(RunCancellation::default());
         cancelled.cancel();
-        assert!(transcribe(&provider, &[0.1; 16_000], 16_000, 1_000, cancelled)
-            .await
-            .unwrap_err()
-            .contains("cancelled"));
+        assert!(
+            transcribe(&provider, &[0.1; 16_000], 16_000, 1_000, cancelled)
+                .await
+                .unwrap_err()
+                .contains("cancelled")
+        );
         assert!(transcribe(
             &provider,
             &[0.0; 16_000],

@@ -20,17 +20,13 @@ for (const context of contexts) {
   })(context.key, {});
 
   if (invocation.role !== "system") {
-    throw new Error(
-      `${context.key} must render as a system message, received ${invocation.role}`,
-    );
+    throw new Error(`${context.key} must render as a system message, received ${invocation.role}`);
   }
 
   if (process.argv.includes("--check")) {
     const current = await readFile(outputPath, "utf8").catch(() => undefined);
     if (current !== invocation.content.text) {
-      console.error(
-        `${outputPath.slice(projectRoot.length)} is stale; run bun run s11tnext:build`,
-      );
+      console.error(`${outputPath.slice(projectRoot.length)} is stale; run bun run s11tnext:build`);
       process.exitCode = 1;
     }
   } else {

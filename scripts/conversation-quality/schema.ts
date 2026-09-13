@@ -66,19 +66,27 @@ export function validateScenarios(scenarios: QualityScenario[]): string[] {
   const ids = new Set<string>();
   if (scenarios.length !== 60) failures.push(`expected 60 scenarios, received ${scenarios.length}`);
   for (const scenario of scenarios) {
-    if (!/^[a-z][a-z0-9-]{0,79}$/.test(scenario.id)) failures.push(`invalid scenario id: ${scenario.id}`);
+    if (!/^[a-z][a-z0-9-]{0,79}$/.test(scenario.id))
+      failures.push(`invalid scenario id: ${scenario.id}`);
     if (ids.has(scenario.id)) failures.push(`duplicate scenario id: ${scenario.id}`);
     ids.add(scenario.id);
-    if (!scenario.input.trim() || !scenario.expected.trim()) failures.push(`${scenario.id}: empty contract text`);
-    if (scenario.toolMode !== "none" && !scenario.toolResult) failures.push(`${scenario.id}: missing tool result`);
-    const expectedToolMode = scenario.category === "current"
-      ? "success"
-      : scenario.category === "tool-failure" ? "failure" : "none";
-    if (scenario.toolMode !== expectedToolMode) failures.push(`${scenario.id}: invalid tool mode for ${scenario.category}`);
+    if (!scenario.input.trim() || !scenario.expected.trim())
+      failures.push(`${scenario.id}: empty contract text`);
+    if (scenario.toolMode !== "none" && !scenario.toolResult)
+      failures.push(`${scenario.id}: missing tool result`);
+    const expectedToolMode =
+      scenario.category === "current"
+        ? "success"
+        : scenario.category === "tool-failure"
+          ? "failure"
+          : "none";
+    if (scenario.toolMode !== expectedToolMode)
+      failures.push(`${scenario.id}: invalid tool mode for ${scenario.category}`);
   }
   for (const [category, expectedCount] of Object.entries(REQUIRED_CATEGORY_COUNTS)) {
     const count = scenarios.filter((scenario) => scenario.category === category).length;
-    if (count !== expectedCount) failures.push(`${category}: expected ${expectedCount} scenarios, received ${count}`);
+    if (count !== expectedCount)
+      failures.push(`${category}: expected ${expectedCount} scenarios, received ${count}`);
   }
   return failures;
 }
@@ -89,7 +97,8 @@ export function parseEvaluation(value: unknown): Evaluation {
   if (Object.keys(record).sort().join(",") !== "scores,violations") {
     throw new Error("judge result must contain only scores and violations");
   }
-  if (!record.scores || typeof record.scores !== "object") throw new Error("judge scores are missing");
+  if (!record.scores || typeof record.scores !== "object")
+    throw new Error("judge scores are missing");
   const rawScores = record.scores as Record<string, unknown>;
   if (Object.keys(rawScores).sort().join(",") !== Object.keys(SCORE_MAXIMA).sort().join(",")) {
     throw new Error("judge scores must contain the fixed rubric categories");
@@ -104,7 +113,10 @@ export function parseEvaluation(value: unknown): Evaluation {
   }
   const violations = record.violations;
   const allowed = new Set<string>(HARD_VIOLATIONS);
-  if (!Array.isArray(violations) || violations.some((item) => typeof item !== "string" || !allowed.has(item))) {
+  if (
+    !Array.isArray(violations) ||
+    violations.some((item) => typeof item !== "string" || !allowed.has(item))
+  ) {
     throw new Error("judge violations must contain only fixed violation codes");
   }
   return { scores, violations: violations as string[] };
@@ -123,13 +135,16 @@ function median(values: number[]): number {
     : (sorted[middle] ?? 0);
 }
 
-function summarizeResultSet(results: ScoredQualityResult[]): Omit<QualityRunSummary, "round" | "passed"> {
+function summarizeResultSet(
+  results: ScoredQualityResult[],
+): Omit<QualityRunSummary, "round" | "passed"> {
   if (!results.length) throw new Error("quality result set must not be empty");
   const average = results.reduce((sum, result) => sum + result.score, 0) / results.length;
   const categoryPercentages = Object.fromEntries(
     (Object.entries(SCORE_MAXIMA) as Array<[keyof Scores, number]>).map(([key, maximum]) => [
       key,
-      results.reduce((sum, result) => sum + result.scores[key], 0) / results.length / maximum * 100,
+      (results.reduce((sum, result) => sum + result.scores[key], 0) / results.length / maximum) *
+        100,
     ]),
   ) as Record<keyof Scores, number>;
   return {
@@ -147,9 +162,11 @@ export function summarizeQualityGate(
 ): QualityGateSummary {
   if (expectedRounds !== 3) throw new Error("quality release gate requires exactly 3 rounds");
   const expectedIds = new Set(expectedScenarioIds);
-  if (!expectedScenarioIds.length
-    || expectedIds.size !== expectedScenarioIds.length
-    || expectedScenarioIds.some((id) => !id.trim())) {
+  if (
+    !expectedScenarioIds.length ||
+    expectedIds.size !== expectedScenarioIds.length ||
+    expectedScenarioIds.some((id) => !id.trim())
+  ) {
     throw new Error("quality release gate requires unique expected scenario ids");
   }
   if (results.length !== expectedScenarioIds.length * expectedRounds) {
@@ -167,7 +184,10 @@ export function summarizeQualityGate(
     if (observed.has(resultKey)) throw new Error(`duplicate quality result: ${resultKey}`);
     observed.add(resultKey);
     const parsed = parseEvaluation({ scores: result.scores, violations: result.violationCodes });
-    if (!Number.isFinite(result.score) || Math.abs(result.score - totalScore(parsed.scores)) > Number.EPSILON) {
+    if (
+      !Number.isFinite(result.score) ||
+      Math.abs(result.score - totalScore(parsed.scores)) > Number.EPSILON
+    ) {
       throw new Error(`quality result score does not match its rubric: ${resultKey}`);
     }
   }
@@ -184,9 +204,10 @@ export function summarizeQualityGate(
     return {
       round,
       ...run,
-      passed: run.average >= 90
-        && Object.values(run.categoryPercentages).every((value) => value >= 85)
-        && run.hardViolationCount === 0,
+      passed:
+        run.average >= 90 &&
+        Object.values(run.categoryPercentages).every((value) => value >= 85) &&
+        run.hardViolationCount === 0,
     };
   });
   const aggregate = summarizeResultSet(results);
@@ -206,9 +227,10 @@ export function summarizeQualityGate(
     passingRunCount,
     medianRunAverage,
     medianRunCategoryPercentages,
-    passed: passingRunCount >= 2
-      && medianRunAverage >= 90
-      && Object.values(medianRunCategoryPercentages).every((value) => value >= 85)
-      && aggregate.hardViolationCount === 0,
+    passed:
+      passingRunCount >= 2 &&
+      medianRunAverage >= 90 &&
+      Object.values(medianRunCategoryPercentages).every((value) => value >= 85) &&
+      aggregate.hardViolationCount === 0,
   };
 }

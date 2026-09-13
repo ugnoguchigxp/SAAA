@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { isDynamicLanHost, isLocalProviderHost, legacyDynamicLanHost } from "../src/lib/localProviderAddress";
+import {
+  isDynamicLanHost,
+  isLocalProviderHost,
+  legacyDynamicLanHost,
+} from "../src/lib/localProviderAddress";
 
 describe("local provider addresses", () => {
   test("accepts loopback, private IPv4, IPv6, and .local hosts", () => {

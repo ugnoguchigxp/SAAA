@@ -54,7 +54,11 @@ function passingValue(metric: MetricSpec): number {
   return 0;
 }
 
-function suiteReport(suite: SuiteReport["suite"], mode: SuiteReport["mode"], nextIdentity = identity): SuiteReport {
+function suiteReport(
+  suite: SuiteReport["suite"],
+  mode: SuiteReport["mode"],
+  nextIdentity = identity,
+): SuiteReport {
   const timestamp = "2026-08-29T00:00:00.000Z";
   return suiteReportSchema.parse({
     schemaVersion: SCHEMA_VERSION,
@@ -70,42 +74,86 @@ function suiteReport(suite: SuiteReport["suite"], mode: SuiteReport["mode"], nex
       completedAt: timestamp,
       result: "pass",
       reasonCode: null,
-      observations: spec.metrics.map((metric) => ({ key: metric.key, value: passingValue(metric), unit: metric.unit })),
+      observations: spec.metrics.map((metric) => ({
+        key: metric.key,
+        value: passingValue(metric),
+        unit: metric.unit,
+      })),
     })),
     result: "pass",
   });
 }
 
 function writePreflight(directory: string) {
-  writeJsonExclusive(directory, "preflight.json", preflightReportSchema.parse({
-    schemaVersion: SCHEMA_VERSION,
-    suite: "preflight",
-    mode: "preflight",
-    identity,
-    startedAt: "2026-08-29T00:00:00.000Z",
-    completedAt: "2026-08-29T00:00:01.000Z",
-    workspaceInitialSha256: "b".repeat(64),
-    dedicatedAppDataEmpty: true,
-    result: "pass",
-  }));
+  writeJsonExclusive(
+    directory,
+    "preflight.json",
+    preflightReportSchema.parse({
+      schemaVersion: SCHEMA_VERSION,
+      suite: "preflight",
+      mode: "preflight",
+      identity,
+      startedAt: "2026-08-29T00:00:00.000Z",
+      completedAt: "2026-08-29T00:00:01.000Z",
+      workspaceInitialSha256: "b".repeat(64),
+      dedicatedAppDataEmpty: true,
+      result: "pass",
+    }),
+  );
 }
 
 describe("MVP 2 / 2.5 readiness CLI", () => {
   test("accepts only the documented command shapes", () => {
-    expect(parseCliArguments(["preflight", "--report-dir", "/tmp/evidence"])).toEqual({ command: "preflight", reportDirectory: "/tmp/evidence" });
-    expect(parseCliArguments(["verify", "--suite", "meeting", "--mode", "functional", "--report-dir", "/tmp/evidence"])).toEqual({ command: "verify", reportDirectory: "/tmp/evidence", suite: "meeting", mode: "functional" });
-    expect(parseCliArguments(["report", "--report-dir", "/tmp/evidence"])).toEqual({ command: "report", reportDirectory: "/tmp/evidence" });
-    expect(() => parseCliArguments(["verify", "--suite", "meeting", "--mode", "manual", "--report-dir", "/tmp/evidence"])).toThrow(RunnerError);
+    expect(parseCliArguments(["preflight", "--report-dir", "/tmp/evidence"])).toEqual({
+      command: "preflight",
+      reportDirectory: "/tmp/evidence",
+    });
+    expect(
+      parseCliArguments([
+        "verify",
+        "--suite",
+        "meeting",
+        "--mode",
+        "functional",
+        "--report-dir",
+        "/tmp/evidence",
+      ]),
+    ).toEqual({
+      command: "verify",
+      reportDirectory: "/tmp/evidence",
+      suite: "meeting",
+      mode: "functional",
+    });
+    expect(parseCliArguments(["report", "--report-dir", "/tmp/evidence"])).toEqual({
+      command: "report",
+      reportDirectory: "/tmp/evidence",
+    });
+    expect(() =>
+      parseCliArguments([
+        "verify",
+        "--suite",
+        "meeting",
+        "--mode",
+        "manual",
+        "--report-dir",
+        "/tmp/evidence",
+      ]),
+    ).toThrow(RunnerError);
     expect(() => parseCliArguments(["preflight", "--report-dir", "relative"])).toThrow(RunnerError);
-    expect(() => parseCliArguments(["preflight", "--report-dir", "/tmp/evidence", "--token", "secret"])).toThrow(RunnerError);
+    expect(() =>
+      parseCliArguments(["preflight", "--report-dir", "/tmp/evidence", "--token", "secret"]),
+    ).toThrow(RunnerError);
   });
 
   test("keeps CLI failures bounded and content-free", () => {
-    const result = Bun.spawnSync(["bun", join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness.ts")], {
-      cwd: join(import.meta.dir, ".."),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const result = Bun.spawnSync(
+      ["bun", join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness.ts")],
+      {
+        cwd: join(import.meta.dir, ".."),
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     expect(result.exitCode).toBe(64);
     expect(result.stdout.toString()).toBe("");
     expect(result.stderr.toString()).toBe("mvp2x: usage-error\n");
@@ -114,14 +162,23 @@ describe("MVP 2 / 2.5 readiness CLI", () => {
   test("fixes the complete required case matrix", () => {
     const meetingFunctional = caseSpecs("meeting", "functional");
     expect(meetingFunctional.length).toBe(22);
-    expect(meetingFunctional.findLastIndex((item) => item.buildClass === "development"))
-      .toBeLessThan(meetingFunctional.findIndex((item) => item.buildClass === "signed-packaged"));
+    expect(
+      meetingFunctional.findLastIndex((item) => item.buildClass === "development"),
+    ).toBeLessThan(meetingFunctional.findIndex((item) => item.buildClass === "signed-packaged"));
     expect(caseSpecs("meeting", "soak-30m").map((item) => item.caseId)).toEqual(["soak-30m"]);
     expect(caseSpecs("meeting", "soak-2h").map((item) => item.caseId)).toEqual(["soak-2h"]);
     expect(caseSpecs("input-activity", "manual").length).toBe(23);
     expect(caseSpecs("agent-run", "manual").length).toBe(7);
-    expect(caseSpecs("input-activity", "manual").find((item) => item.caseId === "sampling-soak")?.metrics.map((metric) => metric.automatic)).toEqual(["elapsed-seconds", undefined, "rss-median-delta"]);
-    expect(caseSpecs("agent-run", "manual").every((item) => item.metrics.some((metric) => metric.automatic === "workspace-integrity"))).toBeTrue();
+    expect(
+      caseSpecs("input-activity", "manual")
+        .find((item) => item.caseId === "sampling-soak")
+        ?.metrics.map((metric) => metric.automatic),
+    ).toEqual(["elapsed-seconds", undefined, "rss-median-delta"]);
+    expect(
+      caseSpecs("agent-run", "manual").every((item) =>
+        item.metrics.some((metric) => metric.automatic === "workspace-integrity"),
+      ),
+    ).toBeTrue();
   });
 
   test("routes readiness runs to isolated application data", async () => {
@@ -136,7 +193,9 @@ describe("MVP 2 / 2.5 readiness CLI", () => {
     expect(runtime).toContain("must not use normal application data");
     expect(runtime).toContain('state.data_directory.join("diagnostics")');
     expect(runtime).toContain('state.data_directory.join("backups")');
-    const runner = await Bun.file(join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness.ts")).text();
+    const runner = await Bun.file(
+      join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness.ts"),
+    ).text();
     expect(runner).toContain("promptAndValidateAppPid");
     expect(runner).toContain("DEFAULT_DEVELOPMENT_EXECUTABLE");
   });
@@ -160,15 +219,33 @@ describe("strict evidence contracts", () => {
       observations: [],
     };
     expect(caseResultSchema.safeParse(base).success).toBeFalse();
-    expect(caseResultSchema.safeParse({ ...base, result: "blocked", reasonCode: null }).success).toBeFalse();
-    expect(caseResultSchema.safeParse({ ...base, result: "blocked", reasonCode: "operator-blocked", observations: [], note: "free text" }).success).toBeFalse();
+    expect(
+      caseResultSchema.safeParse({ ...base, result: "blocked", reasonCode: null }).success,
+    ).toBeFalse();
+    expect(
+      caseResultSchema.safeParse({
+        ...base,
+        result: "blocked",
+        reasonCode: "operator-blocked",
+        observations: [],
+        note: "free text",
+      }).success,
+    ).toBeFalse();
   });
 
   test("enforces exact, minimum, and maximum thresholds", () => {
-    expect(() => assertMetric({ key: "queue", unit: "count", description: "queue", max: 2 }, 2)).not.toThrow();
-    expect(() => assertMetric({ key: "queue", unit: "count", description: "queue", max: 2 }, 3)).toThrow("threshold-exceeded");
-    expect(() => assertMetric({ key: "samples", unit: "count", description: "samples", min: 890 }, 889)).toThrow("threshold-exceeded");
-    expect(() => assertMetric({ key: "terminal", unit: "count", description: "terminal", exact: 1 }, 2)).toThrow("threshold-exceeded");
+    expect(() =>
+      assertMetric({ key: "queue", unit: "count", description: "queue", max: 2 }, 2),
+    ).not.toThrow();
+    expect(() =>
+      assertMetric({ key: "queue", unit: "count", description: "queue", max: 2 }, 3),
+    ).toThrow("threshold-exceeded");
+    expect(() =>
+      assertMetric({ key: "samples", unit: "count", description: "samples", min: 890 }, 889),
+    ).toThrow("threshold-exceeded");
+    expect(() =>
+      assertMetric({ key: "terminal", unit: "count", description: "terminal", exact: 1 }, 2),
+    ).toThrow("threshold-exceeded");
   });
 
   test("rejects content, secrets, network locations, and local paths", () => {
@@ -182,7 +259,8 @@ describe("strict evidence contracts", () => {
   });
 
   test("requires an Apple certificate chain, Team ID, and signing extension", () => {
-    const appleRootFingerprint = "B0:B1:73:0E:CB:C7:FF:45:05:14:2C:49:F1:29:5E:6E:DA:6B:CA:ED:7E:2C:68:C5:BE:91:B5:A1:10:01:F0:24";
+    const appleRootFingerprint =
+      "B0:B1:73:0E:CB:C7:FF:45:05:14:2C:49:F1:29:5E:6E:DA:6B:CA:ED:7E:2C:68:C5:BE:91:B5:A1:10:01:F0:24";
     const developerDetails = [
       "Authority=Developer ID Application: Example (ABCDE12345)",
       "Authority=Developer ID Certification Authority",
@@ -195,26 +273,50 @@ describe("strict evidence contracts", () => {
       "Authority=Apple Root CA",
       "TeamIdentifier=ABCDE12345",
     ].join("\n");
-    expect(classifySigningDetails(developerDetails, "1.2.840.113635.100.6.1.13", appleRootFingerprint)).toBe("developer-id-application");
-    expect(classifySigningDetails(developmentDetails, "1.2.840.113635.100.6.1.12", appleRootFingerprint)).toBe("apple-development");
-    expect(() => classifySigningDetails(developerDetails, "1.2.840.113635.100.6.1.13", "AA".repeat(32))).toThrow("signing-class-invalid");
-    expect(() => classifySigningDetails('Authority=Developer ID Application: Fake\nTeamIdentifier=ABCDE12345', "1.2.840.113635.100.6.1.13", appleRootFingerprint)).toThrow("signing-class-invalid");
-    expect(() => classifySigningDetails(`${developerDetails}\nSignature=adhoc`, "1.2.840.113635.100.6.1.13", appleRootFingerprint)).toThrow("signature-invalid");
+    expect(
+      classifySigningDetails(developerDetails, "1.2.840.113635.100.6.1.13", appleRootFingerprint),
+    ).toBe("developer-id-application");
+    expect(
+      classifySigningDetails(developmentDetails, "1.2.840.113635.100.6.1.12", appleRootFingerprint),
+    ).toBe("apple-development");
+    expect(() =>
+      classifySigningDetails(developerDetails, "1.2.840.113635.100.6.1.13", "AA".repeat(32)),
+    ).toThrow("signing-class-invalid");
+    expect(() =>
+      classifySigningDetails(
+        "Authority=Developer ID Application: Fake\nTeamIdentifier=ABCDE12345",
+        "1.2.840.113635.100.6.1.13",
+        appleRootFingerprint,
+      ),
+    ).toThrow("signing-class-invalid");
+    expect(() =>
+      classifySigningDetails(
+        `${developerDetails}\nSignature=adhoc`,
+        "1.2.840.113635.100.6.1.13",
+        appleRootFingerprint,
+      ),
+    ).toThrow("signature-invalid");
   });
 
   test("writes atomically with mode 0600 and refuses overwrite", () => {
     const directory = temporaryDirectory();
     writeJsonExclusive(directory, "safe.json", { result: "pass" });
     expect(Bun.file(join(directory, "safe.json")).text()).resolves.toContain('"result": "pass"');
-    expect(() => writeJsonExclusive(directory, "safe.json", { result: "pass" })).toThrow("report-overwrite-refused");
-    expect(() => writeJsonExclusive(directory, "unsafe.json", { workspacePath: "/tmp/x" })).toThrow("redaction-failed");
+    expect(() => writeJsonExclusive(directory, "safe.json", { result: "pass" })).toThrow(
+      "report-overwrite-refused",
+    );
+    expect(() => writeJsonExclusive(directory, "unsafe.json", { workspacePath: "/tmp/x" })).toThrow(
+      "redaction-failed",
+    );
   });
 
   test("validates exact cases, observations, and units", () => {
     const report = suiteReport("agent-run", "manual");
     expect(() => validateSuiteCases(report)).not.toThrow();
     const missing = { ...report, cases: report.cases.slice(1) };
-    expect(() => validateSuiteCases(suiteReportSchema.parse({ ...missing, result: "pass" }))).toThrow("case-matrix-invalid");
+    expect(() =>
+      validateSuiteCases(suiteReportSchema.parse({ ...missing, result: "pass" })),
+    ).toThrow("case-matrix-invalid");
     const changed = structuredClone(report);
     changed.cases[0]!.observations[0]!.unit = "seconds";
     expect(() => validateSuiteCases(changed)).toThrow("observation-invalid");
@@ -263,7 +365,8 @@ describe("resource and aggregate evaluation", () => {
       ["input-activity", "manual"],
       ["agent-run", "manual"],
     ];
-    for (const [suite, mode] of reports) writeJsonExclusive(directory, `${suite}-${mode}.json`, suiteReport(suite, mode));
+    for (const [suite, mode] of reports)
+      writeJsonExclusive(directory, `${suite}-${mode}.json`, suiteReport(suite, mode));
     const aggregate = aggregateReports(directory);
     expect(aggregate.result).toBe("accepted");
     expect(aggregate.passedCaseCount).toBe(aggregate.expectedCaseCount);
@@ -282,7 +385,9 @@ describe("resource and aggregate evaluation", () => {
   test("scans and rejects every unexpected report-directory file", () => {
     const directory = temporaryDirectory();
     writePreflight(directory);
-    writeFileSync(join(directory, "operator-notes.json"), '{"prompt":"private"}\n', { mode: 0o600 });
+    writeFileSync(join(directory, "operator-notes.json"), '{"prompt":"private"}\n', {
+      mode: 0o600,
+    });
     const aggregate = aggregateReports(directory);
     expect(aggregate.result).toBe("not-accepted");
     expect(aggregate.forbiddenDataFindingCount).toBeGreaterThan(0);
@@ -292,7 +397,11 @@ describe("resource and aggregate evaluation", () => {
     const directory = temporaryDirectory();
     writePreflight(directory);
     const mismatched = { ...identity, bundleSha256: "c".repeat(64) };
-    writeJsonExclusive(directory, "meeting-functional.json", suiteReport("meeting", "functional", mismatched));
+    writeJsonExclusive(
+      directory,
+      "meeting-functional.json",
+      suiteReport("meeting", "functional", mismatched),
+    );
     expect(() => aggregateReports(directory)).toThrow("identity-mismatch");
   });
 });

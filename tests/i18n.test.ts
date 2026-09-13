@@ -25,7 +25,7 @@ describe("application i18n", () => {
   });
 
   test("prefers a persisted supported language", () => {
-    const storage = { getItem: (key: string) => key === APP_LANGUAGE_STORAGE_KEY ? "ja" : null };
+    const storage = { getItem: (key: string) => (key === APP_LANGUAGE_STORAGE_KEY ? "ja" : null) };
     expect(detectInitialLanguage(storage, "en-US")).toBe("ja");
   });
 

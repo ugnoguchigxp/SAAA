@@ -1,6 +1,7 @@
 use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(coverage)");
     stage_codex_runtime();
     stage_web_fetch_runtime();
     tauri_build::build()

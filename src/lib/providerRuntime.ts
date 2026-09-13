@@ -7,7 +7,10 @@ export async function resolveServiceHarness(address: string): Promise<HarnessRes
   return invoke<HarnessResolution>("resolve_service_harness", { address });
 }
 
-export async function setProviderApiKey(providerId: string, apiKey: string): Promise<ProviderCredentialState> {
+export async function setProviderApiKey(
+  providerId: string,
+  apiKey: string,
+): Promise<ProviderCredentialState> {
   return invoke<ProviderCredentialState>("set_provider_api_key", { input: { providerId, apiKey } });
 }
 
@@ -15,6 +18,8 @@ export async function deleteProviderApiKey(providerId: string): Promise<Provider
   return invoke<ProviderCredentialState>("delete_provider_api_key", { providerId });
 }
 
-export async function getProviderCredentialState(providerId: string): Promise<ProviderCredentialState> {
+export async function getProviderCredentialState(
+  providerId: string,
+): Promise<ProviderCredentialState> {
   return invoke<ProviderCredentialState>("get_provider_credential_state", { providerId });
 }

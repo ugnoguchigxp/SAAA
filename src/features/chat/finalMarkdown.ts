@@ -9,8 +9,15 @@ const inFlight = new Map<string, { content: string; promise: Promise<string> }>(
 let cacheBytes = 0;
 let worker: Worker | null = null;
 let nextRequestId = 1;
-const pending = new Map<number, { resolve: (html: string) => void; reject: (error: Error) => void }>();
-const workerQueue: Array<{ content: string; resolve: (html: string) => void; reject: (error: Error) => void }> = [];
+const pending = new Map<
+  number,
+  { resolve: (html: string) => void; reject: (error: Error) => void }
+>();
+const workerQueue: Array<{
+  content: string;
+  resolve: (html: string) => void;
+  reject: (error: Error) => void;
+}> = [];
 let workerQueueHead = 0;
 
 function contentKey(messageId: string, content: string): string {
@@ -30,7 +37,9 @@ function cacheRenderedValue(key: string, content: string, html: string) {
   cache.set(key, { content, html, bytes });
   cacheBytes += bytes;
   while (cache.size > CACHE_MAX_ENTRIES || cacheBytes > CACHE_MAX_BYTES) {
-    const oldest = cache.entries().next().value as [string, { content: string; html: string; bytes: number }] | undefined;
+    const oldest = cache.entries().next().value as
+      | [string, { content: string; html: string; bytes: number }]
+      | undefined;
     if (!oldest) break;
     cache.delete(oldest[0]);
     cacheBytes -= oldest[1].bytes;
@@ -53,7 +62,8 @@ function sharedWorker(): Worker {
     drainWorkerQueue();
   };
   worker.onerror = () => failWorker(new Error("Markdown worker failed"));
-  worker.onmessageerror = () => failWorker(new Error("Markdown worker response could not be decoded"));
+  worker.onmessageerror = () =>
+    failWorker(new Error("Markdown worker response could not be decoded"));
   return worker;
 }
 
@@ -78,7 +88,9 @@ function drainWorkerQueue() {
       sharedWorker().postMessage({ id, content: request.content });
     } catch (cause) {
       pending.delete(id);
-      request.reject(cause instanceof Error ? cause : new Error("Markdown worker could not accept work"));
+      request.reject(
+        cause instanceof Error ? cause : new Error("Markdown worker could not accept work"),
+      );
     }
   }
   if (workerQueueHead === workerQueue.length) {
@@ -128,9 +140,10 @@ export async function renderFinalMarkdown(messageId: string, content: string): P
     const bytes = new TextEncoder().encode(content).byteLength;
     let html: string;
     try {
-      html = bytes >= WORKER_THRESHOLD_BYTES
-        ? await renderInWorker(content)
-        : await renderWhenIdle(content);
+      html =
+        bytes >= WORKER_THRESHOLD_BYTES
+          ? await renderInWorker(content)
+          : await renderWhenIdle(content);
     } catch {
       html = await renderWhenIdle(content);
     }

@@ -466,6 +466,24 @@ pub(crate) async fn run(
     result
 }
 
+fn start_request<'a>(context: &'a WebSocketRunContext<'_>, allocation_id: &'a str) -> RunStart<'a> {
+    RunStart::new(
+        &context.input.run_id,
+        allocation_id,
+        context.model,
+        context.messages,
+        context.tools,
+        context.reasoning_effort,
+        context.max_output_tokens,
+        context
+            .timeout
+            .as_millis()
+            .try_into()
+            .unwrap_or(3_300_000_u64)
+            .min(3_300_000),
+    )
+}
+
 async fn run_connected(
     context: &WebSocketRunContext<'_>,
 ) -> Result<WebSocketRunResult, WebSocketRunError> {
@@ -490,21 +508,7 @@ async fn run_connected(
     };
     emit_websocket_state(context, WebSocketConnectionState::Connected);
 
-    let start = RunStart::new(
-        &context.input.run_id,
-        allocation_id,
-        context.model,
-        context.messages,
-        context.tools,
-        context.reasoning_effort,
-        context.max_output_tokens,
-        context
-            .timeout
-            .as_millis()
-            .try_into()
-            .unwrap_or(3_300_000_u64)
-            .min(3_300_000),
-    );
+    let start = start_request(context, allocation_id);
     tokio::select! {
         biased;
         _ = context.cancellation.cancelled() => {

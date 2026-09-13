@@ -35,12 +35,14 @@ export function transitionConversationSession(
 ): ConversationSession {
   switch (event.type) {
     case "runStarted":
-      if (state.runId && state.runId !== event.runId) throw new Error("A conversation run is already active");
+      if (state.runId && state.runId !== event.runId)
+        throw new Error("A conversation run is already active");
       return { ...state, runId: event.runId };
     case "runFinished":
       return state.runId === event.runId ? { ...state, runId: null } : state;
     case "speechStarted":
-      if (state.speechRunId && state.speechRunId !== event.runId) throw new Error("A speech run is already active");
+      if (state.speechRunId && state.speechRunId !== event.runId)
+        throw new Error("A speech run is already active");
       return { ...state, speechRunId: event.runId };
     case "speechFinished":
       return state.speechRunId === event.runId ? { ...state, speechRunId: null } : state;

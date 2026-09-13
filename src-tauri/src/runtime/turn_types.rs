@@ -1,3 +1,5 @@
+#[path = "provider_failure.rs"]
+mod provider_failure;
 use serde_json::Value;
 
 use super::contracts::RunFailureCode;

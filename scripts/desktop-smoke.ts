@@ -15,11 +15,16 @@ const reportDir = args[1] ? resolve(args[1]) : mkdtempSync(join(tmpdir(), "saaa-
 const mac = process.platform === "darwin";
 try {
   await runDesktopSmoke({
-    root, reportDir,
-    build: mac ? ["bunx", "tauri", "build", "--debug", "--bundles", "app"]
+    root,
+    reportDir,
+    build: mac
+      ? ["bunx", "tauri", "build", "--debug", "--bundles", "app"]
       : ["bunx", "tauri", "build", "--debug", "--no-bundle"],
-    executable: [mac ? join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/MacOS/saaa")
-      : join(root, `src-tauri/target/debug/saaa${process.platform === "win32" ? ".exe" : ""}`)],
+    executable: [
+      mac
+        ? join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/MacOS/saaa")
+        : join(root, `src-tauri/target/debug/saaa${process.platform === "win32" ? ".exe" : ""}`),
+    ],
     verifyBundle: mac ? () => verifyMacBundle(root) : undefined,
   });
   console.log("Desktop smoke passed: packaged frontend reported IPC ready.");

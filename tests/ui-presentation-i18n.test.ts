@@ -17,25 +17,29 @@ describe("localized UI presentation", () => {
   test("renders stable UI error identities in the selected language", async () => {
     await i18n.changeLanguage("ja");
 
-    expect(localizeUiMessage(i18n.t, uiMessage("chatVoiceQueueFull"), "chat"))
-      .toBe("音声処理が混み合っているため、最新の発話は送信しませんでした。");
-    expect(localizeUiMessage(i18n.t, "ASR_LANGUAGE_UNKNOWN: fixture", "voice"))
-      .toBe("使用言語を判定できなかったため、発話を送信しませんでした。");
-    expect(localizeUiMessage(
-      i18n.t,
-      "LARM_API_TOKEN is invalid.",
-      "settings",
-    )).toBe("設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。認証なしで使う場合は環境変数を削除してください。");
-    expect(localizeUiMessage(
-      i18n.t,
-      "dynamic_lan rejected the connection authorization.",
-      "settings",
-    )).toBe("Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。");
-    expect(localizeUiMessage(
-      i18n.t,
-      "Agent Session creation did not advertise a supported event stream URL",
-      "settings",
-    )).toBe("セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。");
+    expect(localizeUiMessage(i18n.t, uiMessage("chatVoiceQueueFull"), "chat")).toBe(
+      "音声処理が混み合っているため、最新の発話は送信しませんでした。",
+    );
+    expect(localizeUiMessage(i18n.t, "ASR_LANGUAGE_UNKNOWN: fixture", "voice")).toBe(
+      "使用言語を判定できなかったため、発話を送信しませんでした。",
+    );
+    expect(localizeUiMessage(i18n.t, "LARM_API_TOKEN is invalid.", "settings")).toBe(
+      "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。認証なしで使う場合は環境変数を削除してください。",
+    );
+    expect(
+      localizeUiMessage(i18n.t, "dynamic_lan rejected the connection authorization.", "settings"),
+    ).toBe(
+      "Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。",
+    );
+    expect(
+      localizeUiMessage(
+        i18n.t,
+        "Agent Session creation did not advertise a supported event stream URL",
+        "settings",
+      ),
+    ).toBe(
+      "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。",
+    );
   });
 
   test("does not expose untrusted backend error text in either language", async () => {
@@ -50,9 +54,19 @@ describe("localized UI presentation", () => {
     await i18n.changeLanguage("ja");
 
     expect(localizeStatus(i18n.t, "saaa-transcribing")).toBe("SAAAが文字起こし中");
-    expect(localizeRuntimeActivity(i18n.t, { type: "providerStarted", providerId: "provider-a" })).toBe("provider-a を使用中");
-    expect(localizeRuntimeActivity(i18n.t, { type: "providerSelected", providerId: "provider-b", fallbackUsed: true })).toBe("フォールバックプロバイダー provider-b を使用中");
-    expect(localizeRuntimeActivity(i18n.t, { type: "providerFailed" })).toBe("プロバイダーがリクエストを完了できませんでした。");
+    expect(
+      localizeRuntimeActivity(i18n.t, { type: "providerStarted", providerId: "provider-a" }),
+    ).toBe("provider-a を使用中");
+    expect(
+      localizeRuntimeActivity(i18n.t, {
+        type: "providerSelected",
+        providerId: "provider-b",
+        fallbackUsed: true,
+      }),
+    ).toBe("フォールバックプロバイダー provider-b を使用中");
+    expect(localizeRuntimeActivity(i18n.t, { type: "providerFailed" })).toBe(
+      "プロバイダーがリクエストを完了できませんでした。",
+    );
     expect(localizeSituationScene(i18n.t, "CODING")).toBe("コーディング");
     expect(localizeSituationEntryKind(i18n.t, "heartbeat")).toBe("ハートビート");
   });
@@ -72,7 +86,8 @@ describe("localized UI presentation", () => {
     const expected = new Date(0).toLocaleString("en-US", { timeZone: "Asia/Tokyo" });
 
     expect(formatRegionalDateTime(value, "en-US", "Asia/Tokyo")).toBe(expected);
-    expect(formatRegionalDateTime(value, "en-US", "Asia/Tokyo"))
-      .not.toBe(formatRegionalDateTime(value, "en-US", "UTC"));
+    expect(formatRegionalDateTime(value, "en-US", "Asia/Tokyo")).not.toBe(
+      formatRegionalDateTime(value, "en-US", "UTC"),
+    );
   });
 });

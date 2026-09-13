@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  resolveModelProviderStatus,
-  updateEffectiveRoute,
-} from "../src/lib/conversationRouting";
+import { resolveModelProviderStatus, updateEffectiveRoute } from "../src/lib/conversationRouting";
 import type { AppSnapshot } from "../src/lib/contracts";
 
 function snapshot(): AppSnapshot {

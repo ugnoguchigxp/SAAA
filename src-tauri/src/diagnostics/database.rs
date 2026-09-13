@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use crate::{database_error, persistence::SqliteReaders, redact::redact_runtime_text};
+use crate::{database_error, persistence::SqliteReaders};
 
 pub(super) struct DatabaseDiagnostics {
     pub(super) database: Value,
@@ -45,7 +45,9 @@ pub(super) fn load(readers: &SqliteReaders) -> Result<DatabaseDiagnostics, Strin
                     "route": row.get::<_, String>(0)?,
                     "providerId": row.get::<_, String>(1)?,
                     "status": row.get::<_, String>(2)?,
-                    "error": redact_runtime_text(&row.get::<_, String>(3)?),
+                    // Free-form provider errors may contain body text, endpoint addresses or
+                    // ephemeral credentials. Diagnostics expose status/code instead.
+                    "error": if row.get::<_, String>(3)?.is_empty() { "" } else { "Runtime request failed; inspect failureCode and route settings." },
                     "failureCode": row.get::<_, String>(4)?
                 }))
             })

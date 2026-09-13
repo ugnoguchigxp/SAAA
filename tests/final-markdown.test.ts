@@ -3,19 +3,21 @@ import { renderSafeMarkdown } from "../src/features/chat/markdownRenderer";
 
 describe("final Markdown projection", () => {
   test("renders completed structures while escaping raw HTML", () => {
-    const html = renderSafeMarkdown([
-      "# Result",
-      "",
-      "**safe** <script>alert(1)</script>",
-      "",
-      "| A | B |",
-      "| --- | --- |",
-      "| 1 | 2 |",
-      "",
-      "```ts",
-      "const value = '<tag>';",
-      "```",
-    ].join("\n"));
+    const html = renderSafeMarkdown(
+      [
+        "# Result",
+        "",
+        "**safe** <script>alert(1)</script>",
+        "",
+        "| A | B |",
+        "| --- | --- |",
+        "| 1 | 2 |",
+        "",
+        "```ts",
+        "const value = '<tag>';",
+        "```",
+      ].join("\n"),
+    );
     expect(html).toContain("<h1>Result</h1>");
     expect(html).toContain("<strong>safe</strong>");
     expect(html).toContain("<table>");
@@ -32,7 +34,7 @@ describe("final Markdown projection", () => {
 
   test("treats an unfinished code fence as escaped code at completion", () => {
     const html = renderSafeMarkdown("```html\n<img src=x onerror=alert(1)>");
-    expect(html).toContain("<pre><code class=\"language-html\">");
+    expect(html).toContain('<pre><code class="language-html">');
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
   });
 

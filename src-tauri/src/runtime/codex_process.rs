@@ -1,7 +1,7 @@
+#[path = "codex_output_reader.rs"]
+mod output_reader;
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Read};
 use std::sync::mpsc;
-use std::thread;
 
 use crate::ipc_contract::RuntimeEvent;
 use crate::process_guard::ProcessGuard;
@@ -9,7 +9,7 @@ use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{
     now_iso, spawn_codex_app_server, validate_identifier, write_codex_handshake,
     write_codex_message, CodexReaderMessage, CodexTurnFailure, CodexTurnOutcome, RunCancellation,
-    CODEX_READ_ONLY_SYSTEM_CONTEXT, MAX_CODEX_STDOUT_BYTES,
+    CODEX_READ_ONLY_SYSTEM_CONTEXT,
 };
 
 pub(crate) use super::codex_supervise::{
@@ -94,47 +94,7 @@ pub(crate) fn run_codex_turn_process_with_policy(
             code: RunFailureCode::ChildStartFailed,
             last_progress_at: None,
         })?;
-    let (sender, receiver) = mpsc::sync_channel(256);
-    let stdout_reader = thread::spawn(move || {
-        let mut reader = BufReader::new(stdout.take(MAX_CODEX_STDOUT_BYTES + 1));
-        let mut bytes_read = 0_u64;
-        loop {
-            let mut line = String::new();
-            let count = match reader.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(count) => count,
-                Err(_) => {
-                    let _ = sender.send(CodexReaderMessage::Failed {
-                        code: RunFailureCode::ProtocolError,
-                        message: "Could not read Codex app-server output",
-                    });
-                    break;
-                }
-            };
-            bytes_read = bytes_read.saturating_add(count as u64);
-            if bytes_read > MAX_CODEX_STDOUT_BYTES {
-                let _ = sender.send(CodexReaderMessage::Failed {
-                    code: RunFailureCode::ResponseTooLarge,
-                    message: "Codex app-server output exceeded the bounded stream limit",
-                });
-                break;
-            }
-            match serde_json::from_str::<Value>(line.trim_end()) {
-                Ok(message) => {
-                    if sender.send(CodexReaderMessage::Message(message)).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => {
-                    let _ = sender.send(CodexReaderMessage::Failed {
-                        code: RunFailureCode::ProtocolError,
-                        message: "Codex app-server returned invalid JSON",
-                    });
-                    break;
-                }
-            }
-        }
-    });
+    let (receiver, stdout_reader) = output_reader::spawn(stdout);
     let mut thread_id = existing_thread_id.map(str::to_string);
     let mut last_progress_at = None;
     let result = (|| {

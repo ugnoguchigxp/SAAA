@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { AuditEvent } from "../../lib/contracts";
 import { listAuditEvents } from "../../lib/runtime";
 import "./AuditLogPage.css";
+import { useDialogFocus } from "../../components/useDialogFocus";
 import { auditTimestampIso, formatAuditTimestamp } from "./auditTimestamp";
 
 const auditTableFeatures = tableFeatures({});
@@ -46,18 +47,9 @@ export function AuditLogPage() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (!selectedEvent) {
-      return undefined;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelectedEvent(null);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedEvent]);
+  const { dialogRef, fallbackRef } = useDialogFocus(selectedEvent !== null, () =>
+    setSelectedEvent(null),
+  );
 
   const columns = useMemo(
     () =>
@@ -66,7 +58,11 @@ export function AuditLogPage() {
           header: t("audit.columns.occurredAt"),
           cell: ({ getValue }) => {
             const occurredAt = getValue();
-            return <time dateTime={auditTimestampIso(occurredAt)}>{formatAuditTimestamp(occurredAt, locale)}</time>;
+            return (
+              <time dateTime={auditTimestampIso(occurredAt)}>
+                {formatAuditTimestamp(occurredAt, locale)}
+              </time>
+            );
           },
         }),
         auditColumnHelper.accessor("component", {
@@ -102,14 +98,24 @@ export function AuditLogPage() {
   });
 
   return (
-    <section className="audit-log-page" aria-labelledby="audit-log-title">
+    <section
+      ref={fallbackRef}
+      tabIndex={-1}
+      className="audit-log-page"
+      aria-labelledby="audit-log-title"
+    >
       <header className="audit-log-header">
         <div>
           <p>{t("audit.eyebrow")}</p>
           <h2 id="audit-log-title">{t("audit.title")}</h2>
           <span>{t("audit.description")}</span>
         </div>
-        <button type="button" className="audit-refresh-button" onClick={() => void load()} disabled={loading}>
+        <button
+          type="button"
+          className="audit-refresh-button"
+          onClick={() => void load()}
+          disabled={loading}
+        >
           {t("audit.refresh")}
         </button>
       </header>
@@ -121,7 +127,9 @@ export function AuditLogPage() {
         </div>
 
         {error ? <p className="audit-log-error">{t("audit.loadFailed", { error })}</p> : null}
-        {!loading && !error && events.length === 0 ? <p className="audit-log-empty">{t("audit.empty")}</p> : null}
+        {!loading && !error && events.length === 0 ? (
+          <p className="audit-log-empty">{t("audit.empty")}</p>
+        ) : null}
 
         {events.length > 0 ? (
           <div className="audit-table-frame">
@@ -179,7 +187,14 @@ export function AuditLogPage() {
             }
           }}
         >
-          <aside className="audit-drawer" role="dialog" aria-modal="true" aria-labelledby="audit-drawer-title">
+          <aside
+            ref={dialogRef}
+            tabIndex={-1}
+            className="audit-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="audit-drawer-title"
+          >
             <header className="audit-drawer-header">
               <div>
                 <p>{t("audit.drawer.eyebrow")}</p>
@@ -200,34 +215,63 @@ export function AuditLogPage() {
                 <h4 id="audit-drawer-metadata-title">{t("audit.drawer.metadata")}</h4>
                 <dl className="audit-drawer-metadata">
                   <MetadataField label={t("audit.drawer.eventId")} value={selectedEvent.id} />
-                  <MetadataField label={t("audit.drawer.sequence")} value={selectedEvent.sequence} />
+                  <MetadataField
+                    label={t("audit.drawer.sequence")}
+                    value={selectedEvent.sequence}
+                  />
                   <MetadataField
                     label={t("audit.columns.occurredAt")}
                     value={formatAuditTimestamp(selectedEvent.occurredAt, locale)}
                   />
-                  <MetadataField label={t("audit.columns.component")} value={selectedEvent.component} />
+                  <MetadataField
+                    label={t("audit.columns.component")}
+                    value={selectedEvent.component}
+                  />
                   <MetadataField label={t("audit.columns.phase")} value={selectedEvent.phase} />
                   <MetadataField label={t("audit.columns.outcome")} value={selectedEvent.outcome} />
-                  <MetadataField label={t("audit.columns.failureCode")} value={selectedEvent.failureCode} />
+                  <MetadataField
+                    label={t("audit.columns.failureCode")}
+                    value={selectedEvent.failureCode}
+                  />
                 </dl>
               </section>
 
               <section aria-labelledby="audit-drawer-identifiers-title">
                 <h4 id="audit-drawer-identifiers-title">{t("audit.drawer.identifiers")}</h4>
                 <dl className="audit-drawer-metadata">
-                  <MetadataField label={t("audit.drawer.correlationId")} value={selectedEvent.correlationId} />
-                  <MetadataField label={t("audit.drawer.causationId")} value={selectedEvent.causationId} />
-                  <MetadataField label={t("audit.drawer.conversationId")} value={selectedEvent.conversationId} />
-                  <MetadataField label={t("audit.drawer.runtimeRunId")} value={selectedEvent.runtimeRunId} />
-                  <MetadataField label={t("audit.drawer.sessionId")} value={selectedEvent.sessionId} />
-                  <MetadataField label={t("audit.drawer.subjectId")} value={selectedEvent.subjectId} />
+                  <MetadataField
+                    label={t("audit.drawer.correlationId")}
+                    value={selectedEvent.correlationId}
+                  />
+                  <MetadataField
+                    label={t("audit.drawer.causationId")}
+                    value={selectedEvent.causationId}
+                  />
+                  <MetadataField
+                    label={t("audit.drawer.conversationId")}
+                    value={selectedEvent.conversationId}
+                  />
+                  <MetadataField
+                    label={t("audit.drawer.runtimeRunId")}
+                    value={selectedEvent.runtimeRunId}
+                  />
+                  <MetadataField
+                    label={t("audit.drawer.sessionId")}
+                    value={selectedEvent.sessionId}
+                  />
+                  <MetadataField
+                    label={t("audit.drawer.subjectId")}
+                    value={selectedEvent.subjectId}
+                  />
                 </dl>
               </section>
 
               <section aria-labelledby="audit-drawer-attributes-title">
                 <h4 id="audit-drawer-attributes-title">{t("audit.drawer.attributes")}</h4>
                 {Object.keys(selectedEvent.attributes).length > 0 ? (
-                  <pre className="audit-attributes-json">{JSON.stringify(selectedEvent.attributes, null, 2)}</pre>
+                  <pre className="audit-attributes-json">
+                    {JSON.stringify(selectedEvent.attributes, null, 2)}
+                  </pre>
                 ) : (
                   <p className="audit-no-attributes">{t("audit.drawer.noAttributes")}</p>
                 )}

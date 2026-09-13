@@ -8,7 +8,15 @@ const emptySnapshot = (): AppSnapshot => ({
   settings: [],
   conversations: [],
   primaryConversationId: "",
-  effectiveRoute: { providerId: null, label: "モデル未選択", location: null, state: "unchecked", fallbackUsed: false, reasonCode: "test", updatedAt: null },
+  effectiveRoute: {
+    providerId: null,
+    label: "モデル未選択",
+    location: null,
+    state: "unchecked",
+    fallbackUsed: false,
+    reasonCode: "test",
+    updatedAt: null,
+  },
   larmRuntime: { state: "disabled", message: "", contractCommit: "unknown" },
   voiceProfile: {
     status: "empty",
@@ -32,13 +40,15 @@ describe("chat helpers", () => {
 
   test("findPrimaryRoute reads the conversation route and falls back to dynamic_lan", () => {
     expect(findPrimaryRoute([])).toBe("lan-llm-dynamic");
-    const documents: SettingsDocument[] = [{
-      namespace: "routing.tasks",
-      key: "default",
-      schemaVersion: 14,
-      valueJson: { conversationRespond: { primaryProviderId: "local-openai-compatible" } },
-      updatedAt: "1",
-    }];
+    const documents: SettingsDocument[] = [
+      {
+        namespace: "routing.tasks",
+        key: "default",
+        schemaVersion: 14,
+        valueJson: { conversationRespond: { primaryProviderId: "local-openai-compatible" } },
+        updatedAt: "1",
+      },
+    ];
     expect(findPrimaryRoute(documents)).toBe("local-openai-compatible");
   });
 

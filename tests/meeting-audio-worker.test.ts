@@ -24,14 +24,18 @@ function normalize(input: Float32Array, chunkSize: number) {
 describe("meeting audio worker resampler", () => {
   test("preserves phase and exact sample count across 100 ms input chunks", () => {
     const input = Float32Array.from({ length: 48_000 * 2 }, (_, index) =>
-      Math.sin(2 * Math.PI * 997 * index / 48_000));
+      Math.sin((2 * Math.PI * 997 * index) / 48_000),
+    );
     const chunked = normalize(input, 4_800);
     const whole = normalize(input, input.length);
     expect(chunked.output.length).toBe(32_000);
     expect(chunked.segments.map((segment) => segment.length)).toEqual([16_000, 16_000]);
     let maximumDifference = 0;
     for (let index = 0; index < chunked.output.length; index += 1) {
-      maximumDifference = Math.max(maximumDifference, Math.abs(chunked.output[index] - whole.output[index]));
+      maximumDifference = Math.max(
+        maximumDifference,
+        Math.abs(chunked.output[index] - whole.output[index]),
+      );
     }
     expect(maximumDifference).toBeLessThan(1e-6);
   });
@@ -39,8 +43,12 @@ describe("meeting audio worker resampler", () => {
   test("clips normalized output and suppresses aliases", () => {
     const clipped = normalize(new Float32Array(48_000).fill(4), 4_800).output;
     expect(clipped.every((sample) => sample >= -1 && sample <= 1)).toBe(true);
-    const alias = normalize(Float32Array.from({ length: 48_000 }, (_, index) =>
-      Math.sin(2 * Math.PI * 12_000 * index / 48_000)), 4_800).output.slice(64, -64);
+    const alias = normalize(
+      Float32Array.from({ length: 48_000 }, (_, index) =>
+        Math.sin((2 * Math.PI * 12_000 * index) / 48_000),
+      ),
+      4_800,
+    ).output.slice(64, -64);
     const rms = Math.sqrt(alias.reduce((sum, sample) => sum + sample * sample, 0) / alias.length);
     expect(rms).toBeLessThan(0.03);
   });

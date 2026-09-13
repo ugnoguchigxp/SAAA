@@ -1,0 +1,37 @@
+{
+  "decision": "Keep existing provider stream abstractions. No new common transport trait.",
+  "comparisons": [
+    {
+      "pair": [
+        "runtime/codex_process.rs",
+        "providers/llm_websocket/client.rs"
+      ],
+      "authentication": "Codex local process/handshake versus authenticated WebSocket endpoint",
+      "retry": "thread resume versus acknowledged sequence checkpoint resume",
+      "partialOutput": "projected Codex notifications versus ordered deltas",
+      "cancel": "supervised interrupt/drain versus protocol cancel and cancel deadline",
+      "allocation": "none in Codex transport; provider WebSocket lifetime managed by caller",
+      "terminal": "supervisor outcome versus OrderedRun terminal checkpoint",
+      "sharedExtraction": "none; transport contracts differ"
+    },
+    {
+      "pair": [
+        "providers/openai_compatible.rs",
+        "providers/llm_websocket/client.rs"
+      ],
+      "authentication": "HTTP request headers versus WebSocket handshake",
+      "retry": "provider attempt fallback versus sequence-based resume",
+      "partialOutput": "SSE decode versus ordered event checkpoints",
+      "cancel": "HTTP stream cancellation versus protocol cancel acknowledgement",
+      "allocation": "owned by provider wrappers, not a common decoder",
+      "terminal": "SSE completion versus checkpointed terminal",
+      "sharedExtraction": "existing providers/stream/attempt and dispatch retained"
+    }
+  ],
+  "localExtractions": [
+    "runtime/codex_output_reader.rs: bounded stdout ownership and backpressure",
+    "runtime/conversation_inputs.rs: one SQLite read transaction for settings and source history",
+    "providers/llm_websocket/client.rs start_request: protocol start construction"
+  ],
+  "validation": "bun run check:local passed, including full Rust timeout/cancel/partial output/resume contracts (534 library tests passed, 12 ignored)."
+}

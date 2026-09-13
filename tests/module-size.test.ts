@@ -14,10 +14,12 @@ afterEach(() => {
 
 describe("module-size ratchet", () => {
   test("counts Rust production before a terminal test module", () => {
-    const source = "fn production() {}\n\n#[cfg(test)]\nmod tests {\n  #[test]\n  fn works() {}\n}\n";
+    const source =
+      "fn production() {}\n\n#[cfg(test)]\nmod tests {\n  #[test]\n  fn works() {}\n}\n";
     expect(productionLines(source, "src/example.rs")).toBe(2);
     expect(productionLines(source, "src/example.ts")).toBe(8);
-    const platformTest = "fn production() {}\n\n#[cfg(all(test, target_os = \"macos\"))]\nmod tests {}\n";
+    const platformTest =
+      'fn production() {}\n\n#[cfg(all(test, target_os = "macos"))]\nmod tests {}\n';
     expect(productionLines(platformTest, "src/example.rs")).toBe(2);
   });
 
@@ -30,41 +32,40 @@ describe("module-size ratchet", () => {
       "",
       "fn second() {}",
       "",
-      "#[cfg(all(test, target_os = \"macos\"))]",
+      '#[cfg(all(test, target_os = "macos"))]',
       "mod tests { fn second_works() {} }",
       "",
     ].join("\n");
     expect(productionLines(source, "src/example.rs")).toBe(7);
 
-    const nonTerminal = "fn first() {}\n\n#[cfg(test)]\nmod tests { fn works() {} }\n\nfn second() {}\n";
+    const nonTerminal =
+      "fn first() {}\n\n#[cfg(test)]\nmod tests { fn works() {} }\n\nfn second() {}\n";
     expect(productionLines(nonTerminal, "src/example.rs")).toBe(7);
   });
 
   test("rejects new Rust modules above the hard production budget", () => {
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
-    expect(evaluate([
-      { path: "src-tauri/src/oversized.rs", total: 1_601, production: 1_601 },
-    ], baseline, false)).toEqual([
-      "src-tauri/src/oversized.rs: 1601 exceeds hard budget 1600",
-    ]);
+    expect(
+      evaluate(
+        [{ path: "src-tauri/src/oversized.rs", total: 1_601, production: 1_601 }],
+        baseline,
+        false,
+      ),
+    ).toEqual(["src-tauri/src/oversized.rs: 1601 exceeds hard budget 1600"]);
   });
 
   test("rejects oversized new TypeScript modules outside scripts", () => {
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
-    expect(evaluate([
-      { path: "src/lib/oversized.ts", total: 701, production: 701 },
-    ], baseline, false)).toEqual([
-      "src/lib/oversized.ts: 701 exceeds hard budget 700",
-    ]);
+    expect(
+      evaluate([{ path: "src/lib/oversized.ts", total: 701, production: 701 }], baseline, false),
+    ).toEqual(["src/lib/oversized.ts: 701 exceeds hard budget 700"]);
   });
 
   test("applies the App.tsx hard budget of 450", () => {
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
-    expect(evaluate([
-      { path: "src/App.tsx", total: 451, production: 451 },
-    ], baseline, false)).toEqual([
-      "src/App.tsx: 451 exceeds hard budget 450",
-    ]);
+    expect(
+      evaluate([{ path: "src/App.tsx", total: 451, production: 451 }], baseline, false),
+    ).toEqual(["src/App.tsx: 451 exceeds hard budget 450"]);
   });
 
   test("does not follow symlinks or include special directory entries", () => {

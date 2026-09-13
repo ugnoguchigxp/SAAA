@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "sortImports": false,
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "src/lib/generated/**",
+    "**/vendor/**",
+    "**/node_modules/**",
+    "**/target/**",
+    "dist/**",
+    "spec/**"
+  ]
+}

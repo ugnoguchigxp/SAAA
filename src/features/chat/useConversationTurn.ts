@@ -1,12 +1,38 @@
+import { useCommittedCallback } from "../../useCommittedCallback";
 import { cancelReasoningRun } from "../../lib/reasoningRunControl";
-import { markReasoningRun, endReasoningRun, queueReasoningReplacement, markReasoningCancellation, clearReasoningCancellation, reasoningCancellationRequested } from "../../lib/reasoningRun";
+import {
+  markReasoningRun,
+  endReasoningRun,
+  queueReasoningReplacement,
+  markReasoningCancellation,
+  clearReasoningCancellation,
+  reasoningCancellationRequested,
+} from "../../lib/reasoningRun";
 import { useMessageHistory } from "./useMessageHistory";
-import { type Dispatch, type FormEvent, type MutableRefObject, type SetStateAction, useEffect, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type FormEvent,
+  type MutableRefObject,
+  type SetStateAction,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
 import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
-import { appendConversationActivity, type ConversationRuntimeActivity } from "../../lib/conversationActivity";
-import type { AppSnapshot, ConversationMessage, MeetingState, RuntimeEvent, VoiceSettings, WebSocketConnectionState } from "../../lib/contracts";
+import {
+  appendConversationActivity,
+  type ConversationRuntimeActivity,
+} from "../../lib/conversationActivity";
+import type {
+  AppSnapshot,
+  ConversationMessage,
+  MeetingState,
+  RuntimeEvent,
+  VoiceSettings,
+  WebSocketConnectionState,
+} from "../../lib/contracts";
 import { cancelRun, startTurn, stopTts } from "../../lib/runtime";
 import {
   transitionConversationSession,
@@ -26,7 +52,12 @@ import {
   recordRunWithoutMarkdown,
   recordSocketReceive,
 } from "./streamingPerformance";
-type RetryAction = { kind: "response"; prompt: string; inputMessageId: string; inputOrigin: InputOrigin };
+type RetryAction = {
+  kind: "response";
+  prompt: string;
+  inputMessageId: string;
+  inputOrigin: InputOrigin;
+};
 export function useConversationTurn({
   selectedConversationId,
   voiceSettings,
@@ -49,10 +80,18 @@ export function useConversationTurn({
   setError: Dispatch<SetStateAction<string | null>>;
 }) {
   const history = useMessageHistory();
-  const { messages, setMessages, hasMoreMessages, hasNewerMessages, loadingOlderMessages, loadingNewerMessages } = history;
+  const {
+    messages,
+    setMessages,
+    hasMoreMessages,
+    hasNewerMessages,
+    loadingOlderMessages,
+    loadingNewerMessages,
+  } = history;
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const { streamingText, resetStreamingText, appendStreamingText, hasStreamingText } = useStreamingTextProjection();
+  const { streamingText, resetStreamingText, appendStreamingText, hasStreamingText } =
+    useStreamingTextProjection();
   const [runtimeActivity, setRuntimeActivity] = useState<ConversationRuntimeActivity[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
@@ -71,37 +110,47 @@ export function useConversationTurn({
   meetingStateRef.current = meetingState;
   useEffect(() => {
     disposedRef.current = false;
+    const coordinator = issueCoordinatorRef.current;
     return () => {
       disposedRef.current = true;
-      issueCoordinatorRef.current.dispose();
+      coordinator.dispose();
       const runId = conversationSessionRef.current.runId;
       const ttsRunId = conversationSessionRef.current.speechRunId;
       if (runId) void cancelRun(runId).catch(() => undefined);
       if (ttsRunId) void stopTts(ttsRunId).catch(() => undefined);
     };
   }, [conversationSessionRef]);
+  const resetHistory = useCommittedCallback(history.reset);
+  const loadMessagesCommitted = useCommittedCallback(loadMessages);
   useEffect(() => {
-    history.reset(selectedConversationId);
+    resetHistory(selectedConversationId);
     incompleteRunIdsRef.current.clear();
     resetStreamingText();
     setRuntimeActivity([]);
     setWebSocketState("disconnected");
     if (selectedConversationId) {
-      void loadMessages(selectedConversationId, issueCoordinatorRef.current.begin());
+      void loadMessagesCommitted(selectedConversationId, issueCoordinatorRef.current.begin());
     }
-  }, [selectedConversationId]);
+  }, [selectedConversationId, resetHistory, resetStreamingText, loadMessagesCommitted]);
   function publishIssue(scope: number, message: string, retry: RetryAction | null = null) {
     if (disposedRef.current || !issueCoordinatorRef.current.isCurrent(scope)) return;
     setError(message);
     setRetryAction(retry);
   }
-  async function loadMessages(conversationId: string, issueScope: number): Promise<ConversationMessage[]> {
+  async function loadMessages(
+    conversationId: string,
+    issueScope: number,
+  ): Promise<ConversationMessage[]> {
     const request = ++messagesRequestRef.current;
     try {
       const nextMessages = await history.latest(conversationId);
       return nextMessages;
     } catch (cause) {
-      if (!disposedRef.current && request === messagesRequestRef.current && selectedConversationIdRef.current === conversationId) {
+      if (
+        !disposedRef.current &&
+        request === messagesRequestRef.current &&
+        selectedConversationIdRef.current === conversationId
+      ) {
         publishIssue(issueScope, toMessage(cause));
       }
       return [];
@@ -109,21 +158,35 @@ export function useConversationTurn({
   }
   async function loadOlderMessages(): Promise<void> {
     if (!hasMoreMessages) return;
-    try { await history.load("before"); } catch (cause) { publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause)); }
+    try {
+      await history.load("before");
+    } catch (cause) {
+      publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause));
+    }
   }
   async function loadNewerMessages(): Promise<void> {
     if (!hasNewerMessages) return;
-    try { await history.load("after"); } catch (cause) { publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause)); }
+    try {
+      await history.load("after");
+    } catch (cause) {
+      publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause));
+    }
   }
   useEffect(() => {
     const changed = (event: Event) => {
-      if ((event as CustomEvent<string>).detail === selectedConversationIdRef.current && selectedConversationIdRef.current) {
-        void loadMessages(selectedConversationIdRef.current, issueCoordinatorRef.current.begin());
+      if (
+        (event as CustomEvent<string>).detail === selectedConversationIdRef.current &&
+        selectedConversationIdRef.current
+      ) {
+        void loadMessagesCommitted(
+          selectedConversationIdRef.current,
+          issueCoordinatorRef.current.begin(),
+        );
       }
     };
     window.addEventListener("saaa:ui-history", changed);
     return () => window.removeEventListener("saaa:ui-history", changed);
-  }, []);
+  }, [loadMessagesCommitted]);
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await submitPrompt(composer);
@@ -135,25 +198,39 @@ export function useConversationTurn({
       sourceId = null,
       onSettled,
     } = options;
-    const replacement = !disposedRef.current && selectedConversationId
-      ? queueReasoningReplacement(conversationSessionRef.current.runId, prompt, pendingVoicePromptsRef.current, options, selectedConversationId) : null;
+    const replacement =
+      !disposedRef.current && selectedConversationId
+        ? queueReasoningReplacement(
+            conversationSessionRef.current.runId,
+            prompt,
+            pendingVoicePromptsRef.current,
+            options,
+            selectedConversationId,
+          )
+        : null;
     if (replacement) {
-      if (replacement === "queued") { setComposer(""); await cancelReasoningRun(conversationSessionRef.current.runId).catch((cause) => publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause))); }
+      if (replacement === "queued") {
+        setComposer("");
+        await cancelReasoningRun(conversationSessionRef.current.runId).catch((cause) =>
+          publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause)),
+        );
+      }
       return;
     }
     if (
-      disposedRef.current
-      || !selectedConversationId
-      || !prompt.trim()
-      || conversationSessionRef.current.runId
-    ) return;
+      disposedRef.current ||
+      !selectedConversationId ||
+      !prompt.trim() ||
+      conversationSessionRef.current.runId
+    )
+      return;
     const conversationId = selectedConversationId;
     const content = prompt.trim();
     const runId = `run_${crypto.randomUUID()}`;
     beginRunPerformance(runId);
     const issueScope = issueCoordinatorRef.current.begin();
-    const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak)
-      && !isMeetingBlocking(meetingStateRef.current);
+    const shouldStreamSpeech =
+      Boolean(voiceSettings?.autoSpeak) && !isMeetingBlocking(meetingStateRef.current);
     const presentationMode = shouldStreamSpeech ? "visual-and-spoken" : "visual";
     let delivered = false;
     let deliverySettled = false;
@@ -176,7 +253,16 @@ export function useConversationTurn({
       resetStreamingText();
       setRuntimeActivity([]);
       if (!retryInputMessageId && !history.isBrowsingOlder()) {
-        setMessages((current) => [...current, { id: `pending_${runId}`, conversationId, role: "user", content, createdAt: String(Date.now()) }]);
+        setMessages((current) => [
+          ...current,
+          {
+            id: `pending_${runId}`,
+            conversationId,
+            role: "user",
+            content,
+            createdAt: String(Date.now()),
+          },
+        ]);
       }
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
@@ -184,7 +270,16 @@ export function useConversationTurn({
         await stopSpeech(issueScope);
       }
       await startTurn(
-        { runId, conversationId, content, workspacePath: null, retryInputMessageId, sourceId, inputOrigin, presentationMode },
+        {
+          runId,
+          conversationId,
+          content,
+          workspacePath: null,
+          retryInputMessageId,
+          sourceId,
+          inputOrigin,
+          presentationMode,
+        },
         (event) => {
           if (event.type === "started") settleDelivery(true);
           handleRuntimeEvent(event, conversationId, issueScope);
@@ -192,7 +287,10 @@ export function useConversationTurn({
       );
       delivered = true;
     } catch (cause) {
-      if (!reasoningCancellationRequested(runId)) { failedRunIdsRef.current.add(runId); publishIssue(issueScope, toMessage(cause)); }
+      if (!reasoningCancellationRequested(runId)) {
+        failedRunIdsRef.current.add(runId);
+        publishIssue(issueScope, toMessage(cause));
+      }
     } finally {
       endReasoningRun(runId);
       if (conversationSessionRef.current.runId === runId) {
@@ -209,15 +307,24 @@ export function useConversationTurn({
         if (!preserveIncomplete) resetStreamingText();
         const nextMessages = await loadMessages(conversationId, issueScope);
         if (failed) {
-          const input = [...nextMessages].reverse().find((message) => message.role === "user" && message.content === content);
+          const input = [...nextMessages]
+            .reverse()
+            .find((message) => message.role === "user" && message.content === content);
           if (input && issueCoordinatorRef.current.isCurrent(issueScope)) {
-            setRetryAction({ kind: "response", prompt: content, inputMessageId: input.id, inputOrigin });
+            setRetryAction({
+              kind: "response",
+              prompt: content,
+              inputMessageId: input.id,
+              inputOrigin,
+            });
             handedToRetry = true;
           }
         }
       }
       settleDelivery(delivered || handedToRetry);
-      const nextVoicePrompt = disposedRef.current ? undefined : pendingVoicePromptsRef.current.shift();
+      const nextVoicePrompt = disposedRef.current
+        ? undefined
+        : pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
         if (conversationSessionRef.current.speechRunId) await stopSpeech(issueScope);
         await submitPrompt(nextVoicePrompt.content, {
@@ -229,50 +336,100 @@ export function useConversationTurn({
     }
   }
   function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, issueScope: number) {
-    const isSpeechLifecycle = event.type === "speechStarted" || event.type === "speechEnded" || event.type === "speechFailed";
-    const ownsEvent = conversationSessionRef.current.runId === event.runId
-      || (isSpeechLifecycle && conversationSessionRef.current.speechRunId === event.runId);
-    if (
-      disposedRef.current ||
-      selectedConversationIdRef.current !== conversationId ||
-      !ownsEvent
-    ) return;
+    const isSpeechLifecycle =
+      event.type === "speechStarted" ||
+      event.type === "speechEnded" ||
+      event.type === "speechFailed";
+    const ownsEvent =
+      conversationSessionRef.current.runId === event.runId ||
+      (isSpeechLifecycle && conversationSessionRef.current.speechRunId === event.runId);
+    if (disposedRef.current || selectedConversationIdRef.current !== conversationId || !ownsEvent)
+      return;
     if (event.type !== "delta") recordRuntimeLifecycleAudit(event, conversationId);
     if (!isSpeechLifecycle) recordSocketReceive(event.runId);
-    if (event.type === "messageCompleted" || event.type === "cancelled" || event.type === "failed") setWebSocketState("disconnected");
+    if (event.type === "messageCompleted" || event.type === "cancelled" || event.type === "failed")
+      setWebSocketState("disconnected");
     switch (event.type) {
       case "started":
         if (event.route === "conversation.reasoning") markReasoningRun(event.runId, conversationId);
-        setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }));
-        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerStarted", providerId: event.providerId }));
+        setSnapshot((current) =>
+          updateEffectiveRoute(current, event.providerId, "active", { reasonCode: "turn-active" }),
+        );
+        setRuntimeActivity((current) =>
+          appendConversationActivity(current, {
+            type: "providerStarted",
+            providerId: event.providerId,
+          }),
+        );
         break;
       case "providerSelected":
-        setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "active", { fallbackUsed: event.fallbackUsed, reasonCode: event.selectionReasonCode === "other" ? "provider-selected-other" : "turn-active" }));
-        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerSelected", providerId: event.runtimeId, fallbackUsed: event.fallbackUsed }));
+        setSnapshot((current) =>
+          updateEffectiveRoute(current, event.providerId, "active", {
+            fallbackUsed: event.fallbackUsed,
+            reasonCode:
+              event.selectionReasonCode === "other" ? "provider-selected-other" : "turn-active",
+          }),
+        );
+        setRuntimeActivity((current) =>
+          appendConversationActivity(current, {
+            type: "providerSelected",
+            providerId: event.runtimeId,
+            fallbackUsed: event.fallbackUsed,
+          }),
+        );
         break;
-      case "webSocketStateChanged": setWebSocketState(event.state); break;
+      case "webSocketStateChanged":
+        setWebSocketState(event.state);
+        break;
       case "delta":
         recordFirstDelta(event.runId);
         appendStreamingText(event.runId, event.text);
         break;
       case "activity":
-        if (event.kind === "ui-presented") { void loadMessages(conversationId, issueScope); break; }
-        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerWorking" }));
+        if (event.kind === "ui-presented") {
+          void loadMessages(conversationId, issueScope);
+          break;
+        }
+        setRuntimeActivity((current) =>
+          appendConversationActivity(current, { type: "providerWorking" }),
+        );
         break;
       case "providerFailed":
-        setSnapshot((current) => updateEffectiveRoute(current, event.providerId, "failed", { reasonCode: "provider-failed" }));
-        setRuntimeActivity((current) => appendConversationActivity(current, { type: "providerFailed" }));
+        setSnapshot((current) =>
+          updateEffectiveRoute(current, event.providerId, "failed", {
+            reasonCode: "provider-failed",
+          }),
+        );
+        setRuntimeActivity((current) =>
+          appendConversationActivity(current, { type: "providerFailed" }),
+        );
         break;
       case "messageCompleted":
         incompleteRunIdsRef.current.delete(event.runId);
         recordResponseCompleted(event.runId, event.message.id);
         setRetryAction(null);
-        setMessages((current) => history.isBrowsingOlder() ? current : [...current.filter((message) => !message.id.startsWith("streaming_") && message.id !== event.message.id), event.message]);
-        setSnapshot((current) => current.effectiveRoute.providerId
-          ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", { fallbackUsed: current.effectiveRoute.fallbackUsed, reasonCode: "last-turn-completed" })
-          : current);
+        setMessages((current) =>
+          history.isBrowsingOlder()
+            ? current
+            : [
+                ...current.filter(
+                  (message) =>
+                    !message.id.startsWith("streaming_") && message.id !== event.message.id,
+                ),
+                event.message,
+              ],
+        );
+        setSnapshot((current) =>
+          current.effectiveRoute.providerId
+            ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", {
+                fallbackUsed: current.effectiveRoute.fallbackUsed,
+                reasonCode: "last-turn-completed",
+              })
+            : current,
+        );
         resetStreamingText();
-        if (selectedConversationIdRef.current) void loadMessages(selectedConversationIdRef.current, issueScope);
+        if (selectedConversationIdRef.current)
+          void loadMessagesCommitted(selectedConversationIdRef.current, issueScope);
         if (event.voicePolicy) voice.setVoicePolicy(event.voicePolicy);
         else voice.clearVoicePolicy();
         break;
@@ -308,7 +465,9 @@ export function useConversationTurn({
         recordRunWithoutMarkdown(event.runId, "cancelled");
         failedRunIdsRef.current.delete(event.runId);
         incompleteRunIdsRef.current.add(event.runId);
-        setRuntimeActivity((current) => appendConversationActivity(current, { type: "generationCancelled" }));
+        setRuntimeActivity((current) =>
+          appendConversationActivity(current, { type: "generationCancelled" }),
+        );
         break;
       case "failed":
         if (reasoningCancellationRequested(event.runId)) break;
@@ -324,7 +483,12 @@ export function useConversationTurn({
     if (!runId) return;
     const issueScope = issueCoordinatorRef.current.begin();
     markReasoningCancellation(runId);
-    try { await cancelRun(runId); } catch (cause) { clearReasoningCancellation(runId); publishIssue(issueScope, toMessage(cause)); }
+    try {
+      await cancelRun(runId);
+    } catch (cause) {
+      clearReasoningCancellation(runId);
+      publishIssue(issueScope, toMessage(cause));
+    }
   }
   async function stopSpeech(existingIssueScope?: number) {
     const runId = conversationSessionRef.current.speechRunId;
@@ -357,7 +521,10 @@ export function useConversationTurn({
     const action = retryAction;
     if (!action) return;
     setRetryAction(null);
-    await submitPrompt(action.prompt, { retryInputMessageId: action.inputMessageId, inputOrigin: action.inputOrigin });
+    await submitPrompt(action.prompt, {
+      retryInputMessageId: action.inputMessageId,
+      inputOrigin: action.inputOrigin,
+    });
   }
   return {
     messages,

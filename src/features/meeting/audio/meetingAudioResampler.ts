@@ -66,8 +66,10 @@ export class StatefulMeetingResampler {
   private processAvailable(maxTotalOutput: number) {
     const step = this.sourceRate / MEETING_TARGET_SAMPLE_RATE;
     const cutoff = Math.min(1, MEETING_TARGET_SAMPLE_RATE / this.sourceRate) * CUTOFF_GUARD;
-    while (this.sourcePosition + FILTER_RADIUS < this.source.length
-      && this.totalOutputSamples < maxTotalOutput) {
+    while (
+      this.sourcePosition + FILTER_RADIUS < this.source.length &&
+      this.totalOutputSamples < maxTotalOutput
+    ) {
       const lower = Math.floor(this.sourcePosition);
       let weighted = 0;
       let weightSum = 0;
@@ -78,9 +80,7 @@ export class StatefulMeetingResampler {
         if (windowPosition >= 1) continue;
         const window = 0.5 * (1 + Math.cos(Math.PI * windowPosition));
         const scaled = Math.PI * cutoff * distance;
-        const sinc = Math.abs(scaled) < 1e-8
-          ? cutoff
-          : cutoff * Math.sin(scaled) / scaled;
+        const sinc = Math.abs(scaled) < 1e-8 ? cutoff : (cutoff * Math.sin(scaled)) / scaled;
         const weight = sinc * window;
         weighted += this.source[index] * weight;
         weightSum += weight;

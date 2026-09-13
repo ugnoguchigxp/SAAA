@@ -5,7 +5,8 @@ import type { ConversationVoicePolicySnapshot } from "../src/lib/contracts";
 import { invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
 import { installJsdom } from "./jsdomGlobals";
 
-const { useConversationVoicePolicy } = await import("../src/features/chat/useConversationVoicePolicy");
+const { useConversationVoicePolicy } =
+  await import("../src/features/chat/useConversationVoicePolicy");
 
 function policyFor(conversationId: string): ConversationVoicePolicySnapshot {
   return {
@@ -45,17 +46,36 @@ describe("conversation voice policy hook", () => {
         return { ...policy, conversationId: (args as { conversationId: string }).conversationId };
       }
       if (command === "update_conversation_voice_policy") {
-        const input = (args as { input: { expectedRevision: number; speechOutput: string | null; listeningPace: string | null } }).input;
+        const input = (
+          args as {
+            input: {
+              expectedRevision: number;
+              speechOutput: string | null;
+              listeningPace: string | null;
+            };
+          }
+        ).input;
         policy = {
           ...policy,
           policyRevision: input.expectedRevision + 1,
-          speechOutput: input.speechOutput === null ? policy.speechOutput : input.speechOutput as ConversationVoicePolicySnapshot["speechOutput"],
-          listeningPace: input.listeningPace === null ? policy.listeningPace : input.listeningPace as ConversationVoicePolicySnapshot["listeningPace"],
+          speechOutput:
+            input.speechOutput === null
+              ? policy.speechOutput
+              : (input.speechOutput as ConversationVoicePolicySnapshot["speechOutput"]),
+          listeningPace:
+            input.listeningPace === null
+              ? policy.listeningPace
+              : (input.listeningPace as ConversationVoicePolicySnapshot["listeningPace"]),
         };
         return policy;
       }
       if (command === "reset_conversation_voice_policy") {
-        policy = { ...policy, speechOutput: "inherit", listeningPace: "inherit", policyRevision: policy.policyRevision + 1 };
+        policy = {
+          ...policy,
+          speechOutput: "inherit",
+          listeningPace: "inherit",
+          policyRevision: policy.policyRevision + 1,
+        };
         return policy;
       }
       return command;
@@ -73,14 +93,24 @@ describe("conversation voice policy hook", () => {
     restore = installJsdom().restore;
     const { createRoot } = await import("react-dom/client");
     const { createElement } = await import("react");
-    const apiRef: MutableRefObject<ReturnType<typeof useConversationVoicePolicy> | null> = { current: null };
+    const apiRef: MutableRefObject<ReturnType<typeof useConversationVoicePolicy> | null> = {
+      current: null,
+    };
     root = createRoot(document.getElementById("root")!);
     await act(async () => root!.render(createElement(Harness, { conversationId: "c1", apiRef })));
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(apiRef.current!.voicePolicy?.conversationId).toBe("c1");
-    await act(async () => { await apiRef.current!.setConversationSpeechOutput("muted"); });
-    await act(async () => { await apiRef.current!.setConversationListeningPace("patient"); });
-    await act(async () => { await apiRef.current!.resetConversationVoiceOverrides(); });
+    await act(async () => {
+      await apiRef.current!.setConversationSpeechOutput("muted");
+    });
+    await act(async () => {
+      await apiRef.current!.setConversationListeningPace("patient");
+    });
+    await act(async () => {
+      await apiRef.current!.resetConversationVoiceOverrides();
+    });
     expect(policy.speechOutput).toBe("inherit");
     expect(policy.listeningPace).toBe("inherit");
     await act(async () => root!.render(createElement(Harness, { conversationId: null, apiRef })));

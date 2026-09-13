@@ -67,6 +67,9 @@ pub(crate) async fn render_tts_artifact(
         let _ = fs::remove_file(&path);
         return Err("Could not send text to the system TTS renderer".to_string());
     }
+    // Pipe shutdown does not release the owned handle. Close it before waiting
+    // so renderers reading until EOF can finish.
+    drop(stdin);
     let status = tokio::select! {
         _ = cancellation.cancelled() => {
             let _ = child.kill().await;
@@ -271,7 +274,11 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&missing).expect("metadata").permissions().mode() & 0o777;
+            let mode = std::fs::metadata(&missing)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
             assert_eq!(mode, 0o700);
         }
         let file = directory.path().join("not-a-directory");

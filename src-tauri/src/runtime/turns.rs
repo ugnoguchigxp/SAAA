@@ -1,3 +1,5 @@
+#[path = "conversation_inputs.rs"]
+mod conversation_inputs;
 use rusqlite::params;
 use std::fs;
 use std::sync::Arc;
@@ -12,9 +14,6 @@ mod conversation_controller;
 use super::event_hub::RuntimeEventSender;
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent, RuntimeFailureCode};
 use crate::persistence::conversations::validate_conversation_write_target;
-use crate::persistence::{
-    load_codex_settings, load_model_providers, load_routing_settings, load_security_settings,
-};
 use crate::providers::routing::{
     apply_runtime_provider_gates, effective_conversation_route_ids, resolve_harness_llm_provider,
 };
@@ -101,14 +100,7 @@ pub(crate) async fn execute_turn(
         return result.map(|_| ());
     }
 
-    let result = execute_conversation_turn(state, input, on_event, cancellation.clone())
-        .await
-        .map_err(|message| {
-            TurnExecutionFailure::unsupervised(
-                crate::runtime::contracts::RunFailureCode::ProviderError,
-                message,
-            )
-        });
+    let result = execute_conversation_turn(state, input, on_event, cancellation.clone()).await;
     let finalization = match &result {
         Ok(message) => {
             let (presentation, voice_policy) = crate::voice_behavior::completion_state(
@@ -124,7 +116,10 @@ pub(crate) async fn execute_turn(
             });
             Ok(())
         }
-        Err(error) if cancellation.is_cancelled() => {
+        Err(error)
+            if cancellation.is_cancelled()
+                || error.code == crate::runtime::contracts::RunFailureCode::UserCancelled =>
+        {
             let finalization = finish_supervised_runtime_run(
                 state,
                 &input.run_id,
@@ -146,7 +141,7 @@ pub(crate) async fn execute_turn(
                 state,
                 &input.run_id,
                 "failed",
-                None,
+                Some(error.code),
                 None,
                 None,
                 Some(&error.message),
@@ -154,7 +149,7 @@ pub(crate) async fn execute_turn(
             if finalization.is_ok() {
                 let _ = on_event.send(RuntimeEvent::Failed {
                     run_id: input.run_id.clone(),
-                    code: RuntimeFailureCode::RuntimeError,
+                    code: public_failure_code(error.code),
                     message: redact_runtime_text(&error.message),
                     recovery: "Review the selected provider and runtime settings, then retry."
                         .to_string(),
@@ -188,51 +183,51 @@ pub(crate) fn send_runtime_terminal_event(
     } else {
         let _ = on_event.send(RuntimeEvent::Failed {
             run_id: run_id.to_string(),
-            code: match error.code {
-                crate::runtime::contracts::RunFailureCode::ConfigurationError => {
-                    RuntimeFailureCode::ConfigurationError
-                }
-                crate::runtime::contracts::RunFailureCode::ChildStartFailed => {
-                    RuntimeFailureCode::ChildStartFailed
-                }
-                crate::runtime::contracts::RunFailureCode::RequestTimeout => {
-                    RuntimeFailureCode::RequestTimeout
-                }
-                crate::runtime::contracts::RunFailureCode::ProgressTimeout => {
-                    RuntimeFailureCode::ProgressTimeout
-                }
-                crate::runtime::contracts::RunFailureCode::TerminalTimeout => {
-                    RuntimeFailureCode::TerminalTimeout
-                }
-                crate::runtime::contracts::RunFailureCode::HardTimeout => {
-                    RuntimeFailureCode::HardTimeout
-                }
-                crate::runtime::contracts::RunFailureCode::ChildExited => {
-                    RuntimeFailureCode::ChildExited
-                }
-                crate::runtime::contracts::RunFailureCode::ProtocolError => {
-                    RuntimeFailureCode::ProtocolError
-                }
-                crate::runtime::contracts::RunFailureCode::PolicyViolation => {
-                    RuntimeFailureCode::PolicyViolation
-                }
-                crate::runtime::contracts::RunFailureCode::ProviderError => {
-                    RuntimeFailureCode::ProviderError
-                }
-                crate::runtime::contracts::RunFailureCode::ResponseTooLarge => {
-                    RuntimeFailureCode::ResponseTooLarge
-                }
-                crate::runtime::contracts::RunFailureCode::InternalError
-                | crate::runtime::contracts::RunFailureCode::AppRestarted => {
-                    RuntimeFailureCode::InternalError
-                }
-                crate::runtime::contracts::RunFailureCode::UserCancelled => {
-                    RuntimeFailureCode::RuntimeError
-                }
-            },
+            code: public_failure_code(error.code),
             message: redact_runtime_text(&error.message),
             recovery: error.code.recovery().to_string(),
         });
+    }
+}
+
+fn public_failure_code(code: crate::runtime::contracts::RunFailureCode) -> RuntimeFailureCode {
+    match code {
+        crate::runtime::contracts::RunFailureCode::ConfigurationError => {
+            RuntimeFailureCode::ConfigurationError
+        }
+        crate::runtime::contracts::RunFailureCode::ChildStartFailed => {
+            RuntimeFailureCode::ChildStartFailed
+        }
+        crate::runtime::contracts::RunFailureCode::RequestTimeout => {
+            RuntimeFailureCode::RequestTimeout
+        }
+        crate::runtime::contracts::RunFailureCode::ProgressTimeout => {
+            RuntimeFailureCode::ProgressTimeout
+        }
+        crate::runtime::contracts::RunFailureCode::TerminalTimeout => {
+            RuntimeFailureCode::TerminalTimeout
+        }
+        crate::runtime::contracts::RunFailureCode::HardTimeout => RuntimeFailureCode::HardTimeout,
+        crate::runtime::contracts::RunFailureCode::ChildExited => RuntimeFailureCode::ChildExited,
+        crate::runtime::contracts::RunFailureCode::ProtocolError => {
+            RuntimeFailureCode::ProtocolError
+        }
+        crate::runtime::contracts::RunFailureCode::PolicyViolation => {
+            RuntimeFailureCode::PolicyViolation
+        }
+        crate::runtime::contracts::RunFailureCode::ProviderError => {
+            RuntimeFailureCode::ProviderError
+        }
+        crate::runtime::contracts::RunFailureCode::ResponseTooLarge => {
+            RuntimeFailureCode::ResponseTooLarge
+        }
+        crate::runtime::contracts::RunFailureCode::InternalError
+        | crate::runtime::contracts::RunFailureCode::AppRestarted => {
+            RuntimeFailureCode::InternalError
+        }
+        crate::runtime::contracts::RunFailureCode::UserCancelled => {
+            RuntimeFailureCode::RuntimeError
+        }
     }
 }
 
@@ -414,8 +409,8 @@ pub(crate) async fn execute_conversation_turn(
     input: &StartTurnInput,
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
-) -> Result<ConversationMessage, String> {
-    let (
+) -> Result<ConversationMessage, TurnExecutionFailure> {
+    let conversation_inputs::Inputs {
         mut providers,
         route,
         security,
@@ -423,34 +418,7 @@ pub(crate) async fn execute_conversation_turn(
         regional,
         loaded_context,
         configuration_fingerprint,
-    ) = state.sqlite_readers.read(|connection| {
-        let input_message_id: String = connection
-            .query_row(
-                "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
-                params![input.run_id],
-                |row| row.get(0),
-            )
-            .map_err(database_error)?;
-        let loaded_context =
-            memory::context_window::load(connection, &input.conversation_id, &input_message_id)?;
-        let identity = load_codex_settings(connection)?;
-        let regional = crate::persistence::settings::regional_preferences::load(connection)?;
-        let providers = load_model_providers(connection)?;
-        let route = load_routing_settings(connection)?.conversation_respond;
-        let configuration_fingerprint =
-            crate::persistence::effective_route::conversation_configuration_fingerprint(
-                &providers, &route,
-            )?;
-        Ok((
-            providers,
-            route,
-            load_security_settings(connection)?,
-            identity,
-            regional,
-            loaded_context,
-            configuration_fingerprint,
-        ))
-    })?;
+    } = conversation_inputs::load(state, input)?;
     let context_window = memory::context_window::compose(loaded_context)?;
     let context_health = context_window.health.clone();
     if memory::control_plane::memory_enabled() {
@@ -476,7 +444,9 @@ pub(crate) async fn execute_conversation_turn(
         context_window.messages,
     )?;
     if let Some(client) = crate::providers::reasoning_mcp::for_turn(input, &cancellation).await? {
-        return execute_reasoning(state, input, &history, on_event, cancellation, &client).await;
+        return execute_reasoning(state, input, &history, on_event, cancellation, &client)
+            .await
+            .map_err(Into::into);
     }
     let mut route = route;
     if route.source == "harness" {
@@ -492,14 +462,19 @@ pub(crate) async fn execute_conversation_turn(
         &state.larm_gate,
     );
     if route_ids.is_empty() && !state.larm_gate.allows_traffic() {
-        return Err(state.larm_gate.public_message().to_string());
+        return Err(TurnExecutionFailure::configuration(
+            state.larm_gate.public_message(),
+        ));
     }
-    let mut failures = Vec::new();
+    let mut failures: Vec<TurnExecutionFailure> = Vec::new();
     let mut context_health_emitted = false;
 
     for (attempt_index, provider_id) in route_ids.into_iter().enumerate() {
         if cancellation.is_cancelled() {
-            return Err("Cancelled by user".to_string());
+            return Err(TurnExecutionFailure::provider(
+                ProviderFailureKind::Cancelled,
+                "Cancelled by user".to_string(),
+            ));
         }
         let Some(provider) = providers
             .providers
@@ -507,11 +482,13 @@ pub(crate) async fn execute_conversation_turn(
             .find(|provider| provider.id() == provider_id && provider.enabled())
             .cloned()
         else {
-            failures.push(format!("{provider_id}: provider is disabled or missing"));
+            failures.push(TurnExecutionFailure::configuration(format!(
+                "{provider_id}: provider is disabled or missing"
+            )));
             continue;
         };
         if attempt_index > 0 && matches!(provider, ModelProviderSettings::Larm(_)) {
-            return Err("Legacy LARM WebSocket transport must be selected explicitly as the primary provider.".to_string());
+            return Err(TurnExecutionFailure::configuration("Legacy LARM WebSocket transport must be selected explicitly as the primary provider."));
         }
         update_runtime_provider(state, &input.run_id, provider.id())?;
         let session_id = begin_provider_session(
@@ -545,10 +522,13 @@ pub(crate) async fn execute_conversation_turn(
                     Some(ProviderFailureKind::ClientDisconnected),
                 )?;
             }
-            return Err(ProviderFailureKind::ClientDisconnected
-                .public_message()
-                .as_str()
-                .to_string());
+            return Err(TurnExecutionFailure::provider(
+                ProviderFailureKind::ClientDisconnected,
+                ProviderFailureKind::ClientDisconnected
+                    .public_message()
+                    .as_str()
+                    .to_string(),
+            ));
         }
         if !context_health_emitted {
             let _ = on_event.send(RuntimeEvent::Activity {
@@ -678,7 +658,7 @@ pub(crate) async fn execute_conversation_turn(
                 } else {
                     finish_provider_session(state, &session_id, "completed", None)?;
                 }
-                return persist_conversation_success(state, input, &content);
+                return persist_conversation_success(state, input, &content).map_err(Into::into);
             }
             ProviderAttemptOutcome::Cancelled { cleanup, .. } => {
                 if provider.kind() == "larm" {
@@ -705,7 +685,10 @@ pub(crate) async fn execute_conversation_turn(
                         Some(ProviderFailureKind::Cancelled),
                     )?;
                 }
-                return Err("Cancelled by user".to_string());
+                return Err(TurnExecutionFailure::provider(
+                    ProviderFailureKind::Cancelled,
+                    "Cancelled by user".to_string(),
+                ));
             }
             ProviderAttemptOutcome::Failed {
                 kind,
@@ -738,7 +721,8 @@ pub(crate) async fn execute_conversation_turn(
                     provider_id: provider.id().to_string(),
                     reason: reason.to_string(),
                 });
-                let failure = format!("{}: {reason}", provider.id());
+                let failure =
+                    TurnExecutionFailure::provider(kind, format!("{}: {reason}", provider.id()));
                 if !provider_route_fallback_allowed(&provider, kind, output_started) {
                     return Err(failure);
                 }
@@ -749,9 +733,20 @@ pub(crate) async fn execute_conversation_turn(
     if failures.len() == 1 {
         Err(failures.remove(0))
     } else {
-        Err(format!(
-            "Configured provider attempts failed. {}",
-            failures.join("; ")
+        let code = failures
+            .last()
+            .map(|failure| failure.code)
+            .unwrap_or(crate::runtime::contracts::RunFailureCode::ConfigurationError);
+        Err(TurnExecutionFailure::unsupervised(
+            code,
+            format!(
+                "Configured provider attempts failed. {}",
+                failures
+                    .into_iter()
+                    .map(|failure| failure.message)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
         ))
     }
 }

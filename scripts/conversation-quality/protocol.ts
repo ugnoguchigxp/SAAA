@@ -35,7 +35,8 @@ export function parseWebSearchToolCall(value: unknown): WebSearchToolCall {
   const rawCall = value[0];
   if (!rawCall || typeof rawCall !== "object") throw new Error("tool call must be an object");
   const call = rawCall as Record<string, unknown>;
-  if (!hasExactKeys(call, ["id", "type", "function"])) throw new Error("tool call has an invalid shape");
+  if (!hasExactKeys(call, ["id", "type", "function"]))
+    throw new Error("tool call has an invalid shape");
   if (typeof call.id !== "string" || !call.id.trim() || call.id.length > MAX_TOOL_CALL_ID_LENGTH) {
     throw new Error("tool call id is invalid");
   }
@@ -43,7 +44,11 @@ export function parseWebSearchToolCall(value: unknown): WebSearchToolCall {
     throw new Error("tool call must invoke a function");
   }
   const fn = call.function as Record<string, unknown>;
-  if (!hasExactKeys(fn, ["name", "arguments"]) || fn.name !== "web_search" || typeof fn.arguments !== "string") {
+  if (
+    !hasExactKeys(fn, ["name", "arguments"]) ||
+    fn.name !== "web_search" ||
+    typeof fn.arguments !== "string"
+  ) {
     throw new Error("tool call must invoke web_search with JSON arguments");
   }
   let args: unknown;
@@ -52,7 +57,11 @@ export function parseWebSearchToolCall(value: unknown): WebSearchToolCall {
   } catch {
     throw new Error("web_search arguments must be strict JSON");
   }
-  if (!args || typeof args !== "object" || !hasExactKeys(args as Record<string, unknown>, ["query"])) {
+  if (
+    !args ||
+    typeof args !== "object" ||
+    !hasExactKeys(args as Record<string, unknown>, ["query"])
+  ) {
     throw new Error("web_search arguments must contain only query");
   }
   const query = (args as Record<string, unknown>).query;

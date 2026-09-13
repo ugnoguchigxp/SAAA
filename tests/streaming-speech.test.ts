@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { initialConversationSession, transitionConversationSession } from "../src/lib/conversationSession";
+import {
+  initialConversationSession,
+  transitionConversationSession,
+} from "../src/lib/conversationSession";
 import type { RuntimeEvent } from "../src/lib/contracts";
 
 const started = (): RuntimeEvent => ({
@@ -13,7 +16,13 @@ describe("streaming response speech", () => {
     const completed: RuntimeEvent = {
       type: "messageCompleted",
       runId: "run_1",
-      message: { id: "message_1", conversationId: "conversation", role: "assistant", content: "complete answer", createdAt: "1" },
+      message: {
+        id: "message_1",
+        conversationId: "conversation",
+        role: "assistant",
+        content: "complete answer",
+        createdAt: "1",
+      },
       presentation: { decision: "speak", reasonCode: "global_default" },
       voicePolicy: null,
     };
@@ -26,7 +35,10 @@ describe("streaming response speech", () => {
       runId: "run_1",
     });
     expect(speaking.speechRunId).toBe("run_1");
-    expect(transitionConversationSession(speaking, { type: "speechFinished", runId: "run_1" }).speechRunId).toBeNull();
+    expect(
+      transitionConversationSession(speaking, { type: "speechFinished", runId: "run_1" })
+        .speechRunId,
+    ).toBeNull();
   });
 
   test("does not let a stale completion clear a newer speech session", () => {
@@ -34,6 +46,9 @@ describe("streaming response speech", () => {
       type: "speechStarted",
       runId: "run_2",
     });
-    expect(transitionConversationSession(speaking, { type: "speechFinished", runId: "run_1" }).speechRunId).toBe("run_2");
+    expect(
+      transitionConversationSession(speaking, { type: "speechFinished", runId: "run_1" })
+        .speechRunId,
+    ).toBe("run_2");
   });
 });

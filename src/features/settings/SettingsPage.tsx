@@ -1,9 +1,9 @@
+import { SecuritySection } from "./SecuritySection";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   LarmRuntimeStatus,
   RegionalPreferencesSettings,
-  SecuritySettings,
   SettingsDocument,
   SituationSettings,
   SituationSnapshot,
@@ -12,18 +12,19 @@ import type {
 import { setDisplayLanguagePreference } from "../../i18n";
 import { localizeStatus, localizeUiMessage } from "../../i18n/presentation";
 import { availableTimeZones, CURRENCY_CODES, systemTimeZone } from "../../lib/regionalPreferences";
-import {
-  backupDatabase,
-  exportDiagnostics,
-  getSituationSnapshot,
-  saveSettingsDocuments,
-} from "../../lib/runtime";
+import { getSituationSnapshot, saveSettingsDocuments } from "../../lib/runtime";
 import { deleteProviderApiKey } from "../../lib/providerRuntime";
 import { IndividualProvidersSection } from "./IndividualProvidersSection";
 import { ServiceConnectionsSection } from "./ServiceConnectionsSection";
 import { Field, Metric } from "./SettingsFields";
 import { defaultSettingsDraft, DEFAULT_AGENT_NAME } from "./settingsDefaults";
-import { credentialCleanupProviderIds, documentsFromDraft, draftFromDocuments, reconcileSavedDraft, type SettingsDraft } from "./settingsDraft";
+import {
+  credentialCleanupProviderIds,
+  documentsFromDraft,
+  draftFromDocuments,
+  reconcileSavedDraft,
+  type SettingsDraft,
+} from "./settingsDraft";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 
@@ -59,12 +60,32 @@ export function SettingsPage({
 }) {
   const { t, i18n } = useTranslation();
   const tabs: Array<{ id: SettingsTab; label: string; detail: string }> = [
-    { id: "general", label: t("settings.tabs.general.label"), detail: t("settings.tabs.general.detail") },
-    { id: "connection", label: t("settings.tabs.connection.label"), detail: t("settings.tabs.connection.detail") },
-    { id: "providers", label: t("settings.tabs.providers.label"), detail: t("settings.tabs.providers.detail") },
+    {
+      id: "general",
+      label: t("settings.tabs.general.label"),
+      detail: t("settings.tabs.general.detail"),
+    },
+    {
+      id: "connection",
+      label: t("settings.tabs.connection.label"),
+      detail: t("settings.tabs.connection.detail"),
+    },
+    {
+      id: "providers",
+      label: t("settings.tabs.providers.label"),
+      detail: t("settings.tabs.providers.detail"),
+    },
     { id: "voice", label: t("settings.tabs.voice.label"), detail: t("settings.tabs.voice.detail") },
-    { id: "situation", label: t("settings.tabs.situation.label"), detail: t("settings.tabs.situation.detail") },
-    { id: "security", label: t("settings.tabs.security.label"), detail: t("settings.tabs.security.detail") },
+    {
+      id: "situation",
+      label: t("settings.tabs.situation.label"),
+      detail: t("settings.tabs.situation.detail"),
+    },
+    {
+      id: "security",
+      label: t("settings.tabs.security.label"),
+      detail: t("settings.tabs.security.detail"),
+    },
   ];
   const source = useMemo(() => draftFromDocuments(documents, defaultSettingsDraft), [documents]);
   const [draft, setDraft] = useState<SettingsDraft>(source);
@@ -78,9 +99,14 @@ export function SettingsPage({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<SaveNotice | null>(null);
   useEffect(() => {
-    setDraft((current) => JSON.stringify(current) === JSON.stringify(previousSourceRef.current)
-      ? source
-      : { ...current, voice: { ...current.voice, listeningEnabled: source.voice.listeningEnabled } });
+    setDraft((current) =>
+      JSON.stringify(current) === JSON.stringify(previousSourceRef.current)
+        ? source
+        : {
+            ...current,
+            voice: { ...current.voice, listeningEnabled: source.voice.listeningEnabled },
+          },
+    );
     previousSourceRef.current = source;
     void setDisplayLanguagePreference(source.regional.language);
   }, [source]);
@@ -95,7 +121,7 @@ export function SettingsPage({
     draftEditGeneration.current += 1;
     setDraft(update);
     setSaveMessage(null);
-    setSaveState((current) => current === "saving" ? current : "idle");
+    setSaveState((current) => (current === "saving" ? current : "idle"));
   }
 
   async function save() {
@@ -114,7 +140,9 @@ export function SettingsPage({
       const cleanupResults = await Promise.allSettled(
         credentialCleanup.map((providerId) => deleteProviderApiKey(providerId)),
       );
-      const cleanupFailures = cleanupResults.filter((result) => result.status === "rejected").length;
+      const cleanupFailures = cleanupResults.filter(
+        (result) => result.status === "rejected",
+      ).length;
       if (generation !== saveGeneration.current) return;
       const unchanged = draftEditGeneration.current === submittedEditGeneration;
       setSaveState(unchanged ? "saved" : "idle");
@@ -122,7 +150,10 @@ export function SettingsPage({
     } catch (cause) {
       if (generation !== saveGeneration.current) return;
       setSaveState("error");
-      setSaveMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+      setSaveMessage({
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
     }
   }
 
@@ -142,8 +173,25 @@ export function SettingsPage({
           <p>{t("settings.description")}</p>
         </div>
         <div className="settings-save-status" aria-live="polite">
-          {dirty && saveState === "idle" && <span className="unsaved">{t("settings.unsaved")}</span>}
-          {saveMessage && <span className={saveMessage.kind === "error" ? "save-error" : "save-success"}>{saveMessage.kind === "error" ? localizeUiMessage(t, saveMessage.message, "settings") : saveMessage.cleanupFailures > 0 ? t("settings.savedWithCleanupFailure", { count: saveMessage.cleanupFailures }) : t("settings.savedAt", { time: new Date(saveMessage.savedAt).toLocaleTimeString(i18n.resolvedLanguage, draft.regional.timeZone === "system" ? undefined : { timeZone: draft.regional.timeZone }) })}</span>}
+          {dirty && saveState === "idle" && (
+            <span className="unsaved">{t("settings.unsaved")}</span>
+          )}
+          {saveMessage && (
+            <span className={saveMessage.kind === "error" ? "save-error" : "save-success"}>
+              {saveMessage.kind === "error"
+                ? localizeUiMessage(t, saveMessage.message, "settings")
+                : saveMessage.cleanupFailures > 0
+                  ? t("settings.savedWithCleanupFailure", { count: saveMessage.cleanupFailures })
+                  : t("settings.savedAt", {
+                      time: new Date(saveMessage.savedAt).toLocaleTimeString(
+                        i18n.resolvedLanguage,
+                        draft.regional.timeZone === "system"
+                          ? undefined
+                          : { timeZone: draft.regional.timeZone },
+                      ),
+                    })}
+            </span>
+          )}
         </div>
       </header>
       <div className="settings-screen-layout">
@@ -160,13 +208,18 @@ export function SettingsPage({
           ))}
         </nav>
         <div className="settings-content">
-          <header className="settings-content-header"><h2>{activeTabMeta.label}</h2><p>{activeTabMeta.detail}</p></header>
+          <header className="settings-content-header">
+            <h2>{activeTabMeta.label}</h2>
+            <p>{activeTabMeta.detail}</p>
+          </header>
           {activeTab === "general" && <GeneralSection draft={draft} onChange={changeDraft} />}
           {activeTab === "connection" && (
             <ServiceConnectionsSection
               providers={draft.providers}
               routing={draft.routing}
-              onProvidersChange={(providers) => changeDraft((current) => ({ ...current, providers }))}
+              onProvidersChange={(providers) =>
+                changeDraft((current) => ({ ...current, providers }))
+              }
               onRoutingChange={(routing) => changeDraft((current) => ({ ...current, routing }))}
               onValidityChange={setConnectionSettingsValid}
             />
@@ -188,29 +241,58 @@ export function SettingsPage({
               listeningError={voiceError}
               onToggleListening={onToggleVoiceListening}
               onProfileChanged={onVoiceProfileChanged}
-              onChange={(voice) => changeDraft((current) => ({ ...current, voice: { ...voice, listeningEnabled: current.voice.listeningEnabled } }))}
+              onChange={(voice) =>
+                changeDraft((current) => ({
+                  ...current,
+                  voice: { ...voice, listeningEnabled: current.voice.listeningEnabled },
+                }))
+              }
             />
           )}
           {activeTab === "situation" && (
-            <SituationSection situation={draft.situation} onChange={(situation) => changeDraft((current) => ({ ...current, situation }))} />
+            <SituationSection
+              situation={draft.situation}
+              onChange={(situation) => changeDraft((current) => ({ ...current, situation }))}
+            />
           )}
           {activeTab === "security" && (
-            <SecuritySection security={draft.security} onChange={(security) => changeDraft((current) => ({ ...current, security }))} />
+            <SecuritySection
+              security={draft.security}
+              onChange={(security) => changeDraft((current) => ({ ...current, security }))}
+            />
           )}
         </div>
       </div>
       <footer className="settings-save-bar">
         <p>{dirty ? t("settings.pendingRuntime") : t("settings.showingSaved")}</p>
         <div>
-          <button className="discard-button" onClick={discard} disabled={!dirty || saveState === "saving"}>{t("settings.discard")}</button>
-          <button className="save-button" onClick={() => void save()} disabled={!dirty || !connectionSettingsValid || saveState === "saving"}>{saveState === "saving" ? t("settings.saving") : t("settings.saveSettings")}</button>
+          <button
+            className="discard-button"
+            onClick={discard}
+            disabled={!dirty || saveState === "saving"}
+          >
+            {t("settings.discard")}
+          </button>
+          <button
+            className="save-button"
+            onClick={() => void save()}
+            disabled={!dirty || !connectionSettingsValid || saveState === "saving"}
+          >
+            {saveState === "saving" ? t("settings.saving") : t("settings.saveSettings")}
+          </button>
         </div>
       </footer>
     </section>
   );
 }
 
-function GeneralSection({ draft, onChange }: { draft: SettingsDraft; onChange: (draft: SettingsDraft) => void }) {
+function GeneralSection({
+  draft,
+  onChange,
+}: {
+  draft: SettingsDraft;
+  onChange: (draft: SettingsDraft) => void;
+}) {
   const { t, i18n } = useTranslation();
   const timeZones = useMemo(availableTimeZones, []);
   const localTimeZone = systemTimeZone();
@@ -218,8 +300,13 @@ function GeneralSection({ draft, onChange }: { draft: SettingsDraft; onChange: (
     () => new Intl.DisplayNames([i18n.resolvedLanguage ?? "en"], { type: "currency" }),
     [i18n.resolvedLanguage],
   );
-  const enabledProviders = draft.providers.providers.filter((provider) => provider.enabled && provider.kind !== "dynamic-lan").length;
-  function changeRegional<K extends keyof RegionalPreferencesSettings>(key: K, value: RegionalPreferencesSettings[K]) {
+  const enabledProviders = draft.providers.providers.filter(
+    (provider) => provider.enabled && provider.kind !== "dynamic-lan",
+  ).length;
+  function changeRegional<K extends keyof RegionalPreferencesSettings>(
+    key: K,
+    value: RegionalPreferencesSettings[K],
+  ) {
     onChange({ ...draft, regional: { ...draft.regional, [key]: value } });
   }
   return (
@@ -232,7 +319,8 @@ function GeneralSection({ draft, onChange }: { draft: SettingsDraft; onChange: (
             <select
               value={draft.regional.language}
               onChange={(event) => {
-                const language = event.currentTarget.value as RegionalPreferencesSettings["language"];
+                const language = event.currentTarget
+                  .value as RegionalPreferencesSettings["language"];
                 changeRegional("language", language);
                 void setDisplayLanguagePreference(language);
               }}
@@ -243,26 +331,63 @@ function GeneralSection({ draft, onChange }: { draft: SettingsDraft; onChange: (
             </select>
           </Field>
           <Field label={t("settings.general.timeZone")}>
-            <select value={draft.regional.timeZone} onChange={(event) => changeRegional("timeZone", event.currentTarget.value)}>
-              <option value="system">{t("settings.general.systemTimeZone", { timeZone: localTimeZone })}</option>
-              {timeZones.map((timeZone) => <option key={timeZone} value={timeZone}>{timeZone}</option>)}
+            <select
+              value={draft.regional.timeZone}
+              onChange={(event) => changeRegional("timeZone", event.currentTarget.value)}
+            >
+              <option value="system">
+                {t("settings.general.systemTimeZone", { timeZone: localTimeZone })}
+              </option>
+              {timeZones.map((timeZone) => (
+                <option key={timeZone} value={timeZone}>
+                  {timeZone}
+                </option>
+              ))}
             </select>
           </Field>
           <Field label={t("settings.general.lengthUnit")}>
-            <select value={draft.regional.lengthUnit} onChange={(event) => changeRegional("lengthUnit", event.currentTarget.value as RegionalPreferencesSettings["lengthUnit"])}>
+            <select
+              value={draft.regional.lengthUnit}
+              onChange={(event) =>
+                changeRegional(
+                  "lengthUnit",
+                  event.currentTarget.value as RegionalPreferencesSettings["lengthUnit"],
+                )
+              }
+            >
               <option value="metric">{t("settings.general.metric")}</option>
               <option value="imperial">{t("settings.general.imperial")}</option>
             </select>
           </Field>
           <Field label={t("settings.general.weightUnit")}>
-            <select value={draft.regional.weightUnit} onChange={(event) => changeRegional("weightUnit", event.currentTarget.value as RegionalPreferencesSettings["weightUnit"])}>
+            <select
+              value={draft.regional.weightUnit}
+              onChange={(event) =>
+                changeRegional(
+                  "weightUnit",
+                  event.currentTarget.value as RegionalPreferencesSettings["weightUnit"],
+                )
+              }
+            >
               <option value="kilogram">{t("settings.general.kilogram")}</option>
               <option value="pound">{t("settings.general.pound")}</option>
             </select>
           </Field>
           <Field label={t("settings.general.currency")}>
-            <select value={draft.regional.currency} onChange={(event) => changeRegional("currency", event.currentTarget.value as RegionalPreferencesSettings["currency"])}>
-              {CURRENCY_CODES.map((currency) => <option key={currency} value={currency}>{currency} — {currencyNames.of(currency) ?? currency}</option>)}
+            <select
+              value={draft.regional.currency}
+              onChange={(event) =>
+                changeRegional(
+                  "currency",
+                  event.currentTarget.value as RegionalPreferencesSettings["currency"],
+                )
+              }
+            >
+              {CURRENCY_CODES.map((currency) => (
+                <option key={currency} value={currency}>
+                  {currency} — {currencyNames.of(currency) ?? currency}
+                </option>
+              ))}
             </select>
           </Field>
         </div>
@@ -270,83 +395,113 @@ function GeneralSection({ draft, onChange }: { draft: SettingsDraft; onChange: (
       <section className="settings-card">
         <h3>{t("settings.general.identity")}</h3>
         <div className="settings-form-grid">
-          <Field label={t("settings.general.agentName")}><input value={draft.codex.agentName} maxLength={80} placeholder={DEFAULT_AGENT_NAME} onChange={(event) => onChange({ ...draft, codex: { ...draft.codex, agentName: event.target.value } })} /></Field>
-          <Field label={t("settings.general.userName")}><input value={draft.codex.userName} maxLength={80} placeholder={t("settings.general.userNamePlaceholder")} onChange={(event) => onChange({ ...draft, codex: { ...draft.codex, userName: event.target.value } })} /></Field>
+          <Field label={t("settings.general.agentName")}>
+            <input
+              value={draft.codex.agentName}
+              maxLength={80}
+              placeholder={DEFAULT_AGENT_NAME}
+              onChange={(event) =>
+                onChange({ ...draft, codex: { ...draft.codex, agentName: event.target.value } })
+              }
+            />
+          </Field>
+          <Field label={t("settings.general.userName")}>
+            <input
+              value={draft.codex.userName}
+              maxLength={80}
+              placeholder={t("settings.general.userNamePlaceholder")}
+              onChange={(event) =>
+                onChange({ ...draft, codex: { ...draft.codex, userName: event.target.value } })
+              }
+            />
+          </Field>
         </div>
       </section>
       <section className="settings-card">
         <h3>{t("settings.general.runtimeState")}</h3>
         <div className="settings-summary-grid">
-          <Metric label={t("settings.general.harness")} value={draft.providers.harness.address || t("common.notConfigured")} />
-          <Metric label={t("settings.general.individualProviders")} value={t("settings.general.enabledCount", { count: enabledProviders })} />
-          <Metric label={t("settings.general.listening")} value={draft.voice.listeningEnabled ? t("settings.general.alwaysOn") : t("common.paused")} />
-          <Metric label={t("settings.general.situation")} value={draft.situation.enabled ? t("settings.general.shadowMonitoring") : t("common.paused")} />
+          <Metric
+            label={t("settings.general.harness")}
+            value={draft.providers.harness.address || t("common.notConfigured")}
+          />
+          <Metric
+            label={t("settings.general.individualProviders")}
+            value={t("settings.general.enabledCount", { count: enabledProviders })}
+          />
+          <Metric
+            label={t("settings.general.listening")}
+            value={
+              draft.voice.listeningEnabled ? t("settings.general.alwaysOn") : t("common.paused")
+            }
+          />
+          <Metric
+            label={t("settings.general.situation")}
+            value={
+              draft.situation.enabled ? t("settings.general.shadowMonitoring") : t("common.paused")
+            }
+          />
         </div>
       </section>
     </div>
   );
 }
 
-function SituationSection({ situation, onChange }: { situation: SituationSettings; onChange: (value: SituationSettings) => void }) {
+function SituationSection({
+  situation,
+  onChange,
+}: {
+  situation: SituationSettings;
+  onChange: (value: SituationSettings) => void;
+}) {
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<SituationSnapshot | null>(null);
   useEffect(() => {
     let active = true;
-    void getSituationSnapshot().then((value) => { if (active) setSnapshot(value); }).catch(() => undefined);
-    return () => { active = false; };
+    void getSituationSnapshot()
+      .then((value) => {
+        if (active) setSnapshot(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, []);
   return (
     <div className="settings-stack">
       <section className="settings-card">
         <div className="card-title-row">
-          <div><h3>{t("settings.situation.title")}</h3><p className="settings-help">{t("settings.situation.description")}</p></div>
-          <label className="toggle"><input type="checkbox" checked={situation.enabled} onChange={(event) => onChange({ ...situation, enabled: event.target.checked })} /><span /></label>
+          <div>
+            <h3>{t("settings.situation.title")}</h3>
+            <p className="settings-help">{t("settings.situation.description")}</p>
+          </div>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={situation.enabled}
+              onChange={(event) => onChange({ ...situation, enabled: event.target.checked })}
+            />
+            <span />
+          </label>
         </div>
         <div className="settings-summary-grid">
-          <Metric label={t("settings.situation.sampling")} value={`${situation.sampleIntervalMs} ms`} />
-          <Metric label={t("settings.situation.calendar")} value={snapshot ? localizeStatus(t, snapshot.signals.calendar.health) : t("common.disabled")} />
-          <Metric label={t("settings.situation.retention")} value={t("settings.situation.days", { count: situation.retentionDays })} />
-          <Metric label={t("settings.situation.rawAudio")} value={t("settings.situation.neverStored")} />
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function SecuritySection({ security, onChange }: { security: SecuritySettings; onChange: (value: SecuritySettings) => void }) {
-  const { t } = useTranslation();
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  async function run(action: typeof backupDatabase | typeof exportDiagnostics) {
-    try {
-      const result = await action();
-      setMessage(result.path);
-      setError(null);
-    } catch (cause) {
-      setMessage(null);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-  return (
-    <div className="settings-stack">
-      <section className="settings-card">
-        <h3>{t("settings.security.credentials")}</h3>
-        <p>{t("settings.security.credentialsDescription")}</p>
-        <div className="locked-policy">{t("settings.security.storagePolicy")}</div>
-      </section>
-      <section className="settings-card">
-        <h3>{t("settings.security.runtimePolicy")}</h3>
-        <label className="check-row"><input type="checkbox" checked={security.localOnlyWhenSelected} onChange={(event) => onChange({ ...security, localOnlyWhenSelected: event.target.checked })} />{t("settings.security.noCloudFallback")}</label>
-        <label className="check-row"><input type="checkbox" checked={security.diagnosticsRedaction} disabled />{t("settings.security.diagnosticsRedaction")}</label>
-      </section>
-      <section className="settings-card">
-        <h3>{t("settings.security.dataOperations")}</h3>
-        <div className="provider-card-footer">
-          <span>{error ? localizeUiMessage(t, error, "settings") : message ?? t("settings.security.noApiKeysInExports")}</span>
-          <div>
-            <button className="text-button" type="button" onClick={() => void run(exportDiagnostics)}>{t("settings.security.exportDiagnostics")}</button>
-            <button className="text-button" type="button" onClick={() => void run(backupDatabase)}>{t("settings.security.backupDatabase")}</button>
-          </div>
+          <Metric
+            label={t("settings.situation.sampling")}
+            value={`${situation.sampleIntervalMs} ms`}
+          />
+          <Metric
+            label={t("settings.situation.calendar")}
+            value={
+              snapshot ? localizeStatus(t, snapshot.signals.calendar.health) : t("common.disabled")
+            }
+          />
+          <Metric
+            label={t("settings.situation.retention")}
+            value={t("settings.situation.days", { count: situation.retentionDays })}
+          />
+          <Metric
+            label={t("settings.situation.rawAudio")}
+            value={t("settings.situation.neverStored")}
+          />
         </div>
       </section>
     </div>

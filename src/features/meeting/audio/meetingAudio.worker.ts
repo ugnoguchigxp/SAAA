@@ -7,9 +7,7 @@ type WorkerInput =
   | { type: "samples"; samples: Float32Array }
   | { type: "flush" };
 
-type WorkerOutput =
-  | ({ type: "segment" } & NormalizedMeetingSegment)
-  | { type: "flushed" };
+type WorkerOutput = ({ type: "segment" } & NormalizedMeetingSegment) | { type: "flushed" };
 
 const scope = self as unknown as {
   onmessage: ((event: MessageEvent<WorkerInput>) => void) | null;

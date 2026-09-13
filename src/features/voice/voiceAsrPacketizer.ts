@@ -33,11 +33,15 @@ export class VoiceAsrPacketizer {
     return packet;
   }
 
-  reset(): void { this.carry.fill(0); this.carry = new Float32Array(); }
+  reset(): void {
+    this.carry.fill(0);
+    this.carry = new Float32Array();
+  }
 }
 
 function encodePcm16(samples: Float32Array): Uint8Array {
-  if (samples.length !== AUDIO_PACKET_SAMPLES) throw new Error("ASR packets must be exactly 1,600 samples.");
+  if (samples.length !== AUDIO_PACKET_SAMPLES)
+    throw new Error("ASR packets must be exactly 1,600 samples.");
   const bytes = new Uint8Array(AUDIO_PACKET_BYTES);
   const view = new DataView(bytes.buffer);
   for (let index = 0; index < samples.length; index += 1) {

@@ -2,14 +2,130 @@
   <h1 id="verified-quality-improvements">品質改善実装計画 — 重複統合版</h1>
   <dl>
     <dt>Status</dt>
-    <dd>改訂済み — 過去の部分実装あり、新規バックログは未着手</dd>
+    <dd>実装反映済み — ローカル検証済み。R11の方式、OSS報告先、M01は確定待ち</dd>
     <dt>Updated</dt>
     <dd>2026-09-13</dd>
     <dt>調査対象</dt>
     <dd>HEAD 698d803と現在の未コミット作業ツリー</dd>
     <dt>今回の成果物</dt>
-    <dd>追加20件の妥当性評価、既存項目との統合、実装順序と完了条件の更新</dd>
+    <dd>改善実装、整形・構造分割、回帰テスト、ローカル検証結果と残条件の記録</dd>
   </dl>
+  <h2 id="execution-results">実施結果（2026-09-13）</h2>
+  <p>
+    R01〜R10、R12〜R14の実装を反映した。R11の保護方式とOSSの非公開報告先はユーザーの回答待ちであり、完了扱いにしない。実WebViewのキーボード操作・権限・30分soakなどM01の手動確認も自動テストとは分ける。commit・pushは行っていない。
+  </p>
+  <table>
+    <caption>
+      今回の実装と残条件
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">実装・確認</th>
+        <th scope="col">状態</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>R01</td>
+        <td>
+          readyとログ出力の競合、Darwinの終了済みprocess
+          groupへのsignal再送、失敗時のログ保存待ちを修正。spawn／exit／closeを記録。通常20回・CPU負荷下20回で失敗0。
+        </td>
+        <td>ローカル検証済み</td>
+      </tr>
+      <tr>
+        <td>R02</td>
+        <td>
+          oxlint 1.82.0／oxfmt
+          0.67.0をBunで固定。Hooks必須規則とcheck:localを追加。隔離コピー211ファイルの実行AST比較と整形による行数移行を記録。超過した設定画面・辞書・音声フックを分割。
+        </td>
+        <td>ローカル検証済み</td>
+      </tr>
+      <tr>
+        <td>R03・R04</td>
+        <td>
+          Shortcutはcommit済みcallbackを参照。Situation
+          tabの矢印・Home／End操作、監査dialogのfocus移動・trap・復元・Escape消費をDOMテスト。
+        </td>
+        <td>実装・DOM検証済み。実WebView操作はM01</td>
+      </tr>
+      <tr>
+        <td>R05</td>
+        <td>
+          日本語READMEの監査7日・画面200件・診断1,000件を同期。CONTRIBUTINGと報告先未確定を明記したSECURITY／CODE_OF_CONDUCTを追加。
+        </td>
+        <td>README・検査案内済み。報告先・担当待ち</td>
+      </tr>
+      <tr>
+        <td>R06</td>
+        <td>
+          Snapshot／Runtime／Meeting／ASR受信をunknownからzodで検証。不正購読は以後の更新を止め、Runtime／ASRは中断要求。Rust生成fixtureと型一致、欠落・未知variant・数値・配列・異なるrun／時刻逆転を検査。
+        </td>
+        <td>実装・境界テスト済み</td>
+      </tr>
+      <tr>
+        <td>R07</td>
+        <td>
+          speakerのFFI前提を明記。未使用の評価API-key環境書込みを除去し、tool
+          fixtureをtask-local化。並行評価の分離とテスト環境のRAII復元を確認。
+        </td>
+        <td>実装・検証済み</td>
+      </tr>
+      <tr>
+        <td>R08・R09</td>
+        <td>
+          音声資材・ASR送信・停止待ち・解放を単一ownerへ移動し、disposeの冪等性を検査。lib.rsから子moduleのテストとAppStateを分離。元のテスト名・148
+          assertion・埋込みfixtureを保全。
+        </td>
+        <td>実装・検証済み</td>
+      </tr>
+      <tr>
+        <td>R10</td>
+        <td>
+          既存ProviderFailureKindをTurnExecutionFailureまで保持し、認証／設定／timeout／cancelを分類。既存IPCの型とコード集合を維持し、DBにも分類を保存。
+        </td>
+        <td>実装・検証済み</td>
+      </tr>
+      <tr>
+        <td>R11</td>
+        <td>
+          WAV・埋め込み・手動backup・移行backup・削除を追跡。鍵紛失・破損・旧形式移行・コピー残存を含む契約案をevidenceへ記録。保存形式は変更していない。
+        </td>
+        <td>保護方式の回答待ち</td>
+      </tr>
+      <tr>
+        <td>R12・R13</td>
+        <td>
+          診断の自由文errorを安全な案内へ置換し、失敗コードを保持。UI向けcredential構文をマスク。空画面の設定案内は既存snapshotから次の操作を選び、日英表示とSettings到達をテスト。
+        </td>
+        <td>実装・検証済み</td>
+      </tr>
+      <tr>
+        <td>R14</td>
+        <td>
+          Codex
+          stdout読取り、会話入力の一貫したDB読取り、WebSocket開始要求を分離。認可・再開・cancel・allocation・terminal契約の差を記録し、新しい共通transport
+          traitは導入しない。
+        </td>
+        <td>限定分割を実施</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    追加で全体検査中に見つかったTTS
+    rendererのEOF待ちを修正し、実際のWAV生成を確認した。実行終了後のProvider更新は更新行数を検査して拒否する。既存テストの古いfixtureや移動前のパス参照も現行契約に合わせた。
+  </p>
+  <p>
+    証跡はspec/evidence/quality-improvements/2026-09-13-*.jsonに保存する。以下の判定表と「未着手」の記載は計画改訂時点の調査記録であり、最新状態はこの実施結果を優先する。
+  </p>
+  <h2 id="review-corrections">実装レビュー後の追加修正</h2>
+  <p>
+    前回の完了判定で見落としていたR06・R08・R12を修正した。Runtimeはterminal後の本文更新を拒否し、独立したTTSの終了通知とProvider切替の再開始は許可する。ASRはready・revision・発話terminal・stoppedを検査し、Meetingはsessionとlaneごとの重複・終了後更新を検査する。並行する発話やsegmentの順不同完了は維持する。
+  </p>
+  <p>
+    音声captureの終了対象はawait前に共有refから切り離し、古い終了処理が新しい資材を停止・消去しないようにした。flush中のdisposeも世代番号で無効化する。JSON形式のcredentialは空白・エスケープを含む値全体をマスクし、理由と回復情報を保持する。各再現ケースを回帰テストへ追加した。R11・OSS報告先・M01の保留状態は継続する。
+  </p>
   <h2 id="scope">1. 現在の範囲と状態</h2>
   <p>
     ユーザーの除外指定はCI/CDである。GitHub workflowの追加・実行、必須チェック設定、依存更新bot、OS
@@ -17,7 +133,7 @@
     smokeは対象に含む。
   </p>
   <p>
-    フォーマッタはoxfmt、リンタはoxlintに固定する。Biome、Prettier、ESLintの新規導入は計画しない。2026-09-13のこの更新時点ではoxlint／oxfmtの依存追加・設定・一括整形は未実施である。計画の更新をツール導入完了と数えない。
+    フォーマッタはoxfmt、リンタはoxlintに固定する。Biome、Prettier、ESLintの新規導入は計画しない。計画改訂時点ではoxlint／oxfmtの依存追加・設定・一括整形は未実施だった。今回の導入結果は実施結果節に記録する。
   </p>
   <p>
     音声データ保護、診断のマスキング、初回設定案内は対象に残す。前回提示したバックログに着手せず応答だけで終了した分は未着手として扱う。自動介入、system

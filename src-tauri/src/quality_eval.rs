@@ -13,6 +13,12 @@ use crate::{
     StartTurnInput, PRIMARY_CONVERSATION_ID,
 };
 
+// The fixture follows this evaluation future, including across thread switches.
+// Concurrent runs never share process environment or inherit another run's fixture.
+tokio::task_local! {
+    pub(crate) static TOOL_FIXTURE: String;
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct QualityRequest {
@@ -38,31 +44,21 @@ pub async fn run_json(input: &str) -> Result<String, String> {
     let request: QualityRequest = serde_json::from_str(input)
         .map_err(|error| format!("Invalid quality runtime request: {error}"))?;
     validate_request(&request)?;
-    std::env::set_var("SAAA_PROVIDER_QUALITY_EVAL_API_KEY", &request.api_key);
-    match request.tool_mode.as_str() {
-        "none" => std::env::set_var(
-            "SAAA_QUALITY_TOOL_FIXTURE",
-            runtime::agent_tools::tool_error_content(
-                "fixture-tool-not-expected",
-                "No external tool fixture is available for this scenario.",
-            ),
+    let fixture = match request.tool_mode.as_str() {
+        "none" => runtime::agent_tools::tool_error_content(
+            "fixture-tool-not-expected",
+            "No external tool fixture is available for this scenario.",
         ),
-        "success" => std::env::set_var(
-            "SAAA_QUALITY_TOOL_FIXTURE",
-            request.tool_result.as_deref().unwrap_or_default(),
-        ),
-        "failure" => std::env::set_var(
-            "SAAA_QUALITY_TOOL_FIXTURE",
-            runtime::agent_tools::tool_error_content(
-                "fixture-network-failure",
-                request
-                    .tool_result
-                    .as_deref()
-                    .unwrap_or("Deterministic network failure."),
-            ),
+        "success" => request.tool_result.clone().unwrap_or_default(),
+        "failure" => runtime::agent_tools::tool_error_content(
+            "fixture-network-failure",
+            request
+                .tool_result
+                .as_deref()
+                .unwrap_or("Deterministic network failure."),
         ),
         _ => return Err("Invalid quality tool mode".to_string()),
-    }
+    };
 
     let state = quality_state(&request)?;
     let run_id = crate::new_id("quality-run");
@@ -78,15 +74,19 @@ pub async fn run_json(input: &str) -> Result<String, String> {
     };
     let channel = tauri::ipc::Channel::new(|_| Ok(()));
     let started = Instant::now();
-    runtime::turns::execute_turn(
-        &state,
-        &turn,
-        &channel,
-        Arc::new(RunCancellation::default()),
-        None,
-    )
-    .await
-    .map_err(|error| error.message)?;
+    TOOL_FIXTURE
+        .scope(
+            fixture,
+            runtime::turns::execute_turn(
+                &state,
+                &turn,
+                &channel,
+                Arc::new(RunCancellation::default()),
+                None,
+            ),
+        )
+        .await
+        .map_err(|error| error.message)?;
     let content = state.sqlite_readers.read(|connection| {
         connection
             .query_row(
@@ -276,5 +276,22 @@ mod tests {
         let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
         assert_eq!(response["content"], "runtime answer");
         assert_eq!(response["runtimePath"], "execute_turn/conversation.respond");
+    }
+
+    #[tokio::test]
+    async fn concurrent_evaluations_keep_their_own_fixture_and_release_it() {
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let run = |value: &'static str| {
+            let barrier = barrier.clone();
+            tokio::spawn(TOOL_FIXTURE.scope(value.to_string(), async move {
+                barrier.wait().await;
+                tokio::task::yield_now().await;
+                assert_eq!(TOOL_FIXTURE.with(Clone::clone), value);
+            }))
+        };
+        let (left, right) = tokio::join!(run("first-secret-fixture"), run("second-secret-fixture"));
+        left.unwrap();
+        right.unwrap();
+        assert!(TOOL_FIXTURE.try_with(Clone::clone).is_err());
     }
 }

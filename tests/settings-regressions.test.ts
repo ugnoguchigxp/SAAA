@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { defaultSettingsDraft } from "../src/features/settings/settingsDefaults";
-import {
-  documentsFromDraft,
-  reconcileSavedDraft,
-} from "../src/features/settings/settingsDraft";
+import { documentsFromDraft, reconcileSavedDraft } from "../src/features/settings/settingsDraft";
 import { modelProvidersSettingsSchema } from "../src/lib/providerSchemas";
 import { validateSettingsDocuments } from "../src/lib/schemas";
 import providerCases from "./fixtures/provider-validation.json";
@@ -12,19 +9,34 @@ describe("settings regressions", () => {
   test("matches the shared provider endpoint contract", () => {
     for (const fixture of providerCases) {
       const settings = structuredClone(defaultSettingsDraft.providers);
-      settings.providers = [{
-        kind: "openai-compatible", id: "fixture", enabled: true, label: "Fixture",
-        location: fixture.location as "local" | "cloud", endpoint: fixture.endpoint,
-        model: "model", authentication: "none",
-      }];
-      expect(modelProvidersSettingsSchema.safeParse(settings).success, fixture.name).toBe(fixture.valid);
+      settings.providers = [
+        {
+          kind: "openai-compatible",
+          id: "fixture",
+          enabled: true,
+          label: "Fixture",
+          location: fixture.location as "local" | "cloud",
+          endpoint: fixture.endpoint,
+          model: "model",
+          authentication: "none",
+        },
+      ];
+      expect(modelProvidersSettingsSchema.safeParse(settings).success, fixture.name).toBe(
+        fixture.valid,
+      );
     }
   });
   test("malformed URLs are validation failures rather than thrown TypeErrors", () => {
     const malformed = structuredClone(defaultSettingsDraft.providers);
     malformed.providers.push({
-      kind: "openai-compatible", id: "broken", enabled: true, label: "Broken",
-      location: "local", endpoint: "http://[", model: "model", authentication: "none",
+      kind: "openai-compatible",
+      id: "broken",
+      enabled: true,
+      label: "Broken",
+      location: "local",
+      endpoint: "http://[",
+      model: "model",
+      authentication: "none",
     });
     expect(() => modelProvidersSettingsSchema.safeParse(malformed)).not.toThrow();
     expect(modelProvidersSettingsSchema.safeParse(malformed).success).toBe(false);
@@ -78,6 +90,8 @@ describe("settings regressions", () => {
 
     const editedWhileSaving = structuredClone(submitted);
     editedWhileSaving.codex.agentName = "New edit";
-    expect(reconcileSavedDraft(editedWhileSaving, fingerprint, saved).codex.agentName).toBe("New edit");
+    expect(reconcileSavedDraft(editedWhileSaving, fingerprint, saved).codex.agentName).toBe(
+      "New edit",
+    );
   });
 });

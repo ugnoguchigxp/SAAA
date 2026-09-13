@@ -68,4 +68,29 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn exported_json_omits_free_form_credentials_and_retains_failure_category() {
+        let connection = Connection::open_in_memory().unwrap();
+        crate::initialize_database(&connection).unwrap();
+        connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,error_message,failure_code,started_at) VALUES('diagnostic_fixture',?1,'conversation.respond','failed',?2,'configuration-error','1')", rusqlite::params![crate::PRIMARY_CONVERSATION_ID, "Bearer temporary-secret https://private-endpoint.example?token=another-secret provider body private-text"]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = crate::test_support::app_state(connection);
+        state.data_directory = directory.path().to_path_buf();
+        let result = export_diagnostics(&state).unwrap();
+        let encoded = fs::read_to_string(result.path).unwrap();
+        for value in [
+            "temporary-secret",
+            "private-endpoint",
+            "another-secret",
+            "private-text",
+        ] {
+            assert!(!encoded.contains(value));
+        }
+        let payload: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            payload["recentRuns"][0]["failureCode"],
+            "configuration-error"
+        );
+        assert_eq!(payload["recentRuns"][0]["status"], "failed");
+    }
 }

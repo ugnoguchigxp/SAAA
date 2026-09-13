@@ -1,0 +1,245 @@
+{
+  "load": "two independent CPU-bound Python processes during loaded phase",
+  "results": [
+    {
+      "phase": "normal",
+      "iteration": 1,
+      "exitCode": 0,
+      "durationMs": 8637
+    },
+    {
+      "phase": "normal",
+      "iteration": 2,
+      "exitCode": 0,
+      "durationMs": 8688
+    },
+    {
+      "phase": "normal",
+      "iteration": 3,
+      "exitCode": 0,
+      "durationMs": 8644
+    },
+    {
+      "phase": "normal",
+      "iteration": 4,
+      "exitCode": 0,
+      "durationMs": 8780
+    },
+    {
+      "phase": "normal",
+      "iteration": 5,
+      "exitCode": 0,
+      "durationMs": 8636
+    },
+    {
+      "phase": "normal",
+      "iteration": 6,
+      "exitCode": 0,
+      "durationMs": 8686
+    },
+    {
+      "phase": "normal",
+      "iteration": 7,
+      "exitCode": 0,
+      "durationMs": 8611
+    },
+    {
+      "phase": "normal",
+      "iteration": 8,
+      "exitCode": 0,
+      "durationMs": 8759
+    },
+    {
+      "phase": "normal",
+      "iteration": 9,
+      "exitCode": 0,
+      "durationMs": 8697
+    },
+    {
+      "phase": "normal",
+      "iteration": 10,
+      "exitCode": 0,
+      "durationMs": 8649
+    },
+    {
+      "phase": "normal",
+      "iteration": 11,
+      "exitCode": 0,
+      "durationMs": 8703
+    },
+    {
+      "phase": "normal",
+      "iteration": 12,
+      "exitCode": 0,
+      "durationMs": 8705
+    },
+    {
+      "phase": "normal",
+      "iteration": 13,
+      "exitCode": 0,
+      "durationMs": 8674
+    },
+    {
+      "phase": "normal",
+      "iteration": 14,
+      "exitCode": 0,
+      "durationMs": 8685
+    },
+    {
+      "phase": "normal",
+      "iteration": 15,
+      "exitCode": 0,
+      "durationMs": 8664
+    },
+    {
+      "phase": "normal",
+      "iteration": 16,
+      "exitCode": 0,
+      "durationMs": 8683
+    },
+    {
+      "phase": "normal",
+      "iteration": 17,
+      "exitCode": 0,
+      "durationMs": 8604
+    },
+    {
+      "phase": "normal",
+      "iteration": 18,
+      "exitCode": 0,
+      "durationMs": 8639
+    },
+    {
+      "phase": "normal",
+      "iteration": 19,
+      "exitCode": 0,
+      "durationMs": 8657
+    },
+    {
+      "phase": "normal",
+      "iteration": 20,
+      "exitCode": 0,
+      "durationMs": 8646
+    },
+    {
+      "phase": "loaded",
+      "iteration": 1,
+      "exitCode": 1,
+      "durationMs": 8624
+    },
+    {
+      "phase": "loaded",
+      "iteration": 2,
+      "exitCode": 0,
+      "durationMs": 8586
+    },
+    {
+      "phase": "loaded",
+      "iteration": 3,
+      "exitCode": 0,
+      "durationMs": 8594
+    },
+    {
+      "phase": "loaded",
+      "iteration": 4,
+      "exitCode": 0,
+      "durationMs": 8690
+    },
+    {
+      "phase": "loaded",
+      "iteration": 5,
+      "exitCode": 0,
+      "durationMs": 8669
+    },
+    {
+      "phase": "loaded",
+      "iteration": 6,
+      "exitCode": 0,
+      "durationMs": 8608
+    },
+    {
+      "phase": "loaded",
+      "iteration": 7,
+      "exitCode": 0,
+      "durationMs": 8634
+    },
+    {
+      "phase": "loaded",
+      "iteration": 8,
+      "exitCode": 0,
+      "durationMs": 8603
+    },
+    {
+      "phase": "loaded",
+      "iteration": 9,
+      "exitCode": 0,
+      "durationMs": 8615
+    },
+    {
+      "phase": "loaded",
+      "iteration": 10,
+      "exitCode": 0,
+      "durationMs": 8633
+    },
+    {
+      "phase": "loaded",
+      "iteration": 11,
+      "exitCode": 0,
+      "durationMs": 8650
+    },
+    {
+      "phase": "loaded",
+      "iteration": 12,
+      "exitCode": 1,
+      "durationMs": 8601
+    },
+    {
+      "phase": "loaded",
+      "iteration": 13,
+      "exitCode": 1,
+      "durationMs": 8646
+    },
+    {
+      "phase": "loaded",
+      "iteration": 14,
+      "exitCode": 0,
+      "durationMs": 8673
+    },
+    {
+      "phase": "loaded",
+      "iteration": 15,
+      "exitCode": 0,
+      "durationMs": 8678
+    },
+    {
+      "phase": "loaded",
+      "iteration": 16,
+      "exitCode": 0,
+      "durationMs": 9022
+    },
+    {
+      "phase": "loaded",
+      "iteration": 17,
+      "exitCode": 1,
+      "durationMs": 9279
+    },
+    {
+      "phase": "loaded",
+      "iteration": 18,
+      "exitCode": 1,
+      "durationMs": 9130
+    },
+    {
+      "phase": "loaded",
+      "iteration": 19,
+      "exitCode": 0,
+      "durationMs": 9231
+    },
+    {
+      "phase": "loaded",
+      "iteration": 20,
+      "exitCode": 0,
+      "durationMs": 9076
+    }
+  ]
+}

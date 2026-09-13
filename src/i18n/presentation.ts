@@ -35,7 +35,8 @@ const messageKeys = {
   meetingStartFailed: "errors.meeting.startFailed",
   meetingRuntimeFailure: "errors.meeting.runtimeFailure",
   settingsAgentConnectionTokenInvalid: "settings.connection.agentConnectionTokenInvalid",
-  settingsAgentConnectionAuthorizationRejected: "settings.connection.agentConnectionAuthorizationRejected",
+  settingsAgentConnectionAuthorizationRejected:
+    "settings.connection.agentConnectionAuthorizationRejected",
   settingsAgentSessionEventStreamMissing: "errors.settings.agentSessionEventStreamMissing",
 } as const;
 
@@ -53,15 +54,18 @@ export function uiMessage(name: UiMessageName): string {
 
 const legacyMessageNames: Record<string, UiMessageName> = {
   "Primary conversation is unavailable.": "appPrimaryConversationUnavailable",
-  "Chat voice capture is disabled while a meeting is active or paused.": "chatVoiceBlockedDuringMeeting",
+  "Chat voice capture is disabled while a meeting is active or paused.":
+    "chatVoiceBlockedDuringMeeting",
   "Voice settings are unavailable.": "chatVoiceSettingsUnavailable",
   "Recorded audio is unavailable.": "chatRecordedAudioUnavailable",
   "音声処理が追いつかないため、新しい発話は送信しませんでした。": "chatVoiceQueueFull",
-  "応答待ちの音声クエリーが上限に達したため、新しい発話は送信しませんでした。": "chatVoicePendingLimit",
+  "応答待ちの音声クエリーが上限に達したため、新しい発話は送信しませんでした。":
+    "chatVoicePendingLimit",
   "Voice query queued until the active response completes": "chatVoiceQueryQueued",
   "Generation cancelled": "chatGenerationCancelled",
   "サンプルを再生できませんでした。": "voiceSamplePlaybackFailed",
-  "Meeting transcription cannot keep up. Capture was paused without evicting queued audio.": "meetingTranscriptionBackpressure",
+  "Meeting transcription cannot keep up. Capture was paused without evicting queued audio.":
+    "meetingTranscriptionBackpressure",
   "Meeting capture is no longer active.": "meetingCaptureInactive",
   "capture disconnected — pause or stop to recover": "meetingCaptureDisconnected",
   "Loading local speaker verification…": "voiceProfileLoading",
@@ -70,8 +74,10 @@ const legacyMessageNames: Record<string, UiMessageName> = {
   "No audio was recorded.": "voiceProfileNoAudio",
   "音声が記録されませんでした。": "voiceProfileNoAudio",
   "LARM_API_TOKEN is invalid.": "settingsAgentConnectionTokenInvalid",
-  "dynamic_lan rejected the connection authorization.": "settingsAgentConnectionAuthorizationRejected",
-  "Agent Session creation did not advertise a supported event stream URL": "settingsAgentSessionEventStreamMissing",
+  "dynamic_lan rejected the connection authorization.":
+    "settingsAgentConnectionAuthorizationRejected",
+  "Agent Session creation did not advertise a supported event stream URL":
+    "settingsAgentSessionEventStreamMissing",
 };
 
 const microphoneMessageNames: Array<[RegExp, string]> = [
@@ -146,21 +152,29 @@ const reasonKeys: Record<string, string> = {
 };
 
 /** Localizes known runtime failures and hides untrusted backend/provider text. */
-export function localizeUiMessage(t: TFunction, message: string | null | undefined, scope: ErrorScope): string {
+export function localizeUiMessage(
+  t: TFunction,
+  message: string | null | undefined,
+  scope: ErrorScope,
+): string {
   if (!message) return "";
   const trimmed = message.trim();
   const name = trimmed.startsWith(MESSAGE_PREFIX)
-    ? trimmed.slice(MESSAGE_PREFIX.length) as UiMessageName
+    ? (trimmed.slice(MESSAGE_PREFIX.length) as UiMessageName)
     : legacyMessageNames[trimmed];
   if (name && name in messageKeys) return t(messageKeys[name]);
 
-  if (trimmed.startsWith("TARGET_SPEAKER_REJECTED")) return t(messageKeys.voiceTargetSpeakerRejected);
-  if (trimmed.startsWith("ASR_LANGUAGE_NOT_ALLOWED")) return t(messageKeys.voiceAsrLanguageNotAllowed);
+  if (trimmed.startsWith("TARGET_SPEAKER_REJECTED"))
+    return t(messageKeys.voiceTargetSpeakerRejected);
+  if (trimmed.startsWith("ASR_LANGUAGE_NOT_ALLOWED"))
+    return t(messageKeys.voiceAsrLanguageNotAllowed);
   if (trimmed.startsWith("ASR_LANGUAGE_UNKNOWN")) return t(messageKeys.voiceAsrLanguageUnknown);
   if (trimmed.startsWith("ASR_NO_SPEECH")) return t(messageKeys.voiceAsrNoSpeech);
   if (trimmed.startsWith("Speech playback failed:")) return t(messageKeys.chatSpeechPlaybackFailed);
-  if (trimmed.startsWith("Microphone resume failed:")) return t(messageKeys.chatMicrophoneResumeFailed);
-  if (trimmed.startsWith("Voice capture initialization failed:")) return t(messageKeys.chatVoiceCaptureInitializationFailed);
+  if (trimmed.startsWith("Microphone resume failed:"))
+    return t(messageKeys.chatMicrophoneResumeFailed);
+  if (trimmed.startsWith("Voice capture initialization failed:"))
+    return t(messageKeys.chatVoiceCaptureInitializationFailed);
   if (trimmed.startsWith("Meeting start failed:")) return t(messageKeys.meetingStartFailed);
 
   const microphone = microphoneMessageNames.find(([pattern]) => pattern.test(trimmed));
@@ -177,12 +191,25 @@ export function localizeSituationScene(t: TFunction, scene: string): string {
 }
 
 export function localizeForegroundCategory(t: TFunction, category: string): string {
-  const known = ["communication", "coding", "writing", "browser", "media", "sensitive", "other", "unknown"];
-  return known.includes(category) ? t(`situation.foregroundCategories.${category}`) : t("common.unknown");
+  const known = [
+    "communication",
+    "coding",
+    "writing",
+    "browser",
+    "media",
+    "sensitive",
+    "other",
+    "unknown",
+  ];
+  return known.includes(category)
+    ? t(`situation.foregroundCategories.${category}`)
+    : t("common.unknown");
 }
 
 export function localizeSituationReason(t: TFunction, reason: string): string {
-  return reasonKeys[reason] ? t(`situation.reasons.${reasonKeys[reason]}`) : t("situation.reasons.unknown");
+  return reasonKeys[reason]
+    ? t(`situation.reasons.${reasonKeys[reason]}`)
+    : t("situation.reasons.unknown");
 }
 
 export function localizeSituationAttention(t: TFunction, attention: string): string {
@@ -204,7 +231,15 @@ export function localizeMeetingLane(t: TFunction, lane: string): string {
 }
 
 export function localizeProviderKind(t: TFunction, kind: string): string {
-  const known = ["openai-compatible", "agent-session", "cloud-asr", "cloud-tts", "system-tts", "larm", "dynamic-lan"];
+  const known = [
+    "openai-compatible",
+    "agent-session",
+    "cloud-asr",
+    "cloud-tts",
+    "system-tts",
+    "larm",
+    "dynamic-lan",
+  ];
   return known.includes(kind) ? t(`settings.providers.kinds.${kind}`) : t("common.unknown");
 }
 
@@ -217,12 +252,20 @@ export function localizeProviderLabel(t: TFunction, label: string): string {
 }
 
 /** Localizes a typed, presentation-safe runtime activity. */
-export function localizeRuntimeActivity(t: TFunction, activity: ConversationRuntimeActivity): string {
+export function localizeRuntimeActivity(
+  t: TFunction,
+  activity: ConversationRuntimeActivity,
+): string {
   switch (activity.type) {
     case "providerStarted":
       return t("chat.activity.usingProvider", { provider: activity.providerId });
     case "providerSelected":
-      return t(activity.fallbackUsed ? "chat.activity.usingFallbackProvider" : "chat.activity.usingProvider", { provider: activity.providerId });
+      return t(
+        activity.fallbackUsed
+          ? "chat.activity.usingFallbackProvider"
+          : "chat.activity.usingProvider",
+        { provider: activity.providerId },
+      );
     case "providerWorking":
       return t("chat.activity.working");
     case "providerFailed":
@@ -234,8 +277,15 @@ export function localizeRuntimeActivity(t: TFunction, activity: ConversationRunt
   }
 }
 
-export function formatRegionalDateTime(value: string, language: string | undefined, timeZone: string): string {
+export function formatRegionalDateTime(
+  value: string,
+  language: string | undefined,
+  timeZone: string,
+): string {
   const milliseconds = Number(value);
   if (!Number.isFinite(milliseconds)) return value;
-  return new Date(milliseconds).toLocaleString(language, timeZone === "system" ? undefined : { timeZone });
+  return new Date(milliseconds).toLocaleString(
+    language,
+    timeZone === "system" ? undefined : { timeZone },
+  );
 }

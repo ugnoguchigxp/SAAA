@@ -12,7 +12,12 @@ import {
   validateSoakObservation,
   waitForCheckpoint,
 } from "../scripts/larm-readiness/live";
-import { encodeU32, encodeU64, resultStrength, testNameForMode } from "../scripts/larm-readiness/bundle";
+import {
+  encodeU32,
+  encodeU64,
+  resultStrength,
+  testNameForMode,
+} from "../scripts/larm-readiness/bundle";
 import { failureCode, removeRustFragment, run } from "../scripts/larm-readiness/runner";
 import {
   REPORT_FILENAMES,
@@ -20,12 +25,17 @@ import {
   atomicWriteReport,
   emptyReport,
 } from "../scripts/larm-readiness.ts";
-import type { DatabaseObservation, ProviderSessionRow, RuntimeRow } from "../scripts/larm-readiness/database";
+import type {
+  DatabaseObservation,
+  ProviderSessionRow,
+  RuntimeRow,
+} from "../scripts/larm-readiness/database";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of temporaryDirectories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
 });
 
 function identity() {
@@ -76,10 +86,7 @@ describe("LARM live helpers", () => {
     expect(median([1, 2, 3, 4])).toBe(2.5);
     expect(() => median([])).toThrow(RunnerError);
     const observation: DatabaseObservation = {
-      runs: [
-        runRow({ id: "run-1" }),
-        runRow({ id: "run-2", status: "cancelled" }),
-      ],
+      runs: [runRow({ id: "run-1" }), runRow({ id: "run-2", status: "cancelled" })],
       sessions: [
         session({ id: "s1", runtime_run_id: "run-1", allocation_id: "a1" }),
         session({
@@ -91,32 +98,45 @@ describe("LARM live helpers", () => {
         }),
       ],
     };
-    expect(validateSoakObservation(observation, "larm-local")).toEqual({ completed: 1, cancelled: 1 });
+    expect(validateSoakObservation(observation, "larm-local")).toEqual({
+      completed: 1,
+      cancelled: 1,
+    });
     expect(countSessions(observation, (item) => item.status === "cancelled")).toBe(1);
     expect(knownObservationIdentifiers(observation)).toContain("run-1");
   });
 
   test("reads stream bytes, samples the current process RSS, and times out a checkpoint", async () => {
-    const bytes = await readStreamBytes(new ReadableStream({
-      start(controller) {
-        controller.enqueue(Buffer.from("abc"));
-        controller.close();
-      },
-    }), 16);
+    const bytes = await readStreamBytes(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(Buffer.from("abc"));
+          controller.close();
+        },
+      }),
+      16,
+    );
     expect(bytes.toString()).toBe("abc");
-    await expect(readStreamBytes(new ReadableStream({
-      start(controller) {
-        controller.enqueue(Buffer.from("too-long"));
-        controller.close();
-      },
-    }), 3)).rejects.toThrow(RunnerError);
+    await expect(
+      readStreamBytes(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(Buffer.from("too-long"));
+            controller.close();
+          },
+        }),
+        3,
+      ),
+    ).rejects.toThrow(RunnerError);
     expect(await sampleRssKiB(process.pid)).toBeGreaterThan(0);
     const application = {
       child: { exitCode: null, pid: process.pid },
       stdoutScanner: { detected: false },
       stderrScanner: { detected: false },
     };
-    await expect(waitForCheckpoint(application as never, "waiting", () => false, performance.now() - 1)).rejects.toThrow(RunnerError);
+    await expect(
+      waitForCheckpoint(application as never, "waiting", () => false, performance.now() - 1),
+    ).rejects.toThrow(RunnerError);
     await waitForCheckpoint(application as never, "ready", () => true, performance.now() + 1_000);
   });
 });
@@ -137,7 +157,10 @@ describe("LARM bundle and runner helpers", () => {
     temporaryDirectories.push(directory);
     const id = identity();
     for (const mode of ["preflight", "functional", "soak-30m", "soak-2h"] as const) {
-      atomicWriteReport(join(directory, REPORT_FILENAMES[mode]), emptyReport(id, mode, "failed", ["internal"]));
+      atomicWriteReport(
+        join(directory, REPORT_FILENAMES[mode]),
+        emptyReport(id, mode, "failed", ["internal"]),
+      );
     }
     const previousToken = process.env.LARM_API_TOKEN;
     const previousUrl = process.env.SAAA_LARM_CANARY_BASE_URL;

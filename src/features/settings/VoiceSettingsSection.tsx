@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { VoiceProfileSnapshot, VoiceSettings } from "../../lib/contracts";
-import {
-  enumerateAudioInputDevices,
-  microphoneErrorMessage,
-} from "../../lib/microphone";
+import { enumerateAudioInputDevices, microphoneErrorMessage } from "../../lib/microphone";
 import { ASR_LANGUAGES, type AsrLanguageCode } from "../../lib/asrLanguages";
 import { Field, Metric } from "./SettingsFields";
 import { VoiceProfileCard } from "./VoiceProfileCard";
@@ -72,17 +69,16 @@ export function VoiceSettingsSection({
           </label>
         </div>
         <div className="settings-summary-grid">
-          <Metric
-            label={t("voice.listening")}
-            value={t(`voice.status.${availability}`)}
-          />
+          <Metric label={t("voice.listening")} value={t(`voice.status.${availability}`)} />
           <Metric label={t("voice.detection")} value={t("voice.localVad")} />
           <Metric label={t("voice.cloudUpload")} value={t("voice.continuousChunks")} />
           <Metric label={t("voice.activation")} value={t("voice.automatic")} />
         </div>
         <p className="settings-help">{t("voice.permissionHelp")}</p>
         {listeningError && (
-          <p className="provider-test-result error">{localizeUiMessage(t, listeningError, "voice")}</p>
+          <p className="provider-test-result error">
+            {localizeUiMessage(t, listeningError, "voice")}
+          </p>
         )}
       </section>
 
@@ -92,15 +88,11 @@ export function VoiceSettingsSection({
           <Field label={t("voice.inputDevice")}>
             <select
               value={voice.inputDeviceId}
-              onChange={(event) =>
-                onChange({ ...voice, inputDeviceId: event.target.value })
-              }
+              onChange={(event) => onChange({ ...voice, inputDeviceId: event.target.value })}
             >
               <option value="default">{t("common.systemDefault")}</option>
               {missingDevice && (
-                <option value={voice.inputDeviceId}>
-                  {t("voice.unavailableDevice")}
-                </option>
+                <option value={voice.inputDeviceId}>{t("voice.unavailableDevice")}</option>
               )}
               {devices.map((device, index) => (
                 <option key={device.deviceId} value={device.deviceId}>
@@ -130,8 +122,7 @@ export function VoiceSettingsSection({
               onChange={(event) =>
                 onChange({
                   ...voice,
-                  vadSensitivity: event.target
-                    .value as VoiceSettings["vadSensitivity"],
+                  vadSensitivity: event.target.value as VoiceSettings["vadSensitivity"],
                 })
               }
             >
@@ -162,11 +153,7 @@ export function VoiceSettingsSection({
         <div>
           <strong>{t("voice.languages")}</strong>
           <p className="settings-help">{t("voice.languagesHelp")}</p>
-          <div
-            className="language-options"
-            role="group"
-            aria-label={t("voice.languagesAria")}
-          >
+          <div className="language-options" role="group" aria-label={t("voice.languagesAria")}>
             {ASR_LANGUAGES.map((language) => (
               <label className="check-row" key={language.code}>
                 <input
@@ -196,9 +183,7 @@ export function VoiceSettingsSection({
           <input
             type="checkbox"
             checked={voice.autoSpeak}
-            onChange={(event) =>
-              onChange({ ...voice, autoSpeak: event.target.checked })
-            }
+            onChange={(event) => onChange({ ...voice, autoSpeak: event.target.checked })}
           />
           {t("voice.autoSpeak")}
         </label>
@@ -220,7 +205,5 @@ function updateLanguages(
   checked: boolean,
 ): AsrLanguageCode[] {
   if (checked) return current.includes(code) ? current : [...current, code];
-  return current.length === 1
-    ? current
-    : current.filter((language) => language !== code);
+  return current.length === 1 ? current : current.filter((language) => language !== code);
 }

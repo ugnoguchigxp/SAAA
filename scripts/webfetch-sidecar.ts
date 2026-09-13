@@ -47,13 +47,16 @@ export function parseInvocation(raw: string): WebFetchInvocation {
   }
   const record = value as Record<string, unknown>;
   if (
-    Object.keys(record).some((key) => key !== "name" && key !== "arguments")
-    || !WEB_FETCH_TOOL_NAMES.includes(record.name as WebFetchToolName)
-    || !record.arguments
-    || typeof record.arguments !== "object"
-    || Array.isArray(record.arguments)
+    Object.keys(record).some((key) => key !== "name" && key !== "arguments") ||
+    !WEB_FETCH_TOOL_NAMES.includes(record.name as WebFetchToolName) ||
+    !record.arguments ||
+    typeof record.arguments !== "object" ||
+    Array.isArray(record.arguments)
   ) {
-    throw new LlmFetchError("INVALID_INPUT", "WebFetch invocation does not match the tool protocol.");
+    throw new LlmFetchError(
+      "INVALID_INPUT",
+      "WebFetch invocation does not match the tool protocol.",
+    );
   }
   return {
     name: record.name as WebFetchToolName,

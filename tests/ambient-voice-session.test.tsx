@@ -2,20 +2,29 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, type MutableRefObject } from "react";
 import type { Root } from "react-dom/client";
 import type { ConversationVoicePolicySnapshot, VoiceSettings } from "../src/lib/contracts";
-import { initialConversationSession, type ConversationSession, type PendingConversationPrompt } from "../src/lib/conversationSession";
+import {
+  initialConversationSession,
+  type ConversationSession,
+  type PendingConversationPrompt,
+} from "../src/lib/conversationSession";
 import { channels, invokeCalls, resetTauriCoreMock } from "./tauriCoreMock";
 import { installJsdom } from "./jsdomGlobals";
 
 await import("../src/i18n");
-const { effectiveCaptureSettings, useAmbientVoiceSession } = await import("../src/features/voice/useAmbientVoiceSession");
+const { effectiveCaptureSettings, useAmbientVoiceSession } =
+  await import("../src/features/voice/useAmbientVoiceSession");
 
 class FakeAudioWorkletNode {
   port = {
     onmessage: null as ((event: MessageEvent) => void) | null,
     postMessage: () => undefined,
   };
-  connect() { return this; }
-  disconnect() { return this; }
+  connect() {
+    return this;
+  }
+  disconnect() {
+    return this;
+  }
 }
 
 class FakeAudioContext {
@@ -29,8 +38,12 @@ class FakeAudioContext {
   createMediaStreamSource() {
     return { connect: () => this, disconnect: () => undefined };
   }
-  close = async () => { this.state = "closed"; };
-  resume = async () => { this.state = "running"; };
+  close = async () => {
+    this.state = "closed";
+  };
+  resume = async () => {
+    this.state = "running";
+  };
 }
 
 const voiceSettings: VoiceSettings = {
@@ -82,7 +95,9 @@ function Harness({
     setError: () => undefined,
     setRuntimeActivity: (update) => (typeof update === "function" ? update([]) : update),
     stopSpeech: async () => undefined,
-    submitPrompt: async (prompt) => { submitted.push(prompt); },
+    submitPrompt: async (prompt) => {
+      submitted.push(prompt);
+    },
     persistListeningEnabled: async () => undefined,
   });
   return null;
@@ -140,16 +155,28 @@ describe("ambient voice session", () => {
     const { createRoot } = await import("react-dom/client");
     const { createElement } = await import("react");
     const apiRef: MutableRefObject<SessionApi | null> = { current: null };
-    const sessionRef: MutableRefObject<ConversationSession> = { current: { ...initialConversationSession } };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
     const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
     root = createRoot(document.getElementById("root")!);
     await act(async () => root!.render(createElement(Harness, { apiRef, sessionRef, pendingRef })));
-    await act(async () => { await apiRef.current!.toggleAmbientListening(true); });
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(true);
+    });
     const start = invokeCalls.find((call) => call.command === "start_voice_asr_session");
-    const sessionId = (start?.args as { input?: { sessionId?: string } } | undefined)?.input?.sessionId ?? "";
+    const sessionId =
+      (start?.args as { input?: { sessionId?: string } } | undefined)?.input?.sessionId ?? "";
     expect(sessionId.length).toBeGreaterThan(0);
     const channel = channels.at(-1);
     await act(async () => {
+      channel?.onmessage?.({
+        type: "ready",
+        sessionId,
+        currentUtteranceId: "u1",
+        protocol: "native",
+        scope: "all-speakers",
+      });
       channel?.onmessage?.({
         type: "partial",
         sessionId,
@@ -165,7 +192,7 @@ describe("ambient voice session", () => {
         type: "final",
         sessionId,
         utteranceId: "u1",
-        revision: 1,
+        revision: 2,
         startMs: 0,
         endMs: 20,
         text: "hello there",
@@ -173,10 +200,18 @@ describe("ambient voice session", () => {
       });
     });
     expect(submitted).toContain("hello there");
-    await act(async () => { await apiRef.current!.suspendVoiceForSpeech("speech-1"); });
-    await act(async () => { await apiRef.current!.resumeVoiceAfterSpeech("speech-1"); });
-    await act(async () => { await apiRef.current!.suspendVoiceForMeeting(); });
-    await act(async () => { await apiRef.current!.toggleAmbientListening(false); });
+    await act(async () => {
+      await apiRef.current!.suspendVoiceForSpeech("speech-1");
+    });
+    await act(async () => {
+      await apiRef.current!.resumeVoiceAfterSpeech("speech-1");
+    });
+    await act(async () => {
+      await apiRef.current!.suspendVoiceForMeeting();
+    });
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(false);
+    });
     expect(apiRef.current!.listeningEnabled).toBe(false);
   });
 });

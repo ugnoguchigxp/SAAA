@@ -4,6 +4,11 @@ Situation-Aware Ambient Agent Runtime
 
 [English](README.md) | 日本語
 
+**MIT · 開発中のMVP · 主な検証対象：macOS**
+
+[起動する](#ローカルで起動する) · [開発に参加](CONTRIBUTING.md) · [困ったとき](SUPPORT.md) · [セキュリティ](SECURITY.md) · [ライセンス](LICENSE)
+
+
 SAAA は、会話、音声、ミーティングの文字起こし、作業状況の観測を一つのデスクトップアプリにまとめる、ローカルファーストの AI ランタイムです。React と Tauri で作られており、会話と設定は端末内の SQLite に保存します。モデルの接続先は、プライベートネットワーク上のローカル LLM サーバー、OpenAI 互換 API、または機能フラグで有効にする LARM から選べます。
 
 SAAA が目指しているのは、入力された質問へ答えるだけでなく、利用者の状況に応じて「今は支援するべきか、何もしないべきか」を判断できる常駐型のランタイムです。ただし、現在の実装はその途中段階にあります。状況の観測は評価用のシャドーモードに限定され、アプリの自動操作や自動通知は行いません。
@@ -21,36 +26,36 @@ SAAA が目指しているのは、入力された質問へ答えるだけでな
 | Chat | テキスト入力、マイク入力、ストリーミング応答、OS の音声合成による読み上げ | ローカル接続を選んだ場合、Cloud への自動フォールバックは既定で無効 |
 | Meeting | マイク音声の途中・確定文字起こし、一時停止、確認後の保存 | 明示的に開始したセッションだけを対象とし、録音中は TTS を停止 |
 | Situation | 前面アプリ、入力の有無、SAAA 自身の動作などを分類し、介入判断を記録・再生 | 既定で無効。自動のモデル呼び出し、通知、読み上げ、Meeting 開始、アプリ操作は行わない |
-| Settings | モデル経路、音声、Situation、プライバシー設定を管理 | 認証情報は設定画面や SQLite に保存しない |
+| Settings | モデル経路、音声、Situation、プライバシー設定を管理 | APIキーはKeychainへ保存し、設定JSONやSQLiteには保存しない |
 
-音声会話と Meeting の音声認識には、LAN 内のローカル ASR サーバーを使います。ASR は音声をテキストへ変換する仕組みです。現在はマイクのみを扱い、システム音声、翻訳、フローティングオーバーレイには対応していません。
+音声会話と Meeting の音声認識には、設定したHarness側のASR、または個別のASR Providerを使います。音声入力を使わない場合、ASRや話者登録は不要です。ASR は音声をテキストへ変換する仕組みです。現在はマイクのみを扱い、システム音声、翻訳、フローティングオーバーレイには対応していません。
 
 ## 必要なもの
 
-- [Bun](https://bun.sh/)
-- Rust toolchain
-- 対象 OS 用の Tauri 2 ビルド環境
+- [Bun](https://bun.sh/) 1.3.14（`package.json`で固定）
+- Rust 1.92.0（`rust-toolchain.toml`で指定。rustfmt・Clippyを含む）
+- 対象 OS 用の Tauri 2 ビルド環境（macOSでは`xcode-select --install`でXcode Command Line Toolsを導入）
 - ローカル会話経路を使う場合は、プライベートネットワークから接続できるローカル LLM サーバーと `LARM_API_TOKEN`
-- 音声入力または Meeting を使う場合は、SAAA から接続できるローカル ASR サーバー
+- 音声入力または Meeting を使う場合は、設定するASRサービスへの接続
 
 主な検証対象は macOS です。OS の音声合成は macOS、Linux、Windows に実装がありますが、Situation の前面アプリ・入力状態の取得は macOS の機能に依存します。
 
 ## ローカルで起動する
 
-依存関係をインストールします。
+ソースから起動します。モデルや音声サービスの接続は、アプリを開いてから設定できます。
 
 ```sh
-bun install
-```
-
-ローカル LLM 経路を使う場合は、同じシェルでトークンを環境変数に設定してから起動します。
-
-```sh
-export LARM_API_TOKEN="<token>"
+git clone https://github.com/ugnoguchigxp/SAAA.git
+cd SAAA
+bun install --frozen-lockfile
 bun start
 ```
 
-アプリが開いたら、Settings → Model Providers でローカル LLM Provider を設定し、有効にしてください。入力するのはホスト名またはプライベート IP だけです。接続先の詳細とモデル名はサーバーから取得するため、設定画面には保存しません。端末固有の接続先やモデルは既定で有効になりません。
+1. Settingsでモデル接続を追加し、接続を確認して会話用の経路に選びます。OpenAI互換APIのキーは設定画面から登録できます。
+2. Chatから短いテキストを送り、応答を確認します。
+3. 音声を使う場合だけ、ASRの接続、入力デバイス、マイク権限を設定します。話者フィルターも任意です。
+
+ローカルLLMの接続APIを使う場合は、起動前に同じシェルで`LARM_API_TOKEN`を設定してください。詳しくは次の接続手順を参照してください。`bun run dev`はフロントエンドの開発サーバーです。デスクトップIPCや音声の確認には`bun start`を使います。
 
 ## モデル接続を設定する
 
@@ -99,11 +104,15 @@ Settings → Voice → My voice profile では、利用者本人の声を端末�
 変更前後の基本確認には次を使います。
 
 ```sh
-bun run check
-bun run build
+bun run check:local
+bun run test:rust-packages
+bun run spec:check
 bun run desktop:smoke
 ```
 
+- `bun run check:local`: oxfmtの整形検査とoxlintを実行してから、既存の`check`を実行します。
+- `bun run test:rust-packages`: 独立したRust crateとサービスのテストを実行します。
+- `bun run spec:check`: 仕様書の構造と書式を確認します。
 - `bun run check`: モジュールサイズ、生成物、型、Rust の format・Clippy、フロントエンドと Rust のテストを確認します。
 - `bun run test:coverage`: ローカル用の HTML/LCOV レポートを `coverage/` に出力します。`bun run check` には含まれません。
 - `bun run build`: TypeScript を検査し、フロントエンドの production build を作成します。
@@ -134,9 +143,9 @@ SAAA は `com.saaa.desktop` のアプリデータディレクトリに SQLite �
 
 メインデータベースを read-write で所有するのは、Tauri プロセスの起動時に一度だけ作成し、すべての書込み処理で使い回す Rust の `SqliteWriter` 一つだけです。SQLite を開く前に OS の排他ロックを取得するため、同じデータディレクトリを使う二つ目の SAAA プロセスは、データベースを開いたり移行したりする前に拒否されます。参照処理は read-only flag と `query_only=ON` を設定した別接続を使い、一回の操作を一つの read transaction で包むため、操作内の各クエリは同じスナップショットを参照します。複数の Reader を許可しながら、書込みは単一 Writer を通して直列化されます。隣に作られる `saaa.sqlite3.writer.lock` は終了後も残ることがありますが、ロック自体は OS が自動解放します。SAAA の実行中にこのファイルを削除しないでください。
 
-データベースには、設定、会話、確定済みメッセージ、実行状態、暗号化していない話者埋め込みを保存します。モデルの API key、`LARM_API_TOKEN`、ローカル LLM サーバーから受け取った一時的な接続情報は保存しません。
+データベースには、設定、会話、確定済みメッセージ、実行状態、暗号化していない話者埋め込み、構造化した監査イベントを保存します。監査イベントは7日間保持し、7日を過ぎたものは起動時にデータベースを開く際に削除します。マイク、ASR、会話、Provider、TTS、Meeting、設定変更のライフサイクルを相関・因果IDで関連づけ、イベント名、状態、時刻、結果、失敗コードを記録します。音声品質の評価値、生音声、文字起こし・プロンプト・モデル出力の本文、認証情報、接続先アドレス、一時的なallocation/request IDは監査に保存しません。モデルの API key、`LARM_API_TOKEN`、ローカル LLM サーバーから受け取った一時的な接続情報は保存しません。
 
-Settings → Privacy & Security から、SQLite の整合性を保ったバックアップと、内容を伏せた診断 JSON を作成できます。診断情報には会話本文、ローカルパス、認証情報を含めません。
+トップレベルの Audit log 画面では、最新200件の監査イベントを読み取り専用で確認できます。Settings → Privacy & Security から、SQLite の整合性を保ったバックアップと、内容を伏せた診断 JSON を作成できます。診断情報には最新1,000件の監査イベントを含め、会話本文、ローカルパス、認証情報を含めません。
 
 データベースのバックアップには暗号化していない話者埋め込みが含まれますが、WAV 音声サンプルは含まれません。そのため、バックアップだけを戻しても音声プロファイルは復元できません。古いスキーマを開く前には、移行前のデータベースバックアップを自動作成します。
 
@@ -168,6 +177,17 @@ spec/docs/       design documents, ADRs, runbooks, and release evidence
 - [Situation Privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html)
 - [Input Activity Privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html)
 
+## 開発に参加する
+
+不具合の再現手順、ドキュメントや翻訳の修正、テストの追加も歓迎します。大きな動作変更は、実装前に目的と利用例をIssueで共有してください。
+
+- [CONTRIBUTING](CONTRIBUTING.md)：環境構築、検査、生成物とPRの扱い
+- [SUPPORT](SUPPORT.md)：よくある問題と報告時に必要な情報（日英）
+- [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md)：コミュニティでの行動指針
+- [SECURITY](SECURITY.md)：脆弱性情報の扱い。非公開報告先は未確定です
+
 ## ライセンス
 
-SAAA は [MIT License](LICENSE) です。同梱している話者照合コンポーネントはそれぞれの条件に従います。[THIRD_PARTY_NOTICES](src-tauri/resources/voice/THIRD_PARTY_NOTICES.md) を参照してください。
+SAAAのソースコードは [MIT License](LICENSE) で公開しています。同梱している話者照合コンポーネントはそれぞれの条件に従います。[THIRD_PARTY_NOTICES](src-tauri/resources/voice/THIRD_PARTY_NOTICES.md) を参照してください。
+
+依存パッケージやモデルを含む案内は[第三者ライセンス](THIRD_PARTY_NOTICES.md)を参照してください。

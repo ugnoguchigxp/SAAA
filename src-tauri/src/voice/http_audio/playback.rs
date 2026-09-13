@@ -121,13 +121,15 @@ mod tests {
     fn started_source_forwards_samples_and_fires_the_callback_once() {
         let fired = Arc::new(AtomicBool::new(false));
         let flag = fired.clone();
+        let source = rodio::buffer::SamplesBuffer::new(1, 24_000, vec![7_i16, 8]);
+        let expected_frame_len = source.current_frame_len();
         let mut started = Started {
-            source: rodio::buffer::SamplesBuffer::new(1, 24_000, vec![7_i16, 8]),
+            source,
             callback: Some(Box::new(move || flag.store(true, Ordering::SeqCst))),
         };
         assert_eq!(started.channels(), 1);
         assert_eq!(started.sample_rate(), 24_000);
-        assert_eq!(started.current_frame_len(), Some(2));
+        assert_eq!(started.current_frame_len(), expected_frame_len);
         assert!(started.total_duration().is_some());
         assert_eq!(started.next(), Some(7));
         assert!(fired.load(Ordering::SeqCst));

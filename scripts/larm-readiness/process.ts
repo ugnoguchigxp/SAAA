@@ -2,14 +2,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  MAX_CHILD_BYTES,
-  RELEASE_EXECUTABLE,
-  ROOT,
-  RunnerError,
-} from "./schema.ts";
+import { MAX_CHILD_BYTES, RELEASE_EXECUTABLE, ROOT, RunnerError } from "./schema.ts";
 import { ForbiddenDataScanner, appChildEnvironment, type ValidatedEnvironment } from "./io.ts";
-
 
 export interface ChildResult {
   exitCode: number;
@@ -111,24 +105,38 @@ export async function runBoundedChild(options: {
   let redactionFailed = false;
   const stdoutScanner = options.scanner.fork();
   const stderrScanner = options.scanner.fork();
-  const stdout = consumeBounded(child.stdout, options.limit, stdoutScanner, () => {
-    overflow = true;
-    void terminateOwnedChild(child);
-  }, () => {
-    redactionFailed = true;
-    void terminateOwnedChild(child);
-  });
-  const stderr = consumeBounded(child.stderr, options.limit, stderrScanner, () => {
-    overflow = true;
-    void terminateOwnedChild(child);
-  }, () => {
-    redactionFailed = true;
-    void terminateOwnedChild(child);
-  });
+  const stdout = consumeBounded(
+    child.stdout,
+    options.limit,
+    stdoutScanner,
+    () => {
+      overflow = true;
+      void terminateOwnedChild(child);
+    },
+    () => {
+      redactionFailed = true;
+      void terminateOwnedChild(child);
+    },
+  );
+  const stderr = consumeBounded(
+    child.stderr,
+    options.limit,
+    stderrScanner,
+    () => {
+      overflow = true;
+      void terminateOwnedChild(child);
+    },
+    () => {
+      redactionFailed = true;
+      void terminateOwnedChild(child);
+    },
+  );
   let deadlineHandle: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     deadlineHandle = setTimeout(() => {
-      void terminateOwnedChild(child).finally(() => reject(new RunnerError(2, "runner-timeout", "failed")));
+      void terminateOwnedChild(child).finally(() =>
+        reject(new RunnerError(2, "runner-timeout", "failed")),
+      );
     }, options.deadlineMs);
   });
   let exitCode: number;
@@ -145,10 +153,16 @@ export async function runBoundedChild(options: {
   const streams = await Promise.allSettled([stdout, stderr]);
   if (redactionFailed) throw new RunnerError(2, "redaction-failed", "failed");
   if (overflow) throw new RunnerError(70, "internal", "failed");
-  if (streams.some((stream) => stream.status === "rejected")) throw new RunnerError(70, "internal", "failed");
+  if (streams.some((stream) => stream.status === "rejected"))
+    throw new RunnerError(70, "internal", "failed");
   const stdoutBytes = streams[0].status === "fulfilled" ? streams[0].value : 0;
   const stderrBytes = streams[1].status === "fulfilled" ? streams[1].value : 0;
-  return { exitCode, stdoutBytes, stderrBytes, redactionFailed: stdoutScanner.detected || stderrScanner.detected };
+  return {
+    exitCode,
+    stdoutBytes,
+    stderrBytes,
+    redactionFailed: stdoutScanner.detected || stderrScanner.detected,
+  };
 }
 
 export interface OwnedApplication {
@@ -184,7 +198,10 @@ export function capturedApplicationStream(
   );
 }
 
-export async function startApplication(environment: ValidatedEnvironment, enabled: boolean): Promise<OwnedApplication> {
+export async function startApplication(
+  environment: ValidatedEnvironment,
+  enabled: boolean,
+): Promise<OwnedApplication> {
   const markerId = `canary-${randomBytes(16).toString("hex")}`;
   const marker = join(tmpdir(), `saaa-frontend-${markerId}.ready`);
   if (existsSync(marker)) throw new RunnerError(2, "environment-invalid", "failed");
@@ -201,7 +218,11 @@ export async function startApplication(environment: ValidatedEnvironment, enable
   ]);
   const child = Bun.spawn([RELEASE_EXECUTABLE], {
     cwd: ROOT,
-    env: appChildEnvironment(process.env, { enabled, markerId, dataDirectory: environment.dataDirectory }),
+    env: appChildEnvironment(process.env, {
+      enabled,
+      markerId,
+      dataDirectory: environment.dataDirectory,
+    }),
     stdout: "pipe",
     stderr: "pipe",
     detached: true,
@@ -235,14 +256,25 @@ export async function startApplication(environment: ValidatedEnvironment, enable
   }
   if (existsSync(marker)) unlinkSync(marker);
   await stopApplication(application);
-  throw new RunnerError(2, applicationDetectedForbiddenData(application) ? "redaction-failed" : "restart-recovery-failed", "failed");
+  throw new RunnerError(
+    2,
+    applicationDetectedForbiddenData(application) ? "redaction-failed" : "restart-recovery-failed",
+    "failed",
+  );
 }
 
-export async function stopApplication(application: OwnedApplication, knownIdentifiers: string[] = []): Promise<void> {
+export async function stopApplication(
+  application: OwnedApplication,
+  knownIdentifiers: string[] = [],
+): Promise<void> {
   await terminateOwnedChild(application.child);
   const [stdout, stderr] = await Promise.all([application.stdout, application.stderr]);
   if (!stdout.ok || !stderr.ok || applicationDetectedForbiddenData(application)) {
-    throw new RunnerError(2, applicationDetectedForbiddenData(application) ? "redaction-failed" : "internal", "failed");
+    throw new RunnerError(
+      2,
+      applicationDetectedForbiddenData(application) ? "redaction-failed" : "internal",
+      "failed",
+    );
   }
   const stdoutIdentifierScanner = new ForbiddenDataScanner(knownIdentifiers);
   const stderrIdentifierScanner = new ForbiddenDataScanner(knownIdentifiers);

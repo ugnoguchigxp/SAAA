@@ -32,17 +32,19 @@ import {
 
 describe("extended coverage helpers", () => {
   test("renders lists, quotes, emphasis, and nested inline markup", () => {
-    const html = renderSafeMarkdown([
-      "- one",
-      "- two",
-      "",
-      "1. first",
-      "2. second",
-      "",
-      "> quoted *em* and ~~del~~",
-      "",
-      "A paragraph with `code` and **bold**.",
-    ].join("\n"));
+    const html = renderSafeMarkdown(
+      [
+        "- one",
+        "- two",
+        "",
+        "1. first",
+        "2. second",
+        "",
+        "> quoted *em* and ~~del~~",
+        "",
+        "A paragraph with `code` and **bold**.",
+      ].join("\n"),
+    );
     expect(html).toContain("<ul>");
     expect(html).toContain("<ol>");
     expect(html).toContain("<blockquote>");

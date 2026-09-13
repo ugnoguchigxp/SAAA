@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync, linkSync, statSync, realpathSync, symlinkSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  chmodSync,
+  linkSync,
+  statSync,
+  realpathSync,
+  symlinkSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -37,7 +48,8 @@ function temporaryDirectory(): string {
 }
 
 afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of temporaryDirectories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
 });
 
 function identity() {
@@ -50,7 +62,10 @@ function identity() {
   };
 }
 
-function report(mode: Exclude<ReportMode, "aggregate">, result: ReadinessReport["result"] = "passed"): ReadinessReport {
+function report(
+  mode: Exclude<ReportMode, "aggregate">,
+  result: ReadinessReport["result"] = "passed",
+): ReadinessReport {
   const value = emptyReport(identity(), mode, result, result === "passed" ? [] : ["gate-missing"]);
   if (mode === "functional") {
     value.leaseSummary.effectiveTtlSecondsMin = 60;
@@ -61,8 +76,13 @@ function report(mode: Exclude<ReportMode, "aggregate">, result: ReadinessReport[
 
 describe("LARM readiness CLI", () => {
   test("accepts only the fixed subcommands and argument shapes", () => {
-    expect(parseCliArguments(["preflight", "--report-dir", "/tmp/report"])).toEqual({ command: "preflight", reportDirectory: "/tmp/report" });
-    expect(parseCliArguments(["soak", "--duration", "30m", "--report-dir", "/tmp/report"])).toEqual({ command: "soak", reportDirectory: "/tmp/report", duration: "30m" });
+    expect(parseCliArguments(["preflight", "--report-dir", "/tmp/report"])).toEqual({
+      command: "preflight",
+      reportDirectory: "/tmp/report",
+    });
+    expect(parseCliArguments(["soak", "--duration", "30m", "--report-dir", "/tmp/report"])).toEqual(
+      { command: "soak", reportDirectory: "/tmp/report", duration: "30m" },
+    );
     for (const arguments_ of [
       [],
       ["unknown", "--report-dir", "/tmp/report"],
@@ -103,12 +123,23 @@ describe("LARM readiness CLI", () => {
   });
 
   test("usage errors keep the one-line stdout contract", async () => {
-    const process_ = Bun.spawn(["bun", "scripts/larm-readiness.ts", "soak", "--report-dir", "/tmp/report", "--duration", "10m"], {
-      cwd: join(import.meta.dir, ".."),
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? tmpdir() },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const process_ = Bun.spawn(
+      [
+        "bun",
+        "scripts/larm-readiness.ts",
+        "soak",
+        "--report-dir",
+        "/tmp/report",
+        "--duration",
+        "10m",
+      ],
+      {
+        cwd: join(import.meta.dir, ".."),
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? tmpdir() },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     const [exitCode, stdout, stderr] = await Promise.all([
       process_.exited,
       new Response(process_.stdout).text(),
@@ -116,34 +147,49 @@ describe("LARM readiness CLI", () => {
     ]);
     expect(exitCode).toBe(64);
     expect(stderr).toBe("usage-error\n");
-    expect(stdout).toBe(`${JSON.stringify({ format: REPORT_FORMAT, mode: "preflight", result: "failed" })}\n`);
+    expect(stdout).toBe(
+      `${JSON.stringify({ format: REPORT_FORMAT, mode: "preflight", result: "failed" })}\n`,
+    );
   });
 });
 
 describe("readiness report contract", () => {
   test("runner contract pin matches the production Rust adapter", () => {
-    const source = readFileSync(join(import.meta.dir, "../src-tauri/src/providers/larm/mod.rs"), "utf8");
-    expect(source).toContain(`pub(crate) const CONTRACT_COMMIT: &str = "${COMPILED_LARM_CONTRACT_COMMIT}";`);
+    const source = readFileSync(
+      join(import.meta.dir, "../src-tauri/src/providers/larm/mod.rs"),
+      "utf8",
+    );
+    expect(source).toContain(
+      `pub(crate) const CONTRACT_COMMIT: &str = "${COMPILED_LARM_CONTRACT_COMMIT}";`,
+    );
   });
 
   test("rejects unknown fields, oversized values, invalid TTL, and duplicate failure codes", () => {
     expect(validateReport(report("preflight"))).toBeTruthy();
-    expect(validateReport({
-      ...report("preflight"),
-      startedAt: "2026-08-29T00:00:00.123456789Z",
-      finishedAt: "2026-08-29T00:00:00.123456789Z",
-    })).toBeTruthy();
-    expect(() => validateReport({
-      ...report("preflight"),
-      startedAt: "2026-02-30T00:00:00Z",
-    })).toThrow(RunnerError);
-    expect(() => validateReport({
-      ...report("preflight"),
-      startedAt: "2026-08-29T00:00:00.123456789Z",
-      finishedAt: "2026-08-29T00:00:00.123456788Z",
-    })).toThrow(RunnerError);
+    expect(
+      validateReport({
+        ...report("preflight"),
+        startedAt: "2026-08-29T00:00:00.123456789Z",
+        finishedAt: "2026-08-29T00:00:00.123456789Z",
+      }),
+    ).toBeTruthy();
+    expect(() =>
+      validateReport({
+        ...report("preflight"),
+        startedAt: "2026-02-30T00:00:00Z",
+      }),
+    ).toThrow(RunnerError);
+    expect(() =>
+      validateReport({
+        ...report("preflight"),
+        startedAt: "2026-08-29T00:00:00.123456789Z",
+        finishedAt: "2026-08-29T00:00:00.123456788Z",
+      }),
+    ).toThrow(RunnerError);
     expect(() => validateReport({ ...report("preflight"), extra: true })).toThrow(RunnerError);
-    expect(() => validateReport({ ...report("preflight"), saaaCommit: "ABC1234" })).toThrow(RunnerError);
+    expect(() => validateReport({ ...report("preflight"), saaaCommit: "ABC1234" })).toThrow(
+      RunnerError,
+    );
     const ttl = report("preflight");
     ttl.leaseSummary.effectiveTtlSecondsMin = 60;
     expect(() => validateReport(ttl)).toThrow(RunnerError);
@@ -270,25 +316,58 @@ describe("readiness report contract", () => {
   test("soak database observation accepts exact cancelled terminal state only", () => {
     const observation = {
       runs: [
-        { id: "run_completed", conversation_id: "conversation_1", provider_id: "larm-local", status: "completed" as const },
-        { id: "run_cancelled", conversation_id: "conversation_2", provider_id: "larm-local", status: "cancelled" as const },
+        {
+          id: "run_completed",
+          conversation_id: "conversation_1",
+          provider_id: "larm-local",
+          status: "completed" as const,
+        },
+        {
+          id: "run_cancelled",
+          conversation_id: "conversation_2",
+          provider_id: "larm-local",
+          status: "cancelled" as const,
+        },
       ],
       sessions: [
         {
-          id: "session_completed", runtime_run_id: "run_completed", provider_id: "larm-local", provider_kind: "larm" as const,
-          allocation_id: "allocation_1", selected_runtime_id: "qwen-general", request_id: "request_1", fallback_used: 0 as const,
-          route_id: "llm-default", selection_reason: "primary" as const, output_started: 1 as const, failure_kind: null,
-          release_status: "released" as const, status: "completed" as const,
+          id: "session_completed",
+          runtime_run_id: "run_completed",
+          provider_id: "larm-local",
+          provider_kind: "larm" as const,
+          allocation_id: "allocation_1",
+          selected_runtime_id: "qwen-general",
+          request_id: "request_1",
+          fallback_used: 0 as const,
+          route_id: "llm-default",
+          selection_reason: "primary" as const,
+          output_started: 1 as const,
+          failure_kind: null,
+          release_status: "released" as const,
+          status: "completed" as const,
         },
         {
-          id: "session_cancelled", runtime_run_id: "run_cancelled", provider_id: "larm-local", provider_kind: "larm" as const,
-          allocation_id: "allocation_2", selected_runtime_id: "qwen-general", request_id: null, fallback_used: 0 as const,
-          route_id: "llm-default", selection_reason: "primary" as const, output_started: 1 as const, failure_kind: "cancelled" as const,
-          release_status: "released" as const, status: "cancelled" as const,
+          id: "session_cancelled",
+          runtime_run_id: "run_cancelled",
+          provider_id: "larm-local",
+          provider_kind: "larm" as const,
+          allocation_id: "allocation_2",
+          selected_runtime_id: "qwen-general",
+          request_id: null,
+          fallback_used: 0 as const,
+          route_id: "llm-default",
+          selection_reason: "primary" as const,
+          output_started: 1 as const,
+          failure_kind: "cancelled" as const,
+          release_status: "released" as const,
+          status: "cancelled" as const,
         },
       ],
     };
-    expect(validateSoakObservation(observation, "larm-local")).toEqual({ completed: 1, cancelled: 1 });
+    expect(validateSoakObservation(observation, "larm-local")).toEqual({
+      completed: 1,
+      cancelled: 1,
+    });
     observation.sessions[1]!.failure_kind = null as never;
     expect(() => validateSoakObservation(observation, "larm-local")).toThrow(RunnerError);
   });
@@ -303,7 +382,10 @@ describe("readiness security boundaries", () => {
     expect(authorization.scan(Buffer.from("Authorization: Bearer anything"))).toBe(true);
     const identifier = new ForbiddenDataScanner([]);
     expect(identifier.scan(Buffer.from('{"allocationId":"alloc_secret"}'))).toBe(true);
-    const content = new ForbiddenDataScanner(["Reply with exactly: READY", "http://127.0.0.1:9810"]);
+    const content = new ForbiddenDataScanner([
+      "Reply with exactly: READY",
+      "http://127.0.0.1:9810",
+    ]);
     expect(content.scan(Buffer.from("Reply with exactly: READY"))).toBe(true);
   });
 
@@ -343,7 +425,11 @@ describe("readiness security boundaries", () => {
     expect(rust.SAAA_LARM_CANARY_METRICS_SCOPE).toBe("client-scoped");
     expect(rust).not.toHaveProperty("SAAA_PROVIDER_LOCAL_OPENAI_COMPATIBLE_API_KEY");
     expect(rust).not.toHaveProperty("RANDOM_SETTING");
-    const app = appChildEnvironment(environment, { enabled: false, markerId: "canary-" + "a".repeat(32), dataDirectory: "/tmp/data" });
+    const app = appChildEnvironment(environment, {
+      enabled: false,
+      markerId: "canary-" + "a".repeat(32),
+      dataDirectory: "/tmp/data",
+    });
     expect(app.SAAA_LARM_ENABLED).toBe("0");
     expect(app.SAAA_PROVIDER_LOCAL_OPENAI_COMPATIBLE_API_KEY).toBe("rollback");
     expect(app).not.toHaveProperty("OPENAI_API_KEY");
@@ -363,7 +449,9 @@ describe("readiness security boundaries", () => {
     linkSync(join(bundle, "Contents/Resources/a.txt"), join(bundle, "Contents/Resources/b.txt"));
     await expect(canonicalBundleDigest(bundle)).rejects.toBeInstanceOf(RunnerError);
     const missing = join(temporaryDirectory(), "missing.app");
-    await expect(canonicalBundleDigest(missing)).rejects.toMatchObject({ errorCode: "artifact-mismatch" });
+    await expect(canonicalBundleDigest(missing)).rejects.toMatchObject({
+      errorCode: "artifact-mismatch",
+    });
   });
 
   test("reports are mode 0600, atomic, and never overwritten", () => {
@@ -374,7 +462,9 @@ describe("readiness security boundaries", () => {
     expect(statSync(filename).mode & 0o777).toBe(0o600);
     expect(() => atomicWriteReport(filename, report("preflight"))).toThrow(RunnerError);
     expect(validateReportDirectory(directory, "canary")).toBe(directory);
-    expect(() => validateReportDirectory(join(directory, "missing"), "preflight")).toThrow(RunnerError);
+    expect(() => validateReportDirectory(join(directory, "missing"), "preflight")).toThrow(
+      RunnerError,
+    );
   });
 
   test("manifest parser enforces strict schema, permissions, and data lifecycle", () => {
@@ -435,25 +525,22 @@ describe("readiness security boundaries", () => {
     const directory = temporaryDirectory();
     chmodSync(directory, 0o700);
     try {
-      const process_ = Bun.spawn([
-        "bun",
-        "scripts/larm-readiness.ts",
-        "preflight",
-        "--report-dir",
-        directory,
-      ], {
-        cwd: join(import.meta.dir, ".."),
-        env: {
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-          HOME: process.env.HOME ?? tmpdir(),
-          SAAA_LARM_CANARY: "1",
-          SAAA_LARM_ENABLED: "1",
-          LARM_API_TOKEN: "fixture-token",
-          SAAA_LARM_CANARY_BASE_URL: `http://127.0.0.1:${server.port}`,
+      const process_ = Bun.spawn(
+        ["bun", "scripts/larm-readiness.ts", "preflight", "--report-dir", directory],
+        {
+          cwd: join(import.meta.dir, ".."),
+          env: {
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
+            HOME: process.env.HOME ?? tmpdir(),
+            SAAA_LARM_CANARY: "1",
+            SAAA_LARM_ENABLED: "1",
+            LARM_API_TOKEN: "fixture-token",
+            SAAA_LARM_CANARY_BASE_URL: `http://127.0.0.1:${server.port}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
         },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      );
       const [exitCode, stdout, stderr] = await Promise.all([
         process_.exited,
         new Response(process_.stdout).text(),
@@ -461,7 +548,11 @@ describe("readiness security boundaries", () => {
       ]);
       expect(exitCode).toBe(3);
       expect(stderr).toBe("gate-missing\n");
-      expect(JSON.parse(stdout)).toEqual({ format: REPORT_FORMAT, mode: "preflight", result: "blocked" });
+      expect(JSON.parse(stdout)).toEqual({
+        format: REPORT_FORMAT,
+        mode: "preflight",
+        result: "blocked",
+      });
       expect(requests).toBe(0);
     } finally {
       server.stop(true);

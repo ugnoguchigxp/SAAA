@@ -56,7 +56,9 @@ export function ServiceConnectionsSection({
   const candidates = {
     llm: providers.providers.filter(isLlmProvider),
     asr: providers.providers.filter((provider) => provider.kind === "cloud-asr"),
-    tts: providers.providers.filter((provider) => provider.kind === "cloud-tts" || provider.kind === "system-tts"),
+    tts: providers.providers.filter(
+      (provider) => provider.kind === "cloud-tts" || provider.kind === "system-tts",
+    ),
   };
 
   function changeHarnessAddress(address: string) {
@@ -66,9 +68,7 @@ export function ServiceConnectionsSection({
       ...providers,
       harness: { address },
       providers: providers.providers.map((provider) =>
-        provider.kind === "dynamic-lan" && host
-          ? { ...provider, enabled: true, host }
-          : provider,
+        provider.kind === "dynamic-lan" && host ? { ...provider, enabled: true, host } : provider,
       ),
     });
     setResolution(null);
@@ -87,22 +87,29 @@ export function ServiceConnectionsSection({
       setResolution(next);
       setResolveState("idle");
       setResolveMessage({
-        kind: next.revision === "agent-connection.v1"
-          ? "agentConnectionReady"
-          : next.state === "ready" ? "resolvedAll" : "resolvedPartial",
+        kind:
+          next.revision === "agent-connection.v1"
+            ? "agentConnectionReady"
+            : next.state === "ready"
+              ? "resolvedAll"
+              : "resolvedPartial",
       });
     } catch (cause) {
       if (generation !== resolveGeneration.current || address !== harnessAddressRef.current) return;
       setResolution(null);
       setResolveState("error");
-      setResolveMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+      setResolveMessage({
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
     }
   }
 
   function setSource(capability: Capability, source: "harness" | "provider") {
-    const providerId = source === "provider"
-      ? candidates[capability].find((provider) => provider.enabled)?.id ?? null
-      : null;
+    const providerId =
+      source === "provider"
+        ? (candidates[capability].find((provider) => provider.enabled)?.id ?? null)
+        : null;
     if (capability === "llm") {
       onRoutingChange({
         ...routing,
@@ -114,7 +121,10 @@ export function ServiceConnectionsSection({
         },
       });
     } else if (capability === "asr") {
-      onRoutingChange({ ...routing, voiceTranscribe: { ...routing.voiceTranscribe, source, providerId } });
+      onRoutingChange({
+        ...routing,
+        voiceTranscribe: { ...routing.voiceTranscribe, source, providerId },
+      });
     } else {
       onRoutingChange({ ...routing, voiceSpeak: { ...routing.voiceSpeak, source, providerId } });
     }
@@ -142,8 +152,12 @@ export function ServiceConnectionsSection({
             <h3>{t("settings.connection.title")}</h3>
             <p className="settings-help">{t("settings.connection.description")}</p>
           </div>
-          <span className={`provider-test-result ${resolution?.state === "ready" ? "success" : resolveState === "error" ? "error" : ""}`}>
-            {resolveState === "resolving" ? t("settings.connection.resolving") : localizeStatus(t, resolution?.state ?? "unchecked")}
+          <span
+            className={`provider-test-result ${resolution?.state === "ready" ? "success" : resolveState === "error" ? "error" : ""}`}
+          >
+            {resolveState === "resolving"
+              ? t("settings.connection.resolving")
+              : localizeStatus(t, resolution?.state ?? "unchecked")}
           </span>
         </div>
         <div className="settings-form-grid">
@@ -157,10 +171,12 @@ export function ServiceConnectionsSection({
           <Field label={t("settings.connection.reasoningEffort")}>
             <select
               value={providers.reasoningEffort}
-              onChange={(event) => onProvidersChange({
-                ...providers,
-                reasoningEffort: event.target.value as ModelProvidersSettings["reasoningEffort"],
-              })}
+              onChange={(event) =>
+                onProvidersChange({
+                  ...providers,
+                  reasoningEffort: event.target.value as ModelProvidersSettings["reasoningEffort"],
+                })
+              }
             >
               <option value="provider-default">{t("settings.connection.providerDefault")}</option>
               <option value="low">{t("settings.connection.low")}</option>
@@ -172,14 +188,26 @@ export function ServiceConnectionsSection({
             timeoutMs={routing.conversationRespond.timeoutMs}
             legacyDynamicLan={resolution?.revision === "agent-connection.v1"}
             onValidityChange={onValidityChange}
-            onChange={(timeoutMs) => onRoutingChange({
-              ...routing,
-              conversationRespond: { ...routing.conversationRespond, timeoutMs },
-            })}
+            onChange={(timeoutMs) =>
+              onRoutingChange({
+                ...routing,
+                conversationRespond: { ...routing.conversationRespond, timeoutMs },
+              })
+            }
           />
         </div>
         <div className="provider-card-footer">
-          <span>{resolveMessage?.kind === "error" ? localizeUiMessage(t, resolveMessage.message, "settings") : resolveMessage?.kind === "agentConnectionReady" ? t("settings.connection.agentConnectionReady") : resolveMessage?.kind === "resolvedAll" ? t("settings.connection.resolvedAll") : resolveMessage?.kind === "resolvedPartial" ? t("settings.connection.resolvedPartial") : t("settings.connection.resolutionHint")}</span>
+          <span>
+            {resolveMessage?.kind === "error"
+              ? localizeUiMessage(t, resolveMessage.message, "settings")
+              : resolveMessage?.kind === "agentConnectionReady"
+                ? t("settings.connection.agentConnectionReady")
+                : resolveMessage?.kind === "resolvedAll"
+                  ? t("settings.connection.resolvedAll")
+                  : resolveMessage?.kind === "resolvedPartial"
+                    ? t("settings.connection.resolvedPartial")
+                    : t("settings.connection.resolutionHint")}
+          </span>
           <button
             className="text-button"
             type="button"
@@ -247,8 +275,8 @@ function ConversationTimeoutField({
   const [inputValue, setInputValue] = useState(canonicalValue);
   const parsedTimeoutMs = conversationTimeoutMsFromSecondsInput(inputValue);
   const invalid = parsedTimeoutMs === null;
-  const legacyLimitExceeded = legacyDynamicLan
-    && timeoutMs > LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS;
+  const legacyLimitExceeded =
+    legacyDynamicLan && timeoutMs > LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS;
   const fieldInvalid = invalid || legacyLimitExceeded;
 
   useEffect(() => setInputValue(canonicalValue), [canonicalValue]);
@@ -271,11 +299,13 @@ function ConversationTimeoutField({
           const nextTimeoutMs = conversationTimeoutMsFromSecondsInput(next);
           if (nextTimeoutMs !== null && nextTimeoutMs !== timeoutMs) onChange(nextTimeoutMs);
         }}
-        onBlur={() => setInputValue(
-          parsedTimeoutMs === null
-            ? canonicalValue
-            : conversationTimeoutSecondsInputValue(parsedTimeoutMs),
-        )}
+        onBlur={() =>
+          setInputValue(
+            parsedTimeoutMs === null
+              ? canonicalValue
+              : conversationTimeoutSecondsInputValue(parsedTimeoutMs),
+          )
+        }
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
           if (event.key === "Escape") setInputValue(canonicalValue);
@@ -285,11 +315,13 @@ function ConversationTimeoutField({
         id="llm-timeout-seconds-help"
         className={fieldInvalid ? "settings-field-hint error" : "settings-field-hint"}
       >
-        {t(invalid
-          ? "settings.connection.llmTimeoutInvalid"
-          : legacyLimitExceeded
-            ? "settings.connection.llmTimeoutLegacyLimit"
-            : "settings.connection.llmTimeoutHint")}
+        {t(
+          invalid
+            ? "settings.connection.llmTimeoutInvalid"
+            : legacyLimitExceeded
+              ? "settings.connection.llmTimeoutLegacyLimit"
+              : "settings.connection.llmTimeoutHint",
+        )}
       </small>
     </Field>
   );
@@ -324,17 +356,34 @@ function SourceRow({
           <strong>{label}</strong>
           <p className="muted">
             {source === "harness"
-              ? status?.model ?? status?.voice ?? (status ? localizeStatus(t, status.state) : t("settings.connection.resolveAfterSave"))
-              : selected ? localizeProviderLabel(t, selected.label) : t("settings.connection.registerProvider")}
+              ? (status?.model ??
+                status?.voice ??
+                (status
+                  ? localizeStatus(t, status.state)
+                  : t("settings.connection.resolveAfterSave")))
+              : selected
+                ? localizeProviderLabel(t, selected.label)
+                : t("settings.connection.registerProvider")}
           </p>
         </div>
-        <span className={`provider-test-result ${source === "harness" && status?.state === "ready" ? "success" : ""}`}>
-          {source === "harness" ? localizeStatus(t, status?.state ?? "unchecked") : selected?.enabled ? t("common.configured") : t("common.missing")}
+        <span
+          className={`provider-test-result ${source === "harness" && status?.state === "ready" ? "success" : ""}`}
+        >
+          {source === "harness"
+            ? localizeStatus(t, status?.state ?? "unchecked")
+            : selected?.enabled
+              ? t("common.configured")
+              : t("common.missing")}
         </span>
       </div>
       <div className="settings-form-grid">
         <Field label={t("settings.connection.source")}>
-          <select value={source} onChange={(event) => onSourceChange(capability, event.target.value as "harness" | "provider")}>
+          <select
+            value={source}
+            onChange={(event) =>
+              onSourceChange(capability, event.target.value as "harness" | "provider")
+            }
+          >
             <option value="harness">{t("settings.connection.providerHarness")}</option>
             <option value="provider">{t("settings.connection.individualProvider")}</option>
           </select>
@@ -348,7 +397,8 @@ function SourceRow({
             <option value="">{t("settings.connection.selectProvider")}</option>
             {candidates.map((provider) => (
               <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
-                {localizeProviderLabel(t, provider.label)}{provider.enabled ? "" : t("settings.connection.disabledSuffix")}
+                {localizeProviderLabel(t, provider.label)}
+                {provider.enabled ? "" : t("settings.connection.disabledSuffix")}
               </option>
             ))}
           </select>
@@ -359,5 +409,9 @@ function SourceRow({
 }
 
 function isLlmProvider(provider: ModelProviderSettings): boolean {
-  return provider.kind === "openai-compatible" || provider.kind === "agent-session" || provider.kind === "larm";
+  return (
+    provider.kind === "openai-compatible" ||
+    provider.kind === "agent-session" ||
+    provider.kind === "larm"
+  );
 }

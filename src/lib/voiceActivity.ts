@@ -35,8 +35,10 @@ export class VoiceActivityDetector {
     silenceTimeoutMs = DEFAULT_VOICE_SILENCE_TIMEOUT_MS,
     candidateResetMs = DEFAULT_CANDIDATE_RESET_MS,
   }: VoiceActivityDetectorOptions) {
-    if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new RangeError("sampleRate must be positive");
-    if (!Number.isFinite(speechThresholdRms) || speechThresholdRms <= 0) throw new RangeError("speechThresholdRms must be positive");
+    if (!Number.isFinite(sampleRate) || sampleRate <= 0)
+      throw new RangeError("sampleRate must be positive");
+    if (!Number.isFinite(speechThresholdRms) || speechThresholdRms <= 0)
+      throw new RangeError("speechThresholdRms must be positive");
     this.speechThresholdRms = speechThresholdRms;
     this.requiredSpeechSamples = millisecondsToSamples(requiredSpeechMs, sampleRate);
     this.silenceTimeoutSamples = millisecondsToSamples(silenceTimeoutMs, sampleRate);
@@ -88,7 +90,8 @@ export class VoiceActivityDetector {
 }
 
 function millisecondsToSamples(milliseconds: number, sampleRate: number): number {
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) throw new RangeError("duration must be positive");
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0)
+    throw new RangeError("duration must be positive");
   return Math.ceil((milliseconds / 1_000) * sampleRate);
 }
 

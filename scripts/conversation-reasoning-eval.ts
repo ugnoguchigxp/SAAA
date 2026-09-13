@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const mode = process.argv[2];
 if (mode !== "fixture") {
-  console.error("Only fixture is available. Live LARM/audio measurements are not implemented or claimed by this runner.");
+  console.error(
+    "Only fixture is available. Live LARM/audio measurements are not implemented or claimed by this runner.",
+  );
   process.exit(1);
 }
 const commands = [
@@ -13,7 +15,13 @@ const commands = [
   ["cargo", "test", "--manifest-path", "services/reasoning-mcp/Cargo.toml"],
   ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "reasoning"],
   ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "conversation_controller"],
-  ["bun", "test", "tests/reasoning-run.test.ts", "tests/larm-voice-owner.test.ts", "tests/larm-voice-drain.test.ts"],
+  [
+    "bun",
+    "test",
+    "tests/reasoning-run.test.ts",
+    "tests/larm-voice-owner.test.ts",
+    "tests/larm-voice-drain.test.ts",
+  ],
 ];
 for (const [command, ...args] of commands) {
   const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });

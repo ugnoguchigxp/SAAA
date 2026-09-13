@@ -1,0 +1,43 @@
+{
+  "testNames": [
+    "duplicate_run_registration_preserves_the_original_cancellation_handle",
+    "app_shutdown_cancels_every_active_run_and_resets_situation_to_safe_state",
+    "runtime_and_provider_session_finalization_is_one_shot",
+    "dynamic_lan_session_persists_release_success_and_deferred_cleanup",
+    "dynamic_lan_cleanup_keeps_release_debt_across_connection_replacement",
+    "cancellation_notification_remains_observable_for_late_waiters",
+    "runtime_and_voice_events_serialize_camel_case_fields",
+    "foreign_message_flood_cannot_starve_a_request_deadline",
+    "normal_turns_reject_legacy_conversation_ids_without_writing_partial_state",
+    "active_meeting_rejects_coding_turn_before_writing_partial_state",
+    "running_coding_turn_rejects_meeting_start_before_writing_partial_state",
+    "task_specific_workspace_validation_precedes_runtime_writes",
+    "normal_turns_reject_byte_oversized_context_before_writing_partial_state",
+    "readiness_data_directory_is_isolated_and_permission_bounded",
+    "openai_compatible_stream_fixture_projects_deltas",
+    "http_disconnect_preserves_partial_output_without_regeneration",
+    "dynamic_lan_stream_policy_requires_sse_for_stream_requests",
+    "openai_provider_executes_the_single_recall_tool_before_final_output",
+    "voice_policy_tool_quota_is_independent_from_other_agent_tools",
+    "typed_memory_tools_are_routed_only_from_a_valid_typed_manifest",
+    "typed_memory_execution_cannot_exceed_the_provider_deadline",
+    "malformed_recall_calls_consume_the_persistent_turn_limit",
+    "recall_tool_rounds_share_one_provider_timeout_budget",
+    "provider_stream_stops_when_the_tauri_consumer_disconnects",
+    "model_provider_redirects_are_not_followed",
+    "conversation_route_falls_back_and_persists_completed_message",
+    "partial_provider_stream_never_reaches_the_fallback_provider",
+    "codex_thread_mapping_survives_database_reopen",
+    "audio_resampling_and_cancellation_are_bounded_and_idempotent",
+    "macos_system_tts_runtime_is_available",
+    "codex_app_server_contract_covers_start_stream_resume_and_cancel",
+    "larm_turn_commits_before_events_and_keeps_success_when_release_fails"
+  ],
+  "assertionCount": 148,
+  "unchanged": true,
+  "rawStringFixtures": {
+    "count": 5,
+    "unchanged": true,
+    "sha256": "7b613f63ae3555b33377df63a70f42d7b19620ffc558e41eb5ce55e7b2286afc"
+  }
+}

@@ -114,10 +114,21 @@ export type CodexAgentSettings = {
 };
 
 export type RoutingSettings = {
-  conversationRespond: { source: "harness" | "provider"; primaryProviderId: string | null; fallbackProviderIds: string[]; timeoutMs: number };
+  conversationRespond: {
+    source: "harness" | "provider";
+    primaryProviderId: string | null;
+    fallbackProviderIds: string[];
+    timeoutMs: number;
+  };
   voiceTranscribe: { source: "harness" | "provider"; providerId: string | null; timeoutMs: number };
   voiceSpeak: { source: "harness" | "provider"; providerId: string | null; timeoutMs: number };
-  codingAssist: { providerId: "codex-sdk"; timeoutMs: number; readOnly: true; networkEnabled: false; webSearchEnabled: false };
+  codingAssist: {
+    providerId: "codex-sdk";
+    timeoutMs: number;
+    readOnly: true;
+    networkEnabled: false;
+    webSearchEnabled: false;
+  };
 };
 
 export type VoiceSettings = {
@@ -134,7 +145,17 @@ export type SecuritySettings = { localOnlyWhenSelected: boolean; diagnosticsReda
 export type DisplayLanguagePreference = "system" | "en" | "ja";
 export type LengthUnitSystem = "metric" | "imperial";
 export type WeightUnit = "kilogram" | "pound";
-export type CurrencyCode = "JPY" | "USD" | "EUR" | "GBP" | "CNY" | "KRW" | "AUD" | "CAD" | "CHF" | "SGD";
+export type CurrencyCode =
+  | "JPY"
+  | "USD"
+  | "EUR"
+  | "GBP"
+  | "CNY"
+  | "KRW"
+  | "AUD"
+  | "CAD"
+  | "CHF"
+  | "SGD";
 export type RegionalPreferencesSettings = {
   language: DisplayLanguagePreference;
   timeZone: string;

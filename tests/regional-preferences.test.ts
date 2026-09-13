@@ -12,7 +12,13 @@ const valid = {
 describe("regional preference settings", () => {
   test("accepts supported values and rejects unknown values", () => {
     expect(() => regionalPreferencesSchema.parse(valid)).not.toThrow();
-    for (const [key, value] of [["language", "fr"], ["timeZone", "not a zone"], ["lengthUnit", "nautical"], ["weightUnit", "stone"], ["currency", "BTC"]]) {
+    for (const [key, value] of [
+      ["language", "fr"],
+      ["timeZone", "not a zone"],
+      ["lengthUnit", "nautical"],
+      ["weightUnit", "stone"],
+      ["currency", "BTC"],
+    ]) {
       expect(() => regionalPreferencesSchema.parse({ ...valid, [key]: value })).toThrow();
     }
   });

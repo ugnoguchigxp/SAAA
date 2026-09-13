@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 describe("module-size command", () => {
   test("rejects unknown commands and missing baselines", () => {
     expect(() => runSizeCommand("rewrite", "missing.json")).toThrow("usage:");
-    expect(() => runSizeCommand("check", join(tmpdir(), "missing-baseline.json"))).toThrow("missing baseline");
+    expect(() => runSizeCommand("check", join(tmpdir(), "missing-baseline.json"))).toThrow(
+      "missing baseline",
+    );
   });
 });

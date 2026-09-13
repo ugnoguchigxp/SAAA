@@ -1,0 +1,202 @@
+{
+  "asr": {
+    "endMs": 1000,
+    "language": "ja",
+    "revision": 1,
+    "sessionId": "asr-fixture",
+    "startMs": 0,
+    "text": "Fixture transcript",
+    "type": "final",
+    "utteranceId": "utterance-fixture"
+  },
+  "meeting": {
+    "lane": "microphone",
+    "language": "ja",
+    "sequence": 1,
+    "sessionId": "meeting-fixture",
+    "text": "Fixture transcript",
+    "type": "transcriptFinal"
+  },
+  "runtime": {
+    "providerId": "provider-fixture",
+    "route": "conversation.respond",
+    "runId": "run-fixture",
+    "type": "started"
+  },
+  "snapshot": {
+    "conversations": [
+      {
+        "createdAt": "0",
+        "id": "conversation_primary",
+        "taskMode": "conversation",
+        "title": "SAAAとの会話",
+        "updatedAt": "0"
+      }
+    ],
+    "effectiveRoute": {
+      "fallbackUsed": false,
+      "label": "Provider Harness LLM",
+      "location": "local",
+      "providerId": "lan-llm-dynamic",
+      "reasonCode": "no-completed-provider-session",
+      "state": "unchecked",
+      "updatedAt": null
+    },
+    "larmRuntime": {
+      "contractCommit": "7dca7c3",
+      "message": "LARM is disabled. Set SAAA_LARM_ENABLED=1 and restart SAAA to enable it.",
+      "state": "disabled"
+    },
+    "primaryConversationId": "conversation_primary",
+    "settings": [
+      {
+        "key": "codex-sdk",
+        "namespace": "providers.agent",
+        "schemaVersion": 14,
+        "updatedAt": "0",
+        "valueJson": {
+          "agentName": "SAAA",
+          "approvalPolicy": "never",
+          "enabled": false,
+          "health": "unchecked",
+          "model": "",
+          "networkEnabled": false,
+          "provider": "codex-sdk",
+          "runtimeMode": "app-server",
+          "sandboxMode": "read-only",
+          "userName": "",
+          "webSearchEnabled": false,
+          "workspacePolicy": "select-per-conversation"
+        }
+      },
+      {
+        "key": "default",
+        "namespace": "providers.model",
+        "schemaVersion": 14,
+        "updatedAt": "0",
+        "valueJson": {
+          "harness": {
+            "address": "http://localhost:9810"
+          },
+          "providers": [
+            {
+              "enabled": true,
+              "host": "localhost",
+              "id": "lan-llm-dynamic",
+              "kind": "dynamic-lan",
+              "label": "Provider Harness LLM",
+              "location": "local"
+            },
+            {
+              "enabled": true,
+              "id": "system-tts",
+              "kind": "system-tts",
+              "label": "System Voice",
+              "location": "local",
+              "voice": "default"
+            }
+          ],
+          "reasoningEffort": "medium"
+        }
+      },
+      {
+        "key": "default",
+        "namespace": "routing.tasks",
+        "schemaVersion": 14,
+        "updatedAt": "0",
+        "valueJson": {
+          "codingAssist": {
+            "networkEnabled": false,
+            "providerId": "codex-sdk",
+            "readOnly": true,
+            "timeoutMs": 120000,
+            "webSearchEnabled": false
+          },
+          "conversationRespond": {
+            "fallbackProviderIds": [],
+            "primaryProviderId": null,
+            "source": "harness",
+            "timeoutMs": 1800000
+          },
+          "voiceSpeak": {
+            "providerId": "system-tts",
+            "source": "provider",
+            "timeoutMs": 30000
+          },
+          "voiceTranscribe": {
+            "providerId": null,
+            "source": "harness",
+            "timeoutMs": 120000
+          }
+        }
+      },
+      {
+        "key": "default",
+        "namespace": "security.runtime",
+        "schemaVersion": 14,
+        "updatedAt": "0",
+        "valueJson": {
+          "diagnosticsRedaction": true,
+          "localOnlyWhenSelected": true
+        }
+      },
+      {
+        "key": "default",
+        "namespace": "situation.runtime",
+        "schemaVersion": 14,
+        "updatedAt": "0",
+        "valueJson": {
+          "calendarEnabled": false,
+          "enabled": false,
+          "heartbeatIntervalMs": 300000,
+          "maxLedgerEntries": 10000,
+          "retentionDays": 7,
+          "sampleIntervalMs": 2000,
+          "sensitiveApplicationCategories": true
+        }
+      },
+      {
+        "key": "default",
+        "namespace": "ui.preferences",
+        "schemaVersion": 14,
+        "updatedAt": "0",
+        "valueJson": {
+          "currency": "JPY",
+          "language": "system",
+          "lengthUnit": "metric",
+          "timeZone": "system",
+          "weightUnit": "kilogram"
+        }
+      },
+      {
+        "key": "default",
+        "namespace": "voice.runtime",
+        "schemaVersion": 14,
+        "updatedAt": "0",
+        "valueJson": {
+          "allowedLanguages": [
+            "ja"
+          ],
+          "autoSpeak": true,
+          "inputDeviceId": "default",
+          "listeningEnabled": false,
+          "outputDeviceId": "default",
+          "silenceTimeoutMs": 1500,
+          "vadSensitivity": "medium"
+        }
+      }
+    ],
+    "voiceProfile": {
+      "filterEnabled": false,
+      "minimumDurationMs": 50000,
+      "runtimeAvailable": false,
+      "runtimeMessage": "Unavailable in unit tests",
+      "sampleCount": 0,
+      "samples": [],
+      "status": "empty",
+      "targetSampleCount": 5,
+      "threshold": 0.550000011920929,
+      "totalDurationMs": 0
+    }
+  }
+}

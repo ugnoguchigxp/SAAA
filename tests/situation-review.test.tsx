@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import type { CalibrationProfile, CalibrationRun, SituationReviewSnapshot } from "../src/lib/contracts";
+import type {
+  CalibrationProfile,
+  CalibrationRun,
+  SituationReviewSnapshot,
+} from "../src/lib/contracts";
 import { invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
 import { installJsdom } from "./jsdomGlobals";
 
 await import("../src/i18n");
-const { decodeReplayMetrics, SituationReview } = await import("../src/features/situation/review/SituationReview");
+const { decodeReplayMetrics, SituationReview } =
+  await import("../src/features/situation/review/SituationReview");
 
 function profile(status: CalibrationProfile["status"], id = "profile-1"): CalibrationProfile {
   return {
@@ -70,7 +75,8 @@ describe("situation review", () => {
     resetTauriCoreMock();
     invokeImpl.handler = async (command) => {
       if (failLoad && command === "get_situation_review_snapshot") throw new Error("offline");
-      if (command === "get_situation_review_snapshot" || command === "decide_situation_calibration") return snapshot;
+      if (command === "get_situation_review_snapshot" || command === "decide_situation_calibration")
+        return snapshot;
       if (command === "create_situation_calibration_candidate") return snapshot.candidates[0];
       if (command === "run_situation_calibration") return snapshot.latestRun;
       return command;
@@ -88,7 +94,9 @@ describe("situation review", () => {
     expect(decodeReplayMetrics(null)).toBeNull();
     expect(decodeReplayMetrics("{")).toBeNull();
     expect(decodeReplayMetrics(JSON.stringify({ fixtureSetVersion: "v1" }))).toBeNull();
-    expect(decodeReplayMetrics(snapshot.latestRun?.metricsJson ?? null)?.fixtureSetVersion).toBe("v1");
+    expect(decodeReplayMetrics(snapshot.latestRun?.metricsJson ?? null)?.fixtureSetVersion).toBe(
+      "v1",
+    );
   });
 
   test("loads a snapshot and runs candidate actions", async () => {
@@ -99,17 +107,30 @@ describe("situation review", () => {
     const { createElement } = await import("react");
     root = createRoot(document.getElementById("root")!);
     await act(async () => root!.render(createElement(SituationReview)));
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(document.body.textContent).toContain("situation-v1");
     const buttons = [...document.querySelectorAll("button")];
-    await act(async () => buttons.find((button) => button.textContent?.includes("Replay"))?.click());
-    await act(async () => buttons.find((button) => button.textContent?.includes("Create"))?.click());
-    await act(async () => buttons.find((button) => button.textContent?.includes("Accept"))?.click());
-    await act(async () => buttons.find((button) => button.textContent?.includes("Rollback"))?.click());
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("Replay"))?.click(),
+    );
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("Create"))?.click(),
+    );
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("Accept"))?.click(),
+    );
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("Rollback"))?.click(),
+    );
     const number = document.querySelector<HTMLInputElement>("input[type='number']");
     if (number) {
       await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(env.dom.window.HTMLInputElement.prototype, "value")!.set!;
+        const setter = Object.getOwnPropertyDescriptor(
+          env.dom.window.HTMLInputElement.prototype,
+          "value",
+        )!.set!;
         setter.call(number, "80");
         number.dispatchEvent(new env.dom.window.Event("input", { bubbles: true }));
       });
@@ -125,7 +146,9 @@ describe("situation review", () => {
     const { createElement } = await import("react");
     root = createRoot(document.getElementById("root")!);
     await act(async () => root!.render(createElement(SituationReview)));
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(document.querySelector(".error-banner")).not.toBeNull();
   });
 });

@@ -1,0 +1,61 @@
+{
+  "date": "2026-09-13",
+  "overallStatus": "implementation-and-local-checks-passed-with-explicit-open-items",
+  "checks": {
+    "bun run check:local": {
+      "exitCode": 0,
+      "frontendPassed": 332,
+      "rustLibraryPassed": 534,
+      "rustLibraryIgnored": 12,
+      "moduleSizeFiles": 444
+    },
+    "bun run test:rust-packages": {
+      "exitCode": 0
+    },
+    "bun run spec:check": {
+      "exitCode": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    "bun run desktop:smoke": {
+      "exitCode": 0,
+      "report": "/var/folders/mx/jbv8qfwd52z14q0mby_273lhlp5gd2/T/saaa-smoke-report-72wSp6"
+    },
+    "smokeRepetitions": {
+      "normal": 20,
+      "cpuLoad": 20,
+      "failures": 0
+    },
+    "formatterIdempotence": {
+      "unchanged": true,
+      "hashedTsFilesIncludingIgnored": 237
+    },
+    "git diff --check": {
+      "exitCode": 0
+    }
+  },
+  "openItems": [
+    {
+      "id": "R11",
+      "reason": "User selection of approved protection scope and Keychain application encryption versus verified FileVault/backup protection remains pending; no storage-format migration implemented."
+    },
+    {
+      "id": "R05",
+      "reason": "Private report contact and responsible maintainer not supplied; documents explicitly disclose this."
+    },
+    {
+      "id": "M01",
+      "reason": "Real WebView keyboard operation, macOS permissions, and 30-minute soak not verified; desktop IPC readiness smoke does not substitute for these."
+    }
+  ],
+  "scope": {
+    "ciCdChanged": false,
+    "committed": false,
+    "pushed": false
+  },
+  "contextTools": {
+    "context_compile": 1,
+    "compile_eval": 1
+  },
+  "latestReviewEvidence": "2026-09-13-review-corrections.json"
+}

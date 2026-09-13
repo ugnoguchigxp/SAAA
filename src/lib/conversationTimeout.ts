@@ -13,9 +13,9 @@ export function conversationTimeoutSecondsInputValue(timeoutMs: number): string 
 export function conversationTimeoutMsFromSecondsInput(value: string): number | null {
   if (!value || value.trim() !== value) return null;
   const timeoutMs = Number(value) * 1_000;
-  return Number.isInteger(timeoutMs)
-    && timeoutMs >= MIN_CONVERSATION_TIMEOUT_MS
-    && timeoutMs <= MAX_CONVERSATION_TIMEOUT_MS
+  return Number.isInteger(timeoutMs) &&
+    timeoutMs >= MIN_CONVERSATION_TIMEOUT_MS &&
+    timeoutMs <= MAX_CONVERSATION_TIMEOUT_MS
     ? timeoutMs
     : null;
 }

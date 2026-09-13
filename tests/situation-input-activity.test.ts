@@ -4,23 +4,31 @@ import { decodeReplayMetrics } from "../src/features/situation/review/SituationR
 
 describe("input activity contract", () => {
   test("accepts only bounded category and health", () => {
-    expect(inputActivitySignalSchema.parse({ state: "idle", health: "ready" }))
-      .toEqual({ state: "idle", health: "ready" });
-    expect(inputActivitySignalSchema.parse({ state: "unknown", health: "unsupported" }))
-      .toEqual({ state: "unknown", health: "unsupported" });
+    expect(inputActivitySignalSchema.parse({ state: "idle", health: "ready" })).toEqual({
+      state: "idle",
+      health: "ready",
+    });
+    expect(inputActivitySignalSchema.parse({ state: "unknown", health: "unsupported" })).toEqual({
+      state: "unknown",
+      health: "unsupported",
+    });
   });
 
   test("has no exact duration or last-input field", () => {
-    expect(() => inputActivitySignalSchema.parse({
-      state: "active",
-      health: "ready",
-      elapsedMs: 123,
-    })).toThrow("Unrecognized key");
-    expect(() => inputActivitySignalSchema.parse({
-      state: "active",
-      health: "ready",
-      lastInputAt: "secret",
-    })).toThrow("Unrecognized key");
+    expect(() =>
+      inputActivitySignalSchema.parse({
+        state: "active",
+        health: "ready",
+        elapsedMs: 123,
+      }),
+    ).toThrow("Unrecognized key");
+    expect(() =>
+      inputActivitySignalSchema.parse({
+        state: "active",
+        health: "ready",
+        lastInputAt: "secret",
+      }),
+    ).toThrow("Unrecognized key");
   });
 
   test("validates candidate input-activity boundaries", () => {
@@ -34,11 +42,13 @@ describe("input activity contract", () => {
       inputRecentMaxMs: 300_000,
     };
     expect(calibrationParametersSchema.parse(candidate)).toEqual(candidate);
-    expect(() => calibrationParametersSchema.parse({
-      ...candidate,
-      inputActiveMaxMs: 300_000,
-      inputRecentMaxMs: 300_000,
-    })).toThrow("Input active boundary");
+    expect(() =>
+      calibrationParametersSchema.parse({
+        ...candidate,
+        inputActiveMaxMs: 300_000,
+        inputRecentMaxMs: 300_000,
+      }),
+    ).toThrow("Input active boundary");
   });
 
   test("decodes replay attention metrics without unsafe defaults", () => {
@@ -53,9 +63,13 @@ describe("input activity contract", () => {
       shadowPolicyCounts: { ignore: 8, observe: 1, suggest: 7, respond: 1 },
     };
     expect(decodeReplayMetrics(JSON.stringify(metrics))).toEqual(metrics);
-    expect(decodeReplayMetrics(JSON.stringify({
-      ...metrics,
-      expectedAttentionMatches: 15,
-    }))).toBeNull();
+    expect(
+      decodeReplayMetrics(
+        JSON.stringify({
+          ...metrics,
+          expectedAttentionMatches: 15,
+        }),
+      ),
+    ).toBeNull();
   });
 });

@@ -1,33 +1,30 @@
+import { containsSource, readProjectSource as source } from "./sourceContract";
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
-function source(path: string): string {
-  return readFileSync(join(import.meta.dir, "..", path), "utf8");
-}
 
 describe("settings provider UI contracts", () => {
   test("lets users select the conversation reasoning effort", () => {
     const settings = source("src/features/settings/ServiceConnectionsSection.tsx");
     const english = source("src/i18n/locales/en.ts");
-    expect(settings).toContain('Field label={t("settings.connection.reasoningEffort")}');
-    expect(settings).toContain('t("settings.connection.low")');
-    expect(settings).toContain('t("settings.connection.medium")');
-    expect(settings).toContain('t("settings.connection.extraHigh")');
-    expect(english).toContain('reasoningEffort: "Reasoning effort (LLM)"');
-    expect(settings).not.toContain('Field label="Maximum output tokens"');
+    expect(containsSource(settings, 'Field label={t("settings.connection.reasoningEffort")}')).toBe(
+      true,
+    );
+    expect(containsSource(settings, 't("settings.connection.low")')).toBe(true);
+    expect(containsSource(settings, 't("settings.connection.medium")')).toBe(true);
+    expect(containsSource(settings, 't("settings.connection.extraHigh")')).toBe(true);
+    expect(containsSource(english, 'reasoningEffort: "Reasoning effort (LLM)"')).toBe(true);
+    expect(containsSource(settings, 'Field label="Maximum output tokens"')).toBe(false);
   });
 
   test("lets users configure the LLM timeout in seconds", () => {
     const settings = source("src/features/settings/ServiceConnectionsSection.tsx");
     const japanese = source("src/i18n/locales/ja.ts");
-    expect(settings).toContain("<ConversationTimeoutField");
-    expect(settings).toContain("conversationTimeoutMsFromSecondsInput(next)");
-    expect(settings).toContain('aria-invalid={fieldInvalid}');
-    expect(settings).toContain("onValidityChange(!fieldInvalid)");
-    expect(settings).toContain('resolution?.revision === "agent-connection.v1"');
-    expect(settings).toContain('t(invalid');
-    expect(japanese).toContain('llmTimeoutSeconds: "LLMタイムアウト（秒）"');
+    expect(containsSource(settings, "<ConversationTimeoutField")).toBe(true);
+    expect(containsSource(settings, "conversationTimeoutMsFromSecondsInput(next)")).toBe(true);
+    expect(containsSource(settings, "aria-invalid={fieldInvalid}")).toBe(true);
+    expect(containsSource(settings, "onValidityChange(!fieldInvalid)")).toBe(true);
+    expect(containsSource(settings, 'resolution?.revision === "agent-connection.v1"')).toBe(true);
+    expect(containsSource(settings, "t(invalid")).toBe(true);
+    expect(containsSource(japanese, 'llmTimeoutSeconds: "LLMタイムアウト（秒）"')).toBe(true);
   });
 
   test("configures Agent Connection and limits LAN discovery to compatible addresses", () => {
@@ -43,26 +40,32 @@ describe("settings provider UI contracts", () => {
       source("src-tauri/src/providers/dynamic_lan/urls.rs"),
       source("src-tauri/src/providers/dynamic_lan/validate.rs"),
     ].join("\n");
-    expect(settings).toContain('Field label={t("settings.connection.harnessAddress")}');
-    expect(settings).toContain('t("settings.connection.description")');
-    expect(japanese).toContain("ローカルLANでは認証なしで利用でき");
-    expect(japanese).toContain("接続を確認");
-    expect(japanese).toContain("Agent Connectionのclaim・LLMヘルスチェックに成功");
-    expect(settings).toContain('next.revision === "agent-connection.v1"');
-    expect(settings).toContain("legacyDynamicLanHost(address)");
-    expect(runtime).toContain("new URL(address)");
-    expect(runtime).toContain('url.protocol === "http:"');
-    expect(runtime).toContain('url.port === "9810"');
-    expect(settings).toContain("harness: { address }");
-    expect(settings).toContain('placeholder="http://provider.local:9810"');
-    expect(dynamicLan).toContain('format!("http://{host}:{CONTROL_PORT}/")');
-    expect(dynamicLan).not.toContain('Command::new("ssh")');
-    expect(dynamicLan).toContain('.join("v1/agent-profiles")');
-    expect(dynamicLan).toContain('.extend(["v1", "agent-connections", id])');
-    expect(dynamicLan).toContain('.push("claim")');
-    expect(dynamicLan).toContain('"openai-provider-v1"');
-    expect(dynamicLan).toContain('endpoint: descriptor.configuration.fields.base_url');
-    expect(dynamicLan).toContain('stream_url.path() != "/v1/llm/stream"');
-    expect(dynamicLan).toContain("Err(env::VarError::NotPresent) => return Ok(None)");
+    expect(containsSource(settings, 'Field label={t("settings.connection.harnessAddress")}')).toBe(
+      true,
+    );
+    expect(containsSource(settings, 't("settings.connection.description")')).toBe(true);
+    expect(containsSource(japanese, "ローカルLANでは認証なしで利用でき")).toBe(true);
+    expect(containsSource(japanese, "接続を確認")).toBe(true);
+    expect(containsSource(japanese, "Agent Connectionのclaim・LLMヘルスチェックに成功")).toBe(true);
+    expect(containsSource(settings, 'next.revision === "agent-connection.v1"')).toBe(true);
+    expect(containsSource(settings, "legacyDynamicLanHost(address)")).toBe(true);
+    expect(containsSource(runtime, "new URL(address)")).toBe(true);
+    expect(containsSource(runtime, 'url.protocol === "http:"')).toBe(true);
+    expect(containsSource(runtime, 'url.port === "9810"')).toBe(true);
+    expect(containsSource(settings, "harness: { address }")).toBe(true);
+    expect(containsSource(settings, 'placeholder="http://provider.local:9810"')).toBe(true);
+    expect(containsSource(dynamicLan, 'format!("http://{host}:{CONTROL_PORT}/")')).toBe(true);
+    expect(containsSource(dynamicLan, 'Command::new("ssh")')).toBe(false);
+    expect(containsSource(dynamicLan, '.join("v1/agent-profiles")')).toBe(true);
+    expect(containsSource(dynamicLan, '.extend(["v1", "agent-connections", id])')).toBe(true);
+    expect(containsSource(dynamicLan, '.push("claim")')).toBe(true);
+    expect(containsSource(dynamicLan, '"openai-provider-v1"')).toBe(true);
+    expect(containsSource(dynamicLan, "endpoint: descriptor.configuration.fields.base_url")).toBe(
+      true,
+    );
+    expect(containsSource(dynamicLan, 'stream_url.path() != "/v1/llm/stream"')).toBe(true);
+    expect(containsSource(dynamicLan, "Err(env::VarError::NotPresent) => return Ok(None)")).toBe(
+      true,
+    );
   });
 });

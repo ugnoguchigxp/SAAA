@@ -88,7 +88,10 @@ export async function ensureMicrophoneAudioContextRunning(
   }
 }
 
-export async function disposeMicrophoneCapture(stream: MediaStream | null, context: AudioContext | null): Promise<void> {
+export async function disposeMicrophoneCapture(
+  stream: MediaStream | null,
+  context: AudioContext | null,
+): Promise<void> {
   stream?.getTracks().forEach((track) => track.stop());
   if (context) await context.close().catch(() => undefined);
 }
@@ -111,11 +114,12 @@ function apiUnavailableError(
   capability: MicrophoneCapability,
   originalCause?: unknown,
 ): MicrophoneCaptureError {
-  const message = environment.secureContext === false
-    ? "Microphone capture requires a secure application context. Open SAAA through the desktop app or localhost."
-    : capability === "capture"
-      ? "Microphone capture is unavailable in this SAAA build. Reinstall or rebuild SAAA with microphone access enabled."
-      : "Microphone device listing is unavailable in this SAAA build.";
+  const message =
+    environment.secureContext === false
+      ? "Microphone capture requires a secure application context. Open SAAA through the desktop app or localhost."
+      : capability === "capture"
+        ? "Microphone capture is unavailable in this SAAA build. Reinstall or rebuild SAAA with microphone access enabled."
+        : "Microphone device listing is unavailable in this SAAA build.";
   return new MicrophoneCaptureError("api-unavailable", message, originalCause);
 }
 
@@ -125,7 +129,10 @@ function classifyMicrophoneFailure(
 ): MicrophoneCaptureError {
   if (cause instanceof MicrophoneCaptureError) return cause;
   const name = errorName(cause);
-  if (environment.secureContext === false && (name === "NotAllowedError" || name === "SecurityError")) {
+  if (
+    environment.secureContext === false &&
+    (name === "NotAllowedError" || name === "SecurityError")
+  ) {
     return apiUnavailableError(environment, "capture", cause);
   }
   switch (name) {
@@ -172,7 +179,9 @@ function classifyMicrophoneFailure(
       const detail = errorMessage(cause);
       return new MicrophoneCaptureError(
         "unknown",
-        detail ? `Microphone unavailable: ${detail}` : "Microphone unavailable for an unknown reason.",
+        detail
+          ? `Microphone unavailable: ${detail}`
+          : "Microphone unavailable for an unknown reason.",
         cause,
       );
     }
@@ -180,7 +189,10 @@ function classifyMicrophoneFailure(
 }
 
 function errorName(cause: unknown): string {
-  return typeof cause === "object" && cause !== null && "name" in cause && typeof cause.name === "string"
+  return typeof cause === "object" &&
+    cause !== null &&
+    "name" in cause &&
+    typeof cause.name === "string"
     ? cause.name
     : "";
 }

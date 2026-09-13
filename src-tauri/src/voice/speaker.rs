@@ -171,6 +171,8 @@ struct NativeExtractor {
 
 impl NativeExtractor {
     fn load(library_path: &Path, model_path: &Path) -> Result<Self, String> {
+        // SAFETY: Load the bundled, ABI-matched sherpa library on the dedicated worker.
+        // NativeExtractor retains it until all native objects have been destroyed.
         let library = unsafe { Library::new(library_path) }
             .map_err(|error| format!("Could not load the speaker-verification library: {error}"))?;
         let create_extractor: CreateExtractor =
@@ -209,12 +211,16 @@ impl NativeExtractor {
             debug: 0,
             provider: provider.as_ptr(),
         };
+        // SAFETY: config and its NUL-terminated strings live through this synchronous
+        // constructor; sherpa copies configuration rather than retaining Rust pointers.
         let extractor = unsafe { create_extractor(&config) };
         if extractor.is_null() {
             return Err("Could not initialize the bundled speaker-verification model".to_string());
         }
+        // SAFETY: extractor was checked non-null and belongs to this loaded library.
         let dimension = unsafe { extractor_dim(extractor) };
         if dimension <= 0 || dimension > 4_096 {
+            // SAFETY: This is the sole owner; initialization failed before any stream existed.
             unsafe { destroy_extractor(extractor) };
             return Err(
                 "Speaker-verification model returned an invalid embedding dimension".to_string(),
@@ -238,24 +244,35 @@ impl NativeExtractor {
     fn embed(&mut self, samples: &[f32]) -> Result<Vec<f32>, String> {
         let sample_count = i32::try_from(samples.len())
             .map_err(|_| "Speaker-verification audio is too long".to_string())?;
+        // SAFETY: self owns a live extractor and all access stays on its worker thread.
         let stream = unsafe { (self.create_stream)(self.extractor) };
         if stream.is_null() {
             return Err("Could not create a speaker-verification stream".to_string());
         }
+        // SAFETY: stream is non-null. samples contains sample_count initialized f32s
+        // and remains borrowed through both synchronous calls; count fits the C ABI.
         unsafe {
             (self.accept_waveform)(stream, SAMPLE_RATE, samples.as_ptr(), sample_count);
             (self.input_finished)(stream);
         }
+        // SAFETY: Both objects are live, from the same library, and exclusively accessed.
         if unsafe { (self.is_ready)(self.extractor, stream) } == 0 {
+            // SAFETY: stream is live and uniquely owned; this return prevents further use.
             unsafe { (self.destroy_stream)(stream) };
             return Err("The recording does not contain enough usable speech".to_string());
         }
+        // SAFETY: The checked-ready stream and extractor remain alive on this worker.
         let embedding = unsafe { (self.compute_embedding)(self.extractor, stream) };
         if embedding.is_null() {
+            // SAFETY: stream is live and uniquely owned; this return prevents further use.
             unsafe { (self.destroy_stream)(stream) };
             return Err("Speaker-verification inference failed".to_string());
         }
+        // SAFETY: sherpa returns dimension contiguous floats for a non-null embedding.
+        // dimension was bounded at construction; copy before freeing the native storage.
         let mut result = unsafe { std::slice::from_raw_parts(embedding, self.dimension) }.to_vec();
+        // SAFETY: Both allocations are non-null and uniquely owned. Free the embedding
+        // before its stream, while the extractor and dynamic library are still alive.
         unsafe {
             (self.destroy_embedding)(embedding);
             (self.destroy_stream)(stream);
@@ -271,6 +288,8 @@ impl NativeExtractor {
 impl Drop for NativeExtractor {
     fn drop(&mut self) {
         if !self.extractor.is_null() {
+            // SAFETY: All per-call streams were freed; Drop runs before _library is
+            // unloaded and this pointer is owned only by this worker-local extractor.
             unsafe { (self.destroy_extractor)(self.extractor) };
             self.extractor = ptr::null();
         }
@@ -278,6 +297,8 @@ impl Drop for NativeExtractor {
 }
 
 fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, String> {
+    // SAFETY: Private callers pair each NUL-terminated sherpa symbol with its exact
+    // C ABI function type. The copied pointer is used only while library is retained.
     unsafe { library.get::<T>(name) }
         .map(|symbol| *symbol)
         .map_err(|error| format!("Bundled speaker library is incompatible: {error}"))
@@ -303,5 +324,21 @@ mod tests {
         let embedding = extractor.embed(samples).expect("embedding extracts");
         assert_eq!(embedding.len(), extractor.dimension());
         assert!(embedding.iter().all(|value| value.is_finite()));
+    }
+    #[test]
+    fn invalid_audio_is_rejected_before_native_inference() {
+        let resource = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/voice");
+        let extractor = SpeakerExtractor::start(
+            &resource.join("lib/libsherpa-onnx-c-api.dylib"),
+            &resource.join("model/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"),
+        )
+        .unwrap();
+        assert!(extractor.embed(Vec::new()).is_err());
+        assert!(extractor
+            .embed(vec![f32::NAN; SAMPLE_RATE as usize])
+            .is_err());
+        assert!(extractor
+            .embed(vec![0.0; SAMPLE_RATE as usize * 31])
+            .is_err());
     }
 }

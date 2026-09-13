@@ -19,6 +19,8 @@ describe("Situation settings contract", () => {
   test("rejects unbounded sampling, retention, and privacy relaxation", () => {
     expect(() => situationSettingsSchema.parse({ ...valid, sampleIntervalMs: 100 })).toThrow();
     expect(() => situationSettingsSchema.parse({ ...valid, retentionDays: 365 })).toThrow();
-    expect(() => situationSettingsSchema.parse({ ...valid, sensitiveApplicationCategories: false })).toThrow();
+    expect(() =>
+      situationSettingsSchema.parse({ ...valid, sensitiveApplicationCategories: false }),
+    ).toThrow();
   });
 });

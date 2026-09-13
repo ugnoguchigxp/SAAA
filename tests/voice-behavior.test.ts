@@ -39,10 +39,16 @@ describe("conversation voice behavior", () => {
     const coding = catalog("codex.read-only", {});
 
     expect(conversation.content.text).toContain("Use `update_conversation_voice_behavior`");
-    expect(conversation.content.text).toContain("Do not treat quotations, translation or writing examples");
+    expect(conversation.content.text).toContain(
+      "Do not treat quotations, translation or writing examples",
+    );
     expect(coding.content.text).not.toContain("update_conversation_voice_behavior");
-    expect(readFileSync(new URL("../contexts/conversation/respond.context.toml", import.meta.url), "utf8"))
-      .toContain("update_conversation_voice_behavior");
+    expect(
+      readFileSync(
+        new URL("../contexts/conversation/respond.context.toml", import.meta.url),
+        "utf8",
+      ),
+    ).toContain("update_conversation_voice_behavior");
   });
 
   test("maps the conversation listening profile into the next detector snapshot", () => {

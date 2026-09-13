@@ -2,7 +2,8 @@ import { mock } from "bun:test";
 
 export const invokeCalls: Array<{ command: string; args?: unknown; options?: unknown }> = [];
 export const invokeImpl = {
-  handler: async (command: string, _args?: unknown, _options?: unknown): Promise<unknown> => command,
+  handler: async (command: string, _args?: unknown, _options?: unknown): Promise<unknown> =>
+    command,
 };
 export const channels: Array<{ onmessage: ((event: unknown) => void) | null }> = [];
 

@@ -5,7 +5,17 @@ const packet = () => new Uint8Array(3_200);
 describe("VoiceAsrPacketSender", () => {
   test("preserves audio → commit → audio order and only advances successful sequences", async () => {
     const log: string[] = [];
-    const sender = new VoiceAsrPacketSender({ append: async (sequence) => { log.push(`audio:${sequence}`); }, commit: async () => { log.push("commit"); }, stop: async () => { log.push("stop"); } });
+    const sender = new VoiceAsrPacketSender({
+      append: async (sequence) => {
+        log.push(`audio:${sequence}`);
+      },
+      commit: async () => {
+        log.push("commit");
+      },
+      stop: async () => {
+        log.push("stop");
+      },
+    });
     const first = packet().fill(7);
     sender.enqueueAudio(first);
     const commit = sender.enqueueCommit("silence");
@@ -18,17 +28,28 @@ describe("VoiceAsrPacketSender", () => {
   test("queues stop after a pending commit and waits for its own completion", async () => {
     const log: string[] = [];
     let releaseAppend!: () => void;
-    const appendStarted = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    const appendStarted = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
     const sender = new VoiceAsrPacketSender({
-      append: async () => { log.push("audio"); await appendStarted; },
-      commit: async () => { log.push("commit"); },
-      stop: async () => { log.push("stop"); },
+      append: async () => {
+        log.push("audio");
+        await appendStarted;
+      },
+      commit: async () => {
+        log.push("commit");
+      },
+      stop: async () => {
+        log.push("stop");
+      },
     });
     sender.enqueueAudio(packet());
     const commit = sender.enqueueCommit("silence");
     const stop = sender.enqueueStop(true);
     let stopCompleted = false;
-    void stop.then(() => { stopCompleted = true; });
+    void stop.then(() => {
+      stopCompleted = true;
+    });
     await Promise.resolve();
     expect(stopCompleted).toBeFalse();
     releaseAppend();
@@ -37,7 +58,9 @@ describe("VoiceAsrPacketSender", () => {
   });
   test("rejects and zeroizes microphone frames that arrive after stop is queued", async () => {
     let releaseStop!: () => void;
-    const stopPending = new Promise<void>((resolve) => { releaseStop = resolve; });
+    const stopPending = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
     const sender = new VoiceAsrPacketSender({
       append: async () => {},
       commit: async () => {},
@@ -53,11 +76,20 @@ describe("VoiceAsrPacketSender", () => {
   test("uses backend commit acceptance as the next-packet ordering barrier", async () => {
     const log: string[] = [];
     let releaseCommit!: () => void;
-    const commitFinished = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    const commitFinished = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
     const sender = new VoiceAsrPacketSender({
-      append: async (sequence) => { log.push(`audio:${sequence}`); },
-      commit: async () => { log.push("commit"); await commitFinished; },
-      stop: async () => { log.push("stop"); },
+      append: async (sequence) => {
+        log.push(`audio:${sequence}`);
+      },
+      commit: async () => {
+        log.push("commit");
+        await commitFinished;
+      },
+      stop: async () => {
+        log.push("stop");
+      },
     });
     sender.enqueueAudio(packet());
     const commit = sender.enqueueCommit("silence");
@@ -71,7 +103,9 @@ describe("VoiceAsrPacketSender", () => {
   });
   test("fails closed at ten unsent packets and zeroizes queued audio", async () => {
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const queued = Array.from({ length: 11 }, () => packet().fill(7));
     const sender = new VoiceAsrPacketSender({
       append: async () => blocked,
@@ -86,7 +120,10 @@ describe("VoiceAsrPacketSender", () => {
   test("propagates invoke failure and never advances the sequence", async () => {
     const sequences: number[] = [];
     const sender = new VoiceAsrPacketSender({
-      append: async (sequence) => { sequences.push(sequence); throw new Error("invoke failed"); },
+      append: async (sequence) => {
+        sequences.push(sequence);
+        throw new Error("invoke failed");
+      },
       commit: async () => {},
       stop: async () => {},
     });

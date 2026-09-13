@@ -12,8 +12,8 @@ export function selectVoicePolicySnapshot(
   current: ConversationVoicePolicySnapshot | null,
   incoming: ConversationVoicePolicySnapshot,
 ): ConversationVoicePolicySnapshot {
-  return current?.conversationId === incoming.conversationId
-    && current.policyRevision > incoming.policyRevision
+  return current?.conversationId === incoming.conversationId &&
+    current.policyRevision > incoming.policyRevision
     ? current
     : incoming;
 }
@@ -48,7 +48,7 @@ export function useConversationVoicePolicy(
     const reported = reportedErrorRef.current;
     if (!reported) return;
     reportedErrorRef.current = null;
-    setErrorRef.current((current) => current === reported ? null : current);
+    setErrorRef.current((current) => (current === reported ? null : current));
   }
 
   useEffect(() => {
@@ -78,14 +78,17 @@ export function useConversationVoicePolicy(
   }
 
   async function apply(
-    operation: (policy: ConversationVoicePolicySnapshot) => Promise<ConversationVoicePolicySnapshot>,
+    operation: (
+      policy: ConversationVoicePolicySnapshot,
+    ) => Promise<ConversationVoicePolicySnapshot>,
   ) {
     const policy = voicePolicy;
     if (
-      !policy
-      || policy.conversationId !== selectedConversationIdRef.current
-      || mutationRef.current
-    ) return;
+      !policy ||
+      policy.conversationId !== selectedConversationIdRef.current ||
+      mutationRef.current
+    )
+      return;
     const request = requestRef.current;
     const mutation = {
       conversationId: policy.conversationId,
@@ -96,8 +99,8 @@ export function useConversationVoicePolicy(
     try {
       const updated = await operation(policy);
       if (
-        request === requestRef.current
-        && selectedConversationIdRef.current === policy.conversationId
+        request === requestRef.current &&
+        selectedConversationIdRef.current === policy.conversationId
       ) {
         acceptVoicePolicy(updated);
         clearVoicePolicyError();
@@ -105,9 +108,10 @@ export function useConversationVoicePolicy(
     } catch (cause) {
       await loadPolicy(policy.conversationId, request, false);
       if (
-        request === requestRef.current
-        && selectedConversationIdRef.current === policy.conversationId
-      ) reportVoicePolicyError(cause);
+        request === requestRef.current &&
+        selectedConversationIdRef.current === policy.conversationId
+      )
+        reportVoicePolicyError(cause);
     } finally {
       if (mutationRef.current?.token === mutation.token) {
         mutationRef.current = null;
@@ -116,28 +120,35 @@ export function useConversationVoicePolicy(
     }
   }
 
-  const setConversationSpeechOutput = (speechOutput: "inherit" | "muted") => apply((policy) =>
-    updateConversationVoicePolicy({
-      conversationId: policy.conversationId,
-      speechOutput,
-      listeningPace: null,
-      expectedRevision: policy.policyRevision,
-    }));
+  const setConversationSpeechOutput = (speechOutput: "inherit" | "muted") =>
+    apply((policy) =>
+      updateConversationVoicePolicy({
+        conversationId: policy.conversationId,
+        speechOutput,
+        listeningPace: null,
+        expectedRevision: policy.policyRevision,
+      }),
+    );
 
   const setConversationListeningPace = (
     listeningPace: "inherit" | "quick" | "balanced" | "patient",
-  ) => apply((policy) => updateConversationVoicePolicy({
-    conversationId: policy.conversationId,
-    speechOutput: null,
-    listeningPace,
-    expectedRevision: policy.policyRevision,
-  }));
+  ) =>
+    apply((policy) =>
+      updateConversationVoicePolicy({
+        conversationId: policy.conversationId,
+        speechOutput: null,
+        listeningPace,
+        expectedRevision: policy.policyRevision,
+      }),
+    );
 
-  const resetConversationVoiceOverrides = () => apply((policy) =>
-    resetConversationVoicePolicy({
-      conversationId: policy.conversationId,
-      expectedRevision: policy.policyRevision,
-    }));
+  const resetConversationVoiceOverrides = () =>
+    apply((policy) =>
+      resetConversationVoicePolicy({
+        conversationId: policy.conversationId,
+        expectedRevision: policy.policyRevision,
+      }),
+    );
 
   return {
     voicePolicy: voicePolicy?.conversationId === selectedConversationId ? voicePolicy : null,

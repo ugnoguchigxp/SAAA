@@ -20,7 +20,10 @@ import { mergePcmFrames } from "../../lib/pcm";
 import { withTimeout } from "../../lib/promiseTimeout";
 import { disposePendingVoiceCapture, type PendingVoiceCapture } from "./pendingVoiceCapture";
 import { useVoiceSamplePlayback } from "./useVoiceSamplePlayback";
-import { VOICE_ENROLLMENT_AUTO_STOP_MS, VOICE_ENROLLMENT_MINIMUM_SECONDS } from "./voiceEnrollmentPrompts";
+import {
+  VOICE_ENROLLMENT_AUTO_STOP_MS,
+  VOICE_ENROLLMENT_MINIMUM_SECONDS,
+} from "./voiceEnrollmentPrompts";
 import { VoiceTranscriptionScope } from "./VoiceTranscriptionScope";
 import { localizeUiMessage, uiMessage } from "../../i18n/presentation";
 const VOICE_PROFILE_SAMPLE_RATE = 16_000;
@@ -60,7 +63,9 @@ export function VoiceProfileCard({
   const maximumTimerRef = useRef<number | null>(null);
   const elapsedTimerRef = useRef<number | null>(null);
   const startedAtRef = useRef(0);
-  const [captureState, setCaptureState] = useState<"idle" | "starting" | "recording" | "saving">("idle");
+  const [captureState, setCaptureState] = useState<"idle" | "starting" | "recording" | "saving">(
+    "idle",
+  );
   const [elapsedMs, setElapsedMs] = useState(0);
   const [level, setLevel] = useState(0);
   const [message, setMessage] = useState<ProfileNotice | null>(null);
@@ -74,7 +79,15 @@ export function VoiceProfileCard({
     };
   }, []);
   async function startCapture() {
-    if (blocked || playback.playingId !== null || captureState !== "idle" || profile.sampleCount >= profile.targetSampleCount || pendingCaptureRef.current || captureRef.current) return;
+    if (
+      blocked ||
+      playback.playingId !== null ||
+      captureState !== "idle" ||
+      profile.sampleCount >= profile.targetSampleCount ||
+      pendingCaptureRef.current ||
+      captureRef.current
+    )
+      return;
     const pending: PendingVoiceCapture = { stream: null, context: null, releaseLease: null };
     pendingCaptureRef.current = pending;
     try {
@@ -92,7 +105,11 @@ export function VoiceProfileCard({
         return;
       }
       pending.context = new AudioContext();
-      await withTimeout(pending.context.audioWorklet.addModule("/audio/meeting-processor.js"), CAPTURE_START_TIMEOUT_MS, "Audio processor startup timed out");
+      await withTimeout(
+        pending.context.audioWorklet.addModule("/audio/meeting-processor.js"),
+        CAPTURE_START_TIMEOUT_MS,
+        "Audio processor startup timed out",
+      );
       if (disposedRef.current || pendingCaptureRef.current !== pending) {
         await closePendingCapture(pending);
         return;
@@ -120,7 +137,10 @@ export function VoiceProfileCard({
         if (!(event.data instanceof Float32Array) || captureRef.current !== capture) return;
         capture.frames.push(event.data);
         capture.length += event.data.length;
-        const rms = Math.sqrt(event.data.reduce((sum, value) => sum + value * value, 0) / Math.max(1, event.data.length));
+        const rms = Math.sqrt(
+          event.data.reduce((sum, value) => sum + value * value, 0) /
+            Math.max(1, event.data.length),
+        );
         setLevel(Math.min(1, rms * 12));
       };
       source.connect(node);
@@ -129,8 +149,13 @@ export function VoiceProfileCard({
       if (disposedRef.current || captureRef.current !== capture) return;
       startedAtRef.current = performance.now();
       setElapsedMs(0);
-      elapsedTimerRef.current = window.setInterval(() => setElapsedMs(performance.now() - startedAtRef.current), 100);
-      maximumTimerRef.current = window.setTimeout(() => { void stopAndSave(); }, VOICE_ENROLLMENT_AUTO_STOP_MS);
+      elapsedTimerRef.current = window.setInterval(
+        () => setElapsedMs(performance.now() - startedAtRef.current),
+        100,
+      );
+      maximumTimerRef.current = window.setTimeout(() => {
+        void stopAndSave();
+      }, VOICE_ENROLLMENT_AUTO_STOP_MS);
       setCaptureState("recording");
     } catch (cause) {
       await closePendingCapture(pending);
@@ -163,9 +188,17 @@ export function VoiceProfileCard({
       }).finally(() => normalized.fill(0));
       if (disposedRef.current) return;
       onChanged(next);
-      setMessage({ kind: "sampleSaved", current: next.sampleCount, target: next.targetSampleCount });
+      setMessage({
+        kind: "sampleSaved",
+        current: next.sampleCount,
+        target: next.targetSampleCount,
+      });
     } catch (cause) {
-      if (!disposedRef.current) setMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+      if (!disposedRef.current)
+        setMessage({
+          kind: "error",
+          message: cause instanceof Error ? cause.message : String(cause),
+        });
     } finally {
       if (!disposedRef.current) {
         setCaptureState("idle");
@@ -203,7 +236,10 @@ export function VoiceProfileCard({
       setMessage(null);
       onChanged(await setTargetSpeakerFilterEnabled(enabled));
     } catch (cause) {
-      setMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+      setMessage({
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
     }
   }
   async function removeSample(sampleId: string) {
@@ -212,8 +248,13 @@ export function VoiceProfileCard({
       onChanged(await deleteVoiceEnrollmentSample(sampleId));
       setMessage({ kind: "sampleDeleted" });
     } catch (cause) {
-      void getVoiceProfileSnapshot().then(onChanged).catch(() => undefined);
-      setMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+      void getVoiceProfileSnapshot()
+        .then(onChanged)
+        .catch(() => undefined);
+      setMessage({
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
     }
   }
   async function removeProfile() {
@@ -222,37 +263,159 @@ export function VoiceProfileCard({
       onChanged(await deleteVoiceProfile());
       setMessage({ kind: "profileDeleted" });
     } catch (cause) {
-      void getVoiceProfileSnapshot().then(onChanged).catch(() => undefined);
-      setMessage({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+      void getVoiceProfileSnapshot()
+        .then(onChanged)
+        .catch(() => undefined);
+      setMessage({
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
     }
   }
   const ready = profile.status === "ready";
-  const prompt = t(`voice.profile.prompts.${promptKeys[Math.min(profile.sampleCount, promptKeys.length - 1)]}`);
-  const messageText = message?.kind === "sampleSaved"
-    ? t("voice.profile.sampleSaved", { current: message.current, target: message.target })
-    : message?.kind === "sampleDeleted"
-      ? t("voice.profile.sampleDeleted")
-      : message?.kind === "profileDeleted"
-        ? t("voice.profile.profileDeleted")
-        : message?.kind === "error"
-          ? localizeUiMessage(t, message.message, "voice")
-          : null;
-  return <section className="settings-card voice-profile-card">
-    <div className="card-title-row"><div><h3>{t("voice.profile.title")}</h3><p className="settings-help">{t("voice.profile.description")}</p></div><span className={`voice-profile-status ${ready ? "ready" : "collecting"}`}>{t(`voice.profile.status.${profile.status}`, { defaultValue: profile.status })}</span></div>
-    <div className="voice-profile-progress"><strong>{t("voice.profile.sampleProgress", { current: profile.sampleCount, target: profile.targetSampleCount })}</strong><span>{t("voice.profile.durationProgress", { current: (profile.totalDurationMs / 1000).toFixed(1), minimum: (profile.minimumDurationMs / 1000).toFixed(0) })}</span></div>
-    <p className="voice-enrollment-prompt">「{prompt}」</p>
-    <p className="settings-help">{t("voice.profile.recordingGuidance", { seconds: VOICE_ENROLLMENT_MINIMUM_SECONDS })}</p>
-    <div className="voice-enrollment-controls">
-      <button className={captureState === "recording" ? "secondary-button recording" : "secondary-button"} type="button" onClick={() => void startCapture()} disabled={blocked || playback.playingId !== null || captureState !== "idle" || profile.sampleCount >= profile.targetSampleCount || !profile.runtimeAvailable}>{captureState === "starting" ? t("voice.profile.prepareMic") : captureState === "saving" ? t("voice.profile.preparingData") : captureState === "recording" ? t("voice.profile.recordingUntilAutoStop") : t("voice.profile.recordSample")}</button>
-      {captureState === "recording" && <><span>{(elapsedMs / 1000).toFixed(1)} {t("common.seconds")}</span><span className="voice-level" aria-label={t("voice.profile.inputLevel")}><i style={{ width: `${Math.round(level * 100)}%` }} /></span></>}
-    </div>
-    {blocked && <p className="provider-test-result error">{t("voice.profile.blocked")}</p>}
-    {!profile.runtimeAvailable && <p className="provider-test-result error">{localizeUiMessage(t, profile.runtimeMessage, "voice")}</p>}
-    <div className="voice-sample-list">{profile.samples.map((sample) => <div key={sample.id}><span>{t("voice.profile.sample", { number: sample.ordinal, duration: (sample.durationMs / 1000).toFixed(1), aec: sample.effectiveAec ? t("common.on") : t("common.off") })}</span><div><button className="text-button" type="button" onClick={() => void playback.play(sample.id)} disabled={blocked || playback.playingId !== null || captureState !== "idle"}>{playback.playingId === sample.id ? t("common.playing") : t("common.play")}</button><button className="text-button danger" type="button" onClick={() => void removeSample(sample.id)} disabled={blocked || playback.playingId !== null || captureState !== "idle"}>{t("common.delete")}</button></div></div>)}</div>
-    <VoiceTranscriptionScope filterEnabled={profile.filterEnabled} disabled={blocked || playback.playingId !== null || captureState !== "idle"} canEnableFilter={ready && profile.runtimeAvailable} onChange={(enabled) => void toggleFilter(enabled)} />
-    <div className="locked-policy">{t("voice.profile.storage")}</div>
-    <p className="settings-help">{t("voice.profile.limitation")}</p>
-    {profile.sampleCount > 0 && <button className="text-button danger" type="button" onClick={() => void removeProfile()} disabled={blocked || playback.playingId !== null || captureState !== "idle"}>{t("voice.profile.deleteProfile")}</button>}
-    {messageText && <p className={message?.kind === "error" ? "provider-test-result error" : "provider-test-result success"} aria-live="polite">{messageText}</p>}
-  </section>;
+  const prompt = t(
+    `voice.profile.prompts.${promptKeys[Math.min(profile.sampleCount, promptKeys.length - 1)]}`,
+  );
+  const messageText =
+    message?.kind === "sampleSaved"
+      ? t("voice.profile.sampleSaved", { current: message.current, target: message.target })
+      : message?.kind === "sampleDeleted"
+        ? t("voice.profile.sampleDeleted")
+        : message?.kind === "profileDeleted"
+          ? t("voice.profile.profileDeleted")
+          : message?.kind === "error"
+            ? localizeUiMessage(t, message.message, "voice")
+            : null;
+  return (
+    <section className="settings-card voice-profile-card">
+      <div className="card-title-row">
+        <div>
+          <h3>{t("voice.profile.title")}</h3>
+          <p className="settings-help">{t("voice.profile.description")}</p>
+        </div>
+        <span className={`voice-profile-status ${ready ? "ready" : "collecting"}`}>
+          {t(`voice.profile.status.${profile.status}`, { defaultValue: profile.status })}
+        </span>
+      </div>
+      <div className="voice-profile-progress">
+        <strong>
+          {t("voice.profile.sampleProgress", {
+            current: profile.sampleCount,
+            target: profile.targetSampleCount,
+          })}
+        </strong>
+        <span>
+          {t("voice.profile.durationProgress", {
+            current: (profile.totalDurationMs / 1000).toFixed(1),
+            minimum: (profile.minimumDurationMs / 1000).toFixed(0),
+          })}
+        </span>
+      </div>
+      <p className="voice-enrollment-prompt">「{prompt}」</p>
+      <p className="settings-help">
+        {t("voice.profile.recordingGuidance", { seconds: VOICE_ENROLLMENT_MINIMUM_SECONDS })}
+      </p>
+      <div className="voice-enrollment-controls">
+        <button
+          className={
+            captureState === "recording" ? "secondary-button recording" : "secondary-button"
+          }
+          type="button"
+          onClick={() => void startCapture()}
+          disabled={
+            blocked ||
+            playback.playingId !== null ||
+            captureState !== "idle" ||
+            profile.sampleCount >= profile.targetSampleCount ||
+            !profile.runtimeAvailable
+          }
+        >
+          {captureState === "starting"
+            ? t("voice.profile.prepareMic")
+            : captureState === "saving"
+              ? t("voice.profile.preparingData")
+              : captureState === "recording"
+                ? t("voice.profile.recordingUntilAutoStop")
+                : t("voice.profile.recordSample")}
+        </button>
+        {captureState === "recording" && (
+          <>
+            <span>
+              {(elapsedMs / 1000).toFixed(1)} {t("common.seconds")}
+            </span>
+            <span className="voice-level" aria-label={t("voice.profile.inputLevel")}>
+              <i style={{ width: `${Math.round(level * 100)}%` }} />
+            </span>
+          </>
+        )}
+      </div>
+      {blocked && <p className="provider-test-result error">{t("voice.profile.blocked")}</p>}
+      {!profile.runtimeAvailable && (
+        <p className="provider-test-result error">
+          {localizeUiMessage(t, profile.runtimeMessage, "voice")}
+        </p>
+      )}
+      <div className="voice-sample-list">
+        {profile.samples.map((sample) => (
+          <div key={sample.id}>
+            <span>
+              {t("voice.profile.sample", {
+                number: sample.ordinal,
+                duration: (sample.durationMs / 1000).toFixed(1),
+                aec: sample.effectiveAec ? t("common.on") : t("common.off"),
+              })}
+            </span>
+            <div>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => void playback.play(sample.id)}
+                disabled={blocked || playback.playingId !== null || captureState !== "idle"}
+              >
+                {playback.playingId === sample.id ? t("common.playing") : t("common.play")}
+              </button>
+              <button
+                className="text-button danger"
+                type="button"
+                onClick={() => void removeSample(sample.id)}
+                disabled={blocked || playback.playingId !== null || captureState !== "idle"}
+              >
+                {t("common.delete")}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <VoiceTranscriptionScope
+        filterEnabled={profile.filterEnabled}
+        disabled={blocked || playback.playingId !== null || captureState !== "idle"}
+        canEnableFilter={ready && profile.runtimeAvailable}
+        onChange={(enabled) => void toggleFilter(enabled)}
+      />
+      <div className="locked-policy">{t("voice.profile.storage")}</div>
+      <p className="settings-help">{t("voice.profile.limitation")}</p>
+      {profile.sampleCount > 0 && (
+        <button
+          className="text-button danger"
+          type="button"
+          onClick={() => void removeProfile()}
+          disabled={blocked || playback.playingId !== null || captureState !== "idle"}
+        >
+          {t("voice.profile.deleteProfile")}
+        </button>
+      )}
+      {messageText && (
+        <p
+          className={
+            message?.kind === "error"
+              ? "provider-test-result error"
+              : "provider-test-result success"
+          }
+          aria-live="polite"
+        >
+          {messageText}
+        </p>
+      )}
+    </section>
+  );
 }

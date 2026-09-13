@@ -91,6 +91,9 @@ pub(crate) fn update_runtime_provider(
                 params![provider_id, run_id],
             )
             .map_err(database_error)?;
+        if changed != 1 {
+            return Err("Runtime run is no longer active".to_string());
+        }
         Ok(())
     })
 }
@@ -122,27 +125,18 @@ mod tests {
 
     #[test]
     fn start_turn_input_must_use_canonical_identifiers_and_modes() {
-        assert!(validate_start_turn(&turn(
-            "run_a",
-            "hello",
-            "text",
-            "visual",
-            None,
-            None
-        ))
-        .is_ok());
-        assert!(validate_start_turn(&turn("run a", "hello", "text", "visual", None, None)).is_err());
+        assert!(validate_start_turn(&turn("run_a", "hello", "text", "visual", None, None)).is_ok());
+        assert!(
+            validate_start_turn(&turn("run a", "hello", "text", "visual", None, None)).is_err()
+        );
         assert!(validate_start_turn(&turn("run_a", "", "text", "visual", None, None)).is_err());
-        assert!(validate_start_turn(&turn(
-            "run_a",
-            "hello",
-            "clipboard",
-            "visual",
-            None,
-            None
-        ))
-        .is_err());
-        assert!(validate_start_turn(&turn("run_a", "hello", "voice", "spoken", None, None)).is_err());
+        assert!(
+            validate_start_turn(&turn("run_a", "hello", "clipboard", "visual", None, None))
+                .is_err()
+        );
+        assert!(
+            validate_start_turn(&turn("run_a", "hello", "voice", "spoken", None, None)).is_err()
+        );
         assert!(validate_start_turn(&turn(
             "run_a",
             "hello",

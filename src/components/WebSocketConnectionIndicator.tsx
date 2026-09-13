@@ -18,18 +18,20 @@ export function WebSocketConnectionIndicator({
   label: string;
   statusLabel: string;
 }) {
-  return <div
-    className={`websocket-indicator ${state}`}
-    role="status"
-    aria-live="polite"
-    aria-label={`${label}: ${statusLabel}`}
-  >
-    <span className="websocket-status-dot" aria-hidden="true" />
-    <span className="websocket-status-copy">
-      <span>{label}</span>
-      <strong>{statusLabel}</strong>
-    </span>
-  </div>;
+  return (
+    <div
+      className={`websocket-indicator ${state}`}
+      role="status"
+      aria-live="polite"
+      aria-label={`${label}: ${statusLabel}`}
+    >
+      <span className="websocket-status-dot" aria-hidden="true" />
+      <span className="websocket-status-copy">
+        <span>{label}</span>
+        <strong>{statusLabel}</strong>
+      </span>
+    </div>
+  );
 }
 
 export function WebSocketSidebarFooter({
@@ -42,26 +44,46 @@ export function WebSocketSidebarFooter({
   onOpenSettings: () => void;
 }) {
   const { t } = useTranslation();
-  return <div className="sidebar-footer">
-    <WebSocketConnectionIndicator
-      state={state}
-      label={t("app.webSocket")}
-      statusLabel={t(statusTranslationKeys[state])}
-    />
-    <button className={settingsActive ? "sidebar-settings active" : "sidebar-settings"} onClick={onOpenSettings}>
-      <AppIcon name="settings" />{t("app.settings")}
-    </button>
-  </div>;
+  return (
+    <div className="sidebar-footer">
+      <WebSocketConnectionIndicator
+        state={state}
+        label={t("app.webSocket")}
+        statusLabel={t(statusTranslationKeys[state])}
+      />
+      <button
+        className={settingsActive ? "sidebar-settings active" : "sidebar-settings"}
+        onClick={onOpenSettings}
+      >
+        <AppIcon name="settings" />
+        {t("app.settings")}
+      </button>
+    </div>
+  );
 }
 
-export function ConversationSidebarFooter({ active, settingsActive, onOpenSettings }: {
-  active: boolean; settingsActive: boolean; onOpenSettings: () => void;
+export function ConversationSidebarFooter({
+  active,
+  settingsActive,
+  onOpenSettings,
+}: {
+  active: boolean;
+  settingsActive: boolean;
+  onOpenSettings: () => void;
 }) {
   const { t } = useTranslation();
-  return <div className="sidebar-footer">
-    <div role="status" aria-live="polite" className="conversation-status">{t(active ? "app.conversationActive" : "app.conversationIdle")}</div>
-    <button className={settingsActive ? "sidebar-settings active" : "sidebar-settings"} onClick={onOpenSettings}>
-      <AppIcon name="settings" />{t("app.settings")}
-    </button>
-  </div>;
+  return (
+    <div className="sidebar-footer">
+      <div role="status" aria-live="polite" className="conversation-status">
+        {t(active ? "app.conversationActive" : "app.conversationIdle")}
+      </div>
+      <button
+        className={settingsActive ? "sidebar-settings active" : "sidebar-settings"}
+        onClick={onOpenSettings}
+      >
+        <AppIcon name="settings" />
+        {t("app.settings")}
+      </button>
+    </div>
+  );
 }

@@ -1,0 +1,75 @@
+{
+  "scope": [
+    "R06 event ordering",
+    "R08 capture ownership race",
+    "R12 JSON credential redaction"
+  ],
+  "regressions": {
+    "frontend": {
+      "passed": 341,
+      "failed": 0
+    },
+    "redactionRust": {
+      "passed": 4,
+      "failed": 0
+    },
+    "desktopSmoke": {
+      "status": "ready",
+      "stage": "cleanup",
+      "durationMs": 48584,
+      "stages": [
+        {
+          "stage": "build",
+          "durationMs": 44654,
+          "exitCode": 0
+        },
+        {
+          "stage": "bundle",
+          "durationMs": 262
+        },
+        {
+          "stage": "launch",
+          "durationMs": 2
+        },
+        {
+          "stage": "ready",
+          "durationMs": 3658
+        },
+        {
+          "stage": "cleanup",
+          "durationMs": 8
+        }
+      ]
+    },
+    "specCheck": {
+      "exitCode": 0
+    },
+    "sizeCheck": {
+      "files": 448,
+      "existingLimitsPreserved": true
+    },
+    "checkLocal": {
+      "exitCode": 0,
+      "frontendPassed": 341,
+      "rustLibraryPassed": 535,
+      "rustLibraryIgnored": 12
+    },
+    "codexIsolated": {
+      "exitCode": 0,
+      "passed": 1
+    }
+  },
+  "observedTransientFailure": {
+    "test": "tests::codex_app_server_contract_covers_start_stream_resume_and_cancel",
+    "scenario": "response-too-large",
+    "actual": "RequestTimeout",
+    "expected": "ResponseTooLarge",
+    "requestTimeoutMs": 200,
+    "context": "Observed during concurrent desktop build. Isolated rerun and complete sequential check:local both passed. Concurrency causality is not proven; the 200ms fixture deadline remains unchanged."
+  },
+  "remainingScope": [
+    "R11 protection choice and implementation",
+    "R05 private reporting contact",
+    "M01 manual device validation"
+  ]
+}

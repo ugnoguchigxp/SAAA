@@ -33,9 +33,10 @@ export function useStreamingTextProjection() {
       setStreamingText(bufferRef.current.snapshot());
       if (recordPlainCommit(runId)) requestAnimationFrame(() => recordFirstPlainPaint(runId));
     };
-    updateRef.current = document.visibilityState === "hidden"
-      ? { kind: "timeout", id: window.setTimeout(commit, 100) }
-      : { kind: "frame", id: requestAnimationFrame(commit) };
+    updateRef.current =
+      document.visibilityState === "hidden"
+        ? { kind: "timeout", id: window.setTimeout(commit, 100) }
+        : { kind: "frame", id: requestAnimationFrame(commit) };
   }
 
   function hasStreamingText() {

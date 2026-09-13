@@ -23,7 +23,6 @@ describe("runtime supervisor contracts", () => {
   });
 
   test("rejects unbounded provider failure values", () => {
-    expect(() => runtimeFailureCodeSchema.parse("turn/failed: secret payload"))
-      .toThrow();
+    expect(() => runtimeFailureCodeSchema.parse("turn/failed: secret payload")).toThrow();
   });
 });

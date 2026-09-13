@@ -16,7 +16,12 @@ function Harness({
   conversationId: string | null;
   apiRef: MutableRefObject<((next: boolean) => void) | null>;
 }) {
-  apiRef.current = useLarmVoiceLifetime(enabled, conversationId, () => false, () => undefined);
+  apiRef.current = useLarmVoiceLifetime(
+    enabled,
+    conversationId,
+    () => false,
+    () => undefined,
+  );
   return null;
 }
 
@@ -41,10 +46,16 @@ describe("LARM voice lifetime hook", () => {
     const { createElement } = await import("react");
     const apiRef: MutableRefObject<((next: boolean) => void) | null> = { current: null };
     root = createRoot(document.getElementById("root")!);
-    await act(async () => root!.render(createElement(Harness, { enabled: true, conversationId: "c1", apiRef })));
+    await act(async () =>
+      root!.render(createElement(Harness, { enabled: true, conversationId: "c1", apiRef })),
+    );
     expect(currentLarmVoice()?.conversationId).toBe("c1");
     await act(async () => apiRef.current?.(false));
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => root!.render(createElement(Harness, { enabled: false, conversationId: "c1", apiRef })));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () =>
+      root!.render(createElement(Harness, { enabled: false, conversationId: "c1", apiRef })),
+    );
   });
 });

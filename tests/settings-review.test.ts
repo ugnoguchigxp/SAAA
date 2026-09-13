@@ -27,7 +27,9 @@ describe("reviewed settings boundaries", () => {
       authentication: "api-key",
     });
     const removed = structuredClone(source);
-    removed.providers.providers = removed.providers.providers.filter(({ id }) => id !== "cloud-llm");
+    removed.providers.providers = removed.providers.providers.filter(
+      ({ id }) => id !== "cloud-llm",
+    );
     expect(credentialCleanupProviderIds(source, removed)).toEqual(["cloud-llm"]);
 
     const authenticationOff = structuredClone(source);
@@ -92,7 +94,7 @@ describe("reviewed settings boundaries", () => {
       language: "auto",
       authentication: "none",
     };
-    settings.providers.push(asr as typeof settings.providers[number]);
+    settings.providers.push(asr as (typeof settings.providers)[number]);
     expect(() => modelProvidersSettingsSchema.parse(settings)).not.toThrow();
     asr.language = "ja";
     expect(() => modelProvidersSettingsSchema.parse(settings)).toThrow();
@@ -101,17 +103,51 @@ describe("reviewed settings boundaries", () => {
 
 describe("HTTP audio provider settings", () => {
   test("reads existing WAV settings and accepts local PCM without WS fields", () => {
-    for (const [kind, extra] of [["cloud-asr", { language: "auto" }], ["cloud-tts", { voice: "local-voice" }]] as const) {
+    for (const [kind, extra] of [
+      ["cloud-asr", { language: "auto" }],
+      ["cloud-tts", { voice: "local-voice" }],
+    ] as const) {
       const settings = structuredClone(defaultSettingsDraft.providers);
-      const provider = { kind, id: `http-${kind}`, enabled: true, label: "Local HTTP", location: "local", endpoint: "http://127.0.0.1:9000/proxy/v1", model: "local-model", authentication: "none", ...extra };
+      const provider = {
+        kind,
+        id: `http-${kind}`,
+        enabled: true,
+        label: "Local HTTP",
+        location: "local",
+        endpoint: "http://127.0.0.1:9000/proxy/v1",
+        model: "local-model",
+        authentication: "none",
+        ...extra,
+      };
       const parsed = modelProvidersSettingsSchema.parse({ ...settings, providers: [provider] });
-      if (parsed.providers[0]?.kind === "cloud-tts") expect(parsed.providers[0].responseFormat).toBe("wav");
+      if (parsed.providers[0]?.kind === "cloud-tts")
+        expect(parsed.providers[0].responseFormat).toBe("wav");
       if (kind === "cloud-tts") {
-        expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, responseFormat: "pcm" }] })).not.toThrow();
-        expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, responseFormat: "mp3" }] })).toThrow();
+        expect(() =>
+          modelProvidersSettingsSchema.parse({
+            ...settings,
+            providers: [{ ...provider, responseFormat: "pcm" }],
+          }),
+        ).not.toThrow();
+        expect(() =>
+          modelProvidersSettingsSchema.parse({
+            ...settings,
+            providers: [{ ...provider, responseFormat: "mp3" }],
+          }),
+        ).toThrow();
       }
-      expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, endpoint: "http://public.example/v1" }] })).toThrow();
-      expect(() => modelProvidersSettingsSchema.parse({ ...settings, providers: [{ ...provider, endpoint: "http://token@localhost/v1" }] })).toThrow();
+      expect(() =>
+        modelProvidersSettingsSchema.parse({
+          ...settings,
+          providers: [{ ...provider, endpoint: "http://public.example/v1" }],
+        }),
+      ).toThrow();
+      expect(() =>
+        modelProvidersSettingsSchema.parse({
+          ...settings,
+          providers: [{ ...provider, endpoint: "http://token@localhost/v1" }],
+        }),
+      ).toThrow();
     }
   });
 });

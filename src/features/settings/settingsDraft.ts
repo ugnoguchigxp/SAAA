@@ -30,7 +30,10 @@ export type SettingsDraft = {
   situation: SituationSettings;
 };
 
-export function draftFromDocuments(documents: SettingsDocument[], fallback: SettingsDraft): SettingsDraft {
+export function draftFromDocuments(
+  documents: SettingsDocument[],
+  fallback: SettingsDraft,
+): SettingsDraft {
   const find = (namespace: SettingsNamespace, key: "default" | "codex-sdk") =>
     findSettingsDocument(documents, namespace, key)?.valueJson;
   const model = find("providers.model", "default");
@@ -58,7 +61,9 @@ export function draftFromDocuments(documents: SettingsDocument[], fallback: Sett
   };
 }
 
-export function documentsFromDraft(draft: SettingsDraft): Array<Omit<SettingsDocument, "updatedAt">> {
+export function documentsFromDraft(
+  draft: SettingsDraft,
+): Array<Omit<SettingsDocument, "updatedAt">> {
   return [
     document("providers.model", "default", draft.providers),
     document("providers.agent", "codex-sdk", {
@@ -84,8 +89,13 @@ export function reconcileSavedDraft(
     : current;
 }
 
-export function credentialCleanupProviderIds(source: SettingsDraft, draft: SettingsDraft): string[] {
-  const nextProviders = new Map(draft.providers.providers.map((provider) => [provider.id, provider]));
+export function credentialCleanupProviderIds(
+  source: SettingsDraft,
+  draft: SettingsDraft,
+): string[] {
+  const nextProviders = new Map(
+    draft.providers.providers.map((provider) => [provider.id, provider]),
+  );
   return source.providers.providers.flatMap((provider) => {
     if (!("authentication" in provider)) return [];
     const next = nextProviders.get(provider.id);
@@ -95,6 +105,10 @@ export function credentialCleanupProviderIds(source: SettingsDraft, draft: Setti
   });
 }
 
-function document(namespace: SettingsNamespace, key: "default" | "codex-sdk", valueJson: Record<string, unknown>): Omit<SettingsDocument, "updatedAt"> {
+function document(
+  namespace: SettingsNamespace,
+  key: "default" | "codex-sdk",
+  valueJson: Record<string, unknown>,
+): Omit<SettingsDocument, "updatedAt"> {
   return { namespace, key, schemaVersion: 14, valueJson };
 }

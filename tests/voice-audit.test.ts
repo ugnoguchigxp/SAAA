@@ -33,7 +33,9 @@ describe("voice audit projections", () => {
     settle(true);
     settle(false);
     expect(settled).toBe(false);
-    const names = invokeCalls.map((call) => (call.args as { input?: { eventName?: string; failureCode?: string } })?.input);
+    const names = invokeCalls.map(
+      (call) => (call.args as { input?: { eventName?: string; failureCode?: string } })?.input,
+    );
     expect(names.some((event) => event?.eventName === "capture-started")).toBe(true);
     expect(names.some((event) => event?.failureCode === "permission-denied")).toBe(true);
     expect(names.some((event) => event?.failureCode === "asr-provider-unavailable")).toBe(true);

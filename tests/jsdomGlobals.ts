@@ -1,8 +1,17 @@
 import { JSDOM } from "jsdom";
 
-const names = ["window", "document", "navigator", "HTMLElement", "Event", "IS_REACT_ACT_ENVIRONMENT"] as const;
+const names = [
+  "window",
+  "document",
+  "navigator",
+  "HTMLElement",
+  "Event",
+  "IS_REACT_ACT_ENVIRONMENT",
+] as const;
 
-export function installJsdom(html = "<!doctype html><html><body><div id='root'></div></body></html>") {
+export function installJsdom(
+  html = "<!doctype html><html><body><div id='root'></div></body></html>",
+) {
   const dom = new JSDOM(html, { url: "http://localhost" });
   const previous = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
   const values: unknown[] = [
@@ -14,7 +23,11 @@ export function installJsdom(html = "<!doctype html><html><body><div id='root'><
     true,
   ];
   names.forEach((name, index) => {
-    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: values[index] });
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      writable: true,
+      value: values[index],
+    });
   });
   return {
     dom,

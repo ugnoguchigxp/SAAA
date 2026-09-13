@@ -4,6 +4,11 @@ Situation-Aware Ambient Agent Runtime
 
 English | [日本語](README.ja.md)
 
+**MIT · MVP in development · Primarily verified on macOS**
+
+[Get started](#run-locally) · [Contribute](CONTRIBUTING.md) · [Get help](SUPPORT.md) · [Security](SECURITY.md) · [License](LICENSE)
+
+
 SAAA is a local-first AI runtime that brings conversation, voice, meeting transcription, and work-context observation into one desktop application. It is built with React and Tauri, and stores conversations and settings in a local SQLite database. Model traffic can be routed to a local LLM server on a private network, an OpenAI-compatible API, or the feature-gated LARM provider.
 
 The long-term goal is a resident runtime that does more than answer prompts: it should decide whether to assist at all, based on the user's current situation. The implementation has not reached that goal yet. Situation observation currently runs only in an evaluation-oriented shadow mode and never operates applications or sends notifications automatically.
@@ -23,34 +28,34 @@ Normal development and offline verification are available. Production use throug
 | Situation | Classify the foreground application, input activity, and SAAA's own state; record and replay intervention decisions | Disabled by default; never starts a model, notification, TTS, Meeting, or application action automatically |
 | Settings | Manage model routes, voice, Situation, and privacy settings | Credentials are never stored in Settings or SQLite |
 
-Voice chat and Meeting transcription use a local ASR server on the LAN. ASR is the service that converts speech to text. The current Meeting implementation captures the microphone only. System audio, translation, and a floating overlay are not available.
+Voice chat and Meeting transcription use the configured harness ASR service or an individual ASR provider. Text-only use does not require ASR or voice enrollment. ASR is the service that converts speech to text. The current Meeting implementation captures the microphone only. System audio, translation, and a floating overlay are not available.
 
 ## Requirements
 
-- [Bun](https://bun.sh/)
-- Rust toolchain
-- The Tauri 2 build prerequisites for the target OS
+- [Bun](https://bun.sh/) 1.3.14, pinned in `package.json`
+- Rust 1.92.0 with rustfmt and Clippy, selected by `rust-toolchain.toml`
+- The Tauri 2 build prerequisites for the target OS (on macOS, install Xcode Command Line Tools with `xcode-select --install`)
 - To use the local conversation route, a local LLM server reachable over the private network and a `LARM_API_TOKEN`
-- For voice input or Meeting, a local ASR server reachable from SAAA
+- For voice input or Meeting, access to the configured ASR service
 
 macOS is the primary verification target. System TTS is implemented for macOS, Linux, and Windows, but Situation foreground/input signals depend on macOS facilities.
 
 ## Run locally
 
-Install dependencies:
+Start from source. You can configure model and voice connections after opening the application.
 
 ```sh
-bun install
-```
-
-To use the local LLM route, set its token in the same shell and start the desktop application:
-
-```sh
-export LARM_API_TOKEN="<token>"
+git clone https://github.com/ugnoguchigxp/SAAA.git
+cd SAAA
+bun install --frozen-lockfile
 bun start
 ```
 
-After the application opens, configure and enable the local LLM provider under Settings → Model Providers. Enter only its hostname or private IP. SAAA obtains the connection details and model name from the server and does not persist them in Settings. No machine-specific endpoint or model is enabled by default.
+1. Add a model connection in Settings, check connectivity, and select it for conversation. OpenAI-compatible API keys can be registered in Settings.
+2. Send a short text message in Chat to verify a response.
+3. Only if you want voice input, configure ASR, the input device, and microphone permission. The speaker filter is optional.
+
+For the local LLM connection API, set `LARM_API_TOKEN` in the same shell before starting; see the connection instructions below. `bun run dev` starts the frontend development server. Use `bun start` to exercise desktop IPC and audio.
 
 ## Configure model connections
 
@@ -99,11 +104,15 @@ This filter applies to both Voice chat and Meeting transcription. It is a transc
 Use these commands for the normal pre-change and post-change checks:
 
 ```sh
-bun run check
-bun run build
+bun run check:local
+bun run test:rust-packages
+bun run spec:check
 bun run desktop:smoke
 ```
 
+- `bun run check:local` runs oxfmt checks and oxlint before the existing `check` command.
+- `bun run test:rust-packages` tests the standalone Rust crates and service.
+- `bun run spec:check` checks specification structure and formatting.
 - `bun run check` verifies module size, generated files, types, Rust formatting and Clippy, and both frontend and Rust tests.
 - `bun run test:coverage` writes local HTML/LCOV reports under `coverage/`. It is optional and is not part of `bun run check`.
 - `bun run build` type-checks TypeScript and creates a production frontend build.
@@ -168,6 +177,17 @@ spec/docs/       design documents, ADRs, runbooks, and release evidence
 - [Situation Privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html)
 - [Input Activity Privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html)
 
+## Contributing
+
+Reproduction steps, documentation and translation fixes, and regression tests are welcome. For substantial behavior changes, open an issue describing the problem and a concrete use case before implementation.
+
+- [CONTRIBUTING](CONTRIBUTING.md): local checks, generated files, and pull requests
+- [SUPPORT](SUPPORT.md): troubleshooting and useful report details, in English and Japanese
+- [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md): community expectations
+- [SECURITY](SECURITY.md): handling vulnerability reports; a private reporting contact is still pending
+
 ## License
 
 SAAA is available under the [MIT License](LICENSE). Bundled speaker-verification components keep their own terms; see [THIRD_PARTY_NOTICES](src-tauri/resources/voice/THIRD_PARTY_NOTICES.md).
+
+See the [third-party license guide](THIRD_PARTY_NOTICES.md) for dependency and model notices.

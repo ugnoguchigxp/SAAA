@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { VoiceActivityDetector } from "../src/lib/voiceActivity";
 
 const sampleRate = 1_000;
-const frame = (milliseconds: number, amplitude: number) => Float32Array.from({ length: milliseconds }, (_, index) => amplitude * (index % 2 === 0 ? 1 : -1));
+const frame = (milliseconds: number, amplitude: number) =>
+  Float32Array.from({ length: milliseconds }, (_, index) => amplitude * (index % 2 === 0 ? 1 : -1));
 describe("voice activity endpointing", () => {
   test("never finalizes from silence before speech", () => {
     const detector = new VoiceActivityDetector({ sampleRate });

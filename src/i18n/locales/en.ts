@@ -1,3 +1,4 @@
+import { errors } from "./enErrors";
 import { uiEnglish } from "../../features/chat/ui/translations";
 export const en = {
   genui: uiEnglish,
@@ -55,6 +56,15 @@ export const en = {
     surfaceSwitchBlocked: "Stop the current operation before switching surfaces.",
   },
   chat: {
+    setup: {
+      provider: "Choose a provider in Settings to start a conversation.",
+      connection: "Test the provider connection in Settings before starting.",
+      asr: "Configure speech recognition in Settings to use voice input.",
+      speaker:
+        "Register your voice in Settings to use the target-speaker filter. Voice input is optional.",
+      ready: "You can start a text conversation. Voice input is optional.",
+      openSettings: "Open Settings",
+    },
     eyebrow: "CONTINUOUS CONVERSATION",
     title: "Conversation with SAAA",
     cloudProcessing: "Cloud processing",
@@ -86,7 +96,8 @@ export const en = {
     micPause: "Pause always-on listening",
     micRetry: "Retry always-on listening",
     micResumeAfterMeeting: "Always-on listening will resume after the meeting ends",
-    listeningHint: "Always-on listening is active. Your speech is sent automatically after {{seconds}} seconds of silence.",
+    listeningHint:
+      "Always-on listening is active. Your speech is sent automatically after {{seconds}} seconds of silence.",
     pausedHint: "Always-on listening is paused.",
     speakingHint: "Listening is paused during speech playback and resumes automatically afterward.",
     stopSpeech: "Stop speaking",
@@ -118,11 +129,23 @@ export const en = {
   meeting: {
     eyebrow: "EXPLICIT MEETING MODE",
     title: "Meeting",
-    states: { idle: "Idle", preflight: "Preparing", ready: "Ready", active: "Active", paused: "Paused", stopping: "Stopping", completed: "Completed", failed: "Failed" },
+    states: {
+      idle: "Idle",
+      preflight: "Preparing",
+      ready: "Ready",
+      active: "Active",
+      paused: "Paused",
+      stopping: "Stopping",
+      completed: "Completed",
+      failed: "Failed",
+    },
     microphone: "Microphone",
     systemAudioUnavailable: "System audio: Unavailable in this build",
     sttRoute: "STT: ASR selected in Voice settings",
-    transcriptionScopes: { "all-speakers": "Speaker filter: all speakers", "target-speaker": "Speaker filter: enrolled speaker only" },
+    transcriptionScopes: {
+      "all-speakers": "Speaker filter: all speakers",
+      "target-speaker": "Speaker filter: enrolled speaker only",
+    },
     elapsed: "Elapsed {{time}} · Persistence: discarded unless you explicitly save after stopping.",
     starting: "Starting…",
     start: "Start meeting",
@@ -145,7 +168,8 @@ export const en = {
     confirmSave: "Confirm save",
     discardAria: "Discard transcript confirmation",
     discardTitle: "Discard this transcript?",
-    discardDescription: "{{count}} transcript entries and their language metadata will not be saved. This cannot be undone.",
+    discardDescription:
+      "{{count}} transcript entries and their language metadata will not be saved. This cannot be undone.",
     confirmDiscard: "Confirm discard",
     discardFailed: "Discard failed session",
     final: "final",
@@ -156,12 +180,14 @@ export const en = {
       stopped: "Capture stopped",
     },
     emptyTitle: "Explicit capture only.",
-    emptyDescription: "Start controls the microphone. When the enrolled-speaker filter is enabled, each segment is checked on-device before accepted audio is sent to ASR. Audio is never saved unless you choose Save after Stop. Simultaneous speakers are not separated.",
+    emptyDescription:
+      "Start controls the microphone. When the enrolled-speaker filter is enabled, each segment is checked on-device before accepted audio is sent to ASR. Audio is never saved unless you choose Save after Stop. Simultaneous speakers are not separated.",
   },
   audit: {
     eyebrow: "LOCAL HISTORY",
     title: "Audit log",
-    description: "Read-only structured events retained in SQLite for the last seven days. Message content, audio, and credentials are never included.",
+    description:
+      "Read-only structured events retained in SQLite for the last seven days. Message content, audio, and credentials are never included.",
     refresh: "Refresh",
     loading: "Loading…",
     loadFailed: "Could not load the audit log.",
@@ -196,10 +222,12 @@ export const en = {
   settings: {
     eyebrow: "SETTINGS",
     title: "Service & voice settings",
-    description: "Use the Harness as your base and switch only the services you need to individual providers.",
+    description:
+      "Use the Harness as your base and switch only the services you need to individual providers.",
     sectionsLabel: "Settings sections",
     unsaved: "Unsaved changes",
-    savedWithCleanupFailure: "Settings were saved, but {{count}} unused API keys could not be removed from Keychain.",
+    savedWithCleanupFailure:
+      "Settings were saved, but {{count}} unused API keys could not be removed from Keychain.",
     savedAt: "Saved to SQLite · {{time}}",
     pendingRuntime: "Changes have not been applied to the Runtime yet.",
     showingSaved: "Showing the saved Runtime settings.",
@@ -210,15 +238,19 @@ export const en = {
       general: { label: "General", detail: "Language, regional formats, and identity" },
       connection: { label: "Service connection", detail: "Harness and service sources" },
       providers: {
-      location: "Location",
-      audioFormat: "Audio format", label: "Individual services", detail: "Cloud LLM, ASR and TTS" },
+        location: "Location",
+        audioFormat: "Audio format",
+        label: "Individual services",
+        detail: "Cloud LLM, ASR and TTS",
+      },
       voice: { label: "Voice & devices", detail: "Always-on listening and audio" },
       situation: { label: "Situation", detail: "Shadow observation controls" },
       security: { label: "Privacy & Security", detail: "Local-first controls" },
     },
     general: {
       regionalPreferences: "Language & regional formats",
-      regionalPreferencesDescription: "These preferences are stored locally and used as the default for display and formatting.",
+      regionalPreferencesDescription:
+        "These preferences are stored locally and used as the default for display and formatting.",
       displayLanguage: "Display language",
       systemLanguage: "System language",
       timeZone: "Time zone",
@@ -245,7 +277,8 @@ export const en = {
     },
     situation: {
       title: "Situation Shadow Mode",
-      description: "Only candidates are recorded. Models, TTS, notifications, and external actions never run automatically.",
+      description:
+        "Only candidates are recorded. Models, TTS, notifications, and external actions never run automatically.",
       sampling: "Sampling",
       calendar: "Calendar",
       retention: "Retention",
@@ -255,7 +288,8 @@ export const en = {
     },
     security: {
       credentials: "Credentials",
-      credentialsDescription: "API keys are stored in macOS Keychain. Values are never shown again or included in SQLite, backups, or diagnostics.",
+      credentialsDescription:
+        "API keys are stored in macOS Keychain. Values are never shown again or included in SQLite, backups, or diagnostics.",
       runtimePolicy: "Runtime policy",
       noCloudFallback: "Do not implicitly select a cloud fallback from a local primary",
       diagnosticsRedaction: "Diagnostics redaction (always on)",
@@ -268,7 +302,8 @@ export const en = {
     connection: {
       eyebrow: "PRIMARY CONNECTION",
       title: "Agent Connection / Provider Harness",
-      description: "Port 9810 validates an Agent Connection directly and uses the WebSocket advertised by its claim. Local-LAN connections work without authentication; Bearer authentication is used only when LARM_API_TOKEN is set. Other addresses resolve services through the Harness.",
+      description:
+        "Port 9810 validates an Agent Connection directly and uses the WebSocket advertised by its claim. Local-LAN connections work without authentication; Bearer authentication is used only when LARM_API_TOKEN is set. Other addresses resolve services through the Harness.",
       resolving: "Resolving…",
       harnessAddress: "Harness address",
       providerDefault: "Omit (HTTP provider default)",
@@ -276,19 +311,24 @@ export const en = {
       llmTimeoutSeconds: "LLM timeout (seconds)",
       llmTimeoutHint: "1–3600 seconds. New settings default to 1800 seconds.",
       llmTimeoutInvalid: "Enter a value from 1 to 3600 seconds.",
-      llmTimeoutLegacyLimit: "This Legacy Dynamic LAN connection is limited to 269.999 seconds. Update the Harness or LARM to use 1800 seconds.",
+      llmTimeoutLegacyLimit:
+        "This Legacy Dynamic LAN connection is limited to 269.999 seconds. Update the Harness or LARM to use 1800 seconds.",
       low: "Low",
       medium: "Medium (recommended)",
       extraHigh: "Extra high",
       resolvedAll: "Resolved LLM, ASR, and TTS.",
       resolvedPartial: "Only some services were resolved.",
       agentConnectionReady: "Agent Connection claim and LLM health checks succeeded.",
-      resolutionHint: "The connection check validates the Agent Connection claim and health. Authentication is optional.",
+      resolutionHint:
+        "The connection check validates the Agent Connection claim and health. Authentication is optional.",
       resolveServices: "Check connection",
-      agentConnectionTokenInvalid: "The configured LARM_API_TOKEN is invalid or was rejected by Agent Connection. Remove the environment variable to use anonymous local-LAN access.",
-      agentConnectionAuthorizationRejected: "Agent Connection rejected the request. Allow anonymous local-LAN access or configure a valid LARM_API_TOKEN.",
+      agentConnectionTokenInvalid:
+        "The configured LARM_API_TOKEN is invalid or was rejected by Agent Connection. Remove the environment variable to use anonymous local-LAN access.",
+      agentConnectionAuthorizationRejected:
+        "Agent Connection rejected the request. Allow anonymous local-LAN access or configure a valid LARM_API_TOKEN.",
       sourcesTitle: "Service sources",
-      sourcesDescription: "Choose the Harness or an individual provider for each of LLM, ASR, and TTS. No implicit switching occurs.",
+      sourcesDescription:
+        "Choose the Harness or an individual provider for each of LLM, ASR, and TTS. No implicit switching occurs.",
       resolveAfterSave: "Save the Harness to resolve",
       registerProvider: "Register an individual provider",
       source: "Source",
@@ -301,7 +341,8 @@ export const en = {
     providers: {
       eyebrow: "INDIVIDUAL SERVICES",
       title: "Individual Provider catalog",
-      description: "Register services that do not use the Harness. API keys are stored in macOS Keychain and excluded from settings, SQLite, and diagnostics.",
+      description:
+        "Register services that do not use the Harness. API keys are stored in macOS Keychain and excluded from settings, SQLite, and diagnostics.",
       stableId: "Provider IDs cannot be changed after creation.",
       defaultName: "Cloud {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "System voice" },
@@ -348,7 +389,8 @@ export const en = {
   voice: {
     eyebrow: "ALWAYS-ON VOICE",
     alwaysOnTitle: "Always-on listening",
-    alwaysOnDescription: "While recording, audio chunks are sent to ASR in order and the transcript updates continuously. Local VAD uses silence only to finalize the utterance and submit it to the LLM once.",
+    alwaysOnDescription:
+      "While recording, audio chunks are sent to ASR in order and the transcript updates continuously. Local VAD uses silence only to finalize the utterance and submit it to the LLM once.",
     listening: "Listening",
     status: {
       disabled: "Off (enable to grant access)",
@@ -364,7 +406,8 @@ export const en = {
     activation: "Activation",
     automatic: "Automatic",
     localVad: "Local VAD",
-    permissionHelp: "SAAA asks for macOS microphone permission only when you enable this switch or press the microphone button. Listening pauses during meetings and response playback, then resumes automatically.",
+    permissionHelp:
+      "SAAA asks for macOS microphone permission only when you enable this switch or press the microphone button. Listening pauses during meetings and response playback, then resumes automatically.",
     audioDevices: "Audio devices",
     inputDevice: "Input device",
     unavailableDevice: "Previously selected (unavailable)",
@@ -378,14 +421,16 @@ export const en = {
     highSensitivity: "High · quiet speech",
     silenceTimeout: "Silence timeout (ms)",
     languages: "Languages",
-    languagesHelp: "ASR detects the language automatically. Audio in unselected or undetectable languages is not sent to conversations or meeting notes.",
+    languagesHelp:
+      "ASR detects the language automatically. Audio in unselected or undetectable languages is not sent to conversations or meeting notes.",
     languagesAria: "Allowed languages",
     autoSpeak: "Play responses as speech",
     profile: {
       title: "My voice profile",
       loadingRuntime: "Loading local speaker verification…",
       status: { empty: "Empty", collecting: "Collecting", ready: "Ready" },
-      description: "On-device speaker verification that allows only your enrolled voice through to transcription.",
+      description:
+        "On-device speaker verification that allows only your enrolled voice through to transcription.",
       sampleProgress: "{{current}} / {{target}} samples",
       durationProgress: "{{current}} / {{minimum}} sec minimum",
       prepareMic: "Preparing microphone…",
@@ -393,15 +438,18 @@ export const en = {
       stopAndSave: "Stop recording and save",
       recordSample: "Record sample",
       recordingUntilAutoStop: "Recording… keep reading until it stops automatically",
-      recordingGuidance: "You do not need to finish the whole passage. Keep reading in your natural voice without a long pause until recording stops automatically. Recording lasts at least {{seconds}} seconds.",
+      recordingGuidance:
+        "You do not need to finish the whole passage. Keep reading in your natural voice without a long pause until recording stops automatically. Recording lasts at least {{seconds}} seconds.",
       inputLevel: "Input level",
       blocked: "Stop conversation recording, speech playback, or the meeting before enrolling.",
       sample: "Sample {{number}} · {{duration}} sec · AEC {{aec}}",
       onlyMyVoice: "Limit transcription to my voice (do not send when verification is unavailable)",
       transcriptionScope: "Transcription scope",
       allVoices: "Transcribe every captured voice, regardless of speaker",
-      storage: "Audio files and speaker embeddings are stored unencrypted in the app data directory on this device and are never sent to the cloud.",
-      limitation: "This feature filters transcription input; it is not identity authentication and cannot detect recordings or synthetic speech.",
+      storage:
+        "Audio files and speaker embeddings are stored unencrypted in the app data directory on this device and are never sent to the cloud.",
+      limitation:
+        "This feature filters transcription input; it is not identity authentication and cannot detect recordings or synthetic speech.",
       deleteProfile: "Delete entire voice profile",
       noAudio: "No audio was recorded.",
       sampleSaved: "Sample {{current}}/{{target}} was saved.",
@@ -412,7 +460,8 @@ export const en = {
       prompts: {
         one: "Today I am speaking in my calm, natural voice, noticing the quiet morning air, the light by the window, and the sounds around me. When I open the window, a soft breeze comes in, and I can hear a distant train and birds singing in the garden. As I picture the day ahead, I continue reading naturally without stopping halfway through the passage.",
         two: "Would you like to meet at the small café by the station next Tuesday at two thirty in the afternoon? If you cannot find it, please call without worrying. Leave through the east exit, cross the street, and turn right at the flower shop to find a blue sign. If it rains, let us meet at exit seven of the underground passage. I will leave with a little extra time.",
-        three: "I am truly happy that the new project was approved! Preparing it was difficult, but if everyone works together, I am sure we can move it forward. What began as a small idea became more concrete with every discussion, and now we can finally take the next step. We will check everything carefully without rushing and carry it through with a positive attitude.",
+        three:
+          "I am truly happy that the new project was approved! Preparing it was difficult, but if everyone works together, I am sure we can move it forward. What began as a small idea became more concrete with every discussion, and now we can finally take the next step. We will check everything carefully without rushing and carry it through with a positive attitude.",
         four: "I picture a red balloon, a blue bicycle, and a white cloud in that order. I also say the numbers seven, one hundred, and one thousand smoothly while separating them clearly. After setting cold milk, hot tea, and freshly baked bread on the breakfast table, the whole family talks about today's plans. We will leave at nine fifteen in the morning and arrive by twelve thirty.",
         five: "Turn right at the intersection, pass the third traffic light, and you will find a quiet park. If you listen closely, you can hear distant birds and the flow of the river. Walk slowly up the hill, and beyond the old clock tower you will see a wide lawn and a small fountain. Rest on a shaded bench, take a deep breath, and return along a narrow path different from the one you came on.",
       },
@@ -427,7 +476,8 @@ export const en = {
     pauseObservation: "Pause observation",
     enableObservation: "Enable observation",
     noAutomaticActions: "No automatic actions",
-    safetyDetail: "Execution NONE · Presentation SILENT · Model/TTS/Notification/Application actions disabled",
+    safetyDetail:
+      "Execution NONE · Presentation SILENT · Model/TTS/Notification/Application actions disabled",
     overview: "Overview",
     review: "Review",
     currentScene: "CURRENT STABLE SCENE",
@@ -437,7 +487,12 @@ export const en = {
     observationPaused: "observation paused",
     rule: "rule {{version}}",
     shadowDecision: "Shadow decision",
-    attention: { IGNORE: "Stay silent", OBSERVE: "Would observe", SUGGEST: "Would suggest", RESPOND: "Would respond" },
+    attention: {
+      IGNORE: "Stay silent",
+      OBSERVE: "Would observe",
+      SUGGEST: "Would suggest",
+      RESPOND: "Would respond",
+    },
     evidenceTitle: "Evidence",
     attentionValue: "Attention: {{value}}",
     noEvidence: "There are not enough fresh signals to decide. The safe default is maintained.",
@@ -450,11 +505,14 @@ export const en = {
     microphone: "Microphone",
     audio: "Audio",
     calendar: "Calendar",
-    privacy: "Raw application identity, window titles, calendar details, audio content, and exact input idle times are not stored.",
+    privacy:
+      "Raw application identity, window titles, calendar details, audio content, and exact input idle times are not stored.",
     ledger: "Evaluation ledger",
-    ledgerSummary: "{{total}} bounded entries · {{accurate}} accurate · {{inaccurate}} inaccurate · {{unsure}} unsure",
+    ledgerSummary:
+      "{{total}} bounded entries · {{accurate}} accurate · {{inaccurate}} inaccurate · {{unsure}} unsure",
     clearHistory: "Clear history",
-    emptyHistory: "Enabling monitoring stores transitions, decision changes, and bounded heartbeats here.",
+    emptyHistory:
+      "Enabling monitoring stores transitions, decision changes, and bounded heartbeats here.",
     safeDefault: "Safe default",
     evaluateAria: "Evaluate {{scene}}",
     accurate: "Accurate",
@@ -505,9 +563,12 @@ export const en = {
       unknown: "Unknown app",
     },
     entryKinds: { transition: "Transition", decision: "Decision", heartbeat: "Heartbeat" },
-    feedbackReasonPrompt: "Reason code: wrong-scene, stale-signal, unstable-transition, unwanted-suggestion, missed-meeting-candidate, insufficient-evidence",
-    correctedScenePrompt: "Corrected scene (optional): CONVERSATION, MEETING, CODING, WRITING, MEDIA, FOCUS, SOLO, UNKNOWN",
-    confirmClear: "Situation ledger, feedback, quality windows, and calibration runs will be deleted. Active profiles, conversations, and Settings are kept.",
+    feedbackReasonPrompt:
+      "Reason code: wrong-scene, stale-signal, unstable-transition, unwanted-suggestion, missed-meeting-candidate, insufficient-evidence",
+    correctedScenePrompt:
+      "Corrected scene (optional): CONVERSATION, MEETING, CODING, WRITING, MEDIA, FOCUS, SOLO, UNKNOWN",
+    confirmClear:
+      "Situation ledger, feedback, quality windows, and calibration runs will be deleted. Active profiles, conversations, and Settings are kept.",
     evidence: {
       explicitUserInput: "Explicit user input",
       modelRunActive: "Conversation generation is active",
@@ -535,7 +596,8 @@ export const en = {
     pendingFeedback: "Pending feedback",
     flappingRate: "Flapping rate",
     staleSignalRate: "Stale signal rate",
-    insufficientRates: "Insufficient data: rates remain unavailable until 20 samples are persisted.",
+    insufficientRates:
+      "Insufficient data: rates remain unavailable until 20 samples are persisted.",
     createTitle: "Create candidate",
     classificationConfidence: "Classification confidence",
     lowConfidenceMaximum: "Low-confidence maximum",
@@ -545,7 +607,8 @@ export const en = {
     inputActiveMax: "Input active max (ms)",
     inputRecentMax: "Input recent max (ms)",
     inputOrderError: "Input active maximum must be lower than input recent maximum.",
-    rangeError: "Check every threshold range. Low-confidence maximum must remain lower than classification confidence.",
+    rangeError:
+      "Check every threshold range. Low-confidence maximum must remain lower than classification confidence.",
     creating: "Creating…",
     create: "Create candidate",
     history: "Profile history",
@@ -564,7 +627,13 @@ export const en = {
     baselineAttention: "Baseline attention",
     unreadableMetrics: "Replay did not produce readable comparison metrics.",
     insufficientData: "Insufficient data",
-    status: { candidate: "Candidate", active: "Active", rejected: "Rejected", superseded: "Superseded", "rolled-back": "Rolled back" },
+    status: {
+      candidate: "Candidate",
+      active: "Active",
+      rejected: "Rejected",
+      superseded: "Superseded",
+      "rolled-back": "Rolled back",
+    },
     reasons: {
       "wrong-scene": "Wrong scene",
       "stale-signal": "Stale signal",
@@ -574,65 +643,37 @@ export const en = {
       "insufficient-evidence": "Insufficient evidence",
     },
   },
-  errors: {
-    app: {
-    conversationActive: "Processing response",
-    conversationIdle: "Ready for a message",
-      primaryConversationUnavailable: "The main conversation is unavailable. Restart SAAA and try again.",
-      operationFailed: "SAAA could not complete that operation. Try again.",
-    },
-    chat: {
-      voiceBlockedDuringMeeting: "Always-on listening is unavailable while a meeting is active or paused.",
-      voiceSettingsUnavailable: "Voice settings are unavailable.",
-      recordedAudioUnavailable: "Recorded audio is unavailable. Try again.",
-      voiceQueueFull: "Voice processing is busy, so the latest utterance was not sent.",
-      voicePendingLimit: "Too many voice requests are waiting. The latest utterance was not sent.",
-      speechPlaybackFailed: "Speech playback could not be completed. Try again.",
-      microphoneResumeFailed: "Always-on listening could not resume. Try the microphone button again.",
-      voiceCaptureInitializationFailed: "Voice capture could not start. Try the microphone button again.",
-      voiceAsrUnavailable: "The speech-recognition service is unavailable. Check the connection settings, then try the microphone button again.",
-      voiceSessionConflict: "The previous voice session could not be closed. Restart SAAA and try again.",
-      voiceTargetSpeakerModeUnavailable: "Target-speaker filtering is not yet available for always-on listening. Turn it off in Voice settings and try again.",
-      operationFailed: "The conversation operation could not be completed. Try again.",
-    },
-    meeting: {
-      transcriptionBackpressure: "Meeting transcription cannot keep up. Capture was paused; no queued audio was removed.",
-      captureInactive: "Meeting capture is no longer active.",
-      voiceSettingsUnavailable: "Voice settings are unavailable.",
-      startFailed: "The meeting could not start. Check the microphone and ASR settings, then try again.",
-      runtimeFailure: "The meeting runtime reported a failure. Check the meeting settings and try again.",
-      operationFailed: "The meeting operation could not be completed. Try again.",
-    },
-    settings: {
-      agentSessionEventStreamMissing: "Session creation succeeded, but no supported event stream endpoint was returned. Check the provider's SSE or WebSocket contract.",
-      operationFailed: "The setting could not be updated. Check the values and try again.",
-    },
-    situation: { operationFailed: "Situation could not complete that operation. Try again." },
-    voice: {
-      targetSpeakerRejected: "The voice could not be confirmed as the enrolled speaker, so it was not transcribed.",
-      asrLanguageNotAllowed: "The detected language is not allowed, so the utterance was not sent.",
-      asrLanguageUnknown: "The spoken language could not be identified, so the utterance was not sent.",
-      asrNoSpeech: "No speech was detected, so nothing was sent.",
-      samplePlaybackFailed: "The voice sample could not be played.",
-      microphoneStartupTimedOut: "Microphone startup timed out. Try again.",
-      audioProcessorStartupTimedOut: "Audio processing could not start. Try again.",
-      operationFailed: "The voice operation could not be completed. Try again.",
-    },
-    microphone: {
-      secureContextRequired: "Microphone capture requires the SAAA desktop app or a secure local connection.",
-      captureUnavailable: "Microphone capture is unavailable in this SAAA build.",
-      deviceListUnavailable: "Microphone device listing is unavailable in this SAAA build.",
-      permissionDenied: "Microphone access was denied. Allow SAAA in system privacy settings, then try again.",
-      securityBlocked: "Microphone capture is blocked by the current app or WebView security policy.",
-      deviceNotFound: "No microphone was found. Connect or enable one, then try again.",
-      deviceUnavailable: "The microphone could not be opened. Close other apps using it or reconnect it, then try again.",
-      deviceSelectionInvalid: "The selected microphone is unavailable. Choose System default in Settings, then try again.",
-      startupInterrupted: "Microphone startup was interrupted. Try again.",
-      processingCouldNotStart: "Microphone audio processing could not start. Try again.",
-      processingDidNotStart: "Microphone audio processing did not start. Try again.",
-    },
-  },
+  errors,
   asrLanguages: {
-    ja: "Japanese", en: "English", zh: "Chinese", yue: "Cantonese", ko: "Korean", ar: "Arabic", de: "German", fr: "French", es: "Spanish", pt: "Portuguese", id: "Indonesian", it: "Italian", ru: "Russian", th: "Thai", vi: "Vietnamese", tr: "Turkish", hi: "Hindi", ms: "Malay", nl: "Dutch", sv: "Swedish", da: "Danish", fi: "Finnish", pl: "Polish", cs: "Czech", fil: "Filipino", fa: "Persian", el: "Greek", ro: "Romanian", hu: "Hungarian", mk: "Macedonian",
+    ja: "Japanese",
+    en: "English",
+    zh: "Chinese",
+    yue: "Cantonese",
+    ko: "Korean",
+    ar: "Arabic",
+    de: "German",
+    fr: "French",
+    es: "Spanish",
+    pt: "Portuguese",
+    id: "Indonesian",
+    it: "Italian",
+    ru: "Russian",
+    th: "Thai",
+    vi: "Vietnamese",
+    tr: "Turkish",
+    hi: "Hindi",
+    ms: "Malay",
+    nl: "Dutch",
+    sv: "Swedish",
+    da: "Danish",
+    fi: "Finnish",
+    pl: "Polish",
+    cs: "Czech",
+    fil: "Filipino",
+    fa: "Persian",
+    el: "Greek",
+    ro: "Romanian",
+    hu: "Hungarian",
+    mk: "Macedonian",
   },
 } as const;

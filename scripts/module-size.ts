@@ -13,9 +13,7 @@ const HARD = {
   script: 1_000,
 } as const;
 
-const RATCHET_ONLY = new Set([
-  "scripts/larm-readiness.ts",
-]);
+const RATCHET_ONLY = new Set(["scripts/larm-readiness.ts"]);
 
 export type SizeRecord = {
   path: string;
@@ -30,7 +28,8 @@ export type BaselineFile = {
 
 export function walk(directory: string, files: string[] = []): string[] {
   for (const entry of readdirSync(directory)) {
-    if (entry === "node_modules" || entry === "target" || entry === "dist" || entry === ".git") continue;
+    if (entry === "node_modules" || entry === "target" || entry === "dist" || entry === ".git")
+      continue;
     const path = join(directory, entry);
     const stat = lstatSync(path);
     if (stat.isSymbolicLink()) continue;
@@ -46,6 +45,7 @@ function posix(path: string): string {
 
 export function productionLines(content: string, path: string): number {
   if (!path.endsWith(".rs")) return content.split("\n").length;
+  if (/^\s*#!\[cfg\(test\)\]/.test(content)) return 0;
   const matches = [...content.matchAll(/\n#\[cfg\([^\]\n]*\btest\b[^\]\n]*\)\]\s*\nmod tests \{/g)];
   for (const match of matches.reverse()) {
     if (match.index === undefined) continue;
@@ -127,7 +127,12 @@ function rustCharLiteralEnd(content: string, start: number): number | null {
 }
 
 export function collectSizes(): SizeRecord[] {
-  const roots = [join(ROOT, "src"), join(ROOT, "src-tauri/src"), join(ROOT, "tests"), join(ROOT, "scripts")];
+  const roots = [
+    join(ROOT, "src"),
+    join(ROOT, "src-tauri/src"),
+    join(ROOT, "tests"),
+    join(ROOT, "scripts"),
+  ];
   const records: SizeRecord[] = [];
   for (const root of roots) {
     if (!existsSync(root)) continue;
@@ -152,22 +157,30 @@ function hardLimit(record: SizeRecord): number | undefined {
   return undefined;
 }
 
-export function evaluate(records: SizeRecord[], baseline: BaselineFile, requireRegistration = true): string[] {
+export function evaluate(
+  records: SizeRecord[],
+  baseline: BaselineFile,
+  requireRegistration = true,
+): string[] {
   const failures: string[] = [];
   for (const record of records) {
     const previous = baseline.files[record.path];
-    if (!previous && requireRegistration) failures.push(`${record.path}: missing baseline; run bun run size:register`);
+    if (!previous && requireRegistration)
+      failures.push(`${record.path}: missing baseline; run bun run size:register`);
     const measured = record.path.endsWith(".rs") ? record.production : record.total;
     if (previous) {
       const previousMeasured = record.path.endsWith(".rs") ? previous.production : previous.total;
       const ceiling = Math.ceil(previousMeasured * GROWTH);
       if (measured > ceiling) {
-        failures.push(`${record.path}: ${measured} exceeds ratchet ${ceiling} (baseline ${previousMeasured})`);
+        failures.push(
+          `${record.path}: ${measured} exceeds ratchet ${ceiling} (baseline ${previousMeasured})`,
+        );
       }
     }
     const hard = hardLimit(record);
     if (hard !== undefined && measured > hard) {
-      const allowed = previous && (record.path.endsWith(".rs") ? previous.production : previous.total) > hard;
+      const allowed =
+        previous && (record.path.endsWith(".rs") ? previous.production : previous.total) > hard;
       if (!allowed) {
         failures.push(`${record.path}: ${measured} exceeds hard budget ${hard}`);
       }
@@ -176,7 +189,10 @@ export function evaluate(records: SizeRecord[], baseline: BaselineFile, requireR
   if (requireRegistration) {
     const paths = new Set(records.map((record) => record.path));
     for (const path of Object.keys(baseline.files)) {
-      if (!paths.has(path)) failures.push(`${path}: stale baseline; review deletion or transfer its baseline when moving a file`);
+      if (!paths.has(path))
+        failures.push(
+          `${path}: stale baseline; review deletion or transfer its baseline when moving a file`,
+        );
     }
   }
   return failures;

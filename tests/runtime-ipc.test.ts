@@ -1,3 +1,4 @@
+import receiverFixtures from "./fixtures/ipc-receivers.json";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
 import { markReasoningRun } from "../src/lib/reasoningRun";
@@ -46,10 +47,18 @@ const {
   unwatchMeeting,
   watchMeeting,
 } = await import("../src/lib/runtime");
-const { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } = await import("../src/lib/voiceAsrRuntime");
-const { getConversationVoicePolicy, resetConversationVoicePolicy, updateConversationVoicePolicy } = await import("../src/lib/voiceBehaviorRuntime");
+const { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } =
+  await import("../src/lib/voiceAsrRuntime");
+const { getConversationVoicePolicy, resetConversationVoicePolicy, updateConversationVoicePolicy } =
+  await import("../src/lib/voiceBehaviorRuntime");
 const { recordAuditEvent } = await import("../src/lib/auditRuntime");
-const { currentLarmVoice, endLarmVoice, failLarmVoiceSession, ownLarmVoice, prepareLarmVoiceSession } = await import("../src/lib/larmVoiceRuntime");
+const {
+  currentLarmVoice,
+  endLarmVoice,
+  failLarmVoiceSession,
+  ownLarmVoice,
+  prepareLarmVoiceSession,
+} = await import("../src/lib/larmVoiceRuntime");
 const { cancelReasoningRun } = await import("../src/lib/reasoningRunControl");
 const { stageAudioUpload } = await import("../src/lib/audioIpc");
 const { notifyUiHistoryChanged, uiApi } = await import("../src/features/chat/ui/api");
@@ -62,16 +71,18 @@ function settingsDocuments() {
       schemaVersion: 14,
       valueJson: {
         harness: { address: "http://localhost:9810" },
-        providers: [{
-          kind: "openai-compatible",
-          id: "local",
-          enabled: true,
-          label: "Local",
-          location: "local",
-          endpoint: "http://127.0.0.1:11434/v1",
-          model: "test",
-          authentication: "none",
-        }],
+        providers: [
+          {
+            kind: "openai-compatible",
+            id: "local",
+            enabled: true,
+            label: "Local",
+            location: "local",
+            endpoint: "http://127.0.0.1:11434/v1",
+            model: "test",
+            authentication: "none",
+          },
+        ],
         reasoningEffort: "medium",
       },
     },
@@ -99,10 +110,21 @@ function settingsDocuments() {
       key: "default",
       schemaVersion: 14,
       valueJson: {
-        conversationRespond: { source: "provider", primaryProviderId: "local", fallbackProviderIds: [], timeoutMs: 30_000 },
+        conversationRespond: {
+          source: "provider",
+          primaryProviderId: "local",
+          fallbackProviderIds: [],
+          timeoutMs: 30_000,
+        },
         voiceTranscribe: { source: "harness", providerId: null, timeoutMs: 120_000 },
         voiceSpeak: { source: "harness", providerId: null, timeoutMs: 30_000 },
-        codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false },
+        codingAssist: {
+          providerId: "codex-sdk",
+          timeoutMs: 120_000,
+          readOnly: true,
+          networkEnabled: false,
+          webSearchEnabled: false,
+        },
       },
     },
     {
@@ -143,13 +165,23 @@ function settingsDocuments() {
       namespace: "ui.preferences",
       key: "default",
       schemaVersion: 14,
-      valueJson: { language: "system", timeZone: "system", lengthUnit: "metric", weightUnit: "kilogram", currency: "JPY" },
+      valueJson: {
+        language: "system",
+        timeZone: "system",
+        lengthUnit: "metric",
+        weightUnit: "kilogram",
+        currency: "JPY",
+      },
     },
   ];
 }
 
 function ensureWindow() {
-  if (typeof globalThis.window !== "undefined" && typeof globalThis.window.addEventListener === "function") return;
+  if (
+    typeof globalThis.window !== "undefined" &&
+    typeof globalThis.window.addEventListener === "function"
+  )
+    return;
   Object.assign(globalThis, { window: new EventTarget() });
 }
 
@@ -166,14 +198,17 @@ afterEach(async () => {
 describe("frontend IPC wrappers", () => {
   test("forwards conversation, settings, situation, and meeting commands", async () => {
     const events: unknown[] = [];
-    await startTurn({
-      runId: "run-1",
-      conversationId: "c1",
-      content: "hello",
-      workspacePath: null,
-      inputOrigin: "text",
-      presentationMode: "visual",
-    }, (event) => events.push(event));
+    await startTurn(
+      {
+        runId: "run-1",
+        conversationId: "c1",
+        content: "hello",
+        workspacePath: null,
+        inputOrigin: "text",
+        presentationMode: "visual",
+      },
+      (event) => events.push(event),
+    );
     await cancelRun("run-1");
     await testModelProvider({
       kind: "openai-compatible",
@@ -186,6 +221,8 @@ describe("frontend IPC wrappers", () => {
       authentication: "none",
     });
     await stopTts("run-1");
+    invokeImpl.handler = async (command) =>
+      command === "get_app_snapshot" ? receiverFixtures.snapshot : command;
     await getAppSnapshot();
     await getVoiceProfileSnapshot();
     await setTargetSpeakerFilterEnabled(true);
@@ -201,7 +238,11 @@ describe("frontend IPC wrappers", () => {
     await listMessages("c1", null);
     await getSituationSnapshot();
     await setSituationMonitoring(true);
-    await reportOwnedSignal({ conversationState: "idle", microphoneState: "inactive", audioState: "silent" });
+    await reportOwnedSignal({
+      conversationState: "idle",
+      microphoneState: "inactive",
+      audioState: "silent",
+    });
     await submitSituationFeedback({
       ledgerId: "ledger-1",
       verdict: "accurate",
@@ -222,7 +263,11 @@ describe("frontend IPC wrappers", () => {
     await runSituationCalibration("profile-1");
     await decideSituationCalibration("profile-1", "accept", "insufficient-evidence");
     await clearSituationHistory();
-    await meetingPreflight({ microphoneDeviceId: "default", systemAudioEnabled: false, translationEnabled: false });
+    await meetingPreflight({
+      microphoneDeviceId: "default",
+      systemAudioEnabled: false,
+      translationEnabled: false,
+    });
     await startMeeting({
       sessionId: "meeting-1",
       microphoneDeviceId: "default",
@@ -249,7 +294,8 @@ describe("frontend IPC wrappers", () => {
   });
 
   test("stages enrollment and meeting audio before invoking", async () => {
-    invokeImpl.handler = async (command) => command === "stage_audio_upload" ? "upload-1" : { id: command };
+    invokeImpl.handler = async (command) =>
+      command === "stage_audio_upload" ? "upload-1" : { id: command };
     const enrollment = new Float32Array([0.1, -0.2]);
     await saveVoiceEnrollmentSample({
       samples: enrollment,
@@ -291,7 +337,10 @@ describe("frontend IPC wrappers", () => {
       expectedRevision: 1,
     });
     await resetConversationVoicePolicy({ conversationId: "c1", expectedRevision: 2 });
-    await startVoiceAsrSession({ sessionId: "asr-1", conversationId: "c1", sampleRate: 16_000 }, () => undefined);
+    await startVoiceAsrSession(
+      { sessionId: "asr-1", conversationId: "c1", sampleRate: 16_000 },
+      () => undefined,
+    );
     await appendVoiceAsrAudio("asr-1", 1, new Uint8Array([1, 2]));
     await commitVoiceAsrUtterance({ sessionId: "asr-1", reason: "silence" });
     await stopVoiceAsrSession({ sessionId: "asr-1", finalizeCurrent: true });
@@ -322,11 +371,16 @@ describe("frontend IPC wrappers", () => {
       if (command === "start_voice_asr_session") throw new Error("asr-provider-unavailable");
       return command;
     };
-    await expect(startVoiceAsrSession({
-      sessionId: "asr-2",
-      conversationId: "c2",
-      sampleRate: 16_000,
-    }, () => undefined)).rejects.toThrow("asr-provider-unavailable");
+    await expect(
+      startVoiceAsrSession(
+        {
+          sessionId: "asr-2",
+          conversationId: "c2",
+          sampleRate: 16_000,
+        },
+        () => undefined,
+      ),
+    ).rejects.toThrow("asr-provider-unavailable");
     expect(invokeCalls.map((call) => call.command)).toContain("end_larm_voice_session");
   });
 
@@ -335,11 +389,16 @@ describe("frontend IPC wrappers", () => {
       if (command === "start_voice_asr_session") throw new Error("asr-cancelled");
       return command;
     };
-    await expect(startVoiceAsrSession({
-      sessionId: "asr-3",
-      conversationId: "c3",
-      sampleRate: 16_000,
-    }, () => undefined)).rejects.toThrow("asr-cancelled");
+    await expect(
+      startVoiceAsrSession(
+        {
+          sessionId: "asr-3",
+          conversationId: "c3",
+          sampleRate: 16_000,
+        },
+        () => undefined,
+      ),
+    ).rejects.toThrow("asr-cancelled");
     expect(invokeCalls.filter((call) => call.command === "end_larm_voice_session")).toHaveLength(0);
   });
 

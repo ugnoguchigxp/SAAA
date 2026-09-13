@@ -1,0 +1,28 @@
+{
+  "status": "ready",
+  "stage": "cleanup",
+  "durationMs": 66781,
+  "stages": [
+    {
+      "stage": "build",
+      "durationMs": 61852,
+      "exitCode": 0
+    },
+    {
+      "stage": "bundle",
+      "durationMs": 45
+    },
+    {
+      "stage": "launch",
+      "durationMs": 3
+    },
+    {
+      "stage": "ready",
+      "durationMs": 4873
+    },
+    {
+      "stage": "cleanup",
+      "durationMs": 8
+    }
+  ]
+}

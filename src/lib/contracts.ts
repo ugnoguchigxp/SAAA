@@ -126,7 +126,18 @@ export type AuditEvent = {
   sequence: number;
   id: string;
   occurredAt: string;
-  component: "app" | "frontend" | "microphone" | "voice-asr" | "conversation" | "provider" | "tts" | "meeting" | "settings" | "voice-policy" | "situation";
+  component:
+    | "app"
+    | "frontend"
+    | "microphone"
+    | "voice-asr"
+    | "conversation"
+    | "provider"
+    | "tts"
+    | "meeting"
+    | "settings"
+    | "voice-policy"
+    | "situation";
   eventName: string;
   phase: "request" | "start" | "state" | "progress" | "decision" | "terminal" | "error";
   outcome: "success" | "failure" | "cancelled" | "interrupted" | "degraded" | "blocked" | null;
@@ -141,9 +152,22 @@ export type AuditEvent = {
 };
 
 export type SignalHealth = "ready" | "disabled" | "permission-denied" | "unsupported" | "degraded";
-export type ForegroundCategory = "communication" | "coding" | "writing" | "browser" | "media" | "sensitive" | "other" | "unknown";
+export type ForegroundCategory =
+  | "communication"
+  | "coding"
+  | "writing"
+  | "browser"
+  | "media"
+  | "sensitive"
+  | "other"
+  | "unknown";
 export type ConversationSignalState = "idle" | "user-input" | "model-running" | "agent-running";
-export type MicrophoneSignalState = "inactive" | "saaa-capturing" | "saaa-transcribing" | "external-active" | "unknown";
+export type MicrophoneSignalState =
+  | "inactive"
+  | "saaa-capturing"
+  | "saaa-transcribing"
+  | "external-active"
+  | "unknown";
 export type AudioSignalState = "silent" | "saaa-speaking" | "external-media" | "unknown";
 export type InputActivityState = "active" | "recent" | "idle" | "unknown";
 
@@ -192,10 +216,42 @@ export type SituationFeedback = {
   createdAt: string;
 };
 
-export type CalibrationParameters = { classificationMinConfidence: number; lowConfidenceMax: number; enterSampleCount: number; exitSampleCount: number; cooldownMs: number; inputActiveMaxMs: number; inputRecentMaxMs: number };
-export type CalibrationProfile = { id: string; ruleVersion: string; baseRuleVersion: string | null; status: "candidate" | "active" | "superseded" | "rejected" | "rolled-back"; parameters: CalibrationParameters; createdAt: string; decidedAt: string | null; decisionReasonCode: string | null };
-export type CalibrationRun = { id: string; profileId: string; fixtureSetVersion: string; status: "completed" | "failed"; metricsJson: string | null; errorCode: string | null; startedAt: string; completedAt: string };
-export type SituationReviewSnapshot = { activeProfile: CalibrationProfile; quality: { sampleCount: number; flappingRate: number | null; staleRate: number | null }; feedbackQueue: SituationLedgerEntry[]; latestRun: CalibrationRun | null; candidates: CalibrationProfile[] };
+export type CalibrationParameters = {
+  classificationMinConfidence: number;
+  lowConfidenceMax: number;
+  enterSampleCount: number;
+  exitSampleCount: number;
+  cooldownMs: number;
+  inputActiveMaxMs: number;
+  inputRecentMaxMs: number;
+};
+export type CalibrationProfile = {
+  id: string;
+  ruleVersion: string;
+  baseRuleVersion: string | null;
+  status: "candidate" | "active" | "superseded" | "rejected" | "rolled-back";
+  parameters: CalibrationParameters;
+  createdAt: string;
+  decidedAt: string | null;
+  decisionReasonCode: string | null;
+};
+export type CalibrationRun = {
+  id: string;
+  profileId: string;
+  fixtureSetVersion: string;
+  status: "completed" | "failed";
+  metricsJson: string | null;
+  errorCode: string | null;
+  startedAt: string;
+  completedAt: string;
+};
+export type SituationReviewSnapshot = {
+  activeProfile: CalibrationProfile;
+  quality: { sampleCount: number; flappingRate: number | null; staleRate: number | null };
+  feedbackQueue: SituationLedgerEntry[];
+  latestRun: CalibrationRun | null;
+  candidates: CalibrationProfile[];
+};
 
 export type SituationLedgerEntry = {
   id: string;
@@ -226,17 +282,54 @@ export type SituationEvent =
   | { type: "monitoringStopped"; reason: string }
   | { type: "failed"; code: string; message: string; recovery: string };
 
-export type MeetingState = "idle" | "preflight" | "ready" | "active" | "paused" | "stopping" | "completed" | "failed";
+export type MeetingState =
+  | "idle"
+  | "preflight"
+  | "ready"
+  | "active"
+  | "paused"
+  | "stopping"
+  | "completed"
+  | "failed";
 export type MeetingLane = "microphone" | "system-audio";
-export type MeetingCapabilities = { microphone: boolean; systemAudio: boolean; overlay: boolean; translation: boolean };
+export type MeetingCapabilities = {
+  microphone: boolean;
+  systemAudio: boolean;
+  overlay: boolean;
+  translation: boolean;
+};
 export type MeetingError = { code: string; message: string; recovery: string };
 export type TranscriptionScope = "all-speakers" | "target-speaker";
-export type MeetingSnapshot = { sessionId: string | null; state: MeetingState; captureToken: string | null; entries: number; transcriptionScope: TranscriptionScope; capabilities: MeetingCapabilities; error: MeetingError | null };
-export type MeetingPreflightResult = { state: MeetingState; microphone: { status: string; message: string }; systemAudio: { status: string; message: string }; stt: { status: string; message: string }; translation: { status: string; message: string }; shippingCapabilities: MeetingCapabilities; transcriptionScope: TranscriptionScope; blockingErrors: MeetingError[] };
+export type MeetingSnapshot = {
+  sessionId: string | null;
+  state: MeetingState;
+  captureToken: string | null;
+  entries: number;
+  transcriptionScope: TranscriptionScope;
+  capabilities: MeetingCapabilities;
+  error: MeetingError | null;
+};
+export type MeetingPreflightResult = {
+  state: MeetingState;
+  microphone: { status: string; message: string };
+  systemAudio: { status: string; message: string };
+  stt: { status: string; message: string };
+  translation: { status: string; message: string };
+  shippingCapabilities: MeetingCapabilities;
+  transcriptionScope: TranscriptionScope;
+  blockingErrors: MeetingError[];
+};
 export type MeetingSegmentResult = { accepted: boolean; text: string; language: string | null };
 export type MeetingEvent =
   | { type: "stateChanged"; sessionId: string | null; state: MeetingState }
-  | { type: "transcriptFinal"; sessionId: string; lane: MeetingLane; sequence: number; text: string; language: string | null }
+  | {
+      type: "transcriptFinal";
+      sessionId: string;
+      lane: MeetingLane;
+      sequence: number;
+      text: string;
+      language: string | null;
+    }
   | { type: "failed"; sessionId: string | null; code: string; message: string; recovery: string };
 
 export function findSettingsDocument(
@@ -244,7 +337,5 @@ export function findSettingsDocument(
   namespace: SettingsNamespace,
   key: SettingsKey,
 ): SettingsDocument | undefined {
-  return documents.find(
-    (document) => document.namespace === namespace && document.key === key,
-  );
+  return documents.find((document) => document.namespace === namespace && document.key === key);
 }

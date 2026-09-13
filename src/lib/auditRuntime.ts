@@ -1,7 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type AuditEventInput = {
-  component: "app" | "frontend" | "microphone" | "voice-asr" | "conversation" | "provider" | "tts" | "meeting" | "settings" | "voice-policy" | "situation";
+  component:
+    | "app"
+    | "frontend"
+    | "microphone"
+    | "voice-asr"
+    | "conversation"
+    | "provider"
+    | "tts"
+    | "meeting"
+    | "settings"
+    | "voice-policy"
+    | "situation";
   eventName: string;
   phase: "request" | "start" | "state" | "progress" | "decision" | "terminal" | "error";
   outcome?: "success" | "failure" | "cancelled" | "interrupted" | "degraded" | "blocked" | null;

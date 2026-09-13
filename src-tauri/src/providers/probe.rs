@@ -115,7 +115,7 @@ mod tests {
                     location: "cloud".into(),
                     base_url: "https://example.invalid/".into(),
                     model: "probe-model".into(),
-                    models_path: "/v1/models".into(),
+                    models_path: "/v1/agents/models?runtime=fixture".into(),
                     sessions_path: "/v1/sessions".into(),
                     authentication: "api-key".into(),
                 }),

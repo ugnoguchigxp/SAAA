@@ -2,15 +2,22 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { MutableRefObject } from "react";
 import type { VoiceSettings } from "../src/lib/contracts";
 import { currentAudioCaptureOwner } from "../src/lib/audioCaptureCoordinator";
-import { attachAmbientVoiceCapture, resetVoiceActivityDetector } from "../src/features/voice/ambientVoiceCapture";
+import {
+  attachAmbientVoiceCapture,
+  resetVoiceActivityDetector,
+} from "../src/features/voice/ambientVoiceCapture";
 
 class FakeAudioWorkletNode {
   port = {
     onmessage: null as ((event: MessageEvent) => void) | null,
     postMessage: () => undefined,
   };
-  connect() { return this; }
-  disconnect() { return this; }
+  connect() {
+    return this;
+  }
+  disconnect() {
+    return this;
+  }
 }
 
 class FakeAudioContext {
@@ -24,8 +31,12 @@ class FakeAudioContext {
   createMediaStreamSource() {
     return { connect: () => this, disconnect: () => undefined };
   }
-  close = async () => { this.state = "closed"; };
-  resume = async () => { this.state = "running"; };
+  close = async () => {
+    this.state = "closed";
+  };
+  resume = async () => {
+    this.state = "running";
+  };
 }
 
 const stream = { getTracks: () => [{ stop: () => undefined }] } as unknown as MediaStream;
@@ -121,12 +132,18 @@ describe("ambient voice capture", () => {
     node.port.onmessage?.({ data: new Float32Array([0.1, 0.2]) } as MessageEvent);
     node.port.onmessage?.({ data: { type: "flushed" } } as MessageEvent);
     expect(frames).toEqual([2]);
-    resetVoiceActivityDetector(target.activityDetector, { ...settings, vadSensitivity: "low" }, 16_000);
+    resetVoiceActivityDetector(
+      target.activityDetector,
+      { ...settings, vadSensitivity: "low" },
+      16_000,
+    );
     expect(target.activityDetector.current).not.toBeNull();
   });
 
   test("returns immediately when capture is already owned or blocked", async () => {
-    await attachAmbientVoiceCapture(context({ stream: ref(stream), captureLease: ref(() => undefined) }) as never);
+    await attachAmbientVoiceCapture(
+      context({ stream: ref(stream), captureLease: ref(() => undefined) }) as never,
+    );
     await attachAmbientVoiceCapture(context({ listeningEnabled: ref(false) }) as never);
     await attachAmbientVoiceCapture(context({ meetingState: ref("active") }) as never);
     expect(currentAudioCaptureOwner()).toBeNull();

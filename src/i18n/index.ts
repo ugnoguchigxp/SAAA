@@ -13,8 +13,12 @@ export function normalizeAppLanguage(language: string | null | undefined): AppLa
 }
 
 export function detectInitialLanguage(
-  storage: Pick<Storage, "getItem"> | null = typeof window === "undefined" ? null : window.localStorage,
-  browserLanguage: string | null | undefined = typeof navigator === "undefined" ? null : navigator.language,
+  storage: Pick<Storage, "getItem"> | null = typeof window === "undefined"
+    ? null
+    : window.localStorage,
+  browserLanguage: string | null | undefined = typeof navigator === "undefined"
+    ? null
+    : navigator.language,
 ): AppLanguage {
   try {
     const stored = storage?.getItem(APP_LANGUAGE_STORAGE_KEY);
@@ -26,14 +30,16 @@ export function detectInitialLanguage(
 }
 
 function applyDocumentLanguage(language: string) {
-  if (typeof document !== "undefined") document.documentElement.lang = normalizeAppLanguage(language);
+  if (typeof document !== "undefined")
+    document.documentElement.lang = normalizeAppLanguage(language);
 }
 
 function persistLanguage(language: string) {
   const normalized = normalizeAppLanguage(language);
   applyDocumentLanguage(normalized);
   try {
-    if (typeof window !== "undefined") window.localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, normalized);
+    if (typeof window !== "undefined")
+      window.localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, normalized);
   } catch {
     // The in-memory language still changes when persistent storage is unavailable.
   }
@@ -62,12 +68,16 @@ function setAppLanguage(language: AppLanguage): Promise<unknown> {
 
 export function resolveDisplayLanguagePreference(
   preference: DisplayLanguagePreference,
-  browserLanguage: string | null | undefined = typeof navigator === "undefined" ? null : navigator.language,
+  browserLanguage: string | null | undefined = typeof navigator === "undefined"
+    ? null
+    : navigator.language,
 ): AppLanguage {
   return preference === "system" ? normalizeAppLanguage(browserLanguage) : preference;
 }
 
-export function setDisplayLanguagePreference(preference: DisplayLanguagePreference): Promise<unknown> {
+export function setDisplayLanguagePreference(
+  preference: DisplayLanguagePreference,
+): Promise<unknown> {
   return setAppLanguage(resolveDisplayLanguagePreference(preference));
 }
 

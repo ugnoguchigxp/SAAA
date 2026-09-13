@@ -1,0 +1,50 @@
+{
+  "status": "protection-choice-pending",
+  "formatChanged": false,
+  "authoritativeData": [
+    {
+      "data": "enrollment WAV",
+      "location": "voice/profile/codec.rs write_private_atomic + voice/profile/enrollment.rs",
+      "protection": "private filesystem permissions; plaintext",
+      "restore": "requires matching sample metadata and model-compatible embedding"
+    },
+    {
+      "data": "speaker embedding",
+      "location": "SQLite voice_profile_samples.embedding",
+      "protection": "plaintext SQLite; model SHA256 and dimension checked"
+    },
+    {
+      "data": "manual SQLite backup",
+      "location": "src-tauri/src/backup.rs backup_connection_to",
+      "protection": "temporary private file and atomic persist_noclobber; plaintext",
+      "restore": "database only; does not include WAV"
+    },
+    {
+      "data": "pre-migration backup",
+      "location": "src-tauri/src/persistence/migrate.rs backup_before_migration",
+      "protection": "same SQLite backup mechanism; retained for recovery"
+    }
+  ],
+  "deletion": "Live sample deletion removes WAV before metadata; file failure retains metadata for retry. Existing database backups and user-created copies are outside live-profile deletion. File deletion does not promise physical media erasure.",
+  "encryptionContractProposal": {
+    "scope": [
+      "live WAV",
+      "live embeddings",
+      "manual and migration backups containing biometric data"
+    ],
+    "key": "random data key protected by macOS Keychain; never include the key in a backup",
+    "missingKey": "stop reading or migrating protected records; preserve original bytes; do not replace the key automatically",
+    "migration": "validate legacy data first, atomically write versioned authenticated ciphertext, commit metadata, then remove the old managed plaintext; retain an explicit recovery path until verification",
+    "restore": "authenticate and verify complete WAV+metadata+model compatibility in staging before replacing live state",
+    "deletion": "inventory managed backup copies and specify retention; never imply user-created copies were removed"
+  },
+  "fileVaultAlternative": "Requires observed FileVault state and a verified backup destination. Filesystem mode alone is not encryption. No FileVault claim has been made.",
+  "requiredTestsAfterChoice": [
+    "normal restoration",
+    "missing key",
+    "corruption",
+    "deletion and retained backups",
+    "legacy migration",
+    "failure before atomic commit"
+  ]
+}

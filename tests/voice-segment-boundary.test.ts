@@ -9,9 +9,8 @@ describe("voice segment boundary", () => {
   });
 
   test("uses the VAD boundary for a voiced utterance", () => {
-    expect(voiceSegmentCommitReason(
-      { hasSpeech: true, shouldFinalize: true, rms: 0 },
-      20,
-    )).toBe("silence");
+    expect(voiceSegmentCommitReason({ hasSpeech: true, shouldFinalize: true, rms: 0 }, 20)).toBe(
+      "silence",
+    );
   });
 });

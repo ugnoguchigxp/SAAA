@@ -1,3 +1,4 @@
+import { errors } from "./jaErrors";
 import { uiJapanese } from "../../features/chat/ui/translations";
 export const ja = {
   genui: uiJapanese,
@@ -55,6 +56,14 @@ export const ja = {
     surfaceSwitchBlocked: "実行中の処理を停止してから画面を切り替えてください。",
   },
   chat: {
+    setup: {
+      provider: "会話を始めるには、設定でProviderを選んでください。",
+      connection: "設定でProviderの接続をテストしてください。",
+      asr: "音声入力を使うには、設定で音声認識の接続先を確認してください。",
+      speaker: "対象話者フィルターを使うには、設定で声を登録してください。音声入力は任意です。",
+      ready: "テキストで会話を始められます。音声入力は任意です。",
+      openSettings: "設定を開く",
+    },
     eyebrow: "継続的な会話",
     title: "SAAAとの会話",
     cloudProcessing: "クラウド処理",
@@ -118,11 +127,23 @@ export const ja = {
   meeting: {
     eyebrow: "明示的なミーティングモード",
     title: "ミーティング",
-    states: { idle: "待機中", preflight: "準備中", ready: "準備完了", active: "進行中", paused: "一時停止", stopping: "停止中", completed: "完了", failed: "失敗" },
+    states: {
+      idle: "待機中",
+      preflight: "準備中",
+      ready: "準備完了",
+      active: "進行中",
+      paused: "一時停止",
+      stopping: "停止中",
+      completed: "完了",
+      failed: "失敗",
+    },
     microphone: "マイク",
     systemAudioUnavailable: "システム音声：このビルドでは利用できません",
     sttRoute: "音声認識：音声設定で選択したASR",
-    transcriptionScopes: { "all-speakers": "話者フィルター：すべての話者", "target-speaker": "話者フィルター：登録した話者のみ" },
+    transcriptionScopes: {
+      "all-speakers": "話者フィルター：すべての話者",
+      "target-speaker": "話者フィルター：登録した話者のみ",
+    },
     elapsed: "経過 {{time}} · 停止後に明示的に保存しない限り、内容は破棄されます。",
     starting: "開始中…",
     start: "ミーティングを開始",
@@ -145,7 +166,8 @@ export const ja = {
     confirmSave: "保存する",
     discardAria: "文字起こし破棄の確認",
     discardTitle: "この文字起こしを破棄しますか？",
-    discardDescription: "文字起こし{{count}}件と言語情報は保存されません。この操作は元に戻せません。",
+    discardDescription:
+      "文字起こし{{count}}件と言語情報は保存されません。この操作は元に戻せません。",
     confirmDiscard: "破棄する",
     discardFailed: "失敗したセッションを破棄",
     final: "確定",
@@ -156,12 +178,14 @@ export const ja = {
       stopped: "キャプチャを停止しました",
     },
     emptyTitle: "明示的に開始したときだけ録音します。",
-    emptyDescription: "開始ボタンでマイクを有効にします。登録話者フィルターが有効な場合、各音声区間を端末内で確認し、通過した音声だけをASRへ送ります。停止後に保存を選ばない限り音声は保存されません。同時に話す複数人の音声は分離できません。",
+    emptyDescription:
+      "開始ボタンでマイクを有効にします。登録話者フィルターが有効な場合、各音声区間を端末内で確認し、通過した音声だけをASRへ送ります。停止後に保存を選ばない限り音声は保存されません。同時に話す複数人の音声は分離できません。",
   },
   audit: {
     eyebrow: "ローカル履歴",
     title: "監査ログ",
-    description: "SQLiteに保存された直近7日間の構造化イベントを読み取り専用で表示します。本文・音声・認証情報は含まれません。",
+    description:
+      "SQLiteに保存された直近7日間の構造化イベントを読み取り専用で表示します。本文・音声・認証情報は含まれません。",
     refresh: "再読み込み",
     loading: "読み込み中…",
     loadFailed: "監査ログを読み込めませんでした。",
@@ -199,7 +223,8 @@ export const ja = {
     description: "Harnessを中心に、必要なサービスだけ個別プロバイダーへ切り替えられます。",
     sectionsLabel: "設定セクション",
     unsaved: "未保存の変更",
-    savedWithCleanupFailure: "設定を保存しましたが、未使用のAPIキー{{count}}件をKeychainから削除できませんでした。",
+    savedWithCleanupFailure:
+      "設定を保存しましたが、未使用のAPIキー{{count}}件をKeychainから削除できませんでした。",
     savedAt: "SQLiteへ保存しました · {{time}}",
     pendingRuntime: "変更はまだランタイムへ反映されていません。",
     showingSaved: "保存済みのランタイム設定を表示しています。",
@@ -210,15 +235,19 @@ export const ja = {
       general: { label: "一般", detail: "言語・地域形式・名前" },
       connection: { label: "サービス接続", detail: "Harnessとサービスの接続元" },
       providers: {
-      location: "接続先",
-      audioFormat: "音声形式", label: "個別サービス", detail: "ローカル・クラウドのHTTP LLM・ASR・TTS" },
+        location: "接続先",
+        audioFormat: "音声形式",
+        label: "個別サービス",
+        detail: "ローカル・クラウドのHTTP LLM・ASR・TTS",
+      },
       voice: { label: "音声とデバイス", detail: "常時待ち受けとオーディオ" },
       situation: { label: "状況", detail: "シャドウ観測の設定" },
       security: { label: "プライバシーとセキュリティ", detail: "ローカル優先の制御" },
     },
     general: {
       regionalPreferences: "言語と地域形式",
-      regionalPreferencesDescription: "表示と書式の既定値として使用し、端末内のSQLiteへ保存します。",
+      regionalPreferencesDescription:
+        "表示と書式の既定値として使用し、端末内のSQLiteへ保存します。",
       displayLanguage: "表示言語",
       systemLanguage: "システムの言語",
       timeZone: "タイムゾーン",
@@ -255,7 +284,8 @@ export const ja = {
     },
     security: {
       credentials: "認証情報",
-      credentialsDescription: "APIキーはmacOS Keychainへ保存します。値を再表示せず、SQLite・バックアップ・診断情報には含めません。",
+      credentialsDescription:
+        "APIキーはmacOS Keychainへ保存します。値を再表示せず、SQLite・バックアップ・診断情報には含めません。",
       runtimePolicy: "ランタイムポリシー",
       noCloudFallback: "ローカルのプライマリーからクラウドのフォールバックを暗黙選択しない",
       diagnosticsRedaction: "診断情報をマスキング（常に有効）",
@@ -268,7 +298,8 @@ export const ja = {
     connection: {
       eyebrow: "主要な接続",
       title: "Agent Connection / Provider Harness",
-      description: "ポート9810ではAgent Connectionを直接検証し、claimで通知されたWebSocketへ接続します。ローカルLANでは認証なしで利用でき、LARM_API_TOKENがある場合だけBearer認証を使用します。その他のアドレスではHarnessから各サービスを解決します。",
+      description:
+        "ポート9810ではAgent Connectionを直接検証し、claimで通知されたWebSocketへ接続します。ローカルLANでは認証なしで利用でき、LARM_API_TOKENがある場合だけBearer認証を使用します。その他のアドレスではHarnessから各サービスを解決します。",
       resolving: "解決中…",
       harnessAddress: "Harnessのアドレス",
       providerDefault: "指定しない（HTTP Providerの既定値）",
@@ -276,19 +307,24 @@ export const ja = {
       llmTimeoutSeconds: "LLMタイムアウト（秒）",
       llmTimeoutHint: "1〜3600秒。新規設定の既定値は1800秒です。",
       llmTimeoutInvalid: "1〜3600秒の範囲で入力してください。",
-      llmTimeoutLegacyLimit: "このLegacy Dynamic LAN接続の上限は269.999秒です。1800秒を使うにはHarnessまたはLARMを更新してください。",
+      llmTimeoutLegacyLimit:
+        "このLegacy Dynamic LAN接続の上限は269.999秒です。1800秒を使うにはHarnessまたはLARMを更新してください。",
       low: "低",
       medium: "中（推奨）",
       extraHigh: "最高",
       resolvedAll: "LLM・ASR・TTSを解決しました。",
       resolvedPartial: "一部のサービスだけを解決しました。",
       agentConnectionReady: "Agent Connectionのclaim・LLMヘルスチェックに成功しました。",
-      resolutionHint: "接続確認ではAgent Connectionのclaim・ヘルスチェックまで検証します。認証は任意です。",
+      resolutionHint:
+        "接続確認ではAgent Connectionのclaim・ヘルスチェックまで検証します。認証は任意です。",
       resolveServices: "接続を確認",
-      agentConnectionTokenInvalid: "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。認証なしで使う場合は環境変数を削除してください。",
-      agentConnectionAuthorizationRejected: "Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。",
+      agentConnectionTokenInvalid:
+        "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。認証なしで使う場合は環境変数を削除してください。",
+      agentConnectionAuthorizationRejected:
+        "Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。",
       sourcesTitle: "サービスの接続元",
-      sourcesDescription: "LLM・ASR・TTSはそれぞれHarnessまたは個別プロバイダーを選べます。暗黙の切り替えは行いません。",
+      sourcesDescription:
+        "LLM・ASR・TTSはそれぞれHarnessまたは個別プロバイダーを選べます。暗黙の切り替えは行いません。",
       resolveAfterSave: "Harnessで保存後に解決",
       registerProvider: "個別プロバイダーを登録してください",
       source: "接続元",
@@ -301,7 +337,8 @@ export const ja = {
     providers: {
       eyebrow: "個別サービス",
       title: "個別プロバイダー一覧",
-      description: "Harnessを使わないサービスを個別に登録します。APIキーはmacOS Keychainへ保存し、設定・SQLite・診断情報には含めません。",
+      description:
+        "Harnessを使わないサービスを個別に登録します。APIキーはmacOS Keychainへ保存し、設定・SQLite・診断情報には含めません。",
       stableId: "プロバイダーIDは作成後に変更できません。",
       defaultName: "HTTP {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "システム音声" },
@@ -348,7 +385,8 @@ export const ja = {
   voice: {
     eyebrow: "常時待ち受け音声",
     alwaysOnTitle: "常時待ち受け",
-    alwaysOnDescription: "録音中は音声チャンクを順番にASRへ送り、文字起こしを継続更新します。ローカルVADが沈黙を検出した時点で発話を確定し、LLMへ1回送信します。",
+    alwaysOnDescription:
+      "録音中は音声チャンクを順番にASRへ送り、文字起こしを継続更新します。ローカルVADが沈黙を検出した時点で発話を確定し、LLMへ1回送信します。",
     listening: "待ち受け",
     status: {
       disabled: "停止中（マイクボタンで許可）",
@@ -364,7 +402,8 @@ export const ja = {
     activation: "起動",
     automatic: "自動",
     localVad: "ローカルVAD",
-    permissionHelp: "マイクボタンまたはこのスイッチをオンにした時だけ、初回のmacOSマイク許可を求めます。ミーティング・応答の読み上げ中は自動的に一時停止し、終了後に再開します。",
+    permissionHelp:
+      "マイクボタンまたはこのスイッチをオンにした時だけ、初回のmacOSマイク許可を求めます。ミーティング・応答の読み上げ中は自動的に一時停止し、終了後に再開します。",
     audioDevices: "オーディオデバイス",
     inputDevice: "入力デバイス",
     unavailableDevice: "以前の選択（利用不可）",
@@ -378,7 +417,8 @@ export const ja = {
     highSensitivity: "高 · 小さな声",
     silenceTimeout: "無音タイムアウト（ミリ秒）",
     languages: "使用する言語",
-    languagesHelp: "ASRは言語を自動判定します。ここに登録していない言語、または判定できない音声は会話や議事録へ送りません。",
+    languagesHelp:
+      "ASRは言語を自動判定します。ここに登録していない言語、または判定できない音声は会話や議事録へ送りません。",
     languagesAria: "使用する言語",
     autoSpeak: "応答を音声で再生する",
     profile: {
@@ -393,15 +433,18 @@ export const ja = {
       stopAndSave: "録音を停止して保存",
       recordSample: "サンプルを録音",
       recordingUntilAutoStop: "録音中…自動停止まで読み続けてください",
-      recordingGuidance: "全文を読み切る必要はありません。文章の途中でも、録音が自動停止するまで長い間を空けずに普段どおりの声で読み続けてください。録音は{{seconds}}秒以上です。",
+      recordingGuidance:
+        "全文を読み切る必要はありません。文章の途中でも、録音が自動停止するまで長い間を空けずに普段どおりの声で読み続けてください。録音は{{seconds}}秒以上です。",
       inputLevel: "入力レベル",
       blocked: "会話録音、読み上げ、またはミーティングを停止してから登録してください。",
       sample: "サンプル {{number}} · {{duration}}秒 · AEC {{aec}}",
       onlyMyVoice: "文字起こしを自分の声だけに限定する（判定不能時は送信しない）",
       transcriptionScope: "文字起こし対象",
       allVoices: "話者を問わず、拾った音声をすべて文字起こしする",
-      storage: "音声ファイルと話者埋め込みは暗号化せず端末内へ保存します。アプリのデータ領域に保存され、クラウドへ送信しません。",
-      limitation: "これは文字起こし対象を絞る機能で、本人認証や録音・合成音声の検出には使用できません。",
+      storage:
+        "音声ファイルと話者埋め込みは暗号化せず端末内へ保存します。アプリのデータ領域に保存され、クラウドへ送信しません。",
+      limitation:
+        "これは文字起こし対象を絞る機能で、本人認証や録音・合成音声の検出には使用できません。",
       deleteProfile: "声プロファイル全体を削除",
       noAudio: "音声が記録されませんでした。",
       sampleSaved: "サンプル {{current}}/{{target}} を保存しました。",
@@ -412,7 +455,8 @@ export const ja = {
       prompts: {
         one: "今日は落ち着いた普段どおりの声で、静かな朝の空気や窓辺の光、周りの音にも耳を傾けながら、ゆっくり自然に話しています。窓を開けるとやわらかな風が入り、遠くを走る電車の音と、庭で鳴く小鳥の声が聞こえてきました。これから始まる一日を思い浮かべながら、文章の途中でも止まらず、そのまま読み続けています。",
         two: "来週の火曜日、午後二時半に駅前の小さな喫茶店で待ち合わせませんか？場所が分からなければ、慌てずに電話で知らせてください。駅の東口を出て横断歩道を渡り、花屋の角を右へ曲がると、青い看板が見えてきます。雨が降った場合は、地下通路の七番出口で会うことにしましょう。時間には少し余裕を持って出発します。",
-        three: "新しい企画が無事に決まって、本当にうれしいです！準備は大変でしたが、みんなで力を合わせれば、きっとうまく進められるでしょう。最初は小さなアイデアだったものが、話し合いを重ねるたびに具体的になり、ようやく次の一歩を踏み出せました。焦らず丁寧に確認しながら、明るい気持ちで最後まで取り組んでいきます。",
+        three:
+          "新しい企画が無事に決まって、本当にうれしいです！準備は大変でしたが、みんなで力を合わせれば、きっとうまく進められるでしょう。最初は小さなアイデアだったものが、話し合いを重ねるたびに具体的になり、ようやく次の一歩を踏み出せました。焦らず丁寧に確認しながら、明るい気持ちで最後まで取り組んでいきます。",
         four: "赤い風船、青い自転車、白い雲を順番に思い浮かべます。数字の七、百、千も、はっきり区切りながら滑らかに読み上げます。冷たい牛乳、温かい紅茶、焼きたてのパンを朝のテーブルに並べたら、家族のみんなで今日の予定を話します。午前九時十五分に出発し、十二時三十分までには目的地へ着く予定です。",
         five: "交差点を右へ曲がり、三つ目の信号を越えたら、静かな公園があります。遠くの鳥の声や川の流れまで、耳を澄ませば聞こえるでしょう。坂道をゆっくり上ると、古い時計台の向こうに広い芝生と小さな噴水が見えてきます。木陰のベンチで少し休み、深く息を吸ってから、来た道とは別の細い小道を歩いて帰ります。",
       },
@@ -437,7 +481,12 @@ export const ja = {
     observationPaused: "観測を一時停止中",
     rule: "ルール {{version}}",
     shadowDecision: "シャドウ判断",
-    attention: { IGNORE: "発言しない", OBSERVE: "観測する想定", SUGGEST: "提案する想定", RESPOND: "応答する想定" },
+    attention: {
+      IGNORE: "発言しない",
+      OBSERVE: "観測する想定",
+      SUGGEST: "提案する想定",
+      RESPOND: "応答する想定",
+    },
     evidenceTitle: "根拠",
     attentionValue: "注意状態：{{value}}",
     noEvidence: "判定に十分な新しいシグナルがありません。安全な既定値を維持します。",
@@ -450,11 +499,14 @@ export const ja = {
     microphone: "マイク",
     audio: "音声",
     calendar: "カレンダー",
-    privacy: "アプリの生の識別情報、ウインドウタイトル、カレンダーの詳細、音声内容、正確な入力アイドル時間は保存しません。",
+    privacy:
+      "アプリの生の識別情報、ウインドウタイトル、カレンダーの詳細、音声内容、正確な入力アイドル時間は保存しません。",
     ledger: "評価履歴",
-    ledgerSummary: "記録 {{total}}件 · 正確 {{accurate}}件 · 不正確 {{inaccurate}}件 · 不明 {{unsure}}件",
+    ledgerSummary:
+      "記録 {{total}}件 · 正確 {{accurate}}件 · 不正確 {{inaccurate}}件 · 不明 {{unsure}}件",
     clearHistory: "履歴を消去",
-    emptyHistory: "観測を有効にすると、遷移、判断の変更、制限付きハートビートがここへ保存されます。",
+    emptyHistory:
+      "観測を有効にすると、遷移、判断の変更、制限付きハートビートがここへ保存されます。",
     safeDefault: "安全な既定値",
     evaluateAria: "{{scene}}を評価",
     accurate: "正確",
@@ -505,9 +557,12 @@ export const ja = {
       unknown: "不明なアプリ",
     },
     entryKinds: { transition: "遷移", decision: "判断", heartbeat: "ハートビート" },
-    feedbackReasonPrompt: "理由コード：wrong-scene、stale-signal、unstable-transition、unwanted-suggestion、missed-meeting-candidate、insufficient-evidence",
-    correctedScenePrompt: "修正後のシーン（任意）：CONVERSATION、MEETING、CODING、WRITING、MEDIA、FOCUS、SOLO、UNKNOWN",
-    confirmClear: "Situationの履歴、フィードバック、品質ウインドウ、調整実行を削除します。現在のプロファイル、会話、設定は保持されます。",
+    feedbackReasonPrompt:
+      "理由コード：wrong-scene、stale-signal、unstable-transition、unwanted-suggestion、missed-meeting-candidate、insufficient-evidence",
+    correctedScenePrompt:
+      "修正後のシーン（任意）：CONVERSATION、MEETING、CODING、WRITING、MEDIA、FOCUS、SOLO、UNKNOWN",
+    confirmClear:
+      "Situationの履歴、フィードバック、品質ウインドウ、調整実行を削除します。現在のプロファイル、会話、設定は保持されます。",
     evidence: {
       explicitUserInput: "ユーザーによる明示的な入力",
       modelRunActive: "会話の生成中",
@@ -545,7 +600,8 @@ export const ja = {
     inputActiveMax: "入力アクティブ上限（ミリ秒）",
     inputRecentMax: "最近の入力上限（ミリ秒）",
     inputOrderError: "入力アクティブ上限は、最近の入力上限より小さくしてください。",
-    rangeError: "各しきい値の範囲を確認してください。低信頼度の上限は分類の最低信頼度より小さくする必要があります。",
+    rangeError:
+      "各しきい値の範囲を確認してください。低信頼度の上限は分類の最低信頼度より小さくする必要があります。",
     creating: "作成中…",
     create: "候補を作成",
     history: "プロファイル履歴",
@@ -564,7 +620,13 @@ export const ja = {
     baselineAttention: "基準の注意状態",
     unreadableMetrics: "再実行から比較可能な指標を取得できませんでした。",
     insufficientData: "データ不足",
-    status: { candidate: "候補", active: "有効", rejected: "却下済み", superseded: "置き換え済み", "rolled-back": "ロールバック済み" },
+    status: {
+      candidate: "候補",
+      active: "有効",
+      rejected: "却下済み",
+      superseded: "置き換え済み",
+      "rolled-back": "ロールバック済み",
+    },
     reasons: {
       "wrong-scene": "シーンの誤判定",
       "stale-signal": "古いシグナル",
@@ -574,65 +636,37 @@ export const ja = {
       "insufficient-evidence": "根拠不足",
     },
   },
-  errors: {
-    app: {
-    conversationActive: "応答を処理中",
-    conversationIdle: "会話入力待ち",
-      primaryConversationUnavailable: "メインの会話を利用できません。SAAAを再起動してからもう一度お試しください。",
-      operationFailed: "SAAAはこの操作を完了できませんでした。もう一度お試しください。",
-    },
-    chat: {
-      voiceBlockedDuringMeeting: "ミーティングが進行中または一時停止中のため、常時待ち受けを利用できません。",
-      voiceSettingsUnavailable: "音声設定を利用できません。",
-      recordedAudioUnavailable: "録音した音声を利用できません。もう一度お試しください。",
-      voiceQueueFull: "音声処理が混み合っているため、最新の発話は送信しませんでした。",
-      voicePendingLimit: "待機中の音声リクエストが多すぎるため、最新の発話は送信しませんでした。",
-      speechPlaybackFailed: "読み上げを完了できませんでした。もう一度お試しください。",
-      microphoneResumeFailed: "常時待ち受けを再開できませんでした。マイクボタンからもう一度お試しください。",
-      voiceCaptureInitializationFailed: "音声キャプチャを開始できませんでした。マイクボタンからもう一度お試しください。",
-      voiceAsrUnavailable: "音声認識サービスに接続できません。接続設定を確認してから、マイクボタンでもう一度お試しください。",
-      voiceSessionConflict: "前回の音声セッションを終了できませんでした。SAAAを再起動してからもう一度お試しください。",
-      voiceTargetSpeakerModeUnavailable: "本人の声だけを認識する設定は常時待ち受けではまだ利用できません。声の設定で本人確認をオフにしてからお試しください。",
-      operationFailed: "会話の操作を完了できませんでした。もう一度お試しください。",
-    },
-    meeting: {
-      transcriptionBackpressure: "ミーティングの文字起こし処理が追いついていません。キャプチャを一時停止しましたが、待機中の音声は削除していません。",
-      captureInactive: "ミーティングのキャプチャはすでに停止しています。",
-      voiceSettingsUnavailable: "音声設定を利用できません。",
-      startFailed: "ミーティングを開始できませんでした。マイクとASRの設定を確認してからもう一度お試しください。",
-      runtimeFailure: "ミーティングのランタイムで失敗が発生しました。ミーティング設定を確認してからもう一度お試しください。",
-      operationFailed: "ミーティングの操作を完了できませんでした。もう一度お試しください。",
-    },
-    settings: {
-      agentSessionEventStreamMissing: "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。",
-      operationFailed: "設定を更新できませんでした。内容を確認してからもう一度お試しください。",
-    },
-    situation: { operationFailed: "Situationの操作を完了できませんでした。もう一度お試しください。" },
-    voice: {
-      targetSpeakerRejected: "登録した本人の声として確認できなかったため、文字起こしへ送信しませんでした。",
-      asrLanguageNotAllowed: "検出された言語は許可されていないため、発話を送信しませんでした。",
-      asrLanguageUnknown: "使用言語を判定できなかったため、発話を送信しませんでした。",
-      asrNoSpeech: "発話を確認できなかったため、何も送信しませんでした。",
-      samplePlaybackFailed: "音声サンプルを再生できませんでした。",
-      microphoneStartupTimedOut: "マイクの起動がタイムアウトしました。もう一度お試しください。",
-      audioProcessorStartupTimedOut: "音声処理を開始できませんでした。もう一度お試しください。",
-      operationFailed: "音声の操作を完了できませんでした。もう一度お試しください。",
-    },
-    microphone: {
-      secureContextRequired: "マイクのキャプチャにはSAAAデスクトップアプリまたは安全なローカル接続が必要です。",
-      captureUnavailable: "このSAAAビルドではマイクのキャプチャを利用できません。",
-      deviceListUnavailable: "このSAAAビルドではマイクデバイスの一覧を利用できません。",
-      permissionDenied: "マイクへのアクセスが拒否されました。システムのプライバシー設定でSAAAを許可してから、もう一度お試しください。",
-      securityBlocked: "現在のアプリまたはWebViewのセキュリティポリシーにより、マイクのキャプチャがブロックされています。",
-      deviceNotFound: "マイクが見つかりません。マイクを接続または有効にしてから、もう一度お試しください。",
-      deviceUnavailable: "マイクを開けませんでした。他のアプリでの使用を終了するか、デバイスを再接続してからもう一度お試しください。",
-      deviceSelectionInvalid: "選択したマイクを利用できません。設定で「システム既定」を選んでから、もう一度お試しください。",
-      startupInterrupted: "マイクの起動が中断されました。もう一度お試しください。",
-      processingCouldNotStart: "マイクの音声処理を開始できませんでした。もう一度お試しください。",
-      processingDidNotStart: "マイクの音声処理が開始されませんでした。もう一度お試しください。",
-    },
-  },
+  errors,
   asrLanguages: {
-    ja: "日本語", en: "英語", zh: "中国語", yue: "広東語", ko: "韓国語", ar: "アラビア語", de: "ドイツ語", fr: "フランス語", es: "スペイン語", pt: "ポルトガル語", id: "インドネシア語", it: "イタリア語", ru: "ロシア語", th: "タイ語", vi: "ベトナム語", tr: "トルコ語", hi: "ヒンディー語", ms: "マレー語", nl: "オランダ語", sv: "スウェーデン語", da: "デンマーク語", fi: "フィンランド語", pl: "ポーランド語", cs: "チェコ語", fil: "フィリピン語", fa: "ペルシャ語", el: "ギリシャ語", ro: "ルーマニア語", hu: "ハンガリー語", mk: "マケドニア語",
+    ja: "日本語",
+    en: "英語",
+    zh: "中国語",
+    yue: "広東語",
+    ko: "韓国語",
+    ar: "アラビア語",
+    de: "ドイツ語",
+    fr: "フランス語",
+    es: "スペイン語",
+    pt: "ポルトガル語",
+    id: "インドネシア語",
+    it: "イタリア語",
+    ru: "ロシア語",
+    th: "タイ語",
+    vi: "ベトナム語",
+    tr: "トルコ語",
+    hi: "ヒンディー語",
+    ms: "マレー語",
+    nl: "オランダ語",
+    sv: "スウェーデン語",
+    da: "デンマーク語",
+    fi: "フィンランド語",
+    pl: "ポーランド語",
+    cs: "チェコ語",
+    fil: "フィリピン語",
+    fa: "ペルシャ語",
+    el: "ギリシャ語",
+    ro: "ルーマニア語",
+    hu: "ハンガリー語",
+    mk: "マケドニア語",
   },
 } as const;

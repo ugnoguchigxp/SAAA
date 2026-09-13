@@ -33,11 +33,15 @@ import {
   runRustLiveSuite,
 } from "./bundle.ts";
 
-
 export function removeRustFragment(filename: string): void {
   try {
     const info = lstatSync(filename);
-    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || modeBits(info.mode) !== 0o600) {
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.nlink !== 1 ||
+      modeBits(info.mode) !== 0o600
+    ) {
       throw new RunnerError(2, "report-schema-invalid", "failed");
     }
     assertCurrentOwner(filename);
@@ -50,21 +54,37 @@ export function removeRustFragment(filename: string): void {
 
 export function failureCode(error: RunnerError): ReadinessReport["failureCodes"][number] {
   return FAILURE_CODES.includes(error.errorCode as ReadinessReport["failureCodes"][number])
-    ? error.errorCode as ReadinessReport["failureCodes"][number]
+    ? (error.errorCode as ReadinessReport["failureCodes"][number])
     : "internal";
 }
 
-export async function executeLive(arguments_: CliArguments): Promise<{ mode: LiveMode; result: Result }> {
-  const mode: LiveMode = arguments_.command === "preflight"
-    ? "preflight"
-    : arguments_.command === "canary"
-      ? "functional"
-      : arguments_.duration === "30m" ? "soak-30m" : "soak-2h";
-  const totalDeadline = mode === "preflight" ? 30 * 60_000 : mode === "functional" ? 60 * 60_000 : mode === "soak-30m" ? 45 * 60_000 : 150 * 60_000;
+export async function executeLive(
+  arguments_: CliArguments,
+): Promise<{ mode: LiveMode; result: Result }> {
+  const mode: LiveMode =
+    arguments_.command === "preflight"
+      ? "preflight"
+      : arguments_.command === "canary"
+        ? "functional"
+        : arguments_.duration === "30m"
+          ? "soak-30m"
+          : "soak-2h";
+  const totalDeadline =
+    mode === "preflight"
+      ? 30 * 60_000
+      : mode === "functional"
+        ? 60 * 60_000
+        : mode === "soak-30m"
+          ? 45 * 60_000
+          : 150 * 60_000;
   const commandStarted = performance.now();
   const commandStartedAt = new Date().toISOString();
   const deadlineAt = commandStarted + totalDeadline;
-  const reportDirectory = validateReportDirectory(arguments_.reportDirectory, arguments_.command, arguments_.duration);
+  const reportDirectory = validateReportDirectory(
+    arguments_.reportDirectory,
+    arguments_.command,
+    arguments_.duration,
+  );
   const environment = validateLiveEnvironment(
     reportDirectory,
     mode === "preflight" ? "preflight" : mode === "functional" ? "functional" : "later",
@@ -108,7 +128,10 @@ export async function executeLive(arguments_: CliArguments): Promise<{ mode: Liv
       const failure = emptyReport(identity, mode, known.result, [failureCode(known)]);
       failure.startedAt = commandStartedAt;
       failure.finishedAt = new Date().toISOString();
-      failure.timingSummary.elapsedMs = Math.min(10_800_000, Math.ceil(performance.now() - commandStarted));
+      failure.timingSummary.elapsedMs = Math.min(
+        10_800_000,
+        Math.ceil(performance.now() - commandStarted),
+      );
       atomicWriteReport(finalFilename, failure);
     }
     if (existsSync(fragmentFilename)) {
@@ -122,12 +145,17 @@ export async function executeLive(arguments_: CliArguments): Promise<{ mode: Liv
   }
 }
 
-export async function executeReport(arguments_: CliArguments): Promise<{ mode: "aggregate"; result: Result }> {
+export async function executeReport(
+  arguments_: CliArguments,
+): Promise<{ mode: "aggregate"; result: Result }> {
   const reportDirectory = validateReportDirectory(arguments_.reportDirectory, "report");
-  const filenames = (["preflight", "functional", "soak-30m", "soak-2h"] as const).map((mode) => join(reportDirectory, REPORT_FILENAMES[mode]));
+  const filenames = (["preflight", "functional", "soak-30m", "soak-2h"] as const).map((mode) =>
+    join(reportDirectory, REPORT_FILENAMES[mode]),
+  );
   const inputs = filenames.map(readFinalReportWithBytes);
   const inputHashes = inputs.map(({ bytes }) => createHash("sha256").update(bytes).digest("hex"));
-  if (new Set(inputHashes).size !== inputHashes.length) throw new RunnerError(2, "report-schema-invalid", "failed");
+  if (new Set(inputHashes).size !== inputHashes.length)
+    throw new RunnerError(2, "report-schema-invalid", "failed");
   const reports = inputs.map(({ report }) => evaluateReport(report));
   const aggregate = aggregateReports(reports);
   const scanner = new ForbiddenDataScanner([

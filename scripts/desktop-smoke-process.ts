@@ -1,3 +1,4 @@
+import { signalSmokeProcess } from "./desktop-smoke-signals";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -22,42 +23,52 @@ export function sanitizeSmokeLog(text: string, root: string): string {
     .map(([, value]) => value!)
     .sort((left, right) => right.length - left.length);
   for (const value of values) text = text.replaceAll(value, "[REDACTED]");
-  return text.replaceAll(root, "[WORKSPACE]").replaceAll(homedir(), "[HOME]")
+  return text
+    .replaceAll(root, "[WORKSPACE]")
+    .replaceAll(homedir(), "[HOME]")
     .replace(/https?:\/\/[^\s<>"']+/g, "[URL]");
 }
 
 function startProcess(command: string[], root: string, env = process.env) {
   const child = spawn(command[0], command.slice(1), {
-    cwd: root, env, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
+    cwd: root,
+    env,
+    detached: process.platform !== "win32",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const events: { event: string; elapsedMs: number }[] = [];
+  const started = Date.now();
+  const record = (event: string) => events.push({ event, elapsedMs: Date.now() - started });
+  child.once("spawn", () => record("spawn"));
+  child.once("error", () => record("error"));
+  child.once("exit", () => record("exit"));
+  child.once("close", () => record("close"));
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => { stdout = (stdout + chunk).slice(-LOG_LIMIT); });
-  child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-LOG_LIMIT); });
+  child.stdout.on("data", (chunk: string) => {
+    stdout = (stdout + chunk).slice(-LOG_LIMIT);
+  });
+  child.stderr.on("data", (chunk: string) => {
+    stderr = (stderr + chunk).slice(-LOG_LIMIT);
+  });
   const exited = new Promise<number>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => resolve(code ?? 1));
   });
   const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-  const kill = (signal: NodeJS.Signals) => {
-    if (!child.pid) return;
-    try {
-      if (process.platform === "win32") child.kill(signal);
-      else process.kill(-child.pid, signal);
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "ESRCH") throw cause;
-    }
-  };
-  return { child, exited, closed, kill, logs: () => ({ stdout, stderr }) };
+  const kill = (signal: NodeJS.Signals) => signalSmokeProcess(child, signal);
+  return { child, exited, closed, kill, events, logs: () => ({ stdout, stderr }) };
 }
 
 type SmokeProcess = ReturnType<typeof startProcess>;
 async function terminate(child: SmokeProcess): Promise<void> {
   child.kill("SIGTERM");
   const force = setTimeout(() => child.kill("SIGKILL"), 2_000);
-  try { await child.closed; } finally {
+  try {
+    await child.closed;
+  } finally {
     clearTimeout(force);
     // Parent close only accounts for inherited pipes. A descendant with its own
     // output may still be alive after ignoring SIGTERM.
@@ -75,14 +86,21 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
   let active: SmokeProcess | undefined;
   let interrupted = false;
   let stageExitCode: number | undefined;
-  const interrupt = () => { interrupted = true; active?.kill("SIGKILL"); };
+  const interrupt = () => {
+    interrupted = true;
+    active?.kill("SIGKILL");
+  };
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   let output: Promise<void> | undefined;
   let scratch: string | undefined;
   let failure: string | undefined;
   const advance = (next: Stage, exitCode?: number) => {
-    stages.push({ stage, durationMs: Date.now() - stageStarted, ...(exitCode === undefined ? {} : { exitCode }) });
+    stages.push({
+      stage,
+      durationMs: Date.now() - stageStarted,
+      ...(exitCode === undefined ? {} : { exitCode }),
+    });
     stage = next;
     stageExitCode = undefined;
     stageStarted = Date.now();
@@ -91,8 +109,18 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
   const saveOutput = async (name: string, child: SmokeProcess) => {
     await child.closed;
     const { stdout, stderr } = child.logs();
-    writeFileSync(join(options.reportDir, `${name}.stdout.log`), sanitizeSmokeLog(stdout, options.root));
-    writeFileSync(join(options.reportDir, `${name}.stderr.log`), sanitizeSmokeLog(stderr, options.root));
+    writeFileSync(
+      join(options.reportDir, `${name}.events.json`),
+      JSON.stringify(child.events, null, 2) + "\n",
+    );
+    writeFileSync(
+      join(options.reportDir, `${name}.stdout.log`),
+      sanitizeSmokeLog(stdout, options.root),
+    );
+    writeFileSync(
+      join(options.reportDir, `${name}.stderr.log`),
+      sanitizeSmokeLog(stderr, options.root),
+    );
   };
   try {
     console.log("desktop smoke: build");
@@ -100,10 +128,26 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
     active = build;
     const buildOutput = saveOutput("build", build);
     let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; build.kill("SIGKILL"); }, options.buildTimeoutMs ?? 30 * 60_000);
+    const timeout = setTimeout(
+      () => {
+        timedOut = true;
+        build.kill("SIGKILL");
+      },
+      options.buildTimeoutMs ?? 30 * 60_000,
+    );
     let code: number;
-    try { code = await build.exited; } finally {
-      try { await terminate(build); await buildOutput; } finally { clearTimeout(timeout); }
+    try {
+      code = await build.exited;
+    } finally {
+      try {
+        try {
+          await terminate(build);
+        } finally {
+          await buildOutput;
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
     }
     active = undefined;
     stageExitCode = code;
@@ -119,25 +163,33 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
     const marker = join(tmpdir(), `saaa-frontend-${markerId}.ready`);
     try {
       application = startProcess(options.executable, options.root, {
-        ...process.env, SAAA_SMOKE_MARKER_ID: markerId, SAAA_SMOKE_DATA_DIR: scratch,
-        SAAA_SMOKE_EXERCISE_SITUATION: "1", SAAA_SMOKE_REQUIRE_SPEAKER: "1",
+        ...process.env,
+        SAAA_SMOKE_MARKER_ID: markerId,
+        SAAA_SMOKE_DATA_DIR: scratch,
+        SAAA_SMOKE_EXERCISE_SITUATION: "1",
+        SAAA_SMOKE_REQUIRE_SPEAKER: "1",
       });
       active = application;
       // Observe spawn failures immediately; do not leave a rejected exit promise pending.
       let launchError: unknown;
-      void application.exited.catch((cause) => { launchError = cause; });
+      void application.exited.catch((cause) => {
+        launchError = cause;
+      });
       output = saveOutput("application", application);
       advance("ready");
       const deadline = Date.now() + (options.readyTimeoutMs ?? 10_000);
       while (!existsSync(marker)) {
         if (interrupted) throw new Error("Desktop smoke interrupted");
         if (launchError) throw launchError;
-        if (application.child.exitCode !== null || application.child.signalCode !== null) throw new Error(`Desktop exited before ready with code ${application.child.exitCode}`);
-        if (Date.now() >= deadline) throw new Error("Desktop did not report IPC ready before the deadline");
+        if (application.child.exitCode !== null || application.child.signalCode !== null)
+          throw new Error(`Desktop exited before ready with code ${application.child.exitCode}`);
+        if (Date.now() >= deadline)
+          throw new Error("Desktop did not report IPC ready before the deadline");
         await Bun.sleep(25);
       }
       if (interrupted) throw new Error("Desktop smoke interrupted");
-      if (application.child.exitCode !== null || application.child.signalCode !== null) throw new Error("Desktop exited after reporting ready");
+      if (application.child.exitCode !== null || application.child.signalCode !== null)
+        throw new Error("Desktop exited after reporting ready");
       advance("cleanup");
     } finally {
       try {
@@ -149,17 +201,35 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
       }
     }
   } catch (cause) {
-    failure = sanitizeSmokeLog(cause instanceof Error ? cause.message : String(cause), options.root);
+    failure = sanitizeSmokeLog(
+      cause instanceof Error ? cause.message : String(cause),
+      options.root,
+    );
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", interrupt);
     if (scratch) rmSync(scratch, { recursive: true, force: true });
-    stages.push({ stage, durationMs: Date.now() - stageStarted,
-      ...((application?.child.exitCode ?? stageExitCode) === undefined ? {} : { exitCode: application?.child.exitCode ?? stageExitCode }) });
-    writeFileSync(join(options.reportDir, "summary.json"), JSON.stringify({
-      status: failure ? "failed" : "ready", stage, durationMs: Date.now() - started, stages,
-      ...(failure ? { error: failure } : {}),
-    }, null, 2) + "\n");
+    stages.push({
+      stage,
+      durationMs: Date.now() - stageStarted,
+      ...((application?.child.exitCode ?? stageExitCode) === undefined
+        ? {}
+        : { exitCode: application?.child.exitCode ?? stageExitCode }),
+    });
+    writeFileSync(
+      join(options.reportDir, "summary.json"),
+      JSON.stringify(
+        {
+          status: failure ? "failed" : "ready",
+          stage,
+          durationMs: Date.now() - started,
+          stages,
+          ...(failure ? { error: failure } : {}),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
   }
   if (failure) throw new Error(failure);
 }

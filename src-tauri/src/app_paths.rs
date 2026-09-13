@@ -112,7 +112,9 @@ mod tests {
 
     #[test]
     fn readiness_data_directory_must_be_a_private_directory_distinct_from_app_data() {
-        assert!(validate_readiness_data_directory(Path::new("relative"), Path::new("/tmp")).is_err());
+        assert!(
+            validate_readiness_data_directory(Path::new("relative"), Path::new("/tmp")).is_err()
+        );
         let missing = std::env::temp_dir().join(format!(
             "saaa-missing-readiness-{}",
             uuid::Uuid::new_v4().simple()
@@ -139,7 +141,9 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755))
                 .expect("relaxed mode");
-            assert!(validate_readiness_data_directory(directory.path(), Path::new("/tmp")).is_err());
+            assert!(
+                validate_readiness_data_directory(directory.path(), Path::new("/tmp")).is_err()
+            );
         }
     }
 }

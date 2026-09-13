@@ -1,0 +1,1272 @@
+{
+  "formatter": "oxfmt@0.67.0",
+  "reference": "225655dff6cdd51a0458c27d8dfa17e7c43877ec",
+  "rows": [
+    {
+      "file": "scripts/codex-sdk-smoke.ts",
+      "oldLines": 21,
+      "newLines": 21,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/conversation-quality-eval.ts",
+      "oldLines": 248,
+      "newLines": 384,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/conversation-quality/protocol.ts",
+      "oldLines": 64,
+      "newLines": 73,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/conversation-quality/scenarios.ts",
+      "oldLines": 107,
+      "newLines": 152,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/conversation-quality/schema.ts",
+      "oldLines": 215,
+      "newLines": 237,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/conversation-reasoning-eval.ts",
+      "oldLines": 23,
+      "newLines": 31,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/desktop-smoke-process.ts",
+      "oldLines": 166,
+      "newLines": 229,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/desktop-smoke.ts",
+      "oldLines": 32,
+      "newLines": 37,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/generative-ui-openui-spike.tsx",
+      "oldLines": 23,
+      "newLines": 104,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/generative-ui-preview.tsx",
+      "oldLines": 49,
+      "newLines": 201,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/generative-ui-vite.config.ts",
+      "oldLines": 4,
+      "newLines": 7,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness.ts",
+      "oldLines": 53,
+      "newLines": 71,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness/bundle.ts",
+      "oldLines": 359,
+      "newLines": 485,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness/database.ts",
+      "oldLines": 256,
+      "newLines": 347,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness/io.ts",
+      "oldLines": 470,
+      "newLines": 615,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness/live.ts",
+      "oldLines": 583,
+      "newLines": 824,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness/process.ts",
+      "oldLines": 257,
+      "newLines": 289,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness/runner.ts",
+      "oldLines": 148,
+      "newLines": 176,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/larm-readiness/schema.ts",
+      "oldLines": 514,
+      "newLines": 667,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/macos-bundle-smoke.ts",
+      "oldLines": 51,
+      "newLines": 58,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/maximum-performance.ts",
+      "oldLines": 132,
+      "newLines": 226,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/module-size-baseline.ts",
+      "oldLines": 37,
+      "newLines": 46,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/module-size.ts",
+      "oldLines": 194,
+      "newLines": 209,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/mvp-2-2.5-readiness.ts",
+      "oldLines": 747,
+      "newLines": 958,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/mvp-2-2.5-readiness/schema.ts",
+      "oldLines": 222,
+      "newLines": 566,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/render-system-contexts.ts",
+      "oldLines": 40,
+      "newLines": 36,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/test-coverage.ts",
+      "oldLines": 47,
+      "newLines": 47,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "scripts/webfetch-sidecar.ts",
+      "oldLines": 141,
+      "newLines": 144,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/App.tsx",
+      "oldLines": 200,
+      "newLines": 366,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/appPages.ts",
+      "oldLines": 6,
+      "newLines": 16,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/components/AppIcon.tsx",
+      "oldLines": 26,
+      "newLines": 87,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/components/WebSocketConnectionIndicator.tsx",
+      "oldLines": 68,
+      "newLines": 90,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/audit/AuditLogPage.tsx",
+      "oldLines": 242,
+      "newLines": 287,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/audit/auditTimestamp.ts",
+      "oldLines": 27,
+      "newLines": 27,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ChatMessages.tsx",
+      "oldLines": 53,
+      "newLines": 105,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ChatPage.tsx",
+      "oldLines": 74,
+      "newLines": 306,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ConversationVoiceBehaviorBar.tsx",
+      "oldLines": 30,
+      "newLines": 80,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/VirtualMessages.tsx",
+      "oldLines": 49,
+      "newLines": 89,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/chatPageTypes.ts",
+      "oldLines": 26,
+      "newLines": 56,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/conversationAudit.ts",
+      "oldLines": 44,
+      "newLines": 133,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/conversationIssueCoordinator.ts",
+      "oldLines": 17,
+      "newLines": 17,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/finalMarkdown.ts",
+      "oldLines": 147,
+      "newLines": 160,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/markdown.worker.ts",
+      "oldLines": 11,
+      "newLines": 11,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/markdownRenderer.ts",
+      "oldLines": 138,
+      "newLines": 153,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/messageHistoryStore.ts",
+      "oldLines": 72,
+      "newLines": 136,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/messageWindow.ts",
+      "oldLines": 9,
+      "newLines": 15,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/streamingPerformance.ts",
+      "oldLines": 122,
+      "newLines": 122,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/streamingTextBuffer.ts",
+      "oldLines": 47,
+      "newLines": 47,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/InlineUi.tsx",
+      "oldLines": 43,
+      "newLines": 161,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/SemanticRenderer.tsx",
+      "oldLines": 20,
+      "newLines": 45,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/UiBoundary.tsx",
+      "oldLines": 8,
+      "newLines": 15,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/UiControls.tsx",
+      "oldLines": 22,
+      "newLines": 119,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/api.ts",
+      "oldLines": 20,
+      "newLines": 25,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/components.tsx",
+      "oldLines": 77,
+      "newLines": 261,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/context.tsx",
+      "oldLines": 25,
+      "newLines": 45,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/enabledStore.ts",
+      "oldLines": 25,
+      "newLines": 46,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/instanceState.ts",
+      "oldLines": 60,
+      "newLines": 123,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/queryCache.ts",
+      "oldLines": 51,
+      "newLines": 71,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/settings.ts",
+      "oldLines": 10,
+      "newLines": 12,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/translations.ts",
+      "oldLines": 29,
+      "newLines": 93,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/ui/visibility.ts",
+      "oldLines": 16,
+      "newLines": 23,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/useConversationTurn.ts",
+      "oldLines": 392,
+      "newLines": 552,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/useConversationVoicePolicy.ts",
+      "oldLines": 152,
+      "newLines": 163,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/useMessageHistory.ts",
+      "oldLines": 9,
+      "newLines": 21,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/chat/useStreamingTextProjection.ts",
+      "oldLines": 48,
+      "newLines": 49,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/meeting/MeetingPage.tsx",
+      "oldLines": 33,
+      "newLines": 225,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/meeting/audio/meetingAudio.worker.ts",
+      "oldLines": 42,
+      "newLines": 40,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/meeting/audio/meetingAudioResampler.ts",
+      "oldLines": 126,
+      "newLines": 126,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/meeting/audio/segmentQueue.ts",
+      "oldLines": 9,
+      "newLines": 26,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/meeting/useMeetingSession.ts",
+      "oldLines": 463,
+      "newLines": 504,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/IndividualProvidersSection.tsx",
+      "oldLines": 337,
+      "newLines": 596,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/ServiceConnectionsSection.tsx",
+      "oldLines": 364,
+      "newLines": 418,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/SettingsFields.tsx",
+      "oldLines": 20,
+      "newLines": 20,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/SettingsPage.tsx",
+      "oldLines": 355,
+      "newLines": 585,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/VoiceProfileCard.tsx",
+      "oldLines": 259,
+      "newLines": 422,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/VoiceSettingsSection.tsx",
+      "oldLines": 227,
+      "newLines": 210,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/VoiceTranscriptionScope.tsx",
+      "oldLines": 27,
+      "newLines": 46,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/pendingVoiceCapture.ts",
+      "oldLines": 18,
+      "newLines": 18,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/settingsDefaults.ts",
+      "oldLines": 92,
+      "newLines": 92,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/settingsDraft.ts",
+      "oldLines": 101,
+      "newLines": 115,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/useVoiceSamplePlayback.ts",
+      "oldLines": 71,
+      "newLines": 71,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/settings/voiceEnrollmentPrompts.ts",
+      "oldLines": 11,
+      "newLines": 11,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/situation/SituationPage.tsx",
+      "oldLines": 165,
+      "newLines": 422,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/situation/review/SituationReview.tsx",
+      "oldLines": 222,
+      "newLines": 432,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/ambientVoiceCapture.ts",
+      "oldLines": 146,
+      "newLines": 157,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/useAmbientVoiceSession.ts",
+      "oldLines": 700,
+      "newLines": 797,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/useLarmVoiceLifetime.ts",
+      "oldLines": 41,
+      "newLines": 54,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/voiceAsrPacketSender.ts",
+      "oldLines": 116,
+      "newLines": 145,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/voiceAsrPacketizer.ts",
+      "oldLines": 50,
+      "newLines": 54,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/voiceAsrProjection.ts",
+      "oldLines": 90,
+      "newLines": 90,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/voiceAudit.ts",
+      "oldLines": 52,
+      "newLines": 145,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/voiceFinalDeliveryQueue.ts",
+      "oldLines": 42,
+      "newLines": 42,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/features/voice/voiceSegmentBoundary.ts",
+      "oldLines": 13,
+      "newLines": 13,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/i18n/index.ts",
+      "oldLines": 75,
+      "newLines": 85,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/i18n/locales/en.ts",
+      "oldLines": 639,
+      "newLines": 745,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/i18n/locales/ja.ts",
+      "oldLines": 639,
+      "newLines": 741,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/i18n/presentation.ts",
+      "oldLines": 242,
+      "newLines": 292,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/appHelpers.ts",
+      "oldLines": 10,
+      "newLines": 10,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/appLanguage.ts",
+      "oldLines": 12,
+      "newLines": 12,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/asrLanguages.ts",
+      "oldLines": 41,
+      "newLines": 68,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/audioCaptureCoordinator.ts",
+      "oldLines": 19,
+      "newLines": 19,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/audioIpc.ts",
+      "oldLines": 29,
+      "newLines": 34,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/audioResampling.ts",
+      "oldLines": 36,
+      "newLines": 45,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/auditRuntime.ts",
+      "oldLines": 22,
+      "newLines": 33,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/contracts.ts",
+      "oldLines": 251,
+      "newLines": 342,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/conversationActivity.ts",
+      "oldLines": 19,
+      "newLines": 19,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/conversationRouting.ts",
+      "oldLines": 57,
+      "newLines": 73,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/conversationSession.ts",
+      "oldLines": 49,
+      "newLines": 51,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/conversationTimeout.ts",
+      "oldLines": 22,
+      "newLines": 22,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/larmVoiceDrain.ts",
+      "oldLines": 18,
+      "newLines": 22,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/larmVoiceOwner.ts",
+      "oldLines": 68,
+      "newLines": 87,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/larmVoiceRuntime.ts",
+      "oldLines": 9,
+      "newLines": 12,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/localProviderAddress.ts",
+      "oldLines": 59,
+      "newLines": 68,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/microphone.ts",
+      "oldLines": 192,
+      "newLines": 204,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/pcm.ts",
+      "oldLines": 10,
+      "newLines": 10,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/promiseTimeout.ts",
+      "oldLines": 27,
+      "newLines": 27,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/providerRuntime.ts",
+      "oldLines": 21,
+      "newLines": 26,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/providerSchemas.ts",
+      "oldLines": 174,
+      "newLines": 377,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/reasoningRun.ts",
+      "oldLines": 20,
+      "newLines": 54,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/reasoningRunControl.ts",
+      "oldLines": 8,
+      "newLines": 17,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/regionalPreferences.ts",
+      "oldLines": 35,
+      "newLines": 55,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/runtime.ts",
+      "oldLines": 163,
+      "newLines": 262,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/schemas.ts",
+      "oldLines": 199,
+      "newLines": 324,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/settingsTypes.ts",
+      "oldLines": 154,
+      "newLines": 175,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/voiceActivity.ts",
+      "oldLines": 107,
+      "newLines": 110,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/voiceAsrRuntime.ts",
+      "oldLines": 21,
+      "newLines": 45,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/voiceBehaviorRuntime.ts",
+      "oldLines": 23,
+      "newLines": 23,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/lib/voiceSession.ts",
+      "oldLines": 56,
+      "newLines": 69,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/main.tsx",
+      "oldLines": 11,
+      "newLines": 11,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/useAppErrors.ts",
+      "oldLines": 22,
+      "newLines": 24,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/useOwnedSignalHeartbeat.ts",
+      "oldLines": 23,
+      "newLines": 41,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "src/vite-env.d.ts",
+      "oldLines": 2,
+      "newLines": 2,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/ambient-voice-capture.test.ts",
+      "oldLines": 135,
+      "newLines": 152,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/ambient-voice-session.test.tsx",
+      "oldLines": 183,
+      "newLines": 211,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/app-icon.test.tsx",
+      "oldLines": 22,
+      "newLines": 38,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/audio-ipc.test.ts",
+      "oldLines": 15,
+      "newLines": 15,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/audio-resampling.test.ts",
+      "oldLines": 26,
+      "newLines": 26,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/audit-log-ui.test.ts",
+      "oldLines": 40,
+      "newLines": 40,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/audit-timestamp.test.ts",
+      "oldLines": 20,
+      "newLines": 20,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/chat-helpers.test.ts",
+      "oldLines": 72,
+      "newLines": 82,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/conversation-quality-eval.test.ts",
+      "oldLines": 80,
+      "newLines": 158,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/conversation-session.test.ts",
+      "oldLines": 19,
+      "newLines": 39,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/conversation-timeout.test.ts",
+      "oldLines": 31,
+      "newLines": 31,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/conversation-virtualization.test.ts",
+      "oldLines": 76,
+      "newLines": 149,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/conversation-voice-policy-hook.test.tsx",
+      "oldLines": 90,
+      "newLines": 120,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/desktop-smoke-descendants.test.ts",
+      "oldLines": 32,
+      "newLines": 47,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/desktop-smoke.test.ts",
+      "oldLines": 102,
+      "newLines": 137,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/effective-route.test.ts",
+      "oldLines": 133,
+      "newLines": 130,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/extended-coverage.test.ts",
+      "oldLines": 122,
+      "newLines": 124,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/final-markdown.test.ts",
+      "oldLines": 47,
+      "newLines": 49,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/generative-ui-boundary.test.tsx",
+      "oldLines": 23,
+      "newLines": 47,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/generative-ui-contracts.test.ts",
+      "oldLines": 14,
+      "newLines": 38,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/generative-ui-lifecycle.test.ts",
+      "oldLines": 35,
+      "newLines": 96,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/generative-ui-openui-spike.test.ts",
+      "oldLines": 27,
+      "newLines": 37,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/generative-ui-state.test.ts",
+      "oldLines": 74,
+      "newLines": 136,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/generative-ui-views.test.tsx",
+      "oldLines": 124,
+      "newLines": 181,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/i18n.test.ts",
+      "oldLines": 48,
+      "newLines": 48,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/interrupted-streaming-ui.test.ts",
+      "oldLines": 18,
+      "newLines": 18,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/jsdomGlobals.ts",
+      "oldLines": 30,
+      "newLines": 43,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/larm-readiness-database.test.ts",
+      "oldLines": 236,
+      "newLines": 282,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/larm-readiness-live-helpers.test.ts",
+      "oldLines": 162,
+      "newLines": 185,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/larm-readiness-process.test.ts",
+      "oldLines": 75,
+      "newLines": 105,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/larm-readiness.test.ts",
+      "oldLines": 471,
+      "newLines": 562,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/larm-voice-drain.test.ts",
+      "oldLines": 33,
+      "newLines": 58,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/larm-voice-lifetime.test.tsx",
+      "oldLines": 51,
+      "newLines": 62,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/larm-voice-owner.test.ts",
+      "oldLines": 107,
+      "newLines": 149,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/local-provider-address.test.ts",
+      "oldLines": 22,
+      "newLines": 26,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/meeting-audio-worker.test.ts",
+      "oldLines": 54,
+      "newLines": 62,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/meeting-contracts.test.ts",
+      "oldLines": 24,
+      "newLines": 39,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/meeting-segment-queue.test.ts",
+      "oldLines": 14,
+      "newLines": 14,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/microphone-desktop-contracts.test.ts",
+      "oldLines": 343,
+      "newLines": 302,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/microphone.test.ts",
+      "oldLines": 178,
+      "newLines": 261,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/module-size-command.test.ts",
+      "oldLines": 12,
+      "newLines": 14,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/module-size-registration.test.ts",
+      "oldLines": 46,
+      "newLines": 74,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/module-size.test.ts",
+      "oldLines": 83,
+      "newLines": 84,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/mvp-2-2.5-readiness.test.ts",
+      "oldLines": 299,
+      "newLines": 408,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/mvp-ui-contracts.test.ts",
+      "oldLines": 98,
+      "newLines": 87,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/reasoning-run.test.ts",
+      "oldLines": 39,
+      "newLines": 66,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/regional-preferences.test.ts",
+      "oldLines": 20,
+      "newLines": 26,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/runtime-ipc.test.ts",
+      "oldLines": 373,
+      "newLines": 429,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/runtime-supervisor-contracts.test.ts",
+      "oldLines": 30,
+      "newLines": 29,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/service-connections-async.test.tsx",
+      "oldLines": 92,
+      "newLines": 118,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/settings-regressions.test.ts",
+      "oldLines": 84,
+      "newLines": 98,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/settings-review.test.ts",
+      "oldLines": 118,
+      "newLines": 154,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/settings-ui-contracts.test.ts",
+      "oldLines": 69,
+      "newLines": 69,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/settings.test.ts",
+      "oldLines": 273,
+      "newLines": 449,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/situation-input-activity.test.ts",
+      "oldLines": 62,
+      "newLines": 76,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/situation-review.test.tsx",
+      "oldLines": 132,
+      "newLines": 155,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/situation.test.ts",
+      "oldLines": 25,
+      "newLines": 27,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/streaming-performance.test.ts",
+      "oldLines": 30,
+      "newLines": 30,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/streaming-speech.test.ts",
+      "oldLines": 40,
+      "newLines": 55,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/streaming-text-buffer.test.ts",
+      "oldLines": 43,
+      "newLines": 43,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/system-context.test.ts",
+      "oldLines": 60,
+      "newLines": 82,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/tauriCoreMock.ts",
+      "oldLines": 29,
+      "newLines": 30,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/ui-presentation-i18n.test.ts",
+      "oldLines": 79,
+      "newLines": 94,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-activity-offset.test.ts",
+      "oldLines": 15,
+      "newLines": 15,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-activity.test.ts",
+      "oldLines": 42,
+      "newLines": 43,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-asr-packet-sender.test.ts",
+      "oldLines": 101,
+      "newLines": 138,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-asr-packetizer.test.ts",
+      "oldLines": 21,
+      "newLines": 27,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-asr-projection.test.ts",
+      "oldLines": 62,
+      "newLines": 137,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-audit.test.ts",
+      "oldLines": 43,
+      "newLines": 45,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-behavior.test.ts",
+      "oldLines": 65,
+      "newLines": 71,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-enrollment-prompts.test.ts",
+      "oldLines": 21,
+      "newLines": 21,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-final-delivery.test.ts",
+      "oldLines": 36,
+      "newLines": 36,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-profile.test.ts",
+      "oldLines": 65,
+      "newLines": 89,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-segment-boundary.test.ts",
+      "oldLines": 18,
+      "newLines": 17,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/voice-session.test.ts",
+      "oldLines": 36,
+      "newLines": 53,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/webfetch-sidecar.test.ts",
+      "oldLines": 57,
+      "newLines": 73,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/websocket-connection-indicator.test.tsx",
+      "oldLines": 26,
+      "newLines": 26,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "tests/websocket-sidebar.test.tsx",
+      "oldLines": 22,
+      "newLines": 40,
+      "emittedAstEqual": true
+    },
+    {
+      "file": "vite.config.ts",
+      "oldLines": 26,
+      "newLines": 26,
+      "emittedAstEqual": true
+    }
+  ]
+}

@@ -15,8 +15,13 @@ import type { CommitReason } from "../../lib/generated/voiceAsr";
 import { voiceSegmentCommitReason } from "./voiceSegmentBoundary";
 
 function detector(settings: VoiceSettings, sampleRate: number): VoiceActivityDetector {
-  const speechThresholdRms = settings.vadSensitivity === "high" ? 0.006 : settings.vadSensitivity === "low" ? 0.012 : 0.008;
-  return new VoiceActivityDetector({ sampleRate, speechThresholdRms, silenceTimeoutMs: settings.silenceTimeoutMs });
+  const speechThresholdRms =
+    settings.vadSensitivity === "high" ? 0.006 : settings.vadSensitivity === "low" ? 0.012 : 0.008;
+  return new VoiceActivityDetector({
+    sampleRate,
+    speechThresholdRms,
+    silenceTimeoutMs: settings.silenceTimeoutMs,
+  });
 }
 
 export async function attachAmbientVoiceCapture(context: {
@@ -47,10 +52,11 @@ export async function attachAmbientVoiceCapture(context: {
   let node: AudioWorkletNode | null = null;
   let activityDetector: VoiceActivityDetector | null = null;
   let releaseCapture: (() => void) | null = null;
-  const stale = () => context.disposed.current
-    || context.captureAttempt.current !== captureAttempt
-    || !context.listeningEnabled.current
-    || isMeetingBlocking(context.meetingState.current);
+  const stale = () =>
+    context.disposed.current ||
+    context.captureAttempt.current !== captureAttempt ||
+    !context.listeningEnabled.current ||
+    isMeetingBlocking(context.meetingState.current);
   const releaseOwnedCapture = () => {
     const release = releaseCapture;
     if (!release) return;
@@ -63,7 +69,8 @@ export async function attachAmbientVoiceCapture(context: {
     if (context.audioContext.current === audioContext) context.audioContext.current = null;
     if (context.source.current === source) context.source.current = null;
     if (context.node.current === node) context.node.current = null;
-    if (context.activityDetector.current === activityDetector) context.activityDetector.current = null;
+    if (context.activityDetector.current === activityDetector)
+      context.activityDetector.current = null;
   };
   const disposeOwnedCapture = async () => {
     if (node) node.port.onmessage = null;
@@ -87,7 +94,11 @@ export async function attachAmbientVoiceCapture(context: {
     // The stream is registered before constructing the AudioContext.
     audioContext = new AudioContext({ sampleRate: 16_000 });
     const activeContext = audioContext;
-    if (activeContext.sampleRate !== 16_000) throw new MicrophoneCaptureError("startup-interrupted", "Streaming transcription requires a 16 kHz audio context.");
+    if (activeContext.sampleRate !== 16_000)
+      throw new MicrophoneCaptureError(
+        "startup-interrupted",
+        "Streaming transcription requires a 16 kHz audio context.",
+      );
     context.audioContext.current = activeContext;
     await activeContext.audioWorklet.addModule("/audio/meeting-processor.js");
     if (stale()) {

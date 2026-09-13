@@ -1,3 +1,11 @@
+import { runtimeEventOrder, meetingEventOrder } from "./ipcEventOrder";
+import {
+  appSnapshotSchema,
+  runtimeEventSchema,
+  meetingEventSchema,
+  parseIpc,
+  guardedReceiver,
+} from "./ipcValidation";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { stageAudioUpload } from "./audioIpc";
 import type {
@@ -10,7 +18,10 @@ import type {
   RuntimeEvent,
   SettingsDocument,
   SituationSnapshot,
-  SituationReviewSnapshot, CalibrationParameters, CalibrationProfile, CalibrationRun,
+  SituationReviewSnapshot,
+  CalibrationParameters,
+  CalibrationProfile,
+  CalibrationRun,
   VoiceProfileSnapshot,
   MeetingPreflightResult,
   MeetingSegmentResult,
@@ -18,15 +29,42 @@ import type {
   MeetingEvent,
 } from "./contracts";
 import { validateSettingsDocuments } from "./schemas";
-export { deleteProviderApiKey, getProviderCredentialState, resolveServiceHarness, setProviderApiKey } from "./providerRuntime";
-export { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } from "./voiceAsrRuntime";
+export {
+  deleteProviderApiKey,
+  getProviderCredentialState,
+  resolveServiceHarness,
+  setProviderApiKey,
+} from "./providerRuntime";
+export {
+  appendVoiceAsrAudio,
+  commitVoiceAsrUtterance,
+  startVoiceAsrSession,
+  stopVoiceAsrSession,
+} from "./voiceAsrRuntime";
 
 export async function startTurn(
-  input: { runId: string; conversationId: string; content: string; workspacePath: string | null; retryInputMessageId?: string | null; sourceId?: string | null; inputOrigin: "text" | "voice"; presentationMode: "visual" | "visual-and-spoken" },
+  input: {
+    runId: string;
+    conversationId: string;
+    content: string;
+    workspacePath: string | null;
+    retryInputMessageId?: string | null;
+    sourceId?: string | null;
+    inputOrigin: "text" | "voice";
+    presentationMode: "visual" | "visual-and-spoken";
+  },
   onEvent: (event: RuntimeEvent) => void,
 ): Promise<void> {
-  const channel = new Channel<RuntimeEvent>();
-  channel.onmessage = onEvent;
+  const channel = new Channel<unknown>();
+  channel.onmessage = guardedReceiver(
+    runtimeEventSchema,
+    "runtime",
+    onEvent,
+    runtimeEventOrder(input.runId),
+    () => {
+      void cancelRun(input.runId).catch(() => undefined);
+    },
+  );
   return invoke<void>("start_turn", { input, onEvent: channel });
 }
 
@@ -34,7 +72,9 @@ export async function cancelRun(runId: string): Promise<void> {
   return invoke<void>("cancel_run", { runId });
 }
 
-export async function testModelProvider(provider: ModelProviderSettings): Promise<ProviderTestResult> {
+export async function testModelProvider(
+  provider: ModelProviderSettings,
+): Promise<ProviderTestResult> {
   return invoke<ProviderTestResult>("test_model_provider", { input: { provider } });
 }
 
@@ -43,7 +83,7 @@ export async function stopTts(runId: string): Promise<void> {
 }
 
 export async function getAppSnapshot(): Promise<AppSnapshot> {
-  return invoke<AppSnapshot>("get_app_snapshot");
+  return parseIpc(appSnapshotSchema, await invoke<unknown>("get_app_snapshot"), "snapshot");
 }
 
 export async function getVoiceProfileSnapshot(): Promise<VoiceProfileSnapshot> {
@@ -57,13 +97,17 @@ export async function saveVoiceEnrollmentSample(input: {
   effectiveAec: boolean;
 }): Promise<VoiceProfileSnapshot> {
   const { samples, ...metadata } = input;
-  const audioUploadId = await stageAudioUpload(samples, "voice-enrollment").finally(() => samples.fill(0));
+  const audioUploadId = await stageAudioUpload(samples, "voice-enrollment").finally(() =>
+    samples.fill(0),
+  );
   return invoke<VoiceProfileSnapshot>("save_voice_enrollment_sample", {
     input: { ...metadata, audioUploadId },
   });
 }
 
-export async function setTargetSpeakerFilterEnabled(enabled: boolean): Promise<VoiceProfileSnapshot> {
+export async function setTargetSpeakerFilterEnabled(
+  enabled: boolean,
+): Promise<VoiceProfileSnapshot> {
   return invoke<VoiceProfileSnapshot>("set_target_speaker_filter_enabled", { input: { enabled } });
 }
 
@@ -108,10 +152,16 @@ export async function setVoiceListeningEnabled(enabled: boolean): Promise<Settin
   return invoke<SettingsDocument>("set_voice_listening_enabled", { input: { enabled } });
 }
 
-export async function listMessages(conversationId: string, cursor: string | null): Promise<{ messages: ConversationMessage[]; hasMore: boolean; nextCursor: string | null }> {
-  return invoke<{ messages: ConversationMessage[]; hasMore: boolean; nextCursor: string | null }>("list_messages", {
-    input: { conversationId, cursor },
-  });
+export async function listMessages(
+  conversationId: string,
+  cursor: string | null,
+): Promise<{ messages: ConversationMessage[]; hasMore: boolean; nextCursor: string | null }> {
+  return invoke<{ messages: ConversationMessage[]; hasMore: boolean; nextCursor: string | null }>(
+    "list_messages",
+    {
+      input: { conversationId, cursor },
+    },
+  );
 }
 
 export async function getSituationSnapshot(): Promise<SituationSnapshot> {
@@ -124,7 +174,12 @@ export async function setSituationMonitoring(enabled: boolean): Promise<Situatio
 
 export async function reportOwnedSignal(input: {
   conversationState: "idle" | "user-input" | "model-running" | "agent-running";
-  microphoneState: "inactive" | "saaa-capturing" | "saaa-transcribing" | "external-active" | "unknown";
+  microphoneState:
+    | "inactive"
+    | "saaa-capturing"
+    | "saaa-transcribing"
+    | "external-active"
+    | "unknown";
   audioState: "silent" | "saaa-speaking" | "external-media" | "unknown";
 }): Promise<void> {
   return invoke<void>("report_owned_signal", { input });
@@ -140,23 +195,91 @@ export async function submitSituationFeedback(input: {
   return invoke<SituationSnapshot>("submit_situation_feedback", { input });
 }
 
-export const getSituationReviewSnapshot = (): Promise<SituationReviewSnapshot> => invoke("get_situation_review_snapshot");
-export const createSituationCalibrationCandidate = (parameters: CalibrationParameters): Promise<CalibrationProfile> => invoke("create_situation_calibration_candidate", { parameters });
-export const runSituationCalibration = (profileId: string): Promise<CalibrationRun> => invoke("run_situation_calibration", { profileId });
-export const decideSituationCalibration = (profileId: string, decision: "accept" | "reject" | "rollback", reasonCode: string): Promise<SituationReviewSnapshot> => invoke("decide_situation_calibration", { profileId, decision, reasonCode });
+export const getSituationReviewSnapshot = (): Promise<SituationReviewSnapshot> =>
+  invoke("get_situation_review_snapshot");
+export const createSituationCalibrationCandidate = (
+  parameters: CalibrationParameters,
+): Promise<CalibrationProfile> => invoke("create_situation_calibration_candidate", { parameters });
+export const runSituationCalibration = (profileId: string): Promise<CalibrationRun> =>
+  invoke("run_situation_calibration", { profileId });
+export const decideSituationCalibration = (
+  profileId: string,
+  decision: "accept" | "reject" | "rollback",
+  reasonCode: string,
+): Promise<SituationReviewSnapshot> =>
+  invoke("decide_situation_calibration", { profileId, decision, reasonCode });
 
 export async function clearSituationHistory(): Promise<SituationSnapshot> {
   return invoke<SituationSnapshot>("clear_situation_history");
 }
 
-export async function meetingPreflight(input: { microphoneDeviceId: string; systemAudioEnabled: boolean; translationEnabled: boolean }): Promise<MeetingPreflightResult> { return invoke("meeting_preflight", { input }); }
-export async function startMeeting(input: { sessionId: string; microphoneDeviceId: string; microphoneEnabled: boolean; systemAudioEnabled: boolean; translationEnabled: boolean; persistenceMode: "discard" }): Promise<MeetingSnapshot> { return invoke("start_meeting", { input }); }
-export async function getMeetingSnapshot(): Promise<MeetingSnapshot> { return invoke("get_meeting_snapshot"); }
-export async function watchMeeting(subscriberId: string, onEvent: (event: MeetingEvent) => void): Promise<void> { const channel = new Channel<MeetingEvent>(); channel.onmessage = onEvent; return invoke("watch_meeting", { subscriberId, onEvent: channel }); }
-export async function unwatchMeeting(subscriberId: string): Promise<void> { return invoke("unwatch_meeting", { subscriberId }); }
-export async function pauseMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("pause_meeting", { input: { sessionId } }); }
-export async function resumeMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("resume_meeting", { input: { sessionId } }); }
-export async function stopMeeting(sessionId: string): Promise<MeetingSnapshot> { return invoke("stop_meeting", { input: { sessionId } }); }
-export async function appendMeetingAudioSegment(input: { sessionId: string; captureToken: string; lane: "microphone"; sequence: number; samples: Float32Array; sampleRate: number; startedAtMs: number; durationMs: number }): Promise<MeetingSegmentResult> { const { samples, ...metadata } = input; const audioUploadId = await stageAudioUpload(samples, "meeting-segment").finally(() => samples.fill(0)); return invoke("append_meeting_audio_segment", { input: { ...metadata, audioUploadId } }); }
-export async function saveMeetingTranscript(sessionId: string): Promise<MeetingSnapshot> { return invoke("save_meeting_transcript", { input: { sessionId } }); }
-export async function discardMeeting(sessionId: string): Promise<void> { return invoke("discard_meeting", { input: { sessionId } }); }
+export async function meetingPreflight(input: {
+  microphoneDeviceId: string;
+  systemAudioEnabled: boolean;
+  translationEnabled: boolean;
+}): Promise<MeetingPreflightResult> {
+  return invoke("meeting_preflight", { input });
+}
+export async function startMeeting(input: {
+  sessionId: string;
+  microphoneDeviceId: string;
+  microphoneEnabled: boolean;
+  systemAudioEnabled: boolean;
+  translationEnabled: boolean;
+  persistenceMode: "discard";
+}): Promise<MeetingSnapshot> {
+  return invoke("start_meeting", { input });
+}
+export async function getMeetingSnapshot(): Promise<MeetingSnapshot> {
+  return invoke("get_meeting_snapshot");
+}
+export async function watchMeeting(
+  subscriberId: string,
+  onEvent: (event: MeetingEvent) => void,
+): Promise<void> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = guardedReceiver(
+    meetingEventSchema,
+    "meeting",
+    onEvent,
+    meetingEventOrder(),
+    () => {
+      void unwatchMeeting(subscriberId).catch(() => undefined);
+    },
+  );
+  return invoke("watch_meeting", { subscriberId, onEvent: channel });
+}
+export async function unwatchMeeting(subscriberId: string): Promise<void> {
+  return invoke("unwatch_meeting", { subscriberId });
+}
+export async function pauseMeeting(sessionId: string): Promise<MeetingSnapshot> {
+  return invoke("pause_meeting", { input: { sessionId } });
+}
+export async function resumeMeeting(sessionId: string): Promise<MeetingSnapshot> {
+  return invoke("resume_meeting", { input: { sessionId } });
+}
+export async function stopMeeting(sessionId: string): Promise<MeetingSnapshot> {
+  return invoke("stop_meeting", { input: { sessionId } });
+}
+export async function appendMeetingAudioSegment(input: {
+  sessionId: string;
+  captureToken: string;
+  lane: "microphone";
+  sequence: number;
+  samples: Float32Array;
+  sampleRate: number;
+  startedAtMs: number;
+  durationMs: number;
+}): Promise<MeetingSegmentResult> {
+  const { samples, ...metadata } = input;
+  const audioUploadId = await stageAudioUpload(samples, "meeting-segment").finally(() =>
+    samples.fill(0),
+  );
+  return invoke("append_meeting_audio_segment", { input: { ...metadata, audioUploadId } });
+}
+export async function saveMeetingTranscript(sessionId: string): Promise<MeetingSnapshot> {
+  return invoke("save_meeting_transcript", { input: { sessionId } });
+}
+export async function discardMeeting(sessionId: string): Promise<void> {
+  return invoke("discard_meeting", { input: { sessionId } });
+}

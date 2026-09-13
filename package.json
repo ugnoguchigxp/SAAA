@@ -45,7 +45,12 @@
     "spec:fix": "bunx --bun spec-html check ./spec/docs --fix --warnings-as-errors && bunx --bun spec-html check ./spec/docs/.archived --fixer --format --fix",
     "preview": "vite preview",
     "tauri": "tauri",
-    "codex:smoke": "bun scripts/codex-sdk-smoke.ts"
+    "codex:smoke": "bun scripts/codex-sdk-smoke.ts",
+    "lint": "oxlint src tests scripts vite.config.ts --deny-warnings",
+    "format": "oxfmt --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"scripts/**/*.{ts,tsx}\" vite.config.ts",
+    "format:check": "oxfmt --check \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"scripts/**/*.{ts,tsx}\" vite.config.ts",
+    "check:local": "bun run format:check && bun run lint && bun run check",
+    "ipc:fixtures": "SAAA_UPDATE_IPC_FIXTURES=1 cargo test --manifest-path src-tauri/Cargo.toml --lib ipc_receiver_fixture"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.144.4",
@@ -61,15 +66,17 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@openuidev/react-lang": "0.2.15",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "jsdom": "26.1.0",
+    "oxfmt": "0.67.0",
+    "oxlint": "1.82.0",
     "s11tnext-cli": "0.1.2",
     "spec-html": "0.1.6",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "@openuidev/react-lang": "0.2.15"
+    "vite": "^7.0.4"
   }
 }

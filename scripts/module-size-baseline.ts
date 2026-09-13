@@ -8,18 +8,25 @@ export function supplementBaseline(records: SizeRecord[], baseline: BaselineFile
   if (failures.length) throw new Error(failures.join("\n"));
   return {
     ...baseline,
-    files: Object.fromEntries([
-      ...Object.entries(baseline.files),
-      ...records.filter((record) => !baseline.files[record.path]).map((record) => [
-        record.path, { total: record.total, production: record.production },
-      ] as const),
-    ].sort(([left], [right]) => left.localeCompare(right))),
+    files: Object.fromEntries(
+      [
+        ...Object.entries(baseline.files),
+        ...records
+          .filter((record) => !baseline.files[record.path])
+          .map(
+            (record) =>
+              [record.path, { total: record.total, production: record.production }] as const,
+          ),
+      ].sort(([left], [right]) => left.localeCompare(right)),
+    ),
   };
 }
 
 export function runSizeCommand(command: string | undefined, baselinePath: string): void {
   if (command !== undefined && command !== "check" && command !== "add-missing") {
-    throw new Error("usage: bun scripts/module-size.ts check|add-missing (existing baselines must be reviewed explicitly)");
+    throw new Error(
+      "usage: bun scripts/module-size.ts check|add-missing (existing baselines must be reviewed explicitly)",
+    );
   }
   if (!existsSync(baselinePath)) throw new Error(`missing baseline: ${baselinePath}`);
   const records = collectSizes();
@@ -27,7 +34,9 @@ export function runSizeCommand(command: string | undefined, baselinePath: string
   if (command === "add-missing") {
     const next = supplementBaseline(records, baseline);
     writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`);
-    console.log(`registered ${Object.keys(next.files).length - Object.keys(baseline.files).length} files; existing values preserved`);
+    console.log(
+      `registered ${Object.keys(next.files).length - Object.keys(baseline.files).length} files; existing values preserved`,
+    );
     return;
   }
   const failures = evaluate(records, baseline);

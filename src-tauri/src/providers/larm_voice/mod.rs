@@ -235,7 +235,8 @@ mod tests {
             .is_none());
         assert!(reasoning_client("conversation_primary", "voice")
             .await
-            .is_err());
+            .expect("disabled voice origin skips LARM")
+            .is_none());
         classify_shadow(
             "conversation_primary",
             "hello",

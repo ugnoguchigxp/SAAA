@@ -116,8 +116,12 @@ fn main_database_open_and_connection_ownership_are_centralized() {
         .split_once("pub(crate) async fn execute_conversation_turn")
         .expect("conversation runtime entry point exists")
         .1;
+    let inputs = fs::read_to_string(source_root.join("runtime/conversation_inputs.rs"))
+        .expect("conversation input source reads");
+    assert!(inputs.contains("state.sqlite_readers.read"));
+    assert!(!inputs.contains("state.sqlite_writer.write"));
     let reader = execute_turn
-        .find("state.sqlite_readers.read")
+        .find("conversation_inputs::load(state, input)")
         .expect("context source uses a persistent Reader");
     let compose = execute_turn
         .find("context_window::compose")

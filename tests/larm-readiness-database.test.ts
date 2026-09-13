@@ -14,7 +14,8 @@ import { RunnerError, type CanaryManifest } from "../scripts/larm-readiness/sche
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of temporaryDirectories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
 });
 
 function directory() {
@@ -107,12 +108,29 @@ function settingsJson(primary: "larm" | "direct") {
       key: "default",
       schema_version: 14,
       value_json: JSON.stringify({
-        conversationRespond: primary === "larm"
-          ? { source: "provider", primaryProviderId: "larm-local", fallbackProviderIds: ["local-openai-compatible"], timeoutMs: 30_000 }
-          : { source: "provider", primaryProviderId: "local-openai-compatible", fallbackProviderIds: [], timeoutMs: 30_000 },
+        conversationRespond:
+          primary === "larm"
+            ? {
+                source: "provider",
+                primaryProviderId: "larm-local",
+                fallbackProviderIds: ["local-openai-compatible"],
+                timeoutMs: 30_000,
+              }
+            : {
+                source: "provider",
+                primaryProviderId: "local-openai-compatible",
+                fallbackProviderIds: [],
+                timeoutMs: 30_000,
+              },
         voiceTranscribe: { source: "harness", providerId: null, timeoutMs: 120_000 },
         voiceSpeak: { source: "harness", providerId: null, timeoutMs: 30_000 },
-        codingAssist: { providerId: "codex-sdk", timeoutMs: 120_000, readOnly: true, networkEnabled: false, webSearchEnabled: false },
+        codingAssist: {
+          providerId: "codex-sdk",
+          timeoutMs: 120_000,
+          readOnly: true,
+          networkEnabled: false,
+          webSearchEnabled: false,
+        },
       }),
     },
     {
@@ -153,7 +171,13 @@ function settingsJson(primary: "larm" | "direct") {
       namespace: "ui.preferences",
       key: "default",
       schema_version: 14,
-      value_json: JSON.stringify({ language: "system", timeZone: "system", lengthUnit: "metric", weightUnit: "kilogram", currency: "JPY" }),
+      value_json: JSON.stringify({
+        language: "system",
+        timeZone: "system",
+        lengthUnit: "metric",
+        weightUnit: "kilogram",
+        currency: "JPY",
+      }),
     },
   ];
   return documents;
@@ -172,21 +196,40 @@ function createDatabase(dataDirectory: string, options?: { settings?: boolean; r
     );
   `);
   if (options?.settings !== false) {
-    const insert = database.query("INSERT INTO settings_documents (namespace, key, schema_version, value_json) VALUES (?1, ?2, ?3, ?4)");
+    const insert = database.query(
+      "INSERT INTO settings_documents (namespace, key, schema_version, value_json) VALUES (?1, ?2, ?3, ?4)",
+    );
     for (const document of settingsJson("larm")) {
       insert.run(document.namespace, document.key, document.schema_version, document.value_json);
     }
   }
   if (options?.run) {
-    database.query("INSERT INTO runtime_runs (id, conversation_id, provider_id, status) VALUES (?1, ?2, ?3, ?4)")
+    database
+      .query(
+        "INSERT INTO runtime_runs (id, conversation_id, provider_id, status) VALUES (?1, ?2, ?3, ?4)",
+      )
       .run("run-1", "conversation-1", "larm-local", "completed");
-    database.query(`INSERT INTO provider_sessions (
+    database
+      .query(`INSERT INTO provider_sessions (
       id, runtime_run_id, provider_id, provider_kind, allocation_id, selected_runtime_id, request_id,
       fallback_used, route_id, selection_reason, output_started, failure_kind, release_status, status
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`).run(
-      "session-1", "run-1", "larm-local", "larm", "alloc-1", "qwen-general", "req-1",
-      0, "llm-default", "primary", 1, null, "released", "completed",
-    );
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`)
+      .run(
+        "session-1",
+        "run-1",
+        "larm-local",
+        "larm",
+        "alloc-1",
+        "qwen-general",
+        "req-1",
+        0,
+        "llm-default",
+        "primary",
+        1,
+        null,
+        "released",
+        "completed",
+      );
   }
   database.close();
   chmodSync(filename, 0o600);
@@ -213,7 +256,10 @@ describe("LARM canary database observations", () => {
     const snapshot = databaseSnapshot(first);
     first.close();
     const writable = new Database(join(dataDirectory, "saaa.sqlite3"));
-    writable.query("INSERT INTO runtime_runs (id, conversation_id, provider_id, status) VALUES (?1, ?2, ?3, ?4)")
+    writable
+      .query(
+        "INSERT INTO runtime_runs (id, conversation_id, provider_id, status) VALUES (?1, ?2, ?3, ?4)",
+      )
       .run("run-2", "conversation-1", "larm-local", "cancelled");
     writable.close();
     const second = openCanaryDatabase(dataDirectory);
