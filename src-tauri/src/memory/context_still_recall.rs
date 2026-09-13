@@ -1263,6 +1263,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(coverage))]
     #[tokio::test]
     #[ignore = "operator-only ContextStill typed-memory MCP compatibility canary"]
     async fn live_typed_memory_contract() {

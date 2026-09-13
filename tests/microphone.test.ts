@@ -147,4 +147,31 @@ describe("microphone capture", () => {
       code: "startup-interrupted",
     });
   });
+
+  test("disposes streams and classifies remaining capture failures", async () => {
+    const { disposeMicrophoneCapture, microphoneErrorMessage } = await import("../src/lib/microphone");
+    const stopped: string[] = [];
+    await disposeMicrophoneCapture({
+      getTracks: () => [{ stop: () => stopped.push("track") }],
+    } as unknown as MediaStream, {
+      close: async () => undefined,
+    } as AudioContext);
+    expect(stopped).toEqual(["track"]);
+    expect(microphoneErrorMessage(new MicrophoneCaptureError("device-not-found", "missing"))).toBe("missing");
+    await expect(requestMicrophoneStream(true, environment({
+      mediaDevices: { getUserMedia: async () => { throw new DOMException("Gone", "NotFoundError"); } },
+    }))).rejects.toMatchObject({ code: "device-not-found" });
+    await expect(requestMicrophoneStream(true, environment({
+      mediaDevices: { getUserMedia: async () => { throw new DOMException("Busy", "NotReadableError"); } },
+    }))).rejects.toMatchObject({ code: "device-unavailable" });
+    await expect(requestMicrophoneStream(true, environment({
+      mediaDevices: { getUserMedia: async () => { throw new DOMException("Bad", "OverconstrainedError"); } },
+    }))).rejects.toMatchObject({ code: "device-selection-invalid" });
+    await expect(requestMicrophoneStream(true, environment({
+      mediaDevices: { getUserMedia: async () => { throw new DOMException("Stop", "AbortError"); } },
+    }))).rejects.toMatchObject({ code: "startup-interrupted" });
+    await expect(requestMicrophoneStream(true, environment({
+      mediaDevices: { getUserMedia: async () => { throw new Error("mystery"); } },
+    }))).rejects.toMatchObject({ code: "unknown" });
+  });
 });

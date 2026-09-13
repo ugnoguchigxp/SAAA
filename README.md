@@ -64,13 +64,9 @@ Voice chat and Meeting reuse the LAN host configured under Settings → Model Pr
 
 ### OpenAI-compatible APIs
 
-You can add an endpoint and model in Settings. SAAA reads the credential from:
+You can add an endpoint and model in Settings. For API-key authentication, save the provider's key in Settings; SAAA stores it in macOS Keychain under service `com.saaa.provider-api-key`, keyed by provider ID. The key itself is not stored in Settings JSON or SQLite. This credential storage requires macOS.
 
-```text
-SAAA_PROVIDER_<PROVIDER_ID>_API_KEY
-```
-
-`<PROVIDER_ID>` is uppercased and every non-alphanumeric character becomes `_`. For example, provider ID `local-llm` maps to `SAAA_PROVIDER_LOCAL_LLM_API_KEY`. Providers classified as Cloud may also use `OPENAI_API_KEY`.
+The current OpenAI-compatible provider does not read `SAAA_PROVIDER_<PROVIDER_ID>_API_KEY` or `OPENAI_API_KEY` as a fallback. The LARM token below belongs to a separate runtime path.
 
 ### LARM provider
 
@@ -171,3 +167,7 @@ spec/docs/       design documents, ADRs, runbooks, and release evidence
 - [Runtime Boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.html)
 - [Situation Privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html)
 - [Input Activity Privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html)
+
+## License
+
+SAAA is available under the [MIT License](LICENSE). Bundled speaker-verification components keep their own terms; see [THIRD_PARTY_NOTICES](src-tauri/resources/voice/THIRD_PARTY_NOTICES.md).

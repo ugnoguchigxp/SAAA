@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import {
   OPTIONAL_RUNTIME_IDS,
   RESIDENT_DEFAULT_RUNTIME_IDS,
+  ROOT,
   RunnerError,
   emptyReport,
   reportFailure,
@@ -12,6 +13,7 @@ import {
   applicationDetectedForbiddenData,
   startApplication,
   stopApplication,
+  terminateOwnedChild,
   type OwnedApplication,
 } from "./process.ts";
 import {

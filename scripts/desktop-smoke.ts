@@ -1,64 +1,31 @@
-import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyMacBundle } from "./macos-bundle-smoke";
+import { runDesktopSmoke } from "./desktop-smoke-process";
 
+const args = process.argv.slice(2);
+if (args.length !== 0 && (args.length !== 2 || args[0] !== "--report-dir" || !args[1])) {
+  console.error("usage: bun run desktop:smoke [--report-dir DIRECTORY]");
+  process.exit(64);
+}
 const root = fileURLToPath(new URL("..", import.meta.url));
-const buildArguments = process.platform === "darwin"
-  ? ["bunx", "tauri", "build", "--debug", "--bundles", "app"]
-  : ["bunx", "tauri", "build", "--debug", "--no-bundle"];
-const build = Bun.spawn(buildArguments, { cwd: root, stdout: "inherit", stderr: "inherit" });
-if (await build.exited !== 0) process.exit(1);
-
-if (process.platform === "darwin") {
-  await verifyMacBundle(root).catch((cause) => {
-    console.error(cause instanceof Error ? cause.message : String(cause));
-    process.exit(1);
-  });
-}
-
-const executable = process.platform === "darwin"
-  ? join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/MacOS/saaa")
-  : join(root, `src-tauri/target/debug/saaa${process.platform === "win32" ? ".exe" : ""}`);
-const markerId = `smoke-${Date.now()}`;
-const marker = join(tmpdir(), `saaa-frontend-${markerId}.ready`);
-const dataDirectory = mkdtempSync(join(tmpdir(), "saaa-desktop-smoke-"));
-if (existsSync(marker)) unlinkSync(marker);
-const application = Bun.spawn([executable], {
-  cwd: root,
-  env: {
-    ...process.env,
-    SAAA_SMOKE_MARKER_ID: markerId,
-    SAAA_SMOKE_DATA_DIR: dataDirectory,
-    SAAA_SMOKE_EXERCISE_SITUATION: "1",
-    SAAA_SMOKE_REQUIRE_SPEAKER: "1",
-  },
-  stdout: "inherit",
-  stderr: "inherit",
-});
-
-let ready = false;
+const reportDir = args[1] ? resolve(args[1]) : mkdtempSync(join(tmpdir(), "saaa-smoke-report-"));
+const mac = process.platform === "darwin";
 try {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (existsSync(marker)) {
-      ready = true;
-      break;
-    }
-    if (application.exitCode !== null) break;
-    await Bun.sleep(100);
-  }
+  await runDesktopSmoke({
+    root, reportDir,
+    build: mac ? ["bunx", "tauri", "build", "--debug", "--bundles", "app"]
+      : ["bunx", "tauri", "build", "--debug", "--no-bundle"],
+    executable: [mac ? join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/MacOS/saaa")
+      : join(root, `src-tauri/target/debug/saaa${process.platform === "win32" ? ".exe" : ""}`)],
+    verifyBundle: mac ? () => verifyMacBundle(root) : undefined,
+  });
+  console.log("Desktop smoke passed: packaged frontend reported IPC ready.");
+} catch (cause) {
+  console.error(cause instanceof Error ? cause.message : String(cause));
+  process.exitCode = 1;
 } finally {
-  try {
-    if (application.exitCode === null) application.kill();
-    await application.exited;
-  } finally {
-    rmSync(dataDirectory, { recursive: true, force: true });
-    if (existsSync(marker)) unlinkSync(marker);
-  }
+  console.log(`Desktop smoke report: ${reportDir}`);
 }
-if (!ready) {
-  console.error("Desktop smoke failed: the packaged frontend did not report ready within 10 seconds.");
-  process.exit(1);
-}
-console.log(JSON.stringify({ desktop: "ready", executable, packagedCodex: process.platform === "darwin" }));

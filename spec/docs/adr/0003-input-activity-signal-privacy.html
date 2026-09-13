@@ -9,6 +9,28 @@
     <dd>なし。<a href="./0002-situation-signal-privacy.html">ADR 0002</a>を継承する</dd>
   </dl>
 
+  <h2 id="operator-scheduling-20260912">2026-09-12 — 手動検証の実施管理</h2>
+  <p>
+    以下は本書の全未完了operator
+    Gateに適用する共通管理情報。各Gateの結果・証跡は本書の既存項目を正本とし、CI
+    smokeの成功で置き換えない。
+  </p>
+  <dl>
+    <dt>適用範囲</dt>
+    <dd>入力活動信号のAccepted判定</dd>
+    <dt>担当者</dt>
+    <dd>未割当。release担当者の確定が必要</dd>
+    <dt>対象build・実施予定日</dt>
+    <dd>未確定。対象releaseと担当確定後に記入</dd>
+    <dt>必要環境</dt>
+    <dd>macOS signed package、権限の許可／拒否状態</dd>
+    <dt>現在の結果</dt>
+    <dd>未実施。既存のpending／Conditional／blockedを維持</dd>
+    <dt>次の作業</dt>
+    <dd>
+      既存Decisionの手動権限確認を実施し、結果をInput Activity spikeとMVP 2.5 evidenceに記録する。
+    </dd>
+  </dl>
   <h2 id="context">Context</h2>
   <p>
     SituationのShadow policyは、提案を控える弱い根拠として入力活動の有無を必要とする。

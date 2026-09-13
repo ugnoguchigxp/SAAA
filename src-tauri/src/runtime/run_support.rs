@@ -91,9 +91,85 @@ pub(crate) fn update_runtime_provider(
                 params![provider_id, run_id],
             )
             .map_err(database_error)?;
-        if changed != 1 {
-            return Err("Runtime run is not active".to_string());
-        }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::StartTurnInput;
+
+    fn turn(
+        run_id: &str,
+        content: &str,
+        origin: &str,
+        mode: &str,
+        retry: Option<&str>,
+        workspace: Option<&str>,
+    ) -> StartTurnInput {
+        StartTurnInput {
+            run_id: run_id.into(),
+            conversation_id: "conversation_primary".into(),
+            content: content.into(),
+            workspace_path: workspace.map(str::to_string),
+            retry_input_message_id: retry.map(str::to_string),
+            source_id: None,
+            input_origin: origin.into(),
+            presentation_mode: mode.into(),
+        }
+    }
+
+    #[test]
+    fn start_turn_input_must_use_canonical_identifiers_and_modes() {
+        assert!(validate_start_turn(&turn(
+            "run_a",
+            "hello",
+            "text",
+            "visual",
+            None,
+            None
+        ))
+        .is_ok());
+        assert!(validate_start_turn(&turn("run a", "hello", "text", "visual", None, None)).is_err());
+        assert!(validate_start_turn(&turn("run_a", "", "text", "visual", None, None)).is_err());
+        assert!(validate_start_turn(&turn(
+            "run_a",
+            "hello",
+            "clipboard",
+            "visual",
+            None,
+            None
+        ))
+        .is_err());
+        assert!(validate_start_turn(&turn("run_a", "hello", "voice", "spoken", None, None)).is_err());
+        assert!(validate_start_turn(&turn(
+            "run_a",
+            "hello",
+            "text",
+            "visual",
+            Some("bad id"),
+            None
+        ))
+        .is_err());
+        assert!(validate_start_turn(&turn(
+            "run_a",
+            "hello",
+            "text",
+            "visual-and-spoken",
+            None,
+            Some(&"x".repeat(4_097))
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn register_active_run_rejects_duplicates() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        let state = crate::test_support::app_state(connection);
+        let cancellation = Arc::new(RunCancellation::default());
+        register_active_run(&state, "run_a", cancellation.clone()).expect("first register");
+        assert!(register_active_run(&state, "run_a", cancellation).is_err());
+    }
 }

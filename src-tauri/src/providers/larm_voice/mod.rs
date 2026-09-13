@@ -216,3 +216,32 @@ pub(crate) async fn reasoning_client(
     Ok(Some(current(conversation).await?.client.clone()))
 }
 pub(crate) use decision::classify_shadow;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn disabled_mode_skips_session_lifecycle() {
+        assert!(!enabled());
+        begin_larm_voice_session("owner".into(), "conversation_primary".into())
+            .await
+            .expect("disabled begin is a no-op");
+        assert!(current("conversation_primary").await.is_err());
+        assert!(reasoning_client("conversation_primary", "text")
+            .await
+            .expect("text origin skips LARM")
+            .is_none());
+        assert!(reasoning_client("conversation_primary", "voice")
+            .await
+            .is_err());
+        classify_shadow(
+            "conversation_primary",
+            "hello",
+            Arc::new(crate::RunCancellation::default()),
+        )
+        .await;
+        shutdown().await;
+    }
+}

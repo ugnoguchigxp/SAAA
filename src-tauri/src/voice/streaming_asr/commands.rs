@@ -261,4 +261,33 @@ mod tests {
             Err("bad".to_string())
         );
     }
+
+    #[test]
+    fn start_errors_and_native_failures_map_to_stable_codes() {
+        assert_eq!(
+            normalize_start_error("TARGET_SPEAKER_UNAVAILABLE in prepare"),
+            "asr-target-speaker-unavailable"
+        );
+        assert_eq!(
+            normalize_start_error("asr-language-not-allowed"),
+            "asr-language-not-allowed"
+        );
+        assert_eq!(
+            normalize_start_error("asr-provider-unavailable"),
+            "asr-provider-unavailable"
+        );
+        assert_eq!(normalize_start_error("asr-cancelled"), "asr-cancelled");
+        assert_eq!(
+            normalize_start_error("unexpected"),
+            "asr-provider-unavailable"
+        );
+        assert!(matches!(
+            native_failure_code("stream protocol mismatch"),
+            VoiceAsrFailureCode::StreamProtocol
+        ));
+        assert!(matches!(
+            native_failure_code("timed out"),
+            VoiceAsrFailureCode::StreamTimeout
+        ));
+    }
 }

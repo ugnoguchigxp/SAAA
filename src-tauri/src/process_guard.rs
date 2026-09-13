@@ -32,3 +32,24 @@ impl Drop for ProcessGuard {
         self.terminate();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn terminate_is_idempotent_and_drop_reaps_the_child() {
+        let child = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sleep starts");
+        let mut guard = ProcessGuard::new(child);
+        let _ = guard.child_mut();
+        guard.terminate();
+        guard.terminate();
+        drop(guard);
+    }
+}

@@ -1103,4 +1103,19 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn disabled_monitor_does_not_start_a_worker() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        let state = crate::test_support::app_state(connection);
+        assert!(!state.situation.enabled());
+        spawn_situation_monitor(state.sqlite_writer.clone(), state.situation.clone());
+        assert!(!state.situation.is_worker_running());
+        assert!(state.situation.begin_worker());
+        assert!(!state.situation.begin_worker());
+        state.situation.finish_worker();
+        assert!(!state.situation.is_worker_running());
+        assert_eq!(state.situation.sample_interval_ms(), 2_000);
+    }
 }

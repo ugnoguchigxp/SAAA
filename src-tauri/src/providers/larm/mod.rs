@@ -1,6 +1,6 @@
 pub(crate) mod client;
 pub(crate) mod contracts;
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 mod live_canary;
 
 use client::{

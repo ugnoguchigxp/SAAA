@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use std::sync::Arc;
 pub(crate) mod client;
 pub(crate) mod decode;
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 mod live;
 mod playback;
 #[cfg(test)]

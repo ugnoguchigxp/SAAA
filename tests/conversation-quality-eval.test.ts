@@ -71,5 +71,9 @@ describe("conversation quality evaluation contract", () => {
     expect(parseWebSearchToolCall([{ id: "call_1", type: "function", function: { name: "web_search", arguments: '{"query":"current weather"}' } }]).id).toBe("call_1");
     expect(() => parseWebSearchToolCall([{ id: "call_1", type: "function", function: { name: "other", arguments: "{}" } }])).toThrow("must invoke web_search");
     expect(() => parseWebSearchToolCall([{ id: "call_1", type: "function", function: { name: "web_search", arguments: '{"query":"weather","extra":true}' } }])).toThrow("contain only query");
+    expect(() => normalizeEndpointBaseUrl("not a url")).toThrow("valid URL");
+    expect(() => parseWebSearchToolCall([])).toThrow("exactly one");
+    expect(() => parseWebSearchToolCall([{ id: "", type: "function", function: { name: "web_search", arguments: '{"query":"q"}' } }])).toThrow("id is invalid");
+    expect(() => parseWebSearchToolCall([{ id: "call_1", type: "function", function: { name: "web_search", arguments: "not-json" } }])).toThrow("strict JSON");
   });
 });

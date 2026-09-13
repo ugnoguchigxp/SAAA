@@ -516,4 +516,52 @@ mod tests {
             Err("asr-backpressure".to_string())
         );
     }
+
+    #[test]
+    fn reserve_rejects_invalid_identifiers_and_sample_rates() {
+        let manager = AsrSessionManager::default();
+        assert!(manager
+            .reserve("bad id".into(), "conversation_main", 16_000, false)
+            .is_err());
+        assert_eq!(
+            manager
+                .reserve("session_rate".into(), "conversation_main", 8_000, false)
+                .err(),
+            Some("ASR requires the canonical 16 kHz sample rate".to_string())
+        );
+        manager.shutdown();
+        assert_eq!(
+            manager.append("missing", 0, PACKET_SAMPLES, &[0; PACKET_BYTES]),
+            Err("asr-session-not-found".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_and_stop_report_missing_sessions() {
+        let manager = AsrSessionManager::default();
+        assert_eq!(
+            manager.commit("missing", CommitReason::Silence).await,
+            Err("asr-session-not-found".to_string())
+        );
+        assert_eq!(
+            manager.stop("missing", false).await,
+            Err("asr-session-not-found".to_string())
+        );
+        let cancellation = Arc::new(RunCancellation::default());
+        manager.inner.sessions.lock().unwrap().insert(
+            "session_dead".to_string(),
+            SessionHandle {
+                generation: 1,
+                next_sequence: 0,
+                utterance_bytes: 0,
+                sender: None,
+                cancellation: cancellation.clone(),
+            },
+        );
+        assert_eq!(
+            manager.stop("session_dead", true).await,
+            Err("asr-session-not-found".to_string())
+        );
+        assert!(cancellation.is_cancelled());
+    }
 }

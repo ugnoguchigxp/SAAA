@@ -3502,6 +3502,7 @@ for line in sys.stdin:
         );
     }
 
+    #[cfg(not(coverage))]
     #[test]
     #[ignore = "requires a local Codex runtime, authentication, and network access"]
     fn codex_live_read_only_turn_completes() {
@@ -3528,6 +3529,7 @@ for line in sys.stdin:
         );
     }
 
+    #[cfg(not(coverage))]
     #[test]
     #[ignore = "requires a local Codex runtime, authentication, and network access"]
     fn codex_live_read_only_turn_cancels_after_turn_start() {

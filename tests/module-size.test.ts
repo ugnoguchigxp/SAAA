@@ -44,7 +44,7 @@ describe("module-size ratchet", () => {
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
     expect(evaluate([
       { path: "src-tauri/src/oversized.rs", total: 1_601, production: 1_601 },
-    ], baseline)).toEqual([
+    ], baseline, false)).toEqual([
       "src-tauri/src/oversized.rs: 1601 exceeds hard budget 1600",
     ]);
   });
@@ -53,7 +53,7 @@ describe("module-size ratchet", () => {
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
     expect(evaluate([
       { path: "src/lib/oversized.ts", total: 701, production: 701 },
-    ], baseline)).toEqual([
+    ], baseline, false)).toEqual([
       "src/lib/oversized.ts: 701 exceeds hard budget 700",
     ]);
   });
@@ -62,7 +62,7 @@ describe("module-size ratchet", () => {
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
     expect(evaluate([
       { path: "src/App.tsx", total: 451, production: 451 },
-    ], baseline)).toEqual([
+    ], baseline, false)).toEqual([
       "src/App.tsx: 451 exceeds hard budget 450",
     ]);
   });

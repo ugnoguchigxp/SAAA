@@ -92,3 +92,54 @@ pub(crate) fn validate_readiness_data_directory(
     }
     Ok(canonical)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use std::fs;
+
+    fn state() -> crate::AppState {
+        let connection = Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        crate::test_support::app_state(connection)
+    }
+
+    #[test]
+    fn frontend_ready_is_a_no_op_without_a_smoke_marker() {
+        frontend_ready(&state()).expect("idle frontend ready succeeds");
+    }
+
+    #[test]
+    fn readiness_data_directory_must_be_a_private_directory_distinct_from_app_data() {
+        assert!(validate_readiness_data_directory(Path::new("relative"), Path::new("/tmp")).is_err());
+        let missing = std::env::temp_dir().join(format!(
+            "saaa-missing-readiness-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        assert!(validate_readiness_data_directory(&missing, Path::new("/tmp")).is_err());
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("private mode");
+        }
+        let canonical = validate_readiness_data_directory(directory.path(), Path::new("/tmp"))
+            .expect("private directory is accepted");
+        assert_eq!(
+            canonical,
+            fs::canonicalize(directory.path()).expect("canonical path")
+        );
+        assert!(validate_readiness_data_directory(directory.path(), directory.path()).is_err());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755))
+                .expect("relaxed mode");
+            assert!(validate_readiness_data_directory(directory.path(), Path::new("/tmp")).is_err());
+        }
+    }
+}

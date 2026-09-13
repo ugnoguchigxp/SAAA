@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -152,10 +152,11 @@ function hardLimit(record: SizeRecord): number | undefined {
   return undefined;
 }
 
-export function evaluate(records: SizeRecord[], baseline: BaselineFile): string[] {
+export function evaluate(records: SizeRecord[], baseline: BaselineFile, requireRegistration = true): string[] {
   const failures: string[] = [];
   for (const record of records) {
     const previous = baseline.files[record.path];
+    if (!previous && requireRegistration) failures.push(`${record.path}: missing baseline; run bun run size:register`);
     const measured = record.path.endsWith(".rs") ? record.production : record.total;
     if (previous) {
       const previousMeasured = record.path.endsWith(".rs") ? previous.production : previous.total;
@@ -172,36 +173,21 @@ export function evaluate(records: SizeRecord[], baseline: BaselineFile): string[
       }
     }
   }
+  if (requireRegistration) {
+    const paths = new Set(records.map((record) => record.path));
+    for (const path of Object.keys(baseline.files)) {
+      if (!paths.has(path)) failures.push(`${path}: stale baseline; review deletion or transfer its baseline when moving a file`);
+    }
+  }
   return failures;
 }
 
-function usage(): never {
-  console.error("usage: bun scripts/module-size.ts check|write-baseline");
-  process.exit(64);
-}
-
 if (import.meta.main) {
-  const command = process.argv[2];
-  if (command !== "check" && command !== "write-baseline" && command !== undefined) usage();
-  const records = collectSizes();
-  if (command === "write-baseline") {
-    const baseline: BaselineFile = {
-      generatedAt: new Date().toISOString(),
-      files: Object.fromEntries(records.map((record) => [record.path, { total: record.total, production: record.production }])),
-    };
-    writeFileSync(BASELINE_PATH, `${JSON.stringify(baseline, null, 2)}\n`);
-    console.log(`wrote ${records.length} files to ${posix(BASELINE_PATH)}`);
-  } else {
-    if (!existsSync(BASELINE_PATH)) {
-      console.error(`missing ${posix(BASELINE_PATH)}; run bun scripts/module-size.ts write-baseline`);
-      process.exit(2);
-    }
-    const baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineFile;
-    const failures = evaluate(records, baseline);
-    if (failures.length > 0) {
-      console.error(failures.join("\n"));
-      process.exit(1);
-    }
-    console.log(`module-size ok (${records.length} files)`);
+  try {
+    const { runSizeCommand } = await import("./module-size-baseline");
+    runSizeCommand(process.argv[2], BASELINE_PATH);
+  } catch (cause) {
+    console.error(cause instanceof Error ? cause.message : String(cause));
+    process.exit(1);
   }
 }

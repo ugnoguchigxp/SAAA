@@ -255,5 +255,58 @@ mod tests {
     fn parses_multiword_macos_voice_names() {
         let voice = parse_macos_voice("Grandma (German (Germany))  de_DE    # Hallo!").unwrap();
         assert_eq!(voice.id, "Grandma (German (Germany))");
+        assert!(parse_macos_voice("").is_none());
+        assert!(parse_macos_voice("Samantha en_US").is_none());
+        assert!(parse_macos_voice("  en # hi").is_none());
+    }
+
+    #[test]
+    fn default_voice_is_always_valid_and_cache_directories_are_private() {
+        validate_voice("default").expect("default voice");
+        assert!(validate_voice("definitely-not-a-macos-voice-zzzz").is_err());
+        let directory = tempfile::tempdir().expect("tts cache");
+        prepare_render_directory(directory.path()).expect("existing directory");
+        let missing = directory.path().join("nested");
+        prepare_render_directory(&missing).expect("created directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&missing).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+        let file = directory.path().join("not-a-directory");
+        std::fs::write(&file, b"x").expect("file fixture");
+        assert!(prepare_render_directory(&file).is_err());
+    }
+
+    #[tokio::test]
+    async fn cancelled_render_does_not_leave_an_artifact() {
+        let directory = tempfile::tempdir().expect("tts cache");
+        let cancellation = Arc::new(RunCancellation::default());
+        cancellation.cancel();
+        let error = render_tts_artifact(
+            "a".into(),
+            "default".into(),
+            directory.path().to_path_buf(),
+            cancellation,
+        )
+        .await
+        .expect_err("cancelled render");
+        assert!(error.contains("cancelled") || error.contains("System TTS"));
+    }
+
+    #[tokio::test]
+    async fn default_macos_voice_renders_a_wave_file() {
+        let directory = tempfile::tempdir().expect("tts cache");
+        let path = render_tts_artifact(
+            "a".into(),
+            "default".into(),
+            directory.path().to_path_buf(),
+            Arc::new(RunCancellation::default()),
+        )
+        .await
+        .expect("system TTS renders");
+        assert!(path.is_file());
+        assert!(path.metadata().expect("artifact metadata").len() >= 12);
     }
 }

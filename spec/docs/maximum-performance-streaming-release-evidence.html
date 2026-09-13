@@ -20,6 +20,29 @@
     run IDを保存しない。
   </p>
 
+  <h2 id="operator-scheduling-20260912">2026-09-12 — 手動検証の実施管理</h2>
+  <p>
+    以下は本書の全未完了operator
+    Gateに適用する共通管理情報。各Gateの結果・証跡は本書の既存項目を正本とし、CI
+    smokeの成功で置き換えない。
+  </p>
+  <dl>
+    <dt>適用範囲</dt>
+    <dd>Maximum-Performance Streamingのrelease判定</dd>
+    <dt>担当者</dt>
+    <dd>未割当。release担当者の確定が必要</dd>
+    <dt>対象build・実施予定日</dt>
+    <dd>未確定。対象releaseと担当確定後に記入</dd>
+    <dt>必要環境</dt>
+    <dd>実Provider、実マイク、実WebView、release hardwareとrollback artifact</dd>
+    <dt>現在の結果</dt>
+    <dd>未実施。既存のpending／Conditional／blockedを維持</dd>
+    <dt>次の作業</dt>
+    <dd>
+      下記Operator-only Gateの各項目と既存14
+      Gateに従い、実測・30分soak・別operatorのrollbackを記録する。
+    </dd>
+  </dl>
   <h2 id="automated">1. Controlled automated evidence</h2>
   <table>
     <caption>

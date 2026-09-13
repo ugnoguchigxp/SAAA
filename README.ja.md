@@ -64,13 +64,9 @@ SAAA は設定したホストの接続 API を通じて、会話に使うロー�
 
 ### OpenAI 互換 API
 
-Settings から接続先とモデル名を追加できます。認証情報は次の環境変数から読み込みます。
+Settings から接続先とモデル名を追加できます。API-key 認証を使う場合は、Settings で Provider のキーを保存してください。キーは macOS Keychain の service `com.saaa.provider-api-key` に Provider ID ごとに保存され、Settings JSON や SQLite には保存されません。この認証情報の保存は macOS 専用です。
 
-```text
-SAAA_PROVIDER_<PROVIDER_ID>_API_KEY
-```
-
-`<PROVIDER_ID>` は大文字に変換され、英数字以外は `_` になります。たとえば Provider ID が `local-llm` なら、環境変数名は `SAAA_PROVIDER_LOCAL_LLM_API_KEY` です。Cloud に分類した Provider では `OPENAI_API_KEY` も利用できます。
+現行の OpenAI 互換 Provider は、`SAAA_PROVIDER_<PROVIDER_ID>_API_KEY` や `OPENAI_API_KEY` への fallback を行いません。下記の LARM token は別のランタイム経路で使用します。
 
 ### LARM Provider
 
@@ -171,3 +167,7 @@ spec/docs/       design documents, ADRs, runbooks, and release evidence
 - [Runtime Boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.html)
 - [Situation Privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html)
 - [Input Activity Privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html)
+
+## ライセンス
+
+SAAA は [MIT License](LICENSE) です。同梱している話者照合コンポーネントはそれぞれの条件に従います。[THIRD_PARTY_NOTICES](src-tauri/resources/voice/THIRD_PARTY_NOTICES.md) を参照してください。

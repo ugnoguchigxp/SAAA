@@ -14,6 +14,7 @@ import {
   forbiddenDataFindings,
   hashDirectory,
   hashEvidenceReportSet,
+  median,
   parseCliArguments,
   preflightReportSchema,
   suiteReportSchema,
@@ -237,6 +238,12 @@ describe("resource and aggregate evaluation", () => {
     writeFileSync(join(directory, "nested", "fixture.txt"), "fixture", { mode: 0o600 });
     expect(hashDirectory(directory)).toMatch(/^[0-9a-f]{64}$/);
     expect(hashDirectory(directory)).toBe(hashDirectory(directory));
+  });
+
+  test("computes a bounded median for even and empty samples", () => {
+    expect(median([4, 1, 3, 2])).toBe(2.5);
+    expect(() => median([])).toThrow(RunnerError);
+    expect(() => summarizeRssMedianDelta([], 1_800_000)).toThrow(RunnerError);
   });
 
   test("rejects hard-linked bundle or fixture content", () => {

@@ -215,4 +215,54 @@ mod tests {
         assert!(!response_is_no_speech(&[segment(None)]));
         assert!(!response_is_no_speech(&[]));
     }
+
+    #[tokio::test]
+    async fn transcription_rejects_cancelled_silent_and_oversize_audio_before_upload() {
+        let provider = CloudAsrProviderSettings {
+            id: "cloud-asr".into(),
+            enabled: true,
+            label: "Cloud ASR".into(),
+            location: "cloud".into(),
+            endpoint: "https://example.invalid/v1".into(),
+            model: "asr-model".into(),
+            language: "auto".into(),
+            authentication: "api-key".into(),
+        };
+        let cancelled = Arc::new(RunCancellation::default());
+        cancelled.cancel();
+        assert!(transcribe(&provider, &[0.1; 16_000], 16_000, 1_000, cancelled)
+            .await
+            .unwrap_err()
+            .contains("cancelled"));
+        assert!(transcribe(
+            &provider,
+            &[0.0; 16_000],
+            16_000,
+            1_000,
+            Arc::new(RunCancellation::default())
+        )
+        .await
+        .unwrap_err()
+        .starts_with("ASR_NO_SPEECH"));
+        assert!(transcribe(
+            &provider,
+            &[0.1; 16_000 * 600 + 1],
+            16_000,
+            1_000,
+            Arc::new(RunCancellation::default())
+        )
+        .await
+        .unwrap_err()
+        .contains("ten minutes"));
+        assert!(transcribe(
+            &provider,
+            &[0.1; 16_000],
+            16_000,
+            1_000,
+            Arc::new(RunCancellation::default())
+        )
+        .await
+        .unwrap_err()
+        .contains("API key"));
+    }
 }

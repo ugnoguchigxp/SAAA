@@ -15,6 +15,9 @@ describe("WebFetch sidecar protocol", () => {
     expect(parseInvocation('{"name":"fetch_content","arguments":{"url":"https://example.com","maxCharacters":5000}}').name).toBe("fetch_content");
     expect(() => parseInvocation('{"name":"shell","arguments":{}}')).toThrow();
     expect(() => parseInvocation('{"name":"web_search","arguments":{},"extra":true}')).toThrow();
+    expect(() => parseInvocation("not-json")).toThrow();
+    expect(() => parseInvocation("[]")).toThrow();
+    expect(() => parseInvocation(`{"name":"web_search","arguments":${"x".repeat(20_000)}}`)).toThrow();
   });
 
   test("uses the package's strict OpenAI Chat Completions definitions", async () => {
@@ -46,5 +49,8 @@ describe("WebFetch sidecar protocol", () => {
         retryable: false,
       },
     });
+    const guarded = new LlmFetchError("UNSAFE_URL", "blocked");
+    Object.assign(guarded, { retryable: true, guardDecision: "block", warningCategories: ["local"] });
+    expect(safeFailure(guarded).error.guardDecision).toBe("block");
   });
 });

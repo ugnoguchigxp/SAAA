@@ -1,0 +1,505 @@
+<article lang="ja">
+  <h1 id="verified-quality-improvements">品質改善実装計画 — 重複統合版</h1>
+  <dl>
+    <dt>Status</dt>
+    <dd>改訂済み — 過去の部分実装あり、新規バックログは未着手</dd>
+    <dt>Updated</dt>
+    <dd>2026-09-13</dd>
+    <dt>調査対象</dt>
+    <dd>HEAD 698d803と現在の未コミット作業ツリー</dd>
+    <dt>今回の成果物</dt>
+    <dd>追加20件の妥当性評価、既存項目との統合、実装順序と完了条件の更新</dd>
+  </dl>
+  <h2 id="scope">1. 現在の範囲と状態</h2>
+  <p>
+    ユーザーの除外指定はCI/CDである。GitHub workflowの追加・実行、必須チェック設定、依存更新bot、OS
+    matrix、release・署名・公証の自動化は今後の実装対象にも完了条件にも含めない。以前作成したworkflow差分は保全するが、本改訂を理由に適用・削除・公開しない。ローカルのlint、format、テスト、build、desktop
+    smokeは対象に含む。
+  </p>
+  <p>
+    フォーマッタはoxfmt、リンタはoxlintに固定する。Biome、Prettier、ESLintの新規導入は計画しない。2026-09-13のこの更新時点ではoxlint／oxfmtの依存追加・設定・一括整形は未実施である。計画の更新をツール導入完了と数えない。
+  </p>
+  <p>
+    音声データ保護、診断のマスキング、初回設定案内は対象に残す。前回提示したバックログに着手せず応答だけで終了した分は未着手として扱う。自動介入、system
+    audio、対応OS拡大は今回の改善に含めない。
+  </p>
+  <p>
+    番号はユーザーが貼り付けた文章の順をN01〜N20、最初の改善20件を旧01〜旧20と呼ぶ。Canvasでは番号順が異なるため、下表にCanvas番号も併記する。優先度や半日以内という工数はそのまま引き継がず、確認できた失敗と依存関係から決める。
+  </p>
+  <h2 id="previous-work">2. 実装済みと未完了を分離する</h2>
+  <ul>
+    <li>
+      実装済み・ローカル検証済み：サイズ未登録検出と補完、既存基準の維持、削除済み基準の整理、dist生成をRust検証より先に実行するbuild順序、ADR
+      0001追記と日英READMEのKeychain説明。
+    </li>
+    <li>
+      部分実装・再検証で未完了：desktop smokeのログ・process
+      group終了処理は実装済みだが、反復実行でテストのtimeoutを再現。R01を完了するまで安定化済みとは扱わない。
+    </li>
+    <li>
+      作成済みだが今回の対象外：別Rust
+      package／spec／desktopのworkflow差分。GitHub上の適用、実行、必須化は追わない。
+    </li>
+    <li>
+      記録整理のみ実施済み：ADR 0003、MVP
+      2／2.5、性能evidenceへの未割当・必要環境の追記。実機検証そのものは未実施。
+    </li>
+    <li>
+      既存ユーザー差分：LICENSEとMITメタデータは作業ツリーにあり未コミット。今回の文書更新でcommit、push、履歴書換えは行わない。
+    </li>
+  </ul>
+  <p>
+    過去の検証値は<code>spec/evidence/quality-improvements/2026-09-12.json</code>と<code>2026-09-12-clean-build.json</code>を参照する。前回のローカルcheckはfrontend
+    280件、Rust本体508件・ignore 12件、IPC
+    4件成功。現在のsmoke再現結果は過去の単回成功に優先する。前回のサイズ計測は395件、旧基準134件は値を保持している。
+  </p>
+  <h2 id="review-matrix">3. 追加20件の判定と統合先</h2>
+  <table>
+    <caption>
+      追加指摘と既存バックログの対応
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">追加番号</th>
+        <th scope="col">Canvas番号</th>
+        <th scope="col">判定・状態</th>
+        <th scope="col">確認結果と補正</th>
+        <th scope="col">統合先</th>
+        <th scope="col">根拠</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>01</td>
+        <td>01</td>
+        <td>一部妥当・未着手</td>
+        <td>
+          LICENSEは未追跡。SECURITY／CONTRIBUTING／CODE_OF_CONDUCTは未作成。未追跡は未収録を意味し、それだけでライセンスの法的効力を断定しない。報告先や対応期限を創作しない。
+        </td>
+        <td>既存ライセンス差分を保全。R05へ統合</td>
+        <td>git status／ルート文書</td>
+      </tr>
+      <tr>
+        <td>02</td>
+        <td>02</td>
+        <td>妥当・再オープン</td>
+        <td>
+          短い期限は実在。現行2ファイルを8回再実行し3回失敗。ただし今回の失敗はdescendantsテストのbuild段階で5秒timeout。元報告の2/8・300ms原因とは区別する。
+        </td>
+        <td>QI-02の追加不具合としてR01。新規に二重計上しない</td>
+        <td>tests/desktop-smoke.test.ts:65／tests/desktop-smoke-descendants.test.ts:8</td>
+      </tr>
+      <tr>
+        <td>03</td>
+        <td>05</td>
+        <td>重複・未着手</td>
+        <td>
+          TS
+          formatter／linterは未導入。tsconfigはstrictに加えnoUnused等も有効。「strictのみ」は誤認。noUncheckedIndexedAccessは別の型厳格化であり自動的に追加しない。
+        </td>
+        <td>旧20件の13と統合。oxlint＋oxfmtに固定。CI部分は除外</td>
+        <td>package.json:61／tsconfig.json:21</td>
+      </tr>
+      <tr>
+        <td>04</td>
+        <td>06</td>
+        <td>重複・未着手</td>
+        <td>
+          1,000文字超TSXは現在6行、最大App.tsx:195の2,518文字。7行という数は不一致。行数制限を回避する意図までは断定できないが可読性の問題は実在する。
+        </td>
+        <td>旧01・13と統合してR02。整形と分割を連続した作業として扱う</td>
+        <td>src/App.tsx:195／ChatPage.tsx:69／SituationPage.tsx:149／MeetingPage.tsx:27</td>
+      </tr>
+      <tr>
+        <td>05</td>
+        <td>03</td>
+        <td>妥当・未着手</td>
+        <td>
+          日本語READMEに監査の説明がない。実装は7日保持、画面200件、diagnostics
+          1,000件で英語版の説明に対応する。
+        </td>
+        <td>R05へ統合。ADR 0001修正済みとは別の未対応箇所</td>
+        <td>README.md:137／persistence/audit.rs:11／diagnostics/database.rs:80</td>
+      </tr>
+      <tr>
+        <td>06</td>
+        <td>04</td>
+        <td>重複・実機確認待ち</td>
+        <td>
+          ADR
+          0003はProposedで手動権限確認待ちを明示している。実装済みであることだけではAcceptedへ変更できない。
+        </td>
+        <td>旧08・QI-06と同一。M01に一本化</td>
+        <td>spec/docs/adr/0003-input-activity-signal-privacy.html:5</td>
+      </tr>
+      <tr>
+        <td>07</td>
+        <td>07</td>
+        <td>一部妥当・未着手</td>
+        <td>
+          Shortcut
+          effectでturn、voice、stopSpeech、openAuxiliarySurfaceを参照するが依存配列に対応する関数がない。参照先は一部refを使うため、実際に古い状態で誤動作する条件は回帰テストで確認する。
+        </td>
+        <td>新規R03。useCallbackを付けるだけで解消したとしない</td>
+        <td>src/App.tsx:100–114</td>
+      </tr>
+      <tr>
+        <td>08</td>
+        <td>08</td>
+        <td>一部妥当・未着手</td>
+        <td>
+          getAppSnapshot、Runtime／Meeting／ASR
+          Channelの受信値を直接使用する。src/libの明示invoke&lt;T&gt;は現在30箇所で40と不一致。型生成とRust側契約テストは既にある。
+        </td>
+        <td>新規R06。型生成を維持して重要受信境界から段階追加</td>
+        <td>src/lib/runtime.ts:28,46／src/lib/voiceAsrRuntime.ts:9／src/lib/schemas.ts:142</td>
+      </tr>
+      <tr>
+        <td>09</td>
+        <td>10</td>
+        <td>一部誤認・未着手</td>
+        <td>
+          Situation
+          tablistのtab属性とキーボード移動が不足。監査dialogの初期focus・trap・復元がない。一方Escapeで閉じる処理は既に存在する。
+        </td>
+        <td>新規R04。Escapeの重複実装を避け、App側Shortcutとの競合を検証</td>
+        <td>SituationPage.tsx:144／AuditLogPage.tsx:48,195</td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td>11</td>
+        <td>重複・未着手</td>
+        <td>
+          lib.rsは3,565行（現行計測規則）、本番743行、末尾testsは745行から。約2,800行のテストは事実だが、本番上限800は超えていない。
+        </td>
+        <td>旧01と統合してR09。まず子moduleへのテスト移動、外部integration test化を強制しない</td>
+        <td>src-tauri/src/lib.rs:102,538,745</td>
+      </tr>
+      <tr>
+        <td>11</td>
+        <td>14</td>
+        <td>一部誤認・未着手</td>
+        <td>
+          speaker.rsはunsafeトークン24箇所だがブロックは14、SAFETY注記なし。lib.rs:2693,3109のset_varはcfg(test)内。quality_evalはfeature限定harnessで通常の製品経路ではないが、process環境の変更は実在する。
+        </td>
+        <td>新規R07。FFI前提の明記とharness状態の注入を分離する</td>
+        <td>voice/speaker.rs:33,174／lib.rs:31,744／quality_eval.rs:41</td>
+      </tr>
+      <tr>
+        <td>12</td>
+        <td>17</td>
+        <td>未着手・対象外</td>
+        <td>
+          CI監査・依存更新botは未導入。git依存はrev固定されている。個人管理という理由だけで脆弱性を認定しない。
+        </td>
+        <td>CI/CD除外指示により今回追加しない</td>
+        <td>src-tauri/Cargo.toml／.github/workflows/ci.yml</td>
+      </tr>
+      <tr>
+        <td>13</td>
+        <td>09</td>
+        <td>重複・未着手</td>
+        <td>
+          音声フックは現行計測700行。マイク・ASR・配信・停止待ちが同居。ただしuseLarmVoiceLifetime、状態遷移、配信queueなどは既に別module。
+        </td>
+        <td>旧01と統合してR08。既存分割を再実装しない</td>
+        <td>src/features/voice/useAmbientVoiceSession.ts:1,80,159</td>
+      </tr>
+      <tr>
+        <td>14</td>
+        <td>12</td>
+        <td>重複・未着手</td>
+        <td>
+          単純なResult&lt;...,
+          String&gt;検索は現在479件で478と差異。複雑な型やテストもあるため件数を移行対象数としない。既存ProviderFailureKind等の分類は存在する。
+        </td>
+        <td>旧06と統合してR10。IPC形式変更は別段階の互換契約が必要</td>
+        <td>runtime/contracts.rs／providers/stream/attempt.rs:5／ipc_contract.rs</td>
+      </tr>
+      <tr>
+        <td>15</td>
+        <td>13</td>
+        <td>根拠不足・未着手（条件付き）</td>
+        <td>
+          4系統の総行数だけでは重複を証明しない。既にstream/attempt、dispatch、recall_dispatchがあり、WebSocketの再開やLARM
+          allocationはSSEと異なる責務を持つ。
+        </td>
+        <td>R14で重複の対を調査。共通化は同一契約を確認した箇所のみ</td>
+        <td>src-tauri/src/providers/stream/／llm_websocket/protocol.rs／larm/</td>
+      </tr>
+      <tr>
+        <td>16</td>
+        <td>15</td>
+        <td>一部妥当・未着手（条件付き）</td>
+        <td>
+          対象関数585／356／346行とtoo_many_arguments
+          7箇所は確認。execute_conversation_turnの開始は現行412行で239ではない。数だけでstruct化を必須にしない。
+        </td>
+        <td>旧01と統合してR14。状態遷移・所有権を保てる分割から実施</td>
+        <td>runtime/codex_process.rs:52／llm_websocket/client.rs:469／runtime/turns.rs:412</td>
+      </tr>
+      <tr>
+        <td>17</td>
+        <td>16</td>
+        <td>重複・未着手</td>
+        <td>
+          埋め込みBLOBとWAVの暗号化なし保存は確認済み。FileVaultが有効であることや、それだけで外部backupも保護されることは未確認。
+        </td>
+        <td>旧14と統合してR11。除外対象は音声保護ではなくCI/CD</td>
+        <td>voice/profile/codec.rs:60／voice/profile/enrollment.rs／README.md:93</td>
+      </tr>
+      <tr>
+        <td>18</td>
+        <td>18</td>
+        <td>重複・対象外</td>
+        <td>
+          非macOSのKeychain操作がエラーになるのは事実。READMEは既にmacOS主検証対象を明記し、全面的な他OS対応を約束していない。
+        </td>
+        <td>旧17に統合。OS matrixはCI/CD除外、keyring導入は製品対応範囲の別判断</td>
+        <td>src-tauri/src/credentials.rs:115,140／README.md:36</td>
+      </tr>
+      <tr>
+        <td>19</td>
+        <td>19</td>
+        <td>一部妥当・未着手（保留）</td>
+        <td>
+          追跡バイナリは合計94,088,290 bytes（約94.1
+          MB）、.gitは現時点235M。LFSや取得方式で今後の増加を抑えても既存履歴はそのまま。webfetch
+          sidecarはBun compileであり同じ取得方式ではない。
+        </td>
+        <td>配布・資材管理の別判断へ。履歴書換えfilter-repoや自動downloadを本計画では行わない</td>
+        <td>src-tauri/resources/voice/／src-tauri/build.rs:56</td>
+      </tr>
+      <tr>
+        <td>20</td>
+        <td>20</td>
+        <td>重複・一部対象外</td>
+        <td>
+          release
+          workflowは未導入。大規模コミットは確認済み。ただし行数だけで適切な粒度は決まらない。
+        </td>
+        <td>releaseはCI/CD除外。旧15のレビュー単位での変更整理だけ共通運用として残す</td>
+        <td>git log --shortstat／.github/workflows/ci.yml</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2 id="waves">4. 実装順序</h2>
+  <ol>
+    <li>
+      第1波：R01のsmoke安定化を最初に実施。R02のoxlint／oxfmt導入・整形・必要な分割を行い、続いてR03
+      ShortcutとR04 a11yを修正する。検査導入だけで完了せず、適用範囲内の違反を解消する。
+    </li>
+    <li>
+      第2波：R05文書、R06重要IPC受信、R07
+      FFI／評価harness、R11音声データ保護、R12診断、R13初回設定を進める。実機でしか確定しない確認はM01に分離する。
+    </li>
+    <li>
+      第3波：R08音声フック、R09
+      lib.rsのテスト・配線分割、R10エラー境界の順に構造を改修する。R14の共通化と巨大関数分割は重複・責務の対を確定してから着手する。
+    </li>
+  </ol>
+  <p>
+    依存関係はR02→R03／R04／R08／R09、R06の受信契約整理→R10、R09→Rust境界の広い移動。小さな機能修正のためにlib.rs全体分離を必須の前提にしない。R11の保護方式決定はバックアップ・復元・破棄の契約整理を先行する。
+  </p>
+  <h2 id="tickets">5. 重複除外後の実装チケット</h2>
+  <h3 id="r01">R01 — smokeテストと終了待ちを安定化する（最優先・未着手）</h3>
+  <p>
+    対象：<code>scripts/desktop-smoke-process.ts</code>、<code>tests/desktop-smoke.test.ts</code>、<code>tests/desktop-smoke-descendants.test.ts</code>。300msや固定回数のsleepに成功判定を依存させず、fixtureの起動完了・signal受信・終了を明示的に同期する。まず今回停止したbuild段階のspawn／exit／closeを記録し、イベント取りこぼし、runner挙動、負荷のどこが原因かを確定する。原因をCPU負荷と決めつけない。
+  </p>
+  <p>
+    テストの全体期限は起動・終了の各期限を含める。timeoutが起きても親・子・marker・scratchを回収する。子のstdio継承あり／なし、SIGTERMを無視するケース、早期終了、spawn失敗を保持する。確認用ログに秘密・個人パスを残さない。
+  </p>
+  <p>
+    完了条件：対象2ファイルを通常20回と制御した負荷下20回実行して失敗0、各失敗fixtureは期待したエラー種別を返し、終了後のprocess／一時データ残留0。反復成功だけを決定性の証明とせず、成功判定がイベント・状態に基づくことをレビューする。timeout延長だけでは完了にしない。
+  </p>
+  <h3 id="r02">R02 — oxlint／oxfmtと整形後サイズ管理（未着手）</h3>
+  <p>
+    依存はBunでdevDependenciesへ追加し、採用時のバージョンを固定してbun.lockへ保存する。<code>.oxlintrc.json</code>、<code>.oxfmtrc.json</code>と<code>lint</code>、<code>format</code>、<code>format:check</code>のローカルscriptを用意する。対象は自分たちが管理するsrc、tests、scriptsのTS／TSXとvite設定。generated
+    bindings、vendor、dist、node_modules、target、HTML仕様は除外し、HTMLは既存spec-htmlを使う。
+  </p>
+  <p>
+    公式仕様に基づき、oxfmtは<code>--check</code>で非変更検査、書込はformatコマンドに分離する。oxlintはreact
+    pluginを明示し、<code>react/rules-of-hooks</code>と<code>react/exhaustive-deps</code>を最小必須規則にする。型検証は既存tscを維持する。採用版のCLIで規則の存在と設定を確認し、experimentalなReact
+    Compiler規則を自動的に全部有効化しない。exhaustive-depsの危険な自動修正は使わない。
+  </p>
+  <p>
+    整形前後のAST上の変更と行数増加を分けて記録する。最初に隔離コピーでoxfmtを適用して超過箇所を列挙し、App／Chat／Situation／Meetingを責務単位に分割する。整形で増えたファイルのratchetは、formatter以外の変更がない前後対応表をレビューした場合だけ移行する。無関係の基準は維持し、hard上限を黙って上げない。formatter設定・size
+    script・baseline・分割を整合した単位で反映する。
+  </p>
+  <p>
+    完了条件：適用範囲でlint／format:check／tsc／size:checkが成功し、2回目のformatに差分がない。未登録0、意味変更は対応テストを持つ。新規ローカル統合script
+    <code>check:local</code
+    >を<code>format:check → lint → check</code>の順で用意する。既存CIが呼ぶcheckへの新規lint接続とworkflow変更は今回行わない。noUncheckedIndexedAccessは影響評価を別途行う候補であり、本チケットの必須条件にしない。
+  </p>
+  <h3 id="r03">R03 — Shortcutが最新の状態を使うようにする（未着手）</h3>
+  <p>
+    対象：App.tsxのShortcut effect。依存関係を整理したhandlerか最新callback
+    refを採用し、所有するeffectを明確にする。再render・音声開始停止・会話切替後のEscape／設定Shortcutで最新の操作が一度だけ呼ばれることをDOMテストする。閉じたdialogのEscapeが背後の音声まで止めないことをR04と合わせて確認する。useCallback化のみや依存警告の一括無効化で完了にしない。
+  </p>
+  <h3 id="r04">R04 — tabと監査dialogのキーボード操作（未着手）</h3>
+  <p>
+    Situationのtablistにtab／aria-selected／tabpanel対応を付け、矢印・Home／End・選択時のfocusを定義する。監査drawerは開いたときにfocusを移し、Tab／Shift+Tabを内部に閉じ、閉じると起点へ戻す。既存Escapeを再利用してイベント伝播を整理する。完了条件：キーボードだけで開閉・移動可能、focusが背景へ漏れず、起点が消えた場合の代替focusを持つ。DOMテストと実WebView操作で確認する。
+  </p>
+  <h3 id="r05">R05 — OSS案内と日英READMEの同期（未着手）</h3>
+  <p>
+    LICENSEの既存本文・メタデータ・第三者NOTICEを保全し、将来のcommit対象として明示する。CONTRIBUTINGには実在するローカル検査とIPC生成手順を記載する。SECURITY／CODE_OF_CONDUCTは報告先・適用範囲・担当を確認して作成し、未確定のメールや対応SLAを捏造しない。連絡先の確定が必要な部分は明記して保留し、README監査説明を先に直す。
+  </p>
+  <p>
+    日本語READMEへ7日保持・起動時削除・画面200件・diagnostics
+    1,000件と保存しない情報を追記する。完了条件：日英説明がaudit.rsとdiagnostics/database.rsに一致し、文書リンクが有効。未確定の報告先があればOSS案内だけ未完了として残す。
+  </p>
+  <h3 id="r06">R06 — 重要IPC受信境界の実行時検証（未着手）</h3>
+  <p>
+    最初はAppSnapshotとRuntime／Meeting／VoiceASR
+    Channelを対象に、受信値をunknownとしてzodで検証する。バイナリArrayBufferはJSON
+    schemaへ無理に通さず型・長さ・PCM契約を個別に扱う。手書きschemaと生成TSの二重正本を避け、Rust生成fixtureと型適合チェックでズレを検出する。
+  </p>
+  <p>
+    不正値ではUI更新と後続副作用を止め、本文やcredentialを含まない境界エラーに変換する。壊れたeventを正常terminalとして扱わない。完了条件：正常fixture、欠落／未知variant／不正数値／異常配列／順序の異常を試験し、既存のcommit-before-eventと単一terminalを維持する。全invokeへの一括schema追加は次段階とする。
+  </p>
+  <h3 id="r07">R07 — FFIの安全条件と評価harnessの状態分離（未着手）</h3>
+  <p>
+    speaker.rsの14
+    unsafeブロックにpointerの非null、寸法、buffer寿命、解放順、Library寿命、使用threadの前提を説明する。注記とコードが合わなければ所有権・検査を修正する。既存worker内のNativeExtractorを再利用し、コメントのためだけにwrapperを増やさない。
+  </p>
+  <p>
+    quality_evalのfeature限定harnessはAPI key／tool
+    fixtureをprocess-global環境へ書く方式から、評価runの入力・明示的なcontextへ移す。API
+    keyの実際の利用経路も確認し、未使用なら不要なset_varを除去する。lib.rsのset_varはテスト用なので本番不具合と分類しないが、テスト間の復元・隔離は確認する。
+  </p>
+  <p>
+    完了条件：既存speaker抽出・不正入力・失敗時解放テストが成功し、異なるfixtureを並行した評価runで状態が混ざらない。quality-eval-harnessのテストと通常feature双方を検査する。
+  </p>
+  <h3 id="r08">R08 — 音声フックの責務分割（旧01との統合・未着手）</h3>
+  <p>
+    useAmbientVoiceSessionからcapture資材の所有と解放、ASR送信・停止待ち、final配信の連携を段階的に分ける。既存のuseLarmVoiceLifetime、voiceSessionの状態機械、PacketSender、DeliveryQueueは再利用する。完了条件：整形後に上限内となり、unmount、入力device変更、会話変更、TTS／Meeting中断、late
+    final、cancelで資材や配信が二重処理されない。状態の第二の正本を作らない。
+  </p>
+  <h3 id="r09">R09 — lib.rsのテストと配線の分離（旧01との統合・未着手）</h3>
+  <p>
+    最初に末尾のテストをcrate内の子moduleへ移動し、private
+    APIへアクセスするためだけにpubを増やさない。続いてAppStateとcommand配線を必要なまとまりで分離する。外部tests/への移動は公開境界のテストに限る。完了条件：テストケースとassertionが失われず、公開command名、生成IPC型、起動・終了順序が不変。サイズは本番とテストを区別して比較する。
+  </p>
+  <h3 id="r10">R10 — エラー分類を境界まで保持する（旧06との統合・未着手）</h3>
+  <p>
+    ProviderFailureKind等の既存分類を再利用し、再試行・設定修正・中断で挙動が分かれる経路から内部String化を減らす。全479検索箇所を置換する作業にはしない。最初の段階は既存IPC形式を保持する。
+  </p>
+  <p>
+    AppError { code, message
+    }のIPC導入は、RuntimeFailureCodeを全commandに使えるかを評価してから別段階で行う。未対応フロントの受信互換、メッセージの翻訳、再試行判定、生成TS・fixture更新を一体で定義する。完了条件：選んだ境界で文字列一致による失敗分岐が不要となり、成功／認証／設定／timeout／cancelを分類できる。公開エラー契約を無計画に変更しない。
+  </p>
+  <h3 id="r11">R11 — 音声データの保存・backup・restore・破棄（旧14との統合・未着手）</h3>
+  <p>
+    WAV、埋め込み、SQLite
+    backup、ファイルコピー、移行時backupを追跡し、保存・復元・削除の正本と保護範囲を先に決める。Keychain鍵で暗号化する場合は鍵紛失・端末移行・鍵とbackupの分離・旧平文の移行・原子的更新を設計する。FileVault前提を採用する場合も実機有効状態とbackupの保管先を確認し、暗号化済み実装と表示しない。
+  </p>
+  <p>
+    完了条件：承認された保護範囲に従い、正常復元・鍵欠落・破損・削除・旧形式移行のテストが通る。復元不能な埋め込みだけを持ち出す状態や、削除後に未管理のコピーが残る条件を明示する。DBや保存形式が変わる場合は先に移行契約を記載する。
+  </p>
+  <h3 id="r12">R12 — 本体の診断マスキング（旧16・未着手）</h3>
+  <p>
+    smokeログのマスキングと本体redact.rsは別実装である。diagnostics/database.rsが自由文errorを出力する箇所から、Bearer／一時credential／endpoint等の具体的な到達経路を追跡する。既にprovider診断から除外されたallocation／request
+    IDを再実装しない。
+  </p>
+  <p>
+    完了条件：制御したsecret
+    fixtureが診断JSON・UI向けerrorへ現れず、失敗種別や回復情報は残る。一般的なIDや全URLを理由なく消す前に出力契約を定め、正規表現追加だけで漏洩防止完了とは扱わない。
+  </p>
+  <h3 id="r13">R13 — 初回設定のチェックリスト（旧20・未着手）</h3>
+  <p>
+    Conversation空状態から、Provider接続・ASR・必要時の話者登録へ辿れる案内を作る。既存snapshotの設定と接続結果を使い、frontendに独立した設定済みフラグを保存しない。音声を使わない利用者に登録を必須化しない。完了条件：未設定／接続失敗／音声未登録／設定完了の各状態で次の操作が一つに定まり、日英表示とSettingsへの到達をテストする。
+  </p>
+  <h3 id="r14">R14 — 巨大関数とProvider重複の限定分割（条件付き・未着手）</h3>
+  <p>
+    585／356／346行の各関数について準備・実行・後処理の境界と、再利用候補の具体的なコードの対を記録する。共通化前に認可、再試行、partial出力、cancel、allocation解放、terminalの契約差を表にする。既存stream/を利用し、単にファイル総行数が多い理由で共通traitを作らない。
+  </p>
+  <p>
+    完了条件：抽出前後でtimeout／cancel／partial失敗／再開の契約テストが一致し、所有権が追いやすくなる。重複の根拠が得られなければ共通化をしない判断を残し、独立した関数分割だけに限定する。
+  </p>
+  <h2 id="manual">6. M01 — 実機確認待ち</h2>
+  <p>
+    ADR 0003の権限、MVP
+    2／2.5、実WebViewのkeyboard操作、30分soak、復旧手順は既存evidenceを正本とする。担当・対象build・利用可能な実機が未確定のものは待ちとして明記する。実装済みやローカル自動テスト成功だけでAcceptedにしない。手動検証はCI/CD除外とは別であり、取得可能な実機結果は実施して記録する。release自動化は対象外のまま維持する。
+  </p>
+  <h2 id="verification">7. 検証と完了判定</h2>
+  <table>
+    <caption>
+      ローカルでの検証順と期待結果
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">コマンド・検証</th>
+        <th scope="col">目的と期待結果</th>
+        <th scope="col">失敗時</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>bun test tests/desktop-smoke.test.ts tests/desktop-smoke-descendants.test.ts</td>
+        <td>R01の同期・終了・回収を検査。通常／負荷下の反復で失敗0</td>
+        <td>停止段階と残存processを記録し原因を修正。期限だけ延長しない</td>
+      </tr>
+      <tr>
+        <td>bun run format:check → bun run lint</td>
+        <td>R02で追加予定。oxfmt非変更検査とoxlintの必須規則が成功</td>
+        <td>既存違反も対象内で修正。一括disableしない</td>
+      </tr>
+      <tr>
+        <td>bun run typecheck／対象DOM・IPCテスト</td>
+        <td>R03〜R10の最新callback・focus・不正payload・生成型を検証</td>
+        <td>変更境界の回帰を先に切り分ける</td>
+      </tr>
+      <tr>
+        <td>bun run size:check</td>
+        <td>整形後の予算内、未登録0、無関係な旧基準値不変</td>
+        <td>整形移行と実際の成長を区別する</td>
+      </tr>
+      <tr>
+        <td>bun run check:local</td>
+        <td>R02で追加予定。format:check、lint、既存checkが同じ対象で成功</td>
+        <td>新しい検査を外して成功扱いにしない</td>
+      </tr>
+      <tr>
+        <td>bun run check／bun run test:rust-packages</td>
+        <td>現在存在する全体検査と別Rust packageの契約を維持</td>
+        <td>通常ソースと負例fixtureのCargo targetを分離する</td>
+      </tr>
+      <tr>
+        <td>bun run desktop:smoke／bun run spec:check</td>
+        <td>実アプリ起動・cleanupと仕様整合。手動権限・soakの代替ではない</td>
+        <td>実機要因と実装失敗を区別し、未検証を隠さない</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    実装開始前に対象テストの結果を記録し、変更後に同条件で比較する。各チケットは対象テスト、統合検査、変更ファイル、残条件を記録して閉じる。機械整形、構造移動、挙動変更、生成物をレビューで区別できる差分にし、commit行数の一律上限は設けない。ユーザーの既存差分を混ぜてcommit／pushしない。
+  </p>
+  <h2 id="sources">8. 参照と今回の調査記録</h2>
+  <ul>
+    <li>Canvas：ローカルのsaaa-improvement-backlog-20.canvas.tsx。番号対応は第3節に保存した。</li>
+    <li>
+      <a href="https://oxc.rs/docs/guide/usage/formatter/cli.html">Oxfmt CLI</a
+      >：--checkは非変更検査、PATH指定と除外globを利用できる。
+    </li>
+    <li>
+      <a href="https://oxc.rs/docs/guide/usage/linter/rules/react/exhaustive-deps"
+        >Oxlint exhaustive-deps</a
+      >：react pluginで有効化する。危険な自動修正があるため依存追加を無条件に適用しない。
+    </li>
+    <li>
+      <a href="https://oxc.rs/docs/guide/usage/linter/plugins">Oxlint built-in plugins</a
+      >：ReactとReact Hooksの規則を含むがreact pluginは明示的に有効化する。
+    </li>
+    <li>
+      <a href="./adr/0003-input-activity-signal-privacy.html">ADR 0003</a>、<a
+        href="./mvp-2.5-release-evidence.html"
+        >MVP 2.5 evidence</a
+      >、<a href="./maximum-performance-streaming-release-evidence.html">性能evidence</a
+      >は実機判定の正本として維持する。
+    </li>
+  </ul>
+  <p>
+    2026-09-13の再確認ではsmokeの対象2ファイルを8回実行し、成功5回・失敗3回。失敗は2／3／5回目のdesktop-smoke-descendants.test.tsで、build表示後にBunの5秒test
+    timeout。原因は未確定。元報告の「8回中2回失敗」と同じ試験結果ではない。計画更新時には本番コード、依存、CI設定を変更していない。
+  </p>
+</article>

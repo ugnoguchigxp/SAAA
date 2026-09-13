@@ -1,0 +1,80 @@
+{
+  "date": "2026-09-12",
+  "baseCommit": "698d803",
+  "scope": [
+    "build frontend before Rust validation",
+    "terminate descendants without inherited pipes"
+  ],
+  "sourceSha256": {
+    "package.json": "300a480bd192546ef4cdfd58870759dc2f8135371e581de5a78fd7f12ea76b39",
+    "scripts/desktop-smoke-process.ts": "bf8bdd09eb162258e465f2187438d643a8c3287ef312fb5b786eef998676dc6a",
+    "tests/desktop-smoke-descendants.test.ts": "316ba7ccd72f901ea8956e42f6a170fbb8280de6b52669349c4ca130a6294cd2",
+    "scripts/module-size-baseline.json": "a0dd758611763e32455480c54764c392f80846166bdd2ac7048396f39bd822b6"
+  },
+  "observedCiFailure": {
+    "run": "https://github.com/ugnoguchigxp/SAAA/actions/runs/34691580376",
+    "head": "698d803",
+    "cause": "frontendDist ../dist does not exist at Tauri generate_context"
+  },
+  "cleanBuild": {
+    "command": "bun run build",
+    "startedWithoutDist": true,
+    "startedWithoutCargoTarget": true,
+    "exitCode": 0
+  },
+  "cleanCheck": {
+    "command": "bun run check",
+    "startedWithoutDist": true,
+    "isolatedCargoTarget": true,
+    "exitCode": 0,
+    "durationSeconds": 176.75
+  },
+  "desktop": {
+    "status": "ready",
+    "stage": "cleanup",
+    "durationMs": 101705,
+    "stages": [
+      {
+        "stage": "build",
+        "durationMs": 93469,
+        "exitCode": 0
+      },
+      {
+        "stage": "bundle",
+        "durationMs": 379
+      },
+      {
+        "stage": "launch",
+        "durationMs": 6
+      },
+      {
+        "stage": "ready",
+        "durationMs": 7825
+      },
+      {
+        "stage": "cleanup",
+        "durationMs": 26
+      }
+    ]
+  },
+  "tests": {
+    "descendantRegressionBefore": "failed; descendant survived parent close",
+    "descendantRegressionAfter": "passed",
+    "targetedPassed": 22,
+    "frontendPassed": 280,
+    "rustMainPassed": 508,
+    "rustMainIgnored": 12,
+    "ipcPassed": 4
+  },
+  "moduleSizes": {
+    "measured": 395,
+    "missing": 0,
+    "newBaselineEntries": 1,
+    "existingValuesChanged": 0
+  },
+  "remaining": [
+    "Execute updated workflow on GitHub macos-15",
+    "Configure required checks after CI succeeds",
+    "Collect operator release evidence"
+  ]
+}

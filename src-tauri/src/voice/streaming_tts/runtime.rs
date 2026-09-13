@@ -854,4 +854,46 @@ mod tests {
         assert!(finalize_rendered_chunk(0, Instant::now(), path.clone(), Instant::now()).is_err());
         assert!(!path.exists());
     }
+
+    #[test]
+    fn cancel_and_shutdown_are_idle_without_sessions() {
+        let runtime = StreamingSpeechRuntime::default();
+        assert!(!runtime.is_active());
+        runtime.cancel("run_missing");
+        runtime.shutdown();
+        runtime.set_enabled("run_missing", true);
+        runtime.schedule_idle("run_missing", 1);
+        assert_eq!(
+            runtime.append("run_missing", "Hello."),
+            Ok(AppendOutcome::default())
+        );
+        assert_eq!(
+            runtime.flush_idle("run_missing", 1),
+            Ok(AppendOutcome::default())
+        );
+        runtime.finish("run_missing", "Hello.").unwrap();
+    }
+
+    #[tokio::test]
+    async fn begin_creates_a_disabled_session_that_cancel_removes() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        let state = crate::test_support::app_state(connection);
+        let runtime = StreamingSpeechRuntime::default();
+        let channel = tauri::ipc::Channel::new(|_| Ok(()));
+        runtime
+            .begin(&state, "run_speech", false, channel, None)
+            .await
+            .expect("speech session begins");
+        assert!(runtime.is_active());
+        assert_eq!(
+            runtime.append("run_speech", "Hello."),
+            Ok(AppendOutcome::default())
+        );
+        runtime.schedule_idle("run_speech", 0);
+        runtime.flush_idle("run_speech", 0).unwrap();
+        runtime.finish("run_speech", "").unwrap();
+        runtime.set_enabled("run_speech", false);
+        assert!(!runtime.is_active());
+    }
 }

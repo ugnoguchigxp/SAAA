@@ -1737,6 +1737,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(coverage))]
     #[tokio::test]
     #[ignore = "operator-only live dynamic_lan Agent Connection API canary"]
     async fn live_dynamic_lan_claim_and_chat() {

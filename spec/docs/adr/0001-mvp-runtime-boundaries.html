@@ -4,6 +4,50 @@
     <li>Status: Accepted</li>
     <li>Date: 2026-08-26</li>
   </ul>
+  <h2 id="current-runtime-amendment">2026-09-12追記 — 現行ランタイムへの適用</h2>
+  <p>
+    本ADRのAcceptedはMVP
+    0時点の決定を記録する。以下のDecision以降は当時の記述として保持する。現行実装ではSTT、TTS、Provider認証、話者モデルの境界が更新されており、旧whisper
+    CLIや「embedding runtime依存なし」を現在の契約として使用しない。
+  </p>
+  <ul>
+    <li>
+      通常の音声会話とMeetingの音声認識は、設定済みLAN
+      hostから導出するASRサービスを使用する。音声はWebViewからTauri
+      IPCを経て設定された認識経路へ送られるため、旧節の「音声がIPC境界を出ない」は現行経路には適用しない。ストリーミングとfallbackの正本は<a
+        href="../always-on-streaming-asr-implementation-plan.html"
+        >Always-on Streaming ASR計画</a
+      >。
+    </li>
+    <li>
+      STT／TTSは設定に応じたProvider／Harness経路を持ち、Cloud ASR／Cloud TTSとsystem
+      TTSの実装がある。実装参照は<code>src-tauri/src/voice/cloud_asr.rs</code>、<code>cloud_tts.rs</code>、<code>streaming_tts/runtime.rs</code>。設定契約の正本は<a
+        href="../settings-provider-harness-cloud-voice-implementation-plan.html"
+        >Provider／音声設定計画</a
+      >。
+    </li>
+    <li>
+      API-key認証のProviderは<code>src-tauri/src/credentials.rs</code>を通してmacOS
+      Keychainのservice
+      <code>com.saaa.provider-api-key</code>からキーを取得する。キー自体はSettings
+      JSONやSQLiteへ保存しない。Keychain保存操作はmacOS専用。OpenAI互換Providerの旧環境変数fallbackは現行の<code>providers/openai_compatible.rs</code>にはない。
+    </li>
+    <li>
+      LAN接続APIで取得する一時credentialは接続のメモリ内状態に保持する。LARMの起動時tokenは別契約として<code>LARM_API_TOKEN</code>を使用する。Provider
+      Keychainと同一の保存方式であるとは扱わない。
+    </li>
+    <li>
+      話者照合にはbundleされたネイティブruntimeとモデルを使用する。登録WAVはアプリデータ領域、埋め込みはSQLiteへ暗号化なしで保存する。macOSのdirectory
+      0700／file 0600と、照合失敗時のfail-closedは保存時暗号化の代替とは扱わない。正本は<a
+        href="../target-speaker-enrollment-implementation-plan.html"
+        >話者登録計画</a
+      >、実装は<code>src-tauri/src/voice/profile/</code>。
+    </li>
+  </ul>
+  <p>
+    この追記は実装の対応関係を示す。認証方式、DBスキーマ、音声経路の動作変更や、未完了のoperator
+    Gate解除は含まない。
+  </p>
   <h2 id="decision">Decision</h2>
   <p>SAAA MVP 0 uses these runtime boundaries:</p>
   <ul>

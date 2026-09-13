@@ -78,6 +78,7 @@ mod tests {
         ));
     }
 
+    #[cfg(not(coverage))]
     #[test]
     #[ignore = "requires a 30 minute macOS sampling soak"]
     fn thirty_minute_input_activity_soak_has_bounded_memory() {

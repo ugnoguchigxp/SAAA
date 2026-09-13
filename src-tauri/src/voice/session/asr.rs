@@ -233,5 +233,31 @@ mod tests {
         assert!(validate_asr_audio_quality(&[0.0; 16_000], 16_000, "medium").is_err());
         assert!(validate_asr_audio_quality(&[0.02; 16_000], 16_000, "medium").is_err());
         assert!(validate_asr_audio_quality(&quiet_speech, 16_000, "low").is_err());
+        assert!(validate_asr_audio_quality(&[0.0; 100], 16_000, "medium").is_err());
+        assert_eq!(vad_rms_threshold("high"), 0.006);
+        assert_eq!(vad_rms_threshold("low"), 0.012);
+        assert_eq!(vad_rms_threshold("medium"), 0.008);
+    }
+
+    #[test]
+    fn default_settings_select_the_harness_asr_route() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        let selected = select_asr(&connection).expect("asr route");
+        assert!(matches!(selected.route, AsrRoute::Harness(_)));
+        let streaming = select_streaming_asr(&connection).expect("streaming asr route");
+        assert!(matches!(streaming.route, AsrRoute::Harness(_)));
+        let provider = harness_asr_provider(crate::providers::service_harness::ServiceDescriptor {
+            capability: "asr".into(),
+            protocol: "openai.audio-transcriptions.v1".into(),
+            base_url: "http://127.0.0.1:9/v1".into(),
+            model: "harness-asr".into(),
+            language: None,
+            voice: None,
+            health_url: "http://127.0.0.1:9/health".into(),
+            streaming: None,
+        });
+        assert_eq!(provider.id, "provider-harness-asr");
+        assert_eq!(provider.model, "harness-asr");
     }
 }

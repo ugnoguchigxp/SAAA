@@ -1,0 +1,121 @@
+{
+  "verifiedAt": "2026-09-12",
+  "baseCommit": "698d803",
+  "environment": {
+    "os": "macOS 26.6.2",
+    "arch": "arm64",
+    "bun": "1.3.14",
+    "rust": "1.92.0"
+  },
+  "sourceSha256": {
+    ".github/workflows/ci.yml": "0cdc8f8c39bdfaf14b98bb9a2c3d15fb8cd1cf4bfabd88a2d7984cf61a5dbe82",
+    "scripts/module-size.ts": "ea161334b383f7d91fbb87d25ef13f3c3ad21d9b51ad15a6e7a5e7a614fafca4",
+    "scripts/module-size-baseline.ts": "424d2f0b28be4b5bcedfb9c6cd6a655d5a3b07d75aef9151024b5a1262f689f5",
+    "scripts/module-size-baseline.json": "b22b20496c7367bf9b6ec5c93036c5d0bb33637922d44eed7bb4e876d9916c49",
+    "scripts/desktop-smoke.ts": "cf2b59d1517f0fd1279a84a9ee03f3e576550d358bb529a43d13c94b56363f2e",
+    "scripts/desktop-smoke-process.ts": "cf14bbd0bd75995689fefd6116f53d6f8c645d9cf2447e55ab78837948f8fa04",
+    "tests/module-size.test.ts": "3cc30b3f8464cf607e2265cd51e57f1c18ab55cae1f6fc6b49e8165748698cfb",
+    "tests/module-size-registration.test.ts": "067db6422dd07f8d555e63fd28c8b3a199661e91acfef57a6ba4b68af1852f4b",
+    "tests/desktop-smoke.test.ts": "8396270bfe9409a2c12372fcf1e336c0b8689a21b5d10224fc7865d7c41b0a2d"
+  },
+  "runs": [
+    {
+      "name": "final-check",
+      "exitCode": 0,
+      "durationSeconds": 80.96
+    },
+    {
+      "name": "final-rust-packages",
+      "exitCode": 101,
+      "durationSeconds": 0.48
+    },
+    {
+      "name": "final-rust-packages-rebuilt",
+      "exitCode": 0,
+      "durationSeconds": 17.0
+    },
+    {
+      "name": "final-desktop",
+      "exitCode": 0,
+      "durationSeconds": 61.13
+    }
+  ],
+  "desktop": {
+    "status": "ready",
+    "stage": "cleanup",
+    "durationMs": 61099,
+    "stages": [
+      {
+        "stage": "build",
+        "durationMs": 55595,
+        "exitCode": 0
+      },
+      {
+        "stage": "bundle",
+        "durationMs": 141
+      },
+      {
+        "stage": "launch",
+        "durationMs": 2
+      },
+      {
+        "stage": "ready",
+        "durationMs": 5351
+      },
+      {
+        "stage": "cleanup",
+        "durationMs": 10
+      }
+    ]
+  },
+  "baseline": {
+    "beforeMeasured": 390,
+    "beforeMissing": 256,
+    "afterMeasured": 394,
+    "afterMissing": 0,
+    "retainedValuesUnchanged": 134,
+    "added": 260,
+    "removedStale": 3
+  },
+  "tests": {
+    "headFrontendPassed": 264,
+    "finalFrontendPassed": 279,
+    "rustMainPassed": 508,
+    "rustMainIgnored": 12,
+    "ipcPassed": 4,
+    "rustPackagesPassed": 20,
+    "rustPackagesLiveIgnored": 1,
+    "targetedPassed": 27
+  },
+  "negativeRust": [
+    {
+      "package": "crates/larm-session",
+      "exitCode": 101,
+      "intentionalFailureDetected": true
+    },
+    {
+      "package": "crates/reasoning-contract",
+      "exitCode": 101,
+      "intentionalFailureDetected": true
+    },
+    {
+      "package": "services/reasoning-mcp",
+      "exitCode": 101,
+      "intentionalFailureDetected": true
+    }
+  ],
+  "spec": {
+    "exitCode": 0,
+    "activeFiles": 34,
+    "archivedFiles": 15,
+    "negativeExitCode": 1,
+    "hashesUnchanged": true
+  },
+  "actionlintExitCode": 0,
+  "remaining": [
+    "GitHub macos-15 execution",
+    "Required checks configuration",
+    "Operator release evidence"
+  ],
+  "verificationIncident": "Negative Rust test artifacts reused through a shared target directory. Normal sources contained no probe. Cleaned only the three package artifacts and reran successfully; future negative runs must isolate target directories too."
+}

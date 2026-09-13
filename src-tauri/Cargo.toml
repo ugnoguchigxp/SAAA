@@ -3,6 +3,7 @@ name = "saaa"
 version = "0.1.0"
 description = "Situation-Aware Ambient Agent Runtime"
 authors = ["SAAA contributors"]
+license = "MIT"
 edition = "2021"
 default-run = "saaa"
 

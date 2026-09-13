@@ -320,6 +320,7 @@ async fn cancellation_and_timeout_bound_the_initial_post() {
 
 /// Uses the actual configured Muse transport against a disposable local database.
 /// Run explicitly after the provider's quota is available; never touches the app's data.
+#[cfg(not(coverage))]
 #[tokio::test]
 #[ignore = "requires live Muse subscription quota; set SAAA_LIVE_SSE=1"]
 async fn live_muse_sse_ui_workflow() {
