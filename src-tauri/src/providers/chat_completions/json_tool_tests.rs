@@ -53,7 +53,7 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
     assert_eq!(output, "Job unavailable");
     let requests = server.await.unwrap();
     assert!(requests.iter().all(|r| r["stream"] == false));
-    assert_eq!(requests[0]["reasoning_effort"], "low");
+    assert!(requests[0].get("reasoning_effort").is_none());
     assert_eq!(requests[0]["parallel_tool_calls"], false);
     assert!(requests[0].get("chat_template_kwargs").is_none());
     assert!(requests[0]["tools"]

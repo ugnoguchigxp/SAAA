@@ -505,6 +505,10 @@
       "total": 900,
       "production": 625
     },
+    "src-tauri/src/persistence/settings/http_migration.rs": {
+      "total": 49,
+      "production": 49
+    },
     "src-tauri/src/persistence/settings/provider_validation.rs": {
       "total": 416,
       "production": 341
@@ -512,6 +516,10 @@
     "src-tauri/src/persistence/settings/regional_preferences.rs": {
       "total": 89,
       "production": 65
+    },
+    "src-tauri/src/persistence/settings/voice_fallbacks.rs": {
+      "total": 52,
+      "production": 52
     },
     "src-tauri/src/persistence/sqlite/mod.rs": {
       "total": 10,
@@ -540,6 +548,10 @@
     "src-tauri/src/providers/agent_session.rs": {
       "total": 563,
       "production": 502
+    },
+    "src-tauri/src/providers/agent_session/creation.rs": {
+      "total": 95,
+      "production": 32
     },
     "src-tauri/src/providers/agent_session/sse.rs": {
       "total": 668,
@@ -580,6 +592,10 @@
     "src-tauri/src/providers/chat_completions/sse.rs": {
       "total": 72,
       "production": 56
+    },
+    "src-tauri/src/providers/chat_completions/test_helpers.rs": {
+      "total": 44,
+      "production": 0
     },
     "src-tauri/src/providers/chat_completions/tests.rs": {
       "total": 430,
@@ -665,6 +681,10 @@
       "total": 125,
       "production": 111
     },
+    "src-tauri/src/providers/route_policy.rs": {
+      "total": 100,
+      "production": 76
+    },
     "src-tauri/src/providers/routing.rs": {
       "total": 130,
       "production": 42
@@ -704,6 +724,10 @@
     "src-tauri/src/providers/stream/dynamic_lan.rs": {
       "total": 183,
       "production": 183
+    },
+    "src-tauri/src/providers/stream/dynamic_lan/initialization.rs": {
+      "total": 53,
+      "production": 53
     },
     "src-tauri/src/providers/stream/mod.rs": {
       "total": 445,
@@ -977,6 +1001,10 @@
       "total": 114,
       "production": 114
     },
+    "src-tauri/src/voice/http_audio/requests.rs": {
+      "total": 85,
+      "production": 85
+    },
     "src-tauri/src/voice/http_audio/timeout_tests.rs": {
       "total": 46,
       "production": 46
@@ -1021,9 +1049,21 @@
       "total": 347,
       "production": 347
     },
+    "src-tauri/src/voice/session/asr_route_tests.rs": {
+      "total": 119,
+      "production": 119
+    },
+    "src-tauri/src/voice/session/asr_routes.rs": {
+      "total": 121,
+      "production": 121
+    },
     "src-tauri/src/voice/session/asr.rs": {
       "total": 238,
       "production": 221
+    },
+    "src-tauri/src/voice/session/tts_policy.rs": {
+      "total": 47,
+      "production": 47
     },
     "src-tauri/src/voice/session/tts.rs": {
       "total": 59,
@@ -1088,6 +1128,14 @@
     "src-tauri/src/voice/streaming_tts/chunker.rs": {
       "total": 686,
       "production": 569
+    },
+    "src-tauri/src/voice/streaming_tts/fallback_tests.rs": {
+      "total": 75,
+      "production": 75
+    },
+    "src-tauri/src/voice/streaming_tts/fallback.rs": {
+      "total": 146,
+      "production": 146
     },
     "src-tauri/src/voice/streaming_tts/runtime.rs": {
       "total": 858,
@@ -1317,9 +1365,17 @@
       "total": 540,
       "production": 540
     },
+    "src/features/settings/ConversationTimeoutField.tsx": {
+      "total": 78,
+      "production": 78
+    },
     "src/features/settings/IndividualProvidersSection.tsx": {
       "total": 596,
       "production": 596
+    },
+    "src/features/settings/LlmRequestFields.tsx": {
+      "total": 71,
+      "production": 71
     },
     "src/features/settings/pendingVoiceCapture.ts": {
       "total": 18,
@@ -1336,6 +1392,10 @@
     "src/features/settings/RemoteCleanupStatus.tsx": {
       "total": 39,
       "production": 39
+    },
+    "src/features/settings/RoutePolicyFields.tsx": {
+      "total": 103,
+      "production": 103
     },
     "src/features/settings/SecuritySection.tsx": {
       "total": 75,
@@ -1848,6 +1908,10 @@
     "tests/pi-interface.test.ts": {
       "total": 65,
       "production": 65
+    },
+    "tests/provider-card-async.test.tsx": {
+      "total": 56,
+      "production": 56
     },
     "tests/reasoning-run.test.ts": {
       "total": 66,

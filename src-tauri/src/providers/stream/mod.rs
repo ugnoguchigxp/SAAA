@@ -105,28 +105,20 @@ pub(crate) async fn stream_model_provider_inner(
             false,
         ));
     }
-    // The current agent-connection gateway truncates tool/reasoning SSE chunks.
-    // Use its supported JSON completion contract with the same model and tools.
-    if allocation_id.is_some() {
-        crate::providers::chat_completions::run_mode(
-            &provider.endpoint,
-            authorization.as_deref(),
-            &provider.model,
-            history,
-            timeout_ms,
-            context,
-            crate::providers::chat_completions::RequestMode::JsonTools,
-        )
-        .await
-    } else {
-        crate::providers::chat_completions::run(
-            &provider.endpoint,
-            authorization.as_deref(),
-            &provider.model,
-            history,
-            timeout_ms,
-            context,
-        )
-        .await
-    }
+    let options = provider.request_options.clone().unwrap_or_else(|| {
+        let mut options = saaa_larm_session::http_api::LlmOptions::standard();
+        options.streaming = allocation_id.is_none();
+        options
+    });
+    crate::providers::chat_completions::run_with_options(
+        &provider.endpoint,
+        authorization.as_deref(),
+        &provider.model,
+        history,
+        timeout_ms,
+        context,
+        crate::providers::chat_completions::RequestMode::Stream,
+        &options,
+    )
+    .await
 }

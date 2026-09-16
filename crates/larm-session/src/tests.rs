@@ -32,7 +32,7 @@ impl Fake {
             "health":{"url":format!("{}/{name}/health",self.base),"maxAgeMs":10000}
         })).collect::<Vec<_>>();
         if self.bad_claim.load(Ordering::SeqCst) {
-            providers.pop();
+            providers[0]["protocol"] = json!("invalid-protocol");
         }
         let mut value = self.state("ready");
         value["allocationId"] = json!(format!("allocation-{generation}"));
@@ -256,7 +256,7 @@ async fn startup_failure_and_cancel_both_release_the_created_id() {
         if cancel {
             fake.pending.store(true, Ordering::SeqCst);
         } else {
-            fake.bad_protocol.store(true, Ordering::SeqCst);
+            fake.bad_claim.store(true, Ordering::SeqCst);
         }
         let base = fake.base.clone();
         let start = tokio::spawn(async move { Session::connect(&base, receiver).await });
@@ -277,7 +277,7 @@ async fn startup_failure_and_cancel_both_release_the_created_id() {
     }
 }
 #[tokio::test]
-async fn health_expiration_requires_a_fresh_probe_and_failure_closes_session() {
+async fn health_failure_is_confined_to_the_requested_capability() {
     let (fake, server) = fixture().await;
     let (_stop, receiver) = watch::channel(false);
     let session = Session::connect(&fake.base, receiver).await.unwrap();
@@ -288,8 +288,11 @@ async fn health_expiration_requires_a_fresh_probe_and_failure_closes_session() {
     }
     fake.stale_health.store(true, Ordering::SeqCst);
     assert!(session.acquire("llm").await.is_err());
-    assert_eq!(count(&fake, "/llm/health"), 2);
-    assert!(session.acquire("asr").await.is_err());
+    assert_eq!(count(&fake, "/llm/health"), 1);
+    fake.stale_health.store(false, Ordering::SeqCst);
+    assert!(session.acquire("asr").await.is_ok());
+    assert!(!session.closed.load(Ordering::Acquire));
+    session.close().await.unwrap();
     server.abort();
 }
 #[tokio::test]
@@ -388,5 +391,39 @@ async fn renew_rejects_a_response_for_a_different_connection() {
         Err("larm_connection_mismatch")
     );
     assert!(session.released.load(Ordering::Acquire));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_single_advertised_capability_is_a_valid_claim() {
+    let (fake, server) = fixture().await;
+    let mut value = fake.claim();
+    value["providers"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["name"] == "llm");
+    let parsed = contract::parse(value, "session-1").unwrap();
+    assert!(parsed.providers.contains_key("llm"));
+    assert!(!parsed.providers.contains_key("asr"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn audio_request_budget_cannot_outlive_the_pinned_credential() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let session = Session::connect(&fake.base, receiver).await.unwrap();
+    session.snapshot.write().await.as_mut().unwrap().expires_at =
+        chrono::Utc::now() + chrono::Duration::seconds(100);
+    let lease = session.acquire("tts").await.unwrap();
+    let budget = lease.request_budget(Duration::from_secs(300)).unwrap();
+    assert!(budget <= Duration::from_secs(95));
+    assert!(budget > Duration::from_secs(90));
+    assert_eq!(
+        lease.request_budget(Duration::from_secs(1)).unwrap(),
+        Duration::from_secs(1)
+    );
+    drop(lease);
+    session.close().await.unwrap();
     server.abort();
 }

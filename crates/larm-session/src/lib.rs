@@ -3,6 +3,7 @@
 mod contract;
 mod error;
 mod http;
+pub mod http_api;
 use contract::Snapshot;
 pub use contract::{local_url, Provider};
 pub use error::ConnectError;
@@ -42,6 +43,18 @@ impl Use {
     pub fn provider(&self) -> &Provider {
         &self.snapshot.as_ref().expect("live snapshot").providers[&self.name]
     }
+    /// Never start provider I/O beyond the pinned credential's expiry.
+    pub fn request_budget(&self, requested: Duration) -> Result<Duration, &'static str> {
+        let remaining = (self.snapshot.as_ref().expect("live snapshot").expires_at
+            - chrono::Utc::now())
+        .to_std()
+        .map_err(|_| "larm_expired")?
+        .saturating_sub(Duration::from_secs(5));
+        if remaining.is_zero() {
+            return Err("larm_expired");
+        }
+        Ok(requested.min(remaining))
+    }
     pub fn allocation_id(&self) -> &str {
         &self.snapshot.as_ref().expect("live snapshot").allocation_id
     }
@@ -51,11 +64,27 @@ impl Session {
         base: &str,
         cancellation: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
+        Self::connect_with_profile(base, "saaa-qwen38-kv-mem", cancellation).await
+    }
+    pub async fn connect_with_profile(
+        base: &str,
+        profile: &str,
+        cancellation: watch::Receiver<bool>,
+    ) -> Result<Arc<Self>, ConnectError> {
+        if profile.is_empty()
+            || profile.len() > 160
+            || !profile
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        {
+            return Err("larm_invalid_profile".into());
+        }
+        let profile = profile.to_string();
         let base = base.to_string();
         let (alive, abandoned) = watch::channel(false);
         let (send, receive) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let result = Self::connect_inner(&base, cancellation, abandoned).await;
+            let result = Self::connect_inner(&base, &profile, cancellation, abandoned).await;
             if let Err(result) = send.send(result) {
                 let cleanup = match result {
                     Ok(session) => Some(session),
@@ -74,6 +103,7 @@ impl Session {
     }
     async fn connect_inner(
         base: &str,
+        profile: &str,
         mut cancellation: watch::Receiver<bool>,
         mut abandoned: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
@@ -101,11 +131,9 @@ impl Session {
                     "Idempotency-Key",
                     format!("saaa-session-{}", uuid::Uuid::new_v4()),
                 )
-                .json(
-                    &json!({"agentProfile":"saaa-qwen38-kv-mem","explicitAgentProfile":true,
+                .json(&json!({"agentProfile":profile,"explicitAgentProfile":true,
                 "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
-                "allowFallback":false,"deploymentPolicy":"existing-only"}),
-                ),
+                "allowFallback":false,"deploymentPolicy":"existing-only"})),
             &[201, 202],
         )
         .await?;
@@ -195,9 +223,6 @@ impl Session {
         )
         .await?;
         let snapshot = contract::parse(value, &self.id)?;
-        for provider in snapshot.providers.values() {
-            self.health(provider).await?;
-        }
         Ok(snapshot)
     }
     async fn health(&self, provider: &Provider) -> Result<(), &'static str> {
@@ -243,11 +268,7 @@ impl Session {
             .providers
             .get(name)
             .ok_or("larm_unknown_provider")?;
-        if let Err(error) = self.health(provider).await {
-            drop(guard);
-            let _ = self.close().await;
-            return Err(error);
-        }
+        self.health(provider).await?;
         Ok(Use {
             snapshot: guard,
             name: name.to_string(),

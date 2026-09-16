@@ -80,7 +80,9 @@ impl BoundedProviderMessage {
 pub(crate) enum CleanupOutcome {
     NotApplicable,
     NotStarted,
+    Pending,
     Released,
+    ReleaseFailed { kind: &'static str },
     DynamicLanDeferredToTtl { kind: &'static str },
 }
 

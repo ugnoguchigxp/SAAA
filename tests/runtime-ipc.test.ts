@@ -68,7 +68,7 @@ function settingsDocuments() {
     {
       namespace: "providers.model",
       key: "default",
-      schemaVersion: 14,
+      schemaVersion: 15,
       valueJson: {
         harness: { address: "http://localhost:9810" },
         providers: [
@@ -89,7 +89,7 @@ function settingsDocuments() {
     {
       namespace: "providers.agent",
       key: "codex-sdk",
-      schemaVersion: 14,
+      schemaVersion: 15,
       valueJson: {
         agentName: "SAAA",
         userName: "",
@@ -108,7 +108,7 @@ function settingsDocuments() {
     {
       namespace: "routing.tasks",
       key: "default",
-      schemaVersion: 14,
+      schemaVersion: 15,
       valueJson: {
         conversationRespond: {
           source: "provider",
@@ -130,7 +130,7 @@ function settingsDocuments() {
     {
       namespace: "voice.runtime",
       key: "default",
-      schemaVersion: 14,
+      schemaVersion: 15,
       valueJson: {
         listeningEnabled: true,
         inputDeviceId: "default",
@@ -144,13 +144,13 @@ function settingsDocuments() {
     {
       namespace: "security.runtime",
       key: "default",
-      schemaVersion: 14,
+      schemaVersion: 15,
       valueJson: { localOnlyWhenSelected: true, diagnosticsRedaction: true },
     },
     {
       namespace: "situation.runtime",
       key: "default",
-      schemaVersion: 14,
+      schemaVersion: 15,
       valueJson: {
         enabled: false,
         sampleIntervalMs: 2_000,
@@ -164,7 +164,7 @@ function settingsDocuments() {
     {
       namespace: "ui.preferences",
       key: "default",
-      schemaVersion: 14,
+      schemaVersion: 15,
       valueJson: {
         language: "system",
         timeZone: "system",

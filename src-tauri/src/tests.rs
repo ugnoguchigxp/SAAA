@@ -774,7 +774,7 @@ async fn openai_compatible_stream_fixture_projects_deltas() {
     let request = request_body.lock().expect("request lock")[0].clone();
     assert!(request.contains("\"stream\":true"));
     assert!(!request.contains("allocationId"));
-    assert!(request.contains("\"reasoning_effort\":\"low\""));
+    assert!(!request.contains("reasoning_effort"));
     assert!(request.contains("\"max_tokens\":2048"));
     assert_eq!(
         projected
@@ -868,6 +868,7 @@ async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests() {
             .expect("fixture writes response");
     });
     let provider = OpenAiCompatibleProviderSettings {
+        request_options: None,
         endpoint: format!("http://{address}/v1"),
         ..direct_provider("dynamic_lan-sse-policy", "local")
     };
@@ -1492,6 +1493,7 @@ async fn model_provider_redirects_are_not_followed() {
             .expect("source writes redirect");
     });
     let provider = OpenAiCompatibleProviderSettings {
+        request_options: None,
         endpoint: format!("http://{source_address}/v1"),
         ..direct_provider("redirect-fixture", "local")
     };

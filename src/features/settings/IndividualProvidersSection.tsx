@@ -77,7 +77,7 @@ export function IndividualProvidersSection({
     });
   }
 
-  const visible = settings.providers.filter((provider) => provider.kind !== "dynamic-lan");
+  const visible = settings.providers;
   return (
     <div className="settings-stack">
       <section className="settings-card">

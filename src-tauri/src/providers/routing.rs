@@ -8,26 +8,22 @@ pub(crate) fn effective_conversation_route_ids(
     route: &ConversationRouteSettings,
     security: &SecurityRuntimeSettings,
 ) -> Vec<String> {
-    if route.source == "harness" {
-        return providers
-            .providers
-            .iter()
-            .find(|provider| {
-                provider.id() == crate::DYNAMIC_LAN_PROVIDER_ID
-                    || matches!(provider, crate::ModelProviderSettings::DynamicLan(_))
-            })
-            .map(|provider| vec![provider.id().to_string()])
-            .unwrap_or_default();
+    if route.source == "provider" && route.primary_provider_id.is_none() {
+        return vec![];
     }
     let primary = providers
         .providers
         .iter()
         .find(|provider| Some(provider.id()) == route.primary_provider_id.as_deref());
-    let primary_is_local = primary.is_some_and(|provider| provider.location() == "local");
-    route
-        .primary_provider_id
-        .iter()
-        .cloned()
+    let primary_is_local =
+        route.source == "harness" || primary.is_some_and(|provider| provider.location() == "local");
+    let primary_id = if route.source == "harness" {
+        Some(crate::DYNAMIC_LAN_PROVIDER_ID.to_string())
+    } else {
+        route.primary_provider_id.clone()
+    };
+    primary_id
+        .into_iter()
         .chain(route.fallback_provider_ids.iter().cloned())
         .filter(|provider_id| {
             !(security.local_only_when_selected && primary_is_local)
@@ -56,10 +52,13 @@ mod tests {
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
         };
         let route = ConversationRouteSettings {
+            attempt_timeout_ms: None,
             source: "provider".to_string(),
             primary_provider_id: Some("local-primary".to_string()),
             fallback_provider_ids: vec!["cloud-fallback".to_string(), "local-fallback".to_string()],
@@ -85,10 +84,13 @@ mod tests {
             ],
             reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
         };
         let route = ConversationRouteSettings {
+            attempt_timeout_ms: None,
             source: "provider".to_string(),
             primary_provider_id: Some("dynamic_lan-primary".to_string()),
             fallback_provider_ids: vec!["local-fallback".to_string()],

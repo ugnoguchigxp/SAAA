@@ -2,16 +2,17 @@ use futures_util::StreamExt;
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::Deserialize;
 use serde_json::json;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use url::Url;
 
 use crate::ipc_contract::ConversationMessage;
-use crate::{AgentSessionProviderSettings, RunCancellation};
+use crate::AgentSessionProviderSettings;
 
 use super::stream::{
     CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
 };
 
+mod creation;
 mod sse;
 
 const MAX_HTTP_BODY_BYTES: usize = 1_048_576;
@@ -80,6 +81,7 @@ pub(crate) async fn stream_agent_session_provider(
     timeout_ms: u64,
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
+    let started = std::time::Instant::now();
     if context.cancellation.is_cancelled() {
         return cancelled(false);
     }
@@ -91,27 +93,31 @@ pub(crate) async fn stream_agent_session_provider(
         Ok(api_key) => api_key,
         Err(_) => return failed(ProviderFailureKind::Authentication, false),
     };
-    let session = match await_or_cancel(
+    let session = match creation::create_owned(
+        client.clone(),
+        provider.clone(),
+        api_key.clone(),
         context.cancellation.clone(),
-        create_session(&client, provider, api_key.as_deref().map(String::as_str)),
     )
     .await
     {
         Ok(session) => session,
-        Err(ProviderFailureKind::Cancelled) => return cancelled(false),
+        Err(ProviderFailureKind::Cancelled) => {
+            return cancelled(false).with_cleanup(CleanupOutcome::Pending)
+        }
         Err(kind) => return failed(kind, false),
     };
     let transport = match session_transport(provider, &session) {
         Ok(transport) => transport,
         Err(kind) => {
-            let _ = release_session(
+            let release = release_session_with_retry(
                 &client,
                 provider,
                 &session.id,
                 api_key.as_deref().map(String::as_str),
             )
             .await;
-            return failed(kind, false);
+            return apply_release(failed(kind, false), release);
         }
     };
     let attempt = match transport {
@@ -122,7 +128,9 @@ pub(crate) async fn stream_agent_session_provider(
                 &session,
                 events_url,
                 history,
-                timeout_ms,
+                timeout_ms
+                    .saturating_sub(started.elapsed().as_millis() as u64)
+                    .max(1),
                 api_key.as_deref().map(String::as_str),
                 context,
             )
@@ -136,9 +144,26 @@ pub(crate) async fn stream_agent_session_provider(
         api_key.as_deref().map(String::as_str),
     )
     .await;
+    apply_release(attempt, release)
+}
+fn apply_release(
+    attempt: ProviderAttemptOutcome,
+    release: Result<(), ProviderFailureKind>,
+) -> ProviderAttemptOutcome {
     match release {
         Ok(()) => attempt.with_cleanup(CleanupOutcome::Released),
-        Err(_) => failed(ProviderFailureKind::Internal, output_started(&attempt)),
+        Err(kind) => attempt.with_cleanup(CleanupOutcome::ReleaseFailed {
+            kind: match kind {
+                ProviderFailureKind::Authentication => "authentication",
+                ProviderFailureKind::Network => "network",
+                ProviderFailureKind::Timeout => "timeout",
+                ProviderFailureKind::Capacity
+                | ProviderFailureKind::Upstream
+                | ProviderFailureKind::Unavailable => "upstream",
+                ProviderFailureKind::Contract | ProviderFailureKind::Protocol => "protocol",
+                _ => "internal",
+            },
+        }),
     }
 }
 
@@ -342,16 +367,24 @@ async fn release_session_with_retry(
     api_key: Option<&str>,
 ) -> Result<(), ProviderFailureKind> {
     let idempotency_key = format!("saaa_{}", uuid::Uuid::new_v4().simple());
-    for attempt in 0..20 {
-        match release_session_request(client, provider, session_id, api_key, &idempotency_key).await
-        {
-            Err(ProviderFailureKind::Capacity) if attempt < 19 => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        for attempt in 0..3 {
+            match release_session_request(client, provider, session_id, api_key, &idempotency_key)
+                .await
+            {
+                Err(
+                    ProviderFailureKind::Capacity
+                    | ProviderFailureKind::Upstream
+                    | ProviderFailureKind::Network
+                    | ProviderFailureKind::Timeout,
+                ) if attempt < 2 => tokio::time::sleep(Duration::from_millis(100)).await,
+                result => return result,
             }
-            result => return result,
         }
-    }
-    Err(ProviderFailureKind::Internal)
+        Err(ProviderFailureKind::Internal)
+    })
+    .await
+    .unwrap_or(Err(ProviderFailureKind::Timeout))
 }
 
 fn authorized(request: RequestBuilder, api_key: Option<&str>) -> RequestBuilder {
@@ -404,16 +437,6 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>, Strin
     Ok(body)
 }
 
-async fn await_or_cancel<T>(
-    cancellation: Arc<RunCancellation>,
-    future: impl std::future::Future<Output = Result<T, ProviderFailureKind>>,
-) -> Result<T, ProviderFailureKind> {
-    tokio::select! {
-        _ = cancellation.cancelled() => Err(ProviderFailureKind::Cancelled),
-        result = future => result,
-    }
-}
-
 fn failure_for_status(status: StatusCode) -> ProviderFailureKind {
     match status.as_u16() {
         401 | 403 => ProviderFailureKind::Authentication,
@@ -441,19 +464,11 @@ fn cancelled(output_started: bool) -> ProviderAttemptOutcome {
     }
 }
 
-fn output_started(outcome: &ProviderAttemptOutcome) -> bool {
-    match outcome {
-        ProviderAttemptOutcome::Completed { content, .. } => !content.is_empty(),
-        ProviderAttemptOutcome::Cancelled { output_started, .. }
-        | ProviderAttemptOutcome::Failed { output_started, .. } => *output_started,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn provider() -> AgentSessionProviderSettings {
+    pub(super) fn provider() -> AgentSessionProviderSettings {
         AgentSessionProviderSettings {
             id: "muse".to_string(),
             enabled: true,
@@ -465,6 +480,24 @@ mod tests {
             sessions_path: "/v1/agents/sessions".to_string(),
             authentication: "none".to_string(),
         }
+    }
+
+    #[test]
+    fn release_failure_preserves_success_and_uses_a_persistable_failure_code() {
+        let outcome = apply_release(
+            ProviderAttemptOutcome::Completed {
+                content: "answer".into(),
+                cleanup: CleanupOutcome::NotApplicable,
+            },
+            Err(ProviderFailureKind::Capacity),
+        );
+        assert_eq!(
+            outcome,
+            ProviderAttemptOutcome::Completed {
+                content: "answer".into(),
+                cleanup: CleanupOutcome::ReleaseFailed { kind: "upstream" }
+            }
+        );
     }
 
     #[test]

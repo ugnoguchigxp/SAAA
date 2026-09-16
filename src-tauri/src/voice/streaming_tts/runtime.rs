@@ -19,6 +19,9 @@ use crate::{
     AppState, RunCancellation,
 };
 
+#[path = "fallback.rs"]
+mod fallback;
+
 use super::chunker::{SelectReason, SentenceAccumulator};
 
 const MAX_QUEUED_CHUNKS: usize = 32;
@@ -90,18 +93,26 @@ impl StreamingSpeechRuntime {
                 "MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string(),
             );
         }
-        let (route, _provider_id, timeout_ms) = if let Some(conversation) =
-            voice_conversation.filter(|_| crate::larm_voice::enabled())
-        {
-            let ready = crate::larm_voice::current(conversation).await?;
-            (
-                TtsRoute::Larm(ready.session.clone()),
-                "larm-session-tts".into(),
-                15_000,
-            )
-        } else {
-            selected_tts_route(state)?
-        };
+        let (mut route, _provider_id, timeout_ms) = selected_tts_route(state)?;
+        if let Some(conversation) = voice_conversation.filter(|_| crate::larm_voice::enabled()) {
+            let harness = state
+                .sqlite_readers
+                .read(|c| Ok(crate::persistence::load_model_providers(c)?.harness))?;
+            fn apply(route: &mut TtsRoute, conversation: &str, harness: &crate::HarnessSettings) {
+                match route {
+                    TtsRoute::Harness(..) => {
+                        *route = TtsRoute::Larm(conversation.to_string(), harness.clone())
+                    }
+                    TtsRoute::Fallback(routes, _) => {
+                        for route in routes {
+                            apply(route, conversation, harness);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            apply(&mut route, conversation, &harness);
+        }
         let mut sessions = self
             .sessions
             .lock()
@@ -376,8 +387,11 @@ async fn render_session_inner(
     receiver: &mut mpsc::Receiver<SpeechWork>,
     context: &mut RenderSessionContext,
 ) -> Result<(), String> {
+    if matches!(context.route, TtsRoute::Fallback(..)) {
+        return fallback::render(receiver, context).await;
+    }
     context.route = resolve_render_route(&context.route, &context.cancellation).await?;
-    if matches!(&context.route, TtsRoute::Cloud(_) | TtsRoute::Larm(_)) {
+    if matches!(&context.route, TtsRoute::Cloud(_) | TtsRoute::Larm(..)) {
         return render_http_session(receiver, context).await;
     }
     let mut queued = VecDeque::<(u64, String, Instant)>::new();
@@ -573,9 +587,12 @@ async fn render_http_session(
                 )
                 .await?
             }
-            TtsRoute::Larm(session) => {
+            TtsRoute::Larm(conversation, settings) => {
+                let ready = crate::larm_voice::current_at(conversation, settings).await?;
                 crate::voice::http_audio::play_larm(
-                    session,
+                    &ready.session,
+                    settings.tts_voice.as_deref(),
+                    Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     &text,
                     context.timeout_ms,
                     context.cancellation.clone(),
@@ -594,7 +611,7 @@ async fn resolve_render_route(
     cancellation: &RunCancellation,
 ) -> Result<TtsRoute, String> {
     match route {
-        TtsRoute::Harness(address) => {
+        TtsRoute::Harness(address, voice) => {
             let service = crate::providers::service_harness::resolve_service_cancellable(
                 address,
                 "tts",
@@ -609,7 +626,7 @@ async fn resolve_render_route(
                 location: "local".to_string(),
                 endpoint: service.base_url,
                 model: service.model,
-                voice: service.voice.ok_or_else(|| {
+                voice: voice.clone().or(service.voice).ok_or_else(|| {
                     "Provider Harness TTS descriptor does not include a voice".to_string()
                 })?,
                 authentication: "none".to_string(),
@@ -650,7 +667,7 @@ fn render_future(
                 )
                 .await?
             }
-            TtsRoute::Harness(_) | TtsRoute::Larm(_) => {
+            TtsRoute::Harness(..) | TtsRoute::Larm(..) | TtsRoute::Fallback(..) => {
                 return Err("Unresolved Harness TTS render route".to_string());
             }
         };

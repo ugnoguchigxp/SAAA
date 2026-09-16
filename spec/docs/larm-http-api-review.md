@@ -1,6 +1,6 @@
 # LARM通信・設定レビューとWebSocket削除
 
-2026-09-16。対象はSAAAの作業ツリー。既存の未コミット変更を含む現在のコードをレビューした。LARMサーバーの実装・稼働状態は今回検証していない。以下の指摘は削除後にも残る改善項目であり、実装済みとは扱わない。
+2026-09-16。対象はSAAAの作業ツリー。既存の未コミット変更を含む現在のコードをレビューした。LARMサーバーの実装・稼働状態は今回検証していない。以下の指摘はWebSocket削除直後の記録。後続の実装内容と残る境界は「SAAA側の後続実装」に記載する。
 
 WebSocketの実装、専用状態管理、UI、依存ライブラリ、旧allocation Provider、専用検証スクリプトを削除した。今後の方針はLLM・ASR・TTSそれぞれをHTTP APIの境界で交換できること。そのためには通信形式に加え、設定の優先順位とフォールバック方針を揃える必要がある。
 
@@ -129,3 +129,82 @@ HTTPでもLLMの逐次表示とTTSの音声逐次受信は可能。WebSocketとH
 - 追加の全Rust実行時に既存Codex App Server契約テストが一度RequestTimeoutとなった。単独再実行と、その後の全体再実行は成功。タイミング依存の可能性があるため、検証上の注意として記録する。
 - 旧設定のみの起動、旧fallbackの除去、HTTP広告に付随する未使用拡張、WSしか広告しないAgent Sessionの拒否を回帰検証。
 - 実LARM、外部クラウド、実マイクでの統合動作・遅延は未検証。既存のlive/ignored試験を合格と数えていない。
+
+
+## SAAA側の後続実装
+
+LARM側への依頼後、SAAAのHTTP adapterと設定・実行経路を更新した。通常のLLM、ASR、TTSには、それぞれ独立したprimary、優先順付きfallback、総時間、1回の試行時間を設定できる。Harnessから個別Providerへのfallbackも利用できる。ローカル限定が有効なときは、保存時と実行時の両方でクラウドへの切り替えを拒否する。
+
+### HTTP APIと設定
+
+- 明示したbase URLのパスを維持する。`/v1beta/openai/`などの末尾へ余分な`/v1`を追加しない。ホストだけのURLは引き続き`/v1`の省略形として扱う。
+- LLMの出力上限形式、reasoning parameterの送信可否、tools、HTTP SSEをProvider単位で選択できる。既知のモデル名には控えめな自動判定を行い、別名・独自モデルは設定で上書きする。モデル固有のreasoning値を自動判定できない場合は送らない。
+- 動的LLMもSSEを明示的に有効化できる。既存LARMとの適合試験が済むまでは、未指定の動的接続はJSON応答を既定値とする。
+- ASRはmultipartのWAV uploadとJSON応答を使用し、`language`と`languages[].code`を統合して言語制限へ渡す。text-only応答を架空の検出言語で補わない。WAV uploadは25 MBまでに制限する。
+- TTSはmodel/input/voice/response_formatを送信し、WAVまたはPCMを段階的に受信・再生する。voiceは個別Provider、Harness設定、LARMの広告から取得する。LARMがvoiceを広告せず、利用者の設定もない場合は設定エラーとし、特定エンジンのvoice名を推測しない。
+- 設定schemaを15へ更新した。従来の未バージョン指定proxyパスは旧接続先を維持するよう移行し、明示したAPI versionやOpenAI互換のprefixは維持する。移行は冪等で、primaryやfallbackの昇格は行わない。
+- 接続テストの結果を設定のfingerprintと要求世代へ結び付けた。URL・モデル・認証・credentialの変更後に、古い成功結果を表示しない。
+
+### 実行経路とフォールバック
+
+LLMは総時間からdiscoveryの経過時間を差し引き、残り時間の範囲でProviderを試行する。Dynamic LANの準備待ちも試行予算で打ち切り、遅れて取得した接続IDの解放はバックグラウンドで継続する。Legacy Dynamic LANの単一試行は既存のlease上限に制限する。
+
+ASRの通常録音と連続入力は同じfallback処理を使用する。連続入力でもHTTP認識要求ごとに保存済み設定を読み直す。LARM音声モードでも個別ASR・TTSの指定が優先され、通常のLLM指定を専用reasoning clientで上書きしない。
+
+TTSは最初に音声を再生キューへ渡した時点で自動切り替えを止める。再生のコールバックを待たずに判定するため、音声の二重再生を避けられる。一度出力を始めた応答中は、後続の句についても別Providerへの切り替えを行わない。TTSの総時間と試行時間は句単位に適用し、待機中のLLM生成時間は含めない。
+
+自動切り替えの対象は容量不足、利用不能、一時的な上流・ネットワーク障害、タイムアウトなど。認証・契約・ポリシー拒否、キャンセル、LLMの表示・tool実行開始後は切り替えない。ASRの無音や許可外言語も別Providerへ再送しない。試行時間が未指定なら総時間を候補数で等分する。
+
+### LARMのセッションと解放
+
+LARM音声セッションの接続先には保存済みHarness addressを使用する。旧`SAAA_LARM_CONTROL_URL`による別の接続先指定は削除した。音声セッション用profileは設定から指定できる。`SAAA_CONVERSATION_REASONING_MODE=larm`は、Harnessを選択した音声経路で共有leaseを使う互換設定として残る。
+
+音声入力の開始時は所有者だけを登録し、LARMへの接続は必要な機能を初めて使う時点で行う。未使用のASR・TTS・decisionの欠落を理由にclaim全体を拒否せず、healthは要求した機能に対して確認する。一機能のhealth失敗では共有セッション全体を閉じない。アドレス・profile変更時は古いセッションを解放してから再接続する。
+
+音声要求の通信時間は、取得したcredentialの残存有効時間から5秒の余裕を引いた範囲に制限する。設定上のタイムアウトが長くても、leaseの有効期限を越える予算では要求しない。
+
+Agent Sessionでは回答生成と解放の結果を別々に保存する。releaseは最大2秒の独立した予算内で再試行し、失敗しても生成成功を取り消さない。キャンセル後も遅れたcreate応答のIDを受け取って解放する。非同期解放の記録は最終観測状態であり、pendingやdeferred-to-ttlを解放成功と扱わない。
+
+### 残る境界と受け入れ確認
+
+管理メモリを有効にしたLLMは、LARM固有の更新確認・整合性契約を使用する。そのため、通常のLLM設定やクラウド自動fallbackへ置き換えない。この制約を設定画面に表示する。memory拡張を伴わない三つの推論APIと、管理メモリの保証は別々に受け入れ確認する必要がある。
+
+SAAAでの自動試験は模擬HTTPサーバーを使う。実LARM・クラウドの認証情報や実音声を使った適合試験は未実施。LARM側の変更後に、能力広告、モデル・voice、SSE tool_calls、lease失効、三機能の独立切り替え、実測遅延を確認する。OpenAI互換API以外のschemaを持つProviderには別adapterが必要である。
+
+### 後続実装の検証結果
+
+- フロントエンド：322 passed / 0 failed。
+- Rust lib全体：523 passed / 0 failed / 13 ignored（同時実行4）。その後の調整に対してProvider系68件、音声系116件を再検証した。
+- 共有LARM crate：単体15件・HTTP契約4件、reasoning MCP：6件、IPC・SQLite統合：5件が成功。実LARMへ接続するignored試験は実行していない。
+- personal-state-core：17件、会話品質の契約60シナリオとruntime試験2件が成功。
+- frontend build、format、lint、Clippy全ターゲット（warningsをerror扱い）、module-size、仕様書、差分の空白検査を実施。Viteの既存chunkサイズ警告は残る。
+- 全Rust試験を既定の並列数で実行した際、既存Codex App Server契約試験で期待したResponseTooLargeではなくProgressTimeoutとなる事象が一度発生した。同時実行4で全体を再実行し成功した。外部プロセスを使う試験の時間依存として記録する。
+
+
+## 実機接続検証（2026-09-16）
+
+SAAAを開発しているMacから、保存済みHarness address `http://192.168.0.130:9810`へ通常Bearer認証でHTTP要求した。Profile・claim・Allocation headerは使用していない。認証情報は既存のLARM設定から読み取り、記録には含めていない。送信したのは検証用の短文と合成音声だけで、会話履歴や実マイク入力は使用していない。
+
+稼働releaseは`be5e86272165f4e13e69f4da204b1425486c6070`、検証時のLARM repository HEADは`631c15ad84eacb757770c92b21d647743cfeae6c`。異なるため、受領したsourceベースの報告と配備済み挙動を同一視できない。`gnosis.local`の名前解決は5秒でタイムアウトしたが、保存済みIPへの接続は成功した。配備・再起動・設定変更は実施していない。
+
+| 検証 | 実測結果 |
+| --- | --- |
+| health | 200、release identity取得 |
+| 認証 | tokenなしのmodels要求は401、通常Bearerでは200 |
+| models | coding-default、decision-default、ASR・TTSを含む8モデルを取得 |
+| LLM JSON | coding-defaultとdecision-defaultで「1+1」への本文「2」を確認 |
+| LLM SSE | coding-defaultで本文「2」、finish_reason=stop、DONEを確認（70イベント） |
+| function tool | connection_checkのtool_callsとJSON引数value=OKを確認。実処理は行わない検証用tool |
+| Structured Outputs | 指定したJSON Schemaに合うok=trueの本文を確認 |
+| TTS WAV | voicevox-core / Kasukabe_Tsumugi、200、86,572 bytes、24 kHz・mono・16 bit、1.803秒 |
+| ASR WAV | 上記音声のmultipart送信で200、「接続を確認しました。」、language=Japanese |
+| TTS PCM | 502 upstream_response_format_mismatch。PCM対応はこの配備では合格にできない |
+| voices | GET /v1/audio/voices?model=voicevox-coreが400 invalid_request（JSON body要求）。通常の一覧取得は不合格 |
+
+短い英語指示「Reply with just OK.」は、JSON・SSEとも200とstopを返したが本文が空だった。JSONにはreasoning_contentだけが存在した。日本語質問では本文が返るため、LLM通信の全面失敗ではなく、モデル／template／生成設定を含む再現確認が必要な事象として扱う。原因は今回断定していない。
+
+初回のWAV生成は約0.40秒、ASRは約4.63秒、日本語LLM JSONは約10.33秒、SSEは約10.03秒で要求全体が完了した。各条件の単発測定であり、起動待ち・cacheの影響を分離した性能値や初回音声遅延ではない。
+
+今回確認したのは通常HTTP data planeであり、SAAAの画面操作・音声再生まで含むE2E、cloud fallback、障害注入、キャンセル後のengine停止、personal-state保証、Qwen TTS、全モデルの能力を検証したものではない。SAAAのASR言語正規化はJapaneseをjaとして扱える。WAVを使用し、voiceを明示する経路が今回の成功条件である。
+
+追加のtool往復試験では、検証用tool結果ok=trueを返すとmax_tokens=256ではlength終端・本文空になった。max_tokens=1024で再試行するとstop終端・本文「接続チェック成功（OK）」を確認した（約22.25秒）。試験用tool結果を返しただけで外部操作は実行していない。上限変更後の生成は193トークンで終了しており、生成の変動もあるため「常に256では不足する」とは断定しない。

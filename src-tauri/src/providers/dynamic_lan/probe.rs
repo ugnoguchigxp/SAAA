@@ -10,6 +10,7 @@ pub(crate) async fn probe(provider: &crate::DynamicLanProviderSettings) -> Resul
     {
         Ok(connection) => {
             let resolved = crate::OpenAiCompatibleProviderSettings {
+                request_options: provider.request_options.clone(),
                 id: provider.id.clone(),
                 enabled: true,
                 label: provider.label.clone(),

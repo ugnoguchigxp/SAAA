@@ -10,6 +10,15 @@ export const providerIdSchema = z
     "Provider ids may contain only ASCII letters, numbers, hyphens, and underscores",
   );
 
+const llmRequestOptionsSchema = z
+  .object({
+    tokenLimit: z.enum(["auto", "legacy", "completion"]).default("auto"),
+    reasoning: z.enum(["auto", "supported", "unsupported"]).default("auto"),
+    tools: z.boolean().default(true),
+    streaming: z.boolean().default(true),
+  })
+  .strict();
+
 const providerCommonSchema = z.object({
   id: providerIdSchema,
   enabled: z.boolean(),
@@ -26,6 +35,7 @@ const providerCommonSchema = z.object({
 const openAiCompatibleProviderSchema = providerCommonSchema
   .extend({
     kind: z.literal("openai-compatible"),
+    requestOptions: llmRequestOptionsSchema.optional(),
     location: z.enum(["local", "cloud"]),
     endpoint: z.union([
       z.literal(""),
@@ -129,6 +139,7 @@ const systemTtsProviderSchema = providerCommonSchema
 const dynamicLanProviderSchema = providerCommonSchema
   .extend({
     kind: z.literal("dynamic-lan"),
+    requestOptions: llmRequestOptionsSchema.optional(),
     location: z.literal("local"),
     host: z
       .string()
@@ -201,7 +212,23 @@ const harnessAddressSchema = z
 
 export const modelProvidersSettingsSchema = z
   .object({
-    harness: z.object({ address: harnessAddressSchema }).strict(),
+    harness: z
+      .object({
+        address: harnessAddressSchema,
+        larmProfile: z
+          .string()
+          .min(1)
+          .max(160)
+          .regex(/^[A-Za-z0-9_-]+$/)
+          .optional(),
+        ttsVoice: z
+          .string()
+          .min(1)
+          .max(160)
+          .refine((v) => v.trim() === v && !/[\u0000-\u001f\u007f]/.test(v))
+          .optional(),
+      })
+      .strict(),
     providers: z
       .array(providerSchema)
       .max(20)

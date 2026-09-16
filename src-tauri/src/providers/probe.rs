@@ -14,6 +14,8 @@ pub(crate) async fn test_model_provider(state: &AppState, input: TestProviderInp
     validate_identifier(provider.id(), "provider id")?;
     validate_model_providers(&ModelProvidersSettings {
         harness: crate::HarnessSettings {
+            larm_profile: None,
+            tts_voice: None,
             address: String::new(),
         },
         providers: vec![provider.clone()],

@@ -68,6 +68,7 @@ impl NetworkAsrRuntime {
         Ok(resolution)
     }
 
+    #[cfg(test)]
     pub(crate) async fn invalidate(&self, host: &str) {
         let normalized_host = host.trim().to_ascii_lowercase();
         let mut cached = self.cached.lock().await;

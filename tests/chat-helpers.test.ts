@@ -43,7 +43,7 @@ describe("chat helpers", () => {
       {
         namespace: "routing.tasks",
         key: "default",
-        schemaVersion: 14,
+        schemaVersion: 15,
         valueJson: { conversationRespond: { primaryProviderId: "local-openai-compatible" } },
         updatedAt: "1",
       },

@@ -18,11 +18,12 @@ pub(super) async fn probe(service: &ServiceDescriptor) -> Result<(), String> {
         .send()
         .await
         .map_err(|_| {
-            format!(
-                "Provider Harness {} health check failed",
-                service.capability
-            )
+            crate::providers::stream::ProviderFailureKind::Network
+                .public_message()
+                .as_str()
+                .to_string()
         })?;
+
     if !response.status().is_success() {
         return Err(format!(
             "Provider Harness {} health check returned HTTP {}",

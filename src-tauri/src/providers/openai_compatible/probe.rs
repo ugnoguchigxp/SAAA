@@ -41,7 +41,7 @@ pub(crate) async fn probe_model_provider_with_api_key(
         return Err("API key is not configured in macOS Keychain".into());
     }
     let authorization = key.map(|key| format!("Bearer {key}"));
-    let result = crate::providers::chat_completions::run_mode(
+    let result = crate::providers::chat_completions::run_with_options(
         &provider.endpoint,
         authorization.as_deref(),
         &provider.model,
@@ -56,6 +56,10 @@ pub(crate) async fn probe_model_provider_with_api_key(
             output_persistence: None,
         },
         crate::providers::chat_completions::RequestMode::JsonProbe,
+        &provider
+            .request_options
+            .clone()
+            .unwrap_or_else(saaa_larm_session::http_api::LlmOptions::standard),
     )
     .await;
     match result {

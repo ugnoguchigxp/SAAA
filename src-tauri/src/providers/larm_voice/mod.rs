@@ -10,14 +10,15 @@ mod decision;
 
 pub(crate) struct Ready {
     pub session: Arc<Session>,
-    pub client: Arc<crate::providers::reasoning_mcp::Client>,
-    server_stop: watch::Sender<bool>,
 }
 struct Owner {
     id: String,
     conversation: String,
+    base: String,
+    profile: String,
     cancel: watch::Sender<bool>,
     ready: OnceCell<Result<Arc<Ready>, StartupError>>,
+    started: AtomicBool,
 }
 static OWNER: Mutex<Option<Arc<Owner>>> = Mutex::const_new(None);
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
@@ -27,12 +28,20 @@ pub(crate) fn enabled() -> bool {
 }
 #[tauri::command]
 pub(crate) async fn begin_larm_voice_session(
+    state: tauri::State<'_, crate::AppState>,
     owner_id: String,
     conversation_id: String,
 ) -> Result<(), String> {
     if !enabled() {
         return Ok(());
     }
+    let harness = state
+        .sqlite_readers
+        .read(|c| Ok(crate::persistence::load_model_providers(c)?.harness))?;
+    let base = harness.address;
+    let profile = harness
+        .larm_profile
+        .unwrap_or_else(|| "saaa-qwen38-kv-mem".into());
     crate::validate_identifier(&owner_id, "voice owner")?;
     crate::validate_identifier(&conversation_id, "conversation id")?;
     let mut current = OWNER.lock().await;
@@ -40,92 +49,58 @@ pub(crate) async fn begin_larm_voice_session(
         return Err("LARM voice runtime is shutting down".into());
     }
     if let Some(previous) = current.as_ref() {
-        if previous.id != owner_id || previous.conversation != conversation_id {
+        if previous.id != owner_id
+            || previous.conversation != conversation_id
+            || previous.base != base
+            || previous.profile != profile
+        {
             previous.cancel.send_replace(true);
-            match previous.ready.get_or_init(|| initialize(previous)).await {
-                Ok(ready) => ready.close().await?,
-                Err(error) => error.release().await?,
-            }
+            close_owner(previous).await?;
             *current = None;
         }
     }
-    let owner = current
-        .get_or_insert_with(|| {
-            let (cancel, _) = watch::channel(false);
-            Arc::new(Owner {
-                id: owner_id,
-                conversation: conversation_id,
-                cancel,
-                ready: OnceCell::new(),
-            })
+    current.get_or_insert_with(|| {
+        let (cancel, _) = watch::channel(false);
+        Arc::new(Owner {
+            id: owner_id,
+            conversation: conversation_id,
+            base,
+            profile,
+            cancel,
+            ready: OnceCell::new(),
+            started: AtomicBool::new(false),
         })
-        .clone();
-    drop(current);
-    // Detached initializer completes cleanup even if the invoking frontend disappears.
-    let task = tokio::spawn(async move {
-        let result = owner.ready.get_or_init(|| initialize(&owner)).await;
-        result.as_ref().map(|_| ()).map_err(|e| e.message.clone())
     });
-    task.await
-        .map_err(|_| "LARM session startup task failed".to_string())?
+    Ok(())
 }
+async fn close_owner(owner: &Owner) -> Result<(), String> {
+    if owner.started.load(Ordering::Acquire) {
+        match owner.ready.get_or_init(|| initialize(owner)).await {
+            Ok(ready) => ready.close().await?,
+            Err(error) => error.release().await?,
+        }
+    }
+    Ok(())
+}
+
 async fn initialize(owner: &Owner) -> Result<Arc<Ready>, StartupError> {
-    let base = std::env::var("SAAA_LARM_CONTROL_URL")
-        .unwrap_or_else(|_| "http://gnosis.local:9810".into());
-    let session = Session::connect(&base, owner.cancel.subscribe())
-        .await
-        .map_err(|error| StartupError {
-            message: error.to_string(),
-            cleanup: error.cleanup,
-        })?;
-    let result = async {
-        let token = uuid::Uuid::new_v4().to_string();
-        let provider = saaa_reasoning_mcp::provider::Provider::from_larm(session.clone())?;
-        let service = saaa_reasoning_mcp::Service::new(provider, token.clone())?;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    let session =
+        Session::connect_with_profile(&owner.base, &owner.profile, owner.cancel.subscribe())
             .await
-            .map_err(|_| "MCP bind failed")?;
-        let address = listener
-            .local_addr()
-            .map_err(|_| "MCP address unavailable")?;
-        let client = Arc::new(crate::providers::reasoning_mcp::Client::new(
-            &format!("http://{address}/mcp"),
-            token,
-        )?);
-        let (server_stop, mut shutdown) = watch::channel(false);
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, service.router())
-                .with_graceful_shutdown(async move {
-                    while !*shutdown.borrow_and_update() {
-                        if shutdown.changed().await.is_err() {
-                            break;
-                        }
-                    }
-                })
-                .await;
+            .map_err(|error| StartupError {
+                message: error.to_string(),
+                cleanup: error.cleanup,
+            })?;
+    if *owner.cancel.borrow() {
+        let cleanup = session.close().await.err().map(|_| session.clone());
+        return Err(StartupError {
+            message: "LARM session cancelled".into(),
+            cleanup,
         });
-        Ok::<_, String>(Arc::new(Ready {
-            session: session.clone(),
-            client,
-            server_stop,
-        }))
     }
-    .await;
-    match result {
-        Ok(ready) if !*owner.cancel.borrow() => Ok(ready),
-        Ok(ready) => {
-            let cleanup = ready.close().await.err().map(|_| session.clone());
-            Err(StartupError {
-                message: "LARM session cancelled".into(),
-                cleanup,
-            })
-        }
-        Err(message) => {
-            let cleanup = session.close().await.err().map(|_| session.clone());
-            Err(StartupError { message, cleanup })
-        }
-    }
+    Ok(Arc::new(Ready { session }))
 }
+
 struct StartupError {
     message: String,
     cleanup: Option<Arc<Session>>,
@@ -141,7 +116,6 @@ impl StartupError {
 
 impl Ready {
     async fn close(&self) -> Result<(), String> {
-        self.server_stop.send_replace(true);
         self.session.close().await.map_err(str::to_string)
     }
 }
@@ -170,15 +144,44 @@ async fn end(owner_id: &str) -> Result<(), String> {
     if current.as_ref().is_some_and(|o| o.id == owner_id) {
         let owner = current.as_ref().unwrap();
         owner.cancel.send_replace(true);
-        // Wait for a pending initializer to release too; its create response may carry the id.
-        let result = owner.ready.get_or_init(|| initialize(owner)).await;
-        match result {
-            Ok(ready) => ready.close().await?,
-            Err(error) => error.release().await?,
-        }
+        close_owner(owner).await?;
         *current = None;
     }
     Ok(())
+}
+pub(crate) async fn current_at(
+    conversation: &str,
+    settings: &crate::HarnessSettings,
+) -> Result<Arc<Ready>, String> {
+    let profile = settings
+        .larm_profile
+        .as_deref()
+        .unwrap_or("saaa-qwen38-kv-mem");
+    {
+        let mut slot = OWNER.lock().await;
+        let owner = slot.as_ref().ok_or("LARM voice session is not started")?;
+        if owner.conversation != conversation {
+            return Err("LARM voice session mismatch".into());
+        }
+        if owner.base != settings.address
+            || owner.profile != profile
+            || owner.ready.get().is_some_and(Result::is_err)
+        {
+            owner.cancel.send_replace(true);
+            close_owner(owner).await?;
+            let (cancel, _) = watch::channel(false);
+            *slot = Some(Arc::new(Owner {
+                id: owner.id.clone(),
+                conversation: conversation.into(),
+                base: settings.address.clone(),
+                profile: profile.into(),
+                cancel,
+                ready: OnceCell::new(),
+                started: AtomicBool::new(false),
+            }));
+        }
+    }
+    current(conversation).await
 }
 pub(crate) async fn current(conversation: &str) -> Result<Arc<Ready>, String> {
     let owner = OWNER
@@ -189,13 +192,19 @@ pub(crate) async fn current(conversation: &str) -> Result<Arc<Ready>, String> {
     if owner.conversation != conversation || *owner.cancel.borrow() {
         return Err("LARM voice session mismatch".into());
     }
-    owner
-        .ready
-        .get()
-        .ok_or("LARM voice session is not ready")?
-        .as_ref()
-        .cloned()
-        .map_err(|error| error.message.clone())
+    owner.started.store(true, Ordering::Release);
+    // Startup retains cleanup ownership if the caller reaches its request deadline.
+    tokio::spawn(async move {
+        owner
+            .ready
+            .get_or_init(|| initialize(&owner))
+            .await
+            .as_ref()
+            .cloned()
+            .map_err(|e| e.message.clone())
+    })
+    .await
+    .map_err(|_| "LARM startup worker stopped".to_string())?
 }
 pub(crate) async fn shutdown() {
     SHUTTING_DOWN.store(true, Ordering::Release);
@@ -205,15 +214,6 @@ pub(crate) async fn shutdown() {
             eprintln!("LARM session release failed on exit");
         }
     }
-}
-pub(crate) async fn reasoning_client(
-    conversation: &str,
-    origin: &str,
-) -> Result<Option<Arc<crate::providers::reasoning_mcp::Client>>, String> {
-    if !enabled() || origin != "voice" {
-        return Ok(None);
-    }
-    Ok(Some(current(conversation).await?.client.clone()))
 }
 pub(crate) use decision::classify_shadow;
 
@@ -225,18 +225,7 @@ mod tests {
     #[tokio::test]
     async fn disabled_mode_skips_session_lifecycle() {
         assert!(!enabled());
-        begin_larm_voice_session("owner".into(), "conversation_primary".into())
-            .await
-            .expect("disabled begin is a no-op");
         assert!(current("conversation_primary").await.is_err());
-        assert!(reasoning_client("conversation_primary", "text")
-            .await
-            .expect("text origin skips LARM")
-            .is_none());
-        assert!(reasoning_client("conversation_primary", "voice")
-            .await
-            .expect("disabled voice origin skips LARM")
-            .is_none());
         classify_shadow(
             "conversation_primary",
             "hello",

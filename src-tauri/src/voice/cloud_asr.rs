@@ -10,13 +10,28 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 const TRANSCRIPTION_RESPONSE_FORMAT: &str = "json";
 
 #[derive(Debug, Deserialize)]
-struct TranscriptionResponse {
-    text: String,
+pub(crate) struct TranscriptionResponse {
+    pub(crate) text: String,
     language: Option<String>,
+    #[serde(default)]
+    languages: Vec<DetectedLanguage>,
     #[serde(default)]
     segments: Vec<TranscriptionSegment>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DetectedLanguage {
+    code: String,
+}
+impl TranscriptionResponse {
+    pub(crate) fn detected_language(&self) -> Option<String> {
+        let mut codes: Vec<String> = self.language.iter().cloned().collect();
+        codes.extend(self.languages.iter().map(|l| l.code.clone()));
+        codes.sort();
+        codes.dedup();
+        (!codes.is_empty()).then(|| codes.join(","))
+    }
+}
 #[derive(Debug, Deserialize)]
 struct TranscriptionSegment {
     no_speech_prob: Option<f32>,
@@ -69,6 +84,9 @@ pub(crate) async fn transcribe_with_api_key(
         return Err("ASR audio exceeds ten minutes".into());
     }
     let wav = crate::voice::network_asr::encode_wav(samples, sample_rate)?;
+    if wav.len() > 25_000_000 {
+        return Err("ASR upload exceeds the 25 MB compatibility limit".into());
+    }
     if samples.iter().all(|sample| sample.abs() <= f32::EPSILON) {
         return Err("ASR_NO_SPEECH: The audio is silent".into());
     }
@@ -119,10 +137,7 @@ pub(crate) async fn transcribe_with_api_key(
         return Err("ASR_NO_SPEECH: Cloud ASR completed without a transcript".to_string());
     }
     crate::providers::http_metrics::record("asrUploadToFinalText", request_started.elapsed());
-    Ok((
-        bounded_text(text, 16_000),
-        result.language.map(|language| bounded_text(&language, 80)),
-    ))
+    Ok((bounded_text(text, 16_000), result.detected_language()))
 }
 
 fn response_is_no_speech(segments: &[TranscriptionSegment]) -> bool {
@@ -190,6 +205,16 @@ async fn bounded_body(
 mod tests {
     use super::*;
 
+    #[test]
+    fn modern_language_metadata_is_checked_against_the_allowlist() {
+        let result: TranscriptionResponse =
+            serde_json::from_str(r#"{"text":"hello","languages":[{"code":"en"}]}"#).unwrap();
+        assert!(crate::voice::language::enforce_allowed_language(
+            result.detected_language().as_deref(),
+            &["ja".into()]
+        )
+        .is_err());
+    }
     #[test]
     fn text_only_json_is_supported() {
         assert_eq!(TRANSCRIPTION_RESPONSE_FORMAT, "json");

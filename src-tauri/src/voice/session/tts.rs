@@ -1,23 +1,31 @@
+#[path = "tts_policy.rs"]
+mod policy;
 use crate::{validate_identifier, AppState};
 
 #[derive(Clone)]
 pub(crate) enum TtsRoute {
-    Larm(std::sync::Arc<saaa_larm_session::Session>),
-    Harness(String),
+    Larm(String, crate::HarnessSettings),
+    Fallback(Vec<TtsRoute>, u64),
+    Harness(String, Option<String>),
     Cloud(crate::CloudTtsProviderSettings),
     System(crate::SystemTtsProviderSettings),
 }
 
 pub(crate) fn selected_tts_route(state: &AppState) -> Result<(TtsRoute, String, u64), String> {
-    let (providers, route) = state.sqlite_readers.read(|connection| {
+    let (providers, route, security) = state.sqlite_readers.read(|connection| {
         Ok((
             crate::persistence::load_model_providers(connection)?,
             crate::persistence::load_routing_settings(connection)?.voice_speak,
+            crate::persistence::load_security_settings(connection)?,
         ))
     })?;
+    let wrap = |primary| policy::wrap(primary, &providers, &route, &security);
     if route.source == "harness" {
         return Ok((
-            TtsRoute::Harness(providers.harness.address),
+            wrap(TtsRoute::Harness(
+                providers.harness.address.clone(),
+                providers.harness.tts_voice.clone(),
+            )),
             "provider-harness-tts".to_string(),
             route.timeout_ms,
         ));
@@ -26,24 +34,17 @@ pub(crate) fn selected_tts_route(state: &AppState) -> Result<(TtsRoute, String, 
         .provider_id
         .as_deref()
         .ok_or_else(|| "TTS provider is not selected".to_string())?;
-    let selected = providers
+    let provider = providers
         .providers
-        .into_iter()
-        .find_map(|provider| match provider {
-            crate::ModelProviderSettings::CloudTts(provider)
-                if provider.id == provider_id && provider.enabled =>
-            {
-                Some(TtsRoute::Cloud(provider))
-            }
-            crate::ModelProviderSettings::SystemTts(provider)
-                if provider.id == provider_id && provider.enabled =>
-            {
-                Some(TtsRoute::System(provider))
-            }
-            _ => None,
-        })
-        .ok_or_else(|| "The selected TTS provider is unavailable".to_string())?;
-    Ok((selected, provider_id.to_string(), route.timeout_ms))
+        .iter()
+        .find(|p| p.id() == provider_id && p.enabled())
+        .ok_or("The selected TTS provider is unavailable")?;
+    let selected = match provider {
+        crate::ModelProviderSettings::CloudTts(p) => TtsRoute::Cloud(p.clone()),
+        crate::ModelProviderSettings::SystemTts(p) => TtsRoute::System(p.clone()),
+        _ => return Err("The selected provider does not support TTS".into()),
+    };
+    Ok((wrap(selected), provider_id.to_string(), route.timeout_ms))
 }
 
 pub(crate) fn stop_tts(state: &AppState, run_id: String) -> Result<(), String> {

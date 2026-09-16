@@ -101,19 +101,6 @@ pub(crate) fn base_url_from_host(host: &str) -> Result<String, String> {
     validate_base_url(url.as_str())
 }
 
-pub(super) fn ensure_selected_model(
-    resolution: &NetworkAsrResolution,
-    selected_model: &str,
-) -> Result<(), String> {
-    if resolution.model != selected_model {
-        return Err(format!(
-            "LAN ASR currently reports model {}, but Voice settings select {}. Resolve the ASR settings again.",
-            resolution.model, selected_model
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn validate_base_url(value: &str) -> Result<String, String> {
     let url = Url::parse(value.trim())
         .map_err(|_| "LAN ASR endpoint must be a valid private-network HTTP origin".to_string())?;

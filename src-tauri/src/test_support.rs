@@ -48,6 +48,7 @@ pub(crate) fn provider(id: &str, location: &str) -> ModelProviderSettings {
 
 pub(crate) fn direct_provider(id: &str, location: &str) -> OpenAiCompatibleProviderSettings {
     OpenAiCompatibleProviderSettings {
+        request_options: None,
         id: id.to_string(),
         enabled: true,
         label: id.to_string(),
@@ -64,6 +65,7 @@ pub(crate) fn direct_provider(id: &str, location: &str) -> OpenAiCompatibleProvi
 
 pub(crate) fn dynamic_lan_provider(id: &str) -> ModelProviderSettings {
     ModelProviderSettings::DynamicLan(DynamicLanProviderSettings {
+        request_options: None,
         id: id.to_string(),
         enabled: true,
         label: id.to_string(),

@@ -172,6 +172,8 @@ mod tests {
     fn only_a_saved_api_key_provider_accepts_a_credential() {
         let mut settings = crate::ModelProvidersSettings {
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: String::new(),
             },
             providers: vec![crate::test_support::provider("cloud", "cloud")],

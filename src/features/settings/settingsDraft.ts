@@ -110,5 +110,5 @@ function document(
   key: "default" | "codex-sdk",
   valueJson: Record<string, unknown>,
 ): Omit<SettingsDocument, "updatedAt"> {
-  return { namespace, key, schemaVersion: 14, valueJson };
+  return { namespace, key, schemaVersion: 15, valueJson };
 }

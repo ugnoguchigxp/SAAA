@@ -7,6 +7,8 @@ fn default_conversation_reasoning_effort() -> String {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct OpenAiCompatibleProviderSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request_options: Option<saaa_larm_session::http_api::LlmOptions>,
     pub(crate) id: String,
     pub(crate) enabled: bool,
     pub(crate) label: String,
@@ -75,6 +77,8 @@ pub(crate) struct SystemTtsProviderSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DynamicLanProviderSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request_options: Option<saaa_larm_session::http_api::LlmOptions>,
     pub(crate) id: String,
     pub(crate) enabled: bool,
     pub(crate) label: String,
@@ -176,6 +180,10 @@ impl ModelProviderSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct HarnessSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) larm_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tts_voice: Option<String>,
     pub(crate) address: String,
 }
 

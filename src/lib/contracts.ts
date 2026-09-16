@@ -23,7 +23,7 @@ export type SettingsKey = "default" | "codex-sdk";
 export type SettingsDocument = {
   namespace: SettingsNamespace;
   key: SettingsKey;
-  schemaVersion: 14;
+  schemaVersion: 15;
   valueJson: Record<string, unknown>;
   updatedAt: string;
 };

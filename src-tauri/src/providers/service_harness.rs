@@ -31,11 +31,6 @@ pub(crate) struct ServiceDescriptor {
     pub(crate) health_url: String,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedAsrService {
-    pub(crate) batch: ServiceDescriptor,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HarnessResolution {
@@ -68,18 +63,6 @@ pub(crate) async fn resolve_service(
     resolve_service_inner(address, capability).await
 }
 
-/// Resolves the validated HTTP batch ASR endpoint.
-pub(crate) async fn resolve_asr_service(address: &str) -> Result<ResolvedAsrService, String> {
-    let descriptor = load_descriptor(address, true).await?;
-    let service = descriptor
-        .services
-        .into_iter()
-        .find(|service| service.capability == "asr")
-        .ok_or_else(|| "Provider Harness does not advertise asr".to_string())?;
-    health::probe(&service).await?;
-    Ok(ResolvedAsrService { batch: service })
-}
-
 pub(crate) async fn resolve_service_cancellable(
     address: &str,
     capability: &str,
@@ -104,7 +87,12 @@ async fn resolve_service_inner(
         .services
         .into_iter()
         .find(|service| service.capability == capability)
-        .ok_or_else(|| format!("Provider Harness does not advertise {capability}"))?;
+        .ok_or_else(|| {
+            crate::providers::stream::ProviderFailureKind::Unavailable
+                .public_message()
+                .as_str()
+                .to_string()
+        })?;
     health::probe(&service).await?;
     Ok(service)
 }

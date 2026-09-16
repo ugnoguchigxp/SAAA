@@ -216,6 +216,28 @@ export const en = {
     },
   },
   settings: {
+    compatibility: {
+      voiceProfile: "LARM voice session profile",
+      title: "LLM API capabilities",
+      tokenLimit: "Output token limit parameter",
+      auto: "Detect from model name",
+      supported: "Supported (send setting)",
+      omit: "Unsupported (omit)",
+      tools: "Enable tool calls",
+      streaming: "Stream with HTTP SSE",
+      hint: "For aliases and compatible APIs, select the provider's supported parameters. Explicit URL paths are preserved.",
+    },
+    fallback: {
+      automatic: "Auto: {{seconds}} seconds",
+      title: "Fallbacks and time budgets",
+      total: "Total time (seconds)",
+      attempt: "Time per attempt (seconds)",
+      up: "Move up",
+      remove: "Remove",
+      add: "Add fallback",
+      hint: "Tried in order within a total budget including setup. No fallback on authentication/configuration errors or after output starts. Local-only policy blocks cloud providers.",
+    },
+
     eyebrow: "SETTINGS",
     title: "Service & voice settings",
     description:
@@ -308,7 +330,7 @@ export const en = {
       llmTimeoutHint: "1–3600 seconds. New settings default to 1800 seconds.",
       llmTimeoutInvalid: "Enter a value from 1 to 3600 seconds.",
       llmTimeoutLegacyLimit:
-        "This Legacy Dynamic LAN connection is limited to 269.999 seconds. Update the Harness or LARM to use 1800 seconds.",
+        "Each Legacy Dynamic LAN attempt is capped at 269.999 seconds. The total budget also covers fallback attempts.",
       low: "Low",
       medium: "Medium (recommended)",
       extraHigh: "Extra high",

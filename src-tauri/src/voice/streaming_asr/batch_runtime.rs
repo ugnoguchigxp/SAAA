@@ -1,10 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::Client;
 use zeroize::Zeroizing;
 
-use crate::{CloudAsrProviderSettings, RunCancellation};
+use crate::RunCancellation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BatchDecodeOutcome {
@@ -24,39 +23,10 @@ pub(crate) trait BatchDecode: Send + Sync {
     ) -> Result<BatchDecodeOutcome, String>;
 }
 
-#[derive(Clone)]
-pub(crate) enum BatchRoute {
-    Larm(Arc<saaa_larm_session::Session>),
-    Cloud(CloudAsrProviderSettings),
-    LegacyNetwork {
-        client: Client,
-        endpoint: String,
-        model: String,
-    },
-}
-
-#[derive(Clone)]
 pub(crate) struct ProductionBatchDecoder {
-    route: BatchRoute,
-    timeout_ms: u64,
-    allowed_languages: Vec<String>,
-    vad_threshold: f32,
-}
-
-impl ProductionBatchDecoder {
-    pub(crate) fn new(
-        route: BatchRoute,
-        timeout_ms: u64,
-        allowed_languages: Vec<String>,
-        vad_threshold: f32,
-    ) -> Self {
-        Self {
-            route,
-            timeout_ms,
-            allowed_languages,
-            vad_threshold,
-        }
-    }
+    readers: crate::persistence::SqliteReaders,
+    conversation: String,
+    network: crate::voice::network_asr::NetworkAsrRuntime,
 }
 
 #[async_trait]
@@ -66,6 +36,18 @@ impl BatchDecode for ProductionBatchDecoder {
         pcm16le: Zeroizing<Vec<u8>>,
         cancellation: Arc<RunCancellation>,
     ) -> Result<BatchDecodeOutcome, String> {
+        let selected = self.readers.read(|c| {
+            let mut selected = crate::voice::session::select_streaming_asr(c)?;
+            if crate::larm_voice::enabled()
+                && matches!(selected.route, crate::voice::session::AsrRoute::Harness(_))
+            {
+                selected.route = crate::voice::session::AsrRoute::Larm(
+                    self.conversation.clone(),
+                    crate::persistence::load_model_providers(c)?.harness,
+                );
+            }
+            Ok(selected)
+        })?;
         if pcm16le.is_empty() || pcm16le.iter().all(|byte| *byte == 0) {
             return Ok(BatchDecodeOutcome::NoSpeech);
         }
@@ -75,49 +57,25 @@ impl BatchDecode for ProductionBatchDecoder {
                 .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]) as f32 / 32_768.0)
                 .collect::<Vec<_>>(),
         );
-        if !contains_speech(&samples, self.vad_threshold) {
+        if !contains_speech(
+            &samples,
+            crate::voice::session::vad_rms_threshold(&selected.vad_sensitivity),
+        ) {
             return Ok(BatchDecodeOutcome::NoSpeech);
         }
-        let timeout = Duration::from_millis(self.timeout_ms.min(15_000));
-        let result = tokio::time::timeout(timeout, async {
-            match &self.route {
-                BatchRoute::Larm(session) => {
-                    crate::larm_voice::audio::transcribe(session, &samples, cancellation).await
-                }
-                BatchRoute::Cloud(provider) => {
-                    crate::voice::cloud_asr::transcribe(
-                        provider,
-                        &samples,
-                        16_000,
-                        self.timeout_ms.min(15_000),
-                        cancellation,
-                    )
-                    .await
-                }
-                BatchRoute::LegacyNetwork {
-                    client,
-                    endpoint,
-                    model,
-                } => {
-                    crate::voice::network_asr::transcribe_at(
-                        client,
-                        endpoint,
-                        &samples,
-                        16_000,
-                        model,
-                        cancellation,
-                    )
-                    .await
-                }
-            }
-        })
-        .await
-        .map_err(|_| "ASR request reached its configured timeout".to_string())?;
+        let result = crate::voice::session::asr_routes::transcribe_routes(
+            &self.network,
+            &samples,
+            16_000,
+            &selected,
+            cancellation,
+        )
+        .await;
         match result {
             Ok((text, language)) if !text.trim().is_empty() => {
                 crate::voice::language::enforce_allowed_language(
                     language.as_deref(),
-                    &self.allowed_languages,
+                    &selected.allowed_languages,
                 )?;
                 Ok(BatchDecodeOutcome::Transcript { text, language })
             }
@@ -133,17 +91,14 @@ fn is_no_speech_error(error: &str) -> bool {
 }
 
 pub(crate) fn decoder(
-    route: BatchRoute,
-    timeout_ms: u64,
-    allowed_languages: Vec<String>,
-    vad_threshold: f32,
-) -> Arc<dyn BatchDecode> {
-    Arc::new(ProductionBatchDecoder::new(
-        route,
-        timeout_ms,
-        allowed_languages,
-        vad_threshold,
-    ))
+    readers: crate::persistence::SqliteReaders,
+    conversation: String,
+) -> Result<Arc<dyn BatchDecode>, String> {
+    Ok(Arc::new(ProductionBatchDecoder {
+        readers,
+        conversation,
+        network: crate::voice::network_asr::NetworkAsrRuntime::new()?,
+    }))
 }
 
 fn contains_speech(samples: &[f32], threshold: f32) -> bool {

@@ -1,3 +1,6 @@
+#[path = "settings/http_migration.rs"]
+mod http_migration;
+use http_migration::migrate_http_bases;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
@@ -312,13 +315,17 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
                         .any(|provider| provider.get("credentialStatus").is_some())
                 });
         migrate_provider_document(&mut providers.value, system_voice, legacy_shape);
+        if providers.schema_version < 15 {
+            migrate_http_bases(&mut providers.value);
+        }
+
         if providers.schema_version < SETTINGS_SCHEMA_VERSION || providers.value != before {
             write_document(connection, "providers.model", "default", &providers.value)?;
         }
     }
     if let Some(mut routing) = read_document(connection, "routing.tasks", "default")? {
         let before = routing.value.clone();
-        if routing.schema_version < SETTINGS_SCHEMA_VERSION {
+        if routing.schema_version < 14 {
             if let Some(providers) = read_document(connection, "providers.model", "default")? {
                 migrate_obsolete_direct_lan_route(&providers.value, &mut routing.value);
             }

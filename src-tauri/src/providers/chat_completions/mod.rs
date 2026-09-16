@@ -17,30 +17,16 @@ mod tests;
 pub(crate) enum RequestMode {
     Stream,
     JsonProbe,
+    #[cfg(test)]
     JsonTools,
 }
 
-pub(crate) async fn run(
-    endpoint: &str,
-    authorization: Option<&str>,
-    model: &str,
-    history: &[ConversationMessage],
-    timeout_ms: u64,
-    context: ModelStreamContext<'_>,
-) -> Result<String, Error> {
-    run_mode(
-        endpoint,
-        authorization,
-        model,
-        history,
-        timeout_ms,
-        context,
-        RequestMode::Stream,
-    )
-    .await
-}
+mod test_helpers;
+#[cfg(test)]
+pub(crate) use test_helpers::{run, run_mode};
 
-pub(crate) async fn run_mode(
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_with_options(
     endpoint: &str,
     authorization: Option<&str>,
     model: &str,
@@ -48,6 +34,7 @@ pub(crate) async fn run_mode(
     timeout_ms: u64,
     context: ModelStreamContext<'_>,
     mode: RequestMode,
+    options: &saaa_larm_session::http_api::LlmOptions,
 ) -> Result<String, Error> {
     let request_started = Instant::now();
     let mut first_content = true;
@@ -99,8 +86,8 @@ pub(crate) async fn run_mode(
         let mut calls = 0;
         let mut voice_calls = 0;
         loop {
-            let streaming = mode == RequestMode::Stream;
-            let tools = if mode != RequestMode::JsonProbe {
+            let streaming = mode == RequestMode::Stream && options.streaming;
+            let tools = if mode != RequestMode::JsonProbe && options.tools {
                 available_agent_tools(
                     context.output_persistence,
                     context.input,
@@ -112,9 +99,12 @@ pub(crate) async fn run_mode(
             };
             let mut body = json!({"model": model, "messages": messages, "stream": streaming,
                 "max_tokens": context.max_output_tokens});
-            if context.reasoning_effort != "provider-default" {
-                body["reasoning_effort"] = json!(context.reasoning_effort);
-            }
+            options.apply(
+                &mut body,
+                model,
+                context.max_output_tokens,
+                context.reasoning_effort,
+            );
             if !tools.is_empty() {
                 body["tools"] = json!(tools);
                 body["parallel_tool_calls"] = json!(false);

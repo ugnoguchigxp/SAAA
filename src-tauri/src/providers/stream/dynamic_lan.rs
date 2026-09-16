@@ -13,6 +13,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
     cancellation: Arc<RunCancellation>,
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
+    let started = std::time::Instant::now();
     let (connection, prior_cleanup) = match resolve_dynamic_lan_connection_for_request(
         provider,
         timeout_ms,
@@ -39,6 +40,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
         }
     };
     let resolved = OpenAiCompatibleProviderSettings {
+        request_options: provider.request_options.clone(),
         id: provider.id.clone(),
         enabled: true,
         label: provider.label.clone(),
@@ -55,16 +57,15 @@ pub(crate) async fn stream_dynamic_lan_provider(
     let outcome = stream_model_provider_with_api_key(
         &resolved,
         history,
-        timeout_ms,
+        timeout_ms
+            .saturating_sub(started.elapsed().as_millis() as u64)
+            .max(1),
         connection.api_key(),
         Some(connection.allocation_id()),
         context,
     )
     .await;
-    let cleanup = merge_dynamic_lan_cleanup(
-        prior_cleanup,
-        dynamic_lan_cleanup_from_release(connection.release().await),
-    );
+    let cleanup = merge_dynamic_lan_cleanup(prior_cleanup, release_in_background(connection).await);
     outcome.with_cleanup(cleanup)
 }
 
@@ -110,7 +111,11 @@ pub(crate) fn dynamic_lan_release_failure_kind(
     }
 }
 
-pub(crate) async fn resolve_dynamic_lan_connection_for_request(
+mod initialization;
+use initialization::release_in_background;
+pub(crate) use initialization::resolve as resolve_dynamic_lan_connection_for_request;
+
+async fn resolve_connection(
     provider: &DynamicLanProviderSettings,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,

@@ -435,17 +435,15 @@ pub(crate) async fn execute_conversation_turn(
         &input.presentation_mode,
         context_window.messages,
     )?;
-    if let Some(client) = crate::providers::reasoning_mcp::for_turn(input, &cancellation).await? {
+    if let Some(client) =
+        crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)
+            .await?
+    {
         return execute_reasoning(state, input, &history, on_event, cancellation, &client)
             .await
             .map_err(Into::into);
     }
-    let mut route = route;
-    if route.source == "harness" {
-        route.timeout_ms =
-            resolve_harness_llm_provider(&mut providers, route.timeout_ms, cancellation.clone())
-                .await?;
-    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(route.timeout_ms);
     let reasoning_effort = providers.reasoning_effort.clone();
     let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
     let route_ids = effective_conversation_route_ids(&providers, &route, &security);
@@ -463,6 +461,71 @@ pub(crate) async fn execute_conversation_turn(
                 ProviderFailureKind::Cancelled,
                 "Cancelled by user".to_string(),
             ));
+        }
+        let remaining_ms = deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .as_millis() as u64;
+        if remaining_ms == 0 {
+            return Err(TurnExecutionFailure::provider(
+                ProviderFailureKind::Timeout,
+                "Conversation reached its total timeout".into(),
+            ));
+        }
+        let attempt_deadline =
+            tokio::time::Instant::now()
+                + std::time::Duration::from_millis(remaining_ms.min(
+                    route.attempt_timeout_ms.unwrap_or(
+                        route.timeout_ms / (1 + route.fallback_provider_ids.len()) as u64,
+                    ),
+                ));
+        if route.source == "harness" && provider_id == crate::DYNAMIC_LAN_PROVIDER_ID {
+            let resolution = tokio::time::timeout_at(
+                attempt_deadline,
+                resolve_harness_llm_provider(&mut providers, remaining_ms, cancellation.clone()),
+            )
+            .await;
+            match resolution {
+                Ok(Ok(_)) => {}
+                result => {
+                    if cancellation.is_cancelled() {
+                        return Err(TurnExecutionFailure::provider(
+                            ProviderFailureKind::Cancelled,
+                            "Cancelled by user".into(),
+                        ));
+                    }
+                    let (kind, message) = match result {
+                        Err(_) => (
+                            ProviderFailureKind::Timeout,
+                            "Harness discovery reached its timeout".to_string(),
+                        ),
+                        Ok(Err(error)) => {
+                            (crate::providers::route_policy::failure_kind(&error), error)
+                        }
+                        _ => unreachable!(),
+                    };
+                    let _ = on_event.send(RuntimeEvent::ProviderFailed {
+                        run_id: input.run_id.clone(),
+                        provider_id: provider_id.clone(),
+                        reason: kind.public_message().as_str().to_string(),
+                    });
+                    let failure = TurnExecutionFailure::provider(kind, message);
+                    if !provider_fallback_allowed(kind, false) {
+                        return Err(failure);
+                    }
+                    failures.push(failure);
+                    continue;
+                }
+            }
+        }
+        let attempt_timeout_ms = attempt_deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .as_millis() as u64;
+        if attempt_timeout_ms == 0 {
+            failures.push(TurnExecutionFailure::provider(
+                ProviderFailureKind::Timeout,
+                "Provider setup reached its timeout".into(),
+            ));
+            continue;
         }
         let Some(provider) = providers
             .providers
@@ -539,7 +602,7 @@ pub(crate) async fn execute_conversation_turn(
                 stream_model_provider(
                     provider,
                     &history,
-                    route.timeout_ms,
+                    attempt_timeout_ms,
                     ModelStreamContext {
                         reasoning_effort: &reasoning_effort,
                         max_output_tokens,
@@ -558,7 +621,7 @@ pub(crate) async fn execute_conversation_turn(
                 crate::providers::agent_session::stream_agent_session_provider(
                     provider,
                     &history,
-                    route.timeout_ms,
+                    attempt_timeout_ms,
                     ModelStreamContext {
                         reasoning_effort: &reasoning_effort,
                         max_output_tokens,
@@ -577,7 +640,7 @@ pub(crate) async fn execute_conversation_turn(
                 stream_dynamic_lan_provider(
                     provider,
                     &history,
-                    route.timeout_ms,
+                    attempt_timeout_ms.min(crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS),
                     cancellation.clone(),
                     ModelStreamContext {
                         reasoning_effort: &reasoning_effort,
@@ -604,7 +667,10 @@ pub(crate) async fn execute_conversation_turn(
         };
         match outcome {
             ProviderAttemptOutcome::Completed { content, cleanup } => {
-                if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                if matches!(
+                    &provider,
+                    ModelProviderSettings::DynamicLan(_) | ModelProviderSettings::AgentSession(_)
+                ) {
                     finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
@@ -618,7 +684,10 @@ pub(crate) async fn execute_conversation_turn(
                 return persist_conversation_success(state, input, &content).map_err(Into::into);
             }
             ProviderAttemptOutcome::Cancelled { cleanup, .. } => {
-                if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                if matches!(
+                    &provider,
+                    ModelProviderSettings::DynamicLan(_) | ModelProviderSettings::AgentSession(_)
+                ) {
                     finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
@@ -646,7 +715,10 @@ pub(crate) async fn execute_conversation_turn(
                 cleanup,
             } => {
                 let reason = public_message.as_str();
-                if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                if matches!(
+                    &provider,
+                    ModelProviderSettings::DynamicLan(_) | ModelProviderSettings::AgentSession(_)
+                ) {
                     finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
@@ -691,13 +763,11 @@ pub(crate) async fn execute_conversation_turn(
         ))
     }
 }
-
 pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {
     !output_started
         && matches!(
             kind,
             ProviderFailureKind::Capacity
-                | ProviderFailureKind::Policy
                 | ProviderFailureKind::Unavailable
                 | ProviderFailureKind::Upstream
                 | ProviderFailureKind::Network
@@ -785,7 +855,6 @@ mod tests {
     #[test]
     fn provider_fallback_policy_is_failure_kind_and_output_aware() {
         for kind in [
-            ProviderFailureKind::Policy,
             ProviderFailureKind::Capacity,
             ProviderFailureKind::Unavailable,
             ProviderFailureKind::Upstream,
@@ -797,6 +866,7 @@ mod tests {
             assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
         }
         for kind in [
+            ProviderFailureKind::Policy,
             ProviderFailureKind::Authentication,
             ProviderFailureKind::Contract,
             ProviderFailureKind::Protocol,

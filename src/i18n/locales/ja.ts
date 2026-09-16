@@ -214,6 +214,28 @@ export const ja = {
     },
   },
   settings: {
+    compatibility: {
+      voiceProfile: "LARM音声セッションのprofile",
+      title: "LLM APIの対応機能",
+      tokenLimit: "出力トークン上限の形式",
+      auto: "モデル名から判定",
+      supported: "対応（設定値を送信）",
+      omit: "未対応（送信しない）",
+      tools: "ツール呼び出しを使用",
+      streaming: "HTTP SSEで逐次表示",
+      hint: "モデルの別名や互換APIでは提供元の仕様に合わせて指定してください。URLのパスはそのまま使用します。",
+    },
+    fallback: {
+      automatic: "自動: {{seconds}}秒",
+      title: "代替先と待ち時間",
+      total: "合計待ち時間（秒）",
+      attempt: "1回の試行時間（秒）",
+      up: "上へ",
+      remove: "削除",
+      add: "代替先を追加",
+      hint: "上から順に試行します。合計時間には接続準備を含みます。認証・設定エラーや出力開始後は切り替えません。ローカル限定設定中はクラウドを使用できません。",
+    },
+
     eyebrow: "設定",
     title: "サービスと音声の設定",
     description: "Harnessを中心に、必要なサービスだけ個別プロバイダーへ切り替えられます。",
@@ -304,7 +326,7 @@ export const ja = {
       llmTimeoutHint: "1〜3600秒。新規設定の既定値は1800秒です。",
       llmTimeoutInvalid: "1〜3600秒の範囲で入力してください。",
       llmTimeoutLegacyLimit:
-        "このLegacy Dynamic LAN接続の上限は269.999秒です。1800秒を使うにはHarnessまたはLARMを更新してください。",
+        "Legacy Dynamic LANの1回の試行は269.999秒までに制限されます。合計時間には代替先への試行も含みます。",
       low: "低",
       medium: "中（推奨）",
       extraHigh: "最高",

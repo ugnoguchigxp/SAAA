@@ -1,7 +1,14 @@
+export type LlmRequestOptions = {
+  tokenLimit: "auto" | "legacy" | "completion";
+  reasoning: "auto" | "supported" | "unsupported";
+  tools: boolean;
+  streaming: boolean;
+};
 import type { AsrLanguageCode } from "./asrLanguages";
 
 export type OpenAiCompatibleProviderSettings = {
   kind: "openai-compatible";
+  requestOptions?: LlmRequestOptions;
   id: string;
   enabled: boolean;
   label: string;
@@ -60,6 +67,7 @@ export type SystemTtsProviderSettings = {
 
 export type DynamicLanProviderSettings = {
   kind: "dynamic-lan";
+  requestOptions?: LlmRequestOptions;
   id: string;
   enabled: boolean;
   label: string;
@@ -78,7 +86,7 @@ export type ModelProviderSettings =
 export type ReasoningEffort = "provider-default" | "low" | "medium" | "xhigh";
 
 export type ModelProvidersSettings = {
-  harness: { address: string };
+  harness: { address: string; larmProfile?: string; ttsVoice?: string };
   providers: ModelProviderSettings[];
   reasoningEffort: ReasoningEffort;
 };
@@ -103,10 +111,23 @@ export type RoutingSettings = {
     source: "harness" | "provider";
     primaryProviderId: string | null;
     fallbackProviderIds: string[];
+    attemptTimeoutMs?: number;
     timeoutMs: number;
   };
-  voiceTranscribe: { source: "harness" | "provider"; providerId: string | null; timeoutMs: number };
-  voiceSpeak: { source: "harness" | "provider"; providerId: string | null; timeoutMs: number };
+  voiceTranscribe: {
+    source: "harness" | "provider";
+    providerId: string | null;
+    timeoutMs: number;
+    attemptTimeoutMs?: number;
+    fallbackProviderIds?: string[];
+  };
+  voiceSpeak: {
+    source: "harness" | "provider";
+    providerId: string | null;
+    timeoutMs: number;
+    attemptTimeoutMs?: number;
+    fallbackProviderIds?: string[];
+  };
   codingAssist: {
     providerId: "codex-sdk";
     timeoutMs: number;

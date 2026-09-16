@@ -70,7 +70,7 @@ export const appSnapshotSchema = z.object({
           "situation.runtime",
         ]),
         key: z.enum(["default", "codex-sdk"]),
-        schemaVersion: z.literal(14),
+        schemaVersion: z.literal(15),
         valueJson: z.record(z.string(), z.unknown()),
         updatedAt: text,
       }),

@@ -103,7 +103,9 @@ pub(crate) fn cleanup_persistence(cleanup: CleanupOutcome) -> (&'static str, Opt
     match cleanup {
         CleanupOutcome::NotApplicable => ("not-applicable", None),
         CleanupOutcome::NotStarted => ("not-started", None),
+        CleanupOutcome::Pending => ("pending", None),
         CleanupOutcome::Released => ("released", None),
+        CleanupOutcome::ReleaseFailed { kind } => ("failed", Some(kind)),
         CleanupOutcome::DynamicLanDeferredToTtl { kind } => ("deferred-to-ttl", Some(kind)),
     }
 }

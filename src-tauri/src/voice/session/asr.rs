@@ -2,35 +2,37 @@ use std::sync::Arc;
 
 use crate::{AppState, RunCancellation};
 
+#[derive(Clone)]
 pub(crate) enum AsrRoute {
     Harness(String),
+    Larm(String, crate::HarnessSettings),
     Cloud(crate::CloudAsrProviderSettings),
 }
 
+#[derive(Clone)]
 pub(crate) struct SelectedAsr {
     pub(crate) route: AsrRoute,
     pub(crate) timeout_ms: u64,
+    pub(crate) attempt_timeout_ms: u64,
+    pub(crate) fallbacks: Vec<AsrRoute>,
     pub(crate) allowed_languages: Vec<String>,
     pub(crate) vad_sensitivity: String,
 }
 
 pub(crate) fn select_asr(connection: &rusqlite::Connection) -> Result<SelectedAsr, String> {
-    select_route(connection, false)
+    select_route(connection)
 }
 pub(crate) fn select_streaming_asr(
     connection: &rusqlite::Connection,
 ) -> Result<SelectedAsr, String> {
-    select_route(connection, crate::larm_voice::enabled())
+    select_route(connection)
 }
-fn select_route(
-    connection: &rusqlite::Connection,
-    larm_session: bool,
-) -> Result<SelectedAsr, String> {
+fn select_route(connection: &rusqlite::Connection) -> Result<SelectedAsr, String> {
     let voice = crate::persistence::load_voice_settings(connection)?;
     let providers = crate::persistence::load_model_providers(connection)?;
     let settings = crate::persistence::load_routing_settings(connection)?.voice_transcribe;
-    let route = if larm_session || settings.source == "harness" {
-        AsrRoute::Harness(providers.harness.address)
+    let route = if settings.source == "harness" {
+        AsrRoute::Harness(providers.harness.address.clone())
     } else {
         let provider_id = settings
             .provider_id
@@ -38,7 +40,8 @@ fn select_route(
             .ok_or_else(|| "ASR provider is not selected".to_string())?;
         let provider = providers
             .providers
-            .into_iter()
+            .iter()
+            .cloned()
             .find_map(|provider| match provider {
                 crate::ModelProviderSettings::CloudAsr(provider)
                     if provider.id == provider_id && provider.enabled =>
@@ -50,9 +53,34 @@ fn select_route(
             .ok_or_else(|| "The selected ASR provider is unavailable".to_string())?;
         AsrRoute::Cloud(provider)
     };
+    let security = crate::persistence::load_security_settings(connection)?;
+    let primary_local = settings.source == "harness"
+        || matches!(&route, AsrRoute::Cloud(p) if p.location == "local");
+    let fallbacks = settings
+        .fallback_provider_ids
+        .iter()
+        .filter_map(|id| {
+            providers.providers.iter().find_map(|p| match p {
+                crate::ModelProviderSettings::CloudAsr(p)
+                    if &p.id == id
+                        && p.enabled
+                        && !(security.local_only_when_selected
+                            && primary_local
+                            && p.location == "cloud") =>
+                {
+                    Some(AsrRoute::Cloud(p.clone()))
+                }
+                _ => None,
+            })
+        })
+        .collect();
     Ok(SelectedAsr {
         route,
         timeout_ms: settings.timeout_ms,
+        attempt_timeout_ms: settings
+            .attempt_timeout_ms
+            .unwrap_or(settings.timeout_ms / (1 + settings.fallback_provider_ids.len()) as u64),
+        fallbacks,
         allowed_languages: voice.allowed_languages,
         vad_sensitivity: voice.vad_sensitivity,
     })
@@ -72,6 +100,7 @@ pub(crate) async fn transcribe_selected_audio(
 pub(crate) async fn probe_selected_asr(state: &AppState) -> Result<(), String> {
     let selected = state.sqlite_readers.read(select_asr)?;
     match selected.route {
+        AsrRoute::Larm(..) => Err("Probe the selected Harness directly".into()),
         AsrRoute::Cloud(provider) => crate::voice::cloud_asr::probe(&provider).await.map(|_| ()),
         AsrRoute::Harness(address) => {
             match crate::providers::service_harness::resolve_service(&address, "asr").await {
@@ -115,66 +144,14 @@ async fn transcribe_selected(
     selected: SelectedAsr,
     cancellation: Arc<RunCancellation>,
 ) -> Result<(String, Option<String>), String> {
-    let timeout_ms = selected.timeout_ms;
-    let result = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
-        match selected.route {
-            AsrRoute::Cloud(provider) => {
-                crate::voice::cloud_asr::transcribe(
-                    &provider,
-                    samples,
-                    sample_rate,
-                    timeout_ms,
-                    cancellation,
-                )
-                .await
-            }
-            AsrRoute::Harness(address) => {
-                match crate::providers::service_harness::resolve_service_cancellable(
-                    &address,
-                    "asr",
-                    &cancellation,
-                )
-                .await
-                {
-                    Ok(service) => {
-                        let provider = harness_asr_provider(service);
-                        crate::voice::cloud_asr::transcribe(
-                            &provider,
-                            samples,
-                            sample_rate,
-                            timeout_ms,
-                            cancellation,
-                        )
-                        .await
-                    }
-                    Err(error) => {
-                        match crate::providers::service_harness::legacy_dynamic_lan_host(&address)?
-                        {
-                            Some(host) => {
-                                crate::voice::network_asr::transcribe(
-                                    state,
-                                    &host,
-                                    samples,
-                                    sample_rate,
-                                    crate::voice::network_asr::MODEL_ID,
-                                    cancellation,
-                                )
-                                .await
-                            }
-                            None => Err(error),
-                        }
-                    }
-                }
-            }
-        }
-    })
+    super::asr_routes::transcribe_routes(
+        &state.network_asr,
+        samples,
+        sample_rate,
+        &selected,
+        cancellation,
+    )
     .await
-    .map_err(|_| "ASR request reached its configured timeout".to_string())??;
-    crate::voice::language::enforce_allowed_language(
-        result.1.as_deref(),
-        &selected.allowed_languages,
-    )?;
-    Ok(result)
 }
 
 fn validate_asr_audio_quality(

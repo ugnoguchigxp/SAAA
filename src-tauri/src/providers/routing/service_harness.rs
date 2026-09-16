@@ -10,12 +10,19 @@ pub(crate) async fn resolve_harness_llm_provider(
     if cancellation.is_cancelled() {
         return Err("Cancelled by user".to_string());
     }
+    let options = providers.providers.iter().find_map(|p| match p {
+        ModelProviderSettings::DynamicLan(p) if p.id == crate::DYNAMIC_LAN_PROVIDER_ID => {
+            p.request_options.clone()
+        }
+        _ => None,
+    });
     if let Some(host) =
         crate::providers::service_harness::legacy_dynamic_lan_host(&providers.harness.address)?
     {
         replace_harness_provider(
             providers,
             ModelProviderSettings::DynamicLan(crate::DynamicLanProviderSettings {
+                request_options: options.clone(),
                 id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
                 enabled: true,
                 label: "Agent Connection LLM".to_string(),
@@ -35,6 +42,7 @@ pub(crate) async fn resolve_harness_llm_provider(
         {
             Ok(service) => (
                 ModelProviderSettings::OpenAiCompatible(crate::OpenAiCompatibleProviderSettings {
+                    request_options: options.clone(),
                     id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
                     enabled: true,
                     label: "Provider Harness LLM".to_string(),
@@ -96,6 +104,8 @@ mod tests {
     async fn agent_connection_address_skips_harness_discovery_and_uses_dynamic_claims() {
         let mut providers = ModelProvidersSettings {
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://192.168.0.130:9810".to_string(),
             },
             providers: vec![dynamic_lan_provider(crate::DYNAMIC_LAN_PROVIDER_ID)],
@@ -130,6 +140,8 @@ mod tests {
     async fn cancellation_never_falls_through_to_the_legacy_route() {
         let mut providers = ModelProvidersSettings {
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
             providers: vec![dynamic_lan_provider(crate::DYNAMIC_LAN_PROVIDER_ID)],

@@ -1,3 +1,4 @@
+import { RoutePolicyFields } from "./RoutePolicyFields";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -9,13 +10,7 @@ import type {
 import { resolveServiceHarness } from "../../lib/runtime";
 import { legacyDynamicLanHost } from "../../lib/providerRuntime";
 import { localizeProviderLabel, localizeStatus, localizeUiMessage } from "../../i18n/presentation";
-import {
-  conversationTimeoutMsFromSecondsInput,
-  conversationTimeoutSecondsInputValue,
-  LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS,
-  MAX_CONVERSATION_TIMEOUT_SECONDS,
-  MIN_CONVERSATION_TIMEOUT_SECONDS,
-} from "../../lib/conversationTimeout";
+import { ConversationTimeoutField } from "./ConversationTimeoutField";
 import { Field } from "./SettingsFields";
 
 type Capability = "llm" | "asr" | "tts";
@@ -66,7 +61,7 @@ export function ServiceConnectionsSection({
     const host = legacyDynamicLanHost(address);
     onProvidersChange({
       ...providers,
-      harness: { address },
+      harness: { ...providers.harness, address },
       providers: providers.providers.map((provider) =>
         provider.kind === "dynamic-lan" && host ? { ...provider, enabled: true, host } : provider,
       ),
@@ -123,10 +118,18 @@ export function ServiceConnectionsSection({
     } else if (capability === "asr") {
       onRoutingChange({
         ...routing,
-        voiceTranscribe: { ...routing.voiceTranscribe, source, providerId },
+        voiceTranscribe: {
+          ...routing.voiceTranscribe,
+          source,
+          providerId,
+          fallbackProviderIds: [],
+        },
       });
     } else {
-      onRoutingChange({ ...routing, voiceSpeak: { ...routing.voiceSpeak, source, providerId } });
+      onRoutingChange({
+        ...routing,
+        voiceSpeak: { ...routing.voiceSpeak, source, providerId, fallbackProviderIds: [] },
+      });
     }
   }
 
@@ -134,12 +137,36 @@ export function ServiceConnectionsSection({
     if (capability === "llm") {
       onRoutingChange({
         ...routing,
-        conversationRespond: { ...routing.conversationRespond, primaryProviderId: providerId },
+        conversationRespond: {
+          ...routing.conversationRespond,
+          primaryProviderId: providerId,
+          fallbackProviderIds: routing.conversationRespond.fallbackProviderIds.filter(
+            (id) => id !== providerId,
+          ),
+        },
       });
     } else if (capability === "asr") {
-      onRoutingChange({ ...routing, voiceTranscribe: { ...routing.voiceTranscribe, providerId } });
+      onRoutingChange({
+        ...routing,
+        voiceTranscribe: {
+          ...routing.voiceTranscribe,
+          providerId,
+          fallbackProviderIds: routing.voiceTranscribe.fallbackProviderIds?.filter(
+            (id) => id !== providerId,
+          ),
+        },
+      });
     } else {
-      onRoutingChange({ ...routing, voiceSpeak: { ...routing.voiceSpeak, providerId } });
+      onRoutingChange({
+        ...routing,
+        voiceSpeak: {
+          ...routing.voiceSpeak,
+          providerId,
+          fallbackProviderIds: routing.voiceSpeak.fallbackProviderIds?.filter(
+            (id) => id !== providerId,
+          ),
+        },
+      });
     }
   }
 
@@ -166,6 +193,29 @@ export function ServiceConnectionsSection({
               value={providers.harness.address}
               placeholder="http://provider.local:9810"
               onChange={(event) => changeHarnessAddress(event.target.value)}
+            />
+          </Field>
+          <Field label={t("settings.compatibility.voiceProfile")}>
+            <input
+              value={providers.harness.larmProfile ?? "saaa-qwen38-kv-mem"}
+              onChange={(e) =>
+                onProvidersChange({
+                  ...providers,
+                  harness: { ...providers.harness, larmProfile: e.target.value },
+                })
+              }
+            />
+          </Field>
+          <Field label={t("settings.providers.voice")}>
+            <input
+              value={providers.harness.ttsVoice ?? ""}
+              placeholder={t("settings.connection.providerDefault")}
+              onChange={(e) =>
+                onProvidersChange({
+                  ...providers,
+                  harness: { ...providers.harness, ttsVoice: e.target.value || undefined },
+                })
+              }
             />
           </Field>
           <Field label={t("settings.connection.reasoningEffort")}>
@@ -233,6 +283,22 @@ export function ServiceConnectionsSection({
             onSourceChange={setSource}
             onProviderChange={setProvider}
           />
+          <RoutePolicyFields
+            maxTotalMs={3_600_000}
+            value={routing.conversationRespond}
+            primary={routing.conversationRespond.primaryProviderId}
+            candidates={candidates.llm}
+            onChange={(policy) =>
+              onRoutingChange({
+                ...routing,
+                conversationRespond: {
+                  ...routing.conversationRespond,
+                  ...policy,
+                  fallbackProviderIds: policy.fallbackProviderIds ?? [],
+                },
+              })
+            }
+          />
           <SourceRow
             capability="asr"
             label="ASR"
@@ -242,6 +308,21 @@ export function ServiceConnectionsSection({
             resolution={resolution}
             onSourceChange={setSource}
             onProviderChange={setProvider}
+          />
+          <RoutePolicyFields
+            value={routing.voiceTranscribe}
+            primary={routing.voiceTranscribe.providerId}
+            candidates={candidates.asr}
+            onChange={(policy) =>
+              onRoutingChange({
+                ...routing,
+                voiceTranscribe: {
+                  ...routing.voiceTranscribe,
+                  ...policy,
+                  fallbackProviderIds: policy.fallbackProviderIds ?? [],
+                },
+              })
+            }
           />
           <SourceRow
             capability="tts"
@@ -253,77 +334,24 @@ export function ServiceConnectionsSection({
             onSourceChange={setSource}
             onProviderChange={setProvider}
           />
+          <RoutePolicyFields
+            value={routing.voiceSpeak}
+            primary={routing.voiceSpeak.providerId}
+            candidates={candidates.tts}
+            onChange={(policy) =>
+              onRoutingChange({
+                ...routing,
+                voiceSpeak: {
+                  ...routing.voiceSpeak,
+                  ...policy,
+                  fallbackProviderIds: policy.fallbackProviderIds ?? [],
+                },
+              })
+            }
+          />
         </div>
       </section>
     </div>
-  );
-}
-
-function ConversationTimeoutField({
-  timeoutMs,
-  legacyDynamicLan,
-  onValidityChange,
-  onChange,
-}: {
-  timeoutMs: number;
-  legacyDynamicLan: boolean;
-  onValidityChange: (valid: boolean) => void;
-  onChange: (timeoutMs: number) => void;
-}) {
-  const { t } = useTranslation();
-  const canonicalValue = conversationTimeoutSecondsInputValue(timeoutMs);
-  const [inputValue, setInputValue] = useState(canonicalValue);
-  const parsedTimeoutMs = conversationTimeoutMsFromSecondsInput(inputValue);
-  const invalid = parsedTimeoutMs === null;
-  const legacyLimitExceeded =
-    legacyDynamicLan && timeoutMs > LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS;
-  const fieldInvalid = invalid || legacyLimitExceeded;
-
-  useEffect(() => setInputValue(canonicalValue), [canonicalValue]);
-  useEffect(() => onValidityChange(!fieldInvalid), [fieldInvalid, onValidityChange]);
-  useEffect(() => () => onValidityChange(true), [onValidityChange]);
-
-  return (
-    <Field label={t("settings.connection.llmTimeoutSeconds")}>
-      <input
-        type="number"
-        min={MIN_CONVERSATION_TIMEOUT_SECONDS}
-        max={MAX_CONVERSATION_TIMEOUT_SECONDS}
-        step={0.001}
-        value={inputValue}
-        aria-describedby="llm-timeout-seconds-help"
-        aria-invalid={fieldInvalid}
-        onChange={(event) => {
-          const next = event.currentTarget.value;
-          setInputValue(next);
-          const nextTimeoutMs = conversationTimeoutMsFromSecondsInput(next);
-          if (nextTimeoutMs !== null && nextTimeoutMs !== timeoutMs) onChange(nextTimeoutMs);
-        }}
-        onBlur={() =>
-          setInputValue(
-            parsedTimeoutMs === null
-              ? canonicalValue
-              : conversationTimeoutSecondsInputValue(parsedTimeoutMs),
-          )
-        }
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") setInputValue(canonicalValue);
-        }}
-      />
-      <small
-        id="llm-timeout-seconds-help"
-        className={fieldInvalid ? "settings-field-hint error" : "settings-field-hint"}
-      >
-        {t(
-          invalid
-            ? "settings.connection.llmTimeoutInvalid"
-            : legacyLimitExceeded
-              ? "settings.connection.llmTimeoutLegacyLimit"
-              : "settings.connection.llmTimeoutHint",
-        )}
-      </small>
-    </Field>
   );
 }
 

@@ -6,69 +6,12 @@ pub(crate) mod decode;
 #[cfg(all(test, not(coverage)))]
 mod live;
 mod playback;
-#[cfg(test)]
 mod timeout_tests;
 
-pub(crate) async fn play(
-    provider: &CloudTtsProviderSettings,
-    text: &str,
-    timeout_ms: u64,
-    cancellation: Arc<RunCancellation>,
-    on_started: impl FnOnce() + Send + 'static,
-) -> Result<(), String> {
-    let started = std::time::Instant::now();
-    let response =
-        super::cloud_tts::request_audio(provider, text, timeout_ms, cancellation.clone()).await?;
-    play_response(
-        response,
-        &provider.response_format,
-        cancellation,
-        on_started,
-        started,
-        None,
-    )
-    .await
-}
+mod requests;
+pub(crate) use requests::{play, play_guarded, play_larm};
 
-pub(crate) async fn play_larm(
-    session: &Arc<saaa_larm_session::Session>,
-    text: &str,
-    timeout_ms: u64,
-    cancellation: Arc<RunCancellation>,
-    on_started: impl FnOnce() + Send + 'static,
-) -> Result<(), String> {
-    let started = std::time::Instant::now();
-    let lease = tokio::select! { biased;
-        _ = cancellation.cancelled() => return Err("Speech cancelled".into()),
-        result = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), session.acquire("tts")) => result.map_err(|_| "TTS lease acquisition timed out")?.map_err(str::to_string)?,
-    };
-    let provider = crate::larm_voice::audio::tts_settings(lease.provider());
-    let remaining = timeout_ms.saturating_sub(started.elapsed().as_millis() as u64);
-    if remaining == 0 {
-        return Err("TTS request timed out".into());
-    }
-    let response = super::cloud_tts::request_audio_with_api_key(
-        &provider,
-        text,
-        remaining,
-        cancellation.clone(),
-        Some(lease.provider().token()),
-    )
-    .await?;
-    play_response(
-        response,
-        &provider.response_format,
-        cancellation,
-        on_started,
-        started,
-        Some((
-            lease,
-            std::time::Duration::from_millis(timeout_ms).saturating_sub(started.elapsed()),
-        )),
-    )
-    .await
-}
-
+#[allow(clippy::too_many_arguments)]
 async fn play_response(
     response: reqwest::Response,
     format: &str,
@@ -76,15 +19,24 @@ async fn play_response(
     on_started: impl FnOnce() + Send + 'static,
     started: std::time::Instant,
     lease: Option<(saaa_larm_session::Use, std::time::Duration)>,
+    output: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     let player = playback::Playback::start(cancellation.clone(), move || {
         crate::providers::http_metrics::record("ttsRequestToFirstMixerSample", started.elapsed());
         on_started();
     });
     if let Some((_, remaining)) = &lease {
-        receive_with_timeout(response, format, &cancellation, &player.sender, *remaining).await?;
+        receive_with_timeout(
+            response,
+            format,
+            &cancellation,
+            &player.sender,
+            *remaining,
+            &output,
+        )
+        .await?;
     } else {
-        receive(response, format, &cancellation, &player.sender).await?;
+        receive(response, format, &cancellation, &player.sender, &output).await?;
     }
     // Provider I/O is complete. Playback must not hold up token renewal.
     drop(lease);
@@ -101,11 +53,15 @@ async fn receive_with_timeout(
     cancellation: &RunCancellation,
     sender: &tokio::sync::mpsc::Sender<playback::Packet>,
     remaining: std::time::Duration,
+    output: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
     // reqwest's timeout cannot interrupt waiting for the audio output queue.
-    tokio::time::timeout(remaining, receive(response, format, cancellation, sender))
-        .await
-        .map_err(|_| "TTS audio receive timed out")?
+    tokio::time::timeout(
+        remaining,
+        receive(response, format, cancellation, sender, output),
+    )
+    .await
+    .map_err(|_| "TTS audio receive timed out")?
 }
 
 async fn receive(
@@ -113,6 +69,7 @@ async fn receive(
     format: &str,
     cancellation: &RunCancellation,
     sender: &tokio::sync::mpsc::Sender<playback::Packet>,
+    output: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
     super::cloud_tts::validate_audio_headers(&response, format)?;
     let mut decoder = decode::Decoder::new(format)?;
@@ -143,6 +100,7 @@ async fn receive(
             pending.extend(samples);
             let count = pending.len() / packet_samples * packet_samples;
             for packet in pending[..count].chunks(packet_samples) {
+                output.store(true, std::sync::atomic::Ordering::Release);
                 send_packet(sender, cancellation, format, packet.to_vec()).await?;
             }
             pending.drain(..count);
@@ -150,6 +108,7 @@ async fn receive(
     }
     decoder.finish()?;
     if !pending.is_empty() {
+        output.store(true, std::sync::atomic::Ordering::Release);
         send_packet(sender, cancellation, decoder.format.unwrap(), pending).await?;
     }
     Ok(())
@@ -272,9 +231,15 @@ mod tests {
                 gate.send(()).unwrap();
                 while receiver.recv().await.is_some() {}
             });
-            receive(response, format, &cancellation, &sender)
-                .await
-                .unwrap();
+            receive(
+                response,
+                format,
+                &cancellation,
+                &sender,
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
             drop(sender);
             consumer.await.unwrap();
             server.await.unwrap();

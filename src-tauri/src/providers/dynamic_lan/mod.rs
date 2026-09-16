@@ -355,7 +355,8 @@ impl DynamicLanConnection {
             control_credential.as_ref(),
             Some(("idempotency-key", idempotency_key.as_str())),
             Some(&create_body),
-            &cancellation,
+            // Receive a late creation id so the detached initializer can release it.
+            &RunCancellation::default(),
         )
         .await?;
         if !matches!(

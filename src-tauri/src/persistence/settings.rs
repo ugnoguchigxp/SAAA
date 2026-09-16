@@ -1,3 +1,4 @@
+mod voice_fallbacks;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
@@ -5,7 +6,7 @@ mod provider_validation;
 pub(crate) mod regional_preferences;
 pub(crate) use provider_validation::validate_model_providers;
 
-pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 14;
+pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 15;
 const DEFAULT_CONVERSATION_TIMEOUT_MS: u64 = 1_800_000;
 const MAX_CONVERSATION_TIMEOUT_MS: u64 = 3_600_000;
 
@@ -385,7 +386,10 @@ pub(crate) fn validate_settings_batch(
             providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
         ));
     }
-    if primary_id.is_none() && !conversation.fallback_provider_ids.is_empty() {
+    if conversation.source == "provider"
+        && primary_id.is_none()
+        && !conversation.fallback_provider_ids.is_empty()
+    {
         return Err("A fallback requires a primary conversation provider".to_string());
     }
     let mut route_ids = std::collections::HashSet::new();
@@ -408,12 +412,13 @@ pub(crate) fn validate_settings_batch(
         if !route_ids.insert(provider_id) {
             return Err(format!("Duplicate provider in route: {provider_id}"));
         }
-        let primary_is_local = primary_id.is_some_and(|primary_id| {
-            providers
-                .providers
-                .iter()
-                .any(|provider| provider.id() == primary_id && provider.location() == "local")
-        });
+        let primary_is_local = conversation.source == "harness"
+            || primary_id.is_some_and(|primary_id| {
+                providers
+                    .providers
+                    .iter()
+                    .any(|provider| provider.id() == primary_id && provider.location() == "local")
+            });
         let fallback_is_cloud = providers
             .providers
             .iter()
@@ -424,9 +429,8 @@ pub(crate) fn validate_settings_batch(
             ));
         }
     }
-    if conversation.source == "harness" && !conversation.fallback_provider_ids.is_empty() {
-        return Err("Harness routes do not use individual provider fallbacks".to_string());
-    }
+
+    voice_fallbacks::validate(&providers, &routing, &security)?;
     validate_voice_route_provider(
         &routing.voice_transcribe.source,
         routing.voice_transcribe.provider_id.as_deref(),
@@ -520,6 +524,25 @@ pub(crate) fn validate_routing_settings(settings: &RoutingSettings) -> Result<()
         "provider" => provider_id.is_some_and(valid_provider_id),
         _ => false,
     };
+    for (total, attempt) in [
+        (conversation.timeout_ms, conversation.attempt_timeout_ms),
+        (transcribe.timeout_ms, transcribe.attempt_timeout_ms),
+        (speak.timeout_ms, speak.attempt_timeout_ms),
+    ] {
+        if attempt.is_some_and(|n| n < 1_000 || n > total) {
+            return Err("Invalid attempt timeout".into());
+        }
+    }
+    for route in [transcribe, speak] {
+        if route.fallback_provider_ids.len() > 20
+            || route
+                .fallback_provider_ids
+                .iter()
+                .any(|id| !valid_provider_id(id))
+        {
+            return Err("Invalid voice fallbacks".into());
+        }
+    }
     // An unconfigured conversation route is readable after provider removal.
     // A missing primary must remain unconfigured rather than selecting a fallback.
     let conversation_source_valid = valid_source(
@@ -759,6 +782,8 @@ mod tests {
             providers: vec![provider("local", "local")],
             reasoning_effort: "mid".to_string(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string()
             },
         })
@@ -770,6 +795,8 @@ mod tests {
             providers: vec![ModelProviderSettings::OpenAiCompatible(dynamic_lan)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string()
             },
         })
@@ -780,6 +807,8 @@ mod tests {
             providers: vec![ModelProviderSettings::OpenAiCompatible(public_http)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string()
             },
         })
@@ -788,12 +817,15 @@ mod tests {
         let with_credentials = ModelProvidersSettings {
             providers: vec![ModelProviderSettings::OpenAiCompatible(
                 OpenAiCompatibleProviderSettings {
+                    request_options: None,
                     endpoint: "https://user:secret@example.invalid/v1".to_string(),
                     ..direct_provider("cloud", "cloud")
                 },
             )],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
         };
@@ -811,6 +843,8 @@ mod tests {
             providers: vec![provider("local provider", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
         };
@@ -819,6 +853,8 @@ mod tests {
             providers: vec![provider("local-a", "local"), provider("local_a", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
         };
@@ -897,6 +933,8 @@ mod tests {
             providers: vec![provider("Local_Custom", "local")],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
         };
@@ -928,6 +966,8 @@ mod tests {
             providers: vec![ModelProviderSettings::OpenAiCompatible(provider.clone())],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string()
             },
         })
@@ -938,6 +978,8 @@ mod tests {
             providers: vec![ModelProviderSettings::OpenAiCompatible(provider)],
             reasoning_effort: providers::default_conversation_reasoning_effort(),
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string()
             },
         })

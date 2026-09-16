@@ -53,9 +53,16 @@ impl Provider {
             Some(l) => l.provider().endpoint("chat/completions")?,
             None => self.endpoint.clone(),
         };
-        let body = json!({"model":model,"messages":[{"role":"system","content":system},{"role":"user","content":data.to_string()}],
+        let mut body = json!({"model":model,"messages":[{"role":"system","content":system},{"role":"user","content":data.to_string()}],
             "stream":false,"max_tokens":1024,"temperature":0,
             "response_format":{"type":"json_schema","json_schema":{"name":"reasoning_answer","strict":true,"schema":saaa_reasoning_contract::schema::answer()}}});
+        saaa_larm_session::http_api::LlmOptions::standard().apply(
+            &mut body,
+            model,
+            1024,
+            "provider-default",
+        );
+        body.as_object_mut().unwrap().remove("temperature");
         let mut call = self.client.post(endpoint).json(&body);
         if let Some(token) = lease
             .as_ref()

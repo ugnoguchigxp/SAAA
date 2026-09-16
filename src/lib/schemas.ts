@@ -90,6 +90,7 @@ export const routingSettingsSchema = z
         source: z.enum(["harness", "provider"]),
         primaryProviderId: providerIdSchema.nullable(),
         fallbackProviderIds: z.array(providerIdSchema).max(20),
+        attemptTimeoutMs: z.number().int().min(1_000).max(MAX_CONVERSATION_TIMEOUT_MS).optional(),
         timeoutMs: z
           .number()
           .int()
@@ -119,6 +120,8 @@ export const routingSettingsSchema = z
       .object({
         source: z.enum(["harness", "provider"]),
         providerId: providerIdSchema.nullable(),
+        fallbackProviderIds: z.array(providerIdSchema).max(20).optional(),
+        attemptTimeoutMs: z.number().int().min(1_000).max(300_000).optional(),
         timeoutMs: z.number().int().min(1_000).max(300_000),
       })
       .strict()
@@ -140,6 +143,8 @@ export const routingSettingsSchema = z
       .object({
         source: z.enum(["harness", "provider"]),
         providerId: providerIdSchema.nullable(),
+        fallbackProviderIds: z.array(providerIdSchema).max(20).optional(),
+        attemptTimeoutMs: z.number().int().min(1_000).max(300_000).optional(),
         timeoutMs: z.number().int().min(1_000).max(300_000),
       })
       .strict()
@@ -229,7 +234,7 @@ const settingsDocumentBaseSchema = z
       "situation.runtime",
     ]),
     key: z.enum(["default", "codex-sdk"]),
-    schemaVersion: z.literal(14),
+    schemaVersion: z.literal(15),
     valueJson: z.record(z.string(), z.unknown()),
   })
   .strict();
@@ -285,11 +290,6 @@ export function validateSettingsDocuments(documents: unknown[]): void {
       `dynamic LAN conversation timeout must not exceed ${LEGACY_DYNAMIC_LAN_MAX_REQUEST_TIMEOUT_MS} ms`,
     );
   }
-  if (
-    routing.conversationRespond.source === "harness" &&
-    routing.conversationRespond.fallbackProviderIds.length > 0
-  )
-    throw new Error("Harness routes do not use individual provider fallbacks");
   const routeIds = new Set(primaryId ? [primaryId] : []);
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
     const fallback = enabled.get(fallbackId);
@@ -301,13 +301,37 @@ export function validateSettingsDocuments(documents: unknown[]): void {
     routeIds.add(fallbackId);
     if (
       security.localOnlyWhenSelected &&
-      primary?.location === "local" &&
+      (routing.conversationRespond.source === "harness" || primary?.location === "local") &&
       fallback.location === "cloud"
     ) {
       throw new Error(
         `Cloud fallback is blocked while the local-only policy is active: ${fallbackId}`,
       );
     }
+  }
+  for (const [route, kinds] of [
+    [routing.voiceTranscribe, ["cloud-asr"]],
+    [routing.voiceSpeak, ["cloud-tts", "system-tts"]],
+  ] as const) {
+    const primary = route.providerId ? enabled.get(route.providerId) : undefined;
+    const seen = new Set(route.providerId ? [route.providerId] : []);
+    for (const id of route.fallbackProviderIds ?? []) {
+      const provider = enabled.get(id);
+      if (!provider || !(kinds as readonly string[]).includes(provider.kind))
+        throw new Error(`Invalid voice fallback: ${id}`);
+      if (seen.has(id)) throw new Error(`Duplicate provider in route: ${id}`);
+      seen.add(id);
+      if (
+        security.localOnlyWhenSelected &&
+        (route.source === "harness" || primary?.location === "local") &&
+        provider.location === "cloud"
+      )
+        throw new Error(`Cloud fallback is blocked while the local-only policy is active: ${id}`);
+    }
+  }
+  for (const route of [routing.conversationRespond, routing.voiceTranscribe, routing.voiceSpeak]) {
+    if (route.attemptTimeoutMs !== undefined && route.attemptTimeoutMs > route.timeoutMs)
+      throw new Error("Attempt timeout exceeds total timeout");
   }
   const asrProvider = routing.voiceTranscribe.providerId
     ? enabled.get(routing.voiceTranscribe.providerId)

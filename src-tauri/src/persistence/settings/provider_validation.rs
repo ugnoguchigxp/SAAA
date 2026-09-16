@@ -5,6 +5,21 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
         return Err("Reasoning effort must be provider-default, low, medium, or xhigh".to_string());
     }
     validate_harness_address(&settings.harness.address)?;
+    if settings.harness.larm_profile.as_ref().is_some_and(|p| {
+        p.is_empty()
+            || p.len() > 160
+            || !p
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    }) {
+        return Err("Invalid LARM profile".into());
+    }
+    if settings.harness.tts_voice.as_ref().is_some_and(|v| {
+        v.is_empty() || v.len() > 160 || v.trim() != v || v.chars().any(char::is_control)
+    }) {
+        return Err("Invalid Harness TTS voice".into());
+    }
+
     if settings.providers.len() > 20 {
         return Err("At most 20 model providers are allowed".to_string());
     }
@@ -309,6 +324,8 @@ mod tests {
     fn settings(provider: ModelProviderSettings) -> ModelProvidersSettings {
         ModelProvidersSettings {
             harness: crate::HarnessSettings {
+                larm_profile: None,
+                tts_voice: None,
                 address: "http://localhost:9810".to_string(),
             },
             providers: vec![provider],

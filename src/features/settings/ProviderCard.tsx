@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   AgentSessionProviderSettings,
@@ -14,6 +14,7 @@ import {
   setProviderApiKey,
   testModelProvider,
 } from "../../lib/runtime";
+import { LlmRequestFields } from "./LlmRequestFields";
 import { Field } from "./SettingsFields";
 import {
   localizeProviderKind,
@@ -26,30 +27,56 @@ export function ProviderCard({
   persisted,
   onChange,
   onRemove,
+  testProvider = testModelProvider,
 }: {
   provider: ModelProviderSettings;
+  testProvider?: typeof testModelProvider;
   persisted: boolean;
   onChange: (value: ModelProviderSettings) => void;
   onRemove: () => void;
 }) {
   const { t } = useTranslation();
-  const [testResult, setTestResult] = useState<
+  const fingerprint = JSON.stringify(provider);
+  const generation = useRef(0);
+  const currentFingerprint = useRef(fingerprint);
+  if (currentFingerprint.current !== fingerprint) {
+    generation.current += 1;
+    currentFingerprint.current = fingerprint;
+  }
+  useEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [],
+  );
+  const [testedFingerprint, setTestedFingerprint] = useState("");
+  const [storedTestResult, setTestResult] = useState<
     | { state: "idle" }
     | { state: "testing" }
     | { state: "success"; latency: number }
     | { state: "error"; message: string }
   >({ state: "idle" });
 
+  const testResult =
+    testedFingerprint === fingerprint ? storedTestResult : { state: "idle" as const };
+  function invalidateTest() {
+    generation.current += 1;
+    setTestResult({ state: "idle" });
+  }
   async function test() {
+    const requestGeneration = ++generation.current;
+    setTestedFingerprint(fingerprint);
     setTestResult({ state: "testing" });
     try {
-      const result = await testModelProvider(provider);
+      const result = await testProvider(provider);
+      if (requestGeneration !== generation.current) return;
       setTestResult(
         result.ok
           ? { state: "success", latency: result.latencyMs }
           : { state: "error", message: result.message },
       );
     } catch (cause) {
+      if (requestGeneration !== generation.current) return;
       setTestResult({
         state: "error",
         message: cause instanceof Error ? cause.message : String(cause),
@@ -57,7 +84,17 @@ export function ProviderCard({
     }
   }
 
-  if (provider.kind === "dynamic-lan") return null;
+  if (provider.kind === "dynamic-lan")
+    return (
+      <section className="settings-card">
+        <h3>{provider.label}</h3>
+        <LlmRequestFields
+          value={provider.requestOptions}
+          dynamic
+          onChange={(requestOptions) => onChange({ ...provider, requestOptions })}
+        />
+      </section>
+    );
   if (provider.kind === "system-tts") {
     return (
       <section className="settings-card provider-card">
@@ -84,7 +121,13 @@ export function ProviderCard({
     <section className="settings-card provider-card">
       <ProviderHeader provider={provider} onChange={onChange} />
       {provider.kind === "openai-compatible" && (
-        <LlmFields provider={provider} onChange={onChange} />
+        <>
+          <LlmFields provider={provider} onChange={onChange} />
+          <LlmRequestFields
+            value={provider.requestOptions}
+            onChange={(requestOptions) => onChange({ ...provider, requestOptions })}
+          />
+        </>
       )}
       {provider.kind === "agent-session" && (
         <AgentSessionFields provider={provider} onChange={onChange} />
@@ -101,7 +144,11 @@ export function ProviderCard({
         </p>
       )}
       <div className="provider-card-footer">
-        <ApiKeyControl provider={provider} persisted={persisted} />
+        <ApiKeyControl
+          provider={provider}
+          persisted={persisted}
+          onCredentialChange={invalidateTest}
+        />
         <div>
           <button
             className="text-button"
@@ -340,6 +387,7 @@ function TtsFields({
 function ApiKeyControl({
   provider,
   persisted,
+  onCredentialChange,
 }: {
   provider:
     | OpenAiCompatibleProviderSettings
@@ -347,6 +395,7 @@ function ApiKeyControl({
     | CloudAsrProviderSettings
     | CloudTtsProviderSettings;
   persisted: boolean;
+  onCredentialChange: () => void;
 }) {
   const { t } = useTranslation();
   const [credential, setCredential] = useState<ProviderCredentialState["state"]>("missing");
@@ -373,10 +422,12 @@ function ApiKeyControl({
   if (provider.authentication !== "api-key") return <span>{t("settings.providers.authNone")}</span>;
   if (!persisted) return <span>{t("settings.providers.saveBeforeKey")}</span>;
   async function save() {
+    onCredentialChange();
     setSaving(true);
     setCredentialError(null);
     try {
       const result = await setProviderApiKey(provider.id, apiKey);
+      onCredentialChange();
       setCredential(result.state);
       setApiKey("");
     } catch (cause) {
@@ -386,10 +437,12 @@ function ApiKeyControl({
     }
   }
   async function remove() {
+    onCredentialChange();
     setSaving(true);
     setCredentialError(null);
     try {
       const result = await deleteProviderApiKey(provider.id);
+      onCredentialChange();
       setCredential(result.state);
       setApiKey("");
     } catch (cause) {

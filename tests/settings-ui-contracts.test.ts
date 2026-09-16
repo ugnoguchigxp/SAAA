@@ -1,9 +1,13 @@
 import { containsSource, readProjectSource as source } from "./sourceContract";
 import { describe, expect, test } from "bun:test";
 
+const connections = () =>
+  source("src/features/settings/ServiceConnectionsSection.tsx") +
+  source("src/features/settings/ConversationTimeoutField.tsx");
+
 describe("settings provider UI contracts", () => {
   test("lets users select the conversation reasoning effort", () => {
-    const settings = source("src/features/settings/ServiceConnectionsSection.tsx");
+    const settings = connections();
     const english = source("src/i18n/locales/en.ts");
     expect(containsSource(settings, 'Field label={t("settings.connection.reasoningEffort")}')).toBe(
       true,
@@ -16,7 +20,7 @@ describe("settings provider UI contracts", () => {
   });
 
   test("lets users configure the LLM timeout in seconds", () => {
-    const settings = source("src/features/settings/ServiceConnectionsSection.tsx");
+    const settings = connections();
     const japanese = source("src/i18n/locales/ja.ts");
     expect(containsSource(settings, "<ConversationTimeoutField")).toBe(true);
     expect(containsSource(settings, "conversationTimeoutMsFromSecondsInput(next)")).toBe(true);
@@ -28,7 +32,7 @@ describe("settings provider UI contracts", () => {
   });
 
   test("configures Agent Connection and limits LAN discovery to compatible addresses", () => {
-    const settings = source("src/features/settings/ServiceConnectionsSection.tsx");
+    const settings = connections();
     const japanese = source("src/i18n/locales/ja.ts");
     const runtime = [
       source("src/lib/providerRuntime.ts"),
@@ -52,7 +56,7 @@ describe("settings provider UI contracts", () => {
     expect(containsSource(runtime, "new URL(address)")).toBe(true);
     expect(containsSource(runtime, 'url.protocol === "http:"')).toBe(true);
     expect(containsSource(runtime, 'url.port === "9810"')).toBe(true);
-    expect(containsSource(settings, "harness: { address }")).toBe(true);
+    expect(containsSource(settings, "harness: { ...providers.harness, address }")).toBe(true);
     expect(containsSource(settings, 'placeholder="http://provider.local:9810"')).toBe(true);
     expect(containsSource(dynamicLan, 'format!("http://{host}:{CONTROL_PORT}/")')).toBe(true);
     expect(containsSource(dynamicLan, 'Command::new("ssh")')).toBe(false);

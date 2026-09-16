@@ -169,14 +169,15 @@ impl Client {
 pub(crate) mod tests;
 
 pub(crate) async fn for_turn(
+    harness_selected: bool,
     input: &crate::StartTurnInput,
     cancellation: &RunCancellation,
 ) -> Result<Option<Arc<Client>>, String> {
-    if let Some(client) = tokio::select! { biased;
-        _ = cancellation.cancelled() => return Err("Cancelled by user".into()),
-        result = crate::larm_voice::reasoning_client(&input.conversation_id, &input.input_origin) => result?,
-    } {
-        return Ok(Some(client));
+    if !harness_selected {
+        return Ok(None);
+    }
+    if cancellation.is_cancelled() {
+        return Err("Cancelled by user".into());
     }
     Ok(configured(&input.input_origin)?.map(|c| Arc::new(c.clone())))
 }

@@ -86,6 +86,8 @@ pub(crate) struct EffectiveRouteSnapshot {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConversationRouteSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) attempt_timeout_ms: Option<u64>,
     pub(crate) source: String,
     pub(crate) primary_provider_id: Option<String>,
     pub(crate) fallback_provider_ids: Vec<String>,
@@ -96,6 +98,10 @@ pub(crate) struct ConversationRouteSettings {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct VoiceRouteSettings {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) fallback_provider_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) attempt_timeout_ms: Option<u64>,
     pub(crate) source: String,
     pub(crate) provider_id: Option<String>,
     pub(crate) timeout_ms: u64,

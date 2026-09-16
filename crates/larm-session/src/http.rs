@@ -6,7 +6,13 @@ pub(crate) async fn json(
 ) -> Result<Value, &'static str> {
     let response = call.send().await.map_err(|_| "larm_transport_failed")?;
     if !statuses.contains(&response.status().as_u16()) {
-        return Err("larm_http_rejected");
+        return Err(match response.status().as_u16() {
+            401 | 403 => "larm_authentication_failed",
+            408 => "larm_timeout",
+            429 => "larm_capacity",
+            500..=599 => "larm_upstream_failed",
+            _ => "larm_http_rejected",
+        });
     }
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();

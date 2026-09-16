@@ -53,7 +53,14 @@ async fn live_tts_playback_and_asr() {
         }
         samples
     });
-    let received = receive(response, "wav", &cancellation, &sender).await;
+    let received = receive(
+        response,
+        "wav",
+        &cancellation,
+        &sender,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .await;
     drop(sender);
     let samples = collector.await.expect("audio collection completes");
     received.expect("SAAA incrementally decodes HTTP audio");

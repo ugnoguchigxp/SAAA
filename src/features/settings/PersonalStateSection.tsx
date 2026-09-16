@@ -78,6 +78,11 @@ export function PersonalStateSection() {
   return (
     <section className="settings-section">
       <h3>会話の現在状態</h3>
+      {snapshot?.enabled && (
+        <p role="status">
+          LARM管理メモリを使用中です。LLMはメモリ整合性を保証するLARM経路を使用し、接続設定のLLM選択・クラウド自動切替は適用されません。ASRとTTSは個別に選択できます。
+        </p>
+      )}
       <p>目的・制約・未決事項と、その根拠を確認できます。抽出は初期状態では停止しています。</p>
       <button type="button" onClick={() => void refresh()} disabled={busy}>
         更新

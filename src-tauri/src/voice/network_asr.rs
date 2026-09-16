@@ -1,14 +1,12 @@
-use crate::{bounded_text, AppState, RunCancellation};
+use crate::{bounded_text, RunCancellation};
 use futures_util::StreamExt;
 use reqwest::{multipart, Client, Response};
-use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use zeroize::Zeroizing;
 
 mod discovery;
 mod runtime;
 pub(crate) use discovery::base_url_from_host;
-use discovery::ensure_selected_model;
 #[cfg(test)]
 use discovery::{resolve_at, validate_base_url};
 pub(crate) use runtime::NetworkAsrRuntime;
@@ -30,39 +28,7 @@ fn request_error_message(error: &reqwest::Error) -> String {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct TranscriptionResponse {
-    text: String,
-    language: Option<String>,
-}
-
-pub async fn transcribe(
-    state: &AppState,
-    host: &str,
-    samples: &[f32],
-    sample_rate: u32,
-    model: &str,
-    cancellation: Arc<RunCancellation>,
-) -> Result<(String, Option<String>), String> {
-    let resolution = state
-        .network_asr
-        .resolve(host, cancellation.clone())
-        .await?;
-    ensure_selected_model(&resolution, model)?;
-    let result = transcribe_at(
-        state.network_asr.client(),
-        &resolution.endpoint,
-        samples,
-        sample_rate,
-        model,
-        cancellation.clone(),
-    )
-    .await;
-    if result.is_err() && !cancellation.is_cancelled() {
-        state.network_asr.invalidate(host).await;
-    }
-    result
-}
+use super::cloud_asr::TranscriptionResponse;
 
 pub(crate) async fn transcribe_at(
     client: &Client,
@@ -105,7 +71,7 @@ pub(crate) async fn transcribe_at(
     }
     Ok((
         bounded_text(text, MAX_TRANSCRIPT_CHARS),
-        result.language.map(|language| bounded_text(&language, 80)),
+        result.detected_language(),
     ))
 }
 

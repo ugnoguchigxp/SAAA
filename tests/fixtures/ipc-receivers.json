@@ -47,7 +47,7 @@
       {
         "key": "codex-sdk",
         "namespace": "providers.agent",
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
           "agentName": "SAAA",
@@ -67,7 +67,7 @@
       {
         "key": "default",
         "namespace": "providers.model",
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
           "harness": {
@@ -97,7 +97,7 @@
       {
         "key": "default",
         "namespace": "routing.tasks",
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
           "codingAssist": {
@@ -128,7 +128,7 @@
       {
         "key": "default",
         "namespace": "security.runtime",
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
           "diagnosticsRedaction": true,
@@ -138,7 +138,7 @@
       {
         "key": "default",
         "namespace": "situation.runtime",
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
           "calendarEnabled": false,
@@ -153,7 +153,7 @@
       {
         "key": "default",
         "namespace": "ui.preferences",
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
           "currency": "JPY",
@@ -166,7 +166,7 @@
       {
         "key": "default",
         "namespace": "voice.runtime",
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
           "allowedLanguages": [

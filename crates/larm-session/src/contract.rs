@@ -14,6 +14,7 @@ pub struct Provider {
     pub base_url: url::Url,
     pub model: String,
     pub protocol: String,
+    pub voice: Option<String>,
     token: Zeroizing<String>,
     pub(crate) health_url: url::Url,
     pub(crate) max_age: Duration,
@@ -100,6 +101,10 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
                 base_url: endpoint(string(fields, "baseURL")?)?,
                 model: string(fields, "model")?.to_string(),
                 protocol: protocol.to_string(),
+                voice: fields
+                    .get("voice")
+                    .map(|_| string(fields, "voice").map(str::to_string))
+                    .transpose()?,
                 token: Zeroizing::new(token.to_string()),
                 health_url: endpoint(string(&raw["health"], "url")?)?,
                 max_age: Duration::from_millis(max_age),
@@ -107,7 +112,7 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
             },
         );
     }
-    if providers.len() != PROVIDERS.len() {
+    if providers.is_empty() {
         return Err("larm_missing_provider");
     }
     Ok(Snapshot {
