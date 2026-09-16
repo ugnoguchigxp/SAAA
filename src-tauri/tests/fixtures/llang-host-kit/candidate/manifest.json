@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "profile": "predicate-i32-v1",
+  "export": "evaluate",
+  "contract": {
+    "version": 1,
+    "fields": [
+      {
+        "name": "enabled",
+        "kind": "boolean",
+        "values": [],
+        "nullable": false,
+        "undefinable": false,
+        "optional": false
+      },
+      {
+        "name": "suspended",
+        "kind": "boolean",
+        "values": [],
+        "nullable": false,
+        "undefinable": false,
+        "optional": false
+      }
+    ]
+  },
+  "compiler": "0.1.0-dev.1",
+  "backend": "binaryen@132.0.0",
+  "options": "mvp-no-optimization",
+  "irHash": "cd1db3ee439bf86648173d6a6a5edd8384b02317a5acb67d0ae973cc15209456",
+  "provenance": {
+    "source": "source.prompt.json",
+    "concept": "access",
+    "predicate": "access",
+    "fingerprint": "a8ffb8fc53f38aa6849f372e9c27bec26cde3689a4d72d57da0e860d202a7309",
+    "conceptHash": "b5cd43d5afbd348663d0949c90aefcf6c57c91eb6d36ef3a91be62a24d587c28",
+    "sourceHash": "53aa67d85ac9406ef5d208e296d301ac79578b0fe1164515e17e4178ec2329d3",
+    "typeHash": "1a545844899f6a8201e9643439adcfd2abc78998b86c956458c60d2d764f6034",
+    "testHash": "51747723804889e5035b3d0bf37fa70385ce6f5afb0bd5ca0299dadb466ff873",
+    "promptHash": "fc90a82153f8f2eccaceab3d8a1a7426c2610fa1cf07421da50a618fd644b433",
+    "contextHash": "990c08cbb9b5ddbc4fb163b97009ffd0e777ddb0fc6980daecc1f3dff6e9cab2",
+    "contextVersion": 1
+  },
+  "wasmHash": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa",
+  "file": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa.wasm"
+}

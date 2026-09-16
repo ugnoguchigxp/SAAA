@@ -44,6 +44,8 @@ pub mod voice_asr_contract;
 mod voice_behavior;
 mod voice_commands;
 mod voice_text;
+#[cfg(test)]
+mod wasm_host_poc;
 
 pub(crate) use models::*;
 #[cfg(test)]

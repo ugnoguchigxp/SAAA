@@ -1145,6 +1145,26 @@
       "total": 260,
       "production": 249
     },
+    "src-tauri/src/wasm_host_poc/contracts.rs": {
+      "total": 614,
+      "production": 614
+    },
+    "src-tauri/src/wasm_host_poc/kit.rs": {
+      "total": 151,
+      "production": 151
+    },
+    "src-tauri/src/wasm_host_poc/mod.rs": {
+      "total": 147,
+      "production": 147
+    },
+    "src-tauri/src/wasm_host_poc/process.rs": {
+      "total": 344,
+      "production": 344
+    },
+    "src-tauri/src/wasm_host_poc/tests.rs": {
+      "total": 452,
+      "production": 452
+    },
     "src/App.css": {
       "total": 287,
       "production": 287

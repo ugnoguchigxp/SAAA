@@ -1,0 +1,27 @@
+{
+  "protocol": "llang-host-v1",
+  "bunVersion": "1.3.14",
+  "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+  "fixture": true,
+  "provenance": {
+    "commit": "0124d704f8228cb0c34d6379cf0302641199d82e",
+    "dirty": false
+  },
+  "acceptance": "not-run",
+  "files": {
+    "candidate/capability.json": "8e2ffd0acef8b0077cfffa49bff60684c87c359cd30322e8113bac848665f507",
+    "candidate/source.prompt.json": "4c3152f043e2a32e316532e7a82f6f72248bd84683f6bb8afe4f806a881304d2",
+    "candidate/source.prompt.json.lock.json": "1f22da2962b517c3f59567662acd7c26fb01de253d685c9d04d3fa14ecef48a5",
+    "candidate/manifest.json": "db3837afcef6741aee6b13d578cebcdce02ab43dc7eabff54e8c8b84e7b976f8",
+    "candidate/eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa.wasm": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa",
+    "candidate/tests.json": "0d74a73a3f5f1d315c2a41343b39da705c4109b06afd620256b94b418b2d385e",
+    "vectors.json": "b24408c5eab9d7d5c1d53848c33f06788dd7edbbcd8869bf78355465ddaca7ee",
+    "request.json": "a4b641cd5f2a1a2a6f0c8ce7dd3781cf76196089f4d73609fddc93461665acf0",
+    "verification.json": "42c0c3a28cb94698e4386abb07742b8e35ba4b9100b2188bbc870c7b8c453d7e",
+    "request.schema.json": "741a72e2ad0b6847345ffa44665544eb8fc9d3c5de5946f35c904bc769d35987",
+    "response.schema.json": "0467ff5e7b5801748869b231cc270f83b1686f2d7603f842751bfa11508698e9",
+    "runtime/capability-host-cli.ts": "592cf7092b7f02207fb6ece754a1cead440f3ea6656851b8532a986c5440ab9d",
+    "runtime/capability-worker.ts": "e80aaa9f966c1a0f693ef61645c82f3348811a9d5c0d129bbe9b4c480bc0d92d",
+    "runtime/capability-invoke-worker.ts": "c9e3b0ab0000898b86c0b66c4120d5500484487a1e132d2d57a5e28005c08532"
+  }
+}

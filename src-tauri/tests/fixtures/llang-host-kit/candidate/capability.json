@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "metadata": {
+    "id": "access",
+    "release": "v1",
+    "purpose": "利用者の受付可否を返す。",
+    "useWhen": "有効・利用停止フラグを持つ利用者の受付前。",
+    "doNotUseWhen": "現在時刻や外部サービスへの照会が必要な場合。"
+  },
+  "profile": "predicate-i32-v1",
+  "output": "boolean",
+  "permissions": [],
+  "files": {
+    "source": {
+      "path": "source.prompt.json",
+      "hash": "4c3152f043e2a32e316532e7a82f6f72248bd84683f6bb8afe4f806a881304d2"
+    },
+    "lock": {
+      "path": "source.prompt.json.lock.json",
+      "hash": "1f22da2962b517c3f59567662acd7c26fb01de253d685c9d04d3fa14ecef48a5"
+    },
+    "build": {
+      "path": "manifest.json",
+      "hash": "db3837afcef6741aee6b13d578cebcdce02ab43dc7eabff54e8c8b84e7b976f8"
+    },
+    "wasm": {
+      "path": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa.wasm",
+      "hash": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa"
+    },
+    "tests": {
+      "path": "tests.json",
+      "hash": "0d74a73a3f5f1d315c2a41343b39da705c4109b06afd620256b94b418b2d385e"
+    }
+  }
+}

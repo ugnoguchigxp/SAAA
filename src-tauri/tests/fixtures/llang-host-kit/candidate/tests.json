@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "sourceRevision": "53aa67d85ac9406ef5d208e296d301ac79578b0fe1164515e17e4178ec2329d3",
+  "cases": [
+    {
+      "id": "allowed",
+      "requirementIds": [
+        "enabled",
+        "suspension"
+      ],
+      "input": {
+        "enabled": true,
+        "suspended": false
+      },
+      "undefinedFields": [],
+      "expected": {
+        "kind": "value",
+        "value": true
+      }
+    },
+    {
+      "id": "stopped",
+      "requirementIds": [
+        "suspension"
+      ],
+      "input": {
+        "enabled": true,
+        "suspended": true
+      },
+      "undefinedFields": [],
+      "expected": {
+        "kind": "value",
+        "value": false
+      }
+    },
+    {
+      "id": "disabled-stopped",
+      "requirementIds": [
+        "enabled",
+        "suspension"
+      ],
+      "input": {
+        "enabled": false,
+        "suspended": true
+      },
+      "undefinedFields": [],
+      "expected": {
+        "kind": "value",
+        "value": false
+      }
+    },
+    {
+      "id": "invalid-enabled",
+      "requirementIds": [
+        "enabled"
+      ],
+      "input": {
+        "enabled": "yes",
+        "suspended": false
+      },
+      "undefinedFields": [],
+      "expected": {
+        "kind": "error",
+        "code": "INVALID_INPUT"
+      }
+    }
+  ]
+}

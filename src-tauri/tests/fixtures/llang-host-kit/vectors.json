@@ -1,0 +1,100 @@
+[
+  {
+    "request": {
+      "protocol": "llang-host-v1",
+      "requestId": "access-0",
+      "operation": "invoke",
+      "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+      "input": {
+        "enabled": true,
+        "suspended": true
+      },
+      "undefinedFields": [],
+      "timeoutMs": 10000
+    },
+    "expected": {
+      "status": "ok",
+      "result": {
+        "value": false
+      }
+    }
+  },
+  {
+    "request": {
+      "protocol": "llang-host-v1",
+      "requestId": "access-1",
+      "operation": "invoke",
+      "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+      "input": {
+        "enabled": true,
+        "suspended": false
+      },
+      "undefinedFields": [],
+      "timeoutMs": 10000
+    },
+    "expected": {
+      "status": "ok",
+      "result": {
+        "value": true
+      }
+    }
+  },
+  {
+    "request": {
+      "protocol": "llang-host-v1",
+      "requestId": "access-2",
+      "operation": "invoke",
+      "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+      "input": {
+        "enabled": false,
+        "suspended": true
+      },
+      "undefinedFields": [],
+      "timeoutMs": 10000
+    },
+    "expected": {
+      "status": "ok",
+      "result": {
+        "value": false
+      }
+    }
+  },
+  {
+    "request": {
+      "protocol": "llang-host-v1",
+      "requestId": "access-3",
+      "operation": "invoke",
+      "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+      "input": {
+        "enabled": false,
+        "suspended": false
+      },
+      "undefinedFields": [],
+      "timeoutMs": 10000
+    },
+    "expected": {
+      "status": "ok",
+      "result": {
+        "value": false
+      }
+    }
+  },
+  {
+    "request": {
+      "protocol": "llang-host-v1",
+      "requestId": "bad-input",
+      "operation": "invoke",
+      "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+      "input": {
+        "enabled": "true",
+        "suspended": false
+      },
+      "undefinedFields": [],
+      "timeoutMs": 10000
+    },
+    "expected": {
+      "status": "error",
+      "error": "invalid-input"
+    }
+  }
+]

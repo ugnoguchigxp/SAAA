@@ -1,0 +1,12 @@
+{
+  "protocol": "llang-host-v1",
+  "requestId": "access-0",
+  "operation": "invoke",
+  "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+  "input": {
+    "enabled": true,
+    "suspended": true
+  },
+  "undefinedFields": [],
+  "timeoutMs": 10000
+}

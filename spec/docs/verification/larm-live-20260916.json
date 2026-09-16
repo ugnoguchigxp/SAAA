@@ -1,0 +1,3464 @@
+{
+  "date": "2026-09-16",
+  "target": "http://192.168.0.130:9810",
+  "releaseCommit": "be5e86272165f4e13e69f4da204b1425486c6070",
+  "saaaCommit": "68af784f9ac1dbd1cdf9bcea8b84531cb63190c3",
+  "llm": [
+    {
+      "name": "coding-default/canary",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_1bae7971-9351-43bf-a4e7-25380c745d9e"
+      },
+      "firstReadSeconds": 5.283,
+      "bytes": 680,
+      "seconds": 5.283,
+      "model": "coding-default",
+      "usage": {
+        "completion_tokens": 4,
+        "prompt_tokens": 57,
+        "total_tokens": 61,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "",
+      "finishes": [
+        "stop"
+      ],
+      "pass": false
+    },
+    {
+      "name": "coding-default/sse",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_ccf91354-4edb-4235-8936-39e3ae6e7c58"
+      },
+      "firstReadSeconds": 5.903,
+      "bytes": 18153,
+      "seconds": 10.107,
+      "model": "coding-default",
+      "done": true,
+      "events": 70,
+      "content": "2",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "coding-default/tools",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_ed289792-299e-45f5-8c21-aff511aa8c5e"
+      },
+      "firstReadSeconds": 7.591,
+      "bytes": 93921,
+      "seconds": 36.947,
+      "model": "coding-default",
+      "done": true,
+      "events": 365,
+      "content": "",
+      "finishes": [
+        "tool_calls"
+      ],
+      "tools": [
+        {
+          "id": "T1Q3JU81q7VpHfhQ2b8A6lcqmFhLcPDC",
+          "type": "function",
+          "function": {
+            "name": "connection_check",
+            "arguments": "{\"value\":\"OK\"}"
+          }
+        }
+      ],
+      "pass": true
+    },
+    {
+      "name": "coding-default/tool-result",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_b9e75767-b91e-4732-aa6b-18d73d8326b1"
+      },
+      "firstReadSeconds": 11.692,
+      "bytes": 980,
+      "seconds": 11.692,
+      "model": "coding-default",
+      "usage": {
+        "completion_tokens": 77,
+        "prompt_tokens": 122,
+        "total_tokens": 199,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "OpenAIは2025年1月21日、推論能力に特化した新モデル「o1」を発表した。",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "coding-default/schema",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_853cb9c8-d10f-4a51-ac61-fd41615dc6ec"
+      },
+      "firstReadSeconds": 6.554,
+      "bytes": 717,
+      "seconds": 6.554,
+      "model": "coding-default",
+      "usage": {
+        "completion_tokens": 22,
+        "prompt_tokens": 65,
+        "total_tokens": 87,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "{\n  \"ok\": true\n}",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "decision-default/canary",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_7d2b387e-66c4-4767-8e2a-e1514972289d"
+      },
+      "firstReadSeconds": 3.772,
+      "bytes": 619,
+      "seconds": 3.772,
+      "model": "decision-default",
+      "usage": {
+        "completion_tokens": 2,
+        "prompt_tokens": 17,
+        "total_tokens": 19,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "OK",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "decision-default/sse",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_caa01cbe-52d3-4665-9945-01f8b70e4931"
+      },
+      "firstReadSeconds": 2.76,
+      "bytes": 1003,
+      "seconds": 2.76,
+      "model": "decision-default",
+      "done": true,
+      "events": 3,
+      "content": "2",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "decision-default/tools",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_9c327719-ae94-40f5-8c56-f87a0586217a"
+      },
+      "firstReadSeconds": 2.18,
+      "bytes": 2324,
+      "seconds": 2.18,
+      "model": "decision-default",
+      "done": true,
+      "events": 7,
+      "content": "",
+      "finishes": [
+        "tool_calls"
+      ],
+      "tools": [
+        {
+          "id": "rnc81HFmoNL5Uak3Z1qxKwWLsySR3VMN",
+          "type": "function",
+          "function": {
+            "name": "connection_check",
+            "arguments": "{\"value\":\"OK\"}"
+          }
+        }
+      ],
+      "pass": true
+    },
+    {
+      "name": "decision-default/tool-result",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_f82d452a-baf5-4138-a51c-af3e9ffa44e7"
+      },
+      "firstReadSeconds": 1.929,
+      "bytes": 671,
+      "seconds": 1.93,
+      "model": "decision-default",
+      "usage": {
+        "completion_tokens": 9,
+        "prompt_tokens": 78,
+        "total_tokens": 87,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "接続チェックが正常に完了しました。",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "decision-default/schema",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_26649e60-f59e-40ae-bb29-fcdea6a2e5ed"
+      },
+      "firstReadSeconds": 1.623,
+      "bytes": 639,
+      "seconds": 1.623,
+      "model": "decision-default",
+      "usage": {
+        "completion_tokens": 10,
+        "prompt_tokens": 25,
+        "total_tokens": 35,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "{\n  \"ok\": true\n}",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-agent-worker/canary",
+      "path": "/v1/chat/completions",
+      "error": "TimeoutError: timed out",
+      "seconds": 90.006,
+      "model": "qwen-agent-worker",
+      "content": null,
+      "finishes": [],
+      "pass": false
+    },
+    {
+      "name": "qwen-agent-worker/sse",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_6bd5cada-05c6-4dcb-80bd-b2c27181d0b3"
+      },
+      "firstReadSeconds": 90.433,
+      "bytes": 14427,
+      "seconds": 91.98,
+      "model": "qwen-agent-worker",
+      "done": true,
+      "events": 54,
+      "content": "2",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-agent-worker/tools",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_3d5b9328-ef53-4505-8cde-29d80834816c"
+      },
+      "firstReadSeconds": 4.818,
+      "bytes": 8150,
+      "seconds": 6.135,
+      "model": "qwen-agent-worker",
+      "done": true,
+      "events": 29,
+      "content": "",
+      "finishes": [
+        "tool_calls"
+      ],
+      "tools": [
+        {
+          "id": "KXikVOPQK9zn4OdO5rSb6bBQlT68RYOv",
+          "type": "function",
+          "function": {
+            "name": "connection_check",
+            "arguments": "{\"value\":\"OK\"}"
+          }
+        }
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-agent-worker/tool-result",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_28037393-aec8-4b9d-84ea-6ebcd52981dc"
+      },
+      "firstReadSeconds": 7.065,
+      "bytes": 1167,
+      "seconds": 7.065,
+      "model": "qwen-agent-worker",
+      "usage": {
+        "completion_tokens": 96,
+        "prompt_tokens": 122,
+        "total_tokens": 218,
+        "prompt_tokens_details": {
+          "cached_tokens": 42
+        }
+      },
+      "content": "正常です。",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-agent-worker/schema",
+      "path": "/v1/chat/completions",
+      "error": "TimeoutError: timed out",
+      "seconds": 90.007,
+      "model": "qwen-agent-worker",
+      "content": null,
+      "finishes": [],
+      "pass": false
+    },
+    {
+      "name": "qwen-nightworker/canary",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_932b2621-185d-486c-a10b-01c40d892d1c"
+      },
+      "firstReadSeconds": 40.039,
+      "bytes": 810,
+      "seconds": 40.039,
+      "model": "qwen-nightworker",
+      "usage": {
+        "completion_tokens": 30,
+        "prompt_tokens": 57,
+        "total_tokens": 87,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "OK",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-nightworker/sse",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_e7b8ef2f-b190-41d1-ade0-533514ad3ea0"
+      },
+      "firstReadSeconds": 3.592,
+      "bytes": 14371,
+      "seconds": 5.069,
+      "model": "qwen-nightworker",
+      "done": true,
+      "events": 54,
+      "content": "2",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-nightworker/tools",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_bcc564b2-2409-4feb-aef6-d27a8173581f"
+      },
+      "firstReadSeconds": 6.785,
+      "bytes": 8123,
+      "seconds": 8.111,
+      "model": "qwen-nightworker",
+      "done": true,
+      "events": 29,
+      "content": "",
+      "finishes": [
+        "tool_calls"
+      ],
+      "tools": [
+        {
+          "id": "21XFLhcjASRrFFB5yv7KsXRZXKLQ9u9D",
+          "type": "function",
+          "function": {
+            "name": "connection_check",
+            "arguments": "{\"value\":\"OK\"}"
+          }
+        }
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-nightworker/tool-result",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_2a18ea3d-d840-40b8-8f92-3ce0934dd328"
+      },
+      "firstReadSeconds": 8.735,
+      "bytes": 1165,
+      "seconds": 8.735,
+      "model": "qwen-nightworker",
+      "usage": {
+        "completion_tokens": 96,
+        "prompt_tokens": 122,
+        "total_tokens": 218,
+        "prompt_tokens_details": {
+          "cached_tokens": 42
+        }
+      },
+      "content": "正常です。",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-nightworker/schema",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_4f3e4677-b3ee-4d0a-87e6-d1498eadb88e"
+      },
+      "firstReadSeconds": 18.346,
+      "bytes": 870,
+      "seconds": 18.347,
+      "model": "qwen-nightworker",
+      "usage": {
+        "completion_tokens": 45,
+        "prompt_tokens": 65,
+        "total_tokens": 110,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "{\"ok\":true}",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen3.8-kv-mem/canary",
+      "path": "/v1/chat/completions",
+      "error": "TimeoutError: timed out",
+      "seconds": 90.007,
+      "model": "qwen3.8-kv-mem",
+      "content": null,
+      "finishes": [],
+      "pass": false
+    },
+    {
+      "name": "qwen3.8-kv-mem/sse",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_c280ab55-b911-48d1-bf99-982de5d80483"
+      },
+      "firstReadSeconds": 38.55,
+      "bytes": 14788,
+      "seconds": 40.381,
+      "model": "qwen3.8-kv-mem",
+      "done": true,
+      "events": 56,
+      "content": "2",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen3.8-kv-mem/tools",
+      "path": "/v1/chat/completions",
+      "error": "TimeoutError: timed out",
+      "seconds": 90.007,
+      "model": "qwen3.8-kv-mem",
+      "content": null,
+      "finishes": [],
+      "pass": false
+    },
+    {
+      "name": "qwen3.8-kv-mem/schema",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_c6ce750b-a885-4fe7-8e34-4124d3b592c8"
+      },
+      "firstReadSeconds": 13.527,
+      "bytes": 870,
+      "seconds": 13.527,
+      "model": "qwen3.8-kv-mem",
+      "usage": {
+        "completion_tokens": 45,
+        "prompt_tokens": 65,
+        "total_tokens": 110,
+        "prompt_tokens_details": {
+          "cached_tokens": 42
+        }
+      },
+      "content": "{\"ok\": true}",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    }
+  ],
+  "llmRetry": [
+    {
+      "name": "qwen-agent-worker/canary",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_efefb576-b29d-4257-b6c7-6c2221051474"
+      },
+      "firstReadSeconds": 66.547,
+      "bytes": 811,
+      "seconds": 66.547,
+      "model": "qwen-agent-worker",
+      "usage": {
+        "completion_tokens": 30,
+        "prompt_tokens": 57,
+        "total_tokens": 87,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "OK",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen-agent-worker/schema",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_72be6988-cd15-4586-9900-d8bf5da0843f"
+      },
+      "firstReadSeconds": 3.868,
+      "bytes": 873,
+      "seconds": 3.869,
+      "model": "qwen-agent-worker",
+      "usage": {
+        "completion_tokens": 45,
+        "prompt_tokens": 65,
+        "total_tokens": 110,
+        "prompt_tokens_details": {
+          "cached_tokens": 42
+        }
+      },
+      "content": "{\"ok\":true}",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen3.8-kv-mem/canary",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_d3e7df8c-24d9-44e3-97d2-555285ec2cc4"
+      },
+      "firstReadSeconds": 12.195,
+      "bytes": 764,
+      "seconds": 12.195,
+      "model": "qwen3.8-kv-mem",
+      "usage": {
+        "completion_tokens": 23,
+        "prompt_tokens": 57,
+        "total_tokens": 80,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "OK",
+      "finishes": [
+        "stop"
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen3.8-kv-mem/tools",
+      "path": "/v1/chat/completions",
+      "status": 503,
+      "error": "{\"error\":{\"message\":\"model qwen3.8-kv-mem did not become ready\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"model_loading_timeout\"}}",
+      "seconds": 120.023,
+      "model": "qwen3.8-kv-mem",
+      "content": null,
+      "finishes": [],
+      "pass": false
+    },
+    {
+      "name": "qwen3-tts-expressive/Aiden/wav-retry",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.018,
+      "pass": false
+    }
+  ],
+  "audio": [
+    {
+      "name": "voicevox-core/voices",
+      "path": "/v1/audio/voices?model=voicevox-core",
+      "status": 400,
+      "error": "{\"error\":{\"message\":\"request body must be valid UTF-8 JSON\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request\"}}",
+      "seconds": 0.207,
+      "pass": false
+    },
+    {
+      "name": "voicevox-core/Shikoku_Metan/wav",
+      "path": "/v1/audio/speech",
+      "status": 200,
+      "media": "audio/wav",
+      "headers": {
+        "x-request-id": "req_9d2995cc-b8eb-450c-a4d3-98963e96bc66"
+      },
+      "firstReadSeconds": 0.388,
+      "bytes": 87084,
+      "seconds": 0.408,
+      "pass": true,
+      "rate": 24000,
+      "channels": 1,
+      "sampleBytes": 2,
+      "duration": 1.8133333333333332
+    },
+    {
+      "name": "voicevox-core/Zundamon/wav",
+      "path": "/v1/audio/speech",
+      "status": 200,
+      "media": "audio/wav",
+      "headers": {
+        "x-request-id": "req_1b9aa5db-f1cf-41dd-bd41-92524cddf3ed"
+      },
+      "firstReadSeconds": 0.326,
+      "bytes": 99884,
+      "seconds": 0.34,
+      "pass": true,
+      "rate": 24000,
+      "channels": 1,
+      "sampleBytes": 2,
+      "duration": 2.08
+    },
+    {
+      "name": "voicevox-core/Kasukabe_Tsumugi/wav",
+      "path": "/v1/audio/speech",
+      "status": 200,
+      "media": "audio/wav",
+      "headers": {
+        "x-request-id": "req_0f6ef627-b16e-4837-8de3-bd91d06933d9"
+      },
+      "firstReadSeconds": 0.269,
+      "bytes": 86572,
+      "seconds": 0.282,
+      "pass": true,
+      "rate": 24000,
+      "channels": 1,
+      "sampleBytes": 2,
+      "duration": 1.8026666666666666
+    },
+    {
+      "name": "voicevox-core/Amehare_Hau/wav",
+      "path": "/v1/audio/speech",
+      "status": 200,
+      "media": "audio/wav",
+      "headers": {
+        "x-request-id": "req_8f12f696-b42d-40b4-b326-1567975c345e"
+      },
+      "firstReadSeconds": 0.271,
+      "bytes": 95276,
+      "seconds": 0.286,
+      "pass": true,
+      "rate": 24000,
+      "channels": 1,
+      "sampleBytes": 2,
+      "duration": 1.984
+    },
+    {
+      "name": "voicevox-core/pcm",
+      "path": "/v1/audio/speech",
+      "status": 502,
+      "error": "{\"error\":{\"message\":\"upstream speech response media type does not match response_format\",\"type\":\"server_error\",\"param\":null,\"code\":\"upstream_response_format_mismatch\"}}",
+      "seconds": 0.218,
+      "pass": false
+    },
+    {
+      "name": "qwen3-tts-expressive/voices",
+      "path": "/v1/audio/voices?model=qwen3-tts-expressive",
+      "status": 400,
+      "error": "{\"error\":{\"message\":\"request body must be valid UTF-8 JSON\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request\"}}",
+      "seconds": 0.009,
+      "pass": false
+    },
+    {
+      "name": "qwen3-tts-expressive/Aiden/wav",
+      "path": "/v1/audio/speech",
+      "error": "TimeoutError: timed out",
+      "seconds": 90.006,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Ono_Anna/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 12.12,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Vivian/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.017,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Serena/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.016,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Uncle_Fu/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.014,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Dylan/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.016,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Eric/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.022,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Ryan/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.02,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/Sohee/wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.013,
+      "pass": false,
+      "validationError": ""
+    },
+    {
+      "name": "qwen3-tts-expressive/pcm",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.02,
+      "pass": false
+    },
+    {
+      "name": "asr/json",
+      "path": "/v1/audio/transcriptions",
+      "status": 200,
+      "media": "application/json",
+      "headers": {
+        "x-request-id": "req_436474e6-8954-4f3c-bb48-daf282730a0a"
+      },
+      "firstReadSeconds": 0.579,
+      "bytes": 63,
+      "seconds": 0.579,
+      "response": {
+        "text": "接続を確認しました。",
+        "language": "Japanese"
+      },
+      "pass": true
+    },
+    {
+      "name": "asr/verbose_json",
+      "path": "/v1/audio/transcriptions",
+      "status": 200,
+      "media": "application/json",
+      "headers": {
+        "x-request-id": "req_01346aef-4333-4c33-95c1-2a0c8c3cd1b4"
+      },
+      "firstReadSeconds": 0.574,
+      "bytes": 113,
+      "seconds": 0.574,
+      "response": {
+        "task": "transcribe",
+        "duration": 1.8026666666666666,
+        "text": "接続を確認しました。",
+        "language": "Japanese"
+      },
+      "pass": true
+    },
+    {
+      "name": "asr/silence",
+      "path": "/v1/audio/transcriptions",
+      "status": 200,
+      "media": "application/json",
+      "headers": {
+        "x-request-id": "req_7f3480de-287d-4dfa-92aa-f704da16372a"
+      },
+      "firstReadSeconds": 0.248,
+      "bytes": 11,
+      "seconds": 0.248,
+      "response": {
+        "text": ""
+      },
+      "pass": true
+    }
+  ],
+  "connections": [
+    {
+      "name": "asr-qwen/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 1.924,
+      "bytes": 843,
+      "seconds": 1.924,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "asr-qwen/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 843,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "asr-qwen/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 480,
+      "seconds": 0.013,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "asr-qwen/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 1546,
+      "seconds": 0.013,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "asr-qwen/provider-health-asr",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227/providers/asr/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 277,
+      "seconds": 0.011,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "asr-qwen/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 843,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "asr-qwen/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1546,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "asr-qwen/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227/providers/asr/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "asr-qwen/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.015,
+      "pass": true
+    },
+    {
+      "name": "asr-qwen/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 890,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "asr-qwen/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8a1c3d9a-3527-4860-9380-c671e7c96227/providers/asr/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "coding-default/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 1.718,
+      "bytes": 848,
+      "seconds": 1.718,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "coding-default/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.44,
+      "bytes": 848,
+      "seconds": 0.441,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "coding-default/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 480,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "coding-default/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 1542,
+      "seconds": 0.013,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "coding-default/provider-health-llm",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e/providers/llm/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 277,
+      "seconds": 0.012,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "coding-default/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 848,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "coding-default/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 1542,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "coding-default/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "coding-default/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.014,
+      "pass": true
+    },
+    {
+      "name": "coding-default/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.018,
+      "bytes": 895,
+      "seconds": 0.018,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "coding-default/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_1bc61802-fa42-4a79-8f81-34e413727c5e/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "contextstill-background/create",
+      "path": "/v1/agent-connections",
+      "status": 202,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.016,
+      "bytes": 870,
+      "seconds": 0.016,
+      "pass": true,
+      "result_status": "pending"
+    },
+    {
+      "name": "contextstill-background/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f411ba30-5b8e-4e62-b6fd-5d5d2ef89ab9",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 870,
+      "seconds": 0.01,
+      "pass": false,
+      "result_status": "pending"
+    },
+    {
+      "name": "contextstill-background/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f411ba30-5b8e-4e62-b6fd-5d5d2ef89ab9",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.02,
+      "pass": true
+    },
+    {
+      "name": "contextstill-background/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f411ba30-5b8e-4e62-b6fd-5d5d2ef89ab9",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 912,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "contextstill-decision-default-canary/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.1,
+      "bytes": 904,
+      "seconds": 0.1,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-decision-default-canary/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 904,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-decision-default-canary/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 504,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "contextstill-decision-default-canary/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.016,
+      "bytes": 1613,
+      "seconds": 0.016,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-decision-default-canary/provider-health-decision-default",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15/providers/decision-default/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 301,
+      "seconds": 0.011,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "contextstill-decision-default-canary/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.014,
+      "bytes": 904,
+      "seconds": 0.014,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-decision-default-canary/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 1613,
+      "seconds": 0.013,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-decision-default-canary/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15/providers/decision-default/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "contextstill-decision-default-canary/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "contextstill-decision-default-canary/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 951,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "contextstill-decision-default-canary/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_8f72070e-1729-4ea6-b1b9-beae4d98bd15/providers/decision-default/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "contextstill-embedding/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.063,
+      "bytes": 901,
+      "seconds": 0.063,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-embedding/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.014,
+      "bytes": 901,
+      "seconds": 0.014,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-embedding/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 605,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "contextstill-embedding/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 2373,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-embedding/provider-health-embedding",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627/providers/embedding/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 402,
+      "seconds": 0.01,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "contextstill-embedding/embed-query",
+      "path": "/v1/embed",
+      "status": 200,
+      "media": "application/json",
+      "headers": {
+        "x-request-id": "req_e2c982b8-44c8-40fe-b581-fb086c69ee7b"
+      },
+      "firstReadSeconds": 0.02,
+      "bytes": 4778,
+      "seconds": 0.02,
+      "pass": true,
+      "dimension": 384,
+      "norm": 0.9999999938668275
+    },
+    {
+      "name": "contextstill-embedding/embed-passage",
+      "path": "/v1/embed",
+      "status": 200,
+      "media": "application/json",
+      "headers": {
+        "x-request-id": "req_019550f4-f283-47c1-b3f6-7e581b547ce7"
+      },
+      "firstReadSeconds": 0.016,
+      "bytes": 4762,
+      "seconds": 0.016,
+      "pass": true,
+      "dimension": 384,
+      "norm": 0.9999999550120494
+    },
+    {
+      "name": "contextstill-embedding/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 901,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-embedding/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 2373,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-embedding/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627/providers/embedding/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.015,
+      "pass": true
+    },
+    {
+      "name": "contextstill-embedding/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "contextstill-embedding/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 948,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "contextstill-embedding/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e44c6b7a-8984-4034-8a1e-d1a8bbf2f627/providers/embedding/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "deep-reasoning-35b/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.811,
+      "bytes": 855,
+      "seconds": 0.811,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "deep-reasoning-35b/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 855,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "deep-reasoning-35b/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 482,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "deep-reasoning-35b/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1549,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "deep-reasoning-35b/provider-health-llm",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c/providers/llm/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 279,
+      "seconds": 0.01,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "deep-reasoning-35b/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 855,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "deep-reasoning-35b/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1549,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "deep-reasoning-35b/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "deep-reasoning-35b/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "deep-reasoning-35b/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 902,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "deep-reasoning-35b/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_f9a6204c-a049-4d61-9c8c-17fa3a048e7c/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "nightworker-background/create",
+      "path": "/v1/agent-connections",
+      "status": 202,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.012,
+      "bytes": 868,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "pending"
+    },
+    {
+      "name": "nightworker-background/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ecc99114-815a-4435-8b30-43403fcec416",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 868,
+      "seconds": 0.013,
+      "pass": false,
+      "result_status": "pending"
+    },
+    {
+      "name": "nightworker-background/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ecc99114-815a-4435-8b30-43403fcec416",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.018,
+      "pass": true
+    },
+    {
+      "name": "nightworker-background/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ecc99114-815a-4435-8b30-43403fcec416",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.017,
+      "bytes": 910,
+      "seconds": 0.018,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/create",
+      "path": "/v1/agent-connections",
+      "status": 202,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.017,
+      "bytes": 1414,
+      "seconds": 0.017,
+      "pass": true,
+      "result_status": "pending"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e0dd2714-752b-4795-bce1-c91f795d4e36",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 1414,
+      "seconds": 0.012,
+      "pass": false,
+      "result_status": "pending"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e0dd2714-752b-4795-bce1-c91f795d4e36",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.016,
+      "pass": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_e0dd2714-752b-4795-bce1-c91f795d4e36",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1459,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "tts-default/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.437,
+      "bytes": 841,
+      "seconds": 0.437,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "tts-default/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 841,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "tts-default/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 442,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "tts-default/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 1536,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "tts-default/provider-health-tts",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d/providers/tts/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 239,
+      "seconds": 0.01,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "tts-default/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 841,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "tts-default/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 1536,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "tts-default/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d/providers/tts/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "tts-default/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "tts-default/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 888,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "tts-default/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_0f141568-b097-4f66-b2aa-e42fc95a972d/providers/tts/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "tts-expressive/create",
+      "path": "/v1/agent-connections",
+      "status": 202,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.024,
+      "bytes": 869,
+      "seconds": 0.024,
+      "pass": true,
+      "result_status": "probing"
+    },
+    {
+      "name": "tts-expressive/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_82865dd0-7b0c-4b40-ad26-2ad46a6cda09",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 869,
+      "seconds": 0.012,
+      "pass": false,
+      "result_status": "probing"
+    },
+    {
+      "name": "tts-expressive/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_82865dd0-7b0c-4b40-ad26-2ad46a6cda09",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.016,
+      "pass": true
+    },
+    {
+      "name": "tts-expressive/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_82865dd0-7b0c-4b40-ad26-2ad46a6cda09",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 911,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "released"
+    }
+  ],
+  "connectionsRetry": [
+    {
+      "name": "contextstill-background/create",
+      "path": "/v1/agent-connections",
+      "status": 202,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.197,
+      "bytes": 870,
+      "seconds": 0.197,
+      "pass": true,
+      "result_status": "pending"
+    },
+    {
+      "name": "contextstill-background/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 865,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-background/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 495,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "contextstill-background/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1548,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-background/provider-health-llm",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0/providers/llm/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 292,
+      "seconds": 0.009,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "contextstill-background/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 865,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-background/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 1548,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "contextstill-background/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "contextstill-background/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "contextstill-background/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 912,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "contextstill-background/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_aae0b638-a81f-4c0c-b878-c606f6fb11e0/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "nightworker-background/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.366,
+      "bytes": 863,
+      "seconds": 0.366,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "nightworker-background/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 863,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "nightworker-background/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 494,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "nightworker-background/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 1546,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "nightworker-background/provider-health-llm",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84/providers/llm/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 291,
+      "seconds": 0.009,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "nightworker-background/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 863,
+      "seconds": 0.013,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "nightworker-background/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1546,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "nightworker-background/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "nightworker-background/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "nightworker-background/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 910,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "nightworker-background/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_fa305942-de79-4ab9-9148-bd3a55787f84/providers/llm/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/create",
+      "path": "/v1/agent-connections",
+      "status": 202,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.015,
+      "bytes": 1414,
+      "seconds": 0.015,
+      "pass": true,
+      "result_status": "pending"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1400,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1306,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "ready",
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/claim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.015,
+      "bytes": 5358,
+      "seconds": 0.015,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/provider-health-asr",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/providers/asr/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 276,
+      "seconds": 0.013,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/provider-health-decision-default",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/providers/decision-default/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 301,
+      "seconds": 0.009,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/provider-health-llm",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/providers/llm/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 284,
+      "seconds": 0.009,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/provider-health-tts",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/providers/tts/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 239,
+      "seconds": 0.01,
+      "pass": true,
+      "result_ready": true,
+      "result_acceptingRequests": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 1400,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/reclaim",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/claim",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 5358,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/old-token-after-renew",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/providers/asr/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.012,
+      "pass": true
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 1459,
+      "seconds": 0.011,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "saaa-qwen38-kv-mem/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_9f4cb26e-5cef-4dde-82a7-604950be8e5c/providers/asr/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "tts-expressive/create",
+      "path": "/v1/agent-connections",
+      "status": 202,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.014,
+      "bytes": 869,
+      "seconds": 0.014,
+      "pass": true,
+      "result_status": "probing"
+    },
+    {
+      "name": "tts-expressive/get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ac71654d-3702-49e6-bae0-3e33e4c30652",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 988,
+      "seconds": 0.011,
+      "pass": false,
+      "result_status": "failed",
+      "result_error": {
+        "code": "connection_ready_timeout",
+        "message": "connection did not become semantically ready before its deadline"
+      }
+    },
+    {
+      "name": "tts-expressive/pending-health",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ac71654d-3702-49e6-bae0-3e33e4c30652/health",
+      "status": 409,
+      "error": "{\"error\":{\"code\":\"connection_inactive\",\"message\":\"connection aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ac71654d-3702-49e6-bae0-3e33e4c30652 is failed\"}}",
+      "seconds": 0.009,
+      "pass": false,
+      "response": null
+    },
+    {
+      "name": "tts-expressive/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ac71654d-3702-49e6-bae0-3e33e4c30652",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "tts-expressive/released-get",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ac71654d-3702-49e6-bae0-3e33e4c30652",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 988,
+      "seconds": 0.01,
+      "pass": false,
+      "result_status": "failed",
+      "result_error": {
+        "code": "connection_ready_timeout",
+        "message": "connection did not become semantically ready before its deadline"
+      }
+    }
+  ],
+  "control": [
+    {
+      "name": "/health",
+      "path": "/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.206,
+      "bytes": 233,
+      "seconds": 0.206,
+      "pass": true,
+      "response": {
+        "status": "ok",
+        "version": "0.1.0",
+        "releaseCommit": "be5e86272165f4e13e69f4da204b1425486c6070",
+        "configRevision": "af52b01648eb2a93cc676de4afaaa479d0e42494702f0e822bc38a8f68ef47d9",
+        "bootEpoch": "epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382"
+      }
+    },
+    {
+      "name": "/ready",
+      "path": "/ready",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 18,
+      "seconds": 0.011,
+      "pass": true,
+      "response": {
+        "status": "ready"
+      }
+    },
+    {
+      "name": "/v1/activity",
+      "path": "/v1/activity",
+      "status": 200,
+      "media": "application/json",
+      "headers": {
+        "retry-after": "1"
+      },
+      "firstReadSeconds": 0.01,
+      "bytes": 332,
+      "seconds": 0.01,
+      "pass": true,
+      "response": {
+        "contractVersion": "larm-service-activity.v1",
+        "observedAt": "2026-09-16T03:03:14.414Z",
+        "validForMs": 1000,
+        "reservationGuaranteed": false,
+        "bootEpoch": "epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382",
+        "configRevision": "af52b01648eb2a93cc676de4afaaa479d0e42494702f0e822bc38a8f68ef47d9",
+        "state": "active",
+        "activeWorkloads": 2,
+        "retryAfterMs": 1000
+      }
+    },
+    {
+      "name": "/metrics",
+      "path": "/metrics",
+      "status": 200,
+      "media": "text/plain; charset=UTF-8",
+      "headers": {},
+      "firstReadSeconds": 0.019,
+      "bytes": 41537,
+      "seconds": 0.025,
+      "pass": true
+    },
+    {
+      "name": "/openapi.json",
+      "path": "/openapi.json",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.025,
+      "bytes": 123361,
+      "seconds": 0.06,
+      "pass": true
+    },
+    {
+      "name": "/runtimes",
+      "path": "/runtimes",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 2161,
+      "seconds": 0.012,
+      "pass": true
+    },
+    {
+      "name": "/state",
+      "path": "/state",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.015,
+      "bytes": 2618,
+      "seconds": 0.015,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes",
+      "path": "/v1/inspection/runtimes",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 7953,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/state",
+      "path": "/v1/inspection/state",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.015,
+      "bytes": 6335,
+      "seconds": 0.015,
+      "pass": true
+    },
+    {
+      "name": "/v1/release-convergence",
+      "path": "/v1/release-convergence",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.022,
+      "bytes": 319,
+      "seconds": 0.022,
+      "pass": true
+    },
+    {
+      "name": "/v1/context-status",
+      "path": "/v1/context-status",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 2568,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "/v1/agent-profiles",
+      "path": "/v1/agent-profiles",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 2520,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v2/agent-profiles",
+      "path": "/v2/agent-profiles",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 4261,
+      "seconds": 0.012,
+      "pass": true
+    },
+    {
+      "name": "/v3/agent-profiles",
+      "path": "/v3/agent-profiles",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 5268,
+      "seconds": 0.014,
+      "pass": true
+    },
+    {
+      "name": "/v1/services",
+      "path": "/v1/services",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 348,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/services/asr/health",
+      "path": "/v1/services/asr/health",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 40,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/models",
+      "path": "/v1/models",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 606,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/runtime-releases",
+      "path": "/v1/runtime-releases",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 5851,
+      "seconds": 0.012,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/multilingual-e5-small",
+      "path": "/runtimes/multilingual-e5-small",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 141,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/multilingual-e5-small",
+      "path": "/v1/inspection/runtimes/multilingual-e5-small",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 1011,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/multilingual-e5-small",
+      "path": "/v1/deployments/multilingual-e5-small",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 554,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/ornith15-35b",
+      "path": "/runtimes/ornith15-35b",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 150,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/ornith15-35b",
+      "path": "/v1/inspection/runtimes/ornith15-35b",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.008,
+      "bytes": 557,
+      "seconds": 0.008,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/ornith15-35b",
+      "path": "/v1/deployments/ornith15-35b",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 528,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/ornith15-35b-agent",
+      "path": "/runtimes/ornith15-35b-agent",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 156,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/ornith15-35b-agent",
+      "path": "/v1/inspection/runtimes/ornith15-35b-agent",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 581,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/ornith15-35b-agent",
+      "path": "/v1/deployments/ornith15-35b-agent",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 578,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/ornith15-35b-speed",
+      "path": "/runtimes/ornith15-35b-speed",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 156,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/ornith15-35b-speed",
+      "path": "/v1/inspection/runtimes/ornith15-35b-speed",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 581,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/ornith15-35b-speed",
+      "path": "/v1/deployments/ornith15-35b-speed",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.014,
+      "bytes": 554,
+      "seconds": 0.014,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen-asr",
+      "path": "/runtimes/qwen-asr",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 119,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen-asr",
+      "path": "/v1/inspection/runtimes/qwen-asr",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 362,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen-asr",
+      "path": "/v1/deployments/qwen-asr",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 454,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen-general",
+      "path": "/runtimes/qwen-general",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 149,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen-general",
+      "path": "/v1/inspection/runtimes/qwen-general",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 400,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen-general",
+      "path": "/v1/deployments/qwen-general",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 498,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen-tts",
+      "path": "/runtimes/qwen-tts",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 123,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen-tts",
+      "path": "/v1/inspection/runtimes/qwen-tts",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 366,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen-tts",
+      "path": "/v1/deployments/qwen-tts",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 456,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen-worker-agent",
+      "path": "/runtimes/qwen-worker-agent",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 155,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen-worker-agent",
+      "path": "/v1/inspection/runtimes/qwen-worker-agent",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 556,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen-worker-agent",
+      "path": "/v1/deployments/qwen-worker-agent",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 516,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen-worker-agent-efficientthink",
+      "path": "/runtimes/qwen-worker-agent-efficientthink",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 170,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen-worker-agent-efficientthink",
+      "path": "/v1/inspection/runtimes/qwen-worker-agent-efficientthink",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 616,
+      "seconds": 0.012,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen-worker-agent-efficientthink",
+      "path": "/v1/deployments/qwen-worker-agent-efficientthink",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 585,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen-worker-fast",
+      "path": "/runtimes/qwen-worker-fast",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 138,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen-worker-fast",
+      "path": "/v1/inspection/runtimes/qwen-worker-fast",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 536,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen-worker-fast",
+      "path": "/v1/deployments/qwen-worker-fast",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 502,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen-worker-quality",
+      "path": "/runtimes/qwen-worker-quality",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 157,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen-worker-quality",
+      "path": "/v1/inspection/runtimes/qwen-worker-quality",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 564,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen-worker-quality",
+      "path": "/v1/deployments/qwen-worker-quality",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 538,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen35-decision",
+      "path": "/runtimes/qwen35-decision",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 133,
+      "seconds": 0.013,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen35-decision",
+      "path": "/v1/inspection/runtimes/qwen35-decision",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 515,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen35-decision",
+      "path": "/v1/deployments/qwen35-decision",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 534,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/qwen36-35b",
+      "path": "/runtimes/qwen36-35b",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 148,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/qwen36-35b",
+      "path": "/v1/inspection/runtimes/qwen36-35b",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 549,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/qwen36-35b",
+      "path": "/v1/deployments/qwen36-35b",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 480,
+      "seconds": 0.009,
+      "pass": true
+    },
+    {
+      "name": "/runtimes/voicevox-tts",
+      "path": "/runtimes/voicevox-tts",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 115,
+      "seconds": 0.012,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/voicevox-tts",
+      "path": "/v1/inspection/runtimes/voicevox-tts",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 362,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/voicevox-tts",
+      "path": "/v1/deployments/voicevox-tts",
+      "status": 404,
+      "error": "{\"error\":{\"code\":\"runtime_not_found\",\"message\":\"runtime voicevox-tts has no release catalog entry\"}}",
+      "seconds": 0.01,
+      "pass": false
+    },
+    {
+      "name": "/runtimes/whisper-asr",
+      "path": "/runtimes/whisper-asr",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 122,
+      "seconds": 0.01,
+      "pass": true
+    },
+    {
+      "name": "/v1/inspection/runtimes/whisper-asr",
+      "path": "/v1/inspection/runtimes/whisper-asr",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 368,
+      "seconds": 0.011,
+      "pass": true
+    },
+    {
+      "name": "/v1/deployments/whisper-asr",
+      "path": "/v1/deployments/whisper-asr",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 504,
+      "seconds": 0.012,
+      "pass": true
+    }
+  ],
+  "negative": [
+    {
+      "name": "unknown-model",
+      "path": "/v1/chat/completions",
+      "status": 404,
+      "error": "{\"error\":{\"message\":\"model saaa-conformance-missing-model is not available\",\"type\":\"invalid_request_error\",\"param\":\"model\",\"code\":\"model_not_found\"}}",
+      "seconds": 0.213,
+      "pass": true
+    },
+    {
+      "name": "invalid-chat",
+      "path": "/v1/chat/completions",
+      "status": 400,
+      "error": "{\"error\":{\"message\":\"model and messages are required\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request\"}}",
+      "seconds": 0.016,
+      "pass": true
+    },
+    {
+      "name": "attempt-without-allocation",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "application/json; charset=utf-8",
+      "headers": {
+        "x-request-id": "req_9ed8f0b4-cd31-49ae-b8b0-c88270836073"
+      },
+      "firstReadSeconds": 5.199,
+      "bytes": 686,
+      "seconds": 5.199,
+      "pass": false
+    }
+  ],
+  "cancel": [
+    {
+      "name": "cancel/create",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.408,
+      "bytes": 904,
+      "seconds": 0.408,
+      "pass": true
+    },
+    {
+      "name": "cancel/close-stream",
+      "status": 200,
+      "firstLineReceived": true,
+      "seconds": 3.475,
+      "pass": true
+    },
+    {
+      "name": "cancel/release",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_bd09b4a5-a3a6-4b64-9eb2-afa72e810d8a",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.017,
+      "pass": true
+    },
+    {
+      "name": "cancel/revoked",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_bd09b4a5-a3a6-4b64-9eb2-afa72e810d8a/providers/decision-default/health",
+      "status": 401,
+      "error": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"provider bearer token is no longer valid\"}}",
+      "seconds": 0.01,
+      "pass": true
+    }
+  ],
+  "allocation": [
+    {
+      "name": "allocation/bootstrap",
+      "path": "/v1/agent-connections",
+      "status": 201,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.397,
+      "bytes": 904,
+      "seconds": 0.397,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "allocation/template",
+      "path": "/v1/allocations/alloc_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ac3ed217-9e13-4015-8b35-c4333cc8be0c",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 796,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "allocation/bootstrap-delete",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_3f07c95a-72fe-4147-b0fb-5def12b6ac28",
+      "status": 204,
+      "media": null,
+      "headers": {},
+      "bytes": 0,
+      "seconds": 0.015,
+      "pass": true
+    },
+    {
+      "name": "allocation/create",
+      "path": "/v1/allocations",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.013,
+      "bytes": 795,
+      "seconds": 0.013,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "allocation/get",
+      "path": "/v1/allocations/alloc_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_649309b1-ec54-4841-bbac-5be374b28f5d",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 795,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "allocation/resolve",
+      "path": "/v1/allocations/alloc_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_649309b1-ec54-4841-bbac-5be374b28f5d/resolve",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 295,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "HOT",
+      "result_runtime": "qwen35-decision"
+    },
+    {
+      "name": "allocation/renew",
+      "path": "/v1/allocations/alloc_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_649309b1-ec54-4841-bbac-5be374b28f5d/renew",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 795,
+      "seconds": 0.01,
+      "pass": true,
+      "result_status": "ready"
+    },
+    {
+      "name": "allocation/delete",
+      "path": "/v1/allocations/alloc_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_649309b1-ec54-4841-bbac-5be374b28f5d",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 838,
+      "seconds": 0.012,
+      "pass": true,
+      "result_status": "released"
+    },
+    {
+      "name": "legacy/prepare",
+      "path": "/prepare",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.012,
+      "bytes": 353,
+      "seconds": 0.012,
+      "pass": true,
+      "result_ready": true
+    },
+    {
+      "name": "legacy/resolve",
+      "path": "/resolve",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.009,
+      "bytes": 124,
+      "seconds": 0.009,
+      "pass": true,
+      "result_status": "HOT",
+      "result_runtime": "qwen35-decision"
+    },
+    {
+      "name": "legacy/release",
+      "path": "/release",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.01,
+      "bytes": 177,
+      "seconds": 0.01,
+      "pass": true
+    }
+  ],
+  "ttsCleanup": [
+    {
+      "name": "tts-failed-connection",
+      "path": "/v1/agent-connections/aconn_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_ac71654d-3702-49e6-bae0-3e33e4c30652",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.2,
+      "bytes": 988,
+      "seconds": 0.2,
+      "connectionStatus": "failed",
+      "connectionError": {
+        "code": "connection_ready_timeout",
+        "message": "connection did not become semantically ready before its deadline"
+      }
+    },
+    {
+      "name": "tts-failed-allocation",
+      "path": "/v1/allocations/alloc_epoch-ea4bb6f2-dadf-4a21-a399-096c14c78382_5f3a9d4a-5f11-470f-b067-21a1ede6ce1d",
+      "status": 200,
+      "media": "application/json",
+      "headers": {},
+      "firstReadSeconds": 0.011,
+      "bytes": 812,
+      "seconds": 0.011,
+      "allocationStatus": "released"
+    }
+  ],
+  "personalState": {
+    "audience": "saaa-desktop",
+    "client": "saaa-coding-agent",
+    "capabilityStatus": 401,
+    "sourceCreated": false,
+    "forgetStatus": 401,
+    "connectionReleased": true
+  },
+  "saaaRustLive": {
+    "test": "live_four_provider_session",
+    "passed": true,
+    "seconds": 18.75,
+    "checks": [
+      "decision-default",
+      "llm",
+      "tts-wav",
+      "asr",
+      "release",
+      "credential-revocation"
+    ]
+  },
+  "noAuthHarnessDiscovery": [
+    {
+      "path": "/v1/services",
+      "status": 200,
+      "body": {
+        "contractVersion": "saaa-service-harness.v2",
+        "revision": "af52b01648eb2a93cc676de4afaaa479d0e42494702f0e822bc38a8f68ef47d9",
+        "services": [
+          {
+            "capability": "asr",
+            "protocol": "openai.audio-transcriptions.v1",
+            "baseUrl": "http://192.168.0.130:9810/v1",
+            "model": "qwen3-asr-1.7b",
+            "language": "auto",
+            "healthUrl": "http://192.168.0.130:9810/v1/services/asr/health"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/services/asr/health",
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "model": "qwen3-asr-1.7b"
+      }
+    }
+  ],
+  "noAuthHarnessAsr": {
+    "status": 200,
+    "body": {
+      "text": ""
+    }
+  },
+  "cleanupAudit": {
+    "connectionsChecked": 25,
+    "states": {
+      "released": 24,
+      "failed": 1
+    },
+    "issues": []
+  },
+  "endReleaseCommit": "be5e86272165f4e13e69f4da204b1425486c6070",
+  "targetedQwenKvRecheck": [
+    {
+      "name": "qwen-tts-wav",
+      "path": "/v1/audio/speech",
+      "status": 400,
+      "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+      "seconds": 0.21,
+      "pass": false
+    },
+    {
+      "name": "qwen3.8-kv-mem/tools",
+      "path": "/v1/chat/completions",
+      "status": 200,
+      "media": "text/event-stream",
+      "headers": {
+        "x-request-id": "req_5a08bda4-13ae-423b-95b3-0aeeb73d6d41"
+      },
+      "firstReadSeconds": 13.47,
+      "bytes": 9617,
+      "seconds": 15.016,
+      "model": "qwen3.8-kv-mem",
+      "done": true,
+      "events": 35,
+      "content": "",
+      "finishes": [
+        "tool_calls"
+      ],
+      "tools": [
+        {
+          "id": "WLRlb771ZtIJNiM6ng5FR8oC5AtL5een",
+          "type": "function",
+          "function": {
+            "name": "connection_check",
+            "arguments": "{\"value\":\"OK\"}"
+          }
+        }
+      ],
+      "pass": true
+    },
+    {
+      "name": "qwen3.8-kv-mem/tool-result",
+      "path": "/v1/chat/completions",
+      "status": 503,
+      "error": "{\"error\":{\"message\":\"model qwen3.8-kv-mem did not become ready\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"model_loading_timeout\"}}",
+      "seconds": 120.064,
+      "model": "qwen3.8-kv-mem",
+      "content": null,
+      "finishes": [],
+      "pass": false
+    }
+  ],
+  "targetedRecheckHistory": [
+    {
+      "observedAt": "2026-09-16T04:03:24.901498+00:00",
+      "releaseCommit": "be5e86272165f4e13e69f4da204b1425486c6070",
+      "runningReadyTimeoutOverride": null,
+      "results": [
+        {
+          "name": "qwen-tts-wav",
+          "path": "/v1/audio/speech",
+          "status": 400,
+          "error": "{\"detail\":{\"error\":\"invalid_model\",\"message\":\"Unsupported model: qwen3-tts-expressive. Supported: ['tts-1', 'tts-1-hd', 'qwen3-tts', 'tts-1-en', 'tts-1-hd-en', 'tts-1-zh', 'tts-1-hd-zh', 'tts-1-ja', 'tts-1-hd-ja', 'tts-1-ko', 'tts-1-hd-ko', 'tts-1-de', 'tts-1-hd-de', 'tts-1-fr', 'tts-1-hd-fr', 'tts-1-es', 'tts-1-hd-es', 'tts-1-ru', 'tts-1-hd-ru', 'tts-1-pt', 'tts-1-hd-pt', 'tts-1-it', 'tts-1-hd-it']\",\"type\":\"invalid_request_error\"}}",
+          "seconds": 0.22,
+          "pass": false
+        },
+        {
+          "name": "qwen3.8-kv-mem/tools",
+          "path": "/v1/chat/completions",
+          "status": 200,
+          "media": "text/event-stream",
+          "headers": {
+            "x-request-id": "req_a0758c38-d652-4517-b94e-e11e53552eff"
+          },
+          "firstReadSeconds": 14.094,
+          "bytes": 9618,
+          "seconds": 15.659,
+          "model": "qwen3.8-kv-mem",
+          "done": true,
+          "events": 35,
+          "content": "",
+          "finishes": [
+            "tool_calls"
+          ],
+          "tools": [
+            {
+              "id": "lPgDMgTWlF0mSOJXuuPSMzWaxhcEuZ67",
+              "type": "function",
+              "function": {
+                "name": "connection_check",
+                "arguments": "{\"value\":\"OK\"}"
+              }
+            }
+          ],
+          "pass": true
+        },
+        {
+          "name": "qwen3.8-kv-mem/tool-result",
+          "path": "/v1/chat/completions",
+          "status": 503,
+          "error": "{\"error\":{\"message\":\"model qwen3.8-kv-mem did not become ready\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"model_loading_timeout\"}}",
+          "seconds": 120.058,
+          "model": "qwen3.8-kv-mem",
+          "content": null,
+          "finishes": [],
+          "pass": false
+        }
+      ]
+    }
+  ]
+}

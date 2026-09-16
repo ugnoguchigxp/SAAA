@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "protocol": "prompt-predicate-v1",
+  "sourceHash": "53aa67d85ac9406ef5d208e296d301ac79578b0fe1164515e17e4178ec2329d3",
+  "irHash": "bebbcbd256c27919440d817d483cc16a3de856150c454e12d967df65e952cea7",
+  "body": {
+    "kind": "all",
+    "conditions": [
+      {
+        "kind": "equals",
+        "property": [
+          "enabled"
+        ],
+        "value": true
+      },
+      {
+        "kind": "equals",
+        "property": [
+          "suspended"
+        ],
+        "value": false
+      }
+    ]
+  },
+  "resolver": {
+    "provider": "fixture",
+    "model": "fixture",
+    "responseId": "fixture",
+    "usage": null
+  },
+  "diagnostics": [],
+  "checksum": "a8ffb8fc53f38aa6849f372e9c27bec26cde3689a4d72d57da0e860d202a7309"
+}

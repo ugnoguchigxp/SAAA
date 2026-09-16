@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "kind": "predicate",
+  "id": "access",
+  "intent": "有効かつ利用停止中でない利用者だけを受け付ける。",
+  "requirements": [
+    {
+      "id": "enabled",
+      "level": "must",
+      "text": "enabledがtrueであること。"
+    },
+    {
+      "id": "suspension",
+      "level": "must-not",
+      "text": "suspendedがtrueなら許可しない。"
+    }
+  ],
+  "unresolvedWhen": [
+    "要求が矛盾する、または入力契約と現行Predicate IRで表現できない場合。"
+  ],
+  "profile": "predicate-i32-v1",
+  "contract": {
+    "version": 1,
+    "fields": [
+      {
+        "name": "enabled",
+        "kind": "boolean",
+        "values": [],
+        "nullable": false,
+        "undefinable": false,
+        "optional": false
+      },
+      {
+        "name": "suspended",
+        "kind": "boolean",
+        "values": [],
+        "nullable": false,
+        "undefinable": false,
+        "optional": false
+      }
+    ]
+  },
+  "examples": [
+    {
+      "id": "accepted",
+      "input": {
+        "enabled": true,
+        "suspended": false
+      },
+      "undefinedFields": [],
+      "expected": true
+    },
+    {
+      "id": "disabled",
+      "input": {
+        "enabled": false,
+        "suspended": false
+      },
+      "undefinedFields": [],
+      "expected": false
+    }
+  ]
+}

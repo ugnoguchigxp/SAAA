@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "verifier": "capability-predicate-v1",
+  "packageHash": "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68",
+  "status": "pass",
+  "acceptance": "not-run",
+  "apiCalls": 0,
+  "results": [
+    {
+      "id": "accepted",
+      "origin": "source",
+      "requirementIds": [],
+      "expected": {
+        "kind": "value",
+        "value": true
+      },
+      "actual": {
+        "kind": "value",
+        "value": true
+      },
+      "status": "pass"
+    },
+    {
+      "id": "disabled",
+      "origin": "source",
+      "requirementIds": [],
+      "expected": {
+        "kind": "value",
+        "value": false
+      },
+      "actual": {
+        "kind": "value",
+        "value": false
+      },
+      "status": "pass"
+    },
+    {
+      "id": "allowed",
+      "origin": "suite",
+      "requirementIds": [
+        "enabled",
+        "suspension"
+      ],
+      "expected": {
+        "kind": "value",
+        "value": true
+      },
+      "actual": {
+        "kind": "value",
+        "value": true
+      },
+      "status": "pass"
+    },
+    {
+      "id": "stopped",
+      "origin": "suite",
+      "requirementIds": [
+        "suspension"
+      ],
+      "expected": {
+        "kind": "value",
+        "value": false
+      },
+      "actual": {
+        "kind": "value",
+        "value": false
+      },
+      "status": "pass"
+    },
+    {
+      "id": "disabled-stopped",
+      "origin": "suite",
+      "requirementIds": [
+        "enabled",
+        "suspension"
+      ],
+      "expected": {
+        "kind": "value",
+        "value": false
+      },
+      "actual": {
+        "kind": "value",
+        "value": false
+      },
+      "status": "pass"
+    },
+    {
+      "id": "invalid-enabled",
+      "origin": "suite",
+      "requirementIds": [
+        "enabled"
+      ],
+      "expected": {
+        "kind": "error",
+        "code": "INVALID_INPUT"
+      },
+      "actual": {
+        "kind": "error",
+        "code": "INVALID_INPUT"
+      },
+      "status": "pass"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "enabled",
+      "caseIds": [
+        "allowed",
+        "disabled-stopped",
+        "invalid-enabled"
+      ]
+    },
+    {
+      "id": "suspension",
+      "caseIds": [
+        "allowed",
+        "stopped",
+        "disabled-stopped"
+      ]
+    }
+  ],
+  "unchecked": [
+    "SAAA acceptance",
+    "Natural-language completeness is not proven by case coverage"
+  ],
+  "passed": 6,
+  "failed": 0,
+  "errors": 0,
+  "diagnostics": []
+}
