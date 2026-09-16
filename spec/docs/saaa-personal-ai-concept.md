@@ -214,7 +214,7 @@ Local-firstを原則とし、外部処理を使う場合も、送信可能な情
 
 2B級モデルは受領・相槌・短い確認・構造化判断の候補に限定し、SAAAが許可された種別を検証して定型文を返す。事実回答、結果の解釈、約束、最終応答は27BまたはSAAAの決定的ロジックが担当する。2BはMemory/World Modelを更新せず、27Bと無条件に同時generationしない。semantic readiness未認定の経路はshadow・定型文のままとする。
 
-LARMのKV:memは、principalあたり最大20M tokenの登録Source Setから、各generationに必要なbounded Active Viewを構成する。現行Qwen 3.8のnative windowは262,144 token、出力予約32,768と安全余白4,096を除いた最大入力は225,280 tokenである。20Mは単一ContextWindowの容量ではない。Viewはone-shotであり、snapshotは適合するView/prefixの再利用を速める性能cacheとして扱う。
+LARMのKV:memは、principalあたり最大20M tokenの登録Source Setから、各generationに必要なbounded Active Viewを構成する。現行Qwen 3.8の本番保証は128k context（131,072 token）で、出力予約4,096と安全余白1,976を除いた最大入力は125,000 tokenである。20Mは単一ContextWindowの容量ではない。Viewはone-shotであり、snapshotは適合するView/prefixの再利用を速める性能cacheとして扱う。
 
 中間メモリは現在有効な目的・制約・訂正・未決を管理し、原文とともに継続の正本を構成する。View失効、release変更、source版変更時は有効なsourceと状態から再構築する。具体的な役割・更新・忘却・認可は[Personal Stateロードマップ](personal-state-architecture-roadmap.md)を優先する。原本照合の版と確認範囲は[契約照合記録](larm-personal-state-contract-review.md)に残す。
 

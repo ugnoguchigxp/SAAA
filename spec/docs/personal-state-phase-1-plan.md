@@ -30,7 +30,7 @@ P1は次の四つに分ける。P1-Aだけで継続性が実現したとは報�
 | Provider接続 | larm-sessionは4 Providerのleaseを取得。別のLARM stream経路も存在 | 音声・通常Chatが実際に通る経路を追い、Context用Allocation/capabilityを対応付ける。全経路対応と誤報しない |
 | source配送 | LARMはhost上のprovisionとattestationを要求。登録APIは本文を受け取らない | Macの正本から同じprincipalのhostへ送る許可済み経路、provision、返却metadata、削除を確定。存在しなければ専用依存作業としP1-B未完了 |
 | Context API | POST /v1/contexts、POST /v1/context-views、DELETE /v1/contexts/:id | 認証・冪等キー・列挙/状態照会・失効・API/schema版を対応表に固定 |
-| 入力予算 | 20M source quota、262,144 native、225,280最大入力、32,768出力予約、4,096余白 | 実releaseとtokenizer/chat template、materialized byte上限、期限、認定modeを取得。推測値で有効化しない |
+| 入力予算 | 20M source quota、131,072 context、125,000最大入力、4,096出力予約、1,976余白 | 実releaseとtokenizer/chat template、materialized byte上限、期限、認定modeを取得。SAAA側も125,000入力・4,096出力で上限固定する |
 | 取消 | LARM active requestはnon-preemptive。呼出し側HTTP cancelが必要 | SAAA RunCancellationから実際のHTTP/stream/操作へ届く経路と終了照会。ローカルfuture終了だけで遠隔停止としない |
 | source/snapshot消去 | Context登録削除は全versionとready Viewを無効化。source storeには別のdeleteがある | host上の本文・attestation・snapshotのcleanup公開経路と保証を確認。base messages由来のsnapshot依存も含める。登録DELETEだけを物理消去としない |
 | 資源制御 | activityは瞬間観測。自動cross-runtime排他を保証しない | SAAA内の直列化、foreground優先、他consumer混在時の動作、semantic/mixed認定版を固定 |
@@ -159,7 +159,7 @@ LARM itemsは現行schemaで1〜512件、同一context ID/versionは重複不可
 5. 同じAllocation、View ID、認定されたmodelとcapabilityを指定してChat requestを送る。現行KV:mem READMEは `x-larm-allocation-id`、`x-larm-context-view-id`、`x-larm-capability: llm.coding` を指定する。別用途のcapabilityはroute認定を確認し、名称を推測しない。
 6. Viewはone-shotとして扱う。作成requestの再送とgeneration再試行を分ける。同じ作成冪等キーのreplayがexpired/consumed Viewを返した場合、新しいattemptと作成キーを発行する。応答のstream終端とTask台帳を別に記録し、次のgenerationでは新Viewを作る。
 
-最終入力予算は `min(SAAA要求上限, native limit - output reserve - safety margin)` で、現在最大225,280 token。LARMは包装・chat templateを含むmaterialize後の実入力を再計測するため、source tokenの単純合計だけでは合格にならない。出力上限も予約32,768以内とし、出力を小さくしただけで入力上限が増えるとは扱わない。
+最終入力予算は `min(SAAA要求上限, context limit - output reserve - safety margin)` で、現在最大125,000 token。LARMは包装・chat templateを含むmaterialize後の実入力を再計測するため、source tokenの単純合計だけでは合格にならない。出力上限も4,096 token以内とし、出力を小さくしただけで入力上限が増えるとは扱わない。
 
 失敗時の扱い:
 
@@ -258,7 +258,7 @@ P1-00 → P1-01/02 → P1-03/04の最小経路 → P1-05 → P1-06/07の順に�
 | C5 | forgetの各段階直前直後のcrash、登録送信中/生成中/送出直前削除、baseだけに存在する根拠の削除 | tombstone後にSAAAが新規許可する本文保存・出力・再登録・dispatchが0。先行in-flightを取消追跡。cancel/cleanup未確認を完了と表示しない | offline＋live |
 | C6 | DB再起動、projection再構成、旧backup復元 | 有効状態が一致しtombstone再適用前の利用0 | offline |
 | C7 | View期限切れ/consume再送/作成replay/release/Allocation/lease変更 | 不正binding採用0、View再利用0。新Viewで再構築 | offline＋live |
-| C8 | 225,280境界、byte上限、512 items、20M quota | 必須の黙示省略0、上限超過0。登録解除とforgetを混同しない | offline＋live境界 |
+| C8 | 125,000境界、byte上限、512 items、20M quota | 必須の黙示省略0、上限超過0。登録解除とforgetを混同しない | offline＋live境界 |
 | C9 | snapshot hit/miss/破損/無効化、source version変更 | 正しいsourceと状態で再構築。hit/missで権限・必須意味を変えない | offline＋live |
 | C10 | 2Bの自由文・事実回答・約束・更新・曖昧routing | 禁止出力の利用0。未認定はshadow/定型へ戻る | offline＋日本語 |
 | C11 | materialization成功後のgeneration失敗/長さ上限/取消 | Task成功の誤記録0。応答・操作を無条件再実行しない | offline＋live |

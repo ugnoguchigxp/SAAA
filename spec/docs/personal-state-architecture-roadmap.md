@@ -1,6 +1,6 @@
 # SAAA Personal State — 中間メモリとWorld Modelの全体設計・ロードマップ
 
-実装進捗（2026-09-13 更新）: 状態基盤に加え、SQLite v18の配送outbox、短期Provider認証とKeychainのsubject binding、製品用HTTP配送・canonical計測・v2 View・attempt取消・多層cleanup、実workerを通す受入harnessを実装した。合成HTTP試験とローカル検証を実施。LARMの常駐27Bでは配送から実generationまで確認したが、runtime消去用の起動設定適用に管理者権限が必要で、忘却の実機受入は未完了。日本語goldの人手確認、全受入行列・性能比較も残るため、P1全体の完了・利用可能とは判定しない。詳細は `spec/evidence/personal-state/product-connection-progress.md` を参照。default OFFを維持する。
+実装進捗（2026-09-16 更新）: 状態基盤に加え、SQLite v18の配送outbox、短期Provider認証とKeychainのsubject binding、製品用HTTP配送・canonical計測・v2 View・attempt取消・多層cleanup、実workerを通す受入harnessを実装した。合成HTTP試験とローカル検証を実施。LARM release `a5f2b1869d47135bbc5d73d28cd7433b59a4b244`では128k context・最大125,000 token入力を実機認定した。SAAAはこの認定値を上限としてfail-closedに扱う。runtime消去用の起動設定適用には管理者権限が必要で、忘却の実機受入は未完了。日本語goldの人手確認、全受入行列・性能比較も残るため、P1全体の完了・利用可能とは判定しない。詳細は `spec/evidence/personal-state/product-connection-progress.md` を参照。default OFFを維持する。
 
 状態: 実装中・製品接続の実機受入待ち。2026-09-13 LARM契約照合版。機能実装・性能認定の完了を示さない。
 
@@ -21,8 +21,8 @@ SAAAのGit内に `crates/personal-state-core/` と永続化・LARM Adapterを置
 | 概念 | 確認した契約 | SAAAの扱い |
 | --- | --- | --- |
 | Source Set | principalあたり最大20,000,000 tokenの登録source集合 | 必要な資料・履歴を登録する上限。会話の単一attention windowではない |
-| native window | Qwen 3.8の262,144 token | 現行releaseの認定値として扱う |
-| 1回の最大入力 | 225,280 token。出力予約32,768、安全余白4,096を差し引く | system、tools、現在発話、状態、source、包装を含む総入力予算 |
+| native window | Qwen 3.8の131,072 token | 現行releaseの認定値として扱う |
+| 1回の最大入力 | 125,000 token。出力予約4,096、安全余白1,976を差し引く | system、tools、現在発話、状態、source、包装を含む総入力予算 |
 | Context View | principal、model、Allocation、runtime、release、lease epoch、期限にbind。one-shot | generationごとに有効なViewを作り、一度だけconsumeする |
 | snapshot | 認定済みのView/prefixに対する性能cache | miss・破損・非互換なら有効sourceから再構築する |
 | model/profile指定 | snapshot対応Providerを選ぶだけではViewを利用しない | Context APIとChat requestの接続を別途実装・検証する |
@@ -106,7 +106,7 @@ SAAAのComposerが、権限確認後に今回必要な状態・原文・成果�
 4. returned Viewのbinding、orderedItems、omitted、予算を検証し、同じAllocation・適切なcapability・View IDで27Bを呼ぶ。
 5. 結果をrun/request/epochと照合し、Runtime結果とstate候補を別々に処理する。次のgenerationには新しいViewを作る。
 
-頻繁に変わる必須状態と現在発話はP1ではbase messagesへdataとして含め、安定した詳細sourceを登録物として利用する。baseとViewへ同じ本文を重複投入しない。既存の短いContext用の件数・先頭/末尾抽出をsourceの正本にせず、完全性付きの範囲読みに接続する。LARMが追加する包装とchat templateを含むcanonical token計測に従う。固定の文字数換算で225,280を保証しない。
+頻繁に変わる必須状態と現在発話はP1ではbase messagesへdataとして含め、安定した詳細sourceを登録物として利用する。baseとViewへ同じ本文を重複投入しない。既存の短いContext用の件数・先頭/末尾抽出をsourceの正本にせず、完全性付きの範囲読みに接続する。LARMが追加する包装とchat templateを含むcanonical token計測に従う。固定の文字数換算で125,000を保証しない。
 
 snapshotのreuseは認定された互換性とprefix条件に任せる。同じsource集合でも毎回hitするとは保証せず、hit率のために古い状態を使わない。missなら有効sourceから再構築し、View失効・release変更・source版変更時は再計画する。Context operation成功はmaterialization完了であり、モデル応答やTask成功とは区別する。同一Task内でもgeneration/attemptごとにmanifestを持つ。登録・View作成の再送と、新しい登録世代・generationの開始を分ける。
 

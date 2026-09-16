@@ -112,7 +112,7 @@ fn certification(
         tokenizer_digest: c.tokenizer_digest.clone(),
         capability: "llm.coding".into(),
         native_tokens: c.context_limit_tokens,
-        output_reserve: c.output_reserve_tokens,
+        output_reserve: c.output_limit()?,
         safety_margin: c.safety_margin_tokens,
         max_input_tokens: c.input_limit()?,
         max_bytes: usize::try_from(c.max_materialized_bytes).map_err(|_| "personal-byte-budget")?,

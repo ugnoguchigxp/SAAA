@@ -34,6 +34,7 @@ pub async fn infer(
         return Err("personal-capability-unavailable".into());
     }
     cap.validate(&cap.subject_digest, &m.allocation, &m.runtime, super::now())?;
+    let output_limit = cap.output_limit()?;
     if m.release != cap.release
         || m.lease_epoch != cap.lease_epoch
         || required.len() > 512
@@ -42,7 +43,7 @@ pub async fn infer(
         || request["stream"] != false
         || request["max_tokens"]
             .as_u64()
-            .is_none_or(|n| n == 0 || n > cap.output_reserve_tokens)
+            .is_none_or(|n| n == 0 || n > output_limit)
     {
         return Err("personal-generation-binding".into());
     }

@@ -2,6 +2,8 @@
 
 確認日: 2026-09-13。SAAAの計画修正に必要な原本・コードを、既存SSH接続で読み取りのみ確認した。モデル起動、設定変更、source provision、generation、外部タスクへの送信は行っていない。
 
+> 2026-09-16追補: 下記の容量値は当時の原本確認記録である。本番保証はLARM release `a5f2b1869d47135bbc5d73d28cd7433b59a4b244`の128k context、最大125,000 token入力、4,096 token出力予約、1,976 token安全余白へ更新した。SAAAの実装・運用判断には追補後の値を使う。
+
 ## 対象版
 
 - SAAA HEAD: `cc8c66c`。`src-tauri/src/providers/larm_voice/decision.rs`、`crates/larm-session/src/contract.rs`、`src-tauri/src/providers/stream/larm.rs`、memory control_planeと既存計画を確認。

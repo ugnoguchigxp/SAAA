@@ -1,5 +1,7 @@
 # LARMの公開機能・実機検証（2026-09-16）
 
+> 更新: 本文はrelease `be5e86272165f4e13e69f4da204b1425486c6070`に対する初回検証記録である。Qwen 3.8の現行本番保証と再検証結果は[125k本番受入記録](verification/larm-qwen38-125k-20260916.md)を正とする。256k対応は保証せず、128k context・最大125,000 token入力として扱う。
+
 ## 結論
 
 全公開モデルと接続Profileを対象に検証した結果、すべてが稼働する状態ではない。通常のLLM、ASR、VOICEVOX WAV、Embedding、9種類の接続Profileは実応答を確認した。一方、Qwen TTS、PCM、voice一覧、管理メモリ拡張、特定のLLM要求に失敗が残る。

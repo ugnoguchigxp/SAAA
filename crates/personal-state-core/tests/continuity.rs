@@ -386,17 +386,17 @@ fn c7_one_shot_expiry_and_every_binding_dimension() {
 fn c8_required_source_and_certified_materialization_boundaries() {
     let budget = Budget {
         certified: true,
-        native_tokens: 262144,
-        output_reserve: 32768,
-        safety_margin: 4096,
-        requested_input: 225280,
+        native_tokens: 131_072,
+        output_reserve: 4_096,
+        safety_margin: 1_976,
+        requested_input: 125_000,
         max_bytes: 1_000_000,
     };
     assert_eq!(
-        budget.validate_materialized(225280, 1_000_000, 32768),
+        budget.validate_materialized(125_000, 1_000_000, 4_096),
         Ok(())
     );
-    for (tokens, bytes, output) in [(225281, 1, 1), (1, 1_000_001, 1), (1, 1, 32769)] {
+    for (tokens, bytes, output) in [(125_001, 1, 1), (1, 1_000_001, 1), (1, 1, 4_097)] {
         assert_eq!(
             budget.validate_materialized(tokens, bytes, output),
             Err(Error::Limit)

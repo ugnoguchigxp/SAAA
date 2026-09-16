@@ -27,7 +27,7 @@ migration前の最新schemaは他作業による16だったため17を追加し�
 - `x-larm-allocation-id`、`x-larm-context-view-id`、`x-larm-capability`。base-onlyはView headerを付けず別purposeで記録。
 - DELETE成功でも機能OFF中はno-opとなる。全ページのabsenceとsource/snapshot cleanupを分ける。HTTP future取消を遠隔停止の確認とは扱わない。
 - hostの `apps/daemon/src/context-source-cli.ts` はprovision CLI。Macからの製品用配送・canonical計測・削除APIであるとは確認できていない。
-- 20Mはsource quota。262,144 native / 32,768 reserve / 4,096 margin / 225,280 inputは文書例であり、今回のrelease認定値として有効化していない。
+- 20Mはsource quota。旧文書例の262,144 native / 32,768 reserve / 4,096 margin / 225,280 inputは本番保証として使用しない。2026-09-16の認定releaseは131,072 context / 4,096 output reserve / 1,976 safety margin / 125,000 inputであり、SAAAも125,000入力・4,096出力を上限とする。
 
 ## 残る依存と完了条件
 
