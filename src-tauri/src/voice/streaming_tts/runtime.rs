@@ -22,7 +22,7 @@ use crate::{
 #[path = "fallback.rs"]
 mod fallback;
 
-use super::chunker::{SelectReason, SentenceAccumulator};
+use super::chunker::{SelectReason, SentenceAccumulator, MAX_SOURCE_CHARS};
 
 const MAX_QUEUED_CHUNKS: usize = 32;
 const MAX_RENDER_CONCURRENCY: usize = 3;
@@ -216,6 +216,27 @@ impl StreamingSpeechRuntime {
         })
     }
 
+    pub(crate) fn queue_utterance(&self, run_id: &str, text: &str) -> Result<(), String> {
+        if text.chars().count() > MAX_SOURCE_CHARS {
+            return Err("Speech utterance is too large".to_string());
+        }
+        let spoken = crate::voice_text::text_for_speech(text);
+        if spoken.is_empty() {
+            return Ok(());
+        }
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "Streaming speech runtime lock unavailable".to_string())?;
+        let Some(session) = sessions.get(run_id) else {
+            return Ok(());
+        };
+        if session.closed || session.cancellation.is_cancelled() || !session.enabled {
+            return Ok(());
+        }
+        queue_chunk(session, spoken)
+    }
+
     pub(crate) fn schedule_idle(&self, run_id: &str, expected_generation: u64) {
         if let Ok(sessions) = self.sessions.lock() {
             if let Some(session) = sessions.get(run_id) {
@@ -272,12 +293,25 @@ impl StreamingSpeechRuntime {
             .accumulator
             .finish(final_content)
             .map_err(|error| format!("Invalid final streamed speech input: {error:?}"))?;
+        let mut final_chunks = Vec::new();
         while let Some(chunk) = session.accumulator.next_chunk(SelectReason::Completion) {
-            queue_chunk(session, chunk.spoken)?;
+            final_chunks.push((chunk.spoken, Instant::now()));
         }
         session.closed = true;
         let work = session.work.clone();
         tauri::async_runtime::spawn(async move {
+            for (text, boundary_at) in final_chunks {
+                if work
+                    .send(SpeechWork::Chunk { text, boundary_at })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                crate::runtime::event_hub::performance::record_tts_boundary_to_dispatch(
+                    boundary_at.elapsed(),
+                );
+            }
             let _ = work.send(SpeechWork::Finish).await;
         });
         Ok(())
@@ -889,6 +923,41 @@ mod tests {
             Ok(AppendOutcome::default())
         );
         runtime.finish("run_missing", "Hello.").unwrap();
+    }
+
+    #[tokio::test]
+    async fn queued_utterance_and_final_response_preserve_order_with_backpressure() {
+        let runtime = StreamingSpeechRuntime::default();
+        let (work, mut receiver) = mpsc::channel(1);
+        let cancellation = Arc::new(RunCancellation::default());
+        let (idle_reset, _idle_resets) = watch::channel(None);
+        runtime.sessions.lock().expect("sessions lock").insert(
+            "run-response".to_string(),
+            SpeechSession {
+                accumulator: SentenceAccumulator::default(),
+                work,
+                cancellation,
+                child: Arc::new(Mutex::new(None)),
+                closed: false,
+                enabled: true,
+                idle_timer: None,
+                idle_reset,
+            },
+        );
+        runtime
+            .queue_utterance("run-response", "確認しています。")
+            .unwrap();
+        runtime.finish("run-response", "最終回答です。").unwrap();
+
+        let Some(SpeechWork::Chunk { text, .. }) = receiver.recv().await else {
+            panic!("acknowledgement chunk is queued first");
+        };
+        assert_eq!(text, "確認しています。");
+        let Some(SpeechWork::Chunk { text, .. }) = receiver.recv().await else {
+            panic!("final response chunk follows the acknowledgement");
+        };
+        assert_eq!(text, "最終回答です。");
+        assert!(matches!(receiver.recv().await, Some(SpeechWork::Finish)));
     }
 
     #[tokio::test]

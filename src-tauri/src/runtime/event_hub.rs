@@ -1,7 +1,7 @@
 #[path = "performance.rs"]
 pub(crate) mod performance;
 #[path = "reasoning_ack.rs"]
-mod reasoning_ack;
+pub(super) mod reasoning_ack;
 
 use std::time::{Duration, Instant};
 use std::{
@@ -40,6 +40,18 @@ pub(crate) trait RuntimeEventSender: Send + Sync {
         self.send(event)
     }
     fn clone_box(&self) -> Box<dyn RuntimeEventSender>;
+    fn voice_response_enabled(&self) -> bool {
+        false
+    }
+    fn speak_voice_response(
+        &self,
+        _run_id: &str,
+        _kind: crate::larm_voice::ResponseKind,
+        _text: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    fn set_completion_speech(&self, _run_id: &str, _text: String) {}
     fn acknowledge<'a>(
         &'a self,
         _state: &'a crate::AppState,
@@ -66,8 +78,9 @@ impl RuntimeEventSender for tauri::ipc::Channel<RuntimeEvent> {
 #[derive(Clone)]
 pub(crate) struct TurnEventHub {
     ui: tauri::ipc::Channel<RuntimeEvent>,
-    speech: StreamingSpeechRuntime,
-    streaming_speech: bool,
+    pub(super) speech: StreamingSpeechRuntime,
+    pub(super) streaming_speech: bool,
+    pub(super) voice_response: super::voice_response::HubState,
     ui_queue: Arc<UiQueue>,
 }
 
@@ -87,8 +100,14 @@ impl TurnEventHub {
             ui,
             speech,
             streaming_speech,
+            voice_response: super::voice_response::HubState::default(),
             ui_queue,
         }
+    }
+
+    pub(crate) fn with_voice_response(mut self, enabled: bool) -> Self {
+        self.voice_response.enable(enabled, self.streaming_speech);
+        self
     }
 
     fn spawn_ui_delivery(ui: tauri::ipc::Channel<RuntimeEvent>, queue: Weak<UiQueue>) {
@@ -187,7 +206,11 @@ impl TurnEventHub {
         });
     }
 
-    fn dispatch(&self, event: RuntimeEvent, received_at: Option<Instant>) -> tauri::Result<()> {
+    pub(super) fn dispatch(
+        &self,
+        event: RuntimeEvent,
+        received_at: Option<Instant>,
+    ) -> tauri::Result<()> {
         if self.ui_queue.failed.load(Ordering::Acquire) {
             return Err(tauri::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
@@ -202,7 +225,7 @@ impl TurnEventHub {
         }
         if self.streaming_speech {
             match &event {
-                RuntimeEvent::Delta { run_id, text } => {
+                RuntimeEvent::Delta { run_id, text } if !self.voice_response.enabled() => {
                     let tts_started_at = Instant::now();
                     match self.speech.append(run_id, text) {
                         Ok(outcome) => self.speech.schedule_idle(run_id, outcome.idle_generation),
@@ -216,47 +239,25 @@ impl TurnEventHub {
                     presentation,
                     ..
                 } if presentation.decision == "speak" => {
-                    if let Err(error) = self.speech.finish(run_id, &message.content) {
+                    let rendered = self.voice_response.take_completion(run_id);
+                    let final_content = rendered.as_deref().unwrap_or(&message.content);
+                    let result = self.speech.finish(run_id, final_content);
+                    if let Err(error) = result {
                         self.stop_speech_with_error(run_id, error);
                     }
+                    self.voice_response.clear(run_id);
                 }
                 RuntimeEvent::MessageCompleted { run_id, .. }
                 | RuntimeEvent::Cancelled { run_id }
-                | RuntimeEvent::Failed { run_id, .. } => self.speech.cancel(run_id),
+                | RuntimeEvent::Failed { run_id, .. } => {
+                    self.voice_response.clear(run_id);
+                    self.speech.cancel(run_id);
+                }
                 _ => {}
             }
         }
         self.enqueue_ui(event);
         Ok(())
-    }
-}
-
-impl RuntimeEventSender for TurnEventHub {
-    fn acknowledge<'a>(
-        &'a self,
-        state: &'a crate::AppState,
-        run_id: &'a str,
-        conversation_id: &'a str,
-        cancellation: Arc<crate::RunCancellation>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(reasoning_ack::speak(
-            self,
-            state,
-            run_id,
-            conversation_id,
-            cancellation,
-        ))
-    }
-    fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {
-        self.dispatch(event, None)
-    }
-
-    fn send_received(&self, event: RuntimeEvent, received_at: Instant) -> tauri::Result<()> {
-        self.dispatch(event, Some(received_at))
-    }
-
-    fn clone_box(&self) -> Box<dyn RuntimeEventSender> {
-        Box::new(self.clone())
     }
 }
 

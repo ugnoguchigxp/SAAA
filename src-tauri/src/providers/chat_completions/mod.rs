@@ -1,17 +1,20 @@
 //! OpenAI Chat Completions data plane. Bootstrap/leases remain outside this client.
 use super::stream::{
-    available_agent_tools, execute_agent_tool, tool_was_offered, ModelStreamContext,
-    ProviderAttemptError as Error, ProviderFailureKind as Failure,
+    available_agent_tools, tool_was_offered, ModelStreamContext, ProviderAttemptError as Error,
+    ProviderFailureKind as Failure,
 };
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
+const MAX_SPOKEN_TOOL_PROGRESS_PER_ATTEMPT: usize = 4;
+
 mod chunks;
 mod sse;
 #[cfg(test)]
 mod tests;
+mod voice_progress;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RequestMode {
@@ -85,6 +88,7 @@ pub(crate) async fn run_with_options(
         let mut output = String::new();
         let mut calls = 0;
         let mut voice_calls = 0;
+        let mut spoken_tool_progress = 0;
         loop {
             let streaming = mode == RequestMode::Stream && options.streaming;
             let tools = if mode != RequestMode::JsonProbe && options.tools {
@@ -233,13 +237,14 @@ pub(crate) async fn run_with_options(
                 if call.name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME {
                     voice_calls += 1;
                 }
-                let result = execute_agent_tool(
-                    context.output_persistence,
-                    context.input,
-                    &call,
-                    Duration::from_secs(60),
-                )
-                .await;
+                let report_progress = context.on_event.voice_response_enabled()
+                    && spoken_tool_progress < MAX_SPOKEN_TOOL_PROGRESS_PER_ATTEMPT
+                    && voice_progress::supports(&call.name);
+                let (result, progress_spoken) =
+                    voice_progress::execute(&context, &call, report_progress).await;
+                if progress_spoken {
+                    spoken_tool_progress += 1;
+                }
                 if result.len() > 262_144 {
                     return Err(Failure::RequestTooLarge);
                 }

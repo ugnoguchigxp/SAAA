@@ -8,10 +8,12 @@ use crate::{OpenAiCompatibleProviderSettings, RunCancellation, StartTurnInput};
 mod attempt;
 mod dispatch;
 mod dynamic_lan;
+mod larm_voice;
 mod recall_dispatch;
 pub(crate) use attempt::*;
 pub(crate) use dispatch::*;
 pub(crate) use dynamic_lan::*;
+pub(crate) use larm_voice::*;
 
 pub(crate) struct ModelStreamContext<'a> {
     pub(crate) reasoning_effort: &'a str,

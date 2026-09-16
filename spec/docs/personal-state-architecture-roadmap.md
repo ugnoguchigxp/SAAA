@@ -2,11 +2,13 @@
 
 実装進捗（2026-09-16 更新）: 状態基盤に加え、SQLite v18の配送outbox、短期Provider認証とKeychainのsubject binding、製品用HTTP配送・canonical計測・v2 View・attempt取消・多層cleanup、実workerを通す受入harnessを実装した。合成HTTP試験とローカル検証を実施。LARM release `a5f2b1869d47135bbc5d73d28cd7433b59a4b244`では128k context・最大125,000 token入力を実機認定した。SAAAはこの認定値を上限としてfail-closedに扱う。runtime消去用の起動設定適用には管理者権限が必要で、忘却の実機受入は未完了。日本語goldの人手確認、全受入行列・性能比較も残るため、P1全体の完了・利用可能とは判定しない。詳細は `spec/evidence/personal-state/product-connection-progress.md` を参照。default OFFを維持する。
 
-状態: 実装中・製品接続の実機受入待ち。2026-09-13 LARM契約照合版。機能実装・性能認定の完了を示さない。
+状態: 実装中・製品接続の実機受入待ち。2026-09-16 共通Runtime統合方針追記。機能実装・性能認定の完了を示さない。
 
 ## 1. 採用する構成
 
 Personal Stateは、原文や実行記録を根拠に「現在何が有効か」を管理し、次の推論へ渡す状態を決めるSAAAの内部機能とする。中間メモリは対話・作業の継続を、World Stateはユーザーに関係する現在の認識を担当する。変更の履歴と依存関係を保存し、現在状態はそこから導出する。
+
+Personal Stateは会話Runtimeではなく、共通Context Brokerへsource-backedな状態参照を供給するContext Sourceである。現在のP1実装にはPersonal State有効時の専用会話経路があるが、これは製品接続を検証するための移行経路であり、完成形とはしない。通常会話とPersonal State経路へ同じ機能を二重実装せず、共通Turn Orchestrator、Provider routing、ContextEnvelope、Tool loopへ統合してからWorld Stateを拡張する。
 
 27Bは、必要な原文・成果物と現在状態を含むbounded Active Viewを使って、事実回答、推論、タスク遂行の判断を行う。2Bは受領・相槌・短い確認・構造化判断に限定する。操作の実行、認可、取消、状態変更の採用はSAAAの決定的ロジックが管理する。
 
@@ -96,9 +98,11 @@ P1では2Bの自由文を利用者へ直接出さない。既存shadow分類は�
 
 27Bの回答を2Bへ再投入して要約する経路は作らない。検証を通った出力を既存の表示/TTSへ渡し、結果の出典、run/request、現在epochを送出境界で照合する。
 
-## 8. 20M Source Setとbounded Active Viewを利用する
+## 8. 共通Context Brokerからbounded Active Viewを利用する
 
-SAAAのComposerが、権限確認後に今回必要な状態・原文・成果物を選ぶ。P1はID、task適用範囲、明示参照、最近のsourceで選び、新しい検索基盤を前提にしない。詳細取得が不足すれば既存recallまたは27Bの追加照会を使い、必須制約をutilityの低さで落とさない。
+SAAAの共通Context Brokerが、権限確認後に今回必要な状態・原文・成果物を選ぶ。P1はID、task適用範囲、明示参照、最近のsourceで選び、新しい検索基盤を前提にしない。詳細取得が不足すれば既存recallまたは27Bの追加照会を使い、必須制約をutilityの低さで落とさない。
+
+Active ViewはContextEnvelope全体ではなく、LARMへ渡すsource解決方式の一つである。現在入力、trusted policy、Identity、Provider routing、Task状態、Capability Routerが選んだTool定義は共通Turn OrchestratorとContext Brokerが所有する。Personal State Adapterがそれらを独自に再構成しない。Memory、World State、会話履歴、Tool schemaは同じEnvelope予算で調整し、同じsource本文をbaseとViewへ重複投入しない。
 
 1. 現在発話、policy、必須状態、未反映の訂正を固定し、同じread snapshotのstate revision/input epoch/policy revisionを記録する。
 2. 許可された詳細sourceを版付きでprovision・登録する。source本文はContext登録APIへinline送信しない。
@@ -133,6 +137,7 @@ P1は既存利用者のSAAAと明示設定したLARMだけを対象とし、外�
 | 段階 | 実装範囲 | 完了条件 |
 | --- | --- | --- |
 | P1 継続とLARM接続 | 単一scope、変更履歴・依存、current projection、Source/View Adapter、委譲・取消・忘却、認可、抽出、診断 | P1受入行列の必須項目を全て通す。coreのみ・snapshot hitのみで完了にしない |
+| P1.5 共通Runtime統合 | Personal StateをContext Source化し、通常会話、Provider routing、Identity、最近の会話、Tool loopと同じTurn Orchestrator / Context Brokerへ統合 | Memory ON/OFFでRuntime所有者が変わらず、現在入力の重複0件、Context Source別ablation可能、最小Contextへの縮退成功 |
 | P2 World State v1 | project:SAAA・会議・Task参照、時刻、失効、競合、用途別投影 | 固定corpusで古い/競合状態の確定値化0件、Runtime正本との矛盾0件。根拠付き必要属性の保持率95%以上 |
 | P3 複数scope・User Core | 作業の継続/切替/再開、限定した個人の好み候補 | 固定corpusでtask/scope/principal間の条件漏洩0件、局所条件の人物属性化0件、正しい対象への再開率95%以上 |
 | P4 背景整理・ContextStill | 有限Dream、候補レビュー、送信・訂正・忘却契約 | 無許可送信・削除情報の再送・無根拠昇格0件。固定例題で支持される候補precision95%以上 |
@@ -144,7 +149,7 @@ p50/p95は受付音声、27B first token、最終応答、抽出待ちに分け�
 
 ## 12. 既存文書・実装との関係
 
-[Personal AI Concept](saaa-personal-ai-concept.md)のVision、[実装前評価](continuity-world-model-direction.md)の独立コア方針を継承する。[MVP 3](mvp-3-memory-architecture-implementation-plan.html)からSessionless、Rawの単一正本、既存recall、ContextStillの責務、default OFFを継承する。
+[Personal AI Concept](saaa-personal-ai-concept.md)のVisionと共通Runtime契約、[Adaptive Learning and Selective Memory Concept](saaa-adaptive-learning-memory-concept.html)の選択境界、[Capability / Tool Runtime Concept](saaa-capability-tool-runtime-concept.md)のTool候補契約、[実装前評価](continuity-world-model-direction.md)の独立コア方針を継承する。[MVP 3](mvp-3-memory-architecture-implementation-plan.html)からSessionless、Rawの単一正本、既存recall、ContextStillの責務、default OFFを継承する。
 
 未実装のworking state/capsule/idle更新は本書とP1を優先する。working stateを直接更新する以前の案は、変更履歴からのprojectionへ置き換える。LARM snapshotとSAAAのcurrent projectionを同じsnapshotという語で混同しない。
 

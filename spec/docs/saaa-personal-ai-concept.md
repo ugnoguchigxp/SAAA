@@ -3,7 +3,8 @@
 ## ユーザーを理解し、任された仕事を進め、適切なタイミングで関わる
 
 作成日: 2026-09-13  
-状態: コンセプト案 v1 / レビュー用
+状態: コンセプト案 v3 / 統合契約改訂
+改訂日: 2026-09-17
 
 ## 1. この文書の位置付け
 
@@ -14,6 +15,8 @@
 本文の「SAAAは〜する」は目標とする設計を表し、実装済みという意味ではない。VoiceMem、ContextStill、NightWorkers、DeepStill、LARM、KV:memは、その責務を担う候補または連携先として記述する。各製品の現在の機能を保証するものではない。
 
 設計原則、実装仮説、未決事項を区別する。特にVoiceMemの導入方式とWorld Modelの具体構造は、この文書を基準に次の設計で決める。
+
+この文書をTool・Memory・Context・World Modelを束ねる上位Conceptとする。詳細は[Capability / Tool Runtime Concept](saaa-capability-tool-runtime-concept.md)、[Adaptive Learning and Selective Memory Concept](saaa-adaptive-learning-memory-concept.html)、[Personal Stateロードマップ](personal-state-architecture-roadmap.md)で具体化する。下位文書が本文の共通Runtime、正本、Scope、Context境界と矛盾する場合は、実装前に上位Conceptと下位文書のどちらを改訂するかを明示し、暗黙に二つのRuntimeを成立させない。
 
 ## 2. Vision
 
@@ -83,13 +86,16 @@ SAAAの中核は、観測から行動、その結果の確認までがつなが�
 
 同じ循環の中に、即時応答、長時間の仕事、バックグラウンドでの振り返りを位置付ける。それぞれの応答時間と計算予算は分ける。
 
+この循環は一つの共通Runtime契約として成立させる。Memoryを有効にした場合、Toolを利用する場合、World Stateを参照する場合も、会話Runtimeそのものを別経路へ切り替えない。各機能は共通Runtimeへ入力するContext Source、実行Capability、または結果を受け取るReducerとして接続する。
+
 ## 5. 情報と責務の分離
 
 以下は論理的な責務であり、それぞれに別のプロセス、DB、サービスが必要という意味ではない。
 
 | 責務 | 答える問い | 扱うもの |
 | --- | --- | --- |
-| Event / Evidence | 何が発言・観測・実行されたか | 記録、出典、時刻、結果 |
+| Raw Event Ledger | 何が発言・観測・実行されたか | 原文、出典、時刻、結果、訂正、取消 |
+| Scope Model | 今回の情報や制約がどこへ適用されるか | user、project、task、resource、request |
 | Personal Memory | このユーザーについて何を覚えているか | 好み、経験、関係、個人史 |
 | Knowledge Memory | 何を再利用できるか | 知識、手順、失敗、判断理由 |
 | World Model | 現在をどう理解しているか | 関連する実体の状態、関係、不確実性 |
@@ -97,17 +103,37 @@ SAAAの中核は、観測から行動、その結果の確認までがつなが�
 | Policy / Delegation | 何を、どこまで任されているか | 操作範囲、予算、期限、通知条件 |
 | Task Runtime | 何をどこまで進めているか | 計画、依存関係、実行状態、検証 |
 | Capability Model | どの能力を利用できるか | 実行先、適用条件、資源、実績 |
-| Context Composer | 今回の判断に何が必要か | 関連する情報の選択と構成 |
+| Context Broker | 今回の判断に何が必要か | 候補の選択、予算配分、ContextEnvelopeの構成 |
 | Intelligence Runtime | 推論や音声処理をどう動かすか | モデル、計算資源、推論キャッシュ |
+| Learning Ledger | 過去の選択がどう評価されたか | 候補、選択、結果、feedback、policy revision |
 | Consolidation | 経験をどう次へ生かすか | 記憶の整理、矛盾の再評価、改善候補 |
 
 World ModelとIntent / Goal Modelは並列の責務とする。前者は現在についての判断、後者は望む未来を保持する。両者を一緒に参照できても、同一の意味として保存しない。
 
 Task Runtimeは実行状態の責任主体である。World ModelにTaskの状態を載せる場合、それは参照用の派生状態とし、別の実行状態を独立管理しない。
 
+### 5.1 共通Runtimeの不変条件
+
+- 通常会話はSessionlessとし、ユーザーが会話を新規作成・再開する操作を継続性の前提にしない。
+- SessionlessはScopelessを意味しない。情報、制約、状態には`user`、`project`、`task`、`resource`、`request`などの適用Scopeを持たせる。
+- Raw Event Ledgerと各専門Runtimeの台帳を正本とする。Memory、World State、検索Index、ContextEnvelopeは正本から導出できる投影または派生物とする。
+- Providerへ渡すContextEnvelopeはTurnまたはgenerationごとに新しく構成し、それ自体を次Turnの正本にしない。
+- Capability Router、Memory Policy、World Modelは候補と参照を返す。最終的な予算配分と命令境界は共通Context Brokerが決める。
+- Feature FlagはContext SourceやPolicyを有効化するために使い、会話、Tool、ProviderのRuntime全体を別実装へ切り替えるために使わない。
+- Tool出力は観測であり、目的達成、World State更新、権限追加を自動的には意味しない。
+- Learning Ledgerは選択改善の監査記録であり、全文Memoryやユーザー要求の複製先、実行権限の正本にしない。
+
+### 5.2 実行単位とScope
+
+共通Runtimeは責務と契約を共有することであり、全Taskを一つの直列処理にすることではない。会話、長時間Task、背景整理はそれぞれのrun、取消状態、予算を持つ。計算資源の同時利用は実行基盤の制約に従う。新入力で失効させるのは、その入力に依存するrequestや状態を使うrunであり、無関係なTaskまで一律に停止しない。共有resourceへの変更は、実行直前の版照合と競合調整を通す。
+
+Scopeは明示された対象、Taskとの関連、確認済みの参照から解決する。推定だけで別projectの情報を混ぜない。複数Scopeを必要とする要求は、対象と用途を明示した参照として扱い、各sourceの読み取り・送信許可を別に検査する。対象不明の場合は候補を保持し、確認または対象情報を使わない応答へ縮退する。
+
+現在Scopeに有効な制約、訂正、未完了Tool correlationは必須とする。直前の会話でもScope外・削除済み・権限外なら無条件に持ち込まない。別Scopeで完了したTaskの結果は、そのTaskの台帳へ記録し、通知条件に従って届ける。現在の会話の目的や状態へ自動的に合流させない。
+
 ## 6. 記録は証拠であり、世界の真実そのものではない
 
-Event Logは、発言、観測、操作、応答が記録されたことについての基礎資料である。「明日会議がある」という発言の記録だけで、会議の開催が確定するわけではない。
+Raw Event Ledgerは、発言、観測、操作、応答が記録されたことについての基礎資料である。「明日会議がある」という発言の記録だけで、会議の開催が確定するわけではない。
 
 ```text
 Event / Evidence = 発言・観測・実行の記録
@@ -118,9 +144,15 @@ Goal             = 望ましい状態とその由来
 
 事実についての判断には、可能な範囲で出典、観測時刻、対象時点、確かさ、失効条件を伴わせる。ユーザーの明示発言、外部サービスの応答、モデルの推測を区別する。
 
+指示への従い方と、事実の確かさは別に判断する。現在のユーザー指示は今回の希望や作業条件を更新できるが、外部サービスやTask Runtimeが所有する実行済み状態の証明にはならない。事実の競合は対象ごとの正本、対象時点、検証結果で評価し、解決できなければ不明または競合として保持する。
+
 同じ情報を複数のMemoryから取り出しても、元が同じ発言なら独立した裏付けとして数えない。生成した要約や以前のWorld Modelを繰り返し読むことで、確信だけが強まることを防ぐ。
 
 記録対象と保持期間は用途とユーザー設定に従う。完全な永久ログを前提にしない。再構築できる範囲は、保持が許可され、現に残っている証拠の範囲に限られる。
+
+「常に記憶する」とは、許可された重要な入力、観測、実行結果、訂正を、応答や状態更新より先に追跡可能な正本へ記録することである。すべての入力を永久保存することや、すべてを毎TurnのContextへ入れることではない。
+
+「常にContextを忘れる」とは、ContextEnvelopeを正本として次Turnへ持ち越さず、その時点で有効なsource、state、policyから再構成することである。同じTurn内のTool loopや、Task Runtimeが所有する実行状態まで破棄することではない。ProviderやOSの物理cache消去を保証する表現にも使わない。
 
 ## 7. Personal MemoryとKnowledge Memory
 
@@ -200,7 +232,31 @@ Capabilityは、利用できるツール名の一覧にとどまらず、どの�
 
 能力を組み合わせても、構成する操作の委任範囲は広がらない。失敗した場合は、どの段階まで実施されたかを追跡できるようにする。
 
-Context Composerは、Personal Memory、Knowledge Memory、World Model、Goal、Task、最近の会話から、今回必要な情報を選ぶ。大量に渡すことより、関連性、現在性、根拠、矛盾の扱いを重視する。
+Capability Routerは、現在の要求、Goal、Task、Situation、Scopeに合うCapabilityとSkillの候補を返す。Toolを検索できたことは実行許可を意味せず、検索順位だけで実行先を決めない。選ばれた少数のTool定義だけをContext Brokerへ渡す。
+
+Context Brokerは、Personal Memory、Knowledge Memory、Personal State、World Model、Goal、Task、最近の会話、Capability候補から、今回必要な情報を選び、毎Turnの`ContextEnvelope`を構成する。大量に渡すことより、関連性、現在性、根拠、適用Scope、矛盾、Context costを重視する。
+
+`ContextEnvelope`は少なくとも次を区別する。
+
+- SAAAが所有するtrusted policyと、現在のユーザー入力。現在入力は一度だけ命令位置へ置く。
+- 今回の`scope_refs`、Goal、Task、Personal State、World Stateのうち判断に必要な投影。
+- 最近の会話、Recallした原文、ContextStillの知識など、出典付きのuntrusted evidence。
+- Capability Routerの候補からBrokerが選び、Runtimeが適格性を確認した少数のTool定義と、実際の提示集合に対応するSelection Snapshot。
+- 構成に使ったsource ref、revision、予算、欠落、競合、Context Health。
+
+次は`ContextEnvelope`へ入れない。
+
+- 全Memory、全会話、全Toolの無条件な列挙。
+- Learning Ledgerの生ログ、学習用特徴量、利用回数だけの順位理由。
+- credential、秘密値、実行に不要な個人情報。
+- 失効、削除、Scope外、権限外の状態。
+- Context内の文章だけから新しく導出した実行権限。
+
+Context BrokerはToolやProcedureと、その判断に必須の制約・対象・根拠の依存関係を一緒に扱う。schemaだけを残して必要情報を落とさない。必須集合が予算へ収まらない場合は、参照範囲の分割、追加照会、再計画を行い、それでも成立しなければ実行を保留する。optional sourceの障害は最小Contextへ縮退できるが、認可や必須制約を確認できない操作は継続しない。
+
+Orchestratorが現在入力とtrusted policyの参照を所有し、Brokerが命令とEvidenceの境界を保持してEnvelopeを構成する。Provider Adapterはその境界と共通予算を保って配送形式へ変換する。Selection Snapshotやsource manifestは監査・実行検査用metadataとして区別し、モデルの判断に不要なhashや台帳情報までpromptへ入れない。
+
+一つのTurnでTool結果により目的や状態が変わった場合は、同じTool一覧を使い続けず、必要部分だけを更新した次のContextEnvelopeを作る。長時間Taskの実行状態はTask Runtimeへ残し、Provider Contextをその保存場所にしない。
 
 外部から取得した文書や過去の発言は参照情報として扱い、現在の実行権限を決める指示と区別する。Contextへ含まれたことを理由に、操作を許可しない。
 
@@ -240,7 +296,7 @@ Personal AIでは、覚える能力と同じく、適切に忘れる能力を設
 
 訂正は、その発言を追加保存するだけで終わらせず、現在の理解と以後の検索結果へ反映する。履歴として残す情報と、現在有効な情報を区別する。
 
-削除は、原文、派生記憶、索引、World Model、Context、キャッシュなど、関係する保存先への影響を追跡する。再構築によって削除した情報が復活しないようにする。
+削除は、原文、派生記憶、索引、World Model、Context、キャッシュ、学習例、学習revisionなど、関係する保存先への影響を追跡する。再構築によって削除した情報が復活しないようにする。
 
 外部サービスやバックアップを含む削除範囲と反映時点は、利用者へ説明できるものにする。期限切れの情報を保持し続けるかどうかも、保存目的に応じて決める。
 
@@ -254,14 +310,26 @@ Personal AIでは、覚える能力と同じく、適切に忘れる能力を設
 | 記憶 | 必要な経験を取り出し、取り違えや過剰な一般化を抑えられるか |
 | 現在性 | 訂正・中止・状態変化を必要な時間内に反映できるか |
 | 実行 | 目標を満たしたことを確認し、重複操作や無制限の再試行を防げるか |
+| Context | 必要情報を落とさず、不要情報と命令権限のないデータを増やしていないか |
+| Capability選択 | 必要なToolを候補へ含め、誤ったToolや権限外Toolを提示していないか |
 | 自発性 | 採用される提案が増え、不要な仕事や通知が増えていないか |
 | 制御 | 委任範囲を守り、停止や撤回が実際に機能するか |
 | 資源 | 会話の応答性を守り、時間・計算・費用が予算内に収まるか |
 | 改善 | 振り返り後に正確さや仕事の成果が改善したか |
 
+共通の受入シナリオでは、project AのTask開始、Bへの会話切替、Aの完了通知、委任撤回、再起動、Aの続きの依頼を連続して試す。Scope漏洩、重複操作、撤回後の新規実行を0件とし、再説明回数、確認負荷、通知条件への適合、正しいTaskへの再開を測る。個別機能の合格だけでこの循環の成立を代替しない。
+
 数値目標は各PoCの開始時に決める。品質を確認する前に構成を増やさず、効果が確認できない仕組みは簡素化または見送る。
 
 ## 16. 段階的な検証方針
+
+### 最初に共通Runtimeを成立させる
+
+Memory、World State、Capability Routerの高度化より先に、通常会話、Personal State投影、Tool選択が同じTurn OrchestratorとContext Brokerを通る状態を成立させる。機能を有効にしたときにProvider選択、最近の会話、Identity、Tool実行契約が別経路へ変わらないことを確認する。
+
+最初の比較では、Context Sourceを一つずつ有効・無効にしても、現在入力の一意性、権限判定、Task状態、実行結果の保存先が変わらないことを必須条件とする。二つのRuntimeを長期間維持したまま、それぞれへ同じ機能を実装しない。
+
+統合の依存順序は、共通Turn Orchestrator → 明示Scope解決 → 共通Context Broker → Personal StateのContext Source化 → Tool Router接続 → World State → 学習による再順位付けとする。Scopeの自動推定や広範な個人適応は後段で検証する。既存P1の受入資産を共通経路へ移し、専用経路の機能追加を統合の前提にしない。段階とgateはPersonal Stateロードマップ§11に対応付ける。
 
 ### 最初に小さな循環を成立させる
 
@@ -286,6 +354,19 @@ Dream Cycleを加えて、記憶と判断が改善するかを比較する。行
 Capabilityの動的構成、広範な視覚入力、大量Contextのキャッシュは、具体的な不足や性能上の問題が確認された段階で導入する。
 
 ## 17. 次に設計すること
+
+### 共通Turn OrchestratorとScope
+
+実装変更の前に、現在の通常会話経路とPersonal State経路を比較し、共通化する契約を決める。
+
+- Turnの開始、Raw Event保存、取消、Provider選択、Tool loop、応答保存を誰が所有するか。
+- Personal State、World State、Recall、Capability候補を同じContext Brokerへ渡す型。
+- Sessionを復活させずに、project、task、resource、requestのScopeをどの根拠で付与するか。
+- Scopeが不明または競合した場合、混ぜずに確認、候補保持、最小Contextへ縮退する条件。
+- ContextEnvelopeのrevision、Selection Snapshot、Task Runtime stateをどの識別子で結ぶか。
+- MemoryやRouterが停止した場合も、通常会話を最小Contextで継続する条件。
+
+この契約を確定するまで、Personal State専用会話RuntimeやTool専用Provider経路を新たに増やさない。
 
 ### VoiceMem導入
 

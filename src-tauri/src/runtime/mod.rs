@@ -10,6 +10,8 @@ pub(crate) mod event_hub;
 pub(crate) mod pi;
 pub(crate) mod run_support;
 pub mod supervisor;
+pub(crate) mod turn_activity;
 pub(crate) mod turn_types;
 pub(crate) mod turns;
+pub(crate) mod voice_response;
 pub mod web_fetch;

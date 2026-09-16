@@ -5,11 +5,14 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>Status: Concept; revision 2。実装開始、学習algorithm採用、品質thresholdはいずれも未承認</li>
+    <li>Status: Concept; revision 3。統合契約レビュー用。実装開始、学習algorithm採用、品質thresholdはいずれも未承認</li>
     <li>Created: 2026-08-30</li>
-    <li>Revised: 2026-08-30</li>
-    <li>Reviewed: 2026-08-30</li>
-    <li>SAAA baseline: <code>0f0d2cd</code></li>
+    <li>Revised: 2026-09-16</li>
+    <li>Reviewed: 未承認</li>
+    <li>
+      SAAA baseline: original Memory analysis <code>0f0d2cd</code>; integration reassessment
+      <code>d5a5cae</code> and 2026-09-16 working tree
+    </li>
     <li>Shipping client: macOS版SAAA desktop</li>
     <li>
       対象: Assist Planner、Context Broker、Conversation Runtime、Memory、ContextStill、Provider
@@ -26,6 +29,8 @@
     本文書は実装契約ではない。DB schema、Rust module、依存library、migration、Work
     Package、導入順序、 固定threshold、verification commandは定義しない。既存の
     <a href="./plan.html">Situation-Aware Ambient Agent Runtime</a>と
+    <a href="./saaa-personal-ai-concept.md">SAAA Personal AI Concept</a>、
+    <a href="./saaa-capability-tool-runtime-concept.md">Capability / Tool Runtime Concept</a>、
     <a href="./mvp-3-memory-architecture-implementation-plan.html"
       >MVP 3 Memory Architecture実装契約</a
     >を自動的に変更せず、後続の検証設計と再baselineで参照するConceptとする。
@@ -40,6 +45,12 @@
     requestの開始はContext Health statusでgateされていない。したがって§12の「Context
     HealthがREDのEnvelopeは送信せず」と§16.3のContext
     Health違反0件は、現時点でコード上未強制のinvariantである。§16のbaselineをこの差分の上で組む。
+  </p>
+  <p>
+    さらに現行実装は、Memory feature gateが有効な場合にPersonal State専用の会話経路へ分岐する。
+    その経路は通常のContext Window、Provider routing、最近の会話、Tool構成と同じ統合点を通らない。
+    これは移行中のbaselineであり、目標architectureではない。本ConceptはMemory専用Runtimeを完成形とせず、
+    Personal Stateを共通Context Brokerの一つのsourceへ変更する方向を固定する。
   </p>
 
   <h2 id="1-executive-decision">1. 結論とDecision Status</h2>
@@ -71,6 +82,16 @@
         <td>分離し、各Turnで必要十分なWorking Setを再構築する</td>
       </tr>
       <tr>
+        <td>会話Runtime</td>
+        <td>固定</td>
+        <td>Memory有効時も共通Turn Orchestratorを使い、Memory専用会話Runtimeを持たない</td>
+      </tr>
+      <tr>
+        <td>SessionとScope</td>
+        <td>固定</td>
+        <td>通常会話はSessionlessとし、適用範囲はuser / project / task / resource / requestのScopeで分離する</td>
+      </tr>
+      <tr>
         <td>Safetyと権限</td>
         <td>固定</td>
         <td>学習対象外のhard constraintとする</td>
@@ -81,9 +102,14 @@
         <td>Memory itemの単一選択ではなく、制約付きの階層的な集合選択とする</td>
       </tr>
       <tr>
-        <td>初期主学習器</td>
+        <td>初期active policy</td>
+        <td>固定</td>
+        <td>決定論的guard、Scope filter、rule / semantic selectorをbaselineとし、学習器なしでも成立させる</td>
+      </tr>
+      <tr>
+        <td>学習reranker</td>
         <td>検証仮説</td>
-        <td>online linear contextual banditを第一候補とする</td>
+        <td>十分な独立outcomeとsupportが得られた場合だけ、online linear contextual banditを比較候補にする</td>
       </tr>
       <tr>
         <td>学習器stateの再構成性</td>
@@ -157,25 +183,36 @@
   </p>
 
   <h2 id="3-system-position">3. SAAA全体における位置</h2>
-  <pre><code class="language-text">Perception
+  <pre><code class="language-text">Trigger / Current Instruction
   ↓
-Situation
-  ↓
-Interaction Policy ── hard permission / privacy / intervention boundary
-  ↓
-Assist Planning
-  ↓ Memory request
-Adaptive Memory Policy + Context Broker
-  ↓ MemoryPlan / ContextEnvelope
-Capability Resolution
-  ↓
-Execution
-  ↓
-Presentation</code></pre>
+Common Turn Orchestrator
+  ├─ Raw Event Ledgerへ入力を記録
+  ├─ Scope Resolution
+  ├─ Interaction Policy / hard permission
+  └─ Goal / Task / Situation snapshot
+             ↓
+Candidate Planning
+  ├─ Adaptive Memory Policy → MemoryPlan
+  ├─ Personal / World State → State refs
+  └─ Capability Router → Capability Plan + Selection Snapshot
+             ↓
+Common Context Broker
+  └─ bounded ContextEnvelope
+             ↓
+Provider / Tool Loop / Verification
+             ↓
+Raw Event・Task Runtime・World State候補・Learning Ledger
+             ↓
+Presentation / Reducer</code></pre>
   <p>
     Adaptive Memory Policyは、発話するか、介入するか、外部操作するかを決めない。Situationと
     Interaction Policyが許したAssist Planningに対して、参照すべきMemoryの計画だけを返す。
     MemoryPlanはCapabilityでもPermissionでもなく、外部作用を許可するauthorityを持たない。
+  </p>
+  <p>
+    Adaptive Memory Policy、Personal / World State、Capability Routerは並列の候補生成器である。
+    いずれもProvider requestを直接所有しない。共通Context Brokerだけが、現在入力を一度だけ命令位置へ置き、
+    Memory、State、Tool定義、Task状態を共通予算内へ収めたContextEnvelopeを構成する。
   </p>
   <p>
     LLMは自然言語の理解と生成を担当する。Memoryの保存可否、source validity、Context予算、 Tool
@@ -200,8 +237,14 @@ Presentation</code></pre>
       <tr>
         <td>Raw Event Store</td>
         <td>SAAA SQLite / 原文の正本</td>
-        <td>会話原文、時刻、provenance</td>
+        <td>会話原文、観測、実行結果、時刻、provenance</td>
         <td>正確な過去Evidenceが必要な場合だけRecallする</td>
+      </tr>
+      <tr>
+        <td>Scope Model</td>
+        <td>SAAA SQLite / 明示参照と根拠</td>
+        <td>user、project、task、resource、requestへの適用範囲</td>
+        <td>候補のeligibilityと誤混入防止に使い、権限としては扱わない</td>
       </tr>
       <tr>
         <td>User Core</td>
@@ -211,9 +254,15 @@ Presentation</code></pre>
       </tr>
       <tr>
         <td>Working State</td>
-        <td>SAAA SQLite / 現在のTask状態</td>
+        <td>Personal State / source-backed current projection</td>
         <td>目的、制約、約束、未完了事項</td>
         <td>activeかつ現在目的に必要な項目だけ投影する</td>
+      </tr>
+      <tr>
+        <td>World State</td>
+        <td>SAAA SQLite / source-backed current projection</td>
+        <td>外界の状態、観測時刻、対象時点、失効、競合</td>
+        <td>今回の判断に必要な属性だけ投影し、外部正本やTask Runtimeを上書きしない</td>
       </tr>
       <tr>
         <td>Continuity Capsule</td>
@@ -253,6 +302,12 @@ Presentation</code></pre>
       </tr>
     </tbody>
   </table>
+  <p>
+    「常に記憶する」は、許可された入力・観測・結果を追跡可能な正本へ記録することを指し、永久保存や
+    全件投影を意味しない。「常にContextを忘れる」は、Per-turn Working Setを次Turnの正本にせず、
+    有効なsource、state、policyから再構成することを指す。同じTurnのTool loopやTask Runtimeの実行状態を
+    破棄すること、Provider側の物理cache消去を保証することとは区別する。
+  </p>
 
   <h3 id="41-term-mapping">4.1 ConceptとMVP 3の用語対応</h3>
   <p>
@@ -501,6 +556,22 @@ subject to
     MemoryPlan自身にRaw本文、secret、Tool permission、外部実行命令を保存しない。本文解決後にsourceや
     validityが変わった場合は、古い計画を送信せず再検査する。
   </p>
+
+  <h3 id="62-context-envelope-contract">6.2 ContextEnvelopeの統合契約</h3>
+  <p>
+    MemoryPlanはContextEnvelope全体を所有しない。Context Brokerは、MemoryPlan、Personal / World State
+    refs、Capability Plan、Task Runtime snapshot、最近の会話を同じContext予算で調整する。あるsourceが
+    同じRaw Eventを根拠にする場合、MemoryとWorld Stateの両方から選ばれても独立した裏付けとして数えず、
+    本文を重複投影しない。
+  </p>
+  <ul>
+    <li>trusted policyとcurrent instructionはMemoryPlanから供給せず、共通Turn Orchestratorが一度だけ置く。</li>
+    <li>Scope外、deleted、expired、permission外の候補は、utility scoreより前に除外する。</li>
+    <li>Memory、State、Tool schema、会話履歴は個別上限だけでなく、Envelope全体の共通予算で競合解決する。</li>
+    <li>Learning Ledger、Policy checkpoint、Candidate Index本文はProviderへ投影しない。</li>
+    <li>選択漏れ、競合、stale、source unavailable、予算超過をContext Healthへ残す。</li>
+    <li>Turn完了後にEnvelopeを継続状態として保存せず、必要な結果だけを各正本へ記録する。</li>
+  </ul>
   <p>
     Candidate Indexは本文cacheではなく、各Turnで選択可否を判断するmetadata
     projectionである。前Turnで選んだMemoryを無条件に持ち越さない。
@@ -797,6 +868,14 @@ subject to
         <td>必要なMemory同士が矛盾し解決不能</td>
         <td>一方を自動選択せず、影響に応じてMemoryなし、確認、abstentionを選ぶ</td>
       </tr>
+      <tr>
+        <td>同じ会話で別projectの話題へ移る</td>
+        <td>会話Sessionは分けず、Scopeを切り替え、旧project固有の制約と状態を混入させない</td>
+      </tr>
+      <tr>
+        <td>Memory featureを有効化する</td>
+        <td>Provider routing、最近の会話、Identity、Tool loopの所有者を変えず、Context Sourceだけを追加する</td>
+      </tr>
     </tbody>
   </table>
 
@@ -927,6 +1006,8 @@ subject to
     <li>ユーザー別LoRA、online fine-tuning、neural long-term memoryを初期主経路にしない。</li>
     <li>Vector DBまたはEmbeddingを必須dependencyにしない。</li>
     <li>全Memory、全Skill、全過去会話をContextへ投入しない。</li>
+    <li>Memory有効時だけ別の会話Runtime、Provider routing、Tool loopへ切り替えない。</li>
+    <li>Sessionを継続性の単位として復活させず、適用範囲はScopeとして扱う。</li>
     <li>
       非線形residual補正（Random Forest）を初期主経路にしない。単一userのデータ量では chronological
       holdoutで増分価値を検証できないため、個人情報を含まない横断学習のPrivacy

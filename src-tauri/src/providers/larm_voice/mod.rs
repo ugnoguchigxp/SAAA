@@ -7,6 +7,8 @@ use std::sync::{
 use tokio::sync::{watch, Mutex, OnceCell};
 pub(crate) mod audio;
 mod decision;
+mod response;
+pub(crate) use response::{render as render_response, ResponseKind};
 
 pub(crate) struct Ready {
     pub session: Arc<Session>,

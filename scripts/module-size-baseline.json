@@ -601,6 +601,10 @@
       "total": 430,
       "production": 430
     },
+    "src-tauri/src/providers/chat_completions/voice_progress.rs": {
+      "total": 124,
+      "production": 103
+    },
     "src-tauri/src/providers/completion.rs": {
       "total": 161,
       "production": 97
@@ -648,6 +652,10 @@
     "src-tauri/src/providers/larm_voice/mod.rs": {
       "total": 219,
       "production": 219
+    },
+    "src-tauri/src/providers/larm_voice/response.rs": {
+      "total": 239,
+      "production": 197
     },
     "src-tauri/src/providers/mod.rs": {
       "total": 19,
@@ -728,6 +736,10 @@
     "src-tauri/src/providers/stream/dynamic_lan/initialization.rs": {
       "total": 53,
       "production": 53
+    },
+    "src-tauri/src/providers/stream/larm_voice.rs": {
+      "total": 108,
+      "production": 108
     },
     "src-tauri/src/providers/stream/mod.rs": {
       "total": 445,
@@ -865,6 +877,10 @@
       "total": 442,
       "production": 225
     },
+    "src-tauri/src/runtime/turn_activity.rs": {
+      "total": 40,
+      "production": 40
+    },
     "src-tauri/src/runtime/turn_types.rs": {
       "total": 62,
       "production": 62
@@ -872,6 +888,14 @@
     "src-tauri/src/runtime/turns.rs": {
       "total": 795,
       "production": 714
+    },
+    "src-tauri/src/runtime/voice_response.rs": {
+      "total": 232,
+      "production": 218
+    },
+    "src-tauri/src/runtime/voice_response_state.rs": {
+      "total": 106,
+      "production": 65
     },
     "src-tauri/src/runtime/web_fetch.rs": {
       "total": 281,

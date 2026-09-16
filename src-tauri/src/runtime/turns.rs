@@ -19,10 +19,10 @@ use crate::redact::{bounded_text, redact_runtime_text};
 use crate::{
     begin_provider_session, database_error, execute_codex_turn,
     finish_dynamic_lan_provider_session, finish_provider_session, memory, new_id, now_iso,
-    persist_conversation_success, situation, stream_dynamic_lan_provider, stream_model_provider,
-    update_runtime_provider, AppState, CleanupOutcome, ModelProviderSettings, ModelStreamContext,
-    ProviderAttemptOutcome, ProviderFailureKind, ProviderOutputPersistence, RunCancellation,
-    StartTurnInput, TurnExecutionFailure,
+    persist_conversation_success, situation, stream_model_provider,
+    stream_voice_aware_dynamic_lan_provider, update_runtime_provider, AppState, CleanupOutcome,
+    ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
+    ProviderOutputPersistence, RunCancellation, StartTurnInput, TurnExecutionFailure,
 };
 use conversation_context::compose_provider_history;
 use conversation_controller::execute as execute_reasoning;
@@ -97,10 +97,23 @@ pub(crate) async fn execute_turn(
         return result.map(|_| ());
     }
 
+    let response_task =
+        crate::runtime::voice_response::start(state, input, on_event, cancellation.clone());
     let result = execute_conversation_turn(state, input, on_event, cancellation.clone()).await;
+    if let Some(task) = response_task {
+        task.abort();
+        let _ = task.await;
+    }
     let finalization = match &result {
         Ok(message) => {
-            memory::personal_state::output::send_completed(state, input, on_event, message)
+            crate::runtime::voice_response::complete(
+                state,
+                input,
+                on_event,
+                cancellation.clone(),
+                message,
+            )
+            .await
         }
         Err(error)
             if cancellation.is_cancelled()
@@ -435,6 +448,9 @@ pub(crate) async fn execute_conversation_turn(
         &input.presentation_mode,
         context_window.messages,
     )?;
+    let shared_larm_voice =
+        route.source == "harness" && input.input_origin == "voice" && crate::larm_voice::enabled();
+    let harness = providers.harness.clone();
     if let Some(client) =
         crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)
             .await?
@@ -478,7 +494,10 @@ pub(crate) async fn execute_conversation_turn(
                         route.timeout_ms / (1 + route.fallback_provider_ids.len()) as u64,
                     ),
                 ));
-        if route.source == "harness" && provider_id == crate::DYNAMIC_LAN_PROVIDER_ID {
+        if route.source == "harness"
+            && provider_id == crate::DYNAMIC_LAN_PROVIDER_ID
+            && !shared_larm_voice
+        {
             let resolution = tokio::time::timeout_at(
                 attempt_deadline,
                 resolve_harness_llm_provider(&mut providers, remaining_ms, cancellation.clone()),
@@ -569,34 +588,12 @@ pub(crate) async fn execute_conversation_turn(
                     .to_string(),
             ));
         }
-        if !context_health_emitted {
-            let _ = on_event.send(RuntimeEvent::Activity {
-                run_id: input.run_id.clone(),
-                kind: "context-window".to_string(),
-                summary: format!(
-                    "Context {}: {}/{} input bytes, {} bytes output reserved, {} memory items, {} recent messages, {} continuity groups, {} loaded source messages omitted{}{}",
-                    context_health.status,
-                    context_health.projected_bytes,
-                    context_health.hard_limit_bytes,
-                    context_health.output_reserve_bytes,
-                    context_health.memory_item_count,
-                    context_health.recent_source_messages,
-                    context_health.continuity_group_count,
-                    context_health.omitted_loaded_source_messages,
-                    if context_health.source_history_truncated {
-                        ", older source history truncated"
-                    } else {
-                        ""
-                    },
-                    if context_health.repair_count > 0 {
-                        ", minimal reconstruction applied"
-                    } else {
-                        ""
-                    },
-                ),
-            });
-            context_health_emitted = true;
-        }
+        crate::runtime::turn_activity::send_context_window_once(
+            &mut context_health_emitted,
+            on_event,
+            &input.run_id,
+            &context_health,
+        );
         let outcome = match &provider {
             ModelProviderSettings::OpenAiCompatible(provider) => {
                 stream_model_provider(
@@ -637,22 +634,25 @@ pub(crate) async fn execute_conversation_turn(
                 .await
             }
             ModelProviderSettings::DynamicLan(provider) => {
-                stream_dynamic_lan_provider(
+                let context = ModelStreamContext {
+                    reasoning_effort: &reasoning_effort,
+                    max_output_tokens,
+                    input,
+                    on_event,
+                    cancellation: cancellation.clone(),
+                    output_persistence: Some(ProviderOutputPersistence {
+                        state,
+                        session_id: &session_id,
+                    }),
+                };
+                stream_voice_aware_dynamic_lan_provider(
                     provider,
+                    &harness,
+                    shared_larm_voice,
+                    &input.conversation_id,
                     &history,
-                    attempt_timeout_ms.min(crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS),
-                    cancellation.clone(),
-                    ModelStreamContext {
-                        reasoning_effort: &reasoning_effort,
-                        max_output_tokens,
-                        input,
-                        on_event,
-                        cancellation: cancellation.clone(),
-                        output_persistence: Some(ProviderOutputPersistence {
-                            state,
-                            session_id: &session_id,
-                        }),
-                    },
+                    attempt_timeout_ms,
+                    context,
                 )
                 .await
             }

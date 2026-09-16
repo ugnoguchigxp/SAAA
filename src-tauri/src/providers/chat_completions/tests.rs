@@ -35,6 +35,7 @@ fn input() -> crate::StartTurnInput {
         presentation_mode: "visual".into(),
     }
 }
+
 async fn fixture(
     responses: Vec<(u16, String, u64)>,
 ) -> (String, tokio::task::JoinHandle<Vec<Value>>) {

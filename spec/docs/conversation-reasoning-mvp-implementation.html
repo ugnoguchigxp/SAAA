@@ -162,8 +162,9 @@
     </li>
     <li>
       <code>src-tauri/src/providers/larm_voice/</code>:
-      音声会話のownerを管理し、同じSessionをASR・TTS・Decision・アプリ内MCPに渡す。MCPはランダムなloopback
-      portと専用Bearerを使い、Provider tokenはRust側のメモリ内に保持する。
+      音声会話のownerを管理し、同じSessionをASR・TTS・軽量応答・27B推論に渡す。Provider
+      tokenはRust側のメモリ内に保持する。ツール実行とMCP利用経路はSAAAが所有し、LARMはLLM
+      Providerとしてだけ扱う。
     </li>
     <li>
       音声ONの最初のASR開始前に4
@@ -180,6 +181,14 @@
       ContextのView作成は今回の範囲に含めない。作成済みViewを渡す経路がない現在は通常推論を使い、snapshot使用を表示・計測上も主張しない。
     </li>
   </ul>
+  <p>
+    2026-09-16以降の音声経路では、<code>decision-default</code>を軽量応答モデルとして使う。軽量モデルは相槌、長時間推論中の通知、SAAAが把握したtool
+    phase、最終回答の読み上げ用文面だけを生成し、tool
+    call・推論結果・保存内容を決定しない。<code>llm</code>の27B
+    Providerが会話本文とtool
+    callを生成し、SAAAがtoolを実行して結果を27Bへ返す。画面表示と履歴には27Bの本文を保存し、軽量モデルの文面は同じTTS
+    queueへだけ配送する。軽量モデルが失敗・timeout・不正JSONになった場合も推論は失敗させず、最終発話は27B本文へ戻す。
+  </p>
   <p>
     検証: 接続管理fixture 11件、LARM
     claimからMCP回答までの結合テスト、音声ownerの競合・再試行7件、終了待機3件を追加。
@@ -283,7 +292,7 @@
     </li>
     <li>
       2B
-      Decisionの呼び出しはshadow実行として実装済み。最大3秒・応答16KiB以内で型を検証し、分類別の時間を記録する。本回答が先に完了したらshadowを打ち切り、音声を待たせない。採用基準を満たすまで分類結果は回答・経路に反映しない。
+      Decisionの分類は引き続きshadowであり、回答経路を変更しない。これとは別に軽量応答を最大1〜2秒・応答16KiB以内の厳格なJSON契約で受け取り、相槌・思考中・tool進捗・読み上げ用最終文面へ使う。軽量応答は27Bの回答本文、tool選択、保存内容を変更しない。
     </li>
     <li>
       上流HTTP要求のdropによる切断までは伝播する。GPU上の生成が実際に停止すること、残留計算が増えないことはLARM側の動作に依存し、実接続試験が必要。
@@ -293,11 +302,12 @@
       window検証と予算調整は未接続。小さいcontextや推論tokenを多く消費するモデルで完了できるとは保証しない。
     </li>
     <li>
-      既存の会話投影からuser/assistant履歴を渡す。新しい検索、tool execution、長期記憶のsystem
-      messageへの昇格は行わない。文脈が足りなければ確認または不足情報を返す。
+      既存の会話投影からuser/assistant履歴と利用可能なtool定義を27Bへ渡す。tool
+      callは全件を先に検証し、検索・記憶参照・Coding・Generative
+      UIを既存SAAA実装で実行する。軽量応答モデルにはtool定義・引数・結果を渡さず、SAAAが選んだ安全な進捗文だけを渡す。
     </li>
     <li>
-      相槌は最大2秒待ちで停止し、終了通知が確認できない場合は本回答をテキストに限定する。2Bで本回答を書き換える処理はない。
+      相槌・思考中通知は27B完了時に打ち切る。軽量モデルが生成した最終文面は音声専用であり、27Bの本回答を書き換えたり履歴へ保存したりしない。
     </li>
     <li>
       実音声のVADからの自然な割り込みは未対応。TTS中に音声入力を休止する既存方針を維持する。停止操作と入力受付中の追加入力を対象とする。

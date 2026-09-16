@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-pub(super) async fn speak(
+pub(in crate::runtime) async fn speak(
     hub: &TurnEventHub,
     state: &AppState,
     run_id: &str,
