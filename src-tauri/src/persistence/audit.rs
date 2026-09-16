@@ -173,19 +173,6 @@ fn voice_asr_event_fields(event: &VoiceAsrStreamEvent) -> Option<VoiceAsrAuditFi
             Some(wire_tag(code)),
             BTreeMap::from([("fatal".to_string(), AuditAttributeValue::Boolean(*fatal))]),
         ),
-        VoiceAsrStreamEvent::Degraded {
-            from,
-            to,
-            reason_code,
-            ..
-        } => (
-            "asr-degraded",
-            "state",
-            Some("degraded"),
-            None,
-            Some(wire_tag(reason_code)),
-            tag_attributes([("fromProtocol", *from), ("toProtocol", *to)]),
-        ),
         VoiceAsrStreamEvent::Stopped { session_id } => (
             "asr-stopped",
             "terminal",
@@ -205,7 +192,6 @@ fn session_id(event: &VoiceAsrStreamEvent) -> &str {
         | VoiceAsrStreamEvent::UtteranceDiscarded { session_id, .. }
         | VoiceAsrStreamEvent::Final { session_id, .. }
         | VoiceAsrStreamEvent::Failed { session_id, .. }
-        | VoiceAsrStreamEvent::Degraded { session_id, .. }
         | VoiceAsrStreamEvent::Stopped { session_id } => session_id,
     }
 }

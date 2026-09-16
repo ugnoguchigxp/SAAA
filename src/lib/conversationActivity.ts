@@ -4,7 +4,6 @@
  */
 export type ConversationRuntimeActivity =
   | { type: "providerStarted"; providerId: string }
-  | { type: "providerSelected"; providerId: string; fallbackUsed: boolean }
   | { type: "providerWorking" }
   | { type: "providerFailed" }
   | { type: "generationCancelled" }

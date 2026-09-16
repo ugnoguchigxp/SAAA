@@ -11,8 +11,7 @@ use super::{
 #[cfg(test)]
 use crate::{database_error, new_id, now_iso, Conversation, CreateConversationInput};
 use crate::{
-    spawn_situation_monitor, AppSnapshot, AppState, LarmRuntimeStatus, SaveSettingsDocumentsInput,
-    SettingsDocument,
+    spawn_situation_monitor, AppSnapshot, AppState, SaveSettingsDocumentsInput, SettingsDocument,
 };
 
 pub(crate) fn get_app_snapshot(state: &AppState) -> Result<AppSnapshot, String> {
@@ -35,11 +34,6 @@ pub(crate) fn get_app_snapshot(state: &AppState) -> Result<AppSnapshot, String> 
                 conversations,
                 primary_conversation_id,
                 effective_route: effective_route_snapshot(connection, &provider_probes)?,
-                larm_runtime: LarmRuntimeStatus {
-                    state: state.larm_gate.state(),
-                    message: state.larm_gate.public_message(),
-                    contract_commit: crate::providers::larm::CONTRACT_COMMIT,
-                },
                 voice_profile,
             })
         })

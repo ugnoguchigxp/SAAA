@@ -9,9 +9,9 @@ use tauri::{
 use super::{
     contracts::{
         CommitVoiceAsrUtteranceInput, StartVoiceAsrSessionInput, StopVoiceAsrSessionInput,
-        VoiceAsrFailureCode, VoiceAsrStreamEvent,
+        VoiceAsrStreamEvent,
     },
-    native_connection, route,
+    route,
     session::SessionConfig,
     speaker_gate_runtime::SpeakerGate,
 };
@@ -55,32 +55,7 @@ pub(crate) async fn start_voice_asr_session(
         }
     };
     let current_utterance_id = crate::new_id("voice_asr_utterance");
-    let (native, start_degraded) = match prepared.native.as_ref() {
-        Some(native_route) => match tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => Err("asr-cancelled".to_string()),
-            result = native_connection::open(
-                &native_route.descriptor,
-                &input.session_id,
-                &current_utterance_id,
-                &native_route.model,
-                &native_route.language,
-            ) => result,
-        } {
-            Ok(connection) => (Some(connection), None),
-            Err(error) if error == "asr-cancelled" => {
-                state.voice_asr.abort(reservation);
-                return Err(error);
-            }
-            Err(error) => (None, Some(native_failure_code(&error))),
-        },
-        None => (None, None),
-    };
-    let protocol = if native.is_some() {
-        "native"
-    } else {
-        "batch-agreement"
-    };
+    let protocol = "batch-agreement";
     let speaker_gate = SpeakerGate::new(prepared.speaker_scorer, prepared.vad_threshold);
     let scope = speaker_gate.scope();
     if cancellation.is_cancelled() {
@@ -96,12 +71,8 @@ pub(crate) async fn start_voice_asr_session(
             input.conversation_id,
         ),
         batch_decoder: prepared.batch_decoder,
-        native,
         speaker_gate,
-        allowed_languages: prepared.allowed_languages,
-        final_timeout: std::time::Duration::from_millis(prepared.timeout_ms.min(15_000)),
         cancellation: reservation.cancellation.clone(),
-        start_degraded,
     };
     state
         .voice_asr
@@ -237,14 +208,6 @@ fn normalize_start_error(error: &str) -> String {
     "asr-provider-unavailable".to_string()
 }
 
-fn native_failure_code(error: &str) -> VoiceAsrFailureCode {
-    if error.contains("protocol") {
-        VoiceAsrFailureCode::StreamProtocol
-    } else {
-        VoiceAsrFailureCode::StreamTimeout
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn start_errors_and_native_failures_map_to_stable_codes() {
+    fn start_errors_map_to_stable_codes() {
         assert_eq!(
             normalize_start_error("TARGET_SPEAKER_UNAVAILABLE in prepare"),
             "asr-target-speaker-unavailable"
@@ -281,13 +244,5 @@ mod tests {
             normalize_start_error("unexpected"),
             "asr-provider-unavailable"
         );
-        assert!(matches!(
-            native_failure_code("stream protocol mismatch"),
-            VoiceAsrFailureCode::StreamProtocol
-        ));
-        assert!(matches!(
-            native_failure_code("timed out"),
-            VoiceAsrFailureCode::StreamTimeout
-        ));
     }
 }

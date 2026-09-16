@@ -8,7 +8,7 @@ impl TurnExecutionFailure {
             Kind::Authentication | Kind::Contract | Kind::Policy => {
                 RunFailureCode::ConfigurationError
             }
-            Kind::Timeout | Kind::NotReady => RunFailureCode::RequestTimeout,
+            Kind::Timeout => RunFailureCode::RequestTimeout,
             Kind::Cancelled => RunFailureCode::UserCancelled,
             Kind::Protocol => RunFailureCode::ProtocolError,
             Kind::RequestTooLarge => RunFailureCode::ResponseTooLarge,

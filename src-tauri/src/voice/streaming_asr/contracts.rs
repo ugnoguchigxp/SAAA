@@ -77,7 +77,7 @@ pub(crate) enum VoiceAsrStreamEvent {
     Ready {
         session_id: String,
         current_utterance_id: String,
-        #[ts(type = "\"native\" | \"batch-agreement\"")]
+        #[ts(type = "\"batch-agreement\"")]
         protocol: &'static str,
         #[ts(type = "\"all-speakers\" | \"target-speaker\"")]
         scope: &'static str,
@@ -121,14 +121,6 @@ pub(crate) enum VoiceAsrStreamEvent {
         recovery: String,
         fatal: bool,
     },
-    Degraded {
-        session_id: String,
-        #[ts(type = "\"native\"")]
-        from: &'static str,
-        #[ts(type = "\"batch-agreement\"")]
-        to: &'static str,
-        reason_code: VoiceAsrFailureCode,
-    },
     Stopped {
         session_id: String,
     },
@@ -167,7 +159,7 @@ mod tests {
             VoiceAsrStreamEvent::Ready {
                 session_id: "s".into(),
                 current_utterance_id: "u".into(),
-                protocol: "native",
+                protocol: "batch-agreement",
                 scope: "all-speakers",
             },
             VoiceAsrStreamEvent::Partial {
@@ -201,12 +193,6 @@ mod tests {
                 message: "failed".into(),
                 recovery: "retry".into(),
                 fatal: false,
-            },
-            VoiceAsrStreamEvent::Degraded {
-                session_id: "s".into(),
-                from: "native",
-                to: "batch-agreement",
-                reason_code: VoiceAsrFailureCode::StreamTimeout,
             },
             VoiceAsrStreamEvent::Stopped {
                 session_id: "s".into(),

@@ -1,4 +1,5 @@
 use super::owner::{DatabaseOwnerGuard, OwnershipError};
+use crate::memory::personal_state::journal;
 use rusqlite::Connection;
 #[cfg(test)]
 use rusqlite::{Transaction, TransactionBehavior};
@@ -9,6 +10,7 @@ use std::{error::Error, fmt, path::Path, sync::Mutex};
 pub(crate) struct SqliteWriter {
     connection: Mutex<Connection>,
     _owner: Option<DatabaseOwnerGuard>,
+    forget_journal: Option<Mutex<journal::Journal>>,
 }
 
 #[derive(Debug)]
@@ -39,11 +41,16 @@ impl SqliteWriter {
             OwnershipError::Unavailable(_error) => DatabaseOpenError::OwnershipUnavailable,
         })?;
         let connection = Connection::open(database_path).map_err(DatabaseOpenError::Sqlite)?;
+        let previous_version =
+            journal::database_version(&connection).map_err(DatabaseOpenError::Sqlite)?;
         crate::persistence::migrate::backup_before_migration(&connection, database_path)
             .map_err(DatabaseOpenError::Bootstrap)?;
         crate::persistence::schema::initialize_database(&connection)
             .map_err(DatabaseOpenError::Sqlite)?;
+        let journal = journal::open_database(&connection, database_path, previous_version)
+            .map_err(DatabaseOpenError::Bootstrap)?;
         Ok(Self {
+            forget_journal: Some(Mutex::new(journal)),
             connection: Mutex::new(connection),
             _owner: Some(owner),
         })
@@ -54,6 +61,7 @@ impl SqliteWriter {
         Self {
             connection: Mutex::new(connection),
             _owner: None,
+            forget_journal: None,
         }
     }
 
@@ -70,7 +78,9 @@ impl SqliteWriter {
             .connection
             .lock()
             .map_err(|_| "Database writer unavailable".to_string())?;
-        operation(&mut connection)
+        let result = operation(&mut connection);
+        journal::sync_locked(&self.forget_journal, &connection)?;
+        result
     }
 
     #[cfg(test)]

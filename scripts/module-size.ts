@@ -13,8 +13,6 @@ const HARD = {
   script: 1_000,
 } as const;
 
-const RATCHET_ONLY = new Set(["scripts/larm-readiness.ts"]);
-
 export type SizeRecord = {
   path: string;
   total: number;
@@ -149,7 +147,6 @@ export function collectSizes(): SizeRecord[] {
 function hardLimit(record: SizeRecord): number | undefined {
   if (record.path === "src/App.tsx") return 450;
   if (record.path === "src-tauri/src/lib.rs") return 800;
-  if (RATCHET_ONLY.has(record.path)) return undefined;
   if (record.path.endsWith(".rs")) return HARD.rustProduction;
   if (record.path.endsWith(".tsx")) return HARD.tsx;
   if (record.path.startsWith("scripts/") && record.path.endsWith(".ts")) return HARD.script;

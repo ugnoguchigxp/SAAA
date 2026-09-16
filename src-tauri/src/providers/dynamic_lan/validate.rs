@@ -8,7 +8,7 @@ use super::{
 };
 
 fn valid_llm_protocol(value: &str) -> bool {
-    matches!(value, "openai.chat-completions.v1" | "saaa.llm-stream.v1")
+    value == "openai.chat-completions.v1"
 }
 
 pub(crate) fn validate_config_revision(revision: Option<&str>) -> Result<(), DynamicLanError> {
@@ -301,23 +301,6 @@ pub(crate) fn validate_claim(
         .port_or_known_default()
         .ok_or_else(|| contract_error(()))?;
     let expected_health_url = provider_health_url(&base_url, &expected.id, &descriptor.name)?;
-    // HTTP inference ignores WS transport/encoding/resume capabilities. Validate
-    // an advertised URL's boundary without requiring that optional advertisement.
-    if let Some(streaming) = &descriptor.streaming {
-        let stream_url = Url::parse(&streaming.url).map_err(contract_error)?;
-        if stream_url.scheme() != "ws"
-            || stream_url.host_str() != base_url.host_str()
-            || stream_url.port_or_known_default() != base_url.port_or_known_default()
-            || stream_url.path() != "/v1/llm/stream"
-            || stream_url.query().is_some()
-            || stream_url.fragment().is_some()
-            || !stream_url.username().is_empty()
-            || stream_url.password().is_some()
-            || streaming.url.len() > 2048
-        {
-            return Err(contract_error(()));
-        }
-    }
     if descriptor.api_style != "openai"
         || expected_scheme != "http"
         || descriptor.scheme != expected_scheme

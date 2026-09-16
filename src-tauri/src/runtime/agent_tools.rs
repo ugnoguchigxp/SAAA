@@ -8,7 +8,7 @@ use crate::memory::{
 };
 
 #[cfg(test)]
-const MAX_TOOL_ARGUMENT_CHARS: usize = 4_096;
+const MAX_TOOL_ARGUMENT_CHARS: usize = 200_000;
 #[cfg(test)]
 const MAX_TOOL_CALL_ID_BYTES: usize = 160;
 
@@ -245,7 +245,8 @@ pub fn agent_tool_definitions(
 
 #[cfg(test)]
 pub fn is_supported_agent_tool(name: &str) -> bool {
-    name == RECALL_TOOL_NAME
+    crate::coding::contracts::NAMES.contains(&name)
+        || name == RECALL_TOOL_NAME
         || is_typed_recall_tool(name)
         || crate::runtime::web_fetch::is_web_fetch_tool(name)
         || name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
@@ -324,6 +325,7 @@ fn merge_tool_name(target: &mut String, incoming: &str) -> Result<(), ToolProtoc
     };
     if !std::iter::once(RECALL_TOOL_NAME)
         .chain(TYPED_RECALL_TOOL_NAMES)
+        .chain(crate::coding::contracts::NAMES)
         .chain(crate::runtime::web_fetch::WEB_FETCH_TOOL_NAMES)
         .chain(std::iter::once(
             crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME,

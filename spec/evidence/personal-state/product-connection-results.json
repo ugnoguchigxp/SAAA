@@ -1,0 +1,77 @@
+{
+  "date": "2026-09-13",
+  "p1Complete": false,
+  "defaultEnabled": false,
+  "implementation": "production adapter, durable outbox, cancellation, seven-phase cleanup, owner diagnostics, finite native harness",
+  "verification": {
+    "localCheck": {
+      "status": "passed",
+      "frontendPassed": 353,
+      "rustUnitPassed": 571,
+      "rustUnitIgnored": 17,
+      "rustIntegrationPassed": 5,
+      "personalStateCorePassed": 17,
+      "productHttpPassed": 6,
+      "log": "/tmp/saaa-personal-final-check.log"
+    },
+    "larmSession": {
+      "unitPassed": 11,
+      "httpPassed": 4,
+      "liveIgnored": 1
+    },
+    "nativeHarnessBuild": "passed",
+    "specCheck": "passed",
+    "desktopSmoke": {
+      "status": "passed",
+      "log": "/tmp/saaa-personal-desktop-smoke-final.log"
+    },
+    "larmHost": {
+      "targetedTestsPassed": 6,
+      "typecheck": "passed",
+      "docs": "passed"
+    },
+    "launcher": {
+      "shellSyntax": "passed",
+      "argumentTests": "passed",
+      "cacheProfileTests": "passed",
+      "buildFlagTests": "passed"
+    }
+  },
+  "liveConformance": {
+    "scope": "public API on resident qwen-general 27B; not native SAAA acceptance",
+    "provision": "passed",
+    "registration": "passed",
+    "canonicalMeasurement": "passed",
+    "viewV2": "passed",
+    "generation": "completed/http_200",
+    "forget": {
+      "complete": false,
+      "absenceVerified": false,
+      "phases": {
+        "attempts": "absent",
+        "views": "absent",
+        "runtime": "stop_unknown",
+        "snapshots": "absent",
+        "registry": "absent",
+        "sources": "absent",
+        "audit": "absent"
+      }
+    },
+    "temporaryDaemon": "stopped",
+    "syntheticConnection": "deleted HTTP 204",
+    "syntheticSourceFiles": 0,
+    "productionHealth": "ok"
+  },
+  "acceptancePending": [
+    "Apply staged service setting and restart with administrator privileges; sudo -n requires interactive authentication.",
+    "Reserve intended qwen-worker-quality runtime without interrupting other inference.",
+    "Human review of 64 Japanese gold cases (humanReviewed remains false).",
+    "Native SAAA live acceptance, snapshot OFF/ON, race and rollback cases.",
+    "Three semantic repetitions, cold/warm 100 requests each and resource measurements."
+  ],
+  "context": {
+    "compileCount": 1,
+    "compileResult": "No Content",
+    "compileEvalCount": 0
+  }
+}

@@ -48,39 +48,6 @@ pub(crate) fn begin_provider_session(
     })
 }
 
-pub(crate) fn persist_larm_selection(
-    state: &AppState,
-    session_id: &str,
-    allocation: &crate::providers::larm::contracts::ReadyAllocation,
-) -> Result<(), String> {
-    let selection_reason = match allocation.selection_reason {
-        crate::providers::larm::contracts::SelectionReason::Primary => "primary",
-        crate::providers::larm::contracts::SelectionReason::Other => "other",
-    };
-    state.sqlite_writer.write(|connection| {
-        let changed = connection
-            .execute(
-                "UPDATE provider_sessions
-             SET route_id='llm-default', allocation_id=?1, selected_runtime_id=?2,
-                 fallback_used=?3, selection_reason=?4, updated_at=?5
-             WHERE id=?6 AND provider_kind='larm' AND status='running' AND allocation_id IS NULL",
-                params![
-                    allocation.allocation_id.as_str(),
-                    allocation.selected_runtime_id.as_str(),
-                    allocation.fallback_used,
-                    selection_reason,
-                    now_iso(),
-                    session_id
-                ],
-            )
-            .map_err(database_error)?;
-        if changed != 1 {
-            return Err("LARM provider selection could not be persisted".to_string());
-        }
-        Ok(())
-    })
-}
-
 pub(crate) fn mark_provider_output_started(
     state: &AppState,
     session_id: &str,
@@ -95,55 +62,6 @@ pub(crate) fn mark_provider_output_started(
             .map_err(database_error)?;
         if changed != 1 {
             return Err("Provider output state could not be persisted".to_string());
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn mark_larm_release_pending(state: &AppState, session_id: &str) -> Result<(), String> {
-    state.sqlite_writer.write(|connection| {
-        let changed = connection
-            .execute(
-                "UPDATE provider_sessions SET release_status='pending', updated_at=?1
-             WHERE id=?2 AND provider_kind='larm' AND status='running'
-               AND release_status='not-started'",
-                params![now_iso(), session_id],
-            )
-            .map_err(database_error)?;
-        if changed != 1 {
-            return Err("LARM release state could not be persisted".to_string());
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn finish_larm_provider_session(
-    state: &AppState,
-    session_id: &str,
-    status: &str,
-    failure_kind: Option<ProviderFailureKind>,
-    cleanup: CleanupOutcome,
-) -> Result<(), String> {
-    let (release_status, release_failure_kind) = cleanup_persistence(cleanup);
-    state.sqlite_writer.write(|connection| {
-        let changed = connection
-            .execute(
-                "UPDATE provider_sessions
-             SET status=?1, failure_reason=?2, failure_kind=?2, release_status=?3,
-                 release_failure_kind=?4, updated_at=?5
-             WHERE id=?6 AND provider_kind='larm' AND status='running'",
-                params![
-                    status,
-                    failure_kind.map(ProviderFailureKind::as_str),
-                    release_status,
-                    release_failure_kind,
-                    now_iso(),
-                    session_id
-                ],
-            )
-            .map_err(database_error)?;
-        if changed != 1 {
-            return Err("Provider session was already finalized".to_string());
         }
         Ok(())
     })
@@ -186,24 +104,7 @@ pub(crate) fn cleanup_persistence(cleanup: CleanupOutcome) -> (&'static str, Opt
         CleanupOutcome::NotApplicable => ("not-applicable", None),
         CleanupOutcome::NotStarted => ("not-started", None),
         CleanupOutcome::Released => ("released", None),
-        CleanupOutcome::DeferredToTtl { kind } => {
-            ("deferred-to-ttl", Some(release_failure_kind_str(kind)))
-        }
         CleanupOutcome::DynamicLanDeferredToTtl { kind } => ("deferred-to-ttl", Some(kind)),
-    }
-}
-
-pub(crate) fn release_failure_kind_str(
-    kind: crate::providers::larm::contracts::ReleaseFailureKind,
-) -> &'static str {
-    use crate::providers::larm::contracts::ReleaseFailureKind as Release;
-    match kind {
-        Release::Authentication => "authentication",
-        Release::Protocol => "protocol",
-        Release::Upstream => "upstream",
-        Release::Network => "network",
-        Release::Timeout => "timeout",
-        Release::Internal => "internal",
     }
 }
 
@@ -239,6 +140,14 @@ pub(crate) fn persist_conversation_success(
     input: &StartTurnInput,
     content: &str,
 ) -> Result<ConversationMessage, String> {
+    persist_conversation_success_with_state(state, input, content, |_| Ok(()))
+}
+pub(crate) fn persist_conversation_success_with_state(
+    state: &AppState,
+    input: &StartTurnInput,
+    content: &str,
+    adopt: impl FnOnce(&rusqlite::Connection) -> Result<(), String>,
+) -> Result<ConversationMessage, String> {
     let fallback = if content.trim().is_empty() {
         state.sqlite_readers.read(|c| {
         c.query_row("SELECT json_extract(result_json,'$.summary') FROM ui_tool_results WHERE run_id=?1 AND json_extract(result_json,'$.summary') IS NOT NULL ORDER BY rowid DESC LIMIT 1", [&input.run_id], |r| r.get::<_,String>(0)).map_err(database_error)
@@ -267,6 +176,8 @@ pub(crate) fn persist_conversation_success(
     };
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
+        crate::memory::personal_state::generation::allow_run(&transaction, &input.run_id)?;
+        adopt(&transaction)?;
         transaction
             .execute(
                 "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
@@ -280,6 +191,7 @@ pub(crate) fn persist_conversation_success(
                 ],
             )
             .map_err(database_error)?;
+        transaction.execute("INSERT OR IGNORE INTO personal_artifacts(generation_id,message_id) SELECT id,?2 FROM personal_generations WHERE run_id=?1 AND output_allowed=1 AND status='succeeded' ORDER BY rowid DESC LIMIT 1",params![input.run_id,message.id]).map_err(database_error)?;
         transaction
             .execute(
                 "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",

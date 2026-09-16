@@ -10,13 +10,10 @@ pub(crate) enum ProviderFailureKind {
     Policy,
     Capacity,
     Unavailable,
-    Draining,
     Upstream,
     Network,
     Timeout,
     AllocationLost,
-    AllocationOutcomeUnknown,
-    NotReady,
     PartialOutput,
     ClientDisconnected,
     Cancelled,
@@ -33,13 +30,10 @@ impl ProviderFailureKind {
             Self::Policy => "policy",
             Self::Capacity => "capacity",
             Self::Unavailable => "unavailable",
-            Self::Draining => "draining",
             Self::Upstream => "upstream",
             Self::Network => "network",
             Self::Timeout => "timeout",
             Self::AllocationLost => "allocation-lost",
-            Self::AllocationOutcomeUnknown => "allocation-outcome-unknown",
-            Self::NotReady => "not-ready",
             Self::PartialOutput => "partial-output",
             Self::ClientDisconnected => "client-disconnected",
             Self::Cancelled => "cancelled",
@@ -58,13 +52,10 @@ impl ProviderFailureKind {
             Self::Policy => "Provider policy rejected the request.",
             Self::Capacity => "Provider capacity is currently exhausted.",
             Self::Unavailable => "Provider is currently unavailable.",
-            Self::Draining => "Provider is draining and is not accepting new work.",
             Self::Upstream => "Provider could not complete the upstream request.",
             Self::Network => "Provider connection ended before the response completed.",
             Self::Timeout => "Provider request reached its timeout.",
             Self::AllocationLost => "The selected local runtime allocation is no longer available.",
-            Self::AllocationOutcomeUnknown => "The local runtime allocation outcome is unknown.",
-            Self::NotReady => "The selected local runtime did not become ready in time.",
             Self::PartialOutput => {
                 "Provider reached the output token limit; the response is incomplete."
             }
@@ -90,12 +81,7 @@ pub(crate) enum CleanupOutcome {
     NotApplicable,
     NotStarted,
     Released,
-    DeferredToTtl {
-        kind: crate::providers::larm::contracts::ReleaseFailureKind,
-    },
-    DynamicLanDeferredToTtl {
-        kind: &'static str,
-    },
+    DynamicLanDeferredToTtl { kind: &'static str },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -159,30 +145,6 @@ impl ProviderAttemptError {
     }
 }
 
-pub(crate) fn provider_failure_from_larm(
-    kind: crate::providers::larm::contracts::SessionFailureKind,
-) -> ProviderFailureKind {
-    use crate::providers::larm::contracts::SessionFailureKind as Larm;
-    match kind {
-        Larm::Authentication => ProviderFailureKind::Authentication,
-        Larm::Contract => ProviderFailureKind::Contract,
-        Larm::Protocol => ProviderFailureKind::Protocol,
-        Larm::RequestTooLarge => ProviderFailureKind::RequestTooLarge,
-        Larm::Internal => ProviderFailureKind::Internal,
-        Larm::Cancelled => ProviderFailureKind::Cancelled,
-        Larm::Policy => ProviderFailureKind::Policy,
-        Larm::Capacity => ProviderFailureKind::Capacity,
-        Larm::Unavailable => ProviderFailureKind::Unavailable,
-        Larm::Draining => ProviderFailureKind::Draining,
-        Larm::Upstream => ProviderFailureKind::Upstream,
-        Larm::Network => ProviderFailureKind::Network,
-        Larm::Timeout => ProviderFailureKind::Timeout,
-        Larm::AllocationLost => ProviderFailureKind::AllocationLost,
-        Larm::AllocationOutcomeUnknown => ProviderFailureKind::AllocationOutcomeUnknown,
-        Larm::NotReady => ProviderFailureKind::NotReady,
-    }
-}
-
 pub(crate) fn provider_failure_from_dynamic_lan(
     kind: crate::providers::dynamic_lan::ErrorKind,
 ) -> ProviderFailureKind {
@@ -199,12 +161,6 @@ pub(crate) fn provider_failure_from_dynamic_lan(
         DynamicLan::Cancelled => ProviderFailureKind::Cancelled,
         DynamicLan::Internal => ProviderFailureKind::Internal,
     }
-}
-
-pub(crate) fn larm_failure_message(
-    kind: crate::providers::larm::contracts::SessionFailureKind,
-) -> &'static str {
-    provider_failure_from_larm(kind).public_message().as_str()
 }
 
 #[derive(Clone, Copy)]

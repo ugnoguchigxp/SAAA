@@ -16,7 +16,6 @@ fn descriptor_rejects_duplicate_capabilities_and_cross_host_urls() {
                 language: None,
                 voice: None,
                 health_url: "http://provider.local:8080/health".to_string(),
-                streaming: None,
             },
             ServiceDescriptor {
                 capability: "llm".to_string(),
@@ -26,7 +25,6 @@ fn descriptor_rejects_duplicate_capabilities_and_cross_host_urls() {
                 language: None,
                 voice: None,
                 health_url: "http://other.local:8080/health".to_string(),
-                streaming: None,
             },
         ],
     };
@@ -50,7 +48,6 @@ fn address_rejects_public_http_and_descriptor_rejects_https_downgrade() {
             language: None,
             voice: None,
             health_url: "http://provider.example/health".to_string(),
-            streaming: None,
         }],
     };
     assert!(validate_descriptor(&base, &descriptor).is_err());
@@ -86,7 +83,6 @@ fn asr_descriptor_requires_automatic_language_detection() {
             language: Some("ja".to_string()),
             voice: None,
             health_url: "http://provider.local:8080/health".to_string(),
-            streaming: None,
         }],
     };
     assert!(validate_descriptor(&base, &descriptor).is_err());
@@ -94,143 +90,27 @@ fn asr_descriptor_requires_automatic_language_detection() {
     assert!(validate_descriptor(&base, &descriptor).is_ok());
 }
 
-fn v2_asr_descriptor(base: &str, stream_url: &str) -> HarnessDescriptor {
-    HarnessDescriptor {
-        contract_version: "saaa-service-harness.v2".to_string(),
-        revision: "native-test-r1".to_string(),
-        services: vec![ServiceDescriptor {
-            capability: "asr".to_string(),
-            protocol: "openai.audio-transcriptions.v1".to_string(),
-            base_url: format!("{base}v1"),
-            model: "m".to_string(),
-            language: Some("auto".to_string()),
-            voice: None,
-            health_url: format!("{base}health"),
-            streaming: Some(StreamingDescriptor::Asr(AsrStreamingDescriptor {
-                protocol: "saaa.asr-stream.v1".to_string(),
-                url: stream_url.to_string(),
-                sample_rate: 16_000,
-                encoding: "pcm_s16le".to_string(),
-                packet_milliseconds: 100,
-            })),
-        }],
-    }
-}
-
-fn v3_llm_descriptor(stream_url: &str) -> HarnessDescriptor {
-    HarnessDescriptor {
-        contract_version: "saaa-service-harness.v3".to_string(),
-        revision: "llm-websocket-r1".to_string(),
-        services: vec![ServiceDescriptor {
-            capability: "llm".to_string(),
-            protocol: "saaa.llm-stream.v1".to_string(),
-            base_url: "http://provider.local:9810/v1".to_string(),
-            model: "m".to_string(),
-            language: None,
-            voice: None,
-            health_url: "http://provider.local:9810/health".to_string(),
-            streaming: Some(StreamingDescriptor::Llm(LlmStreamingDescriptor {
-                protocol: "saaa.llm-stream.v1".to_string(),
-                url: stream_url.to_string(),
-                encoding: "json-control+binary-delta-v1".to_string(),
-                compression: "none".to_string(),
-                max_concurrent_runs: 2,
-                max_connections: 2,
-                resume_window_ms: 120_000,
-                upstream_transport: "native".to_string(),
-            })),
-        }],
-    }
-}
-
 #[test]
-fn v3_llm_requires_exact_websocket_contract_and_bounded_concurrency() {
+fn http_descriptors_ignore_unused_transport_extensions_and_reject_legacy_protocol() {
     let base = url::Url::parse("http://provider.local:9810/").unwrap();
-    let valid = v3_llm_descriptor("ws://provider.local:9810/v1/llm/stream");
-    assert!(validate_descriptor(&base, &valid).is_ok());
-
-    let mut mismatch = valid.clone();
-    if let Some(StreamingDescriptor::Llm(streaming)) = mismatch.services[0].streaming.as_mut() {
-        streaming.max_connections = 1;
+    for (capability, protocol) in [
+        ("llm", "openai.chat-completions.v1"),
+        ("asr", "openai.audio-transcriptions.v1"),
+        ("tts", "openai.audio-speech.v1"),
+    ] {
+        let value = serde_json::json!({
+            "contractVersion":"saaa-service-harness.v3", "revision":"http-r1",
+            "services":[{"capability":capability,"protocol":protocol,
+                "baseUrl":"http://provider.local:9810/v1", "model":"m",
+                "voice": if capability == "tts" { Some("voice") } else { None },
+                "healthUrl":"http://provider.local:9810/health",
+                "streaming":{"protocol":"unused","url":"ws://other.local/ignored"}}]
+        });
+        let mut descriptor: HarnessDescriptor = serde_json::from_value(value).unwrap();
+        assert!(validate_descriptor(&base, &descriptor).is_ok());
+        descriptor.services[0].protocol = "saaa.llm-stream.v1".into();
+        assert!(validate_descriptor(&base, &descriptor).is_err());
     }
-    assert!(validate_descriptor(&base, &mismatch).is_err());
-
-    let mut too_many = valid.clone();
-    if let Some(StreamingDescriptor::Llm(streaming)) = too_many.services[0].streaming.as_mut() {
-        streaming.max_connections = 9;
-        streaming.max_concurrent_runs = 9;
-    }
-    assert!(validate_descriptor(&base, &too_many).is_err());
-
-    let cross_host = v3_llm_descriptor("ws://other.local:9810/v1/llm/stream");
-    assert!(validate_descriptor(&base, &cross_host).is_err());
-}
-
-#[test]
-fn legacy_llm_descriptors_remain_valid_without_a_streaming_member() {
-    let base = url::Url::parse("http://provider.local:9810/").unwrap();
-    let descriptor = HarnessDescriptor {
-        contract_version: "saaa-service-harness.v2".to_string(),
-        revision: "legacy-r1".to_string(),
-        services: vec![ServiceDescriptor {
-            capability: "llm".to_string(),
-            protocol: "openai.chat-completions.v1".to_string(),
-            base_url: "http://provider.local:9810/v1".to_string(),
-            model: "m".to_string(),
-            language: None,
-            voice: None,
-            health_url: "http://provider.local:9810/health".to_string(),
-            streaming: None,
-        }],
-    };
-    assert!(validate_descriptor(&base, &descriptor).is_ok());
-}
-
-#[test]
-fn v2_streaming_requires_the_exact_protocol_and_same_secure_host() {
-    let local = url::Url::parse("http://provider.local:9810/").unwrap();
-    let valid = v2_asr_descriptor(
-        "http://provider.local:9810/",
-        "ws://provider.local:9810/asr-stream",
-    );
-    assert!(validate_descriptor(&local, &valid).is_ok());
-
-    let mut wrong_protocol = valid.clone();
-    if let Some(StreamingDescriptor::Asr(streaming)) = wrong_protocol.services[0].streaming.as_mut()
-    {
-        streaming.protocol = "vendor.stream.v1".to_string();
-    }
-    assert!(validate_descriptor(&local, &wrong_protocol).is_err());
-
-    let cross_host = v2_asr_descriptor(
-        "http://provider.local:9810/",
-        "ws://other.local:9810/asr-stream",
-    );
-    assert!(validate_descriptor(&local, &cross_host).is_err());
-
-    let public = url::Url::parse("https://provider.example/").unwrap();
-    let insecure_public = v2_asr_descriptor(
-        "https://provider.example/",
-        "ws://provider.example/asr-stream",
-    );
-    assert!(validate_descriptor(&public, &insecure_public).is_err());
-}
-
-#[test]
-fn v1_rejects_streaming_and_v2_rejects_unknown_fields() {
-    let base = url::Url::parse("http://provider.local:9810/").unwrap();
-    let mut v1 = v2_asr_descriptor(
-        "http://provider.local:9810/",
-        "ws://provider.local:9810/asr-stream",
-    );
-    v1.contract_version = "saaa-service-harness.v1".to_string();
-    assert!(validate_descriptor(&base, &v1).is_err());
-    assert!(serde_json::from_str::<HarnessDescriptor>(
-        r#"{
-      "contractVersion":"saaa-service-harness.v2","revision":"r1","unknown":true,"services":[]
-    }"#
-    )
-    .is_err());
 }
 
 #[tokio::test]

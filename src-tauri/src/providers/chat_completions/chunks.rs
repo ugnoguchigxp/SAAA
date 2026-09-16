@@ -16,10 +16,11 @@ pub(super) struct Completion {
     pub(super) finish: Option<String>,
     pub(super) done: bool,
     tools: BTreeMap<u64, Tool>,
+    response_model: Option<String>,
 }
 
 impl Completion {
-    pub(super) fn absorb(&mut self, data: &str, model: &str) -> Result<String, Failure> {
+    pub(super) fn absorb(&mut self, data: &str, _requested_model: &str) -> Result<String, Failure> {
         if self.done {
             return Err(Failure::Protocol);
         }
@@ -34,11 +35,22 @@ impl Completion {
         if value.get("error").is_some() {
             return Err(Failure::Upstream);
         }
-        if value
-            .get("model")
-            .is_some_and(|v| v.as_str() != Some(model))
-        {
-            return Err(Failure::Contract);
+        // OpenAI-compatible servers may return a concrete model for a public alias.
+        // Keep that response identity stable across this completion, rather than
+        // inventing aliases or requiring the request spelling in every chunk.
+        if let Some(value) = value.get("model") {
+            let actual = value
+                .as_str()
+                .filter(|m| !m.is_empty() && m.len() <= 256)
+                .ok_or(Failure::Contract)?;
+            if self
+                .response_model
+                .as_deref()
+                .is_some_and(|prior| prior != actual)
+            {
+                return Err(Failure::Contract);
+            }
+            self.response_model = Some(actual.into());
         }
         let choices = value
             .get("choices")

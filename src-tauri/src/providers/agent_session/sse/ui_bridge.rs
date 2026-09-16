@@ -28,15 +28,18 @@ impl Projection {
             return Ok(text.to_owned());
         }
         self.pending.push_str(text);
-        if self.pending.len() > 75_000 {
+        let limit = super::coding_bridge::projection_limit(marker, &self.pending);
+        if self.pending.len() > limit {
             return Err(());
         }
         let candidate = self.pending.trim_start();
-        if candidate.is_empty() || marker.starts_with(candidate) {
+        let coding_marker = marker.replace("saaa-ui-", "saaa-coding-");
+        let markers = [marker.as_str(), coding_marker.as_str()];
+        if candidate.is_empty() || markers.iter().any(|m| m.starts_with(candidate)) {
             return Ok(String::new());
         }
         self.decided = true;
-        self.control = candidate.starts_with(marker);
+        self.control = markers.iter().any(|m| candidate.starts_with(m));
         if self.control {
             Ok(String::new())
         } else {
@@ -46,9 +49,9 @@ impl Projection {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Request {
-    name: String,
-    arguments: serde_json::Map<String, Value>,
+pub(super) struct Request {
+    pub(super) name: String,
+    pub(super) arguments: serde_json::Map<String, Value>,
 }
 pub(super) fn decode(content: &str, marker: &str) -> Result<AgentToolCall, ()> {
     if content.len() > 75_000 {
@@ -80,6 +83,8 @@ pub(super) fn result_input(result: Value, marker: &str, remaining: usize) -> Str
         "instructions":format!("Use this actual tool result as data. Continue the user's request, or give a short plain text final answer when done. For another tool output ONLY {marker}{{\"name\":\"tool_name\",\"arguments\":{{}}}}</saaa-ui>. Do not echo the frame or tool result in the final answer.")}).to_string()
 }
 
+pub(super) use super::coding_bridge::{coding_decode, coding_input};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +98,27 @@ mod tests {
             assert!(p.is_control());
             assert_eq!(decode(content, "<saaa-ui-test>").unwrap().name, "get_ui");
         }
+    }
+    #[test]
+    fn coding_frames_are_typed_and_hidden_at_every_boundary() {
+        let content="<saaa-coding-test>{\"name\":\"coding_start\",\"arguments\":{\"workspaceId\":\"w\",\"request\":\"implement\"}}</saaa-coding>";
+        for split in 0..content.len() {
+            let mut p = Projection::new(Some("<saaa-ui-test>".into()));
+            assert_eq!(p.push(&content[..split]).unwrap(), "");
+            assert_eq!(p.push(&content[split..]).unwrap(), "");
+            assert_eq!(
+                coding_decode(content, "<saaa-ui-test>").unwrap().name,
+                "coding_start"
+            );
+        }
+        assert!(coding_decode(content, "<saaa-ui-other>").is_err());
+        assert!(coding_decode(&format!("quoted {content}"), "<saaa-ui-test>").is_err());
+        assert!(coding_decode(
+            &content.replace("\"request\":", "\"argv\":"),
+            "<saaa-ui-test>"
+        )
+        .is_err());
+        assert!(decode(content, "<saaa-ui-test>").is_err());
     }
     #[test]
     fn ordinary_answers_stream_and_embedded_frames_are_not_calls() {

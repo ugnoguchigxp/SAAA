@@ -1,3 +1,5 @@
+const MAX_CONTENT_BYTES: usize = 262_144;
+const MAX_CONTENT_CHARS: usize = 64_000;
 use futures_util::StreamExt;
 use reqwest::{header, Client, Response};
 use serde::Deserialize;
@@ -12,11 +14,11 @@ use crate::{
 };
 
 use super::{authorized, failed, safe_remote_id, send, session_operation_url, SessionResponse};
-use crate::providers::{
-    llm_websocket::protocol::{MAX_CONTENT_BYTES, MAX_CONTENT_CHARS},
-    stream::{CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind},
+use crate::providers::stream::{
+    CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
 };
 
+mod coding_bridge;
 mod ui_bridge;
 #[cfg(test)]
 mod workflow_tests;
@@ -114,9 +116,28 @@ pub(super) async fn run_agent_session_sse(
             .read(crate::generative_ui::store::enabled)
             .unwrap_or(false)
     });
+    let coding_enabled = context.output_persistence.is_some_and(|p| {
+        p.state
+            .sqlite_readers
+            .read(crate::coding::repository::enabled)
+            .unwrap_or(false)
+    });
+    if !coding_enabled {
+        input=json!({"type":"saaa.conversation.capabilities.v1","conversation":serde_json::from_str::<Value>(&input).unwrap_or(Value::Null),"instructions":"SAAA coding tools are disabled on this route. You cannot start, resume, inspect or cancel a local coding job. Explain this limitation for coding requests and ask the user to enable pi coding in SAAA settings. Never claim to have performed an implementation or use your own remote tools as a substitute."}).to_string();
+    }
     let marker = format!("<saaa-ui-{}>", uuid::Uuid::new_v4().simple());
     if enabled {
         input = ui_bridge::initial_input(&input, &marker);
+    }
+    if coding_enabled {
+        input = ui_bridge::coding_input(
+            &input,
+            &marker,
+            context
+                .output_persistence
+                .map(|p| crate::coding::tools::context(p.state, &context.input.conversation_id))
+                .unwrap_or(Value::Null),
+        );
     }
     if input.len() > 1_000_000 {
         return failed(ProviderFailureKind::RequestTooLarge, false);
@@ -136,7 +157,9 @@ pub(super) async fn run_agent_session_sse(
         let mut state = StreamState {
             last_cursor: cursor.take(),
             output_started,
-            projection: ui_bridge::Projection::new(enabled.then(|| marker.clone())),
+            projection: ui_bridge::Projection::new(
+                (enabled || coding_enabled).then(|| marker.clone()),
+            ),
             ..Default::default()
         };
         let outcome = read_turn(
@@ -168,18 +191,40 @@ pub(super) async fn run_agent_session_sse(
         if TokioInstant::now() >= deadline {
             return failed(ProviderFailureKind::Timeout, output_started);
         }
-        let result = match ui_bridge::decode(&content, &marker) {
+        let decoded = if content
+            .trim_start()
+            .starts_with(&marker.replace("saaa-ui-", "saaa-coding-"))
+            && coding_enabled
+        {
+            ui_bridge::coding_decode(&content, &marker)
+        } else if enabled {
+            ui_bridge::decode(&content, &marker)
+        } else {
+            Err(())
+        };
+        let result = match decoded {
             Ok(mut call) => {
                 call.id = format!("sse-ui-{marker}-{round}");
-                let result = crate::generative_ui::tools::execute(
-                    context.output_persistence.map(|p| p.state),
-                    context.input,
-                    &call,
-                );
+                let result = if crate::coding::contracts::NAMES.contains(&call.name.as_str()) {
+                    crate::coding::tools::execute(
+                        context.output_persistence.map(|p| p.state),
+                        context.input,
+                        &call,
+                    )
+                } else {
+                    crate::generative_ui::tools::execute(
+                        context.output_persistence.map(|p| p.state),
+                        context.input,
+                        &call,
+                    )
+                };
                 let value = serde_json::from_str::<Value>(&result)
                     .unwrap_or(json!({"error":"Invalid result"}));
                 let presented = value["messageId"].is_string();
-                if presented || (call.name == "save_ui" && value.get("error").is_none()) {
+                if value["accepted"] == true
+                    || presented
+                    || (call.name == "save_ui" && value.get("error").is_none())
+                {
                     // Persisted mutations must prevent fallback from repeating side effects.
                     if !output_started
                         && context
@@ -207,6 +252,9 @@ pub(super) async fn run_agent_session_sse(
             Err(()) => return failed(ProviderFailureKind::Protocol, output_started),
         };
         input = ui_bridge::result_input(result, &marker, 11 - round);
+        if coding_enabled {
+            input = ui_bridge::coding_input(&input, &marker, Value::Null);
+        }
         if input.len() > 1_000_000 {
             return failed(ProviderFailureKind::RequestTooLarge, output_started);
         }
@@ -617,8 +665,6 @@ mod tests {
         };
         let session = SessionResponse {
             id: "ags_1".to_string(),
-            stream_url: None,
-            stream_protocol: None,
             events_url: Some("/events".to_string()),
         };
         let event = |event_type: &str, cursor: &str, data: Value| ParsedEvent {

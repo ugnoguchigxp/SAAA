@@ -9,7 +9,7 @@ describe("voice ASR projection", () => {
     type: "ready",
     sessionId: "s",
     currentUtteranceId: "u",
-    protocol: "native",
+    protocol: "batch-agreement",
     scope: "all-speakers",
   });
   const latest = projectVoiceAsrEvent(ready, {
@@ -96,15 +96,7 @@ describe("voice ASR projection", () => {
       reason: "no-speech",
     });
     expect(discarded.stableText + discarded.unstableText).toBe("");
-    const degraded = projectVoiceAsrEvent(latest, {
-      type: "degraded",
-      sessionId: "s",
-      from: "native",
-      to: "batch-agreement",
-      reasonCode: "asr-stream-timeout",
-    });
-    expect(degraded).toMatchObject({ protocol: "batch-agreement", status: "degraded" });
-    expect(projectVoiceAsrEvent(degraded, { type: "stopped", sessionId: "s" })).toEqual(
+    expect(projectVoiceAsrEvent(latest, { type: "stopped", sessionId: "s" })).toEqual(
       initialVoiceAsrProjection,
     );
   });

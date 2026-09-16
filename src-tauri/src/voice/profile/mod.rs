@@ -610,7 +610,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("plaintext schema reads");
-        assert_eq!(version, crate::memory::control_plane::MEMORY_SCHEMA_VERSION);
+        assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         assert_eq!(profile_count, 0);
         assert_eq!(embedding_column, 1);
     }

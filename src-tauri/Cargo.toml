@@ -25,6 +25,7 @@ quality-eval-harness = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+saaa-personal-state-core = { path = "../crates/personal-state-core" }
 saaa-larm-session = { path = "../crates/larm-session" }
 saaa-reasoning-mcp = { path = "../services/reasoning-mcp" }
 axum = "0.8"
@@ -50,7 +51,6 @@ regex = "1"
 sha2 = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
-tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 unicode-segmentation = "1"
 unicode-normalization = "0.1"
 url = "2"
@@ -70,10 +70,6 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
-
-[[bench]]
-name = "streaming_hot_path"
-harness = false
 
 [[bench]]
 name = "sqlite_read_path"

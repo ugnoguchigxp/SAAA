@@ -63,7 +63,7 @@ describe("settings provider UI contracts", () => {
     expect(containsSource(dynamicLan, "endpoint: descriptor.configuration.fields.base_url")).toBe(
       true,
     );
-    expect(containsSource(dynamicLan, 'stream_url.path() != "/v1/llm/stream"')).toBe(true);
+    expect(containsSource(dynamicLan, 'value == "openai.chat-completions.v1"')).toBe(true);
     expect(containsSource(dynamicLan, "Err(env::VarError::NotPresent) => return Ok(None)")).toBe(
       true,
     );

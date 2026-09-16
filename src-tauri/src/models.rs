@@ -67,7 +67,6 @@ pub(crate) struct AppSnapshot {
     pub(crate) conversations: Vec<Conversation>,
     pub(crate) primary_conversation_id: String,
     pub(crate) effective_route: EffectiveRouteSnapshot,
-    pub(crate) larm_runtime: LarmRuntimeStatus,
     pub(crate) voice_profile: crate::voice::profile::VoiceProfileSnapshot,
 }
 
@@ -81,14 +80,6 @@ pub(crate) struct EffectiveRouteSnapshot {
     pub(crate) fallback_used: bool,
     pub(crate) reason_code: String,
     pub(crate) updated_at: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct LarmRuntimeStatus {
-    pub(crate) state: &'static str,
-    pub(crate) message: &'static str,
-    pub(crate) contract_commit: &'static str,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

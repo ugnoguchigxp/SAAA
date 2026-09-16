@@ -33,7 +33,7 @@ export const defaultSettingsDraft: SettingsDraft = {
     userName: "",
     enabled: false,
     provider: "codex-sdk",
-    model: "",
+    model: "gpt-5.6-luna",
     runtimeMode: "app-server",
     health: "unchecked",
     sandboxMode: "read-only",

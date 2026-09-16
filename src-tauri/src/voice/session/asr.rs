@@ -255,7 +255,6 @@ mod tests {
             language: None,
             voice: None,
             health_url: "http://127.0.0.1:9/health".into(),
-            streaming: None,
         });
         assert_eq!(provider.id, "provider-harness-asr");
         assert_eq!(provider.model, "harness-asr");

@@ -9,7 +9,6 @@ pub(super) struct AppState {
     pub(super) provider_probes: Mutex<HashMap<String, ProviderProbeStatus>>,
     pub(super) interaction_policy: Mutex<()>,
     pub(super) shutdown_started: AtomicBool,
-    pub(super) larm_gate: providers::larm::LarmRuntimeGate,
     pub(super) network_asr: voice::network_asr::NetworkAsrRuntime,
     pub(super) audio_uploads: voice::audio_upload::AudioUploadStore,
     pub(super) streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime,

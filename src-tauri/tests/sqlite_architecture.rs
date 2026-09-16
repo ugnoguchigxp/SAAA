@@ -133,11 +133,4 @@ fn main_database_open_and_connection_ownership_are_centralized() {
         reader < compose && compose < writer,
         "context data must be read first, composed after the Reader transaction, then recorded"
     );
-
-    let readiness_reader = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/larm-readiness/database.ts"),
-    )
-    .expect("LARM readiness database reader source reads");
-    assert!(readiness_reader.contains("readonly: true"));
-    assert!(readiness_reader.contains("PRAGMA query_only=ON"));
 }

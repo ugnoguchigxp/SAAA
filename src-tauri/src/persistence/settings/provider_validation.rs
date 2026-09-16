@@ -5,11 +5,10 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
         return Err("Reasoning effort must be provider-default, low, medium, or xhigh".to_string());
     }
     validate_harness_address(&settings.harness.address)?;
-    if settings.providers.is_empty() || settings.providers.len() > 20 {
-        return Err("Between 1 and 20 model providers are required".to_string());
+    if settings.providers.len() > 20 {
+        return Err("At most 20 model providers are allowed".to_string());
     }
     let mut ids = std::collections::HashSet::new();
-    let mut enabled_larm_count = 0;
     let mut enabled_dynamic_lan_count = 0;
     for provider in &settings.providers {
         let provider_id = provider.id();
@@ -188,47 +187,6 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                     return Err(format!("Invalid system TTS provider: {provider_id}"));
                 }
             }
-            ModelProviderSettings::Larm(provider) => {
-                if provider.enabled {
-                    enabled_larm_count += 1;
-                }
-                if provider.location != "local"
-                    || provider.base_url.len() > 2_048
-                    || provider.token_env != "LARM_API_TOKEN"
-                    || !(60..=3_600).contains(&provider.allocation_ttl_seconds)
-                    || !(1..=300).contains(&provider.allocation_startup_timeout_seconds)
-                    || provider.allow_fallback_by_default
-                    || provider.deployment_policy != "existing-only"
-                {
-                    return Err(format!(
-                        "LARM provider violates the fixed security policy: {provider_id}"
-                    ));
-                }
-                let base_url = url::Url::parse(&provider.base_url)
-                    .map_err(|_| format!("Invalid LARM base URL: {provider_id}"))?;
-                let numeric_loopback = matches!(
-                    base_url.host(),
-                    Some(url::Host::Ipv4(address))
-                        if address == std::net::Ipv4Addr::LOCALHOST
-                ) || matches!(
-                    base_url.host(),
-                    Some(url::Host::Ipv6(address))
-                        if address == std::net::Ipv6Addr::LOCALHOST
-                );
-                if base_url.scheme() != "http"
-                    || !numeric_loopback
-                    || base_url.port().is_none()
-                    || !base_url.username().is_empty()
-                    || base_url.password().is_some()
-                    || base_url.query().is_some()
-                    || base_url.fragment().is_some()
-                    || base_url.path() != "/"
-                {
-                    return Err(format!(
-                        "LARM base URL must be an explicit numeric HTTP loopback origin: {provider_id}"
-                    ));
-                }
-            }
             ModelProviderSettings::DynamicLan(provider) => {
                 if provider.enabled {
                     enabled_dynamic_lan_count += 1;
@@ -242,9 +200,6 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                 }
             }
         }
-    }
-    if enabled_larm_count > 1 {
-        return Err("Only one LARM provider may be enabled".to_string());
     }
     if enabled_dynamic_lan_count > 1 {
         return Err("Only one dynamic LAN provider may be enabled".to_string());

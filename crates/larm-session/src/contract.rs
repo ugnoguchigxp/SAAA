@@ -30,6 +30,7 @@ impl Provider {
     }
 }
 pub(crate) struct Snapshot {
+    pub context_subject: Option<String>,
     pub allocation_id: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub providers: HashMap<String, Provider>,
@@ -110,6 +111,19 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
         return Err("larm_missing_provider");
     }
     Ok(Snapshot {
+        context_subject: if value["contextControl"]["contractVersion"] == "larm-personal-state.v1" {
+            let subject = string(&value["contextControl"], "subjectDigest")?;
+            if subject.len() != 64
+                || !subject
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            {
+                return Err("larm_invalid_context_subject");
+            }
+            Some(subject.to_string())
+        } else {
+            None
+        },
         allocation_id,
         expires_at,
         providers,

@@ -38,7 +38,7 @@ describe("localized UI presentation", () => {
         "settings",
       ),
     ).toBe(
-      "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。",
+      "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSE契約を確認してください。",
     );
   });
 
@@ -57,13 +57,6 @@ describe("localized UI presentation", () => {
     expect(
       localizeRuntimeActivity(i18n.t, { type: "providerStarted", providerId: "provider-a" }),
     ).toBe("provider-a を使用中");
-    expect(
-      localizeRuntimeActivity(i18n.t, {
-        type: "providerSelected",
-        providerId: "provider-b",
-        fallbackUsed: true,
-      }),
-    ).toBe("フォールバックプロバイダー provider-b を使用中");
     expect(localizeRuntimeActivity(i18n.t, { type: "providerFailed" })).toBe(
       "プロバイダーがリクエストを完了できませんでした。",
     );

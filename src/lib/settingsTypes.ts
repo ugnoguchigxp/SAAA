@@ -58,20 +58,6 @@ export type SystemTtsProviderSettings = {
   voice: string;
 };
 
-export type LarmProviderSettings = {
-  kind: "larm";
-  id: string;
-  enabled: boolean;
-  label: string;
-  location: "local";
-  baseUrl: string;
-  tokenEnv: "LARM_API_TOKEN";
-  allocationTtlSeconds: number;
-  allocationStartupTimeoutSeconds: number;
-  allowFallbackByDefault: false;
-  deploymentPolicy: "existing-only";
-};
-
 export type DynamicLanProviderSettings = {
   kind: "dynamic-lan";
   id: string;
@@ -87,7 +73,6 @@ export type ModelProviderSettings =
   | CloudAsrProviderSettings
   | CloudTtsProviderSettings
   | SystemTtsProviderSettings
-  | LarmProviderSettings
   | DynamicLanProviderSettings;
 
 export type ReasoningEffort = "provider-default" | "low" | "medium" | "xhigh";

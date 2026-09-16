@@ -1,8 +1,9 @@
+import { PersonalStateSection } from "./PersonalStateSection";
+import { CodingSettingsSection } from "../coding/CodingSettingsSection";
 import { SecuritySection } from "./SecuritySection";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-  LarmRuntimeStatus,
   RegionalPreferencesSettings,
   SettingsDocument,
   SituationSettings,
@@ -35,7 +36,6 @@ type SaveNotice =
 
 export function SettingsPage({
   documents,
-  larmRuntime: _larmRuntime,
   voiceProfile,
   voiceEnrollmentBlocked,
   voiceListeningEnabled,
@@ -47,7 +47,6 @@ export function SettingsPage({
   onToggleVoiceListening,
 }: {
   documents: SettingsDocument[];
-  larmRuntime: LarmRuntimeStatus;
   voiceProfile: VoiceProfileSnapshot;
   voiceEnrollmentBlocked: boolean;
   voiceListeningEnabled: boolean;
@@ -213,6 +212,7 @@ export function SettingsPage({
             <p>{activeTabMeta.detail}</p>
           </header>
           {activeTab === "general" && <GeneralSection draft={draft} onChange={changeDraft} />}
+          {activeTab === "general" && <PersonalStateSection />}
           {activeTab === "connection" && (
             <ServiceConnectionsSection
               providers={draft.providers}
@@ -224,6 +224,7 @@ export function SettingsPage({
               onValidityChange={setConnectionSettingsValid}
             />
           )}
+          {activeTab === "providers" && <CodingSettingsSection />}
           {activeTab === "providers" && (
             <IndividualProvidersSection
               settings={draft.providers}

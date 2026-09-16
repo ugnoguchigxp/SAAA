@@ -1,4 +1,10 @@
 <article lang="ja">
+  <p>
+    履歴資料：2026-09-16にWebSocket実装と旧LARM検証コマンドを削除した。以下は当時の計画・検証記録であり、現在の実行手順ではない。現在の要件は<a
+      href="./larm-http-api-review.md"
+      >LARM通信・設定レビュー</a
+    >を参照。
+  </p>
   <h1 id="maximum-performance-streaming-plan">Maximum-Performance Streaming Experience 実装計画</h1>
 
   <h2 id="0-document-role">0. 文書の役割</h2>
@@ -379,9 +385,9 @@ Conversation turn → prewarmed saaa.llm-stream.v1 WS pool（1 active run / conn
 
   <h3 id="41-llm-websocket-contract">4.1 <code>saaa.llm-stream.v1</code> contract</h3>
   <p>
-    Provider側のnormative wire contractは
-    <a href="./provider-llm-websocket-protocol-v1.html">SAAA Provider LLM WebSocket Protocol v1</a
-    >を正本とする。
+    当時のWebSocket規格書は実装とともに削除した。現在の<a href="./larm-http-api-review.md"
+      >HTTP API要件</a
+    >を参照。
   </p>
   <p>
     endpointごとにProviderが広告する<code>maxConcurrentRuns</code>本までpersistent

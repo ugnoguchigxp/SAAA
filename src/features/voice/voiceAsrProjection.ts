@@ -7,9 +7,9 @@ export type VoiceAsrProjection = {
   stableText: string;
   unstableText: string;
   finalText: string | null;
-  protocol: "native" | "batch-agreement" | null;
+  protocol: "batch-agreement" | null;
   scope: "all-speakers" | "target-speaker" | null;
-  status: "idle" | "active" | "degraded" | "failed";
+  status: "idle" | "active" | "failed";
   reasonCode: string | null;
 };
 
@@ -44,14 +44,7 @@ export function projectVoiceAsrEvent(
     return event.sessionId === state.sessionId ? initialVoiceAsrProjection : state;
   }
   if (event.sessionId !== state.sessionId) return state;
-  if (event.type === "degraded") {
-    return {
-      ...state,
-      protocol: event.to,
-      status: "degraded",
-      reasonCode: event.reasonCode,
-    };
-  }
+
   if (event.type === "failed") {
     return {
       ...state,

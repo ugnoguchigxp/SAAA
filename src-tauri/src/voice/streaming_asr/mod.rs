@@ -2,9 +2,7 @@ mod batch_engine;
 mod batch_runtime;
 pub(crate) mod commands;
 pub(crate) mod contracts;
-mod harness_stream;
 mod manager;
-mod native_connection;
 mod reconciler;
 #[cfg(test)]
 mod regression_corpus;

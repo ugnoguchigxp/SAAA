@@ -259,13 +259,6 @@ export function localizeRuntimeActivity(
   switch (activity.type) {
     case "providerStarted":
       return t("chat.activity.usingProvider", { provider: activity.providerId });
-    case "providerSelected":
-      return t(
-        activity.fallbackUsed
-          ? "chat.activity.usingFallbackProvider"
-          : "chat.activity.usingProvider",
-        { provider: activity.providerId },
-      );
     case "providerWorking":
       return t("chat.activity.working");
     case "providerFailed":

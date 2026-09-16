@@ -5,6 +5,7 @@ pub(crate) mod conversations;
 pub(crate) mod effective_route;
 pub(crate) mod migrate;
 mod provider_identity;
+mod remove_legacy_provider;
 pub(crate) mod runs;
 pub(crate) mod schema;
 pub(crate) mod settings;

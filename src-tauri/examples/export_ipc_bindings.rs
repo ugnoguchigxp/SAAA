@@ -12,5 +12,10 @@ fn main() {
         saaa_lib::ipc_contract::ui_typescript_bindings(),
     )
     .expect("UI bindings are written");
+    fs::write(
+        output_path.with_file_name("coding.ts"),
+        saaa_lib::ipc_contract::coding_typescript_bindings(),
+    )
+    .expect("coding bindings are written");
     println!("generated {}", output_path.display());
 }

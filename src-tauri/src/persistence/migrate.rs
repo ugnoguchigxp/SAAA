@@ -7,7 +7,7 @@ use super::settings::default_settings_documents;
 use super::settings::SETTINGS_SCHEMA_VERSION;
 use crate::backup::backup_connection_to;
 use crate::{
-    database_error, memory, now_iso, providers, situation, voice, DEFAULT_DYNAMIC_LAN_HOST,
+    database_error, now_iso, providers, situation, voice, DEFAULT_DYNAMIC_LAN_HOST,
     DYNAMIC_LAN_PROVIDER_ID,
 };
 
@@ -448,7 +448,9 @@ pub(crate) fn backup_before_migration(
         )
         .unwrap_or(0)
         >= SETTINGS_SCHEMA_VERSION;
-    if !has_data || (version >= memory::control_plane::MEMORY_SCHEMA_VERSION && settings_current) {
+    if !has_data
+        || (version >= crate::persistence::schema::DATABASE_SCHEMA_VERSION && settings_current)
+    {
         return Ok(None);
     }
     let directory = database_path
@@ -632,7 +634,7 @@ mod tests {
     use crate::persistence::list_settings_documents;
     use crate::persistence::provider_identity::migrate_dynamic_lan_provider_identity;
     use crate::{
-        initialize_database, memory, situation, DEFAULT_DYNAMIC_LAN_HOST, DYNAMIC_LAN_PROVIDER_ID,
+        initialize_database, situation, DEFAULT_DYNAMIC_LAN_HOST, DYNAMIC_LAN_PROVIDER_ID,
     };
     use rusqlite::Connection;
     use serde_json::{json, Value};
@@ -790,7 +792,7 @@ mod tests {
                 )
                 .expect("active profile reads"),
         );
-        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
+        assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         assert_eq!(active_profile, "profile_mvp1_default");
         let recall_schema_objects: i64 = connection
             .query_row(
@@ -1218,7 +1220,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("legacy transcript remains");
-        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
+        assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         assert_eq!(voice.pointer("/allowedLanguages"), Some(&json!(["ja"])));
         assert_eq!(voice.pointer("/listeningEnabled"), Some(&json!(false)));
         assert!(voice.pointer("/sttProviderId").is_none());
@@ -1261,7 +1263,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
+        assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         assert!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table exists"));
         initialize_database(&connection).expect("migration idempotent");
     }
@@ -1442,7 +1444,7 @@ mod tests {
             .expect("provider settings read");
         let provider_value: Value =
             serde_json::from_str(&provider_value).expect("provider settings decode");
-        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
+        assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         assert_eq!(
             provider_value.pointer("/providers/0/kind"),
             Some(&json!("openai-compatible"))
@@ -1674,7 +1676,7 @@ mod tests {
             .expect("backup data remains");
         assert_eq!(
             migrated_version,
-            memory::control_plane::MEMORY_SCHEMA_VERSION
+            crate::persistence::schema::DATABASE_SCHEMA_VERSION
         );
         assert_eq!(backup_version, 11);
         assert_eq!(title, "Keep");
@@ -1864,7 +1866,7 @@ mod tests {
         let version: i64 = reopened
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
-        assert_eq!(version, memory::control_plane::MEMORY_SCHEMA_VERSION);
+        assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         let documents = list_settings_documents(&reopened).expect("settings load");
         assert_eq!(documents.len(), 7);
         assert!(documents

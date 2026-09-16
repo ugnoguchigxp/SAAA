@@ -1,12 +1,3 @@
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct ProviderStreamingDescriptor {
-    pub(super) url: String,
-    #[cfg(test)]
-    #[serde(default)]
-    pub(super) upstream_transport: String,
-}
-
 use url::{Host, Url};
 
 use super::{contract_error, DynamicLanError, ErrorKind, CONTROL_PORT};

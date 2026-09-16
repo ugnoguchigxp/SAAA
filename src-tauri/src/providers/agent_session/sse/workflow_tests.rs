@@ -165,8 +165,6 @@ async fn sse_generates_edits_saves_searches_and_reopens_without_control_deltas()
     };
     let session = SessionResponse {
         id: "ags_test".into(),
-        stream_url: None,
-        stream_protocol: None,
         events_url: None,
     };
     let outcome = run_agent_session_sse(
@@ -258,8 +256,6 @@ async fn cancellation_and_timeout_bound_the_initial_post() {
         };
         let session = SessionResponse {
             id: "ags_test".into(),
-            stream_url: None,
-            stream_protocol: None,
             events_url: None,
         };
         let input = crate::StartTurnInput {
@@ -417,3 +413,6 @@ async fn live_muse_sse_ui_workflow() {
         .iter()
         .any(|e| matches!(e,RuntimeEvent::Delta {text,..} if text.contains("saaa-ui-"))));
 }
+
+#[path = "coding_workflow_tests.rs"]
+mod coding_workflow_tests;

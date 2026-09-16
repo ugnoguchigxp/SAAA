@@ -7,8 +7,6 @@ pub(crate) use crate::voice_behavior::{
 
 mod bindings;
 pub use bindings::{typescript_bindings, ui_typescript_bindings};
-mod websocket_state;
-pub(crate) use websocket_state::WebSocketConnectionState;
 
 macro_rules! runtime_failure_codes {
     ($( $variant:ident => $wire_value:literal ),+ $(,)?) => {
@@ -65,23 +63,6 @@ pub(crate) enum RuntimeEvent {
         route: String,
         provider_id: String,
     },
-    ProviderSelected {
-        run_id: String,
-        provider_id: String,
-        #[ts(type = "\"larm\"")]
-        provider_kind: String,
-        #[ts(type = "\"llm-default\"")]
-        route_id: String,
-        runtime_id: String,
-        fallback_used: bool,
-        #[ts(type = "\"primary\" | \"other\"")]
-        selection_reason_code: String,
-    },
-    WebSocketStateChanged {
-        run_id: String,
-        #[ts(type = "\"connected\" | \"connecting\" | \"disconnected\"")]
-        state: WebSocketConnectionState,
-    },
     Delta {
         run_id: String,
         text: String,
@@ -123,3 +104,5 @@ pub(crate) enum RuntimeEvent {
         recovery: String,
     },
 }
+
+pub use crate::coding::contracts::typescript_bindings as coding_typescript_bindings;

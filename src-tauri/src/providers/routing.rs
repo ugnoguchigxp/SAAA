@@ -1,8 +1,6 @@
 use crate::{ConversationRouteSettings, ModelProvidersSettings, SecurityRuntimeSettings};
 
-mod runtime_gates;
 mod service_harness;
-pub(crate) use runtime_gates::apply_runtime_provider_gates;
 pub(crate) use service_harness::resolve_harness_llm_provider;
 
 pub(crate) fn effective_conversation_route_ids(
@@ -45,9 +43,8 @@ pub(crate) fn effective_conversation_route_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{dynamic_lan_provider, larm_provider, provider};
+    use crate::test_support::{dynamic_lan_provider, provider};
     use crate::{ConversationRouteSettings, ModelProvidersSettings, SecurityRuntimeSettings};
-    use std::sync::Arc;
 
     #[test]
     fn local_only_route_excludes_cloud_fallback() {
@@ -105,36 +102,6 @@ mod tests {
         assert_eq!(
             effective_conversation_route_ids(&providers, &route, &security),
             ["dynamic_lan-primary", "local-fallback"]
-        );
-    }
-
-    #[test]
-    fn disabled_larm_gate_removes_only_larm_and_preserves_direct_rollback_order() {
-        let providers = ModelProvidersSettings {
-            providers: vec![
-                larm_provider("larm-primary"),
-                provider("direct-rollback", "local"),
-            ],
-            reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-            harness: crate::HarnessSettings {
-                address: "http://localhost:9810".to_string(),
-            },
-        };
-        let configured = vec!["larm-primary".to_string(), "direct-rollback".to_string()];
-        assert_eq!(
-            apply_runtime_provider_gates(
-                &providers,
-                configured.clone(),
-                &crate::providers::larm::LarmRuntimeGate::Disabled,
-            ),
-            vec!["direct-rollback"]
-        );
-        let ready = crate::providers::larm::LarmRuntimeGate::Ready(Arc::new(
-            crate::providers::larm::client::SharedLarmClient::build().expect("LARM client builds"),
-        ));
-        assert_eq!(
-            apply_runtime_provider_gates(&providers, configured.clone(), &ready),
-            configured
         );
     }
 }

@@ -14,18 +14,15 @@ mod conversation_controller;
 use super::event_hub::RuntimeEventSender;
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent, RuntimeFailureCode};
 use crate::persistence::conversations::validate_conversation_write_target;
-use crate::providers::routing::{
-    apply_runtime_provider_gates, effective_conversation_route_ids, resolve_harness_llm_provider,
-};
+use crate::providers::routing::{effective_conversation_route_ids, resolve_harness_llm_provider};
 use crate::redact::{bounded_text, redact_runtime_text};
 use crate::{
     begin_provider_session, database_error, execute_codex_turn,
-    finish_dynamic_lan_provider_session, finish_larm_provider_session, finish_provider_session,
-    memory, new_id, now_iso, persist_conversation_success, situation, stream_dynamic_lan_provider,
-    stream_larm_provider, stream_model_provider, update_runtime_provider, AppState, CleanupOutcome,
-    LarmStreamContext, ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome,
-    ProviderFailureKind, ProviderOutputPersistence, RunCancellation, StartTurnInput,
-    TurnExecutionFailure,
+    finish_dynamic_lan_provider_session, finish_provider_session, memory, new_id, now_iso,
+    persist_conversation_success, situation, stream_dynamic_lan_provider, stream_model_provider,
+    update_runtime_provider, AppState, CleanupOutcome, ModelProviderSettings, ModelStreamContext,
+    ProviderAttemptOutcome, ProviderFailureKind, ProviderOutputPersistence, RunCancellation,
+    StartTurnInput, TurnExecutionFailure,
 };
 use conversation_context::compose_provider_history;
 use conversation_controller::execute as execute_reasoning;
@@ -103,18 +100,7 @@ pub(crate) async fn execute_turn(
     let result = execute_conversation_turn(state, input, on_event, cancellation.clone()).await;
     let finalization = match &result {
         Ok(message) => {
-            let (presentation, voice_policy) = crate::voice_behavior::completion_state(
-                state,
-                &input.run_id,
-                &input.conversation_id,
-            );
-            let _ = on_event.send(RuntimeEvent::MessageCompleted {
-                run_id: input.run_id.clone(),
-                message: message.clone(),
-                presentation,
-                voice_policy,
-            });
-            Ok(())
+            memory::personal_state::output::send_completed(state, input, on_event, message)
         }
         Err(error)
             if cancellation.is_cancelled()
@@ -270,6 +256,7 @@ pub(crate) fn prepare_runtime_run(
     state: &AppState,
     input: &StartTurnInput,
 ) -> Result<String, String> {
+    memory::personal_state::worker::interrupt();
     let _policy = state
         .interaction_policy
         .lock()
@@ -410,6 +397,11 @@ pub(crate) async fn execute_conversation_turn(
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
 ) -> Result<ConversationMessage, TurnExecutionFailure> {
+    if memory::control_plane::memory_enabled() {
+        return memory::personal_state::conversation::conversation(state, input, cancellation)
+            .await
+            .map_err(Into::into);
+    }
     let conversation_inputs::Inputs {
         mut providers,
         route,
@@ -456,20 +448,16 @@ pub(crate) async fn execute_conversation_turn(
     }
     let reasoning_effort = providers.reasoning_effort.clone();
     let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
-    let route_ids = apply_runtime_provider_gates(
-        &providers,
-        effective_conversation_route_ids(&providers, &route, &security),
-        &state.larm_gate,
-    );
-    if route_ids.is_empty() && !state.larm_gate.allows_traffic() {
+    let route_ids = effective_conversation_route_ids(&providers, &route, &security);
+    if route_ids.is_empty() {
         return Err(TurnExecutionFailure::configuration(
-            state.larm_gate.public_message(),
+            "Choose a conversation provider in Settings.",
         ));
     }
     let mut failures: Vec<TurnExecutionFailure> = Vec::new();
     let mut context_health_emitted = false;
 
-    for (attempt_index, provider_id) in route_ids.into_iter().enumerate() {
+    for provider_id in route_ids {
         if cancellation.is_cancelled() {
             return Err(TurnExecutionFailure::provider(
                 ProviderFailureKind::Cancelled,
@@ -487,9 +475,7 @@ pub(crate) async fn execute_conversation_turn(
             )));
             continue;
         };
-        if attempt_index > 0 && matches!(provider, ModelProviderSettings::Larm(_)) {
-            return Err(TurnExecutionFailure::configuration("Legacy LARM WebSocket transport must be selected explicitly as the primary provider."));
-        }
+
         update_runtime_provider(state, &input.run_id, provider.id())?;
         let session_id = begin_provider_session(
             state,
@@ -506,22 +492,12 @@ pub(crate) async fn execute_conversation_turn(
             })
             .is_err()
         {
-            if provider.kind() == "larm" {
-                finish_larm_provider_session(
-                    state,
-                    &session_id,
-                    "failed",
-                    Some(ProviderFailureKind::ClientDisconnected),
-                    CleanupOutcome::NotStarted,
-                )?;
-            } else {
-                finish_provider_session(
-                    state,
-                    &session_id,
-                    "failed",
-                    Some(ProviderFailureKind::ClientDisconnected),
-                )?;
-            }
+            finish_provider_session(
+                state,
+                &session_id,
+                "failed",
+                Some(ProviderFailureKind::ClientDisconnected),
+            )?;
             return Err(TurnExecutionFailure::provider(
                 ProviderFailureKind::ClientDisconnected,
                 ProviderFailureKind::ClientDisconnected
@@ -597,23 +573,6 @@ pub(crate) async fn execute_conversation_turn(
                 )
                 .await
             }
-            ModelProviderSettings::Larm(provider) => {
-                stream_larm_provider(
-                    provider,
-                    &history,
-                    &reasoning_effort,
-                    max_output_tokens,
-                    route.timeout_ms,
-                    cancellation.clone(),
-                    LarmStreamContext {
-                        state,
-                        session_id: &session_id,
-                        input,
-                        on_event,
-                    },
-                )
-                .await
-            }
             ModelProviderSettings::DynamicLan(provider) => {
                 stream_dynamic_lan_provider(
                     provider,
@@ -645,9 +604,7 @@ pub(crate) async fn execute_conversation_turn(
         };
         match outcome {
             ProviderAttemptOutcome::Completed { content, cleanup } => {
-                if provider.kind() == "larm" {
-                    finish_larm_provider_session(state, &session_id, "completed", None, cleanup)?;
-                } else if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
                     finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
@@ -661,15 +618,7 @@ pub(crate) async fn execute_conversation_turn(
                 return persist_conversation_success(state, input, &content).map_err(Into::into);
             }
             ProviderAttemptOutcome::Cancelled { cleanup, .. } => {
-                if provider.kind() == "larm" {
-                    finish_larm_provider_session(
-                        state,
-                        &session_id,
-                        "cancelled",
-                        Some(ProviderFailureKind::Cancelled),
-                        cleanup,
-                    )?;
-                } else if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
                     finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
@@ -697,15 +646,7 @@ pub(crate) async fn execute_conversation_turn(
                 cleanup,
             } => {
                 let reason = public_message.as_str();
-                if provider.kind() == "larm" {
-                    finish_larm_provider_session(
-                        state,
-                        &session_id,
-                        "failed",
-                        Some(kind),
-                        cleanup,
-                    )?;
-                } else if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
+                if matches!(&provider, ModelProviderSettings::DynamicLan(_)) {
                     finish_dynamic_lan_provider_session(
                         state,
                         &session_id,
@@ -758,12 +699,10 @@ pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_starte
             ProviderFailureKind::Capacity
                 | ProviderFailureKind::Policy
                 | ProviderFailureKind::Unavailable
-                | ProviderFailureKind::Draining
                 | ProviderFailureKind::Upstream
                 | ProviderFailureKind::Network
                 | ProviderFailureKind::Timeout
                 | ProviderFailureKind::AllocationLost
-                | ProviderFailureKind::AllocationOutcomeUnknown
         )
 }
 
@@ -849,12 +788,10 @@ mod tests {
             ProviderFailureKind::Policy,
             ProviderFailureKind::Capacity,
             ProviderFailureKind::Unavailable,
-            ProviderFailureKind::Draining,
             ProviderFailureKind::Upstream,
             ProviderFailureKind::Network,
             ProviderFailureKind::Timeout,
             ProviderFailureKind::AllocationLost,
-            ProviderFailureKind::AllocationOutcomeUnknown,
         ] {
             assert!(provider_fallback_allowed(kind, false), "{}", kind.as_str());
             assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
@@ -864,7 +801,6 @@ mod tests {
             ProviderFailureKind::Contract,
             ProviderFailureKind::Protocol,
             ProviderFailureKind::RequestTooLarge,
-            ProviderFailureKind::NotReady,
             ProviderFailureKind::PartialOutput,
             ProviderFailureKind::ClientDisconnected,
             ProviderFailureKind::Cancelled,

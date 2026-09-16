@@ -171,8 +171,6 @@ struct ProviderDescriptor {
     port: u16,
     base_url: String,
     model: String,
-    #[serde(default)]
-    streaming: Option<ProviderStreamingDescriptor>,
     health: ProviderHealthDescriptor,
     #[serde(default)]
     credential: Option<ProviderCredential>,
@@ -745,16 +743,6 @@ mod tests {
                 "port": port,
                 "baseUrl": base_url,
                 "model": AGENT_PROFILE,
-                "streaming": {
-                    "protocol": "saaa.llm-stream.v1",
-                    "url": format!("ws://{host}:{port}/v1/llm/stream"),
-                    "encoding": "json-control+binary-delta-v1",
-                    "compression": "none",
-                    "maxConcurrentRuns": 2,
-                    "maxConnections": 2,
-                    "resumeWindowMs": 120_000,
-                    "upstreamTransport": "native"
-                },
                 "health": {
                     "url": format!("http://{host}:{port}/v1/agent-connections/aconn_test/providers/llm/health"),
                     "kind": "semantic-inference",
@@ -891,8 +879,7 @@ mod tests {
                     "capability": "llm.coding",
                     "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
                     "protocol": "openai.chat-completions.v1",
-                    "model": "coding-default",
-                    "streamingProtocol": "saaa.llm-stream.v1"
+                    "model": "coding-default"
                 }]
             }],
             "audiences": [AUDIENCE]
@@ -970,74 +957,32 @@ mod tests {
         let descriptor = validate_claim(claim("10.0.0.42"), &identity, AUDIENCE, false)
             .expect("private HTTP descriptor is accepted");
         assert_eq!(descriptor.base_url, "http://10.0.0.42:9810/v1");
-        assert_eq!(
-            descriptor
-                .streaming
-                .as_ref()
-                .map_or_else(String::new, |value| value.url.clone()),
-            "ws://10.0.0.42:9810/v1/llm/stream"
-        );
         assert!(validate_claim(claim("127.0.0.1"), &identity, AUDIENCE, false).is_err());
         let wrong_identity = test_identity("different-id", &created_at, &expires_at);
         assert!(validate_claim(claim("10.0.0.42"), &wrong_identity, AUDIENCE, false).is_err());
     }
 
     #[test]
-    fn http_claim_accepts_no_ws_but_checks_advertised_urls() {
+    fn http_claim_ignores_unused_extensions_but_requires_http_protocol() {
         let (created_at, expires_at) = test_timestamps();
         let identity = test_identity("aconn_test", &created_at, &expires_at);
-
-        let mut missing = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
-        missing["providers"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("streaming");
+        let mut value = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+        value["providers"][0]["streaming"] = json!({"url":"ws://other.local/ignored"});
         assert!(validate_claim(
-            serde_json::from_value(missing).unwrap(),
+            serde_json::from_value(value.clone()).unwrap(),
             &identity,
             AUDIENCE,
             false
         )
         .is_ok());
-
-        let mut cross_host = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
-        cross_host["providers"][0]["streaming"]["url"] = json!("ws://10.0.0.43:9810/v1/llm/stream");
-        let cross_host = serde_json::from_value::<ConnectionClaim>(cross_host).unwrap();
-        assert!(validate_claim(cross_host, &identity, AUDIENCE, false).is_err());
-
-        let mut wrong_path = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
-        wrong_path["providers"][0]["streaming"]["url"] =
-            json!("ws://10.0.0.42:9810/v1/chat/completions");
-        let wrong_path = serde_json::from_value::<ConnectionClaim>(wrong_path).unwrap();
-        assert!(validate_claim(wrong_path, &identity, AUDIENCE, false).is_err());
-    }
-
-    #[test]
-    fn claim_accepts_stream_protocol_top_level_and_compact_stream_metadata() {
-        let (created_at, expires_at) = test_timestamps();
-        let identity = test_identity("aconn_test", &created_at, &expires_at);
-        let mut value = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
         value["providers"][0]["protocol"] = json!("saaa.llm-stream.v1");
-        let streaming = value["providers"][0]["streaming"].as_object_mut().unwrap();
-        for optional in [
-            "encoding",
-            "compression",
-            "maxConcurrentRuns",
-            "maxConnections",
-            "resumeWindowMs",
-        ] {
-            streaming.remove(optional);
-        }
-        let claim = serde_json::from_value::<ConnectionClaim>(value).unwrap();
-
-        let descriptor = validate_claim(claim, &identity, AUDIENCE, false)
-            .expect("compact WebSocket claim remains sufficient");
-
-        assert_eq!(descriptor.protocol, "saaa.llm-stream.v1");
-        assert_eq!(
-            descriptor.streaming.as_ref().unwrap().upstream_transport,
-            "native"
-        );
+        assert!(validate_claim(
+            serde_json::from_value(value).unwrap(),
+            &identity,
+            AUDIENCE,
+            false
+        )
+        .is_err());
     }
 
     #[test]
@@ -1160,7 +1105,7 @@ mod tests {
 
     #[tokio::test]
     async fn releases_the_original_connection_when_poll_identity_changes() {
-        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
         env::set_var(API_TOKEN_ENV, "test-control-token");
 
@@ -1251,7 +1196,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_claimed_openai_settings_and_releases_the_connection() {
-        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
         env::set_var(API_TOKEN_ENV, "test-control-token");
 
@@ -1394,7 +1339,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_the_advertised_default_profile_through_state_and_claim() {
-        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
         env::remove_var(API_TOKEN_ENV);
 
@@ -1423,8 +1368,7 @@ mod tests {
                                     "llm.reasoning"
                                 ],
                                 "protocol": "openai.chat-completions.v1",
-                                "model": "coding-default",
-                                "streamingProtocol": "saaa.llm-stream.v1"
+                                "model": "coding-default"
                             }]
                         }],
                         "audiences": [AUDIENCE]
@@ -1489,7 +1433,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_and_releases_without_control_or_provider_credentials() {
-        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
         env::remove_var(API_TOKEN_ENV);
 
@@ -1511,7 +1455,7 @@ mod tests {
                             "providers": [{
                                 "name": "llm",
                                 "capability": PROFILE_CAPABILITY,
-                                "protocol": "saaa.llm-stream.v1",
+                                "protocol": "openai.chat-completions.v1",
                                 "model": AGENT_PROFILE
                             }]
                         }],
@@ -1565,7 +1509,7 @@ mod tests {
 
     #[tokio::test]
     async fn releases_when_semantic_health_is_not_ready() {
-        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
         env::set_var(API_TOKEN_ENV, "test-control-token");
 
@@ -1638,7 +1582,7 @@ mod tests {
 
     #[tokio::test]
     async fn renews_and_reclaims_before_the_request_deadline() {
-        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
         env::set_var(API_TOKEN_ENV, "test-control-token");
 
@@ -1741,7 +1685,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "operator-only live dynamic_lan Agent Connection API canary"]
     async fn live_dynamic_lan_claim_and_chat() {
-        let _environment = super::super::larm::test_environment_lock().lock().await;
+        let _environment = crate::test_environment::larm_lock().lock().await;
         let host = env::var("SAAA_DYNAMIC_LAN_HOST").expect("SAAA_DYNAMIC_LAN_HOST is required");
         let connection = DynamicLanConnection::resolve(&host, Arc::new(RunCancellation::default()))
             .await

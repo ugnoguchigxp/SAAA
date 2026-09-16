@@ -14,7 +14,6 @@ use std::{collections::HashSet, env};
 pub const CONTEXT_POLICY_VERSION: i64 = 1;
 // `user_version` is the application database version. Version 15 replaces
 // encrypted voice-profile storage with private, local plaintext storage.
-pub const MEMORY_SCHEMA_VERSION: i64 = 15;
 #[cfg(test)]
 const MAX_ITEM_JSON_BYTES: usize = 4_000;
 #[cfg(test)]

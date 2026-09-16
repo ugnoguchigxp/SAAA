@@ -3,7 +3,6 @@
 use super::*;
 use crate::persistence::save_settings_documents_to_connection;
 use crate::test_support::*;
-use futures_util::{SinkExt, StreamExt};
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::{
@@ -12,12 +11,6 @@ use std::{
     sync::mpsc,
     thread,
 };
-use tokio_tungstenite::tungstenite::{
-    handshake::server::{Request as WebSocketRequest, Response as WebSocketResponse},
-    http::{header, HeaderValue},
-    Message as WebSocketMessage,
-};
-
 enum LlmHttpStep {
     Delta(&'static str),
     ToolCall {
@@ -353,22 +346,6 @@ fn runtime_and_voice_events_serialize_camel_case_fields() {
     assert_eq!(runtime["providerId"], "codex-sdk");
     assert!(runtime.get("run_id").is_none());
     assert!(runtime.get("provider_id").is_none());
-
-    let selected = serde_json::to_value(RuntimeEvent::ProviderSelected {
-        run_id: "run_contract".to_string(),
-        provider_id: "larm-primary".to_string(),
-        provider_kind: "larm".to_string(),
-        route_id: "llm-default".to_string(),
-        runtime_id: "runtime-safe".to_string(),
-        fallback_used: false,
-        selection_reason_code: "primary".to_string(),
-    })
-    .expect("provider selection serializes");
-    assert_eq!(selected["type"], "providerSelected");
-    assert_eq!(selected["routeId"], "llm-default");
-    assert_eq!(selected["selectionReasonCode"], "primary");
-    assert!(selected.get("allocationId").is_none());
-    assert!(selected.get("requestId").is_none());
 }
 
 #[test]
@@ -778,7 +755,7 @@ async fn openai_compatible_stream_fixture_projects_deltas() {
         &history,
         5_000,
         Some("ephemeral-connection-token"),
-        Some("alloc_stream_fixture"),
+        None, // Direct SSE fixture; allocation-backed connections use JSON completions.
         ModelStreamContext {
             reasoning_effort: "low",
             max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
@@ -790,7 +767,7 @@ async fn openai_compatible_stream_fixture_projects_deltas() {
     )
     .await;
     let ProviderAttemptOutcome::Completed { content, .. } = content else {
-        panic!("provider stream should complete");
+        panic!("provider stream should complete: {content:?}");
     };
     server.await.expect("fixture server joins");
     assert_eq!(content, "hello world");
@@ -1583,10 +1560,10 @@ async fn conversation_route_falls_back_and_persists_completed_message() {
         .value_json = json!({
             "harness": { "address": "http://localhost:9810" }, "providers": [{
             "kind": "openai-compatible", "id": "primary", "enabled": true, "label": "Primary", "location": "local",
-            "endpoint": primary_endpoint.replacen("ws://", "http://", 1).trim_end_matches("/llm/stream"), "model": "primary-model", "authentication": "none"
+            "endpoint": primary_endpoint, "model": "primary-model", "authentication": "none"
         }, {
             "kind": "openai-compatible", "id": "fallback", "enabled": true, "label": "Fallback", "location": "local",
-            "endpoint": fallback_endpoint.replacen("ws://", "http://", 1).trim_end_matches("/llm/stream"), "model": "fallback-model", "authentication": "none"
+            "endpoint": fallback_endpoint, "model": "fallback-model", "authentication": "none"
         }], "reasoningEffort": "medium"});
     let route = documents
         .iter_mut()
@@ -1729,7 +1706,7 @@ async fn partial_provider_stream_never_reaches_the_fallback_provider() {
         .value_json = json!({
             "harness": { "address": "http://localhost:9810" }, "providers": [{
             "kind": "openai-compatible", "id": "partial-primary", "enabled": true, "label": "Partial primary", "location": "local",
-            "endpoint": primary_endpoint.replacen("ws://", "http://", 1).trim_end_matches("/llm/stream"), "model": "primary-model", "authentication": "none"
+            "endpoint": primary_endpoint, "model": "primary-model", "authentication": "none"
         }, {
             "kind": "openai-compatible", "id": "forbidden-fallback", "enabled": true, "label": "Forbidden fallback", "location": "local",
             "endpoint": format!("http://{fallback_address}/v1"), "model": "fallback-model", "authentication": "none"
@@ -2362,363 +2339,6 @@ for line in sys.stdin:
         .expect("event lock")
         .iter()
         .any(|event| { event.contains("SAAA_OK") && event.contains("\"type\":\"delta\"") }));
-}
-
-#[tokio::test]
-async fn larm_turn_commits_before_events_and_keeps_success_when_release_fails() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    use crate::test_environment::EnvGuard;
-
-    let _environment_lock = providers::larm::test_environment_lock().lock().await;
-    let _token = EnvGuard::set("LARM_API_TOKEN", "fixture-token");
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("fake LARM binds");
-    let address = listener.local_addr().expect("fake LARM address");
-    let requests = Arc::new(Mutex::new(Vec::<String>::new()));
-    let server_requests = requests.clone();
-    let allocation = concat!(
-        "{\"id\":\"alloc_turn\",\"status\":\"ready\",",
-        "\"requirements\":[{\"capability\":\"llm.general\",\"route\":\"llm-default\"}],",
-        "\"bindings\":[{\"capability\":\"llm.general\",\"route\":\"llm-default\",",
-        "\"runtime\":\"runtime_turn\",\"node\":\"dynamic_lan\",\"status\":\"HOT\",",
-        "\"candidateRank\":1,\"fallback\":false,\"selectionReason\":\"primary-live\"}],",
-        "\"allowFallback\":false,\"deploymentPolicy\":\"existing-only\",",
-        "\"createdAt\":\"2026-08-28T00:00:00.000Z\",",
-        "\"expiresAt\":\"2026-08-28T00:05:00.000Z\"}"
-    );
-    let allocate_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{allocation}",
-            allocation.len()
-        );
-    let release_error =
-        r#"{"error":{"code":"internal_error","message":"fixture release failure"}}"#;
-    let release_response = format!(
-            "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{release_error}",
-            release_error.len()
-        );
-    let server = tokio::spawn(async move {
-        use sha2::{Digest, Sha256};
-
-        let (mut allocate_socket, _) = listener.accept().await.expect("allocation accepts");
-        let mut request = vec![0_u8; 64 * 1_024];
-        let size = allocate_socket
-            .read(&mut request)
-            .await
-            .expect("allocation request reads");
-        server_requests
-            .lock()
-            .expect("request lock")
-            .push(String::from_utf8_lossy(&request[..size]).into_owned());
-        allocate_socket
-            .write_all(allocate_response.as_bytes())
-            .await
-            .expect("allocation response writes");
-
-        let (stream, _) = listener.accept().await.expect("WebSocket accepts");
-        let handshake_requests = server_requests.clone();
-        let mut socket = tokio_tungstenite::accept_hdr_async(
-            stream,
-            move |request: &WebSocketRequest, mut response: WebSocketResponse| {
-                let mut captured = format!("GET {} HTTP/1.1\r\n", request.uri());
-                for (name, value) in request.headers() {
-                    captured.push_str(name.as_str());
-                    captured.push_str(": ");
-                    captured.push_str(value.to_str().unwrap_or("<binary>"));
-                    captured.push_str("\r\n");
-                }
-                handshake_requests
-                    .lock()
-                    .expect("request lock")
-                    .push(captured);
-                response.headers_mut().insert(
-                    header::SEC_WEBSOCKET_PROTOCOL,
-                    HeaderValue::from_static(providers::llm_websocket::protocol::SUBPROTOCOL),
-                );
-                Ok(response)
-            },
-        )
-        .await
-        .expect("WebSocket handshake");
-        socket
-            .send(WebSocketMessage::Text(
-                json!({
-                    "type": "connection.ready",
-                    "protocol": "saaa.llm-stream.v1",
-                    "connectionId": "conn_larm_fixture",
-                    "upstreamTransport": "native",
-                    "limits": {
-                        "maxConcurrentRuns": 1,
-                        "maxConnections": 1,
-                        "maxActiveRunsPerConnection": 1,
-                        "maxUnackedEvents": 64,
-                        "maxUnackedBytes": 524288,
-                        "resumeWindowMs": 120000,
-                        "heartbeatIntervalMs": 15000
-                    }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("ready sends");
-        let start = socket
-            .next()
-            .await
-            .expect("run.start arrives")
-            .expect("run.start reads");
-        let WebSocketMessage::Text(start) = start else {
-            panic!("run.start is text");
-        };
-        server_requests
-            .lock()
-            .expect("request lock")
-            .push(start.to_string());
-        let start: Value = serde_json::from_str(start.as_str()).expect("run.start JSON");
-        let run_id = start["runId"].as_str().expect("run id");
-        socket
-            .send(WebSocketMessage::Text(
-                json!({
-                    "type": "run.accepted", "runId": run_id, "seq": 1
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("accepted sends");
-        socket
-            .send(WebSocketMessage::Text(
-                json!({
-                    "type": "tool.call", "runId": run_id, "seq": 2,
-                    "callId": "call_larm_turn", "name": "recall_conversation",
-                    "arguments": "{\"query\":\"missing-history\"}"
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("tool call sends");
-        loop {
-            let message = socket
-                .next()
-                .await
-                .expect("tool result arrives")
-                .expect("tool result reads");
-            let WebSocketMessage::Text(message) = message else {
-                continue;
-            };
-            if message.contains("\"type\":\"tool.result\"") {
-                server_requests
-                    .lock()
-                    .expect("request lock")
-                    .push(message.to_string());
-                break;
-            }
-        }
-        let content = "LARM ok";
-        let mut frame = Vec::with_capacity(16 + content.len());
-        frame.extend_from_slice(b"SAD1");
-        frame.extend_from_slice(&[1, 0]);
-        frame.extend_from_slice(&16_u16.to_be_bytes());
-        frame.extend_from_slice(&3_u64.to_be_bytes());
-        frame.extend_from_slice(content.as_bytes());
-        socket
-            .send(WebSocketMessage::Binary(frame.into()))
-            .await
-            .expect("delta sends");
-        let hash = Sha256::digest(content.as_bytes());
-        socket
-            .send(WebSocketMessage::Text(
-                json!({
-                    "type": "response.completed", "runId": run_id, "seq": 4,
-                    "contentBytes": content.len(), "contentSha256": format!("{hash:x}"),
-                    "finishReason": "stop", "usage": null
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .expect("completion sends");
-
-        let (mut release_socket, _) = listener.accept().await.expect("release accepts");
-        let size = release_socket
-            .read(&mut request)
-            .await
-            .expect("release request reads");
-        server_requests
-            .lock()
-            .expect("request lock")
-            .push(String::from_utf8_lossy(&request[..size]).into_owned());
-        release_socket
-            .write_all(release_response.as_bytes())
-            .await
-            .expect("release response writes");
-    });
-
-    let connection = Connection::open_in_memory().expect("database opens");
-    initialize_database(&connection).expect("database initializes");
-    let mut state = app_state(connection);
-    state.larm_gate = providers::larm::LarmRuntimeGate::Ready(Arc::new(
-        providers::larm::client::SharedLarmClient::build().expect("LARM client builds"),
-    ));
-    let mut documents = default_settings_input();
-    documents
-        .iter_mut()
-        .find(|document| document.namespace == "providers.model")
-        .expect("provider settings")
-        .value_json = json!({
-            "harness": { "address": "http://localhost:9810" }, "providers": [{
-                "kind": "larm", "id": "larm-primary", "enabled": true, "label": "LARM",
-                "location": "local", "baseUrl": format!("http://{address}"),
-                "tokenEnv": "LARM_API_TOKEN", "allocationTtlSeconds": 300,
-                "allocationStartupTimeoutSeconds": 5, "allowFallbackByDefault": false,
-                "deploymentPolicy": "existing-only"
-            }], "reasoningEffort": "medium" });
-    let routing = documents
-        .iter_mut()
-        .find(|document| document.namespace == "routing.tasks")
-        .expect("routing settings");
-    routing.value_json["conversationRespond"]["source"] = json!("provider");
-    routing.value_json["conversationRespond"]["primaryProviderId"] = json!("larm-primary");
-    routing.value_json["conversationRespond"]["fallbackProviderIds"] = json!([]);
-    routing.value_json["voiceSpeak"]["source"] = json!("harness");
-    routing.value_json["voiceSpeak"]["providerId"] = Value::Null;
-    save_settings_documents_to_connection(
-        &mut state.sqlite_writer.lock().expect("database lock"),
-        &documents,
-    )
-    .expect("settings save");
-
-    let event_states = Arc::new(Mutex::new(Vec::<String>::new()));
-    let callback_states = event_states.clone();
-    let callback_database = state.sqlite_writer.clone();
-    let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {
-        let tauri::ipc::InvokeResponseBody::Json(event) = body else {
-            return Ok(());
-        };
-        if event.contains("\"type\":\"providerSelected\"") {
-            let selected: (Option<String>, i64, String) = callback_database
-                .lock()
-                .expect("database lock")
-                .query_row(
-                    "SELECT selected_runtime_id, output_started, status
-                         FROM provider_sessions WHERE runtime_run_id='run-larm'",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .expect("selection row");
-            callback_states.lock().expect("state lock").push(format!(
-                "selected:{:?}:{}:{}",
-                selected.0, selected.1, selected.2
-            ));
-        } else if event.contains("\"type\":\"delta\"") {
-            let output_started: i64 = callback_database
-                .lock()
-                .expect("database lock")
-                .query_row(
-                    "SELECT output_started FROM provider_sessions WHERE runtime_run_id='run-larm'",
-                    [],
-                    |row| row.get(0),
-                )
-                .expect("output row");
-            callback_states
-                .lock()
-                .expect("state lock")
-                .push(format!("delta:{output_started}"));
-        } else if event.contains("\"type\":\"messageCompleted\"") {
-            let terminal: (String, String, String) = callback_database
-                .lock()
-                .expect("database lock")
-                .query_row(
-                    "SELECT ps.status, ps.release_status, rr.status
-                         FROM provider_sessions ps JOIN runtime_runs rr ON rr.id=ps.runtime_run_id
-                         WHERE ps.runtime_run_id='run-larm'",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .expect("terminal rows");
-            callback_states.lock().expect("state lock").push(format!(
-                "completed:{}:{}:{}",
-                terminal.0, terminal.1, terminal.2
-            ));
-        }
-        Ok(())
-    });
-    let input = StartTurnInput {
-        run_id: "run-larm".to_string(),
-        conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
-        content: "fixture prompt".to_string(),
-        workspace_path: None,
-        retry_input_message_id: None,
-        source_id: None,
-        input_origin: "text".to_string(),
-        presentation_mode: "visual".to_string(),
-    };
-    execute_turn(
-        &state,
-        &input,
-        &channel,
-        Arc::new(RunCancellation::default()),
-        None,
-    )
-    .await
-    .expect("LARM turn completes");
-    server.await.expect("fake LARM joins");
-
-    assert_eq!(
-        *event_states.lock().expect("state lock"),
-        vec![
-            "selected:Some(\"runtime_turn\"):0:running",
-            "delta:1",
-            "completed:completed:deferred-to-ttl:completed"
-        ]
-    );
-    let captures = requests.lock().expect("request lock");
-    assert_eq!(captures.len(), 5);
-    for index in [0, 1, 4] {
-        assert!(captures[index]
-            .to_ascii_lowercase()
-            .contains("authorization: bearer fixture-token"));
-    }
-    assert!(captures[2].contains("\"allocationId\":\"alloc_turn\""));
-    assert!(captures[2].contains("\"name\":\"recall_conversation\""));
-    assert!(captures[3].contains("continuity-no-hit"));
-    let telemetry: (String, String, i64, String, String, Option<String>, String) = state
-        .sqlite_writer
-        .lock()
-        .expect("database lock")
-        .query_row(
-            "SELECT route_id, selected_runtime_id, fallback_used, selection_reason,
-                        release_status, request_id, release_failure_kind
-                 FROM provider_sessions WHERE runtime_run_id='run-larm'",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            },
-        )
-        .expect("telemetry row");
-    assert_eq!(
-        telemetry,
-        (
-            "llm-default".to_string(),
-            "runtime_turn".to_string(),
-            0,
-            "primary".to_string(),
-            "deferred-to-ttl".to_string(),
-            None,
-            "upstream".to_string()
-        )
-    );
 }
 
 #[cfg(not(coverage))]

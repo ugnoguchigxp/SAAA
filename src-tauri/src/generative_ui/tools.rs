@@ -48,6 +48,7 @@ pub(crate) fn execute(
             return Err("UI tool arguments too large".into());
         }
         state.sqlite_writer.write(|connection| {
+            crate::memory::personal_state::generation::allow_dispatch(connection,&input.run_id)?;
             store::require_enabled(connection)?;
             if let Some(result) = store::cached(connection, &input.run_id, &call.id)? { return Ok(result); }
             let transaction = connection.transaction().map_err(database_error)?;

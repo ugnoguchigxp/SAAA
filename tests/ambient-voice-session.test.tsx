@@ -174,7 +174,7 @@ describe("ambient voice session", () => {
         type: "ready",
         sessionId,
         currentUtteranceId: "u1",
-        protocol: "native",
+        protocol: "batch-agreement",
         scope: "all-speakers",
       });
       channel?.onmessage?.({

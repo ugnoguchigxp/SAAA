@@ -1,0 +1,21 @@
+.coding-jobs {
+  padding: 0.5rem 1rem;
+  max-height: 16rem;
+  overflow: auto;
+  border-bottom: 1px solid var(--border-color, #ddd);
+}
+.coding-jobs details {
+  padding: 0.4rem 0;
+}
+.coding-jobs summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.coding-jobs p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.5rem 0;
+}
+.coding-jobs input {
+  width: min(100%, 32rem);
+}

@@ -20,7 +20,8 @@ pub(crate) fn export_diagnostics(state: &AppState) -> Result<LocalArtifactResult
         "recentRuns": database.recent_runs,
         "providerSessions": database.provider_sessions,
         "streamingPerformance": crate::runtime::event_hub::performance::snapshot(),
-        "auditTrail": database.audit_trail
+        "auditTrail": database.audit_trail,
+        "personalState": state.sqlite_writer.read_serialized(crate::memory::personal_state::commands::summary)?
     });
     let directory = state.data_directory.join("diagnostics");
     fs::create_dir_all(&directory)

@@ -79,24 +79,6 @@ export function ProviderCard({
       </section>
     );
   }
-  if (provider.kind === "larm") {
-    return (
-      <section className="settings-card provider-card">
-        <ProviderHeader provider={provider} onChange={onChange} />
-        <div className="settings-form-grid">
-          <Field label={t("settings.providers.baseUrl")}>
-            <input
-              value={provider.baseUrl}
-              onChange={(event) => onChange({ ...provider, baseUrl: event.target.value })}
-            />
-          </Field>
-          <Field label={t("settings.providers.runtime")}>
-            <input value={t("settings.providers.existingDeployment")} disabled />
-          </Field>
-        </div>
-      </section>
-    );
-  }
 
   return (
     <section className="settings-card provider-card">

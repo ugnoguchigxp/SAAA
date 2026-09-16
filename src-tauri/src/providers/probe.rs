@@ -1,5 +1,5 @@
 use super::agent_session::probe_agent_session_provider as probe_agent_session;
-use super::{openai_compatible::probe_model_provider, stream::larm_failure_message};
+use super::openai_compatible::probe_model_provider;
 use crate::persistence::validate_model_providers;
 use crate::{
     redact::redact_runtime_text, validate_identifier, AppState, ModelProviderSettings,
@@ -27,12 +27,6 @@ pub(crate) async fn test_model_provider(state: &AppState, input: TestProviderInp
         ModelProviderSettings::CloudAsr(provider) => crate::voice::cloud_asr::probe(provider).await,
         ModelProviderSettings::CloudTts(provider) => crate::voice::cloud_tts::probe(provider).await,
         ModelProviderSettings::SystemTts(_) => Ok("System text-to-speech is available".to_string()),
-        ModelProviderSettings::Larm(provider) => {
-            crate::providers::larm::LarmProvider::probe(&state.larm_gate, &provider.base_url)
-                .await
-                .map(|_| "LARM health and readiness checks succeeded".to_string())
-                .map_err(|kind| larm_failure_message(kind).to_string())
-        }
         ModelProviderSettings::DynamicLan(provider) => {
             super::dynamic_lan::probe::probe(provider).await
         }
@@ -81,16 +75,6 @@ mod tests {
         .expect("system TTS probe returns");
         assert!(system.ok);
         assert!(system.message.contains("System text-to-speech"));
-
-        let larm = test_model_provider(
-            &state,
-            TestProviderInput {
-                provider: crate::test_support::larm_provider("larm-primary"),
-            },
-        )
-        .await
-        .expect("disabled LARM probe returns");
-        assert!(!larm.ok);
 
         let mut openai = crate::test_support::direct_provider("cloud-probe", "cloud");
         openai.authentication = "api-key".into();

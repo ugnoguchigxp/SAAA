@@ -7,7 +7,7 @@ const ready = {
   type: "ready",
   sessionId: "s",
   currentUtteranceId: "u",
-  protocol: "native",
+  protocol: "batch-agreement",
   scope: "all-speakers",
 } as const;
 const final = (utteranceId = "u", revision = 1): VoiceAsrStreamEvent => ({

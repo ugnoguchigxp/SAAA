@@ -11,7 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { AppIcon } from "./components/AppIcon";
-import { ConversationSidebarFooter } from "./components/WebSocketConnectionIndicator";
+import { ConversationSidebarFooter } from "./components/ConversationSidebarFooter";
 import { ChatPage } from "./features/chat/ChatPage";
 import { useConversationTurn } from "./features/chat/useConversationTurn";
 import { MeetingPage } from "./features/meeting/MeetingPage";
@@ -48,11 +48,6 @@ const initialSnapshot: AppSnapshot = {
     fallbackUsed: false,
     reasonCode: "snapshot-loading",
     updatedAt: null,
-  },
-  larmRuntime: {
-    state: "disabled",
-    message: "LARM runtime state is loading.",
-    contractCommit: "unknown",
   },
   voiceProfile: {
     status: "empty",
@@ -294,7 +289,6 @@ function App() {
         {surface === "settings" ? (
           <SettingsPage
             documents={snapshot.settings}
-            larmRuntime={snapshot.larmRuntime}
             voiceProfile={snapshot.voiceProfile}
             voiceEnrollmentBlocked={voiceBusy || meetingActive || Boolean(activeTtsRunId)}
             voiceListeningEnabled={voice.listeningEnabled}

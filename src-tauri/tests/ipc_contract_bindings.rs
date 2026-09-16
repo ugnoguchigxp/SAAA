@@ -26,3 +26,12 @@ fn generated_ui_binding_is_current() {
         saaa_lib::ipc_contract::ui_typescript_bindings()
     );
 }
+
+#[test]
+fn generated_coding_binding_is_current() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated/coding.ts");
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        saaa_lib::ipc_contract::coding_typescript_bindings()
+    );
+}

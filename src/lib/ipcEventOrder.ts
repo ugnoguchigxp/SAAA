@@ -37,7 +37,6 @@ export function voiceAsrEventOrder(sessionId: string) {
       failed = event.fatal;
       return true;
     }
-    if (event.type === "degraded") return true;
     const previous = utterances.get(event.utteranceId);
     if (previous?.terminal) return false;
     if (event.type === "utteranceDiscarded") {

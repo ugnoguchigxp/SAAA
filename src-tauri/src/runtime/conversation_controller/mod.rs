@@ -159,7 +159,10 @@ fn project(input: &StartTurnInput, history: &[ConversationMessage]) -> Result<Re
         request: input.content.trim().into(),
         context: Context {
             messages,
-            evidence: vec![],
+            evidence: vec![saaa_reasoning_contract::Evidence {
+                id: "host_capabilities".into(), source: "SAAA host capability declaration".into(),
+                content: "This voice reasoning route cannot execute coding tools or pi jobs. When asked to implement, continue, inspect or cancel a coding job, state that this route does not support the action and direct the user to the normal text conversation. Never claim to have executed an action.".into(),
+            }],
             truncated,
         },
         constraints: Constraints {

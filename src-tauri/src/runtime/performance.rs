@@ -14,8 +14,6 @@ struct StreamingMetrics {
     hub_to_tts_ns: VecDeque<u64>,
     tts_boundary_to_dispatch_ns: VecDeque<u64>,
     tts_boundary_to_player_spawn_ns: VecDeque<u64>,
-    reconnects: u64,
-    sequence_gaps: u64,
     max_tts_queue_depth: usize,
     ui_batches: u64,
 }
@@ -58,20 +56,6 @@ pub(crate) fn record_tts_boundary_to_player_spawn(duration: Duration) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     push_sample(&mut metrics.tts_boundary_to_player_spawn_ns, duration);
-}
-
-pub(crate) fn record_reconnect() {
-    metrics()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .reconnects += 1;
-}
-
-pub(crate) fn record_sequence_gap() {
-    metrics()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .sequence_gaps += 1;
 }
 
 pub(crate) fn record_tts_queue_depth(depth: usize) {
@@ -117,8 +101,6 @@ pub(crate) fn snapshot() -> Value {
         "hubAcceptToTtsAppend": percentiles(&metrics.hub_to_tts_ns),
         "ttsBoundaryToDispatch": percentiles(&metrics.tts_boundary_to_dispatch_ns),
         "ttsBoundaryToPlayerSpawn": percentiles(&metrics.tts_boundary_to_player_spawn_ns),
-        "reconnectCount": metrics.reconnects,
-        "sequenceGapCount": metrics.sequence_gaps,
         "maxTtsQueueDepth": metrics.max_tts_queue_depth,
         "uiBatchCount": metrics.ui_batches
     })
@@ -136,8 +118,6 @@ mod tests {
         record_hub_to_tts(Duration::from_nanos(10));
         record_tts_boundary_to_dispatch(Duration::from_nanos(11));
         record_tts_boundary_to_player_spawn(Duration::from_nanos(12));
-        record_reconnect();
-        record_sequence_gap();
         record_tts_queue_depth(3);
         let snapshot = snapshot();
         assert_eq!(

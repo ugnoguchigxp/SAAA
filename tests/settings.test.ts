@@ -392,57 +392,12 @@ describe("settings contracts", () => {
     legacy[0].schemaVersion = 13;
     expect(() => validateSettingsDocuments(legacy)).toThrow("Invalid input");
   });
-  test("accepts only the fixed LARM security contract", () => {
+  test("rejects removed legacy LARM provider settings", () => {
     const snapshot = documents();
-    const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> })
-      .providers;
-    providers.push({
+    (snapshot[0].valueJson as { providers: unknown[] }).providers.push({
       kind: "larm",
-      id: "larm-local",
-      enabled: false,
-      label: "LARM",
-      location: "local",
-      baseUrl: "http://127.0.0.1:9810",
-      tokenEnv: "LARM_API_TOKEN",
-      allocationTtlSeconds: 300,
-      allocationStartupTimeoutSeconds: 300,
-      allowFallbackByDefault: false,
-      deploymentPolicy: "existing-only",
+      id: "legacy",
     });
-    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
-    providers[1].baseUrl = "http://[::1]:9810";
-    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
-    for (const baseUrl of [
-      "http://localhost:9810",
-      "http://192.168.1.10:9810",
-      "https://127.0.0.1:9810",
-      "http://127.0.0.1:9810/v1",
-      "http://user:secret@127.0.0.1:9810",
-    ]) {
-      providers[1].baseUrl = baseUrl;
-      expect(() => validateSettingsDocuments(snapshot)).toThrow("numeric-loopback");
-    }
-  });
-  test("rejects multiple enabled LARM providers", () => {
-    const snapshot = documents();
-    const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> })
-      .providers;
-    const larm = {
-      kind: "larm",
-      enabled: true,
-      label: "LARM",
-      location: "local",
-      baseUrl: "http://127.0.0.1:9810",
-      tokenEnv: "LARM_API_TOKEN",
-      allocationTtlSeconds: 300,
-      allocationStartupTimeoutSeconds: 300,
-      allowFallbackByDefault: false,
-      deploymentPolicy: "existing-only",
-    };
-    providers.push(
-      { ...larm, id: "larm-one" },
-      { ...larm, id: "larm-two", baseUrl: "http://127.0.0.1:9811" },
-    );
-    expect(() => validateSettingsDocuments(snapshot)).toThrow("Only one LARM provider");
+    expect(() => validateSettingsDocuments(snapshot)).toThrow();
   });
 });

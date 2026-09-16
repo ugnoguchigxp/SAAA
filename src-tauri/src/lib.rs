@@ -19,6 +19,7 @@ use tauri::Manager;
 
 mod app_paths;
 mod backup;
+mod coding;
 mod credentials;
 mod database_backup;
 mod diagnostics;
@@ -51,8 +52,8 @@ use persistence::conversations::list_messages_from_connection;
 use persistence::schema::initialize_database;
 use persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
 pub(crate) use providers::session_store::{
-    begin_provider_session, finish_dynamic_lan_provider_session, finish_larm_provider_session,
-    finish_provider_session, persist_conversation_success,
+    begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session,
+    persist_conversation_success,
 };
 pub(crate) use providers::stream::*;
 pub(crate) use redact::{bounded_text, redact_runtime_text};
@@ -443,6 +444,8 @@ async fn list_messages(
 #[tauri::command]
 
 fn shutdown_app_state(state: &AppState) {
+    memory::personal_state::worker::interrupt();
+    coding::commands::shutdown(state);
     state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
     if let Ok(active_runs) = state.active_runs.lock() {
@@ -540,6 +543,7 @@ pub fn run() {
             if situation_settings.enabled {
                 spawn_situation_monitor(sqlite_writer.clone(), situation.clone());
             }
+            memory::personal_state::worker::spawn(Arc::downgrade(&sqlite_writer));
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,
@@ -550,7 +554,6 @@ pub fn run() {
                 provider_probes: Mutex::new(HashMap::new()),
                 interaction_policy: Mutex::new(()),
                 shutdown_started: AtomicBool::new(false),
-                larm_gate: providers::larm::LarmRuntimeGate::initialize(),
                 network_asr: voice::network_asr::NetworkAsrRuntime::new()
                     .map_err(std::io::Error::other)?,
                 audio_uploads: voice::audio_upload::AudioUploadStore::default(),
@@ -575,7 +578,9 @@ pub fn run() {
             shutdown_app_state(&state);
             let window = window.clone();
             tauri::async_runtime::spawn(async move {
-                let deadline = tokio::time::Instant::now() + WINDOW_SHUTDOWN_GRACE;
+                let coding_active = window.state::<AppState>().sqlite_readers.read(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM coding_runs WHERE state IN ('starting','running','stopping'))",[],|r|r.get::<_,bool>(0)).map_err(database_error)).unwrap_or(false);
+                let grace = if coding_active { Duration::from_secs(30) } else { WINDOW_SHUTDOWN_GRACE };
+                let deadline = tokio::time::Instant::now() + grace;
                 loop {
                     let no_active_runs = window
                         .state::<AppState>()
@@ -583,7 +588,8 @@ pub fn run() {
                         .lock()
                         .map(|active| active.is_empty())
                         .unwrap_or(true);
-                    if no_active_runs || tokio::time::Instant::now() >= deadline {
+                    let no_coding_runs = window.state::<AppState>().sqlite_readers.read(|c| c.query_row("SELECT NOT EXISTS(SELECT 1 FROM coding_runs WHERE state IN ('starting','running','stopping'))",[],|r|r.get::<_,bool>(0)).map_err(database_error)).unwrap_or(false);
+                    if (no_active_runs && no_coding_runs) || tokio::time::Instant::now() >= deadline {
                         break;
                     }
                     tokio::time::sleep(Duration::from_millis(25)).await;
@@ -592,6 +598,10 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            memory::personal_state::commands::personal_state_snapshot,
+            memory::personal_state::commands::personal_source_page,
+            memory::personal_state::commands::forget_personal_source,
+            memory::personal_state::commands::personal_state_extract_once,
             get_app_snapshot,
             get_voice_profile_snapshot,
             stage_audio_upload,
@@ -643,6 +653,12 @@ pub fn run() {
             larm_voice::end_larm_voice_session,
             list_messages,
             generative_ui::history::list_message_window,
+            coding::commands::get_coding_settings,
+            coding::commands::save_coding_settings,
+            coding::commands::probe_coding,
+            coding::commands::register_coding_workspace,
+            coding::commands::coding_snapshot,
+            coding::commands::cancel_coding_job,
             generative_ui::get_ui_enabled,
             generative_ui::set_ui_enabled,
             generative_ui::get_ui_instance,
@@ -662,6 +678,7 @@ pub fn run() {
         .expect("error while building SAAA")
         .run(|_, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                tauri::async_runtime::block_on(memory::personal_state::product_binding::shutdown());
                 tauri::async_runtime::block_on(larm_voice::shutdown());
             }
         });
@@ -672,3 +689,6 @@ mod tests;
 mod ipc_receiver_tests;
 
 mod test_environment;
+
+#[cfg(feature = "quality-eval-harness")]
+pub use memory::personal_state::live_harness as personal_state_harness;

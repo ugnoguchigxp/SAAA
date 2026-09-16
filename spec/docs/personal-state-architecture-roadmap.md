@@ -1,166 +1,153 @@
 # SAAA Personal State — 中間メモリとWorld Modelの全体設計・ロードマップ
 
-状態: 実装計画案。2026-09-13。機能実装の完了を示さない。
+実装進捗（2026-09-13 更新）: 状態基盤に加え、SQLite v18の配送outbox、短期Provider認証とKeychainのsubject binding、製品用HTTP配送・canonical計測・v2 View・attempt取消・多層cleanup、実workerを通す受入harnessを実装した。合成HTTP試験とローカル検証を実施。LARMの常駐27Bでは配送から実generationまで確認したが、runtime消去用の起動設定適用に管理者権限が必要で、忘却の実機受入は未完了。日本語goldの人手確認、全受入行列・性能比較も残るため、P1全体の完了・利用可能とは判定しない。詳細は `spec/evidence/personal-state/product-connection-progress.md` を参照。default OFFを維持する。
 
-## 1. 採用する方向
+状態: 実装中・製品接続の実機受入待ち。2026-09-13 LARM契約照合版。機能実装・性能認定の完了を示さない。
 
-SAAAのGit内に、UI・音声・推論モデルから独立したPersonal Stateコアを作る。中間メモリとPersonal World Modelはこのコアの異なる責務とし、共通の出典・適用範囲・更新版・失効の規則で管理する。
+## 1. 採用する構成
 
-VoiceMemのcloneは現状のまま残す。本体の取り込み、fork、実行依存への追加は行わない。新規RAG、音声保存、embeddingを初期の前提にしない。ContextStillは再利用可能な知識・経験を担い続ける。
+Personal Stateは、原文や実行記録を根拠に「現在何が有効か」を管理し、次の推論へ渡す状態を決めるSAAAの内部機能とする。中間メモリは対話・作業の継続を、World Stateはユーザーに関係する現在の認識を担当する。変更の履歴と依存関係を保存し、現在状態はそこから導出する。
 
-全体は一度に実装しない。本書で境界と到達点を固定し、[第1段階の詳細計画](personal-state-phase-1-plan.md)だけを実装可能な粒度にする。後段の詳細計画は前段の契約に合わせて作成する。配置案を再比較するために複数実装を作ることはしない。
+27Bは、必要な原文・成果物と現在状態を含むbounded Active Viewを使って、事実回答、推論、タスク遂行の判断を行う。2Bは受領・相槌・短い確認・構造化判断に限定する。操作の実行、認可、取消、状態変更の採用はSAAAの決定的ロジックが管理する。
 
-### モデルの役割分担
+SAAAのGit内に `crates/personal-state-core/` と永続化・LARM Adapterを置く。VoiceMemのcloneは変更せず、参考にとどめる。新しい音声保存、汎用RAG、embedding、独立サービスはP1の前提にしない。ContextStillは再利用可能な知識・経験を担当し続ける。
 
-設計前提は、2B級モデルが音声会話のフロントに立ち、Qwen 3.8 27B＋20M KV:memが実際のタスクを担当する構成である。ユーザーが示した構成として採用し、全経路が実装・検証済みという主張とは区別する。
+全体の責務は本書、最初に実装する範囲は[P1詳細計画](personal-state-phase-1-plan.md)を正とする。後段の全schemaを先に作らず、P1で成立した出典・更新・権限契約をWorld Stateへ広げる。
 
-2Bは依頼の受け付け、短い会話、必要な確認、根拠のある進捗・結果の伝達を担当する。詳細履歴の解釈、計画、調査、タスク遂行は27Bへ委譲する。2Bが不足した詳細を推測で補完したり、27Bの実行結果を待たずに完了を宣言したりしない。委譲の起動・重複防止・操作権限・取消はSAAA Runtimeが担う。
+## 2. LARM契約と以前の計画の訂正
 
-27Bの長大Contextはタスクの詳細な作業文脈として継続利用する。2Bには独立した短いContextを用意し、共有状態から会話に必要な内容を投影する。中間メモリは、両モデル間の情報受け渡しと現在状態の明示を常時支え、27Bの容量到達・cache喪失時には再開を支える。World Stateは両者が参照する現在の認識として扱う。
+2026-09-13にLARMのREADME、local-node契約、Context API型・controller、役割境界文書を読み取りで確認した。確認した版・箇所と実装上の制約は[契約照合記録](larm-personal-state-contract-review.md)に残す。役割境界文書はLARM作業ツリー上の未追跡ファイルであり、commitとは別にdigestを記録した。
 
-## 2. 既存文書との関係
-
-- [Personal AI Concept](saaa-personal-ai-concept.md): 長期Vision。引き続き参照する。
-- [実装前評価](continuity-world-model-direction.md): SAAA内の独立コアを選んだ理由。
-- [MVP 3 Memory計画](mvp-3-memory-architecture-implementation-plan.html): Sessionless、Raw会話の単一正本、既存recall、ContextStillの知識責務を継承する。
-- MVP 3の未実装部分のうち、User Core / Working State / Capsule / idle更新の分割と実装順序は本書と後続の段階計画を優先する。旧計画の全項目を今回同時に実装する意味ではない。
-- 型付きContextStill Recallの既存契約は維持する。個人情報全般をContextStillへ保存する拡張は含めない。
-
-既存のSnapshot＋Overlay案は実装仮説とする。第1段階はrevision付き状態と未反映イベントの差分で開始し、World Modelに二層の物理保存が必要かは第2段階で決める。
-
-## 3. 到達する体験
-
-ユーザーが数日前の作業へ戻っても、何を決め、何を決めておらず、何を取り消したかを引き継げる。Window切り替え、再起動、モデル変更で状態を消さない。
-
-同じ会話で話題が変わっても、局所的な制約を別の作業へ漏らさない。通常ChatにSession選択UIを復活させない。
-
-会議やTaskの変化は現在状態へ反映し、古い推測を現在の事実として提示しない。有益な経験はContextStillへ残し、作業中の未確定な情報はSAAAで扱う。
-
-## 4. 責務と所有
-
-| 領域 | 正本・責任主体 | Personal Stateの扱い |
+| 概念 | 確認した契約 | SAAAの扱い |
 | --- | --- | --- |
-| 会話本文 | SAAA conversation_messages | IDで参照。新しいRaw履歴・FTSへ複製しない |
-| 作業・対話の現在地 | Continuity State | 目的、制約、決定、open loop、参照対象を管理 |
-| 現在の世界理解 | World State | 実体、関係、現在採用する主張と不確実性を管理 |
-| 長期Goalと委任 | 将来のGoal / Policy担当 | 参照を保持。推測からGoalや権限を自動生成しない |
-| Taskの実行状態 | SAAA Task / Runtime | 状態を参照・投影。別の実行状態を育てない |
-| 再利用できる知識・経験 | ContextStill | 候補送信と必要時recall。現在状態の正本にはしない |
-| 会話フロント | 2B級モデル | 会話用の短い投影を受け取り、受け付け・確認・伝達を行う |
-| 詳細な作業文脈 | 27B＋20M KV:mem | タスク文脈を継続。共有する状態候補と結果を返す |
-| モデル・計算資源 | 既存Provider / LARM経路 | 明示された要求を出す。接続・資格情報の別管理を作らない |
+| Source Set | principalあたり最大20,000,000 tokenの登録source集合 | 必要な資料・履歴を登録する上限。会話の単一attention windowではない |
+| native window | Qwen 3.8の262,144 token | 現行releaseの認定値として扱う |
+| 1回の最大入力 | 225,280 token。出力予約32,768、安全余白4,096を差し引く | system、tools、現在発話、状態、source、包装を含む総入力予算 |
+| Context View | principal、model、Allocation、runtime、release、lease epoch、期限にbind。one-shot | generationごとに有効なViewを作り、一度だけconsumeする |
+| snapshot | 認定済みのView/prefixに対する性能cache | miss・破損・非互換なら有効sourceから再構築する |
+| model/profile指定 | snapshot対応Providerを選ぶだけではViewを利用しない | Context APIとChat requestの接続を別途実装・検証する |
 
-## 5. 一つのコア、二つの状態
+以前の「20M Contextを保持し続ける」「20Mの旧・新Contextを切り替える」「KV投入済みbatchを追う」という設計は撤回する。Source登録と版の照合、bounded Viewの作成・consume、snapshotの適合確認へ置き換える。20M以上への拡大、任意KV blockの連結、他モデルとのKV共有を計画に含めない。
 
-### Continuity State
+数値は現行契約の基準値であり、起動時に有効releaseの認定・policyと照合する。schemaが大きい値を許すことを利用可能容量と解釈しない。
 
-作業scopeに属するcurrent objective、active constraints、decisions、pending decisions、open loops、active referents、progress referencesを持つ。単なる会話要約でなく「今有効な内容」を保持する。
+## 3. 利用者に提供する継続性
 
-scopeは会話ID、ContextWindow ID、カレンダー日付から自動的に区切らない。対象の仕事を識別する内部IDである。初期は既存primaryに対応するscopeだけを有効化し、複数scopeは第3段階で加える。ただしP1からtask/requestへの適用対象を保持し、局所条件をscope全体へ自動拡張しない。
+「導入を検討していたが、採用せず独自実装へ進む」と決めたら、次の推論でも訂正後の方針を使う。2BのContext更新、27BのView再作成、アプリ再起動で、目的・制約・未決事項を失わない。
+
+作業中の進捗はRuntime台帳の値を定型伝達する。成果の意味を説明する回答は27Bが作り、2Bが言い換えて意味を変えない。27B待ちでも受付・取消・定型通知は可能にする。
+
+詳細な根拠は必要なときにSource Setや原文から取り出せる。現在有効な制約・訂正・撤回は検索順位に任せず、今回のViewに必要なものを必須入力として扱う。保持期限切れ・忘却で根拠が失われた場合は、不完全さを明示する。
+
+## 4. 所有する情報と正本
+
+| 情報 | 正本 | 派生物・利用先 |
+| --- | --- | --- |
+| 会話本文・資料・成果物 | conversation_messages、既存artifact/資料保存先 | LARM向けの許可済みsource複製・参照 |
+| 作業の現在地 | Personal Stateのassertion/transition履歴と有効な根拠 | Continuityのcurrent projection、推論用の必須状態 |
+| 現在の世界理解 | 同じ変更履歴上のWorld assertionと根拠 | World Stateのcurrent projection |
+| 実行状況・操作結果 | 既存Task/Runtime台帳 | 進捗表示・Task参照。独立した実行台帳を作らない |
+| 操作の委任・認可 | 既存Policyとユーザーの明示委任 | 読み取り・送信・実行時に照合する参照 |
+| 再利用できる知識・経験 | ContextStill | 必要時recall。現在状態の代用にしない |
+| LARM Source Set | 正本から生成した、principalに属する版付き登録物 | Active Viewの材料。SAAAの唯一の履歴にはしない |
+| Context View / snapshot | LARMの一時実行物・性能cache | 正本から再作成。Memoryや権限の正本にしない |
+
+SAAA内のRaw履歴table・FTSを増やさない。LARMへのsource provisionに必要な複製は送信先・版・分類・保持・削除を追跡する。複製を全く作らないという意味ではない。
+
+## 5. 中間メモリとWorld State
+
+### Continuity
+
+現在の目的、有効な制約、決定、未決事項、open loop、参照対象、Task進捗への参照を持つ。全文要約や内部思考の保存を目的にしない。次の判断に必要な情報と、その出典を保持する。
+
+principalはアクセス主体、scopeは作業の適用範囲、task/requestは実行対象である。相互に代用しない。P1は既存primaryに対応する単一scopeだが、局所条件にはtask/requestまたは明示scope共通の対象を付ける。対象不明の「それ」を全Taskへ適用しない。複数scopeの自動整理はP3とする。
 
 ### World State
 
-userを中心にproject / person / device / service / meeting等を表現する。明示情報、Runtimeの観測、推論を区別し、unknown / disputed / staleを表せるようにする。
+ユーザーに関係するproject、person、device、service、meeting等について「誰が、何を、いつから、どの根拠で、現在どう認識しているか」を表す。物理世界のシミュレーターや汎用因果モデルは初期範囲に含めない。
 
-このWorld Modelは、ユーザーに関係する現在の認識を表す。物理世界の予測モデルや汎用的な因果シミュレーターを初期に作る意味ではない。
+明示情報、Runtime観測、推論候補を分ける。unknown / disputed / staleを表現し、新着という理由だけで矛盾を解決しない。Runtimeが所有する状態は参照として扱い、World StateがRuntimeを上書きしない。P2はproject:SAAA、現在の会議、進行中Task参照に限定する。
 
-局所的な条件を共有World Stateへ反映するには別の根拠が必要である。「今回だけ短く説明して」は今回の制約、「普段から短い説明がよい」は個人の好みの候補として扱う。
+「今回だけ短く」はtask条件であり、一般的な個人属性へ昇格させない。P3でも個人の好みは根拠・適用範囲・訂正可能性を持つ。
 
-## 6. 共通の更新規則
+## 6. 変更履歴と現在状態
 
-状態項目は、安定ID、scope、種別、値、status、source refs、revision、observed/effective time、recorded time、必要に応じvalid_untilを持つ。scoreを一つ付けるだけで権威・確かさ・重要度を兼用しない。
+意味状態はimmutableなassertionとtransitionとして記録し、current state、旧working state、capsuleは同じ履歴から導出する。二つの書き込み正本を持たない。通常更新では過去の値を上書きせず、訂正・撤回・失効を追加して現在値を変える。
 
-モデルは差分候補を提案し、コアは型、参照範囲、適用元revision、状態遷移を検証する。提案・推測をユーザーの決定へ昇格させない。Runtimeイベントは担当Runtimeの状態参照として反映する。
+出典はsource ID、version、digest、coverageで指定する。根拠を支持する依存と、生成に渡した全入力への依存を区別し、分類・忘却は後者からも伝播させる。モデルの引用だけで依存範囲を狭めない。抽出器のversion、model/release、prompt/schema版、assertion間のdepends_on、superseded_by、retracted_at、invalidated_atを追えるようにする。sourceから派生項目を逆引きする索引を持つ。
 
-同じ入力の再処理は冪等にする。古い入力からの背景処理が新しい訂正を上書きしない。state revisionとは別に新入力・削除のinput epochを照合し、未抽出の訂正も競合として検知する。source抽出の進捗、KV投入確認、実行イベントの順序を別管理する。解決していない矛盾は候補を残し、都合のよい一件へ自動的に潰さない。
+state revisionは意味状態の更新、input epochは新入力・訂正・削除による古い推論の拒否に使う。request revision、LARM lease epoch、source登録状態、抽出coverage、Runtime event sequenceは別の値である。数値が一致しても相互の証明にならない。
 
-作業完了は削除と異なる。activeなContextから外しても、保持可能な出典へ戻れる。削除・撤回は派生状態と送信候補へ伝播し、古いsnapshotへの復帰で復活させない。
+27BはStatePatch候補を出し、SAAAが出典・対象・権限・revision・epochを検証して採用する。2Bは意味状態を更新しない。初回取込・長文分割・原文編集もcoverageと版で追い、未確認の過去や後半を処理済みとして扱わない。有効期限は読み取り時にも検査し、worker停止で古い状態を延命させない。型や出典IDの検証だけで自然文の意味が正しいと保証せず、日本語corpusで誤昇格を評価する。
 
-## 7. ContextWindowとの接続
+immutableは忘却対象の本文を永久保存する約束ではない。payloadと監査metadataを分け、忘却時は本文・派生値を削除または利用不能にし、内容を含まない必要最小限のtombstoneを残す。
 
-Context接続は、2Bフロント向けの短い投影、27Bタスク担当向けの長大Context継続、27Bのcache喪失・容量到達・担当モデル変更時の再開という三経路に分ける。2Bへの投影は通常運転の一部であり、27Bの代替モデルへのfallbackとは区別する。毎回短いContextへ組み直すことを共通の前提にしない。
+## 7. 2B・27B・SAAAの応答責任
 
-現在の目的・明示制約・撤回・未決事項のうち継続に必須な内容は、検索順位に依存させない。まだ整理されていない入力はpending sourceとして引き継ぐ。checkpointを進めたふりをして省略しない。
+| 担当 | 許可する処理 | P1で担わせない処理 |
+| --- | --- | --- |
+| 2B tactical | 受領、相槌、短い確認の種別、意図・待機・取消の構造化候補 | 事実回答、約束、tool実行、Memory/World更新、最終判断 |
+| SAAA決定的ロジック | schema検証、定型文選択、台帳値の意味を変えない通知、認可・実行・取消 | モデル文だけを実行成功やユーザー決定へ変換すること |
+| 27B | 事実回答、結果の解釈、最終応答、計画・推論、state差分候補 | 自己申告だけで権限や台帳状態を確定すること |
 
-stateは新しい最上位指示ではない。過去の明示依頼を継続するための根拠付き情報であり、現行のユーザー指示・system/developer policy・操作の委任範囲に従う。外部文書やassistantの提案を、ユーザーが許可した事項へ変換しない。
+P1では2Bの自由文を利用者へ直接出さない。既存shadow分類は認定前のまま維持し、許可されたreply key/判断だけを検証する。semantic readiness未達・timeout・不正出力は定型文または27Bへ進む。質問や実作業を2Bのsimple replyへ格下げしない。
 
-ContextStillが停止しても、現在の作業再開は可能にする。追加知識の取得失敗と、継続状態が不完全な問題を別のhealth理由で表示する。
+同一accelerator上の2Bと27Bは短い直列実行を基本とし、不要な2B呼出しは省く。27B実行中の通知は定型文で行う。無条件な同時generationは認定済みmixed benchmarkがある場合だけの別release判断とする。LARM activityは瞬間観測であり予約・自動排他ではない。
 
-### フロントとタスク担当の受け渡し
+27Bの回答を2Bへ再投入して要約する経路は作らない。検証を通った出力を既存の表示/TTSへ渡し、結果の出典、run/request、現在epochを送出境界で照合する。
 
-SAAAは確定ユーザー入力を保存し、原文source、scope、現在state revision、未反映の訂正、既存Policyの権限参照を付けて27Bへ渡す。2Bの言い換えだけをタスク指示の正本にしない。単純な会話は2Bで返し、実作業・詳細な検討・手元の投影だけでは根拠不足の質問は27Bへ渡す。判断が曖昧なら確認または27Bによる解釈へ進める。
+## 8. 20M Source Setとbounded Active Viewを利用する
 
-27Bからはtask/run IDに紐づく結果・成果物参照・未決事項・確認要求・state差分候補を受け取る。Runtimeの受付・実行中・終了・失敗・取消の状態は既存台帳を参照する。モデルの「完了しました」という文章だけで完了状態を作らない。2Bへ渡す会話用投影は、現在の目的・制約、最新の訂正、台帳上の進捗、伝える結果、ユーザーへ確認する事項、根拠と鮮度を含む。20M全体の転送や2Bによる全履歴整理は行わない。
+SAAAのComposerが、権限確認後に今回必要な状態・原文・成果物を選ぶ。P1はID、task適用範囲、明示参照、最近のsourceで選び、新しい検索基盤を前提にしない。詳細取得が不足すれば既存recallまたは27Bの追加照会を使い、必須制約をutilityの低さで落とさない。
 
-進捗・訂正・取消の伝達はidle抽出workerを待たない。新しい依頼版と実行IDを照合し、旧依頼に対する結果を訂正後の完了として伝えない。ユーザーの取消をRuntimeへ直ちに伝え、取消要求と取消完了を区別する。27Bが利用不能でも2Bは受け付けと状態説明を継続できるが、実作業を引き受け直したふりはしない。
+1. 現在発話、policy、必須状態、未反映の訂正を固定し、同じread snapshotのstate revision/input epoch/policy revisionを記録する。
+2. 許可された詳細sourceを版付きでprovision・登録する。source本文はContext登録APIへinline送信しない。
+3. base入力と必要な登録sourceからViewを計画し、明示Allocationへbindする。required項目とoptional項目を区別する。
+4. returned Viewのbinding、orderedItems、omitted、予算を検証し、同じAllocation・適切なcapability・View IDで27Bを呼ぶ。
+5. 結果をrun/request/epochと照合し、Runtime結果とstate候補を別々に処理する。次のgenerationには新しいViewを作る。
 
-### タスク担当の20M Contextを優先する
+頻繁に変わる必須状態と現在発話はP1ではbase messagesへdataとして含め、安定した詳細sourceを登録物として利用する。baseとViewへ同じ本文を重複投入しない。既存の短いContext用の件数・先頭/末尾抽出をsourceの正本にせず、完全性付きの範囲読みに接続する。LARMが追加する包装とchat templateを含むcanonical token計測に従う。固定の文字数換算で225,280を保証しない。
 
-2026-09-13のユーザー提供情報として、LARM側にはQwen 3.8 27B一モデルに限定した20M ContextWindow / KVキャッシュが実装済みである。20Mを設計上の上限とし、他モデルへのKV共有や無制限の拡大を前提にしない。ここでの20Mはユーザー提示の容量表記であり、token単位・実効上限・予約領域はLARM契約で確定する。SAAA内では `saaa-qwen38-kv-mem` profileの明示接続を確認したが、LARM内部の容量・保持保証を本作業で実測したわけではない。
+snapshotのreuseは認定された互換性とprefix条件に任せる。同じsource集合でも毎回hitするとは保証せず、hit率のために古い状態を使わない。missなら有効sourceから再構築し、View失効・release変更・source版変更時は再計画する。Context operation成功はmaterialization完了であり、モデル応答やTask成功とは区別する。同一Task内でもgeneration/attemptごとにmanifestを持つ。登録・View作成の再送と、新しい登録世代・generationの開始を分ける。
 
-この経路では、保持済みの詳細な会話文脈をそのまま活用し、確定した新規入力・訂正・外部状態の変化を追加する。短い要約に置換してから毎回再投入する方式を標準にしない。KV継続が成立する条件、cache identity、処理済みsource、実使用量、再接続時の保持、prefix変更時の挙動を接続契約として確認する。接続leaseの継続だけでKVの継続を保証したことにしない。
+Source Setの20M quotaと1回の入力予算超過は別に扱う。前者は再登録可能な非必須sourceの登録解除、後者はoptional削減・参照範囲の分割・段階的照会で対応する。必要な内容を黙って落とさない。登録解除は忘却ではなく、忘却済みsourceは再登録しない。
 
-Personal Stateは、この豊かな作業文脈を全て写す役割から、現在有効な決定・制約・未決事項の明示、別モデルへの引き継ぎ、cache喪失・容量到達からの再開へ重点を移す。World Stateも、長文中の古い主張と現在採用する認識の区別、外部Runtime状態との対応を担当する。状態抽出のたびに20M全体を再読込せず、確定source差分を処理する。
+## 9. 訂正・取消・忘却・回復
 
-タスク用KVのprefixを背景抽出で書き換えない。抽出呼出しの分離または安全な分岐・復帰がLARMで保証されるまでは、同一cacheを抽出用途へ流用しない。共通の96,000 bytes等の短い投影上限を、そのままLARMの保持可能容量として適用しない。要求payload予算と既存KVを含む総Context予算を区別する。
+訂正は新しい値と依頼版の反映、撤回は以前の主張の取り下げ、取消要求は実行停止の要求、取消完了は実行状態の確認、忘却は指定情報の利用停止・削除である。別々に記録する。
 
-通常の訂正は最新の根拠として差分追加し、削除は影響cacheの再利用を止める。両者を一律のcache破棄にしない。
+忘却ではSAAAのtombstoneとinput epochを先に確定し、対象runへHTTP cancel相当のAbortSignalを送り、遅延出力をrun/epochで拒否する。その後LARM登録を削除し、残存sourceから新しいViewを作る。LARMのContext削除だけでactive generationが停止するとは扱わない。忘却後の遅延結果は保存入口でも本文を拒否する。既送信の処理はin-flightとして追い、SAAAでの新規dispatch・保存・出力許可をtombstoneと順序付ける。Context機能OFF時のDELETE成功だけで削除完了と判断しない。source本文・snapshotの物理削除は登録削除とは別の保証として追跡する。登録sourceだけでなくbase messages中の根拠も依存として追い、影響snapshotの回避・失効が確認できるまで再利用しない。
 
-20M到達への備えはP1に含める。残容量と次の入力・出力・引き継ぎに必要な予約量から切替予告を出し、現状態revisionと未反映sourceを確定し、必要な詳細出典と共に次のContextへ引き継ぐ。旧・新の20Mを同時保持できるとは仮定せず、一つ分の容量なら回復情報を永続化してから旧cacheを解放する。固定割合での切替、KVの部分削除、永続復元、圧縮は未確認のため保証しない。source削除時は派生stateだけでなく旧KVの再利用も無効化し、LARMの削除・再構築契約に従う。
+DB再起動時は変更履歴からcurrent projectionを復元し、未完了のforget/outboxを先に再開する。期限切れ・consume済みViewを使い回さず、sourceと実行台帳から必要な推論を再構成する。実施済みか不明な外部操作は再実行せず照会する。モデル内部の思考状態の無損失復元は約束しない。
 
-KV投入はbatch単位の受領確認で追跡する。容量切替は実行の安全な境界で旧generationを止め、回復manifest・新Contextの受領・切替中の入力を確認してからactive bindingを切り替える。KVだけに残った内部推論の完全復元は保証しない。回復に必要な成果物と実行進捗は既存Runtimeへ確定する。詳細手順と未対応時の動作はP1第9節を正とする。
+## 10. 読み取りと送信の境界
 
-## 8. 実装境界
+principalと用途に基づく読み取り許可をSAAAで検証する。scope一致だけでは認可しない。public / internal / confidential / restrictedをsourceから派生状態へ継承し、分類だけで用途を許可したと判断しない。LARMのprincipalは認証から対応付け、モデルに選ばせない。
 
-想定配置は `crates/personal-state-core/` とSAAA側の永続化・worker Adapter。コアはTauri、HTTP、LLM SDK、音声Runtimeへ依存しない。型、差分検証、状態遷移、投影優先順位を担当する。
+P1は既存利用者のSAAAと明示設定したLARMだけを対象とし、外部agentへの新しいexport APIは作らない。将来のContext Packは必要最小限の投影とし、送信時にも同じ認可・忘却検証を通す。本文は命令ではなくdataであり、Context内の文だけで実行権限を作らない。
 
-SAAAの既存SQLite writerが永続化を担当する。モデル処理中にDB transactionを保持しない。source snapshotを読み、推論を行い、短いtransactionでrevisionとsource有効性を再確認して適用する。
+本文・個人情報・credentialをlog/telemetryへ出さない。export、retention、backupからの復元、forgetの保証範囲はP1で固定する。物理secure eraseを未保証のまま「完全消去」と表示しない。
 
-外部エージェントには生成したContext Packを渡せる構造を維持する。別リポジトリ・常駐サービスへの分離は、SAAA外の独立した利用主体が確定した場合の別判断とする。
+## 11. 段階ロードマップと共通gate
 
-## 9. 段階ロードマップ
+| 段階 | 実装範囲 | 完了条件 |
+| --- | --- | --- |
+| P1 継続とLARM接続 | 単一scope、変更履歴・依存、current projection、Source/View Adapter、委譲・取消・忘却、認可、抽出、診断 | P1受入行列の必須項目を全て通す。coreのみ・snapshot hitのみで完了にしない |
+| P2 World State v1 | project:SAAA・会議・Task参照、時刻、失効、競合、用途別投影 | 固定corpusで古い/競合状態の確定値化0件、Runtime正本との矛盾0件。根拠付き必要属性の保持率95%以上 |
+| P3 複数scope・User Core | 作業の継続/切替/再開、限定した個人の好み候補 | 固定corpusでtask/scope/principal間の条件漏洩0件、局所条件の人物属性化0件、正しい対象への再開率95%以上 |
+| P4 背景整理・ContextStill | 有限Dream、候補レビュー、送信・訂正・忘却契約 | 無許可送信・削除情報の再送・無根拠昇格0件。固定例題で支持される候補precision95%以上 |
+| P5 性能改善 | 認定済みsnapshot利用改善、partial ASR先読み、必要性を示せた検索改善 | 共通の整合性違反0件、品質gateを維持。比較対象に対するp50/p95改善と資源上限を事前固定し達成 |
 
-| 段階 | 利用者への成果 | 実装範囲 | 次へ進む条件 |
-| --- | --- | --- | --- |
-| P1 継続状態とモデル間連携 | 2Bが依頼・進捗を扱い、27Bが詳細文脈を保って作業を継続 | 独立コア、単一scope、委譲・返却の既存経路接続、三経路の投影、差分抽出、出典、回復、最小診断 | 第1段階の受入条件を満たす |
-| P2 World State v1 | 今のプロジェクト・会議・Task状態を根拠付きで参照 | 少数のentity/property/relation、時刻・失効・競合、Runtime接続、両モデルへの用途別投影 | 古い状態を現在として返さず、状態正本を重複させない |
-| P3 複数作業とユーザー理解 | 話題を切り替えても局所条件が混ざらない | scopeの継続/切替/再開、User Core候補、対象に結び付く態度 | 作業間漏洩と誤った人物属性化を抑える |
-| P4 背景整理と長期記憶 | 経験の整理と再利用 | 小さなDream cycle、候補レビュー、ContextStill送信・訂正契約 | 情報の水増しなく、根拠と削除を維持する |
-| P5 最適化 | 応答を待たせず関連情報を使う | partial ASR先読み、Context予算改善、必要時のみembedding | 品質を落とさず実測で改善する |
+全段階で明示制約・訂正・撤回の必須投影、out-of-order拒否、局所条件漏洩、忘却race、DB再起動・snapshot miss・release変更を回帰行列に含める。整合性・認可違反は許容0件。自然文の抽出precision/recall、誤昇格率、未抽出率は固定corpusと明示閾値で測る。
 
-P2の初期対象は `project:SAAA`、現在の会議、進行中Runtime参照など、SAAAが根拠を観測できるものに限定する。全人物グラフ、感情推定、全サービス連携を一括実装しない。
+p50/p95は受付音声、27B first token、最終応答、抽出待ちに分け、workerの最大同時数・呼出し数・出力token・wall time・資源競合も測る。後段のcorpusと速度目標はその段階の詳細計画で、結果を見る前に固定する。表は計画上のgateであり達成済み数値ではない。
 
-P2はP1の出典・revision・失効契約を利用するため、次の詳細計画とする。P3以降のschemaやUIを今固定しない。長期Goal Graph、Gap Engine、自律Task生成は別の実装計画である。既存LARM KVの活用と容量境界はP1に含め、KVエンジン自体の改修は含めない。
+## 12. 既存文書・実装との関係
 
-## 10. 既存MVP 3項目の振り分け
+[Personal AI Concept](saaa-personal-ai-concept.md)のVision、[実装前評価](continuity-world-model-direction.md)の独立コア方針を継承する。[MVP 3](mvp-3-memory-architecture-implementation-plan.html)からSessionless、Rawの単一正本、既存recall、ContextStillの責務、default OFFを継承する。
 
-| 旧項目 | 今回の扱い |
-| --- | --- |
-| M3-01 保存構造 | 既存migrationを変更せず差分migrationで拡張。P1で互換性を監査 |
-| M3-02 Sessionless | 維持。新しいSession UIを追加しない |
-| M3-03 Context/Capsule/Health | P1で完成させる範囲を詳細化 |
-| M3-04 User Core/Working State | Working StateはP1、User Coreの推論・昇格はP3 |
-| M3-05 Idle/Reflection | P1はcontinuity抽出の一worker。経験整理はP4 |
-| M3-06〜08 抽象化・候補・知識化 | P4で現行ContextStill契約を確認して別計画化 |
-| M3-09 Recall | 現行契約を維持し、P1の参照解決で利用 |
-| M3-10〜12 診断・試験・canary | 各段階に必要な分を含める。機能default OFFを継承 |
+未実装のworking state/capsule/idle更新は本書とP1を優先する。working stateを直接更新する以前の案は、変更履歴からのprojectionへ置き換える。LARM snapshotとSAAAのcurrent projectionを同じsnapshotという語で混同しない。
 
-## 11. 実装前に残す仮説と制約
+P1は段階的に実装する。LARMのsource配送・provision、claimとContext用Allocationの接続、取消の実際の伝播、release認定はP1-00で確認する。未充足の外部契約は別の依存作業として明示し、代替動作を本機能の完成とは報告しない。
 
-自然文からの意味抽出の精度、採用モデル、役割別の必要なContext容量は実測対象である。LARM接続に必要な受領・容量・回復契約が未充足ならP1の接続部分は未完了とし、コアの検証だけでP1完了としない。これらは配置方針の未決ではない。選んだ構成の受入可否を検証する項目とする。
-
-初期workerは既存MVP 3の上限（idle 30秒後、一回30秒・一モデル呼出し・出力2,000 token）を出発点にする。実際のContext容量はモデルの契約と現行の安全予算の小さい方へ収める。token数を単純な文字数換算で保証しない。
-
-実装段階で変更対象外のprovider本体やContextStillへ変更が必要と判明した場合、その契約変更を独立した作業として明示する。関連コードの全面書き換えを暗黙に含めない。
-
-## 12. 文書の更新方法
-
-段階が完了したら、実装commit・受入結果・残存制約をその段階計画へ追記する。将来の詳細計画から本書を参照し、責務や不変条件を変える場合は本書も同時更新する。
-
-本書の作成は実装開始、機能有効化、外部送信の実施を意味しない。
-
-## 13. 設計レビュー記録（2026-09-13）
-
-責務・異常系・受入条件を反復レビューし、P1との対応を修正した。主要修正は、単一scope内のtask適用範囲、新入力を検知するinput epoch、部分source coverage、KV受領確認と原子的切替、削除時の生成停止、実装依存順序、比較gateの明確化である。
-
-文書レビューの終了条件は、両文書間の責務・範囲・順序の矛盾がなく、各必須動作に実装担当・異常時動作・検証が対応し、未確認の外部保証を合格扱いしないことである。実装精度、性能、LARM接続保証はP1-00と実機受入で確認する事項として残す。これらを文書レビューだけで達成済みにしない。
+この改訂は誤った20M/2B前提と、以前の「レビューで整合確認済み」という記録を更新する。契約照合は行ったが、実機性能・安全な並行generation・日本語精度は本作業では未検証である。機能実装、設定有効化、外部送信は行わない。

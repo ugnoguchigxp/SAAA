@@ -31,6 +31,14 @@ pub struct Use {
     _session: Arc<Session>,
 }
 impl Use {
+    pub fn context_subject(&self) -> Result<&str, &'static str> {
+        self.snapshot
+            .as_ref()
+            .expect("live snapshot")
+            .context_subject
+            .as_deref()
+            .ok_or("larm_context_unavailable")
+    }
     pub fn provider(&self) -> &Provider {
         &self.snapshot.as_ref().expect("live snapshot").providers[&self.name]
     }
@@ -380,3 +388,6 @@ impl Drop for Session {
 
 #[cfg(test)]
 mod tests;
+
+pub mod contexts;
+pub mod personal_state;

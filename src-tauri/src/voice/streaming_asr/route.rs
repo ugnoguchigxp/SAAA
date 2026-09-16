@@ -7,25 +7,14 @@ use super::{
     speaker_gate_runtime::{PreparedSpeakerScorer, SpeakerScorer},
 };
 use crate::{
-    providers::service_harness::AsrStreamingDescriptor,
     voice::session::{harness_asr_provider, select_streaming_asr, vad_rms_threshold, AsrRoute},
     AppState, RunCancellation,
 };
 
-#[derive(Clone)]
-pub(crate) struct NativeRoute {
-    pub(crate) descriptor: AsrStreamingDescriptor,
-    pub(crate) model: String,
-    pub(crate) language: String,
-}
-
 pub(crate) struct PreparedSession {
     pub(crate) batch_decoder: Arc<dyn BatchDecode>,
-    pub(crate) native: Option<NativeRoute>,
     pub(crate) speaker_scorer: Option<Arc<dyn SpeakerScorer>>,
     pub(crate) vad_threshold: f32,
-    pub(crate) allowed_languages: Vec<String>,
-    pub(crate) timeout_ms: u64,
 }
 
 pub(crate) async fn prepare(
@@ -56,22 +45,19 @@ pub(crate) async fn prepare(
     let vad_threshold = vad_rms_threshold(&selected.vad_sensitivity);
     let scorer =
         verifier.map(|value| Arc::new(PreparedSpeakerScorer::new(value)) as Arc<dyn SpeakerScorer>);
-    let (batch_route, native) = if crate::larm_voice::enabled() {
-        (
-            BatchRoute::Larm(
-                crate::larm_voice::current(conversation_id)
-                    .await?
-                    .session
-                    .clone(),
-            ),
-            None,
+    let batch_route = if crate::larm_voice::enabled() {
+        BatchRoute::Larm(
+            crate::larm_voice::current(conversation_id)
+                .await?
+                .session
+                .clone(),
         )
     } else {
         match selected.route {
-            AsrRoute::Cloud(provider) => (BatchRoute::Cloud(provider), None),
+            AsrRoute::Cloud(provider) => BatchRoute::Cloud(provider),
             AsrRoute::Harness(address) => {
                 match crate::providers::service_harness::resolve_asr_service(&address).await {
-                    Ok(service) => (BatchRoute::Cloud(harness_asr_provider(service.batch)), None),
+                    Ok(service) => BatchRoute::Cloud(harness_asr_provider(service.batch)),
                     Err(primary_error) => {
                         let Some(host) =
                             crate::providers::service_harness::legacy_dynamic_lan_host(&address)?
@@ -87,14 +73,11 @@ pub(crate) async fn prepare(
                             .resolve(&host, Arc::new(RunCancellation::default()))
                             .await
                             .map_err(|_| "asr-provider-unavailable".to_string())?;
-                        (
-                            BatchRoute::LegacyNetwork {
-                                client: state.network_asr.client().clone(),
-                                endpoint: resolution.endpoint,
-                                model: resolution.model,
-                            },
-                            None,
-                        )
+                        BatchRoute::LegacyNetwork {
+                            client: state.network_asr.client().clone(),
+                            endpoint: resolution.endpoint,
+                            model: resolution.model,
+                        }
                     }
                 }
             }
@@ -108,10 +91,7 @@ pub(crate) async fn prepare(
             allowed_languages.clone(),
             vad_threshold,
         ),
-        native,
         speaker_scorer: scorer,
         vad_threshold,
-        allowed_languages,
-        timeout_ms,
     })
 }

@@ -1,3 +1,4 @@
+import { usePersonalStateForget } from "./usePersonalStateForget";
 import { useCommittedCallback } from "../../useCommittedCallback";
 import { cancelReasoningRun } from "../../lib/reasoningRunControl";
 import {
@@ -31,7 +32,6 @@ import type {
   MeetingState,
   RuntimeEvent,
   VoiceSettings,
-  WebSocketConnectionState,
 } from "../../lib/contracts";
 import { cancelRun, startTurn, stopTts } from "../../lib/runtime";
 import {
@@ -96,7 +96,6 @@ export function useConversationTurn({
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
-  const [webSocketState, setWebSocketState] = useState<WebSocketConnectionState>("disconnected");
   const voice = useConversationVoicePolicy(selectedConversationId, setError);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
@@ -127,11 +126,17 @@ export function useConversationTurn({
     incompleteRunIdsRef.current.clear();
     resetStreamingText();
     setRuntimeActivity([]);
-    setWebSocketState("disconnected");
     if (selectedConversationId) {
       void loadMessagesCommitted(selectedConversationId, issueCoordinatorRef.current.begin());
     }
   }, [selectedConversationId, resetHistory, resetStreamingText, loadMessagesCommitted]);
+  const forgottenRuns = usePersonalStateForget(() => {
+    const conversation = selectedConversationIdRef.current;
+    resetHistory(conversation);
+    resetStreamingText();
+    setRuntimeActivity([]);
+    if (conversation) void loadMessagesCommitted(conversation, issueCoordinatorRef.current.begin());
+  });
   function publishIssue(scope: number, message: string, retry: RetryAction | null = null) {
     if (disposedRef.current || !issueCoordinatorRef.current.isCurrent(scope)) return;
     setError(message);
@@ -336,6 +341,7 @@ export function useConversationTurn({
     }
   }
   function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, issueScope: number) {
+    if (forgottenRuns.current.has(event.runId)) return;
     const isSpeechLifecycle =
       event.type === "speechStarted" ||
       event.type === "speechEnded" ||
@@ -347,8 +353,6 @@ export function useConversationTurn({
       return;
     if (event.type !== "delta") recordRuntimeLifecycleAudit(event, conversationId);
     if (!isSpeechLifecycle) recordSocketReceive(event.runId);
-    if (event.type === "messageCompleted" || event.type === "cancelled" || event.type === "failed")
-      setWebSocketState("disconnected");
     switch (event.type) {
       case "started":
         if (event.route === "conversation.reasoning") markReasoningRun(event.runId, conversationId);
@@ -361,25 +365,6 @@ export function useConversationTurn({
             providerId: event.providerId,
           }),
         );
-        break;
-      case "providerSelected":
-        setSnapshot((current) =>
-          updateEffectiveRoute(current, event.providerId, "active", {
-            fallbackUsed: event.fallbackUsed,
-            reasonCode:
-              event.selectionReasonCode === "other" ? "provider-selected-other" : "turn-active",
-          }),
-        );
-        setRuntimeActivity((current) =>
-          appendConversationActivity(current, {
-            type: "providerSelected",
-            providerId: event.runtimeId,
-            fallbackUsed: event.fallbackUsed,
-          }),
-        );
-        break;
-      case "webSocketStateChanged":
-        setWebSocketState(event.state);
         break;
       case "delta":
         recordFirstDelta(event.runId);
@@ -544,7 +529,6 @@ export function useConversationTurn({
     retryKind: retryAction?.kind ?? null,
     retryFailedAction,
     activeTtsRunId,
-    webSocketState,
     handleSubmit,
     submitPrompt,
     stopActiveRun,

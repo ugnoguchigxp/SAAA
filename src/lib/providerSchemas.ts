@@ -126,19 +126,6 @@ const systemTtsProviderSchema = providerCommonSchema
   })
   .strict();
 
-const larmProviderSchema = providerCommonSchema
-  .extend({
-    kind: z.literal("larm"),
-    location: z.literal("local"),
-    baseUrl: z.string().url().max(2_048),
-    tokenEnv: z.literal("LARM_API_TOKEN"),
-    allocationTtlSeconds: z.number().int().min(60).max(3_600),
-    allocationStartupTimeoutSeconds: z.number().int().min(1).max(300),
-    allowFallbackByDefault: z.literal(false),
-    deploymentPolicy: z.literal("existing-only"),
-  })
-  .strict();
-
 const dynamicLanProviderSchema = providerCommonSchema
   .extend({
     kind: z.literal("dynamic-lan"),
@@ -159,7 +146,6 @@ const providerSchema = z.discriminatedUnion("kind", [
   cloudAsrProviderSchema,
   cloudTtsProviderSchema,
   systemTtsProviderSchema,
-  larmProviderSchema,
   dynamicLanProviderSchema,
 ]);
 
@@ -218,11 +204,9 @@ export const modelProvidersSettingsSchema = z
     harness: z.object({ address: harnessAddressSchema }).strict(),
     providers: z
       .array(providerSchema)
-      .min(1)
       .max(20)
       .superRefine((providers, context) => {
         const ids = new Set<string>();
-        let enabledLarmProviders = 0;
         let enabledDynamicLanProviders = 0;
         providers.forEach((provider, index) => {
           if (ids.has(provider.id))
@@ -232,7 +216,6 @@ export const modelProvidersSettingsSchema = z
               path: [index, "id"],
             });
           ids.add(provider.id);
-          if (provider.kind === "larm" && provider.enabled) enabledLarmProviders += 1;
           if (provider.kind === "dynamic-lan" && provider.enabled) enabledDynamicLanProviders += 1;
           if (
             provider.kind === "openai-compatible" &&
@@ -336,34 +319,7 @@ export const modelProvidersSettingsSchema = z
                 path: [index, "endpoint"],
               });
           }
-          if (provider.kind === "larm") {
-            const baseUrl = parsedUrl(provider.baseUrl);
-            if (!baseUrl) return;
-            if (
-              baseUrl.protocol !== "http:" ||
-              !["127.0.0.1", "[::1]"].includes(baseUrl.hostname) ||
-              !baseUrl.port ||
-              baseUrl.username ||
-              baseUrl.password ||
-              baseUrl.search ||
-              baseUrl.hash ||
-              baseUrl.pathname !== "/"
-            ) {
-              context.addIssue({
-                code: "custom",
-                message:
-                  "LARM must use an explicit HTTP numeric-loopback base URL without credentials, path, query, or fragment",
-                path: [index, "baseUrl"],
-              });
-            }
-          }
         });
-        if (enabledLarmProviders > 1)
-          context.addIssue({
-            code: "custom",
-            message: "Only one LARM provider may be enabled",
-            path: [],
-          });
         if (enabledDynamicLanProviders > 1)
           context.addIssue({
             code: "custom",

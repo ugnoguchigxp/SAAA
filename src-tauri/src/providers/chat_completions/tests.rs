@@ -143,7 +143,8 @@ async fn rejects_eof_bad_json_model_mismatch_and_length() {
         ),
         ("data: {broken}\n\n".into(), Failure::Protocol, false),
         (
-            chunk(json!({}), json!("stop")).replace("fixture", "wrong"),
+            chunk(json!({"role":"assistant"}), Value::Null)
+                + &chunk(json!({}), json!("stop")).replace("fixture", "wrong"),
             Failure::Contract,
             false,
         ),
@@ -409,8 +410,17 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
         .unwrap()
         .iter()
         .any(|t| t["function"]["name"] == "present_ui"));
-    let tool_result: Value =
-        serde_json::from_str(requests[1]["messages"][1]["content"].as_str().unwrap()).unwrap();
+    let tool_result: Value = serde_json::from_str(
+        requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .unwrap()["content"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     assert!(tool_result["instanceId"].is_string());
     state
         .sqlite_readers
@@ -427,3 +437,25 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
         })
         .unwrap();
 }
+
+#[path = "coding_tests.rs"]
+mod coding_tests;
+
+#[tokio::test]
+async fn accepts_server_resolved_model_alias_without_fabricating_a_mapping() {
+    let body = (chunk(json!({"content":"ready"}), Value::Null)
+        + &chunk(json!({}), json!("stop"))
+        + "data: [DONE]\n\n")
+        .replace("fixture", "Qwen3.8-27B-ROCmFP4-FAST.gguf");
+    let (endpoint, server) = fixture(vec![(200, body, 0)]).await;
+    assert_eq!(
+        invoke(&endpoint, &Sink::default(), Arc::default())
+            .await
+            .unwrap(),
+        "ready"
+    );
+    server.await.unwrap();
+}
+
+#[path = "json_tool_tests.rs"]
+mod json_tool_tests;

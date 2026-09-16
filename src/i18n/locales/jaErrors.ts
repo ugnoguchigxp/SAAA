@@ -39,7 +39,7 @@ export const errors = {
   },
   settings: {
     agentSessionEventStreamMissing:
-      "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSEまたはWebSocket契約を確認してください。",
+      "セッション作成には成功しましたが、対応しているイベントストリームの接続先が返されませんでした。Provider側のSSE契約を確認してください。",
     operationFailed: "設定を更新できませんでした。内容を確認してからもう一度お試しください。",
   },
   situation: {

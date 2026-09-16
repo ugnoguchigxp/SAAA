@@ -98,10 +98,14 @@ export const routingSettingsSchema = z
       })
       .strict()
       .superRefine((route, context) => {
-        if (route.source === "provider" && !route.primaryProviderId)
+        if (
+          route.source === "provider" &&
+          !route.primaryProviderId &&
+          route.fallbackProviderIds.length > 0
+        )
           context.addIssue({
             code: "custom",
-            message: "Individual LLM source requires a provider",
+            message: "A fallback requires a primary conversation provider",
             path: ["primaryProviderId"],
           });
         if (route.source === "harness" && route.primaryProviderId !== null)
@@ -269,12 +273,9 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   );
   const primaryId = routing.conversationRespond.primaryProviderId;
   const primary = primaryId ? enabled.get(primaryId) : undefined;
-  if (routing.conversationRespond.source === "provider" && !primary)
+  if (routing.conversationRespond.source === "provider" && primaryId && !primary)
     throw new Error("The primary conversation provider must be enabled");
-  if (
-    primary &&
-    !["openai-compatible", "agent-session", "larm", "dynamic-lan"].includes(primary.kind)
-  )
+  if (primary && !["openai-compatible", "agent-session", "dynamic-lan"].includes(primary.kind))
     throw new Error("The selected conversation provider does not support LLM");
   if (
     primary?.kind === "dynamic-lan" &&
@@ -293,7 +294,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   for (const fallbackId of routing.conversationRespond.fallbackProviderIds) {
     const fallback = enabled.get(fallbackId);
     if (!fallback) throw new Error(`Fallback provider is not enabled: ${fallbackId}`);
-    if (!["openai-compatible", "agent-session", "larm", "dynamic-lan"].includes(fallback.kind)) {
+    if (!["openai-compatible", "agent-session", "dynamic-lan"].includes(fallback.kind)) {
       throw new Error(`Fallback provider does not support LLM: ${fallbackId}`);
     }
     if (routeIds.has(fallbackId)) throw new Error(`Duplicate provider in route: ${fallbackId}`);

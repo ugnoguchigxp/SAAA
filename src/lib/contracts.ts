@@ -5,15 +5,9 @@ export type {
   RuntimeFailureCode,
   VoicePresentationDecision,
 } from "./generated/runtimeEvent";
-import type { RuntimeEvent as GeneratedRuntimeEvent } from "./generated/runtimeEvent";
 export type * from "./settingsTypes";
 
 export type TaskMode = "conversation" | "coding";
-
-export type WebSocketConnectionState = Extract<
-  GeneratedRuntimeEvent,
-  { type: "webSocketStateChanged" }
->["state"];
 
 export type SettingsNamespace =
   | "providers.model"
@@ -47,7 +41,6 @@ export type AppSnapshot = {
   conversations: Conversation[];
   primaryConversationId: string;
   effectiveRoute: EffectiveRouteSnapshot;
-  larmRuntime: LarmRuntimeStatus;
   voiceProfile: VoiceProfileSnapshot;
 };
 
@@ -81,12 +74,6 @@ export type VoiceSampleSummary = {
   inputDeviceId: string;
   effectiveAec: boolean;
   createdAt: string;
-};
-
-export type LarmRuntimeStatus = {
-  state: "disabled" | "ready" | "unavailable";
-  message: string;
-  contractCommit: string;
 };
 
 export type ProviderTestResult = {

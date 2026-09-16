@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const FORMAT = "saaa-maximum-performance-v1";
+const FORMAT = "saaa-maximum-performance-v2";
 
 type CommandResult = { name: string; command: string; elapsedMs: number; passed: boolean };
 type BenchmarkReport = { format: string; passed: boolean; [key: string]: unknown };
@@ -47,25 +47,13 @@ function readBenchmark(path: string): BenchmarkReport {
 }
 
 function sourceContract(): { passed: boolean; checks: Record<string, boolean> } {
-  const larm = readFileSync(join(ROOT, "src-tauri/src/providers/larm/client/mod.rs"), "utf8");
-  const larmDecode = readFileSync(
-    join(ROOT, "src-tauri/src/providers/larm/client/decode.rs"),
-    "utf8",
-  );
-  const openAi = readFileSync(join(ROOT, "src-tauri/src/providers/openai_compatible.rs"), "utf8");
   const stream = readFileSync(join(ROOT, "src-tauri/src/providers/stream/mod.rs"), "utf8");
   const checks = {
-    larmLegacySseRemoved:
-      !existsSync(join(ROOT, "src-tauri/src/providers/larm/client/chat.rs")) &&
-      !larm.includes("mod chat;") &&
-      !larmDecode.includes("drain_sse") &&
-      !larmDecode.includes("project_sse"),
-    openAiSseProjectionIsTestOnly: /#\[cfg\(test\)\][\s\S]{0,500}fn sse_event_data/u.test(openAi),
-    productionStreamUsesWebSocket: stream.includes("llm_websocket"),
-    protocolVersionPinned: readFileSync(
-      join(ROOT, "src-tauri/src/providers/llm_websocket/protocol.rs"),
-      "utf8",
-    ).includes('SUBPROTOCOL: &str = "saaa.llm-stream.v1"'),
+    productionStreamUsesHttp: stream.includes("chat_completions::run"),
+    legacyLlmTransportRemoved: !existsSync(join(ROOT, "src-tauri/src/providers/llm_websocket")),
+    legacyAsrTransportRemoved: !existsSync(
+      join(ROOT, "src-tauri/src/voice/streaming_asr/native_connection.rs"),
+    ),
   };
   return { passed: Object.values(checks).every(Boolean), checks };
 }
@@ -76,12 +64,6 @@ function verify(directory: string): void {
   const benchmarkCommands = reuseBenchmarks
     ? [
         {
-          name: "streaming-hot-path",
-          command: "validate existing streaming-hot-path.json",
-          elapsedMs: 0,
-          passed: readBenchmark(join(directory, "streaming-hot-path.json")).passed,
-        },
-        {
           name: "sqlite-read-path",
           command: "validate existing sqlite-read-path.json",
           elapsedMs: 0,
@@ -89,12 +71,6 @@ function verify(directory: string): void {
         },
       ]
     : [
-        run(
-          "streaming-hot-path",
-          "cargo",
-          ["bench", "--manifest-path", "src-tauri/Cargo.toml", "--bench", "streaming_hot_path"],
-          environment,
-        ),
         run(
           "sqlite-read-path",
           "cargo",
@@ -104,12 +80,12 @@ function verify(directory: string): void {
       ];
   const commands = [
     ...benchmarkCommands,
-    run("websocket-contract", "cargo", [
+    run("http-contract", "cargo", [
       "test",
       "--manifest-path",
       "src-tauri/Cargo.toml",
       "--lib",
-      "providers::llm_websocket",
+      "providers::chat_completions",
     ]),
     run("event-hub-and-tts", "cargo", [
       "test",
@@ -130,7 +106,7 @@ function verify(directory: string): void {
       "--manifest-path",
       "src-tauri/Cargo.toml",
       "--lib",
-      "voice::services::streaming_asr",
+      "voice::streaming_asr",
     ]),
     run("frontend-hot-path", "bun", [
       "test",
@@ -161,7 +137,6 @@ function verify(directory: string): void {
 }
 
 function aggregate(directory: string): void {
-  const streaming = readBenchmark(join(directory, "streaming-hot-path.json"));
   const sqlite = readBenchmark(join(directory, "sqlite-read-path.json"));
   const automated = JSON.parse(
     readFileSync(join(directory, "automated-verification.json"), "utf8"),
@@ -182,7 +157,7 @@ function aggregate(directory: string): void {
     "G-AUD-02",
     "G-SOAK-01",
   ];
-  const passed = streaming.passed && sqlite.passed && automated.result === "passed";
+  const passed = sqlite.passed && automated.result === "passed";
   const report = {
     format: FORMAT,
     mode: "aggregate",
@@ -191,7 +166,6 @@ function aggregate(directory: string): void {
     releaseResult: pendingOperatorGates.length === 0 && passed ? "passed" : "blocked",
     passedAutomatedGates: [
       "G-LLM-01",
-      "G-LLM-02",
       "G-LLM-05",
       "G-UI-02",
       "G-UI-03",

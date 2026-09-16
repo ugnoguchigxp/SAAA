@@ -174,7 +174,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
                 "userName": DEFAULT_USER_NAME,
                 "enabled": false,
                 "provider": "codex-sdk",
-                "model": "",
+                "model": "gpt-5.6-luna",
                 "runtimeMode": "app-server",
                 "health": "unchecked",
                 "sandboxMode": "read-only",
@@ -359,7 +359,7 @@ pub(crate) fn validate_settings_batch(
     };
     let conversation = &routing.conversation_respond;
     let primary_id = conversation.primary_provider_id.as_deref();
-    if conversation.source == "provider" {
+    if conversation.source == "provider" && primary_id.is_some() {
         let primary = primary_id
             .and_then(enabled_provider)
             .ok_or_else(|| "The individual conversation provider must be enabled".to_string())?;
@@ -367,7 +367,6 @@ pub(crate) fn validate_settings_batch(
             primary,
             ModelProviderSettings::OpenAiCompatible(_)
                 | ModelProviderSettings::AgentSession(_)
-                | ModelProviderSettings::Larm(_)
                 | ModelProviderSettings::DynamicLan(_)
         ) {
             return Err("The selected conversation provider does not support LLM".to_string());
@@ -386,6 +385,9 @@ pub(crate) fn validate_settings_batch(
             providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS
         ));
     }
+    if primary_id.is_none() && !conversation.fallback_provider_ids.is_empty() {
+        return Err("A fallback requires a primary conversation provider".to_string());
+    }
     let mut route_ids = std::collections::HashSet::new();
     if let Some(primary_id) = primary_id {
         route_ids.insert(primary_id);
@@ -397,7 +399,6 @@ pub(crate) fn validate_settings_batch(
             fallback,
             ModelProviderSettings::OpenAiCompatible(_)
                 | ModelProviderSettings::AgentSession(_)
-                | ModelProviderSettings::Larm(_)
                 | ModelProviderSettings::DynamicLan(_)
         ) {
             return Err(format!(
@@ -519,10 +520,15 @@ pub(crate) fn validate_routing_settings(settings: &RoutingSettings) -> Result<()
         "provider" => provider_id.is_some_and(valid_provider_id),
         _ => false,
     };
-    if !valid_source(
+    // An unconfigured conversation route is readable after provider removal.
+    // A missing primary must remain unconfigured rather than selecting a fallback.
+    let conversation_source_valid = valid_source(
         &conversation.source,
         conversation.primary_provider_id.as_deref(),
-    ) || conversation.fallback_provider_ids.len() > 20
+    ) || (conversation.source == "provider"
+        && conversation.primary_provider_id.is_none());
+    if !conversation_source_valid
+        || conversation.fallback_provider_ids.len() > 20
         || conversation
             .fallback_provider_ids
             .iter()
@@ -641,7 +647,7 @@ pub(crate) fn settings_document_from_row(
 mod tests {
     use super::*;
     use crate::test_support::{
-        default_settings_input, direct_provider, dynamic_lan_provider, larm_provider, provider,
+        default_settings_input, direct_provider, dynamic_lan_provider, provider,
     };
     use crate::{
         initialize_database, providers, CodexAgentRuntimeSettings, ModelProviderSettings,
@@ -883,66 +889,6 @@ mod tests {
             .expect("provider settings");
         provider_settings.value_json["harness"]["address"] = json!("");
         assert!(validate_settings_batch(&documents).is_err());
-    }
-
-    #[test]
-    fn larm_settings_enforce_the_fixed_loopback_security_contract() {
-        let valid = ModelProvidersSettings {
-            providers: vec![larm_provider("larm")],
-            reasoning_effort: providers::default_conversation_reasoning_effort(),
-            harness: crate::HarnessSettings {
-                address: "http://localhost:9810".to_string(),
-            },
-        };
-        assert!(validate_model_providers(&valid).is_ok());
-        let mut ipv6 = larm_provider("larm-ipv6");
-        let ModelProviderSettings::Larm(provider) = &mut ipv6 else {
-            unreachable!("LARM fixture must remain tagged as LARM");
-        };
-        provider.base_url = "http://[::1]:9810/".to_string();
-        assert!(validate_model_providers(&ModelProvidersSettings {
-            providers: vec![ipv6],
-            reasoning_effort: providers::default_conversation_reasoning_effort(),
-            harness: crate::HarnessSettings {
-                address: "http://localhost:9810".to_string()
-            },
-        })
-        .is_ok());
-
-        for base_url in [
-            "http://localhost:9810/",
-            "http://192.168.1.20:9810/",
-            "https://127.0.0.1:9810/",
-            "http://127.0.0.1:9810/v1",
-            "http://user:secret@127.0.0.1:9810/",
-            "http://127.0.0.1/",
-        ] {
-            let mut invalid = larm_provider("larm");
-            let ModelProviderSettings::Larm(provider) = &mut invalid else {
-                unreachable!("LARM fixture must remain tagged as LARM");
-            };
-            provider.base_url = base_url.to_string();
-            assert!(
-                validate_model_providers(&ModelProvidersSettings {
-                    providers: vec![invalid],
-                    reasoning_effort: providers::default_conversation_reasoning_effort(),
-                    harness: crate::HarnessSettings {
-                        address: "http://localhost:9810".to_string()
-                    },
-                })
-                .is_err(),
-                "invalid LARM URL was accepted: {base_url}"
-            );
-        }
-
-        assert!(validate_model_providers(&ModelProvidersSettings {
-            providers: vec![larm_provider("larm-a"), larm_provider("larm-b")],
-            reasoning_effort: providers::default_conversation_reasoning_effort(),
-            harness: crate::HarnessSettings {
-                address: "http://localhost:9810".to_string()
-            },
-        })
-        .is_err());
     }
 
     #[test]

@@ -42,11 +42,6 @@
       "state": "unchecked",
       "updatedAt": null
     },
-    "larmRuntime": {
-      "contractCommit": "7dca7c3",
-      "message": "LARM is disabled. Set SAAA_LARM_ENABLED=1 and restart SAAA to enable it.",
-      "state": "disabled"
-    },
     "primaryConversationId": "conversation_primary",
     "settings": [
       {
@@ -59,7 +54,7 @@
           "approvalPolicy": "never",
           "enabled": false,
           "health": "unchecked",
-          "model": "",
+          "model": "gpt-5.6-luna",
           "networkEnabled": false,
           "provider": "codex-sdk",
           "runtimeMode": "app-server",

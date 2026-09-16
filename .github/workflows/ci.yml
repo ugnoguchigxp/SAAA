@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [crates/larm-session, crates/reasoning-contract, services/reasoning-mcp]
+        package: [crates/personal-state-core, crates/larm-session, crates/reasoning-contract, services/reasoning-mcp]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0

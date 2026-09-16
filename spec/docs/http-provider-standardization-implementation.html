@@ -1,4 +1,10 @@
 <article lang="ja">
+  <p>
+    2026-09-16追記：旧WebSocket実装とlarm:preflight／canary／soak／reportを削除した。以下の結果は作成当時の記録。現在の残課題は<a
+      href="./larm-http-api-review.md"
+      >LARM通信・設定レビュー</a
+    >を参照。
+  </p>
   <h1 id="http-provider-standardization-implementation">
     OpenAI互換HTTP Providerへの移行：実装記録
   </h1>
@@ -175,7 +181,7 @@
       Profile／claim、固定model、voice、音声format、credential期限の契約に合わせて追加する。
     </li>
     <li>
-      larm:preflight／canary／reportの旧allocation／WS用評価をHTTP三APIと期待releaseの評価へ変更する作業が残る。旧runnerの合格をHTTP統合の合格には使わない。動的LLM専用のlive
+      旧allocation／WS用runnerは2026-09-16に削除した。HTTP三APIと期待releaseの実機評価は引き続き必要。動的LLM専用のlive
       canaryはHTTPへ更新したが、三API統合の代用ではない。
     </li>
     <li>

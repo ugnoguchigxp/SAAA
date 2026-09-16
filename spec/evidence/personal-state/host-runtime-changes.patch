@@ -1,0 +1,109 @@
+--- a/apps/daemon/src/main.ts
++++ b/apps/daemon/src/main.ts
+@@ -274,7 +274,7 @@
+ 
+ const personalStateController = new PersonalStateController({
+   enabled: config.personalStateEnabled,
+-  journal: new LocalPersonalStateJournal(config.personalStateJournalRoot, identity.bootEpoch),
++  journal: new LocalPersonalStateJournal(config.personalStateJournalRoot),
+   context: contextController,
+   sourceStore: contextSourceStore,
+   tokenizer: contextTokenizer,
+
+--- a/deploy/local-node/systemd/llama-server.service
++++ b/deploy/local-node/systemd/llama-server.service
+@@ -30,6 +30,7 @@
+   --temp 0.2 \
+   --repeat-penalty 1.0 \
+   --reasoning auto \
++  --slot-save-path /srv/ai/cache/personal-state-slots \
+   --metrics \
+   --no-webui
+ Restart=on-failure
+
+diff --git a/run_server.sh b/run_server.sh
+index 0c51138..8fff356 100755
+--- a/run_server.sh
++++ b/run_server.sh
+@@ -103,6 +103,7 @@ PRESENCE_PENALTY="${PRESENCE_PENALTY:-0.0}"
+ CACHE_MODE="$([ "${PROFILE}" = "cache" ] && printf cache || printf disabled)"
+ configure_cache_profile
+ EXTRA_ARGS=()
++EXPLICIT_SLOT_SAVE_PATH=0
+ 
+ while [[ $# -gt 0 ]]; do
+     case "$1" in
+@@ -115,7 +116,7 @@ while [[ $# -gt 0 ]]; do
+         --ctx-checkpoints) CTX_CHECKPOINTS="$2"; shift 2 ;;
+         --cache-reuse) CACHE_REUSE="$2"; shift 2 ;;
+         --checkpoint-every) CHECKPOINT_EVERY="$2"; shift 2 ;;
+-        --slot-save-path) SLOT_SAVE_PATH="$2"; shift 2 ;;
++        --slot-save-path) SLOT_SAVE_PATH="$2"; EXPLICIT_SLOT_SAVE_PATH=1; shift 2 ;;
+         --mlock) MLOCK=1; shift ;;
+         --profile) shift 2 ;;
+         --cache-mode) shift ;;
+@@ -171,7 +172,7 @@ if [ -z "$MODEL_PATH" ]; then
+     fi
+ fi
+ 
+-if [ "${PROFILE}" = "cache" ]; then
++if [ "${PROFILE}" = "cache" ] || [ "${EXPLICIT_SLOT_SAVE_PATH}" = "1" ]; then
+     mkdir -p "${SLOT_SAVE_PATH}"
+ fi
+ 
+@@ -255,6 +256,11 @@ else
+     CMD+=("-ctxcp" "0" "-cram" "0" "--no-cache-prompt" "--no-cache-idle-slots")
+ fi
+ 
++# Explicit slot actions also serve erase-only clients, without enabling cache reuse.
++if [ "${PROFILE}" != "cache" ] && [ "${EXPLICIT_SLOT_SAVE_PATH}" = "1" ]; then
++    CMD+=("--slot-save-path" "${SLOT_SAVE_PATH}")
++fi
++
+ if [ "${MLOCK}" = "1" ]; then
+     CMD+=("--mlock")
+ fi
+diff --git a/tests/test_run_server_args.sh b/tests/test_run_server_args.sh
+index 36c0a31..f0d5276 100644
+--- a/tests/test_run_server_args.sh
++++ b/tests/test_run_server_args.sh
+@@ -27,6 +27,8 @@ strict=""
+ no_cache_prompt=""
+ cache_prompt=""
+ spec_type=""
++slot_path=""
++slot_path_count=0
+ 
+ batch_count=0
+ ubatch_count=0
+@@ -43,6 +45,11 @@ ctx_count=0
+ spec_type_count=0
+ while [ "$#" -gt 0 ]; do
+     case "$1" in
++        --slot-save-path)
++            slot_path="$2"
++            slot_path_count=$((slot_path_count + 1))
++            shift 2
++            ;;
+         -b)
+             batch_count=$((batch_count + 1))
+             batch="$2"
+@@ -120,6 +127,7 @@ printf 'no_cache_prompt_count=%s\n' "$no_cache_prompt_count"
+ printf 'cache_prompt_count=%s\n' "$cache_prompt_count"
+ printf 'strict_count=%s\n' "$strict_count"
+ printf 'spec_type_count=%s\n' "$spec_type_count"
++printf 'slot_path=%s count=%s\n' "$slot_path" "$slot_path_count"
+ EOF
+ chmod +x "$TMP_DIR/llama-server"
+ 
+@@ -245,3 +253,9 @@ explicit_binary_output="$({
+ [[ "$explicit_binary_output" == *"Profile:        safe"* ]]
+ 
+ printf '%s\n' "run_server argument tests passed"
++
++# Explicit erase support must not switch a speed profile into cache mode.
++output="$(ROCMFPX_BIN_DIR="$TMP_DIR" MODEL_PATH="$TMP_DIR/model.gguf" "$ROOT_DIR/run_server.sh" --profile speed --slot-save-path "$TMP_DIR/erase-slots" 2>&1)"
++grep -F "slot_path=$TMP_DIR/erase-slots count=1" <<<"$output"
++grep -F 'no_cache_prompt_count=1' <<<"$output"
++grep -F 'cache_prompt_count=0' <<<"$output"
+

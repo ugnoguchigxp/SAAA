@@ -1,0 +1,32 @@
+//! Durable Personal State owned by the existing SQLite writer.
+mod codec;
+pub mod commands;
+pub mod contract;
+pub mod conversation;
+pub mod generation;
+pub mod inference;
+pub mod jobs;
+pub(crate) mod journal;
+mod lineage;
+pub mod managed;
+mod managed_tests;
+pub(crate) mod output;
+pub mod projection;
+mod registration;
+mod scheduler;
+pub mod schema;
+pub mod sources;
+pub mod store;
+pub mod task_bundle;
+mod tests;
+mod turn_tools;
+pub mod worker;
+pub use codec::{decode, encode, now};
+#[cfg(feature = "quality-eval-harness")]
+pub mod live_harness;
+pub mod product;
+pub mod product_binding;
+mod product_cleanup;
+mod product_extract;
+mod product_tests;
+mod subject_pin;

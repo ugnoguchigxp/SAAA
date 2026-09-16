@@ -1,4 +1,7 @@
 use rusqlite::{params, OptionalExtension};
+#[cfg(test)]
+#[path = "coding_live_canary.rs"]
+mod coding_live_canary;
 use std::fs;
 use std::sync::Arc;
 
@@ -24,6 +27,11 @@ pub(crate) async fn execute_codex_turn(
     cancellation: Arc<RunCancellation>,
     policy_override: Option<crate::runtime::contracts::RunSupervisionPolicy>,
 ) -> Result<TurnCompletion, TurnExecutionFailure> {
+    let _personal_slot = if crate::memory::control_plane::memory_enabled() {
+        Some(crate::memory::personal_state::worker::foreground().await)
+    } else {
+        None
+    };
     let workspace = input
         .workspace_path
         .as_deref()

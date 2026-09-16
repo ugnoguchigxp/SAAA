@@ -482,7 +482,7 @@ fn only_the_owner_process_runs_migration_backup_and_bootstrap() {
     let version: i64 = reopened
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version reads");
-    assert_eq!(version, crate::memory::control_plane::MEMORY_SCHEMA_VERSION);
+    assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
     let ready_events: i64 = reopened
         .query_row(
             "SELECT COUNT(*) FROM audit_events WHERE event_name='database-ready'",

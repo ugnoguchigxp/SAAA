@@ -17,7 +17,6 @@ const emptySnapshot = (): AppSnapshot => ({
     reasonCode: "test",
     updatedAt: null,
   },
-  larmRuntime: { state: "disabled", message: "", contractCommit: "unknown" },
   voiceProfile: {
     status: "empty",
     filterEnabled: false,

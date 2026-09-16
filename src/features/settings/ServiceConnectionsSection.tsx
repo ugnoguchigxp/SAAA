@@ -409,9 +409,5 @@ function SourceRow({
 }
 
 function isLlmProvider(provider: ModelProviderSettings): boolean {
-  return (
-    provider.kind === "openai-compatible" ||
-    provider.kind === "agent-session" ||
-    provider.kind === "larm"
-  );
+  return provider.kind === "openai-compatible" || provider.kind === "agent-session";
 }

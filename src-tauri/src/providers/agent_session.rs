@@ -9,8 +9,7 @@ use crate::ipc_contract::ConversationMessage;
 use crate::{AgentSessionProviderSettings, RunCancellation};
 
 use super::stream::{
-    run_model_websocket, websocket_attempt_outcome, CleanupOutcome, ModelStreamContext,
-    ProviderAttemptOutcome, ProviderFailureKind,
+    CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
 };
 
 mod sse;
@@ -31,15 +30,10 @@ struct ModelDescriptor {
 struct SessionResponse {
     id: String,
     #[serde(default)]
-    stream_url: Option<String>,
-    #[serde(default)]
-    stream_protocol: Option<String>,
-    #[serde(default)]
     events_url: Option<String>,
 }
 
 enum SessionTransport {
-    WebSocket(Url),
     ServerSentEvents(Url),
 }
 
@@ -59,7 +53,6 @@ pub(crate) async fn probe_agent_session_provider(
         Ok(SessionTransport::ServerSentEvents(url)) => {
             sse::probe_event_stream(&client, url, api_key.as_deref().map(String::as_str)).await
         }
-        Ok(SessionTransport::WebSocket(_)) => Ok(()),
         Err(error) => Err(error.clone()),
     };
     let release_result = release_session(
@@ -73,7 +66,6 @@ pub(crate) async fn probe_agent_session_provider(
     transport_probe?;
     release_result?;
     let transport = match transport_result.expect("successful transport probe has a transport") {
-        SessionTransport::WebSocket(_) => "WebSocket",
         SessionTransport::ServerSentEvents(_) => "SSE",
     };
     Ok(format!(
@@ -123,20 +115,6 @@ pub(crate) async fn stream_agent_session_provider(
         }
     };
     let attempt = match transport {
-        SessionTransport::WebSocket(stream_url) => {
-            let authorization = api_key.as_deref().map(|key| format!("Bearer {key}"));
-            let websocket = run_model_websocket(
-                stream_url.as_str(),
-                authorization.as_deref(),
-                Some(&session.id),
-                &provider.model,
-                history,
-                timeout_ms,
-                context,
-            )
-            .await;
-            websocket_attempt_outcome(websocket, CleanupOutcome::NotStarted)
-        }
         SessionTransport::ServerSentEvents(events_url) => {
             sse::run_agent_session_sse(
                 &client,
@@ -251,39 +229,10 @@ fn session_transport(
     if !safe_remote_id(&session.id) {
         return Err(ProviderFailureKind::Protocol);
     }
-    if let (Some(path), Some(crate::providers::llm_websocket::protocol::SUBPROTOCOL)) = (
-        session.stream_url.as_deref(),
-        session.stream_protocol.as_deref(),
-    ) {
-        return websocket_stream_url(provider, path).map(SessionTransport::WebSocket);
-    }
     if let Some(path) = session.events_url.as_deref() {
         return event_stream_url(provider, path).map(SessionTransport::ServerSentEvents);
     }
     Err(ProviderFailureKind::Contract)
-}
-
-fn websocket_stream_url(
-    provider: &AgentSessionProviderSettings,
-    path: &str,
-) -> Result<Url, ProviderFailureKind> {
-    let base = Url::parse(&provider.base_url).map_err(|_| ProviderFailureKind::Contract)?;
-    let url = base.join(path).map_err(|_| ProviderFailureKind::Contract)?;
-    let matching_host = url.host_str() == base.host_str()
-        && url.port_or_known_default() == base.port_or_known_default();
-    let matching_transport = matches!(
-        (base.scheme(), url.scheme()),
-        ("http", "ws") | ("https", "wss")
-    );
-    if !matching_host
-        || !matching_transport
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(ProviderFailureKind::Contract);
-    }
-    Ok(url)
 }
 
 fn event_stream_url(
@@ -519,44 +468,30 @@ mod tests {
     }
 
     #[test]
-    fn accepts_same_origin_websocket_and_sse_session_streams() {
+    fn requires_same_origin_sse_even_when_legacy_transport_is_advertised() {
         let provider = provider();
-        let websocket = |stream_url: &str| SessionResponse {
-            id: "ags_valid".to_string(),
-            stream_url: Some(stream_url.to_string()),
-            stream_protocol: Some(
-                crate::providers::llm_websocket::protocol::SUBPROTOCOL.to_string(),
-            ),
-            events_url: None,
-        };
-        let sse = |events_url: &str| SessionResponse {
-            id: "ags_valid".to_string(),
-            stream_url: None,
-            stream_protocol: None,
-            events_url: Some(events_url.to_string()),
+        let session = |events: serde_json::Value| {
+            serde_json::from_value::<SessionResponse>(json!({
+                "id": "ags_valid", "events_url": events,
+                "stream_url": "ws://127.0.0.1:44449/v1/llm/stream",
+                "stream_protocol": "saaa.llm-stream.v1"
+            }))
+            .unwrap()
         };
         assert_eq!(runtime_id(&provider).as_deref(), Ok("muse"));
         assert!(matches!(
-            session_transport(&provider, &websocket("ws://127.0.0.1:44449/v1/llm/stream")),
-            Ok(SessionTransport::WebSocket(_))
-        ));
-        assert!(matches!(
-            session_transport(&provider, &sse("/v1/agents/sessions/ags_valid/events")),
+            session_transport(
+                &provider,
+                &session(json!("/v1/agents/sessions/ags_valid/events"))
+            ),
             Ok(SessionTransport::ServerSentEvents(_))
         ));
-        assert!(
-            session_transport(&provider, &websocket("ws://example.com/v1/llm/stream")).is_err()
-        );
-        assert!(session_transport(&provider, &sse("http://example.com/events")).is_err());
-        assert!(session_transport(
-            &provider,
-            &SessionResponse {
-                id: "ags_valid".to_string(),
-                stream_url: None,
-                stream_protocol: None,
-                events_url: None,
-            }
-        )
-        .is_err());
+        for events in [
+            serde_json::Value::Null,
+            json!("http://example.com/events"),
+            json!("ws://127.0.0.1:44449/events"),
+        ] {
+            assert!(session_transport(&provider, &session(events)).is_err());
+        }
     }
 }

@@ -1,5 +1,3 @@
-use rusqlite::{params, Connection};
-
 use super::migrate::{
     ensure_provider_configuration_fingerprint, migrate_direct_dynamic_lan_provider_to_discovery,
     migrate_legacy_settings_documents, migrate_pristine_provider_defaults_to_dynamic_lan,
@@ -11,6 +9,9 @@ use super::runs::reconcile_interrupted_runs;
 use super::settings::default_settings_documents;
 use super::settings_migration::migrate_settings_to_current;
 use crate::{meeting, memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
+use rusqlite::{params, Connection};
+
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 18;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
@@ -181,6 +182,10 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     )?;
     crate::voice_behavior::migrate(&transaction)?;
     crate::generative_ui::store::migrate(&transaction)?;
+    crate::coding::repository::migrate(&transaction)?;
+    crate::coding::recovery::reconcile(&transaction)
+        .map_err(rusqlite::Error::InvalidParameterName)?;
+    memory::personal_state::schema::migrate(&transaction)?;
     let memory_now = now_iso();
     memory::control_plane::ensure_continuity_state(
         &transaction,
@@ -193,6 +198,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     migrate_dynamic_lan_provider_identity(&transaction)?;
     migrate_provider_reasoning_effort_default(&transaction)?;
     migrate_settings_to_current(&transaction)?;
+    super::remove_legacy_provider::migrate(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     meeting::reconcile(&transaction)?;
     super::audit::initialize_schema(&transaction)?;
@@ -201,10 +207,6 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
          VALUES(?1,?2,'app','database-ready','terminal','success','{}')",
         params![crate::new_id("audit"), now_iso()],
     )?;
-    transaction.pragma_update(
-        None,
-        "user_version",
-        memory::control_plane::MEMORY_SCHEMA_VERSION,
-    )?;
+    transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()
 }

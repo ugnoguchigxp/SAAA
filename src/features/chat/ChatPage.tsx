@@ -1,3 +1,4 @@
+import { CodingJobs } from "../coding/CodingJobs";
 import { SetupChecklist } from "./SetupChecklist";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -124,6 +125,7 @@ export function ChatPage({
           </button>
         </div>
       </header>
+      <CodingJobs conversationId={selectedConversation?.id} />
       {voicePolicy && (
         <ConversationVoiceBehaviorBar
           policy={voicePolicy}
@@ -187,7 +189,6 @@ export function ChatPage({
             {asrProjection.protocol && (
               <small className="transcript-route">
                 {asrProjection.protocol} · {asrProjection.scope}
-                {asrProjection.status === "degraded" ? ` · ${asrProjection.status}` : ""}
               </small>
             )}
           </article>

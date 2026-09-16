@@ -39,7 +39,7 @@ export const errors = {
   },
   settings: {
     agentSessionEventStreamMissing:
-      "Session creation succeeded, but no supported event stream endpoint was returned. Check the provider's SSE or WebSocket contract.",
+      "Session creation succeeded, but no supported event stream endpoint was returned. Check the provider's SSE contract.",
     operationFailed: "The setting could not be updated. Check the values and try again.",
   },
   situation: { operationFailed: "Situation could not complete that operation. Try again." },

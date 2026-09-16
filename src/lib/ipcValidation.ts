@@ -97,11 +97,6 @@ export const appSnapshotSchema = z.object({
     reasonCode: text,
     updatedAt: text.nullable(),
   }),
-  larmRuntime: z.object({
-    state: z.enum(["disabled", "ready", "unavailable"]),
-    message: text,
-    contractCommit: text,
-  }),
   voiceProfile: z.object({
     status: z.enum(["empty", "collecting", "ready"]),
     filterEnabled: z.boolean(),
@@ -128,21 +123,6 @@ export const appSnapshotSchema = z.object({
 });
 export const runtimeEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("started"), runId: id, route: text, providerId: text }),
-  z.object({
-    type: z.literal("providerSelected"),
-    runId: id,
-    providerId: id,
-    providerKind: z.literal("larm"),
-    routeId: z.literal("llm-default"),
-    runtimeId: id,
-    fallbackUsed: z.boolean(),
-    selectionReasonCode: z.enum(["primary", "other"]),
-  }),
-  z.object({
-    type: z.literal("webSocketStateChanged"),
-    runId: id,
-    state: z.enum(["connected", "connecting", "disconnected"]),
-  }),
   z.object({ type: z.literal("delta"), runId: id, text }),
   z.object({ type: z.literal("activity"), runId: id, kind: text, summary: text }),
   z.object({ type: z.literal("providerFailed"), runId: id, providerId: text, reason: text }),
@@ -214,7 +194,7 @@ export const voiceAsrEventSchema = z
       type: z.literal("ready"),
       sessionId: id,
       currentUtteranceId: id,
-      protocol: z.enum(["native", "batch-agreement"]),
+      protocol: z.literal("batch-agreement"),
       scope: z.enum(["all-speakers", "target-speaker"]),
     }),
     z.object({
@@ -252,13 +232,6 @@ export const voiceAsrEventSchema = z
       message: text,
       recovery: text,
       fatal: z.boolean(),
-    }),
-    z.object({
-      type: z.literal("degraded"),
-      sessionId: id,
-      from: z.literal("native"),
-      to: z.literal("batch-agreement"),
-      reasonCode: asrCode,
     }),
     z.object({ type: z.literal("stopped"), sessionId: id }),
   ])

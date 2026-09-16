@@ -212,9 +212,11 @@ SAAAは必要な能力、応答期限、予算を決める。LARMなどのIntell
 
 Local-firstを原則とし、外部処理を使う場合も、送信可能な情報と利用条件をユーザーの設定・委任に従わせる。処理性能を理由に、暗黙に送信範囲を広げない。
 
-会話フロントは2B級モデル、詳細な推論・タスク遂行は27Bモデルが担当する設計とする。中間メモリから2Bへは会話に必要な現在状態・進捗・確認事項を投影し、27Bへは原文に基づく依頼と変更を渡す。実行状態と権限はSAAA Runtimeが管理する。
+2B級モデルは受領・相槌・短い確認・構造化判断の候補に限定し、SAAAが許可された種別を検証して定型文を返す。事実回答、結果の解釈、約束、最終応答は27BまたはSAAAの決定的ロジックが担当する。2BはMemory/World Modelを更新せず、27Bと無条件に同時generationしない。semantic readiness未認定の経路はshadow・定型文のままとする。
 
-2026-09-13のユーザー提供情報では、LARMのQwen 3.8 27Bに20M ContextWindow / KVキャッシュが実装済みである。このモデルでは詳細な作業文脈を継続して使う中核として優先活用する。20Mを上限とし、他モデルへのKV共有は前提にしない。中間メモリは現在状態の明示、モデル間の引き継ぎ、容量到達・cache喪失からの回復を補う。具体的な接続・保持保証と実装順序は[Personal Stateロードマップ](personal-state-architecture-roadmap.md)を優先する。
+LARMのKV:memは、principalあたり最大20M tokenの登録Source Setから、各generationに必要なbounded Active Viewを構成する。現行Qwen 3.8のnative windowは262,144 token、出力予約32,768と安全余白4,096を除いた最大入力は225,280 tokenである。20Mは単一ContextWindowの容量ではない。Viewはone-shotであり、snapshotは適合するView/prefixの再利用を速める性能cacheとして扱う。
+
+中間メモリは現在有効な目的・制約・訂正・未決を管理し、原文とともに継続の正本を構成する。View失効、release変更、source版変更時は有効なsourceと状態から再構築する。具体的な役割・更新・忘却・認可は[Personal Stateロードマップ](personal-state-architecture-roadmap.md)を優先する。原本照合の版と確認範囲は[契約照合記録](larm-personal-state-contract-review.md)に残す。
 
 キャッシュの再利用条件と無効化条件は、採用するモデルとRuntimeの仕様に合わせて検証する。訂正、削除、権限変更、Context変更が正しく反映され、元の情報から再生成できることを求める。導入効果は遅延、メモリ、再利用率、出力品質で測る。
 

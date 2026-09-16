@@ -18,7 +18,7 @@ struct HarnessDescriptor {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ServiceDescriptor {
     pub(crate) capability: String,
     pub(crate) protocol: String,
@@ -29,38 +29,6 @@ pub(crate) struct ServiceDescriptor {
     #[serde(default)]
     pub(crate) voice: Option<String>,
     pub(crate) health_url: String,
-    #[serde(default)]
-    pub(crate) streaming: Option<StreamingDescriptor>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum StreamingDescriptor {
-    Asr(AsrStreamingDescriptor),
-    Llm(LlmStreamingDescriptor),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct AsrStreamingDescriptor {
-    pub(crate) protocol: String,
-    pub(crate) url: String,
-    pub(crate) sample_rate: u32,
-    pub(crate) encoding: String,
-    pub(crate) packet_milliseconds: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct LlmStreamingDescriptor {
-    pub(crate) protocol: String,
-    pub(crate) url: String,
-    pub(crate) encoding: String,
-    pub(crate) compression: String,
-    pub(crate) max_concurrent_runs: u8,
-    pub(crate) max_connections: u8,
-    pub(crate) resume_window_ms: u64,
-    pub(crate) upstream_transport: String,
 }
 
 #[derive(Debug, Clone)]
@@ -258,12 +226,6 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
     let mut capabilities = HashSet::new();
     for service in &descriptor.services {
         let expected_protocol = match service.capability.as_str() {
-            "llm"
-                if descriptor.contract_version == "saaa-service-harness.v3"
-                    && service.protocol == "saaa.llm-stream.v1" =>
-            {
-                "saaa.llm-stream.v1"
-            }
             "llm" => "openai.chat-completions.v1",
             "asr" => "openai.audio-transcriptions.v1",
             "tts" => "openai.audio-speech.v1",
@@ -290,23 +252,6 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
                 && (service.language.is_some() || service.voice.is_some()))
             || (service.capability == "asr" && service.voice.is_some())
             || (service.capability == "tts" && service.language.is_some())
-            || (descriptor.contract_version == "saaa-service-harness.v1"
-                && service.streaming.is_some())
-            || (service.capability == "llm"
-                && descriptor.contract_version != "saaa-service-harness.v3"
-                && service.streaming.is_some())
-            || (service.capability == "tts" && service.streaming.is_some())
-            || (service.capability == "asr"
-                && service
-                    .streaming
-                    .as_ref()
-                    .is_some_and(|streaming| !matches!(streaming, StreamingDescriptor::Asr(_))))
-            || (service.protocol == "saaa.llm-stream.v1"
-                && service.capability == "llm"
-                && service
-                    .streaming
-                    .as_ref()
-                    .is_none_or(|streaming| !matches!(streaming, StreamingDescriptor::Llm(_))))
         {
             return Err("Provider Harness returned an invalid service descriptor".to_string());
         }
@@ -327,95 +272,6 @@ fn validate_descriptor(base: &url::Url, descriptor: &HarnessDescriptor) -> Resul
                 return Err("Provider Harness service URLs must use the configured host without credentials".to_string());
             }
         }
-        if let Some(streaming) = &service.streaming {
-            match streaming {
-                StreamingDescriptor::Asr(streaming) => {
-                    validate_asr_streaming_descriptor(base, streaming)?
-                }
-                StreamingDescriptor::Llm(streaming) => {
-                    validate_llm_streaming_descriptor(base, streaming)?
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_asr_streaming_descriptor(
-    base: &url::Url,
-    streaming: &AsrStreamingDescriptor,
-) -> Result<(), String> {
-    if streaming.protocol != "saaa.asr-stream.v1"
-        || streaming.sample_rate != 16_000
-        || streaming.encoding != "pcm_s16le"
-        || streaming.packet_milliseconds != 100
-        || streaming.url.len() > 2_048
-    {
-        return Err("Provider Harness returned an invalid ASR streaming descriptor".to_string());
-    }
-    let url = url::Url::parse(&streaming.url)
-        .map_err(|_| "Provider Harness returned an invalid ASR streaming URL".to_string())?;
-    let expected_scheme = if base.scheme() == "https" {
-        "wss"
-    } else {
-        "ws"
-    };
-    if url.scheme() != expected_scheme
-        || url.host_str() != base.host_str()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(
-            "Provider Harness streaming URL must use the configured host without credentials"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-fn validate_llm_streaming_descriptor(
-    base: &url::Url,
-    streaming: &LlmStreamingDescriptor,
-) -> Result<(), String> {
-    if streaming.protocol != "saaa.llm-stream.v1"
-        || streaming.encoding != "json-control+binary-delta-v1"
-        || streaming.compression != "none"
-        || !(1..=8).contains(&streaming.max_concurrent_runs)
-        || streaming.max_connections != streaming.max_concurrent_runs
-        || streaming.resume_window_ms < 120_000
-        || !matches!(
-            streaming.upstream_transport.as_str(),
-            "native" | "websocket"
-        )
-        || streaming.url.len() > 2_048
-    {
-        return Err("Provider Harness returned an invalid LLM streaming descriptor".to_string());
-    }
-    validate_stream_url(base, &streaming.url, "LLM")
-}
-
-fn validate_stream_url(base: &url::Url, value: &str, capability: &str) -> Result<(), String> {
-    let url = url::Url::parse(value)
-        .map_err(|_| format!("Provider Harness returned an invalid {capability} streaming URL"))?;
-    let expected_scheme = if base.scheme() == "https" {
-        "wss"
-    } else {
-        "ws"
-    };
-    if url.scheme() != expected_scheme
-        || url.host_str() != base.host_str()
-        || url.port_or_known_default() != base.port_or_known_default()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(
-            "Provider Harness streaming URL must use the configured host without credentials"
-                .to_string(),
-        );
     }
     Ok(())
 }

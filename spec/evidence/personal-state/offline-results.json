@@ -1,0 +1,57 @@
+{
+  "date": "2026-09-13",
+  "saaa_head": "cc8c66c586ed98ab0dd493b4fe796678e577da36",
+  "larm_head": "631c15ad84eacb757770c92b21d647743cfeae6c",
+  "working_tree": "dirty at start; concurrent coding/pi edits preserved",
+  "scope": "core, SQLite, request-local worker, multi-source inference, atomic Task bundles, bounded live harness runner; production LARM binding remains unconfigured",
+  "full_p1_complete": false,
+  "p1_a_complete": false,
+  "live_executed": false,
+  "default_enabled": false,
+  "checks": [
+    {
+      "command": "bun run check:local",
+      "result": "passed",
+      "rust_passed": 565,
+      "rust_ignored": 17,
+      "frontend_passed": 353,
+      "integration_passed": 5,
+      "note": "Includes frontend build, quality contract, IPC, fmt, clippy, typecheck, lint, size and tests. E2E settings reader corrected to existing SqliteReaders."
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml memory::personal_state",
+      "result": "passed",
+      "tests": 16
+    },
+    {
+      "command": "bun run test:rust-packages",
+      "result": "passed",
+      "core_tests": 17,
+      "larm_context_tests": 4
+    },
+    {
+      "command": "bun test tests/personal-state-live.test.ts",
+      "result": "passed",
+      "tests": 2,
+      "note": "Synthetic harness only: 192 bounded invocations, gold withheld, timeout and child process cleanup"
+    },
+    {
+      "command": "bun run spec:check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "unverified": [
+    "LARM product source provision, canonical measurement, cleanup and remote stop APIs",
+    "authenticated principal/Allocation lease/release binding and all Provider/subprocess paths",
+    "product SAAA harness driver for the finite live runner",
+    "complete C1-C15 race injection across remote failures",
+    "human gold review and real-model Japanese/snapshot/performance acceptance"
+  ],
+  "context_compile_count": 1,
+  "compile_eval_count": 1,
+  "context_compile_run_id": "00000000-0000-0000-18d4-c9d39124945f"
+}
