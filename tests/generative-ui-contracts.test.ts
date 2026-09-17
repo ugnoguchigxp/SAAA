@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { SemanticRenderer } from "../src/features/chat/ui/SemanticRenderer";
 import type { UiNode } from "../src/lib/generated/generativeUi";
-test("native semantic renderer treats generated text as text and respects relative grid width", () => {
+test("semantic renderer uses the design system adapter and treats generated text as text", () => {
   const text: UiNode = {
     id: "label",
     kind: "Text",
@@ -22,10 +22,13 @@ test("native semantic renderer treats generated text as text and respects relati
       },
     }),
   );
-  expect(html).toContain("ui-span-8");
+  expect(html).toContain('data-ds-component="grid"');
+  expect(html).toContain('data-semantic-component="Cell"');
+  expect(html).toContain('data-span="8"');
   expect(html).toContain("&lt;script&gt;");
   expect(html).not.toContain("<script>");
 });
+
 test("unknown nodes fail within the host error boundary instead of executing arbitrary code", () => {
   expect(() =>
     renderToStaticMarkup(

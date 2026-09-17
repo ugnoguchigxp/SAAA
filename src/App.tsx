@@ -34,6 +34,8 @@ import { useWindowShortcut } from "./useWindowShortcut";
 import { useAppErrors } from "./useAppErrors";
 import { useOwnedSignalHeartbeat } from "./useOwnedSignalHeartbeat";
 import { AuditLogPage, SettingsPage, SituationPage } from "./appPages";
+import { DesignSystemProvider } from "./design-system";
+import "./design-system/styles.css";
 
 type Surface = "chat" | "meeting" | "situation" | "audit" | "settings";
 const initialSnapshot: AppSnapshot = {
@@ -356,4 +358,10 @@ function App() {
   );
 }
 
-export default App;
+export default function DesignSystemApp() {
+  return (
+    <DesignSystemProvider>
+      <App />
+    </DesignSystemProvider>
+  );
+}

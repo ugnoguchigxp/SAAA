@@ -16,7 +16,7 @@
 
 設計原則、実装仮説、未決事項を区別する。特にVoiceMemの導入方式とWorld Modelの具体構造は、この文書を基準に次の設計で決める。
 
-この文書をTool・Memory・Context・World Modelを束ねる上位Conceptとする。詳細は[Capability / Tool Runtime Concept](saaa-capability-tool-runtime-concept.md)、[Adaptive Learning and Selective Memory Concept](saaa-adaptive-learning-memory-concept.html)、[Personal Stateロードマップ](personal-state-architecture-roadmap.md)で具体化する。下位文書が本文の共通Runtime、正本、Scope、Context境界と矛盾する場合は、実装前に上位Conceptと下位文書のどちらを改訂するかを明示し、暗黙に二つのRuntimeを成立させない。
+この文書をTool・Memory・Context・World Modelを束ねる上位Conceptとする。詳細は[Capability / Tool Runtime Concept](saaa-capability-tool-runtime-concept.md)、[Adaptive Learning and Selective Memory Concept](saaa-adaptive-learning-memory-concept.html)、[Interface / Artifact Runtime Concept](saaa-interface-artifact-runtime-concept.md)、[Personal Stateロードマップ](personal-state-architecture-roadmap.md)で具体化する。下位文書が本文の共通Runtime、正本、Scope、Context境界と矛盾する場合は、実装前に上位Conceptと下位文書のどちらを改訂するかを明示し、暗黙に二つのRuntimeを成立させない。
 
 ## 2. Vision
 

@@ -108,6 +108,10 @@ describe("generative UI views", () => {
     root = createRoot(document.getElementById("root")!);
     await act(async () => root!.render(tree));
     expect(document.body.textContent).toContain("hello");
+    expect(document.querySelector('[data-semantic-component="Metric"]')).not.toBeNull();
+    expect(document.querySelector('[data-semantic-component="Status"]')).not.toBeNull();
+    expect(document.querySelector('[data-semantic-component="ModelStatus"]')).not.toBeNull();
+    expect(document.querySelector('[data-semantic-component="Chart"]')).not.toBeNull();
     const filter = document.querySelector("input");
     if (filter) {
       await act(async () => {

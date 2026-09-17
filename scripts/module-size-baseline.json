@@ -1261,6 +1261,22 @@
       "total": 49,
       "production": 49
     },
+    "src/design-system/index.ts": {
+      "total": 15,
+      "production": 15
+    },
+    "src/design-system/primitives.tsx": {
+      "total": 141,
+      "production": 141
+    },
+    "src/design-system/styles.css": {
+      "total": 149,
+      "production": 149
+    },
+    "src/design-system/tokens.css": {
+      "total": 53,
+      "production": 53
+    },
     "src/features/audit/AuditLogPage.css": {
       "total": 350,
       "production": 350
@@ -1344,6 +1360,10 @@
     "src/features/chat/ui/context.tsx": {
       "total": 45,
       "production": 45
+    },
+    "src/features/chat/ui/designSystemAdapter.tsx": {
+      "total": 97,
+      "production": 97
     },
     "src/features/chat/ui/enabledStore.ts": {
       "total": 46,
@@ -1849,6 +1869,10 @@
       "total": 120,
       "production": 120
     },
+    "tests/design-system.test.tsx": {
+      "total": 43,
+      "production": 43
+    },
     "tests/desktop-smoke-descendants.test.ts": {
       "total": 47,
       "production": 47
@@ -2068,6 +2092,10 @@
     "tests/streaming-text-buffer.test.ts": {
       "total": 43,
       "production": 43
+    },
+    "tests/streaming-text-projection-hook.test.tsx": {
+      "total": 41,
+      "production": 41
     },
     "tests/system-context.test.ts": {
       "total": 81,

@@ -1,21 +1,22 @@
 import type { UiNode } from "../../../lib/generated/generativeUi";
 import { MetricView, TableView, ChartView, ActionsView } from "./components";
+import { semanticDesignSystem as ui } from "./designSystemAdapter";
 /** Only backend-validated semantic nodes reach this renderer. No eval/HTML or runtime tools. */
 export function SemanticRenderer({ node }: { node: UiNode }) {
   const children = node.children.map((child) => <SemanticRenderer key={child.id} node={child} />);
   const [source, field, label] = node.args;
   switch (node.kind) {
     case "Grid":
-      return <div className="ui-grid">{children}</div>;
+      return <ui.Grid>{children}</ui.Grid>;
     case "Stack":
-      return <div className="ui-stack">{children}</div>;
+      return <ui.Stack>{children}</ui.Stack>;
     case "Cell":
-      return <div className={`ui-cell ui-span-${node.span}`}>{children}</div>;
+      return <ui.Cell span={node.span}>{children}</ui.Cell>;
     case "Text":
-      return <p>{source}</p>;
+      return <ui.Text>{source}</ui.Text>;
     case "Metric":
     case "Status":
-      return <MetricView source={source} field={field} label={label} />;
+      return <MetricView source={source} field={field} label={label} kind={node.kind} />;
     case "Table":
       return <TableView source={source} columns={field} stateId={node.id} />;
     case "ModelStatus":
@@ -32,6 +33,7 @@ export function SemanticRenderer({ node }: { node: UiNode }) {
                   : "provider,status,startedAt"
           }
           stateId={node.id}
+          kind="ModelStatus"
         />
       );
     case "Chart":

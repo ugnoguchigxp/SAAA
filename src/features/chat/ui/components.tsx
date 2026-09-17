@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { uiApi, notifyUiHistoryChanged } from "./api";
 import { useUiContext, useUiData, useUiField } from "./context";
+import { semanticDesignSystem as ui } from "./designSystemAdapter";
 import { uiQueries } from "./queryCache";
 
 function DataStatus({
@@ -15,7 +16,7 @@ function DataStatus({
 }) {
   const { t, i18n } = useTranslation();
   return (
-    <p className="ui-data-status" role={error ? "status" : undefined}>
+    <ui.MutedText className="ui-data-status" role={error ? "status" : undefined}>
       {error
         ? t("genui.unavailable")
         : loading
@@ -23,36 +24,40 @@ function DataStatus({
           : capturedAt
             ? new Date(Number(capturedAt)).toLocaleString(i18n.language)
             : ""}
-    </p>
+    </ui.MutedText>
   );
 }
 export function MetricView({
   source,
   field,
   label,
+  kind = "Metric",
 }: {
   source: string;
   field: string;
   label: string;
+  kind?: "Metric" | "Status";
 }) {
   const { t } = useTranslation();
   const result = useUiData(source);
   return (
-    <section className="ui-metric">
+    <ui.Metric kind={kind}>
       <span>{label}</span>
       <strong>{String(result.data?.rows[0]?.[field] ?? t("genui.missing"))}</strong>
       <DataStatus {...result} capturedAt={result.data?.capturedAt} />
-    </section>
+    </ui.Metric>
   );
 }
 export function TableView({
   source,
   columns,
   stateId,
+  kind = "Table",
 }: {
   source: string;
   columns: string;
   stateId: string;
+  kind?: "Table" | "ModelStatus";
 }) {
   const { t, i18n } = useTranslation();
   const result = useUiData(source);
@@ -87,10 +92,10 @@ export function TableView({
     return String(value);
   }
   return (
-    <section className="ui-table">
+    <ui.DataPanel className="ui-table" kind={kind}>
       <label className="ui-filter">
         {t("genui.filter")}
-        <input
+        <ui.Input
           maxLength={1000}
           value={String(filter)}
           onChange={(event) => {
@@ -99,54 +104,55 @@ export function TableView({
           }}
         />
       </label>
-      <div className="ui-table-scroll">
-        <table>
-          <caption>{source === "runtime.history" ? t("genui.history") : t("genui.scope")}</caption>
-          <thead>
-            <tr>
-              {fields.map((field) => (
-                <th
-                  key={field}
-                  scope="col"
-                  aria-sort={sort === field ? (descending ? "descending" : "ascending") : "none"}
+      <ui.Table>
+        <caption>{source === "runtime.history" ? t("genui.history") : t("genui.scope")}</caption>
+        <thead>
+          <tr>
+            {fields.map((field) => (
+              <th
+                key={field}
+                scope="col"
+                aria-sort={sort === field ? (descending ? "descending" : "ascending") : "none"}
+              >
+                <ui.QuietButton
+                  onClick={() => {
+                    setSort(field);
+                    setDescending(sort === field ? !descending : false);
+                  }}
                 >
-                  <button
-                    onClick={() => {
-                      setSort(field);
-                      setDescending(sort === field ? !descending : false);
-                    }}
-                  >
-                    {t(`genui.${field}`, { defaultValue: field })}
-                  </button>
-                </th>
+                  {t(`genui.${field}`, { defaultValue: field })}
+                </ui.QuietButton>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(current * 10, current * 10 + 10).map((row, index) => (
+            <tr key={String(row.id ?? index)}>
+              {fields.map((field) => (
+                <td key={field}>{cell(field, row[field])}</td>
               ))}
             </tr>
-          </thead>
-          <tbody>
-            {rows.slice(current * 10, current * 10 + 10).map((row, index) => (
-              <tr key={String(row.id ?? index)}>
-                {fields.map((field) => (
-                  <td key={field}>{cell(field, row[field])}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </ui.Table>
       {!rows.length && !result.loading && <p>{t("genui.empty")}</p>}
       <div className="ui-pagination">
-        <button disabled={current === 0} onClick={() => setPage(current - 1)}>
+        <ui.Button disabled={current === 0} onClick={() => setPage(current - 1)}>
           {t("genui.previous")}
-        </button>
+        </ui.Button>
         <span>
           {current + 1} / {Math.max(1, Math.ceil(rows.length / 10))}
         </span>
-        <button disabled={(current + 1) * 10 >= rows.length} onClick={() => setPage(current + 1)}>
+        <ui.Button
+          disabled={(current + 1) * 10 >= rows.length}
+          onClick={() => setPage(current + 1)}
+        >
           {t("genui.next")}
-        </button>
+        </ui.Button>
       </div>
       <DataStatus {...result} capturedAt={result.data?.capturedAt} />
-    </section>
+    </ui.DataPanel>
   );
 }
 export function ChartView({ source }: { source: string }) {
@@ -162,7 +168,7 @@ export function ChartView({ source }: { source: string }) {
     .map((row) => `${x(row.time)},${160 - (Number(row.count) / max) * 140}`)
     .join(" ");
   return (
-    <figure className="ui-chart">
+    <ui.Chart>
       <figcaption>{t("genui.history")}</figcaption>
       {rows.length ? (
         <>
@@ -192,7 +198,7 @@ export function ChartView({ source }: { source: string }) {
         <p>{t("genui.empty")}</p>
       )}
       <DataStatus {...result} capturedAt={result.data?.capturedAt} />
-    </figure>
+    </ui.Chart>
   );
 }
 function CancelRuns() {
@@ -220,13 +226,13 @@ function CancelRuns() {
       {result.data?.rows
         .filter((row) => row.status === "running")
         .map((row) => (
-          <button
+          <ui.ActionButton
             key={String(row.id)}
             disabled={pending || !active || !enabled}
             onClick={() => void cancel(String(row.id))}
           >
             {t("genui.cancel")} · {String(row.provider ?? row.id)}
-          </button>
+          </ui.ActionButton>
         ))}
       {!result.loading &&
         !result.error &&
@@ -253,8 +259,8 @@ export function ActionsView({ action }: { action: string }) {
     sources.forEach((source) => void uiQueries.refresh(`${conversationId}:${source}`));
   }
   return (
-    <button disabled={!active || !enabled} onClick={refresh}>
+    <ui.ActionButton disabled={!active || !enabled} onClick={refresh}>
       {t("genui.refresh")}
-    </button>
+    </ui.ActionButton>
   );
 }

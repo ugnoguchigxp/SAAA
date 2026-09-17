@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   EMPTY_STREAMING_TEXT,
   StreamingTextBuffer,
@@ -11,19 +11,19 @@ export function useStreamingTextProjection() {
   const bufferRef = useRef(new StreamingTextBuffer());
   const updateRef = useRef<{ kind: "frame" | "timeout"; id: number } | null>(null);
 
-  function cancelUpdate() {
+  const cancelUpdate = useCallback(() => {
     const pending = updateRef.current;
     if (!pending) return;
     if (pending.kind === "frame") cancelAnimationFrame(pending.id);
     else window.clearTimeout(pending.id);
     updateRef.current = null;
-  }
+  }, []);
 
-  function resetStreamingText() {
+  const resetStreamingText = useCallback(() => {
     cancelUpdate();
     bufferRef.current = new StreamingTextBuffer();
     setStreamingText(EMPTY_STREAMING_TEXT);
-  }
+  }, [cancelUpdate]);
 
   function appendStreamingText(runId: string, delta: string) {
     bufferRef.current.append(delta);
@@ -43,6 +43,6 @@ export function useStreamingTextProjection() {
     return !bufferRef.current.isEmpty();
   }
 
-  useEffect(() => () => cancelUpdate(), []);
+  useEffect(() => () => cancelUpdate(), [cancelUpdate]);
   return { streamingText, resetStreamingText, appendStreamingText, hasStreamingText };
 }
