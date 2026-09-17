@@ -1,0 +1,43 @@
+<article lang="ja">
+  <h1 id="product-readiness-acceptance-runbook">SAAA 製品受入手順</h1>
+  <p>
+    自動化できない実WebView、実Provider、実マイク、長時間運転、配布物を同じ形式で確認する。実施前に固定commitからbuildし、空の隔離データdirectoryを使う。認証情報、接続先、会話本文、音声、個人pathを証跡へ保存しない。
+  </p>
+  <h2 id="record">記録する項目</h2>
+  <ul>
+    <li>scenario ID、commit、build digest、OS version、CPU architecture、匿名化した環境label</li>
+    <li>開始・終了日時、反復番号、所要時間、成功・失敗・未実施、安定した失敗code</li>
+    <li>失敗時の原因、変更内容、再実行結果。最初の失敗を削除しない</li>
+  </ul>
+  <h2 id="scenarios">手動scenario</h2>
+  <ol>
+    <li>U01: 新規起動から設定、接続確認、最初のテキスト応答までを3回実施する。</li>
+    <li>U02: 応答途中で取消し、遅延表示が混ざらないことを確認して再送信する。</li>
+    <li>U03: 認証失敗、切断、timeoutを発生させ、設定修正後に同じProviderへ再試行する。</li>
+    <li>U04: 確定済み会話と未完了runを含む状態で終了し、再起動後の復元を確認する。</li>
+    <li>U05: マイク拒否、OS設定で許可、音声入力、停止を順に行う。</li>
+    <li>
+      U06: Meetingを開始・停止し、保存分だけが再起動後に残り、破棄分が残らないことを確認する。
+    </li>
+    <li>U07: 不正な生成UIと読込失敗で、会話とfallbackが維持されることを確認する。</li>
+    <li>
+      U08: マウスを使わず設定とdialogを操作し、Escapeとfocus復帰を確認する。VoiceOverも併用する。
+    </li>
+    <li>
+      U09: MemoryのON/OFF、訂正、忘却、遅延結果、再起動後に削除情報が復活しないことを確認する。
+    </li>
+  </ol>
+  <h2 id="performance">性能・耐久</h2>
+  <p>
+    同一buildと同一machineで、起動から操作可能、Provider待ち、最初の文字描画、取消から停止、長い履歴、Meeting確定表示を各30回測定し、成功数、失敗数、timeout数、p50、p95を記録する。30分・100
+    turnには切断、sleep/wake、取消を含める。出荷候補では別に2時間運転を実施する。
+  </p>
+  <h2 id="distribution">配布物</h2>
+  <p>
+    署名・公証済み配布物についてdigest、lockfile、同梱物、ライセンス、対象OSを記録する。PATHへ依存しない新規環境でinstall、起動、接続、更新、uninstall時のデータ扱い、backupから別directoryへの復元、rollbackを確認する。DB互換性がない場合はアプリだけを戻さない。
+  </p>
+  <h2 id="decision">判定</h2>
+  <p>
+    各scenarioは3回すべて成功した場合だけ合格とする。未実施、環境不足、認証失敗、サービス不通を成功へ読み替えない。署名・実機・非公開報告窓口のいずれかが未完了なら、一般配布は不承認のままとし、ソース開発者向け提供と分ける。
+  </p>
+</article>

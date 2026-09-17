@@ -172,6 +172,7 @@ h3 { margin-bottom: 0; font-size: .78rem; }
 .provider-card-footer, .effective-route { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-top: 15px; padding-top: 12px; border-top: 1px solid #2b3542; color: #8998aa; font-size: .67rem; }
 .provider-card-footer > div { display: flex; gap: 8px; }
 .provider-test-result { margin: 12px 0 0 !important; padding: 8px 9px; border-radius: 7px; font-size: .68rem !important; }
+.provider-test-result.detailed { display: flex; flex-direction: column; gap: 3px; }
 .provider-test-result.testing { color: #b7c6d8; background: #202936; }
 .provider-test-result.success { color: #9ce0cb; background: #193a32; }
 .provider-test-result.error { color: #ffc0c8; background: #47252c; }

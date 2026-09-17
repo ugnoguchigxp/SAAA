@@ -17,7 +17,7 @@ The long-term goal is a resident runtime that does more than answer prompts: it 
 
 This repository is an MVP under active development. It implements text and voice conversation, microphone-based meeting transcription, Situation recording and calibration, local database backups, and redacted diagnostics.
 
-Normal development and offline verification are available. Production use through LARM is not yet approved: the API contract, isolated canary environment, 30-minute canary, two-hour soak test, and other gates still have open work. See [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html) for the current decision.
+Normal development and offline verification are available. Production use through LARM is not yet approved: the API contract, isolated canary environment, 30-minute canary, two-hour soak test, and other gates still have open work. See the [Product Readiness Status](spec/docs/product-readiness-status.html) for the current feature and verification matrix. The older [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html) remains route-specific historical evidence.
 
 ## What SAAA can do today
 
@@ -35,7 +35,7 @@ Voice chat and Meeting transcription use the configured harness ASR service or a
 - [Bun](https://bun.sh/) 1.3.14, pinned in `package.json`
 - Rust 1.92.0 with rustfmt and Clippy, selected by `rust-toolchain.toml`
 - The Tauri 2 build prerequisites for the target OS (on macOS, install Xcode Command Line Tools with `xcode-select --install`)
-- To use the local conversation route, a local LLM server reachable over the private network and a `LARM_API_TOKEN`
+- To use the local conversation route, a local LLM server reachable over the private network. `LARM_API_TOKEN` is optional when that server permits anonymous LAN access and required when it enforces Bearer authentication.
 - For voice input or Meeting, access to the configured ASR service
 
 macOS is the primary verification target. System TTS is implemented for macOS, Linux, and Windows, but Situation foreground/input signals depend on macOS facilities.
@@ -55,7 +55,7 @@ bun start
 2. Send a short text message in Chat to verify a response.
 3. Only if you want voice input, configure ASR, the input device, and microphone permission. The speaker filter is optional.
 
-For the local LLM connection API, set `LARM_API_TOKEN` in the same shell before starting; see the connection instructions below. `bun run dev` starts the frontend development server. Use `bun start` to exercise desktop IPC and audio.
+For a local LLM connection API that requires Bearer authentication, set `LARM_API_TOKEN` in the same shell before starting. Leave it unset only when the server explicitly permits anonymous LAN access. `bun run dev` starts the frontend development server. Use `bun start` to exercise desktop IPC and audio.
 
 ## Configure model connections
 
@@ -63,7 +63,7 @@ For the local LLM connection API, set `LARM_API_TOKEN` in the same shell before 
 
 SAAA uses the connection API on the configured host to obtain a connection to the local model. It keeps the returned OpenAI-compatible endpoint, model name, and short-lived credential in memory, then releases the connection after each turn. None of these discovered values are written to SQLite.
 
-The local LLM server requires `LARM_API_TOKEN`. SAAA does not create an SSH tunnel, so both the connection API and the model endpoint returned by the server must be reachable over the private network.
+SAAA sends `LARM_API_TOKEN` as a Bearer credential when the variable is set. It can be left unset for a trusted LAN server that explicitly allows anonymous access; this does not mean every server accepts unauthenticated requests. SAAA does not create an SSH tunnel, so both the connection API and the model endpoint returned by the server must be reachable over the private network.
 
 Voice chat and Meeting reuse the LAN host configured under Settings → Model Providers. SAAA derives the private ASR origin, queries `/v1/models` and `/health`, and reflects the resolved model under Settings → Voice. No separate ASR environment variable is required.
 
@@ -108,6 +108,7 @@ bun run check:local
 bun run test:rust-packages
 bun run spec:check
 bun run desktop:smoke
+bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
 ```
 
 - `bun run check:local` runs oxfmt checks and oxlint before the existing `check` command.
@@ -117,6 +118,7 @@ bun run desktop:smoke
 - `bun run test:coverage` writes local HTML/LCOV reports under `coverage/`. It is optional and is not part of `bun run check`.
 - `bun run build` type-checks TypeScript and creates a production frontend build.
 - `bun run desktop:smoke` launches a debug desktop build with an isolated data directory and waits for IPC readiness. On macOS it also checks the bundled speaker-verification runtime.
+- `bun run readiness:verify` runs the three automated readiness lanes and writes a content-free, non-overwriting JSON report. Use a new absolute report directory for every run. A dirty working tree is always blocked from release use.
 - `bun run tauri build` creates the distributable desktop application for the target OS.
 
 System Context sources live under `contexts/`. After changing one, run `bun run s11tnext:build`. When changing the Rust IPC types, run `bun run ipc:generate` to refresh the TypeScript types. Normal build and check commands fail when either generated artifact is stale.
@@ -170,6 +172,8 @@ spec/docs/       design documents, ADRs, runbooks, and release evidence
 ## Documentation
 
 - [Project Concept & Direction](spec/docs/plan.html)
+- [Product Readiness Status](spec/docs/product-readiness-status.html)
+- [Product Readiness Acceptance Runbook](spec/docs/product-readiness-acceptance-runbook.html)
 - [Internal Design Documents](spec/docs/README.html)
 - [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html)
 - [LARM Operations Runbook](spec/docs/mvp-2.6-larm-operations-runbook.html)

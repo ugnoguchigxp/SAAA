@@ -316,6 +316,8 @@ export const en = {
       noApiKeysInExports: "API keys are never included in either output.",
       exportDiagnostics: "Export diagnostics",
       backupDatabase: "Backup database",
+      backupScope:
+        "A database backup includes conversations, settings, and speaker embeddings, but not WAV voice samples or API keys. Restoring it alone does not restore a usable voice profile.",
     },
     connection: {
       eyebrow: "PRIMARY CONNECTION",
@@ -365,7 +367,28 @@ export const en = {
       defaultName: "Cloud {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "System voice" },
       connecting: "Connecting…",
+      statusChecking: "Checking",
+      statusAvailable: "Available",
       connectionSucceeded: "Connection succeeded · {{latency}} ms",
+      failure: {
+        authentication: {
+          title: "Authentication failed",
+          recovery: "Check the saved API key or server access policy, then retry. {{detail}}",
+        },
+        timeout: {
+          title: "Connection timed out",
+          recovery:
+            "Check that the endpoint is responsive and the timeout is sufficient, then retry. {{detail}}",
+        },
+        unreachable: {
+          title: "Endpoint unreachable",
+          recovery: "Check the URL, network, VPN, and server process, then retry. {{detail}}",
+        },
+        other: {
+          title: "Connection check failed",
+          recovery: "Review the provider settings, save changes, and retry. {{detail}}",
+        },
+      },
       voice: "Voice",
       output: "Output",
       baseUrl: "Base URL",
@@ -393,6 +416,9 @@ export const en = {
       enterKey: "Enter API key",
       saveKey: "Save key",
       deleteKey: "Delete key",
+      keyStorageMacOnly: "API-key storage is available only on macOS in this release.",
+      keyStorageUnsupported:
+        "API-key storage is not supported on this OS. Use an authentication-free local endpoint or move this setup to macOS.",
       kinds: {
         "openai-compatible": "OpenAI-compatible LLM",
         "agent-session": "Agent Session LLM",

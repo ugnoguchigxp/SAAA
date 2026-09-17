@@ -4,7 +4,7 @@ This policy covers SAAA source code and bundled application behavior. No support
 
 Do not publish credentials, personal recordings, conversation data, or exploit details in a public issue. A private reporting route and responsible maintainer still need to be designated before this policy can provide a complete vulnerability reporting process. This document does not claim that such a route is available.
 
-For current storage and diagnostics behavior, see [README](README.md#local-data-and-privacy). Public contributions should follow [CONTRIBUTING](CONTRIBUTING.md).
+For current storage and diagnostics behavior, see [README](README.md#local-data-and-privacy) and the [Product Readiness Status](spec/docs/product-readiness-status.html#data-storage). Public contributions should follow [CONTRIBUTING](CONTRIBUTING.md).
 
 ## Information for a future private report
 

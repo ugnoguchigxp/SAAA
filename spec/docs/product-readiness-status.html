@@ -1,0 +1,276 @@
+<article lang="ja">
+  <h1 id="product-readiness-status">SAAA 製品準備状況</h1>
+  <dl>
+    <dt>ソース基準</dt>
+    <dd>
+      評価基準commit
+      <code>0f4c6c1</code
+      >と本改善差分。実装commitは未割当のため、固定commitの証跡は作成待ち
+    </dd>
+    <dt>確認日</dt>
+    <dd>2026-09-17</dd>
+    <dt>対象</dt>
+    <dd>ソース開発者向けmacOS版。一般配布は未承認</dd>
+    <dt>判定</dt>
+    <dd>自動検証済み。実Provider、実マイク、署名・公証、2時間運転は検証待ち</dd>
+  </dl>
+  <p>
+    この文書を現行機能と製品準備状況の正本とする。古いrelease
+    evidenceは、記載したcommit、経路、OSに限定した歴史資料であり、SAAA全体の現行認定ではない。
+  </p>
+
+  <h2 id="feature-matrix">機能・環境・証拠</h2>
+  <table>
+    <caption>
+      機能別の対応範囲。未確認を成功に含めない
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">機能</th>
+        <th scope="col">実装と接続</th>
+        <th scope="col">自動検証</th>
+        <th scope="col">実機検証</th>
+        <th scope="col">既知の制約</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Chat</td>
+        <td>実装済み。Agent Connection、OpenAI互換API、機能フラグ付きLARM</td>
+        <td>Frontend、Rust、IPC fixtureで検証済み</td>
+        <td>固定buildによるU01〜U03は待ち</td>
+        <td>ローカル経路からCloudへの暗黙切替は既定で無効</td>
+      </tr>
+      <tr>
+        <td>Meeting</td>
+        <td>マイク入力、途中・確定文字起こし、保存・破棄を実装済み</td>
+        <td>状態遷移、音声queue、保存境界を検証済み</td>
+        <td>実マイクによるU06は待ち</td>
+        <td>システム音声、翻訳、話者分離、overlayは非対応</td>
+      </tr>
+      <tr>
+        <td>Situation</td>
+        <td>macOSの前面アプリ・入力状態をshadow-onlyで観測</td>
+        <td>ledger、保持、校正、8時間fixtureを検証済み</td>
+        <td>VoiceOverと権限lifecycleは待ち</td>
+        <td>自動通知、TTS、Meeting開始、アプリ操作は行わない</td>
+      </tr>
+      <tr>
+        <td>Memory</td>
+        <td>Scope、訂正、期限切れ、忘却journal、再起動復元を実装済み</td>
+        <td>64件corpusとRust契約を検証済み</td>
+        <td>実Providerによる3反復は待ち</td>
+        <td>実Provider未確認時は品質合格としない</td>
+      </tr>
+      <tr>
+        <td>Coding</td>
+        <td>workspace登録、開始、継続、取消、再開を実装済み</td>
+        <td>認可、revision、busy、冪等性、commit後起動を検証済み</td>
+        <td>ローカルCodex認証を使うignored testは待ち</td>
+        <td>Git repositoryだけを登録でき、同時実行は制限される</td>
+      </tr>
+      <tr>
+        <td>生成UI</td>
+        <td>制限付きsemantic component、履歴、fallbackを実装済み</td>
+        <td>parser、Boundary、lifecycle、100,000行履歴を検証済み</td>
+        <td>実WebViewの画面確認は待ち</td>
+        <td>任意コードや未登録componentを実行しない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="evidence-index">証拠索引</h2>
+  <table>
+    <caption>
+      現行判定に使用する自動検証と適用範囲
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">証拠</th>
+        <th scope="col">対象</th>
+        <th scope="col">適用範囲・後継</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>bun run readiness:verify --report-dir /absolute/path</code></td>
+        <td>format、lint、type、Frontend/Rust、独立package、spec、U01〜U09の自動部分</td>
+        <td>commitとworking tree状態を記録。dirty時はrelease判定をblockedにする</td>
+      </tr>
+      <tr>
+        <td><code>bun run quality:eval</code></td>
+        <td>固定した実Providerによる会話品質</td>
+        <td>credentialと環境の準備後に3反復。契約検査だけでは代替しない</td>
+      </tr>
+      <tr>
+        <td><code>bun scripts/personal-state-eval.ts</code></td>
+        <td>Memoryの反復結果</td>
+        <td>live harnessの結果と人手reviewがない場合は基盤完了に限定</td>
+      </tr>
+      <tr>
+        <td><a href="./mvp-2.6-release-evidence.html">MVP 2.6 release evidence</a></td>
+        <td>記載commitの旧LARM経路</td>
+        <td>歴史資料。現行SSE経路やSAAA全体の認定には使用しない</td>
+      </tr>
+      <tr>
+        <td>
+          <a href="./verification/larm-qwen38-125k-20260916.md">LARM 125k受入記録</a>
+        </td>
+        <td>記載releaseのLARM側contract</td>
+        <td>SAAAのUI、音声、復旧、配布物の認定には使用しない</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="platform-matrix">OS対応</h2>
+  <table>
+    <caption>
+      CIでbuildできることと製品対応を区別する
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">macOS</th>
+        <th scope="col">Linux</th>
+        <th scope="col">Windows</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>主な製品受入対象</td>
+        <td>対象</td>
+        <td>対象外・CI確認のみ</td>
+        <td>対象外・CI確認のみ</td>
+      </tr>
+      <tr>
+        <td>APIキー保存</td>
+        <td>Keychainで対応</td>
+        <td>非対応</td>
+        <td>非対応</td>
+      </tr>
+      <tr>
+        <td>System TTS</td>
+        <td>実装済み</td>
+        <td>実装済み・製品受入待ち</td>
+        <td>実装済み・製品受入待ち</td>
+      </tr>
+      <tr>
+        <td>Situation platform signal</td>
+        <td>実装済み</td>
+        <td>非対応</td>
+        <td>非対応</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="data-storage">保存・削除・復元</h2>
+  <table>
+    <caption>
+      保存対象と保護方式
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">データ</th>
+        <th scope="col">保存場所・保護</th>
+        <th scope="col">削除・復元上の制約</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SQLite</td>
+        <td>アプリデータdirectory。会話、設定、run、話者埋め込み、監査を平文保存</td>
+        <td>DBバックアップ対象。移行前backupを作成。OS全体の暗号化は利用者環境に依存</td>
+      </tr>
+      <tr>
+        <td>話者WAV</td>
+        <td>voice profile directory。macOSではdirectory 0700、file 0600。暗号化なし</td>
+        <td>DBバックアップに含まれず、DBだけでは音声profileを復元できない</td>
+      </tr>
+      <tr>
+        <td>APIキー</td>
+        <td>macOS Keychain。SQLite、設定JSON、backup、diagnosticsには含めない</td>
+        <td>Provider削除または認証解除時に削除。macOS以外は保存非対応</td>
+      </tr>
+      <tr>
+        <td>監査</td>
+        <td>SQLite。本文、音声、接続先、認証情報を含めず7日保持</td>
+        <td>起動時に期限切れを削除。画面200件、diagnostics 1,000件まで</td>
+      </tr>
+      <tr>
+        <td>診断JSON</td>
+        <td>利用者が明示的に出力。秘密、本文、個人pathを除外</td>
+        <td>共有前に利用者が内容を確認する</td>
+      </tr>
+      <tr>
+        <td>忘却journal</td>
+        <td>DB外にopaque IDと時刻だけを保存</td>
+        <td>古いDB復元後も削除済み記憶を復活させない。journal欠損時は安全側に停止</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="work-status">改善計画の状態</h2>
+  <table>
+    <caption>
+      実装状態と検証状態
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">実装状態</th>
+        <th scope="col">検証状態・残条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Q01</td>
+        <td>完了</td>
+        <td>本書、README日英、SUPPORT、リンクを更新。spec検査対象</td>
+      </tr>
+      <tr>
+        <td>Q02</td>
+        <td>実装完了</td>
+        <td>
+          状態別表示、復旧案内、古いprobe防止、OS制約を自動テスト。協力者3名の初回導入確認は待ち
+        </td>
+      </tr>
+      <tr>
+        <td>Q03</td>
+        <td>自動検証済み</td>
+        <td>DOM・Rust・IPCは完了。実WebView、実マイク、VoiceOver各3回は待ち</td>
+      </tr>
+      <tr>
+        <td>Q04</td>
+        <td>自動検証済み</td>
+        <td>現行SSE hot pathとSQLite benchmarkあり。30回実機計測と30分反復は待ち</td>
+      </tr>
+      <tr>
+        <td>Q05</td>
+        <td>評価基盤完了</td>
+        <td>60会話・64記憶scenarioを検査。固定Providerによる3反復と人手確認は待ち</td>
+      </tr>
+      <tr>
+        <td>Q06</td>
+        <td>完了</td>
+        <td>
+          長いSQLとtransaction内の状態遷移を名前付きmoduleへ分離。公開IPC・DB
+          schema・tool応答を変えず、Coding不変条件と全体検査を自動確認
+        </td>
+      </tr>
+      <tr>
+        <td>Q07</td>
+        <td>一部完了</td>
+        <td>保存・復元・OS制約を明記。非公開報告先と保護方式は公開責任者の指定待ち</td>
+      </tr>
+      <tr>
+        <td>Q08</td>
+        <td>実機検証待ち</td>
+        <td>macOS CIをcheck:localへ統一。署名、公証、新規環境、2時間運転、rollbackは待ち</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    実機項目は<a href="./product-readiness-acceptance-runbook.html">製品受入手順</a
+    >で記録する。公開責任者が署名・報告窓口・対象versionを指定し、待ち項目が成功するまで一般配布を承認しない。
+  </p>
+</article>

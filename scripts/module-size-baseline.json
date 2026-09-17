@@ -109,6 +109,14 @@
       "total": 24,
       "production": 24
     },
+    "scripts/product-readiness.ts": {
+      "total": 62,
+      "production": 62
+    },
+    "scripts/product-readiness/report.ts": {
+      "total": 80,
+      "production": 80
+    },
     "scripts/render-system-contexts.ts": {
       "total": 36,
       "production": 36
@@ -172,6 +180,14 @@
     "src-tauri/src/coding/repository.rs": {
       "total": 120,
       "production": 120
+    },
+    "src-tauri/src/coding/service_queries.rs": {
+      "total": 159,
+      "production": 159
+    },
+    "src-tauri/src/coding/service_transactions.rs": {
+      "total": 145,
+      "production": 145
     },
     "src-tauri/src/coding/service.rs": {
       "total": 178,
@@ -1477,6 +1493,10 @@
       "total": 540,
       "production": 540
     },
+    "src/features/settings/ApiKeyControl.tsx": {
+      "total": 146,
+      "production": 146
+    },
     "src/features/settings/ConversationTimeoutField.tsx": {
       "total": 78,
       "production": 78
@@ -1500,6 +1520,10 @@
     "src/features/settings/ProviderCard.tsx": {
       "total": 465,
       "production": 465
+    },
+    "src/features/settings/providerTestPresentation.ts": {
+      "total": 23,
+      "production": 23
     },
     "src/features/settings/RemoteCleanupStatus.tsx": {
       "total": 39,
@@ -2025,9 +2049,21 @@
       "total": 65,
       "production": 65
     },
+    "tests/product-readiness.test.ts": {
+      "total": 106,
+      "production": 106
+    },
     "tests/provider-card-async.test.tsx": {
       "total": 56,
       "production": 56
+    },
+    "tests/provider-status-ui.test.tsx": {
+      "total": 88,
+      "production": 88
+    },
+    "tests/provider-test-presentation.test.ts": {
+      "total": 29,
+      "production": 29
     },
     "tests/reasoning-run.test.ts": {
       "total": 66,

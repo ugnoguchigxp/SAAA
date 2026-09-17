@@ -49,6 +49,7 @@ export function SecuritySection({
       </section>
       <section className="settings-card">
         <h3>{t("settings.security.dataOperations")}</h3>
+        <p>{t("settings.security.backupScope")}</p>
         <div className="provider-card-footer">
           <span>
             {error

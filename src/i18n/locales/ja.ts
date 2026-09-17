@@ -312,6 +312,8 @@ export const ja = {
       noApiKeysInExports: "APIキーはどちらの出力にも含まれません。",
       exportDiagnostics: "診断情報を出力",
       backupDatabase: "データベースをバックアップ",
+      backupScope:
+        "バックアップには会話、設定、話者埋め込みを含みますが、WAV音声サンプルとAPIキーは含みません。バックアップだけでは利用可能な音声プロファイルを復元できません。",
     },
     connection: {
       eyebrow: "主要な接続",
@@ -361,7 +363,29 @@ export const ja = {
       defaultName: "HTTP {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "システム音声" },
       connecting: "接続中…",
+      statusChecking: "確認中",
+      statusAvailable: "利用可能",
       connectionSucceeded: "接続に成功 · {{latency}} ms",
+      failure: {
+        authentication: {
+          title: "認証に失敗",
+          recovery:
+            "保存したAPIキーまたはサーバーのアクセス設定を確認し、再試行してください。{{detail}}",
+        },
+        timeout: {
+          title: "接続がタイムアウト",
+          recovery: "接続先の応答とタイムアウト設定を確認し、再試行してください。{{detail}}",
+        },
+        unreachable: {
+          title: "接続先に到達できません",
+          recovery:
+            "URL、ネットワーク、VPN、サーバープロセスを確認し、再試行してください。{{detail}}",
+        },
+        other: {
+          title: "接続確認に失敗",
+          recovery: "プロバイダー設定を確認して保存し、再試行してください。{{detail}}",
+        },
+      },
       voice: "音声",
       output: "出力",
       baseUrl: "ベースURL",
@@ -389,6 +413,9 @@ export const ja = {
       enterKey: "APIキーを入力",
       saveKey: "キーを保存",
       deleteKey: "キーを削除",
+      keyStorageMacOnly: "このリリースでAPIキーを保存できるのはmacOSだけです。",
+      keyStorageUnsupported:
+        "このOSではAPIキーを保存できません。認証不要のローカル接続を使うか、macOSで設定してください。",
       kinds: {
         "openai-compatible": "OpenAI互換LLM",
         "agent-session": "Agent Session LLM",

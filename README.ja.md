@@ -17,7 +17,7 @@ SAAA が目指しているのは、入力された質問へ答えるだけでな
 
 このリポジトリは開発中の MVP（実用に必要な一部機能へ範囲を絞った試作版）です。テキスト・音声会話、マイクによるミーティング文字起こし、Situation の記録と校正、ローカルデータのバックアップと診断情報の出力まで実装されています。
 
-通常の開発とオフライン検証は実行できますが、LARM 経由の本番利用はまだ承認されていません。API 契約、隔離環境で段階的にトラフィックを流す 30 分の canary、2 時間連続で安定性を確かめる soak test などに未完了項目があります。現在の判定は [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html) を参照してください。
+通常の開発とオフライン検証は実行できますが、LARM 経由の本番利用はまだ承認されていません。API 契約、隔離環境で段階的にトラフィックを流す 30 分の canary、2 時間連続で安定性を確かめる soak test などに未完了項目があります。機能別の現行状態は[製品準備状況](spec/docs/product-readiness-status.html)を参照してください。旧[MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html)はLARM経路に限定した過去の証跡として残します。
 
 ## できること
 
@@ -35,7 +35,7 @@ SAAA が目指しているのは、入力された質問へ答えるだけでな
 - [Bun](https://bun.sh/) 1.3.14（`package.json`で固定）
 - Rust 1.92.0（`rust-toolchain.toml`で指定。rustfmt・Clippyを含む）
 - 対象 OS 用の Tauri 2 ビルド環境（macOSでは`xcode-select --install`でXcode Command Line Toolsを導入）
-- ローカル会話経路を使う場合は、プライベートネットワークから接続できるローカル LLM サーバーと `LARM_API_TOKEN`
+- ローカル会話経路を使う場合は、プライベートネットワークから接続できるローカル LLM サーバー。`LARM_API_TOKEN`は、サーバーがLAN内の匿名接続を許可する場合は任意、Bearer認証を要求する場合は必須です。
 - 音声入力または Meeting を使う場合は、設定するASRサービスへの接続
 
 主な検証対象は macOS です。OS の音声合成は macOS、Linux、Windows に実装がありますが、Situation の前面アプリ・入力状態の取得は macOS の機能に依存します。
@@ -55,7 +55,7 @@ bun start
 2. Chatから短いテキストを送り、応答を確認します。
 3. 音声を使う場合だけ、ASRの接続、入力デバイス、マイク権限を設定します。話者フィルターも任意です。
 
-ローカルLLMの接続APIを使う場合は、起動前に同じシェルで`LARM_API_TOKEN`を設定してください。詳しくは次の接続手順を参照してください。`bun run dev`はフロントエンドの開発サーバーです。デスクトップIPCや音声の確認には`bun start`を使います。
+ローカルLLMの接続APIがBearer認証を要求する場合は、起動前に同じシェルで`LARM_API_TOKEN`を設定してください。サーバーがLAN内の匿名接続を明示的に許可する場合だけ未設定にできます。`bun run dev`はフロントエンドの開発サーバーです。デスクトップIPCや音声の確認には`bun start`を使います。
 
 ## モデル接続を設定する
 
@@ -63,7 +63,7 @@ bun start
 
 SAAA は設定したホストの接続 API を通じて、会話に使うローカルモデルへの接続を取得します。応答で得た OpenAI 互換の接続先、モデル名、短時間だけ有効な認証情報はメモリ上で使い、各ターンの終了時に接続を解放します。これらの値は SQLite に保存しません。
 
-ローカル LLM サーバーとの通信には `LARM_API_TOKEN` が必要です。SAAA は SSH トンネルを作成しないため、接続 API と、サーバーが返すモデル接続先の両方へプライベートネットワークから到達できる必要があります。
+`LARM_API_TOKEN`を設定すると、SAAAはBearer認証情報として送信します。信頼できるLAN内でサーバーが匿名接続を明示的に許可する場合は未設定にできますが、すべてのサーバーが認証不要という意味ではありません。SAAA は SSH トンネルを作成しないため、接続 API と、サーバーが返すモデル接続先の両方へプライベートネットワークから到達できる必要があります。
 
 音声会話と Meeting は、Settings → Model Providers で設定した LAN host を共用します。SAAA はプライベート ASR 接続先を導出し、`/v1/models` と `/health` からモデル情報を取得して Settings → Voice へ反映します。ASR専用の環境変数は不要です。
 
@@ -108,6 +108,7 @@ bun run check:local
 bun run test:rust-packages
 bun run spec:check
 bun run desktop:smoke
+bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
 ```
 
 - `bun run check:local`: oxfmtの整形検査とoxlintを実行してから、既存の`check`を実行します。
@@ -117,6 +118,7 @@ bun run desktop:smoke
 - `bun run test:coverage`: ローカル用の HTML/LCOV レポートを `coverage/` に出力します。`bun run check` には含まれません。
 - `bun run build`: TypeScript を検査し、フロントエンドの production build を作成します。
 - `bun run desktop:smoke`: debug 版デスクトップアプリを一時データディレクトリで起動し、IPC の準備完了を確認します。macOS では同梱した話者照合ランタイムも確認します。
+- `bun run readiness:verify`: 3つの自動検証laneを実行し、本文を含まず上書きできないJSON証跡を出力します。実行ごとに新しい絶対pathを指定します。dirtyなworking treeの結果はrelease根拠にできません。
 - `bun run tauri build`: 対象 OS の配布用デスクトップアプリを作成します。
 
 System Context は `contexts/` で管理しています。変更した場合は `bun run s11tnext:build` を実行してください。Rust 側の IPC 型を変更した場合は `bun run ipc:generate` で TypeScript の型を更新します。通常の build と check は、生成物が古い場合に失敗します。
@@ -170,6 +172,8 @@ spec/docs/       design documents, ADRs, runbooks, and release evidence
 ## 関連ドキュメント
 
 - [Project Concept & Direction](spec/docs/plan.html)
+- [製品準備状況](spec/docs/product-readiness-status.html)
+- [製品受入手順](spec/docs/product-readiness-acceptance-runbook.html)
 - [Internal Design Documents](spec/docs/README.html)
 - [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html)
 - [LARM Operations Runbook](spec/docs/mvp-2.6-larm-operations-runbook.html)

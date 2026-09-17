@@ -1,0 +1,496 @@
+<article lang="ja">
+  <h1 id="product-readiness-improvement-plan">SAAA 製品品質・導入性改善 実装計画</h1>
+  <dl>
+    <dt>状態</dt>
+    <dd>
+      自動化可能な改善を実装済み。実装・検証の最新状態は<a href="./product-readiness-status.html"
+        >製品準備状況</a
+      >を正本とする。実機・署名・公開責任者の確認完了や出荷承認を意味しない。
+    </dd>
+    <dt>作成日</dt>
+    <dd>2026-09-17</dd>
+    <dt>評価基準点</dt>
+    <dd>コミット <code>0f4c6c1</code>。同日のプロジェクト評価に基づく。</dd>
+    <dt>目的</dt>
+    <dd>既存の技術基盤を維持し、初回導入から日常利用・復旧までの成功を確認できる状態にする。</dd>
+    <dt>担当</dt>
+    <dd>実装担当、検証担当、公開責任者の役割を下記に記す。個人の割当は未確定。</dd>
+  </dl>
+
+  <h2 id="baseline">1. 評価とベースライン</h2>
+  <p>
+    総合評点73/100は15観点の主観的評価の平均であり、出荷基準や改善の達成指標には使わない。強みはデータ整合性、自動検証、Runtime境界である。優先して改善するのは、現行状態の説明、導入、実機での利用品質、保守性、公開時の運用体制である。
+  </p>
+  <table>
+    <caption>
+      評価時に実行した検証。実装開始時は対象コミットで再取得する
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">検証</th>
+        <th scope="col">2026-09-17の結果</th>
+        <th scope="col">限界</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>bun run check:local</code></td>
+        <td>成功。Frontend 326件、メインRust単体554件、統合5件成功</td>
+        <td>メインRustの13件はignored。実接続・長時間運転等を含む</td>
+      </tr>
+      <tr>
+        <td><code>bun run test:rust-packages</code></td>
+        <td>48件成功、1件ignored</td>
+        <td>外部環境の実用性を保証しない</td>
+      </tr>
+      <tr>
+        <td>Frontend build</td>
+        <td>成功。メインチャンク約543 kB、gzip約169 kB</td>
+        <td>サイズ警告あり。実際の操作遅延とは別の指標</td>
+      </tr>
+      <tr>
+        <td>実機・AI品質</td>
+        <td>既存記録を確認</td>
+        <td>
+          今回の評価では実マイク、実Provider、実WebView操作、長時間運転、他OS実機を再検証していない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    上記は評価時のローカル実行結果であり、署名済み配布物の証拠ではない。件数は品質目標にせず、対象ケースと成功条件を維持する。
+  </p>
+
+  <h2 id="scope">2. 対象範囲と維持する境界</h2>
+  <ul>
+    <li>
+      対象は現行機能の導入・検証・説明・保守性の改善。最初の製品受入対象はmacOSとし、他OSは機能別の対応表で示す。
+    </li>
+    <li>
+      単一SQLite
+      Writer、読取snapshot、生成IPC型、Provider境界、忘却・Scopeの失効検証、Situationのshadow-only制約を維持する。
+    </li>
+    <li>DB schema、公開IPC、認証の要否、Cloud fallbackの既定値はこの計画で変更しない。</li>
+    <li>
+      新しいAgent機能、自動介入、記憶方式の全面置換、全体リファクタは対象外。失敗の原因がこれらに及ぶ場合は、影響と移行方法を別変更として設計する。
+    </li>
+    <li>
+      暗号化方式、Windows/Linuxの秘密情報保存実装、自動更新基盤の導入は選択肢の整理まで。今回の計画だけで方式・費用・署名アカウントを確定しない。
+    </li>
+  </ul>
+  <table>
+    <caption>
+      既存計画との関係
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">既存文書</th>
+        <th scope="col">本計画での扱い</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <a href="./verified-quality-improvements-implementation-plan.html">品質改善実装計画</a>
+        </td>
+        <td>
+          R01〜R10、R12〜R14の実装を再実装しない。M01実機確認、R11保護方式、OSS報告先の残条件をQ03・Q07へ関連付け、元文書にも結果を反映する
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <a href="./context-memory-unified-runtime-implementation-plan.md">共通Runtime統合計画</a>
+        </td>
+        <td>統合済み構造を前提とする。Q05は品質評価と不足ケースの補強であり、再統合ではない</td>
+      </tr>
+      <tr>
+        <td><a href="./personal-state-phase-1-plan.md">Personal State P1</a></td>
+        <td>既存の精度・忘却・外部受入契約を継承し、合格基準を緩めない</td>
+      </tr>
+      <tr>
+        <td>
+          <a href="./mvp-2.6-release-evidence.html">旧MVP 2.6証跡</a>、<a
+            href="./verification/larm-qwen38-125k-20260916.md"
+            >LARM 125k受入記録</a
+          >
+        </td>
+        <td>
+          Q01で適用範囲と後継を明示。古い未完了項目を無条件に引き継がず、廃止契約の要件は根拠付きで対象外にする。LARM側認定をSAAA全体の認定に置き換えない
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="sequence">3. 実装順序と成果物</h2>
+  <p>
+    P0は現状と受入条件の確定、P1は利用品質と保守性、P2は配布判定を担当する。優先度は作業順を表し、確認済みの重大脆弱性の存在を意味しない。各Qは個別にレビュー可能な変更単位とし、実装状態と検証状態を別々に記録する。
+  </p>
+  <table>
+    <caption>
+      作業一覧。日数は実装者1名の概算作業日で、環境準備・外部回答待ちは含まない
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID・優先度</th>
+        <th scope="col">成果物</th>
+        <th scope="col">依存</th>
+        <th scope="col">担当役割・目安</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Q01・P0</td>
+        <td>現行機能・対応環境・証拠の一覧とREADME更新</td>
+        <td>なし</td>
+        <td>実装担当・1〜2日</td>
+      </tr>
+      <tr>
+        <td>Q02・P0</td>
+        <td>接続手順と初回設定の改善</td>
+        <td>Q01</td>
+        <td>UI/Runtime担当・2〜3日</td>
+      </tr>
+      <tr>
+        <td>Q03・P0</td>
+        <td>主要操作の自動受入と実機手順</td>
+        <td>Q01。初回設定の最終受入はQ02後</td>
+        <td>検証担当・3〜5日</td>
+      </tr>
+      <tr>
+        <td>Q04・P1</td>
+        <td>現行版の性能計測と必要箇所の改善</td>
+        <td>Q03のシナリオ固定</td>
+        <td>UI/Runtime担当・2〜4日</td>
+      </tr>
+      <tr>
+        <td>Q05・P1</td>
+        <td>AI・記憶品質の再現可能な評価結果</td>
+        <td>Q01、実Provider利用可能</td>
+        <td>評価担当・2〜4日</td>
+      </tr>
+      <tr>
+        <td>Q06・P1</td>
+        <td>Coding処理の責務分離と回帰テスト</td>
+        <td>Q03で不変条件を固定</td>
+        <td>Runtime担当・2〜3日</td>
+      </tr>
+      <tr>
+        <td>Q07・P0/P1</td>
+        <td>非公開報告手順、保存・復元・OS制約の明示</td>
+        <td>調査はQ01と並行可能。窓口公開は公開責任者の指定が必要</td>
+        <td>公開責任者/実装担当・1〜2日</td>
+      </tr>
+      <tr>
+        <td>Q08・P2</td>
+        <td>対象配布物の検証と出荷判断記録</td>
+        <td>Q01〜Q07の対象範囲を確認</td>
+        <td>公開責任者/検証担当・2〜4日</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    合計目安は15〜27作業日。Q03で見つかる不具合修正、署名・公証環境、外部サービスの修正、利用者検証の調整は別途見積もる。最初はQ01〜Q03を一巡し、実際の失敗件数を見て後半の見積もりを更新する。
+  </p>
+
+  <h2 id="q01">4. Q01 現行状態と証拠の整理</h2>
+  <p>
+    対象はREADME.md、README.ja.md、SUPPORT.md、spec/docs/README.html、既存のrelease
+    evidenceである。新規の現行状態表はspec/docs/product-readiness-status.htmlに置く計画とし、既存文書の本文を複製せず参照する。
+  </p>
+  <ol>
+    <li>
+      Chat、Meeting、Situation、Memory、Coding、生成UIについて、OS、接続方式、実装状態、自動検証、実機検証、既知の制約を一覧化する。
+    </li>
+    <li>
+      各証拠にSAAA
+      commit、外部release、確認日時、対象機能、結果、後継文書を紐付ける。対象外・未確認・失敗を区別する。
+    </li>
+    <li>
+      旧WebSocketやallocation等の前提が現在のコードに適用されるかを確認し、歴史資料と現行手順を分ける。記録の失敗を消去しない。
+    </li>
+    <li>READMEの日英両方から現行状態表へ誘導し、古い本番判定だけを正本として案内しない。</li>
+  </ol>
+  <p>
+    完了条件:
+    各機能について現在の対応範囲と未検証事項を一か所から確認できる。相反する記録には適用範囲または後継が明記される。リンク、コマンド、日英の事実関係を確認し、spec検査を通す。
+  </p>
+
+  <h2 id="q02">5. Q02 導入と接続設定の改善</h2>
+  <p>
+    主な対象はsrc/features/settings/、src/lib/providerRuntime.ts、src-tauri/src/providers/dynamic_lan/http.rs、src-tauri/src/credentials.rs、README日英版。既存の接続確認と設定UIを拡張し、別の設定経路を増やさない。
+  </p>
+  <ol>
+    <li>
+      認証なしを許すLAN、認証が必要な接続、OpenAI互換API、音声サービスの前提を分ける。LARM_API_TOKEN未設定を許容するコードとREADMEの必須記載を整合させる。未設定を許すことを、すべてのサーバーで認証不要と説明しない。
+    </li>
+    <li>
+      「未設定」「確認中」「利用可能」「認証失敗」「到達不能」「このOSでは非対応」を利用者が区別できる表示にする。既存エラーコードと接続状態を使用する。
+    </li>
+    <li>
+      接続確認の成功から会話経路の選択、最初のメッセージ送信までを連続した手順で案内する。音声の追加設定はテキスト会話の成功後に案内できるようにする。
+    </li>
+    <li>
+      キー保存がmacOS以外で利用できない制約を、操作失敗後だけでなく設定時に表示する。新しい保存方式はここでは実装しない。
+    </li>
+  </ol>
+  <p>
+    完了条件:
+    架空のProviderで各状態と再試行をDOM/IPC境界テストし、古い接続確認結果が新しい設定を上書きしない。READMEの手順だけで新規データディレクトリから会話まで到達する。APIキーをUIログや検証記録へ出さない。
+  </p>
+  <p>
+    利用者検証の初期目標:
+    開発に関与していない協力者3名が、準備済み接続先を使い、依存ソフト導入後から10分以内に口頭補助なしでテキスト会話を成功させる。人数不足や未達は未検証/失敗として記録し、一般利用者全体への統計的な保証とはしない。
+  </p>
+
+  <h2 id="q03">6. Q03 操作を通した受入検証</h2>
+  <p>
+    tests/の既存DOMテスト、IPC
+    fixture、scripts/desktop-smoke.tsを利用する。sourceContractによる構造検査は必要なものを残し、重要な操作については結果を検証するテストを追加する。テストを消して件数を調整しない。
+  </p>
+  <table>
+    <caption>
+      最低限の受入シナリオ
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">操作</th>
+        <th scope="col">期待結果</th>
+        <th scope="col">検証場所</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>U01</td>
+        <td>新規起動→設定→接続確認→最初の会話</td>
+        <td>次の操作が明確で、選択した経路から応答が届く</td>
+        <td>DOM/IPC＋実WebView</td>
+      </tr>
+      <tr>
+        <td>U02</td>
+        <td>応答途中で取消→再送信</td>
+        <td>終端通知の重複・取消後の遅延更新混入がなく、次の会話が開始できる</td>
+        <td>Rust/DOM＋実Provider</td>
+      </tr>
+      <tr>
+        <td>U03</td>
+        <td>認証失敗・切断・timeout→設定修正→再試行</td>
+        <td>原因と回復手順を表示。意図しない別Providerへの送信がない</td>
+        <td>架空HTTPサーバー＋実機</td>
+      </tr>
+      <tr>
+        <td>U04</td>
+        <td>確定済み会話の後に終了→再起動</td>
+        <td>確定データが復元され、未完了runは既定の回復状態になる</td>
+        <td>隔離DBテスト＋実アプリ</td>
+      </tr>
+      <tr>
+        <td>U05</td>
+        <td>マイク拒否→許可→音声入力→停止</td>
+        <td>拒否時に停止し、権限変更後に回復。停止後に送信が継続しない</td>
+        <td>状態機械＋OS権限の実機確認</td>
+      </tr>
+      <tr>
+        <td>U06</td>
+        <td>Meeting開始→停止→保存/破棄</td>
+        <td>TTS競合なし。保存内容が再起動後に残り、破棄分は履歴に現れない</td>
+        <td>Rust/DOM＋実マイク</td>
+      </tr>
+      <tr>
+        <td>U07</td>
+        <td>生成UIの不正出力・読込失敗</td>
+        <td>会話を維持し、安全なfallbackを表示する</td>
+        <td>既存parser/Boundaryテスト＋画面確認</td>
+      </tr>
+      <tr>
+        <td>U08</td>
+        <td>キーボードのみで設定・dialogを操作</td>
+        <td>Tab移動、Escape、focus復帰が機能し、操作不能箇所がない</td>
+        <td>既存DOM＋実WebView/VoiceOver確認</td>
+      </tr>
+      <tr>
+        <td>U09</td>
+        <td>Memory ON/OFF、訂正、忘却、再起動</td>
+        <td>既存Scopeと忘却契約を維持し、削除した情報を後着結果で復活させない</td>
+        <td>既存Rust/外部契約fixture＋Q05実機</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    完了条件:
+    自動化可能なケースは外部credentialなしで再現できる。実機ケースは固定build・隔離データで各3回実施し、全回の成否を残す。未実施を成功に含めない。一般ブラウザのmock成功はTauri
+    WebViewの成功と区別する。今回の計画では新規E2Eフレームワーク導入を必須にしない。
+  </p>
+
+  <h2 id="q04">7. Q04 性能の現状計測と限定改善</h2>
+  <p>
+    対象はsrc/appPages.ts、src/features/chat/、src/features/meeting/audio/、既存ストリーミング計測、scripts/maximum-performance.ts。過去のWebSocket専用手順はそのまま使わず、現行SSE経路への適合を確認する。
+  </p>
+  <ol>
+    <li>
+      同一ハードウェア・build条件で、起動→操作可能、Provider待ち、最初のテキスト描画、取消→停止、長い履歴表示、Meetingの確定表示を分けて計測する。
+    </li>
+    <li>
+      各短時間シナリオ30回以上でp50/p95を記録する。p99の主張はこの標本では行わない。失敗数・timeout数を併記し、成功要求だけで品質を評価しない。
+    </li>
+    <li>
+      30分・100
+      turnの反復に切断、sleep/wake、取消を含め、開始前後の5分間の安定時RSS、残存session/process、クラッシュを確認する。
+    </li>
+    <li>
+      約543
+      kBのメインチャンクは構成を調べ、未使用画面や重量依存が初期読込を悪化させている場合だけ分割する。警告抑制のために上限だけを引き上げない。
+    </li>
+  </ol>
+  <p>
+    完了条件:
+    ベースラインと改善後の条件が一致し、クラッシュ・データ損失・残存処理が0。初期の相対基準としてp95が10%以上悪化、または安定時RSSが10%以上かつ20
+    MiB以上増加したら原因調査を必須にする。閾値は本計画の暫定値であり、測定ノイズを含む初回計測後に固定し、結果を見て合格させるために変更しない。30分成功を2時間の耐久確認の代替にしない。
+  </p>
+
+  <h2 id="q05">8. Q05 AI・記憶品質を実証する</h2>
+  <p>
+    対象はscripts/conversation-quality-eval.ts、scripts/conversation-quality/schema.ts、scripts/personal-state-eval.ts、tests/fixtures/personal-state/ja-corpus.json、Personal
+    Stateの既存live harness。評価器が正しいことと、対象モデルが合格することを分けて報告する。
+  </p>
+  <ul>
+    <li>
+      モデル・Provider
+      release・設定・corpus版を固定し、会話品質は既存60シナリオを3周する。既存基準である平均90以上、項目別85%以上、3周中2周以上合格、全体の重大違反0を維持する。
+    </li>
+    <li>
+      記憶は既存の60件以上・8カテゴリ以上・各カテゴリ5件以上・3反復を維持する。各反復でprecision/recallとも95%以上、未処理率5%以下、違反0、欠測0、人手レビュー済みを認定条件とする。
+    </li>
+    <li>
+      訂正前後、矛盾、別Scope、期限切れ、忘却直後、遅延結果、再起動のケースが網羅されるかを点検し、不足分だけ追加する。
+    </li>
+    <li>
+      LLMによる採点だけで結論を出さず、重大違反全件と各カテゴリの成功・失敗例を人手で確認する。実会話を無断で評価データへ転用しない。
+    </li>
+  </ul>
+  <p>
+    完了条件:
+    既存評価器が合格し、使用した環境・反復別結果・欠測・人手確認の記録が残る。サービス不通や認証失敗は実装不良と断定せず環境失敗に分類するが、合格率の分母から黙って除外しない。必要環境がない場合は「評価基盤完了・実機評価未完了」と記録する。
+  </p>
+
+  <h2 id="q06">9. Q06 Coding処理の保守性改善</h2>
+  <p>
+    対象はsrc-tauri/src/coding/service.rsと隣接repository・workspace・tests。総行数にはテストも含まれるため、大きいという理由だけで全モジュールを分割しない。
+  </p>
+  <ol>
+    <li>
+      冪等性、conversation/workspace認可、revision、busy、shutdown、generation fence、call
+      budget、transaction commit後の起動を不変条件としてテストに対応付ける。
+    </li>
+    <li>
+      長いSQLと状態遷移を名前付き関数へ抽出し、既存のtransactionを引数で受ける。整形と移動を先に行い、挙動変更が必要なら別変更に分ける。
+    </li>
+    <li>
+      認可やbusy判定をtransaction外へ移さず、同一call再送で二重起動しないことを維持する。新しい汎用Repository層やRuntime抽象は導入しない。
+    </li>
+  </ol>
+  <p>
+    完了条件:
+    二重実行、他会話からの参照、古いrevision、取消と起動の競合、commit失敗後の起動禁止を確認する。公開IPC、DB
+    schema、tool応答は不変。module-size上限を維持し、既存テストと全体検査を通す。
+  </p>
+
+  <h2 id="q07">10. Q07 プライバシー説明と公開時の対応</h2>
+  <p>
+    対象はSECURITY.md、SUPPORT.md、THIRD_PARTY_NOTICES.md、Privacy設定、credentials.rs、backup.rs。保存方式の変更と利用者への説明を混同しない。
+  </p>
+  <ol>
+    <li>
+      公開責任者が非公開報告先、担当、初動の目安、対象バージョンを指定する。指定前に架空の窓口や対応保証を記載しない。模擬受付は外部送信せず手順を確認し、実送信は別途明示された場合のみ行う。
+    </li>
+    <li>
+      SQLite、音声WAV、埋め込み、監査、診断、バックアップについて保存場所・保存内容・保護方式・削除方法を対応表にする。Keychainと非暗号化データを区別する。
+    </li>
+    <li>
+      DBバックアップだけでは音声プロファイル全体が復元しない制約をエクスポート時の説明に反映する。合成データを別の隔離ディレクトリへ復元し、DB整合性、WAV欠損時の安全な状態、削除済み記憶の扱いを確認する。
+    </li>
+    <li>
+      R11の暗号化/OS保護、他OSのcredential保存は選択肢・移行・鍵紛失時の復旧・対象OSの影響を整理し、方式未決として残す。非対応機能を黙って劣化動作させない。
+    </li>
+  </ol>
+  <p>
+    完了条件:
+    保存と復元の説明が実装と一致し、公開版には利用可能な非公開報告手順がある。窓口・保護方式が未決なら、その項目は未完了のままとする。他の独立した改善を止める理由にはしない。
+  </p>
+
+  <h2 id="q08">11. Q08 配布物と出荷判断</h2>
+  <p>
+    対象は.github/workflows/ci.yml、src-tauri/tauri.conf.json、SUPPORT.md、現行状態表。最初はmacOSの対象バージョンとCPUアーキテクチャを限定し、CIでbuild可能なOSすべてを製品対応済みと表記しない。
+  </p>
+  <ol>
+    <li>
+      macOSの主CIもcheck:localを使うなど、ローカルとCIの整形・lint検査範囲を揃える。独立Rustパッケージと仕様検査を維持する。
+    </li>
+    <li>
+      署名・公証の担当と環境がある場合、固定commitから配布物を作成し、digest、依存lock、同梱物、ライセンス、実行環境を記録する。秘密鍵はリポジトリへ保存しない。
+    </li>
+    <li>
+      開発環境のPATHに依存しない新規環境でインストール、起動、接続、更新、アンインストール時のデータ扱いを確認する。配布方式未決のまま公開完了としない。
+    </li>
+    <li>
+      現行経路で2時間の連続運転と復旧を実施し、Q03・Q04の停止・再接続・データ整合性を再確認する。旧LARM専用要件はQ01で適用を確認したものだけ追加する。
+    </li>
+    <li>
+      旧アプリと移行後DBの互換性を事前確認する。互換性がなければアプリだけ戻さず、検証済みバックアップを別ディレクトリへ復元して切り替える。移行後に追加されたデータの損失範囲を記録する。
+    </li>
+  </ol>
+  <p>
+    完了条件:
+    対象配布物でU01〜U09の該当ケース、2時間運転、復元、rollbackが成功し、公開責任者が対象機能と既知制約を記した判断を残す。署名・実機・報告窓口が揃わない場合は、ソース開発者向けの限定提供と一般配布の判断を分ける。機能を除外する場合はUIと案内でも無効/非対応が明確であること。
+  </p>
+
+  <h2 id="verification">12. 検証コマンドと証拠の扱い</h2>
+  <pre><code class="language-shell"># コード変更時の基本検査
+bun run check:local
+bun run test:rust-packages
+bun run spec:check
+
+# 上記3 laneを実行し、上書き禁止のJSON証跡を出力
+bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
+
+# 起動・終了・同梱物を変更した場合
+bun run desktop:smoke
+
+# Q05: 実Provider接続設定後に実施。check:localの契約検査とは別
+bun run quality:eval
+
+# Q05: live harness等から取得した結果を既存評価器へ渡す
+bun scripts/personal-state-eval.ts /absolute/path/results.json /absolute/path/summary.json</code></pre>
+  <p>
+    環境変数やlive
+    runnerの引数は実装開始時に現行runnerとrunbookから確認する。古い実行例を推測で補わない。公開IPC変更が別途必要になった場合は生成・fixture更新・ipc:checkを同じ変更で行う。
+  </p>
+  <p>
+    新しい証拠はspec/evidence/product-readiness/への保存を予定する。公開対象はscenario
+    ID、commit/build
+    digest、OS、匿名化した環境ラベル、所要時間、成否、失敗コード、反復数、検証日時に限定する。認証情報、実会話、音声、個人パス、接続先、完全なHTTPログを保存しない。既存runnerの出力も公開前に点検し、機密を含む元データはリポジトリ外で扱う。
+  </p>
+  <p>
+    失敗後の再実行は元の結果を残し、原因と変更内容を添える。再実行の成功で最初の失敗を隠さない。docs-only変更はリンク・コマンド・事実・spec検査で確認し、アプリ全体の再buildは不要。
+  </p>
+
+  <h2 id="completion">13. 完了と引き継ぎ</h2>
+  <ul>
+    <li>
+      各Qの状態は未着手、実装中、自動検証済み、実機検証待ち、完了、対象外のいずれかで記録する。実装コミットと証拠参照を付ける。
+    </li>
+    <li>
+      完了にはそのQの受入条件が必要。外部待ちは担当・必要条件・次の確認方法を明記し、実装だけで完了へ変更しない。
+    </li>
+    <li>
+      第1段階の完了はQ01〜Q03による現行状態の明確化と主要操作の確認。第2段階はQ04〜Q07の対象範囲の品質改善。一般配布の完了はQ08の判断まで必要。
+    </li>
+    <li>
+      受入条件を満たさない変更は独立したcommit単位で戻せるようにする。文書や内部関数整理のためにDB
+      migrationを追加しない。
+    </li>
+    <li>
+      再評価は点数上昇だけでなく、初回成功率、重大違反、復旧成功、性能、未検証項目の減少で比較する。
+    </li>
+  </ul>
+</article>

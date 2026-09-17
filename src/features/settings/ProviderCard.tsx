@@ -6,14 +6,8 @@ import type {
   CloudTtsProviderSettings,
   ModelProviderSettings,
   OpenAiCompatibleProviderSettings,
-  ProviderCredentialState,
 } from "../../lib/contracts";
-import {
-  deleteProviderApiKey,
-  getProviderCredentialState,
-  setProviderApiKey,
-  testModelProvider,
-} from "../../lib/runtime";
+import { testModelProvider } from "../../lib/runtime";
 import { LlmRequestFields } from "./LlmRequestFields";
 import { Field } from "./SettingsFields";
 import {
@@ -21,6 +15,8 @@ import {
   localizeProviderLabel,
   localizeUiMessage,
 } from "../../i18n/presentation";
+import { classifyProviderTestFailure } from "./providerTestPresentation";
+import { ApiKeyControl } from "./ApiKeyControl";
 
 export function ProviderCard({
   provider,
@@ -135,13 +131,31 @@ export function ProviderCard({
       {provider.kind === "cloud-asr" && <AsrFields provider={provider} onChange={onChange} />}
       {provider.kind === "cloud-tts" && <TtsFields provider={provider} onChange={onChange} />}
       {testResult.state !== "idle" && (
-        <p className={`provider-test-result ${testResult.state}`}>
-          {testResult.state === "testing"
-            ? t("settings.providers.connecting")
-            : testResult.state === "success"
-              ? t("settings.providers.connectionSucceeded", { latency: testResult.latency })
-              : localizeUiMessage(t, testResult.message, "settings")}
-        </p>
+        <div
+          className={`provider-test-result detailed ${testResult.state}`}
+          role="status"
+          aria-live="polite"
+        >
+          <strong>
+            {testResult.state === "testing"
+              ? t("settings.providers.statusChecking")
+              : testResult.state === "success"
+                ? t("settings.providers.statusAvailable")
+                : t(
+                    `settings.providers.failure.${classifyProviderTestFailure(testResult.message)}.title`,
+                  )}
+          </strong>
+          <span>
+            {testResult.state === "testing"
+              ? t("settings.providers.connecting")
+              : testResult.state === "success"
+                ? t("settings.providers.connectionSucceeded", { latency: testResult.latency })
+                : t(
+                    `settings.providers.failure.${classifyProviderTestFailure(testResult.message)}.recovery`,
+                    { detail: localizeUiMessage(t, testResult.message, "settings") },
+                  )}
+          </span>
+        </div>
       )}
       <div className="provider-card-footer">
         <ApiKeyControl
@@ -380,120 +394,6 @@ function TtsFields({
           <option value="pcm">PCM · 24 kHz · mono · s16le</option>
         </select>
       </Field>
-    </div>
-  );
-}
-
-function ApiKeyControl({
-  provider,
-  persisted,
-  onCredentialChange,
-}: {
-  provider:
-    | OpenAiCompatibleProviderSettings
-    | AgentSessionProviderSettings
-    | CloudAsrProviderSettings
-    | CloudTtsProviderSettings;
-  persisted: boolean;
-  onCredentialChange: () => void;
-}) {
-  const { t } = useTranslation();
-  const [credential, setCredential] = useState<ProviderCredentialState["state"]>("missing");
-  const [apiKey, setApiKey] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [credentialError, setCredentialError] = useState<string | null>(null);
-  useEffect(() => {
-    if (provider.authentication !== "api-key" || !persisted) return;
-    let active = true;
-    setCredentialError(null);
-    void getProviderCredentialState(provider.id)
-      .then((result) => {
-        if (active) setCredential(result.state);
-      })
-      .catch((cause) => {
-        if (!active) return;
-        setCredential("unavailable");
-        setCredentialError(cause instanceof Error ? cause.message : String(cause));
-      });
-    return () => {
-      active = false;
-    };
-  }, [persisted, provider.authentication, provider.id]);
-  if (provider.authentication !== "api-key") return <span>{t("settings.providers.authNone")}</span>;
-  if (!persisted) return <span>{t("settings.providers.saveBeforeKey")}</span>;
-  async function save() {
-    onCredentialChange();
-    setSaving(true);
-    setCredentialError(null);
-    try {
-      const result = await setProviderApiKey(provider.id, apiKey);
-      onCredentialChange();
-      setCredential(result.state);
-      setApiKey("");
-    } catch (cause) {
-      setCredentialError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function remove() {
-    onCredentialChange();
-    setSaving(true);
-    setCredentialError(null);
-    try {
-      const result = await deleteProviderApiKey(provider.id);
-      onCredentialChange();
-      setCredential(result.state);
-      setApiKey("");
-    } catch (cause) {
-      setCredentialError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <div>
-      <span>
-        {t("settings.providers.apiKeyState", {
-          state: t(`common.${credential}`, { defaultValue: credential }),
-        })}
-      </span>
-      {credentialError && (
-        <p className="provider-test-result error" aria-live="polite">
-          {localizeUiMessage(t, credentialError, "settings")}
-        </p>
-      )}
-      <div>
-        <input
-          type="password"
-          value={apiKey}
-          autoComplete="off"
-          placeholder={
-            credential === "configured"
-              ? t("settings.providers.replaceKey")
-              : t("settings.providers.enterKey")
-          }
-          onChange={(event) => setApiKey(event.target.value)}
-        />
-        <button
-          className="text-button"
-          type="button"
-          disabled={!apiKey || saving}
-          onClick={() => void save()}
-        >
-          {t("settings.providers.saveKey")}
-        </button>
-        {credential === "configured" && (
-          <button
-            className="text-button danger"
-            type="button"
-            disabled={saving}
-            onClick={() => void remove()}
-          >
-            {t("settings.providers.deleteKey")}
-          </button>
-        )}
-      </div>
     </div>
   );
 }

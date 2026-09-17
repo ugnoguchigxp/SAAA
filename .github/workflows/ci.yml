@@ -24,7 +24,7 @@ jobs:
         with:
           workspaces: src-tauri
       - run: bun install --frozen-lockfile
-      - run: bun run check
+      - run: bun run check:local
 
   platform-check:
     name: Platform check (${{ matrix.name }})
