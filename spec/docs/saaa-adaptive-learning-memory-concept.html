@@ -5,13 +5,17 @@
 
   <h2 id="0-document-role">0. 文書の役割</h2>
   <ul>
-    <li>Status: Concept; revision 3。統合契約レビュー用。実装開始、学習algorithm採用、品質thresholdはいずれも未承認</li>
+    <li>
+      Status: Concept; revision
+      4。統合契約レビュー用。実装開始、学習algorithm採用、品質thresholdはいずれも未承認
+    </li>
     <li>Created: 2026-08-30</li>
-    <li>Revised: 2026-09-16</li>
+    <li>Revised: 2026-09-17</li>
     <li>Reviewed: 未承認</li>
     <li>
-      SAAA baseline: original Memory analysis <code>0f0d2cd</code>; integration reassessment
-      <code>d5a5cae</code> and 2026-09-16 working tree
+      SAAA baseline: original Memory analysis <code>0f0d2cd</code>;
+      integration reassessment <code>d5a5cae</code> and 2026-09-16 working
+      tree
     </li>
     <li>Shipping client: macOS版SAAA desktop</li>
     <li>
@@ -89,7 +93,10 @@
       <tr>
         <td>SessionとScope</td>
         <td>固定</td>
-        <td>通常会話はSessionlessとし、適用範囲はuser / project / task / resource / requestのScopeで分離する</td>
+        <td>
+          通常会話はSessionlessとし、適用範囲はuser / project / task / resource /
+          requestのScopeで分離する
+        </td>
       </tr>
       <tr>
         <td>Safetyと権限</td>
@@ -104,12 +111,18 @@
       <tr>
         <td>初期active policy</td>
         <td>固定</td>
-        <td>決定論的guard、Scope filter、rule / semantic selectorをbaselineとし、学習器なしでも成立させる</td>
+        <td>
+          決定論的guard、Scope filter、rule / semantic
+          selectorをbaselineとし、学習器なしでも成立させる
+        </td>
       </tr>
       <tr>
         <td>学習reranker</td>
         <td>検証仮説</td>
-        <td>十分な独立outcomeとsupportが得られた場合だけ、online linear contextual banditを比較候補にする</td>
+        <td>
+          十分な独立outcomeとsupportが得られた場合だけ、online linear contextual
+          banditを比較候補にする
+        </td>
       </tr>
       <tr>
         <td>学習器stateの再構成性</td>
@@ -194,10 +207,12 @@ Common Turn Orchestrator
 Candidate Planning
   ├─ Adaptive Memory Policy → MemoryPlan
   ├─ Personal / World State → State refs
-  └─ Capability Router → Capability Plan + Selection Snapshot
+  └─ Capability Router → Capability Plan + version refs
              ↓
 Common Context Broker
   └─ bounded ContextEnvelope
+             ↓
+Common Runtime: 適格性検査 / 最終提示集合のSelection Snapshot確定
              ↓
 Provider / Tool Loop / Verification
              ↓
@@ -211,7 +226,8 @@ Presentation / Reducer</code></pre>
   </p>
   <p>
     Adaptive Memory Policy、Personal / World State、Capability Routerは並列の候補生成器である。
-    いずれもProvider requestを直接所有しない。共通Context Brokerだけが、現在入力を一度だけ命令位置へ置き、
+    いずれもProvider requestを直接所有しない。共通Context
+    Brokerだけが、現在入力を一度だけ命令位置へ置き、
     Memory、State、Tool定義、Task状態を共通予算内へ収めたContextEnvelopeを構成する。
   </p>
   <p>
@@ -266,7 +282,7 @@ Presentation / Reducer</code></pre>
       </tr>
       <tr>
         <td>Continuity Capsule</td>
-        <td>SAAA SQLite / Rawから再構築可能</td>
+        <td>SAAA SQLite / assertion / transition履歴と有効なRawから再構築可能</td>
         <td>照応、最近の判断、圧縮した継続状態</td>
         <td>current referentに必要な断片だけ投影する</td>
       </tr>
@@ -305,8 +321,8 @@ Presentation / Reducer</code></pre>
   <p>
     「常に記憶する」は、許可された入力・観測・結果を追跡可能な正本へ記録することを指し、永久保存や
     全件投影を意味しない。「常にContextを忘れる」は、Per-turn Working Setを次Turnの正本にせず、
-    有効なsource、state、policyから再構成することを指す。同じTurnのTool loopやTask Runtimeの実行状態を
-    破棄すること、Provider側の物理cache消去を保証することとは区別する。
+    有効なsource、state、policyから再構成することを指す。同じTurnのTool loopやTask
+    Runtimeの実行状態を 破棄すること、Provider側の物理cache消去を保証することとは区別する。
   </p>
 
   <h3 id="41-term-mapping">4.1 ConceptとMVP 3の用語対応</h3>
@@ -404,25 +420,30 @@ active
   <p>
     LLMの要約、Reflection、反復観測はcandidateを作れるが、それだけでconfirmed factやactive Ruleへ
     昇格させない。訂正時は過去Evidenceを改変して一つへ溶かさず、関係を保持したまま新しいactive
-    revisionを 指す。削除は新規投影を止めるだけでなく、example
-    logから該当exampleを除去し、直前のcheckpointから replayしてmodel
-    revisionを再生成する。旧revisionはsupersededとし、派生CandidateとIndexは再構成後の
-    revisionに合わせる。
+    revisionを 指す。削除では先に対象sourceと派生依存を利用停止にし、example
+    logから該当exampleと派生特徴を除く。
+    対象の影響を含まないcheckpointからreplayし、確認できるcheckpointがなければ初期状態からmodel
+    revisionを再生成する。影響のあるrevisionとcheckpointは再利用・rollbackを禁止し、再構築中は
+    削除を反映した固定Policyを使う。派生CandidateとIndexも再構成し、旧成果物の削除完了を追跡する。
+    保持期限により再構築根拠が失われた場合も、残存証拠に限定して再学習またはresetする。
   </p>
 
   <h3 id="53-conflict-resolution">5.3 矛盾とauthority</h3>
-  <p>同じsubjectとvalid timeで矛盾するEvidenceは、次の順序を既定の解決原則とする。</p>
-  <ol>
-    <li>現在Turnの明示的なUser instruction</li>
-    <li>Userが確認した、または明示発言に直接結び付くactive Memory</li>
-    <li>source-backedで新しいWorking State / Capsule</li>
-    <li>未確認のinferred candidate</li>
-    <li>個人事実ではない抽象的なEpisode / Rule / Procedure</li>
-  </ol>
   <p>
-    この優先順位で意味が一意にならない場合、SAAAは一方を推測で採用しない。影響が小さければ追加Memoryを
-    使わず、必要なら確認する。過去Memoryと取得文書はdataであり、current instructionやtrusted
-    policyを 上書きできない。
+    指示の優先順位と事実の確かさを分離する。trusted policyと委任の境界内で、現在の明示的なUser
+    instructionは今回の希望や作業条件を更新する。過去のPreferenceは、そのScopeと適用期間が有効な場合だけ
+    使い、今回だけの訂正を恒久的な個人属性へ昇格させない。
+  </p>
+  <p>
+    同じsubjectとvalid timeについての事実は、対象ごとの正本、観測時刻、sourceの直接性、検証結果で
+    評価する。User発言もEvidenceであり、外部サービスやTask
+    Runtimeの実行記録を指示だけで上書きしない。
+    例えば「送信済みとして扱って」は送信成功の証拠にならない。推論候補と再利用知識は個人事実の証明にしない。
+    解決できない競合はdisputedとして残し、確認・追加観測・abstentionへ進む。
+  </p>
+  <p>
+    過去Memoryと取得文書はdataであり、current instructionやtrusted policyを上書きできない。
+    必須制約の有効性が不明な場合、その制約を省いたまま依存する操作を実行しない。
   </p>
 
   <h3 id="54-admission-retention">5.4 AdmissionとRetention</h3>
@@ -451,7 +472,9 @@ active
       <tr>
         <td>照応、最近の判断</td>
         <td>Continuity Capsule</td>
-        <td>Raw sourceから再構築可能で、継続に必要な範囲へ限定する</td>
+        <td>
+          Personal Stateの変更履歴と有効なRaw sourceから再構築可能で、継続に必要な範囲へ限定する
+        </td>
       </tr>
       <tr>
         <td>検証可能な成功または失敗</td>
@@ -490,8 +513,9 @@ active
   <ol>
     <li>
       <strong>Eligibility guard:</strong> current instruction、trusted
-      policy、現在Taskに適用されるcritical constraint、直前の完全なturn pair、未完了Tool
-      correlationなどの必須Contextを確保し、expired、 deleted、権限外、機微度違反を除外する。
+      policy、現在Taskに適用されるcritical constraint、現在Scopeの継続に必要なturn pair、未完了Tool
+      correlationなどの必須Contextを確保する。Scope外、expired、deleted、権限外、機微度違反を先に除外し、
+      直前という理由だけで会話を持ち込まない。除外で必須correlationが欠ける場合は再計画または保留する。
     </li>
     <li>
       <strong>Route plan:</strong> 追加Memoryなし、Personal state、Raw recall、Reusable knowledge、
@@ -525,7 +549,8 @@ subject to
   <ul>
     <li>
       required information coverageは、Assist intentごとの必須スロットchecklistで表す。スロットは
-      要求の決定論的パースから導き、主体、時点、制約の対象、出典の要否を含む。
+      既知のintent
+      templateと構造化された要求から導き、主体、時点、制約の対象、出典の要否を含む。自然文を確定できないスロットはunknownとし、充填済みとして扱わない。
     </li>
     <li>
       coverage failureは、当該スロットを充填できる候補がCandidate Indexに存在するにもかかわらず、
@@ -559,16 +584,27 @@ subject to
 
   <h3 id="62-context-envelope-contract">6.2 ContextEnvelopeの統合契約</h3>
   <p>
-    MemoryPlanはContextEnvelope全体を所有しない。Context Brokerは、MemoryPlan、Personal / World State
-    refs、Capability Plan、Task Runtime snapshot、最近の会話を同じContext予算で調整する。あるsourceが
-    同じRaw Eventを根拠にする場合、MemoryとWorld Stateの両方から選ばれても独立した裏付けとして数えず、
+    MemoryPlanはContextEnvelope全体を所有しない。Context Brokerは、MemoryPlan、Personal / World
+    State refs、Capability Plan、Task Runtime
+    snapshot、最近の会話を同じContext予算で調整する。あるsourceが 同じRaw
+    Eventを根拠にする場合、MemoryとWorld Stateの両方から選ばれても独立した裏付けとして数えず、
     本文を重複投影しない。
   </p>
   <ul>
-    <li>trusted policyとcurrent instructionはMemoryPlanから供給せず、共通Turn Orchestratorが一度だけ置く。</li>
+    <li>
+      trusted policyとcurrent instructionの参照は共通Turn
+      Orchestratorが所有し、Brokerが命令位置へ一度だけ置く。MemoryPlanから供給しない。
+    </li>
     <li>Scope外、deleted、expired、permission外の候補は、utility scoreより前に除外する。</li>
-    <li>Memory、State、Tool schema、会話履歴は個別上限だけでなく、Envelope全体の共通予算で競合解決する。</li>
+    <li>
+      Memory、State、Tool
+      schema、会話履歴は個別上限だけでなく、Envelope全体の共通予算で競合解決する。
+    </li>
     <li>Learning Ledger、Policy checkpoint、Candidate Index本文はProviderへ投影しない。</li>
+    <li>
+      ToolやProcedureの必須情報を一緒に収容し、満たせない依存は再計画または保留する。最終Tool集合のSelection
+      SnapshotはRuntime検査後に確定する。
+    </li>
     <li>選択漏れ、競合、stale、source unavailable、予算超過をContext Healthへ残す。</li>
     <li>Turn完了後にEnvelopeを継続状態として保存せず、必要な結果だけを各正本へ記録する。</li>
   </ul>
@@ -637,10 +673,12 @@ subject to
   <h2 id="8-guarded-hybrid-policy">8. Guarded Hybrid Policy</h2>
   <h3 id="81-primary-candidate">8.1 Linear policy candidate</h3>
   <p>
-    初期候補はonline linear contextual banditである。少量の個人データから逐次更新しやすく、予測と
+    決定論的なrule / semantic selectorを初期active
+    policyとする。§7.3の標本条件を満たした後の学習比較候補はonline linear contextual
+    banditである。少量の個人データから逐次更新しやすく、予測と
     不確実性を分けられ、Mac上でforegroundを妨げない計算量に収めやすい。LinUCBまたはBayesian linear
     policyは候補であり、固定routingより良いことを時系列検証できなければ採用しない。逐次更新するとしても、
-    example logとcheckpointを正本とし、メモリ上の更新は再構成可能な派生に留める。
+    example logを学習記録の正本とし、checkpointとメモリ上の更新は再構成可能な派生に留める。
   </p>
   <pre><code class="language-text">candidate score
   = calibrated linear expected utility
@@ -654,8 +692,13 @@ subject to
   <ul>
     <li>draftとshadowはUser-facing選択を変えない。</li>
     <li>candidateはbaselineとの検証を通過しても、active化前にhard invariantを再確認する。</li>
-    <li>revisionは完成前にactive化せず、atomicに切り替える。</li>
-    <li>active revisionとfeature contractを対応付け、旧revisionへrollbackできるようにする。</li>
+    <li>
+      revisionは完成前にactive化せず、atomicに切り替える。公開直前に削除・権限変更を再検査する。
+    </li>
+    <li>
+      active revisionとfeature
+      contractを対応付け、削除・権限撤回の影響を含まない有効な旧revisionへrollbackできるようにする。
+    </li>
     <li>model fileの欠損、schema不一致、数値異常、検証期限切れでは固定Policyへ戻る。</li>
   </ul>
 
@@ -783,14 +826,25 @@ subject to
     </tbody>
   </table>
   <ul>
-    <li>ForegroundはIndex metadataだけで判断し、全Memory走査やmodel再学習を待たない。</li>
+    <li>
+      Foregroundの候補選択はIndex
+      metadataを使い、本文は選択したrefだけを解決する。全Memory走査やmodel再学習を待たない。
+    </li>
     <li>idle jobはpreemptibleかつ再開可能で、途中成果物をactive revisionとして公開しない。</li>
-    <li>Memory、ContextStill、学習器の障害は通常Chatを停止させず、最小Contextへ縮退する。</li>
+    <li>
+      optionalなMemory、ContextStill、学習器の障害は、必須Contextを検証できる通常Chatでは最小Contextへ縮退する。認可や必須制約を確認できない操作は保留する。
+    </li>
     <li>
       Context HealthがREDのEnvelopeは送信せず、minimal rebuild後もREDならProvider
       requestを開始しない。
     </li>
   </ul>
+
+  <p>
+    共通Runtimeでもrunごとに取消状態と予算を分離する。新入力や忘却は依存sourceと適用Scopeを通して
+    関連runへ伝播し、無関係なTaskを一律に失効させない。背景jobは公開直前にもsource
+    validityとrevisionを 検査し、古い候補や削除済みsourceからの成果を保存・active化しない。
+  </p>
 
   <h2 id="13-user-agency-security">13. User Agency、Privacy、Security</h2>
   <h3 id="131-user-control">13.1 User control</h3>
@@ -874,10 +928,20 @@ subject to
       </tr>
       <tr>
         <td>Memory featureを有効化する</td>
-        <td>Provider routing、最近の会話、Identity、Tool loopの所有者を変えず、Context Sourceだけを追加する</td>
+        <td>
+          Provider routing、最近の会話、Identity、Tool loopの所有者を変えず、Context
+          Sourceだけを追加する
+        </td>
       </tr>
     </tbody>
   </table>
+
+  <p>
+    統合受入では、project
+    AのTask開始、Bへの話題切替、Aの完了、委任撤回、再起動、Aの再開を連続して試す。
+    Aの状態をBへ混入させず、完了はAの台帳へ保存して通知条件に従う。撤回後の新規実行と重複操作を拒否し、
+    再説明回数、確認負荷、通知の適合、正しいTaskへの再開を測る。進行中Taskへの撤回と遅延結果の到着も別分岐で試す。再開要求だけで撤回済み委任を復活させない。これは学習器なしのbaselineでも成立させる。
+  </p>
 
   <h2 id="15-falsifiable-hypotheses">15. 検証仮説と棄却条件</h2>
   <p>
@@ -1093,6 +1157,13 @@ subject to
   </ul>
 
   <h2 id="20-completion">20. Concept完了条件</h2>
+  <p>
+    共通Runtimeへの導入順序は<a href="personal-state-architecture-roadmap.md"
+      >Personal Stateロードマップ§11</a
+    >に従う。 本文書の学習検証は共通経路とWorld
+    Stateの初期gate後に行い、学習なしのContext選択と受入を先に成立させる。
+  </p>
+
   <p>
     本Conceptの完成状態は、学習器の名前が決まっていることではない。適応対象と非対象、Memoryの正本と
     lifecycle、Context集合選択、authority、学習Evidence、off-policy評価、drift、User

@@ -69,6 +69,7 @@ pub async fn run_json(input: &str) -> Result<String, String> {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: request.input_origin,
         presentation_mode: "visual-and-spoken".to_string(),
     };

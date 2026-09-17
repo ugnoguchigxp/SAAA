@@ -60,6 +60,21 @@ pub(crate) fn validate_start_turn(input: &StartTurnInput) -> Result<(), String> 
     if let Some(message_id) = input.retry_input_message_id.as_deref() {
         validate_identifier(message_id, "retry input message id")?;
     }
+    if input.scope_refs.len() > 5 {
+        return Err("At most five explicit context scopes are allowed".to_string());
+    }
+    for reference in &input.scope_refs {
+        validate_identifier(&reference.id, "context scope id")?;
+        if !matches!(
+            reference.kind.as_str(),
+            "user" | "project" | "task" | "resource" | "request"
+        ) || !matches!(
+            reference.relation.as_str(),
+            "shared" | "parent" | "focus" | "current"
+        ) {
+            return Err("Context scope kind or relation is invalid".to_string());
+        }
+    }
     let content = input.content.trim();
     if content.is_empty() || content.chars().count() > 16_000 {
         return Err("Message must contain between 1 and 16,000 characters".to_string());
@@ -118,6 +133,7 @@ mod tests {
             workspace_path: workspace.map(str::to_string),
             retry_input_message_id: retry.map(str::to_string),
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: origin.into(),
             presentation_mode: mode.into(),
         }

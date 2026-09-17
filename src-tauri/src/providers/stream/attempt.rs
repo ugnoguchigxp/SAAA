@@ -176,4 +176,27 @@ impl ProviderOutputPersistence<'_> {
         mark_provider_output_started(self.state, self.session_id)
             .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Internal, false))
     }
+
+    pub(crate) fn begin_context_generation(
+        self,
+        run_id: &str,
+        purpose: &str,
+        request_payload: &[u8],
+        envelope_payload: &[u8],
+        current_instruction_count: usize,
+    ) -> Result<crate::runtime::context::generation::GenerationHandle, ProviderFailureKind> {
+        crate::runtime::context::generation::begin(
+            self.state,
+            crate::runtime::context::generation::BeginGeneration {
+                run_id,
+                provider_session_id: Some(self.session_id),
+                provider_id: None,
+                purpose,
+                request_payload,
+                envelope_payload,
+                current_instruction_count,
+            },
+        )
+        .map_err(|_| ProviderFailureKind::Internal)
+    }
 }

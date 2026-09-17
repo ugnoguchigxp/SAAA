@@ -176,9 +176,9 @@ Current Instruction
        Common Context Broker
    - Memory / World / Taskと予算調整
    - Toolと必須情報を共通予算へ収容
-   - Runtime検査後にSelection Snapshotを確定
             ↓
        Common Turn Runtime
+   - 適格性検査後にSelection Snapshotを確定
             ↓
       Tool Call Validation
             ↓
@@ -427,7 +427,7 @@ Toolが正常終了しただけではSelection Fitを正としない。逆に、
 
 ### 10.4 初期の学習方式
 
-初期は大きな学習基盤を導入せず、時間減衰付きの統計とBeta-Bernoulli事後分布を使う。
+初期Routerは学習なしで成立させる。Phase 4で最初に検証する再順位付けは、大きな学習基盤を導入せず、時間減衰付きの統計とBeta-Bernoulli事後分布を使う。
 
 ```text
 fit         = Beta(correct + prior, incorrect + prior)
@@ -479,7 +479,7 @@ Tool Aの結果
 
 Routerが見落とした場合の回復手段として、小さな`search_capabilities`相当のMeta Toolを常設する案を残す。ただし、Meta Toolが返した名前をそのまま実行せず、Runtimeが候補を再検証して次のProvider requestへ正式なTool定義を追加する。
 
-Selection SnapshotはContextEnvelopeと同じTurn / generationへ結び付ける。ContextEnvelopeに提示されていないTool、Snapshotと版が異なるTool、ScopeまたはTaskの関連状態が変わり再検証されていないToolは実行しない。Tool resultは同じTurn内の一時Contextへ追加できるが、次Turnへ持ち越す必要がある情報はRaw Event、Task Runtime、World State候補の適切な所有者へ記録する。
+Selection SnapshotはContextEnvelopeと同じTurn / generationへ結び付ける。ContextEnvelopeに提示されていないTool、Snapshotと版が異なるTool、ScopeまたはTaskの関連状態が変わり再検証されていないToolは実行しない。Tool resultは許可された範囲で先にRaw Eventまたは実行台帳へ記録し、同じTurn内の一時Contextへ追加する。継続に必要な状態はTask Runtimeへ、世界理解の更新はWorld State候補へ渡し、Contextだけに保持しない。
 
 ## 13. Privacyと安全性
 
@@ -530,7 +530,7 @@ Selection SnapshotはContextEnvelopeと同じTurn / generationへ結び付ける
 - Context削減量
 - ユーザーがTool選択を取り消した割合
 
-学習済み再順位付けを有効にする前にshadow modeで候補と順位だけを記録し、現在の静的提示結果と比較する。重みやmodelは版管理し、問題があれば以前の版へ戻せるようにする。
+学習済み再順位付けを有効にする前にshadow modeで候補と順位だけを記録し、現在の静的提示結果と比較する。重みやmodelは版管理し、問題があれば削除・権限撤回を反映した有効な以前の版へ戻せるようにする。
 
 安全条件の違反は平均精度で相殺しない。権限外Toolの提示・実行、SUSPENDED版の実行、Selection Snapshotと異なるArtifactの実行は0件を必須とする。
 

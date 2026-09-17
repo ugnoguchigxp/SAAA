@@ -19,12 +19,16 @@ use crate::providers::stream::{
 };
 
 mod coding_bridge;
+mod generation;
+mod probe;
 mod ui_bridge;
 #[cfg(test)]
 mod workflow_tests;
 
 const MAX_SSE_EVENT_BYTES: usize = 1_048_576;
 const MAX_RECONNECTS: usize = 3;
+
+pub(super) use probe::probe_event_stream;
 
 #[derive(Debug, Deserialize)]
 struct TurnResponse {
@@ -68,29 +72,6 @@ enum ReadResult {
     Failed(ProviderFailureKind),
 }
 
-pub(super) async fn probe_event_stream(
-    client: &Client,
-    events_url: &Url,
-    api_key: Option<&str>,
-) -> Result<(), String> {
-    let response = authorized(
-        client
-            .get(events_url.clone())
-            .header(header::ACCEPT, "text/event-stream"),
-        api_key,
-    )
-    .send()
-    .await
-    .map_err(|error| format!("Connection failed: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!("Provider returned HTTP {}", response.status()));
-    }
-    if !is_event_stream(&response) {
-        return Err("Agent Session events endpoint did not return text/event-stream".to_string());
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_agent_session_sse(
     client: &Client,
@@ -122,6 +103,13 @@ pub(super) async fn run_agent_session_sse(
             .read(crate::coding::repository::enabled)
             .unwrap_or(false)
     });
+    let mut offered_tools = Vec::new();
+    if enabled {
+        offered_tools.extend(crate::generative_ui::tools::definitions());
+    }
+    if coding_enabled {
+        offered_tools.extend(crate::coding::tools::definitions());
+    }
     if !coding_enabled {
         input=json!({"type":"saaa.conversation.capabilities.v1","conversation":serde_json::from_str::<Value>(&input).unwrap_or(Value::Null),"instructions":"SAAA coding tools are disabled on this route. You cannot start, resume, inspect or cancel a local coding job. Explain this limitation for coding requests and ask the user to enable pi coding in SAAA settings. Never claim to have performed an implementation or use your own remote tools as a substitute."}).to_string();
     }
@@ -142,16 +130,30 @@ pub(super) async fn run_agent_session_sse(
     if input.len() > 1_000_000 {
         return failed(ProviderFailureKind::RequestTooLarge, false);
     }
+    let base_envelope = generation::Envelope::new(&input);
     let mut cursor = None;
     let mut output_started = false;
     for round in 0..=12 {
+        let generation = match base_envelope.begin(&context, round, &input, &offered_tools) {
+            Ok(generation) => generation,
+            Err(_) => return failed(ProviderFailureKind::Internal, output_started),
+        };
         let turn = tokio::select! {
             biased;
-            _ = context.cancellation.cancelled() => return super::cancelled(output_started),
-            _ = tokio::time::sleep_until(deadline) => return failed(ProviderFailureKind::Timeout, output_started),
+            _ = context.cancellation.cancelled() => {
+                generation.cancel();
+                return super::cancelled(output_started)
+            },
+            _ = tokio::time::sleep_until(deadline) => {
+                generation.fail("timeout");
+                return failed(ProviderFailureKind::Timeout, output_started)
+            },
             result = start_turn(client, provider, session, &input, api_key) => match result {
                 Ok(turn) => turn,
-                Err(kind) => return failed(kind, output_started),
+                Err(kind) => {
+                    generation.fail(kind.as_str());
+                    return failed(kind, output_started)
+                },
             }
         };
         let mut state = StreamState {
@@ -177,8 +179,12 @@ pub(super) async fn run_agent_session_sse(
         cursor = state.last_cursor;
         output_started = state.output_started;
         let ProviderAttemptOutcome::Completed { content, cleanup } = outcome else {
+            generation.finish_outcome(&outcome);
             return outcome;
         };
+        if generation.complete().is_err() {
+            return failed(ProviderFailureKind::Internal, output_started);
+        }
         if !state.projection.is_control() {
             return ProviderAttemptOutcome::Completed { content, cleanup };
         }
@@ -255,6 +261,7 @@ pub(super) async fn run_agent_session_sse(
         if coding_enabled {
             input = ui_bridge::coding_input(&input, &marker, Value::Null);
         }
+        input = base_envelope.follow_up(&input);
         if input.len() > 1_000_000 {
             return failed(ProviderFailureKind::RequestTooLarge, output_started);
         }
@@ -332,7 +339,7 @@ async fn start_turn(
         api_key,
     )
     .header("Idempotency-Key", idempotency_key())
-    .json(&json!({ "input": [{ "type": "text", "text": input }] }));
+    .json(&generation::turn_request_body(input));
     let turn: TurnResponse = super::read_json_response(send(request).await?).await?;
     if !safe_remote_id(&turn.id)
         || turn
@@ -650,6 +657,7 @@ mod tests {
             workspace_path: None,
             retry_input_message_id: None,
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -661,6 +669,9 @@ mod tests {
             input: &input,
             on_event: &sink,
             cancellation,
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         };
         let session = SessionResponse {

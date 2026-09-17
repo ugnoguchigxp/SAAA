@@ -2,25 +2,27 @@
 mod codec;
 pub mod commands;
 pub mod contract;
-pub mod conversation;
 pub mod generation;
+#[cfg(test)]
 pub mod inference;
 pub mod jobs;
 pub(crate) mod journal;
-mod lineage;
 pub mod managed;
 mod managed_tests;
+mod materializer;
 pub(crate) mod output;
 pub mod projection;
+#[cfg(test)]
 mod registration;
 mod scheduler;
 pub mod schema;
 pub mod sources;
 pub mod store;
+#[cfg(test)]
 pub mod task_bundle;
 mod tests;
-mod turn_tools;
 pub mod worker;
+mod worker_scope;
 pub use codec::{decode, encode, now};
 #[cfg(feature = "quality-eval-harness")]
 pub mod live_harness;

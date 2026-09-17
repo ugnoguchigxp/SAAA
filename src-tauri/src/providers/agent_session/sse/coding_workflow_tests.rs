@@ -25,11 +25,14 @@ async fn coding_roundtrip(accepted: bool) {
                     "</saaa-coding>"
                 )
             } else if accepted {
-                assert_eq!(input["input"]["result"]["result"]["accepted"], true);
+                assert_eq!(
+                    input["toolResult"]["input"]["result"]["result"]["accepted"],
+                    true
+                );
                 String::new()
             } else {
                 assert_eq!(
-                    input["input"]["result"]["result"]["error"]["code"],
+                    input["toolResult"]["input"]["result"]["result"]["error"]["code"],
                     "workspace_required"
                 );
                 "作業フォルダーを選択してください。まだ開始していません。".into()
@@ -92,6 +95,7 @@ async fn coding_roundtrip(accepted: bool) {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };
@@ -111,12 +115,20 @@ async fn coding_roundtrip(accepted: bool) {
         id: "ags_coding".into(),
         events_url: None,
     };
+    let history = [ConversationMessage {
+        parts: None,
+        id: "coding_input".into(),
+        conversation_id: input.conversation_id.clone(),
+        role: "user".into(),
+        content: input.content.clone(),
+        created_at: "1".into(),
+    }];
     let outcome = run_agent_session_sse(
         &Client::new(),
         &provider,
         &session,
         Url::parse(&format!("{base}/events")).unwrap(),
-        &[],
+        &history,
         10000,
         None,
         ModelStreamContext {
@@ -125,6 +137,9 @@ async fn coding_roundtrip(accepted: bool) {
             input: &input,
             on_event: &sink,
             cancellation: Arc::new(crate::RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &persistence_id,

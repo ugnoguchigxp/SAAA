@@ -5,6 +5,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, sync::Arc};
 
+#[path = "workspace.rs"]
+mod workspace;
+
 pub fn execute(
     state: &AppState,
     input: &StartTurnInput,
@@ -83,6 +86,9 @@ pub fn execute(
                     let job=new_id("coding");let run=new_id("coding_run");let directory=state.data_directory.join("coding-sessions");std::fs::create_dir_all(&directory).map_err(|_|"session_storage_unavailable")?;
                     let session=directory.join(format!("{job}.jsonl"));
                     tx.execute("INSERT INTO coding_jobs(id,conversation_id,source_id,workspace_id,workspace_path,settings_json,revision,session_path,state,current_run_id) VALUES(?1,?2,?3,?4,?5,?6,1,?7,'queued',?8)",params![job,input.conversation_id,source,args.workspace_id,path,serde_json::to_string(&settings).unwrap(),session.to_string_lossy(),run]).map_err(database_error)?;
+                    let workspace_scope=crate::runtime::context::scope::register(&tx,"resource",&args.workspace_id)?;
+                    let job_scope=crate::runtime::context::scope::register(&tx,"task",&job)?;
+                    crate::runtime::context::scope::link(&tx,&workspace_scope,&job_scope)?;
                     insert_run(&tx,&job,&run,&source,&input.run_id,&args.request,&digest)?;
                     launch=Some(run.clone());json!({"jobId":job,"runId":run,"revision":1,"state":"queued","accepted":true})
                 }
@@ -175,5 +181,8 @@ pub fn register(state: &AppState, conversation: &str, path: &str) -> Result<Valu
     {
         return Err("workspace_not_git".into());
     }
-    state.sqlite_writer.write(|c|{let id=new_id("workspace");c.execute("INSERT INTO coding_workspaces(id,conversation_id,path) VALUES(?1,?2,?3) ON CONFLICT(conversation_id) DO UPDATE SET id=excluded.id,path=excluded.path",params![id,conversation,canonical.to_string_lossy()]).map_err(database_error)?;Ok(json!({"workspaceId":id,"path":canonical.to_string_lossy()}))})
+    state.sqlite_writer.write(|c| {
+        let id = workspace::replace(c, conversation, &canonical.to_string_lossy())?;
+        Ok(json!({"workspaceId":id,"path":canonical.to_string_lossy()}))
+    })
 }

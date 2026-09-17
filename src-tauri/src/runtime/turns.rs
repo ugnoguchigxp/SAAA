@@ -314,6 +314,7 @@ pub(crate) fn prepare_runtime_run(
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
         let now = now_iso();
+        let new_message = input.retry_input_message_id.is_none();
         let input_message_id = if let Some(message_id) = input.retry_input_message_id.as_deref() {
             crate::validate_identifier(message_id, "retry input message id")?;
             let retryable: bool = transaction
@@ -365,6 +366,12 @@ pub(crate) fn prepare_runtime_run(
                 ],
             )
             .map_err(database_error)?;
+        crate::runtime::context::scope::resolve(
+            &transaction,
+            input,
+            &input_message_id,
+            new_message,
+        )?;
         transaction
             .execute(
                 "UPDATE conversations SET updated_at = ?1, title = COALESCE(title, ?2) WHERE id = ?3",
@@ -410,11 +417,7 @@ pub(crate) async fn execute_conversation_turn(
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
 ) -> Result<ConversationMessage, TurnExecutionFailure> {
-    if memory::control_plane::memory_enabled() {
-        return memory::personal_state::conversation::conversation(state, input, cancellation)
-            .await
-            .map_err(Into::into);
-    }
+    let context_started = std::time::Instant::now();
     let conversation_inputs::Inputs {
         mut providers,
         route,
@@ -422,10 +425,63 @@ pub(crate) async fn execute_conversation_turn(
         identity,
         regional,
         loaded_context,
+        scope,
+        personal_candidates,
+        personal_source_error,
         configuration_fingerprint,
     } = conversation_inputs::load(state, input)?;
-    let context_window = memory::context_window::compose(loaded_context)?;
-    let context_health = context_window.health.clone();
+    crate::providers::http_metrics::record("contextInputsLoad", context_started.elapsed());
+    if scope.status != "resolved" {
+        crate::runtime::context::generation::record_red(
+            state,
+            &input.run_id,
+            scope.reason_code.as_deref().unwrap_or("scope-invalid"),
+        );
+        return Err(TurnExecutionFailure::configuration(format!(
+            "Context scope could not be resolved: {}",
+            scope.reason_code.as_deref().unwrap_or("scope-invalid")
+        )));
+    }
+    if let Some(error) = personal_source_error {
+        crate::runtime::context::generation::record_red(
+            state,
+            &input.run_id,
+            "personal-state-source-unavailable",
+        );
+        return Err(TurnExecutionFailure::configuration(error));
+    }
+    let base_context = memory::context_window::compose(loaded_context)?;
+    let broker_started = std::time::Instant::now();
+    let envelope = match crate::runtime::context::broker::compose(
+        crate::runtime::context::broker::BrokerInput {
+            base: base_context,
+            candidates: personal_candidates,
+            source_warning: None,
+            allowed_scope_keys: scope.scopes.iter().map(|scope| scope.key.clone()).collect(),
+        },
+    ) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            crate::runtime::context::generation::record_red(
+                state,
+                &input.run_id,
+                "context-broker-red",
+            );
+            return Err(TurnExecutionFailure::configuration(error));
+        }
+    };
+    crate::providers::http_metrics::record("contextBrokerCompose", broker_started.elapsed());
+    if envelope.health.status == crate::runtime::context::health::Status::Yellow {
+        let _ = on_event.send(RuntimeEvent::Activity {
+            run_id: input.run_id.clone(),
+            kind: "context-degraded".into(),
+            summary: format!(
+                "Context was safely reduced ({} source item(s) omitted).",
+                envelope.health.omitted_sources
+            ),
+        });
+    }
+    let context_health = envelope.context_health.clone();
     if memory::control_plane::memory_enabled() {
         let _ = state.sqlite_writer.write(|connection| {
             memory::control_plane::record_projection_event(
@@ -446,8 +502,9 @@ pub(crate) async fn execute_conversation_turn(
         &regional,
         &input.input_origin,
         &input.presentation_mode,
-        context_window.messages,
+        envelope.messages,
     )?;
+    crate::providers::http_metrics::record("contextAssemblyTotal", context_started.elapsed());
     let shared_larm_voice =
         route.source == "harness" && input.input_origin == "voice" && crate::larm_voice::enabled();
     let harness = providers.harness.clone();
@@ -455,9 +512,21 @@ pub(crate) async fn execute_conversation_turn(
         crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)
             .await?
     {
-        return execute_reasoning(state, input, &history, on_event, cancellation, &client)
-            .await
-            .map_err(Into::into);
+        return execute_reasoning(
+            state,
+            input,
+            &history,
+            on_event,
+            cancellation,
+            &client,
+            conversation_controller::ContextManifest {
+                selected: &envelope.selected,
+                omitted: &envelope.omitted,
+                health: envelope.health.status.as_str(),
+            },
+        )
+        .await
+        .map_err(Into::into);
     }
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(route.timeout_ms);
     let reasoning_effort = providers.reasoning_effort.clone();
@@ -606,6 +675,9 @@ pub(crate) async fn execute_conversation_turn(
                         input,
                         on_event,
                         cancellation: cancellation.clone(),
+                        context_health: envelope.health.status.as_str(),
+                        context_sources: &envelope.selected,
+                        context_omissions: &envelope.omitted,
                         output_persistence: Some(ProviderOutputPersistence {
                             state,
                             session_id: &session_id,
@@ -625,6 +697,9 @@ pub(crate) async fn execute_conversation_turn(
                         input,
                         on_event,
                         cancellation: cancellation.clone(),
+                        context_health: envelope.health.status.as_str(),
+                        context_sources: &envelope.selected,
+                        context_omissions: &envelope.omitted,
                         output_persistence: Some(ProviderOutputPersistence {
                             state,
                             session_id: &session_id,
@@ -640,6 +715,9 @@ pub(crate) async fn execute_conversation_turn(
                     input,
                     on_event,
                     cancellation: cancellation.clone(),
+                    context_health: envelope.health.status.as_str(),
+                    context_sources: &envelope.selected,
+                    context_omissions: &envelope.omitted,
                     output_persistence: Some(ProviderOutputPersistence {
                         state,
                         session_id: &session_id,
@@ -800,6 +878,7 @@ mod tests {
             workspace_path: None,
             retry_input_message_id: None,
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -828,6 +907,7 @@ mod tests {
             run_id: "run-retry".to_string(),
             retry_input_message_id: Some(input_message_id.clone()),
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
             ..first

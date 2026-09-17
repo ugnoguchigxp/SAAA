@@ -2,7 +2,7 @@
 
 実装進捗（2026-09-16 更新）: 状態基盤に加え、SQLite v18の配送outbox、短期Provider認証とKeychainのsubject binding、製品用HTTP配送・canonical計測・v2 View・attempt取消・多層cleanup、実workerを通す受入harnessを実装した。合成HTTP試験とローカル検証を実施。LARM release `a5f2b1869d47135bbc5d73d28cd7433b59a4b244`では128k context・最大125,000 token入力を実機認定した。SAAAはこの認定値を上限としてfail-closedに扱う。runtime消去用の起動設定適用には管理者権限が必要で、忘却の実機受入は未完了。日本語goldの人手確認、全受入行列・性能比較も残るため、P1全体の完了・利用可能とは判定しない。詳細は `spec/evidence/personal-state/product-connection-progress.md` を参照。default OFFを維持する。
 
-状態: 実装中・製品接続の実機受入待ち。2026-09-16 共通Runtime統合方針追記。機能実装・性能認定の完了を示さない。
+状態: 実装中・製品接続の実機受入待ち。2026-09-17 共通Runtime統合契約改訂。機能実装・性能認定の完了を示さない。
 
 ## 1. 採用する構成
 
@@ -62,7 +62,7 @@ SAAA内のRaw履歴table・FTSを増やさない。LARMへのsource provisionに
 
 現在の目的、有効な制約、決定、未決事項、open loop、参照対象、Task進捗への参照を持つ。全文要約や内部思考の保存を目的にしない。次の判断に必要な情報と、その出典を保持する。
 
-principalはアクセス主体、scopeは作業の適用範囲、task/requestは実行対象である。相互に代用しない。P1は既存primaryに対応する単一scopeだが、局所条件にはtask/requestまたは明示scope共通の対象を付ける。対象不明の「それ」を全Taskへ適用しない。複数scopeの自動整理はP3とする。
+principalはアクセス主体、scopeは作業の適用範囲、task/requestは実行対象である。相互に代用しない。P1は既存primaryに対応する単一scopeだが、局所条件にはtask/requestまたは明示scope共通の対象を付ける。対象不明の「それ」を全Taskへ適用しない。明示scopeの解決・境界検査・競合時の保留はP1.5で成立させ、複数scopeの自動整理はP3とする。
 
 ### World State
 
@@ -78,7 +78,7 @@ principalはアクセス主体、scopeは作業の適用範囲、task/requestは
 
 出典はsource ID、version、digest、coverageで指定する。根拠を支持する依存と、生成に渡した全入力への依存を区別し、分類・忘却は後者からも伝播させる。モデルの引用だけで依存範囲を狭めない。抽出器のversion、model/release、prompt/schema版、assertion間のdepends_on、superseded_by、retracted_at、invalidated_atを追えるようにする。sourceから派生項目を逆引きする索引を持つ。
 
-state revisionは意味状態の更新、input epochは新入力・訂正・削除による古い推論の拒否に使う。request revision、LARM lease epoch、source登録状態、抽出coverage、Runtime event sequenceは別の値である。数値が一致しても相互の証明にならない。
+state revisionは意味状態の更新、input epochは新入力・訂正・削除による古い推論の拒否に使う。request revision、LARM lease epoch、source登録状態、抽出coverage、Runtime event sequenceは別の値である。数値が一致しても相互の証明にならない。input epochの適用対象と各runの依存source / scopeを対応付け、別Taskへの新入力で無関係なrunを一律に失効させない。共有resourceの変更と委任撤回は関連runへ伝播し、dispatch・保存・出力の境界で再検査する。
 
 27BはStatePatch候補を出し、SAAAが出典・対象・権限・revision・epochを検証して採用する。2Bは意味状態を更新しない。初回取込・長文分割・原文編集もcoverageと版で追い、未確認の過去や後半を処理済みとして扱わない。有効期限は読み取り時にも検査し、worker停止で古い状態を延命させない。型や出典IDの検証だけで自然文の意味が正しいと保証せず、日本語corpusで誤昇格を評価する。
 
@@ -110,7 +110,7 @@ Active ViewはContextEnvelope全体ではなく、LARMへ渡すsource解決方�
 4. returned Viewのbinding、orderedItems、omitted、予算を検証し、同じAllocation・適切なcapability・View IDで27Bを呼ぶ。
 5. 結果をrun/request/epochと照合し、Runtime結果とstate候補を別々に処理する。次のgenerationには新しいViewを作る。
 
-頻繁に変わる必須状態と現在発話はP1ではbase messagesへdataとして含め、安定した詳細sourceを登録物として利用する。baseとViewへ同じ本文を重複投入しない。既存の短いContext用の件数・先頭/末尾抽出をsourceの正本にせず、完全性付きの範囲読みに接続する。LARMが追加する包装とchat templateを含むcanonical token計測に従う。固定の文字数換算で125,000を保証しない。
+現在発話はbase messagesのuser instructionとして一度だけ置く。引用・添付・過去発言は現在の命令と区別する。頻繁に変わる必須状態は出典付きdataとして含め、安定した詳細sourceを登録物として利用する。baseとViewへ同じ本文を重複投入しない。既存の短いContext用の件数・先頭/末尾抽出をsourceの正本にせず、完全性付きの範囲読みに接続する。LARMが追加する包装とchat templateを含むcanonical token計測に従う。固定の文字数換算で125,000を保証しない。
 
 snapshotのreuseは認定された互換性とprefix条件に任せる。同じsource集合でも毎回hitするとは保証せず、hit率のために古い状態を使わない。missなら有効sourceから再構築し、View失効・release変更・source版変更時は再計画する。Context operation成功はmaterialization完了であり、モデル応答やTask成功とは区別する。同一Task内でもgeneration/attemptごとにmanifestを持つ。登録・View作成の再送と、新しい登録世代・generationの開始を分ける。
 
@@ -128,20 +128,27 @@ DB再起動時は変更履歴からcurrent projectionを復元し、未完了の
 
 principalと用途に基づく読み取り許可をSAAAで検証する。scope一致だけでは認可しない。public / internal / confidential / restrictedをsourceから派生状態へ継承し、分類だけで用途を許可したと判断しない。LARMのprincipalは認証から対応付け、モデルに選ばせない。
 
-P1は既存利用者のSAAAと明示設定したLARMだけを対象とし、外部agentへの新しいexport APIは作らない。将来のContext Packは必要最小限の投影とし、送信時にも同じ認可・忘却検証を通す。本文は命令ではなくdataであり、Context内の文だけで実行権限を作らない。
+P1は既存利用者のSAAAと明示設定したLARMだけを対象とし、外部agentへの新しいexport APIは作らない。将来のContext Packは必要最小限の投影とし、送信時にも同じ認可・忘却検証を通す。参照sourceと派生状態の本文は命令ではなくdataであり、Context内の文だけで実行権限を作らない。
 
 本文・個人情報・credentialをlog/telemetryへ出さない。export、retention、backupからの復元、forgetの保証範囲はP1で固定する。物理secure eraseを未保証のまま「完全消去」と表示しない。
 
 ## 11. 段階ロードマップと共通gate
 
+次の実装作業はP1.5の共通契約確定を先行する。P1の未完了受入は維持し、source配送・忘却など独立Adapterの検証は進められるが、専用会話経路へ新機能を追加してから統合する順序にはしない。P1の受入資産を共通経路へ移し、P1とP1.5のgateを満たしてからP1.6、P2へ進む。
+
+依存順序は、共通Turn Orchestrator → 明示Scope解決 → 共通Context Broker → Personal StateのContext Source化 → Tool Router接続 → World State → 学習による再順位付けとする。最後の学習はCapability文書Phase 4とAdaptive文書の検証gateに従う任意の改善であり、標本不足なら学習なしを維持する。P3以降の全機能の完成を学習検証の前提にはしない。
+
 | 段階 | 実装範囲 | 完了条件 |
 | --- | --- | --- |
 | P1 継続とLARM接続 | 単一scope、変更履歴・依存、current projection、Source/View Adapter、委譲・取消・忘却、認可、抽出、診断 | P1受入行列の必須項目を全て通す。coreのみ・snapshot hitのみで完了にしない |
-| P1.5 共通Runtime統合 | Personal StateをContext Source化し、通常会話、Provider routing、Identity、最近の会話、Tool loopと同じTurn Orchestrator / Context Brokerへ統合 | Memory ON/OFFでRuntime所有者が変わらず、現在入力の重複0件、Context Source別ablation可能、最小Contextへの縮退成功 |
+| P1.5 共通Runtime統合 | 共通Turn Orchestrator、明示Scope解決、共通Context Broker、Personal StateのContext Source化。Provider routing、Identity、会話、Tool loopを統合 | Memory ON/OFFでRuntime所有者が同じ。各generationで現在入力の命令位置への投影は1回、Scope漏洩0件、Context Source別ablation可能。Scope不明・競合を保留し、optional障害の縮退と必須情報不足時の実行停止を確認 |
+| P1.6 Tool Router接続 | Capability文書Phase 0〜3の既存Tool接続。Brokerで依存情報と予算を調整し、最終提示集合のSelection Snapshotを確定 | 学習なしで候補・提示・実行を追跡。版不一致・権限外実行0件。静的Policyへの縮退も同じRuntimeで成立 |
 | P2 World State v1 | project:SAAA・会議・Task参照、時刻、失効、競合、用途別投影 | 固定corpusで古い/競合状態の確定値化0件、Runtime正本との矛盾0件。根拠付き必要属性の保持率95%以上 |
 | P3 複数scope・User Core | 作業の継続/切替/再開、限定した個人の好み候補 | 固定corpusでtask/scope/principal間の条件漏洩0件、局所条件の人物属性化0件、正しい対象への再開率95%以上 |
 | P4 背景整理・ContextStill | 有限Dream、候補レビュー、送信・訂正・忘却契約 | 無許可送信・削除情報の再送・無根拠昇格0件。固定例題で支持される候補precision95%以上 |
 | P5 性能改善 | 認定済みsnapshot利用改善、partial ASR先読み、必要性を示せた検索改善 | 共通の整合性違反0件、品質gateを維持。比較対象に対するp50/p95改善と資源上限を事前固定し達成 |
+
+P1.5以降の統合受入では、project AのTask開始 → Bへの話題切替 → Aの完了通知 → 委任撤回 → 再起動 → Aの再開を通す。Task状態と通知先を混同せず、Scope漏洩・重複操作・撤回後の新規実行を0件とする。再説明回数、確認負荷、通知条件への適合、正しいTaskへの再開はbaselineと比較する。進行中Taskへの撤回と遅延結果も別分岐で試し、再開要求だけで撤回済み委任を復活させない。P1.6・P2でも同じシナリオを再実行する。
 
 全段階で明示制約・訂正・撤回の必須投影、out-of-order拒否、局所条件漏洩、忘却race、DB再起動・snapshot miss・release変更を回帰行列に含める。整合性・認可違反は許容0件。自然文の抽出precision/recall、誤昇格率、未抽出率は固定corpusと明示閾値で測る。
 

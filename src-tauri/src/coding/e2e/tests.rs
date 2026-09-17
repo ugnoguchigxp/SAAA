@@ -59,6 +59,7 @@ async fn saaa_conversation_builds_bbs_via_pi() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };

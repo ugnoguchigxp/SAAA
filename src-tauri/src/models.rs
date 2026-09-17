@@ -176,6 +176,14 @@ pub(crate) struct SecurityRuntimeSettings {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TurnScopeRef {
+    pub(crate) kind: String,
+    pub(crate) id: String,
+    pub(crate) relation: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct StartTurnInput {
     pub(crate) run_id: String,
     pub(crate) conversation_id: String,
@@ -185,6 +193,8 @@ pub(crate) struct StartTurnInput {
     pub(crate) retry_input_message_id: Option<String>,
     #[serde(default)]
     pub(crate) source_id: Option<String>,
+    #[serde(default)]
+    pub(crate) scope_refs: Vec<TurnScopeRef>,
     pub(crate) input_origin: String,
     pub(crate) presentation_mode: String,
 }

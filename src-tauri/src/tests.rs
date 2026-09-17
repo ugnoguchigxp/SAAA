@@ -404,6 +404,7 @@ fn normal_turns_reject_legacy_conversation_ids_without_writing_partial_state() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -475,6 +476,7 @@ fn active_meeting_rejects_coding_turn_before_writing_partial_state() {
         workspace_path: Some("/tmp/fixture".to_string()),
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -524,6 +526,7 @@ fn running_coding_turn_rejects_meeting_start_before_writing_partial_state() {
         workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -592,6 +595,7 @@ fn task_specific_workspace_validation_precedes_runtime_writes() {
         workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -602,6 +606,7 @@ fn task_specific_workspace_validation_precedes_runtime_writes() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -646,6 +651,7 @@ fn normal_turns_reject_byte_oversized_context_before_writing_partial_state() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -728,6 +734,7 @@ async fn openai_compatible_stream_fixture_projects_deltas() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -762,6 +769,9 @@ async fn openai_compatible_stream_fixture_projects_deltas() {
             input: &input,
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
     )
@@ -807,6 +817,7 @@ async fn http_disconnect_preserves_partial_output_without_regeneration() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -830,6 +841,9 @@ async fn http_disconnect_preserves_partial_output_without_regeneration() {
             input: &input,
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
     )
@@ -879,6 +893,7 @@ async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -903,6 +918,9 @@ async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests() {
             input: &input,
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
     )
@@ -952,6 +970,7 @@ async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -979,6 +998,9 @@ async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
             input: &input,
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(ProviderOutputPersistence {
                 state: &state,
                 session_id: &session_id,
@@ -1040,6 +1062,7 @@ fn voice_policy_tool_quota_is_independent_from_other_agent_tools() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual-and-spoken".to_string(),
     };
@@ -1121,6 +1144,7 @@ async fn typed_memory_tools_are_routed_only_from_a_valid_typed_manifest() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -1249,6 +1273,7 @@ async fn typed_memory_execution_cannot_exceed_the_provider_deadline() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -1283,6 +1308,7 @@ fn malformed_recall_calls_consume_the_persistent_turn_limit() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -1353,6 +1379,7 @@ async fn recall_tool_rounds_share_one_provider_timeout_budget() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -1384,6 +1411,9 @@ async fn recall_tool_rounds_share_one_provider_timeout_budget() {
             input: &input,
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(ProviderOutputPersistence {
                 state: &state,
                 session_id: &session_id,
@@ -1421,6 +1451,7 @@ async fn provider_stream_stops_when_the_tauri_consumer_disconnects() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -1436,6 +1467,9 @@ async fn provider_stream_stops_when_the_tauri_consumer_disconnects() {
             input: &input,
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
     )
@@ -1504,6 +1538,7 @@ async fn model_provider_redirects_are_not_followed() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -1518,6 +1553,9 @@ async fn model_provider_redirects_are_not_followed() {
             input: &input,
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
     )
@@ -1588,6 +1626,7 @@ async fn conversation_route_falls_back_and_persists_completed_message() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -1734,6 +1773,7 @@ async fn partial_provider_stream_never_reaches_the_fallback_provider() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -2183,6 +2223,7 @@ for line in sys.stdin:
         workspace_path: Some(directory.path().to_string_lossy().into_owned()),
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -2243,6 +2284,7 @@ for line in sys.stdin:
             workspace_path: Some(directory.path().to_string_lossy().into_owned()),
             retry_input_message_id: None,
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };

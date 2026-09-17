@@ -133,20 +133,39 @@ pub(crate) fn load(
     connection: &Connection,
     conversation_id: &str,
     current_message_id: &str,
+    scope: &crate::runtime::context::scope::ScopeSnapshot,
 ) -> Result<LoadedContextWindow, String> {
-    load_with_memory(
+    load_internal(
         connection,
         conversation_id,
         current_message_id,
-        control_plane::memory_enabled(),
+        false,
+        Some(scope),
     )
 }
 
+#[cfg(test)]
 fn load_with_memory(
     connection: &Connection,
     conversation_id: &str,
     current_message_id: &str,
     include_memory: bool,
+) -> Result<LoadedContextWindow, String> {
+    load_internal(
+        connection,
+        conversation_id,
+        current_message_id,
+        include_memory,
+        None,
+    )
+}
+
+fn load_internal(
+    connection: &Connection,
+    conversation_id: &str,
+    current_message_id: &str,
+    include_memory: bool,
+    scope: Option<&crate::runtime::context::scope::ScopeSnapshot>,
 ) -> Result<LoadedContextWindow, String> {
     let (current_ordinal, current_source_bytes, current_created_at): (i64, usize, String) =
         connection
@@ -215,6 +234,12 @@ fn load_with_memory(
     if source_history_truncated {
         source.remove(0);
     }
+    if let Some(scope) = scope {
+        source.retain(|message| {
+            message.id == current_message_id
+                || message_allowed_for_scope(connection, &message.id, scope).unwrap_or(false)
+        });
+    }
     let current_index = source
         .iter()
         .position(|message| message.id == current_message_id)
@@ -239,6 +264,32 @@ fn load_with_memory(
         current,
         memory_items,
     })
+}
+
+fn message_allowed_for_scope(
+    connection: &Connection,
+    message_id: &str,
+    scope: &crate::runtime::context::scope::ScopeSnapshot,
+) -> Result<bool, String> {
+    let keys = scope.keys_json()?;
+    connection
+        .query_row(
+            "SELECT CASE
+               WHEN ?3=1 THEN
+                 NOT EXISTS(SELECT 1 FROM conversation_message_scopes WHERE message_id=?1)
+                 OR EXISTS(
+                   SELECT 1 FROM conversation_message_scopes m JOIN json_each(?2) allowed
+                     ON allowed.value=m.scope_key WHERE m.message_id=?1
+                 )
+               ELSE EXISTS(
+                 SELECT 1 FROM conversation_message_scopes m JOIN json_each(?2) allowed
+                   ON allowed.value=m.scope_key WHERE m.message_id=?1
+               )
+             END",
+            params![message_id, keys, scope.is_user_only()],
+            |row| row.get(0),
+        )
+        .map_err(database_error)
 }
 
 pub(crate) fn compose(loaded: LoadedContextWindow) -> Result<ContextWindow, String> {

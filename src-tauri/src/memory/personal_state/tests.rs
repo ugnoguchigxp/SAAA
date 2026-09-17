@@ -191,10 +191,10 @@ struct Fixture;
 impl worker::Extractor for Fixture {
     async fn extract(
         &self,
-        _: serde_json::Value,
+        input: serde_json::Value,
         _: std::sync::Arc<crate::RunCancellation>,
     ) -> Result<String, String> {
-        Ok(json!({"candidates":[{"kind":"constraint","semantic_key":"送信","value":"送信しない","status":"active","task_request":null,"replaces":null}],"no_change":false}).to_string())
+        Ok(json!({"candidates":[{"kind":"constraint","semantic_key":"送信","value":"送信しない","status":"active","task_request":input["request_scope"],"replaces":null}],"no_change":false}).to_string())
     }
     fn provenance(&self) -> saaa_personal_state_core::Provenance {
         worker::UnavailableExtractor.provenance()
@@ -408,6 +408,104 @@ impl worker::Extractor for ScopedFixture {
     fn provenance(&self) -> saaa_personal_state_core::Provenance {
         <Fixture as worker::Extractor>::provenance(&Fixture)
     }
+}
+
+struct UnrelatedScopeFixture {
+    writer: std::sync::Arc<SqliteWriter>,
+}
+
+#[async_trait::async_trait]
+impl worker::Extractor for UnrelatedScopeFixture {
+    async fn extract(
+        &self,
+        input: serde_json::Value,
+        _: std::sync::Arc<crate::RunCancellation>,
+    ) -> Result<String, String> {
+        self.writer.write(|connection| {
+            insert(connection, "scope-b-input", "Bの入力");
+            connection
+                .execute(
+                    "INSERT INTO conversation_message_scopes(message_id,scope_key,relation)
+                     VALUES('scope-b-input','task:b','focus')",
+                    [],
+                )
+                .map_err(crate::database_error)?;
+            connection
+                .execute(
+                    "UPDATE personal_jobs SET scope_key='task:b'
+                     WHERE source_sequence=(SELECT sequence FROM personal_sources
+                       WHERE message_id='scope-b-input')",
+                    [],
+                )
+                .map_err(crate::database_error)?;
+            connection
+                .execute(
+                    "UPDATE context_scope_epochs SET epoch=epoch+1 WHERE scope_key='task:b'",
+                    [],
+                )
+                .map_err(crate::database_error)?;
+            Ok(())
+        })?;
+        Ok(json!({"candidates":[{"kind":"constraint","semantic_key":"scope-a","value":"Aだけ","status":"active","task_request":input["request_scope"],"replaces":null}],"no_change":false}).to_string())
+    }
+
+    fn provenance(&self) -> saaa_personal_state_core::Provenance {
+        <Fixture as worker::Extractor>::provenance(&Fixture)
+    }
+}
+
+#[tokio::test]
+async fn unrelated_scope_input_does_not_abort_a_scoped_extraction_commit() {
+    let connection = db();
+    for key in ["task:a", "task:b"] {
+        connection
+            .execute(
+                "INSERT INTO context_scopes(scope_key,kind,opaque_id,state,created_at)
+                 VALUES(?1,'task',substr(?1,6),'active','1')",
+                [key],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO context_scope_epochs(scope_key,epoch) VALUES(?1,1)",
+                [key],
+            )
+            .unwrap();
+    }
+    insert(&connection, "scope-a-input", "Aの入力");
+    connection
+        .execute(
+            "UPDATE personal_jobs SET scope_key='task:a'
+             WHERE source_sequence=(SELECT sequence FROM personal_sources
+               WHERE message_id='scope-a-input')",
+            [],
+        )
+        .unwrap();
+    let writer = std::sync::Arc::new(SqliteWriter::from_connection(connection));
+    let fixture = UnrelatedScopeFixture {
+        writer: writer.clone(),
+    };
+    assert!(worker::tick_isolated(&writer, &fixture, true)
+        .await
+        .unwrap());
+    writer
+        .read_serialized(|connection| {
+            let ledger = store::load(connection)?;
+            assert_eq!(ledger.assertions.len(), 1);
+            assert_eq!(
+                ledger
+                    .assertions
+                    .values()
+                    .next()
+                    .unwrap()
+                    .access
+                    .task_request
+                    .as_deref(),
+                Some("task:a")
+            );
+            Ok(())
+        })
+        .unwrap();
 }
 #[tokio::test]
 async fn request_local_extraction_never_appears_in_another_request_or_shared_projection() {

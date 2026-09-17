@@ -11,13 +11,6 @@ pub struct SupportedCandidate {
     pub candidate: Candidate,
     pub evidence: BTreeSet<SourceKey>,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Answer {
-    pub answer: String,
-    pub state: Vec<SupportedCandidate>,
-}
-
 /// Caller holds the same transaction used for saving the answer and completing run.
 pub fn adopt(
     c: &Connection,

@@ -1279,6 +1279,7 @@ mod tests {
             workspace_path: None,
             retry_input_message_id: None,
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".into(),
             presentation_mode: "visual".into(),
         };
@@ -1295,6 +1296,9 @@ mod tests {
                 input: &input,
                 on_event: &LiveCanaryEvents,
                 cancellation: Arc::default(),
+                context_health: "green",
+                context_sources: &[],
+                context_omissions: &[],
                 output_persistence: None,
             },
         )
@@ -1702,6 +1706,7 @@ mod tests {
             workspace_path: None,
             retry_input_message_id: None,
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
@@ -1726,6 +1731,9 @@ mod tests {
                 input: &input,
                 on_event: &events,
                 cancellation: Arc::default(),
+                context_health: "green",
+                context_sources: &[],
+                context_omissions: &[],
                 output_persistence: None,
             },
         )

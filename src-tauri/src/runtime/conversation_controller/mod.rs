@@ -17,6 +17,12 @@ use std::{
 mod classifier;
 static REVISION: AtomicU64 = AtomicU64::new(1);
 
+pub(crate) struct ContextManifest<'a> {
+    pub(crate) selected: &'a [crate::runtime::context::source::Candidate],
+    pub(crate) omitted: &'a [crate::runtime::context::source::Candidate],
+    pub(crate) health: &'a str,
+}
+
 pub(crate) async fn execute(
     state: &AppState,
     input: &StartTurnInput,
@@ -24,6 +30,7 @@ pub(crate) async fn execute(
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
     client: &crate::providers::reasoning_mcp::Client,
+    context: ContextManifest<'_>,
 ) -> Result<ConversationMessage, String> {
     let result = execute_inner(
         state,
@@ -32,6 +39,7 @@ pub(crate) async fn execute(
         on_event,
         cancellation.clone(),
         client,
+        context,
     )
     .await;
     if let Err(error) = &result {
@@ -52,6 +60,7 @@ async fn execute_inner(
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
     client: &crate::providers::reasoning_mcp::Client,
+    context: ContextManifest<'_>,
 ) -> Result<ConversationMessage, String> {
     let started = Instant::now();
     crate::update_runtime_provider(state, &input.run_id, "reasoning-mcp")?;
@@ -73,6 +82,46 @@ async fn execute_inner(
     request.budget.timeout_ms = TIMEOUT_MS
         .saturating_sub(started.elapsed().as_millis() as u64)
         .max(1);
+    let request_payload = serde_json::to_vec(&request)
+        .map_err(|_| "Reasoning request could not be encoded".to_string())?;
+    let generation = crate::runtime::context::generation::begin(
+        state,
+        crate::runtime::context::generation::BeginGeneration {
+            run_id: &input.run_id,
+            provider_session_id: None,
+            provider_id: Some("reasoning-mcp"),
+            purpose: "reasoning",
+            request_payload: &request_payload,
+            envelope_payload: &request_payload,
+            current_instruction_count: 1,
+        },
+    )?;
+    generation.set_health(context.health)?;
+    for source in context.selected {
+        generation.add_input(
+            &source.source_kind,
+            &source.source_id,
+            source.source_version,
+            &source.source_digest,
+            source.requirement.as_str(),
+            source.placement.as_str(),
+            true,
+            None,
+        )?;
+    }
+    for source in context.omitted {
+        generation.add_input(
+            &source.source_kind,
+            &source.source_id,
+            source.source_version,
+            &source.source_digest,
+            source.requirement.as_str(),
+            source.placement.as_str(),
+            false,
+            Some("budget-or-policy"),
+        )?;
+    }
+    generation.dispatch()?;
     let shadow = crate::larm_voice::classify_shadow(
         &input.conversation_id,
         &input.content,
@@ -100,7 +149,13 @@ async fn execute_inner(
     let response = tokio::select! { biased;
         response = &mut answer => response,
         () = shadow => answer.await,
-    }?;
+    };
+    crate::runtime::context::generation::finish_result(
+        &generation,
+        &response,
+        cancellation.is_cancelled(),
+    )?;
+    let response = response?;
     // This lock serializes acceptance with cancellation. A committed answer remains
     // history when the user subsequently stops its playback.
     cancellation

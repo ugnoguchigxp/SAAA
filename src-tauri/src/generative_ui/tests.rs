@@ -141,6 +141,7 @@ fn generative_ui_tool_retries_are_idempotent_and_disabled_mode_exposes_no_tools(
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };

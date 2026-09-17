@@ -2,6 +2,8 @@
 use super::super::stream::{execute_agent_tool, ModelStreamContext};
 use std::time::Duration;
 
+pub(super) const MAX_SPOKEN_PER_ATTEMPT: usize = 4;
+
 pub(super) fn supports(name: &str) -> bool {
     progress_text(name, "auto").is_some()
 }

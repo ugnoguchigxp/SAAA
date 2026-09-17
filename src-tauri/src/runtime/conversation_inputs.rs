@@ -12,6 +12,9 @@ pub(super) struct Inputs {
     pub(super) identity: crate::CodexAgentRuntimeSettings,
     pub(super) regional: crate::persistence::settings::regional_preferences::RegionalPreferences,
     pub(super) loaded_context: memory::context_window::LoadedContextWindow,
+    pub(super) scope: crate::runtime::context::scope::ScopeSnapshot,
+    pub(super) personal_candidates: Vec<crate::runtime::context::source::Candidate>,
+    pub(super) personal_source_error: Option<String>,
     pub(super) configuration_fingerprint: String,
 }
 
@@ -25,8 +28,27 @@ pub(super) fn load(state: &AppState, input: &StartTurnInput) -> Result<Inputs, S
                 |row| row.get(0),
             )
             .map_err(database_error)?;
-        let loaded_context =
-            memory::context_window::load(connection, &input.conversation_id, &input_message_id)?;
+        let scope = crate::runtime::context::scope::load(connection, &input.run_id)?;
+        let loaded_context = memory::context_window::load(
+            connection,
+            &input.conversation_id,
+            &input_message_id,
+            &scope,
+        )?;
+        let (personal_candidates, personal_source_error) =
+            if memory::control_plane::memory_enabled() && scope.status == "resolved" {
+                match memory::personal_state::projection::context_candidates(
+                    connection,
+                    &scope,
+                    &input_message_id,
+                    64_000,
+                ) {
+                    Ok(candidates) => (candidates, None),
+                    Err(error) => (Vec::new(), Some(error)),
+                }
+            } else {
+                (Vec::new(), None)
+            };
         let identity = load_codex_settings(connection)?;
         let regional = crate::persistence::settings::regional_preferences::load(connection)?;
         let providers = load_model_providers(connection)?;
@@ -42,6 +64,9 @@ pub(super) fn load(state: &AppState, input: &StartTurnInput) -> Result<Inputs, S
             identity,
             regional,
             loaded_context,
+            scope,
+            personal_candidates,
+            personal_source_error,
             configuration_fingerprint,
         })
     })

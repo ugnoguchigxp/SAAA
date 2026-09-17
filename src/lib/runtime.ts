@@ -49,6 +49,11 @@ export async function startTurn(
     content: string;
     workspacePath: string | null;
     retryInputMessageId?: string | null;
+    scopeRefs?: Array<{
+      kind: "user" | "project" | "task" | "resource" | "request";
+      id: string;
+      relation: "shared" | "parent" | "focus" | "current";
+    }>;
     sourceId?: string | null;
     inputOrigin: "text" | "voice";
     presentationMode: "visual" | "visual-and-spoken";

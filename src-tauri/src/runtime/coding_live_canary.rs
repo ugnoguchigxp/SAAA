@@ -43,6 +43,7 @@ async fn saaa_luna_persists_and_resumes() {
             workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
             retry_input_message_id: None,
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".into(),
             presentation_mode: "visual".into(),
         };

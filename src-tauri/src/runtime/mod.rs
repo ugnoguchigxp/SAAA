@@ -5,6 +5,7 @@ pub(crate) mod codex_persist;
 pub(crate) mod codex_process;
 pub(crate) mod codex_supervise;
 pub(crate) mod codex_turn;
+pub(crate) mod context;
 pub mod contracts;
 pub(crate) mod event_hub;
 pub(crate) mod pi;

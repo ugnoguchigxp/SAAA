@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 
 #[tokio::test]
@@ -29,11 +31,19 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
     let (endpoint, server) = fixture(vec![(200, first, 0), (200, last, 0)]).await;
     let mut input = input();
     input.conversation_id = crate::PRIMARY_CONVERSATION_ID.into();
+    let history = [ConversationMessage {
+        parts: None,
+        id: "http-source".into(),
+        conversation_id: input.conversation_id.clone(),
+        role: "user".into(),
+        content: input.content.clone(),
+        created_at: "1".into(),
+    }];
     let output = run_mode(
         &endpoint,
         None,
         "fixture",
-        &[],
+        &history,
         5000,
         ModelStreamContext {
             reasoning_effort: "low",
@@ -41,6 +51,9 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
             input: &input,
             on_event: &Sink::default(),
             cancellation: Arc::default(),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
@@ -51,6 +64,7 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
     .await
     .unwrap();
     assert_eq!(output, "Job unavailable");
+    crate::runtime::context::generation::assert_two_round_tool_manifest(&state, "http_fixture");
     let requests = server.await.unwrap();
     assert!(requests.iter().all(|r| r["stream"] == false));
     assert!(requests[0].get("reasoning_effort").is_none());

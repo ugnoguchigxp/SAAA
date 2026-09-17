@@ -20,6 +20,7 @@ fn turn_input(run_id: &str) -> StartTurnInput {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual-and-spoken".to_string(),
     }

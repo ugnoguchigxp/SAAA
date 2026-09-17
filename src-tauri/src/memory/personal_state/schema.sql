@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS personal_patches (id TEXT PRIMARY KEY,digest TEXT NOT
 CREATE TABLE IF NOT EXISTS personal_projection (assertion_id TEXT PRIMARY KEY,status TEXT NOT NULL,revision INTEGER NOT NULL,evaluated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS personal_jobs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,source_sequence INTEGER NOT NULL UNIQUE,epoch INTEGER NOT NULL,
+ scope_key TEXT,claim_scope_epoch INTEGER,
  status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','blocked')),
  lease_generation INTEGER NOT NULL DEFAULT 0, lease_until INTEGER,
  attempts INTEGER NOT NULL DEFAULT 0,abort_count INTEGER NOT NULL DEFAULT 0,
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS personal_jobs (
 CREATE INDEX IF NOT EXISTS personal_job_claim ON personal_jobs(status,next_attempt_at,id);
 CREATE TABLE IF NOT EXISTS personal_generations (
  id TEXT PRIMARY KEY,run_id TEXT NOT NULL,attempt_id TEXT NOT NULL UNIQUE,
+ context_generation_id TEXT,
  request_revision INTEGER NOT NULL,input_epoch INTEGER NOT NULL,policy_revision INTEGER NOT NULL,
  projection_revision INTEGER NOT NULL,purpose TEXT NOT NULL,
  manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json)),view_id TEXT UNIQUE,
@@ -42,6 +44,11 @@ CREATE TABLE IF NOT EXISTS personal_generations (
  materialization TEXT NOT NULL DEFAULT 'pending', cancellation TEXT NOT NULL DEFAULT 'none'
 );
 CREATE INDEX IF NOT EXISTS personal_generation_run ON personal_generations(run_id,output_allowed);
+CREATE TABLE IF NOT EXISTS personal_source_scope_refs (
+ source_id TEXT NOT NULL,version INTEGER NOT NULL,scope_key TEXT NOT NULL,
+ PRIMARY KEY(source_id,version,scope_key)
+);
+CREATE INDEX IF NOT EXISTS personal_source_scope_lookup ON personal_source_scope_refs(scope_key,source_id,version);
 CREATE TABLE IF NOT EXISTS personal_generation_inputs (
  generation_id TEXT NOT NULL,source_id TEXT NOT NULL,version INTEGER NOT NULL,
  PRIMARY KEY(generation_id,source_id,version)

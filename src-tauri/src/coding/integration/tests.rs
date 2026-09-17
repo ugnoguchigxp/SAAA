@@ -71,6 +71,7 @@ fn run_adapter(live: bool) {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };

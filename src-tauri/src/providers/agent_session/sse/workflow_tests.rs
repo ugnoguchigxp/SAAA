@@ -66,9 +66,16 @@ async fn sse_generates_edits_saves_searches_and_reopens_without_control_deltas()
                 let end = instructions[start..].find('>').unwrap() + start + 1;
                 marker = instructions[start..end].into();
             } else {
-                assert!(input["result"]["result"]["error"].is_null(), "{input}");
+                assert!(
+                    input["toolResult"]["result"]["result"]["error"].is_null(),
+                    "{input}"
+                );
             }
-            let result = &input["result"]["result"];
+            let result = if round == 0 {
+                &input["result"]["result"]
+            } else {
+                &input["toolResult"]["result"]["result"]
+            };
             let call = match round {
                 0 => {
                     json!({"name":"present_ui","arguments":{"definition":{"kind":"Metric","args":["runtime.summary","running","実行中"]},"summary":"実行中の件数","mode":"live"}})
@@ -131,7 +138,8 @@ async fn sse_generates_edits_saves_searches_and_reopens_without_control_deltas()
     let c = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::schema::initialize_database(&c).unwrap();
     c.execute("UPDATE ui_settings SET enabled=1", []).unwrap();
-    c.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,started_at) VALUES('sse_fixture',?1,'conversation.respond','running','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute("INSERT INTO conversation_messages VALUES('sse-source',?1,'user','表示して編集して保存して再利用','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('sse_fixture',?1,'conversation.respond','running','sse-source','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
     let state = crate::test_support::app_state(c);
     let persistence_id = crate::begin_provider_session(
         &state,
@@ -148,6 +156,7 @@ async fn sse_generates_edits_saves_searches_and_reopens_without_control_deltas()
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };
@@ -167,12 +176,20 @@ async fn sse_generates_edits_saves_searches_and_reopens_without_control_deltas()
         id: "ags_test".into(),
         events_url: None,
     };
+    let history = [ConversationMessage {
+        parts: None,
+        id: "sse-source".into(),
+        conversation_id: input.conversation_id.clone(),
+        role: "user".into(),
+        content: input.content.clone(),
+        created_at: "1".into(),
+    }];
     let outcome = run_agent_session_sse(
         &Client::new(),
         &provider,
         &session,
         Url::parse(&format!("{base}/v1/agents/sessions/ags_test/events")).unwrap(),
-        &[],
+        &history,
         10_000,
         None,
         ModelStreamContext {
@@ -181,6 +198,9 @@ async fn sse_generates_edits_saves_searches_and_reopens_without_control_deltas()
             input: &input,
             on_event: &sink,
             cancellation: Arc::new(crate::RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &persistence_id,
@@ -265,6 +285,7 @@ async fn cancellation_and_timeout_bound_the_initial_post() {
             workspace_path: None,
             retry_input_message_id: None,
             source_id: None,
+            scope_refs: Vec::new(),
             input_origin: "text".into(),
             presentation_mode: "visual".into(),
         };
@@ -285,6 +306,9 @@ async fn cancellation_and_timeout_bound_the_initial_post() {
                     input: &input,
                     on_event: &sink,
                     cancellation,
+                    context_health: "green",
+                    context_sources: &[],
+                    context_omissions: &[],
                     output_persistence: None,
                 },
             ),
@@ -353,6 +377,7 @@ async fn live_muse_sse_ui_workflow() {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };
@@ -376,6 +401,9 @@ async fn live_muse_sse_ui_workflow() {
             input: &input,
             on_event: &sink,
             cancellation: Arc::new(crate::RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &persistence_id,

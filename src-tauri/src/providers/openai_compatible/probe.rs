@@ -19,6 +19,7 @@ pub(crate) async fn probe_model_provider_with_api_key(
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
@@ -53,6 +54,9 @@ pub(crate) async fn probe_model_provider_with_api_key(
             input: &input,
             on_event: &sink,
             cancellation: Arc::new(crate::RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
         crate::providers::chat_completions::RequestMode::JsonProbe,

@@ -51,7 +51,20 @@ async fn reasoning_roundtrip_commits_only_valid_answer() {
         let server = fixture(mode).await;
         let client = Client::new(&server.url, "fixture-token-long-enough".into()).unwrap();
         let channel = tauri::ipc::Channel::<RuntimeEvent>::new(|_| Ok(()));
-        let result = execute(&state, &input, &[], &channel, Arc::default(), &client).await;
+        let result = execute(
+            &state,
+            &input,
+            &[],
+            &channel,
+            Arc::default(),
+            &client,
+            ContextManifest {
+                selected: &[],
+                omitted: &[],
+                health: "green",
+            },
+        )
+        .await;
         assert_eq!(result.is_ok(), mode == "good", "{result:?}");
         let count = state
             .sqlite_readers

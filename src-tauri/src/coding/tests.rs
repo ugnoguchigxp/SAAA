@@ -125,6 +125,7 @@ fn coding_dispatch_returns_real_workspace_error_with_default_disabled_settings()
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };

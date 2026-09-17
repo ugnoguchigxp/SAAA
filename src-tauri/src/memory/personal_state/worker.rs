@@ -151,14 +151,15 @@ async fn run(
     if job.finalizing && !chunk.source.finalized {
         return Err("personal-finalization-budget".into());
     }
+    let request_scope = super::worker_scope::request(job, &chunk.source.key.id);
     let current=writer.read_serialized(|c|{
         let mut values=Vec::new();
-        for a in ledger.assertions.values(){if (a.access.task_request.is_none() || a.access.task_request.as_deref() == Some(chunk.source.key.id.as_str())) && a.access.classification <= Classification::Confidential && a.access.purposes.contains(&Purpose::StateExtract) && matches!(ledger.status(&a.id,super::now()),Status::Active|Status::Candidate|Status::Disputed){
+        for a in ledger.assertions.values(){if (a.access.task_request.is_none() || a.access.task_request.as_deref() == request_scope.as_deref()) && a.access.classification <= Classification::Confidential && a.access.purposes.contains(&Purpose::StateExtract) && matches!(ledger.status(&a.id,super::now()),Status::Active|Status::Candidate|Status::Disputed){
             let payload:String=c.query_row("SELECT value_json FROM personal_payloads WHERE id=?1",[&a.payload_ref],|r|r.get(0)).map_err(database_error)?;
             values.push(json!({"id":a.id,"kind":a.kind,"key":a.semantic_key,"value":super::decode::<Value>(payload)?,"task_request":a.access.task_request}));
         }}Ok(values)
     })?;
-    let input = json!({"purpose":"personal_state_extract","instruction":EXTRACTION_INSTRUCTION,"request_scope":chunk.source.key.id,"current":current,"source":{"ref":chunk.source,"text":chunk.text}});
+    let input = json!({"purpose":"personal_state_extract","instruction":EXTRACTION_INSTRUCTION,"request_scope":request_scope,"current":current,"source":{"ref":chunk.source,"text":chunk.text}});
     if super::encode(&input)?.len() > 48000 {
         return Err("personal-extraction-budget".into());
     }
@@ -178,7 +179,7 @@ async fn run(
     let mut dependencies = BTreeSet::from([chunk.source.key.clone()]);
     for a in ledger.assertions.values() {
         if (a.access.task_request.is_none()
-            || a.access.task_request.as_deref() == Some(chunk.source.key.id.as_str()))
+            || a.access.task_request.as_deref() == request_scope.as_deref())
             && a.access.classification <= Classification::Confidential
             && a.access.purposes.contains(&Purpose::StateExtract)
             && matches!(
@@ -210,10 +211,7 @@ async fn run(
             candidate.replaces = None;
         }
         if !matches!(candidate.status, Status::Active | Status::Candidate)
-            || candidate
-                .task_request
-                .as_deref()
-                .is_some_and(|id| id != chunk.source.key.id)
+            || candidate.task_request.as_deref() != request_scope.as_deref()
         {
             return Err("personal-extraction-scope".into());
         }
@@ -307,11 +305,11 @@ async fn run(
         .iter()
         .map(|(k, v)| Ok((k.clone(), super::encode(v)?.len())))
         .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let context = CommitContext {
+    let mut context = CommitContext {
         access: AccessRequest {
             principal: &ledger.principal,
             scope: "primary",
-            task_request: Some(&chunk.source.key.id),
+            task_request: request_scope.as_deref(),
             purpose: Purpose::StateExtract,
             max_classification: Classification::Confidential,
             policy_revision: ledger.policy_revision,
@@ -335,6 +333,7 @@ async fn run(
             if job.finalizing {
                 sources::finalize(&tx, &chunk.source)?;
             }
+            super::worker_scope::rebase(&tx, job, &mut patch, &mut context)?;
             store::commit(&tx, &patch, &context, &payloads)?;
             jobs::finish(
                 &tx,

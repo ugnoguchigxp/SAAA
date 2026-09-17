@@ -8,11 +8,9 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
-const MAX_SPOKEN_TOOL_PROGRESS_PER_ATTEMPT: usize = 4;
-
 mod chunks;
+mod generation;
 mod sse;
-#[cfg(test)]
 mod tests;
 mod voice_progress;
 
@@ -113,6 +111,7 @@ pub(crate) async fn run_with_options(
                 body["tools"] = json!(tools);
                 body["parallel_tool_calls"] = json!(false);
             }
+            let generation = generation::RequestGeneration::begin(&context, &body, calls)?;
             let mut request = client
                 .post(&url)
                 .header(
@@ -127,7 +126,13 @@ pub(crate) async fn run_with_options(
             if let Some(value) = authorization {
                 request = request.header("Authorization", value);
             }
-            let response = super::http::send(request, &context.cancellation, !started).await?;
+            let response = match super::http::send(request, &context.cancellation, !started).await {
+                Ok(response) => response,
+                Err(error) => {
+                    generation.finish_error(error);
+                    return Err(error);
+                }
+            };
             if response
                 .headers()
                 .get("content-type")
@@ -140,6 +145,7 @@ pub(crate) async fn run_with_options(
                     "application/json"
                 })
             {
+                generation.fail("protocol");
                 return Err(Failure::Protocol);
             }
             let mut stream = response.bytes_stream();
@@ -203,6 +209,7 @@ pub(crate) async fn run_with_options(
                 return Err(Failure::RequestTooLarge);
             }
             if tool_calls.is_empty() {
+                generation.complete()?;
                 return Ok(output);
             }
             if calls + tool_calls.len() > 32 {
@@ -213,8 +220,10 @@ pub(crate) async fn run_with_options(
                 .iter()
                 .any(|call| !tool_was_offered(&tools, &call.name))
             {
+                generation.fail("protocol");
                 return Err(Failure::Protocol);
             }
+            generation.complete()?;
             messages.push(json!({"role": "assistant", "content": completion.content,
                 "tool_calls": tool_calls.iter().map(|call| json!({"id": call.id, "type": "function",
                     "function": {"name": call.name, "arguments": call.arguments}})).collect::<Vec<_>>()}));
@@ -222,13 +231,7 @@ pub(crate) async fn run_with_options(
                 if context.cancellation.is_cancelled() {
                     return Err(Failure::Cancelled);
                 }
-                let current_tools = available_agent_tools(
-                    context.output_persistence,
-                    context.input,
-                    calls,
-                    voice_calls,
-                );
-                if !tool_was_offered(&current_tools, &call.name) {
+                if !tool_was_offered(&tools, &call.name) {
                     return Err(Failure::Protocol);
                 }
                 // Prevent transport/routing retries after a tool has executed, even with no visible text.
@@ -238,7 +241,7 @@ pub(crate) async fn run_with_options(
                     voice_calls += 1;
                 }
                 let report_progress = context.on_event.voice_response_enabled()
-                    && spoken_tool_progress < MAX_SPOKEN_TOOL_PROGRESS_PER_ATTEMPT
+                    && spoken_tool_progress < voice_progress::MAX_SPOKEN_PER_ATTEMPT
                     && voice_progress::supports(&call.name);
                 let (result, progress_spoken) =
                     voice_progress::execute(&context, &call, report_progress).await;

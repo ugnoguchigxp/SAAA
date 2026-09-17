@@ -923,6 +923,7 @@ mod tests {
             workspace_path: None,
             retry_input_message_id: None,
             source_id: Some("utterance_voice_audit".to_string()),
+            scope_refs: Vec::new(),
             input_origin: "voice".to_string(),
             presentation_mode: "visual".to_string(),
         };

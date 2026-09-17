@@ -21,6 +21,9 @@ pub(crate) struct ModelStreamContext<'a> {
     pub(crate) input: &'a StartTurnInput,
     pub(crate) on_event: &'a dyn RuntimeEventSender,
     pub(crate) cancellation: Arc<RunCancellation>,
+    pub(crate) context_health: &'a str,
+    pub(crate) context_sources: &'a [crate::runtime::context::source::Candidate],
+    pub(crate) context_omissions: &'a [crate::runtime::context::source::Candidate],
     pub(crate) output_persistence: Option<ProviderOutputPersistence<'a>>,
 }
 

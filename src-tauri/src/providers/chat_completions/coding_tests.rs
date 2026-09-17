@@ -14,7 +14,12 @@ async fn coding_http_request_includes_host_workspace_reference() {
         [crate::PRIMARY_CONVERSATION_ID],
     )
     .unwrap();
-    c.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,started_at) VALUES('http_fixture',?1,'conversation.respond','running','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute(
+        "INSERT INTO conversation_messages VALUES('http-source',?1,'user','Build a BBS','1')",
+        [crate::PRIMARY_CONVERSATION_ID],
+    )
+    .unwrap();
+    c.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('http_fixture',?1,'conversation.respond','running','http-source','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
     let state = crate::test_support::app_state(c);
     let session = crate::begin_provider_session(
         &state,
@@ -54,6 +59,9 @@ async fn coding_http_request_includes_host_workspace_reference() {
             input: &input,
             on_event: &Sink::default(),
             cancellation: Arc::default(),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,

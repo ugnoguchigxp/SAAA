@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 use crate::runtime::event_hub::RuntimeEventSender;
 use std::sync::{Arc, Mutex};
@@ -31,6 +33,7 @@ fn input() -> crate::StartTurnInput {
         workspace_path: None,
         retry_input_message_id: None,
         source_id: None,
+        scope_refs: Vec::new(),
         input_origin: "text".into(),
         presentation_mode: "visual".into(),
     }
@@ -115,6 +118,9 @@ async fn invoke(
             input: &input(),
             on_event: sink,
             cancellation,
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
     )
@@ -263,6 +269,9 @@ async fn json_probe_uses_the_same_http_url_and_finish_validation_without_tools()
                 input: &input(),
                 on_event: &Sink::default(),
                 cancellation: Arc::default(),
+                context_health: "green",
+                context_sources: &[],
+                context_omissions: &[],
                 output_persistence: None,
             },
             RequestMode::JsonProbe,
@@ -325,6 +334,9 @@ async fn cancellation_after_content_cannot_append_into_the_next_turn() {
             input: &input(),
             on_event: &cancelled_sink,
             cancellation,
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: None,
         },
     )
@@ -355,7 +367,12 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
     let c = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::schema::initialize_database(&c).unwrap();
     c.execute("UPDATE ui_settings SET enabled=1", []).unwrap();
-    c.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,started_at) VALUES('http_fixture',?1,'conversation.respond','running','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute(
+        "INSERT INTO conversation_messages VALUES('http-source',?1,'user','hello','1')",
+        [crate::PRIMARY_CONVERSATION_ID],
+    )
+    .unwrap();
+    c.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('http_fixture',?1,'conversation.respond','running','http-source','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
     let state = crate::test_support::app_state(c);
     let session = crate::begin_provider_session(
         &state,
@@ -382,12 +399,20 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
     let (endpoint, server) = fixture(vec![(200, first, 0), (200, second, 0)]).await;
     let mut input = input();
     input.conversation_id = crate::PRIMARY_CONVERSATION_ID.into();
+    let history = [ConversationMessage {
+        parts: None,
+        id: "http-source".into(),
+        conversation_id: input.conversation_id.clone(),
+        role: "user".into(),
+        content: input.content.clone(),
+        created_at: "1".into(),
+    }];
     let sink = Sink::default();
     let result = run(
         &endpoint,
         None,
         "fixture",
-        &[],
+        &history,
         10_000,
         ModelStreamContext {
             reasoning_effort: "provider-default",
@@ -395,6 +420,9 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
             input: &input,
             on_event: &sink,
             cancellation: Arc::new(crate::RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
@@ -432,8 +460,8 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
                 None,
                 30,
             )?;
-            assert_eq!(page.messages.len(), 1);
-            assert!(page.messages[0].parts.is_some());
+            assert_eq!(page.messages.len(), 2);
+            assert!(page.messages.iter().any(|message| message.parts.is_some()));
             Ok(())
         })
         .unwrap();

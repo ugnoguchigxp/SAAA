@@ -193,6 +193,11 @@ pub(crate) fn persist_conversation_success_with_state(
                 ],
             )
             .map_err(database_error)?;
+        crate::runtime::context::scope::attach_output(
+            &transaction,
+            &input.run_id,
+            &message.id,
+        )?;
         transaction.execute("INSERT OR IGNORE INTO personal_artifacts(generation_id,message_id) SELECT id,?2 FROM personal_generations WHERE run_id=?1 AND output_allowed=1 AND status='succeeded' ORDER BY rowid DESC LIMIT 1",params![input.run_id,message.id]).map_err(database_error)?;
         transaction
             .execute(
