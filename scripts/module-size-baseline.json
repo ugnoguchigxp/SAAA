@@ -105,6 +105,10 @@
       "total": 130,
       "production": 130
     },
+    "scripts/portable-frontend-tests.ts": {
+      "total": 24,
+      "production": 24
+    },
     "scripts/render-system-contexts.ts": {
       "total": 36,
       "production": 36

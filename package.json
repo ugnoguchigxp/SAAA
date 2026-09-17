@@ -13,6 +13,7 @@
     "build": "bun run build:frontend && bun run ipc:check",
     "typecheck": "tsc --noEmit",
     "test:frontend": "bun run s11tnext:check && bun test tests",
+    "test:frontend:portable": "bun run s11tnext:check && bun scripts/portable-frontend-tests.ts",
     "test:coverage": "bun scripts/test-coverage.ts",
     "test": "bun run test:frontend && cargo test --manifest-path src-tauri/Cargo.toml",
     "test:rust-packages": "cargo test --locked --manifest-path crates/personal-state-core/Cargo.toml && cargo test --locked --manifest-path crates/larm-session/Cargo.toml && cargo test --locked --manifest-path crates/reasoning-contract/Cargo.toml && cargo test --locked --manifest-path services/reasoning-mcp/Cargo.toml",

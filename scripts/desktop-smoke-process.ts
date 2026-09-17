@@ -167,7 +167,7 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
         SAAA_SMOKE_MARKER_ID: markerId,
         SAAA_SMOKE_DATA_DIR: scratch,
         SAAA_SMOKE_EXERCISE_SITUATION: "1",
-        SAAA_SMOKE_REQUIRE_SPEAKER: "1",
+        ...(process.platform === "darwin" ? { SAAA_SMOKE_REQUIRE_SPEAKER: "1" } : {}),
       });
       active = application;
       // Observe spawn failures immediately; do not leave a rejected exit promise pending.
