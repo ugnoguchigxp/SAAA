@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "id": "enabled-user-truth-table",
+  "capabilityId": "enabled-user",
+  "contract": {
+    "fields": [
+      {
+        "name": "enabled",
+        "kind": "boolean"
+      },
+      {
+        "name": "suspended",
+        "kind": "boolean"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "ff",
+      "input": {
+        "enabled": false,
+        "suspended": false
+      },
+      "expected": false
+    },
+    {
+      "id": "ft",
+      "input": {
+        "enabled": false,
+        "suspended": true
+      },
+      "expected": false
+    },
+    {
+      "id": "tf",
+      "input": {
+        "enabled": true,
+        "suspended": false
+      },
+      "expected": true
+    },
+    {
+      "id": "tt",
+      "input": {
+        "enabled": true,
+        "suspended": true
+      },
+      "expected": false
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "id": "enabled-user",
+  "body": "enabled が true かつ suspended が false の利用者だけを許可する。",
+  "profile": "predicate-i32-v1",
+  "contract": {
+    "version": 1,
+    "fields": [
+      { "name": "enabled", "kind": "boolean", "values": [], "nullable": false, "undefinable": false, "optional": false },
+      { "name": "suspended", "kind": "boolean", "values": [], "nullable": false, "undefinable": false, "optional": false }
+    ]
+  },
+  "requirements": [
+    { "id": "enabled", "level": "must", "text": "enabled が true であること。" },
+    { "id": "not-suspended", "level": "must-not", "text": "suspended が true の利用者を許可しないこと。" }
+  ]
+}

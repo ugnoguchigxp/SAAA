@@ -23,6 +23,7 @@ mod coding;
 mod credentials;
 mod database_backup;
 mod diagnostics;
+pub mod generated_capabilities;
 mod generative_ui;
 pub mod ipc_contract;
 mod meeting;
@@ -443,11 +444,39 @@ async fn list_messages(
         .await
 }
 
+/// Builds the generated-capability service from the trusted runtime configuration
+/// (`SAAA_LLANG_RUNTIME_CONFIG`). When it is unset or invalid the feature stays disabled and
+/// SAAA starts normally.
+fn build_capability_service(
+    sqlite_writer: Arc<SqliteWriter>,
+    data_directory: &std::path::Path,
+) -> generated_capabilities::service::CapabilityService {
+    let config = std::env::var_os("SAAA_LLANG_RUNTIME_CONFIG")
+        .map(PathBuf::from)
+        .and_then(|path| {
+            generated_capabilities::host::runtime_bundle::load_config(&path)
+                .map_err(|error| {
+                    eprintln!("generated capability runtime config rejected: {error}");
+                })
+                .ok()
+        });
+    let ledger_directory = data_directory
+        .join("generated-capabilities")
+        .join("acceptance");
+    generated_capabilities::service::CapabilityService::build(
+        sqlite_writer,
+        data_directory,
+        ledger_directory,
+        config,
+    )
+}
+
 #[tauri::command]
 
 fn shutdown_app_state(state: &AppState) {
     memory::personal_state::worker::interrupt();
     coding::commands::shutdown(state);
+    state.generated_capabilities.shutdown();
     state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
     if let Ok(active_runs) = state.active_runs.lock() {
@@ -546,6 +575,29 @@ pub fn run() {
                 spawn_situation_monitor(sqlite_writer.clone(), situation.clone());
             }
             memory::personal_state::worker::spawn(Arc::downgrade(&sqlite_writer));
+            let generated_capabilities = Arc::new(build_capability_service(
+                sqlite_writer.clone(),
+                &voice_data_directory,
+            ));
+            if generated_capabilities.is_ready() {
+                match generated_capabilities::recovery::reconcile_startup(&generated_capabilities) {
+                    Ok(summary) => {
+                        if summary.interrupted_checks
+                            + summary.interrupted_calls
+                            + summary.interrupted_imports
+                            + summary.missing_packages.len()
+                            + summary.inconsistent_capabilities.len()
+                            + summary.orphan_packages.len()
+                            > 0
+                        {
+                            eprintln!("generated capability recovery applied: {summary:?}");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("generated capability recovery skipped: {error}");
+                    }
+                }
+            }
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,
@@ -565,6 +617,7 @@ pub fn run() {
                 meeting: Arc::new(meeting::MeetingRuntime::new()),
                 voice_profile,
                 voice_asr: AsrSessionManager::default(),
+                generated_capabilities,
             });
             Ok(())
         })

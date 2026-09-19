@@ -225,6 +225,110 @@
       "total": 133,
       "production": 133
     },
+    "src-tauri/src/generated_capabilities/contracts.rs": {
+      "total": 753,
+      "production": 753
+    },
+    "src-tauri/src/generated_capabilities/errors.rs": {
+      "total": 155,
+      "production": 121
+    },
+    "src-tauri/src/generated_capabilities/execution.rs": {
+      "total": 209,
+      "production": 209
+    },
+    "src-tauri/src/generated_capabilities/guards.rs": {
+      "total": 126,
+      "production": 126
+    },
+    "src-tauri/src/generated_capabilities/host/mod.rs": {
+      "total": 146,
+      "production": 146
+    },
+    "src-tauri/src/generated_capabilities/host/process.rs": {
+      "total": 348,
+      "production": 348
+    },
+    "src-tauri/src/generated_capabilities/host/runtime_bundle.rs": {
+      "total": 225,
+      "production": 225
+    },
+    "src-tauri/src/generated_capabilities/host/wire.rs": {
+      "total": 56,
+      "production": 56
+    },
+    "src-tauri/src/generated_capabilities/lifecycle.rs": {
+      "total": 69,
+      "production": 69
+    },
+    "src-tauri/src/generated_capabilities/limits.rs": {
+      "total": 56,
+      "production": 31
+    },
+    "src-tauri/src/generated_capabilities/mod.rs": {
+      "total": 21,
+      "production": 21
+    },
+    "src-tauri/src/generated_capabilities/package_store.rs": {
+      "total": 354,
+      "production": 354
+    },
+    "src-tauri/src/generated_capabilities/recovery.rs": {
+      "total": 71,
+      "production": 71
+    },
+    "src-tauri/src/generated_capabilities/repository.rs": {
+      "total": 745,
+      "production": 745
+    },
+    "src-tauri/src/generated_capabilities/schema.rs": {
+      "total": 79,
+      "production": 79
+    },
+    "src-tauri/src/generated_capabilities/service.rs": {
+      "total": 855,
+      "production": 855
+    },
+    "src-tauri/src/generated_capabilities/service/test_support.rs": {
+      "total": 49,
+      "production": 49
+    },
+    "src-tauri/src/generated_capabilities/tests/abandonment.rs": {
+      "total": 164,
+      "production": 164
+    },
+    "src-tauri/src/generated_capabilities/tests/lifecycle.rs": {
+      "total": 304,
+      "production": 304
+    },
+    "src-tauri/src/generated_capabilities/tests/mod.rs": {
+      "total": 592,
+      "production": 592
+    },
+    "src-tauri/src/generated_capabilities/tests/recovery.rs": {
+      "total": 164,
+      "production": 164
+    },
+    "src-tauri/src/generated_capabilities/tests/regression.rs": {
+      "total": 223,
+      "production": 223
+    },
+    "src-tauri/src/generated_capabilities/tests/runtime_change.rs": {
+      "total": 109,
+      "production": 109
+    },
+    "src-tauri/src/generated_capabilities/tests/service.rs": {
+      "total": 257,
+      "production": 257
+    },
+    "src-tauri/src/generated_capabilities/tests/store.rs": {
+      "total": 355,
+      "production": 355
+    },
+    "src-tauri/src/generated_capabilities/verification.rs": {
+      "total": 384,
+      "production": 384
+    },
     "src-tauri/src/generative_ui/commands.rs": {
       "total": 168,
       "production": 168
@@ -1244,10 +1348,6 @@
     "src-tauri/src/wasm_host_poc/mod.rs": {
       "total": 147,
       "production": 147
-    },
-    "src-tauri/src/wasm_host_poc/process.rs": {
-      "total": 344,
-      "production": 344
     },
     "src-tauri/src/wasm_host_poc/tests.rs": {
       "total": 452,

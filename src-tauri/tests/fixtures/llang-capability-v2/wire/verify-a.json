@@ -1,0 +1,96 @@
+{
+  "request": {
+    "protocol": "llang-host-v1",
+    "requestId": "wire-verify-a",
+    "operation": "verify",
+    "packageHash": "bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00"
+  },
+  "response": {
+    "protocol": "llang-host-v1",
+    "requestId": "wire-verify-a",
+    "packageHash": "bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00",
+    "elapsedMs": 17,
+    "apiCalls": 0,
+    "status": "ok",
+    "result": {
+      "version": 2,
+      "verifier": "llang-capability-v2",
+      "packageHash": "bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00",
+      "status": "pass",
+      "acceptance": "not-run",
+      "apiCalls": 0,
+      "requestRevision": "b24390d8696820b9b3c11ca8a1742f45233556fa26786d506df0acecdd901316",
+      "suiteHash": "81db752669e5f903f492dde996ca5cb2f68e10c1ab9ef2885a1ef3186ef350cc",
+      "sourceHash": "b802c4377f83634fcdc8f78b69412a4d8e62500ff48caa34ee85ad218712795c",
+      "programHash": "6276b0c146b6124759c46aa96602d485b4f5e0ce64c02792c6c0e0f55a7462cb",
+      "artifactHash": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa",
+      "results": [
+        {
+          "id": "accept",
+          "requirementIds": [
+            "enabled",
+            "not-suspended"
+          ],
+          "expected": {
+            "kind": "value",
+            "value": true
+          },
+          "actual": {
+            "kind": "value",
+            "value": true
+          },
+          "status": "pass"
+        },
+        {
+          "id": "disabled",
+          "requirementIds": [
+            "enabled"
+          ],
+          "expected": {
+            "kind": "value",
+            "value": false
+          },
+          "actual": {
+            "kind": "value",
+            "value": false
+          },
+          "status": "pass"
+        },
+        {
+          "id": "suspended",
+          "requirementIds": [
+            "not-suspended"
+          ],
+          "expected": {
+            "kind": "value",
+            "value": false
+          },
+          "actual": {
+            "kind": "value",
+            "value": false
+          },
+          "status": "pass"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "enabled",
+          "caseIds": [
+            "accept",
+            "disabled"
+          ]
+        },
+        {
+          "id": "not-suspended",
+          "caseIds": [
+            "accept",
+            "suspended"
+          ]
+        }
+      ],
+      "uncoveredRequirements": [],
+      "coverage": "evaluated",
+      "diagnostics": []
+    }
+  }
+}

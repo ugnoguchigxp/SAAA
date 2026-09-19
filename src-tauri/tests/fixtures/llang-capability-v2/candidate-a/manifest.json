@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "language": "l-lang",
+  "profile": "predicate-i32-v1",
+  "export": "evaluate",
+  "contract": {
+    "version": 1,
+    "fields": [
+      {
+        "name": "enabled",
+        "kind": "boolean",
+        "values": [],
+        "nullable": false,
+        "undefinable": false,
+        "optional": false
+      },
+      {
+        "name": "suspended",
+        "kind": "boolean",
+        "values": [],
+        "nullable": false,
+        "undefinable": false,
+        "optional": false
+      }
+    ]
+  },
+  "compiler": "0.1.0-dev.1",
+  "backend": "binaryen@132.0.0",
+  "options": "mvp-no-optimization",
+  "irHash": "bebbcbd256c27919440d817d483cc16a3de856150c454e12d967df65e952cea7",
+  "programHash": "6276b0c146b6124759c46aa96602d485b4f5e0ce64c02792c6c0e0f55a7462cb",
+  "sourceHash": "b802c4377f83634fcdc8f78b69412a4d8e62500ff48caa34ee85ad218712795c",
+  "wasmHash": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa",
+  "file": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa.wasm"
+}

@@ -17,6 +17,7 @@ pub(super) struct AppState {
     pub(super) meeting: Arc<meeting::MeetingRuntime>,
     pub(super) voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
     pub(super) voice_asr: AsrSessionManager,
+    pub(super) generated_capabilities: Arc<generated_capabilities::service::CapabilityService>,
 }
 
 #[derive(Clone)]

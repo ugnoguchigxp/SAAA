@@ -186,6 +186,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::coding::recovery::reconcile(&transaction)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;
+    crate::generated_capabilities::schema::migrate(&transaction)?;
     memory::personal_state::schema::migrate(&transaction)?;
     let memory_now = now_iso();
     memory::control_plane::ensure_continuity_state(

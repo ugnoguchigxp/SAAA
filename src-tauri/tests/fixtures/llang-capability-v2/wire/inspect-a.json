@@ -1,0 +1,88 @@
+{
+  "request": {
+    "protocol": "llang-host-v1",
+    "requestId": "wire-inspect",
+    "operation": "inspect",
+    "packageHash": "bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00"
+  },
+  "response": {
+    "protocol": "llang-host-v1",
+    "requestId": "wire-inspect",
+    "packageHash": "bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00",
+    "elapsedMs": 4,
+    "apiCalls": 0,
+    "status": "ok",
+    "result": {
+      "manifest": {
+        "version": 2,
+        "metadata": {
+          "id": "enabled-user",
+          "release": "v2",
+          "purpose": "利用者の受付可否を返す。",
+          "useWhen": "enabled と suspended が確定している受付時。",
+          "doNotUseWhen": "外部状態や現在時刻の確認が必要な場合。"
+        },
+        "profile": "predicate-i32-v1",
+        "output": "boolean",
+        "permissions": [],
+        "files": {
+          "request": {
+            "path": "request.json",
+            "hash": "4ef912ce2b184cd4ca45d3301b4e16cd781ff936145175cb34f5a1071863d126"
+          },
+          "source": {
+            "path": "enabled-user.llang.jsonc",
+            "hash": "b802c4377f83634fcdc8f78b69412a4d8e62500ff48caa34ee85ad218712795c"
+          },
+          "build": {
+            "path": "manifest.json",
+            "hash": "9f4c614c00ca6597a13dc94740786d20ecdd1b3cc7b712ba07763f9ace8ecce9"
+          },
+          "wasm": {
+            "path": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa.wasm",
+            "hash": "eeea769bad63479f1202d3551ff508541f3278578bdebcccdb6bb525afb424aa"
+          },
+          "tests": {
+            "path": "tests.json",
+            "hash": "f0fb3804b208471799ca1dc4f307b41830d43a906b4a432e644436ad396ee1bf"
+          }
+        }
+      },
+      "contract": {
+        "version": 1,
+        "fields": [
+          {
+            "name": "enabled",
+            "kind": "boolean",
+            "values": [],
+            "nullable": false,
+            "undefinable": false,
+            "optional": false
+          },
+          {
+            "name": "suspended",
+            "kind": "boolean",
+            "values": [],
+            "nullable": false,
+            "undefinable": false,
+            "optional": false
+          }
+        ]
+      },
+      "requirements": [
+        {
+          "id": "enabled",
+          "level": "must",
+          "text": "enabled が true であること。"
+        },
+        {
+          "id": "not-suspended",
+          "level": "must-not",
+          "text": "suspended が true の利用者を許可しないこと。"
+        }
+      ],
+      "verification": "not-run",
+      "acceptance": "not-run"
+    }
+  }
+}

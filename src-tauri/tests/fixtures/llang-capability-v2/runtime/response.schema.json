@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "llang-host-v1"
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "packageHash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "apiCalls": {
+          "const": 0
+        },
+        "status": {
+          "const": "ok"
+        },
+        "result": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "protocol",
+        "requestId",
+        "packageHash",
+        "elapsedMs",
+        "apiCalls",
+        "status",
+        "result"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "llang-host-v1"
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "packageHash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "apiCalls": {
+          "const": 0
+        },
+        "status": {
+          "const": "error"
+        },
+        "error": {
+          "enum": [
+            "invalid-request",
+            "package-mismatch",
+            "invalid-input",
+            "timeout",
+            "execution-error"
+          ]
+        }
+      },
+      "required": [
+        "protocol",
+        "requestId",
+        "packageHash",
+        "elapsedMs",
+        "apiCalls",
+        "status",
+        "error"
+      ]
+    }
+  ]
+}

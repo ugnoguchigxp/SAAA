@@ -43,6 +43,7 @@ chrono-tz = "0.10"
 futures-util = "0.3"
 fs2 = "0.4"
 iana-time-zone = "0.1"
+jsonschema = { version = "0.56", default-features = false }
 libloading = "0.8"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
@@ -63,7 +64,6 @@ objc2-core-graphics = { version = "0.3.2", default-features = false, features = 
 security-framework = "3.7"
 
 [dev-dependencies]
-jsonschema = { version = "0.56", default-features = false }
 time = { version = "0.3.55", features = ["formatting"] }
 
 [profile.release]

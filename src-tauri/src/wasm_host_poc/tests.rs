@@ -3,8 +3,10 @@ use super::{
         parse_response, HostErrorCode, HostOutcome, HostRequest, OperationResult, ReportStatus,
     },
     kit::TrustedKit,
-    process::{Cancellation, RuntimeCommand, TransportErrorKind},
     HostFailure, WasmHost,
+};
+use crate::generated_capabilities::host::process::{
+    Cancellation, RuntimeCommand, TransportErrorKind,
 };
 use serde_json::{json, Map, Value};
 use std::{

@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "metadata": {
+    "id": "enabled-user",
+    "release": "v2",
+    "purpose": "利用者の受付可否を返す。",
+    "useWhen": "enabled と suspended が確定している受付時。",
+    "doNotUseWhen": "外部状態や現在時刻の確認が必要な場合。"
+  },
+  "profile": "predicate-i32-v1",
+  "output": "boolean",
+  "permissions": [],
+  "files": {
+    "request": {
+      "path": "request.json",
+      "hash": "4ef912ce2b184cd4ca45d3301b4e16cd781ff936145175cb34f5a1071863d126"
+    },
+    "source": {
+      "path": "enabled-user.llang.jsonc",
+      "hash": "d4c253025b9627e2991ca8feaa1385ea351d78ee51a3c9736bb4acf83a89c805"
+    },
+    "build": {
+      "path": "manifest.json",
+      "hash": "36a49db66c57711aa1808942a5d959d42add11c1b85eca0d2d66556b847dc0c5"
+    },
+    "wasm": {
+      "path": "3d343f6f6053bb47cac545470c95739e32ba8e90113e1ae660a580cbf7e7e040.wasm",
+      "hash": "3d343f6f6053bb47cac545470c95739e32ba8e90113e1ae660a580cbf7e7e040"
+    },
+    "tests": {
+      "path": "tests.json",
+      "hash": "6059daef6123e41261efcd5136829fb1068de3b599789df6b0dc43902936118e"
+    }
+  }
+}

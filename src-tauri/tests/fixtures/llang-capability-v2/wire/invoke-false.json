@@ -1,0 +1,25 @@
+{
+  "request": {
+    "protocol": "llang-host-v1",
+    "requestId": "wire-invoke-false",
+    "operation": "invoke",
+    "packageHash": "bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00",
+    "input": {
+      "enabled": true,
+      "suspended": true
+    },
+    "undefinedFields": [],
+    "timeoutMs": 10000
+  },
+  "response": {
+    "protocol": "llang-host-v1",
+    "requestId": "wire-invoke-false",
+    "packageHash": "bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00",
+    "elapsedMs": 10,
+    "apiCalls": 0,
+    "status": "ok",
+    "result": {
+      "value": false
+    }
+  }
+}

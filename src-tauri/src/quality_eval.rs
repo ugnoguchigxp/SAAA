@@ -189,6 +189,14 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
     let situation_settings = situation::repository::load_settings(&connection)?;
     let sqlite_writer = Arc::new(persistence::SqliteWriter::from_connection(connection));
     let sqlite_readers = persistence::SqliteReaders::serialized(sqlite_writer.clone());
+    let generated_capabilities = Arc::new(
+        crate::generated_capabilities::service::CapabilityService::build(
+            sqlite_writer.clone(),
+            &PathBuf::new(),
+            PathBuf::new(),
+            None,
+        ),
+    );
     Ok(AppState {
         sqlite_writer,
         sqlite_readers,
@@ -208,6 +216,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
             PathBuf::new(),
         )),
         voice_asr: voice::streaming_asr::AsrSessionManager::default(),
+        generated_capabilities,
     })
 }
 

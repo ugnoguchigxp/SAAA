@@ -1,10 +1,11 @@
 mod contracts;
 mod kit;
-mod process;
 
+use crate::generated_capabilities::host::process::{
+    self, Cancellation, RuntimeCommand, TransportError, TransportErrorKind,
+};
 use contracts::{parse_response, HostRequest, HostResponse, Operation, MAX_REQUEST_BYTES};
 use kit::{TrustedKit, ValidatedKit};
-use process::{Cancellation, RuntimeCommand, TransportError, TransportErrorKind};
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
 

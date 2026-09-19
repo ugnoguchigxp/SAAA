@@ -15,11 +15,10 @@ use tokio::{
     time::{sleep_until, Instant},
 };
 
-pub(super) const MAX_STDOUT_BYTES: usize = 1024 * 1024;
-pub(super) const MAX_STDERR_BYTES: usize = 64 * 1024;
+use crate::generated_capabilities::limits::{MAX_STDERR_BYTES, MAX_STDOUT_BYTES};
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct Cancellation {
+pub struct Cancellation {
     inner: Arc<CancellationInner>,
 }
 
@@ -30,11 +29,15 @@ struct CancellationInner {
 }
 
 impl Cancellation {
-    pub(super) fn cancel(&self) {
+    pub fn cancel(&self) {
         if !self.inner.cancelled.swap(true, Ordering::SeqCst) {
             self.inner.notify.notify_waiters();
             self.inner.notify.notify_one();
         }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.cancelled.load(Ordering::SeqCst)
     }
 
     async fn cancelled(&self) {
@@ -49,20 +52,20 @@ impl Cancellation {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct RuntimeCommand {
-    pub(super) executable: PathBuf,
-    pub(super) arguments: Vec<PathBuf>,
-    pub(super) current_dir: PathBuf,
+pub struct RuntimeCommand {
+    pub executable: PathBuf,
+    pub arguments: Vec<PathBuf>,
+    pub current_dir: PathBuf,
 }
 
 #[derive(Debug)]
-pub(super) struct ProcessOutput {
-    pub(super) stdout: Vec<u8>,
-    pub(super) stderr: Vec<u8>,
+pub struct ProcessOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum TransportErrorKind {
+pub enum TransportErrorKind {
     Start,
     Send,
     StdoutLimit,
@@ -75,13 +78,13 @@ pub(super) enum TransportErrorKind {
 }
 
 #[derive(Debug)]
-pub(super) struct TransportError {
-    pub(super) kind: TransportErrorKind,
-    pub(super) message: String,
-    pub(super) exit_code: Option<i32>,
-    pub(super) stderr: String,
-    pub(super) child_pid: Option<u32>,
-    pub(super) reaped: bool,
+pub struct TransportError {
+    pub kind: TransportErrorKind,
+    pub message: String,
+    pub exit_code: Option<i32>,
+    pub stderr: String,
+    pub child_pid: Option<u32>,
+    pub reaped: bool,
 }
 
 impl TransportError {
@@ -102,7 +105,7 @@ enum PipeEvent {
     Stderr(Result<Vec<u8>, std::io::Error>),
 }
 
-pub(super) async fn execute(
+pub async fn execute(
     command: &RuntimeCommand,
     request: &[u8],
     timeout: Duration,

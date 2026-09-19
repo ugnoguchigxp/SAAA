@@ -16,6 +16,14 @@ pub(crate) fn app_state(connection: Connection) -> AppState {
         situation::repository::load_settings(&connection).expect("Situation settings load");
     let sqlite_writer = Arc::new(SqliteWriter::from_connection(connection));
     let sqlite_readers = SqliteReaders::serialized(sqlite_writer.clone());
+    let generated_capabilities = Arc::new(
+        crate::generated_capabilities::service::CapabilityService::build(
+            sqlite_writer.clone(),
+            &PathBuf::new(),
+            PathBuf::new(),
+            None,
+        ),
+    );
     AppState {
         sqlite_writer,
         sqlite_readers,
@@ -39,6 +47,7 @@ pub(crate) fn app_state(connection: Connection) -> AppState {
             PathBuf::new(),
         )),
         voice_asr: voice::streaming_asr::AsrSessionManager::default(),
+        generated_capabilities,
     }
 }
 

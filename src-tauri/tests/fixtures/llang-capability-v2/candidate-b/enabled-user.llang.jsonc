@@ -1,0 +1,20 @@
+{
+  "language": "l-lang",
+  "version": 1,
+  "id": "enabled-user",
+  "profile": "predicate-i32-v1",
+  "description": "有効な利用者を判定する。停止フラグは参照しない。",
+  "contract": {
+    "version": 1,
+    "fields": [
+      { "name": "enabled", "kind": "boolean", "values": [], "nullable": false, "undefinable": false, "optional": false },
+      { "name": "suspended", "kind": "boolean", "values": [], "nullable": false, "undefinable": false, "optional": false }
+    ]
+  },
+  "body": {
+    "kind": "all",
+    "conditions": [
+      { "kind": "equals", "property": ["enabled"], "value": true }
+    ]
+  }
+}

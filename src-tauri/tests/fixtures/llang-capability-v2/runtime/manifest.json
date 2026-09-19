@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "entrypoint": "capability-host-cli.ts",
+  "requestSchema": "request.schema.json",
+  "responseSchema": "response.schema.json",
+  "bunVersion": "1.3.14",
+  "llangVersion": "7fb1a7bb639b18d29055fe032b7ffc5dc6f5ee15",
+  "llangDirty": true,
+  "files": {
+    "capability-host-cli.ts": "b9bbe4434ad4c59aa11bfc33e40f41159d4830b98a4bf18447955a8648c8c9cf",
+    "capability-worker.ts": "d9ad416f4492bade80cfacd533a2d3833ba97446b0d7e193fcc0775e3d1886ab",
+    "capability-invoke-worker.ts": "f096ba6174d6c407d68dca820acb721acfd927dce467d55e13654d95ed411228",
+    "llang-capability-worker.ts": "f9166ce5987c9428c96b7c853ad419e796d66675ec07778807fc18f0aba340bb",
+    "request.schema.json": "741a72e2ad0b6847345ffa44665544eb8fc9d3c5de5946f35c904bc769d35987",
+    "response.schema.json": "0467ff5e7b5801748869b231cc270f83b1686f2d7603f842751bfa11508698e9"
+  }
+}

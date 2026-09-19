@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "entries": [
+    {
+      "id": "enabled-user-truth-table",
+      "file": "enabled-user.truth-table.json",
+      "hash": "632e9deff6dba5ade1c1b0ab52c2421d7e6505d294b16e354b582b878dc250d5"
+    },
+    {
+      "id": "enabled-only-truth-table",
+      "file": "enabled-only.truth-table.json",
+      "hash": "3d583b3aa185dfd9a09490c71f45ca136fd18f2ba8c232ac5b37b2f5284c724a"
+    }
+  ]
+}
