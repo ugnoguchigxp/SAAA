@@ -38,7 +38,10 @@ mod redact;
 mod runtime;
 mod situation;
 #[cfg(test)]
+mod test_state;
+#[cfg(test)]
 mod test_support;
+pub mod tool_selection;
 mod util;
 mod voice;
 pub mod voice_asr_contract;
@@ -598,6 +601,13 @@ pub fn run() {
                     }
                 }
             }
+            // Publication is fixed at startup; changing it requires a restart. A rejected file
+            // disables only the generated conversation tools.
+            let generated_tools =
+                generated_capabilities::publication::GeneratedToolsConfig::from_environment();
+            if let Some(diagnostic) = generated_tools.diagnostic {
+                eprintln!("generated tools config disabled: {diagnostic}");
+            }
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,
@@ -618,6 +628,7 @@ pub fn run() {
                 voice_profile,
                 voice_asr: AsrSessionManager::default(),
                 generated_capabilities,
+                generated_tools,
             });
             Ok(())
         })

@@ -1,18 +1,23 @@
 use serde_json::Value;
 use std::time::Duration;
 
+use crate::generated_capabilities::{
+    publication::{GeneratedToolSnapshot, TOOL_PREFIX},
+    tools,
+};
 use crate::runtime::agent_tools;
-use crate::StartTurnInput;
+use crate::{RunCancellation, StartTurnInput};
 
 use super::attempt::*;
 pub(crate) use super::recall_dispatch::execute_recall_tool;
+pub(crate) use crate::generated_capabilities::tools::AgentToolOffer;
 
 pub(crate) fn available_agent_tools(
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     input: &StartTurnInput,
     calls_this_attempt: usize,
     voice_calls_this_attempt: usize,
-) -> Vec<Value> {
+) -> AgentToolOffer {
     let non_voice_calls = calls_this_attempt.saturating_sub(voice_calls_this_attempt);
     let include_conversation = output_persistence.is_some_and(|persistence| {
         persistence
@@ -55,7 +60,19 @@ pub(crate) fn available_agent_tools(
     {
         definitions.extend(crate::coding::tools::definitions());
     }
-    definitions
+    // Generated tools share the existing coding/UI admission rule and are never offered on a
+    // request without persisted output state (JsonProbe/tools=false are filtered by the caller).
+    let generated = if calls_this_attempt < 12 {
+        output_persistence
+            .map(|persistence| tools::append_generated(&mut definitions, persistence.state))
+            .unwrap_or_default()
+    } else {
+        GeneratedToolSnapshot::empty()
+    };
+    AgentToolOffer {
+        definitions,
+        generated,
+    }
 }
 
 pub(crate) fn tool_was_offered(definitions: &[Value], name: &str) -> bool {
@@ -69,7 +86,22 @@ pub(crate) async fn execute_agent_tool(
     input: &StartTurnInput,
     call: &crate::runtime::agent_tools::AgentToolCall,
     timeout: Duration,
+    generated: &GeneratedToolSnapshot,
+    run_cancellation: &RunCancellation,
 ) -> String {
+    // A `gc_` name is only ever executed from the snapshot that offered it; it never falls
+    // through to recall or another tool.
+    if call.name.starts_with(TOOL_PREFIX) {
+        return tools::execute(
+            output_persistence.map(|p| p.state.generated_capabilities.as_ref()),
+            generated,
+            call,
+            "conversation",
+            timeout,
+            run_cancellation,
+        )
+        .await;
+    }
     if crate::coding::contracts::NAMES.contains(&call.name.as_str()) {
         return crate::coding::tools::execute(output_persistence.map(|p| p.state), input, call);
     }

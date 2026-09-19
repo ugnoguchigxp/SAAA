@@ -1077,18 +1077,21 @@ fn voice_policy_tool_quota_is_independent_from_other_agent_tools() {
         memory::contracts::MAX_RECALL_CALLS_PER_TURN,
         0,
     );
-    assert_eq!(after_general_quota.len(), 1);
+    assert_eq!(after_general_quota.definitions.len(), 1);
     assert!(tool_was_offered(
-        &after_general_quota,
+        &after_general_quota.definitions,
         voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
     ));
 
     let after_voice_quota = available_agent_tools(persistence, &input, 1, 1);
     assert!(!tool_was_offered(
-        &after_voice_quota,
+        &after_voice_quota.definitions,
         voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
     ));
-    assert!(tool_was_offered(&after_voice_quota, "recall_conversation"));
+    assert!(tool_was_offered(
+        &after_voice_quota.definitions,
+        "recall_conversation"
+    ));
 }
 
 #[tokio::test]
@@ -1153,6 +1156,7 @@ async fn typed_memory_tools_are_routed_only_from_a_valid_typed_manifest() {
         session_id: "unused-session",
     });
     let names = available_agent_tools(persistence, &input, 0, 0)
+        .definitions
         .into_iter()
         .map(|definition| {
             definition
@@ -1184,6 +1188,8 @@ async fn typed_memory_tools_are_routed_only_from_a_valid_typed_manifest() {
             arguments: r#"{"query":"release","projectRef":"forbidden"}"#.to_string(),
         },
         Duration::from_secs(1),
+        &crate::generated_capabilities::publication::GeneratedToolSnapshot::empty(),
+        &crate::RunCancellation::default(),
     )
     .await;
     assert!(error.contains("invalid-memory-input"));
@@ -1286,7 +1292,16 @@ async fn typed_memory_execution_cannot_exceed_the_provider_deadline() {
         name: "recall_rule".to_string(),
         arguments: r#"{"query":"release"}"#.to_string(),
     };
-    let execution = execute_agent_tool(persistence, &input, &call, Duration::from_millis(20));
+    let generated = crate::generated_capabilities::publication::GeneratedToolSnapshot::empty();
+    let cancellation = crate::RunCancellation::default();
+    let execution = execute_agent_tool(
+        persistence,
+        &input,
+        &call,
+        Duration::from_millis(20),
+        &generated,
+        &cancellation,
+    );
     let error = tokio::time::timeout(Duration::from_millis(250), execution)
         .await
         .expect("typed recall respects the provider deadline");

@@ -1,5 +1,6 @@
 //! Spoken progress is derived from host-known phases, never tool arguments or results.
 use super::super::stream::{execute_agent_tool, ModelStreamContext};
+use crate::generated_capabilities::publication::GeneratedToolSnapshot;
 use std::time::Duration;
 
 pub(super) const MAX_SPOKEN_PER_ATTEMPT: usize = 4;
@@ -12,12 +13,16 @@ pub(super) async fn execute(
     context: &ModelStreamContext<'_>,
     call: &crate::runtime::agent_tools::AgentToolCall,
     report_progress: bool,
+    timeout: Duration,
+    generated: &GeneratedToolSnapshot,
 ) -> (String, bool) {
     let tool = execute_agent_tool(
         context.output_persistence,
         context.input,
         call,
-        Duration::from_secs(60),
+        timeout,
+        generated,
+        &context.cancellation,
     );
     let language = language(context);
     let Some(canonical) = report_progress
@@ -53,7 +58,6 @@ pub(super) async fn execute(
         }
     }
 }
-
 fn language(context: &ModelStreamContext<'_>) -> String {
     context
         .output_persistence

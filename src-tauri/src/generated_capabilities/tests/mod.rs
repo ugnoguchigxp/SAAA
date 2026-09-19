@@ -1,6 +1,12 @@
 mod abandonment;
+mod adapter;
+mod adapter_abort;
+mod adapter_timeout;
+mod hanging;
 mod invoke_abort;
 mod lifecycle;
+mod publication;
+mod publication_size;
 mod recovery;
 mod regression;
 mod runtime_change;
@@ -61,8 +67,7 @@ pub(crate) fn runtime_digest() -> String {
     runtime_bundle::runtime_digest(&runtime_files())
 }
 
-/// The repository architecture test allows `SqliteWriter::open` only in `lib.rs`, so tests use
-/// an in-memory connection that still runs the real migration.
+/// `SqliteWriter::open` is only allowed in `lib.rs`; tests use an in-memory migrated database.
 pub(crate) fn test_writer() -> Arc<SqliteWriter> {
     let connection = rusqlite::Connection::open_in_memory().expect("in-memory database");
     crate::persistence::schema::initialize_database(&connection).expect("schema initializes");
@@ -77,10 +82,8 @@ pub(crate) struct TestEnv {
     pub(crate) service: Arc<CapabilityService>,
     pub(crate) runtime_digest: String,
 }
-
 impl TestEnv {
-    /// `exposure` controls whether activate/invoke are allowed; import/verify always need a
-    /// trusted runtime, which this fixture provides.
+    /// `exposure` gates activate/invoke; import/verify always need a trusted runtime.
     pub(crate) fn start(exposure: bool) -> Self {
         Self::start_with(exposure, None)
     }

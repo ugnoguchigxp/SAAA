@@ -3,6 +3,7 @@
 mod model;
 mod reducer;
 mod selection;
+pub mod world;
 
 pub use model::*;
 pub use reducer::*;

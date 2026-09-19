@@ -192,6 +192,7 @@ fn generative_ui_tool_retries_are_idempotent_and_disabled_mode_exposes_no_tools(
         0,
     );
     assert!(!offered
+        .definitions
         .iter()
         .any(|t| t["function"]["name"] == "present_ui"));
 }

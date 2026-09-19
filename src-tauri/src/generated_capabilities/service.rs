@@ -463,35 +463,34 @@ impl CapabilityService {
 
     pub fn resolve_active(&self, capability_id: &str) -> CapabilityResult<ResolvedCapability> {
         lifecycle::read(&self.writer, |connection| {
-            let capability = repository::capability_by_id(connection, capability_id)?;
-            let revision_id = capability.current_revision_id.clone().ok_or_else(|| {
+            repository::resolve_active(connection, capability_id)?.ok_or_else(|| {
                 CapabilityError::new(
                     CapabilityErrorCode::NotActive,
                     "capability has no active revision",
                 )
-            })?;
-            let revision = repository::revision_by_id(connection, &revision_id)?;
-            if revision.state != RevisionState::Active {
-                return error(
-                    CapabilityErrorCode::NotActive,
-                    "capability revision is not active",
-                );
-            }
-            let contract: WasmContract =
-                serde_json::from_str(&revision.contract_json).map_err(|_| {
-                    CapabilityError::new(
-                        CapabilityErrorCode::IntegrityError,
-                        "stored contract is unreadable",
-                    )
-                })?;
-            Ok(ResolvedCapability {
-                capability_id: capability.id,
-                revision_id: revision.id,
-                package_hash: revision.package_hash,
-                contract_hash: revision.contract_hash,
-                catalog_epoch: capability.catalog_epoch,
-                contract,
             })
+        })
+    }
+
+    /// Resolves every allowlisted capability under one catalog read, so a single offer can never
+    /// mix revisions from two catalog states. Unknown or inactive ids are skipped; a storage or
+    /// integrity failure fails the whole read. No host is started and no lock is held longer than
+    /// the read.
+    pub fn resolve_publication(
+        &self,
+        capability_ids: &[String],
+    ) -> CapabilityResult<Vec<ResolvedCapability>> {
+        lifecycle::read(&self.writer, |connection| {
+            let mut resolved = Vec::with_capacity(capability_ids.len());
+            for capability_id in capability_ids {
+                match repository::resolve_active(connection, capability_id) {
+                    Ok(Some(capability)) => resolved.push(capability),
+                    Ok(None) => {}
+                    Err(error) if error.code == CapabilityErrorCode::Conflict => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(resolved)
         })
     }
 

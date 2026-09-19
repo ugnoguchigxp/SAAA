@@ -11,7 +11,7 @@ use super::settings_migration::migrate_settings_to_current;
 use crate::{meeting, memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
 use rusqlite::{params, Connection};
 
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 20;
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 22;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
@@ -187,6 +187,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;
     crate::generated_capabilities::schema::migrate(&transaction)?;
+    crate::tool_selection::schema::migrate(&transaction)?;
     memory::personal_state::schema::migrate(&transaction)?;
     let memory_now = now_iso();
     memory::control_plane::ensure_continuity_state(

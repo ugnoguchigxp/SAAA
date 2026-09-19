@@ -22,6 +22,9 @@ pub async fn extract(
         }
     }
     for assertion in ledger.assertions.values() {
+        if assertion.kind.is_world() {
+            continue;
+        }
         for key in &assertion.input_dependencies {
             if let Some(s) = ledger.sources.get(key) {
                 if !sources.contains(s) {

@@ -3,6 +3,8 @@ use rusqlite::{params, Connection};
 /// Additive v17 migration. Raw text remains in conversation_messages only.
 pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(include_str!("schema.sql"))?;
+    // World DDL and the forget trigger must exist before recover/rebuild runs.
+    c.execute_batch(include_str!("world/schema.sql"))?;
     add_column(c, "personal_jobs", "scope_key", "TEXT")?;
     add_column(c, "personal_jobs", "claim_scope_epoch", "INTEGER")?;
     add_column(c, "personal_generations", "context_generation_id", "TEXT")?;

@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
+use super::contracts::{ResolvedCapability, WasmContract};
 use super::errors::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,6 +168,37 @@ pub fn capability_by_id(
         .ok_or_else(|| {
             CapabilityError::new(CapabilityErrorCode::Conflict, "unknown generated capability")
         })
+}
+
+/// Resolves the active revision of a capability. An unknown capability is reported as
+/// [`CapabilityErrorCode::Conflict`] (unchanged from M1); a capability that exists but has no
+/// active revision returns `None` so callers can skip it without treating it as an error.
+pub fn resolve_active(
+    connection: &Connection,
+    capability_id: &str,
+) -> CapabilityResult<Option<ResolvedCapability>> {
+    let capability = capability_by_id(connection, capability_id)?;
+    let Some(revision_id) = capability.current_revision_id.clone() else {
+        return Ok(None);
+    };
+    let revision = revision_by_id(connection, &revision_id)?;
+    if revision.state != RevisionState::Active {
+        return Ok(None);
+    }
+    let contract: WasmContract = serde_json::from_str(&revision.contract_json).map_err(|_| {
+        CapabilityError::new(
+            CapabilityErrorCode::IntegrityError,
+            "stored contract is unreadable",
+        )
+    })?;
+    Ok(Some(ResolvedCapability {
+        capability_id: capability.id,
+        revision_id: revision.id,
+        package_hash: revision.package_hash,
+        contract_hash: revision.contract_hash,
+        catalog_epoch: capability.catalog_epoch,
+        contract,
+    }))
 }
 
 /// Finds the capability that owns a fixed L-Lang metadata id, creating it when absent.

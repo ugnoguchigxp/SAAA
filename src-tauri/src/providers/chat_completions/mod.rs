@@ -1,7 +1,7 @@
 //! OpenAI Chat Completions data plane. Bootstrap/leases remain outside this client.
 use super::stream::{
-    available_agent_tools, tool_was_offered, ModelStreamContext, ProviderAttemptError as Error,
-    ProviderFailureKind as Failure,
+    available_agent_tools, tool_was_offered, AgentToolOffer, ModelStreamContext,
+    ProviderAttemptError as Error, ProviderFailureKind as Failure,
 };
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
 use futures_util::StreamExt;
@@ -89,7 +89,7 @@ pub(crate) async fn run_with_options(
         let mut spoken_tool_progress = 0;
         loop {
             let streaming = mode == RequestMode::Stream && options.streaming;
-            let tools = if mode != RequestMode::JsonProbe && options.tools {
+            let offer = if mode != RequestMode::JsonProbe && options.tools {
                 available_agent_tools(
                     context.output_persistence,
                     context.input,
@@ -97,8 +97,9 @@ pub(crate) async fn run_with_options(
                     voice_calls,
                 )
             } else {
-                Vec::new()
+                AgentToolOffer::empty()
             };
+            let tools = &offer.definitions;
             let mut body = json!({"model": model, "messages": messages, "stream": streaming,
                 "max_tokens": context.max_output_tokens});
             options.apply(
@@ -218,7 +219,7 @@ pub(crate) async fn run_with_options(
             // Validate the entire batch before any tool can produce a side effect.
             if tool_calls
                 .iter()
-                .any(|call| !tool_was_offered(&tools, &call.name))
+                .any(|call| !tool_was_offered(tools, &call.name))
             {
                 generation.fail("protocol");
                 return Err(Failure::Protocol);
@@ -231,7 +232,7 @@ pub(crate) async fn run_with_options(
                 if context.cancellation.is_cancelled() {
                     return Err(Failure::Cancelled);
                 }
-                if !tool_was_offered(&tools, &call.name) {
+                if !tool_was_offered(tools, &call.name) {
                     return Err(Failure::Protocol);
                 }
                 // Prevent transport/routing retries after a tool has executed, even with no visible text.
@@ -243,8 +244,15 @@ pub(crate) async fn run_with_options(
                 let report_progress = context.on_event.voice_response_enabled()
                     && spoken_tool_progress < voice_progress::MAX_SPOKEN_PER_ATTEMPT
                     && voice_progress::supports(&call.name);
-                let (result, progress_spoken) =
-                    voice_progress::execute(&context, &call, report_progress).await;
+                // The tool budget is the turn's actual remaining time, never a fixed constant.
+                let (result, progress_spoken) = voice_progress::execute(
+                    &context,
+                    &call,
+                    report_progress,
+                    Duration::from_millis(timeout_ms).saturating_sub(request_started.elapsed()),
+                    &offer.generated,
+                )
+                .await;
                 if progress_spoken {
                     spoken_tool_progress += 1;
                 }

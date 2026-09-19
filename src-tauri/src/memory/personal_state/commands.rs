@@ -8,6 +8,9 @@ pub fn snapshot(c: &Connection) -> Result<Value, String> {
     let (pending,bytes,oldest):(u64,u64,Option<i64>)=c.query_row("SELECT count(*),COALESCE(sum(s.bytes),0),min(s.recorded_at) FROM personal_jobs j JOIN personal_sources s ON s.sequence=j.source_sequence WHERE j.status!='completed' AND s.available=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(database_error)?;
     let mut items = Vec::new();
     for a in ledger.assertions.values() {
+        if a.kind.is_world() {
+            continue;
+        }
         let status = ledger.status(&a.id, super::now());
         let value: Option<String> = c
             .query_row(

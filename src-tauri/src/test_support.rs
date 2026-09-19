@@ -1,21 +1,14 @@
 use crate::{
-    meeting, memory,
-    persistence::{settings::default_settings_documents, SqliteReaders, SqliteWriter},
-    situation, voice, AppState, DynamicLanProviderSettings, ModelProviderSettings,
-    OpenAiCompatibleProviderSettings, SaveSettingsDocumentInput,
+    persistence::{settings::default_settings_documents, SqliteWriter},
+    AppState, DynamicLanProviderSettings, ModelProviderSettings, OpenAiCompatibleProviderSettings,
+    SaveSettingsDocumentInput,
 };
 use rusqlite::Connection;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{atomic::AtomicBool, Arc, Mutex},
-};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 pub(crate) fn app_state(connection: Connection) -> AppState {
-    let settings =
-        situation::repository::load_settings(&connection).expect("Situation settings load");
     let sqlite_writer = Arc::new(SqliteWriter::from_connection(connection));
-    let sqlite_readers = SqliteReaders::serialized(sqlite_writer.clone());
     let generated_capabilities = Arc::new(
         crate::generated_capabilities::service::CapabilityService::build(
             sqlite_writer.clone(),
@@ -24,31 +17,7 @@ pub(crate) fn app_state(connection: Connection) -> AppState {
             None,
         ),
     );
-    AppState {
-        sqlite_writer,
-        sqlite_readers,
-        data_directory: PathBuf::new(),
-        context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(),
-        active_runs: Mutex::new(HashMap::new()),
-        provider_probes: Mutex::new(HashMap::new()),
-        interaction_policy: Mutex::new(()),
-        shutdown_started: AtomicBool::new(false),
-        network_asr: voice::network_asr::NetworkAsrRuntime::new()
-            .expect("Network ASR runtime initializes"),
-        audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-        streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
-        voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),
-        situation: Arc::new(
-            situation::SituationRuntime::new(settings, None)
-                .expect("Situation runtime initializes"),
-        ),
-        meeting: Arc::new(meeting::MeetingRuntime::new()),
-        voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
-            PathBuf::new(),
-        )),
-        voice_asr: voice::streaming_asr::AsrSessionManager::default(),
-        generated_capabilities,
-    }
+    crate::test_state::app_state_with_capabilities(sqlite_writer, generated_capabilities)
 }
 
 pub(crate) fn provider(id: &str, location: &str) -> ModelProviderSettings {

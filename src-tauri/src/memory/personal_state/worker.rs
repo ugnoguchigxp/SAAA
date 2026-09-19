@@ -154,10 +154,14 @@ async fn run(
     let request_scope = super::worker_scope::request(job, &chunk.source.key.id);
     let current=writer.read_serialized(|c|{
         let mut values=Vec::new();
-        for a in ledger.assertions.values(){if (a.access.task_request.is_none() || a.access.task_request.as_deref() == request_scope.as_deref()) && a.access.classification <= Classification::Confidential && a.access.purposes.contains(&Purpose::StateExtract) && matches!(ledger.status(&a.id,super::now()),Status::Active|Status::Candidate|Status::Disputed){
-            let payload:String=c.query_row("SELECT value_json FROM personal_payloads WHERE id=?1",[&a.payload_ref],|r|r.get(0)).map_err(database_error)?;
-            values.push(json!({"id":a.id,"kind":a.kind,"key":a.semantic_key,"value":super::decode::<Value>(payload)?,"task_request":a.access.task_request}));
-        }}Ok(values)
+        for a in ledger.assertions.values(){
+            if a.kind.is_world(){continue;}
+            if (a.access.task_request.is_none() || a.access.task_request.as_deref() == request_scope.as_deref()) && a.access.classification <= Classification::Confidential && a.access.purposes.contains(&Purpose::StateExtract) && matches!(ledger.status(&a.id,super::now()),Status::Active|Status::Candidate|Status::Disputed){
+                let payload:String=c.query_row("SELECT value_json FROM personal_payloads WHERE id=?1",[&a.payload_ref],|r|r.get(0)).map_err(database_error)?;
+                values.push(json!({"id":a.id,"kind":a.kind,"key":a.semantic_key,"value":super::decode::<Value>(payload)?,"task_request":a.access.task_request}));
+            }
+        }
+        Ok(values)
     })?;
     let input = json!({"purpose":"personal_state_extract","instruction":EXTRACTION_INSTRUCTION,"request_scope":request_scope,"current":current,"source":{"ref":chunk.source,"text":chunk.text}});
     if super::encode(&input)?.len() > 48000 {
@@ -172,12 +176,19 @@ async fn run(
         return Err("personal-extraction-output-budget".into());
     }
     let extraction: Extraction = super::decode(raw)?;
+    if extraction.candidates.iter().any(|c| c.kind.is_world()) {
+        // World payloads are never produced by the continuity extractor.
+        return Err("personal-extraction-invalid".into());
+    }
     if extraction.candidates.len() > 10 || extraction.no_change != extraction.candidates.is_empty()
     {
         return Err("personal-extraction-invalid".into());
     }
     let mut dependencies = BTreeSet::from([chunk.source.key.clone()]);
     for a in ledger.assertions.values() {
+        if a.kind.is_world() {
+            continue;
+        }
         if (a.access.task_request.is_none()
             || a.access.task_request.as_deref() == request_scope.as_deref())
             && a.access.classification <= Classification::Confidential

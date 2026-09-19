@@ -67,6 +67,7 @@ pub async fn run_json(raw: &str) -> Result<String, String> {
     let mut result=writer.read_serialized(|c|{
         let ledger=store::load(c)?;let mut items=Vec::new();
         for assertion in ledger.assertions.values(){
+            if assertion.kind.is_world(){continue;}
             let status=ledger.status(&assertion.id,now());
             if !matches!(status,saaa_personal_state_core::Status::Active|saaa_personal_state_core::Status::Candidate|saaa_personal_state_core::Status::Disputed){continue;}
             let value:String=c.query_row("SELECT value_json FROM personal_payloads WHERE id=?1",[&assertion.payload_ref],|r|r.get(0)).map_err(database_error)?;

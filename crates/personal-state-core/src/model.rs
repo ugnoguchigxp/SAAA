@@ -108,6 +108,26 @@ pub enum Kind {
     OpenLoop,
     ActiveReferent,
     ProgressRef,
+    WorldEntity,
+    WorldRelation,
+    WorldFocus,
+}
+
+impl Kind {
+    /// World assertions are owned by the World projection and never mixed into
+    /// ordinary continuity extraction or Context candidates.
+    pub fn is_world(&self) -> bool {
+        matches!(
+            self,
+            Self::WorldEntity | Self::WorldRelation | Self::WorldFocus
+        )
+    }
+
+    /// The original seven continuity kinds. Kept explicit so adding World does
+    /// not silently change existing behavior.
+    pub fn is_continuity(&self) -> bool {
+        !self.is_world()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

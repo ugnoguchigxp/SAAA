@@ -217,6 +217,8 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         )),
         voice_asr: voice::streaming_asr::AsrSessionManager::default(),
         generated_capabilities,
+        generated_tools: crate::generated_capabilities::publication::GeneratedToolsConfig::disabled(
+        ),
     })
 }
 

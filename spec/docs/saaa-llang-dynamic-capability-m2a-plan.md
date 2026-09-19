@@ -1,8 +1,11 @@
 # SAAA × L-Lang — M2A 会話ツール接続の実装計画
 
 作成日: 2026-09-19  
-状態: 実装指示。今回はこの文書の作成のみ。  
-上位文書: [初期実装計画](saaa-llang-dynamic-capability-initial-plan.md)、[M0/M1詳細手順](saaa-llang-dynamic-capability-implementation-guide.md)
+状態: 実装指示。M2Aの実装・検証結果は下記を参照。  
+上位文書: [初期実装計画](saaa-llang-dynamic-capability-initial-plan.md)、[M0/M1詳細手順](saaa-llang-dynamic-capability-implementation-guide.md)  
+検証結果: [M2A検証結果](verification/llang-dynamic-capability-m2a.md)
+
+後続計画の更新（2026-09-20）: M2Bは[大規模ツール選択・訂正記憶計画v2](saaa-llang-dynamic-capability-m2b-plan.md)へ変更。以下の8件制限はM2Aの直接公開モードに限り、全体台帳の登録上限にはしない。
 
 ## 1. 今回の到達点
 
@@ -16,7 +19,7 @@ M2を二分する。今回の実装は **M2A＝共通公開契約とChat Complet
 
 2026-09-19の作業ツリーにはM1コードと追加修正があり、未コミット・未追跡ファイルを含む。shutdown制御、runtime再検証、追加回帰テストがあるが、この計画書の作成時点では修正の合格を認定していない。工程G0で判定する。
 
-以下の新規型・設定・ファイル名は今回の設計指定であり、実装済みという意味ではない。既存APIと異なる場合は薄い変換を追加し、検証や状態管理をprovider側に複製しない。
+以下の新規型・設定・ファイル名はこの計画で固定する設計である。M2A実装での対応は上記の検証結果を参照。既存APIと異なる場合は薄い変換を追加し、検証や状態管理をprovider側に複製しない。
 
 | 読む場所（repository rootからの相対パス） | 確認事項 |
 | --- | --- |
@@ -71,13 +74,15 @@ G05/G07は非同期executorを同期sleepで塞いで完了待ちにする設計
 ```
 
 - 未設定またはenabled=falseなら公開なし。既存会話機能は動作する。
-- 未知キー、未知version、重複ID、空ID、9件以上、64 KiB超、読めないファイル、不正JSONは公開機能だけを無効にして安全な診断を残す。黙って先頭8件に切らない。
+- 未知キー、未知version、重複ID、空ID、非文字列ID、9件以上、64 KiB超、読めないファイル、不正JSONは公開機能だけを無効にして安全な診断を残す。黙って先頭8件に切らない。
+- 64 KiB超は読み込む前にfile metadataのサイズで判定し、読み込み後にも再確認する。診断は固定文言とし、file本文・実パス・parse詳細をログやLLMへ出さない。
 - IDはmetadata.idやrevision IDでなくcatalogのcapability ID。生成package自身が公開設定を書き換える機能を追加しない。
 - enabled=trueかつ空配列は有効な「公開ゼロ件」。最大8件。
 - 設定済みIDが未存在・inactive・suspendedなら、そのIDはofferから除外する。DB障害・契約破損・名前衝突・サイズ超過なら当該リクエストの生成ツール全体を公開しない。既存ツールは保持する。
 - 同一AppStateの既存Arc<CapabilityService>を使う。二つ目のservice、writer、catalogを作らない。
+- CapabilityServiceがdisabledまたはruntime unavailableなら、設定がenabledでも生成ツールを公開しない。内部エラーを理由に既存会話を停止しない。
 
-設定オブジェクトはAppStateに保持し、test_supportの全初期化箇所も更新する。公開変更には再起動が必要と明記する。設定ファイルの本文や実パスをLLMに渡さない。
+設定オブジェクトはAppStateに保持し、test_supportの全初期化箇所も更新する。テスト用AppStateは既定でdisabledとし、公開を有効にする試験だけが必要なIDを設定する。公開変更には再起動が必要と明記する。設定ファイルの本文や実パスをLLMに渡さない。
 
 ### 4.2 ツール名、入力、説明
 
@@ -85,13 +90,13 @@ G05/G07は非同期executorを同期sleepで塞いで完了待ちにする設計
 
 入力schemaは検証済みWasmContractから構築する。object、boolean propertyのみ、全項目required、additionalProperties=false。M1の1〜8項目制限を維持する。任意の候補JSON Schemaをそのままproviderへコピーしない。
 
-descriptionはホスト管理の定型文とする。「検証済みboolean判定。列挙されたすべてのboolean入力を指定するとboolean結果を返す」という意味を明示し、フィールド名はschemaに載せる。今回は候補由来の自由文説明・使用例をsystem promptに挿入しない。業務的な使い分けを説明する充実したメタデータは別工程にする。
+descriptionはホスト管理の定型文とする。「検証済みboolean判定。列挙されたすべてのboolean入力を指定するとboolean結果を返す」という意味を明示し、フィールド名はschemaに載せる。説明文の言語は既存の会話ツール定義と同じ英語に固定する。今回は候補由来の自由文説明・使用例をsystem promptに挿入しない。業務的な使い分けを説明する充実したメタデータは別工程にする。
 
-生成ツール定義配列をcompact JSONへserializeしたUTF-8バイト数を32 KiB以下にする。既存ツールはこの生成ツール専用上限に含めない。固定の並び順はツール名の昇順。
+32 KiB上限は、providerまたはMCPへ実際に渡す最終ツール定義配列をcompact JSONへserializeしたUTF-8バイト数で判定する。Chat Completionsでは `{"type":"function","function":...}` のwrapper分も含める。snapshotのprovider非依存記述だけで判定を終えず、adapter適用後の配列でも再検査し、どちらかが超過したら当該リクエストの生成ツールを全件公開しない。既存ツールはこの生成ツール専用上限に含めない。固定の並び順はツール名の昇順。
 
 ### 4.3 不変のoffer snapshot
 
-共通モジュールに `GeneratedToolSnapshot` を追加する。最低限、定義配列と `tool_name → ResolvedCapability` の対応を所有する。ResolvedCapabilityのrevision_id、package_hash、contract_hash、catalog_epochを保持する。
+共通モジュールに `GeneratedToolSnapshot` を追加する。最低限、provider非依存のツール記述（tool名、固定説明、入力schema）と `tool_name → ResolvedCapability` の対応を所有する。ResolvedCapabilityのrevision_id、package_hash、contract_hash、catalog_epochを保持する。OpenAIのwrapperなどprovider固有のJSONはsnapshotへ入れずadapterで組み立てる。
 
 公開対象の解決は一つのcatalog読取境界で行い、複数IDの途中で更新を挟んだ混合snapshotを作らない。SQLロックを保持してhostを起動してはいけない。
 
@@ -109,7 +114,7 @@ provider由来call.idはそのままDB主キーにしない。内部call IDは�
 {"ok":true,"callId":"host UUID","revisionId":"revision UUID","value":false}
 ```
 
-失敗は `{"ok":false,"error":{"code":"安定コード","message":"安全な説明"}}`。既存CapabilityErrorCodeを明示的にマッピングし、invalid-input、not-active/stale、busy、cancelled、timeout、unavailable、integrity系を区別する。内部path、stderr、設定、SQL、stack traceを返さない。対応表をコードとテストに置く。
+失敗は `{"ok":false,"error":{"code":"安定コード","message":"安全な説明"}}`。既存CapabilityErrorCodeを明示的にマッピングし、invalid-input、not-active/stale、busy、cancelled、timeout、unavailable、integrity系を区別する。内部path、stderr、設定、SQL、stack traceを返さない。tool message向けにcontentは文字列として返す。対応表はwildcardなしのmatchとしてコードに置き、新しいvariantをコンパイルエラーにする。内部情報が漏れないことはE06で確認する。
 
 入力は16 KiB以下のJSON object。欠落・余剰・非boolean・不正JSONをhost起動前に拒否する。service側検証も維持する。未知のgc_名は失敗させ、recall等のfallbackに流さない。
 
@@ -119,7 +124,7 @@ provider由来call.idはそのままDB主キーにしない。内部call IDは�
 
 推奨ファイルは `generated_capabilities/publication.rs` とそのテスト。設定parse、上限、名前、schema、snapshot生成を実装する。catalogの一括読取はservice/repositoryの責務。providerのJSON形式への変換はadapterへ分け、将来のMCPがOpenAI形式に依存しない共通定義にする。
 
-完了条件: P01〜P06合格。disabledでhostやDBを呼ばない。説明のために新しいDBテーブルを作らない。
+完了条件: P01〜P06合格。disabledでhostやDBを呼ばない。公開設定や説明文の保存のために新しいDBテーブルを作らない。
 
 ### A2: 共通実行adapter
 
@@ -129,7 +134,7 @@ provider由来call.idはそのままDB主キーにしない。内部call IDは�
 
 ### A3: Chat Completionsへの配線
 
-`available_agent_tools`の結果と生成snapshotを一体として当該リクエストに保持する。既存API変更が広がる場合は新しいoffer構造体または専用生成処理を追加してよいが、definitionsとsnapshotの別々の再生成は禁止。
+`available_agent_tools`の結果と生成snapshotを一体として当該リクエストに保持する。既存API変更が広がる場合は新しいoffer構造体または専用生成処理を追加してよいが、definitionsとsnapshotの別々の再生成は禁止。tool callループでは各HTTPリクエストでofferを作り直し、同じリクエストが返したtool callバッチの実行完了までそのofferを使う。`gc_`名は他ツールの判定より先にadapterへ振り分け、未offer・偽造名をrecall等へ落とさない。
 
 `chat_completions/mod.rs`で既存toolsに生成定義を追加し、受信バッチ全体のtool_was_offered検証を維持する。未知名を一つでも含むバッチは、どのツールも実行する前に拒否する。既存のmark_started、最大32call、parallel_tool_calls=falseを維持する。生成ツールの追加offerは既存coding/UIと同様calls_this_attempt < 12とする。既にofferした同一バッチは既存の32件上限で扱う。
 
@@ -151,22 +156,22 @@ RunCancellationとhost Cancellationを接続する。invoke futureと会話取�
 
 テスト用HTTP providerが一回目に実在するgc_名でtool callを返し、二回目にtool結果を受け取って通常回答を返すfixtureを作る。既存のmock server方式を優先する。ネット接続・有料LLM・本番秘密情報は不要。
 
-fixture A/Bと既存の正規runtimeを使う統合テストを最低一本含める。fake hostだけで全件を完了させない。設定ファイルの例、import/verify/activateに使う既存テスト支援経路、実行コマンドを検証報告に記す。会話から管理操作を公開しない。
+fixture A/Bと既存の正規runtimeを使う統合テストを最低一本含める。fake hostだけで全件を完了させない。完了条件はC01〜C05と、既存recall/coding/UI/voiceの回帰（C04相当）。設定ファイルの例、import/verify/activateに使う既存テスト支援経路、実行コマンドを検証報告に記す。会話から管理操作を公開しない。
 
 ## 6. 必須試験表
 
 | ID | 条件と観測する結果 |
 | --- | --- |
 | P01 | 設定なし/disabled/空配列で生成定義ゼロ、既存tools維持 |
-| P02 | 未知キー・version・重複・9件・64 KiB超で明示的に無効化 |
+| P02 | 未知キー・version・重複・空ID・非文字列ID・9件・64 KiB超で明示的に無効化 |
 | P03 | allowlist外activeは非公開、allowlist内inactiveも非公開 |
 | P04 | schemaは全boolean必須、余剰禁止。名前はrevisionに一意 |
-| P05 | 32 KiB境界の前後を試験。超過で全生成定義を拒否し黙って切らない |
-| P06 | offer作成と更新の競合でもsnapshotが一つの読取状態に対応 |
+| P05 | providerへ渡す最終定義配列のserialize後32 KiB境界の前後を試験。超過で全生成定義を拒否し黙って切らない |
+| P06 | offer作成と更新の競合でもsnapshotが一つの読取状態に対応。allowlist全IDを一つのcatalog読取境界で解決しIDごとに再解決しないことをコードとテストで示す。読取境界へ実更新を注入できない場合は理由と代替観測（E05のoffer後更新拒否）を記録し、sleepでの代用や未実施の合格扱いをしない |
 | E01 | Aのtrue/false両方を実行しfalseもok=true |
 | E02 | JSON不正・array・欠落・余剰・非boolean・16 KiB超でhost起動ゼロ |
 | E03 | 未offer名・偽造gc_名を拒否しrecall実行ゼロ |
-| E04 | 同じprovider call.idを別runで使っても内部call IDは別 |
+| E04 | 同じprovider call.idで複数回実行しても内部call IDは毎回別 |
 | E05 | offer A後にBをactivate。A呼出し拒否、Bへ自動差替えなし。次offerはB |
 | E06 | offer後suspend・runtime/package改変で実行拒否。内部情報の漏出なし |
 | C01 | mock providerへの実HTTP bodyに生成定義、次requestに正しいtool_call_idと結果 |
@@ -215,7 +220,7 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D w
 bun run size:check
 ```
 
-最後にroot AGENTS.md等で要求される検証と、`bun run check`を実行する。既存失敗・依存不足は実行結果と開始時の状況を明示する。サイズ上限やlintを通すためだけにbaselineや閾値を引き上げない。大きくなるservice/providerファイルから今回の責務を専用moduleへ分ける。
+最後にroot AGENTS.md等で要求される検証と、`bun run check`を実行する。既存失敗・依存不足は実行結果と開始時の状況を明示する。サイズ上限やlintを通すためだけにbaselineや閾値を引き上げない。大きくなるservice/providerファイルから今回の責務を専用moduleへ分ける。新規ファイルの登録が必要なら`bun run size:register`を使い、既存ファイルの上限は書き換えない。
 
 提出物は実装コード、試験、`spec/docs/verification/llang-dynamic-capability-m2a.md`。報告には次を含める。
 
@@ -224,6 +229,7 @@ bun run size:check
 - 開始時、自己レビュー前、修正後のsnapshot場所と差分の区別。
 - 自己レビューで見つけた問題と修正結果。ゼロなら確認した具体的経路。
 - 実行コマンド、実際の件数、失敗、未実施理由。
+- 未試験の分岐・境界と、その担保方法（コード読直し等）を分けて記述する。
 - M2Bへの引継ぎとして共通snapshot/adapter APIと、MCP未実装である旨。
 
 自分で点数を付けて品質を保証しない。提出証拠から第三者が初回実装と修正後を評価できるようにする。

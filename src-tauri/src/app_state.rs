@@ -18,6 +18,7 @@ pub(super) struct AppState {
     pub(super) voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
     pub(super) voice_asr: AsrSessionManager,
     pub(super) generated_capabilities: Arc<generated_capabilities::service::CapabilityService>,
+    pub(super) generated_tools: generated_capabilities::publication::GeneratedToolsConfig,
 }
 
 #[derive(Clone)]

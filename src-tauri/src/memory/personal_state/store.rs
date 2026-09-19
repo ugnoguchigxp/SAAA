@@ -66,6 +66,9 @@ pub fn commit(
     for key in &context.input_dependencies {
         sources::revalidate(c, ledger.sources.get(key).ok_or("personal-source-missing")?)?;
     }
+    // World semantics are validated here, before Ledger::apply, so direct
+    // callers of store::commit cannot bypass them.
+    super::world::validation::validate_commit(c, &ledger, patch, context, payloads)?;
     if !ledger
         .apply(patch, context)
         .map_err(|e| format!("personal-patch-{e}"))?
@@ -164,6 +167,7 @@ pub fn rebuild(c: &Connection, now: i64) -> Result<(), String> {
         )
         .map_err(database_error)?;
     }
+    super::world::projection::rebuild(c, &l, now)?;
     Ok(())
 }
 

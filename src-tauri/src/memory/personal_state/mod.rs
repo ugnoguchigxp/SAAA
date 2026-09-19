@@ -23,6 +23,7 @@ pub mod task_bundle;
 mod tests;
 pub mod worker;
 mod worker_scope;
+pub mod world;
 pub use codec::{decode, encode, now};
 #[cfg(feature = "quality-eval-harness")]
 pub mod live_harness;

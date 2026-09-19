@@ -488,3 +488,9 @@ async fn accepts_server_resolved_model_alias_without_fabricating_a_mapping() {
 
 #[path = "json_tool_tests.rs"]
 mod json_tool_tests;
+
+#[path = "generated_tools_tests.rs"]
+mod generated_tools_tests;
+
+#[path = "generated_tools_flags_tests.rs"]
+mod generated_tools_flags_tests;

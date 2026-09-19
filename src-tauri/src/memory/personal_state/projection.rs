@@ -20,6 +20,9 @@ pub(crate) fn context_candidates(
         .collect::<std::collections::BTreeSet<_>>();
     let mut candidates = Vec::new();
     for assertion in ledger.assertions.values() {
+        if assertion.kind.is_world() {
+            continue;
+        }
         let assertion_scopes = assertion
             .access
             .task_request
@@ -177,6 +180,9 @@ pub fn compose(c: &Connection, task: Option<&str>, max_bytes: usize) -> Result<V
             continue;
         }
         let a = &ledger.assertions[&id];
+        if a.kind.is_world() {
+            continue;
+        }
         let newest_support = a
             .input_dependencies
             .iter()

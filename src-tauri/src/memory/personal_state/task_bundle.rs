@@ -58,6 +58,10 @@ pub fn adopt(
     let mut sequence = ledger.transitions.last().map_or(1, |t| t.sequence + 1);
     for supported in candidates {
         let candidate = supported.candidate;
+        if candidate.kind.is_world() {
+            // World payloads are not accepted from the continuity candidate path.
+            return Err("personal-task-patch-scope".into());
+        }
         if supported.evidence.is_empty()
             || !supported.evidence.is_subset(&inputs)
             || !matches!(candidate.status, Status::Active | Status::Candidate)
