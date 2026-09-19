@@ -843,11 +843,11 @@ impl CapabilityService {
         );
         // The host process runs in a detached task that owns the permit and writes the terminal
         // record, so aborting the caller's future neither loses the record nor frees the slot:
-        // the task keeps running and observes the shared cancellation token. The entry is
-        // registered after the last `.await` and handed to that task, so an abandoned caller
-        // cannot leak it.
+        // the task cancels the host if its result receiver disappears, then awaits cleanup.
+        // The entry is registered after the last `.await` and handed to that task, so an
+        // abandoned caller cannot leak it.
         self.register_execution(&request.call_id, cancellation);
-        let (sender, receiver) = oneshot::channel();
+        let (mut sender, receiver) = oneshot::channel();
         let invocation = HostInvocation {
             host,
             writer: self.writer.clone(),
@@ -861,8 +861,19 @@ impl CapabilityService {
             started,
             _permit: Some(permit),
         };
+        let abandoned = cancellation.clone();
         tokio::spawn(async move {
-            let _ = sender.send(invocation.run().await);
+            let execution = invocation.run();
+            tokio::pin!(execution);
+            let outcome = tokio::select! {
+                biased;
+                _ = sender.closed() => {
+                    abandoned.cancel();
+                    execution.await
+                }
+                outcome = &mut execution => outcome,
+            };
+            let _ = sender.send(outcome);
         });
         match receiver.await {
             Ok(outcome) => outcome,

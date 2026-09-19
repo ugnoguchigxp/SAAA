@@ -297,6 +297,10 @@
       "total": 164,
       "production": 164
     },
+    "src-tauri/src/generated_capabilities/tests/invoke_abort.rs": {
+      "total": 97,
+      "production": 97
+    },
     "src-tauri/src/generated_capabilities/tests/lifecycle.rs": {
       "total": 304,
       "production": 304

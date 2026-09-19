@@ -62,57 +62,6 @@ async fn s01_shutdown_rejects_new_work_and_cancels_owned_executions() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s02_an_aborted_call_is_never_left_running() {
-    let env = TestEnv::start(true);
-    let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
-    let resolved = env
-        .service
-        .resolve_active(&revision.capability_id)
-        .expect("capability is active");
-
-    let service = env.service.clone();
-    let call = tokio::spawn(async move {
-        service
-            .invoke(
-                InvokeRequest::new(
-                    resolved,
-                    "aborted".into(),
-                    object(json!({ "enabled": true, "suspended": false })),
-                ),
-                &Cancellation::default(),
-            )
-            .await
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    call.abort();
-    let _ = call.await;
-
-    let mut running = -1;
-    for _ in 0..300 {
-        running =
-            env.scalar("SELECT COUNT(*) FROM generated_capability_calls WHERE status = 'running'");
-        if running == 0 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    assert_eq!(
-        running, 0,
-        "an aborted call must reach a terminal status, not stay running"
-    );
-    assert!(
-        env.service.shutdown(),
-        "shutdown reports a clean drain once the abandoned call is settled"
-    );
-    assert_eq!(
-        env.scalar(
-            "SELECT COUNT(*) FROM generated_capability_calls WHERE id = 'aborted' AND status = 'running'"
-        ),
-        0
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s03_shutdown_cancels_a_running_import() {
     let env = TestEnv::start(false);
     let temporary = tempfile::tempdir().unwrap();
