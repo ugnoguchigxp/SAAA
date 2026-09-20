@@ -134,8 +134,8 @@
       "production": 95
     },
     "src-tauri/src/app_state.rs": {
-      "total": 79,
-      "production": 79
+      "total": 89,
+      "production": 89
     },
     "src-tauri/src/backup.rs": {
       "total": 84,
@@ -434,16 +434,16 @@
       "production": 261
     },
     "src-tauri/src/meeting/mod.rs": {
-      "total": 1174,
-      "production": 735
+      "total": 1082,
+      "production": 684
     },
     "src-tauri/src/meeting/speaker.rs": {
       "total": 101,
       "production": 46
     },
     "src-tauri/src/meeting/types.rs": {
-      "total": 149,
-      "production": 149
+      "total": 153,
+      "production": 153
     },
     "src-tauri/src/memory/context_still_recall.rs": {
       "total": 1284,
@@ -694,7 +694,7 @@
       "production": 0
     },
     "src-tauri/src/memory/personal_state/world/v2_tests.rs": {
-      "total": 1609,
+      "total": 688,
       "production": 0
     },
     "src-tauri/src/memory/personal_state/world/validation_v2.rs": {
@@ -1278,8 +1278,8 @@
       "production": 0
     },
     "src-tauri/src/test_state.rs": {
-      "total": 56,
-      "production": 56
+      "total": 63,
+      "production": 63
     },
     "src-tauri/src/test_support.rs": {
       "total": 95,
@@ -1326,12 +1326,48 @@
       "production": 41
     },
     "src-tauri/src/tool_selection/gateway.rs": {
-      "total": 399,
-      "production": 361
+      "total": 468,
+      "production": 430
     },
     "src-tauri/src/tool_selection/inference.rs": {
       "total": 355,
       "production": 324
+    },
+    "src-tauri/src/tool_selection/invocation.rs": {
+      "total": 126,
+      "production": 126
+    },
+    "src-tauri/src/tool_selection/mcp_server/calls.rs": {
+      "total": 142,
+      "production": 107
+    },
+    "src-tauri/src/tool_selection/mcp_server/config.rs": {
+      "total": 251,
+      "production": 152
+    },
+    "src-tauri/src/tool_selection/mcp_server/context.rs": {
+      "total": 89,
+      "production": 53
+    },
+    "src-tauri/src/tool_selection/mcp_server/mod.rs": {
+      "total": 186,
+      "production": 186
+    },
+    "src-tauri/src/tool_selection/mcp_server/protocol.rs": {
+      "total": 179,
+      "production": 118
+    },
+    "src-tauri/src/tool_selection/mcp_server/router.rs": {
+      "total": 450,
+      "production": 450
+    },
+    "src-tauri/src/tool_selection/mcp_server/sessions.rs": {
+      "total": 457,
+      "production": 382
+    },
+    "src-tauri/src/tool_selection/mcp_server/tests.rs": {
+      "total": 5,
+      "production": 5
     },
     "src-tauri/src/tool_selection/mcp/config.rs": {
       "total": 259,
@@ -1342,8 +1378,8 @@
       "production": 343
     },
     "src-tauri/src/tool_selection/mcp/manager.rs": {
-      "total": 796,
-      "production": 796
+      "total": 879,
+      "production": 879
     },
     "src-tauri/src/tool_selection/mcp/mod.rs": {
       "total": 62,
@@ -1358,8 +1394,8 @@
       "production": 256
     },
     "src-tauri/src/tool_selection/mcp/schema.rs": {
-      "total": 102,
-      "production": 102
+      "total": 136,
+      "production": 136
     },
     "src-tauri/src/tool_selection/mcp/service_support.rs": {
       "total": 274,
@@ -1402,8 +1438,8 @@
       "production": 107
     },
     "src-tauri/src/tool_selection/repository.rs": {
-      "total": 884,
-      "production": 884
+      "total": 987,
+      "production": 987
     },
     "src-tauri/src/tool_selection/resolve.rs": {
       "total": 90,
@@ -1422,16 +1458,16 @@
       "production": 183
     },
     "src-tauri/src/tool_selection/service.rs": {
-      "total": 1191,
-      "production": 1191
+      "total": 1337,
+      "production": 1337
     },
     "src-tauri/src/tool_selection/source_lookup.rs": {
       "total": 71,
       "production": 71
     },
     "src-tauri/src/tool_selection/tests/mod.rs": {
-      "total": 1515,
-      "production": 1515
+      "total": 1644,
+      "production": 0
     },
     "src-tauri/src/tool_selection/worker.rs": {
       "total": 530,

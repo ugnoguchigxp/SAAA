@@ -2,9 +2,13 @@
 
 更新日: 2026-09-20 / v2 / 実装指示
 
-この文書は旧M2B「少数の生成能力を直接MCP公開する計画」を置き換える。今回は計画の改訂であり、以下の新規機能は未実装。上位文書は[初期計画](saaa-llang-dynamic-capability-initial-plan.md)、既存基盤は[M2A](saaa-llang-dynamic-capability-m2a-plan.md)。旧HTTP案は[transport参考資料](saaa-llang-dynamic-capability-m2b-transport-reference.md)へ移した。
+この文書は旧M2B「少数の生成能力を直接MCP公開する計画」を置き換える。D0〜D3の実装・検証報告が追加され、次の実装対象はD4。これは実装品質のレビュー合格を意味しない。上位文書は[初期計画](saaa-llang-dynamic-capability-initial-plan.md)、既存基盤は[M2A](saaa-llang-dynamic-capability-m2a-plan.md)。旧HTTP案は[transport参考資料](saaa-llang-dynamic-capability-m2b-transport-reference.md)へ移した。
 
 実装担当者は先に[D0〜D3詳細実装手順](saaa-tool-selection-d0-d3-implementation-guide.md)を読むこと。型・DB制約・推論backend・条件判定・カード順は詳細手順を正本とする。初版は検索cacheを作らず、大結果の継続取得はD4へ延期する。
+
+次の作業には[D4 外部MCP接続・台帳同期 実装計画](saaa-tool-selection-d4-mcp-implementation-plan.md)を使用する。D4の設定・transport・同期・実行状態・大結果の契約と実装カードは同書を正本とする。以下のD0〜D3依頼文は初回実装時の指示として残す。
+
+2026-09-20追記: D4実装と残件報告の追加後、次の作業は[D4残件解消・D5 MCP公開計画](saaa-tool-selection-d5-mcp-server-plan.md)に従う。D4の未達を完了扱いせず、公開前の修正カードを先に実施する。上記D4への着手案内は経緯として残す。
 
 ## 1. 新しい到達点
 
