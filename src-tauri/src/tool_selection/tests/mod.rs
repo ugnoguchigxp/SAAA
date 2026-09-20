@@ -1650,3 +1650,105 @@ async fn gateway_rejects_wrong_typed_describe_fields() {
         Some(&json!("invalid-input"))
     );
 }
+
+/// Backend that cycles success/failure/unknown so a batch has mixed technical outcomes.
+struct MixedBackend {
+    counter: AtomicUsize,
+    calls: Mutex<Vec<BackendRequest>>,
+}
+
+impl MixedBackend {
+    fn new() -> Self {
+        Self {
+            counter: AtomicUsize::new(0),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolBackend for MixedBackend {
+    async fn invoke(
+        &self,
+        request: BackendRequest,
+        cancellation: &crate::RunCancellation,
+    ) -> BackendOutcome {
+        if cancellation.is_cancelled() {
+            return BackendOutcome::cancelled();
+        }
+        self.calls.lock().expect("calls").push(request);
+        match self.counter.fetch_add(1, Ordering::SeqCst) % 3 {
+            0 => BackendOutcome::succeeded(json!({ "ok": true })),
+            1 => BackendOutcome::failed("remote-failure"),
+            _ => BackendOutcome {
+                status: super::backends::TechnicalStatus::Unknown,
+                result: None,
+                error_code: Some("remote-outcome-unknown"),
+            },
+        }
+    }
+}
+
+#[tokio::test]
+async fn p03_100_mixed_calls_never_invent_positive_satisfaction() {
+    let harness = Harness::new();
+    harness.register_pair();
+    let message = harness.insert_message();
+    let context = harness.context(Some(message), Some("A"));
+    let backend = Arc::new(MixedBackend::new());
+    let service = ToolSelectionService::new(
+        harness.writer.clone(),
+        Arc::new(ConstantEmbedding),
+        Arc::new(FixedReranker::new(&[
+            ("web-rev1", 2.0),
+            ("minutes-rev1", 1.0),
+        ])),
+        Arc::new(FixtureExtractor::new(NO_FEEDBACK)),
+        backend.clone(),
+        f64::NEG_INFINITY,
+    );
+    let response = service
+        .search(&context, USER_MESSAGE, 8)
+        .await
+        .expect("search");
+    let candidate = response.candidates.first().expect("candidate");
+    let described = service
+        .describe(&context, &candidate.reference, "contract", None)
+        .expect("describe");
+    let execution_ref = described.execution_ref.expect("execution ref");
+    let cancellation = crate::RunCancellation::default();
+    for _ in 0..100 {
+        let _ = service
+            .invoke(
+                &context,
+                &execution_ref,
+                &json!({ "q": "v" }),
+                &cancellation,
+            )
+            .await;
+    }
+    assert_eq!(backend.calls.lock().expect("calls").len(), 100);
+    let (recorded, non_unknown): (i64, i64) = harness
+        .writer
+        .read_serialized(|connection| {
+            let recorded = connection
+                .query_row("SELECT COUNT(*) FROM tool_selection_invocations", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|error| error.to_string())?;
+            let non_unknown = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM tool_selection_invocations WHERE satisfaction <> 'unknown'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            Ok((recorded, non_unknown))
+        })
+        .expect("counts");
+    assert_eq!(recorded, 100);
+    assert_eq!(
+        non_unknown, 0,
+        "mixed success/failure/unknown calls must never invent satisfaction"
+    );
+}

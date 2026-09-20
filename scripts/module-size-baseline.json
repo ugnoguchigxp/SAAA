@@ -1133,6 +1133,14 @@
       "total": 93,
       "production": 93
     },
+    "src-tauri/src/runtime/context/world_render.rs": {
+      "total": 55,
+      "production": 55
+    },
+    "src-tauri/src/runtime/context/world_source.rs": {
+      "total": 243,
+      "production": 243
+    },
     "src-tauri/src/runtime/contracts.rs": {
       "total": 153,
       "production": 153
@@ -1333,6 +1341,10 @@
       "total": 355,
       "production": 324
     },
+    "src-tauri/src/tool_selection/invocation_task.rs": {
+      "total": 107,
+      "production": 107
+    },
     "src-tauri/src/tool_selection/invocation.rs": {
       "total": 126,
       "production": 126
@@ -1340,6 +1352,10 @@
     "src-tauri/src/tool_selection/mcp_server/calls.rs": {
       "total": 142,
       "production": 107
+    },
+    "src-tauri/src/tool_selection/mcp_server/cleanup.rs": {
+      "total": 26,
+      "production": 26
     },
     "src-tauri/src/tool_selection/mcp_server/config.rs": {
       "total": 251,

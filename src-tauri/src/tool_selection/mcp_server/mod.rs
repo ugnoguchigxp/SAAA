@@ -8,6 +8,7 @@
 #![allow(private_interfaces)]
 
 pub mod calls;
+pub mod cleanup;
 pub mod config;
 pub mod context;
 pub mod protocol;
@@ -19,7 +20,7 @@ pub use config::{MCP_SERVER_BIND_ADDRESS, MCP_SERVER_ENDPOINT};
 mod tests;
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,6 +51,9 @@ pub struct ServerInner {
     pub project_id: Option<String>,
     pub sessions: sessions::SessionRegistry,
     pub shutting_down: AtomicBool,
+    /// Whole-call deadline in milliseconds. Fixed at 30s in production; the acceptance tests lower
+    /// it to prove the deadline path without a 30-second wall-clock wait.
+    pub call_deadline_ms: AtomicU64,
 }
 
 impl ServerInner {
@@ -58,9 +62,13 @@ impl ServerInner {
     }
 
     /// Releases a session's scenario cache, references and continuation results. Audit history is
-    /// never deleted here.
+    /// never deleted here. A session that never reached Ready also loses its empty conversation
+    /// row so abandoned initializations cannot accumulate.
     pub fn discard_session_scope(&self, session: &sessions::Session) {
         self.service.discard_run_scope(session.run_id());
+        if !session.was_ready() {
+            cleanup::delete_empty_conversation(&self.writer, session);
+        }
     }
 }
 
@@ -135,6 +143,7 @@ pub async fn start(
         project_id: config.project_id.clone(),
         sessions: sessions::SessionRegistry::new(),
         shutting_down: AtomicBool::new(false),
+        call_deadline_ms: AtomicU64::new(calls::CALL_DEADLINE.as_millis() as u64),
     });
     let app = router::router(inner.clone());
     let (sender, receiver) = tokio::sync::oneshot::channel::<()>();

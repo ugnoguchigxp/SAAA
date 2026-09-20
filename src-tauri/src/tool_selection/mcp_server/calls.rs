@@ -28,9 +28,26 @@ pub fn tools_list() -> Value {
         .into_iter()
         .filter_map(|definition| {
             let function = definition.get("function")?;
+            let name = function.get("name")?.as_str()?.to_string();
+            let mut description = function
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let guidance = match name.as_str() {
+                "tools_search" => "Call this first; a candidate is not an execution decision.",
+                "tools_describe" => {
+                    "Required before tools_invoke: it returns the executionRef for one tool."
+                }
+                "tools_invoke" => "If the result is unknown, do not retry automatically.",
+                _ => "",
+            };
+            if !guidance.is_empty() {
+                description = format!("{description} {guidance}");
+            }
             Some(json!({
-                "name": function.get("name")?,
-                "description": function.get("description")?,
+                "name": name,
+                "description": description,
                 "inputSchema": function.get("parameters")?,
             }))
         })

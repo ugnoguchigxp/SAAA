@@ -906,7 +906,7 @@ impl McpManager {
 /// respelling the address.
 fn normalize_loopback(raw: &str) -> Option<String> {
     let parsed = url::Url::parse(raw).ok()?;
-    if parsed.scheme() != "http" {
+    if !matches!(parsed.scheme(), "http" | "https") {
         return None;
     }
     let host = match parsed.host()? {

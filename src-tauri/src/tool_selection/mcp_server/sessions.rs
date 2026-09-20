@@ -55,6 +55,7 @@ pub struct Session {
     principal_id: String,
     project_id: Option<String>,
     closing: AtomicBool,
+    ready: AtomicBool,
     inner: Mutex<SessionInner>,
 }
 
@@ -79,6 +80,7 @@ impl Session {
             principal_id,
             project_id,
             closing: AtomicBool::new(false),
+            ready: AtomicBool::new(false),
             inner: Mutex::new(SessionInner {
                 state: SessionState::Initializing,
                 last_activity_ms: now,
@@ -119,12 +121,19 @@ impl Session {
     }
 
     pub fn mark_ready(&self) {
+        self.ready.store(true, Ordering::SeqCst);
         if let Ok(mut inner) = self.inner.lock() {
             if inner.state == SessionState::Initializing {
                 inner.state = SessionState::Ready;
             }
             inner.last_activity_ms = now_ms();
         }
+    }
+
+    /// False until `notifications/initialized` is accepted. A never-ready session owns an empty
+    /// conversation that can be safely removed when the session is discarded.
+    pub fn was_ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst)
     }
 
     pub fn mark_closing(&self) {
@@ -213,6 +222,14 @@ impl Session {
             })
             .unwrap_or(false)
     }
+
+    /// Test-only: ages a session so the idle TTL can be exercised without a real 30-minute wait.
+    #[cfg(test)]
+    pub(crate) fn force_last_activity(&self, at_ms: i64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.last_activity_ms = at_ms;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -256,11 +273,11 @@ impl SessionRegistry {
         self.global_inflight.load(Ordering::SeqCst)
     }
 
-    /// Inserts a freshly initialized session. Fails when the session cap is reached.
+    /// Inserts a freshly initialized session. The caller purges expired sessions first, so the
+    /// capacity check here is authoritative; a race returns `session-limit` and the caller must
+    /// not leave a conversation behind.
     pub fn insert(&self, session: Session) -> Result<Arc<Session>, &'static str> {
         let mut sessions = self.sessions.lock().map_err(|_| "session-lock")?;
-        let now = now_ms();
-        sessions.retain(|_, session| !session.idle_expired(now));
         if sessions.len() >= SESSION_MAX {
             return Err("session-limit");
         }
@@ -269,11 +286,15 @@ impl SessionRegistry {
         Ok(session)
     }
 
+    /// Resolves a session id. An idle-expired session is treated as unknown; other sessions are
+    /// not purged here so their scopes are released by the explicit purge path.
     pub fn get(&self, id: &str) -> Option<Arc<Session>> {
-        let mut sessions = self.sessions.lock().ok()?;
-        let now = now_ms();
-        sessions.retain(|_, session| !session.idle_expired(now));
-        sessions.get(id).cloned()
+        let sessions = self.sessions.lock().ok()?;
+        let session = sessions.get(id)?;
+        if session.idle_expired(now_ms()) {
+            return None;
+        }
+        Some(session.clone())
     }
 
     /// Removes a session and returns it for cleanup. `None` when the id is unknown.
@@ -456,5 +477,16 @@ mod tests {
                 .expect("insert");
         }
         assert!(registry.insert(session("overflow")).is_err());
+    }
+
+    #[test]
+    fn idle_sessions_are_purged_and_no_longer_resolve() {
+        let registry = SessionRegistry::new();
+        let session = registry.insert(session("idle")).expect("insert");
+        session.force_last_activity(now_ms() - SESSION_IDLE_TTL_MILLIS - 1);
+        assert!(registry.get("idle").is_none());
+        let purged = registry.purge_expired();
+        assert_eq!(purged.len(), 1);
+        assert_eq!(registry.len(), 0);
     }
 }

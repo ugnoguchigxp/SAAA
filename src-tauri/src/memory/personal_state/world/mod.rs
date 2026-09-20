@@ -25,7 +25,8 @@ pub mod runtime_meeting;
 mod runtime_meeting_tests;
 pub mod runtime_scope;
 mod runtime_scope_tests;
-mod runtime_test_support;
+#[cfg(test)]
+pub(crate) mod runtime_test_support;
 pub mod test_support;
 mod tests;
 mod v2_tests;

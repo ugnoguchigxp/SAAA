@@ -146,9 +146,11 @@ pub async fn dispatch_external(
     };
     let result = match internal_name(name) {
         Some("tools.search") => {
-            let intent = match parsed.get("intent").and_then(Value::as_str) {
-                Some(intent) => intent,
-                None => return error_envelope(&ToolSelectionError::invalid()),
+            // Validate the shared search shape before spending a provider call on scenario
+            // extraction, so malformed external requests cannot drive the extractor.
+            let (intent, _) = match search_arguments(&parsed) {
+                Ok(parsed) => parsed,
+                Err(error) => return error_envelope(&error),
             };
             let scenario = service.extract_scenario_only(context, intent).await;
             dispatch_search(service, context, &parsed, Some(&scenario)).await
@@ -163,12 +165,8 @@ pub async fn dispatch_external(
     }
 }
 
-async fn dispatch_search(
-    service: &ToolSelectionService,
-    context: &RequestContext,
-    arguments: &Value,
-    scenario: Option<&Scenario>,
-) -> ToolSelectionResult<Value> {
+/// Validates the shared search arguments without running retrieval or the scenario extractor.
+fn search_arguments(arguments: &Value) -> ToolSelectionResult<(&str, usize)> {
     let object = arguments
         .as_object()
         .ok_or_else(ToolSelectionError::invalid)?;
@@ -179,6 +177,9 @@ async fn dispatch_search(
         .get("intent")
         .and_then(Value::as_str)
         .ok_or_else(ToolSelectionError::invalid)?;
+    if intent.trim().is_empty() || intent.len() > SEARCH_INTENT_MAX_BYTES {
+        return Err(ToolSelectionError::invalid());
+    }
     let limit = match object.get("limit") {
         None => SEARCH_LIMIT_DEFAULT,
         Some(value) => value
@@ -186,6 +187,16 @@ async fn dispatch_search(
             .filter(|limit| (1..=SEARCH_LIMIT_MAX as u64).contains(limit))
             .ok_or_else(ToolSelectionError::invalid)? as usize,
     };
+    Ok((intent, limit))
+}
+
+async fn dispatch_search(
+    service: &ToolSelectionService,
+    context: &RequestContext,
+    arguments: &Value,
+    scenario: Option<&Scenario>,
+) -> ToolSelectionResult<Value> {
+    let (intent, limit) = search_arguments(arguments)?;
     let response = match scenario {
         Some(scenario) => {
             service

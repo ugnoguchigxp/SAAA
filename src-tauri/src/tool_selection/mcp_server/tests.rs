@@ -593,6 +593,20 @@ async fn h09_session_cap_refuses_without_touching_the_backend() {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let value = response.json::<Value>().await.expect("json");
     assert_eq!(value.pointer("/error/code"), Some(&json!(-32000)));
+    // A refused initialization must not leave an orphan conversation behind.
+    let conversations: i64 = harness
+        .writer
+        .read_serialized(|connection| {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM conversations WHERE id LIKE 'mcpconv%'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("conversations");
+    assert_eq!(conversations, super::sessions::SESSION_MAX as i64);
 }
 
 #[tokio::test]
@@ -697,11 +711,30 @@ impl ToolBackend for BlockingBackend {
     async fn invoke(
         &self,
         _request: BackendRequest,
-        _cancellation: &crate::RunCancellation,
+        cancellation: &crate::RunCancellation,
     ) -> BackendOutcome {
         self.entered.add_permits(1);
-        let _permit = self.release.acquire().await;
-        BackendOutcome::succeeded(json!({ "ok": true, "value": true }))
+        tokio::select! {
+            _ = self.release.acquire() => {
+                BackendOutcome::succeeded(json!({ "ok": true, "value": true }))
+            }
+            // DELETE, the deadline or shutdown cancel the shared handle; the call must stop.
+            _ = cancellation.cancelled() => BackendOutcome::cancelled(),
+        }
+    }
+}
+
+/// Backend that panics, proving the management task still settles the ledger row.
+struct PanicBackend;
+
+#[async_trait::async_trait]
+impl ToolBackend for PanicBackend {
+    async fn invoke(
+        &self,
+        _request: BackendRequest,
+        _cancellation: &crate::RunCancellation,
+    ) -> BackendOutcome {
+        panic!("backend exploded")
     }
 }
 
@@ -854,4 +887,301 @@ async fn h11_parallel_intents_use_request_local_scenarios() {
     let joined = scenarios.join("\n");
     assert!(joined.contains("alpha decision records"), "{joined}");
     assert!(joined.contains("beta meeting minutes"), "{joined}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// H08: explicit cancellation, DELETE, shutdown and task panic all reach a terminal state
+// ---------------------------------------------------------------------------------------------
+
+async fn prepare_execution_ref(harness: &D5, session: &str) -> String {
+    let search = harness
+        .envelope(
+            1,
+            "tools_search",
+            json!({ "intent": "search notes" }),
+            session,
+        )
+        .await;
+    let candidate = search
+        .pointer("/data/candidates/0/candidateRef")
+        .and_then(Value::as_str)
+        .expect("candidate")
+        .to_string();
+    let describe = harness
+        .envelope(
+            2,
+            "tools_describe",
+            json!({ "candidateRef": candidate }),
+            session,
+        )
+        .await;
+    describe
+        .pointer("/data/executionRef")
+        .and_then(Value::as_str)
+        .expect("execution ref")
+        .to_string()
+}
+
+fn spawn_tool_call(
+    harness: &D5,
+    session: &str,
+    id: i64,
+    execution_ref: &str,
+) -> tokio::task::JoinHandle<()> {
+    let client = harness.client.clone();
+    let url = harness.base.clone();
+    let token = harness.token.clone();
+    let session = session.to_string();
+    let execution_ref = execution_ref.to_string();
+    tokio::spawn(async move {
+        let _ = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", ACCEPT_BOTH)
+            .header("Mcp-Session-Id", session)
+            .json(&json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": { "name": "tools_invoke", "arguments": {
+                    "executionRef": execution_ref, "arguments": { "q": "v" } } }
+            }))
+            .send()
+            .await;
+    })
+}
+
+async fn wait_for_invocation_status(writer: &SqliteWriter) -> String {
+    for _ in 0..600 {
+        let status = writer
+            .read_serialized(|connection| {
+                connection
+                    .query_row(
+                        "SELECT technical_status FROM tool_selection_invocations ORDER BY rowid DESC LIMIT 1",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap_or_default();
+        if status != "running" && !status.is_empty() {
+            return status;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    "running".to_string()
+}
+
+#[tokio::test]
+async fn h08_delete_cancels_the_call_and_closes_the_session() {
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let (writer, service) = ledger_with_backend(
+        4,
+        Arc::new(BlockingBackend {
+            entered: entered.clone(),
+            release,
+        }),
+    );
+    let harness = serve_with(writer.clone(), service).await;
+    let session = harness.ready_session().await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    let call = spawn_tool_call(&harness, &session, 3, &execution_ref);
+    let _entry = tokio::time::timeout(Duration::from_secs(5), entered.acquire())
+        .await
+        .expect("backend entered")
+        .expect("permit");
+
+    let response = harness
+        .client
+        .delete(&harness.base)
+        .header("Authorization", format!("Bearer {}", harness.token))
+        .header("Accept", ACCEPT_BOTH)
+        .header("Mcp-Session-Id", &session)
+        .send()
+        .await
+        .expect("delete");
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    let _ = tokio::time::timeout(Duration::from_secs(5), call).await;
+    assert_eq!(wait_for_invocation_status(&writer).await, "cancelled");
+
+    // The session no longer exists.
+    let (status, _) = harness
+        .rpc(
+            &json!({ "jsonrpc": "2.0", "id": 9, "method": "ping" }),
+            Some(&session),
+        )
+        .await;
+    assert_eq!(status, reqwest::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn h08_shutdown_cancels_in_flight_calls() {
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let (writer, service) = ledger_with_backend(
+        4,
+        Arc::new(BlockingBackend {
+            entered: entered.clone(),
+            release,
+        }),
+    );
+    let harness = serve_with(writer.clone(), service).await;
+    let session = harness.ready_session().await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    let call = spawn_tool_call(&harness, &session, 3, &execution_ref);
+    let _entry = tokio::time::timeout(Duration::from_secs(5), entered.acquire())
+        .await
+        .expect("backend entered")
+        .expect("permit");
+    harness.server.shutdown().await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), call).await;
+    assert_eq!(wait_for_invocation_status(&writer).await, "cancelled");
+}
+
+#[tokio::test]
+async fn h08_backend_panic_still_settles_the_row() {
+    let (writer, service) = ledger_with_backend(4, Arc::new(PanicBackend));
+    let harness = serve_with(writer.clone(), service).await;
+    let session = harness.ready_session().await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    let value = harness
+        .call(
+            3,
+            "tools_invoke",
+            json!({ "executionRef": execution_ref, "arguments": { "q": "v" } }),
+            &session,
+        )
+        .await;
+    assert_eq!(
+        value.pointer("/result/isError"),
+        Some(&json!(true)),
+        "a panicking backend is reported as an error"
+    );
+    assert_eq!(wait_for_invocation_status(&writer).await, "interrupted");
+}
+
+// ---------------------------------------------------------------------------------------------
+// S09: independent client smoke and latency measurement
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn s09_independent_client_smoke() {
+    let harness = harness(4).await;
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../scripts/tool-selection/d5_mcp_smoke.py");
+    let output = tokio::process::Command::new("python3")
+        .arg(&script)
+        .env("D5_MCP_URL", &harness.base)
+        .env("D5_MCP_TOKEN", &harness.token)
+        .output()
+        .await
+        .expect("spawn independent smoke client");
+    assert!(
+        output.status.success(),
+        "smoke client failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("D5_SMOKE_OK"), "stdout: {stdout}");
+}
+
+#[tokio::test]
+async fn s09_search_latency_at_scale() {
+    // 1,500 tools keeps this test light enough to run beside the timing-sensitive Codex
+    // contract tests. The 10,000-item measurement is the live E5/BGE lane in P04 (§4.1), which is
+    // a stronger measurement than the hash lane here.
+    let count = 1500_usize;
+    let iterations = 40_usize;
+    let harness = harness(count).await;
+    let session = harness.ready_session().await;
+    let mut samples = Vec::with_capacity(iterations);
+    for index in 0..iterations {
+        let start = std::time::Instant::now();
+        let value = harness
+            .call(
+                100 + index as i64,
+                "tools_search",
+                json!({ "intent": "search notes", "limit": 1 }),
+                &session,
+            )
+            .await;
+        assert_eq!(
+            value.pointer("/result/isError"),
+            Some(&json!(false)),
+            "search failed at {count} tools: {value}"
+        );
+        samples.push(start.elapsed().as_millis() as u64);
+    }
+    samples.sort_unstable();
+    let p50 = samples[samples.len() / 2];
+    let p95 = samples[(samples.len() * 95) / 100];
+    eprintln!("D5_PERF tools={count} n={iterations} p50={p50}ms p95={p95}ms");
+    // A loose sanity bound only; the recorded p50/p95 are the measurement.
+    assert!(p95 < 3_000, "p95 {p95}ms at {count} tools");
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn h08_deadline_cancels_and_settles_the_call() {
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let (writer, service) = ledger_with_backend(
+        4,
+        Arc::new(BlockingBackend {
+            entered: entered.clone(),
+            release,
+        }),
+    );
+    let harness = serve_with(writer.clone(), service).await;
+    // The production deadline is 30s; the test injects a short one to exercise the same path.
+    harness
+        .server
+        .inner
+        .call_deadline_ms
+        .store(200, std::sync::atomic::Ordering::SeqCst);
+    let session = harness.ready_session().await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    let value = harness
+        .call(
+            3,
+            "tools_invoke",
+            json!({ "executionRef": execution_ref, "arguments": { "q": "v" } }),
+            &session,
+        )
+        .await;
+    assert_eq!(value.pointer("/error/code"), Some(&json!(-32001)));
+    // The management task still reaches a terminal DB state after the deadline.
+    assert_eq!(wait_for_invocation_status(&writer).await, "cancelled");
+}
+
+#[tokio::test]
+async fn review_never_ready_session_reclaims_its_conversation() {
+    let harness = harness(1).await;
+    // initialize without notifications/initialized, then DELETE.
+    let session = harness.initialize(1).await;
+    let response = harness
+        .client
+        .delete(&harness.base)
+        .header("Authorization", format!("Bearer {}", harness.token))
+        .header("Accept", ACCEPT_BOTH)
+        .header("Mcp-Session-Id", &session)
+        .send()
+        .await
+        .expect("delete");
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    let conversations: i64 = harness
+        .writer
+        .read_serialized(|connection| {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM conversations WHERE id LIKE 'mcpconv%'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("conversations");
+    assert_eq!(
+        conversations, 0,
+        "an abandoned initialization must not leave a conversation row"
+    );
 }

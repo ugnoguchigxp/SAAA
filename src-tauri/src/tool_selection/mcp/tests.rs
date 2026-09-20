@@ -2460,6 +2460,68 @@ async fn d5_post(
     request.send().await.expect("request")
 }
 
+async fn d5_open_session(client: &reqwest::Client, base: &str, token: &str) -> String {
+    let response = d5_post(
+        client,
+        base,
+        token,
+        None,
+        &json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": "2025-06-18", "capabilities": {} }
+        }),
+    )
+    .await;
+    let session = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("session")
+        .to_string();
+    d5_post(
+        client,
+        base,
+        token,
+        Some(&session),
+        &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+    )
+    .await;
+    session
+}
+
+async fn d5_tool(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    session: &str,
+    id: i64,
+    name: &str,
+    arguments: Value,
+) -> Value {
+    d5_post(
+        client,
+        base,
+        token,
+        Some(session),
+        &json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }),
+    )
+    .await
+    .json::<Value>()
+    .await
+    .expect("json-rpc response")
+}
+
+fn d5_envelope(value: &Value) -> Value {
+    let text = value
+        .pointer("/result/content/0/text")
+        .and_then(Value::as_str)
+        .expect("content text");
+    serde_json::from_str(text).expect("envelope")
+}
+
 #[tokio::test]
 async fn h10_large_mcp_result_pages_over_the_published_wire() {
     let state = default_state();
@@ -2685,4 +2747,941 @@ async fn review_self_endpoint_source_is_refused() {
             .expect_err("self reference must be refused");
         assert_eq!(error.code, "source-self-reference", "for {url}");
     }
+}
+
+async fn d5_execution_ref(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    session: &str,
+    id: i64,
+    candidate_ref: &str,
+) -> String {
+    let describe = d5_envelope(
+        &d5_tool(
+            client,
+            base,
+            token,
+            session,
+            id,
+            "tools_describe",
+            json!({ "candidateRef": candidate_ref }),
+        )
+        .await,
+    );
+    describe
+        .pointer("/data/executionRef")
+        .and_then(Value::as_str)
+        .expect("execution ref")
+        .to_string()
+}
+
+#[tokio::test]
+async fn h04_same_name_routes_to_the_selected_source_over_the_wire() {
+    let state = default_state();
+    let mock = MockServer::start(state.clone()).await;
+    let harness = Harness::new(&mock, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+
+    // An L-Lang tool with the same display name as the external MCP tool.
+    let principal = harness.principal.clone();
+    let entry = crate::tool_selection::catalog::CatalogEntry {
+        tool_id: "llang-search".to_string(),
+        backend_key: "search".to_string(),
+        title: "search".to_string(),
+        purpose: "Search notes locally for decision records.".to_string(),
+        operations: vec!["search".to_string()],
+        objects: vec!["decision_record".to_string()],
+        suitable: vec!["search notes".to_string()],
+        unsuitable: vec!["unrelated chat".to_string()],
+        required_inputs: vec!["q".to_string()],
+        input_schema: json!({
+            "type": "object",
+            "properties": { "q": { "type": "string" } },
+            "additionalProperties": false
+        }),
+        output_schema: None,
+        effect: "read",
+        usage_pages: vec![crate::tool_selection::catalog::UsagePage {
+            section: "usage",
+            page: 0,
+            text: "Use search locally.".to_string(),
+        }],
+        backend_binding: json!({
+            "capabilityId": "llang-search",
+            "revisionId": "llang-search-rev1",
+            "packageHash": "p",
+            "contractHash": "c",
+            "catalogEpoch": 0,
+            "inputFields": []
+        }),
+    };
+    harness
+        .writer
+        .write({
+            let principal = principal.clone();
+            move |connection| {
+                let transaction = connection
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(crate::database_error)?;
+                crate::tool_selection::catalog::register_revision(
+                    &transaction,
+                    &principal,
+                    "llang",
+                    &entry,
+                    "llang-search-rev1",
+                    now_ms(),
+                )
+                .map_err(|error| error.code.as_str().to_string())?;
+                repository::upsert_grant(
+                    &transaction,
+                    &principal,
+                    "llang-search",
+                    "user",
+                    &principal,
+                )
+                .map_err(|error| error.to_string())?;
+                repository::bump_epochs(&transaction, false, true, false)
+                    .map_err(|error| error.to_string())?;
+                transaction.commit().map_err(crate::database_error)?;
+                Ok(())
+            }
+        })
+        .expect("register llang");
+
+    let Harness {
+        writer, service, ..
+    } = harness;
+    let (config, directory) = d5_config();
+    let server = super::super::mcp_server::start(Arc::new(service), writer, config)
+        .await
+        .expect("start");
+    let base = format!("http://127.0.0.1:{}/mcp", server.port());
+    let token = d5_token(&directory);
+    let client = reqwest::Client::new();
+    let session = d5_open_session(&client, &base, &token).await;
+
+    let search = d5_envelope(
+        &d5_tool(
+            &client,
+            &base,
+            &token,
+            &session,
+            2,
+            "tools_search",
+            json!({ "intent": "search notes", "limit": 8 }),
+        )
+        .await,
+    );
+    let candidates = search
+        .pointer("/data/candidates")
+        .and_then(Value::as_array)
+        .expect("candidates");
+    let find = |source: &str| {
+        candidates
+            .iter()
+            .find(|candidate| candidate.get("sourceId").and_then(Value::as_str) == Some(source))
+            .unwrap_or_else(|| panic!("missing candidate for {source}: {search}"))
+            .clone()
+    };
+    let mcp_candidate = find("mcp-test");
+    let llang_candidate = find("llang");
+
+    // Invoking the MCP candidate reaches the external server exactly once.
+    let before = state.call_count.load(Ordering::SeqCst);
+    let mcp_ref = d5_execution_ref(
+        &client,
+        &base,
+        &token,
+        &session,
+        3,
+        mcp_candidate["candidateRef"]
+            .as_str()
+            .expect("candidateRef"),
+    )
+    .await;
+    let mcp_result = d5_envelope(
+        &d5_tool(
+            &client,
+            &base,
+            &token,
+            &session,
+            4,
+            "tools_invoke",
+            json!({ "executionRef": mcp_ref, "arguments": { "q": "v" } }),
+        )
+        .await,
+    );
+    assert_eq!(
+        mcp_result.pointer("/data/status"),
+        Some(&json!("succeeded"))
+    );
+    assert_eq!(state.call_count.load(Ordering::SeqCst), before + 1);
+
+    // Invoking the L-Lang candidate never contacts the external server.
+    let llang_ref = d5_execution_ref(
+        &client,
+        &base,
+        &token,
+        &session,
+        5,
+        llang_candidate["candidateRef"]
+            .as_str()
+            .expect("candidateRef"),
+    )
+    .await;
+    let llang_result = d5_envelope(
+        &d5_tool(
+            &client,
+            &base,
+            &token,
+            &session,
+            6,
+            "tools_invoke",
+            json!({ "executionRef": llang_ref, "arguments": { "q": "v" } }),
+        )
+        .await,
+    );
+    assert_eq!(
+        llang_result.pointer("/data/status"),
+        Some(&json!("succeeded"))
+    );
+    assert_eq!(state.call_count.load(Ordering::SeqCst), before + 1);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn h12_mcp_correction_applies_to_the_matching_conversation_only() {
+    let state = default_state();
+    let mock = MockServer::start(state).await;
+    let harness = Harness::new(&mock, vec![user_grant("search"), user_grant("other")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+
+    // A normal conversation correction that prefers the other MCP tool. The message row makes the
+    // correction a persisted user instruction, exactly like the conversation path.
+    harness
+        .writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                     VALUES ('msg-h12', 'conversation-d4', 'user', 'other を使って', '1')",
+                    [],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("message");
+    let context = harness.context().with_message(Some("msg-h12".to_string()));
+    let parsed = crate::tool_selection::feedback::ParsedExtraction {
+        scenario: scenario(),
+        accepted: vec![crate::tool_selection::contracts::ExtractedFeedback {
+            kind: crate::tool_selection::contracts::FeedbackKind::ToolChoice,
+            decision_id: None,
+            rejected_tool_id: None,
+            preferred_tool_id: Some("other".to_string()),
+            scope: crate::tool_selection::contracts::ScopeKind::Conversation,
+            duration: crate::tool_selection::contracts::Duration::Persistent,
+            evidence: crate::tool_selection::contracts::Evidence {
+                start: 0,
+                end: 5,
+                text: "other".to_string(),
+            },
+            condition: crate::tool_selection::contracts::FeedbackCondition {
+                operation: Some(crate::tool_selection::Operation::Search),
+                object_type: Some(crate::tool_selection::ObjectType::Document),
+                phase: None,
+                input_kind: None,
+            },
+        }],
+        rejected: Vec::new(),
+    };
+    harness
+        .service
+        .apply_parsed(&context, &parsed)
+        .expect("apply correction");
+
+    let other_tool = descriptors::tool_id("mcp-test", "other");
+    harness.service.set_scenario(&context, scenario());
+    let response = harness
+        .service
+        .search(&context, "search notes", 8)
+        .await
+        .expect("search");
+    let applied = harness
+        .service
+        .decision_candidates(&response.decision_id)
+        .expect("candidates")
+        .into_iter()
+        .find(|candidate| candidate.tool_id == other_tool)
+        .expect("preferred candidate present");
+    assert!(
+        !applied.rule_ids.is_empty(),
+        "the saved correction must reach the MCP search in its conversation"
+    );
+
+    // The same search in another conversation is untouched.
+    harness
+        .writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+                     VALUES ('conversation-other', 'Other', 'conversation', '1', '1')",
+                    [],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("other conversation");
+    let other_context = RequestContext::new(&harness.principal, "conversation-other")
+        .with_run(Some("run-other".to_string()));
+    harness.service.set_scenario(&other_context, scenario());
+    let other_response = harness
+        .service
+        .search(&other_context, "search notes", 8)
+        .await
+        .expect("other search");
+    let untouched = harness
+        .service
+        .decision_candidates(&other_response.decision_id)
+        .expect("candidates")
+        .into_iter()
+        .find(|candidate| candidate.tool_id == other_tool)
+        .expect("candidate present");
+    assert!(
+        untouched.rule_ids.is_empty(),
+        "a conversation correction must not leak into another conversation"
+    );
+}
+
+#[tokio::test]
+async fn h12_correction_scope_distinguishes_operation_and_project() {
+    let state = default_state();
+    let mock = MockServer::start(state).await;
+    let harness = Harness::new(&mock, vec![user_grant("search"), user_grant("other")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let principal = harness.principal.clone();
+    let other_tool = descriptors::tool_id("mcp-test", "other");
+
+    let insert_message = |id: &str| {
+        harness
+            .writer
+            .write({
+                let id = id.to_string();
+                move |connection| {
+                    connection
+                        .execute(
+                            "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                             VALUES (?1, 'conversation-d4', 'user', 'fixture', '1')",
+                            rusqlite::params![id],
+                        )
+                        .map_err(|error| error.to_string())?;
+                    Ok(())
+                }
+            })
+            .expect("message");
+    };
+    let correction = |operation: &str, scope: crate::tool_selection::contracts::ScopeKind| {
+        crate::tool_selection::feedback::ParsedExtraction {
+            scenario: scenario(),
+            accepted: vec![crate::tool_selection::contracts::ExtractedFeedback {
+                kind: crate::tool_selection::contracts::FeedbackKind::ToolChoice,
+                decision_id: None,
+                rejected_tool_id: None,
+                preferred_tool_id: Some("other".to_string()),
+                scope,
+                duration: crate::tool_selection::contracts::Duration::Persistent,
+                evidence: crate::tool_selection::contracts::Evidence {
+                    start: 0,
+                    end: 5,
+                    text: "other".to_string(),
+                },
+                condition: crate::tool_selection::contracts::FeedbackCondition {
+                    operation: Some(crate::tool_selection::Operation::parse(operation)),
+                    object_type: Some(crate::tool_selection::ObjectType::Document),
+                    phase: None,
+                    input_kind: None,
+                },
+            }],
+            rejected: Vec::new(),
+        }
+    };
+    let rule_ids_for = |decision_id: &str| -> Vec<String> {
+        harness
+            .service
+            .decision_candidates(decision_id)
+            .expect("candidates")
+            .into_iter()
+            .find(|candidate| candidate.tool_id == other_tool)
+            .map(|candidate| candidate.rule_ids)
+            .unwrap_or_default()
+    };
+
+    // A correction bound to a different operation must not apply to a search decision.
+    insert_message("msg-h12-create");
+    let create_context = harness
+        .context()
+        .with_message(Some("msg-h12-create".to_string()));
+    harness
+        .service
+        .apply_parsed(
+            &create_context,
+            &correction(
+                "create",
+                crate::tool_selection::contracts::ScopeKind::Conversation,
+            ),
+        )
+        .expect("apply create correction");
+    harness.service.set_scenario(&create_context, scenario());
+    let create_response = harness
+        .service
+        .search(&create_context, "search notes", 8)
+        .await
+        .expect("search");
+    assert!(
+        rule_ids_for(&create_response.decision_id).is_empty(),
+        "a create-scoped correction must not affect a search"
+    );
+
+    // A project-scoped correction applies in its project and not in another.
+    insert_message("msg-h12-project");
+    let project_a = harness
+        .context()
+        .with_run(Some("run-a".to_string()))
+        .with_message(Some("msg-h12-project".to_string()))
+        .with_project(Some("A".to_string()));
+    harness
+        .service
+        .apply_parsed(
+            &project_a,
+            &correction(
+                "search",
+                crate::tool_selection::contracts::ScopeKind::Project,
+            ),
+        )
+        .expect("apply project correction");
+    harness.service.set_scenario(&project_a, scenario());
+    let response_a = harness
+        .service
+        .search(&project_a, "search notes", 8)
+        .await
+        .expect("search A");
+    assert!(
+        !rule_ids_for(&response_a.decision_id).is_empty(),
+        "the project correction applies inside project A"
+    );
+
+    let project_b = RequestContext::new(&principal, "conversation-d4")
+        .with_run(Some("run-b".to_string()))
+        .with_project(Some("B".to_string()));
+    harness.service.set_scenario(&project_b, scenario());
+    let response_b = harness
+        .service
+        .search(&project_b, "search notes", 8)
+        .await
+        .expect("search B");
+    assert!(
+        rule_ids_for(&response_b.decision_id).is_empty(),
+        "the project correction must not apply in project B"
+    );
+}
+
+async fn execute_candidate(
+    service: &ToolSelectionService,
+    context: &RequestContext,
+    reference: &str,
+) -> crate::tool_selection::ToolSelectionResult<crate::tool_selection::service::InvokeResponse> {
+    let described = service
+        .describe(context, reference, "contract", None)
+        .expect("describe");
+    let execution_ref = described.execution_ref.expect("execution ref");
+    let cancellation = crate::RunCancellation::default();
+    service
+        .invoke(context, &execution_ref, &json!({ "q": "v" }), &cancellation)
+        .await
+}
+
+#[tokio::test]
+async fn p03_same_name_routes_across_llang_and_two_mcp_sources() {
+    let state_a = default_state();
+    let state_b = default_state();
+    let server_a = MockServer::start(state_a.clone()).await;
+    let server_b = MockServer::start(state_b.clone()).await;
+    let connection = Connection::open_in_memory().expect("in-memory");
+    crate::persistence::schema::initialize_database(&connection).expect("schema");
+    let writer = Arc::new(SqliteWriter::from_connection(connection));
+    writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+                     VALUES ('conversation-d4', 'D4', 'conversation', '1', '1')",
+                    [],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("conversation");
+    let principal = crate::tool_selection::service::ensure_principal(&writer).expect("principal");
+    let sources = McpSources {
+        sources: vec![
+            McpSourceSpec {
+                id: "mcp-a".to_string(),
+                url: server_a.url(),
+                enabled: true,
+                bearer_token_env: None,
+                grants: vec![user_grant("search")],
+            },
+            McpSourceSpec {
+                id: "mcp-b".to_string(),
+                url: server_b.url(),
+                enabled: true,
+                bearer_token_env: None,
+                grants: vec![user_grant("search")],
+            },
+        ],
+    };
+    let manager = McpManager::new(
+        writer.clone(),
+        principal.clone(),
+        None,
+        sources,
+        Some(hash_embedding()),
+        None,
+    );
+    manager.sync_source("mcp-a").await.expect("a");
+    manager.sync_source("mcp-b").await.expect("b");
+
+    // A third tool with the same display name, backed by the local L-Lang fixture.
+    let entry = crate::tool_selection::catalog::CatalogEntry {
+        tool_id: "llang-search".to_string(),
+        backend_key: "search".to_string(),
+        title: "search".to_string(),
+        purpose: "Search notes locally for decision records.".to_string(),
+        operations: vec!["search".to_string()],
+        objects: vec!["document".to_string()],
+        suitable: vec![],
+        unsuitable: vec![],
+        required_inputs: vec!["q".to_string()],
+        input_schema: json!({ "type": "object", "properties": { "q": { "type": "string" } } }),
+        output_schema: None,
+        effect: "read",
+        usage_pages: vec![],
+        backend_binding: json!({
+            "capabilityId": "llang-search",
+            "revisionId": "llang-search-rev1",
+            "packageHash": "p",
+            "contractHash": "c",
+            "catalogEpoch": 0,
+            "inputFields": []
+        }),
+    };
+    writer
+        .write({
+            let principal = principal.clone();
+            move |connection| {
+                let transaction = connection
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(crate::database_error)?;
+                crate::tool_selection::catalog::register_revision(
+                    &transaction,
+                    &principal,
+                    "llang",
+                    &entry,
+                    "llang-search-rev1",
+                    now_ms(),
+                )
+                .map_err(|error| error.code.as_str().to_string())?;
+                repository::upsert_grant(
+                    &transaction,
+                    &principal,
+                    "llang-search",
+                    "user",
+                    &principal,
+                )
+                .map_err(|error| error.to_string())?;
+                repository::bump_epochs(&transaction, false, true, false)
+                    .map_err(|error| error.to_string())?;
+                transaction.commit().map_err(crate::database_error)?;
+                Ok(())
+            }
+        })
+        .expect("register llang");
+
+    let router = Arc::new(BackendRouter::new(
+        Arc::new(FixtureBackend::new()),
+        Arc::new(McpBackend::new(manager.clone())),
+    ));
+    let mut service = ToolSelectionService::new(
+        writer.clone(),
+        hash_embedding(),
+        Arc::new(FixedReranker::new(&[])),
+        Arc::new(UnconfiguredExtractor),
+        router,
+        f64::NEG_INFINITY,
+    );
+    service.set_mcp_manager(manager);
+    service.set_discovery_configured(true);
+
+    let context =
+        RequestContext::new(&principal, "conversation-d4").with_run(Some("run-d4".into()));
+    service.set_scenario(&context, scenario());
+    let search = service
+        .search(&context, "search notes", 8)
+        .await
+        .expect("search");
+    let candidate_for = |source: &str| -> String {
+        search
+            .candidates
+            .iter()
+            .find(|candidate| candidate.source_id == source)
+            .unwrap_or_else(|| panic!("missing {source} candidate"))
+            .reference
+            .clone()
+    };
+
+    let before_a = state_a.call_count.load(Ordering::SeqCst);
+    let before_b = state_b.call_count.load(Ordering::SeqCst);
+
+    let a = execute_candidate(&service, &context, &candidate_for("mcp-a"))
+        .await
+        .expect("invoke a");
+    assert_eq!(
+        a.status,
+        crate::tool_selection::backends::TechnicalStatus::Succeeded
+    );
+    assert_eq!(state_a.call_count.load(Ordering::SeqCst), before_a + 1);
+    assert_eq!(state_b.call_count.load(Ordering::SeqCst), before_b);
+
+    let b = execute_candidate(&service, &context, &candidate_for("mcp-b"))
+        .await
+        .expect("invoke b");
+    assert_eq!(
+        b.status,
+        crate::tool_selection::backends::TechnicalStatus::Succeeded
+    );
+    assert_eq!(state_b.call_count.load(Ordering::SeqCst), before_b + 1);
+    assert_eq!(state_a.call_count.load(Ordering::SeqCst), before_a + 1);
+
+    let local = execute_candidate(&service, &context, &candidate_for("llang"))
+        .await
+        .expect("invoke local");
+    assert_eq!(
+        local.status,
+        crate::tool_selection::backends::TechnicalStatus::Succeeded
+    );
+    assert_eq!(state_a.call_count.load(Ordering::SeqCst), before_a + 1);
+    assert_eq!(state_b.call_count.load(Ordering::SeqCst), before_b + 1);
+}
+
+#[tokio::test]
+async fn p03_profile_result_storage_limit_is_enforced_over_real_http() {
+    let state = default_state();
+    *state.call_result.lock().unwrap() = json!({
+        "content": [{ "type": "text", "text": "x".repeat(1_048_000) }],
+        "isError": false,
+    });
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+
+    let mut stored = 0;
+    let mut overflow = None;
+    // A fresh run per call keeps each stored result inside the per-run reference/result bounds,
+    // so the principal-wide profile limit (32 MiB) is what is measured.
+    for index in 0..33 {
+        let context = harness
+            .context()
+            .with_run(Some(format!("run-limit-{index}")));
+        harness.service.set_scenario(&context, scenario());
+        let search = harness
+            .service
+            .search(&context, "search notes", 1)
+            .await
+            .expect("search");
+        let describe = harness
+            .service
+            .describe(&context, &search.candidates[0].reference, "contract", None)
+            .expect("describe");
+        let execution_ref = describe.execution_ref.expect("execution ref");
+        let cancellation = crate::RunCancellation::default();
+        let response = harness
+            .service
+            .invoke(
+                &context,
+                &execution_ref,
+                &json!({ "q": "v" }),
+                &cancellation,
+            )
+            .await
+            .expect("invoke");
+        assert_eq!(
+            response.status,
+            crate::tool_selection::backends::TechnicalStatus::Succeeded
+        );
+        match response.result_availability {
+            Some("stored") => stored += 1,
+            other => {
+                overflow = Some((other, response.error_code));
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        stored, 32,
+        "32 results of ~1 MiB fill the 32 MiB profile budget"
+    );
+    assert_eq!(
+        overflow,
+        Some((Some("unavailable"), Some("result-storage-limit"))),
+        "the next result must be reported as a storage limit, not a call failure"
+    );
+}
+
+/// Minimal HTTP/1.1 server that answers every request with a 302 to `target`.
+async fn redirect_server(target: String) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buffer = [0_u8; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+    (format!("http://127.0.0.1:{port}/mcp"), handle)
+}
+
+#[tokio::test]
+async fn a15_redirect_is_not_followed() {
+    let target_state = Arc::new(ServerState::default());
+    let target = MockServer::start(target_state.clone()).await;
+    let (redirect_url, redirect_task) = redirect_server(target.url()).await;
+
+    let connection = Connection::open_in_memory().expect("in-memory");
+    crate::persistence::schema::initialize_database(&connection).expect("schema");
+    let writer = Arc::new(SqliteWriter::from_connection(connection));
+    let principal = crate::tool_selection::service::ensure_principal(&writer).expect("principal");
+    let manager = McpManager::new(
+        writer,
+        principal,
+        None,
+        McpSources {
+            sources: vec![McpSourceSpec {
+                id: "mcp-redirect".to_string(),
+                url: redirect_url,
+                enabled: true,
+                bearer_token_env: None,
+                grants: vec![],
+            }],
+        },
+        Some(hash_embedding()),
+        None,
+    );
+    let error = manager
+        .sync_source("mcp-redirect")
+        .await
+        .expect_err("a 302 must fail the sync");
+    assert!(!error.code.is_empty());
+    assert_eq!(
+        target_state.call_count.load(Ordering::SeqCst),
+        0,
+        "the redirect target must never be contacted"
+    );
+    redirect_task.abort();
+}
+
+async fn mock_chat_provider(body: String) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let endpoint = format!("http://{}/proxy/v1", listener.local_addr().expect("addr"));
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut buffer = vec![0_u8; 16 * 1024];
+        let _ = socket.read(&mut buffer).await;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = socket.write_all(response.as_bytes()).await;
+    });
+    (endpoint, task)
+}
+
+#[tokio::test]
+async fn p04_natural_correction_via_conversation_provider_reaches_mcp_search() {
+    let state = default_state();
+    let mock = MockServer::start(state).await;
+    let connection = Connection::open_in_memory().expect("in-memory");
+    crate::persistence::schema::initialize_database(&connection).expect("schema");
+    let writer = Arc::new(SqliteWriter::from_connection(connection));
+    writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+                     VALUES ('conversation-d4', 'D4', 'conversation', '1', '1')",
+                    [],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("conversation");
+    let principal = crate::tool_selection::service::ensure_principal(&writer).expect("principal");
+    let manager = McpManager::new(
+        writer.clone(),
+        principal.clone(),
+        None,
+        McpSources {
+            sources: vec![McpSourceSpec {
+                id: "mcp-test".to_string(),
+                url: mock.url(),
+                enabled: true,
+                bearer_token_env: None,
+                grants: vec![user_grant("search"), user_grant("other")],
+            }],
+        },
+        Some(hash_embedding()),
+        None,
+    );
+    manager.sync_source("mcp-test").await.expect("sync");
+
+    // The conversation provider is a local mock that returns the extraction the model would.
+    let extraction = json!({
+        "scenario": {
+            "intent": "search instead of other",
+            "operation": "search",
+            "objectType": "document",
+            "phase": "discover",
+            "inputKind": "text"
+        },
+        "feedback": [{
+            "kind": "tool_choice",
+            "decisionId": null,
+            "rejectedToolId": "search",
+            "preferredToolId": "other",
+            "scope": "conversation",
+            "duration": "persistent",
+            "evidence": { "start": 0, "end": 6, "text": "search" },
+            "condition": {
+                "operation": "search",
+                "objectType": "document",
+                "phase": null,
+                "inputKind": null
+            }
+        }]
+    })
+    .to_string();
+    let chat = json!({
+        "model": "fixture",
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": extraction },
+            "finish_reason": "stop"
+        }]
+    })
+    .to_string();
+    let (endpoint, provider_task) = mock_chat_provider(chat).await;
+    writer
+        .write({
+            let endpoint = endpoint.clone();
+            move |connection| {
+                let mut providers = crate::persistence::load_model_providers(connection)?;
+                providers.providers.push(crate::ModelProviderSettings::OpenAiCompatible(
+                    crate::OpenAiCompatibleProviderSettings {
+                        request_options: None,
+                        id: "mock-extraction-provider".to_string(),
+                        enabled: true,
+                        label: "Mock extraction".to_string(),
+                        location: "local".to_string(),
+                        endpoint,
+                        model: "fixture".to_string(),
+                        authentication: "none".to_string(),
+                    },
+                ));
+                let providers_json =
+                    serde_json::to_string(&providers).map_err(|error| error.to_string())?;
+                connection
+                    .execute(
+                        "UPDATE settings_documents SET value_json = ?1
+                          WHERE namespace = 'providers.model' AND key = 'default'",
+                        rusqlite::params![providers_json],
+                    )
+                    .map_err(|error| error.to_string())?;
+                let mut routing = crate::persistence::load_routing_settings(connection)?;
+                routing.conversation_respond.source = "provider".to_string();
+                routing.conversation_respond.primary_provider_id =
+                    Some("mock-extraction-provider".to_string());
+                let routing_json =
+                    serde_json::to_string(&routing).map_err(|error| error.to_string())?;
+                connection
+                    .execute(
+                        "UPDATE settings_documents SET value_json = ?1
+                          WHERE namespace = 'routing.tasks' AND key = 'default'",
+                        rusqlite::params![routing_json],
+                    )
+                    .map_err(|error| error.to_string())?;
+                connection
+                    .execute(
+                        "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                         VALUES ('msg-p04', 'conversation-d4', 'user', 'fixture', '1')",
+                        [],
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            }
+        })
+        .expect("configure provider");
+
+    let router = Arc::new(BackendRouter::new(
+        Arc::new(FixtureBackend::new()),
+        Arc::new(McpBackend::new(manager.clone())),
+    ));
+    let mut service = ToolSelectionService::new(
+        writer.clone(),
+        hash_embedding(),
+        Arc::new(FixedReranker::new(&[])),
+        Arc::new(
+            crate::tool_selection::provider_extraction::ConversationProviderExtractor::new(
+                writer.clone(),
+            ),
+        ),
+        router,
+        f64::NEG_INFINITY,
+    );
+    service.set_mcp_manager(manager);
+    service.set_discovery_configured(true);
+
+    let context = RequestContext::new(&principal, "conversation-d4")
+        .with_run(Some("run-p04".into()))
+        .with_message(Some("msg-p04".into()));
+    let outcome = service
+        .begin_turn(&context, "searchではなくotherを使って")
+        .await;
+    assert!(!outcome.degraded, "the provider extraction must succeed");
+    provider_task.await.expect("provider task");
+
+    let response = service
+        .search(&context, "search notes", 8)
+        .await
+        .expect("search");
+    let other_tool = descriptors::tool_id("mcp-test", "other");
+    let applied = service
+        .decision_candidates(&response.decision_id)
+        .expect("candidates")
+        .into_iter()
+        .find(|candidate| candidate.tool_id == other_tool)
+        .expect("preferred candidate present");
+    assert!(
+        !applied.rule_ids.is_empty(),
+        "the provider-extracted correction must reach the MCP search"
+    );
 }

@@ -632,18 +632,19 @@ pub fn run() {
                 &tool_selection_config,
                 Some(generated_capabilities.clone()),
             ));
-            // The external MCP poll loop is opt-in: it only exists when a sources file is
-            // configured. It performs an immediate sync before serving.
-            if let Some(manager) = tool_selection.mcp_manager() {
-                manager.start_background();
-            }
-            // D5: publish the same three entry points over the local MCP server (listener-only failure).
+            // D5: publish the three entry points, learning our own endpoint before the D4 poll loop
+            // so a self-referencing source is already refused.
             let mcp_server = tauri::async_runtime::block_on(
                 tool_selection::mcp_server::start_from_environment(
                     tool_selection.clone(),
                     sqlite_writer.clone(),
                 ),
             );
+            // The external MCP poll loop is opt-in: it only exists when a sources file is
+            // configured. It performs an immediate sync before serving.
+            if let Some(manager) = tool_selection.mcp_manager() {
+                manager.start_background();
+            }
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,

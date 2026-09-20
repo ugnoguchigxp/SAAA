@@ -13,7 +13,7 @@ use axum::routing::post;
 use axum::Router;
 use serde_json::{json, Value};
 
-use super::calls::{self, CallPermit, CALL_DEADLINE};
+use super::calls::{self, CallPermit};
 use super::context;
 use super::protocol::{
     self, JsonRpcError, Parsed, TypedRequestId, DEADLINE_EXCEEDED, INTERNAL_ERROR, INVALID_PARAMS,
@@ -68,6 +68,8 @@ async fn handle_post(State(inner): State<Arc<ServerInner>>, request: Request) ->
         Ok(bytes) => bytes,
         Err(response) => return response,
     };
+    // Reclaim idle/never-initialized sessions and release their scopes on any client activity.
+    purge_sessions(&inner);
     match protocol::parse(&bytes) {
         Parsed::Error(error) => {
             json_response(StatusCode::OK, &protocol::error_response(None, &error))
@@ -197,25 +199,29 @@ async fn initialize(
     }
     let conversation_id = crate::new_id("mcpconv");
     let run_id = format!("mcp-session:{}", uuid::Uuid::new_v4());
+    let session = super::sessions::Session::new(
+        uuid::Uuid::new_v4().to_string(),
+        MCP_SERVER_PROTOCOL_VERSION.to_string(),
+        client_info,
+        conversation_id.clone(),
+        run_id,
+        inner.principal.clone(),
+        inner.project_id.clone(),
+    );
+    // Reserve the session first: the capacity check in `insert` is authoritative, so a rejected
+    // initialize never creates a conversation row that would be orphaned.
+    let session = match inner.sessions.insert(session) {
+        Ok(session) => session,
+        Err(_) => return Ok(RpcReply::value(server_busy(id))),
+    };
     if context::create_conversation(&inner.writer, &conversation_id).is_err() {
+        // Roll the reservation back so a storage failure does not hold a session slot.
+        inner.sessions.remove(session.id());
         return Ok(RpcReply::value(protocol::error_response(
             Some(id),
             &JsonRpcError::new(INTERNAL_ERROR, "Internal error"),
         )));
     }
-    let session = super::sessions::Session::new(
-        uuid::Uuid::new_v4().to_string(),
-        MCP_SERVER_PROTOCOL_VERSION.to_string(),
-        client_info,
-        conversation_id,
-        run_id,
-        inner.principal.clone(),
-        inner.project_id.clone(),
-    );
-    let session = match inner.sessions.insert(session) {
-        Ok(session) => session,
-        Err(_) => return Ok(RpcReply::value(server_busy(id))),
-    };
     let result = json!({
         "protocolVersion": MCP_SERVER_PROTOCOL_VERSION,
         "capabilities": { "tools": { "listChanged": false } },
@@ -276,10 +282,15 @@ async fn tools_call(
     let service = inner.service.clone();
     let name = name.to_string();
     let task_cancellation = cancellation.clone();
+    let deadline = std::time::Duration::from_millis(
+        inner
+            .call_deadline_ms
+            .load(std::sync::atomic::Ordering::SeqCst),
+    );
     let task = tokio::spawn(async move {
         calls::execute_tool_call(&service, &context, &name, &arguments, &task_cancellation).await
     });
-    let reply = match tokio::time::timeout(CALL_DEADLINE, task).await {
+    let reply = match tokio::time::timeout(deadline, task).await {
         Ok(Ok(Ok(result))) => protocol::success_response(id, result),
         Ok(Ok(Err(error))) => protocol::error_response(Some(id), &error),
         Ok(Err(_)) => protocol::error_response(
@@ -330,6 +341,13 @@ async fn handle_delete(State(inner): State<Arc<ServerInner>>, headers: HeaderMap
     empty(StatusCode::NO_CONTENT)
 }
 
+/// Releases the scopes of sessions that exceeded their idle or initialization TTL.
+fn purge_sessions(inner: &ServerInner) {
+    for session in inner.sessions.purge_expired() {
+        inner.discard_session_scope(&session);
+    }
+}
+
 fn require_session(inner: &ServerInner, headers: &HeaderMap) -> Result<Arc<Session>, Response> {
     let Some(session_id) = header_str(headers, SESSION_HEADER) else {
         return Err(empty(StatusCode::BAD_REQUEST));
@@ -345,6 +363,9 @@ fn require_session(inner: &ServerInner, headers: &HeaderMap) -> Result<Arc<Sessi
             return Err(empty(StatusCode::BAD_REQUEST));
         }
     }
+    // Any valid request refreshes the idle TTL, not only tools/call, so a client that lists or
+    // pings keeps its session alive.
+    session.touch();
     Ok(session)
 }
 

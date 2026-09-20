@@ -13,11 +13,10 @@ use std::sync::Arc;
 use futures_util::FutureExt;
 use tokio::sync::oneshot;
 
-use super::backends::{BackendOutcome, BackendRequest, TechnicalStatus, ToolBackend};
-use super::contracts::{
-    now_ms, RequestContext, ToolSelectionError, ToolSelectionErrorCode, ToolSelectionResult,
-};
-use super::repository::{self, RevisionRow};
+use super::backends::{BackendRequest, ToolBackend};
+use super::contracts::{RequestContext, ToolSelectionError, ToolSelectionResult};
+use super::invocation_task;
+use super::repository::RevisionRow;
 use super::service::InvokeResponse;
 use crate::persistence::SqliteWriter;
 use crate::RunCancellation;
@@ -43,85 +42,24 @@ pub fn spawn(
     invocation: ManagedInvocation,
 ) -> oneshot::Receiver<ToolSelectionResult<InvokeResponse>> {
     let (sender, receiver) = oneshot::channel();
+    let writer = invocation.writer.clone();
+    let invocation_id = invocation.invocation_id.clone();
     tokio::spawn(async move {
-        let response = run(invocation).await;
+        // The worker catches backend panics itself, but a panic in result storage or the terminal
+        // write must still not leave the ledger row `running`. This supervisor catches it, settles
+        // the row, and reports an unavailable outcome to the caller.
+        let response = match std::panic::AssertUnwindSafe(invocation_task::run(invocation))
+            .catch_unwind()
+            .await
+        {
+            Ok(response) => response,
+            Err(_) => {
+                invocation_task::settle_panicked(&writer, &invocation_id);
+                Err(ToolSelectionError::unavailable())
+            }
+        };
         // A detached caller is not an error; the ledger has already been settled.
         let _ = sender.send(response);
     });
     receiver
-}
-
-async fn run(invocation: ManagedInvocation) -> ToolSelectionResult<InvokeResponse> {
-    let ManagedInvocation {
-        writer,
-        backend,
-        invocation_id,
-        context,
-        tool_id,
-        revision,
-        acl_epoch,
-        binding_kind,
-        request,
-        cancellation,
-    } = invocation;
-
-    // A panic inside the backend must not skip the DB terminal write; it is reported as an
-    // interrupted (indeterminate) outcome.
-    let outcome = std::panic::AssertUnwindSafe(backend.invoke(request, &cancellation))
-        .catch_unwind()
-        .await
-        .unwrap_or(BackendOutcome {
-            status: TechnicalStatus::Interrupted,
-            result: None,
-            error_code: Some("backend-panic"),
-        });
-
-    let finalized = super::mcp::service_support::finalize_outcome(
-        &writer,
-        &invocation_id,
-        &context,
-        &tool_id,
-        &revision,
-        acl_epoch,
-        &binding_kind,
-        outcome.status,
-        outcome.error_code,
-        outcome.result,
-    );
-
-    let finished = now_ms();
-    {
-        let invocation_id = invocation_id.clone();
-        let status = finalized.status;
-        let error_code = finalized.error_code;
-        writer
-            .write(move |connection| {
-                repository::finish_invocation(
-                    connection,
-                    &invocation_id,
-                    status.as_str(),
-                    error_code,
-                    finished,
-                )
-                .map_err(|_| "storage".to_string())
-            })
-            .map_err(|_| ToolSelectionError::storage())?;
-    }
-
-    if finalized.status == TechnicalStatus::Cancelled {
-        return Err(ToolSelectionError::new(
-            ToolSelectionErrorCode::Cancelled,
-            "The tool call was cancelled.",
-        ));
-    }
-    Ok(InvokeResponse {
-        invocation_id,
-        status: finalized.status,
-        result: finalized.result,
-        error_code: finalized.error_code,
-        result_ref: finalized.result_ref,
-        byte_count: finalized.byte_count,
-        page_count: finalized.page_count,
-        result_availability: finalized.result_availability,
-    })
 }

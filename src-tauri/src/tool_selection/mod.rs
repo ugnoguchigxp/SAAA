@@ -12,6 +12,7 @@ pub mod gateway;
 pub mod gateway_schemas;
 pub mod inference;
 pub mod invocation;
+pub mod invocation_task;
 pub mod mcp;
 pub mod mcp_server;
 pub mod provider_extraction;

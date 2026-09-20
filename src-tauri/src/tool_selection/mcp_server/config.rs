@@ -40,6 +40,11 @@ pub fn from_environment() -> Result<Option<McpServerConfig>, &'static str> {
     if !config.enabled {
         return Ok(None);
     }
+    // Port 0 is reserved for the in-process tests via `start`; a production document must name a
+    // real port so an operator cannot accidentally bind an ephemeral one.
+    if config.port == 0 {
+        return Err("mcp-server-config-port-invalid");
+    }
     Ok(Some(config))
 }
 
