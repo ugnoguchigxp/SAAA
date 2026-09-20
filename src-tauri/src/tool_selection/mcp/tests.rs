@@ -2404,3 +2404,285 @@ async fn p02_backfill_marks_pre_version_remote_rules_unconfirmed() {
     assert_eq!(binding_hash(&harness).as_deref(), Some(""));
     assert!(active_rule_ids(&harness).is_empty());
 }
+
+// ---------------------------------------------------------------------------------------------
+// D5: published server reusing the D4 ledger
+// ---------------------------------------------------------------------------------------------
+
+/// A D5 config with an owner-only token file; the tempdir must outlive the server.
+fn d5_config() -> (
+    super::super::mcp_server::config::McpServerConfig,
+    tempfile::TempDir,
+) {
+    use base64::Engine;
+    let directory = tempfile::tempdir().expect("tempdir");
+    let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([9u8; 32]);
+    let path = directory.path().join("token");
+    std::fs::write(&path, token).expect("write token");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("mode");
+    }
+    (
+        super::super::mcp_server::config::McpServerConfig {
+            enabled: true,
+            port: 0,
+            token_file: Some(path),
+            project_id: None,
+        },
+        directory,
+    )
+}
+
+fn d5_token(directory: &tempfile::TempDir) -> String {
+    std::fs::read_to_string(directory.path().join("token"))
+        .expect("token")
+        .trim()
+        .to_string()
+}
+
+async fn d5_post(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    session: Option<&str>,
+    body: &Value,
+) -> reqwest::Response {
+    let mut request = client
+        .post(base)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json, text/event-stream")
+        .json(body);
+    if let Some(session) = session {
+        request = request.header("Mcp-Session-Id", session);
+    }
+    request.send().await.expect("request")
+}
+
+#[tokio::test]
+async fn h10_large_mcp_result_pages_over_the_published_wire() {
+    let state = default_state();
+    let payload: String = "あ".repeat(40 * 1024);
+    *state.call_result.lock().unwrap() = json!({
+        "content": [{ "type": "text", "text": payload }],
+        "isError": false,
+    });
+    let mock = MockServer::start(state).await;
+    let harness = Harness::new(&mock, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let Harness {
+        writer, service, ..
+    } = harness;
+    let (config, directory) = d5_config();
+    let server = super::super::mcp_server::start(Arc::new(service), writer, config)
+        .await
+        .expect("start");
+    let base = format!("http://127.0.0.1:{}/mcp", server.port());
+    let token = d5_token(&directory);
+    let client = reqwest::Client::new();
+
+    // initialize + initialized
+    let response = d5_post(
+        &client,
+        &base,
+        &token,
+        None,
+        &json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": "2025-06-18", "capabilities": {} }
+        }),
+    )
+    .await;
+    let session = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("session")
+        .to_string();
+    d5_post(
+        &client,
+        &base,
+        &token,
+        Some(&session),
+        &json!({
+            "jsonrpc": "2.0", "method": "notifications/initialized"
+        }),
+    )
+    .await;
+
+    async fn d5_tool_call(
+        client: &reqwest::Client,
+        base: &str,
+        token: &str,
+        session: &str,
+        id: i64,
+        name: &str,
+        arguments: Value,
+    ) -> reqwest::Response {
+        d5_post(
+            client,
+            base,
+            token,
+            Some(session),
+            &json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": { "name": name, "arguments": arguments }
+            }),
+        )
+        .await
+    }
+
+    let search: Value = d5_tool_call(
+        &client,
+        &base,
+        &token,
+        &session,
+        2,
+        "tools_search",
+        json!({ "intent": "search notes" }),
+    )
+    .await
+    .json()
+    .await
+    .expect("search");
+    let candidate = search
+        .pointer("/result/content/0/text")
+        .and_then(Value::as_str)
+        .map(|text| serde_json::from_str::<Value>(text).expect("envelope"))
+        .and_then(|envelope| {
+            envelope
+                .pointer("/data/candidates/0/candidateRef")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .expect("candidate");
+
+    let describe: Value = d5_tool_call(
+        &client,
+        &base,
+        &token,
+        &session,
+        3,
+        "tools_describe",
+        json!({ "candidateRef": candidate }),
+    )
+    .await
+    .json()
+    .await
+    .expect("describe");
+    let execution_ref = describe
+        .pointer("/result/content/0/text")
+        .and_then(Value::as_str)
+        .map(|text| serde_json::from_str::<Value>(text).expect("envelope"))
+        .and_then(|envelope| {
+            envelope
+                .pointer("/data/executionRef")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .expect("execution ref");
+
+    let invoke: Value = d5_tool_call(
+        &client,
+        &base,
+        &token,
+        &session,
+        4,
+        "tools_invoke",
+        json!({ "executionRef": execution_ref, "arguments": { "q": "value" } }),
+    )
+    .await
+    .json()
+    .await
+    .expect("invoke");
+    let invoked = invoke
+        .pointer("/result/content/0/text")
+        .and_then(Value::as_str)
+        .map(|text| serde_json::from_str::<Value>(text).expect("envelope"))
+        .expect("envelope");
+    assert_eq!(invoked.pointer("/data/status"), Some(&json!("succeeded")));
+    assert_eq!(
+        invoked.pointer("/data/resultAvailability"),
+        Some(&json!("stored"))
+    );
+    let result_ref = invoked
+        .pointer("/data/resultRef")
+        .and_then(Value::as_str)
+        .expect("result ref")
+        .to_string();
+    let page_count = invoked
+        .pointer("/data/pageCount")
+        .and_then(Value::as_i64)
+        .expect("page count");
+    assert!(page_count > 1);
+
+    let mut reassembled = String::new();
+    for page in 0..page_count {
+        let response = d5_tool_call(
+            &client,
+            &base,
+            &token,
+            &session,
+            10 + page,
+            "tools_describe",
+            json!({ "resultRef": result_ref, "page": page }),
+        )
+        .await;
+        // The whole wire response stays inside the 40 KiB bound.
+        let bytes = response.bytes().await.expect("bytes");
+        assert!(bytes.len() <= 40 * 1024, "wire page exceeded the bound");
+        let value: Value = serde_json::from_slice(&bytes).expect("json");
+        let text = value
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .map(|text| serde_json::from_str::<Value>(text).expect("envelope"))
+            .and_then(|envelope| {
+                envelope
+                    .pointer("/data/text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .expect("page text");
+        reassembled.push_str(&text);
+    }
+    let expected = descriptors::canonical_json_string(&json!({
+        "content": [{ "type": "text", "text": payload }],
+        "isError": false,
+    }));
+    assert_eq!(reassembled, expected);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn review_self_endpoint_source_is_refused() {
+    let state = default_state();
+    let mock = MockServer::start(state).await;
+    let harness = Harness::new(&mock, vec![user_grant("search")]);
+    // The manager is told this process listens on 43127; a source pointing there is its own
+    // gateway and must never be connected or synced.
+    harness
+        .manager
+        .set_self_endpoint(Some("loopback:43127/mcp".to_string()))
+        .await;
+    for url in ["http://127.0.0.1:43127/mcp", "http://localhost:43127/mcp"] {
+        harness
+            .manager
+            .apply_sources(McpSources {
+                sources: vec![McpSourceSpec {
+                    id: "mcp-test".to_string(),
+                    url: url.to_string(),
+                    enabled: true,
+                    bearer_token_env: None,
+                    grants: vec![],
+                }],
+            })
+            .await;
+        let error = harness
+            .manager
+            .sync_source("mcp-test")
+            .await
+            .expect_err("self reference must be refused");
+        assert_eq!(error.code, "source-self-reference", "for {url}");
+    }
+}
