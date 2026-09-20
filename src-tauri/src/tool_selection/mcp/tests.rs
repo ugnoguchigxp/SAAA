@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -49,6 +48,7 @@ struct ServerState {
     delete_called: AtomicBool,
     initialized_seen: AtomicBool,
     injected_bad_page: Mutex<Option<usize>>,
+    cursor_map: Mutex<HashMap<String, usize>>,
     calls_while_uninitialized: AtomicUsize,
 }
 
@@ -253,8 +253,48 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
             if bad == Some(index) {
                 return write_response(socket, "200 OK", "application/json", b"{not json").await;
             }
+            let cursor = request
+                .get("params")
+                .and_then(|params| params.get("cursor"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
             let pages = state.list_pages.lock().unwrap().clone();
-            let result = pages.get(index).cloned().unwrap_or_else(|| json!({ "tools": [] }));
+            let page_index = match cursor.as_deref() {
+                None => 0_usize,
+                Some(cursor) => state
+                    .cursor_map
+                    .lock()
+                    .unwrap()
+                    .get(cursor)
+                    .copied()
+                    .unwrap_or(0),
+            };
+            let mut result = pages
+                .get(page_index)
+                .cloned()
+                .unwrap_or_else(|| json!({ "tools": [] }));
+            let explicit = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let next = explicit.or_else(|| {
+                (page_index + 1 < pages.len()).then(|| format!("cursor-{page_index}"))
+            });
+            match next {
+                Some(next) => {
+                    result["nextCursor"] = json!(next);
+                    state
+                        .cursor_map
+                        .lock()
+                        .unwrap()
+                        .insert(next, page_index + 1);
+                }
+                None => {
+                    if let Some(object) = result.as_object_mut() {
+                        object.remove("nextCursor");
+                    }
+                }
+            }
             let message = json!({ "jsonrpc": "2.0", "id": id.clone(), "result": result });
             if state.sse.load(Ordering::SeqCst) {
                 return write_sse(socket, &message).await;
@@ -296,6 +336,7 @@ struct Harness {
     writer: Arc<SqliteWriter>,
     manager: Arc<McpManager>,
     service: ToolSelectionService,
+    principal: String,
 }
 
 fn hash_embedding() -> Arc<dyn EmbeddingProvider> {
@@ -339,6 +380,18 @@ impl Harness {
         let connection = Connection::open_in_memory().expect("in-memory");
         crate::persistence::schema::initialize_database(&connection).expect("schema");
         let writer = Arc::new(SqliteWriter::from_connection(connection));
+        writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+                         VALUES ('conversation-d4', 'D4', 'conversation', '1', '1')",
+                        [],
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("conversation");
         // The principal is created through the settings document so the manager and the service
         // share one id.
         let principal = crate::tool_selection::service::ensure_principal(&writer).expect("principal");
@@ -354,7 +407,7 @@ impl Harness {
         };
         let manager = McpManager::new(
             writer.clone(),
-            principal,
+            principal.clone(),
             None,
             sources,
             Some(hash_embedding()),
@@ -378,11 +431,13 @@ impl Harness {
             writer,
             manager,
             service,
+            principal,
         }
     }
 
     fn context(&self) -> RequestContext {
-        RequestContext::new(PRINCIPAL, "conversation-d4").with_run(Some("run-d4".to_string()))
+        RequestContext::new(&self.principal, "conversation-d4")
+            .with_run(Some("run-d4".to_string()))
     }
 
     fn insert_message(&self) -> String {
@@ -606,10 +661,11 @@ async fn t04_session_404_triggers_reinitialize_for_the_next_operation() {
     // First sync negotiates the session and succeeds.
     let harness = Harness::new(&server, vec![user_grant("search")]);
     harness.manager.sync_source("mcp-test").await.expect("sync");
-    // The server forgets the session; the next sync must re-initialize rather than fail.
+    // The server forgets the session. The operation that observes the 404 fails; the next one
+    // re-initializes and succeeds. An in-flight operation is never replayed.
     *state.session.lock().unwrap() = Some("sess-2".to_string());
-    let outcome = harness.manager.sync_source("mcp-test").await;
-    assert!(outcome.is_ok(), "next sync re-initializes");
+    assert!(harness.manager.sync_source("mcp-test").await.is_err());
+    assert!(harness.manager.sync_source("mcp-test").await.is_ok());
 }
 
 #[tokio::test]
@@ -763,17 +819,23 @@ async fn t06_import_alone_creates_no_grant_and_config_grants_are_managed() {
     let harness = Harness::new(&server, Vec::new());
     harness.manager.sync_source("mcp-test").await.expect("sync");
     let tool_id = descriptors::tool_id("mcp-test", "search");
+    let principal = harness.principal.clone();
     let authorized = harness
         .writer
-        .read_serialized(|c| {
-            repository::grant_exists(c, PRINCIPAL, &tool_id, None).map_err(|e| e.to_string())
+        .read_serialized({
+            let principal = principal.clone();
+            let tool_id = tool_id.clone();
+            move |c| {
+                repository::grant_exists(c, &principal, &tool_id, None)
+                    .map_err(|e| e.to_string())
+            }
         })
         .unwrap();
     assert!(!authorized, "import is never a grant");
     let eligibility = harness
         .writer
-        .read_serialized(|c| {
-            repository::eligible_revisions(c, PRINCIPAL, None, now_ms())
+        .read_serialized(move |c| {
+            repository::eligible_revisions(c, &principal, None, now_ms())
                 .map(|rows| rows.len())
                 .map_err(|e| e.to_string())
         })
@@ -789,14 +851,22 @@ async fn t06_removing_a_source_revokes_only_managed_grants() {
     harness.manager.sync_source("mcp-test").await.expect("sync");
     let search_id = descriptors::tool_id("mcp-test", "search");
     let other_id = descriptors::tool_id("mcp-test", "other");
+    let principal = harness.principal.clone();
     // A manual grant outside the MCP config.
     harness
         .writer
         .write({
             let other_id = other_id.clone();
+            let principal = principal.clone();
             move |connection| {
-                repository::upsert_grant(connection, PRINCIPAL, &other_id, "user", PRINCIPAL)
-                    .map_err(|e| e.to_string())?;
+                repository::upsert_grant(
+                    connection,
+                    &principal,
+                    &other_id,
+                    "user",
+                    &principal,
+                )
+                .map_err(|e| e.to_string())?;
                 Ok(())
             }
         })
@@ -808,16 +878,17 @@ async fn t06_removing_a_source_revokes_only_managed_grants() {
         .apply_sources(McpSources { sources: Vec::new() })
         .await;
 
-    let search_granted = harness
+    let (search_granted, other_granted) = harness
         .writer
-        .read_serialized(|c| {
-            repository::grant_exists(c, PRINCIPAL, &search_id, None).map_err(|e| e.to_string())
-        })
-        .unwrap();
-    let other_granted = harness
-        .writer
-        .read_serialized(|c| {
-            repository::grant_exists(c, PRINCIPAL, &other_id, None).map_err(|e| e.to_string())
+        .read_serialized({
+            let principal = principal.clone();
+            move |c| {
+                let search = repository::grant_exists(c, &principal, &search_id, None)
+                    .map_err(|e| e.to_string())?;
+                let other = repository::grant_exists(c, &principal, &other_id, None)
+                    .map_err(|e| e.to_string())?;
+                Ok((search, other))
+            }
         })
         .unwrap();
     assert!(!search_granted, "config grant is revoked");
@@ -972,7 +1043,8 @@ async fn t08_result_scope_ttl_and_acl_are_enforced() {
     let context = harness.context();
 
     // Another run cannot read the stored result.
-    let other = RequestContext::new(PRINCIPAL, "conversation-d4").with_run(Some("run-other".into()));
+    let principal = harness.principal.clone();
+    let other = RequestContext::new(&principal, "conversation-d4").with_run(Some("run-other".into()));
     assert!(harness.service.describe_result(&other, &result_ref, 0).is_err());
 
     // An expired row is refused.
@@ -1051,7 +1123,7 @@ async fn t08_size_limit_keeps_the_scan_bounded() {
 #[tokio::test]
 async fn t09_stale_source_is_not_eligible() {
     let state = default_state();
-    let server = MockServer::start(state).await;
+    let server = MockServer::start(state.clone()).await;
     let harness = Harness::new(&server, vec![user_grant("search")]);
     harness.manager.sync_source("mcp-test").await.expect("sync");
     // Age the last success beyond the freshness window.
@@ -1069,10 +1141,13 @@ async fn t09_stale_source_is_not_eligible() {
         .unwrap();
     let eligible = harness
         .writer
-        .read_serialized(|c| {
-            repository::eligible_revisions(c, PRINCIPAL, None, now_ms())
-                .map(|rows| rows.len())
-                .map_err(|e| e.to_string())
+        .read_serialized({
+            let principal = harness.principal.clone();
+            move |c| {
+                repository::eligible_revisions(c, &principal, None, now_ms())
+                    .map(|rows| rows.len())
+                    .map_err(|e| e.to_string())
+            }
         })
         .unwrap();
     assert_eq!(eligible, 0);
@@ -1105,6 +1180,18 @@ async fn t10_same_name_in_two_sources_makes_a_name_only_correction_ambiguous() {
     let connection = Connection::open_in_memory().expect("in-memory");
     crate::persistence::schema::initialize_database(&connection).expect("schema");
     let writer = Arc::new(SqliteWriter::from_connection(connection));
+    writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+                     VALUES ('conversation-d4', 'D4', 'conversation', '1', '1')",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
     let principal = crate::tool_selection::service::ensure_principal(&writer).expect("principal");
     let sources = McpSources {
         sources: vec![
@@ -1124,7 +1211,14 @@ async fn t10_same_name_in_two_sources_makes_a_name_only_correction_ambiguous() {
             },
         ],
     };
-    let manager = McpManager::new(writer.clone(), principal, None, sources, Some(hash_embedding()), None);
+    let manager = McpManager::new(
+        writer.clone(),
+        principal.clone(),
+        None,
+        sources,
+        Some(hash_embedding()),
+        None,
+    );
     manager.sync_source("mcp-a").await.expect("a");
     manager.sync_source("mcp-b").await.expect("b");
     let id_a = descriptors::tool_id("mcp-a", "search");
@@ -1132,7 +1226,7 @@ async fn t10_same_name_in_two_sources_makes_a_name_only_correction_ambiguous() {
     assert_ne!(id_a, id_b);
 
     // Both are authorized, so a name-only target is ambiguous and produces no rule.
-    let context = RequestContext::new(PRINCIPAL, "conversation-d4")
+    let context = RequestContext::new(&principal, "conversation-d4")
         .with_run(Some("run-d4".into()))
         .with_message(Some("msg-d4".into()));
     writer
@@ -1232,6 +1326,18 @@ async fn a01_two_sources_with_1500_tools_publish_and_search_is_bounded() {
     let connection = Connection::open_in_memory().expect("in-memory");
     crate::persistence::schema::initialize_database(&connection).expect("schema");
     let writer = Arc::new(SqliteWriter::from_connection(connection));
+    writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO conversations(id, title, task_mode, created_at, updated_at)
+                     VALUES ('conversation-d4', 'D4', 'conversation', '1', '1')",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
     let principal = crate::tool_selection::service::ensure_principal(&writer).expect("principal");
     let grants: Vec<McpGrantSpec> = Vec::new();
     let sources = McpSources {

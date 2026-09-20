@@ -38,21 +38,65 @@ pub fn page_count(byte_count: i64) -> i64 {
     (byte_count + MCP_RESULT_PAGE_BYTES as i64 - 1) / MCP_RESULT_PAGE_BYTES as i64
 }
 
-/// Splits a stored payload into the requested UTF-8 page. Pages never split a scalar value.
+/// Number of contiguous, UTF-8-aligned pages for a payload. Boundaries are computed by walking
+/// from the start so the adjustment for a multi-byte scalar at one boundary carries into the next
+/// page; the raw byte-count division would over-report pages for multibyte text.
+pub fn page_count_for(payload: &str) -> i64 {
+    if payload.is_empty() {
+        return 0;
+    }
+    let mut start = 0_usize;
+    let mut pages = 0_i64;
+    while start < payload.len() {
+        let mut end = (start + MCP_RESULT_PAGE_BYTES).min(payload.len());
+        while end > start && !payload.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == start {
+            break;
+        }
+        start = end;
+        pages += 1;
+    }
+    pages
+}
+
+/// Splits a stored payload into the requested UTF-8 page. Pages never split a scalar value and
+/// their concatenation reproduces the stored bytes exactly.
 pub fn page_text(payload: &str, page: i64) -> Option<String> {
     if page < 0 {
         return None;
     }
-    let start = (page as usize).checked_mul(MCP_RESULT_PAGE_BYTES)?;
+    let mut start = 0_usize;
+    for _ in 0..page {
+        if start >= payload.len() {
+            return None;
+        }
+        let mut end = (start + MCP_RESULT_PAGE_BYTES).min(payload.len());
+        while end > start && !payload.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == start {
+            return None;
+        }
+        start = end;
+    }
     if start > payload.len() {
         return None;
     }
     if start == payload.len() {
-        return if page == 0 { Some(String::new()) } else { None };
+        return if page == 0 {
+            Some(String::new())
+        } else {
+            None
+        };
     }
     let mut end = (start + MCP_RESULT_PAGE_BYTES).min(payload.len());
     while end > start && !payload.is_char_boundary(end) {
         end -= 1;
+    }
+    if end == start {
+        return None;
     }
     Some(payload[start..end].to_string())
 }
@@ -104,7 +148,7 @@ pub fn store_result(
     Ok(StoreOutcome::Stored {
         result_ref,
         byte_count,
-        page_count: page_count(byte_count),
+        page_count: page_count_for(payload_json),
     })
 }
 
@@ -136,7 +180,7 @@ pub fn read_page(
     if !authorized {
         return Err(ToolSelectionError::unauthorized());
     }
-    let total = page_count(row.byte_count);
+    let total = page_count_for(&row.payload_json);
     if page < 0 || page >= total {
         return Err(ToolSelectionError::not_found());
     }

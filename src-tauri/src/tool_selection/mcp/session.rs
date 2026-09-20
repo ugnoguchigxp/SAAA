@@ -253,10 +253,16 @@ impl SourceSession {
             None => json!({}),
         };
         let id = crate::new_id("mcp-list");
-        self.transport
+        let result = self
+            .transport
             .request(&id, "tools/list", params, timeout)
             .await
-            .map_err(map_transport)
+            .map_err(map_transport);
+        if matches!(result, Err(CallError::SessionExpired)) {
+            let mut state = self.state.lock().await;
+            *state = SessionState::Reconnecting;
+        }
+        result
     }
 
     pub async fn shutdown(&self) {
