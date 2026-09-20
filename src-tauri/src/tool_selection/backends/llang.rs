@@ -90,10 +90,7 @@ fn boolean_inputs(binding: &LlangBinding, arguments: &Value) -> Result<Map<Strin
     let object = arguments.as_object().ok_or(())?;
     let mut input = Map::new();
     for field in &binding.input_fields {
-        let value = object
-            .get(field)
-            .and_then(Value::as_bool)
-            .ok_or(())?;
+        let value = object.get(field).and_then(Value::as_bool).ok_or(())?;
         input.insert(field.clone(), Value::Bool(value));
     }
     if object.keys().any(|key| !binding.input_fields.contains(key)) {
@@ -120,10 +117,8 @@ impl ToolBackend for LlangBackend {
             Err(()) => return BackendOutcome::failed("invalid-input"),
         };
         let mut invocation = InvokeRequest::new(binding.resolved(), request.call_id.clone(), input);
-        invocation.inner_timeout_ms = request
-            .timeout
-            .min(Duration::from_secs(30))
-            .as_millis() as u64;
+        invocation.inner_timeout_ms =
+            request.timeout.min(Duration::from_secs(30)).as_millis() as u64;
         invocation.origin = "conversation";
 
         let inner = Cancellation::default();

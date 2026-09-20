@@ -3,7 +3,6 @@
 //! deterministic fixture extractor, which the guide explicitly allows for hand-checked fixtures.
 
 use async_trait::async_trait;
-use std::sync::Arc;
 
 use super::feedback::{parse_extraction, ExtractionFailure, ParsedExtraction};
 
@@ -18,13 +17,19 @@ pub struct RecentDecision {
 pub struct ExtractionRequest {
     pub user_message: String,
     pub recent_decisions: Vec<RecentDecision>,
+    /// Full host-validated reference set used to validate the model output.
     pub allowed_decisions: std::collections::HashSet<String>,
     pub allowed_tools: std::collections::HashSet<String>,
+    /// Small ordered list of tool names actually shown to the model.
+    pub prompt_tools: Vec<String>,
 }
 
 #[async_trait]
 pub trait CorrectionExtractor: Send + Sync {
-    async fn extract(&self, request: ExtractionRequest) -> Result<ParsedExtraction, ExtractionFailure>;
+    async fn extract(
+        &self,
+        request: ExtractionRequest,
+    ) -> Result<ParsedExtraction, ExtractionFailure>;
 }
 
 /// Deterministic extractor used by the golden fixtures. It returns a fixed JSON body, after
@@ -43,7 +48,10 @@ impl FixtureExtractor {
 
 #[async_trait]
 impl CorrectionExtractor for FixtureExtractor {
-    async fn extract(&self, request: ExtractionRequest) -> Result<ParsedExtraction, ExtractionFailure> {
+    async fn extract(
+        &self,
+        request: ExtractionRequest,
+    ) -> Result<ParsedExtraction, ExtractionFailure> {
         parse_extraction(
             &self.body,
             &request.user_message,
@@ -59,39 +67,10 @@ pub struct UnconfiguredExtractor;
 
 #[async_trait]
 impl CorrectionExtractor for UnconfiguredExtractor {
-    async fn extract(&self, _request: ExtractionRequest) -> Result<ParsedExtraction, ExtractionFailure> {
+    async fn extract(
+        &self,
+        _request: ExtractionRequest,
+    ) -> Result<ParsedExtraction, ExtractionFailure> {
         Err(ExtractionFailure::UnexpectedShape)
-    }
-}
-
-/// Adapter over any async closure, so the conversation provider can be injected without this
-/// module depending on the provider stack.
-pub struct ClosureExtractor<F> {
-    function: Arc<F>,
-}
-
-impl<F> ClosureExtractor<F> {
-    pub fn new(function: F) -> Self {
-        Self {
-            function: Arc::new(function),
-        }
-    }
-}
-
-#[async_trait]
-impl<F> CorrectionExtractor for ClosureExtractor<F>
-where
-    F: Fn(String) -> futures_util::future::BoxFuture<'static, Result<String, ExtractionFailure>>
-        + Send
-        + Sync,
-{
-    async fn extract(&self, request: ExtractionRequest) -> Result<ParsedExtraction, ExtractionFailure> {
-        let body = (self.function)(request.user_message.clone()).await?;
-        parse_extraction(
-            &body,
-            &request.user_message,
-            &request.allowed_decisions,
-            &request.allowed_tools,
-        )
     }
 }

@@ -2,7 +2,9 @@ use crate::OpenAiCompatibleProviderSettings;
 use zeroize::Zeroizing;
 
 mod probe;
+mod structured;
 pub(crate) use probe::{probe_model_provider, probe_model_provider_with_api_key};
+pub(crate) use structured::{complete_tool_less, EXTRACTION_SYSTEM_PROMPT};
 
 pub(crate) fn provider_operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
     saaa_larm_session::http_api::operation_url(endpoint, operation)

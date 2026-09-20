@@ -128,19 +128,24 @@ pub fn activate(c: &Connection, input: &ActivateInput<'_>) -> Result<WorldSlice,
     }
 
     // Projection integrity: revision + epoch + policy against the same read.
-    let meta: Option<(u64, u64, u64)> = c
+    // A v2 projection is intentionally unreadable through the v1 API (D20).
+    let meta: Option<(u64, u64, u64, i64)> = c
         .query_row(
-            "SELECT ledger_revision,input_epoch,policy_revision
+            "SELECT ledger_revision,input_epoch,policy_revision,projection_version
                FROM personal_world_projection_meta WHERE id=1",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .ok();
-    let Some((revision, epoch, policy)) = meta else {
+    let Some((revision, epoch, policy, projection_version)) = meta else {
         slice.notices.push(STALE.into());
         return trim_to_budget(slice, max_bytes).map_err(|e| e.code().to_string());
     };
-    if revision != scope.revision || epoch != scope.input_epoch || policy != scope.policy_revision {
+    if projection_version != 1
+        || revision != scope.revision
+        || epoch != scope.input_epoch
+        || policy != scope.policy_revision
+    {
         slice.notices.push(STALE.into());
         return trim_to_budget(slice, max_bytes).map_err(|e| e.code().to_string());
     }
@@ -789,18 +794,20 @@ fn collect_nodes(
     let nodes = ids
         .iter()
         .filter_map(|id| {
-            entities
-                .get(id)
-                .map(|entity| node(id, &entity.name, parse_kind(&entity.kind)))
+            let entity = entities.get(id)?;
+            Some(node(id, &entity.name, parse_kind(&entity.kind)?))
         })
         .collect();
     (nodes, present)
 }
 
-fn parse_kind(kind: &str) -> EntityKind {
+/// Only the three v1 kinds are understood by the v1 reader. A v2 `goal`/`actor`
+/// row is never silently downgraded to `concept` (D20).
+fn parse_kind(kind: &str) -> Option<EntityKind> {
     match kind {
-        "project" => EntityKind::Project,
-        "metric" => EntityKind::Metric,
-        _ => EntityKind::Concept,
+        "project" => Some(EntityKind::Project),
+        "concept" => Some(EntityKind::Concept),
+        "metric" => Some(EntityKind::Metric),
+        _ => None,
     }
 }

@@ -56,19 +56,51 @@ pub fn load(c: &Connection) -> Result<Ledger, String> {
 
 /// Must run inside the caller's writer transaction. All payload writes roll back
 /// if any source/lease/patch fails, and no network is performed here.
+/// Commit a patch. If the caller has not already opened a transaction (e.g. the
+/// worker's `write_transaction`), this opens one so payload, assertion,
+/// transition, revision and projection writes roll back atomically on any
+/// failure (C5/§6).
 pub fn commit(
     c: &Connection,
     patch: &StatePatch,
     context: &CommitContext<'_>,
     payloads: &BTreeMap<String, serde_json::Value>,
 ) -> Result<bool, String> {
+    if c.is_autocommit() {
+        let transaction = c.unchecked_transaction().map_err(database_error)?;
+        let result = commit_inner(&transaction, patch, context, payloads)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(result)
+    } else {
+        commit_inner(c, patch, context, payloads)
+    }
+}
+
+fn commit_inner(
+    c: &Connection,
+    patch: &StatePatch,
+    context: &CommitContext<'_>,
+    payloads: &BTreeMap<String, serde_json::Value>,
+) -> Result<bool, String> {
     let mut ledger = load(c)?;
+    // v2 payloads are content-addressed; verify before a re-send can be
+    // accepted, so swapping the outer payload map is not silently accepted.
+    super::world::validation_v2::verify_world_payload_refs(patch, payloads)?;
+    // D17/C5: authorization and re-send detection before Source re-validation.
+    match super::world::validation_v2::resend(&ledger, patch, context)? {
+        super::world::validation_v2::Resend::Applied => return Ok(false),
+        super::world::validation_v2::Resend::Conflict => {
+            return Err("personal-patch-Conflict".into())
+        }
+        super::world::validation_v2::Resend::New => {}
+    }
     for key in &context.input_dependencies {
         sources::revalidate(c, ledger.sources.get(key).ok_or("personal-source-missing")?)?;
     }
     // World semantics are validated here, before Ledger::apply, so direct
-    // callers of store::commit cannot bypass them.
-    super::world::validation::validate_commit(c, &ledger, patch, context, payloads)?;
+    // callers of store::commit cannot bypass them. Versioned validation covers
+    // v1 and v2 and preserves the v1 semantic pass for v1-only patches.
+    super::world::validation_v2::validate_commit_v2(c, &ledger, patch, context, payloads)?;
     if !ledger
         .apply(patch, context)
         .map_err(|e| format!("personal-patch-{e}"))?

@@ -97,6 +97,36 @@ pub(crate) async fn execute_turn(
         return result.map(|_| ());
     }
 
+    // Tool-selection extraction runs once the input message has a persistent ID and before the
+    // first provider request. It only runs in discovery mode; the legacy path is unchanged.
+    if state.tool_selection.discovery_configured() {
+        let input_message_id = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
+                        rusqlite::params![input.run_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .map_err(|error| error.to_string())
+            })
+            .ok()
+            .flatten();
+        if let Ok(principal) =
+            crate::tool_selection::service::ensure_principal(&state.sqlite_writer)
+        {
+            let context =
+                crate::tool_selection::RequestContext::new(&principal, &input.conversation_id)
+                    .with_run(Some(input.run_id.clone()))
+                    .with_message(input_message_id);
+            let _ = state
+                .tool_selection
+                .begin_turn(&context, &input.content)
+                .await;
+        }
+    }
+
     let response_task =
         crate::runtime::voice_response::start(state, input, on_event, cancellation.clone());
     let result = execute_conversation_turn(state, input, on_event, cancellation.clone()).await;

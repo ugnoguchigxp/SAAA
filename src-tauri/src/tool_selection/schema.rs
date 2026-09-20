@@ -180,24 +180,3 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
          );",
     )
 }
-
-/// Removes every tool-selection row. Used by tests that need a clean ledger in a shared
-/// in-memory database; production callers rely on the deletion FKs instead.
-#[cfg(test)]
-pub(crate) fn reset_for_tests(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(
-        "DELETE FROM tool_selection_rules;
-         DELETE FROM tool_selection_feedback;
-         DELETE FROM tool_selection_invocations;
-         DELETE FROM tool_selection_candidates;
-         DELETE FROM tool_selection_decisions;
-         DELETE FROM tool_selection_embeddings;
-         DELETE FROM tool_selection_grants;
-         DELETE FROM tool_selection_usage_pages;
-         DELETE FROM tool_selection_fts;
-         DELETE FROM tool_selection_revisions;
-         DELETE FROM tool_selection_catalog;
-         DELETE FROM tool_selection_sources;
-         UPDATE tool_selection_meta SET catalog_epoch = 0, acl_epoch = 0, rule_epoch = 0;",
-    )
-}

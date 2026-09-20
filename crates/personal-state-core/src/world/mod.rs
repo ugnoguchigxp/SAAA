@@ -1,10 +1,19 @@
 //! Pure World value types, normalization, keys, validation, traversal, relevance.
 
+pub mod conditions_v2;
 pub mod identity;
+pub mod identity_v2;
 pub mod model;
+pub mod model_v2;
+pub mod outcome_v2;
 pub mod relevance;
+pub mod relevance_v2;
+pub mod slice_v2;
 pub mod traversal;
+pub mod traversal_v2;
 pub mod validation;
+pub mod validation_v2;
+pub mod versioned;
 
 pub use identity::{
     entity_key, focus_key, normalize_name, order_undirected, relation_key, RelationKeyInput,

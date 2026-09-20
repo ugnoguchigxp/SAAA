@@ -2,6 +2,23 @@ use crate::*;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// SHA-256 of the canonical patch JSON. Used for re-send detection before any
+/// World re-validation (C5).
+pub fn patch_fingerprint(patch: &StatePatch) -> Result<String, Error> {
+    let encoded = serde_json::to_vec(patch).map_err(|_| Error::InvalidPatch)?;
+    Ok(patch_fingerprint_bytes(&encoded))
+}
+
+pub fn patch_fingerprint_bytes(encoded: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(encoded))
+}
+
+/// World semantic-key version prefix (`wm1`, `wm2`). Used to allow a v1 to v2
+/// replacement while still rejecting same-version key mismatches.
+fn world_key_version(key: &str) -> &str {
+    key.split(':').next().unwrap_or("")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Projection {
     pub revision: u64,
@@ -191,7 +208,7 @@ impl Ledger {
         if encoded.len() > 16 * 1024 || patch.assertions.len() + patch.transitions.len() > 32 {
             return Err(Error::Limit);
         }
-        let fingerprint = format!("{:x}", Sha256::digest(&encoded));
+        let fingerprint = patch_fingerprint_bytes(&encoded);
         if !context.access.authorized
             || context.access.principal != self.principal
             || context.access.scope != self.scope
@@ -458,9 +475,19 @@ impl Ledger {
         }
         if let Action::Supersede { by } = &t.action {
             let replacement = self.assertions.get(by).ok_or(Error::UnknownDependency)?;
+            // World assertions are versioned: a v1 assertion may be replaced by
+            // an equivalent v2 assertion, so the fixed `wm1:`/`wm2:` key differs
+            // even though the logical identity is the same. The versioned World
+            // validator enforces logical identity; here we only allow a
+            // cross-version key change and reject same-version mismatches.
+            let same_identity = replacement.semantic_key == a.semantic_key
+                || (a.kind.is_world()
+                    && replacement.kind.is_world()
+                    && world_key_version(&replacement.semantic_key)
+                        != world_key_version(&a.semantic_key));
             if by == &a.id
                 || replacement.kind != a.kind
-                || replacement.semantic_key != a.semantic_key
+                || !same_identity
                 || replacement.access.task_request != a.access.task_request
                 || !replacement.access.derives_from(&a.access)
             {

@@ -5,6 +5,12 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(include_str!("schema.sql"))?;
     // World DDL and the forget trigger must exist before recover/rebuild runs.
     c.execute_batch(include_str!("world/schema.sql"))?;
+    add_column(
+        c,
+        "personal_world_projection_meta",
+        "projection_version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
     add_column(c, "personal_jobs", "scope_key", "TEXT")?;
     add_column(c, "personal_jobs", "claim_scope_epoch", "INTEGER")?;
     add_column(c, "personal_generations", "context_generation_id", "TEXT")?;

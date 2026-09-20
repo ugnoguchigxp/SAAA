@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 
 use super::contracts::*;
 use super::repository::{self, NewRevision, NewTool};
-use super::schema;
 
 /// Fixed per-field caps for the search document. The total is additionally capped at 4 KiB.
 const FIELD_CAP: usize = 700;
@@ -43,8 +42,12 @@ impl CatalogEntry {
     /// inputs. Field cap and a 4 KiB whole-document cap are applied with UTF-8 boundaries.
     pub fn search_text(&self) -> String {
         let mut sections = Vec::new();
-        push_section(&mut sections, "title", &[self.title.clone()]);
-        push_section(&mut sections, "purpose", &[self.purpose.clone()]);
+        push_section(&mut sections, "title", std::slice::from_ref(&self.title));
+        push_section(
+            &mut sections,
+            "purpose",
+            std::slice::from_ref(&self.purpose),
+        );
         push_section(&mut sections, "operations", &self.operations);
         push_section(&mut sections, "objects", &self.objects);
         push_section(&mut sections, "suitable", &self.suitable);
@@ -216,20 +219,50 @@ pub fn grant_project(
     Ok(())
 }
 
-/// Returns whether a tool can be seen/executed by the principal/project pair. Used by every
-/// invoke re-check; it never widens access beyond the explicit grants.
-pub fn is_authorized(
-    connection: &Connection,
-    principal_id: &str,
-    tool_id: &str,
-    project_id: Option<&str>,
-) -> ToolSelectionResult<bool> {
-    repository::grant_exists(connection, principal_id, tool_id, project_id)
-        .map_err(|_| ToolSelectionError::storage())
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::schema::initialize_database;
+    use crate::tool_selection::repository;
 
-/// Re-creates the ledger tables if a failed migration left them absent. Kept separate so callers
-/// can distinguish "apply schema" from "register data".
-pub fn ensure_schema(connection: &Connection) -> ToolSelectionResult<()> {
-    schema::migrate(connection).map_err(|_| ToolSelectionError::storage())
+    fn entry(tool_id: &str) -> CatalogEntry {
+        CatalogEntry {
+            tool_id: tool_id.to_string(),
+            backend_key: tool_id.to_string(),
+            title: tool_id.to_string(),
+            purpose: "Catalog grant test tool.".to_string(),
+            operations: vec!["search".to_string()],
+            objects: vec!["decision_record".to_string()],
+            suitable: vec!["tests".to_string()],
+            unsuitable: vec!["production".to_string()],
+            required_inputs: vec!["query".to_string()],
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+            output_schema: None,
+            effect: "read",
+            usage_pages: vec![],
+            backend_binding: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn registration_is_not_a_grant_and_grants_are_scoped() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory");
+        initialize_database(&connection).expect("schema");
+        register_revision(&connection, "P1", "llang", &entry("t"), "t-rev1", 1).expect("register");
+
+        // Registering the catalog is never a grant.
+        assert!(!repository::grant_exists(&connection, "P1", "t", None).expect("grant check"));
+
+        grant_user(&connection, "P1", "t").expect("grant user");
+        assert!(repository::grant_exists(&connection, "P1", "t", None).expect("grant check"));
+
+        grant_project(&connection, "P2", "t", "A").expect("grant project");
+        assert!(repository::grant_exists(&connection, "P2", "t", Some("A")).expect("grant check"));
+        assert!(!repository::grant_exists(&connection, "P2", "t", Some("B")).expect("grant check"));
+    }
 }

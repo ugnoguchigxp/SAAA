@@ -72,10 +72,12 @@ fn condition_signature(rule: &StoredRule) -> String {
 
 /// Keeps one rule per target and condition. Soft avoid/prefer share a group so an opposing
 /// correction resolves by narrower scope / newer rule instead of cancelling out. Pairwise keeps
-/// its preferred partner in the key.
-pub fn dedupe_by_condition<'a>(rules: &'a [StoredRule]) -> Vec<&'a StoredRule> {
+/// its preferred partner in the key. Callers must pass only rules whose scope and condition
+/// already match, otherwise a non-matching narrow rule could mask a matching broad one.
+pub fn dedupe_by_condition<'a>(rules: &[&'a StoredRule]) -> Vec<&'a StoredRule> {
     let mut best: HashMap<(String, String, String), &StoredRule> = HashMap::new();
     for rule in rules {
+        let rule = *rule;
         let group = match rule.action {
             RuleAction::Avoid | RuleAction::Prefer => "soft".to_string(),
             RuleAction::Pairwise => format!(
@@ -115,10 +117,12 @@ pub fn apply_rules(
     scenario: &Scenario,
     context: &RequestContext,
 ) -> CorrectionOutcome {
-    let applicable: Vec<&StoredRule> = dedupe_by_condition(rules)
-        .into_iter()
-        .filter(|rule| scope_matches(rule, context) && condition_matches(rule, scenario))
-        .collect();
+    let applicable: Vec<&StoredRule> = dedupe_by_condition(
+        &rules
+            .iter()
+            .filter(|rule| scope_matches(rule, context) && condition_matches(rule, scenario))
+            .collect::<Vec<_>>(),
+    );
 
     let present_tools: std::collections::BTreeSet<&str> = candidates
         .iter()
@@ -368,6 +372,31 @@ mod tests {
         let rules = vec![
             rule("r1", "minutes", RuleAction::Prefer, ScopeKind::Project, "A"),
             rule("r2", "minutes", RuleAction::Prefer, ScopeKind::Project, "A"),
+        ];
+        let outcome = apply_rules(
+            &candidates,
+            &rules,
+            &scenario(Operation::Search, ObjectType::DecisionRecord),
+            &context,
+        );
+        assert!((outcome.ordered[0].correction - 0.25).abs() < 1e-12);
+    }
+
+    #[test]
+    fn non_matching_narrow_rule_does_not_mask_a_matching_broad_rule() {
+        // The project-A rule is narrower but does not match project B; the user rule must still
+        // apply instead of being masked by a dedupe winner that is later filtered out.
+        let context = RequestContext::new("P1", "C1").with_project(Some("B".into()));
+        let candidates = vec![base("minutes", 0.5)];
+        let rules = vec![
+            rule("user", "minutes", RuleAction::Prefer, ScopeKind::User, "P1"),
+            rule(
+                "project",
+                "minutes",
+                RuleAction::Avoid,
+                ScopeKind::Project,
+                "A",
+            ),
         ];
         let outcome = apply_rules(
             &candidates,

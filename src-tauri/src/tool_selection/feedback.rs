@@ -60,8 +60,13 @@ pub fn parse_extraction(
         return Err(ExtractionFailure::TooLarge);
     }
     let value: Value = serde_json::from_str(raw).map_err(|_| ExtractionFailure::InvalidJson)?;
-    let object = value.as_object().ok_or(ExtractionFailure::UnexpectedShape)?;
-    if object.keys().any(|key| key != "scenario" && key != "feedback") {
+    let object = value
+        .as_object()
+        .ok_or(ExtractionFailure::UnexpectedShape)?;
+    if object
+        .keys()
+        .any(|key| key != "scenario" && key != "feedback")
+    {
         return Err(ExtractionFailure::UnexpectedShape);
     }
     let scenario_value = object
@@ -222,7 +227,12 @@ fn parse_condition(value: Option<&Value>) -> FeedbackCondition {
 /// audit trail exists, but it produces no rule and no epoch change.
 fn salvage_feedback(value: &Value) -> Option<ExtractedFeedback> {
     let object = value.as_object()?;
-    let kind = FeedbackKind::parse(object.get("kind").and_then(Value::as_str).unwrap_or("unknown"));
+    let kind = FeedbackKind::parse(
+        object
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+    );
     Some(ExtractedFeedback {
         kind,
         decision_id: optional_string(object.get("decisionId")),
@@ -270,7 +280,11 @@ struct ResolvedScope {
     shrunk: bool,
 }
 
-fn resolve_scope(feedback: &ExtractedFeedback, context: &RequestContext, now: i64) -> ResolvedScope {
+fn resolve_scope(
+    feedback: &ExtractedFeedback,
+    context: &RequestContext,
+    now: i64,
+) -> ResolvedScope {
     match feedback.duration {
         Duration::Once => {
             if let Some(task) = context.task_id.as_deref() {
@@ -356,12 +370,20 @@ fn resolved_condition(
         .condition
         .object_type
         .filter(|value| value.is_known())
-        .or_else(|| scenario.object_type.is_known().then_some(scenario.object_type))?;
+        .or_else(|| {
+            scenario
+                .object_type
+                .is_known()
+                .then_some(scenario.object_type)
+        })?;
     Some(FeedbackCondition {
         operation: Some(operation),
         object_type: Some(object_type),
         phase: feedback.condition.phase.filter(|value| value.is_known()),
-        input_kind: feedback.condition.input_kind.filter(|value| value.is_known()),
+        input_kind: feedback
+            .condition
+            .input_kind
+            .filter(|value| value.is_known()),
     })
 }
 
@@ -390,7 +412,13 @@ fn signature(
     );
     object.insert(
         "operation".into(),
-        Value::String(condition.operation.map(Operation::as_str).unwrap_or("unknown").to_string()),
+        Value::String(
+            condition
+                .operation
+                .map(Operation::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+        ),
     );
     object.insert(
         "object".into(),
@@ -404,7 +432,13 @@ fn signature(
     );
     object.insert(
         "phase".into(),
-        Value::String(condition.phase.map(Phase::as_str).unwrap_or("*").to_string()),
+        Value::String(
+            condition
+                .phase
+                .map(Phase::as_str)
+                .unwrap_or("*")
+                .to_string(),
+        ),
     );
     object.insert(
         "input".into(),
@@ -429,7 +463,9 @@ fn resolve_tool_id(connection: &Connection, value: &str) -> Option<String> {
     if let Ok(Some(tool)) = repository::tool_by_id(connection, value) {
         return Some(tool.id);
     }
-    repository::tool_id_by_name(connection, value).ok().flatten()
+    repository::tool_id_by_name(connection, value)
+        .ok()
+        .flatten()
 }
 
 /// Applies one extraction inside the caller's writer transaction. Any repository error aborts the
@@ -447,7 +483,19 @@ pub fn apply_extraction(
         .ok_or_else(ToolSelectionError::invalid)?;
     let mut outcome = ApplyOutcome::default();
 
-    for feedback in parsed.accepted.iter().chain(parsed.rejected.iter()) {
+    for (feedback, is_rejected) in parsed
+        .accepted
+        .iter()
+        .map(|item| (item, false))
+        .chain(parsed.rejected.iter().map(|item| (item, true)))
+    {
+        // Items that failed host validation are stored as rejected. Their referenced decision ID
+        // may be unknown, so it is never used as a foreign key.
+        let row_decision_id = if is_rejected {
+            None
+        } else {
+            feedback.decision_id.as_deref().or(decision_id)
+        };
         let condition = resolved_condition(feedback, &parsed.scenario);
         let key = signature(
             message_id,
@@ -476,7 +524,7 @@ pub fn apply_extraction(
                 id: &feedback_id,
                 principal_id: &context.principal_id,
                 message_id,
-                decision_id: feedback.decision_id.as_deref().or(decision_id),
+                decision_id: row_decision_id,
                 kind: feedback.kind.as_str(),
                 evidence_json: &evidence_json,
                 proposal_json: &proposal_json,
@@ -492,8 +540,8 @@ pub fn apply_extraction(
         }
         outcome.feedback_ids.push(feedback_id.clone());
 
-        // Items that failed host validation are stored as rejected and never become rules.
-        if parsed.rejected.iter().any(|item| std::ptr::eq(item, feedback)) {
+        // Rejected proposals never become rules.
+        if is_rejected {
             repository::update_feedback_status(connection, &feedback_id, "rejected")
                 .map_err(|_| ToolSelectionError::storage())?;
             continue;
@@ -504,14 +552,11 @@ pub fn apply_extraction(
                 repository::update_feedback_status(connection, &feedback_id, "ambiguous")
                     .map_err(|_| ToolSelectionError::storage())?;
                 outcome.ambiguous = true;
-                outcome.notes.push("The correction is ambiguous; the previous instruction was kept.");
+                outcome
+                    .notes
+                    .push("The correction is ambiguous; the previous instruction was kept.");
             }
             FeedbackKind::Revoke => {
-                let target = feedback
-                    .rejected_tool_id
-                    .as_deref()
-                    .or(feedback.preferred_tool_id.as_deref())
-                    .and_then(|value| resolve_tool_id(connection, value));
                 if feedback.rejected_tool_id.is_none() && feedback.preferred_tool_id.is_none() {
                     repository::update_feedback_status(connection, &feedback_id, "ambiguous")
                         .map_err(|_| ToolSelectionError::storage())?;
@@ -519,13 +564,28 @@ pub fn apply_extraction(
                     outcome.notes.push("Which instruction should be withdrawn?");
                     continue;
                 }
+                // A named but unresolvable tool must not revoke every correction in scope.
+                let target = feedback
+                    .rejected_tool_id
+                    .as_deref()
+                    .or(feedback.preferred_tool_id.as_deref())
+                    .and_then(|value| resolve_tool_id(connection, value));
+                let Some(target) = target else {
+                    repository::update_feedback_status(connection, &feedback_id, "ambiguous")
+                        .map_err(|_| ToolSelectionError::storage())?;
+                    outcome.ambiguous = true;
+                    outcome
+                        .notes
+                        .push("The instruction to withdraw could not be resolved.");
+                    continue;
+                };
                 let scope = resolve_scope(feedback, context, now);
                 repository::revoke_matching_soft_rules(
                     connection,
                     &context.principal_id,
                     scope.kind.as_str(),
                     &scope.id,
-                    target.as_deref(),
+                    Some(target.as_str()),
                 )
                 .map_err(|_| ToolSelectionError::storage())?;
                 repository::update_feedback_status(connection, &feedback_id, "applied")
@@ -557,15 +617,17 @@ pub fn apply_extraction(
                     repository::update_feedback_status(connection, &feedback_id, "ambiguous")
                         .map_err(|_| ToolSelectionError::storage())?;
                     outcome.ambiguous = true;
-                    outcome.notes.push("No persistent rule was saved for an unbound condition.");
+                    outcome
+                        .notes
+                        .push("No persistent rule was saved for an unbound condition.");
                     continue;
                 };
                 let scope = resolve_scope(feedback, context, now);
                 if scope.shrunk {
                     outcome.scope_shrunk = true;
-                    outcome
-                        .notes
-                        .push("Saved for this conversation because no project/task ID was confirmed.");
+                    outcome.notes.push(
+                        "Saved for this conversation because no project/task ID was confirmed.",
+                    );
                 }
                 let rejected = feedback
                     .rejected_tool_id
@@ -606,7 +668,9 @@ pub fn apply_extraction(
                     repository::update_feedback_status(connection, &feedback_id, "ambiguous")
                         .map_err(|_| ToolSelectionError::storage())?;
                     outcome.ambiguous = true;
-                    outcome.notes.push("The correction did not name a usable tool.");
+                    outcome
+                        .notes
+                        .push("The correction did not name a usable tool.");
                 } else {
                     repository::update_feedback_status(connection, &feedback_id, "applied")
                         .map_err(|_| ToolSelectionError::storage())?;
@@ -692,7 +756,9 @@ mod tests {
     fn allowed() -> (HashSet<String>, HashSet<String>) {
         (
             ["d1".to_string()].into_iter().collect(),
-            ["web".to_string(), "minutes".to_string()].into_iter().collect(),
+            ["web".to_string(), "minutes".to_string()]
+                .into_iter()
+                .collect(),
         )
     }
 
@@ -749,8 +815,22 @@ mod tests {
             phase: None,
             input_kind: None,
         };
-        let first = signature("m", Some("d"), FeedbackKind::ToolChoice, Some("a"), Some("b"), &condition);
-        let second = signature("m", Some("d"), FeedbackKind::ToolChoice, Some("a"), Some("b"), &condition);
+        let first = signature(
+            "m",
+            Some("d"),
+            FeedbackKind::ToolChoice,
+            Some("a"),
+            Some("b"),
+            &condition,
+        );
+        let second = signature(
+            "m",
+            Some("d"),
+            FeedbackKind::ToolChoice,
+            Some("a"),
+            Some("b"),
+            &condition,
+        );
         assert_eq!(first, second);
     }
 }

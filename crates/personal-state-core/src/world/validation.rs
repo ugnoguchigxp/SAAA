@@ -22,6 +22,7 @@ pub enum WorldError {
     Limit,
     BudgetTooSmall,
     ProjectionCorrupt,
+    DuplicateIdentity,
 }
 
 impl WorldError {
@@ -33,6 +34,7 @@ impl WorldError {
             Self::Limit => "world-limit",
             Self::BudgetTooSmall => "world-budget-too-small",
             Self::ProjectionCorrupt => "world-projection-corrupt",
+            Self::DuplicateIdentity => "world-duplicate-identity",
         }
     }
 }

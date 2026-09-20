@@ -60,11 +60,7 @@ impl ReferenceStore {
     }
 
     /// Issues one reference for the run, enforcing the per-run cap and TTL.
-    pub fn issue(
-        &self,
-        entry: ReferenceEntry,
-        now_ms: i64,
-    ) -> ToolSelectionResult<String> {
+    pub fn issue(&self, entry: ReferenceEntry, now_ms: i64) -> ToolSelectionResult<String> {
         let mut entries = self
             .entries
             .lock()
@@ -103,26 +99,6 @@ impl ReferenceStore {
             entries.retain(|_, entry| entry.scope_key() != scope);
         }
     }
-
-    pub fn invalidate_revision(&self, revision_id: &str) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.retain(|_, entry| entry.revision_id != revision_id);
-        }
-    }
-
-    pub fn invalidate_tool(&self, tool_id: &str) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.retain(|_, entry| entry.tool_id != tool_id);
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.lock().map(|entries| entries.len()).unwrap_or(0)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 fn purge_expired(entries: &mut HashMap<String, ReferenceEntry>, now_ms: i64) {
@@ -156,7 +132,9 @@ mod tests {
     #[test]
     fn reference_resolves_and_expires() {
         let store = ReferenceStore::new();
-        let reference = store.issue(entry(ReferenceKind::Candidate), 0).expect("issue");
+        let reference = store
+            .issue(entry(ReferenceKind::Candidate), 0)
+            .expect("issue");
         assert!(store
             .resolve(&reference, ReferenceKind::Candidate, 1000)
             .is_some());
@@ -168,7 +146,9 @@ mod tests {
     #[test]
     fn wrong_kind_is_not_found() {
         let store = ReferenceStore::new();
-        let reference = store.issue(entry(ReferenceKind::Candidate), 0).expect("issue");
+        let reference = store
+            .issue(entry(ReferenceKind::Candidate), 0)
+            .expect("issue");
         assert!(store
             .resolve(&reference, ReferenceKind::Execution, 0)
             .is_none());
@@ -178,7 +158,9 @@ mod tests {
     fn per_run_capacity_is_enforced() {
         let store = ReferenceStore::new();
         for _ in 0..REFERENCE_MAX_PER_RUN {
-            store.issue(entry(ReferenceKind::Candidate), 0).expect("issue");
+            store
+                .issue(entry(ReferenceKind::Candidate), 0)
+                .expect("issue");
         }
         let error = store.issue(entry(ReferenceKind::Candidate), 0).unwrap_err();
         assert_eq!(error.code, ToolSelectionErrorCode::Capacity);
@@ -187,7 +169,9 @@ mod tests {
     #[test]
     fn invalidation_removes_run_references() {
         let store = ReferenceStore::new();
-        let reference = store.issue(entry(ReferenceKind::Candidate), 0).expect("issue");
+        let reference = store
+            .issue(entry(ReferenceKind::Candidate), 0)
+            .expect("issue");
         store.invalidate_scope("run-1");
         assert!(store
             .resolve(&reference, ReferenceKind::Candidate, 0)

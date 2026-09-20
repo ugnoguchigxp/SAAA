@@ -315,31 +315,6 @@ pub fn tool_by_id(connection: &Connection, tool_id: &str) -> rusqlite::Result<Op
         )
         .optional()
 }
-
-/// Resolves a tool by source + backend key, the same identity rule used for L-Lang bindings.
-pub fn tool_by_backend_key(
-    connection: &Connection,
-    source_id: &str,
-    backend_key: &str,
-) -> rusqlite::Result<Option<ToolRow>> {
-    connection
-        .query_row(
-            "SELECT id, source_id, backend_key, current_revision_id, enabled
-               FROM tool_selection_catalog WHERE source_id = ?1 AND backend_key = ?2",
-            params![source_id, backend_key],
-            |row| {
-                Ok(ToolRow {
-                    id: row.get(0)?,
-                    source_id: row.get(1)?,
-                    backend_key: row.get(2)?,
-                    current_revision_id: row.get(3)?,
-                    enabled: row.get::<_, i64>(4)? == 1,
-                })
-            },
-        )
-        .optional()
-}
-
 pub fn tool_id_by_name(connection: &Connection, name: &str) -> rusqlite::Result<Option<String>> {
     // D0–D3 has a single in-process source; the display name is the backend key. A future
     // multi-source resolver must qualify with the source.
@@ -422,15 +397,16 @@ pub fn eligible_revisions(
     rows.collect()
 }
 
-/// Lexical top-K using FTS5 trigram BM25. `order by bm25` is ascending (lower is better).
+/// Lexical top-K using FTS5 trigram BM25. `match_expression` must already be a safe MATCH
+/// expression built by `retrieval::fts_match_query`; `order by bm25` is ascending (lower is
+/// better).
 pub fn lexical_candidates(
     connection: &Connection,
-    query: &str,
+    match_expression: &str,
     principal_id: &str,
     project_id: Option<&str>,
     limit: usize,
 ) -> rusqlite::Result<Vec<(String, f64)>> {
-    let escaped = format!("\"{}\"", query.replace('"', "\"\""));
     let mut statement = connection.prepare(
         "SELECT f.revision_id, bm25(tool_selection_fts) AS score
            FROM tool_selection_fts f
@@ -449,7 +425,7 @@ pub fn lexical_candidates(
           LIMIT ?4",
     )?;
     let rows = statement.query_map(
-        params![escaped, principal_id, project_id, limit as i64],
+        params![match_expression, principal_id, project_id, limit as i64],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
     )?;
     rows.collect()
@@ -487,20 +463,6 @@ pub fn load_embeddings(
     })?;
     rows.collect()
 }
-
-pub fn embedding_model_hash(
-    connection: &Connection,
-    revision_id: &str,
-) -> rusqlite::Result<Option<String>> {
-    connection
-        .query_row(
-            "SELECT model_hash FROM tool_selection_embeddings WHERE revision_id = ?1",
-            params![revision_id],
-            |row| row.get(0),
-        )
-        .optional()
-}
-
 pub fn insert_decision(connection: &Connection, decision: &DecisionRecord) -> rusqlite::Result<()> {
     connection.execute(
         "INSERT INTO tool_selection_decisions(
@@ -653,39 +615,6 @@ pub fn set_satisfaction_for_decision(
         params![decision_id, satisfaction],
     )
 }
-
-pub fn invocation_decision_id(
-    connection: &Connection,
-    invocation_id: &str,
-) -> rusqlite::Result<Option<Option<String>>> {
-    connection
-        .query_row(
-            "SELECT decision_id FROM tool_selection_invocations WHERE id = ?1",
-            params![invocation_id],
-            |row| row.get(0),
-        )
-        .optional()
-}
-
-pub fn recent_invocations(
-    connection: &Connection,
-    conversation_id: &str,
-    limit: usize,
-) -> rusqlite::Result<Vec<(String, String, Option<String>)>> {
-    let mut statement = connection.prepare(
-        "SELECT i.id, i.revision_id, i.decision_id
-           FROM tool_selection_invocations i
-           JOIN tool_selection_decisions d ON d.id = i.decision_id
-          WHERE d.conversation_id = ?1
-          ORDER BY i.started_at DESC, i.id DESC
-          LIMIT ?2",
-    )?;
-    let rows = statement.query_map(params![conversation_id, limit as i64], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-    })?;
-    rows.collect()
-}
-
 /// Inserts feedback unless the idempotency key already exists. Returns `false` when a duplicate
 /// was found so the caller can replay the previous result without moving the rule epoch.
 pub fn insert_feedback_if_absent(
@@ -712,20 +641,6 @@ pub fn insert_feedback_if_absent(
     )?;
     Ok(changed == 1)
 }
-
-pub fn feedback_by_idempotency(
-    connection: &Connection,
-    idempotency_key: &str,
-) -> rusqlite::Result<Option<(String, String)>> {
-    connection
-        .query_row(
-            "SELECT id, status FROM tool_selection_feedback WHERE idempotency_key = ?1",
-            params![idempotency_key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-}
-
 pub fn update_feedback_status(
     connection: &Connection,
     feedback_id: &str,
@@ -867,58 +782,8 @@ pub fn active_rules(
     )?;
     rows.collect()
 }
-
-pub fn rule_by_id(connection: &Connection, rule_id: &str) -> rusqlite::Result<Option<StoredRule>> {
-    let mut statement = connection.prepare(
-        "SELECT id, principal_id, scope_kind, scope_id, operation, object_type, phase, input_kind,
-                source_constraint, target_tool_id, target_revision_id, preferred_tool_id, action,
-                strength, state, created_at
-           FROM tool_selection_rules WHERE id = ?1",
-    )?;
-    let mut rows = statement.query(params![rule_id])?;
-    let Some(row) = rows.next()? else {
-        return Ok(None);
-    };
-    let action: String = row.get(12)?;
-    let state: String = row.get(14)?;
-    Ok(Some(StoredRule {
-        id: row.get(0)?,
-        principal_id: row.get(1)?,
-        scope_kind: ScopeKind::parse(&row.get::<_, String>(2)?).unwrap_or(ScopeKind::User),
-        scope_id: row.get(3)?,
-        operation: row.get(4)?,
-        object_type: row.get(5)?,
-        phase: row.get(6)?,
-        input_kind: row.get(7)?,
-        source_constraint: row.get(8)?,
-        target_tool_id: row.get(9)?,
-        target_revision_id: row.get(10)?,
-        preferred_tool_id: row.get(11)?,
-        action: match action.as_str() {
-            "prefer" => RuleAction::Prefer,
-            "pairwise" => RuleAction::Pairwise,
-            "forbid" => RuleAction::Forbid,
-            _ => RuleAction::Avoid,
-        },
-        strength: row.get(13)?,
-        state: match state.as_str() {
-            "revoked" => RuleState::Revoked,
-            "superseded" => RuleState::Superseded,
-            _ => RuleState::Active,
-        },
-        created_at: row.get(15)?,
-    }))
-}
-
-pub fn revoke_rule(connection: &Connection, rule_id: &str) -> rusqlite::Result<usize> {
-    connection.execute(
-        "UPDATE tool_selection_rules SET state = 'revoked' WHERE id = ?1 AND state = 'active'",
-        params![rule_id],
-    )
-}
-
-/// Active soft rules for the same principal and a matching explicit revoke scope. Returns the
-/// tool IDs to release when a user says "the previous instruction is withdrawn".
+/// Active rules for the same principal and a matching explicit revoke scope. Explicit revoke is
+/// the only way to lift a forbid, so forbids are included here.
 pub fn revoke_matching_soft_rules(
     connection: &Connection,
     principal_id: &str,
@@ -929,7 +794,7 @@ pub fn revoke_matching_soft_rules(
     connection.execute(
         "UPDATE tool_selection_rules SET state = 'revoked'
           WHERE principal_id = ?1 AND state = 'active'
-            AND action IN ('avoid', 'prefer', 'pairwise')
+            AND action IN ('avoid', 'prefer', 'pairwise', 'forbid')
             AND scope_kind = ?2 AND scope_id = ?3
             AND (?4 IS NULL OR target_tool_id = ?4)",
         params![principal_id, scope_kind, scope_id, target_tool_id],
@@ -970,20 +835,6 @@ pub fn usage_page(
         )
         .optional()
 }
-
-pub fn usage_page_count(
-    connection: &Connection,
-    revision_id: &str,
-    section: &str,
-) -> rusqlite::Result<i64> {
-    connection.query_row(
-        "SELECT COUNT(*) FROM tool_selection_usage_pages
-          WHERE revision_id = ?1 AND section = ?2",
-        params![revision_id, section],
-        |row| row.get(0),
-    )
-}
-
 pub fn recent_decisions(
     connection: &Connection,
     principal_id: &str,
@@ -992,7 +843,9 @@ pub fn recent_decisions(
 ) -> rusqlite::Result<Vec<(String, String, Vec<String>)>> {
     let mut statement = connection.prepare(
         "SELECT d.id, d.scenario_json,
-                (SELECT group_concat(c.tool_id, ',') FROM tool_selection_candidates c
+                (SELECT group_concat(r.tool_id, ',')
+                   FROM tool_selection_candidates c
+                   JOIN tool_selection_revisions r ON r.id = c.revision_id
                   WHERE c.decision_id = d.id)
            FROM tool_selection_decisions d
           WHERE d.principal_id = ?1 AND d.conversation_id = ?2
@@ -1018,13 +871,6 @@ pub fn recent_decisions(
     )?;
     rows.collect()
 }
-
-pub fn catalog_count(connection: &Connection) -> rusqlite::Result<i64> {
-    connection.query_row("SELECT COUNT(*) FROM tool_selection_catalog", [], |row| {
-        row.get(0)
-    })
-}
-
 pub fn truncate_utf8(text: &str, max_bytes: usize) -> &str {
     if text.len() <= max_bytes {
         return text;

@@ -5,6 +5,7 @@ use crate::ipc_contract::ConversationMessage;
 use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{OpenAiCompatibleProviderSettings, RunCancellation, StartTurnInput};
 
+mod agent_dispatch;
 mod attempt;
 mod dispatch;
 mod dynamic_lan;
@@ -14,6 +15,8 @@ pub(crate) use attempt::*;
 pub(crate) use dispatch::*;
 pub(crate) use dynamic_lan::*;
 pub(crate) use larm_voice::*;
+#[cfg(test)]
+pub(crate) use recall_dispatch::execute_recall_tool;
 
 pub(crate) struct ModelStreamContext<'a> {
     pub(crate) reasoning_effort: &'a str,

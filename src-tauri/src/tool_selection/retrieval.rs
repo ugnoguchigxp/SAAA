@@ -3,27 +3,19 @@
 //! holding the database lock.
 
 use super::contracts::*;
-use super::repository;
-use super::inference::EmbedKind;
 use super::ranking::{fuse, FusedCandidate};
+use super::repository;
 
-pub const QUERY_PREFIX: &str = "query: ";
-pub const PASSAGE_PREFIX: &str = "passage: ";
-
+/// Raw, bounded embedding query. The E5 `query: ` prefix is added by the local worker (the model
+/// boundary), so it is applied exactly once; the reranker receives the same raw text.
 pub fn query_text(intent: &str) -> String {
-    format!("{QUERY_PREFIX}{}", repository::truncate_utf8(intent, SEARCH_INTENT_MAX_BYTES))
+    repository::truncate_utf8(intent, SEARCH_INTENT_MAX_BYTES).to_string()
 }
 
+/// Raw, bounded document text. The E5 `passage: ` prefix is added by the local worker; the
+/// reranker receives the same raw text.
 pub fn document_text(search_text: &str) -> String {
     repository::truncate_utf8(search_text, SEARCH_TEXT_MAX_BYTES).to_string()
-}
-
-pub fn embed_kind_for_query() -> EmbedKind {
-    EmbedKind::Query
-}
-
-pub fn embed_kind_for_document() -> EmbedKind {
-    EmbedKind::Passage
 }
 
 /// Cosine ranking of one query against precomputed revision vectors. Descending score, then
@@ -54,13 +46,29 @@ pub fn lexical_eligible(query: &str) -> bool {
     query.chars().count() >= 3
 }
 
-pub fn fuse_candidates(lexical: &[String], vector: &[String], top: usize) -> Vec<FusedCandidate> {
-    fuse(lexical, vector, top)
+/// Builds a safe FTS5 MATCH expression: every token is quoted (no raw MATCH operators) and
+/// joined with OR so a long natural-language intent still matches on its distinctive terms.
+/// Returns `None` when no token is long enough to produce a trigram.
+pub fn fts_match_query(intent: &str) -> Option<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for token in intent.split(|character: char| !character.is_alphanumeric()) {
+        if token.chars().count() >= 3 {
+            let escaped = token.replace('"', "\"\"");
+            let term = format!("\"{escaped}\"");
+            if !terms.contains(&term) {
+                terms.push(term);
+            }
+        }
+    }
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
 }
 
-/// Rerank document for one candidate: `passage: ` plus the bounded search text.
-pub fn rerank_document(search_text: &str) -> String {
-    format!("{PASSAGE_PREFIX}{}", document_text(search_text))
+pub fn fuse_candidates(lexical: &[String], vector: &[String], top: usize) -> Vec<FusedCandidate> {
+    fuse(lexical, vector, top)
 }
 
 #[cfg(test)]
@@ -89,8 +97,11 @@ mod tests {
     }
 
     #[test]
-    fn query_and_document_prefixes_are_fixed() {
-        assert_eq!(query_text("x"), "query: x");
-        assert_eq!(rerank_document("doc"), "passage: doc");
+    fn query_and_document_text_are_raw_and_bounded() {
+        // Prefixes are the worker's responsibility; the Rust side must not add them twice.
+        assert_eq!(query_text("x"), "x");
+        assert_eq!(document_text("doc"), "doc");
+        let long = "a".repeat(SEARCH_TEXT_MAX_BYTES + 100);
+        assert_eq!(document_text(&long).len(), SEARCH_TEXT_MAX_BYTES);
     }
 }

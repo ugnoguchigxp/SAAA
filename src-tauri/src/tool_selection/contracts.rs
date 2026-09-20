@@ -36,6 +36,7 @@ pub const EXTRACT_MAX_FEEDBACK: usize = 4;
 pub const EXTRACT_INPUT_MAX_BYTES: usize = 16 * 1024;
 pub const EXTRACT_USER_MESSAGE_MAX_BYTES: usize = 8 * 1024;
 pub const EXTRACT_RECENT_DECISIONS: usize = 8;
+pub const EXTRACT_PROMPT_TOOLS_MAX: usize = 40;
 pub const EXTRACT_OUTPUT_MAX_BYTES: usize = 4096;
 pub const EXTRACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 pub const WORKER_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -43,6 +44,7 @@ pub const WORKER_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 pub const WORKER_LINE_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub const WORKER_STDERR_MAX_BYTES: usize = 64 * 1024;
 pub const WORKER_PENDING_MAX: usize = 8;
+pub const WORKER_SPAWN_FAILURE_LIMIT: u32 = 3;
 
 /// Modes fixed by the guide. `Direct` keeps the existing M2A behaviour; the new discovery path is
 /// opt-in and disabled by default.
@@ -60,14 +62,6 @@ impl SelectionMode {
             "direct" => Some(Self::Direct),
             "discovery" => Some(Self::Discovery),
             _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::Direct => "direct",
-            Self::Discovery => "discovery",
         }
     }
 }
@@ -636,12 +630,6 @@ pub struct ExtractedFeedback {
     pub condition: FeedbackCondition,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExtractionOutput {
-    pub scenario: Scenario,
-    pub feedback: Vec<ExtractedFeedback>,
-}
-
 /// One ranked candidate stored with a decision.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CandidateRecord {
@@ -752,16 +740,6 @@ pub struct CorrectedCandidate {
 pub struct CorrectionOutcome {
     pub ordered: Vec<CorrectedCandidate>,
     pub ambiguous: bool,
-}
-
-impl Scenario {
-    pub fn operation_known(&self) -> bool {
-        self.operation.is_known()
-    }
-
-    pub fn object_known(&self) -> bool {
-        self.object_type.is_known()
-    }
 }
 
 #[cfg(test)]

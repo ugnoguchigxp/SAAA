@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS personal_world_projection_meta (
  ledger_revision INTEGER NOT NULL,
  input_epoch INTEGER NOT NULL,
  policy_revision INTEGER NOT NULL,
- built_at_ms INTEGER NOT NULL
+ built_at_ms INTEGER NOT NULL,
+ projection_version INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS personal_world_entities (

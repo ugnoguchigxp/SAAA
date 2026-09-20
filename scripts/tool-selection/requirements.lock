@@ -1,0 +1,8 @@
+# Pinned ML runtime for scripts/tool-selection/worker.py.
+# Install into a dedicated venv; never into the system Python.
+# `prepare_models.py` recomputes and stores the versions actually used in the manifest.
+sentence-transformers==5.4.0
+transformers==5.5.3
+torch==2.11.0
+huggingface-hub==1.10.1
+safetensors==0.7.0

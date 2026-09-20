@@ -11,7 +11,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 
 use super::contracts::*;
-use super::inference::{EmbedKind, InferenceError, InferenceErrorKind, ModelManifest};
+use super::inference::{
+    EmbedKind, EmbeddingProvider, InferenceError, InferenceErrorKind, ModelManifest, RerankProvider,
+};
 
 pub fn embed_request(id: &str, kind: EmbedKind, texts: &[String]) -> String {
     let kind = match kind {
@@ -154,6 +156,10 @@ pub struct MlWorker {
     model: ModelManifest,
     child: tokio::sync::Mutex<Option<WorkerChild>>,
     pending: tokio::sync::Semaphore,
+    embedding_loaded: std::sync::atomic::AtomicBool,
+    reranker_loaded: std::sync::atomic::AtomicBool,
+    spawn_failures: std::sync::atomic::AtomicU32,
+    disabled: std::sync::atomic::AtomicBool,
 }
 
 impl MlWorker {
@@ -170,13 +176,12 @@ impl MlWorker {
             model,
             child: tokio::sync::Mutex::new(None),
             pending: tokio::sync::Semaphore::new(WORKER_PENDING_MAX),
+            embedding_loaded: std::sync::atomic::AtomicBool::new(false),
+            reranker_loaded: std::sync::atomic::AtomicBool::new(false),
+            spawn_failures: std::sync::atomic::AtomicU32::new(0),
+            disabled: std::sync::atomic::AtomicBool::new(false),
         }
     }
-
-    pub fn model(&self) -> &ModelManifest {
-        &self.model
-    }
-
     async fn spawn(&self) -> Result<WorkerChild, InferenceError> {
         let mut child = tokio::process::Command::new(&self.python_path)
             .arg(&self.script_path)
@@ -189,7 +194,10 @@ impl MlWorker {
             .spawn()
             .map_err(|_| InferenceError::unavailable())?;
         let stdin = child.stdin.take().ok_or_else(InferenceError::unavailable)?;
-        let stdout = child.stdout.take().ok_or_else(InferenceError::unavailable)?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(InferenceError::unavailable)?;
         if let Some(stderr) = child.stderr.take() {
             // Bounded drain; the contents are never returned to the model.
             tokio::spawn(async move {
@@ -211,6 +219,14 @@ impl MlWorker {
         })
     }
 
+    /// A restarted process reloads its models; each model gets the longer load deadline once more.
+    fn reset_loaded(&self) {
+        self.embedding_loaded
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.reranker_loaded
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
     async fn kill(&self, mut worker: WorkerChild) {
         let _ = worker.child.start_kill();
         let _ = worker.child.wait().await;
@@ -221,13 +237,33 @@ impl MlWorker {
         if request.len() > WORKER_LINE_MAX_BYTES {
             return Err(InferenceError::protocol());
         }
+        if self.disabled.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(InferenceError::unavailable());
+        }
         let permit = self
             .pending
             .try_acquire()
             .map_err(|_| InferenceError::new(InferenceErrorKind::Busy))?;
         let mut guard = self.child.lock().await;
         if guard.is_none() {
-            *guard = Some(self.spawn().await?);
+            match self.spawn().await {
+                Ok(worker) => {
+                    self.spawn_failures
+                        .store(0, std::sync::atomic::Ordering::SeqCst);
+                    *guard = Some(worker);
+                }
+                Err(error) => {
+                    let failures = self
+                        .spawn_failures
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        + 1;
+                    if failures >= WORKER_SPAWN_FAILURE_LIMIT {
+                        self.disabled
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    return Err(error);
+                }
+            }
         }
         let result = tokio::time::timeout(timeout, async {
             let worker = guard.as_mut().ok_or_else(InferenceError::unavailable)?;
@@ -261,25 +297,25 @@ impl MlWorker {
             Ok(response)
         })
         .await;
-        match result {
+        let outcome = match result {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(error)) => {
                 if let Some(worker) = guard.take() {
+                    self.reset_loaded();
                     self.kill(worker).await;
                 }
                 Err(error)
             }
             Err(_) => {
                 if let Some(worker) = guard.take() {
+                    self.reset_loaded();
                     self.kill(worker).await;
                 }
                 Err(InferenceError::timeout())
             }
-        }
-        .map(|response| {
-            drop(permit);
-            response
-        })
+        };
+        drop(permit);
+        outcome
     }
 
     pub async fn shutdown(&self) {
@@ -287,6 +323,80 @@ impl MlWorker {
         if let Some(mut worker) = guard.take() {
             let _ = worker.child.start_kill();
             let _ = worker.child.wait().await;
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbeddingProvider for MlWorker {
+    fn model_hash(&self) -> &str {
+        &self.model.embedding_hash
+    }
+
+    fn dimension(&self) -> usize {
+        self.model.embedding_dimension
+    }
+
+    async fn embed(
+        &self,
+        kind: EmbedKind,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, InferenceError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let request = embed_request(&id, kind, texts);
+        let timeout = self.call_timeout(true);
+        let line = self.call(request, timeout).await?;
+        let vectors = parse_embed_response(
+            &line,
+            &id,
+            &self.model.embedding_hash,
+            self.model.embedding_dimension,
+            texts.len(),
+        )?;
+        self.embedding_loaded
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(vectors)
+    }
+}
+
+#[async_trait::async_trait]
+impl RerankProvider for MlWorker {
+    fn model_hash(&self) -> &str {
+        &self.model.reranker_hash
+    }
+
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[(String, String)],
+    ) -> Result<Vec<(String, f64)>, InferenceError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let request = rerank_request(&id, query, documents);
+        let expected: Vec<String> = documents.iter().map(|(id, _)| id.clone()).collect();
+        let timeout = self.call_timeout(false);
+        let line = self.call(request, timeout).await?;
+        let scores = parse_rerank_response(&line, &id, &self.model.reranker_hash, &expected)?;
+        self.reranker_loaded
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(scores)
+    }
+}
+
+impl MlWorker {
+    /// Loading the embedding and reranker models are independent first calls; each gets the
+    /// longer load deadline exactly once.
+    fn call_timeout(&self, embedding: bool) -> Duration {
+        let loaded = if embedding {
+            self.embedding_loaded
+                .load(std::sync::atomic::Ordering::SeqCst)
+        } else {
+            self.reranker_loaded
+                .load(std::sync::atomic::Ordering::SeqCst)
+        };
+        if loaded {
+            WORKER_REQUEST_TIMEOUT
+        } else {
+            WORKER_LOAD_TIMEOUT
         }
     }
 }
@@ -305,6 +415,55 @@ mod tests {
             "modelHash": hash,
         })
         .to_string()
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_the_worker_and_the_next_request_is_isolated() {
+        use std::io::Write;
+        let directory = tempfile::tempdir().expect("tempdir");
+        let script = directory.path().join("fake_worker.py");
+        let manifest_path = directory.path().join("manifest.json");
+        std::fs::write(&manifest_path, "{}").expect("manifest");
+        let mut file = std::fs::File::create(&script).expect("script");
+        writeln!(
+            file,
+            "import sys, json, time\n\
+             for line in sys.stdin:\n\
+             \x20   req = json.loads(line)\n\
+             \x20   if req['id'] == 'first':\n\
+             \x20       time.sleep(30)\n\
+             \x20   print(json.dumps({{'version':1,'id':req['id'],'ok':True,'vectors':[[0.1,0.2]],'dimension':2,'modelHash':'test'}}), flush=True)"
+        )
+        .expect("write script");
+        let python = std::env::var("SAAA_TEST_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let worker = MlWorker::new(
+            std::path::PathBuf::from(python),
+            script,
+            manifest_path,
+            ModelManifest {
+                embedding_hash: "test".to_string(),
+                reranker_hash: "test".to_string(),
+                embedding_dimension: 2,
+                no_match_threshold: 0.0,
+            },
+        );
+        let first = worker
+            .call(
+                embed_request("first", EmbedKind::Query, &["a".to_string()]),
+                Duration::from_millis(300),
+            )
+            .await;
+        assert_eq!(first.unwrap_err().kind, InferenceErrorKind::Timeout);
+        let second = worker
+            .call(
+                embed_request("second", EmbedKind::Query, &["b".to_string()]),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect("restarted worker answers");
+        let parsed = parse_embed_response(&second, "second", "test", 2, 1).expect("parsed");
+        assert_eq!(parsed, vec![vec![0.1_f32, 0.2_f32]]);
+        worker.shutdown().await;
     }
 
     #[test]
@@ -326,10 +485,34 @@ mod tests {
 
     #[test]
     fn wrong_id_hash_dimension_or_count_is_rejected() {
-        assert!(parse_embed_response(&embed_line("other", "hash", json!([[0.1, 0.2]])), "req", "hash", 2, 1).is_err());
-        assert!(parse_embed_response(&embed_line("req", "other", json!([[0.1, 0.2]])), "req", "hash", 2, 1).is_err());
-        assert!(parse_embed_response(&embed_line("req", "hash", json!([[0.1]])), "req", "hash", 2, 1).is_err());
-        assert!(parse_embed_response(&embed_line("req", "hash", json!([])), "req", "hash", 2, 1).is_err());
+        assert!(parse_embed_response(
+            &embed_line("other", "hash", json!([[0.1, 0.2]])),
+            "req",
+            "hash",
+            2,
+            1
+        )
+        .is_err());
+        assert!(parse_embed_response(
+            &embed_line("req", "other", json!([[0.1, 0.2]])),
+            "req",
+            "hash",
+            2,
+            1
+        )
+        .is_err());
+        assert!(parse_embed_response(
+            &embed_line("req", "hash", json!([[0.1]])),
+            "req",
+            "hash",
+            2,
+            1
+        )
+        .is_err());
+        assert!(
+            parse_embed_response(&embed_line("req", "hash", json!([])), "req", "hash", 2, 1)
+                .is_err()
+        );
     }
 
     #[test]

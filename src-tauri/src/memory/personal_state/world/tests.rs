@@ -325,6 +325,24 @@ fn t08_schema_migration_is_idempotent_and_adds_world_tables() {
         )
         .unwrap();
     assert!(trigger);
+    // D18/C6: the projection-format version column exists exactly once and
+    // defaults to 1, and re-running the initializer does not duplicate it.
+    let version_columns: i64 = c
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('personal_world_projection_meta') WHERE name='projection_version'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(version_columns, 1);
+    let default_value: Option<String> = c
+        .query_row(
+            "SELECT dflt_value FROM pragma_table_info('personal_world_projection_meta') WHERE name='projection_version'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(default_value.as_deref(), Some("1"));
 }
 
 #[test]

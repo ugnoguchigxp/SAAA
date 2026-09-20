@@ -608,6 +608,17 @@ pub fn run() {
             if let Some(diagnostic) = generated_tools.diagnostic {
                 eprintln!("generated tools config disabled: {diagnostic}");
             }
+            // Tool selection is fixed at startup as well. An unset configuration keeps the
+            // legacy direct mode; discovery builds the local worker only from local files.
+            let tool_selection_config = tool_selection::ToolSelectionConfig::from_environment();
+            if let Some(diagnostic) = tool_selection_config.diagnostic {
+                eprintln!("tool selection config disabled: {diagnostic}");
+            }
+            let tool_selection = Arc::new(tool_selection::build_service(
+                sqlite_writer.clone(),
+                &tool_selection_config,
+                Some(generated_capabilities.clone()),
+            ));
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,
@@ -629,6 +640,7 @@ pub fn run() {
                 voice_asr: AsrSessionManager::default(),
                 generated_capabilities,
                 generated_tools,
+                tool_selection,
             });
             Ok(())
         })

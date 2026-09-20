@@ -110,21 +110,8 @@ impl FixtureBackend {
             default_result: Mutex::new(serde_json::json!({"ok": true, "value": true})),
         }
     }
-
-    pub fn with_outcome(self, backend_key: &str, outcome: BackendOutcome) -> Self {
-        self.outcomes
-            .lock()
-            .expect("fixture outcomes")
-            .insert(backend_key.to_string(), outcome);
-        self
-    }
-
     pub fn call_count(&self) -> usize {
         self.calls.lock().map(|calls| calls.len()).unwrap_or(0)
-    }
-
-    pub fn calls(&self) -> Vec<BackendRequest> {
-        self.calls.lock().map(|calls| calls.clone()).unwrap_or_default()
     }
 }
 

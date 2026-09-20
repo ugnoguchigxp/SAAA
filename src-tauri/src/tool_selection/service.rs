@@ -5,25 +5,28 @@
 #![allow(private_interfaces)]
 
 use base64::Engine;
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use super::backends::{BackendRequest, TechnicalStatus, ToolBackend};
+use super::catalog::{self, CatalogEntry};
 use super::contracts::*;
 use super::extraction::{CorrectionExtractor, ExtractionRequest, RecentDecision};
 use super::feedback::{apply_extraction, ParsedExtraction};
 use super::inference::{EmbedKind, EmbeddingProvider, RerankProvider};
 use super::references::{ReferenceEntry, ReferenceKind, ReferenceStore};
-use super::repository::{self, Epochs, EligibleRevision};
+use super::repository::{self, EligibleRevision, Epochs};
 use super::{ranking, retrieval, rules};
 use crate::persistence::SqliteWriter;
 use crate::RunCancellation;
 
 const SEARCH_CANDIDATE_POOL: usize = 50;
 const BACKEND_TIMEOUT_MS: u64 = 30_000;
+const EMBED_BATCH_SIZE: usize = 64;
 const MAX_SEARCH_ATTEMPTS: usize = 2;
+const SCENARIO_CACHE_MAX: usize = 512;
 
 #[derive(Clone, Debug)]
 pub struct SearchCandidate {
@@ -121,10 +124,6 @@ impl ToolSelectionService {
         }
     }
 
-    pub fn references(&self) -> &ReferenceStore {
-        &self.references
-    }
-
     pub fn set_discovery_configured(&mut self, configured: bool) {
         self.discovery_configured = configured;
     }
@@ -135,6 +134,11 @@ impl ToolSelectionService {
 
     pub fn set_scenario(&self, context: &RequestContext, scenario: Scenario) {
         if let Ok(mut scenarios) = self.scenarios.lock() {
+            // Completed runs are never read again; cap the cache so a long session cannot grow it
+            // without bound.
+            if scenarios.len() >= SCENARIO_CACHE_MAX {
+                scenarios.clear();
+            }
             scenarios.insert(context.scope_key(), scenario);
         }
     }
@@ -149,12 +153,14 @@ impl ToolSelectionService {
 
     pub async fn begin_turn(&self, context: &RequestContext, user_message: &str) -> TurnOutcome {
         let intent = repository::truncate_utf8(user_message, EXTRACT_USER_MESSAGE_MAX_BYTES);
-        let (allowed_decisions, allowed_tools, recent) = self.allowed_for_extraction(context);
+        let (allowed_decisions, allowed_tools, recent, prompt_tools) =
+            self.allowed_for_extraction(context);
         let request = ExtractionRequest {
             user_message: intent.to_string(),
             recent_decisions: recent,
             allowed_decisions,
             allowed_tools,
+            prompt_tools,
         };
         let parsed = match self.extractor.extract(request).await {
             Ok(parsed) => parsed,
@@ -201,18 +207,20 @@ impl ToolSelectionService {
     fn allowed_for_extraction(
         &self,
         context: &RequestContext,
-    ) -> (HashSet<String>, HashSet<String>, Vec<RecentDecision>) {
+    ) -> (
+        HashSet<String>,
+        HashSet<String>,
+        Vec<RecentDecision>,
+        Vec<String>,
+    ) {
         let principal = context.principal_id.clone();
         let conversation = context.conversation_id.clone();
         let project = context.project_id.clone();
         self.writer
             .read_serialized(|connection| {
-                let eligible = repository::eligible_revisions(
-                    connection,
-                    &principal,
-                    project.as_deref(),
-                )
-                .map_err(|error| error.to_string())?;
+                let eligible =
+                    repository::eligible_revisions(connection, &principal, project.as_deref())
+                        .map_err(|error| error.to_string())?;
                 let mut tools: HashSet<String> = HashSet::new();
                 for item in &eligible {
                     tools.insert(item.revision.tool_id.clone());
@@ -231,10 +239,14 @@ impl ToolSelectionService {
                 .map_err(|error| error.to_string())?;
                 let mut allowed_decisions = HashSet::new();
                 let mut recent = Vec::new();
+                let mut prompt_tools: Vec<String> = Vec::new();
                 for (decision_id, scenario, tool_ids) in decisions {
                     allowed_decisions.insert(decision_id.clone());
                     for tool_id in &tool_ids {
                         tools.insert(tool_id.clone());
+                        if !prompt_tools.contains(tool_id) {
+                            prompt_tools.push(tool_id.clone());
+                        }
                     }
                     recent.push(RecentDecision {
                         decision_id,
@@ -242,7 +254,9 @@ impl ToolSelectionService {
                         tool_ids,
                     });
                 }
-                Ok((allowed_decisions, tools, recent))
+                prompt_tools.sort();
+                prompt_tools.truncate(EXTRACT_PROMPT_TOOLS_MAX);
+                Ok((allowed_decisions, tools, recent, prompt_tools))
             })
             .unwrap_or_default()
     }
@@ -258,21 +272,18 @@ impl ToolSelectionService {
         let task = context.task_id.clone();
         let model_hash = self.embedding.model_hash().to_string();
         let lexical_ok = retrieval::lexical_eligible(intent);
-        let query = intent.to_string();
+        let lexical_query = retrieval::fts_match_query(intent);
         let now = now_ms();
         self.writer
             .read_serialized(|connection| {
                 let epochs = repository::epochs(connection).map_err(|error| error.to_string())?;
-                let eligible = repository::eligible_revisions(
-                    connection,
-                    &principal,
-                    project.as_deref(),
-                )
-                .map_err(|error| error.to_string())?;
-                let lexical = if lexical_ok {
-                    repository::lexical_candidates(
+                let eligible =
+                    repository::eligible_revisions(connection, &principal, project.as_deref())
+                        .map_err(|error| error.to_string())?;
+                let lexical = match (lexical_ok, lexical_query.as_deref()) {
+                    (true, Some(match_expression)) => repository::lexical_candidates(
                         connection,
-                        &query,
+                        match_expression,
                         &principal,
                         project.as_deref(),
                         SEARCH_CANDIDATE_POOL,
@@ -280,9 +291,8 @@ impl ToolSelectionService {
                     .map_err(|error| error.to_string())?
                     .into_iter()
                     .map(|(revision_id, _)| revision_id)
-                    .collect()
-                } else {
-                    Vec::new()
+                    .collect(),
+                    _ => Vec::new(),
                 };
                 let embeddings = repository::load_embeddings(
                     connection,
@@ -332,7 +342,9 @@ impl ToolSelectionService {
 
         let query = retrieval::query_text(intent);
         let mut vector_ids: Vec<String> = Vec::new();
-        let mut vector_degraded = self.embedding.dimension() == 0;
+        // A missing index is treated as an unavailable embedding branch, not as "no match".
+        let mut vector_degraded = self.embedding.dimension() == 0
+            || (snapshot.embeddings.is_empty() && !snapshot.eligible.is_empty());
         if !vector_degraded {
             match self
                 .embedding
@@ -346,10 +358,7 @@ impl ToolSelectionService {
                             "The embedding model returned an unexpected dimension.",
                         ));
                     }
-                    let scored = retrieval::embedding_candidates(
-                        &vectors[0],
-                        &snapshot.embeddings,
-                    );
+                    let scored = retrieval::embedding_candidates(&vectors[0], &snapshot.embeddings);
                     vector_ids = scored
                         .into_iter()
                         .take(SEARCH_CANDIDATE_POOL)
@@ -365,30 +374,28 @@ impl ToolSelectionService {
             notes.push("Embedding search is unavailable; lexical search was used.");
         }
 
-        let mut fused = retrieval::fuse_candidates(&snapshot.lexical, &vector_ids, RERANK_TOP);
-        // Inject explicitly preferred tools that retrieval missed, authorized only.
+        let mut fused = retrieval::fuse_candidates(&snapshot.lexical, &vector_ids, RERANK_TOP); // Inject explicitly preferred tools that retrieval missed, authorized only. Filter by
+                                                                                                // scope/condition before dedupe so a non-matching narrow rule cannot mask a matching
+                                                                                                // broad one.
+        let matching_prefer: Vec<&StoredRule> = snapshot
+            .rules
+            .iter()
+            .filter(|rule| {
+                rule.action == RuleAction::Prefer
+                    && rules::scope_matches(rule, context)
+                    && rules::condition_matches(rule, scenario)
+            })
+            .collect();
         let mut injected = 0;
-        for rule in rules::dedupe_by_condition(&snapshot.rules) {
+        for rule in rules::dedupe_by_condition(&matching_prefer) {
             if injected >= RERANK_PREFERRED_MAX {
                 break;
-            }
-            if rule.action != RuleAction::Prefer {
-                continue;
-            }
-            if !rules::scope_matches(rule, context) || !rules::condition_matches(rule, scenario) {
-                continue;
             }
             let Some(tool_id) = rule.target_tool_id.as_deref() else {
                 continue;
             };
-            if fused.iter().any(|item| item.revision_id == tool_id) {
-                continue;
-            }
             if let Some(revision_id) = tool_revision.get(tool_id) {
-                if !fused
-                    .iter()
-                    .any(|item| item.revision_id == *revision_id)
-                {
+                if !fused.iter().any(|item| item.revision_id == *revision_id) {
                     fused.push(ranking::FusedCandidate {
                         revision_id: (*revision_id).to_string(),
                         lex_rank: None,
@@ -409,7 +416,7 @@ impl ToolSelectionService {
                     .map(|revision| {
                         (
                             revision.revision.id.clone(),
-                            retrieval::rerank_document(&revision.revision.search_text),
+                            retrieval::document_text(&revision.revision.search_text),
                         )
                     })
             })
@@ -463,13 +470,13 @@ impl ToolSelectionService {
             .iter()
             .enumerate()
             .filter_map(|(index, revision_id)| {
-                revision_by_id.get(revision_id.as_str()).map(|revision| {
-                    rules::BaseCandidate {
+                revision_by_id
+                    .get(revision_id.as_str())
+                    .map(|revision| rules::BaseCandidate {
                         revision_id: revision_id.clone(),
                         tool_id: revision.revision.tool_id.clone(),
                         base_score: ranking::base_from_rank(index + 1, total),
-                    }
-                })
+                    })
             })
             .collect();
         let correction = rules::apply_rules(&base_candidates, &snapshot.rules, scenario, context);
@@ -521,7 +528,7 @@ impl ToolSelectionService {
         if intent.is_empty() || intent.len() > SEARCH_INTENT_MAX_BYTES {
             return Err(ToolSelectionError::invalid());
         }
-        if limit < 1 || limit > SEARCH_LIMIT_MAX {
+        if !(1..=SEARCH_LIMIT_MAX).contains(&limit) {
             return Err(ToolSelectionError::invalid());
         }
         let scenario = self.cached_scenario(context, intent);
@@ -653,7 +660,10 @@ impl ToolSelectionService {
         })
     }
 
-    fn read_revision(&self, revision_id: &str) -> ToolSelectionResult<Option<repository::RevisionRow>> {
+    fn read_revision(
+        &self,
+        revision_id: &str,
+    ) -> ToolSelectionResult<Option<repository::RevisionRow>> {
         self.writer
             .read_serialized(|connection| {
                 repository::revision_by_id(connection, revision_id)
@@ -669,7 +679,10 @@ impl ToolSelectionService {
         section: &str,
         cursor: Option<&str>,
     ) -> ToolSelectionResult<DescribeResponse> {
-        if !matches!(section, "contract" | "usage" | "examples" | "troubleshooting") {
+        if !matches!(
+            section,
+            "contract" | "usage" | "examples" | "troubleshooting"
+        ) {
             return Err(ToolSelectionError::invalid());
         }
         let reference = self
@@ -682,7 +695,6 @@ impl ToolSelectionService {
             return Err(ToolSelectionError::unauthorized());
         }
         let (tool, revision) = self.current_revision(&reference)?;
-        let execution_ref = self.issue_execution_ref(context, &reference, &revision)?;
         if section == "contract" {
             let body = json!({
                 "revisionId": revision.id,
@@ -690,14 +702,19 @@ impl ToolSelectionService {
                 "inputSchema": revision.input_schema,
                 "outputSchema": revision.output_schema,
             });
-            if serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(usize::MAX)
+            if serde_json::to_vec(&body)
+                .map(|bytes| bytes.len())
+                .unwrap_or(usize::MAX)
                 > DESCRIBE_RESPONSE_MAX_BYTES
             {
+                // A contract that cannot be described is not runnable, so no execution ref is
+                // issued.
                 return Err(ToolSelectionError::new(
                     ToolSelectionErrorCode::Unavailable,
                     "The tool contract is too large to describe.",
                 ));
             }
+            let execution_ref = self.issue_execution_ref(context, &reference, &revision)?;
             return Ok(DescribeResponse {
                 revision_id: revision.id,
                 tool_id: revision.tool_id,
@@ -707,6 +724,7 @@ impl ToolSelectionService {
                 cursor: None,
             });
         }
+        let execution_ref = self.issue_execution_ref(context, &reference, &revision)?;
         let page = decode_cursor(cursor, &reference.revision_id, section)?;
         let text = self
             .writer
@@ -783,17 +801,14 @@ impl ToolSelectionService {
                 let tool = repository::tool_by_id(connection, &tool_id)
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| "not-found".to_string())?;
-                if !tool.enabled || tool.current_revision_id.as_deref() != Some(revision_id.as_str())
+                if !tool.enabled
+                    || tool.current_revision_id.as_deref() != Some(revision_id.as_str())
                 {
                     return Err("stale".to_string());
                 }
-                let authorized = repository::grant_exists(
-                    connection,
-                    &principal,
-                    &tool_id,
-                    project.as_deref(),
-                )
-                .map_err(|error| error.to_string())?;
+                let authorized =
+                    repository::grant_exists(connection, &principal, &tool_id, project.as_deref())
+                        .map_err(|error| error.to_string())?;
                 if !authorized {
                     return Err("unauthorized".to_string());
                 }
@@ -916,6 +931,119 @@ impl ToolSelectionService {
         })
     }
 
+    /// Development/management API for importing a fixture catalog. Import is never a grant, but
+    /// the evaluation fixture grants each tool to the evaluation principal explicitly.
+    pub fn ingest_catalog(
+        &self,
+        principal_id: &str,
+        source_id: &str,
+        entries: &[CatalogEntry],
+    ) -> ToolSelectionResult<usize> {
+        let now = now_ms();
+        write_transaction(&self.writer, move |connection| {
+            for entry in entries {
+                let revision_id = format!("{}-rev1", entry.tool_id);
+                catalog::register_revision(
+                    connection,
+                    principal_id,
+                    source_id,
+                    entry,
+                    &revision_id,
+                    now,
+                )
+                .map_err(|error| error.code.as_str().to_string())?;
+                repository::upsert_grant(
+                    connection,
+                    principal_id,
+                    &entry.tool_id,
+                    "user",
+                    principal_id,
+                )
+                .map_err(|_| "storage".to_string())?;
+            }
+            repository::bump_epochs(connection, false, true, false)
+                .map_err(|_| "storage".to_string())?;
+            Ok(entries.len())
+        })
+        .map_err(|_| ToolSelectionError::storage())
+    }
+
+    /// Computes and stores document embeddings for every authorized revision using the configured
+    /// embedding provider.
+    pub async fn index_embeddings(
+        &self,
+        principal_id: &str,
+        project_id: Option<&str>,
+    ) -> ToolSelectionResult<usize> {
+        let eligible = self
+            .writer
+            .read_serialized({
+                let principal = principal_id.to_string();
+                let project = project_id.map(str::to_string);
+                move |connection| {
+                    repository::eligible_revisions(connection, &principal, project.as_deref())
+                        .map_err(|error| error.to_string())
+                }
+            })
+            .map_err(|_| ToolSelectionError::storage())?;
+        if eligible.is_empty() {
+            return Ok(0);
+        }
+        let texts: Vec<String> = eligible
+            .iter()
+            .map(|item| retrieval::document_text(&item.revision.search_text))
+            .collect();
+        // Batch requests so one JSONL response stays well under the 2 MiB line limit.
+        let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(EMBED_BATCH_SIZE) {
+            let batch = self
+                .embedding
+                .embed(EmbedKind::Passage, chunk)
+                .await
+                .map_err(|_| ToolSelectionError::unavailable())?;
+            if batch.len() != chunk.len()
+                || batch
+                    .iter()
+                    .any(|vector| vector.len() != self.embedding.dimension())
+            {
+                return Err(ToolSelectionError::new(
+                    ToolSelectionErrorCode::Integrity,
+                    "The embedding model returned an unexpected shape.",
+                ));
+            }
+            vectors.extend(batch);
+        }
+        let model_hash = self.embedding.model_hash().to_string();
+        let rows: Vec<(String, Vec<f32>)> = eligible
+            .iter()
+            .map(|item| item.revision.id.clone())
+            .zip(vectors)
+            .collect();
+        write_transaction(&self.writer, move |connection| {
+            for (revision_id, vector) in &rows {
+                repository::upsert_embedding(connection, revision_id, &model_hash, vector)
+                    .map_err(|_| "storage".to_string())?;
+            }
+            Ok(rows.len())
+        })
+        .map_err(|_| ToolSelectionError::storage())
+    }
+
+    /// Full stored candidate ranking for a decision, used by the evaluation CLI. The returned
+    /// order is the persisted final order before the response limit is applied.
+    pub fn decision_candidates(
+        &self,
+        decision_id: &str,
+    ) -> ToolSelectionResult<Vec<CandidateRecord>> {
+        self.writer
+            .read_serialized(|connection| {
+                repository::decision_by_id(connection, decision_id)
+                    .map(|decision| decision.map(|value| value.candidates).unwrap_or_default())
+                    .map_err(|error| error.to_string())
+            })
+            .map_err(|_| ToolSelectionError::storage())
+    }
+
     fn read_epochs(&self) -> ToolSelectionResult<Epochs> {
         self.writer
             .read_serialized(|connection| {
@@ -925,11 +1053,66 @@ impl ToolSelectionService {
     }
 }
 
+/// Returns the local profile UUID used as the tool-selection principal. It is created once in the
+/// `tool_selection` settings namespace and never derived from credentials or the OS user name.
+pub fn ensure_principal(writer: &SqliteWriter) -> ToolSelectionResult<String> {
+    writer
+        .write(|connection| {
+            let existing: Option<String> = connection
+                .query_row(
+                    "SELECT value_json FROM settings_documents
+                      WHERE namespace = 'tool_selection' AND key = 'principal'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(crate::database_error)?;
+            if let Some(value) = existing {
+                if let Ok(serde_json::Value::String(id)) = serde_json::from_str(&value) {
+                    if !id.is_empty() {
+                        return Ok(id);
+                    }
+                }
+            }
+            let id = uuid::Uuid::new_v4().to_string();
+            connection
+                .execute(
+                    "INSERT OR REPLACE INTO settings_documents(
+                       namespace, key, schema_version, value_json, updated_at)
+                     VALUES ('tool_selection', 'principal', 1, ?1, ?2)",
+                    rusqlite::params![
+                        serde_json::Value::String(id.clone()).to_string(),
+                        crate::now_iso()
+                    ],
+                )
+                .map_err(crate::database_error)?;
+            Ok(id)
+        })
+        .map_err(|_| ToolSelectionError::storage())
+}
+
 const CHANGED: &str = "selection-changed";
 
 enum PersistError {
     Storage,
     Changed,
+}
+
+/// Settles any invocation left `running` by a crash so the ledger never reports a call as still
+/// in flight after a restart. Returns the number of rows repaired.
+pub fn reconcile_interrupted_invocations(writer: &SqliteWriter) -> ToolSelectionResult<usize> {
+    writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "UPDATE tool_selection_invocations
+                        SET technical_status = 'interrupted', finished_at = ?1
+                      WHERE technical_status = 'running'",
+                    rusqlite::params![now_ms()],
+                )
+                .map_err(crate::database_error)
+        })
+        .map_err(|_| ToolSelectionError::storage())
 }
 
 fn write_transaction<T>(
@@ -964,7 +1147,8 @@ fn title_and_summary(search_text: &str) -> (String, String) {
     if title.is_empty() {
         title = "tool".to_string();
     }
-    let summary = repository::truncate_utf8(&purpose, SEARCH_CANDIDATE_SUMMARY_MAX_BYTES).to_string();
+    let summary =
+        repository::truncate_utf8(&purpose, SEARCH_CANDIDATE_SUMMARY_MAX_BYTES).to_string();
     (title, summary)
 }
 
@@ -1009,16 +1193,4 @@ fn decode_cursor(
         .filter(|page| *page >= 0)
         .ok_or_else(ToolSelectionError::invalid)?;
     Ok(page)
-}
-
-/// Kept public for the gateway so the model-facing envelope can be built without leaking details.
-pub fn error_envelope(error: &ToolSelectionError) -> Value {
-    json!({
-        "ok": false,
-        "error": {
-            "code": error.code.as_str(),
-            "message": error.message,
-            "retryable": error.retryable,
-        }
-    })
 }

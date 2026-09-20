@@ -13,6 +13,9 @@ pub struct LlmOptions {
     pub tools: bool,
     #[serde(default = "yes")]
     pub streaming: bool,
+    /// Optional explicit sampling temperature. `None` keeps the provider default.
+    #[serde(default)]
+    pub temperature: Option<f32>,
 }
 impl Default for LlmOptions {
     fn default() -> Self {
@@ -21,6 +24,7 @@ impl Default for LlmOptions {
             reasoning: Reasoning::Auto,
             tools: true,
             streaming: true,
+            temperature: None,
         }
     }
 }
@@ -46,6 +50,9 @@ impl LlmOptions {
             "max_tokens"
         }] = json!(limit);
         body.as_object_mut().unwrap().remove("reasoning_effort");
+        if let Some(temperature) = self.temperature {
+            body["temperature"] = json!(temperature);
+        }
         if effort != "provider-default"
             && (matches!(self.reasoning, Reasoning::Supported)
                 || (matches!(self.reasoning, Reasoning::Auto)

@@ -195,53 +195,6 @@ impl EmbeddingProvider for HashEmbedding {
     }
 }
 
-/// Explicit embedding double: configured texts get exact vectors, everything else hashes.
-pub struct MapEmbedding {
-    inner: HashEmbedding,
-    vectors: HashMap<String, Vec<f32>>,
-}
-
-impl MapEmbedding {
-    pub fn new(dimension: usize) -> Self {
-        Self {
-            inner: HashEmbedding::new(dimension),
-            vectors: HashMap::new(),
-        }
-    }
-
-    pub fn with(mut self, text: &str, vector: Vec<f32>) -> Self {
-        self.vectors.insert(text.to_string(), vector);
-        self
-    }
-}
-
-#[async_trait]
-impl EmbeddingProvider for MapEmbedding {
-    fn model_hash(&self) -> &str {
-        self.inner.model_hash()
-    }
-
-    fn dimension(&self) -> usize {
-        self.inner.dimension()
-    }
-
-    async fn embed(
-        &self,
-        _kind: EmbedKind,
-        texts: &[String],
-    ) -> Result<Vec<Vec<f32>>, InferenceError> {
-        Ok(texts
-            .iter()
-            .map(|text| {
-                self.vectors
-                    .get(text)
-                    .cloned()
-                    .unwrap_or_else(|| self.inner.vector(text))
-            })
-            .collect())
-    }
-}
-
 /// Fixed reranker double. Missing documents fall back to `default_score`.
 pub struct FixedReranker {
     model_hash: String,
@@ -279,6 +232,51 @@ impl RerankProvider for FixedReranker {
             if !score.is_finite() {
                 return Err(InferenceError::integrity());
             }
+            scores.push((id.clone(), score));
+        }
+        Ok(scores)
+    }
+}
+
+/// Deterministic mock reranker used by the evaluation CLI's mock lane and by tests. It scores
+/// with the same hash embedding so the hybrid pipeline is exercised without a live model.
+pub struct HashReranker {
+    model_hash: String,
+    embedding: HashEmbedding,
+}
+
+impl Default for HashReranker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HashReranker {
+    pub fn new() -> Self {
+        Self {
+            model_hash: "test-hash-reranker".to_string(),
+            embedding: HashEmbedding::new(384),
+        }
+    }
+}
+
+#[async_trait]
+impl RerankProvider for HashReranker {
+    fn model_hash(&self) -> &str {
+        &self.model_hash
+    }
+
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[(String, String)],
+    ) -> Result<Vec<(String, f64)>, InferenceError> {
+        let query_vector = self.embedding.vector(query);
+        let mut scores = Vec::with_capacity(documents.len());
+        for (id, text) in documents {
+            let document = self.embedding.vector(text);
+            let score = super::ranking::cosine_similarity(&query_vector, &document)
+                .ok_or_else(InferenceError::integrity)?;
             scores.push((id.clone(), score));
         }
         Ok(scores)

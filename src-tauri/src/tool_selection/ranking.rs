@@ -3,7 +3,7 @@
 //! inference calls live here so the numeric golden tests are deterministic.
 
 use super::contracts::*;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Option<f64> {
     if a.is_empty() || a.len() != b.len() {
@@ -192,21 +192,6 @@ pub fn sort_corrected(candidates: &mut [CorrectedCandidate]) {
 /// fail the inference batch instead of persisting a corrupt score.
 pub fn finite_score(value: f64) -> Option<f64> {
     value.is_finite().then_some(value)
-}
-
-/// True when a candidate set is empty or every base score has no finite value.
-pub fn scores_are_finite(candidates: &[CorrectedCandidate]) -> bool {
-    candidates
-        .iter()
-        .all(|candidate| candidate.base_score.is_finite() && candidate.final_score.is_finite())
-}
-
-/// Groups rule IDs by action for diagnostics; not used for scoring.
-pub fn correction_summary(candidates: &[CorrectedCandidate]) -> BTreeMap<String, f64> {
-    candidates
-        .iter()
-        .map(|candidate| (candidate.revision_id.clone(), candidate.correction))
-        .collect()
 }
 
 #[cfg(test)]
