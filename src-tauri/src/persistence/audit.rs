@@ -540,7 +540,6 @@ fn validate_event(input: &FrontendAuditEventInput) -> Result<(), String> {
             | "conversation"
             | "provider"
             | "tts"
-            | "meeting"
             | "settings"
             | "voice-policy"
             | "situation"

@@ -35,6 +35,13 @@ pub(crate) fn compose(mut input: BrokerInput) -> Result<Envelope, String> {
         status = Status::Yellow;
         reasons.push(warning);
     }
+    for candidate in &mut input.candidates {
+        candidate.requirement = super::required::requirement(candidate);
+    }
+    // The base window contains optional history and old memory projections.  Reserve room for
+    // required state before selecting it; otherwise a long history could consume the budget
+    // before the safety-critical context is considered.
+    reserve_required_budget(&mut input.base, &input.candidates)?;
     input.candidates.sort_by(|left, right| {
         left.requirement
             .cmp(&right.requirement)
@@ -144,6 +151,47 @@ pub(crate) fn compose(mut input: BrokerInput) -> Result<Envelope, String> {
     })
 }
 
+fn reserve_required_budget(
+    base: &mut ContextWindow,
+    candidates: &[Candidate],
+) -> Result<(), String> {
+    let required_bytes = candidates
+        .iter()
+        .filter(|candidate| candidate.requirement == Requirement::Must)
+        .fold(0_usize, |used, candidate| {
+            used.saturating_add(candidate.cost_bytes)
+        })
+        .saturating_add(
+            usize::from(
+                candidates
+                    .iter()
+                    .any(|candidate| candidate.requirement == Requirement::Must),
+            ) * (PERSONAL_HEADER.len() + PERSONAL_FOOTER.len()),
+        );
+    if required_bytes > base.health.hard_limit_bytes {
+        return Err(
+            "required_context_overflow: required context exceeds the provider budget".into(),
+        );
+    }
+    while base.health.projected_bytes.saturating_add(required_bytes) > base.health.hard_limit_bytes
+    {
+        let Some(index) = base
+            .messages
+            .iter()
+            .position(|message| message.role == "assistant")
+        else {
+            return Err("required_context_overflow: required context cannot fit with current input and policy".into());
+        };
+        let removed = base.messages.remove(index);
+        base.health.projected_bytes = base
+            .health
+            .projected_bytes
+            .saturating_sub(removed.content.len());
+        base.health.repair_count = base.health.repair_count.saturating_add(1);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +282,58 @@ mod tests {
             .err()
             .unwrap()
             .contains("does not belong to the resolved scope"));
+    }
+
+    #[test]
+    fn required_state_evicts_optional_history_before_it_overflows() {
+        let mut window = base(220);
+        window.messages.insert(
+            1,
+            ProjectedContextMessage {
+                role: "assistant".into(),
+                content: "x".repeat(170),
+            },
+        );
+        window.health.projected_bytes += 170;
+        let required = Candidate::untrusted(
+            "state".into(),
+            "personal-state",
+            vec!["user:fixture".into()],
+            Requirement::Should,
+            "state".into(),
+            1,
+            1,
+            r#"{"status":"Active","value":"keep"}"#.into(),
+        );
+        let envelope = compose(BrokerInput {
+            base: window,
+            candidates: vec![required],
+            source_warning: None,
+            allowed_scope_keys: BTreeSet::from(["user:fixture".into()]),
+        })
+        .unwrap();
+        assert_eq!(envelope.selected.len(), 1);
+        assert_eq!(envelope.selected[0].requirement, Requirement::Must);
+        assert!(envelope.combined_block.unwrap().contains("keep"));
+    }
+
+    #[test]
+    fn required_only_overflow_has_a_stable_reason_code() {
+        let result = compose(BrokerInput {
+            base: base(32),
+            candidates: vec![Candidate::untrusted(
+                "state".into(),
+                "personal-state",
+                vec!["user:fixture".into()],
+                Requirement::Should,
+                "state".into(),
+                1,
+                1,
+                format!(r#"{{"status":"Active","value":"{}"}}"#, "x".repeat(128)),
+            )],
+            source_warning: None,
+            allowed_scope_keys: BTreeSet::from(["user:fixture".into()]),
+        });
+        assert!(matches!(result, Err(error) if error.contains("required_context_overflow")));
     }
 }

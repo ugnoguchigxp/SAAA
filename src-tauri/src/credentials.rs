@@ -105,6 +105,11 @@ pub(crate) fn credential_state(provider_id: String) -> Result<ProviderCredential
     Ok(ProviderCredentialState { provider_id, state })
 }
 
+pub(crate) fn store_named_secret(account: &str, value: &[u8]) -> Result<(), String> {
+    validate_provider_id(account)?;
+    set_keychain_value(account, value)
+}
+
 #[cfg(target_os = "macos")]
 fn set_keychain_value(provider_id: &str, value: &[u8]) -> Result<(), String> {
     security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, provider_id, value)

@@ -120,6 +120,14 @@ mod tests {
         .is_err());
         assert!(decode(content, "<saaa-ui-test>").is_err());
     }
+
+    #[test]
+    fn delegated_work_frames_use_the_same_coding_bridge() {
+        let content = "<saaa-coding-test>{\"name\":\"work_status\",\"arguments\":{}}</saaa-coding>";
+        let decoded = coding_decode(content, "<saaa-ui-test>").expect("delegated frame");
+        assert_eq!(decoded.name, "work_status");
+        assert!(decode(content, "<saaa-ui-test>").is_err());
+    }
     #[test]
     fn ordinary_answers_stream_and_embedded_frames_are_not_calls() {
         let mut p = Projection::new(Some("<saaa-ui-test>".into()));

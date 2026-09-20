@@ -35,3 +35,12 @@ fn generated_coding_binding_is_current() {
         saaa_lib::ipc_contract::coding_typescript_bindings()
     );
 }
+
+#[test]
+fn generated_schedule_binding_is_current() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated/schedule.ts");
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        saaa_lib::ipc_contract::schedule_typescript_bindings()
+    );
+}

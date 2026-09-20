@@ -43,6 +43,7 @@ pub(crate) fn start(
     let run_id = input.run_id.clone();
     let conversation_id = input.conversation_id.clone();
     let language = language(state);
+    let situation = state.situation.clone();
     let events = on_event.clone_box();
     Some(tauri::async_runtime::spawn(async move {
         tokio::select! { biased;
@@ -62,6 +63,7 @@ pub(crate) fn start(
             &language,
             &*events,
             cancellation.clone(),
+            &situation,
         )
         .await;
         tokio::select! { biased;
@@ -81,6 +83,7 @@ pub(crate) fn start(
             &language,
             &*events,
             cancellation,
+            &situation,
         )
         .await;
     }))
@@ -95,7 +98,13 @@ async fn speak(
     language: &str,
     events: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
+    situation: &std::sync::Arc<crate::situation::SituationRuntime>,
 ) {
+    // ASR can finish well before this acknowledgement is spoken. Re-read the hold at the queue
+    // boundary so a newly observed meeting never receives stale speech.
+    if crate::situation::speech_holds_runtime(situation) {
+        return;
+    }
     if let Ok(speech) = crate::larm_voice::render_response(
         conversation_id,
         kind,
@@ -105,7 +114,7 @@ async fn speak(
     )
     .await
     {
-        if !cancellation.is_cancelled() {
+        if !cancellation.is_cancelled() && !crate::situation::speech_holds_runtime(situation) {
             let _ = events.speak_voice_response(run_id, kind, &speech);
         }
     }

@@ -62,7 +62,7 @@ pub(crate) fn context_candidates(
         }))
         .map_err(|_| "Personal State candidate could not be encoded".to_string())?;
         if candidates.len() >= 512 {
-            return Err("Personal State candidate count exceeds its safe bound".into());
+            return Err("required_context_overflow: required Personal State item count exceeds its safe bound".into());
         }
         let source_version: u64 = c
             .query_row(
@@ -72,7 +72,7 @@ pub(crate) fn context_candidates(
                 |row| row.get(0),
             )
             .map_err(database_error)?;
-        candidates.push(Candidate::untrusted(
+        let mut candidate = Candidate::untrusted(
             format!("personal-assertion:{}", assertion.id),
             "personal-state",
             assertion_scopes,
@@ -81,7 +81,11 @@ pub(crate) fn context_candidates(
             source_version,
             if status == Status::Active { 700 } else { 900 },
             content,
-        ));
+        );
+        // Current state is required context, but remains untrusted data. Keep the central
+        // classifier as the source of truth so the broker can also defend direct callers.
+        candidate.requirement = crate::runtime::context::required::requirement(&candidate);
+        candidates.push(candidate);
     }
     let keys_json = scope.keys_json()?;
     let mut statement = c
@@ -113,7 +117,7 @@ pub(crate) fn context_candidates(
     for (sequence, message_id) in pending {
         let remaining = max_bytes.saturating_sub(pending_used);
         if remaining == 0 {
-            return Err("Required pending Personal State source exceeds its budget".into());
+            return Err("required_context_overflow: required pending Personal State source exceeds its budget".into());
         }
         let chunk = super::sources::load(c, sequence, 0, remaining.min(32_000))?;
         if !chunk.source.finalized {
@@ -127,7 +131,7 @@ pub(crate) fn context_candidates(
         .map_err(|_| "Pending Personal State source could not be encoded".to_string())?;
         pending_used = pending_used.saturating_add(content.len());
         if pending_used > max_bytes {
-            return Err("Required pending Personal State source exceeds its budget".into());
+            return Err("required_context_overflow: required pending Personal State source exceeds its budget".into());
         }
         candidates.push(Candidate::untrusted(
             format!("personal-pending:{message_id}"),

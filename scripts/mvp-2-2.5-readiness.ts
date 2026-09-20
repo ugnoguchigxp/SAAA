@@ -358,9 +358,9 @@ function assertVerificationEnvironment(
     throw new RunnerError(3, "dedicated-app-data-unused");
   const schemaTableCount = commandOutput("/usr/bin/sqlite3", [
     databasePath,
-    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('settings_documents','conversations','runtime_runs','meeting_sessions');",
+    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('settings_documents','conversations','runtime_runs');",
   ]);
-  if (schemaTableCount !== "4") throw new RunnerError(3, "dedicated-app-data-unused");
+  if (schemaTableCount !== "3") throw new RunnerError(3, "dedicated-app-data-unused");
   if (hashDirectory(workspaceDirectory, true) !== preflight.workspaceInitialSha256)
     throw new RunnerError(3, "fixture-workspace-invalid");
   assertCurrentIdentity(preflight.identity);
@@ -811,9 +811,6 @@ export function validateSuiteCases(report: SuiteReport): void {
 }
 
 const EXPECTED_REPORTS: Array<[Suite, Mode]> = [
-  ["meeting", "functional"],
-  ["meeting", "soak-30m"],
-  ["meeting", "soak-2h"],
   ["input-activity", "manual"],
   ["agent-run", "manual"],
 ];

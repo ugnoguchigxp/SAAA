@@ -22,6 +22,8 @@ pub(crate) struct RoleRoutingSettings {
     pub(crate) premium_approval: String,
     #[serde(default)]
     pub(crate) learning: RoutingLearning,
+    #[serde(default)]
+    pub(crate) adaptive_improvement: AdaptiveImprovementSettings,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -122,6 +124,15 @@ pub(crate) struct RoutingLearning {
     pub(crate) batch_size: u16,
     pub(crate) allow_local_labeler: bool,
 }
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AdaptiveImprovementSettings {
+    pub(crate) enabled: bool,
+    pub(crate) provider_recipe: bool,
+    pub(crate) tool: bool,
+    pub(crate) plan: bool,
+    pub(crate) notification: bool,
+}
 impl Default for RoleRoutingSettings {
     fn default() -> Self {
         Self {
@@ -135,6 +146,7 @@ impl Default for RoleRoutingSettings {
             selection: RoutingSelection::default(),
             premium_approval: default_premium_approval(),
             learning: RoutingLearning::default(),
+            adaptive_improvement: AdaptiveImprovementSettings::default(),
         }
     }
 }
@@ -190,6 +202,17 @@ impl Default for RoutingLearning {
             max_run_seconds: 600,
             batch_size: 100,
             allow_local_labeler: false,
+        }
+    }
+}
+impl Default for AdaptiveImprovementSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider_recipe: false,
+            tool: false,
+            plan: false,
+            notification: false,
         }
     }
 }

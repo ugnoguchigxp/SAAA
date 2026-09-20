@@ -1,6 +1,6 @@
 # Butler Schedule Ledger 作業カード
 
-作成日: 2026-09-20。全26枚、SL-00〜25。[全体計画](saaa-butler-schedule-ledger-plan.md)が正本。状態: **見送り中（準備未了。禁止ではない）**。最小循環の委任正本と TTS hold が揃ってから SL-A を着手する。
+作成日: 2026-09-21。全26枚、SL-00〜25。[全体計画](saaa-butler-schedule-ledger-plan.md)が正本。状態: **SL-A〜D 実装済み（offline）。SL-24 live 未実施**。
 
 ## 実行方法
 

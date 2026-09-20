@@ -8,10 +8,10 @@ const id = text.min(1).max(1024);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const pace = z.enum(["quick", "balanced", "patient"]);
 const speechReason = z.enum([
-  "meeting_blocked",
   "global_opt_out",
   "conversation_override",
   "global_default",
+  "situation_hold",
 ]);
 const policy = z.object({
   conversationId: id,
@@ -124,7 +124,6 @@ export const runtimeEventSchema = z.discriminatedUnion("type", [
     presentation: z.object({
       decision: z.enum(["speak", "silent"]),
       reasonCode: z.enum([
-        "meeting_blocked",
         "global_opt_out",
         "turn_override",
         "conversation_override",

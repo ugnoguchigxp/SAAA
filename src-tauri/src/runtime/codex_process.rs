@@ -17,6 +17,13 @@ pub(crate) use super::codex_supervise::{
     request_failure_message, supervisor_outcome, supervisor_wait_duration,
 };
 
+fn developer_instructions(host_context: &str) -> String {
+    if host_context.trim().is_empty() {
+        return CODEX_READ_ONLY_SYSTEM_CONTEXT.to_string();
+    }
+    format!("{CODEX_READ_ONLY_SYSTEM_CONTEXT}\n\n{host_context}")
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_codex_turn_process(
     run_id: &str,
@@ -36,12 +43,49 @@ pub(crate) fn run_codex_turn_process(
             last_progress_at: None,
         },
     )?;
-    run_codex_turn_process_with_policy(
+    run_codex_turn_process_with_policy_and_context(
         run_id,
         prompt,
         workspace,
         model,
         existing_thread_id,
+        "",
+        policy,
+        on_event,
+        cancellation,
+    )
+}
+
+/// Starts a Codex turn with a host-provided, data-only context block.  The block is passed in
+/// developer instructions, where its authority boundary is explicit, rather than concatenating
+/// it to the user's request text.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_codex_turn_process_with_context(
+    run_id: &str,
+    prompt: &str,
+    workspace: &std::path::Path,
+    model: &str,
+    existing_thread_id: Option<&str>,
+    host_context: &str,
+    timeout_ms: u64,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: &RunCancellation,
+) -> Result<CodexTurnOutcome, CodexTurnFailure> {
+    let policy = crate::runtime::contracts::RunSupervisionPolicy::for_route(timeout_ms).map_err(
+        |message| CodexTurnFailure {
+            thread_id: existing_thread_id.map(str::to_string),
+            message,
+            code: crate::runtime::contracts::RunFailureCode::ConfigurationError,
+            last_progress_at: None,
+        },
+    )?;
+    run_codex_turn_process_with_policy_and_context(
+        run_id,
+        prompt,
+        workspace,
+        model,
+        existing_thread_id,
+        host_context,
         policy,
         on_event,
         cancellation,
@@ -55,6 +99,31 @@ pub(crate) fn run_codex_turn_process_with_policy(
     workspace: &std::path::Path,
     model: &str,
     existing_thread_id: Option<&str>,
+    policy: crate::runtime::contracts::RunSupervisionPolicy,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: &RunCancellation,
+) -> Result<CodexTurnOutcome, CodexTurnFailure> {
+    run_codex_turn_process_with_policy_and_context(
+        run_id,
+        prompt,
+        workspace,
+        model,
+        existing_thread_id,
+        "",
+        policy,
+        on_event,
+        cancellation,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_codex_turn_process_with_policy_and_context(
+    run_id: &str,
+    prompt: &str,
+    workspace: &std::path::Path,
+    model: &str,
+    existing_thread_id: Option<&str>,
+    host_context: &str,
     policy: crate::runtime::contracts::RunSupervisionPolicy,
     on_event: &dyn RuntimeEventSender,
     cancellation: &RunCancellation,
@@ -130,7 +199,7 @@ pub(crate) fn run_codex_turn_process_with_policy(
                 "mcp_servers": {},
                 "sandbox_workspace_write": { "network_access": false }
             },
-            "developerInstructions": CODEX_READ_ONLY_SYSTEM_CONTEXT
+            "developerInstructions": developer_instructions(host_context)
         });
         if !model.is_empty() {
             params["model"] = Value::String(model.to_string());
@@ -593,4 +662,18 @@ pub(crate) fn run_codex_turn_process_with_policy(
         });
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::developer_instructions;
+
+    #[test]
+    fn wd_09_host_snapshot_is_kept_at_the_developer_boundary() {
+        let instructions = developer_instructions(
+            "HOST_STATE_SNAPSHOT <host-state-snapshot>{}</host-state-snapshot>",
+        );
+        assert!(instructions.contains("Operate read-only"));
+        assert!(instructions.contains("HOST_STATE_SNAPSHOT"));
+    }
 }

@@ -1,6 +1,6 @@
 # Butler Schedule Ledger 実装計画 — 期限台帳、tick、Google Calendar 投影
 
-作成日: 2026-09-20。状態: **見送り中（準備が整っていない。禁止ではない）。設計のみ。機能は未実装**。コードは本計画の作成では変更していない。
+作成日: 2026-09-21。状態: **SL-A〜D 実装済み（offline）。SL-24 live 未実施**。
 
 見送り理由: 発火の権限は Goal / Delegation / Task に依存する。時刻の到来を権限にしない。会議中の保留は Situation TTS hold に依存する。いずれも執事循環の最小循環（Step 4）と TTS ゲート（Step 3）が先。揃い次第、§2 の SL-A（Calendar なしの期限台帳と tick）から着手する。
 

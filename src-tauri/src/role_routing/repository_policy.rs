@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 /// Stores the currently configured role-routing policy once. Re-saving identical JSON is a no-op;
@@ -15,6 +16,10 @@ pub(crate) fn capture_current_policy(connection: &Connection, now_ms: i64) -> Re
     let Some(config_json) = config_json else {
         return Ok(());
     };
+    // Settings documents originate in JSON, whose object key order is not meaningful. Persist a
+    // canonical snapshot so a UI re-save that only rearranges fields cannot create a new policy
+    // version for subsequent roots.
+    let config_json = canonicalize_json(&config_json)?;
     let digest = format!("{:x}", Sha256::digest(config_json.as_bytes()));
     let previous: Option<String> = connection
         .query_row(
@@ -41,4 +46,28 @@ pub(crate) fn capture_current_policy(connection: &Connection, now_ms: i64) -> Re
         )
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn canonicalize_json(input: &str) -> Result<String, String> {
+    let value: Value = serde_json::from_str(input)
+        .map_err(|error| format!("Could not decode role-routing policy: {error}"))?;
+    serde_json::to_string(&canonicalize_value(value))
+        .map_err(|error| format!("Could not encode role-routing policy: {error}"))
+}
+
+fn canonicalize_value(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.into_iter().map(canonicalize_value).collect()),
+        Value::Object(entries) => {
+            let mut entries = entries.into_iter().collect::<Vec<_>>();
+            entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, canonicalize_value(value)))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
 }

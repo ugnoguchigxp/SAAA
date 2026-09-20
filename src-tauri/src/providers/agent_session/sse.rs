@@ -87,7 +87,24 @@ pub(super) async fn run_agent_session_sse(
         return super::cancelled(false);
     }
     let deadline = TokioInstant::now() + Duration::from_millis(timeout_ms);
-    let mut input = match render_turn_input(history) {
+    // This runs after creation and transport negotiation, immediately before the first remote
+    // turn. It is the AgentSession equivalent of the OpenAI adapter's send-body revalidation.
+    let world = context
+        .output_persistence
+        .and_then(|persistence| persistence.world);
+    let (provider_history, initial_world) = world
+        .map(|world| world.provider_history(history))
+        .unwrap_or_else(|| (history.to_vec(), false));
+    // AgentSession represents tool continuation by wrapping the original input. Keep a distinct
+    // no-World base so a current first-turn snapshot cannot be replayed as a later state claim.
+    let follow_up_history = world
+        .map(|world| world.without_world_history(history))
+        .unwrap_or_else(|| history.to_vec());
+    let mut input = match render_turn_input(&provider_history) {
+        Ok(input) => input,
+        Err(kind) => return failed(kind, false),
+    };
+    let mut follow_up_base = match render_turn_input(&follow_up_history) {
         Ok(input) => input,
         Err(kind) => return failed(kind, false),
     };
@@ -109,13 +126,16 @@ pub(super) async fn run_agent_session_sse(
     }
     if coding_enabled {
         offered_tools.extend(crate::coding::tools::definitions());
+        offered_tools.extend(crate::steward::tools::definitions());
     }
     if !coding_enabled {
         input=json!({"type":"saaa.conversation.capabilities.v1","conversation":serde_json::from_str::<Value>(&input).unwrap_or(Value::Null),"instructions":"SAAA coding tools are disabled on this route. You cannot start, resume, inspect or cancel a local coding job. Explain this limitation for coding requests and ask the user to enable pi coding in SAAA settings. Never claim to have performed an implementation or use your own remote tools as a substitute."}).to_string();
+        follow_up_base=json!({"type":"saaa.conversation.capabilities.v1","conversation":serde_json::from_str::<Value>(&follow_up_base).unwrap_or(Value::Null),"instructions":"SAAA coding tools are disabled on this route. You cannot start, resume, inspect or cancel a local coding job. Explain this limitation for coding requests and ask the user to enable pi coding in SAAA settings. Never claim to have performed an implementation or use your own remote tools as a substitute."}).to_string();
     }
     let marker = format!("<saaa-ui-{}>", uuid::Uuid::new_v4().simple());
     if enabled {
         input = ui_bridge::initial_input(&input, &marker);
+        follow_up_base = ui_bridge::initial_input(&follow_up_base, &marker);
     }
     if coding_enabled {
         input = ui_bridge::coding_input(
@@ -126,18 +146,30 @@ pub(super) async fn run_agent_session_sse(
                 .map(|p| crate::coding::tools::context(p.state, &context.input.conversation_id))
                 .unwrap_or(Value::Null),
         );
+        follow_up_base = ui_bridge::coding_input(
+            &follow_up_base,
+            &marker,
+            context
+                .output_persistence
+                .map(|p| crate::coding::tools::context(p.state, &context.input.conversation_id))
+                .unwrap_or(Value::Null),
+        );
     }
-    if input.len() > 1_000_000 {
+    if input.len() > 1_000_000 || follow_up_base.len() > 1_000_000 {
         return failed(ProviderFailureKind::RequestTooLarge, false);
     }
-    let base_envelope = generation::Envelope::new(&input);
+    let base_envelope = generation::Envelope::new(&follow_up_base);
     let mut cursor = None;
     let mut output_started = false;
     for round in 0..=12 {
-        let generation = match base_envelope.begin(&context, round, &input, &offered_tools) {
-            Ok(generation) => generation,
-            Err(_) => return failed(ProviderFailureKind::Internal, output_started),
-        };
+        // The remote session receives the World only in its initial turn. Tool follow-ups are
+        // explicitly recorded without it; they must not claim that an old frame was resent.
+        let include_world = initial_world && round == 0;
+        let generation =
+            match base_envelope.begin(&context, round, &input, &offered_tools, include_world) {
+                Ok(generation) => generation,
+                Err(_) => return failed(ProviderFailureKind::Internal, output_started),
+            };
         let turn = tokio::select! {
             biased;
             _ = context.cancellation.cancelled() => {
@@ -213,6 +245,12 @@ pub(super) async fn run_agent_session_sse(
                 call.id = format!("sse-ui-{marker}-{round}");
                 let result = if crate::coding::contracts::NAMES.contains(&call.name.as_str()) {
                     crate::coding::tools::execute(
+                        context.output_persistence.map(|p| p.state),
+                        context.input,
+                        &call,
+                    )
+                } else if crate::steward::tools::NAMES.contains(&call.name.as_str()) {
+                    crate::steward::tools::execute(
                         context.output_persistence.map(|p| p.state),
                         context.input,
                         &call,

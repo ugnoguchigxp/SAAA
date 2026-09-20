@@ -1,6 +1,6 @@
 //! Trusted WorldFrame → one untrusted Broker candidate (S1/S3/S4).
 use super::super::source::{Candidate, Requirement};
-use super::render::{render_world_frame, RenderOmission};
+use super::render::{render_world_frame, render_world_frame_explicit, RenderOmission};
 use crate::memory::personal_state::world::query::WorldSeed;
 use crate::memory::personal_state::world::runtime_frame::{
     FrameRequest, PreparedWorldFrame, WorldFrameService,
@@ -60,6 +60,15 @@ pub(crate) struct WorldSourceRequest<'a> {
     pub(crate) frame_request: FrameRequest<'a>,
 }
 
+/// C3: the only distinction the shared inspection helper needs. `EntityIdsOnly` is the existing
+/// shadow/internal entry; `ExplicitQuestionName` additionally accepts one `ExactName` seed and can
+/// only be reached from the production question entry built from a parsed `GraphQuestion`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeedPolicy {
+    EntityIdsOnly,
+    ExplicitQuestionName,
+}
+
 pub(crate) struct PreparedWorldCandidate {
     prepared: PreparedWorldFrame,
     candidate: Candidate,
@@ -99,11 +108,19 @@ pub(crate) fn inspect_request(
     request: &WorldSourceRequest<'_>,
     scope: &ScopeSnapshot,
 ) -> Result<(), WorldOmission> {
+    inspect_request_with(request, scope, SeedPolicy::EntityIdsOnly)
+}
+
+fn inspect_request_with(
+    request: &WorldSourceRequest<'_>,
+    scope: &ScopeSnapshot,
+    policy: SeedPolicy,
+) -> Result<(), WorldOmission> {
     if scope.status != "resolved" {
         return Err(WorldOmission::ScopeDenied);
     }
     inspect_project(request.frame_request.project_scope, scope)?;
-    inspect_graph_and_refs(request)?;
+    inspect_graph_and_refs(request, policy)?;
     Ok(())
 }
 
@@ -128,7 +145,10 @@ fn inspect_project(project_scope: &str, scope: &ScopeSnapshot) -> Result<(), Wor
     Ok(())
 }
 
-fn inspect_graph_and_refs(request: &WorldSourceRequest<'_>) -> Result<(), WorldOmission> {
+fn inspect_graph_and_refs(
+    request: &WorldSourceRequest<'_>,
+    policy: SeedPolicy,
+) -> Result<(), WorldOmission> {
     if request.frame_request.runtime_refs.len() > MAX_RUNTIME_REFS {
         return Err(WorldOmission::Limit);
     }
@@ -144,7 +164,15 @@ fn inspect_graph_and_refs(request: &WorldSourceRequest<'_>) -> Result<(), WorldO
                         }
                         ids.insert(id.as_str());
                     }
-                    WorldSeed::ExactName(_) => return Err(WorldOmission::InvalidInput),
+                    WorldSeed::ExactName(name) => {
+                        if policy != SeedPolicy::ExplicitQuestionName {
+                            return Err(WorldOmission::InvalidInput);
+                        }
+                        if name.is_empty() || name.len() > 160 || name.chars().any(char::is_control) {
+                            return Err(WorldOmission::InvalidInput);
+                        }
+                        ids.insert(name.as_str());
+                    }
                 }
             }
             if ids.len() > MAX_GRAPH_SEEDS {
@@ -164,9 +192,29 @@ pub(crate) fn prepare_candidate(
     request: WorldSourceRequest<'_>,
     scope: &ScopeSnapshot,
 ) -> WorldSourceOutcome {
-    if let Err(omission) = inspect_request(&request, scope) {
+    prepare_candidate_with(service, request, scope, SeedPolicy::EntityIdsOnly)
+}
+
+/// C3/C5: the production explicit-question entry. It accepts one `ExactName` seed and renders an
+/// otherwise-empty frame that carries a resolution/freshness constraint.
+pub(crate) fn prepare_explicit_question_candidate(
+    service: &WorldFrameService,
+    request: WorldSourceRequest<'_>,
+    scope: &ScopeSnapshot,
+) -> WorldSourceOutcome {
+    prepare_candidate_with(service, request, scope, SeedPolicy::ExplicitQuestionName)
+}
+
+fn prepare_candidate_with(
+    service: &WorldFrameService,
+    request: WorldSourceRequest<'_>,
+    scope: &ScopeSnapshot,
+    policy: SeedPolicy,
+) -> WorldSourceOutcome {
+    if let Err(omission) = inspect_request_with(&request, scope, policy) {
         return WorldSourceOutcome::Omitted(omission);
     }
+    let explicit_rendering = policy == SeedPolicy::ExplicitQuestionName;
     let mut request = request;
     if let Some(graph) = request.frame_request.graph_request.as_mut() {
         if graph.seeds.is_empty() {
@@ -179,7 +227,11 @@ pub(crate) fn prepare_candidate(
         Ok(prepared) => prepared,
         Err(error) => return WorldSourceOutcome::Omitted(omission_from_frame(error)),
     };
-    let content = match render_world_frame(prepared.frame()) {
+    let content = match if explicit_rendering {
+        render_world_frame_explicit(prepared.frame())
+    } else {
+        render_world_frame(prepared.frame())
+    } {
         Ok(content) => content,
         Err(RenderOmission::EmptyFrame) => {
             return WorldSourceOutcome::Omitted(WorldOmission::EmptyFrame);

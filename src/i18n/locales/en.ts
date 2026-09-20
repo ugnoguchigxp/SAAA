@@ -203,6 +203,7 @@ export const en = {
         detail: "Cloud LLM, ASR and TTS",
       },
       voice: { label: "Voice & devices", detail: "Always-on listening and audio" },
+      schedule: { label: "Schedule", detail: "Due ledger and calendar projection" },
       security: { label: "Privacy & Security", detail: "Local-first controls" },
     },
     general: {
@@ -230,6 +231,16 @@ export const en = {
       enabledCount: "{{count}} enabled",
       listening: "Listening",
       alwaysOn: "Always on",
+    },
+    schedule: {
+      title: "Due ledger",
+      help: "Off by default. Time is owned by SAAA. Google Calendar is a view, not the clock.",
+      enable: "Enable due ticks",
+      calendar: "Project to Google Calendar",
+      calendarId: "Calendar id",
+      connected: "Calendar connected",
+      disconnected: "Calendar not connected",
+      lastError: "Last calendar error: {{code}}",
     },
     security: {
       credentials: "Credentials",
@@ -378,7 +389,7 @@ export const en = {
     automatic: "Automatic",
     localVad: "Local VAD",
     permissionHelp:
-      "SAAA asks for macOS microphone permission only when you enable this switch or press the microphone button. Listening pauses during meetings and response playback, then resumes automatically.",
+      "SAAA asks for macOS microphone permission only when you enable this switch or press the microphone button. Listening pauses during a busy scene and response playback, then resumes automatically.",
     audioDevices: "Audio devices",
     inputDevice: "Input device",
     unavailableDevice: "Previously selected (unavailable)",
@@ -393,7 +404,7 @@ export const en = {
     silenceTimeout: "Silence timeout (ms)",
     languages: "Languages",
     languagesHelp:
-      "ASR detects the language automatically. Audio in unselected or undetectable languages is not sent to conversations or meeting notes.",
+      "ASR detects the language automatically. Audio in unselected or undetectable languages is not sent to conversations.",
     languagesAria: "Allowed languages",
     autoSpeak: "Play responses as speech",
     profile: {
@@ -412,7 +423,7 @@ export const en = {
       recordingGuidance:
         "You do not need to finish the whole passage. Keep reading in your natural voice without a long pause until recording stops automatically. Recording lasts at least {{seconds}} seconds.",
       inputLevel: "Input level",
-      blocked: "Stop conversation recording, speech playback, or the meeting before enrolling.",
+      blocked: "Stop conversation recording or speech playback before enrolling.",
       sample: "Sample {{number}} · {{duration}} sec · AEC {{aec}}",
       onlyMyVoice: "Limit transcription to my voice (do not send when verification is unavailable)",
       transcriptionScope: "Transcription scope",

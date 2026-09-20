@@ -21,6 +21,7 @@ pub(crate) struct ContextManifest<'a> {
     pub(crate) selected: &'a [crate::runtime::context::source::Candidate],
     pub(crate) omitted: &'a [crate::runtime::context::source::Candidate],
     pub(crate) health: &'a str,
+    pub(crate) world: Option<&'a crate::runtime::context::world::turn::WorldLive>,
 }
 
 pub(crate) async fn execute(
@@ -78,11 +79,17 @@ async fn execute_inner(
     if request.constraints.language == "system" {
         request.constraints.language = "auto".into();
     }
-    fit_context(&mut request)?;
+    fit_context(&mut request, context.selected)?;
     request.budget.timeout_ms = TIMEOUT_MS
         .saturating_sub(started.elapsed().as_millis() as u64)
         .max(1);
-    let request_payload = serde_json::to_vec(&request)
+    let request_value = serde_json::to_value(&request)
+        .map_err(|_| "Reasoning request could not be encoded".to_string())?;
+    crate::runtime::context::generation_inputs::verify_required_wire(
+        &request_value,
+        context.selected,
+    )?;
+    let request_payload = serde_json::to_vec(&request_value)
         .map_err(|_| "Reasoning request could not be encoded".to_string())?;
     let generation = crate::runtime::context::generation::begin(
         state,
@@ -96,7 +103,22 @@ async fn execute_inner(
             current_instruction_count: 1,
         },
     )?;
+    if let Some(world) = context.world {
+        world.bind(&generation);
+    }
     generation.set_health(context.health)?;
+    let required_set =
+        crate::runtime::context::required::RequiredContextSet::from_selected(context.selected);
+    generation.add_input(
+        "required-context-set",
+        &required_set.digest,
+        1,
+        &required_set.digest,
+        "must",
+        "reference",
+        true,
+        None,
+    )?;
     for source in context.selected {
         generation.add_input(
             &source.source_kind,
@@ -229,14 +251,58 @@ fn project(input: &StartTurnInput, history: &[ConversationMessage]) -> Result<Re
             timeout_ms: TIMEOUT_MS,
         },
     };
-    fit_context(&mut request)?;
     Ok(request)
 }
-fn fit_context(request: &mut Request) -> Result<(), String> {
-    while (request.validate().is_err() || !request.model_input_fits())
-        && !request.context.messages.is_empty()
-    {
-        request.context.messages.remove(0);
+fn fit_context(
+    request: &mut Request,
+    selected: &[crate::runtime::context::source::Candidate],
+) -> Result<(), String> {
+    use crate::runtime::context::source::Requirement;
+
+    // `messages` are conversational history, while source snapshots are explicitly marked as
+    // evidence. Do not rely on a model inferring a current-state source from the rendered prose.
+    // Keep the host capability declaration in slot zero and reserve the remaining bounded slots
+    // for required sources first, then the current World frame, then optional context.
+    let mut candidates: Vec<_> = selected.iter().collect();
+    candidates.sort_by_key(|candidate| match candidate.requirement {
+        Requirement::Must => 0_u8,
+        _ if candidate.source_kind == crate::runtime::context::world::source::WORLD_KIND => 1,
+        Requirement::Should => 2,
+        Requirement::May => 3,
+    });
+    let required_count = candidates
+        .iter()
+        .filter(|candidate| candidate.requirement == Requirement::Must)
+        .count();
+    if required_count > 7 {
+        return Err("required_context_overflow: reasoning evidence slots exhausted".into());
+    }
+    for (index, candidate) in candidates.into_iter().take(7).enumerate() {
+        request
+            .context
+            .evidence
+            .push(saaa_reasoning_contract::Evidence {
+                id: format!("source-{index}"),
+                source: format!(
+                    "{}:{}@{}",
+                    candidate.source_kind, candidate.source_id, candidate.source_version
+                ),
+                content: candidate.content.clone(),
+            });
+    }
+    while request.validate().is_err() || !request.model_input_fits() {
+        let Some(index) = request.context.messages.iter().position(|message| {
+            !selected
+                .iter()
+                .filter(|candidate| candidate.requirement == Requirement::Must)
+                .any(|candidate| message.content.contains(&candidate.content))
+        }) else {
+            return Err(
+                "required_context_overflow: reasoning input cannot fit without required context"
+                    .into(),
+            );
+        };
+        request.context.messages.remove(index);
         request.context.truncated = true;
     }
     request.validate().map_err(str::to_string)?;

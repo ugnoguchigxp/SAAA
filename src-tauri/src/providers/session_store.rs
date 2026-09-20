@@ -142,13 +142,13 @@ pub(crate) fn persist_conversation_success(
     input: &StartTurnInput,
     content: &str,
 ) -> Result<ConversationMessage, String> {
-    persist_conversation_success_with_state(state, input, content, |_| Ok(()))
+    persist_conversation_success_with_state(state, input, content, |_, _| Ok(()))
 }
 pub(crate) fn persist_conversation_success_with_state(
     state: &AppState,
     input: &StartTurnInput,
     content: &str,
-    adopt: impl FnOnce(&rusqlite::Connection) -> Result<(), String>,
+    adopt: impl FnOnce(&rusqlite::Connection, &ConversationMessage) -> Result<(), String>,
 ) -> Result<ConversationMessage, String> {
     let fallback = if content.trim().is_empty() {
         state.sqlite_readers.read(|c| {
@@ -179,7 +179,6 @@ pub(crate) fn persist_conversation_success_with_state(
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
         crate::memory::personal_state::generation::allow_run(&transaction, &input.run_id)?;
-        adopt(&transaction)?;
         transaction
             .execute(
                 "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
@@ -198,6 +197,7 @@ pub(crate) fn persist_conversation_success_with_state(
             &input.run_id,
             &message.id,
         )?;
+        adopt(&transaction, &message)?;
         transaction.execute("INSERT OR IGNORE INTO personal_artifacts(generation_id,message_id) SELECT id,?2 FROM personal_generations WHERE run_id=?1 AND output_allowed=1 AND status='succeeded' ORDER BY rowid DESC LIMIT 1",params![input.run_id,message.id]).map_err(database_error)?;
         transaction
             .execute(

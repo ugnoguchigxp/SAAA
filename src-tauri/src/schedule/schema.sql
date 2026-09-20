@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS calendar_observations (
   remote_end INTEGER,
   remote_status TEXT CHECK(remote_status IS NULL OR remote_status IN ('confirmed','cancelled')),
   remote_summary TEXT,
+  remote_rev INTEGER,
   diff_kind TEXT NOT NULL CHECK(diff_kind IN ('moved','deleted','title_edited','foreign_event','unchanged')),
   handled TEXT NOT NULL CHECK(handled IN ('pending','applied','asked','ignored','conflict'))
 );

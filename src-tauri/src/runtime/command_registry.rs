@@ -58,6 +58,17 @@ macro_rules! saaa_invoke_handler {
             steward::commands::register_steward_goal,
             steward::commands::withdraw_steward_delegation,
             steward::commands::list_steward_tasks,
+            steward::commands::work_propose,
+            steward::commands::work_status,
+            steward::commands::work_amend,
+            steward::commands::work_withdraw,
+            schedule::commands::schedule_list,
+            schedule::commands::schedule_add,
+            schedule::commands::schedule_withdraw,
+            schedule::commands::schedule_status,
+            schedule::commands::schedule_set_enabled,
+            schedule::commands::schedule_set_calendar,
+            schedule::commands::schedule_forget,
             generative_ui::get_ui_enabled,
             generative_ui::set_ui_enabled,
             generative_ui::get_ui_instance,
@@ -71,7 +82,12 @@ macro_rules! saaa_invoke_handler {
             generative_ui::cancel_ui_run,
             get_conversation_voice_policy,
             update_conversation_voice_policy,
-            reset_conversation_voice_policy
+            reset_conversation_voice_policy,
+            role_routing::ipc::get_routing_snapshot,
+            role_routing::ipc::replay_routing_events,
+            role_routing::ipc::cancel_routing_root,
+            role_routing::ipc::run_routing_learning_once,
+            role_routing::ipc::get_routing_learning_snapshot
         ]
     };
 }

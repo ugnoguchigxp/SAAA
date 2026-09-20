@@ -133,6 +133,44 @@ pub(crate) fn invalidate_artifacts_for_dataset(
 ) -> Result<usize, String> {
     connection.execute("UPDATE rr_ranker_artifacts SET state='invalidated' WHERE dataset_id=?1 AND state IN ('candidate','shadow')",[dataset_id]).map_err(|e| e.to_string())
 }
+
+/// Publishes only a shadow artifact. Execution selection remains rules-controlled until a
+/// separate policy change names the artifact, which makes retrospective evaluation possible.
+pub(crate) fn publish_shadow_artifact(
+    connection: &Connection,
+    dataset_id: &str,
+    candidate_fingerprint: &str,
+    weights_json: &str,
+    metrics_json: &str,
+    now_ms: i64,
+) -> Result<String, String> {
+    let ready: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM rr_datasets WHERE id=?1 AND state='ready')",
+            [dataset_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !ready {
+        return Err("Learning dataset is not ready".into());
+    }
+    let weights: Value = serde_json::from_str(weights_json)
+        .map_err(|_| "Ranker weights are invalid JSON".to_string())?;
+    let metrics: Value = serde_json::from_str(metrics_json)
+        .map_err(|_| "Ranker metrics are invalid JSON".to_string())?;
+    if !weights.is_object() || !metrics.is_object() {
+        return Err("Ranker artifact must contain JSON objects".into());
+    }
+    let normalized_weights = weights.to_string();
+    let normalized_metrics = metrics.to_string();
+    let digest = sha256(
+        format!("{dataset_id}:{candidate_fingerprint}:{normalized_weights}:{normalized_metrics}")
+            .as_bytes(),
+    );
+    let id = format!("rr-ranker-{}", &digest[..24]);
+    connection.execute("INSERT OR IGNORE INTO rr_ranker_artifacts(id,dataset_id,algorithm,feature_version,candidate_fingerprint,weights_json,metrics_json,digest,state,created_at_ms) VALUES(?1,?2,'empirical-v1',?3,?4,?5,?6,?7,'shadow',?8)",params![id,dataset_id,FEATURE_VERSION,candidate_fingerprint,normalized_weights,normalized_metrics,digest,now_ms]).map_err(|e|e.to_string())?;
+    Ok(id)
+}
 fn sha256(input: &[u8]) -> String {
     format!("{:x}", Sha256::digest(input))
 }
@@ -173,5 +211,24 @@ mod tests {
         assert!(materialize_dirty_roots(&mut c, 11, 10)
             .expect("again")
             .is_none());
+    }
+
+    #[test]
+    fn rr_35_artifact_is_shadow_only_and_requires_a_ready_dataset() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("CREATE TABLE rr_roots(root_id TEXT PRIMARY KEY);CREATE TABLE rr_decisions(id TEXT PRIMARY KEY);").expect("base");
+        super::super::schema::migrate(&c).expect("schema");
+        assert!(publish_shadow_artifact(&c, "missing", "candidates", "{}", "{}", 1).is_err());
+        c.execute("INSERT INTO rr_datasets(id,upper_seq,feature_version,labeler_version,manifest_json,state,created_at_ms) VALUES('d',0,'f','l','{}','ready',1)",[]).expect("dataset");
+        let id = publish_shadow_artifact(&c, "d", "candidates", "{}", "{}", 2).expect("artifact");
+        assert_eq!(
+            c.query_row(
+                "SELECT state FROM rr_ranker_artifacts WHERE id=?1",
+                [id],
+                |r| r.get::<_, String>(0)
+            )
+            .expect("state"),
+            "shadow"
+        );
     }
 }

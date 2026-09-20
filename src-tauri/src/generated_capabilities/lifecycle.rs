@@ -56,6 +56,22 @@ pub(crate) fn retire_revision(
     })
 }
 
+/// Reopens a suspended revision for re-verification. The caller re-verifies with the current
+/// runtime and acceptance, then re-publishes through the single publication transaction;
+/// retirement is never reversible here. This is the management entry point used by tests and the
+/// future restore UI, which is why it is kept even without a non-test caller today.
+#[allow(dead_code)]
+pub(crate) fn restore_revision(
+    writer: &SqliteWriter,
+    revision_id: &str,
+    expected_epoch: i64,
+) -> CapabilityResult<repository::CapabilityRow> {
+    let now = now_iso();
+    transaction(writer, |transaction| {
+        repository::reopen_suspended(transaction, revision_id, expected_epoch, &now)
+    })
+}
+
 /// Runs a short synchronous read through the single writer connection.
 pub(crate) fn read<T>(
     writer: &SqliteWriter,

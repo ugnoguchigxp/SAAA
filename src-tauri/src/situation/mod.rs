@@ -7,7 +7,7 @@ pub mod platform;
 pub mod repository;
 mod speech;
 mod tick;
-pub(crate) use speech::{apply_tts_hold, speech_holds_tts};
+pub(crate) use speech::{apply_tts_hold, speech_holds_runtime, speech_holds_tts};
 
 use crate::persistence::{SqliteReaders, SqliteWriter};
 #[cfg(test)]

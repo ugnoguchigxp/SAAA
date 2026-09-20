@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import "./App.css";
 import { ChatPage } from "./features/chat/ChatPage";
 import { useConversationTurn } from "./features/chat/useConversationTurn";
+import { useRoleRouting } from "./features/chat/useRoleRouting";
 import { useAmbientVoiceSession } from "./features/voice/useAmbientVoiceSession";
 import { toMessage } from "./lib/appHelpers";
 import { findSettingsDocument, type AppSnapshot } from "./lib/contracts";
@@ -99,6 +100,7 @@ function App() {
     setSnapshot,
     setError: setConversationError,
   });
+  const routing = useRoleRouting(selectedConversationId);
   const voice = useAmbientVoiceSession({
     selectedConversationId,
     voiceSettings,
@@ -271,6 +273,9 @@ function App() {
               void turn.setConversationListeningPace(value)
             }
             onResetConversationVoiceOverrides={() => void turn.resetConversationVoiceOverrides()}
+            routingSnapshot={routing.snapshot}
+            routingCancellingRootId={routing.cancellingRootId}
+            onCancelRouting={(rootId) => void routing.cancel(rootId)}
           />
         )}
       </Suspense>

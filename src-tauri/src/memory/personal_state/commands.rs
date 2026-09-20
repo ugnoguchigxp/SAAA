@@ -43,10 +43,18 @@ pub fn forget_personal_source(
         let tx=c.transaction().map_err(database_error)?;
         let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM personal_sources WHERE message_id=?1)",[&source_id],|r|r.get(0)).map_err(database_error)?;
         if !exists{return Err("personal-source-unavailable".into());}
+        crate::steward::forget_source(&tx, &source_id)?;
+        crate::role_routing::learning::invalidation::forget_source(&tx, &source_id)?;
         tx.execute("DELETE FROM conversation_messages WHERE id=?1",[&source_id]).map_err(database_error)?;
         let mut stmt=tx.prepare("SELECT DISTINCT run_id FROM personal_generations WHERE output_allowed=0 AND cancellation='requested'").map_err(database_error)?;
         let runs=stmt.query_map([],|r|r.get::<_,String>(0)).map_err(database_error)?.collect::<Result<Vec<_>,_>>().map_err(database_error)?;
-        drop(stmt);super::store::rebuild(&tx,super::now())?;tx.commit().map_err(database_error)?;Ok(runs)
+        drop(stmt);
+        super::store::rebuild(&tx,super::now())?;
+        // Adaptive artifacts must never outlive a source that was explicitly forgotten. The
+        // conservative invalidation keeps the ordinary conversation path on rules.
+        crate::adaptive_improvement::invalidate_source(&tx, &source_id)?;
+        tx.commit().map_err(database_error)?;
+        Ok(runs)
     })?;
     super::worker::interrupt();
     for run in &runs {

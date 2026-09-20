@@ -28,7 +28,7 @@ pub(crate) struct ConversationVoicePolicySnapshot {
     pub(crate) updated_at: String,
     #[ts(type = "\"speak\" | \"silent\"")]
     pub(crate) effective_speech_output: String,
-    #[ts(type = "\"global_opt_out\" | \"conversation_override\" | \"global_default\"")]
+    #[ts(type = "\"global_opt_out\" | \"conversation_override\" | \"global_default\" | \"situation_hold\"")]
     pub(crate) speech_reason_code: String,
     #[ts(type = "\"quick\" | \"balanced\" | \"patient\"")]
     pub(crate) effective_listening_pace: String,

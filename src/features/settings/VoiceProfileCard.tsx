@@ -106,7 +106,7 @@ export function VoiceProfileCard({
       }
       pending.context = new AudioContext();
       await withTimeout(
-        pending.context.audioWorklet.addModule("/audio/meeting-processor.js"),
+        pending.context.audioWorklet.addModule("/audio/voice-capture-processor.js"),
         CAPTURE_START_TIMEOUT_MS,
         "Audio processor startup timed out",
       );
@@ -115,7 +115,7 @@ export function VoiceProfileCard({
         return;
       }
       const source = pending.context.createMediaStreamSource(pending.stream);
-      const node = new AudioWorkletNode(pending.context, "meeting-processor");
+      const node = new AudioWorkletNode(pending.context, "voice-capture-processor");
       const settings = pending.stream.getAudioTracks()[0]?.getSettings();
       const capture: Capture = {
         stream: pending.stream,

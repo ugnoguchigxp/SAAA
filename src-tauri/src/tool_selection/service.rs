@@ -22,7 +22,7 @@ use super::mcp::manager::McpManager;
 use super::references::{ReferenceEntry, ReferenceKind, ReferenceStore};
 use super::repository::{self, EligibleRevision, Epochs};
 use super::{ranking, retrieval, rules};
-use crate::persistence::SqliteWriter;
+use crate::persistence::{load_role_routing_settings, SqliteWriter};
 use crate::RunCancellation;
 
 const SEARCH_CANDIDATE_POOL: usize = 50;
@@ -109,6 +109,8 @@ struct RankOutcome {
     status: DecisionStatus,
     degraded: bool,
     notes: Vec<&'static str>,
+    adaptive_selection_mode: &'static str,
+    adaptive_policy_revision: i64,
 }
 
 pub struct ToolSelectionService {
@@ -578,13 +580,61 @@ impl ToolSelectionService {
         } else {
             DecisionStatus::Ok
         };
+        // The adaptive layer runs only after ACL, retrieval, and explicit corrections have
+        // produced this finite candidate set. It can move an already-authorized revision to the
+        // front; it cannot add a tool or bypass invocation validation.
+        let mut adaptive_ordered = correction.ordered;
+        let mut adaptive_selection_mode = "rules";
+        let mut adaptive_policy_revision = 0;
+        if let Some(rules_top) = adaptive_ordered
+            .first()
+            .map(|candidate| candidate.revision_id.clone())
+        {
+            let candidate_ids = adaptive_ordered
+                .iter()
+                .map(|candidate| candidate.revision_id.clone())
+                .collect::<Vec<_>>();
+            let scope = context.project_id.as_deref().unwrap_or("global");
+            if let Ok(Some((selected, mode, revision))) =
+                self.writer.read_serialized(|connection| {
+                    let settings = load_role_routing_settings(connection)?;
+                    if settings.adaptive_improvement.enabled && settings.adaptive_improvement.tool {
+                        crate::adaptive_improvement::choose(
+                            connection,
+                            crate::adaptive_improvement::Domain::Tool,
+                            scope,
+                            &candidate_ids,
+                            &rules_top,
+                            now_ms(),
+                        )
+                        .map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                })
+            {
+                if mode != "rules" {
+                    if let Some(index) = adaptive_ordered
+                        .iter()
+                        .position(|candidate| candidate.revision_id == selected)
+                    {
+                        adaptive_ordered.swap(0, index);
+                        notes.push("An approved adaptive policy reordered eligible tools.");
+                        adaptive_selection_mode = mode;
+                        adaptive_policy_revision = revision;
+                    }
+                }
+            }
+        }
         Ok(RankOutcome {
-            ordered: correction.ordered,
+            ordered: adaptive_ordered,
             ranks,
             raw,
             status,
             degraded: vector_degraded || rerank_degraded,
             notes,
+            adaptive_selection_mode,
+            adaptive_policy_revision,
         })
     }
 
@@ -761,7 +811,36 @@ impl ToolSelectionService {
             if current != expected {
                 return Err(CHANGED.to_string());
             }
-            repository::insert_decision(connection, &decision).map_err(|_| "storage".to_string())
+            repository::insert_decision(connection, &decision)
+                .map_err(|_| "storage".to_string())?;
+            let eligible = ranking
+                .ordered
+                .iter()
+                .map(|candidate| candidate.revision_id.clone())
+                .collect::<Vec<_>>();
+            if let Some(selected) = eligible.first().cloned() {
+                let scope = context.project_id.as_deref().unwrap_or("global");
+                crate::adaptive_improvement::record_decision(
+                    connection,
+                    &crate::adaptive_improvement::DecisionObservation {
+                        id: format!("ai-tool-{decision_id}"),
+                        domain: crate::adaptive_improvement::Domain::Tool,
+                        scope_key: scope.to_string(),
+                        event_seq: 0,
+                        policy_revision: ranking.adaptive_policy_revision,
+                        candidate_fingerprint: crate::adaptive_improvement::fingerprint_for(
+                            &eligible,
+                        ),
+                        eligible_candidates: eligible,
+                        selected,
+                        selection_mode: ranking.adaptive_selection_mode.to_string(),
+                        source_refs_json:
+                            serde_json::json!({"toolSelectionDecisionId":decision_id}).to_string(),
+                    },
+                    now,
+                )?;
+            }
+            Ok(())
         })
         .map_err(|error| {
             if error == CHANGED {

@@ -64,7 +64,11 @@ pub struct Process {
 impl Process {
     pub fn open(settings: &CodingSettings, cwd: &Path, session: &Path) -> Result<Self, String> {
         let slot = SLOT.try_lock().map_err(|_| "busy")?;
-        let mut command = launch_command(settings);
+        let mut command = if settings.profile == "delegated-read-test-macos-v1" {
+            delegated_command(settings, cwd, session)?
+        } else {
+            launch_command(settings)
+        };
         command
             .args(["--mode", "rpc", "--session"])
             .arg(session)
@@ -287,6 +291,33 @@ impl Process {
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.exited = true;
+    }
+}
+
+fn delegated_command(
+    settings: &CodingSettings,
+    _workspace: &Path,
+    session: &Path,
+) -> Result<Command, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let session_dir = session.parent().ok_or("delegated_profile_invalid")?;
+        let quote = |path: &Path| format!("\"{}\"", path.to_string_lossy().replace('"', "\\\""));
+        // sandbox-exec applies to pi and every descendant process. Read access
+        // is broad enough for a compiler/test runner, while writes are limited
+        // to the session and temporary directories and network is absent.
+        let profile = format!(
+            "(version 1) (deny default) (allow process*) (allow file-read*) (allow file-write* (subpath {} ) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
+            quote(session_dir),
+        );
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command.args(["-p", &profile]).arg(&settings.executable);
+        Ok(command)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (settings, workspace, session);
+        Err("delegated_profile_unsupported".into())
     }
 }
 impl Drop for Process {

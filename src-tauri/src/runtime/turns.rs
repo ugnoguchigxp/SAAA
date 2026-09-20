@@ -447,12 +447,20 @@ pub(crate) fn prepare_runtime_run(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as i64)
                 .unwrap_or(0);
-            crate::role_routing::repository::record_provider_turn_start_in_transaction(
+            let routing_started = crate::role_routing::repository::record_provider_turn_start_in_transaction(
                 &transaction,
                 &input.run_id,
                 &input.conversation_id,
                 now_ms,
             )?;
+            if routing_started {
+                crate::role_routing::coordinator::apply_in_transaction(
+                    &transaction,
+                    &input.run_id,
+                    crate::role_routing::reducer::Event::Start,
+                    now_ms,
+                )?;
+            }
         }
         transaction
             .execute(

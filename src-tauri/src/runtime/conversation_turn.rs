@@ -11,7 +11,7 @@ use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
 use crate::providers::routing::{effective_conversation_route_ids, resolve_harness_llm_provider};
 use crate::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session, memory,
-    now_iso, persist_conversation_success, stream_model_provider,
+    now_iso, persist_conversation_success_with_state, stream_model_provider,
     stream_voice_aware_dynamic_lan_provider, update_runtime_provider, AppState, CleanupOutcome,
     ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
     ProviderOutputPersistence, RunCancellation, StartTurnInput, TurnExecutionFailure,
@@ -19,6 +19,57 @@ use crate::{
 use conversation_context::compose_provider_history;
 use conversation_controller::execute as execute_reasoning;
 use std::sync::Arc;
+
+struct FreshProviderContext {
+    envelope: crate::runtime::context::broker::Envelope,
+    world: Option<crate::runtime::context::world::turn::WorldLive>,
+    history: Vec<ConversationMessage>,
+}
+
+/// Re-read source-backed context after a provider session has been acquired. This is the context
+/// used for the actual wire body; every fallback gets its own single refresh.
+fn compose_after_connect(
+    state: &AppState,
+    input: &StartTurnInput,
+    identity: &crate::CodexAgentRuntimeSettings,
+    regional: &crate::persistence::settings::regional_preferences::RegionalPreferences,
+) -> Result<FreshProviderContext, String> {
+    let latest = conversation_inputs::load(state, input)?;
+    if latest.scope.status != "resolved" {
+        return Err("context-scope-changed-after-connect".into());
+    }
+    if let Some(error) = latest.personal_source_error {
+        return Err(error);
+    }
+    let base = memory::context_window::compose(latest.loaded_context)?;
+    let composed = crate::runtime::context::world::turn::compose_for_app(
+        state,
+        &input.run_id,
+        &latest.scope,
+        base,
+        latest.personal_candidates,
+        latest
+            .scope
+            .scopes
+            .iter()
+            .map(|scope| scope.key.clone())
+            .collect(),
+    )?;
+    let history = compose_provider_history(
+        &input.conversation_id,
+        &identity.agent_name,
+        &identity.user_name,
+        regional,
+        &input.input_origin,
+        &input.presentation_mode,
+        composed.envelope.messages.clone(),
+    )?;
+    Ok(FreshProviderContext {
+        envelope: composed.envelope,
+        world: composed.world,
+        history,
+    })
+}
 
 /// The World-free rendering of a composed history. `None` when the history carries no World block,
 /// so the caller can reuse the original borrow without cloning.
@@ -86,6 +137,18 @@ pub(crate) async fn execute_conversation_turn(
         );
         return Err(TurnExecutionFailure::configuration(error));
     }
+    // Narrow present-state questions have a host-verifiable answer. Persist the card through the
+    // normal completion path so the UI and voice completion still share one message, but never
+    // ask a provider to turn an unavailable observation into a current-state assertion.
+    let state_answer = state.sqlite_readers.read(|connection| {
+        crate::runtime::context::state_answer::answer(connection, &input.content, &scope)
+    })?;
+    if let Some(answer) = state_answer {
+        return persist_conversation_success_with_state(state, input, &answer.render(), |_, _| {
+            Ok(())
+        })
+        .map_err(Into::into);
+    }
     let base_context = memory::context_window::compose(loaded_context)?;
     let broker_started = std::time::Instant::now();
     let composed = match crate::runtime::context::world::turn::compose_for_app(
@@ -103,7 +166,9 @@ pub(crate) async fn execute_conversation_turn(
                 &input.run_id,
                 "context-broker-red",
             );
-            return Err(TurnExecutionFailure::configuration(error));
+            return Err(TurnExecutionFailure::configuration(
+                context_recovery_message(&error),
+            ));
         }
     };
     let envelope = composed.envelope;
@@ -117,6 +182,14 @@ pub(crate) async fn execute_conversation_turn(
                 "Context was safely reduced ({} source item(s) omitted).",
                 envelope.health.omitted_sources
             ),
+        });
+    }
+    if let Some(omission) = composed.omission {
+        let _ = on_event.send(RuntimeEvent::Activity {
+            run_id: input.run_id.clone(),
+            kind: "world-context-omitted".into(),
+            // Deliberately a stable reason code: diagnostics must not contain the World body.
+            summary: format!("World context omitted: {}", omission.as_str()),
         });
     }
     let context_health = envelope.context_health.clone();
@@ -144,8 +217,6 @@ pub(crate) async fn execute_conversation_turn(
     )?;
     // Providers without World support receive the World-free rendering of the same history. The
     // World block is only present when a World was composed, so no clone happens otherwise.
-    let world_free_history = world_free_history(&history, world_live.as_ref());
-    let world_free_history = world_free_history.as_deref().unwrap_or(&history);
     crate::providers::http_metrics::record("contextAssemblyTotal", context_started.elapsed());
     let shared_larm_voice =
         route.source == "harness" && input.input_origin == "voice" && crate::larm_voice::enabled();
@@ -154,13 +225,27 @@ pub(crate) async fn execute_conversation_turn(
         crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)
             .await?
     {
-        // The reasoning provider has no World revalidation, so it is treated as unsupported and
-        // receives the World-free history and manifest.
+        let FreshProviderContext {
+            envelope,
+            world: world_live,
+            history,
+        } = compose_after_connect(state, input, &identity, &regional).map_err(|error| {
+            TurnExecutionFailure::configuration(context_recovery_message(&error))
+        })?;
+        let reasoning_world_free_history = world_free_history(&history, world_live.as_ref());
+        let reasoning_world_free_history =
+            reasoning_world_free_history.as_deref().unwrap_or(&history);
+        // The MCP request is its own dispatch boundary. It receives World as typed evidence only
+        // after a final freshness check; a stale frame is removed from both its body and receipt.
+        let include_world = world_live
+            .as_ref()
+            .is_some_and(|world| world.revalidate_current());
         let manifest_selected: Vec<crate::runtime::context::source::Candidate> = envelope
             .selected
             .iter()
             .filter(|candidate| {
-                candidate.source_kind != crate::runtime::context::world::source::WORLD_KIND
+                include_world
+                    || candidate.source_kind != crate::runtime::context::world::source::WORLD_KIND
             })
             .cloned()
             .collect();
@@ -168,14 +253,20 @@ pub(crate) async fn execute_conversation_turn(
             .omitted
             .iter()
             .filter(|candidate| {
-                candidate.source_kind != crate::runtime::context::world::source::WORLD_KIND
+                include_world
+                    || candidate.source_kind != crate::runtime::context::world::source::WORLD_KIND
             })
             .cloned()
             .collect();
+        let reasoning_history = if include_world {
+            &history
+        } else {
+            reasoning_world_free_history
+        };
         return execute_reasoning(
             state,
             input,
-            world_free_history,
+            reasoning_history,
             on_event,
             cancellation,
             &client,
@@ -183,6 +274,7 @@ pub(crate) async fn execute_conversation_turn(
                 selected: &manifest_selected,
                 omitted: &manifest_omitted,
                 health: envelope.health.status.as_str(),
+                world: include_world.then_some(world_live.as_ref()).flatten(),
             },
         )
         .await
@@ -323,6 +415,24 @@ pub(crate) async fn execute_conversation_turn(
             &input.run_id,
             &context_health,
         );
+        let FreshProviderContext {
+            envelope,
+            world: world_live,
+            history,
+        } = match compose_after_connect(state, input, &identity, &regional) {
+            Ok(context) => context,
+            Err(error) => {
+                finish_provider_session(
+                    state,
+                    &session_id,
+                    "failed",
+                    Some(ProviderFailureKind::Contract),
+                )?;
+                return Err(TurnExecutionFailure::configuration(
+                    context_recovery_message(&error),
+                ));
+            }
+        };
         let outcome = match &provider {
             ModelProviderSettings::OpenAiCompatible(provider) => {
                 stream_model_provider(
@@ -350,7 +460,7 @@ pub(crate) async fn execute_conversation_turn(
             ModelProviderSettings::AgentSession(provider) => {
                 crate::providers::agent_session::stream_agent_session_provider(
                     provider,
-                    world_free_history,
+                    &history,
                     attempt_timeout_ms,
                     ModelStreamContext {
                         reasoning_effort: &reasoning_effort,
@@ -364,7 +474,7 @@ pub(crate) async fn execute_conversation_turn(
                         output_persistence: Some(ProviderOutputPersistence {
                             state,
                             session_id: &session_id,
-                            world: None,
+                            world: world_live.as_ref(),
                         }),
                     },
                 )
@@ -383,7 +493,7 @@ pub(crate) async fn execute_conversation_turn(
                     output_persistence: Some(ProviderOutputPersistence {
                         state,
                         session_id: &session_id,
-                        world: None,
+                        world: world_live.as_ref(),
                     }),
                 };
                 stream_voice_aware_dynamic_lan_provider(
@@ -391,7 +501,7 @@ pub(crate) async fn execute_conversation_turn(
                     &harness,
                     shared_larm_voice,
                     &input.conversation_id,
-                    world_free_history,
+                    &history,
                     attempt_timeout_ms,
                     context,
                 )
@@ -422,7 +532,24 @@ pub(crate) async fn execute_conversation_turn(
                 } else {
                     finish_provider_session(state, &session_id, "completed", None)?;
                 }
-                return persist_conversation_success(state, input, &content).map_err(Into::into);
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_millis() as i64)
+                    .unwrap_or(0);
+                return persist_conversation_success_with_state(
+                    state,
+                    input,
+                    &content,
+                    |connection, message| {
+                        crate::role_routing::repository::accept_provider_turn(
+                            connection,
+                            &input.run_id,
+                            &message.id,
+                            now_ms,
+                        )
+                    },
+                )
+                .map_err(Into::into);
             }
             ProviderAttemptOutcome::Cancelled { cleanup, .. } => {
                 if matches!(
@@ -502,6 +629,35 @@ pub(crate) async fn execute_conversation_turn(
                     .join("; ")
             ),
         ))
+    }
+}
+
+/// Keep distinct context failures actionable without exposing internal source content. These
+/// failures happen before a provider request, so retrying with fewer optional items is not a
+/// recovery path for required-context overflow.
+fn context_recovery_message(error: &str) -> String {
+    if error.starts_with("required_context_overflow:") {
+        return "Required context does not fit this provider. Narrow the task scope, review the original condition, or correct the saved memory before trying again.".into();
+    }
+    if error.contains("does not belong to the resolved scope") {
+        return "Context scope changed before dispatch. Choose the intended task or scope and try again.".into();
+    }
+    if error.contains("source is incomplete") || error.contains("source-unavailable") {
+        return "A required source is not available yet. Review the original message and try again after it is available.".into();
+    }
+    error.to_owned()
+}
+
+#[cfg(test)]
+mod required_context_recovery_tests {
+    use super::context_recovery_message;
+
+    #[test]
+    fn required_overflow_has_a_specific_non_destructive_recovery() {
+        let message =
+            context_recovery_message("required_context_overflow: required context exceeds");
+        assert!(message.contains("Narrow the task scope"));
+        assert!(!message.contains("delete"));
     }
 }
 pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {

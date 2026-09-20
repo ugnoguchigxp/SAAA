@@ -57,6 +57,23 @@ export type RoleRoutingSelection = {
   switchMargin: number;
 };
 
+export type RoleRoutingLearning = {
+  enabled: boolean;
+  localStart: string;
+  localEnd: string;
+  idleSeconds: number;
+  maxRunSeconds: number;
+  batchSize: number;
+  allowLocalLabeler: boolean;
+};
+export type AdaptiveImprovementSettings = {
+  enabled: boolean;
+  providerRecipe: boolean;
+  tool: boolean;
+  plan: boolean;
+  notification: boolean;
+};
+
 export type RoleRoutingSettings = {
   schemaVersion: 1;
   enabled: boolean;
@@ -75,5 +92,5 @@ export type RoleRoutingSettings = {
   selection: RoleRoutingSelection;
   premiumApproval: "per_request" | "never";
   learning: RoleRoutingLearning;
+  adaptiveImprovement: AdaptiveImprovementSettings;
 };
-

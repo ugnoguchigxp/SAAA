@@ -17,5 +17,10 @@ fn main() {
         saaa_lib::ipc_contract::coding_typescript_bindings(),
     )
     .expect("coding bindings are written");
+    fs::write(
+        output_path.with_file_name("schedule.ts"),
+        saaa_lib::ipc_contract::schedule_typescript_bindings(),
+    )
+    .expect("schedule bindings are written");
     println!("generated {}", output_path.display());
 }

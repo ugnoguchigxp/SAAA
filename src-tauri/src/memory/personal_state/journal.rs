@@ -54,6 +54,7 @@ impl Journal {
             .map(|(id, at)| (id.clone(), *at))
             .collect::<Vec<_>>();
         super::store::recover(&tx, Some(&known))?;
+        crate::schedule::forget::recover(&tx, &known)?;
         tx.commit().map_err(database_error)?;
         journal.sync(c)?;
         if !journal.path.exists() {
@@ -65,17 +66,23 @@ impl Journal {
         let count: usize = c
             .query_row("SELECT count(*) FROM personal_tombstones", [], |r| r.get(0))
             .map_err(database_error)?;
-        if count == self.document.tombstones.len() && !self.dirty {
+        let extra: usize = c
+            .query_row("SELECT count(*) FROM schedule_tombstones", [], |r| r.get(0))
+            .unwrap_or(0);
+        if count + extra == self.document.tombstones.len() && !self.dirty {
             return Ok(());
         }
         let mut stmt = c
-            .prepare("SELECT source_id,forgotten_at FROM personal_tombstones")
+            .prepare("SELECT source_id,forgotten_at FROM personal_tombstones UNION ALL SELECT id,forgotten_at FROM schedule_tombstones")
             .map_err(database_error)?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
             .map_err(database_error)?;
-        for row in rows {
-            let (id, at) = row.map_err(database_error)?;
+        let rows = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error)?;
+        drop(stmt);
+        for (id, at) in rows {
             self.document.tombstones.insert(id, at);
         }
         self.dirty = true;

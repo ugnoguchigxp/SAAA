@@ -71,6 +71,10 @@ pub fn run(writer: Arc<SqliteWriter>, run: String) {
             state,
             json!({"complete":value["complete"]}),
         )?;
+        // The delegated-work cursor is advanced in this same writer
+        // transaction.  A crash cannot leave a terminal job without a durable
+        // follow-up event; delivery remains an outbox concern.
+        crate::steward::driver::consume(&tx)?;
         tx.commit().map_err(database_error)
     });
 }
@@ -197,7 +201,37 @@ fn execute(writer: &SqliteWriter, run: &str) -> Result<Value, String> {
     )
 }
 fn source_valid(c: &rusqlite::Connection, run: &str) -> Result<bool, String> {
-    c.query_row("SELECT EXISTS(SELECT 1 FROM coding_runs r JOIN coding_jobs j ON j.id=r.job_id JOIN conversation_messages m ON m.id=j.source_id JOIN conversation_messages current ON current.id=r.source_id WHERE r.id=?1 AND NOT EXISTS(SELECT 1 FROM coding_runs prior LEFT JOIN conversation_messages source ON source.id=prior.source_id WHERE prior.job_id=j.id AND source.id IS NULL))",[run],|r|r.get(0)).map_err(database_error)
+    c.query_row("SELECT EXISTS(
+        SELECT 1 FROM coding_runs r
+        JOIN coding_jobs j ON j.id=r.job_id
+        LEFT JOIN coding_origin_bindings o ON o.job_id=j.id
+        WHERE r.id=?1 AND (
+          (o.origin_kind='user_turn' AND EXISTS(
+            SELECT 1 FROM conversation_messages m WHERE m.id=o.origin_id AND m.conversation_id=j.conversation_id
+          ) AND NOT EXISTS(
+            SELECT 1 FROM coding_runs prior
+            LEFT JOIN conversation_messages source ON source.id=prior.source_id
+            WHERE prior.job_id=j.id AND source.id IS NULL
+          )) OR
+          (o.origin_kind='delegated_event' AND EXISTS(
+            SELECT 1 FROM steward_tasks t
+            JOIN steward_delegations d ON d.id=t.delegation_id
+            JOIN steward_goals g ON g.id=d.goal_id
+            JOIN conversation_messages m ON m.id=t.source_id
+            WHERE t.id=o.origin_id AND t.conversation_id=j.conversation_id
+              AND t.loop_state IN ('queued','running','awaiting_user')
+              AND d.status='active' AND d.superseded_by IS NULL
+              AND g.status='active' AND g.superseded_by IS NULL
+              AND m.conversation_id=j.conversation_id
+          )) OR
+          (o.job_id IS NULL AND EXISTS(
+            SELECT 1 FROM conversation_messages m WHERE m.id=j.source_id AND m.conversation_id=j.conversation_id
+          ) AND NOT EXISTS(
+            SELECT 1 FROM coding_runs prior
+            LEFT JOIN conversation_messages source ON source.id=prior.source_id
+            WHERE prior.job_id=j.id AND source.id IS NULL
+          ))
+        ))",[run],|r|r.get(0)).map_err(database_error)
 }
 fn stopping(writer: &SqliteWriter, run: &str) -> Result<bool, String> {
     writer.write(|c| {

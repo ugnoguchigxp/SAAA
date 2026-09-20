@@ -41,9 +41,9 @@ describe("macOS microphone bundle configuration", () => {
       ),
     ).toBe(true);
     expect(containsSource(settings, "enumerateAudioInputDevices()")).toBe(true);
-    expect(
-      containsSource(`${app}\n${enrollment}\n${settings}`, "navigator.mediaDevices"),
-    ).toBe(false);
+    expect(containsSource(`${app}\n${enrollment}\n${settings}`, "navigator.mediaDevices")).toBe(
+      false,
+    );
   });
 
   test("keeps microphone processing constraints centralized", () => {

@@ -177,7 +177,7 @@ afterEach(async () => {
 });
 
 describe("frontend IPC wrappers", () => {
-  test("forwards conversation, settings, situation, and meeting commands", async () => {
+  test("forwards conversation, settings, and situation commands", async () => {
     const events: unknown[] = [];
     await startTurn(
       {

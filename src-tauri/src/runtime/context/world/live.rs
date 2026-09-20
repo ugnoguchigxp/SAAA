@@ -7,6 +7,7 @@
 use super::super::generation::GenerationHandle;
 use super::super::source::Candidate;
 use super::source::WORLD_KIND;
+use crate::ipc_contract::ConversationMessage;
 use crate::memory::personal_state::world::runtime_frame::{PreparedWorldFrame, WorldFrameService};
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +26,9 @@ pub(crate) struct WorldBlocks {
     pub(crate) without_world: Option<String>,
 }
 
+// The live variant is the only production variant; the tiny `Fixed` variant exists only in tests,
+// so boxing the live payload would add a per-turn allocation for no benefit.
+#[allow(clippy::large_enum_variant)]
 enum WorldFrame {
     Live {
         service: Arc<WorldFrameService>,
@@ -93,6 +97,47 @@ impl WorldLive {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Produces the actual provider input for a single dispatch. Keeping this at the dispatch
+    /// boundary prevents an adapter from recording a World candidate that is absent from its wire
+    /// body after freshness validation.
+    pub(crate) fn provider_history(
+        &self,
+        history: &[ConversationMessage],
+    ) -> (Vec<ConversationMessage>, bool) {
+        let include_world = self.revalidate_current();
+        if include_world {
+            return (history.to_vec(), true);
+        }
+        (self.without_world_history(history), false)
+    }
+
+    /// A no-World rendering for a follow-up that can otherwise embed its original conversation
+    /// input. This intentionally does not revalidate or mutate the prepared frame.
+    pub(crate) fn without_world_history(
+        &self,
+        history: &[ConversationMessage],
+    ) -> Vec<ConversationMessage> {
+        let Some(blocks) = self.blocks() else {
+            return history.to_vec();
+        };
+        history
+            .iter()
+            .filter_map(|message| {
+                if message.role == "assistant" && message.content == blocks.with_world {
+                    blocks
+                        .without_world
+                        .clone()
+                        .map(|content| ConversationMessage {
+                            content,
+                            ..message.clone()
+                        })
+                } else {
+                    Some(message.clone())
+                }
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -176,4 +221,44 @@ pub(crate) fn for_record<'a>(
         }
     }
     (kept, omitted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorldLive;
+    use crate::ipc_contract::ConversationMessage;
+
+    fn message(content: &str) -> ConversationMessage {
+        ConversationMessage {
+            id: "message-1".into(),
+            conversation_id: "conversation-1".into(),
+            role: "assistant".into(),
+            content: content.into(),
+            parts: None,
+            created_at: "0".into(),
+        }
+    }
+
+    #[test]
+    fn wd_06_stale_frame_is_removed_from_provider_history() {
+        let world = WorldLive::for_test(false, "personal\nworld", Some("personal"));
+        let (history, included) = world.provider_history(&[message("personal\nworld")]);
+        assert!(!included);
+        assert_eq!(history[0].content, "personal");
+    }
+
+    #[test]
+    fn wd_06_current_frame_is_kept_in_provider_history() {
+        let world = WorldLive::for_test(true, "personal\nworld", Some("personal"));
+        let (history, included) = world.provider_history(&[message("personal\nworld")]);
+        assert!(included);
+        assert_eq!(history[0].content, "personal\nworld");
+    }
+
+    #[test]
+    fn wd_08_follow_up_rendering_never_retains_a_world_block() {
+        let world = WorldLive::for_test(true, "personal\nworld", Some("personal"));
+        let history = world.without_world_history(&[message("personal\nworld")]);
+        assert_eq!(history[0].content, "personal");
+    }
 }

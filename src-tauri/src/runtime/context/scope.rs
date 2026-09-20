@@ -1,5 +1,5 @@
 use crate::{database_error, now_iso, StartTurnInput};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
@@ -99,6 +99,12 @@ pub(crate) fn resolve(
                 epoch: epoch(connection, &expected)?,
             });
         }
+    }
+    // A registered coding workspace is an explicit user selection made in the normal UI. Use its
+    // durable Project → resource → active Task links only when this turn did not name a competing
+    // scope. No text similarity or title matching participates in this resolution.
+    if input.scope_refs.is_empty() {
+        append_registered_coding_scope(connection, &input.conversation_id, &mut resolved)?;
     }
     let local = resolved
         .iter()
@@ -222,6 +228,75 @@ pub(crate) fn resolve(
         reason_code: reason.map(str::to_string),
         scopes: resolved,
     })
+}
+
+fn append_registered_coding_scope(
+    connection: &Connection,
+    conversation_id: &str,
+    resolved: &mut Vec<ResolvedScope>,
+) -> Result<(), String> {
+    let workspace: Option<String> = connection
+        .query_row(
+            "SELECT id FROM coding_workspaces WHERE conversation_id=?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(database_error)?;
+    let Some(workspace) = workspace else {
+        return Ok(());
+    };
+    for (kind, id, relation) in [
+        ("project", workspace.as_str(), "focus"),
+        ("resource", workspace.as_str(), "parent"),
+    ] {
+        let key = format!("{kind}:{id}");
+        let active: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM context_scopes
+                 WHERE scope_key=?1 AND kind=?2 AND opaque_id=?3 AND state='active')",
+                params![key, kind, id],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        if active {
+            resolved.push(ResolvedScope {
+                key: key.clone(),
+                kind: kind.into(),
+                relation: relation.into(),
+                epoch: epoch(connection, &key)?,
+            });
+        }
+    }
+    let task: Option<String> = connection
+        .query_row(
+            "SELECT id FROM coding_jobs WHERE conversation_id=?1
+             AND state IN ('queued','running','cancel_requested') ORDER BY rowid DESC LIMIT 1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(database_error)?;
+    if let Some(task) = task {
+        let key = format!("task:{task}");
+        let active: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM context_scopes
+                 WHERE scope_key=?1 AND kind='task' AND opaque_id=?2 AND state='active')",
+                params![key, task],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        if active {
+            resolved.push(ResolvedScope {
+                key: key.clone(),
+                kind: "task".into(),
+                relation: "current".into(),
+                epoch: epoch(connection, &key)?,
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn load(connection: &Connection, run_id: &str) -> Result<ScopeSnapshot, String> {

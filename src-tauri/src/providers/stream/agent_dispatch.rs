@@ -59,6 +59,7 @@ pub(crate) fn available_agent_tools(
         })
     {
         definitions.extend(crate::coding::tools::definitions());
+        definitions.extend(crate::steward::tools::definitions());
     }
     // Discovery mode replaces the generated `gc_` tool surface with the three selection entry
     // points; the legacy direct mode is left untouched. Both are never offered together.
@@ -137,6 +138,9 @@ pub(crate) async fn execute_agent_tool(
     }
     if crate::coding::contracts::NAMES.contains(&call.name.as_str()) {
         return crate::coding::tools::execute(output_persistence.map(|p| p.state), input, call);
+    }
+    if crate::steward::tools::NAMES.contains(&call.name.as_str()) {
+        return crate::steward::tools::execute(output_persistence.map(|p| p.state), input, call);
     }
     if crate::generative_ui::tools::NAMES.contains(&call.name.as_str()) {
         return crate::generative_ui::tools::execute(

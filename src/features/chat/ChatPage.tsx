@@ -15,6 +15,7 @@ import { ConversationVoiceBehaviorBar } from "./ConversationVoiceBehaviorBar";
 import { UiControls } from "./ui/UiControls";
 import { VirtualMessages } from "./VirtualMessages";
 import { StreamingPlainText } from "./ChatMessages";
+import { RoutingProposal } from "./RoutingProposal";
 import type { ChatPageProps } from "./chatPageTypes";
 export function ChatPage({
   setupSnapshot,
@@ -50,6 +51,9 @@ export function ChatPage({
   onSetConversationSpeechOutput,
   onSetConversationListeningPace,
   onResetConversationVoiceOverrides,
+  routingSnapshot,
+  routingCancellingRootId,
+  onCancelRouting,
 }: ChatPageProps) {
   const { t } = useTranslation();
   const messageAreaRef = useRef<HTMLDivElement>(null);
@@ -136,6 +140,11 @@ export function ChatPage({
         </div>
       </header>
       <CodingJobs conversationId={selectedConversation?.id} />
+      <RoutingProposal
+        snapshot={routingSnapshot}
+        cancellingRootId={routingCancellingRootId}
+        onCancel={onCancelRouting}
+      />
       {voicePolicy && (
         <ConversationVoiceBehaviorBar
           policy={voicePolicy}

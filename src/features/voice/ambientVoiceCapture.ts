@@ -97,13 +97,13 @@ export async function attachAmbientVoiceCapture(context: {
         "Streaming transcription requires a 16 kHz audio context.",
       );
     context.audioContext.current = activeContext;
-    await activeContext.audioWorklet.addModule("/audio/meeting-processor.js");
+    await activeContext.audioWorklet.addModule("/audio/voice-capture-processor.js");
     if (stale()) {
       await disposeOwnedCapture();
       return;
     }
     source = activeContext.createMediaStreamSource(stream);
-    node = new AudioWorkletNode(activeContext, "meeting-processor");
+    node = new AudioWorkletNode(activeContext, "voice-capture-processor");
     context.source.current = source;
     context.node.current = node;
     activityDetector = detector(context.settings, activeContext.sampleRate);

@@ -279,16 +279,57 @@ export const roleRoutingSettingsSchema = z
       .max(32),
     limits: z
       .object({
-        maxReasoningSteps: z.number(), maxToolCalls: z.number(), rootTimeoutMs: z.number(),
-        stepTimeoutMs: z.number(), frontendTimeoutMs: z.number(), classificationTimeoutMs: z.number(),
-        maxQueuedInputs: z.number(), maxReviewRounds: z.number(), maxAutomaticSwitches: z.number(),
+        maxReasoningSteps: z.number(),
+        maxToolCalls: z.number(),
+        rootTimeoutMs: z.number(),
+        stepTimeoutMs: z.number(),
+        frontendTimeoutMs: z.number(),
+        classificationTimeoutMs: z.number(),
+        maxQueuedInputs: z.number(),
+        maxReviewRounds: z.number(),
+        maxAutomaticSwitches: z.number(),
         maxEstimatedCostMicros: z.number().nullable(),
       })
       .strict(),
-    speech: z.object({ mode: z.literal("author_verbatim"), ackDelayMs: z.number(), maxAckChars: z.number(), progressMinIntervalMs: z.number(), maxProgressPerRoot: z.number() }).strict(),
-    selection: z.object({ mode: z.enum(["rules", "shadow"]), shadowArtifactId: z.string().nullable(), classificationMinConfidence: z.number(), weights: z.object({ quality: z.number(), latency: z.number(), cost: z.number() }).strict(), switchMargin: z.number() }).strict(),
+    speech: z
+      .object({
+        mode: z.literal("author_verbatim"),
+        ackDelayMs: z.number(),
+        maxAckChars: z.number(),
+        progressMinIntervalMs: z.number(),
+        maxProgressPerRoot: z.number(),
+      })
+      .strict(),
+    selection: z
+      .object({
+        mode: z.enum(["rules", "shadow"]),
+        shadowArtifactId: z.string().nullable(),
+        classificationMinConfidence: z.number(),
+        weights: z.object({ quality: z.number(), latency: z.number(), cost: z.number() }).strict(),
+        switchMargin: z.number(),
+      })
+      .strict(),
     premiumApproval: z.enum(["per_request", "never"]),
-    learning: z.object({ enabled: z.boolean(), localStart: z.string(), localEnd: z.string(), idleSeconds: z.number(), maxRunSeconds: z.number(), batchSize: z.number(), allowLocalLabeler: z.boolean() }).strict(),
+    learning: z
+      .object({
+        enabled: z.boolean(),
+        localStart: z.string(),
+        localEnd: z.string(),
+        idleSeconds: z.number(),
+        maxRunSeconds: z.number(),
+        batchSize: z.number(),
+        allowLocalLabeler: z.boolean(),
+      })
+      .strict(),
+    adaptiveImprovement: z
+      .object({
+        enabled: z.boolean(),
+        providerRecipe: z.boolean(),
+        tool: z.boolean(),
+        plan: z.boolean(),
+        notification: z.boolean(),
+      })
+      .strict(),
   })
   .strict();
 
@@ -311,8 +352,12 @@ const settingsDocumentBaseSchema = z
   .strict();
 
 export function validateSettingsDocuments(documents: unknown[]): void {
-  const parsed = z.array(settingsDocumentBaseSchema).length(8).parse(documents);
-  const expectedDocuments = new Set([
+  // `routing.roles` was introduced after the original seven-document settings
+  // snapshot.  A missing document means the feature is disabled, rather than a
+  // malformed legacy settings payload.  The backend materializes that default
+  // on its next save, so accepting it here preserves read/save compatibility.
+  const parsed = z.array(settingsDocumentBaseSchema).min(7).max(8).parse(documents);
+  const requiredDocuments = new Set([
     "providers.model:default",
     "providers.agent:codex-sdk",
     "routing.tasks:default",
@@ -320,12 +365,13 @@ export function validateSettingsDocuments(documents: unknown[]): void {
     "security.runtime:default",
     "ui.preferences:default",
     "situation.runtime:default",
-    "routing.roles:default",
   ]);
+  const optionalDocuments = new Set(["routing.roles:default"]);
   const namespaces = new Set(parsed.map((document) => `${document.namespace}:${document.key}`));
   if (
-    namespaces.size !== expectedDocuments.size ||
-    [...namespaces].some((value) => !expectedDocuments.has(value))
+    namespaces.size !== parsed.length ||
+    [...requiredDocuments].some((value) => !namespaces.has(value)) ||
+    [...namespaces].some((value) => !requiredDocuments.has(value) && !optionalDocuments.has(value))
   ) {
     throw new Error("Each supported settings document must appear exactly once");
   }
@@ -337,7 +383,8 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const security = securitySettingsSchema.parse(values.get("security.runtime"));
   regionalPreferencesSchema.parse(values.get("ui.preferences"));
   situationSettingsSchema.parse(values.get("situation.runtime"));
-  roleRoutingSettingsSchema.parse(values.get("routing.roles"));
+  const roleRouting = values.get("routing.roles");
+  if (roleRouting !== undefined) roleRoutingSettingsSchema.parse(roleRouting);
   const providers = providerSettings.providers;
   const usesHarness =
     routing.conversationRespond.source === "harness" ||

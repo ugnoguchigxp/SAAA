@@ -1,6 +1,9 @@
 export type {
   ConversationMessage,
   ConversationVoicePolicySnapshot,
+  RoutingEventRecord,
+  RoutingRootSnapshot,
+  RoutingSnapshot,
   RuntimeEvent,
   RuntimeFailureCode,
   VoicePresentationDecision,
@@ -122,7 +125,6 @@ export type AuditEvent = {
     | "conversation"
     | "provider"
     | "tts"
-    | "meeting"
     | "settings"
     | "voice-policy"
     | "situation";

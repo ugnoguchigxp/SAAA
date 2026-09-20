@@ -481,6 +481,56 @@ pub fn suspend(
     })
 }
 
+/// Reopens a suspended revision for re-verification. Only a suspended revision can be reopened;
+/// retirement is final. The catalog epoch advances so the state change is visible to the ledger;
+/// the caller must re-verify and then re-publish through the single publication transaction.
+pub fn reopen_suspended(
+    connection: &Connection,
+    revision_id: &str,
+    expected_epoch: i64,
+    now: &str,
+) -> CapabilityResult<CapabilityRow> {
+    let revision = revision_by_id(connection, revision_id)?;
+    if revision.state != RevisionState::Suspended {
+        return error(
+            CapabilityErrorCode::Conflict,
+            "only a suspended revision can be reopened",
+        );
+    }
+    let capability = capability_by_id(connection, &revision.capability_id)?;
+    if capability.catalog_epoch != expected_epoch {
+        return error(
+            CapabilityErrorCode::Conflict,
+            "catalog epoch does not match",
+        );
+    }
+    connection
+        .execute(
+            "UPDATE generated_capability_revisions SET state = 'validated' WHERE id = ?1",
+            params![revision_id],
+        )
+        .map_err(storage)?;
+    let changed = connection
+        .execute(
+            "UPDATE generated_capabilities
+             SET catalog_epoch = catalog_epoch + 1, updated_at = ?2
+             WHERE id = ?1 AND catalog_epoch = ?3",
+            params![revision.capability_id, now, expected_epoch],
+        )
+        .map_err(storage)?;
+    if changed != 1 {
+        return error(
+            CapabilityErrorCode::Conflict,
+            "catalog epoch changed during reopen",
+        );
+    }
+    Ok(CapabilityRow {
+        id: revision.capability_id,
+        current_revision_id: capability.current_revision_id,
+        catalog_epoch: expected_epoch + 1,
+    })
+}
+
 pub fn insert_import(connection: &Connection, import_id: &str, now: &str) -> CapabilityResult<()> {
     connection
         .execute(

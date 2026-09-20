@@ -10,6 +10,41 @@ pub(crate) enum SignalKind {
     Unclear,
 }
 
+/// Converts a provider's structured classification into the same deliberately limited signal
+/// vocabulary as the conservative local fallback.  Any malformed or unauthorised result becomes
+/// `Unclear`; callers must not infer cancellation, approval, or a tool operation from it.
+pub(crate) fn classify_structured_follow_up(
+    value: &str,
+    active_root_id: &str,
+    allowed_target_ids: &[String],
+) -> SignalKind {
+    let Ok(classification) =
+        crate::role_routing::classifier::parse(value, active_root_id, allowed_target_ids)
+    else {
+        return SignalKind::Unclear;
+    };
+    let crate::role_routing::classifier::Classification {
+        kind,
+        evidence: _,
+        target_root_id: _,
+        confidence: _,
+    } = classification;
+    match kind {
+        crate::role_routing::classifier::ClassificationKind::Status => SignalKind::Status,
+        crate::role_routing::classifier::ClassificationKind::ConstraintUpdate => {
+            SignalKind::ConstraintUpdate
+        }
+        crate::role_routing::classifier::ClassificationKind::Cancel => SignalKind::Cancel,
+        crate::role_routing::classifier::ClassificationKind::AnswerChallenge => {
+            SignalKind::AnswerChallenge
+        }
+        crate::role_routing::classifier::ClassificationKind::PremiumApproval => {
+            SignalKind::PremiumApproval
+        }
+        crate::role_routing::classifier::ClassificationKind::Unclear => SignalKind::Unclear,
+    }
+}
+
 pub(crate) fn classify_follow_up(input: &str) -> SignalKind {
     let text = input.trim();
     if text.is_empty() {
@@ -75,6 +110,27 @@ mod tests {
         assert_eq!(
             classify_follow_up("Solを使ってお願いします"),
             SignalKind::PremiumApproval
+        );
+    }
+
+    #[test]
+    fn rr_08_structured_classification_is_fail_closed() {
+        let targets = vec!["root-1".into()];
+        assert_eq!(
+            classify_structured_follow_up(
+                r#"{"kind":"status","evidence":"進捗を聞いている","targetRootId":"root-1","confidence":0.9}"#,
+                "root-1",
+                &targets,
+            ),
+            SignalKind::Status
+        );
+        assert_eq!(
+            classify_structured_follow_up(
+                r#"{"kind":"cancel","evidence":"停止","targetRootId":"other","confidence":1.0}"#,
+                "root-1",
+                &targets,
+            ),
+            SignalKind::Unclear
         );
     }
 }

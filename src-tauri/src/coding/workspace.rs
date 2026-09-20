@@ -24,7 +24,12 @@ pub(super) fn replace(
         .map_err(database_error)?;
     if let Some(previous) = previous.filter(|previous| previous != &id) {
         crate::runtime::context::scope::revoke(connection, &format!("resource:{previous}"))?;
+        crate::runtime::context::scope::revoke(connection, &format!("project:{previous}"))?;
     }
+    // A workspace is the durable root for the user's active coding project. The resource remains
+    // distinct so task/resource authorization does not get conflated with project focus.
+    let project_scope = crate::runtime::context::scope::register(connection, "project", &id)?;
     crate::runtime::context::scope::register(connection, "resource", &id)?;
+    crate::runtime::context::scope::link(connection, &project_scope, &format!("resource:{id}"))?;
     Ok(id)
 }

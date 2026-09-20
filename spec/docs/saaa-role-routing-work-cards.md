@@ -1,7 +1,52 @@
 # Role Routing 作業カード
 
-状態: 全カード未着手。番号順に実装する。依存の明記がない場合は直前カードが前提。
+状態: **監査済み・未完了**。以下の進捗表は 2026-09-21 の作業treeを確認して更新した。`部分`はコード断片または限定経路があるだけで、カードの合格条件を満たした意味ではない。`未着手`は実装がない。全カードを完了とする報告はまだしてはならない。
 [計画](saaa-role-routing-plan.md) / [実行契約](saaa-role-routing-execution-contract.md) / [学習契約](saaa-role-routing-learning-contract.md) / [受入](saaa-role-routing-acceptance.md)
+
+## 実装監査（2026-09-21）
+
+| カード | 状態 | 現在の根拠 | 合格までに残ること |
+| --- | --- | --- | --- |
+| RR-00 | 部分 | `baseline.md` と `progress.md` にdirty差分、schema、SDK、live gateを記録 | 実機接続能力を明示fixtureで検証 |
+| RR-01 | 部分 | `contracts.rs`、`reducer.rs`、`signals.rs` | event契約、Clock/ID注入、指定境界試験 |
+| RR-02 | 部分 | R1 ledger DDL、migration idempotency試験 | C6全FK/複合整合性、旧DB/FK試験 |
+| RR-03 | 部分 | `routing.roles` validationとpolicy snapshot | CAS、config fingerprint、指定試験 |
+| RR-04 | 部分 | receiptを`prepare_runtime_run` transactionへ接続し、queue上限をcommit前に拒否 | retry/conflict、FIFO queue実行、receipt復元 |
+| RR-05 | 部分 | pure reducerのみ | coordinator、driver、mpsc、registry、IO試験 |
+| RR-06 | 部分 | recipe候補の決定的選択、shadow関数 | hard filter・予算・sticky選択・decision理由 |
+| RR-07 | 未着手 | 既存contextをそのまま使用 | role projection、scope/amendment試験 |
+| RR-08 | 部分 | 保守的なfollow-up文字列分類のみ | 構造化分類、根拠/target検証、frontend prompt |
+| RR-09 | 未着手 | 既存provider経路を直接再利用 | ActorAdapter、Sink、partial/timeout試験 |
+| RR-10 | 部分 | pure permit関数のみ | 実dispatcherでの二重permit |
+| RR-11 | 未着手 | tool ledgerなし | invocation/operation/resultの永続紐付け |
+| RR-12 | 部分 | message保存transaction内でroot採用を試行 | stale/cancel/duplicate/DB failureの縦通し試験 |
+| RR-13 | 未着手 | 既存voice responseを使用 | routing speech owner、queue、FakeSpeech試験 |
+| RR-14 | 部分 | receipt/snapshot/replay/cancel IPC、型付きchat表示・停止操作。永続cancelをlive eventでsnapshot再読込 | live replay store、ASR receipt、legacy/duplicate試験 |
+| RR-15 | 部分 | provider actor準備・role選択UI | probe、完全編集、ASR→tool→TTS E2E |
+| RR-16 | 部分 | barrier用pure reducerと分類候補 | 実行中入力の保存、保留、採用barrier |
+| RR-17 | 部分 | reducerのcancel/revision状態と、tool未確定中のtransactional restart拒否 | input更新/child drain実行、全順序試験 |
+| RR-18 | 部分 | queue順序・in-flight restart復旧を起動writerへ接続 | queue実行、再接続 |
+| RR-19 | 部分 | SDK固定版のJSONL sidecar | mock SDK wire試験、Rust protocol adapter |
+| RR-20 | 部分 | sidecarのSDK起動を空cwd/read-only/approval・network・web・MCP無効化で固定 | bundle、process guard、fake executable、live isolation gate |
+| RR-21 | 未着手 | Sol tool loopなし | Sol delegation、host tool loop |
+| RR-22 | 部分 | root/step deadlineと未知費用を拒否するpure判定 | 実dispatcher中断、usage集計 |
+| RR-23 | 部分 | host feedback保存とdirty mark | active answer一意の実入力接続 |
+| RR-24 | 未着手 | review recipe型のみ | 独立評価実行 |
+| RR-25 | 未着手 | revise recipe型のみ | 評価後revision実行 |
+| RR-26 | 未着手 | premium approval型と文字列検出のみ | Astra提案/明示承諾経路 |
+| RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
+| RR-28 | 部分 | chatで永続snapshotのphase/revision/queue先頭を表示 | 実行履歴・選択理由UI |
+| RR-29 | 未着手 | R2統合gateなし | 競合fixture・実機gate |
+| RR-30 | 部分 | R3 tables、限定feature snapshot | immutable全feature snapshot・C6確認 |
+| RR-31 | 部分 | dirty queueとdataset materialize | event上限/checkpoint/page再開 |
+| RR-32 | 部分 | explicit feedbackの限定ラベル | L2全label/conflict/revision |
+| RR-33 | 部分 | 本文なしJSONL export、examples hash、manifest最後のatomic rename | group split、時系列境界、DB job接続 |
+| RR-34 | 部分 | pure scheduler判定、60秒writer tick、manual materialize IPC、learning件数snapshot | foreground/shutdown pause、job状態 |
+| RR-35 | 部分 | shadow artifact保存とpure score | 観測集計、shadow記録、最低例数 |
+| RR-36 | 部分 | hash・feature/candidate検証済みlinear-v1 loader、観測label限定のoffline評価 | selection接続、昇格証跡 |
+| RR-37 | 部分 | forget sourceからdataset/artifactを同一transactionで失効。設定画面で本文なし学習状況/手動materialize | filesystem journal |
+| RR-38 | 未着手 | tool specialistの型のみ | specialist差替え/実tool試験 |
+| RR-39 | 未着手 | 全体gate・性能測定なし | V1–V6、受入・実機報告 |
 
 ## 共通規則
 

@@ -1,3 +1,4 @@
+use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
 use super::repository as repo;
 use super::{CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
 use crate::persistence::schema::{initialize_database, DATABASE_SCHEMA_VERSION};
@@ -134,7 +135,7 @@ fn ml_01_schema_version_and_empty_goals() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
     assert_eq!(version, DATABASE_SCHEMA_VERSION);
-    assert_eq!(DATABASE_SCHEMA_VERSION, 27);
+    assert_eq!(DATABASE_SCHEMA_VERSION, 30);
     let goals: i64 = connection
         .query_row("SELECT COUNT(*) FROM steward_goals", [], |row| row.get(0))
         .expect("goals");
@@ -155,7 +156,7 @@ fn ml_01_schema_version_and_empty_goals() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 27);
+    assert_eq!(version, 30);
 }
 
 #[test]
@@ -211,13 +212,20 @@ fn ml_02_register_requires_workspace() {
 }
 
 #[test]
-fn ml_02_second_active_goal_refused_and_no_delete() {
+fn dw_01_multiple_active_goals_are_allowed_and_no_delete() {
     let state = app_state(db());
     register_goal(&state);
     let second = state
         .sqlite_writer
         .write(|connection| repo::register(connection, PRIMARY_CONVERSATION_ID, "ws", "again"));
-    assert!(second.is_err());
+    assert!(second.is_ok());
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM steward_goals WHERE status='active'"
+        ),
+        2
+    );
     let sources = [
         include_str!("schema.rs"),
         include_str!("repository.rs"),
@@ -236,6 +244,303 @@ fn ml_02_second_active_goal_refused_and_no_delete() {
 }
 
 #[test]
+fn dw_01_proposal_rejects_ambiguous_or_unbounded_authority() {
+    let valid = GoalProposal {
+        source_message_id: "message".into(),
+        workspace_id: "ws".into(),
+        summary: "調べる".into(),
+        success_condition: Verifier::TestReportObtained,
+        operations: vec![Operation::Read, Operation::TestRun],
+        budget_runs: 1,
+        budget_ms: 1_000,
+        notify: Notify::Both,
+    };
+    assert!(valid.validate().is_ok());
+    let mut invalid = valid.clone();
+    invalid.operations.clear();
+    assert_eq!(invalid.validate(), Err("work_proposal_invalid"));
+    invalid = valid;
+    invalid.budget_runs = 17;
+    assert_eq!(invalid.validate(), Err("work_proposal_invalid"));
+}
+
+#[test]
+fn dw_01_plan_rejects_cycles_and_replan_limit() {
+    let plan = TaskPlan {
+        steps: vec![PlanStep {
+            id: "inspect".into(),
+            depends_on: Vec::new(),
+            verifier: Verifier::TestReportObtained,
+        }],
+        max_replans: 2,
+    };
+    assert!(plan.validate().is_ok());
+    let cycle = TaskPlan {
+        steps: vec![
+            PlanStep {
+                id: "a".into(),
+                depends_on: vec!["b".into()],
+                verifier: Verifier::TestReportObtained,
+            },
+            PlanStep {
+                id: "b".into(),
+                depends_on: vec!["a".into()],
+                verifier: Verifier::TestReportObtained,
+            },
+        ],
+        max_replans: 0,
+    };
+    assert_eq!(cycle.validate(), Err("work_plan_cycle"));
+    let over_limit = TaskPlan {
+        steps: plan.steps,
+        max_replans: 3,
+    };
+    assert_eq!(over_limit.validate(), Err("work_plan_invalid"));
+}
+
+#[test]
+fn dw_03_proposal_binds_only_a_persisted_user_source_and_allows_multiple_goals() {
+    let state = app_state(db());
+    state
+        .sqlite_writer
+        .write(|c| {
+            workspace(c);
+            Ok(())
+        })
+        .unwrap();
+    prepare_runtime_run(&state, &turn("proposal-source", "失敗テストを調べて")).unwrap();
+    let source: String = state
+        .sqlite_readers
+        .read(|c| repo::input_message_id(c, "proposal-source"))
+        .unwrap()
+        .unwrap();
+    prepare_runtime_run(&state, &turn("proposal-source-b", "別の失敗テストを調べて")).unwrap();
+    let source_b: String = state
+        .sqlite_readers
+        .read(|c| repo::input_message_id(c, "proposal-source-b"))
+        .unwrap()
+        .unwrap();
+    let proposal = |summary: &str, source_message_id: String| GoalProposal {
+        source_message_id,
+        workspace_id: "ws".into(),
+        summary: summary.into(),
+        success_condition: Verifier::TestReportObtained,
+        operations: vec![Operation::Read, Operation::TestRun],
+        budget_runs: 1,
+        budget_ms: 1_000,
+        notify: Notify::Both,
+    };
+    state
+        .sqlite_writer
+        .write(|c| repo::propose(c, PRIMARY_CONVERSATION_ID, &proposal("A", source.clone())))
+        .unwrap();
+    let duplicate = state
+        .sqlite_writer
+        .write(|c| {
+            repo::propose(
+                c,
+                PRIMARY_CONVERSATION_ID,
+                &proposal("A again", source.clone()),
+            )
+        })
+        .unwrap();
+    assert_eq!(duplicate["duplicate"], true);
+    state
+        .sqlite_writer
+        .write(|c| repo::propose(c, PRIMARY_CONVERSATION_ID, &proposal("B", source_b)))
+        .unwrap();
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM steward_goals WHERE status='active'"
+        ),
+        2
+    );
+    let mut forged = proposal("forged", source);
+    forged.source_message_id = "missing".into();
+    let error = state
+        .sqlite_writer
+        .write(|c| repo::propose(c, PRIMARY_CONVERSATION_ID, &forged));
+    assert_eq!(error.unwrap_err(), "source_unavailable");
+}
+
+#[test]
+fn dw_02_reservation_is_durable_and_cancelled_before_dispatch_is_released() {
+    let state = app_state(db());
+    register_goal(&state);
+    prepare_runtime_run(&state, &turn("reserve-source", START_TRIGGER)).unwrap();
+    let source = state
+        .sqlite_readers
+        .read(|c| repo::input_message_id(c, "reserve-source"))
+        .unwrap()
+        .unwrap();
+    let task = state
+        .sqlite_writer
+        .write(|c| {
+            let work = repo::active_delegation(c, PRIMARY_CONVERSATION_ID)?.unwrap();
+            repo::queue_task(c, &work, PRIMARY_CONVERSATION_ID, &source, "start")
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM steward_budget_reservations WHERE state='reserved'"
+        ),
+        1
+    );
+    state
+        .sqlite_writer
+        .write(|c| repo::set_loop_state(c, &task, "cancelled", None, None))
+        .unwrap();
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM steward_budget_reservations WHERE state='released'"
+        ),
+        1
+    );
+}
+
+#[test]
+fn dw_06_dispatch_intent_is_claimed_once_and_records_receipt() {
+    let state = app_state(db());
+    register_goal(&state);
+    prepare_runtime_run(&state, &turn("intent-source", START_TRIGGER)).unwrap();
+    let source = state
+        .sqlite_readers
+        .read(|c| repo::input_message_id(c, "intent-source"))
+        .unwrap()
+        .unwrap();
+    let task = state
+        .sqlite_writer
+        .write(|c| {
+            let work = repo::active_delegation(c, PRIMARY_CONVERSATION_ID)?.unwrap();
+            repo::queue_task(c, &work, PRIMARY_CONVERSATION_ID, &source, "start")
+        })
+        .unwrap()
+        .unwrap();
+    state
+        .sqlite_writer
+        .write(|c| {
+            assert!(repo::claim_dispatch(c, &task)?);
+            assert!(!repo::claim_dispatch(c, &task)?);
+            repo::settle_dispatch(c, &task, Some(&serde_json::json!({"accepted":true})), false)
+        })
+        .unwrap();
+    assert_eq!(
+        count(
+            &state,
+            "SELECT COUNT(*) FROM steward_dispatch_intents WHERE state='accepted'"
+        ),
+        1
+    );
+}
+
+#[test]
+fn dw_13_forgetting_source_cancels_derived_task() {
+    let state = app_state(db());
+    register_goal(&state);
+    prepare_runtime_run(&state, &turn("forget-source", START_TRIGGER)).unwrap();
+    let source = state
+        .sqlite_readers
+        .read(|c| repo::input_message_id(c, "forget-source"))
+        .unwrap()
+        .unwrap();
+    let task = state
+        .sqlite_writer
+        .write(|c| {
+            let work = repo::active_delegation(c, PRIMARY_CONVERSATION_ID)?.unwrap();
+            repo::queue_task(c, &work, PRIMARY_CONVERSATION_ID, &source, "start")
+        })
+        .unwrap()
+        .unwrap();
+    state
+        .sqlite_writer
+        .write(|c| repo::forget_source(c, &source))
+        .unwrap();
+    let state_name: String = state
+        .sqlite_readers
+        .read(|c| {
+            c.query_row(
+                "SELECT loop_state FROM steward_tasks WHERE id=?1",
+                [&task],
+                |r| r.get(0),
+            )
+            .map_err(crate::database_error)
+        })
+        .unwrap();
+    assert_eq!(state_name, "cancelled");
+}
+
+#[test]
+fn dw_13_forgetting_source_requests_stop_for_running_coding_job() {
+    let state = app_state(db());
+    register_goal(&state);
+    prepare_runtime_run(&state, &turn("forget-running", START_TRIGGER)).unwrap();
+    let source = state
+        .sqlite_readers
+        .read(|c| repo::input_message_id(c, "forget-running"))
+        .unwrap()
+        .unwrap();
+    let task = state
+        .sqlite_writer
+        .write(|c| {
+            let work = repo::active_delegation(c, PRIMARY_CONVERSATION_ID)?.unwrap();
+            repo::queue_task(c, &work, PRIMARY_CONVERSATION_ID, &source, "start")
+        })
+        .unwrap()
+        .unwrap();
+    insert_job(&state, &task, "running", None);
+    state
+        .sqlite_writer
+        .write(|c| repo::forget_source(c, &source))
+        .unwrap();
+    let run_state: String = state
+        .sqlite_readers
+        .read(|c| {
+            c.query_row("SELECT state FROM coding_runs WHERE id='run'", [], |r| {
+                r.get(0)
+            })
+            .map_err(crate::database_error)
+        })
+        .unwrap();
+    assert_eq!(run_state, "stopping");
+}
+
+#[test]
+fn dw_13_late_terminal_event_cannot_revive_cancelled_task() {
+    with_memory(true, || {
+        let state = app_state(db());
+        register_goal(&state);
+        prepare_runtime_run(&state, &turn("late-source", START_TRIGGER)).unwrap();
+        super::on_user_message(&state, &turn("late-source", START_TRIGGER));
+        let task = task_id(&state);
+        insert_job(&state, &task, "settled", None);
+        state
+            .sqlite_writer
+            .write(|c| repo::set_loop_state(c, &task, "cancelled", None, None))
+            .unwrap();
+        state
+            .sqlite_writer
+            .write(|c| repo::apply_terminal_event(c, "job", "settled"))
+            .unwrap();
+        let state_name: String = state
+            .sqlite_readers
+            .read(|c| {
+                c.query_row(
+                    "SELECT loop_state FROM steward_tasks WHERE id=?1",
+                    [&task],
+                    |r| r.get(0),
+                )
+                .map_err(crate::database_error)
+            })
+            .unwrap();
+        assert_eq!(state_name, "cancelled");
+    });
+}
+
+#[test]
 fn ml_03_exact_trigger_queues_and_partial_does_not() {
     with_memory(true, || {
         let state = app_state(db());
@@ -246,6 +551,7 @@ fn ml_03_exact_trigger_queues_and_partial_does_not() {
         prepare_runtime_run(&state, &turn("run-start", START_TRIGGER)).unwrap();
         super::on_user_message(&state, &turn("run-start", START_TRIGGER));
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 1);
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_task_plans"), 1);
     });
 }
 

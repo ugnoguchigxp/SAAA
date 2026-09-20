@@ -18,8 +18,8 @@ export const REASON_CODES = [
 
 export const RESULT_VALUES = ["pass", "fail", "blocked"] as const;
 export const BUILD_CLASSES = ["development", "signed-packaged"] as const;
-export const SUITES = ["meeting", "input-activity", "agent-run"] as const;
-export const MODES = ["functional", "soak-30m", "soak-2h", "manual"] as const;
+export const SUITES = ["input-activity", "agent-run"] as const;
+export const MODES = ["manual"] as const;
 
 export type Suite = (typeof SUITES)[number];
 export type Mode = (typeof MODES)[number];
@@ -66,115 +66,6 @@ export const latency = (key: string, description: string, max = 5_000): MetricSp
 export function forBuilds(caseId: string, instruction: string, metrics: MetricSpec[]): CaseSpec[] {
   return BUILD_CLASSES.map((buildClass) => ({ caseId, buildClass, instruction, metrics }));
 }
-
-export const MEETING_FUNCTIONAL_CASES: CaseSpec[] = [
-  ...forBuilds(
-    "permission-grant",
-    "未決定状態からmicrophoneを許可し、capture開始とtrack解放を確認する。",
-    [atLeast("captureStartCount", "capture開始回数"), latency("trackReleaseMs", "track解放時間")],
-  ),
-  ...forBuilds("permission-deny", "microphoneを拒否し、capture 0とrecovery表示を確認する。", [
-    count("captureStartCount", "capture開始回数"),
-    atLeast("recoveryVisibleCount", "recovery表示回数"),
-  ]),
-  ...forBuilds(
-    "permission-loss",
-    "active中にpermission revokeまたはdevice lossを発生させ、安全遷移とcleanupを確認する。",
-    [
-      count("captureResourceRemainingCount", "残存capture resource数"),
-      count("asrTaskRemainingCount", "残存ASR task数"),
-      latency("indicatorReleaseMs", "microphone indicator消灯時間"),
-    ],
-  ),
-  ...forBuilds(
-    "partial-final",
-    "real LAN ASRで同一lane/sequenceのPartialがFinalへ置換されることを確認する。",
-    [
-      atLeast("partialFinalReplacementCount", "Partial→Final置換回数"),
-      count("sequenceViolationCount", "sequence重複・逆行回数"),
-    ],
-  ),
-  ...forBuilds("pause", "5分pauseでtranscriptが増えずindicatorが消灯することを確認する。", [
-    count("transcriptGrowthDuringPauseCount", "pause中の追加entry数"),
-    latency("indicatorReleaseMs", "microphone indicator消灯時間"),
-  ]),
-  ...forBuilds("resume", "resumeで新capture tokenを使いsequence違反がないことを確認する。", [
-    count("captureTokenReuseCount", "capture token再利用回数"),
-    count("sequenceViolationCount", "sequence重複・逆行回数"),
-  ]),
-  ...forBuilds(
-    "stop-idempotent",
-    "Stopを連打しCompleted snapshotが一つだけになることを確認する。",
-    [
-      {
-        key: "completedSnapshotCount",
-        unit: "count",
-        description: "Completed snapshot数",
-        exact: 1,
-      },
-      latency("indicatorReleaseMs", "microphone indicator消灯時間"),
-    ],
-  ),
-  ...forBuilds(
-    "tts-guard",
-    "Meeting active/paused中のTTS開始がなく、既存再生も停止することを確認する。",
-    [
-      count("ttsStartCount", "Meeting中のTTS開始回数"),
-      count("activeTtsRemainingCount", "Meeting開始後の残存TTS数"),
-    ],
-  ),
-  ...forBuilds(
-    "app-close",
-    "Surface移動、unmount、通常close後にcapture/ASR/childが残らないことを確認する。",
-    [
-      count("captureResourceRemainingCount", "残存capture resource数"),
-      count("asrTaskRemainingCount", "残存ASR task数"),
-      count("childProcessRemainingCount", "残存child process数"),
-    ],
-  ),
-  {
-    caseId: "save-review",
-    buildClass: "signed-packaged",
-    instruction: "Save reviewのtarget、Final件数、language、raw audio非保存を確認する。",
-    metrics: [
-      {
-        key: "reviewMatchesCount",
-        unit: "count",
-        description: "reviewと実測が一致した項目",
-        exact: 4,
-      },
-      count("rawAudioFileCount", "raw audio file数"),
-    ],
-  },
-  {
-    caseId: "save-final-only",
-    buildClass: "signed-packaged",
-    instruction: "Save前後・reopen後のDB rowとFinal/language状態を確認する。",
-    metrics: [
-      count("preSaveTranscriptRowCount", "Save前transcript row数"),
-      count("nonFinalPersistedCount", "保存された非Final数"),
-      {
-        key: "savedRowCountMismatch",
-        unit: "count",
-        description: "UI reviewとDB件数の不一致",
-        exact: 0,
-      },
-      count("languageStateMismatch", "original_language状態の不一致"),
-    ],
-  },
-  {
-    caseId: "discard",
-    buildClass: "signed-packaged",
-    instruction: "Discard後にtranscript bodyが残らないことを確認する。",
-    metrics: [count("transcriptRowCount", "Discard後transcript row数")],
-  },
-  {
-    caseId: "close-without-save",
-    buildClass: "signed-packaged",
-    instruction: "Saveしないapp close後にtranscript bodyが残らないことを確認する。",
-    metrics: [count("transcriptRowCount", "reopen後transcript row数")],
-  },
-];
 
 export const INPUT_ACTIVITY_CASES: CaseSpec[] = [
   ...forBuilds(
@@ -359,43 +250,7 @@ export const AGENT_RUN_CASES: CaseSpec[] = [
   ],
 }));
 
-export function soakCase(mode: "soak-30m" | "soak-2h"): CaseSpec {
-  const twoHours = mode === "soak-2h";
-  return {
-    caseId: mode,
-    buildClass: "signed-packaged",
-    instruction: `${twoHours ? "2時間" : "30分"}のreal ASR soakを開始し、指示されたpause/resume/stopを実施する。`,
-    metrics: [
-      {
-        key: "elapsedSeconds",
-        unit: "seconds",
-        description: "runner計測時間",
-        min: twoHours ? 7_200 : 1_800,
-        automatic: "elapsed-seconds",
-      },
-      {
-        key: "rssMedianDeltaMiB",
-        unit: "mib",
-        description: "先頭・末尾windowのRSS中央値差",
-        max: twoHours ? 64 : 48,
-        automatic: "rss-median-delta",
-      },
-      { key: "maxQueueDepth", unit: "count", description: "最大segment queue深度", max: 2 },
-      { key: "maxInFlightAsr", unit: "count", description: "最大in-flight ASR数", max: 1 },
-      count("childProcessRemainingCount", "終了後の残存child process数"),
-      count("unexpectedTranscriptPersistenceCount", "予期しないtranscript永続化数"),
-      latency("indicatorReleaseMs", "停止後のmicrophone indicator消灯時間"),
-    ],
-  };
-}
-
 export function caseSpecs(suite: Suite, mode: Mode): CaseSpec[] {
-  if (suite === "meeting" && mode === "functional")
-    return [...MEETING_FUNCTIONAL_CASES].sort(
-      (left, right) =>
-        BUILD_CLASSES.indexOf(left.buildClass) - BUILD_CLASSES.indexOf(right.buildClass),
-    );
-  if (suite === "meeting" && (mode === "soak-30m" || mode === "soak-2h")) return [soakCase(mode)];
   if (suite === "input-activity" && mode === "manual")
     return [...INPUT_ACTIVITY_CASES].sort(
       (left, right) =>

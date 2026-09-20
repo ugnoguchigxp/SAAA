@@ -640,3 +640,167 @@ async fn gc_06_other_principal_cannot_load_stored_inspection() {
         CapabilityErrorCode::NotActive
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gc_07_restore_a_suspended_revision_and_invoke_via_mcp() {
+    use crate::generated_capabilities::publication_sync::{activate_and_publish, PublishRequest};
+    use crate::tool_selection::backends::llang::LlangBackend;
+    use crate::tool_selection::backends::{BackendRequest, TechnicalStatus, ToolBackend};
+
+    let env = TestEnv::start(true);
+    let (_generation, _fake, revision_a) = generate_a(&env).await;
+    let capability_id = invoke_on(&env, "call-a-10", &revision_a).await;
+    bind_typescript(
+        &env,
+        &revision_a,
+        "insp-restore",
+        "export const marker = \"rev-A\";\n",
+    );
+    assert!(catalog_enabled(&env) >= 1);
+
+    // Stop: suspension unpublishes the catalog but keeps the stored evidence.
+    let epoch = env.service.catalog_epoch(&capability_id).expect("epoch");
+    env.service
+        .suspend_revision(&revision_a, epoch)
+        .expect("suspend");
+    assert_eq!(catalog_enabled(&env), 0);
+
+    // Restore: re-verify the suspended revision against the current runtime and acceptance, then
+    // re-publish it with the same publication function.
+    let epoch = env.service.catalog_epoch(&capability_id).expect("epoch");
+    lifecycle::restore_revision(&env.writer, &revision_a, epoch).expect("reopen suspended");
+    let summary = env
+        .service
+        .verify_candidate(&revision_a, ACCEPTANCE_A, &Cancellation::default())
+        .await
+        .expect("re-verify");
+    assert!(summary.passed, "{summary:?}");
+    let principal =
+        crate::tool_selection::service::ensure_principal(&env.writer).expect("principal");
+    let epoch = env.service.catalog_epoch(&capability_id).expect("epoch");
+    lifecycle::transaction(&env.writer, |transaction| {
+        activate_and_publish(
+            transaction,
+            PublishRequest {
+                principal_id: &principal,
+                revision_id: &revision_a,
+                expected_epoch: epoch,
+                job_id: None,
+                grant_on_create: false,
+                fail_at: None,
+            },
+        )
+    })
+    .expect("restore");
+    assert!(catalog_enabled(&env) >= 1);
+
+    // MCP: the restored revision is invoked through the MCP backend and its TypeScript is
+    // retrievable from the same call id.
+    let resolved = env.service.resolve_active(&capability_id).expect("active");
+    let binding = json!({
+        "capabilityId": resolved.capability_id,
+        "revisionId": resolved.revision_id,
+        "packageHash": resolved.package_hash,
+        "contractHash": resolved.contract_hash,
+        "catalogEpoch": resolved.catalog_epoch,
+        "inputFields": resolved.input_fields(),
+    });
+    let request = BackendRequest {
+        call_id: "call-mcp-restore".into(),
+        tool_id: "tool-mcp-restore".into(),
+        revision_id: resolved.revision_id.clone(),
+        backend_key: "llang".into(),
+        binding,
+        arguments: json!({ "enabled": true, "suspended": false }),
+        timeout: Duration::from_secs(5),
+        origin: "mcp",
+        actor: Some(actor()),
+    };
+    let outcome = LlangBackend::new(Some(env.service.clone()))
+        .invoke(request, &RunCancellation::default())
+        .await;
+    assert_eq!(outcome.status, TechnicalStatus::Succeeded, "{outcome:?}");
+    let stored = load_stored_inspection(
+        &env.writer,
+        &env.data_directory,
+        "principal-flow",
+        "call-mcp-restore",
+    )
+    .expect("mcp inspect");
+    assert!(stored.typescript_text.contains("rev-A"));
+}
+
+/// C14 live lane. Requires `SAAA_LLANG_GENERATION_CONFIG` pointing at a trusted kit (see
+/// `scripts/llang/build-generation-kit.ts`), a registered request catalog, and a real
+/// conversation provider credential. Ignored by default; run explicitly:
+/// `cargo test --lib c14_live -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "live lane: trusted kit + registered requests + real provider credential required"]
+async fn c14_live_generate_new_and_update_with_a_real_model() {
+    let configured = crate::generated_capabilities::generation::config::from_environment()
+        .expect("generation config");
+    let Some((config, requests)) = configured else {
+        panic!("SAAA_LLANG_GENERATION_CONFIG must be set, enabled and valid for the live lane");
+    };
+    let request = requests
+        .first()
+        .expect("at least one registered request")
+        .clone();
+    let env = TestEnv::start(true);
+    let kit = Arc::new(
+        crate::generated_capabilities::generation::kit::GenerationKit::load(&config)
+            .expect("trusted kit"),
+    );
+    let generator = Arc::new(
+        crate::generated_capabilities::generation::generator::ConversationProviderGenerator::new(
+            env.writer.clone(),
+        ),
+    );
+    let packager = Arc::new(
+        crate::generated_capabilities::generation::packager::KitPackager::new(
+            kit,
+            &env.data_directory,
+        ),
+    );
+    let generation = GenerationService::new(
+        env.writer.clone(),
+        env.service.clone(),
+        requests.clone(),
+        generator,
+        packager,
+        &env.data_directory,
+    );
+    let started = std::time::Instant::now();
+    let first = generation
+        .generate(
+            context("run-live-a", "msg-live-a"),
+            GenerateInput {
+                request_id: request.id.clone(),
+                base_revision_id: None,
+            },
+            RunCancellation::default(),
+        )
+        .await;
+    eprintln!(
+        "c14 live generation latency_ms={} receipt={first:?}",
+        started.elapsed().as_millis()
+    );
+    assert_eq!(first.status, GenerationStatus::Active, "{first:?}");
+    let revision_a = first.revision_id.clone().expect("revision A");
+    if let Some(update) = requests.iter().find(|candidate| {
+        candidate.id != request.id && candidate.capability_id == request.capability_id
+    }) {
+        let second = generation
+            .generate(
+                context("run-live-b", "msg-live-b"),
+                GenerateInput {
+                    request_id: update.id.clone(),
+                    base_revision_id: Some(revision_a),
+                },
+                RunCancellation::default(),
+            )
+            .await;
+        eprintln!("c14 live change generation receipt={second:?}");
+        assert_eq!(second.status, GenerationStatus::Active, "{second:?}");
+    }
+}

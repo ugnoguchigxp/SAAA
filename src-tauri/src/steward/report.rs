@@ -8,6 +8,7 @@ pub(crate) fn publish(
     connection: &Connection,
     conversation_id: &str,
 ) -> Result<(), String> {
+    super::driver::consume(connection)?;
     repo::sync_from_coding(connection, conversation_id)?;
     queue_terminals(
         state,
@@ -21,18 +22,61 @@ pub(crate) fn queue_terminals(
     state: &AppState,
     connection: &Connection,
     conversation_id: &str,
-    terminals: &[String],
+    terminals: &[repo::TerminalReport],
 ) -> Result<(), String> {
-    if !terminals.is_empty() {
-        repo::enqueue_report(
+    let now = now_ms();
+    for terminal in terminals {
+        let (delivery, selection_mode, policy_revision, candidates) =
+            notification_selection(connection, &terminal.goal_id, &terminal.notify, now)?;
+        repo::enqueue_task_report(
             connection,
             conversation_id,
-            &terminals.join("\n"),
-            speech_holds_tts(state).then_some("meeting"),
+            terminal,
+            speech_holds_tts(state).then_some("situation_hold"),
+            if delivery == "silent" {
+                now + 45_000
+            } else {
+                now
+            },
         )?;
+        let decision_id = format!(
+            "ai-notification-{}",
+            &crate::adaptive_improvement::digest(
+                format!("{}:{}", terminal.goal_id, terminal.digest).as_bytes()
+            )[..24]
+        );
+        let recorded: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM ai_decisions WHERE id=?1)",
+                [&decision_id],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        if !recorded {
+            crate::adaptive_improvement::record_decision(
+                connection,
+                &crate::adaptive_improvement::DecisionObservation {
+                    id: decision_id,
+                    domain: crate::adaptive_improvement::Domain::Notification,
+                    scope_key: terminal.goal_id.clone(),
+                    event_seq: 0,
+                    policy_revision,
+                    candidate_fingerprint: crate::adaptive_improvement::fingerprint_for(
+                        &candidates,
+                    ),
+                    eligible_candidates: candidates,
+                    selected: delivery.to_string(),
+                    selection_mode: selection_mode.to_string(),
+                    source_refs_json:
+                        serde_json::json!({"goalId": terminal.goal_id, "digest": terminal.digest})
+                            .to_string(),
+                },
+                now,
+            )?;
+        }
     }
     if !speech_holds_tts(state) {
-        flush_unflushed(connection, conversation_id)?;
+        flush_unflushed(connection, conversation_id, now)?;
     }
     Ok(())
 }
@@ -43,19 +87,47 @@ pub(crate) fn flush_held_reports(state: &AppState, conversation_id: &str) -> Res
     }
     state.sqlite_writer.write(|connection| {
         publish(state, connection, conversation_id)?;
-        flush_unflushed(connection, conversation_id)
+        flush_unflushed(connection, conversation_id, now_ms())
     })
 }
 
-fn flush_unflushed(connection: &Connection, conversation_id: &str) -> Result<(), String> {
-    let Some(digest) = repo::unflushed_digest(connection, conversation_id)? else {
+/// Delivery wake-up for the schedule loop.  It reads the outbox rather than a
+/// foreground turn, so a completed background task does not require the user
+/// to speak again.  Each conversation is still filtered through Situation
+/// before a chat message is inserted.
+pub(crate) fn flush_all_held_reports(state: &AppState) -> Result<(), String> {
+    if speech_holds_tts(state) {
+        return Ok(());
+    }
+    let conversations = state.sqlite_readers.read(|connection| {
+        let mut statement = connection
+            .prepare("SELECT DISTINCT conversation_id FROM steward_reports WHERE flushed=0")
+            .map_err(database_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(database_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(database_error)
+    })?;
+    for conversation_id in conversations {
+        flush_held_reports(state, &conversation_id)?;
+    }
+    Ok(())
+}
+
+fn flush_unflushed(
+    connection: &Connection,
+    conversation_id: &str,
+    now_ms: i64,
+) -> Result<(), String> {
+    let Some(digest) = repo::unflushed_digest(connection, conversation_id, now_ms)? else {
         return Ok(());
     };
+    let message_id = new_id("message");
     connection
         .execute(
             "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
              VALUES(?1,?2,'assistant',?3,?4)",
-            params![new_id("message"), conversation_id, digest, now_iso()],
+            params![message_id, conversation_id, digest, now_iso()],
         )
         .map_err(database_error)?;
     connection
@@ -64,5 +136,133 @@ fn flush_unflushed(connection: &Connection, conversation_id: &str) -> Result<(),
             params![now_iso(), conversation_id],
         )
         .map_err(database_error)?;
-    repo::mark_flushed(connection, conversation_id)
+    repo::mark_flushed(connection, conversation_id, now_ms, &message_id)
+}
+
+fn notification_selection(
+    connection: &Connection,
+    goal_id: &str,
+    requested: &str,
+    now: i64,
+) -> Result<(String, &'static str, i64, Vec<String>), String> {
+    let candidates = match requested {
+        "silent" => vec!["silent".to_string()],
+        "speak" => vec!["speak".to_string()],
+        "both" => vec!["both".to_string(), "silent".to_string()],
+        _ => return Err("steward_notification_invalid".into()),
+    };
+    let rules = candidates[0].clone();
+    let settings = crate::persistence::load_role_routing_settings(connection)?;
+    let (selected, mode, revision) =
+        if settings.adaptive_improvement.enabled && settings.adaptive_improvement.notification {
+            crate::adaptive_improvement::choose(
+                connection,
+                crate::adaptive_improvement::Domain::Notification,
+                goal_id,
+                &candidates,
+                &rules,
+                now,
+            )?
+        } else {
+            (rules, "rules", 0)
+        };
+    Ok((selected, mode, revision, candidates))
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_report_is_not_flushed_before_its_delivery_deadline() {
+        let connection = rusqlite::Connection::open_in_memory().expect("db");
+        crate::persistence::schema::initialize_database(&connection).expect("schema");
+        let now = 1_000_i64;
+        repo::enqueue_report(
+            &connection,
+            crate::PRIMARY_CONVERSATION_ID,
+            "later",
+            None,
+            now + 45_000,
+        )
+        .expect("enqueue");
+        assert_eq!(
+            repo::unflushed_digest(&connection, crate::PRIMARY_CONVERSATION_ID, now).expect("read"),
+            None
+        );
+        assert_eq!(
+            repo::unflushed_digest(&connection, crate::PRIMARY_CONVERSATION_ID, now + 45_000)
+                .expect("read"),
+            Some("later".into())
+        );
+        repo::mark_flushed(&connection, crate::PRIMARY_CONVERSATION_ID, now, "message")
+            .expect("premature mark is harmless");
+        assert_eq!(
+            repo::unflushed_digest(&connection, crate::PRIMARY_CONVERSATION_ID, now + 45_000)
+                .expect("still pending"),
+            Some("later".into())
+        );
+        repo::mark_flushed(
+            &connection,
+            crate::PRIMARY_CONVERSATION_ID,
+            now + 45_000,
+            "message",
+        )
+        .expect("due mark");
+        assert_eq!(
+            repo::unflushed_digest(&connection, crate::PRIMARY_CONVERSATION_ID, now + 45_000)
+                .expect("flushed"),
+            None
+        );
+    }
+
+    #[test]
+    fn terminal_delivery_is_unique_per_task_revision_and_records_message_id() {
+        let connection = rusqlite::Connection::open_in_memory().expect("db");
+        crate::persistence::schema::initialize_database(&connection).expect("schema");
+        let terminal = repo::TerminalReport {
+            task_id: "task".into(),
+            task_revision: 4,
+            goal_id: "goal".into(),
+            notify: "silent".into(),
+            digest: "finished".into(),
+        };
+        repo::enqueue_task_report(
+            &connection,
+            crate::PRIMARY_CONVERSATION_ID,
+            &terminal,
+            None,
+            0,
+        )
+        .expect("first");
+        repo::enqueue_task_report(
+            &connection,
+            crate::PRIMARY_CONVERSATION_ID,
+            &terminal,
+            None,
+            0,
+        )
+        .expect("replay");
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM steward_reports", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 1);
+        flush_unflushed(&connection, crate::PRIMARY_CONVERSATION_ID, 0).expect("flush");
+        let state: (String, Option<String>) = connection
+            .query_row(
+                "SELECT delivery_state,message_id FROM steward_reports",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("delivery");
+        assert_eq!(state.0, "delivered");
+        assert!(state.1.is_some());
+    }
 }

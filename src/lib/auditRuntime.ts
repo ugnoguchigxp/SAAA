@@ -9,7 +9,6 @@ export type AuditEventInput = {
     | "conversation"
     | "provider"
     | "tts"
-    | "meeting"
     | "settings"
     | "voice-policy"
     | "situation";

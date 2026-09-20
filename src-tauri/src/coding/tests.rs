@@ -61,6 +61,24 @@ fn coding_single_slot_source_revision_and_cancel_are_enforced() {
         .unwrap();
     assert!(repo::authorize(&c, "job", crate::PRIMARY_CONVERSATION_ID).is_err());
 }
+
+#[test]
+fn delegated_origin_authorizes_only_while_its_task_is_active() {
+    let c = database();
+    c.execute("INSERT INTO steward_goals(id,conversation_id,origin,success_condition,status,created_at) VALUES('goal',?1,'user_explicit','report','active','1')", [crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute("INSERT INTO steward_delegations(id,goal_id,conversation_id,workspace_id,ops,budget_runs,budget_ms,notify,status,created_at) VALUES('delegation','goal',?1,'workspace','read',1,1,'silent','active','1')", [crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute("INSERT INTO steward_tasks(id,delegation_id,conversation_id,trigger_kind,source_id,dedupe_key,loop_state,created_at,updated_at) VALUES('task','delegation',?1,'start','input','task','running','1','1')", [crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute("INSERT INTO coding_jobs(id,conversation_id,source_id,workspace_id,workspace_path,settings_json,revision,session_path,state,current_run_id) VALUES('delegated-job',?1,'delegated-task','workspace','/tmp','{}',1,'/tmp/delegated-session','queued','delegated-run')", [crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute("INSERT INTO coding_runs(id,job_id,source_id,host_run_id,payload,digest,delivery,state,started_at) VALUES('delegated-run','delegated-job','delegated-task','task','inspect','digest','prepared','starting','1')", []).unwrap();
+    c.execute("INSERT INTO coding_origin_bindings(id,job_id,origin_kind,origin_id,operation_digest,created_at) VALUES('origin','delegated-job','delegated_event','task','digest','1')", []).unwrap();
+    assert!(repo::authorize(&c, "delegated-job", crate::PRIMARY_CONVERSATION_ID).is_ok());
+    c.execute(
+        "UPDATE steward_tasks SET loop_state='cancelled' WHERE id='task'",
+        [],
+    )
+    .unwrap();
+    assert!(repo::authorize(&c, "delegated-job", crate::PRIMARY_CONVERSATION_ID).is_err());
+}
 #[test]
 fn coding_replay_digest_and_event_cursor_are_bounded() {
     let c = database();
@@ -168,6 +186,31 @@ fn coding_sdk_settings_preserve_legacy_config_and_require_an_explicit_extension(
     assert!(contracts::valid_profile(&settings));
     settings.model = "unverified".into();
     assert!(!contracts::valid_profile(&settings));
+}
+
+#[test]
+fn delegated_read_test_profile_is_explicit_and_platform_bound() {
+    let mut settings = contracts::CodingSettings::default();
+    settings.profile = "delegated-read-test-macos-v1".into();
+    assert_eq!(
+        contracts::valid_profile(&settings),
+        cfg!(target_os = "macos") && std::path::Path::new("/usr/bin/sandbox-exec").is_file()
+    );
+}
+
+#[test]
+fn coding_origin_bindings_backfill_legacy_jobs_as_user_turns() {
+    let c = database();
+    job(&c);
+    super::repository::migrate(&c).unwrap();
+    let origin: (String, String) = c
+        .query_row(
+            "SELECT origin_kind,origin_id FROM coding_origin_bindings WHERE job_id='job'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(origin, ("user_turn".into(), "input".into()));
 }
 
 #[path = "e2e/tests.rs"]

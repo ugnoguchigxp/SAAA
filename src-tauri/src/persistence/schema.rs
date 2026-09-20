@@ -13,8 +13,8 @@ use rusqlite::{params, Connection};
 
 /// Current schema. 26 added steward tables and generated-capability generation/inspection
 /// tables. 27 dropped Meeting session tables. 28 adds the role-routing ledger; 29 adds its
-/// local learning ledger.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 29;
+/// local learning ledger. 30 adds the schedule ledger (CREATE IF NOT EXISTS only).
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 30;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -186,6 +186,16 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::tool_selection::schema::migrate(&transaction)?;
     crate::role_routing::schema::migrate(&transaction)?;
     crate::role_routing::learning::schema::migrate(&transaction)?;
+    crate::role_routing::recovery::reconcile_startup_in_transaction(
+        &transaction,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0),
+    )
+    .map_err(rusqlite::Error::InvalidParameterName)?;
+    crate::adaptive_improvement::migrate(&transaction)?;
+    crate::schedule::migrate(&transaction)?;
     crate::role_routing::repository::capture_current_policy(
         &transaction,
         std::time::SystemTime::now()

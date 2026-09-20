@@ -262,3 +262,106 @@ async fn x01_a_pre_cancelled_run_never_starts_a_host_process() {
     assert_eq!(value["error"]["code"], "cancelled", "{result}");
     assert_eq!(env.call_count(&revision.revision_id), 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn adapter_conversation_path_records_the_call_owner() {
+    let env = TestEnv::start(true);
+    let (_revision, snapshot) = active_snapshot(&env).await;
+    let tool_call = call(
+        &snapshot,
+        "provider-call-owner",
+        json!({ "enabled": true, "suspended": false }),
+    );
+    let actor = crate::generated_capabilities::contracts::CallActor {
+        principal_id: "principal-adapter".into(),
+        conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
+        project_id: None,
+        run_id: "run-adapter-owner".into(),
+    };
+    let result = tools::execute_with_actor(
+        Some(env.service.as_ref()),
+        &snapshot,
+        &tool_call,
+        "conversation",
+        Some(actor),
+        std::time::Duration::from_secs(5),
+        &crate::RunCancellation::default(),
+    )
+    .await;
+    assert!(
+        content(&result)["ok"].as_bool().unwrap_or(false),
+        "{result}"
+    );
+    assert_eq!(
+        env.scalar(
+            "SELECT COUNT(*) FROM generated_capability_call_owners \
+             WHERE principal_id='principal-adapter' AND run_id='run-adapter-owner'"
+        ),
+        1
+    );
+    assert_eq!(
+        env.scalar(
+            "SELECT COUNT(*) FROM generated_capability_calls c \
+             JOIN generated_capability_call_owners o ON o.call_id = c.id \
+             WHERE c.origin='conversation' AND o.principal_id='principal-adapter'"
+        ),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn adapter_mcp_backend_records_origin_and_owner() {
+    use crate::generated_capabilities::contracts::CallActor;
+    use crate::tool_selection::backends::llang::LlangBackend;
+    use crate::tool_selection::backends::{BackendRequest, TechnicalStatus, ToolBackend};
+
+    let env = TestEnv::start(true);
+    let (revision, _snapshot) = active_snapshot(&env).await;
+    let resolved = env
+        .service
+        .resolve_active(&revision.capability_id)
+        .expect("active revision");
+    let binding = json!({
+        "capabilityId": resolved.capability_id,
+        "revisionId": resolved.revision_id,
+        "packageHash": resolved.package_hash,
+        "contractHash": resolved.contract_hash,
+        "catalogEpoch": resolved.catalog_epoch,
+        "inputFields": resolved.input_fields(),
+    });
+    let request = BackendRequest {
+        call_id: "call-mcp-owner".into(),
+        tool_id: "tool-mcp-owner".into(),
+        revision_id: resolved.revision_id.clone(),
+        backend_key: "llang".into(),
+        binding,
+        arguments: json!({ "enabled": true, "suspended": false }),
+        timeout: std::time::Duration::from_secs(5),
+        origin: "mcp",
+        actor: Some(CallActor {
+            principal_id: "principal-mcp".into(),
+            conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
+            project_id: None,
+            run_id: "run-mcp-owner".into(),
+        }),
+    };
+    let backend = LlangBackend::new(Some(env.service.clone()));
+    let outcome = backend
+        .invoke(request, &crate::RunCancellation::default())
+        .await;
+    assert_eq!(outcome.status, TechnicalStatus::Succeeded, "{outcome:?}");
+    assert_eq!(
+        env.scalar(
+            "SELECT COUNT(*) FROM generated_capability_calls \
+             WHERE id='call-mcp-owner' AND origin='mcp'"
+        ),
+        1
+    );
+    assert_eq!(
+        env.scalar(
+            "SELECT COUNT(*) FROM generated_capability_call_owners \
+             WHERE call_id='call-mcp-owner' AND principal_id='principal-mcp'"
+        ),
+        1
+    );
+}

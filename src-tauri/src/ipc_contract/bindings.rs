@@ -24,11 +24,14 @@ pub fn typescript_bindings() -> String {
          export type RuntimeFailureCode = (typeof runtimeFailureCodes)[number];\n\n\
          {}\n\n\
          {}\n\n\
+         {}\n\n\
+         // Role-routing reconnect projections.\n\n\
          {}\n",
         export_declaration::<ConversationMessage>(),
         export_declaration::<VoicePresentationDecision>(),
         export_declaration::<ConversationVoicePolicySnapshot>(),
         export_declaration::<RuntimeEvent>(),
+        crate::role_routing::ipc::typescript_bindings(),
     )
 }
 

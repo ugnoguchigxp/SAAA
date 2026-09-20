@@ -71,6 +71,7 @@ fn compose(
         Some(Arc::new(fixture.service())),
         access.principal,
         access.policy_revision,
+        None,
         RUN_ID,
         &scope,
         window(limit, status),
@@ -143,8 +144,12 @@ fn m3b_01_project_counts_and_refs_come_from_scope() {
         1
     );
     let source = include_str!("turn.rs");
-    assert!(source.contains("graph_request: None"));
-    assert!(!source.contains("ExactName"));
+    // The production turn never builds a seed literal itself; it resolves the graph request from
+    // the saved input via the parser (G1) and delegates the explicit-question inspection to the
+    // source helper.
+    assert!(source.contains("question_input::read"));
+    assert!(source.contains("prepare_explicit_question_candidate"));
+    assert!(!source.contains("WorldSeed::ExactName"));
 }
 
 #[test]
@@ -164,6 +169,7 @@ fn m3b_06_memory_off_skips_world() {
         Some(Arc::new(fixture.service())),
         "",
         fixture.access().policy_revision,
+        None,
         RUN_ID,
         &scope,
         window(8_192, "green"),

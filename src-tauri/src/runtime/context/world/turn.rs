@@ -1,12 +1,16 @@
 //! Production WorldFrame compose for conversation.respond (M3B).
 use super::super::broker::{self, BrokerInput, Envelope};
 use super::super::source::Candidate;
+use super::question_input;
 use super::source::{
-    omission_from_frame, omission_from_validity, prepare_candidate, with_kind, WorldOmission,
-    WorldSourceOutcome, WorldSourceRequest, WORLD_KIND,
+    omission_from_frame, omission_from_validity, prepare_candidate,
+    prepare_explicit_question_candidate, with_kind, WorldOmission, WorldSourceOutcome,
+    WorldSourceRequest, WORLD_KIND,
 };
 use crate::memory::context_window::ContextWindow;
-use crate::memory::personal_state::world::runtime_frame::{FrameRequest, WorldFrameService};
+use crate::memory::personal_state::world::runtime_frame::{
+    FrameRequest, GraphRequest, WorldFrameService,
+};
 use crate::runtime::context::scope::ScopeSnapshot;
 use crate::AppState;
 use saaa_personal_state_core::world::runtime_frame::{RuntimeKind, RuntimeRef, MAX_RUNTIME_REFS};
@@ -19,9 +23,7 @@ pub(crate) use super::live::{for_record, observe_receipt, WorldBlocks, WorldLive
 pub(crate) struct TurnCompose {
     pub(crate) envelope: Envelope,
     pub(crate) world: Option<WorldLive>,
-    #[cfg(test)]
     pub(crate) compose_count: usize,
-    #[cfg(test)]
     pub(crate) omission: Option<WorldOmission>,
 }
 
@@ -34,20 +36,24 @@ pub(crate) fn compose_for_app(
     allowed: BTreeSet<String>,
 ) -> Result<TurnCompose, String> {
     if !crate::memory::control_plane::memory_enabled() {
-        return compose_parts(false, None, "", 0, run_id, scope, base, existing, allowed);
+        return compose_parts(false, None, "", 0, None, run_id, scope, base, existing, allowed);
     }
     let Some((principal, policy_revision)) = personal_access(&state.sqlite_readers) else {
-        return compose_parts(true, None, "", 0, run_id, scope, base, existing, allowed);
+        return compose_parts(true, None, "", 0, None, run_id, scope, base, existing, allowed);
     };
     let service = Arc::new(WorldFrameService::new(
         state.sqlite_readers.clone(),
         Arc::new(crate::memory::personal_state::now),
     ));
+    // C2: the graph question is resolved from the saved current input for this run, never from a
+    // caller-supplied or provider-supplied string.
+    let graph_request = question_input::read(state, run_id).graph_request();
     compose_parts(
         true,
         Some(service),
         &principal,
         policy_revision,
+        graph_request,
         run_id,
         scope,
         base,
@@ -77,6 +83,7 @@ pub(crate) fn compose_parts(
     service: Option<Arc<WorldFrameService>>,
     principal: &str,
     policy_revision: u64,
+    graph_request: Option<GraphRequest>,
     run_id: &str,
     scope: &ScopeSnapshot,
     base: ContextWindow,
@@ -119,7 +126,7 @@ pub(crate) fn compose_parts(
             project_scope: &project,
             access,
             runtime_refs: refs,
-            graph_request: None,
+            graph_request,
             max_bytes: 8_192,
             ttl_ms: 1_000,
         },
@@ -188,13 +195,28 @@ fn prepare_live(
     request: FrameRequest<'_>,
     scope: &ScopeSnapshot,
 ) -> WorldSourceOutcome {
-    match prepare_candidate(
-        service,
-        WorldSourceRequest {
-            frame_request: request,
-        },
-        scope,
-    ) {
+    let explicit_question = request
+        .graph_request
+        .as_ref()
+        .is_some_and(|graph| graph.explicit_question);
+    let prepared = if explicit_question {
+        prepare_explicit_question_candidate(
+            service,
+            WorldSourceRequest {
+                frame_request: request,
+            },
+            scope,
+        )
+    } else {
+        prepare_candidate(
+            service,
+            WorldSourceRequest {
+                frame_request: request,
+            },
+            scope,
+        )
+    };
+    match prepared {
         WorldSourceOutcome::Omitted(omission) => WorldSourceOutcome::Omitted(omission),
         WorldSourceOutcome::Ready(ready) => WorldSourceOutcome::Ready(with_kind(ready, WORLD_KIND)),
     }
@@ -273,14 +295,10 @@ fn done(
     compose_count: usize,
     omission: Option<WorldOmission>,
 ) -> TurnCompose {
-    #[cfg(not(test))]
-    let _ = (compose_count, omission);
     TurnCompose {
         envelope,
         world,
-        #[cfg(test)]
         compose_count,
-        #[cfg(test)]
         omission,
     }
 }

@@ -4,33 +4,28 @@ use super::ledger::{Entry, FireResult};
 pub(crate) enum Decision {
     Act,
     Hold,
+    Defer,
     Ask,
-    Drop(&'static str),
 }
 
-pub(crate) fn decide(entry: &Entry, meeting_hold: bool, generation_busy: bool) -> Decision {
-    if entry.delegation_ref.as_ref().map(|value| value.trim().is_empty()) != Some(false) {
+pub(crate) fn decide(entry: &Entry, situation_hold: bool, generation_busy: bool) -> Decision {
+    if !entry.may_act() {
         return Decision::Ask;
     }
-    if meeting_hold {
+    if situation_hold {
         return Decision::Hold;
     }
     if generation_busy {
-        return Decision::Hold;
-    }
-    if matches!(entry.kind, super::ledger::Kind::HoldUntil) && meeting_hold {
-        return Decision::Hold;
+        return Decision::Defer;
     }
     Decision::Act
 }
 
-pub(crate) fn fire_result(decision: &Decision, generation_busy: bool) -> FireResult {
+pub(crate) fn fire_result(decision: &Decision) -> FireResult {
     match decision {
         Decision::Act => FireResult::Started,
-        Decision::Hold if generation_busy => FireResult::Deferred,
-        Decision::Hold => FireResult::Deferred,
+        Decision::Hold | Decision::Defer => FireResult::Deferred,
         Decision::Ask => FireResult::NoDelegation,
-        Decision::Drop(_) => FireResult::SuppressedMeeting,
     }
 }
 
@@ -60,11 +55,11 @@ mod tests {
     }
 
     #[test]
-    fn sl_07_ask_without_delegation_hold_on_meeting() {
+    fn sl_07_ask_without_delegation_hold_on_situation() {
         assert_eq!(decide(&entry(None), false, false), Decision::Ask);
         assert_eq!(decide(&entry(Some("")), false, false), Decision::Ask);
         assert_eq!(decide(&entry(Some("del")), true, false), Decision::Hold);
-        assert_eq!(decide(&entry(Some("del")), false, true), Decision::Hold);
+        assert_eq!(decide(&entry(Some("del")), false, true), Decision::Defer);
         assert_eq!(decide(&entry(Some("del")), false, false), Decision::Act);
     }
 }

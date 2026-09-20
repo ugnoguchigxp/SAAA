@@ -32,7 +32,6 @@ pub(crate) enum Origin {
 pub(crate) enum FireResult {
     Started,
     Deferred,
-    SuppressedMeeting,
     NoDelegation,
     Error(String),
 }
@@ -54,6 +53,14 @@ pub(crate) struct Entry {
     pub(crate) fired_at: Option<i64>,
     pub(crate) fire_result: Option<FireResult>,
     pub(crate) payload_id: Option<String>,
+}
+
+impl Entry {
+    pub(crate) fn may_act(&self) -> bool {
+        self.delegation_ref
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+    }
 }
 
 pub(crate) fn can_transition(from: Status, to: Status) -> bool {
@@ -143,7 +150,6 @@ impl FireResult {
         match self {
             Self::Started => "started".into(),
             Self::Deferred => "deferred".into(),
-            Self::SuppressedMeeting => "suppressed_meeting".into(),
             Self::NoDelegation => "no_delegation".into(),
             Self::Error(code) => format!("error:{code}"),
         }
@@ -152,7 +158,7 @@ impl FireResult {
         match value {
             "started" => Ok(Self::Started),
             "deferred" => Ok(Self::Deferred),
-            "suppressed_meeting" => Ok(Self::SuppressedMeeting),
+            "suppressed_meeting" => Ok(Self::Deferred),
             "no_delegation" => Ok(Self::NoDelegation),
             other if other.starts_with("error:") => Ok(Self::Error(other[6..].into())),
             _ => Err("invalid-fire-result".into()),
@@ -245,19 +251,34 @@ pub(crate) fn supersede(
     if new_entry.supersedes.as_deref() != Some(old.id.as_str()) {
         return Err("supersede-link-required".into());
     }
-    let tx = connection.unchecked_transaction().map_err(database_error)?;
-    let marked = tx
-        .execute(
-            "UPDATE schedule_entries SET status='superseded' WHERE id=?1 AND revision=?2 AND status=?3",
-            params![old.id, old.revision, old.status.as_str()],
-        )
+    connection
+        .execute("SAVEPOINT schedule_supersede", [])
         .map_err(database_error)?;
-    if marked != 1 {
-        return Err("supersede-cas-failed".into());
+    let result = (|| {
+        let marked = connection
+            .execute(
+                "UPDATE schedule_entries SET status='superseded' WHERE id=?1 AND revision=?2 AND status=?3",
+                params![old.id, old.revision, old.status.as_str()],
+            )
+            .map_err(database_error)?;
+        if marked != 1 {
+            return Err("supersede-cas-failed".into());
+        }
+        insert(connection, new_entry)
+    })();
+    match result {
+        Ok(()) => {
+            connection
+                .execute("RELEASE schedule_supersede", [])
+                .map_err(database_error)?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = connection.execute("ROLLBACK TO schedule_supersede", []);
+            let _ = connection.execute("RELEASE schedule_supersede", []);
+            Err(error)
+        }
     }
-    insert(&tx, new_entry)?;
-    tx.commit().map_err(database_error)?;
-    Ok(())
 }
 
 pub(crate) fn withdraw(connection: &Connection, id: &str, revision: i64) -> Result<bool, String> {
@@ -289,17 +310,14 @@ pub(crate) fn get(connection: &Connection, id: &str) -> Result<Option<Entry>, St
         .map_err(database_error)
 }
 
-pub(crate) fn due(
-    connection: &Connection,
-    now: i64,
-    limit: i64,
-) -> Result<Vec<Entry>, String> {
+pub(crate) fn due(connection: &Connection, now: i64, limit: i64) -> Result<Vec<Entry>, String> {
     let mut statement = connection
         .prepare(
             "SELECT id, kind, subject_ref, scope_ref, due_at, window_end_at, status, origin,
                     delegation_ref, revision, supersedes, created_at, fired_at, fire_result, payload_id
              FROM schedule_entries
              WHERE status='scheduled' AND due_at<=?1
+               AND (window_end_at IS NULL OR window_end_at>=?1)
                AND NOT EXISTS (
                  SELECT 1 FROM calendar_observations o
                  WHERE o.entry_id=schedule_entries.id AND o.handled='asked'
@@ -311,8 +329,7 @@ pub(crate) fn due(
     let rows = statement
         .query_map(params![now, limit], row_entry)
         .map_err(database_error)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(database_error)
+    rows.collect::<Result<Vec<_>, _>>().map_err(database_error)
 }
 
 pub(crate) fn list_all(connection: &Connection, limit: i64) -> Result<Vec<Entry>, String> {
@@ -326,8 +343,7 @@ pub(crate) fn list_all(connection: &Connection, limit: i64) -> Result<Vec<Entry>
     let rows = statement
         .query_map([limit], row_entry)
         .map_err(database_error)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(database_error)
+    rows.collect::<Result<Vec<_>, _>>().map_err(database_error)
 }
 
 pub(crate) fn lineage(connection: &Connection, id: &str) -> Result<Vec<String>, String> {
@@ -438,9 +454,14 @@ mod tests {
     #[test]
     fn sl_01_rejects_reverse_and_requires_supersedes() {
         assert!(!can_transition(Status::Fired, Status::Scheduled));
+        assert!(!can_transition(Status::Fired, Status::Firing));
+        assert!(!can_transition(Status::Missed, Status::Scheduled));
         assert!(!can_transition(Status::Withdrawn, Status::Scheduled));
+        assert!(!can_transition(Status::Superseded, Status::Firing));
         assert!(can_transition(Status::Scheduled, Status::Firing));
         assert!(can_transition(Status::Scheduled, Status::Withdrawn));
+        assert!(can_transition(Status::Firing, Status::Fired));
+        assert!(can_transition(Status::Firing, Status::Missed));
         let connection = db();
         let mut replacement = sample("e1", Status::Scheduled);
         replacement.supersedes = None;
@@ -449,13 +470,13 @@ mod tests {
         assert!(insert(&connection, &bad).is_err());
         bad.supersedes = Some("e0".into());
         insert(&connection, &bad).expect("linked superseded");
-        assert!(sample("e1", Status::Scheduled).delegation_ref.is_some());
-        let ask = sample("e2", Status::Scheduled);
-        assert!(ask.delegation_ref.is_some());
+        assert!(sample("e1", Status::Scheduled).may_act());
         let mut none = sample("e3", Status::Scheduled);
         none.delegation_ref = None;
         insert(&connection, &none).unwrap();
-        assert!(get(&connection, "e3").unwrap().unwrap().delegation_ref.is_none());
+        let stored = get(&connection, "e3").unwrap().unwrap();
+        assert!(stored.delegation_ref.is_none());
+        assert!(!stored.may_act());
     }
 
     #[test]
@@ -482,7 +503,11 @@ mod tests {
             Status::Superseded
         );
         assert_eq!(
-            get(&connection, "new").unwrap().unwrap().supersedes.as_deref(),
+            get(&connection, "new")
+                .unwrap()
+                .unwrap()
+                .supersedes
+                .as_deref(),
             Some("old")
         );
     }
@@ -495,9 +520,23 @@ mod tests {
             entry.due_at = 100 + index;
             insert(&connection, &entry).unwrap();
         }
-        let due = due(&connection, 131, 32).unwrap();
-        assert_eq!(due.len(), 32);
-        assert!(due.windows(2).all(|pair| pair[0].due_at <= pair[1].due_at));
+        let due_rows = due(&connection, 131, 32).unwrap();
+        assert_eq!(due_rows.len(), 32);
+        assert!(due_rows
+            .windows(2)
+            .all(|pair| pair[0].due_at <= pair[1].due_at));
         assert_eq!(lineage(&connection, "e0").unwrap(), vec!["e0".to_string()]);
+        connection
+            .execute(
+                "INSERT INTO calendar_observations(
+                   id,event_id,entry_id,observed_at,remote_etag,diff_kind,handled
+                 ) VALUES('o0','ev','e0',1,'e','title_edited','asked')",
+                [],
+            )
+            .unwrap();
+        assert!(due(&connection, 131, 32)
+            .unwrap()
+            .iter()
+            .all(|entry| entry.id != "e0"));
     }
 }

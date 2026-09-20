@@ -1,4 +1,4 @@
-use super::{holds_speech, inspect_tts_hold, speech_holds_tts};
+use super::{holds_speech, inspect_tts_hold, speech_holds_runtime, speech_holds_tts};
 use crate::ipc_contract::RuntimeEvent;
 use crate::persistence::schema::initialize_database;
 use crate::runtime::event_hub::RuntimeEventSender;
@@ -136,6 +136,17 @@ fn st_02_holds_only_meeting_ignore_or_observe() {
         .situation
         .set_scene_attention_for_test("MEETING", "RESPOND");
     assert!(!speech_holds_tts(&state));
+}
+
+#[test]
+fn wd_11_queue_boundary_reads_the_latest_situation_hold() {
+    let state = state();
+    let runtime = state.situation.clone();
+    assert!(!speech_holds_runtime(&runtime));
+    state
+        .situation
+        .set_scene_attention_for_test("MEETING", "OBSERVE");
+    assert!(speech_holds_runtime(&runtime));
 }
 
 #[test]

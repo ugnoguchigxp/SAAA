@@ -21,9 +21,17 @@ import { defaultSettingsDraft } from "./settingsDefaults";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import { RoleRoutingSection } from "./RoleRoutingSection";
+import { ScheduleSection } from "./ScheduleSection";
 import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 
-type SettingsTab = "general" | "connection" | "providers" | "routing" | "voice" | "security";
+type SettingsTab =
+  | "general"
+  | "connection"
+  | "providers"
+  | "routing"
+  | "voice"
+  | "security"
+  | "schedule";
 type SaveNotice =
   | { kind: "saved"; cleanupFailures: number; savedAt: number }
   | { kind: "error"; message: string };
@@ -71,6 +79,11 @@ export function SettingsPage({
       detail: t("settings.tabs.providers.detail"),
     },
     { id: "routing", label: "Role routing", detail: "モデルの役割と学習" },
+    {
+      id: "schedule",
+      label: t("settings.tabs.schedule.label"),
+      detail: t("settings.tabs.schedule.detail"),
+    },
     { id: "voice", label: t("settings.tabs.voice.label"), detail: t("settings.tabs.voice.detail") },
     {
       id: "security",
@@ -232,9 +245,12 @@ export function SettingsPage({
           {activeTab === "routing" && (
             <RoleRoutingSection
               settings={draft.roleRouting}
+              providers={draft.providers}
+              codex={draft.codex}
               onChange={(roleRouting) => changeDraft((current) => ({ ...current, roleRouting }))}
             />
           )}
+          {activeTab === "schedule" && <ScheduleSection />}
           {activeTab === "voice" && (
             <VoiceSettingsSection
               voice={{ ...draft.voice, listeningEnabled: voiceListeningEnabled }}

@@ -23,6 +23,7 @@ export function CodingConnectionFields({
           }
         >
           <option value="trusted-local-v1">pi標準</option>
+          <option value="delegated-read-test-macos-v1">委譲調査・テスト（macOS制限）</option>
           <option value="codex-sdk-v1">Codex SDK</option>
         </select>
       </label>

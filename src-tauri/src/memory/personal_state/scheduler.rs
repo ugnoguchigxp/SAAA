@@ -24,3 +24,10 @@ pub async fn foreground() -> tokio::sync::MutexGuard<'static, ()> {
     interrupt();
     SLOT.lock().await
 }
+pub fn generation_slot_busy() -> bool {
+    SLOT.try_lock().is_err()
+}
+#[cfg(test)]
+pub fn occupy_for_test() -> tokio::sync::MutexGuard<'static, ()> {
+    SLOT.blocking_lock()
+}

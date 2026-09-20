@@ -9,6 +9,11 @@ impl RequestGeneration {
         calls: usize,
         include_world: bool,
     ) -> Result<Self, Failure> {
+        crate::runtime::context::generation_inputs::verify_required_wire(
+            body,
+            context.context_sources,
+        )
+        .map_err(|_| Failure::Internal)?;
         let request_payload = serde_json::to_vec(body).map_err(|_| Failure::Internal)?;
         let oversized =
             request_payload.len() > crate::runtime::context::generation::MAX_PROVIDER_REQUEST_BYTES;

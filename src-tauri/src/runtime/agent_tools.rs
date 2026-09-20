@@ -246,6 +246,7 @@ pub fn agent_tool_definitions(
 #[cfg(test)]
 pub fn is_supported_agent_tool(name: &str) -> bool {
     crate::coding::contracts::NAMES.contains(&name)
+        || crate::steward::tools::NAMES.contains(&name)
         || name == RECALL_TOOL_NAME
         || is_typed_recall_tool(name)
         || crate::runtime::web_fetch::is_web_fetch_tool(name)

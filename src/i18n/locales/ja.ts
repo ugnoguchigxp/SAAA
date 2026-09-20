@@ -200,6 +200,7 @@ export const ja = {
         detail: "ローカル・クラウドのHTTP LLM・ASR・TTS",
       },
       voice: { label: "音声とデバイス", detail: "常時待ち受けとオーディオ" },
+      schedule: { label: "期限台帳", detail: "期限の発火とカレンダー投影" },
       security: { label: "プライバシーとセキュリティ", detail: "ローカル優先の制御" },
     },
     general: {
@@ -227,6 +228,16 @@ export const ja = {
       enabledCount: "{{count}}件が有効",
       listening: "待ち受け",
       alwaysOn: "常時オン",
+    },
+    schedule: {
+      title: "期限台帳",
+      help: "既定はオフです。時計はSAAAが持ち、Google Calendarは表示面です。",
+      enable: "期限tickを有効にする",
+      calendar: "Google Calendarへ投影する",
+      calendarId: "カレンダーID",
+      connected: "カレンダー接続済み",
+      disconnected: "カレンダー未接続",
+      lastError: "直前のカレンダーエラー: {{code}}",
     },
     security: {
       credentials: "認証情報",
@@ -376,7 +387,7 @@ export const ja = {
     automatic: "自動",
     localVad: "ローカルVAD",
     permissionHelp:
-      "マイクボタンまたはこのスイッチをオンにした時だけ、初回のmacOSマイク許可を求めます。ミーティング・応答の読み上げ中は自動的に一時停止し、終了後に再開します。",
+      "マイクボタンまたはこのスイッチをオンにした時だけ、初回のmacOSマイク許可を求めます。取り込み中の場面や応答の読み上げ中は自動的に一時停止し、終了後に再開します。",
     audioDevices: "オーディオデバイス",
     inputDevice: "入力デバイス",
     unavailableDevice: "以前の選択（利用不可）",
@@ -391,7 +402,7 @@ export const ja = {
     silenceTimeout: "無音タイムアウト（ミリ秒）",
     languages: "使用する言語",
     languagesHelp:
-      "ASRは言語を自動判定します。ここに登録していない言語、または判定できない音声は会話や議事録へ送りません。",
+      "ASRは言語を自動判定します。ここに登録していない言語、または判定できない音声は会話へ送りません。",
     languagesAria: "使用する言語",
     autoSpeak: "応答を音声で再生する",
     profile: {
@@ -409,7 +420,7 @@ export const ja = {
       recordingGuidance:
         "全文を読み切る必要はありません。文章の途中でも、録音が自動停止するまで長い間を空けずに普段どおりの声で読み続けてください。録音は{{seconds}}秒以上です。",
       inputLevel: "入力レベル",
-      blocked: "会話録音、読み上げ、またはミーティングを停止してから登録してください。",
+      blocked: "会話録音または読み上げを停止してから登録してください。",
       sample: "サンプル {{number}} · {{duration}}秒 · AEC {{aec}}",
       onlyMyVoice: "文字起こしを自分の声だけに限定する（判定不能時は送信しない）",
       transcriptionScope: "文字起こし対象",

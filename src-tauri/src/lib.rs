@@ -17,6 +17,7 @@ use std::{
 };
 use tauri::Manager;
 
+mod adaptive_improvement;
 mod app_paths;
 mod backup;
 mod coding;
@@ -63,7 +64,7 @@ use persistence::schema::initialize_database;
 use persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
 pub(crate) use providers::session_store::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session,
-    persist_conversation_success,
+    persist_conversation_success, persist_conversation_success_with_state,
 };
 pub(crate) use providers::stream::*;
 pub(crate) use redact::{bounded_text, redact_runtime_text};
@@ -589,7 +590,22 @@ pub fn run() {
                 generated_tools,
                 tool_selection,
                 mcp_server: Mutex::new(mcp_server),
+                schedule: Arc::new(schedule::Handle::default()),
             });
+            let recovery_now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0);
+            app.state::<AppState>()
+                .sqlite_writer
+                .write(|connection| {
+                    role_routing::recovery::reconcile_startup(connection, recovery_now_ms)
+                        .map(|_| ())
+                })
+                .map_err(|error| format!("role-routing startup recovery: {error}"))?;
+            adaptive_improvement::start_worker(app.state::<AppState>().sqlite_writer.clone());
+            schedule::hydrate(&app.state::<AppState>());
+            schedule::start_loop(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

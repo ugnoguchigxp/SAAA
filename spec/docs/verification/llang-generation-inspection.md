@@ -8,14 +8,14 @@
 | 区分 | 結果 |
 | --- | --- |
 | C01 kit / C02 設定契約 / C03 DDL repository | 実装・試験済み |
-| C04 actor 伝播 | 実装・試験済み（所有権は call と同一 transaction、M2A/MCP/通常会話の actor 伝播、owner 検査） |
+| C04 actor 伝播 | 実装・試験済み（所有権は call と同一 transaction。会話 `execute_with_actor` と MCP `LlangBackend` の origin/owner を end-to-end で検査） |
 | C05 inspection / C06 比較 | 実装・offline合格。保存済み成果物の表示は kit 無し。on-demand kit CLI は設定時のみ（live） |
-| C07 公開同期 | 実装・offline合格（`activate_and_publish` 1tx。suspend は同一 transaction で catalog 非公開） |
-| C08 retire/復帰 | 実装・offline合格。active は先に suspend。過去 inspect は残る |
+| C07 公開同期 | 実装・offline合格（`activate_and_publish` 1tx。suspend は同一 transaction で catalog 非公開。Activate/Catalog/Grant/Job の各境界 rollback と再起動非公開を試験） |
+| C08 retire/復帰 | 実装・offline合格。active は先に suspend。旧版は `restore_revision` で再検証可能化→再検証→再公開して復帰。過去 inspect は残る |
 | C09/C10 生成オーケストレーション | 実装・offline合格（fake/fixture。cancel→cancelled、timeout→failed、epoch conflict。live kit は C14） |
 | C11/C12 会話入口と表示 | 実装・offline合格（command 経路、未記録 call は成功を装わない、他人拒否、改変 TS は integrity） |
-| C13 通し試験 | offline合格（A 生成→invoke→inspect→B 更新で A の TS/revision 不変。`gc_02`） |
-| C14 実モデル live 実証 | **live未検証**（credential / 実 kit。fake で埋めない） |
+| C13 通し試験 | offline合格（A 生成→invoke→inspect→B 更新で A の TS/revision 不変 `gc_02`。suspend→再検証→復帰→MCP invoke と保存済み inspection を `gc_07` で確認） |
+| C14 実モデル live 実証 | **live未検証**。harness は `#[ignore]`（`c14_live_…`）で実装済み。実 credential / 実 kit で実行する |
 | **全体（G01〜G12）** | 決定的（offline）範囲は GC-00〜07 で閉じた。G11/C14 のみ live未検証 |
 
 計画 11 章のとおり、未達を成功として報告しない。汎用 ABI・host API・WASI 等の後続項目は
@@ -36,8 +36,8 @@
 
 | コマンド | 初回 | 最終 |
 | --- | --- | --- |
-| `cargo test --lib generated_capabilities` | 78 passed | 128 passed / 0 failed |
-| `cargo test --lib rw_` | — | 8 passed / 0 failed |
+| `cargo test --lib generated_capabilities` | 78 passed | 134 passed / 0 failed / 1 ignored（C14 live） |
+| `cargo test --lib rw_` | — | 11 passed / 0 failed |
 | `cargo test --lib gc_` | — | 9 passed / 0 failed |
 | `cargo test --lib tool_selection` | （既存） | 183 passed / 0 failed |
 | `cargo test --lib providers` | （既存） | 80 passed / 0 failed / 2 ignored |
@@ -94,7 +94,9 @@
   inspection で not-authorized。
 - `tool_selection::invoke_with_origin` を追加し、gateway の conversation/MCP で origin を固定。
   M2A 直接経路（`generated_capabilities::tools::execute_with_actor`）も actor を渡す。
-- 試験: owner の FK/記録（repository test）。会話/MCP からの end-to-end 所有権確認は未実装。
+- 試験: owner の FK/記録（repository test）。会話経路（`tools::execute_with_actor`）と MCP 経路
+  （`LlangBackend` + `BackendRequest{origin:"mcp", actor}`）で `origin` と owner 行を作り、
+  `generated_capability_calls` と owner を join して確認する。
 
 ### C05（T03）inspection
 
@@ -124,7 +126,10 @@
 
 - `repository::retire` と `lifecycle::retire_revision`、`CapabilityService::retire_revision` を追加。
   active の retire を拒否、suspend→retire、catalog epoch 整合、package/履歴は保持。
-- 試験: active 拒否、suspend→retire、stale epoch 拒否。
+- 復帰: `repository::reopen_suspended`（`suspended`→`validated`、epoch 前進）と
+  `lifecycle::restore_revision` を追加。suspended は直接 verify できない契約（`v03`）を保ったまま、
+  再検証可能化→`verify_candidate`→`activate_and_publish` で復帰する。retire は不可逆。
+- 試験: active 拒否、suspend→retire、stale epoch 拒否、suspend→復帰（`gc_07`）。
 
 ### C09（T06）生成の部品
 
@@ -165,8 +170,10 @@
 
 ### C13 通し
 
-- `generation_flow.rs` の `rw_13` に加え `generation_closeout.rs` の `gc_02`〜`gc_06`。
+- `generation_flow.rs` の `rw_13` に加え `generation_closeout.rs` の `gc_02`〜`gc_07`。
 - A 生成→会話 invoke→inspect→B 更新で、同じ A call の TypeScript と revision は変わらない。
+- `gc_07`: A 生成→会話 invoke→inspect→suspend（catalog 非公開）→`restore_revision`→再検証→
+  再公開→MCP `LlangBackend` で invoke→保存済み inspection を再取得。停止と復帰を 1 ループで確認する。
 - 試験は fake + fixture。credential 0。
 
 ## 4. 生成 job と実行 ID の対応
@@ -180,6 +187,9 @@
 
 未実施。C14 は実 provider credential と接続済み kit を要する。本実装は fake generator と prompt
 builder の決定試験までで、live 実行は行っていない。model 名・usage・latency は記録しない。
+live lane は `generation_closeout.rs::c14_live_generate_new_and_update_with_a_real_model` として
+`#[ignore]` で実装済みで、`SAAA_LLANG_GENERATION_CONFIG`（信頼 kit）と実 credential を設定して
+`cargo test --lib c14_live -- --ignored --nocapture` で実行する。
 
 ## 6. 独立ケース
 
@@ -211,7 +221,7 @@ builder の決定試験までで、live 実行は行っていない。model 名�
 
 | 未達 | 内容 | 次の一手 |
 | --- | --- | --- |
-| C14 / G11 実モデル | live lane の実モデル生成と usage/latency | kit 配置と実 credential。fake で代替しない |
+| C14 / G11 実モデル | live lane の実モデル生成と usage/latency。harness は `#[ignore]` で実装済み | 信頼 kit 配置と実 credential を設定して `cargo test --lib c14_live -- --ignored --nocapture`。fake で代替しない |
 | Clippy 全ターゲット | `cargo clippy --lib -- -D warnings` は既存 ASR `dead_code` で赤。生成・検査の新規 warning は 0 | ASR 側の収束後。`#![allow(dead_code)]` では通さない |
 | inspection の性能 | 最大 256 入力の Wasm 比較を逐次実行 | 将来、kit 側の比較 worker |
 
@@ -242,6 +252,10 @@ builder の決定試験までで、live 実行は行っていない。model 名�
 | R-10 | 未使用の helper/field（`completed_job_ids`、`coverage_marker`、`inspection_error`、`supported_profile`、`GenerationReceipt::refused`、`INSPECT_DIR`）が残っていた | 削除、または意味のある検証に置換（kit `commands` 検証、`within_budget` 利用） | 既存試験 |
 | R-11 | project 付き call の拒否試験がなかった（G10） | project 不一致拒否と一致時成功の試験を追加 | `a_project_scoped_call_requires_the_same_project` |
 | R-12 | 表示上限判定が事前見積で、fence 分だけ 64 KiB を超え得た | 完成後の message 長で判定 | `oversized_typescript_is_summarised_not_truncated_silently` |
+| R-13 | inspection が requests カタログ読込に依存し、requests 不正だけで検査不能になっていた | `config::enabled_config`（kit のみ）を使用 | `enabled_config` 経路 |
+| R-14 | `/capability inspect` の 256 入力比較が turn 取消を観測しなかった | `RunCancellation` を `inspect_reply`→`run_inspection` に伝播し、各入力前に中止 | `capability_turn` 試験 |
+| R-15 | 固定 kit の packaging が async worker を最大 120s 占有し得た | `tokio::task::spawn_blocking` で実行 | `generation_flow` 経路 |
+| R-16 | `routing.roles` だけ schema version 1 としつつ一括移行が 9/15 に上書きし、`validate_settings_document` が全設定読込を拒否（`persistence` 6件・`capability_turn` 2件が失敗） | 共有 `SETTINGS_SCHEMA_VERSION` に統一し、validator の特例を削除 | `persistence` 83 passed / `capability_turn` 3 passed |
 
 未修正のまま残る既知の改善点: inspection の runtime digest 照合、同 revision/digest の
 single-flight mutex。生成 job の cancel/timeout 終端は `gc_05` で offline合格。

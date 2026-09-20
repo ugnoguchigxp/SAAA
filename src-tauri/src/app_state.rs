@@ -21,6 +21,7 @@ pub(super) struct AppState {
     pub(super) generated_tools: generated_capabilities::publication::GeneratedToolsConfig,
     pub(super) tool_selection: Arc<tool_selection::ToolSelectionService>,
     pub(super) mcp_server: Mutex<Option<tool_selection::mcp_server::ServerHandle>>,
+    pub(super) schedule: std::sync::Arc<crate::schedule::Handle>,
 }
 
 #[derive(Clone)]

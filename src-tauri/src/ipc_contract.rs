@@ -106,3 +106,4 @@ pub(crate) enum RuntimeEvent {
 }
 
 pub use crate::coding::contracts::typescript_bindings as coding_typescript_bindings;
+pub use crate::schedule::contracts::typescript_bindings as schedule_typescript_bindings;

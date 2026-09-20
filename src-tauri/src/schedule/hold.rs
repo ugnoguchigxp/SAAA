@@ -1,8 +1,12 @@
-use super::ledger::{self, Entry, Kind, Origin, Status};
+use super::ledger::{self, Entry, Kind, Status};
 use crate::{database_error, new_id};
 use rusqlite::{params, Connection};
 
-pub(crate) fn enqueue_hold(connection: &Connection, source: &Entry, due_at: i64) -> Result<String, String> {
+pub(crate) fn enqueue_hold(
+    connection: &Connection,
+    source: &Entry,
+    due_at: i64,
+) -> Result<String, String> {
     let id = new_id("sched");
     ledger::insert(
         connection,
@@ -27,7 +31,10 @@ pub(crate) fn enqueue_hold(connection: &Connection, source: &Entry, due_at: i64)
     Ok(id)
 }
 
-pub(crate) fn pending_hold_subjects(connection: &Connection, now: i64) -> Result<Vec<String>, String> {
+pub(crate) fn pending_hold_subjects(
+    connection: &Connection,
+    now: i64,
+) -> Result<Vec<String>, String> {
     let mut statement = connection
         .prepare(
             "SELECT DISTINCT subject_ref FROM schedule_entries
@@ -69,10 +76,6 @@ pub(crate) fn record_digest(
     Ok(())
 }
 
-pub(crate) fn origin_user() -> Origin {
-    Origin::UserExplicit
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,11 +98,9 @@ mod tests {
         migrate(&connection).unwrap();
         record_digest(&connection, "conversation_primary", &["goal:a".into()], 1).unwrap();
         let content: String = connection
-            .query_row(
-                "SELECT content FROM conversation_messages",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT content FROM conversation_messages", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(content, "schedule-digest:1");
     }

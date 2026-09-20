@@ -50,5 +50,12 @@ export function defaultRoleRoutingSettings(): RoleRoutingSettings {
       batchSize: 100,
       allowLocalLabeler: false,
     },
+    adaptiveImprovement: {
+      enabled: false,
+      providerRecipe: false,
+      tool: false,
+      plan: false,
+      notification: false,
+    },
   };
 }

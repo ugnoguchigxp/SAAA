@@ -4,7 +4,9 @@
 //! to `tools.search` etc. Every response is a fixed `{ok,data}` / `{ok,error}` envelope and no
 //! internal error detail is ever returned to the model.
 
+use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use super::contracts::*;
 use super::service::{self, ToolSelectionService};
@@ -433,15 +435,121 @@ pub async fn execute_for_turn(
     let context = RequestContext::new(&principal, conversation_id)
         .with_run(Some(run_id.to_string()))
         .with_message(input_message_id);
-    dispatch(
+    let operation_key = format!(
+        "{:x}",
+        Sha256::digest(format!("{}:{}", call.name, call.arguments).as_bytes())
+    );
+    match reserve_routing_operation(state, run_id, &operation_key) {
+        Ok(true) => {}
+        Ok(false) => {
+            return crate::runtime::agent_tools::tool_error_content(
+                "operation-not-retryable",
+                "This routing tool operation is already owned by an earlier invocation.",
+            );
+        }
+        Err(_) => {
+            return crate::runtime::agent_tools::tool_error_content(
+                "unavailable",
+                "Tool routing persistence is temporarily unavailable.",
+            );
+        }
+    }
+    let output = dispatch(
         &state.tool_selection,
         &context,
         &call.name,
         &call.arguments,
         cancellation,
     )
-    .await
-    .to_string()
+    .await;
+    settle_routing_operation(state, run_id, &operation_key, &output);
+    output.to_string()
+}
+
+/// The existing tool-selection service remains the invocation owner.  Role routing only reserves
+/// its operation key before dispatch and records the owner's receipt afterwards.  A process that
+/// dies after `dispatched` therefore cannot silently replay a potentially mutating operation.
+fn reserve_routing_operation(
+    state: &AppState,
+    root_id: &str,
+    operation_key: &str,
+) -> Result<bool, String> {
+    let root_id = root_id.to_string();
+    let operation_key = operation_key.to_string();
+    state.sqlite_writer.write(move |connection| {
+        let transaction = connection.transaction().map_err(|error| error.to_string())?;
+        let step: Option<(String, u32)> = transaction
+            .query_row(
+                "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status IN ('planned','running','draining') ORDER BY ordinal DESC LIMIT 1",
+                [&root_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        let Some((step_id, revision)) = step else {
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Ok(true);
+        };
+        if crate::role_routing::tool_ledger::find_by_operation(&transaction, &root_id, &operation_key)?.is_some() {
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Ok(false);
+        }
+        let link = crate::role_routing::tool_ledger::ToolLink {
+            id: format!("rr-tool-{}", &operation_key[..24]),
+            root_id: root_id.clone(),
+            step_id,
+            revision,
+            operation_key: operation_key.clone(),
+            invocation_id: None,
+            dispatch_state: "reserved".into(),
+            result_ref: None,
+        };
+        let now_ms = now_ms();
+        crate::role_routing::tool_ledger::reserve(&transaction, &link, now_ms)?;
+        crate::role_routing::tool_ledger::settle(
+            &transaction,
+            &root_id,
+            &operation_key,
+            None,
+            None,
+            "dispatched",
+            now_ms,
+        )?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(true)
+    })
+}
+
+fn settle_routing_operation(state: &AppState, root_id: &str, operation_key: &str, output: &Value) {
+    let invocation_id = output
+        .pointer("/data/invocationId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let result_ref = output
+        .pointer("/data/resultRef")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let root_id = root_id.to_string();
+    let operation_key = operation_key.to_string();
+    let _ = state.sqlite_writer.write(move |connection| {
+        crate::role_routing::tool_ledger::settle(
+            connection,
+            &root_id,
+            &operation_key,
+            invocation_id.as_deref(),
+            result_ref.as_deref(),
+            "settled",
+            now_ms(),
+        )
+        .map(|_| ())
+    });
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

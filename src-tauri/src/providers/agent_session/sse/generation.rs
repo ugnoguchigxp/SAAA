@@ -13,9 +13,15 @@ impl Envelope {
         round: usize,
         input: &str,
         offered_tools: &[Value],
+        include_world: bool,
     ) -> Result<RoundGeneration, ProviderFailureKind> {
-        let payload = serde_json::to_vec(&turn_request_body(input))
-            .map_err(|_| ProviderFailureKind::Internal)?;
+        let body = turn_request_body(input);
+        crate::runtime::context::generation_inputs::verify_required_wire(
+            &body,
+            context.context_sources,
+        )
+        .map_err(|_| ProviderFailureKind::Internal)?;
+        let payload = serde_json::to_vec(&body).map_err(|_| ProviderFailureKind::Internal)?;
         let oversized =
             payload.len() > crate::runtime::context::generation::MAX_PROVIDER_REQUEST_BYTES;
         let generation = context
@@ -39,13 +45,21 @@ impl Envelope {
         }
         let generation = generation.map_err(|_| ProviderFailureKind::Internal)?;
         if let Some(generation) = &generation {
+            if include_world {
+                if let Some(world) = context
+                    .output_persistence
+                    .and_then(|persistence| persistence.world)
+                {
+                    world.bind(generation);
+                }
+            }
             crate::runtime::context::generation_inputs::record(
                 generation,
                 context.context_health,
                 context.context_sources,
                 context.context_omissions,
                 offered_tools,
-                false,
+                include_world,
             )
             .map_err(|_| ProviderFailureKind::Internal)?;
         }

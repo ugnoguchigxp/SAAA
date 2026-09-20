@@ -67,6 +67,7 @@ mod tests {
             recipe_id: id.into(),
             actor_ids: vec!["a".into()],
             exclusion_reason: None,
+            reason_codes: vec![],
         }
     }
     #[test]

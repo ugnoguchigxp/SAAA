@@ -29,6 +29,11 @@ impl Default for CodingSettings {
 pub fn valid_profile(settings: &CodingSettings) -> bool {
     match settings.profile.as_str() {
         "trusted-local-v1" => settings.sdk_extension_path.is_none(),
+        "delegated-read-test-macos-v1" => {
+            settings.sdk_extension_path.is_none()
+                && cfg!(target_os = "macos")
+                && std::path::Path::new("/usr/bin/sandbox-exec").is_file()
+        }
         "codex-sdk-v1" => {
             settings.provider == "saaa-codex-sdk"
                 && settings.model == "gpt-5.6-luna"

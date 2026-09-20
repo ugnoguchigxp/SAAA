@@ -52,7 +52,7 @@ export function buildProductReadinessReport(input: {
       U03: ["tests/provider-card-async.test.tsx", "tests/conversation-timeout.test.ts"],
       U04: ["persistence::runs::tests::startup_reconciles_running_work"],
       U05: ["tests/microphone.test.ts", "tests/ambient-voice-session.test.tsx"],
-      U06: ["tests/meeting-contracts.test.ts", "meeting::tests::explicit_save_is_transactional"],
+      U06: ["tests/idle-voice-capture.test.ts", "situation::speech_tests"],
       U07: ["tests/generative-ui-boundary.test.tsx", "tests/generative-ui-contracts.test.ts"],
       U08: ["tests/keyboard-interactions.test.tsx"],
       U09: ["tests/personal-state-eval.test.ts", "memory::personal_state::tests"],

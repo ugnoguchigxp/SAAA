@@ -112,17 +112,17 @@ describe("MVP 2 / 2.5 readiness CLI", () => {
       parseCliArguments([
         "verify",
         "--suite",
-        "meeting",
+        "input-activity",
         "--mode",
-        "functional",
+        "manual",
         "--report-dir",
         "/tmp/evidence",
       ]),
     ).toEqual({
       command: "verify",
       reportDirectory: "/tmp/evidence",
-      suite: "meeting",
-      mode: "functional",
+      suite: "input-activity",
+      mode: "manual",
     });
     expect(parseCliArguments(["report", "--report-dir", "/tmp/evidence"])).toEqual({
       command: "report",
@@ -160,13 +160,6 @@ describe("MVP 2 / 2.5 readiness CLI", () => {
   });
 
   test("fixes the complete required case matrix", () => {
-    const meetingFunctional = caseSpecs("meeting", "functional");
-    expect(meetingFunctional.length).toBe(22);
-    expect(
-      meetingFunctional.findLastIndex((item) => item.buildClass === "development"),
-    ).toBeLessThan(meetingFunctional.findIndex((item) => item.buildClass === "signed-packaged"));
-    expect(caseSpecs("meeting", "soak-30m").map((item) => item.caseId)).toEqual(["soak-30m"]);
-    expect(caseSpecs("meeting", "soak-2h").map((item) => item.caseId)).toEqual(["soak-2h"]);
     expect(caseSpecs("input-activity", "manual").length).toBe(23);
     expect(caseSpecs("agent-run", "manual").length).toBe(7);
     expect(
@@ -359,9 +352,6 @@ describe("resource and aggregate evaluation", () => {
     const directory = temporaryDirectory();
     writePreflight(directory);
     const reports: Array<[SuiteReport["suite"], SuiteReport["mode"]]> = [
-      ["meeting", "functional"],
-      ["meeting", "soak-30m"],
-      ["meeting", "soak-2h"],
       ["input-activity", "manual"],
       ["agent-run", "manual"],
     ];
@@ -399,8 +389,8 @@ describe("resource and aggregate evaluation", () => {
     const mismatched = { ...identity, bundleSha256: "c".repeat(64) };
     writeJsonExclusive(
       directory,
-      "meeting-functional.json",
-      suiteReport("meeting", "functional", mismatched),
+      "input-activity-manual.json",
+      suiteReport("input-activity", "manual", mismatched),
     );
     expect(() => aggregateReports(directory)).toThrow("identity-mismatch");
   });

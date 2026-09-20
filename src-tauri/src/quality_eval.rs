@@ -225,6 +225,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         ),
         tool_selection,
         mcp_server: std::sync::Mutex::new(None),
+        schedule: Arc::new(crate::schedule::Handle::default()),
     })
 }
 

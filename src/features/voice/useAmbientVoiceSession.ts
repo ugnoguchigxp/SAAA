@@ -14,10 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
 import { appendConversationActivity } from "../../lib/conversationActivity";
-import type {
-  ConversationVoicePolicySnapshot,
-  VoiceSettings,
-} from "../../lib/contracts";
+import type { ConversationVoicePolicySnapshot, VoiceSettings } from "../../lib/contracts";
 
 import {
   appendVoiceAsrAudio,
@@ -216,6 +213,7 @@ export function useAmbientVoiceSession({
         listeningEnabled,
         selectedConversationId,
         voiceSettings,
+        situationHold: voicePolicy?.speechReasonCode === "situation_hold",
         speechRunId: conversationSessionRef.current.speechRunId,
         capture: voiceSessionRef.current.capture,
         hasStream: Boolean(voiceStreamRef.current),
@@ -226,6 +224,7 @@ export function useAmbientVoiceSession({
   }, [
     listeningEnabled,
     selectedConversationId,
+    voicePolicy?.speechReasonCode,
     voiceSettings,
     conversationSessionRef,
     attachVoiceCaptureCommitted,
@@ -540,7 +539,8 @@ export function useAmbientVoiceSession({
         if (stoppedBeforeRestart) await stoppedBeforeRestart;
         if (
           disposedRef.current ||
-          !listeningEnabledRef.current || conversationSessionRef.current.speechRunId
+          !listeningEnabledRef.current ||
+          conversationSessionRef.current.speechRunId
         )
           return;
         void attachVoiceCapture();

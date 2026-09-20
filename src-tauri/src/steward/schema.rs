@@ -56,5 +56,127 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
          CREATE UNIQUE INDEX IF NOT EXISTS steward_active_task_dedupe
            ON steward_tasks(dedupe_key)
            WHERE loop_state IN ('queued','running','awaiting_user');",
-    )
+    )?;
+    // v2 is additive: old rows retain their user-turn source and remain
+    // inspectable.  Do not use a unique conversation index for active goals:
+    // the execution slot, not the user's set of background goals, is limited.
+    connection.execute_batch(
+        "DROP INDEX IF EXISTS steward_one_active_goal;
+         CREATE TABLE IF NOT EXISTS steward_event_cursor (
+           id INTEGER PRIMARY KEY CHECK(id=1), cursor INTEGER NOT NULL
+         );
+         INSERT OR IGNORE INTO steward_event_cursor(id,cursor) VALUES(1,0);
+         CREATE TABLE IF NOT EXISTS steward_origin_bindings (
+           id TEXT PRIMARY KEY,
+           goal_id TEXT NOT NULL REFERENCES steward_goals(id),
+           origin_kind TEXT NOT NULL CHECK(origin_kind IN ('user_turn','delegated_event')),
+           origin_id TEXT NOT NULL,
+           operation_digest TEXT NOT NULL,
+           created_at TEXT NOT NULL,
+           UNIQUE(origin_kind,origin_id,operation_digest)
+         );
+         CREATE TABLE IF NOT EXISTS steward_budget_reservations (
+           id TEXT PRIMARY KEY,
+           delegation_id TEXT NOT NULL REFERENCES steward_delegations(id),
+           task_id TEXT NOT NULL REFERENCES steward_tasks(id),
+           state TEXT NOT NULL CHECK(state IN ('reserved','consumed','released')),
+           created_at TEXT NOT NULL,
+           UNIQUE(task_id)
+         );
+         CREATE TABLE IF NOT EXISTS steward_dispatch_intents (
+           id TEXT PRIMARY KEY,
+           task_id TEXT NOT NULL REFERENCES steward_tasks(id),
+           state TEXT NOT NULL CHECK(state IN ('pending','dispatching','accepted','failed','outcome_unknown')),
+           idempotency_key TEXT NOT NULL UNIQUE,
+           receipt_json TEXT,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           UNIQUE(task_id)
+         );
+         CREATE TABLE IF NOT EXISTS steward_task_plans (
+           id TEXT PRIMARY KEY,
+           task_id TEXT NOT NULL REFERENCES steward_tasks(id),
+           revision INTEGER NOT NULL,
+           recipe TEXT NOT NULL CHECK(recipe IN ('read','test_run','read_test')),
+           request TEXT NOT NULL,
+           selection_mode TEXT NOT NULL,
+           policy_revision INTEGER NOT NULL,
+           created_at TEXT NOT NULL,
+           UNIQUE(task_id,revision)
+         );
+         DROP INDEX IF EXISTS steward_report_delivery_once;
+         CREATE INDEX IF NOT EXISTS steward_report_delivery_lookup
+           ON steward_reports(conversation_id,digest);",
+    )?;
+    connection.execute(
+        "UPDATE steward_dispatch_intents SET state='outcome_unknown',updated_at=?1 WHERE state='dispatching'",
+        [crate::now_iso()],
+    )?;
+    add_column(
+        connection,
+        "steward_goals",
+        "summary TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column(
+        connection,
+        "steward_goals",
+        "revision INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column(
+        connection,
+        "steward_goals",
+        "verifier TEXT NOT NULL DEFAULT 'user_confirmation_required'",
+    )?;
+    add_column(
+        connection,
+        "steward_delegations",
+        "revision INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column(connection, "steward_delegations", "source_message_id TEXT")?;
+    add_column(
+        connection,
+        "steward_tasks",
+        "revision INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column(
+        connection,
+        "steward_reports",
+        "available_at_ms INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column(connection, "steward_reports", "task_id TEXT")?;
+    add_column(
+        connection,
+        "steward_reports",
+        "task_revision INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column(
+        connection,
+        "steward_reports",
+        "destination TEXT NOT NULL DEFAULT 'conversation'",
+    )?;
+    add_column(connection, "steward_reports", "message_id TEXT")?;
+    add_column(
+        connection,
+        "steward_reports",
+        "delivery_state TEXT NOT NULL DEFAULT 'pending'",
+    )?;
+    connection.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS steward_report_task_delivery_once
+         ON steward_reports(task_id,task_revision,destination)
+         WHERE task_id IS NOT NULL;",
+    )?;
+    Ok(())
+}
+
+fn add_column(connection: &Connection, table: &str, definition: &str) -> rusqlite::Result<()> {
+    let name = definition.split_whitespace().next().unwrap_or_default();
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|column| column == name);
+    if !exists {
+        connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition}"))?;
+    }
+    Ok(())
 }

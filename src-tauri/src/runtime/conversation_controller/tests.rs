@@ -36,6 +36,32 @@ fn projection_removes_only_current_user_message() {
     assert_eq!(projected.request, "比較して");
 }
 
+#[test]
+fn wd_10_reasoning_request_carries_world_as_typed_evidence() {
+    let input: StartTurnInput = serde_json::from_value(serde_json::json!({
+        "runId":"run_world","conversationId":"conversation_world","content":"いま何を進めていますか",
+        "workspacePath":null,"retryInputMessageId":null,"sourceId":null,"inputOrigin":"voice","presentationMode":"visual"
+    }))
+    .unwrap();
+    let mut request = project(&input, &[]).unwrap();
+    let world = crate::runtime::context::source::Candidate::untrusted(
+        "world".into(),
+        crate::runtime::context::world::source::WORLD_KIND,
+        vec!["project:one".into()],
+        crate::runtime::context::source::Requirement::May,
+        "frame-1".into(),
+        4,
+        100,
+        "{\"runtime\":[]}".into(),
+    );
+    fit_context(&mut request, &[world]).unwrap();
+    assert!(request
+        .context
+        .evidence
+        .iter()
+        .any(|evidence| evidence.source.starts_with("world-model:frame-1@4")));
+}
+
 #[tokio::test]
 async fn reasoning_roundtrip_commits_only_valid_answer() {
     use crate::providers::reasoning_mcp::{tests::fixture, Client};
@@ -62,6 +88,7 @@ async fn reasoning_roundtrip_commits_only_valid_answer() {
                 selected: &[],
                 omitted: &[],
                 health: "green",
+                world: None,
             },
         )
         .await;
@@ -136,12 +163,54 @@ fn projection_trims_to_the_actual_provider_budget_without_truncating_the_request
             created_at: "now".into(),
         })
         .collect::<Vec<_>>();
-    let request = project(&input, &history).unwrap();
+    let mut request = project(&input, &history).unwrap();
+    fit_context(&mut request, &[]).unwrap();
     assert!(request.model_input_fits());
     assert!(request.context.truncated);
     assert!(request.context.messages.len() < history.len());
     assert_eq!(request.request, input.content);
     let mut oversized = input;
     oversized.content = "あ".repeat(10_000);
-    assert!(project(&oversized, &[]).is_err());
+    let mut oversized_request = project(&oversized, &[]).unwrap();
+    assert!(fit_context(&mut oversized_request, &[]).is_err());
+}
+
+#[test]
+fn fitting_reasoning_context_keeps_required_state() {
+    let input: StartTurnInput = serde_json::from_value(serde_json::json!({
+        "runId":"run_test","conversationId":"conversation_test","content":"続けて",
+        "inputOrigin":"voice","presentationMode":"visual"
+    }))
+    .unwrap();
+    let required = crate::runtime::context::source::Candidate::untrusted(
+        "state".into(),
+        "personal-state",
+        vec![],
+        crate::runtime::context::source::Requirement::Must,
+        "state".into(),
+        1,
+        1,
+        r#"{"status":"Active","value":"外部送信しない"}"#.into(),
+    );
+    let history = (0..40)
+        .map(|index| ConversationMessage {
+            parts: None,
+            id: format!("message_{index}"),
+            conversation_id: input.conversation_id.clone(),
+            role: "assistant".into(),
+            content: if index == 0 {
+                format!("state: {}", required.content)
+            } else {
+                "任意履歴。".repeat(500)
+            },
+            created_at: "now".into(),
+        })
+        .collect::<Vec<_>>();
+    let mut request = project(&input, &history).unwrap();
+    fit_context(&mut request, &[required.clone()]).unwrap();
+    assert!(request
+        .context
+        .messages
+        .iter()
+        .any(|message| message.content.contains(&required.content)));
 }

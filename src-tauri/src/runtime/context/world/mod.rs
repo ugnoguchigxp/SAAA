@@ -1,6 +1,11 @@
 #![allow(dead_code)]
+pub(crate) mod inputs;
 mod live;
+pub(crate) mod question;
+pub(crate) mod question_input;
 pub(crate) mod render;
+#[cfg(test)]
+mod g1_tests;
 #[cfg(test)]
 mod render_tests;
 pub(crate) mod shadow;

@@ -16,8 +16,14 @@ pub(crate) fn holds_speech(scene: &str, proposed_attention: &str) -> bool {
 }
 
 pub(crate) fn speech_holds_tts(state: &AppState) -> bool {
-    state
-        .situation
+    speech_holds_runtime(&state.situation)
+}
+
+/// A lightweight, lock-only check for the instant just before audio is queued. Long-running
+/// voice work holds an `Arc<SituationRuntime>`, not `AppState`, so acknowledgement speech can
+/// observe a meeting hold that began after ASR/turn dispatch.
+pub(crate) fn speech_holds_runtime(runtime: &crate::situation::SituationRuntime) -> bool {
+    runtime
         .inner
         .lock()
         .ok()

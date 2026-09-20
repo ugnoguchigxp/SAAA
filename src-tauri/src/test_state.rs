@@ -56,5 +56,6 @@ pub(crate) fn app_state_with_capabilities(
         generated_tools: GeneratedToolsConfig::disabled(),
         tool_selection,
         mcp_server: std::sync::Mutex::new(None),
+        schedule: Arc::new(crate::schedule::Handle::default()),
     }
 }

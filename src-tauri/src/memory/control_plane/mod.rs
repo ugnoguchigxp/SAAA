@@ -11,7 +11,9 @@ use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::{collections::HashSet, env};
 
-pub const CONTEXT_POLICY_VERSION: i64 = 1;
+// Version 2 adds the trusted World-model reading policy to the conversation system template
+// (G1/C6). The policy text is static; no data is ever promoted into it.
+pub const CONTEXT_POLICY_VERSION: i64 = 2;
 // `user_version` is the application database version. Version 15 replaces
 // encrypted voice-profile storage with private, local plaintext storage.
 #[cfg(test)]

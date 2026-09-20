@@ -7,6 +7,14 @@ const stewardTask = z.object({
   dedupeKey: z.string(),
   codingJobId: z.string().nullable(),
   goalStatus: z.string(),
+  goalId: z.string(),
+  summary: z.string(),
+  verifier: z.string(),
+  workspaceId: z.string(),
+  operations: z.string(),
+  budgetRuns: z.number(),
+  budgetMs: z.number(),
+  notify: z.string(),
 });
 const stewardRegister = z.object({
   goalId: z.string(),
@@ -28,7 +36,10 @@ export const stewardApi = {
     stewardRegister.parse(
       await invoke("register_steward_goal", { conversationId, workspaceId, successCondition }),
     ),
-  withdraw: (conversationId: string) => invoke("withdraw_steward_delegation", { conversationId }),
+  withdraw: (conversationId: string, goalId?: string) =>
+    goalId
+      ? invoke("work_withdraw", { conversationId, goalId })
+      : invoke("withdraw_steward_delegation", { conversationId }),
   listTasks: async (conversationId: string) =>
     z.array(stewardTask).parse(await invoke("list_steward_tasks", { conversationId })),
 };

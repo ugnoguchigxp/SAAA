@@ -7,7 +7,7 @@ mod repository_turns;
 
 pub(crate) use repository_policy::capture_current_policy;
 pub(crate) use repository_turns::{
-    record_provider_turn_finish, record_provider_turn_start,
+    accept_provider_turn, record_provider_turn_finish, record_provider_turn_start,
     record_provider_turn_start_in_transaction,
 };
 
@@ -82,6 +82,25 @@ mod tests {
             })
             .expect("count");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn policy_snapshot_ignores_json_object_key_order() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection.execute_batch("CREATE TABLE settings_documents(namespace TEXT, key TEXT, value_json TEXT); CREATE TABLE rr_policy_versions(id TEXT PRIMARY KEY, version INTEGER UNIQUE, config_json TEXT, digest TEXT, created_at_ms INTEGER);").expect("tables");
+        connection.execute("INSERT INTO settings_documents VALUES('routing.roles','default','{\"enabled\":false,\"schemaVersion\":1,\"roles\":{\"frontend\":null,\"reasoner\":null}}')", []).expect("settings");
+        capture_current_policy(&connection, 1).expect("first capture");
+        connection.execute("UPDATE settings_documents SET value_json='{\"roles\":{\"reasoner\":null,\"frontend\":null},\"schemaVersion\":1,\"enabled\":false}' WHERE namespace='routing.roles' AND key='default'", []).expect("reordered settings");
+        capture_current_policy(&connection, 2).expect("reordered capture");
+        let (count, snapshot): (i64, String) = connection
+            .query_row(
+                "SELECT count(*), MIN(config_json) FROM rr_policy_versions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("snapshot");
+        assert_eq!(count, 1);
+        assert_eq!(snapshot, "{\"enabled\":false,\"roles\":{\"frontend\":null,\"reasoner\":null},\"schemaVersion\":1}");
     }
 
     #[test]

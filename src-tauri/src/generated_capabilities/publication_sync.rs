@@ -302,4 +302,147 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&binding).expect("json");
         assert_eq!(value["catalogEpoch"].as_i64(), Some(1), "{binding}");
     }
+
+    async fn failed_publish(env: &TestEnv, step: PublishStep, grant_on_create: bool) -> String {
+        let (revision_id, epoch) = verified(env).await;
+        let principal =
+            crate::tool_selection::service::ensure_principal(&env.writer).expect("principal");
+        let result = lifecycle::transaction(&env.writer, |transaction| {
+            activate_and_publish(
+                transaction,
+                PublishRequest {
+                    principal_id: &principal,
+                    revision_id: &revision_id,
+                    expected_epoch: epoch,
+                    job_id: None,
+                    grant_on_create,
+                    fail_at: Some(step),
+                },
+            )
+        });
+        assert!(result.is_err(), "{step:?} must fail");
+        revision_id
+    }
+
+    #[tokio::test]
+    async fn rw_04_each_publish_boundary_rolls_the_whole_transaction_back() {
+        for (step, grant_on_create) in [
+            (PublishStep::Activate, false),
+            (PublishStep::Catalog, false),
+            (PublishStep::Grant, true),
+        ] {
+            let env = TestEnv::start(true);
+            let revision_id = failed_publish(&env, step, grant_on_create).await;
+            assert_ne!(
+                env.revision_state(&revision_id),
+                repository::RevisionState::Active,
+                "{step:?} activated a revision"
+            );
+            assert_eq!(
+                env.scalar("SELECT COUNT(*) FROM tool_selection_catalog"),
+                0,
+                "{step:?} leaked a catalog row"
+            );
+            assert_eq!(
+                env.scalar("SELECT COUNT(*) FROM tool_selection_grants"),
+                0,
+                "{step:?} leaked a grant"
+            );
+        }
+    }
+
+    fn awaiting_job(env: &TestEnv) -> String {
+        let job_id = crate::new_id("gcjob");
+        let id = job_id.clone();
+        env.writer
+            .write(|connection| {
+                generation_repository::insert_job(
+                    connection,
+                    &generation_repository::NewGenerationJob {
+                        id: id.clone(),
+                        principal_id: "principal-publish".into(),
+                        conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
+                        run_id: "run-publish".into(),
+                        input_message_id: "msg-publish".into(),
+                        project_id: None,
+                        request_id: "req-publish".into(),
+                        request_snapshot_json: "{}".into(),
+                        request_digest: "a".repeat(64),
+                        capability_id: "cap-publish".into(),
+                        base_revision_id: None,
+                        expected_epoch: 0,
+                        created_at: generation_repository::unix_ms(),
+                    },
+                )
+                .map_err(|error| error.encode())?;
+                connection
+                    .execute(
+                        "UPDATE generated_capability_generation_jobs
+                         SET status='awaiting_activation' WHERE id=?1",
+                        rusqlite::params![id],
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("awaiting job inserts");
+        job_id
+    }
+
+    #[tokio::test]
+    async fn rw_04_job_boundary_failure_keeps_the_job_awaiting_and_publishes_nothing() {
+        let env = TestEnv::start(true);
+        let job_id = awaiting_job(&env);
+        let (revision_id, epoch) = verified(&env).await;
+        let principal =
+            crate::tool_selection::service::ensure_principal(&env.writer).expect("principal");
+        let result = lifecycle::transaction(&env.writer, |transaction| {
+            activate_and_publish(
+                transaction,
+                PublishRequest {
+                    principal_id: &principal,
+                    revision_id: &revision_id,
+                    expected_epoch: epoch,
+                    job_id: Some(&job_id),
+                    grant_on_create: true,
+                    fail_at: Some(PublishStep::Job),
+                },
+            )
+        });
+        assert!(result.is_err());
+        assert_ne!(
+            env.revision_state(&revision_id),
+            repository::RevisionState::Active
+        );
+        assert_eq!(env.scalar("SELECT COUNT(*) FROM tool_selection_catalog"), 0);
+        assert_eq!(env.scalar("SELECT COUNT(*) FROM tool_selection_grants"), 0);
+        let status: String = env
+            .writer
+            .read_serialized(|connection| {
+                connection
+                    .query_row(
+                        "SELECT status FROM generated_capability_generation_jobs WHERE id=?1",
+                        rusqlite::params![job_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })
+            .expect("job status");
+        assert_eq!(status, "awaiting_activation");
+    }
+
+    #[tokio::test]
+    async fn rw_04_restart_after_a_failed_publish_publishes_nothing() {
+        let env = TestEnv::start(true);
+        let revision_id = failed_publish(&env, PublishStep::Catalog, true).await;
+        // A restart reconciles M1 state; a rolled-back publication must leave neither an active
+        // revision nor a catalog row behind.
+        let _ = crate::generated_capabilities::recovery::reconcile_startup(&env.service)
+            .expect("recovery");
+        assert_ne!(
+            env.revision_state(&revision_id),
+            repository::RevisionState::Active
+        );
+        assert_eq!(env.scalar("SELECT COUNT(*) FROM tool_selection_catalog"), 0);
+        assert_eq!(env.scalar("SELECT COUNT(*) FROM tool_selection_grants"), 0);
+    }
 }

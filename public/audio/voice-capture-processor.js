@@ -1,4 +1,4 @@
-class MeetingProcessor extends AudioWorkletProcessor {
+class VoiceCaptureProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.frameLength = Math.max(1, Math.round(sampleRate / 10));
@@ -35,4 +35,4 @@ class MeetingProcessor extends AudioWorkletProcessor {
     return true;
   }
 }
-registerProcessor("meeting-processor", MeetingProcessor);
+registerProcessor("voice-capture-processor", VoiceCaptureProcessor);

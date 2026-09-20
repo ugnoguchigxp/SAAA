@@ -8,6 +8,7 @@ import type { ConversationRuntimeActivity } from "../../lib/conversationActivity
 import type { VoiceCaptureState } from "../voice/useAmbientVoiceSession";
 import type { VoiceAsrProjection } from "../voice/voiceAsrProjection";
 import type { StreamingTextProjection } from "./streamingTextBuffer";
+import type { RoutingSnapshot } from "../../lib/generated/runtimeEvent";
 
 export type ChatPageProps = {
   setupSnapshot?: import("../../lib/contracts").AppSnapshot;
@@ -50,4 +51,7 @@ export type ChatPageProps = {
   onSetConversationSpeechOutput: (value: "inherit" | "muted") => void;
   onSetConversationListeningPace: (value: "inherit" | "quick" | "balanced" | "patient") => void;
   onResetConversationVoiceOverrides: () => void;
+  routingSnapshot: RoutingSnapshot;
+  routingCancellingRootId: string | null;
+  onCancelRouting: (rootId: string) => void;
 };

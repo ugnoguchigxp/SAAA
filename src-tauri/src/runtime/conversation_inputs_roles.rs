@@ -10,11 +10,47 @@ pub(super) fn apply_enabled_role_route(
     if !role_policy.enabled {
         return Ok(());
     }
-    let candidate = crate::role_routing::selection::select_rule_candidate(
+    // Candidate construction is the hard filter. Adaptive improvement may only reorder this
+    // exact set, so it cannot enable an unavailable actor or a multi-step recipe this runtime
+    // does not execute.
+    let mut eligible = crate::role_routing::selection::candidates_for_action(
         &role_policy,
         crate::role_routing::contracts::RoutingAction::Respond,
     )
-    .ok_or_else(|| "No eligible role-routing response recipe is configured".to_string())?;
+    .into_iter()
+    .filter(|candidate| candidate.exclusion_reason.is_none() && candidate.actor_ids.len() == 1)
+    .collect::<Vec<_>>();
+    eligible.sort_by(|left, right| left.recipe_id.cmp(&right.recipe_id));
+    let rules_candidate = eligible
+        .first()
+        .cloned()
+        .ok_or_else(|| "No single-actor role-routing response recipe is configured".to_string())?;
+    let candidate_ids = eligible
+        .iter()
+        .map(|candidate| candidate.recipe_id.clone())
+        .collect::<Vec<_>>();
+    let selected_id = if role_policy.adaptive_improvement.enabled
+        && role_policy.adaptive_improvement.provider_recipe
+    {
+        crate::adaptive_improvement::choose(
+            connection,
+            crate::adaptive_improvement::Domain::ProviderRecipe,
+            "conversation.respond",
+            &candidate_ids,
+            &rules_candidate.recipe_id,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0),
+        )?
+        .0
+    } else {
+        rules_candidate.recipe_id.clone()
+    };
+    let candidate = eligible
+        .into_iter()
+        .find(|candidate| candidate.recipe_id == selected_id)
+        .unwrap_or(rules_candidate);
     let actor_id = candidate
         .actor_ids
         .first()

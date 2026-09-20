@@ -109,6 +109,14 @@
       "total": 130,
       "production": 130
     },
+    "scripts/role-routing/codex-sidecar.ts": {
+      "total": 126,
+      "production": 126
+    },
+    "scripts/role-routing/codex-isolation.ts": {
+      "total": 32,
+      "production": 32
+    },
     "scripts/portable-frontend-tests.ts": {
       "total": 24,
       "production": 24
@@ -350,8 +358,8 @@
       "production": 471
     },
     "src-tauri/src/generated_capabilities/lifecycle.rs": {
-      "total": 69,
-      "production": 69
+      "total": 86,
+      "production": 86
     },
     "src-tauri/src/generated_capabilities/limits.rs": {
       "total": 56,
@@ -366,8 +374,8 @@
       "production": 354
     },
     "src-tauri/src/generated_capabilities/publication_sync.rs": {
-      "total": 298,
-      "production": 202
+      "total": 449,
+      "production": 195
     },
     "src-tauri/src/generated_capabilities/publication_unpublish.rs": {
       "total": 65,
@@ -382,8 +390,8 @@
       "production": 71
     },
     "src-tauri/src/generated_capabilities/repository.rs": {
-      "total": 745,
-      "production": 745
+      "total": 851,
+      "production": 851
     },
     "src-tauri/src/generated_capabilities/retirement.rs": {
       "total": 158,
@@ -414,12 +422,12 @@
       "production": 89
     },
     "src-tauri/src/generated_capabilities/tests/adapter.rs": {
-      "total": 262,
-      "production": 262
+      "total": 368,
+      "production": 368
     },
     "src-tauri/src/generated_capabilities/tests/generation_closeout.rs": {
-      "total": 643,
-      "production": 643
+      "total": 807,
+      "production": 807
     },
     "src-tauri/src/generated_capabilities/tests/generation_fail.rs": {
       "total": 48,
@@ -1169,9 +1177,41 @@
       "total": 357,
       "production": 348
     },
+    "src-tauri/src/role_routing/adapters/mod.rs": {
+      "total": 1,
+      "production": 1
+    },
+    "src-tauri/src/role_routing/adapters/codex_protocol.rs": {
+      "total": 191,
+      "production": 191
+    },
     "src-tauri/src/role_routing/learning/mod.rs": {
       "total": 2,
       "production": 2
+    },
+    "src-tauri/src/role_routing/learning/export.rs": {
+      "total": 157,
+      "production": 157
+    },
+    "src-tauri/src/role_routing/learning/artifact.rs": {
+      "total": 122,
+      "production": 122
+    },
+    "src-tauri/src/role_routing/learning/evaluate.rs": {
+      "total": 102,
+      "production": 52
+    },
+    "src-tauri/src/role_routing/learning/invalidation.rs": {
+      "total": 174,
+      "production": 56
+    },
+    "src-tauri/src/role_routing/learning/repository.rs": {
+      "total": 232,
+      "production": 174
+    },
+    "src-tauri/src/role_routing/learning/scheduler.rs": {
+      "total": 49,
+      "production": 32
     },
     "src-tauri/src/role_routing/learning/schema.rs": {
       "total": 45,
@@ -1180,6 +1220,18 @@
     "src-tauri/src/role_routing/mod.rs": {
       "total": 14,
       "production": 14
+    },
+    "src-tauri/src/role_routing/ranker.rs": {
+      "total": 88,
+      "production": 61
+    },
+    "src-tauri/src/role_routing/reducer.rs": {
+      "total": 118,
+      "production": 83
+    },
+    "src-tauri/src/role_routing/revision.rs": {
+      "total": 87,
+      "production": 87
     },
     "src-tauri/src/role_routing/repository_policy.rs": {
       "total": 45,
@@ -1200,6 +1252,14 @@
     "src-tauri/src/role_routing/selection.rs": {
       "total": 85,
       "production": 54
+    },
+    "src-tauri/src/role_routing/signals.rs": {
+      "total": 81,
+      "production": 54
+    },
+    "src-tauri/src/role_routing/tools.rs": {
+      "total": 60,
+      "production": 34
     },
     "src-tauri/src/runtime/agent_tools.rs": {
       "total": 540,
@@ -1452,6 +1512,86 @@
     "src-tauri/src/runtime/web_fetch.rs": {
       "total": 281,
       "production": 221
+    },
+    "src-tauri/src/schedule/calendar/auth.rs": {
+      "total": 68,
+      "production": 55
+    },
+    "src-tauri/src/schedule/calendar/client.rs": {
+      "total": 235,
+      "production": 213
+    },
+    "src-tauri/src/schedule/calendar/encode.rs": {
+      "total": 46,
+      "production": 46
+    },
+    "src-tauri/src/schedule/calendar/mod.rs": {
+      "total": 13,
+      "production": 13
+    },
+    "src-tauri/src/schedule/calendar/observe.rs": {
+      "total": 288,
+      "production": 224
+    },
+    "src-tauri/src/schedule/calendar/projection.rs": {
+      "total": 288,
+      "production": 288
+    },
+    "src-tauri/src/schedule/calendar/reconcile.rs": {
+      "total": 221,
+      "production": 165
+    },
+    "src-tauri/src/schedule/commands.rs": {
+      "total": 162,
+      "production": 162
+    },
+    "src-tauri/src/schedule/contracts.rs": {
+      "total": 50,
+      "production": 50
+    },
+    "src-tauri/src/schedule/decide.rs": {
+      "total": 76,
+      "production": 41
+    },
+    "src-tauri/src/schedule/forget.rs": {
+      "total": 34,
+      "production": 34
+    },
+    "src-tauri/src/schedule/handle.rs": {
+      "total": 75,
+      "production": 75
+    },
+    "src-tauri/src/schedule/hold.rs": {
+      "total": 112,
+      "production": 82
+    },
+    "src-tauri/src/schedule/ledger.rs": {
+      "total": 515,
+      "production": 408
+    },
+    "src-tauri/src/schedule/mod.rs": {
+      "total": 25,
+      "production": 25
+    },
+    "src-tauri/src/schedule/notify.rs": {
+      "total": 47,
+      "production": 47
+    },
+    "src-tauri/src/schedule/runtime.rs": {
+      "total": 116,
+      "production": 116
+    },
+    "src-tauri/src/schedule/schema.rs": {
+      "total": 86,
+      "production": 6
+    },
+    "src-tauri/src/schedule/tests.rs": {
+      "total": 647,
+      "production": 647
+    },
+    "src-tauri/src/schedule/tick.rs": {
+      "total": 197,
+      "production": 197
     },
     "src-tauri/src/situation/calibration.rs": {
       "total": 674,
@@ -2157,6 +2297,14 @@
       "total": 516,
       "production": 516
     },
+    "src/features/chat/useRoleRouting.ts": {
+      "total": 32,
+      "production": 32
+    },
+    "src/features/chat/RoutingProposal.tsx": {
+      "total": 30,
+      "production": 30
+    },
     "src/features/chat/useConversationVoicePolicy.ts": {
       "total": 163,
       "production": 163
@@ -2241,9 +2389,17 @@
       "total": 39,
       "production": 39
     },
+    "src/features/settings/RoleRoutingSection.tsx": {
+      "total": 147,
+      "production": 147
+    },
     "src/features/settings/RoutePolicyFields.tsx": {
       "total": 103,
       "production": 103
+    },
+    "src/features/settings/ScheduleSection.tsx": {
+      "total": 92,
+      "production": 92
     },
     "src/features/settings/SecuritySection.tsx": {
       "total": 75,
@@ -2437,6 +2593,10 @@
       "total": 14,
       "production": 14
     },
+    "src/lib/generated/schedule.ts": {
+      "total": 7,
+      "production": 7
+    },
     "src/lib/generated/voiceAsr.ts": {
       "total": 15,
       "production": 15
@@ -2501,6 +2661,14 @@
       "total": 55,
       "production": 55
     },
+    "src/lib/roleRoutingApi.ts": {
+      "total": 20,
+      "production": 20
+    },
+    "src/lib/roleRoutingControls.ts": {
+      "total": 9,
+      "production": 9
+    },
     "src/lib/roleRoutingSettingsParts.ts": {
       "total": 80,
       "production": 80
@@ -2512,6 +2680,10 @@
     "src/lib/runtime.ts": {
       "total": 299,
       "production": 299
+    },
+    "src/lib/scheduleApi.ts": {
+      "total": 31,
+      "production": 31
     },
     "src/lib/schemas.ts": {
       "total": 412,
@@ -2800,6 +2972,10 @@
     "tests/runtime-supervisor-contracts.test.ts": {
       "total": 29,
       "production": 29
+    },
+    "tests/schedule-settings.test.ts": {
+      "total": 19,
+      "production": 19
     },
     "tests/service-connections-async.test.tsx": {
       "total": 118,
