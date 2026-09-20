@@ -10,7 +10,7 @@ pub(crate) struct VoicePresentationDecision {
     #[ts(type = "\"speak\" | \"silent\"")]
     pub(crate) decision: String,
     #[ts(
-        type = "\"meeting_blocked\" | \"global_opt_out\" | \"turn_override\" | \"conversation_override\" | \"global_default\" | \"route_blocked\""
+        type = "\"meeting_blocked\" | \"global_opt_out\" | \"turn_override\" | \"conversation_override\" | \"global_default\" | \"route_blocked\" | \"situation_hold\""
     )]
     pub(crate) reason_code: String,
 }

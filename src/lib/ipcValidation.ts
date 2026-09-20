@@ -139,6 +139,7 @@ export const runtimeEventSchema = z.discriminatedUnion("type", [
         "conversation_override",
         "global_default",
         "route_blocked",
+        "situation_hold",
       ]),
     }),
     voicePolicy: policy.nullable(),

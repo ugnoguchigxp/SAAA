@@ -37,6 +37,7 @@ pub mod quality_eval;
 mod redact;
 mod runtime;
 mod situation;
+mod steward;
 #[cfg(test)]
 mod test_state;
 #[cfg(test)]
@@ -763,7 +764,7 @@ pub fn run() {
             coding::commands::probe_coding,
             coding::commands::register_coding_workspace,
             coding::commands::coding_snapshot,
-            coding::commands::cancel_coding_job,
+            coding::commands::cancel_coding_job, steward::commands::register_steward_goal, steward::commands::withdraw_steward_delegation, steward::commands::list_steward_tasks,
             generative_ui::get_ui_enabled,
             generative_ui::set_ui_enabled,
             generative_ui::get_ui_instance,

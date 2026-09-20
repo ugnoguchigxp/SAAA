@@ -11,7 +11,7 @@ use super::settings_migration::migrate_settings_to_current;
 use crate::{meeting, memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
 use rusqlite::{params, Connection};
 
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 25;
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 26;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -188,6 +188,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::voice_behavior::migrate(&transaction)?;
     crate::generative_ui::store::migrate(&transaction)?;
     crate::coding::repository::migrate(&transaction)?;
+    crate::steward::schema::migrate(&transaction)?;
     crate::coding::recovery::reconcile(&transaction)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;
@@ -195,7 +196,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::tool_selection::schema::migrate(&transaction)?;
     // Version 25 binds learned corrections to the remote endpoint they were learned on. Existing
     // remote rules are recorded as unconfirmed rather than guessed onto the current endpoint.
-    if previous_version < DATABASE_SCHEMA_VERSION {
+    if previous_version < 25 {
         crate::tool_selection::mcp::schema::backfill_rule_source_bindings(&transaction)?;
     }
     memory::personal_state::schema::migrate(&transaction)?;

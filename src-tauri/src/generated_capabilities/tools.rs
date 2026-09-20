@@ -1,14 +1,13 @@
 //! Common execution adapter for generated capabilities.
 //!
-//! Conversation and (in M2B) MCP pass through here: name lookup happens against the immutable
-//! offer snapshot, the host process is started only through `CapabilityService::invoke`, and no
-//! path ever falls back to recall or another tool.
+//! Conversation and MCP pass through here: name lookup happens against the immutable offer
+//! snapshot, the host starts only through `CapabilityService::invoke`, and no path falls back.
 
 use serde_json::{json, Map, Value};
 use std::time::Duration;
 
 use super::{
-    contracts::{InvocationResult, InvokeRequest},
+    contracts::{CallActor, InvocationResult, InvokeRequest},
     errors::*,
     guards::validate_input,
     host::process::Cancellation,
@@ -86,13 +85,13 @@ pub(crate) fn provider_definitions_fit(provider_definitions: &[Value]) -> bool {
         .unwrap_or(false)
 }
 
-/// Runs one generated tool call and returns the JSON content for the tool message. `origin` and
-/// the cancellation token are explicit so MCP can reuse the same path without copying logic.
-pub(crate) async fn execute(
+/// Runs one generated tool call and records the host-derived owner for later inspection.
+pub(crate) async fn execute_with_actor(
     service: Option<&CapabilityService>,
     snapshot: &GeneratedToolSnapshot,
     call: &AgentToolCall,
     origin: &'static str,
+    actor: Option<CallActor>,
     timeout: Duration,
     run_cancellation: &RunCancellation,
 ) -> String {
@@ -139,6 +138,7 @@ pub(crate) async fn execute(
     let call_id = uuid::Uuid::new_v4().to_string();
     let mut request = InvokeRequest::new(resolved.clone(), call_id, input);
     request.origin = origin;
+    request.actor = actor;
     request.inner_timeout_ms = timeout
         .as_millis()
         .clamp(1, limits::INNER_TIMEOUT_MAX_MS as u128) as u64;

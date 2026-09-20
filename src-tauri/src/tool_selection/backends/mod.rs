@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::generated_capabilities::contracts::CallActor;
 use crate::RunCancellation;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +48,10 @@ pub struct BackendRequest {
     pub binding: Value,
     pub arguments: Value,
     pub timeout: Duration,
+    /// `conversation` or `mcp`; propagated to the generated-capability call row.
+    pub origin: &'static str,
+    /// Host-derived ownership, absent for an internal call with no recorded owner.
+    pub actor: Option<CallActor>,
 }
 
 #[derive(Clone, Debug)]

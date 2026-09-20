@@ -40,7 +40,7 @@ pub fn reconcile_startup(service: &CapabilityService) -> CapabilityResult<Recove
         if !matched {
             missing_packages.push(revision.package_hash.clone());
             lifecycle::transaction(service.writer(), |transaction| {
-                repository::stop_capability(transaction, &revision.capability_id, &now_iso())
+                super::retirement::stop_capability(transaction, &revision.capability_id, &now_iso())
             })?;
         }
     }

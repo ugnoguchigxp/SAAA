@@ -41,6 +41,19 @@ pub(crate) fn suspend_revision(
     })
 }
 
+/// Retires a non-active revision at the expected catalog epoch. Call history and inspections are
+/// retained; only new selection and execution are prevented.
+pub(crate) fn retire_revision(
+    writer: &SqliteWriter,
+    revision_id: &str,
+    expected_epoch: i64,
+) -> CapabilityResult<repository::CapabilityRow> {
+    let now = now_iso();
+    transaction(writer, |transaction| {
+        super::retirement::retire(transaction, revision_id, expected_epoch, &now)
+    })
+}
+
 /// Runs a short synchronous read through the single writer connection.
 pub(crate) fn read<T>(
     writer: &SqliteWriter,

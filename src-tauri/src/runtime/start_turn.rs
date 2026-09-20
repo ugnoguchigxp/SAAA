@@ -17,6 +17,7 @@ pub(crate) async fn start_turn(
         input.source_id.as_deref().unwrap_or("none"),
         "turn source id",
     )?;
+    let _ = crate::steward::flush_held_reports(&state, &input.conversation_id);
     let _ = persistence::audit::record_turn_request(&state, &input);
     let (mut streaming_speech, speech_enabled) =
         voice_behavior::begin_turn_speech_policy(&state, &input)?;

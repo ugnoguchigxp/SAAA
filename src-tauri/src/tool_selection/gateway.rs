@@ -118,7 +118,9 @@ pub async fn dispatch(
     let result = match internal_name(name) {
         Some("tools.search") => dispatch_search(service, context, &parsed, None).await,
         Some("tools.describe") => dispatch_describe(service, context, &parsed),
-        Some("tools.invoke") => dispatch_invoke(service, context, &parsed, cancellation).await,
+        Some("tools.invoke") => {
+            dispatch_invoke(service, context, &parsed, cancellation, "conversation").await
+        }
         _ => Err(ToolSelectionError::invalid()),
     };
     match result {
@@ -156,7 +158,9 @@ pub async fn dispatch_external(
             dispatch_search(service, context, &parsed, Some(&scenario)).await
         }
         Some("tools.describe") => dispatch_describe(service, context, &parsed),
-        Some("tools.invoke") => dispatch_invoke(service, context, &parsed, cancellation).await,
+        Some("tools.invoke") => {
+            dispatch_invoke(service, context, &parsed, cancellation, "mcp").await
+        }
         _ => Err(ToolSelectionError::invalid()),
     };
     match result {
@@ -321,6 +325,7 @@ async fn dispatch_invoke(
     context: &RequestContext,
     arguments: &Value,
     cancellation: &RunCancellation,
+    origin: &'static str,
 ) -> ToolSelectionResult<Value> {
     let object = arguments
         .as_object()
@@ -341,7 +346,7 @@ async fn dispatch_invoke(
         .filter(|value| value.is_object())
         .ok_or_else(ToolSelectionError::invalid)?;
     let response = service
-        .invoke(context, execution_ref, call_arguments, cancellation)
+        .invoke_with_origin(context, execution_ref, call_arguments, cancellation, origin)
         .await?;
     Ok(json!({
         "invocationId": response.invocation_id,

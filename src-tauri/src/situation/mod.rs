@@ -7,7 +7,7 @@ pub mod platform;
 pub mod repository;
 mod speech;
 mod tick;
-pub(crate) use speech::{inspect_tts_hold, record_tts_held, speech_holds_tts};
+pub(crate) use speech::{apply_tts_hold, speech_holds_tts};
 
 use crate::persistence::{SqliteReaders, SqliteWriter};
 #[cfg(test)]
@@ -61,6 +61,7 @@ struct RuntimeInner {
     state: SituationState,
     decision: ShadowDecision,
     last_failure: Option<SituationRuntimeFailure>,
+    tts_hold_audit_run: Option<String>,
     hysteresis: Hysteresis,
     last_candidate_scene: String,
     last_persisted_ms: u128,
@@ -100,6 +101,7 @@ impl SituationRuntime {
                 state,
                 decision,
                 last_failure: None,
+                tts_hold_audit_run: None,
                 last_persisted_ms: 0,
                 next_revision: 1,
                 events: VecDeque::new(),
@@ -129,6 +131,29 @@ impl SituationRuntime {
         drop(inner);
         self.worker_wake.notify_one();
         Ok(())
+    }
+
+    pub(crate) fn foreground_category(&self) -> ForegroundCategory {
+        self.inner
+            .lock()
+            .map(|inner| inner.signals.foreground.category.clone())
+            .unwrap_or(ForegroundCategory::Unknown)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_scene_attention_for_test(&self, scene: &str, attention: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.state.scene = scene.to_string();
+            inner.decision.proposed_attention = attention.to_string();
+            inner.tts_hold_audit_run = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_foreground_category_for_test(&self, category: ForegroundCategory) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.signals.foreground.category = category;
+        }
     }
 
     pub fn set_monitoring(&self, connection: &SqliteWriter, enabled: bool) -> Result<(), String> {

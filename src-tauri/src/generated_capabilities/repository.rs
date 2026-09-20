@@ -49,6 +49,9 @@ pub struct RevisionRow {
     pub contract_json: String,
     pub manifest_json: String,
     pub provenance_json: String,
+    pub source_hash: Option<String>,
+    pub program_hash: Option<String>,
+    pub artifact_hash: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,7 +98,7 @@ fn missing() -> CapabilityError {
 
 const REVISION_COLUMNS: &str = "id, capability_id, package_hash, inventory_hash, contract_hash, \
      runtime_digest, required_acceptance_hash, state, metadata_json, contract_json, manifest_json, \
-     provenance_json";
+     provenance_json, source_hash, program_hash, artifact_hash";
 
 fn revision_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<RevisionRow> {
     let state: String = row.get(7)?;
@@ -114,6 +117,9 @@ fn revision_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<RevisionRow> {
         contract_json: row.get(9)?,
         manifest_json: row.get(10)?,
         provenance_json: row.get(11)?,
+        source_hash: row.get(12)?,
+        program_hash: row.get(13)?,
+        artifact_hash: row.get(14)?,
     })
 }
 
@@ -791,29 +797,4 @@ pub fn active_revisions(connection: &Connection) -> CapabilityResult<Vec<ActiveR
         revisions.push(row.map_err(storage)?);
     }
     Ok(revisions)
-}
-
-/// Stops a capability whose managed package is unusable: state to suspended, pointer cleared,
-/// epoch advanced. Recovery never guesses a replacement revision.
-pub fn stop_capability(
-    connection: &Connection,
-    capability_id: &str,
-    now: &str,
-) -> CapabilityResult<()> {
-    connection
-        .execute(
-            "UPDATE generated_capability_revisions SET state = 'suspended'
-             WHERE capability_id = ?1 AND state = 'active'",
-            params![capability_id],
-        )
-        .map_err(storage)?;
-    connection
-        .execute(
-            "UPDATE generated_capabilities
-             SET current_revision_id = NULL, catalog_epoch = catalog_epoch + 1, updated_at = ?2
-             WHERE id = ?1",
-            params![capability_id, now],
-        )
-        .map_err(storage)?;
-    Ok(())
 }

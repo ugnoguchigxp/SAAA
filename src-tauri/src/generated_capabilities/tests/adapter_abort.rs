@@ -39,11 +39,12 @@ async fn x02_aborting_the_adapter_future_cancels_and_settles() {
     let service = env.service.clone();
     let run = crate::RunCancellation::default();
     let task = tokio::spawn(async move {
-        tools::execute(
+        tools::execute_with_actor(
             Some(service.as_ref()),
             &snapshot,
             &call,
             "conversation",
+            None,
             Duration::from_secs(30),
             &run,
         )
@@ -82,11 +83,12 @@ async fn x01b_in_flight_run_cancellation_reports_cancelled_and_settles() {
     let signal = run.clone();
     let service = env.service.clone();
     let task = tokio::spawn(async move {
-        tools::execute(
+        tools::execute_with_actor(
             Some(service.as_ref()),
             &snapshot,
             &call,
             "conversation",
+            None,
             Duration::from_secs(30),
             &run,
         )

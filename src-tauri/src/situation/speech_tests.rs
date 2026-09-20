@@ -158,6 +158,17 @@ fn st_03_hold_blocks_voice_start_and_streaming_policy() {
         voice_behavior::begin_turn_speech_policy(&state, &stream_input).expect("policy");
     assert!(!streaming);
     assert!(!enabled);
+    assert_eq!(
+        voice_behavior::effective_presentation(
+            &state,
+            Some(&stream_input.run_id),
+            &stream_input.conversation_id,
+        )
+        .expect("presentation")
+        .reason_code,
+        "situation_hold"
+    );
+    assert_eq!(tts_held_count(&state, &stream_input.run_id), 1);
     voice_behavior::end_run(&state, &stream_input.run_id);
 }
 
@@ -190,6 +201,10 @@ fn st_04_held_audit_has_no_body() {
     let _ =
         voice_behavior::effective_presentation(&state, Some(&input.run_id), &input.conversation_id)
             .expect("presentation");
+    assert_eq!(tts_held_count(&state, &input.run_id), 1);
+    let _ =
+        voice_behavior::effective_presentation(&state, Some(&input.run_id), &input.conversation_id)
+            .expect("second presentation");
     assert_eq!(tts_held_count(&state, &input.run_id), 1);
     let json = state
         .sqlite_readers

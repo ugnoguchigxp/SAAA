@@ -106,27 +106,22 @@ Concept §5.1 と指示書をそのまま守る。
 
 完了: 正本 §6 のゲートと `spec/evidence/situation/tts-gate-results.md`。
 
-## 8. Step 4 — 最小の執事循環
+## 8. Step 4 — 最小の執事循環（本コンセプト縦糸の締め）
 
-詳細は[最小循環計画](saaa-minimal-loop-plan.md)。ここでは優先理由と相談点だけを固定する。
+正本は [最小循環計画](saaa-minimal-loop-plan.md)（契約 B0–B7 とカード ML-00〜09）。先回りで runner や複数 Goal を足さない。実装はカード順。
 
-採用する例（Concept §16）: 指定 Git ワークスペースのテスト失敗を検知し、許可された範囲で原因を調査し、結果を報告する。自動修正は入れない。
+完了: 正本 §6 のゲートと `spec/evidence/steward-loop/results.md`。これで Concept §16 の最初の循環は offline で閉じる。
 
-固定点:
+**見送り中（準備が整っていない。禁止ではない）**
 
-- Goal はユーザーが明示登録した一件。由来・状態（active / paused / withdrawn）・達成条件・所属 Scope。
-- Delegation は対象 workspace、許可操作（読み取り・テスト実行のみ、L2相当）、回数・時間予算、通知条件。撤回は即時。
-- 実行先は既存 coding ジョブと Codex read-only sandbox。新しい実行台帳は作らない。
-- 観測は明示トリガ「テストを確認して」と、既存 Situation の foreground=Coding への遷移のみ。定期ポーリングなし。
-- 再開時、実施済みか不明な操作は再実行せず状態照会する（既存 `coding/recovery.rs` の outcome_unknown 方針を再利用）。
-- 報告は完了・失敗・停止のいずれでも1メッセージ。会議中は保留。
-- 同じ失敗から複数 Task を作らない。
+| 対象 | 理由 | 揃うもの |
+| --- | --- | --- |
+| M3C | 自然文から World 候補を抜き採用する。今足すと Goal 推定が明示委任の正本と混ざる。五要素の新推定はこの縦糸では凍結 | M3B の投入経路と、Step 4 の明示 Goal が正本として定着していること |
+| Butler Schedule | tick は定期ポーリング。Goal/Delegation が無いと時刻が権限になる。会議中の発火保留は Step 3 の hold に依存する。Butler 計画自身が最小循環を前提にしている | Step 4 の委任正本と TTS hold。着手は [Butler 計画](saaa-butler-schedule-ledger-plan.md) の SL-A（Calendar なし）から |
+| M4 | live の品質評価。M3B は envelope まで。実会話の正答ゲートは M3C の結果を見て決める | M3B/C の offline 証拠と live 評価設計 |
+| Role Routing | 別コンセプト。本フェーズは着手禁止（§3） | 本縦糸の外。計画文書は残置 |
 
-相談が必要な場合（それ以外は止まらず進める）:
-
-- 既存契約（Scope、忘却、single writer）と矛盾しないと実装できないとき。
-- 外部送信範囲、費用上限、自動実行範囲を広げる必要が出たとき。
-- 受入シナリオを既存 coding ジョブで満たせないと判明したとき。代替案を2つ添える。想定される論点は、coding_jobs が `conversation_id` / ユーザーメッセージ `source_id` に結び付いていること、ジョブ状態語彙が指示書の queued / awaiting_user / done と一致しないこと。写像表は最小循環計画 §5。新しい実行エンジンは代替案にしない。
+live Codex / 実テスト失敗 / 実会議は完了条件にしない（live未検証）。固定トリガ以外の自然文理解は ML-03 の実装漏れとして残し、M3C に含めない。
 
 ## 9. 検証と報告
 
@@ -143,11 +138,11 @@ Step 完了報告は「実装済み / offline合格 / live未検証 / 未着手�
 
 ## 10. 実装漏れとして残してよいもの
 
-本フェーズの成功条件に含めない。後続へ引き渡す。
+本フェーズの成功条件に含めない。後続へ引き渡す。見送りと着手禁止の区別は §8。
 
-- Role Routing、D6、L-Lang 動的配備、MCP OAuth
-- M2B、M3C（自然文からの候補抽出）、M4 品質評価
-- Situation の分類精度改善、自動通知、複数 Goal、コード修正の委任
+- **見送り中（準備未了）**: M3C、Butler Schedule、M4。live Codex / 実会議 / 実テスト失敗
+- Role Routing、D6、L-Lang 動的配備、MCP OAuth（本フェーズ着手禁止）
+- M2B、Situation の分類精度改善、自動通知、複数 Goal、コード修正の委任
 - World のグラフ探索深化、confidence の永続化
 - 音声 live・実会議・実 Provider での品質。offline 実DB試験と live を混同しない
 - 並行作業中の Role Routing / Tool Selection 未コミット差分の完成

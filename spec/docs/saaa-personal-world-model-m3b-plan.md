@@ -134,7 +134,7 @@ bun run check:local
 
 `spec/evidence/world-model/m3b-progress.md` と `m3b-results.md`。各カードの試験名・件数、Memory ON/OFF、compose 回数、receipt の扱い、未接続、live未検証を分ける。本文・会議名をログに残さない。
 
-完了条件は 10 カードと §5、全体ゲート、通常会話 default OFF の証拠。M3C・M4・TTS・最小循環は未着手のまま引き渡す。
+完了条件は 10 カードと §5、全体ゲート、通常会話 default OFF の証拠。M3C・M4 は準備が整っていないので見送り中（禁止ではない）。TTS・最小循環は本フェーズの後続 Step。
 
 ## 8. 作業カード（10枚）
 

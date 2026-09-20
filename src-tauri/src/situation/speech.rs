@@ -15,78 +15,83 @@ pub(crate) fn holds_speech(scene: &str, proposed_attention: &str) -> bool {
     scene == "MEETING" && matches!(proposed_attention, "IGNORE" | "OBSERVE")
 }
 
+pub(crate) fn speech_holds_tts(state: &AppState) -> bool {
+    state
+        .situation
+        .inner
+        .lock()
+        .ok()
+        .is_some_and(|inner| holds_speech(&inner.state.scene, &inner.decision.proposed_attention))
+}
+
 pub(crate) fn inspect_tts_hold(state: &AppState) -> Option<SpeechHold> {
     let inner = state.situation.inner.lock().ok()?;
-    let scene = inner.state.scene.clone();
-    let proposed_attention = inner.decision.proposed_attention.clone();
-    if !holds_speech(&scene, &proposed_attention) {
+    if !holds_speech(&inner.state.scene, &inner.decision.proposed_attention) {
         return None;
     }
-    let reason_code = inner
-        .decision
-        .reason_codes
-        .first()
-        .filter(|code| !code.is_empty())
-        .cloned()
-        .unwrap_or_else(|| "user-busy".to_string());
     Some(SpeechHold {
-        scene,
-        proposed_attention,
-        reason_code,
+        scene: inner.state.scene.clone(),
+        proposed_attention: inner.decision.proposed_attention.clone(),
+        reason_code: inner
+            .decision
+            .reason_codes
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "user-busy".into()),
     })
 }
 
-pub(crate) fn speech_holds_tts(state: &AppState) -> bool {
-    inspect_tts_hold(state).is_some()
+pub(crate) fn apply_tts_hold(
+    state: &AppState,
+    run_id: Option<&str>,
+    conversation_id: &str,
+) -> bool {
+    inspect_tts_hold(state).is_some_and(|hold| {
+        record_tts_held(state, run_id, conversation_id, &hold);
+        true
+    })
 }
 
-pub(crate) fn record_tts_held(
+fn record_tts_held(
     state: &AppState,
     run_id: Option<&str>,
     conversation_id: &str,
     hold: &SpeechHold,
 ) {
-    let mut attributes = BTreeMap::new();
-    attributes.insert(
-        "reasonCode".to_string(),
-        AuditAttributeValue::Tag(hold.reason_code.clone()),
-    );
-    attributes.insert(
-        "state".to_string(),
-        AuditAttributeValue::Tag(hold.scene.clone()),
-    );
-    attributes.insert(
-        "proposedAttention".to_string(),
-        AuditAttributeValue::Tag(hold.proposed_attention.clone()),
-    );
-    let event = FrontendAuditEventInput {
-        component: "situation".to_string(),
-        event_name: "tts-held".to_string(),
-        phase: "decision".to_string(),
-        outcome: Some("blocked".to_string()),
-        correlation_id: run_id.map(str::to_string),
-        causation_id: None,
-        conversation_id: Some(conversation_id.to_string()),
-        runtime_run_id: run_id.map(str::to_string),
-        session_id: None,
-        subject_id: None,
-        failure_code: None,
-        attributes,
+    let Some(run_id) = run_id else { return };
+    let Ok(mut inner) = state.situation.inner.lock() else {
+        return;
     };
-    let _ = record_frontend_event(state, &event);
-}
-
-impl super::SituationRuntime {
-    #[cfg(test)]
-    pub(crate) fn set_scene_attention_for_test(&self, scene: &str, attention: &str) {
-        let Ok(mut inner) = self.inner.lock() else {
-            return;
-        };
-        inner.state.scene = scene.to_string();
-        inner.decision.proposed_attention = attention.to_string();
+    if inner.tts_hold_audit_run.as_deref() == Some(run_id) {
+        return;
     }
+    inner.tts_hold_audit_run = Some(run_id.to_string());
+    drop(inner);
+    let tag = |key: &str, value: &str| (key.into(), AuditAttributeValue::Tag(value.into()));
+    let _ = record_frontend_event(
+        state,
+        &FrontendAuditEventInput {
+            component: "situation".into(),
+            event_name: "tts-held".into(),
+            phase: "decision".into(),
+            outcome: Some("blocked".into()),
+            correlation_id: Some(run_id.into()),
+            causation_id: None,
+            conversation_id: Some(conversation_id.into()),
+            runtime_run_id: Some(run_id.into()),
+            session_id: None,
+            subject_id: None,
+            failure_code: None,
+            attributes: BTreeMap::from([
+                tag("reasonCode", &hold.reason_code),
+                tag("state", &hold.scene),
+                tag("proposedAttention", &hold.proposed_attention),
+            ]),
+        },
+    );
 }
 
 #[cfg(test)]
-#[path = "speech_tests.rs"]
-mod speech_tests;
+mod tests {
+    include!("speech_tests.rs");
+}

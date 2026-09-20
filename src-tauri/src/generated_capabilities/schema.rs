@@ -73,6 +73,9 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            created_at TEXT NOT NULL,
            completed_at TEXT,
            FOREIGN KEY(revision_id) REFERENCES generated_capability_revisions(id)
-         );",
-    )
+         );
+",
+    )?;
+    super::generation::schema::migrate(connection)?;
+    super::inspection::schema::migrate(connection)
 }

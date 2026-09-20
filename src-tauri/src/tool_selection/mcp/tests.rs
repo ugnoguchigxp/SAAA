@@ -1735,6 +1735,8 @@ async fn t07_endpoint_change_and_unknown_kind_are_refused_before_send() {
         }),
         arguments: json!({ "q": "v" }),
         timeout: std::time::Duration::from_secs(5),
+        origin: "mcp",
+        actor: None,
     };
     let outcome =
         crate::tool_selection::backends::ToolBackend::invoke(&backend, tampered, &cancellation)

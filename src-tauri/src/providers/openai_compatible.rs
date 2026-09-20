@@ -1,8 +1,10 @@
 use crate::OpenAiCompatibleProviderSettings;
 use zeroize::Zeroizing;
 
+mod generation;
 mod probe;
 mod structured;
+pub(crate) use generation::complete_generation;
 pub(crate) use probe::{probe_model_provider, probe_model_provider_with_api_key};
 pub(crate) use structured::{complete_tool_less, EXTRACTION_SYSTEM_PROMPT};
 

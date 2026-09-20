@@ -8,7 +8,7 @@ export type ConversationMessage = { id: string, conversationId: string, role: "u
 export const runtimeFailureCodes = ["runtime_error", "configuration-error", "child-start-failed", "request-timeout", "progress-timeout", "terminal-timeout", "hard-timeout", "child-exited", "protocol-error", "policy-violation", "provider-error", "response-too-large", "internal-error"] as const;
 export type RuntimeFailureCode = (typeof runtimeFailureCodes)[number];
 
-export type VoicePresentationDecision = { decision: "speak" | "silent", reasonCode: "meeting_blocked" | "global_opt_out" | "turn_override" | "conversation_override" | "global_default" | "route_blocked", };
+export type VoicePresentationDecision = { decision: "speak" | "silent", reasonCode: "meeting_blocked" | "global_opt_out" | "turn_override" | "conversation_override" | "global_default" | "route_blocked" | "situation_hold", };
 
 export type ConversationVoicePolicySnapshot = { conversationId: string, speechOutput: "inherit" | "muted", listeningPace: "inherit" | "quick" | "balanced" | "patient", policyRevision: number, updatedAt: string, effectiveSpeechOutput: "speak" | "silent", speechReasonCode: "meeting_blocked" | "global_opt_out" | "conversation_override" | "global_default", effectiveListeningPace: "quick" | "balanced" | "patient", effectiveSilenceTimeoutMs: number, };
 

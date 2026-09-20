@@ -1,4 +1,5 @@
 pub mod agent_tools;
+pub mod capability_commands;
 pub mod codex_app_server;
 pub(crate) mod codex_cli;
 pub(crate) mod codex_persist;

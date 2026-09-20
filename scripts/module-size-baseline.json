@@ -53,6 +53,10 @@
       "total": 7,
       "production": 7
     },
+    "scripts/llang/build-generation-kit.ts": {
+      "total": 260,
+      "production": 260
+    },
     "scripts/macos-bundle-smoke.ts": {
       "total": 58,
       "production": 58
@@ -241,6 +245,42 @@
       "total": 209,
       "production": 209
     },
+    "src-tauri/src/generated_capabilities/generation/builder.rs": {
+      "total": 246,
+      "production": 246
+    },
+    "src-tauri/src/generated_capabilities/generation/config.rs": {
+      "total": 525,
+      "production": 391
+    },
+    "src-tauri/src/generated_capabilities/generation/contracts.rs": {
+      "total": 483,
+      "production": 334
+    },
+    "src-tauri/src/generated_capabilities/generation/generator.rs": {
+      "total": 265,
+      "production": 189
+    },
+    "src-tauri/src/generated_capabilities/generation/kit.rs": {
+      "total": 342,
+      "production": 265
+    },
+    "src-tauri/src/generated_capabilities/generation/mod.rs": {
+      "total": 13,
+      "production": 13
+    },
+    "src-tauri/src/generated_capabilities/generation/recovery.rs": {
+      "total": 117,
+      "production": 38
+    },
+    "src-tauri/src/generated_capabilities/generation/repository.rs": {
+      "total": 563,
+      "production": 402
+    },
+    "src-tauri/src/generated_capabilities/generation/schema.rs": {
+      "total": 41,
+      "production": 41
+    },
     "src-tauri/src/generated_capabilities/guards.rs": {
       "total": 126,
       "production": 126
@@ -260,6 +300,30 @@
     "src-tauri/src/generated_capabilities/host/wire.rs": {
       "total": 56,
       "production": 56
+    },
+    "src-tauri/src/generated_capabilities/inspection/comparison.rs": {
+      "total": 254,
+      "production": 134
+    },
+    "src-tauri/src/generated_capabilities/inspection/contracts.rs": {
+      "total": 480,
+      "production": 480
+    },
+    "src-tauri/src/generated_capabilities/inspection/mod.rs": {
+      "total": 9,
+      "production": 9
+    },
+    "src-tauri/src/generated_capabilities/inspection/repository.rs": {
+      "total": 220,
+      "production": 159
+    },
+    "src-tauri/src/generated_capabilities/inspection/schema.rs": {
+      "total": 25,
+      "production": 25
+    },
+    "src-tauri/src/generated_capabilities/inspection/service.rs": {
+      "total": 691,
+      "production": 471
     },
     "src-tauri/src/generated_capabilities/lifecycle.rs": {
       "total": 69,
@@ -288,6 +352,10 @@
     "src-tauri/src/generated_capabilities/repository.rs": {
       "total": 745,
       "production": 745
+    },
+    "src-tauri/src/generated_capabilities/retirement.rs": {
+      "total": 158,
+      "production": 88
     },
     "src-tauri/src/generated_capabilities/schema.rs": {
       "total": 79,
@@ -957,6 +1025,10 @@
       "total": 173,
       "production": 119
     },
+    "src-tauri/src/providers/openai_compatible/generation.rs": {
+      "total": 92,
+      "production": 92
+    },
     "src-tauri/src/providers/openai_compatible/probe.rs": {
       "total": 79,
       "production": 79
@@ -1068,6 +1140,10 @@
     "src-tauri/src/runtime/agent_tools.rs": {
       "total": 540,
       "production": 322
+    },
+    "src-tauri/src/runtime/capability_commands.rs": {
+      "total": 263,
+      "production": 174
     },
     "src-tauri/src/runtime/codex_app_server.rs": {
       "total": 334,
@@ -1324,6 +1400,34 @@
     "src-tauri/src/situation/tick.rs": {
       "total": 272,
       "production": 272
+    },
+    "src-tauri/src/steward/commands.rs": {
+      "total": 57,
+      "production": 57
+    },
+    "src-tauri/src/steward/mod.rs": {
+      "total": 22,
+      "production": 17
+    },
+    "src-tauri/src/steward/reduce.rs": {
+      "total": 165,
+      "production": 165
+    },
+    "src-tauri/src/steward/report.rs": {
+      "total": 69,
+      "production": 69
+    },
+    "src-tauri/src/steward/repository.rs": {
+      "total": 510,
+      "production": 510
+    },
+    "src-tauri/src/steward/schema.rs": {
+      "total": 61,
+      "production": 61
+    },
+    "src-tauri/src/steward/tests.rs": {
+      "total": 556,
+      "production": 556
     },
     "src-tauri/src/test_environment.rs": {
       "total": 25,

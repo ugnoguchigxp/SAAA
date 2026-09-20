@@ -24,11 +24,12 @@ fn call(snapshot: &GeneratedToolSnapshot, id: &str, arguments: Value) -> AgentTo
 }
 
 async fn run(env: &TestEnv, snapshot: &GeneratedToolSnapshot, call: &AgentToolCall) -> String {
-    tools::execute(
+    tools::execute_with_actor(
         Some(env.service.as_ref()),
         snapshot,
         call,
         "conversation",
+        None,
         std::time::Duration::from_secs(5),
         &crate::RunCancellation::default(),
     )
@@ -84,7 +85,7 @@ async fn e02_invalid_inputs_never_start_a_host_process() {
         ),
     ];
     for arguments in invalid {
-        let result = tools::execute(
+        let result = tools::execute_with_actor(
             Some(env.service.as_ref()),
             &snapshot,
             &AgentToolCall {
@@ -93,6 +94,7 @@ async fn e02_invalid_inputs_never_start_a_host_process() {
                 arguments,
             },
             "conversation",
+            None,
             std::time::Duration::from_secs(5),
             &crate::RunCancellation::default(),
         )
@@ -242,7 +244,7 @@ async fn x01_a_pre_cancelled_run_never_starts_a_host_process() {
     let (revision, snapshot) = active_snapshot(&env).await;
     let cancellation = crate::RunCancellation::default();
     cancellation.cancel();
-    let result = tools::execute(
+    let result = tools::execute_with_actor(
         Some(env.service.as_ref()),
         &snapshot,
         &call(
@@ -251,6 +253,7 @@ async fn x01_a_pre_cancelled_run_never_starts_a_host_process() {
             json!({ "enabled": true, "suspended": false }),
         ),
         "conversation",
+        None,
         std::time::Duration::from_secs(5),
         &cancellation,
     )

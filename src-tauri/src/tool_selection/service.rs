@@ -959,6 +959,26 @@ impl ToolSelectionService {
         arguments: &Value,
         run_cancellation: &RunCancellation,
     ) -> ToolSelectionResult<InvokeResponse> {
+        self.invoke_with_origin(
+            context,
+            execution_ref,
+            arguments,
+            run_cancellation,
+            "conversation",
+        )
+        .await
+    }
+
+    /// Same as [`Self::invoke`] but records the origin that reaches the generated-capability call
+    /// row (`conversation` or `mcp`).
+    pub async fn invoke_with_origin(
+        &self,
+        context: &RequestContext,
+        execution_ref: &str,
+        arguments: &Value,
+        run_cancellation: &RunCancellation,
+        origin: &'static str,
+    ) -> ToolSelectionResult<InvokeResponse> {
         let reference = self
             .references
             .resolve(execution_ref, ReferenceKind::Execution, now_ms())
@@ -1027,6 +1047,16 @@ impl ToolSelectionService {
             binding,
             arguments: arguments.clone(),
             timeout: std::time::Duration::from_millis(BACKEND_TIMEOUT_MS),
+            origin,
+            actor: Some(crate::generated_capabilities::contracts::CallActor {
+                principal_id: context.principal_id.clone(),
+                conversation_id: context.conversation_id.clone(),
+                project_id: context.project_id.clone(),
+                run_id: context
+                    .run_id
+                    .clone()
+                    .unwrap_or_else(|| format!("conversation:{}", context.conversation_id)),
+            }),
         };
         // The management task owns the backend call, the cancellation handle, the result storage
         // and the terminal DB write. Dropping this caller future (HTTP disconnect, aborted

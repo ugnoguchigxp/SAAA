@@ -63,8 +63,7 @@ fn resolved_presentation(
         ))
     })?;
     let meeting_blocked = state.meeting.blocks_tts();
-    if let Some(hold) = crate::situation::inspect_tts_hold(state) {
-        crate::situation::record_tts_held(state, run_id, conversation_id, &hold);
+    if crate::situation::apply_tts_hold(state, run_id, conversation_id) {
         return Ok((
             VoicePresentationDecision {
                 decision: "silent".into(),

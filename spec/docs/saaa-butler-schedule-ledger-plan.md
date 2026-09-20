@@ -1,6 +1,8 @@
 # Butler Schedule Ledger 実装計画 — 期限台帳、tick、Google Calendar 投影
 
-作成日: 2026-09-20。状態: **設計のみ。機能は未実装**。コードは本計画の作成では変更していない。
+作成日: 2026-09-20。状態: **見送り中（準備が整っていない。禁止ではない）。設計のみ。機能は未実装**。コードは本計画の作成では変更していない。
+
+見送り理由: 発火の権限は Goal / Delegation / Task に依存する。時刻の到来を権限にしない。会議中の保留は Situation TTS hold に依存する。いずれも執事循環の最小循環（Step 4）と TTS ゲート（Step 3）が先。揃い次第、§2 の SL-A（Calendar なしの期限台帳と tick）から着手する。
 
 上位は[Personal AI Concept](saaa-personal-ai-concept.md) §4（循環の契機に「期限」「定期確認」を含む）と §9（委任）。前提となる並行作業は World Model M3A/M3B、Situation の TTS 抑止、最小Task循環（Goal / Delegation / Task Runtime の最初の実体）。実装担当は本書と[作業カード](saaa-butler-schedule-ledger-work-cards.md)をセットで使う。
 

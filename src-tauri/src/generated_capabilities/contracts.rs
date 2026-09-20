@@ -783,6 +783,17 @@ pub struct InvokeRequest {
     pub input: Map<String, Value>,
     pub inner_timeout_ms: u64,
     pub origin: &'static str,
+    /// Host-derived ownership. `None` means the call has no recorded owner and cannot be
+    /// inspected (plan 12.4); it is never attributed to the current user.
+    pub actor: Option<CallActor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallActor {
+    pub principal_id: String,
+    pub conversation_id: String,
+    pub project_id: Option<String>,
+    pub run_id: String,
 }
 
 impl InvokeRequest {
@@ -793,6 +804,7 @@ impl InvokeRequest {
             input,
             inner_timeout_ms: INNER_TIMEOUT_DEFAULT_MS,
             origin: "internal",
+            actor: None,
         }
     }
 }

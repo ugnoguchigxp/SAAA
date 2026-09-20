@@ -102,11 +102,25 @@ pub(crate) async fn execute_agent_tool(
     // A `gc_` name is only ever executed from the snapshot that offered it; it never falls
     // through to recall or another tool.
     if call.name.starts_with(TOOL_PREFIX) {
-        return tools::execute(
+        // M2A direct path: the host attaches the same actor context the discovery backend does.
+        let actor = output_persistence.and_then(|persistence| {
+            crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
+                .ok()
+                .map(
+                    |principal| crate::generated_capabilities::contracts::CallActor {
+                        principal_id: principal,
+                        conversation_id: input.conversation_id.clone(),
+                        project_id: None,
+                        run_id: input.run_id.clone(),
+                    },
+                )
+        });
+        return tools::execute_with_actor(
             output_persistence.map(|p| p.state.generated_capabilities.as_ref()),
             generated,
             call,
             "conversation",
+            actor,
             timeout,
             run_cancellation,
         )

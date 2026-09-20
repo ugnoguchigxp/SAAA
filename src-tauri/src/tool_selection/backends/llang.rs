@@ -119,7 +119,8 @@ impl ToolBackend for LlangBackend {
         let mut invocation = InvokeRequest::new(binding.resolved(), request.call_id.clone(), input);
         invocation.inner_timeout_ms =
             request.timeout.min(Duration::from_secs(30)).as_millis() as u64;
-        invocation.origin = "conversation";
+        invocation.origin = request.origin;
+        invocation.actor = request.actor.clone();
 
         let inner = Cancellation::default();
         let future = service.invoke(invocation, &inner);

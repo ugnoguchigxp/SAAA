@@ -2,11 +2,11 @@
 
 作成日: 2026-09-20。状態: 実装順のカード。正本は[フェーズ計画](saaa-steward-loop-phase-plan.md)。
 
-Step 1 のカードは既存の[M3Aカード](saaa-personal-world-model-m3-work-cards.md)を使う。ここでは重複して書かない。Step 2 のカードは [M3B計画](saaa-personal-world-model-m3b-plan.md) §8。Step 3 のカードは [TTSゲート計画](saaa-situation-tts-gate-plan.md) §8（ST-00〜07）。Step 4 のカードは[最小循環計画](saaa-minimal-loop-plan.md)。本書は横断ゲートと Step 3 の索引のみ。
+Step 1 のカードは既存の[M3Aカード](saaa-personal-world-model-m3-work-cards.md)を使う。ここでは重複して書かない。Step 2 のカードは [M3B計画](saaa-personal-world-model-m3b-plan.md) §8。Step 3 のカードは [TTSゲート計画](saaa-situation-tts-gate-plan.md) §8。Step 4 のカードは [最小循環計画](saaa-minimal-loop-plan.md) §8（ML-00〜09）。本書は横断ゲートと Step 3 の索引のみ。
 
 ## 実行規則
 
-一枚を完了してから次へ。並行着手しない。5実装ファイルを超える場合は枝番へ分割する。カード単位の commit は不要。試験名は `sl_` / `st_` 接頭辞。0件実行を合格にしない。
+一枚を完了してから次へ。並行着手しない。5実装ファイルを超える場合は枝番へ分割する。カード単位の commit は不要。試験名は `sl_` / `st_` / `ml_` 接頭辞。0件実行を合格にしない。
 
 ## 横断カード
 
@@ -17,8 +17,8 @@ Step 1 のカードは既存の[M3Aカード](saaa-personal-world-model-m3-work-
 | SL-02 | M3B計画 | Step 1 完了後 | [saaa-personal-world-model-m3b-plan.md](saaa-personal-world-model-m3b-plan.md) を正本とする | グラフ深化なし。TTL延長なし。default OFF。カード10枚 |
 | SL-03 | M3Bカード | Step 2 | SL-02 のカードを順に完走。記録は m3b-results.md | 誤断定増0、Scope漏洩0、命令位置1 |
 | SL-04 | ST-00〜07 | Step 3 | [TTSゲート計画](saaa-situation-tts-gate-plan.md) §8 | 会議中TTS開始 0、hysteresis後復帰。`blocks_tts` 置換なし |
-| SL-05 | ML-00〜13 | Step 4 | 最小循環計画のカード | 受入シナリオ実DB。漏洩0、重複0、撤回後新規実行0 |
-| SL-06 | bun run check:local / spec:check | 各Step完了時 | 全体ゲート。size baseline登録。IPC変更時は ipc:generate | 機能カード通過だけでStep完了としない |
+| SL-05 | ML-00〜09 | Step 4 | [最小循環計画](saaa-minimal-loop-plan.md) §8 | 受入シナリオ実DB。漏洩0、重複0、撤回後新規実行0。`ml_` 16 |
+| SL-06 | bun run check:local / spec:check | 各Step完了時 | 全体ゲート。size baseline登録。IPC変更時は ipc:generate | spec:check 通過。check:local は並行 dirty の size/clippy で未完走 |
 
 ## Step 3 カード（Situation TTS 一点強制）
 

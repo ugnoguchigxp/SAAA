@@ -38,11 +38,12 @@ async fn x04_the_adapter_deadline_times_out_cancels_and_settles() {
     let service = env.service.clone();
     let run = crate::RunCancellation::default();
     let task = tokio::spawn(async move {
-        tools::execute(
+        tools::execute_with_actor(
             Some(service.as_ref()),
             &snapshot,
             &call,
             "conversation",
+            None,
             Duration::from_secs(5),
             &run,
         )
@@ -68,11 +69,12 @@ async fn x04b_expired_budget_is_rejected_before_any_call_row() {
     let call = call(&snapshot);
     let before = env.scalar("SELECT COUNT(*) FROM generated_capability_calls");
     let run = crate::RunCancellation::default();
-    let content = tools::execute(
+    let content = tools::execute_with_actor(
         Some(env.service.as_ref()),
         &snapshot,
         &call,
         "conversation",
+        None,
         Duration::ZERO,
         &run,
     )

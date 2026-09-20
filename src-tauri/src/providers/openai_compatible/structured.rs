@@ -12,7 +12,6 @@ use crate::RunCancellation;
 
 const EXTRACTION_TIMEOUT_MS: u64 = 5_000;
 const EXTRACTION_MAX_TOKENS: u32 = 700;
-
 /// Sends one tool-less Chat Completions request and returns the assistant content. The caller
 /// enforces the output size and schema.
 pub(crate) async fn complete_tool_less(

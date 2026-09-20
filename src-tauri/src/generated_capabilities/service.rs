@@ -733,6 +733,16 @@ impl CapabilityService {
         lifecycle::suspend_revision(&self.writer, revision_id, expected_epoch)
     }
 
+    /// Retires a non-active revision. Package, call history and inspections are retained; an
+    /// active revision must be suspended first (plan 4, G04).
+    pub fn retire_revision(
+        &self,
+        revision_id: &str,
+        expected_epoch: i64,
+    ) -> CapabilityResult<repository::CapabilityRow> {
+        lifecycle::retire_revision(&self.writer, revision_id, expected_epoch)
+    }
+
     pub fn catalog_epoch(&self, capability_id: &str) -> CapabilityResult<i64> {
         lifecycle::read(&self.writer, |connection| {
             repository::capability_by_id(connection, capability_id)
@@ -813,6 +823,13 @@ impl CapabilityService {
                     request.origin,
                     &now_iso(),
                 )?;
+                if let Some(actor) = &request.actor {
+                    super::generation::repository::insert_call_owner_for(
+                        transaction,
+                        &request.call_id,
+                        actor,
+                    )?;
+                }
                 Ok(revision.inventory_hash)
             })
         };

@@ -49,6 +49,7 @@ pub(crate) async fn execute_turn(
             ));
         }
     };
+    crate::steward::on_user_message(state, input);
     state
         .situation
         .set_conversation_state(if task_mode == "coding" {
