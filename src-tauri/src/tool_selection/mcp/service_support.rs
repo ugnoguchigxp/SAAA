@@ -45,7 +45,7 @@ pub fn source_display(writer: &SqliteWriter, tool_id: &str) -> (String, String) 
             let tool =
                 repository::tool_by_id(connection, &tool_id).map_err(|error| error.to_string())?;
             let kind = tool.as_ref().and_then(|tool| {
-                repository::source_kind(connection, &tool.source_id)
+                super::super::source_lookup::source_kind(connection, &tool.source_id)
                     .ok()
                     .flatten()
             });
@@ -220,8 +220,10 @@ pub fn finalize_outcome(
             result_availability = Some("inline");
         }
     } else if let Some(value) = &result {
+        // A failed/isError result is kept only within the existing inline bound; a larger body is
+        // dropped while the technical failure and its code remain.
         let bytes = super::descriptors::canonical_json_string(value).len();
-        if bytes > MCP_RESULT_MAX_BYTES {
+        if bytes > super::super::contracts::BACKEND_RESULT_MAX_BYTES {
             result = None;
         }
         result_availability = Some("inline");

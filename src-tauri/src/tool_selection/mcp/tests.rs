@@ -2066,8 +2066,10 @@ async fn review_manual_grant_is_never_adopted_or_revoked() {
             let tool_id = tool_id.clone();
             let principal = principal.clone();
             move |c| {
-                repository::exact_grant_exists(c, &principal, &tool_id, "user", &principal)
-                    .map_err(|e| e.to_string())
+                crate::tool_selection::source_lookup::exact_grant_exists(
+                    c, &principal, &tool_id, "user", &principal,
+                )
+                .map_err(|e| e.to_string())
             }
         })
         .unwrap();

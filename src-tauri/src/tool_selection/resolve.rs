@@ -36,7 +36,7 @@ pub fn resolve_tool_id(
         }
     }
     if let Some((source_id, tool_name)) = value.split_once('/') {
-        let candidates: Vec<String> = repository::tool_ids_by_name(connection, tool_name)
+        let candidates: Vec<String> = super::source_lookup::tool_ids_by_name(connection, tool_name)
             .unwrap_or_default()
             .into_iter()
             .filter(|tool_id| {
@@ -50,7 +50,7 @@ pub fn resolve_tool_id(
             .collect();
         return unique(candidates);
     }
-    let name_matches: Vec<String> = repository::tool_ids_by_name(connection, value)
+    let name_matches: Vec<String> = super::source_lookup::tool_ids_by_name(connection, value)
         .unwrap_or_default()
         .into_iter()
         .filter(|tool_id| authorized(tool_id))

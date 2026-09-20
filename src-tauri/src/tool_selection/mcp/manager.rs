@@ -335,9 +335,16 @@ impl McpManager {
     /// marks the source dirty; the polling loop re-syncs after the debounce. A server that does
     /// not offer GET (405) simply returns no stream.
     async fn watch_notifications(&self, source_id: &str) {
-        // At most one GET watcher per source; a resync replaces the previous one.
-        if let Some(handle) = self.watchers.lock().await.remove(source_id) {
-            handle.abort();
+        // At most one GET watcher per source. The watcher reconnects on its own, so a periodic
+        // resync does not open an additional stream.
+        {
+            let mut watchers = self.watchers.lock().await;
+            if let Some(handle) = watchers.get(source_id) {
+                if !handle.is_finished() {
+                    return;
+                }
+            }
+            watchers.remove(source_id);
         }
         let Some(spec) = self.source_spec(source_id).await else {
             return;
@@ -345,20 +352,22 @@ impl McpManager {
         let Ok(session) = self.pool.session_for(&spec, self.config_generation()).await else {
             return;
         };
-        let Some(mut receiver) = session.open_event_stream().await else {
-            return;
-        };
         let notify = self.dirty_notify.clone();
         let dirty = self.dirty.clone();
         let id = source_id.to_string();
         let handle = tokio::spawn(async move {
-            while let Some(message) = receiver.recv().await {
-                if message.get("method").and_then(Value::as_str)
-                    == Some("notifications/tools/list_changed")
-                {
-                    dirty.lock().await.insert(id.clone());
-                    notify.notify_waiters();
+            // A server without GET support (405) returns `None` and monitoring stops; the 60s
+            // poll still catches changes. A stream that closes is re-opened after a short pause.
+            while let Some(mut receiver) = session.open_event_stream().await {
+                while let Some(message) = receiver.recv().await {
+                    if message.get("method").and_then(Value::as_str)
+                        == Some("notifications/tools/list_changed")
+                    {
+                        dirty.lock().await.insert(id.clone());
+                        notify.notify_waiters();
+                    }
                 }
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
         self.watchers
@@ -473,7 +482,7 @@ impl McpManager {
                 // A grant that already exists but is not config-owned is a manual grant. Never
                 // adopt it, so removing the source cannot revoke a grant the host created by
                 // another management path.
-                let manually_granted = repository::exact_grant_exists(
+                let manually_granted = super::super::source_lookup::exact_grant_exists(
                     &transaction,
                     &grant.principal_id,
                     &grant.tool_id,

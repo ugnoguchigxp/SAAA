@@ -632,7 +632,8 @@ impl ToolSelectionService {
                 created_at_ms: now_ms(),
             };
             let reference = self.references.issue(entry, now_ms())?;
-            let (source_id, source_label) = self.source_display(&candidate.tool_id);
+            let (source_id, source_label) =
+                super::mcp::service_support::source_display(&self.writer, &candidate.tool_id);
             candidates.push(SearchCandidate {
                 reference,
                 revision_id: candidate.revision_id.clone(),
@@ -729,12 +730,6 @@ impl ToolSelectionService {
             .map_err(|_| ToolSelectionError::storage())
     }
 
-    /// Display identity for a tool: the source id plus a label that distinguishes same-named tools
-    /// from different connection targets.
-    fn source_display(&self, tool_id: &str) -> (String, String) {
-        super::mcp::service_support::source_display(&self.writer, tool_id)
-    }
-
     pub fn describe(
         &self,
         context: &RequestContext,
@@ -758,7 +753,8 @@ impl ToolSelectionService {
             return Err(ToolSelectionError::unauthorized());
         }
         let (tool, revision) = self.current_revision(&reference)?;
-        let (source_id, source_label) = self.source_display(&revision.tool_id);
+        let (source_id, source_label) =
+            super::mcp::service_support::source_display(&self.writer, &revision.tool_id);
         if section == "contract" {
             let body = json!({
                 "revisionId": revision.id,
@@ -877,7 +873,7 @@ impl ToolSelectionService {
                 }
                 // A residual reference must be refused when the source is disabled or stale,
                 // even if no catalog epoch has moved since the reference was issued.
-                if !repository::source_eligible(connection, &tool.source_id, now)
+                if !super::source_lookup::source_eligible(connection, &tool.source_id, now)
                     .map_err(|error| error.to_string())?
                 {
                     return Err("stale".to_string());
