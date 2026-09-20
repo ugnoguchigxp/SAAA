@@ -348,6 +348,30 @@ pub fn source_kind(connection: &Connection, source_id: &str) -> rusqlite::Result
         .optional()
 }
 
+/// True when a source may currently serve a tool: enabled, and for an external MCP source a
+/// successful sync within the freshness window. Used by describe/invoke so a residual reference
+/// is refused on freshness, not only on the catalog epoch.
+pub fn source_eligible(
+    connection: &Connection,
+    source_id: &str,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    let stale_before = now - super::mcp::MCP_SOURCE_STALE_AFTER_MILLIS;
+    connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM tool_selection_sources s
+                WHERE s.id = ?1 AND s.enabled = 1
+                  AND (s.kind <> 'mcp_http' OR EXISTS (
+                    SELECT 1 FROM tool_selection_mcp_sources ms
+                     WHERE ms.source_id = s.id AND ms.last_success_at IS NOT NULL
+                       AND ms.last_success_at >= ?2)))",
+            params![source_id, stale_before],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value == 1)
+}
+
 /// Every catalog id whose display name matches. Used to refuse name-only corrections when two
 /// sources publish the same tool name, instead of silently picking one with `LIMIT 1`.
 pub fn tool_ids_by_name(connection: &Connection, name: &str) -> rusqlite::Result<Vec<String>> {

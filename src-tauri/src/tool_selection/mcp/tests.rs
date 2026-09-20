@@ -2191,3 +2191,39 @@ async fn review_project_scoped_result_is_refused_for_another_project() {
         .describe_result(&other, &result_ref, 0)
         .is_err());
 }
+
+#[tokio::test]
+async fn review_describe_refuses_a_stale_source_reference() {
+    let state = default_state();
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let context = harness.context();
+    harness.service.set_scenario(&context, scenario());
+    let search = harness
+        .service
+        .search(&context, "search notes", 1)
+        .await
+        .expect("search");
+    let candidate_ref = search.candidates[0].reference.clone();
+    // Age the source beyond the freshness window after the reference was issued.
+    harness
+        .writer
+        .write(|c| {
+            c.execute(
+                "UPDATE tool_selection_mcp_sources SET last_success_at = ?1 WHERE source_id = 'mcp-test'",
+                rusqlite::params![now_ms() - super::MCP_SOURCE_STALE_AFTER_MILLIS - 1000],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
+    let error = harness
+        .service
+        .describe(&context, &candidate_ref, "contract", None)
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        crate::tool_selection::ToolSelectionErrorCode::StaleReference
+    );
+}

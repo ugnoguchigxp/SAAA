@@ -863,6 +863,7 @@ impl ToolSelectionService {
         let project = reference.project_id.clone();
         let tool_id = reference.tool_id.clone();
         let revision_id = reference.revision_id.clone();
+        let now = now_ms();
         let result = self
             .writer
             .read_serialized(move |connection| {
@@ -871,6 +872,13 @@ impl ToolSelectionService {
                     .ok_or_else(|| "not-found".to_string())?;
                 if !tool.enabled
                     || tool.current_revision_id.as_deref() != Some(revision_id.as_str())
+                {
+                    return Err("stale".to_string());
+                }
+                // A residual reference must be refused when the source is disabled or stale,
+                // even if no catalog epoch has moved since the reference was issued.
+                if !repository::source_eligible(connection, &tool.source_id, now)
+                    .map_err(|error| error.to_string())?
                 {
                     return Err("stale".to_string());
                 }

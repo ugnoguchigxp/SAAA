@@ -38,7 +38,7 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            schema_hash TEXT NOT NULL CHECK(length(schema_hash) = 64),
            acl_epoch INTEGER NOT NULL CHECK(acl_epoch >= 0),
            expires_at INTEGER NOT NULL,
-           payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+           payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND length(payload_json) <= 1048576),
            byte_count INTEGER NOT NULL CHECK(byte_count > 0 AND byte_count <= 1048576),
            FOREIGN KEY(invocation_id) REFERENCES tool_selection_invocations(id) ON DELETE CASCADE,
            FOREIGN KEY(revision_id) REFERENCES tool_selection_revisions(id)
