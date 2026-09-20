@@ -37,6 +37,7 @@ pub struct McpManager {
     gates: Mutex<HashMap<String, Arc<RwLock<()>>>>,
     dirty: Arc<Mutex<HashSet<String>>>,
     dirty_notify: Arc<Notify>,
+    watchers: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     source_diagnostics: RwLock<HashMap<String, &'static str>>,
     config_diagnostic: RwLock<Option<&'static str>>,
     shutting_down: AtomicBool,
@@ -65,6 +66,7 @@ impl McpManager {
             gates: Mutex::new(HashMap::new()),
             dirty: Arc::new(Mutex::new(HashSet::new())),
             dirty_notify: Arc::new(Notify::new()),
+            watchers: Mutex::new(HashMap::new()),
             source_diagnostics: RwLock::new(HashMap::new()),
             config_diagnostic: RwLock::new(diagnostic),
             shutting_down: AtomicBool::new(false),
@@ -164,9 +166,15 @@ impl McpManager {
             }
         }
         if !removed.is_empty() {
-            self.disable_sources(&removed).await;
+            self.disable_sources(&removed, generation).await;
             let keep: HashSet<String> = next.clone();
             self.pool.forget_sources(&keep).await;
+            let mut watchers = self.watchers.lock().await;
+            for id in &removed {
+                if let Some(handle) = watchers.remove(id) {
+                    handle.abort();
+                }
+            }
         }
         // Register the surviving sources' bookkeeping rows and current generation. Grants and
         // embeddings are only applied after a successful sync.
@@ -200,9 +208,10 @@ impl McpManager {
         });
     }
 
-    async fn disable_sources(&self, ids: &[String]) {
+    async fn disable_sources(&self, ids: &[String], generation: i64) {
         let writer = self.writer.clone();
         let ids = ids.to_vec();
+        let owner = self.principal_id.clone();
         let _ = writer.write(move |connection| {
             let transaction = connection
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -210,9 +219,20 @@ impl McpManager {
             let mut catalog_changed = false;
             let mut acl_changed = false;
             for id in &ids {
-                let disabled = mcp_repository::set_source_tools_enabled(&transaction, id, false)
+                // Create (or refresh) the ledger row with the new generation even for a source
+                // that was never successfully synced. A sync that is still running with the old
+                // generation then fails its in-transaction generation check instead of
+                // re-publishing a removed source.
+                repository::upsert_source(&transaction, id, "mcp_http", &owner, false)
                     .map_err(|_| "storage".to_string())?;
-                repository::set_source_enabled(&transaction, id, false)
+                let endpoint_hash = mcp_repository::source(&transaction, id)
+                    .ok()
+                    .flatten()
+                    .map(|row| row.endpoint_hash)
+                    .unwrap_or_else(|| "0".repeat(64));
+                mcp_repository::upsert_source(&transaction, id, generation, &endpoint_hash)
+                    .map_err(|_| "storage".to_string())?;
+                let disabled = mcp_repository::set_source_tools_enabled(&transaction, id, false)
                     .map_err(|_| "storage".to_string())?;
                 let grants = mcp_repository::managed_grants_for_source(&transaction, id)
                     .map_err(|_| "storage".to_string())?;
@@ -315,6 +335,10 @@ impl McpManager {
     /// marks the source dirty; the polling loop re-syncs after the debounce. A server that does
     /// not offer GET (405) simply returns no stream.
     async fn watch_notifications(&self, source_id: &str) {
+        // At most one GET watcher per source; a resync replaces the previous one.
+        if let Some(handle) = self.watchers.lock().await.remove(source_id) {
+            handle.abort();
+        }
         let Some(spec) = self.source_spec(source_id).await else {
             return;
         };
@@ -327,7 +351,7 @@ impl McpManager {
         let notify = self.dirty_notify.clone();
         let dirty = self.dirty.clone();
         let id = source_id.to_string();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             while let Some(message) = receiver.recv().await {
                 if message.get("method").and_then(Value::as_str)
                     == Some("notifications/tools/list_changed")
@@ -337,6 +361,10 @@ impl McpManager {
                 }
             }
         });
+        self.watchers
+            .lock()
+            .await
+            .insert(source_id.to_string(), handle);
     }
 
     pub async fn mark_dirty(&self, source_id: &str) {
@@ -368,6 +396,13 @@ impl McpManager {
                     let mut dirty = manager.dirty.lock().await;
                     dirty.drain().collect()
                 };
+                // Expired continuation rows are removed on the periodic pass.
+                let writer = manager.writer.clone();
+                let _ = writer.write(|connection| {
+                    super::results::cleanup(connection)
+                        .map(|_| ())
+                        .map_err(|error| error.code.as_str().to_string())
+                });
                 if dirty.is_empty() {
                     manager.sync_all().await;
                 } else {
@@ -433,6 +468,20 @@ impl McpManager {
                 )
                 .map_err(|_| "storage".to_string())?;
                 if already_managed {
+                    continue;
+                }
+                // A grant that already exists but is not config-owned is a manual grant. Never
+                // adopt it, so removing the source cannot revoke a grant the host created by
+                // another management path.
+                let manually_granted = repository::exact_grant_exists(
+                    &transaction,
+                    &grant.principal_id,
+                    &grant.tool_id,
+                    &grant.scope_kind,
+                    &grant.scope_id,
+                )
+                .map_err(|_| "storage".to_string())?;
+                if manually_granted {
                     continue;
                 }
                 repository::upsert_grant(
@@ -768,6 +817,12 @@ impl McpManager {
             let sources = self.config.read().await.clone();
             for source in &sources.sources {
                 stopped.insert(source.id.clone());
+            }
+        }
+        {
+            let mut watchers = self.watchers.lock().await;
+            for (_, handle) in watchers.drain() {
+                handle.abort();
             }
         }
         self.pool.shutdown().await;

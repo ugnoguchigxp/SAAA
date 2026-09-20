@@ -253,13 +253,32 @@ impl ToolSelectionService {
                 let eligible =
                     repository::eligible_revisions(connection, &principal, project.as_deref(), now)
                         .map_err(|error| error.to_string())?;
+                // Count display names so a name published by two sources can be offered to the
+                // extractor as a source-qualified alternative instead of an ambiguous bare name.
+                let mut name_counts: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for item in &eligible {
+                    if let Ok(Some(tool)) =
+                        repository::tool_by_id(connection, &item.revision.tool_id)
+                    {
+                        *name_counts.entry(tool.backend_key).or_insert(0) += 1;
+                    }
+                }
                 let mut tools: HashSet<String> = HashSet::new();
+                let mut prompt_candidates: Vec<String> = Vec::new();
                 for item in &eligible {
                     tools.insert(item.revision.tool_id.clone());
                     if let Ok(Some(tool)) =
                         repository::tool_by_id(connection, &item.revision.tool_id)
                     {
-                        tools.insert(tool.backend_key);
+                        tools.insert(tool.backend_key.clone());
+                        let qualified = format!("{}/{}", tool.source_id, tool.backend_key);
+                        tools.insert(qualified.clone());
+                        if name_counts.get(&tool.backend_key).copied().unwrap_or(0) > 1
+                            && !prompt_candidates.contains(&qualified)
+                        {
+                            prompt_candidates.push(qualified);
+                        }
                     }
                 }
                 let decisions = repository::recent_decisions(
@@ -286,6 +305,7 @@ impl ToolSelectionService {
                         tool_ids,
                     });
                 }
+                prompt_tools.extend(prompt_candidates);
                 prompt_tools.sort();
                 prompt_tools.truncate(EXTRACT_PROMPT_TOOLS_MAX);
                 Ok((allowed_decisions, tools, recent, prompt_tools))

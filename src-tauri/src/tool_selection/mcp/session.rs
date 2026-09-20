@@ -7,7 +7,7 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -15,8 +15,8 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use super::config::McpSourceSpec;
 use super::transport::{HttpTransport, TransportError};
 use super::{
-    MCP_CALLS_PER_PROFILE_MAX, MCP_CALLS_PER_SOURCE_MAX, MCP_CALL_QUEUE_MAX, MCP_CONNECT_TIMEOUT,
-    MCP_INITIALIZE_TIMEOUT, MCP_PROTOCOL_VERSION, MCP_SHUTDOWN_GRACE,
+    MCP_BACKOFF_SECONDS, MCP_CALLS_PER_PROFILE_MAX, MCP_CALLS_PER_SOURCE_MAX, MCP_CALL_QUEUE_MAX,
+    MCP_CONNECT_TIMEOUT, MCP_INITIALIZE_TIMEOUT, MCP_PROTOCOL_VERSION, MCP_SHUTDOWN_GRACE,
 };
 use crate::RunCancellation;
 
@@ -83,6 +83,10 @@ pub struct SourceSession {
     pub config_generation: i64,
     transport: Arc<HttpTransport>,
     state: Mutex<SessionState>,
+    /// Consecutive initialize failures and the earliest time the next attempt may run. Implements
+    /// the 1/2/4/8/16/30s source backoff.
+    failure_count: AtomicU32,
+    next_attempt_at: Mutex<Option<tokio::time::Instant>>,
     source_permits: Arc<Semaphore>,
 }
 
@@ -93,8 +97,26 @@ impl SourceSession {
             config_generation,
             transport,
             state: Mutex::new(SessionState::Unavailable),
+            failure_count: AtomicU32::new(0),
+            next_attempt_at: Mutex::new(None),
             source_permits: Arc::new(Semaphore::new(MCP_CALLS_PER_SOURCE_MAX)),
         }
+    }
+
+    async fn backoff_until(&self) -> Option<tokio::time::Instant> {
+        *self.next_attempt_at.lock().await
+    }
+
+    async fn record_success(&self) {
+        self.failure_count.store(0, Ordering::SeqCst);
+        *self.next_attempt_at.lock().await = None;
+    }
+
+    async fn record_failure(&self) {
+        let count = self.failure_count.fetch_add(1, Ordering::SeqCst) as usize;
+        let index = count.min(MCP_BACKOFF_SECONDS.len() - 1);
+        let delay = Duration::from_secs(MCP_BACKOFF_SECONDS[index]);
+        *self.next_attempt_at.lock().await = Some(tokio::time::Instant::now() + delay);
     }
 
     pub async fn state(&self) -> SessionState {
@@ -115,18 +137,25 @@ impl SourceSession {
             SessionState::Disabled | SessionState::Closing => return Err(CallError::Closed),
             _ => {}
         }
+        if let Some(next) = self.backoff_until().await {
+            if tokio::time::Instant::now() < next {
+                return Err(CallError::Unavailable("source-backoff"));
+            }
+        }
         *state = SessionState::Initializing;
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             *state = SessionState::Unavailable;
-            return Err(CallError::Unknown("initialize-timeout"));
+            return Err(CallError::Unavailable("initialize-timeout"));
         }
         match self.initialize(remaining.min(MCP_INITIALIZE_TIMEOUT)).await {
             Ok(()) => {
                 *state = SessionState::Ready;
+                self.record_success().await;
                 Ok(())
             }
             Err(error) => {
+                self.record_failure().await;
                 *state = match error {
                     CallError::Unavailable(_) | CallError::Closed => SessionState::Unavailable,
                     _ => SessionState::Reconnecting,
@@ -240,7 +269,7 @@ impl SourceSession {
         }
     }
 
-    /// Lists one page of tools. Uses the same state machine as `call`.
+    /// Lists one page of tools. Uses the same state machine as `call` and the same deadline.
     pub async fn list_page(
         &self,
         cursor: Option<&str>,
@@ -248,6 +277,10 @@ impl SourceSession {
     ) -> Result<Value, CallError> {
         let deadline = tokio::time::Instant::now() + timeout;
         self.ensure_ready(deadline).await?;
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(CallError::Unknown("list-timeout"));
+        }
         let params = match cursor {
             Some(cursor) => json!({ "cursor": cursor }),
             None => json!({}),
@@ -255,7 +288,7 @@ impl SourceSession {
         let id = crate::new_id("mcp-list");
         let result = self
             .transport
-            .request(&id, "tools/list", params, timeout)
+            .request(&id, "tools/list", params, remaining)
             .await
             .map_err(map_transport);
         if matches!(result, Err(CallError::SessionExpired)) {
@@ -332,7 +365,8 @@ impl McpSessionPool {
         timeout: Duration,
         cancellation: &RunCancellation,
     ) -> Result<Value, CallError> {
-        let _admission = self.admit()?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let _admission = self.admit(deadline).await?;
         let session = self.session_for(spec, config_generation).await?;
         session
             .call(tool_name, arguments, timeout, cancellation)
@@ -371,8 +405,9 @@ impl McpSessionPool {
     }
 
     /// Admission guard that must be held for the duration of one call. Refuses before send when
-    /// the profile queue or the profile call slots are exhausted.
-    pub fn admit(&self) -> Result<AdmissionGuard, CallError> {
+    /// the local queue is full (64 concurrent admissions) and waits for a profile call slot (16)
+    /// until the call deadline. The connection/admission wait is part of the call deadline.
+    pub async fn admit(&self, deadline: tokio::time::Instant) -> Result<AdmissionGuard, CallError> {
         if self.closing.load(Ordering::SeqCst) {
             return Err(CallError::Closed);
         }
@@ -381,11 +416,14 @@ impl McpSessionPool {
             .clone()
             .try_acquire_owned()
             .map_err(|_| CallError::Busy)?;
-        let call = self
-            .profile_permits
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| CallError::Busy)?;
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(CallError::Busy);
+        }
+        let call = tokio::time::timeout(remaining, self.profile_permits.clone().acquire_owned())
+            .await
+            .map_err(|_| CallError::Busy)?
+            .map_err(|_| CallError::Closed)?;
         Ok(AdmissionGuard {
             _queue: queue,
             _call: call,

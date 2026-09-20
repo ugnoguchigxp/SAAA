@@ -56,6 +56,12 @@ struct ServerState {
     emit_progress: AtomicBool,
     server_request: AtomicBool,
     unsupported_reply: Mutex<Option<i64>>,
+    gate_list: AtomicBool,
+    list_received: Arc<tokio::sync::Notify>,
+    list_release: Arc<tokio::sync::Notify>,
+    gate_call: AtomicBool,
+    call_received: Arc<tokio::sync::Notify>,
+    call_release: Arc<tokio::sync::Notify>,
 }
 
 struct MockServer {
@@ -299,6 +305,11 @@ async fn serve(
             if bad == Some(index) {
                 return write_response(socket, "200 OK", "application/json", b"{not json").await;
             }
+            if state.gate_list.load(Ordering::SeqCst) && index == 0 {
+                // A deterministic barrier: the test observes the request before it is answered.
+                state.list_received.notify_one();
+                state.list_release.notified().await;
+            }
             let cursor = request
                 .get("params")
                 .and_then(|params| params.get("cursor"))
@@ -354,6 +365,10 @@ async fn serve(
         }
         "tools/call" => {
             state.call_count.fetch_add(1, Ordering::SeqCst);
+            if state.gate_call.load(Ordering::SeqCst) {
+                state.call_received.notify_one();
+                state.call_release.notified().await;
+            }
             if state.disconnect_after_call.load(Ordering::SeqCst) {
                 // Drop the socket without a response to model an indeterminate outcome.
                 let _ = socket.shutdown().await;
@@ -1880,4 +1895,299 @@ async fn t07_restart_reconcile_marks_mcp_calls_as_indeterminate() {
         .unwrap();
     assert_eq!(status, "interrupted");
     assert_eq!(error.as_deref(), Some("remote-outcome-unknown"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Review fixes: resolution, backoff, admission, removal race, manual grants, project ACL
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn review_source_qualified_resolution_is_unambiguous() {
+    let connection = Connection::open_in_memory().expect("in-memory");
+    crate::persistence::schema::initialize_database(&connection).expect("schema");
+    let principal = "P-REVIEW";
+    let a = descriptors::tool_id("mcp-a", "search");
+    let b = descriptors::tool_id("mcp-b", "search");
+    for (source, tool) in [("mcp-a", &a), ("mcp-b", &b)] {
+        repository::upsert_source(&connection, source, "mcp_http", principal, true)
+            .expect("source");
+        repository::upsert_tool(
+            &connection,
+            &repository::NewTool {
+                source_id: source,
+                tool_id: tool,
+                backend_key: "search",
+                enabled: true,
+            },
+        )
+        .expect("tool");
+        repository::upsert_grant(&connection, principal, tool, "user", principal).expect("grant");
+    }
+    let context = RequestContext::new(principal, "conversation-d4").with_run(Some("run".into()));
+    // A bare duplicate name is ambiguous.
+    assert_eq!(
+        crate::tool_selection::resolve::resolve_tool_id(&connection, "search", &context, None),
+        None
+    );
+    // A source-qualified name resolves to exactly one tool.
+    assert_eq!(
+        crate::tool_selection::resolve::resolve_tool_id(
+            &connection,
+            "mcp-a/search",
+            &context,
+            None
+        ),
+        Some(a)
+    );
+    assert_eq!(
+        crate::tool_selection::resolve::resolve_tool_id(
+            &connection,
+            "mcp-b/search",
+            &context,
+            None
+        ),
+        Some(b)
+    );
+}
+
+#[tokio::test]
+async fn review_failed_initialize_sets_a_source_backoff() {
+    let state = default_state();
+    state.tools_capability.store(false, Ordering::SeqCst);
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    let first = harness.manager.sync_source("mcp-test").await.unwrap_err();
+    assert_eq!(first.code, "tools-capability-missing");
+    // The immediate retry is refused by the 1s backoff rather than hammering the server.
+    let second = harness.manager.sync_source("mcp-test").await.unwrap_err();
+    assert_eq!(second.code, "source-backoff");
+}
+
+#[tokio::test]
+async fn review_removal_during_first_sync_cannot_republish_the_source() {
+    let state = default_state();
+    state.gate_list.store(true, Ordering::SeqCst);
+    let server = MockServer::start(state.clone()).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    let manager = harness.manager.clone();
+    let sync = tokio::spawn(async move { manager.sync_source("mcp-test").await });
+    // Barrier: the server has received tools/list but has not answered it yet.
+    state.list_received.notified().await;
+    harness
+        .manager
+        .apply_sources(McpSources {
+            sources: Vec::new(),
+        })
+        .await;
+    state.list_release.notify_one();
+    let outcome = sync.await.expect("join");
+    assert_eq!(outcome.unwrap_err().code, "sync-generation-changed");
+    let enabled = harness
+        .writer
+        .read_serialized(|c| {
+            c.query_row(
+                "SELECT enabled FROM tool_selection_sources WHERE id = 'mcp-test'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+    assert_eq!(enabled, 0, "a removed source stays disabled");
+    let tools = harness
+        .writer
+        .read_serialized(|c| {
+            mcp_repo::published_tool_count(c, "mcp-test").map_err(|e| e.to_string())
+        })
+        .unwrap();
+    assert_eq!(tools, 0, "no tool was published by the aborted sync");
+}
+
+#[tokio::test]
+async fn review_manual_grant_is_never_adopted_or_revoked() {
+    let state = default_state();
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, Vec::new());
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let tool_id = descriptors::tool_id("mcp-test", "search");
+    let principal = harness.principal.clone();
+    harness
+        .writer
+        .write({
+            let tool_id = tool_id.clone();
+            let principal = principal.clone();
+            move |c| {
+                repository::upsert_grant(c, &principal, &tool_id, "user", &principal)
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+        .unwrap();
+    // Now the config declares the same grant and a sync runs.
+    harness
+        .manager
+        .apply_sources(McpSources {
+            sources: vec![McpSourceSpec {
+                id: "mcp-test".to_string(),
+                url: server.url(),
+                enabled: true,
+                bearer_token_env: None,
+                grants: vec![user_grant("search")],
+            }],
+        })
+        .await;
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("sync2");
+    let managed = harness
+        .writer
+        .read_serialized(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM tool_selection_mcp_managed_grants",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+    assert_eq!(managed, 0, "a pre-existing manual grant is not adopted");
+    // Removing the source must leave the manual grant intact.
+    harness
+        .manager
+        .apply_sources(McpSources {
+            sources: Vec::new(),
+        })
+        .await;
+    let still_granted = harness
+        .writer
+        .read_serialized({
+            let tool_id = tool_id.clone();
+            let principal = principal.clone();
+            move |c| {
+                repository::exact_grant_exists(c, &principal, &tool_id, "user", &principal)
+                    .map_err(|e| e.to_string())
+            }
+        })
+        .unwrap();
+    assert!(still_granted, "the manual grant survives source removal");
+}
+
+#[tokio::test]
+async fn review_after_send_cancel_is_unknown_and_releases_permits() {
+    let state = default_state();
+    state.gate_call.store(true, Ordering::SeqCst);
+    let server = MockServer::start(state.clone()).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let context = harness.context();
+    harness.service.set_scenario(&context, scenario());
+    let search = harness
+        .service
+        .search(&context, "search notes", 1)
+        .await
+        .expect("search");
+    let describe = harness
+        .service
+        .describe(&context, &search.candidates[0].reference, "contract", None)
+        .expect("describe");
+    let execution_ref = describe.execution_ref.expect("execution ref");
+    let cancellation = crate::RunCancellation::default();
+    let arguments = json!({ "q": "v" });
+    let invoke = harness
+        .service
+        .invoke(&context, &execution_ref, &arguments, &cancellation);
+    let controller = async {
+        state.call_received.notified().await;
+        cancellation.cancel();
+        state.gate_call.store(false, Ordering::SeqCst);
+        state.call_release.notify_one();
+    };
+    let (result, _) = tokio::join!(invoke, controller);
+    let response = result.expect("invoke");
+    assert_eq!(
+        response.status,
+        crate::tool_selection::backends::TechnicalStatus::Unknown
+    );
+    // The permit was released, so a second call is admitted and succeeds.
+    let second = harness
+        .service
+        .invoke(
+            &context,
+            &execution_ref,
+            &json!({ "q": "v" }),
+            &crate::RunCancellation::default(),
+        )
+        .await
+        .expect("second invoke");
+    assert_eq!(
+        second.status,
+        crate::tool_selection::backends::TechnicalStatus::Succeeded
+    );
+    assert_eq!(state.call_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn review_project_scoped_result_is_refused_for_another_project() {
+    let state = default_state();
+    *state.call_result.lock().unwrap() = json!({
+        "content": [{ "type": "text", "text": "x".repeat(40 * 1024) }],
+    });
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, Vec::new());
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let tool_id = descriptors::tool_id("mcp-test", "search");
+    let principal = harness.principal.clone();
+    harness
+        .writer
+        .write({
+            let tool_id = tool_id.clone();
+            let principal = principal.clone();
+            move |c| {
+                repository::upsert_grant(c, &principal, &tool_id, "project", "PROJ-1")
+                    .map_err(|e| e.to_string())?;
+                repository::bump_epochs(c, false, true, false).map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+        .unwrap();
+    let context = RequestContext::new(&principal, "conversation-d4")
+        .with_run(Some("run-proj".into()))
+        .with_project(Some("PROJ-1".into()));
+    harness.service.set_scenario(&context, scenario());
+    let search = harness
+        .service
+        .search(&context, "search notes", 1)
+        .await
+        .expect("search");
+    assert_eq!(search.candidates.len(), 1);
+    let describe = harness
+        .service
+        .describe(&context, &search.candidates[0].reference, "contract", None)
+        .expect("describe");
+    let execution_ref = describe.execution_ref.expect("execution ref");
+    let response = harness
+        .service
+        .invoke(
+            &context,
+            &execution_ref,
+            &json!({ "q": "v" }),
+            &crate::RunCancellation::default(),
+        )
+        .await
+        .expect("invoke");
+    let result_ref = response.result_ref.expect("result ref");
+    assert!(harness
+        .service
+        .describe_result(&context, &result_ref, 0)
+        .is_ok());
+    // The same run scope but a different project must not read the stored result.
+    let other = RequestContext::new(&principal, "conversation-d4")
+        .with_run(Some("run-proj".into()))
+        .with_project(Some("PROJ-2".into()));
+    assert!(harness
+        .service
+        .describe_result(&other, &result_ref, 0)
+        .is_err());
 }

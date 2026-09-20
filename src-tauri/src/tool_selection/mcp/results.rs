@@ -31,16 +31,6 @@ pub struct ResultPage {
     pub page_count: i64,
 }
 
-pub fn page_count(byte_count: i64) -> i64 {
-    if byte_count <= 0 {
-        return 0;
-    }
-    (byte_count + MCP_RESULT_PAGE_BYTES as i64 - 1) / MCP_RESULT_PAGE_BYTES as i64
-}
-
-/// Number of contiguous, UTF-8-aligned pages for a payload. Boundaries are computed by walking
-/// from the start so the adjustment for a multi-byte scalar at one boundary carries into the next
-/// page; the raw byte-count division would over-report pages for multibyte text.
 pub fn page_count_for(payload: &str) -> i64 {
     if payload.is_empty() {
         return 0;
@@ -154,6 +144,7 @@ pub fn store_result(
 pub fn read_page(
     connection: &Connection,
     principal_id: &str,
+    project_id: Option<&str>,
     scope_key: &str,
     result_ref: &str,
     page: i64,
@@ -167,14 +158,7 @@ pub fn read_page(
     if row.expires_at <= now_ms() {
         return Err(ToolSelectionError::not_found());
     }
-    let authorized = repository_grant_exists(
-        connection,
-        &row.principal_id,
-        &row.tool_id,
-        &row.conversation_id,
-        &row.scope_key,
-    )?;
-    if !authorized {
+    if !repository_grant_exists(connection, principal_id, project_id, &row.tool_id)? {
         return Err(ToolSelectionError::unauthorized());
     }
     let total = page_count_for(&row.payload_json);
@@ -189,44 +173,27 @@ pub fn read_page(
     })
 }
 
+/// Current-grant re-check for a stored result, using the same scope rules as the eligibility
+/// query: the caller's user scope, or the caller's project when it was confirmed on the host.
 fn repository_grant_exists(
     connection: &Connection,
     principal_id: &str,
+    project_id: Option<&str>,
     tool_id: &str,
-    conversation_id: &str,
-    scope_key: &str,
 ) -> ToolSelectionResult<bool> {
-    // A stored result is re-checked against the current grants for the user scope; project scope
-    // cannot be recovered from the row, so only the user grant and the tool's enabled state are
-    // trusted here. Run scope is verified above by `scope_key`.
-    let _ = (conversation_id, scope_key);
     let authorized = connection
         .query_row(
             "SELECT EXISTS(
                SELECT 1 FROM tool_selection_grants g
                  JOIN tool_selection_catalog c ON c.id = g.tool_id
-                WHERE g.principal_id = ?1 AND g.tool_id = ?2 AND g.scope_kind = 'user'
-                  AND g.scope_id = ?1 AND c.enabled = 1)",
-            params![principal_id, tool_id],
+                WHERE g.principal_id = ?1 AND g.tool_id = ?2 AND c.enabled = 1
+                  AND ((g.scope_kind = 'user' AND g.scope_id = ?1)
+                    OR (g.scope_kind = 'project' AND ?3 IS NOT NULL AND g.scope_id = ?3)))",
+            params![principal_id, tool_id, project_id],
             |row| row.get::<_, i64>(0),
         )
         .map_err(|_| ToolSelectionError::storage())?;
-    if authorized == 0 {
-        // A project-scoped grant is also acceptable when it still exists for this tool.
-        let project_grant: i64 = connection
-            .query_row(
-                "SELECT EXISTS(
-                   SELECT 1 FROM tool_selection_grants g
-                     JOIN tool_selection_catalog c ON c.id = g.tool_id
-                    WHERE g.principal_id = ?1 AND g.tool_id = ?2 AND g.scope_kind = 'project'
-                      AND c.enabled = 1)",
-                params![principal_id, tool_id],
-                |row| row.get(0),
-            )
-            .map_err(|_| ToolSelectionError::storage())?;
-        return Ok(project_grant == 1);
-    }
-    Ok(true)
+    Ok(authorized == 1)
 }
 
 /// Removes expired rows. Called at save time, at startup and from the periodic manager loop.

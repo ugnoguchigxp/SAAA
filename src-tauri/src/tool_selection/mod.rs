@@ -93,7 +93,9 @@ pub(crate) fn build_service(
         mcp::wiring::assemble(writer.clone(), config, capabilities, embedding.clone());
     let mut service =
         ToolSelectionService::new(writer, embedding, reranker, extractor, backend, threshold);
-    service.set_discovery_configured(config.discovery_enabled());
+    // External MCP sources are usable through the same three entry points even when the local
+    // discovery worker is not configured, so the definitions are exposed when either is present.
+    service.set_discovery_configured(config.discovery_enabled() || manager.is_some());
     mcp::wiring::attach(&mut service, manager);
     service
 }

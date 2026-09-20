@@ -502,18 +502,6 @@ fn extract_result(id: &str, message: &Value) -> Result<Value, TransportError> {
     }
 }
 
-/// Collects the byte stream of a JSON response without the SSE machinery. Kept for the GET path.
-pub async fn drain_json(response: reqwest::Response) -> Result<Value, TransportError> {
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|_| TransportError::Connect)?;
-    if bytes.len() > MCP_CALL_RESPONSE_MAX_BYTES {
-        return Err(TransportError::BodyTooLarge);
-    }
-    serde_json::from_slice(&bytes).map_err(|_| TransportError::Protocol("json-body"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

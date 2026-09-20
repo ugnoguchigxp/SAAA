@@ -878,6 +878,27 @@ pub fn grant_exists(
         .map(|value| value == 1)
 }
 
+/// Exact-tuple grant check used when deciding whether a config-declared grant is new or was
+/// already created by another management path. An existing manual grant must never be adopted as
+/// config-owned and later revoked with the source.
+pub fn exact_grant_exists(
+    connection: &Connection,
+    principal_id: &str,
+    tool_id: &str,
+    scope_kind: &str,
+    scope_id: &str,
+) -> rusqlite::Result<bool> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM tool_selection_grants
+                WHERE principal_id = ?1 AND tool_id = ?2 AND scope_kind = ?3 AND scope_id = ?4)",
+            params![principal_id, tool_id, scope_kind, scope_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value == 1)
+}
+
 pub fn usage_page(
     connection: &Connection,
     revision_id: &str,

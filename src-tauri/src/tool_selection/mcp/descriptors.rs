@@ -211,7 +211,7 @@ pub fn normalize_tool(
             "endpointHash": endpoint_hash,
         }),
     };
-    check_describe_envelope(&entry)?;
+    check_describe_envelope(&entry, &revision_id)?;
 
     Ok(NormalizedTool {
         tool_id,
@@ -324,9 +324,9 @@ fn page_boundary(text: &str, max: usize) -> usize {
 
 /// The `contract` describe body must fit the existing 16 KiB envelope. A descriptor that cannot
 /// be described can never be invoked, so the sync fails instead of publishing a dead tool.
-fn check_describe_envelope(entry: &CatalogEntry) -> Result<(), &'static str> {
+fn check_describe_envelope(entry: &CatalogEntry, revision_id: &str) -> Result<(), &'static str> {
     let body = serde_json::json!({
-        "revisionId": "",
+        "revisionId": revision_id,
         "title": entry.title,
         "inputSchema": entry.input_schema,
         "outputSchema": entry.output_schema,

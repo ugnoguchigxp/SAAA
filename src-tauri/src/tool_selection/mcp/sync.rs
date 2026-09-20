@@ -16,8 +16,8 @@ use super::descriptors::{self, NormalizedTool};
 use super::repository as mcp_repository;
 use super::session::{CallError, McpSessionPool};
 use super::{
-    MCP_LIST_DEADLINE, MCP_LIST_PAGES_MAX, MCP_LIST_TOTAL_MAX_BYTES, MCP_TOOLS_PER_PROFILE_MAX,
-    MCP_TOOLS_PER_SOURCE_MAX,
+    MCP_LIST_DEADLINE, MCP_LIST_PAGES_MAX, MCP_LIST_PAGE_MAX_BYTES, MCP_LIST_TOTAL_MAX_BYTES,
+    MCP_TOOLS_PER_PROFILE_MAX, MCP_TOOLS_PER_SOURCE_MAX,
 };
 use crate::persistence::SqliteWriter;
 
@@ -104,7 +104,11 @@ async fn fetch_all(
         if pages > MCP_LIST_PAGES_MAX {
             return Err(SyncError::new("sync-pages-limit"));
         }
-        total_bytes = total_bytes.saturating_add(page.to_string().len());
+        let page_bytes = page.to_string().len();
+        if page_bytes > MCP_LIST_PAGE_MAX_BYTES {
+            return Err(SyncError::new("sync-page-limit"));
+        }
+        total_bytes = total_bytes.saturating_add(page_bytes);
         if total_bytes > MCP_LIST_TOTAL_MAX_BYTES {
             return Err(SyncError::new("sync-bytes-limit"));
         }
@@ -359,6 +363,7 @@ fn code_to_static(code: &str) -> &'static str {
         "sync-profile-limit" => "sync-profile-limit",
         "sync-deadline" => "sync-deadline",
         "sync-pages-limit" => "sync-pages-limit",
+        "sync-page-limit" => "sync-page-limit",
         "sync-bytes-limit" => "sync-bytes-limit",
         "sync-tools-limit" => "sync-tools-limit",
         "sync-too-many" => "sync-tools-limit",

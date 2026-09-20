@@ -195,9 +195,15 @@ pub fn finalize_outcome(
                                 result_availability = Some("unavailable");
                                 error_code = Some("result-storage-limit");
                             }
-                            Ok(StoreOutcome::SizeLimit) | Err(_) => {
+                            Ok(StoreOutcome::SizeLimit) => {
                                 result_availability = Some("unavailable");
                                 error_code = Some("result-size-limit");
+                            }
+                            // A storage error while persisting the result leaves the remote
+                            // success intact but the content unavailable.
+                            Err(_) => {
+                                result_availability = Some("unavailable");
+                                error_code = Some("result-storage-limit");
                             }
                         }
                     }
@@ -251,18 +257,26 @@ pub fn describe_result(
         return Err(ToolSelectionError::invalid());
     }
     let principal = context.principal_id.clone();
+    let project = context.project_id.clone();
     let scope_key = context.scope_key();
     let result_ref = result_ref.to_string();
     writer
         .read_serialized(move |connection| {
-            results::read_page(connection, &principal, &scope_key, &result_ref, page)
-                .map(|page| ResultPageResponse {
-                    result_ref: result_ref.clone(),
-                    page: page.page,
-                    page_count: page.page_count,
-                    text: page.text,
-                })
-                .map_err(|error| error.code.as_str().to_string())
+            results::read_page(
+                connection,
+                &principal,
+                project.as_deref(),
+                &scope_key,
+                &result_ref,
+                page,
+            )
+            .map(|page| ResultPageResponse {
+                result_ref: result_ref.clone(),
+                page: page.page,
+                page_count: page.page_count,
+                text: page.text,
+            })
+            .map_err(|error| error.code.as_str().to_string())
         })
         .map_err(|code| match code.as_str() {
             "not-found" => ToolSelectionError::not_found(),
