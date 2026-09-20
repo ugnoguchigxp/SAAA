@@ -108,8 +108,8 @@ pub fn open_service(
     database_path: &std::path::Path,
     config: &ToolSelectionConfig,
 ) -> ToolSelectionResult<ToolSelectionService> {
-    let writer = crate::persistence::SqliteWriter::open(database_path)
-        .map_err(|_| ToolSelectionError::storage())?;
+    let writer =
+        crate::open_database_writer(database_path).map_err(|_| ToolSelectionError::storage())?;
     Ok(build_service(std::sync::Arc::new(writer), config, None))
 }
 
@@ -118,8 +118,8 @@ pub fn open_service(
 pub fn open_mock_service(
     database_path: &std::path::Path,
 ) -> ToolSelectionResult<ToolSelectionService> {
-    let writer = crate::persistence::SqliteWriter::open(database_path)
-        .map_err(|_| ToolSelectionError::storage())?;
+    let writer =
+        crate::open_database_writer(database_path).map_err(|_| ToolSelectionError::storage())?;
     let _ = service::reconcile_interrupted_invocations(&writer);
     let mut service = ToolSelectionService::new(
         std::sync::Arc::new(writer),

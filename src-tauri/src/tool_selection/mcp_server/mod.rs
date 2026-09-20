@@ -183,3 +183,13 @@ pub async fn start_from_environment(
         }
     }
 }
+
+/// Shuts down a handle held in a mutex slot, if any. The app shutdown path calls this so the
+/// listener stops without blocking the synchronous teardown; the spawned task awaits the drain.
+pub fn shutdown_slot(slot: &std::sync::Mutex<Option<ServerHandle>>) {
+    if let Ok(mut guard) = slot.lock() {
+        if let Some(server) = guard.take() {
+            tauri::async_runtime::spawn(async move { server.shutdown().await });
+        }
+    }
+}

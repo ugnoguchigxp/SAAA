@@ -474,6 +474,12 @@ fn build_capability_service(
     )
 }
 
+pub(crate) fn open_database_writer(
+    database_path: &std::path::Path,
+) -> Result<SqliteWriter, String> {
+    SqliteWriter::open(database_path).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 
 fn shutdown_app_state(state: &AppState) {
@@ -485,13 +491,8 @@ fn shutdown_app_state(state: &AppState) {
     if let Some(manager) = state.tool_selection.mcp_manager() {
         tauri::async_runtime::spawn(async move { manager.shutdown().await });
     }
-    // Stop the published MCP listener: refuse new work, cancel in-flight calls and release the
-    // session scopes. The D4 manager and the result writer stay alive until their own tasks end.
-    if let Ok(mut guard) = state.mcp_server.lock() {
-        if let Some(server) = guard.take() {
-            tauri::async_runtime::spawn(async move { server.shutdown().await });
-        }
-    }
+    // Stop the published MCP listener; the D4 manager and result writer stay alive for their tasks.
+    tool_selection::mcp_server::shutdown_slot(&state.mcp_server);
     state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
     if let Ok(active_runs) = state.active_runs.lock() {
@@ -636,9 +637,7 @@ pub fn run() {
             if let Some(manager) = tool_selection.mcp_manager() {
                 manager.start_background();
             }
-            // D5: publish the same three entry points over the local MCP server. An invalid
-            // configuration or bind failure disables only this listener; the conversation path
-            // and the D4 client connections continue unchanged.
+            // D5: publish the same three entry points over the local MCP server (listener-only failure).
             let mcp_server = tauri::async_runtime::block_on(
                 tool_selection::mcp_server::start_from_environment(
                     tool_selection.clone(),
