@@ -43,16 +43,28 @@ pub fn search_schema() -> Value {
 pub fn describe_schema() -> Value {
     json!({
         "type": "object",
-        "properties": {
-            "candidateRef": { "type": "string" },
-            "section": {
-                "type": "string",
-                "enum": ["contract", "usage", "examples", "troubleshooting"]
+        "oneOf": [
+            {
+                "properties": {
+                    "candidateRef": { "type": "string" },
+                    "section": {
+                        "type": "string",
+                        "enum": ["contract", "usage", "examples", "troubleshooting"]
+                    },
+                    "cursor": { "type": "string" }
+                },
+                "required": ["candidateRef"],
+                "additionalProperties": false
             },
-            "cursor": { "type": "string" }
-        },
-        "required": ["candidateRef"],
-        "additionalProperties": false
+            {
+                "properties": {
+                    "resultRef": { "type": "string" },
+                    "page": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["resultRef", "page"],
+                "additionalProperties": false
+            }
+        ]
     })
 }
 
@@ -172,6 +184,9 @@ async fn dispatch_search(
         .map(|candidate| {
             json!({
                 "candidateRef": candidate.reference,
+                "toolId": candidate.tool_id,
+                "sourceId": candidate.source_id,
+                "sourceLabel": candidate.source_label,
                 "title": candidate.title,
                 "summary": candidate.summary,
                 "reason": candidate.reason,
@@ -201,11 +216,38 @@ fn dispatch_describe(
     let object = arguments
         .as_object()
         .ok_or_else(ToolSelectionError::invalid)?;
-    if object
-        .keys()
-        .any(|key| key != "candidateRef" && key != "section" && key != "cursor")
-    {
+    let known = ["candidateRef", "section", "cursor", "resultRef", "page"];
+    if object.keys().any(|key| !known.contains(&key.as_str())) {
         return Err(ToolSelectionError::invalid());
+    }
+    // The two branches are mutually exclusive, matching the oneOf schema.
+    let result_branch = object.contains_key("resultRef") || object.contains_key("page");
+    if result_branch {
+        if object.contains_key("candidateRef")
+            || object.contains_key("section")
+            || object.contains_key("cursor")
+        {
+            return Err(ToolSelectionError::invalid());
+        }
+        let result_ref = object
+            .get("resultRef")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(ToolSelectionError::invalid)?;
+        let page = object
+            .get("page")
+            .and_then(Value::as_i64)
+            .filter(|page| *page >= 0)
+            .ok_or_else(ToolSelectionError::invalid)?;
+        let response = service.describe_result(context, result_ref, page)?;
+        let data = json!({
+            "resultRef": response.result_ref,
+            "page": response.page,
+            "pageCount": response.page_count,
+            "encoding": "json-text",
+            "text": response.text,
+        });
+        return bounded_describe(data);
     }
     let candidate_ref = object
         .get("candidateRef")
@@ -225,11 +267,18 @@ fn dispatch_describe(
     let response = service.describe(context, candidate_ref, section, cursor)?;
     let data = json!({
         "revisionId": response.revision_id,
+        "toolId": response.tool_id,
+        "sourceId": response.source_id,
+        "sourceLabel": response.source_label,
         "section": response.section,
         "body": response.body,
         "executionRef": response.execution_ref,
         "cursor": response.cursor,
     });
+    bounded_describe(data)
+}
+
+fn bounded_describe(data: Value) -> ToolSelectionResult<Value> {
     let bytes = serde_json::to_vec(&data).map_err(|_| ToolSelectionError::storage())?;
     if bytes.len() > DESCRIBE_RESPONSE_MAX_BYTES {
         return Err(ToolSelectionError::new(
@@ -271,6 +320,10 @@ async fn dispatch_invoke(
         "invocationId": response.invocation_id,
         "status": response.status.as_str(),
         "result": response.result,
+        "resultRef": response.result_ref,
+        "byteCount": response.byte_count,
+        "pageCount": response.page_count,
+        "resultAvailability": response.result_availability,
         "error": response.error_code.map(|code| json!({ "code": code })),
     }))
 }

@@ -338,6 +338,19 @@ pub fn tool_id_by_name(connection: &Connection, name: &str) -> rusqlite::Result<
         .optional()
 }
 
+pub fn source_kind(
+    connection: &Connection,
+    source_id: &str,
+) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT kind FROM tool_selection_sources WHERE id = ?1",
+            params![source_id],
+            |row| row.get(0),
+        )
+        .optional()
+}
+
 /// Every catalog id whose display name matches. Used to refuse name-only corrections when two
 /// sources publish the same tool name, instead of silently picking one with `LIMIT 1`.
 pub fn tool_ids_by_name(connection: &Connection, name: &str) -> rusqlite::Result<Vec<String>> {

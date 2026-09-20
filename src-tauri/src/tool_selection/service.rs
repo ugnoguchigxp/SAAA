@@ -38,6 +38,8 @@ pub struct SearchCandidate {
     pub reference: String,
     pub revision_id: String,
     pub tool_id: String,
+    pub source_id: String,
+    pub source_label: String,
     pub title: String,
     pub summary: String,
     pub reason: String,
@@ -57,6 +59,8 @@ pub struct SearchResponse {
 pub struct DescribeResponse {
     pub revision_id: String,
     pub tool_id: String,
+    pub source_id: String,
+    pub source_label: String,
     pub section: String,
     pub body: Value,
     pub execution_ref: Option<String>,
@@ -618,10 +622,13 @@ impl ToolSelectionService {
                 created_at_ms: now_ms(),
             };
             let reference = self.references.issue(entry, now_ms())?;
+            let (source_id, source_label) = self.source_display(&candidate.tool_id);
             candidates.push(SearchCandidate {
                 reference,
                 revision_id: candidate.revision_id.clone(),
                 tool_id: candidate.tool_id.clone(),
+                source_id,
+                source_label,
                 title,
                 summary,
                 reason,
@@ -712,6 +719,34 @@ impl ToolSelectionService {
             .map_err(|_| ToolSelectionError::storage())
     }
 
+    /// Display identity for a tool: the source id plus a label that distinguishes same-named tools
+    /// from different connection targets.
+    fn source_display(&self, tool_id: &str) -> (String, String) {
+        let tool_id = tool_id.to_string();
+        let resolved = self
+            .writer
+            .read_serialized(move |connection| {
+                let tool = repository::tool_by_id(connection, &tool_id)
+                    .map_err(|error| error.to_string())?;
+                let kind = tool.as_ref().and_then(|tool| {
+                    repository::source_kind(connection, &tool.source_id)
+                        .ok()
+                        .flatten()
+                });
+                Ok((
+                    tool.map(|tool| tool.source_id).unwrap_or_default(),
+                    kind,
+                ))
+            })
+            .unwrap_or_default();
+        let (source_id, kind) = resolved;
+        let label = match kind.as_deref() {
+            Some("mcp_http") => source_id.clone(),
+            _ => "l-lang".to_string(),
+        };
+        (source_id, label)
+    }
+
     pub fn describe(
         &self,
         context: &RequestContext,
@@ -735,6 +770,7 @@ impl ToolSelectionService {
             return Err(ToolSelectionError::unauthorized());
         }
         let (tool, revision) = self.current_revision(&reference)?;
+        let (source_id, source_label) = self.source_display(&revision.tool_id);
         if section == "contract" {
             let body = json!({
                 "revisionId": revision.id,
@@ -758,6 +794,8 @@ impl ToolSelectionService {
             return Ok(DescribeResponse {
                 revision_id: revision.id,
                 tool_id: revision.tool_id,
+                source_id,
+                source_label,
                 section: section.to_string(),
                 body,
                 execution_ref: Some(execution_ref),
@@ -786,6 +824,8 @@ impl ToolSelectionService {
         Ok(DescribeResponse {
             revision_id: revision.id,
             tool_id: revision.tool_id,
+            source_id,
+            source_label,
             section: section.to_string(),
             body,
             execution_ref: Some(execution_ref),

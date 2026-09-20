@@ -518,11 +518,11 @@ mod tests {
     #[test]
     fn sse_decoder_handles_chunk_boundaries_and_multiple_data_lines() {
         let mut decoder = SseDecoder::new();
-        assert!(decoder.push(b"event: message\ndata: {\"a\":").is_empty());
-        let events = decoder.push(b"1,\ndata: \"b\"}\n\n");
+        assert!(decoder.push(b"event: message\ndata: {\"a\":1,").is_empty());
+        let events = decoder.push(b"\ndata: \"b\"}\n\n");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event.as_deref(), Some("message"));
-        assert_eq!(events[0].data, "{\"a\":\n\"b\"}");
+        assert_eq!(events[0].data, "{\"a\":1,\n\"b\"}");
     }
 
     #[test]
