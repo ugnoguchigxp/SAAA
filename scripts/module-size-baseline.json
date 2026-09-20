@@ -250,8 +250,8 @@
       "production": 246
     },
     "src-tauri/src/generated_capabilities/generation/config.rs": {
-      "total": 525,
-      "production": 391
+      "total": 604,
+      "production": 443
     },
     "src-tauri/src/generated_capabilities/generation/contracts.rs": {
       "total": 483,
@@ -262,8 +262,8 @@
       "production": 189
     },
     "src-tauri/src/generated_capabilities/generation/kit.rs": {
-      "total": 342,
-      "production": 265
+      "total": 385,
+      "production": 297
     },
     "src-tauri/src/generated_capabilities/generation/mod.rs": {
       "total": 13,
@@ -1889,10 +1889,6 @@
       "total": 85,
       "production": 85
     },
-    "src/components/ConversationSidebarFooter.tsx": {
-      "total": 29,
-      "production": 29
-    },
     "src/components/SituationTabs.tsx": {
       "total": 60,
       "production": 60
@@ -1917,6 +1913,10 @@
       "total": 53,
       "production": 53
     },
+    "src/features/audit/AuditLogModal.tsx": {
+      "total": 38,
+      "production": 38
+    },
     "src/features/audit/AuditLogPage.css": {
       "total": 350,
       "production": 350
@@ -1932,6 +1932,14 @@
     "src/features/chat/ChatMessages.tsx": {
       "total": 105,
       "production": 105
+    },
+    "src/features/chat/ChatOverflowMenu.css": {
+      "total": 69,
+      "production": 69
+    },
+    "src/features/chat/ChatOverflowMenu.tsx": {
+      "total": 82,
+      "production": 82
     },
     "src/features/chat/ChatPage.tsx": {
       "total": 299,
@@ -2200,10 +2208,6 @@
     "src/features/situation/review/SituationReview.tsx": {
       "total": 429,
       "production": 429
-    },
-    "src/features/situation/SituationPage.tsx": {
-      "total": 424,
-      "production": 424
     },
     "src/features/voice/ambientVoiceCapture.ts": {
       "total": 157,
@@ -2500,10 +2504,6 @@
     "tests/conversation-session.test.ts": {
       "total": 39,
       "production": 39
-    },
-    "tests/conversation-sidebar.test.tsx": {
-      "total": 28,
-      "production": 28
     },
     "tests/conversation-timeout.test.ts": {
       "total": 31,

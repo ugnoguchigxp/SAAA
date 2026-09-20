@@ -15,23 +15,15 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: var(--ds-focus-width) solid var(--ds-color-focus); outline-offset: 2px; }
 
 .boot-screen { width: 100%; height: 100dvh; display: grid; place-items: center; color: #aeb8c7; background: radial-gradient(circle at 50% 10%, #1b3038, #0d1118 52%); }
-.app-shell { width: 100%; height: 100dvh; min-height: 0; display: grid; grid-template-columns: clamp(220px, 19vw, 286px) minmax(0, 1fr); overflow: hidden; background: #0d1118; }
+.app-shell { width: 100%; height: 100dvh; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; background: #0d1118; }
 
-.sidebar, .settings-panel { background: #141922; border-color: #28313d; }
-.sidebar { min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 28px 18px 20px; border-right: 1px solid #28313d; }
-.brand { display: flex; align-items: center; gap: 12px; padding: 0 9px 30px; }
-.brand strong { letter-spacing: .06em; font-size: 1rem; }
-.brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #50cabd; border-radius: 11px; color: #5fd8cb; background: #152b2e; font-size: 1.15rem; font-weight: 850; box-shadow: inset 0 0 16px rgb(83 211 197 / .08); }
-.primary-nav { display: grid; gap: 6px; margin: 0 0 22px; }
-.primary-nav-item, .sidebar-settings { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 13px; border: 0; border-radius: 10px; color: #9ba7b8; background: transparent; text-align: left; font-size: .82rem; font-weight: 600; }
-.primary-nav-item svg, .sidebar-settings svg { flex: 0 0 auto; width: 18px; height: 18px; }
-.primary-nav-item:hover, .sidebar-settings:hover { color: #eef4f8; background: #1d2430; }
-.primary-nav-item.active, .sidebar-settings.active { color: #f4f7fa; background: #252c38; }
+.settings-panel { background: #141922; border-color: #28313d; }
 .secondary-button, .save-button, .send-button, .voice-button { border: 0; border-radius: 10px; }
 .status-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #65d6b8; }
 
 .chat-panel { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; background: radial-gradient(circle at 50% 38%, rgb(24 34 44 / .34), transparent 36%), #0d1118; }
 .topbar { min-height: 92px; display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px clamp(26px, 3.2vw, 54px); border-bottom: 1px solid #252d38; }
+.topbar-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .topbar h1 { min-width: 0; overflow: hidden; font-size: 1.12rem; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-status { display: flex; align-items: center; gap: 10px; }
 .status-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 7px 11px; border: 1px solid #2c3542; border-radius: 10px; color: #aeb9c8; background: #171d26; font-size: .69rem; white-space: nowrap; }
@@ -132,6 +124,7 @@ h3 { margin-bottom: 0; font-size: .78rem; }
 
 .settings-page { min-width: 0; min-height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: #10131a; }
 .settings-page-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; padding: 27px 34px 21px; border-bottom: 1px solid #242b37; }
+.settings-page-header .text-button { display: block; margin: 0 0 10px; padding: 0; }
 .settings-page-header h1 { font-size: 1.12rem; }
 .settings-page-header p:last-child { margin: 7px 0 0; color: #8998ab; font-size: .76rem; }
 .settings-save-status { display: grid; justify-items: end; gap: 6px; min-height: 24px; font-size: .68rem; }
@@ -288,13 +281,10 @@ h3 { margin-bottom: 0; font-size: .78rem; }
 .meeting-active-indicator { margin-left: 5px; padding: 2px 5px; border-radius: 99px; color: #ffd4d4; background: #702d35; font-size: .55rem; }
 
 @media (max-width: 1000px) {
-  .app-shell { grid-template-columns: 205px minmax(0, 1fr); }
   .settings-panel { position: fixed; z-index: 4; top: 0; right: 0; bottom: 0; width: min(340px, 92vw); box-shadow: -20px 0 40px rgb(0 0 0 / .35); }
 }
 
 @media (max-width: 680px) {
-  .app-shell { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
   .topbar, .route-banner { padding-left: 18px; padding-right: 18px; }
   .message-area { padding: 20px; }
   .composer { margin: 0 14px 14px; }

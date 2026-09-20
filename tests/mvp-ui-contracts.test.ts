@@ -10,12 +10,19 @@ describe("MVP UI reachability contracts", () => {
     const contracts = source("src/lib/contracts.ts");
     expect(contracts).toContain("primaryConversationId: string");
     expect(app).toContain("nextSnapshot.primaryConversationId");
-    expect(app).toContain("snapshot.primaryConversationId");
     expect(app).toContain('setSurface("chat")');
     expect(app).not.toContain("新しい会話");
     expect(app).not.toContain("最近の会話");
+    expect(app).not.toContain("primary-nav");
+    expect(app).not.toContain("MeetingPage");
+    expect(app).not.toContain("SituationPage");
+    expect(app).not.toContain("AuditLogPage");
+    const overflow = source("src/features/chat/ChatOverflowMenu.tsx");
+    expect(overflow).toContain('import("../audit/AuditLogModal")');
+    expect(overflow).toContain("setWorkspaceModal(null)");
+    expect(source("src/features/chat/ChatPage.tsx")).toContain("<ChatOverflowMenu");
   });
-  test("keeps normal Chat workspace-free and Meeting transitions safe", () => {
+  test("keeps normal Chat workspace-free", () => {
     const app =
       source("src/App.tsx") +
       source("src/features/chat/useConversationTurn.ts") +
@@ -24,27 +31,22 @@ describe("MVP UI reachability contracts", () => {
     expect(app).toContain('conversationState: activeRunId ? "model-running"');
     expect(app).not.toContain("workspacePath.trim()");
     expect(app).not.toContain("agent-running");
-    expect(app).toContain("if (conversationSessionRef.current.speechRunId) await stopSpeech()");
   });
-  test("keeps the active run controls reachable while navigation is requested", () => {
+  test("keeps the active run controls reachable while settings is requested", () => {
     const app = source("src/App.tsx");
     const openChatSurface = app.slice(
       app.indexOf("function openChatSurface()"),
-      app.indexOf("async function openMeetingSurface()"),
+      app.indexOf("function openSettings()"),
     );
-    const openAuxiliarySurface = app.slice(
-      app.indexOf('function openAuxiliarySurface(nextSurface: "settings" | "situation" | "audit")'),
+    const openSettings = app.slice(
+      app.indexOf("function openSettings()"),
       app.indexOf("if (loading) return"),
-    );
-    expect(app).toContain(
-      'function openAuxiliarySurface(nextSurface: "settings" | "situation" | "audit")',
     );
     expect(openChatSurface).toContain("if (conversationSessionRef.current.runId)");
     expect(openChatSurface).toContain('setSurface("chat")');
     expect(openChatSurface).not.toContain("canChangeConversation()");
-    expect(openAuxiliarySurface).toContain("if (!canChangeConversation()) return;");
-    expect(app).toContain('openAuxiliarySurface("settings")');
-    expect(app).toContain('openAuxiliarySurface("situation")');
+    expect(openSettings).toContain("if (!canChangeConversation()) return;");
+    expect(app).toContain("onOpenSettings={openSettings}");
     expect(app).not.toContain("音声入力を停止してからSurfaceを切り替えてください。");
   });
   test("removes Codex controls from Settings while preserving the stored document", () => {

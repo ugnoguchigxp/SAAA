@@ -38,8 +38,6 @@ export type ChatPageProps = {
     fallbackUsed: boolean;
   };
   onOpenSettings: () => void;
-  onOpenMeeting: () => void;
-  onOpenSituation: () => void;
   onStopRun: () => void;
   onStopSpeech: () => void;
   onRetry: () => void;

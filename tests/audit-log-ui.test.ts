@@ -8,7 +8,7 @@ function source(path: string): string {
 }
 
 describe("audit log UI", () => {
-  test("uses a bounded read-only command from a top-level surface", () => {
+  test("keeps a bounded read-only audit command and page", () => {
     const backend = source("src-tauri/src/lib.rs");
     const audit = source("src-tauri/src/persistence/audit.rs");
     const app = source("src/App.tsx");
@@ -21,8 +21,8 @@ describe("audit log UI", () => {
     expect(containsSource(audit, "fn list_audit_events")).toBe(true);
     expect(containsSource(backend, "persistence::audit::list_audit_events,")).toBe(true);
     expect(containsSource(audit, "const AUDIT_UI_EVENT_LIMIT: usize = 200;")).toBe(true);
-    expect(containsSource(app, '<AppIcon name="audit" />{t("app.audit")}')).toBe(true);
-    expect(containsSource(app, 'surface === "audit" ? ( <AuditLogPage />')).toBe(true);
+    expect(containsSource(app, "AuditLogPage")).toBe(false);
+    expect(containsSource(page, "aliveRef.current")).toBe(true);
     expect(containsSource(settings, "AuditLog")).toBe(false);
     expect(containsSource(runtime, 'invoke<AuditEvent[]>("list_audit_events")')).toBe(true);
     expect(containsSource(packageJson, '"@tanstack/react-table"')).toBe(true);

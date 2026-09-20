@@ -2,6 +2,7 @@ export type AppIconName =
   | "audit"
   | "calendar"
   | "chat"
+  | "menu"
   | "mic"
   | "model"
   | "send"
@@ -40,6 +41,12 @@ export function AppIcon({ name }: { name: AppIconName }) {
       return (
         <svg {...common}>
           <path d="M20 15a4 4 0 0 1-4 4H9l-5 3 1.5-4.5A8 8 0 1 1 20 15Z" />
+        </svg>
+      );
+    case "menu":
+      return (
+        <svg {...common}>
+          <path d="M4 7h16M4 12h16M4 17h16" />
         </svg>
       );
     case "mic":

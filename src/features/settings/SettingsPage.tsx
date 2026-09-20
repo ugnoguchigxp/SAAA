@@ -42,6 +42,7 @@ export function SettingsPage({
   voiceListeningBusy,
   voiceAvailability,
   voiceError,
+  onClose,
   onSaved,
   onVoiceProfileChanged,
   onToggleVoiceListening,
@@ -53,6 +54,7 @@ export function SettingsPage({
   voiceListeningBusy: boolean;
   voiceAvailability: AmbientVoiceAvailability;
   voiceError: string | null;
+  onClose: () => void;
   onSaved: (documents: SettingsDocument[]) => void;
   onVoiceProfileChanged: (profile: VoiceProfileSnapshot) => void;
   onToggleVoiceListening: (enabled: boolean) => void;
@@ -167,6 +169,9 @@ export function SettingsPage({
     <section className="settings-page">
       <header className="settings-page-header">
         <div>
+          <button type="button" className="text-button" onClick={onClose}>
+            {t("common.back")}
+          </button>
           <p className="eyebrow">{t("settings.eyebrow")}</p>
           <h1>{t("settings.title")}</h1>
           <p>{t("settings.description")}</p>

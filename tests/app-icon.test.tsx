@@ -7,6 +7,7 @@ const names: AppIconName[] = [
   "audit",
   "calendar",
   "chat",
+  "menu",
   "mic",
   "model",
   "send",

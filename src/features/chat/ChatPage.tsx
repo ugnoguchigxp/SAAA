@@ -10,6 +10,7 @@ import {
   localizeUiMessage,
 } from "../../i18n/presentation";
 import { DEFAULT_VOICE_SILENCE_TIMEOUT_MS } from "../../lib/voiceActivity";
+import { ChatOverflowMenu } from "./ChatOverflowMenu";
 import { ConversationVoiceBehaviorBar } from "./ConversationVoiceBehaviorBar";
 import { UiControls } from "./ui/UiControls";
 import { VirtualMessages } from "./VirtualMessages";
@@ -38,8 +39,6 @@ export function ChatPage({
   activeRunId,
   modelProviderStatus,
   onOpenSettings,
-  onOpenMeeting,
-  onOpenSituation,
   onStopRun,
   onStopSpeech,
   onRetry,
@@ -91,9 +90,12 @@ export function ChatPage({
   return (
     <section className="chat-panel">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">{t("chat.eyebrow")}</p>
-          <h1>{t("chat.title")}</h1>
+        <div className="topbar-heading">
+          <ChatOverflowMenu />
+          <div>
+            <p className="eyebrow">{t("chat.eyebrow")}</p>
+            <h1>{t("chat.title")}</h1>
+          </div>
         </div>
         <div className="topbar-status">
           <UiControls conversationId={selectedConversation?.id} />
@@ -122,6 +124,15 @@ export function ChatPage({
                 : modelProviderStatus.fallbackUsed
                   ? t("chat.fallbackSuffix")
                   : ""}
+          </button>
+          <button
+            type="button"
+            className="status-pill"
+            onClick={onOpenSettings}
+            aria-label={t("app.settings")}
+            title={t("app.settings")}
+          >
+            <AppIcon name="settings" />
           </button>
         </div>
       </header>
@@ -156,11 +167,17 @@ export function ChatPage({
               >
                 {t("chat.suggestionOrganize")}
               </button>
-              <button type="button" onClick={onOpenMeeting}>
-                {t("chat.suggestionMeeting")}
+              <button
+                type="button"
+                onClick={() => onComposerChange(t("chat.suggestionUnfinishedPrompt"))}
+              >
+                {t("chat.suggestionUnfinished")}
               </button>
-              <button type="button" onClick={onOpenSituation}>
-                {t("chat.suggestionSituation")}
+              <button
+                type="button"
+                onClick={() => onComposerChange(t("chat.suggestionDelegatePrompt"))}
+              >
+                {t("chat.suggestionDelegate")}
               </button>
             </div>
           </div>

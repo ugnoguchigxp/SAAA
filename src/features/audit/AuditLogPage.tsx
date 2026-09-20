@@ -1,5 +1,5 @@
 import { createColumnHelper, tableFeatures, useTable } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AuditEvent } from "../../lib/contracts";
 import { listAuditEvents } from "../../lib/runtime";
@@ -26,25 +26,32 @@ export function AuditLogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  const aliveRef = useRef(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const nextEvents = await listAuditEvents();
+      if (!aliveRef.current) return;
       setEvents(nextEvents);
       setSelectedEvent((current) =>
         current ? (nextEvents.find((event) => event.id === current.id) ?? null) : null,
       );
     } catch (cause) {
+      if (!aliveRef.current) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoading(false);
+      if (aliveRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    aliveRef.current = true;
     void load();
+    return () => {
+      aliveRef.current = false;
+    };
   }, [load]);
 
   const { dialogRef, fallbackRef } = useDialogFocus(selectedEvent !== null, () =>

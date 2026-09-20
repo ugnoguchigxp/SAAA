@@ -22,6 +22,7 @@ export function useDialogFocus(open: boolean, onClose: () => void) {
     (controls()[0] ?? dialog).focus();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (dialog.querySelector('[role="dialog"]')) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         closeRef.current();
