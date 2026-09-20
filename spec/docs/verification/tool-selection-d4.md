@@ -67,7 +67,7 @@ D5（SAAA自身のMCP公開）とD6（順位学習）は未実施。L-Lang proce
 ## 5. 検証コマンドと結果（main working tree）
 
 ```sh
-cargo test --manifest-path src-tauri/Cargo.toml --lib tool_selection      # 123 passed
+cargo test --manifest-path src-tauri/Cargo.toml --lib tool_selection      # 130 passed
 cargo test --manifest-path src-tauri/Cargo.toml --lib generated_capabilities # 67 passed
 cargo test --manifest-path src-tauri/Cargo.toml --lib providers            # 79 passed, 2 ignored
 cargo fmt --check --manifest-path src-tauri/Cargo.toml                     # clean
@@ -95,10 +95,10 @@ E5/BGE の配備（`~/.cache/saaa-tool-selection/venv` とmanifest）がこの�
 | A02 | 完了 | page3相当の不正JSON・重複名・cursor循環で旧snapshot/epoch不変 |
 | A03 | 完了 | 同内容no-op、末尾変更+1、A→B→A、消失→再出現（tool_id不変・履歴保持） |
 | A04 | 完了 | 未認可/別project/別principal/stale参照で候補0・HTTP call 0 |
-| A05 | 一部 | 同名別sourceの曖昧訂正でrule 0 は確認。L-Langと2MCPのsource付き実行の明示試験は未追加 |
+| A05 | 一部 | 同名別sourceの曖昧訂正でrule 0、`sourceId/toolName` 指定の一意解決を確認。L-Langと2MCPを同居させた明示的な実行先振り分け試験は未追加 |
 | A06 | 完了 | JSON/SSE両方、progress通知を挟んでも対象IDの結果のみ |
 | A07 | 完了 | 副作用後に切断でunknown、retryなし、chat call数1 |
-| A08 | 一部 | 送信前取消call0。送信後取消/abortの終端・permit回収は実装済みだが専用fixtureは未追加 |
+| A08 | 一部 | 送信前取消call0、送信後取消のunknown終端とpermit回収をbarrierで確認。呼出元futureのabort時に管理taskがDB終端を所有する経路は未実装（下記制限） |
 | A09 | 一部 | sync中generation変更検知、disable直後dispatch拒否、shutdown。barrierによる競合再現は未整備 |
 | A10 | 完了 | 100KiB日本語のpage復元一致、別run/TTL/容量上限 |
 | A11 | 未完了 | 実会話provider経由の自然訂正は未実施（D0〜D3のfixture抽出経路は維持） |
@@ -123,12 +123,38 @@ E5/BGE の配備（`~/.cache/saaa-tool-selection/venv` とmanifest）がこの�
 
 - **A13 / 実ML**: E5/BGE未配備のため実モデル評価・1500/10000件負荷測定は未実施。mock輸送試験を実ML評価とは呼ばない。
 - **A11**: 実会話provider経由の自然言語訂正は本環境で未実施。訂正記憶のfixture経路（D0〜D3）は維持。
-- **A08/A09/A12/A14/A15の一部**: 送信後取消・barrier競合・100call集計・redirect実測・403は未整備。実装は上記の通り。
-- **project scope の結果ACL**: `mcp_results` は project_id を保存しないため、取得時の再検査は user grant または project grant の存在で判定する。会話run/scope・principal・TTLは厳密に検査する。
-- **source URL変更時の訂正rule**: tool_id は source_id+toolName のため、URLだけ変更しても同一 tool_id となり既存ruleが自動適用されうる。計画の「管理上の再確認まで保留」は未実装。
+- **A08/A09/A12/A14/A15の一部**: barrier競合は初回sync削除・送信後取消を追加した。100call集計・redirect実測・403は未整備。
+- **呼出元futureのabort所有**: 送信後取消はunknownで終端しpermitを解放するが、呼出元future自体がabortされた場合は `finish_invocation` を実行する管理taskがなく、invocationは `running` のまま再起動reconcile待ちになる。計画の「管理taskが取消とDB終端まで所有する」は未達。既存L-Lang経路も同じ。
+- **project scope の結果ACL**: `mcp_results` は project_id を保存しないため、取得時の再検査は「呼出元のuser scope」または「呼出元のproject scope」のgrant存在で判定する（別projectからの読取は拒否済み）。
+- **source URL変更時の訂正rule**: tool_id は source_id+toolName のため、URLだけ変更しても同一 tool_id となり既存ruleが自動適用されうる。計画の「管理上の再確認まで保留」は未実装（ruleへのendpoint記録とmigrationが必要）。
+- **list_changed watcher**: streamが閉じれば再openするが、GET非対応(405)のserverは60秒pollのみに依拠する。
 - **`result-storage-limit` の end-to-end**: 実装・応答契約はあるが、profile 32MiB を実通信で満たす試験は未追加（`result-size-limit` は検証済み）。
 - **D5/D6**: 未実施。
 
 ## 9. 変更ファイル（主要）
 
-`src-tauri/src/tool_selection/mcp/*`（新規14）、`backends/mcp.rs`・`backends/router.rs`（新規）、`resolve.rs`・`gateway_schemas.rs`（新規）、`contracts.rs`・`repository.rs`・`service.rs`・`gateway.rs`・`schema.rs`・`feedback.rs`（変更）、`persistence/schema.rs`（version 24）、`lib.rs`（起動/停止）、`scripts/module-size-baseline.json`（新規file登録、既存値は不変）。
+`src-tauri/src/tool_selection/mcp/*`（新規15）、`backends/mcp.rs`・`backends/router.rs`（新規）、`resolve.rs`・`source_lookup.rs`・`gateway_schemas.rs`（新規）、`contracts.rs`・`repository.rs`・`service.rs`・`gateway.rs`・`schema.rs`・`feedback.rs`（変更）、`persistence/schema.rs`（version 24）、`lib.rs`（起動/停止）、`scripts/module-size-baseline.json`（新規file登録、既存値は不変）。
+
+## 10. 第2次コードレビュー（改善）
+
+初回実装を計画§3〜§7と照合し、次の欠陥・漏れを修正して試験を追加した（`tool_selection` 123→130件）。
+
+| # | 指摘 | 修正 |
+| --- | --- | --- |
+| 1 | `tools/list` が `ensure_ready` 消費後も元のtimeoutを使い、list取得全体60秒を超えうる | deadlineから残り時間を再計算してrequestに渡す |
+| 2 | source単位の失敗backoff（1/2/4/8/16/30秒）が未実装で再接続を連打しうる | `SourceSession` にfailure count/next attemptを持ち、backoff中は `source-backoff` で即時拒否 |
+| 3 | 待機queue 64が実際には機能せず（profile 16のtry_acquireで即busy） | queue permitは非blockingで確保し、profile permitはdeadlineまで待機する二段admissionに変更 |
+| 4 | 初回sync中にsourceを削除すると、台帳行が無いためgeneration照合をすり抜けて再公開しうる | 削除時に新generation・無効の台帳行を必ず作成し、進行中syncのpublishをgeneration不一致で失敗させる |
+| 5 | 設定由来grant適用時に既存の手動grantをmanaged扱いで取り込み、削除時に巻き添え撤回しうる | 適用前に `exact_grant_exists` を確認し、手動grantはadoptしない |
+| 6 | 大結果の取得ACLが「任意のproject grant」を見ており、別projectから読める | 呼出元の `project_id` を `read_page` に渡し、user scopeまたは**そのproject**のgrantのみ許可 |
+| 7 | `describe`/`usage` がsourceの無効化・staleを再確認せず、残存candidateRefを返しうる | `current_revision` に `source_eligible`（enabled + MCP鮮度）を追加。epoch非依存で拒否 |
+| 8 | MCP以外のモードで外部MCP sourceを登録しても3入口が公開されない | `discovery_configured` を `discovery || MCP source有り` に |
+| 9 | 同名別sourceのtoolを抽出器へ提示する手段がなく、訂正が常にambiguousになる | allowed集合と（同名時のみ）promptへ `sourceId/toolName` を追加。`resolve` のsource修飾解決を試験化 |
+| 10 | 失敗/isError結果を1MiBまでinlineで返しうる | failed結果は既存16KiB boundに制限 |
+| 11 | registry watcherがsyncごとに増殖し、stream切断後に再接続しない | source毎に最大1 watcher、stream終了後は再open、405はpollのみ |
+| 12 | `mcp_results.payload_json` 長のCHECKが無い | `length(payload_json) <= 1048576` を追加 |
+| 13 | page単位4MiB上限が未使用 | `MCP_LIST_PAGE_MAX_BYTES` を明示チェック |
+| 14 | `finalize_outcome` がDB保存エラーをsize-limitと誤表示 | storage-limitに分離 |
+| 15 | 定期cleanupが未接続 | poll loopで期限切れ結果を削除 |
+
+新規試験: source修飾解決の一意性、失敗時backoff、初回sync削除競合（barrier）、手動grant非adopt、送信後取消unknownとpermit解放、project scope結果ACL、describeのstale拒否。
