@@ -10,15 +10,17 @@ use serde_json::{json, Value};
 use super::config::McpServerConfig;
 use super::ServerHandle;
 use crate::persistence::SqliteWriter;
-use crate::tool_selection::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
+use crate::tool_selection::backends::{
+    BackendOutcome, BackendRequest, FixtureBackend, ToolBackend,
+};
 use crate::tool_selection::catalog::{self, CatalogEntry, UsagePage};
 use crate::tool_selection::contracts::now_ms;
-use std::time::Duration;
-use tokio::sync::Semaphore;
 use crate::tool_selection::extraction::UnconfiguredExtractor;
 use crate::tool_selection::inference::{EmbeddingProvider, HashEmbedding, HashReranker};
 use crate::tool_selection::repository;
 use crate::tool_selection::service::{self, ToolSelectionService};
+use std::time::Duration;
+use tokio::sync::Semaphore;
 
 const ACCEPT_BOTH: &str = "application/json, text/event-stream";
 
@@ -718,7 +720,12 @@ async fn h07_http_disconnect_does_not_cancel_the_managed_call() {
     let session = harness.ready_session().await;
 
     let search = harness
-        .envelope(1, "tools_search", json!({ "intent": "search notes" }), &session)
+        .envelope(
+            1,
+            "tools_search",
+            json!({ "intent": "search notes" }),
+            &session,
+        )
         .await;
     let candidate = search
         .pointer("/data/candidates/0/candidateRef")
@@ -726,7 +733,12 @@ async fn h07_http_disconnect_does_not_cancel_the_managed_call() {
         .expect("candidate")
         .to_string();
     let describe = harness
-        .envelope(2, "tools_describe", json!({ "candidateRef": candidate }), &session)
+        .envelope(
+            2,
+            "tools_describe",
+            json!({ "candidateRef": candidate }),
+            &session,
+        )
         .await;
     let execution_ref = describe
         .pointer("/data/executionRef")
