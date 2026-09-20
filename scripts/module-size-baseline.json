@@ -2488,6 +2488,74 @@
     "src-tauri/src/tool_selection/provider_extraction.rs": {
       "total": 189,
       "production": 140
+    },
+    "src-tauri/src/tool_selection/backends/mcp.rs": {
+      "total": 122,
+      "production": 122
+    },
+    "src-tauri/src/tool_selection/backends/router.rs": {
+      "total": 56,
+      "production": 56
+    },
+    "src-tauri/src/tool_selection/gateway_schemas.rs": {
+      "total": 41,
+      "production": 41
+    },
+    "src-tauri/src/tool_selection/mcp/config.rs": {
+      "total": 259,
+      "production": 259
+    },
+    "src-tauri/src/tool_selection/mcp/descriptors.rs": {
+      "total": 343,
+      "production": 343
+    },
+    "src-tauri/src/tool_selection/mcp/manager.rs": {
+      "total": 796,
+      "production": 796
+    },
+    "src-tauri/src/tool_selection/mcp/mod.rs": {
+      "total": 62,
+      "production": 62
+    },
+    "src-tauri/src/tool_selection/mcp/repository.rs": {
+      "total": 398,
+      "production": 398
+    },
+    "src-tauri/src/tool_selection/mcp/results.rs": {
+      "total": 256,
+      "production": 256
+    },
+    "src-tauri/src/tool_selection/mcp/schema.rs": {
+      "total": 102,
+      "production": 102
+    },
+    "src-tauri/src/tool_selection/mcp/service_support.rs": {
+      "total": 274,
+      "production": 274
+    },
+    "src-tauri/src/tool_selection/mcp/session.rs": {
+      "total": 442,
+      "production": 442
+    },
+    "src-tauri/src/tool_selection/mcp/sync.rs": {
+      "total": 383,
+      "production": 383
+    },
+    "src-tauri/src/tool_selection/mcp/tests.rs": {
+      "total": 1884,
+      "production": 0
+    },
+    "src-tauri/src/tool_selection/mcp/transport.rs": {
+      "total": 577,
+      "production": 516
+    },
+    "src-tauri/src/tool_selection/mcp/wiring.rs": {
+      "total": 69,
+      "production": 69
+    },
+    "src-tauri/src/tool_selection/resolve.rs": {
+      "total": 90,
+      "production": 90
     }
   }
 }
