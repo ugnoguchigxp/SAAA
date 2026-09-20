@@ -1,4 +1,4 @@
-use super::{generation::GenerationHandle, source::Candidate, world::turn::WorldLive};
+use super::{generation::GenerationHandle, source::Candidate};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -8,10 +8,10 @@ pub(crate) fn record(
     selected: &[Candidate],
     omitted: &[Candidate],
     tools: &[Value],
-    world: Option<&WorldLive>,
+    include_world: bool,
 ) -> Result<(), String> {
     super::world::source::reject_dispatch(selected, omitted)?;
-    let (selected, omitted) = super::world::turn::for_record(selected, omitted, world, generation);
+    let (selected, omitted) = super::world::turn::for_record(selected, omitted, include_world);
     generation.set_health(health)?;
     for (candidate, included, reason) in selected
         .iter()

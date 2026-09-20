@@ -1,0 +1,703 @@
+//! Conversation provider path. `turns::execute_turn` dispatches here after coding / capability.
+#[path = "conversation_inputs.rs"]
+mod conversation_inputs;
+#[path = "conversation_context.rs"]
+mod conversation_context;
+#[path = "conversation_controller/mod.rs"]
+mod conversation_controller;
+
+use super::event_hub::RuntimeEventSender;
+use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
+use crate::providers::routing::{effective_conversation_route_ids, resolve_harness_llm_provider};
+use crate::redact::redact_runtime_text;
+use crate::{
+    begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session, memory,
+    now_iso, persist_conversation_success, stream_model_provider,
+    stream_voice_aware_dynamic_lan_provider, update_runtime_provider, AppState, CleanupOutcome,
+    ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
+    ProviderOutputPersistence, RunCancellation, StartTurnInput, TurnExecutionFailure,
+};
+use conversation_context::compose_provider_history;
+use conversation_controller::execute as execute_reasoning;
+use std::sync::Arc;
+
+pub(crate) async fn try_capability_command(
+    _state: &AppState,
+    _input: &StartTurnInput,
+    _on_event: &dyn RuntimeEventSender,
+    _cancellation: Arc<RunCancellation>,
+) -> Result<bool, TurnExecutionFailure> {
+    Ok(false)
+}
+
+/// The World-free rendering of a composed history. `None` when the history carries no World block,
+/// so the caller can reuse the original borrow without cloning.
+fn world_free_history(
+    history: &[ConversationMessage],
+    world: Option<&crate::runtime::context::world::turn::WorldLive>,
+) -> Option<Vec<ConversationMessage>> {
+    let blocks = world.and_then(|world| world.blocks())?;
+    Some(
+        history
+            .iter()
+            .filter_map(|message| {
+                if message.role == "assistant" && message.content == blocks.with_world {
+                    blocks
+                        .without_world
+                        .clone()
+                        .map(|content| ConversationMessage {
+                            content,
+                            ..message.clone()
+                        })
+                } else {
+                    Some(message.clone())
+                }
+            })
+            .collect(),
+    )
+}
+
+pub(crate) async fn execute_conversation_turn(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: Arc<RunCancellation>,
+) -> Result<ConversationMessage, TurnExecutionFailure> {
+    let context_started = std::time::Instant::now();
+    let conversation_inputs::Inputs {
+        mut providers,
+        route,
+        security,
+        identity,
+        regional,
+        loaded_context,
+        scope,
+        personal_candidates,
+        personal_source_error,
+        configuration_fingerprint,
+    } = conversation_inputs::load(state, input)?;
+    crate::providers::http_metrics::record("contextInputsLoad", context_started.elapsed());
+    if scope.status != "resolved" {
+        crate::runtime::context::generation::record_red(
+            state,
+            &input.run_id,
+            scope.reason_code.as_deref().unwrap_or("scope-invalid"),
+        );
+        return Err(TurnExecutionFailure::configuration(format!(
+            "Context scope could not be resolved: {}",
+            scope.reason_code.as_deref().unwrap_or("scope-invalid")
+        )));
+    }
+    if let Some(error) = personal_source_error {
+        crate::runtime::context::generation::record_red(
+            state,
+            &input.run_id,
+            "personal-state-source-unavailable",
+        );
+        return Err(TurnExecutionFailure::configuration(error));
+    }
+    let base_context = memory::context_window::compose(loaded_context)?;
+    let broker_started = std::time::Instant::now();
+    let composed = match crate::runtime::context::world::turn::compose_for_app(
+        state,
+        &input.run_id,
+        &scope,
+        base_context,
+        personal_candidates,
+        scope.scopes.iter().map(|scope| scope.key.clone()).collect(),
+    ) {
+        Ok(composed) => composed,
+        Err(error) => {
+            crate::runtime::context::generation::record_red(
+                state,
+                &input.run_id,
+                "context-broker-red",
+            );
+            return Err(TurnExecutionFailure::configuration(error));
+        }
+    };
+    let envelope = composed.envelope;
+    let world_live = composed.world;
+    crate::providers::http_metrics::record("contextBrokerCompose", broker_started.elapsed());
+    if envelope.health.status == crate::runtime::context::health::Status::Yellow {
+        let _ = on_event.send(RuntimeEvent::Activity {
+            run_id: input.run_id.clone(),
+            kind: "context-degraded".into(),
+            summary: format!(
+                "Context was safely reduced ({} source item(s) omitted).",
+                envelope.health.omitted_sources
+            ),
+        });
+    }
+    let context_health = envelope.context_health.clone();
+    if memory::control_plane::memory_enabled() {
+        let _ = state.sqlite_writer.write(|connection| {
+            memory::control_plane::record_projection_event(
+                connection,
+                context_health.status,
+                context_health.projected_bytes,
+                context_health.hard_limit_bytes,
+                context_health.output_reserve_bytes,
+                context_health.repair_count,
+                &now_iso(),
+            )
+        });
+    }
+    let history = compose_provider_history(
+        &input.conversation_id,
+        &identity.agent_name,
+        &identity.user_name,
+        &regional,
+        &input.input_origin,
+        &input.presentation_mode,
+        envelope.messages,
+    )?;
+    // Providers without World support receive the World-free rendering of the same history. The
+    // World block is only present when a World was composed, so no clone happens otherwise.
+    let world_free_history = world_free_history(&history, world_live.as_ref());
+    let world_free_history = world_free_history.as_deref().unwrap_or(&history);
+    crate::providers::http_metrics::record("contextAssemblyTotal", context_started.elapsed());
+    let shared_larm_voice =
+        route.source == "harness" && input.input_origin == "voice" && crate::larm_voice::enabled();
+    let harness = providers.harness.clone();
+    if let Some(client) =
+        crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)
+            .await?
+    {
+        // The reasoning provider has no World revalidation, so it is treated as unsupported and
+        // receives the World-free history and manifest.
+        let manifest_selected: Vec<crate::runtime::context::source::Candidate> = envelope
+            .selected
+            .iter()
+            .filter(|candidate| {
+                candidate.source_kind != crate::runtime::context::world::source::WORLD_KIND
+            })
+            .cloned()
+            .collect();
+        let manifest_omitted: Vec<crate::runtime::context::source::Candidate> = envelope
+            .omitted
+            .iter()
+            .filter(|candidate| {
+                candidate.source_kind != crate::runtime::context::world::source::WORLD_KIND
+            })
+            .cloned()
+            .collect();
+        return execute_reasoning(
+            state,
+            input,
+            world_free_history,
+            on_event,
+            cancellation,
+            &client,
+            conversation_controller::ContextManifest {
+                selected: &manifest_selected,
+                omitted: &manifest_omitted,
+                health: envelope.health.status.as_str(),
+            },
+        )
+        .await
+        .map_err(Into::into);
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(route.timeout_ms);
+    let reasoning_effort = providers.reasoning_effort.clone();
+    let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
+    let route_ids = effective_conversation_route_ids(&providers, &route, &security);
+    if route_ids.is_empty() {
+        return Err(TurnExecutionFailure::configuration(
+            "Choose a conversation provider in Settings.",
+        ));
+    }
+    let mut failures: Vec<TurnExecutionFailure> = Vec::new();
+    let mut context_health_emitted = false;
+
+    for provider_id in route_ids {
+        if cancellation.is_cancelled() {
+            return Err(TurnExecutionFailure::provider(
+                ProviderFailureKind::Cancelled,
+                "Cancelled by user".to_string(),
+            ));
+        }
+        let remaining_ms = deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .as_millis() as u64;
+        if remaining_ms == 0 {
+            return Err(TurnExecutionFailure::provider(
+                ProviderFailureKind::Timeout,
+                "Conversation reached its total timeout".into(),
+            ));
+        }
+        let attempt_deadline =
+            tokio::time::Instant::now()
+                + std::time::Duration::from_millis(remaining_ms.min(
+                    route.attempt_timeout_ms.unwrap_or(
+                        route.timeout_ms / (1 + route.fallback_provider_ids.len()) as u64,
+                    ),
+                ));
+        if route.source == "harness"
+            && provider_id == crate::DYNAMIC_LAN_PROVIDER_ID
+            && !shared_larm_voice
+        {
+            let resolution = tokio::time::timeout_at(
+                attempt_deadline,
+                resolve_harness_llm_provider(&mut providers, remaining_ms, cancellation.clone()),
+            )
+            .await;
+            match resolution {
+                Ok(Ok(_)) => {}
+                result => {
+                    if cancellation.is_cancelled() {
+                        return Err(TurnExecutionFailure::provider(
+                            ProviderFailureKind::Cancelled,
+                            "Cancelled by user".into(),
+                        ));
+                    }
+                    let (kind, message) = match result {
+                        Err(_) => (
+                            ProviderFailureKind::Timeout,
+                            "Harness discovery reached its timeout".to_string(),
+                        ),
+                        Ok(Err(error)) => {
+                            (crate::providers::route_policy::failure_kind(&error), error)
+                        }
+                        _ => unreachable!(),
+                    };
+                    let _ = on_event.send(RuntimeEvent::ProviderFailed {
+                        run_id: input.run_id.clone(),
+                        provider_id: provider_id.clone(),
+                        reason: kind.public_message().as_str().to_string(),
+                    });
+                    let failure = TurnExecutionFailure::provider(kind, message);
+                    if !provider_fallback_allowed(kind, false) {
+                        return Err(failure);
+                    }
+                    failures.push(failure);
+                    continue;
+                }
+            }
+        }
+        let attempt_timeout_ms = attempt_deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .as_millis() as u64;
+        if attempt_timeout_ms == 0 {
+            failures.push(TurnExecutionFailure::provider(
+                ProviderFailureKind::Timeout,
+                "Provider setup reached its timeout".into(),
+            ));
+            continue;
+        }
+        let Some(provider) = providers
+            .providers
+            .iter()
+            .find(|provider| provider.id() == provider_id && provider.enabled())
+            .cloned()
+        else {
+            failures.push(TurnExecutionFailure::configuration(format!(
+                "{provider_id}: provider is disabled or missing"
+            )));
+            continue;
+        };
+
+        update_runtime_provider(state, &input.run_id, provider.id())?;
+        let session_id = begin_provider_session(
+            state,
+            &input.run_id,
+            provider.id(),
+            provider.kind(),
+            &configuration_fingerprint,
+        )?;
+        if on_event
+            .send(RuntimeEvent::Started {
+                run_id: input.run_id.clone(),
+                route: "conversation.respond".to_string(),
+                provider_id: provider.id().to_string(),
+            })
+            .is_err()
+        {
+            finish_provider_session(
+                state,
+                &session_id,
+                "failed",
+                Some(ProviderFailureKind::ClientDisconnected),
+            )?;
+            return Err(TurnExecutionFailure::provider(
+                ProviderFailureKind::ClientDisconnected,
+                ProviderFailureKind::ClientDisconnected
+                    .public_message()
+                    .as_str()
+                    .to_string(),
+            ));
+        }
+        crate::runtime::turn_activity::send_context_window_once(
+            &mut context_health_emitted,
+            on_event,
+            &input.run_id,
+            &context_health,
+        );
+        let outcome = match &provider {
+            ModelProviderSettings::OpenAiCompatible(provider) => {
+                stream_model_provider(
+                    provider,
+                    &history,
+                    attempt_timeout_ms,
+                    ModelStreamContext {
+                        reasoning_effort: &reasoning_effort,
+                        max_output_tokens,
+                        input,
+                        on_event,
+                        cancellation: cancellation.clone(),
+                        context_health: envelope.health.status.as_str(),
+                        context_sources: &envelope.selected,
+                        context_omissions: &envelope.omitted,
+                        output_persistence: Some(ProviderOutputPersistence {
+                            state,
+                            session_id: &session_id,
+                            world: world_live.as_ref(),
+                        }),
+                    },
+                )
+                .await
+            }
+            ModelProviderSettings::AgentSession(provider) => {
+                crate::providers::agent_session::stream_agent_session_provider(
+                    provider,
+                    world_free_history,
+                    attempt_timeout_ms,
+                    ModelStreamContext {
+                        reasoning_effort: &reasoning_effort,
+                        max_output_tokens,
+                        input,
+                        on_event,
+                        cancellation: cancellation.clone(),
+                        context_health: envelope.health.status.as_str(),
+                        context_sources: &envelope.selected,
+                        context_omissions: &envelope.omitted,
+                        output_persistence: Some(ProviderOutputPersistence {
+                            state,
+                            session_id: &session_id,
+                            world: None,
+                        }),
+                    },
+                )
+                .await
+            }
+            ModelProviderSettings::DynamicLan(provider) => {
+                let context = ModelStreamContext {
+                    reasoning_effort: &reasoning_effort,
+                    max_output_tokens,
+                    input,
+                    on_event,
+                    cancellation: cancellation.clone(),
+                    context_health: envelope.health.status.as_str(),
+                    context_sources: &envelope.selected,
+                    context_omissions: &envelope.omitted,
+                    output_persistence: Some(ProviderOutputPersistence {
+                        state,
+                        session_id: &session_id,
+                        world: None,
+                    }),
+                };
+                stream_voice_aware_dynamic_lan_provider(
+                    provider,
+                    &harness,
+                    shared_larm_voice,
+                    &input.conversation_id,
+                    world_free_history,
+                    attempt_timeout_ms,
+                    context,
+                )
+                .await
+            }
+            ModelProviderSettings::CloudAsr(_)
+            | ModelProviderSettings::CloudTts(_)
+            | ModelProviderSettings::SystemTts(_) => ProviderAttemptOutcome::Failed {
+                kind: ProviderFailureKind::Contract,
+                public_message: ProviderFailureKind::Contract.public_message(),
+                output_started: false,
+                cleanup: CleanupOutcome::NotApplicable,
+            },
+        };
+        match outcome {
+            ProviderAttemptOutcome::Completed { content, cleanup } => {
+                if matches!(
+                    &provider,
+                    ModelProviderSettings::DynamicLan(_) | ModelProviderSettings::AgentSession(_)
+                ) {
+                    finish_dynamic_lan_provider_session(
+                        state,
+                        &session_id,
+                        "completed",
+                        None,
+                        cleanup,
+                    )?;
+                } else {
+                    finish_provider_session(state, &session_id, "completed", None)?;
+                }
+                return persist_conversation_success(state, input, &content).map_err(Into::into);
+            }
+            ProviderAttemptOutcome::Cancelled { cleanup, .. } => {
+                if matches!(
+                    &provider,
+                    ModelProviderSettings::DynamicLan(_) | ModelProviderSettings::AgentSession(_)
+                ) {
+                    finish_dynamic_lan_provider_session(
+                        state,
+                        &session_id,
+                        "cancelled",
+                        Some(ProviderFailureKind::Cancelled),
+                        cleanup,
+                    )?;
+                } else {
+                    finish_provider_session(
+                        state,
+                        &session_id,
+                        "cancelled",
+                        Some(ProviderFailureKind::Cancelled),
+                    )?;
+                }
+                return Err(TurnExecutionFailure::provider(
+                    ProviderFailureKind::Cancelled,
+                    "Cancelled by user".to_string(),
+                ));
+            }
+            ProviderAttemptOutcome::Failed {
+                kind,
+                public_message,
+                output_started,
+                cleanup,
+            } => {
+                let reason = public_message.as_str();
+                if matches!(
+                    &provider,
+                    ModelProviderSettings::DynamicLan(_) | ModelProviderSettings::AgentSession(_)
+                ) {
+                    finish_dynamic_lan_provider_session(
+                        state,
+                        &session_id,
+                        "failed",
+                        Some(kind),
+                        cleanup,
+                    )?;
+                } else {
+                    finish_provider_session(state, &session_id, "failed", Some(kind))?;
+                }
+                let _ = on_event.send(RuntimeEvent::ProviderFailed {
+                    run_id: input.run_id.clone(),
+                    provider_id: provider.id().to_string(),
+                    reason: reason.to_string(),
+                });
+                let failure =
+                    TurnExecutionFailure::provider(kind, format!("{}: {reason}", provider.id()));
+                if !provider_route_fallback_allowed(&provider, kind, output_started) {
+                    return Err(failure);
+                }
+                failures.push(failure);
+            }
+        }
+    }
+    if failures.len() == 1 {
+        Err(failures.remove(0))
+    } else {
+        let code = failures
+            .last()
+            .map(|failure| failure.code)
+            .unwrap_or(crate::runtime::contracts::RunFailureCode::ConfigurationError);
+        Err(TurnExecutionFailure::unsupervised(
+            code,
+            format!(
+                "Configured provider attempts failed. {}",
+                failures
+                    .into_iter()
+                    .map(|failure| failure.message)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+        ))
+    }
+}
+pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {
+    !output_started
+        && matches!(
+            kind,
+            ProviderFailureKind::Capacity
+                | ProviderFailureKind::Unavailable
+                | ProviderFailureKind::Upstream
+                | ProviderFailureKind::Network
+                | ProviderFailureKind::Timeout
+                | ProviderFailureKind::AllocationLost
+        )
+}
+
+fn provider_route_fallback_allowed(
+    _provider: &ModelProviderSettings,
+    kind: ProviderFailureKind,
+    output_started: bool,
+) -> bool {
+    provider_fallback_allowed(kind, output_started)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn world_free_history_removes_the_world_block_for_unsupported_providers() {
+        let world = crate::runtime::context::world::turn::WorldLive::for_test(
+            true,
+            "WITH_WORLD",
+            Some("WITHOUT_WORLD"),
+        );
+        let history = vec![
+            ConversationMessage {
+                parts: None,
+                id: "system".into(),
+                conversation_id: "c".into(),
+                role: "system".into(),
+                content: "policy".into(),
+                created_at: "system".into(),
+            },
+            ConversationMessage {
+                parts: None,
+                id: "world".into(),
+                conversation_id: "c".into(),
+                role: "assistant".into(),
+                content: "WITH_WORLD".into(),
+                created_at: "1".into(),
+            },
+            ConversationMessage {
+                parts: None,
+                id: "user".into(),
+                conversation_id: "c".into(),
+                role: "user".into(),
+                content: "hello".into(),
+                created_at: "2".into(),
+            },
+        ];
+        let stripped = world_free_history(&history, Some(&world)).expect("world block present");
+        assert_eq!(stripped.len(), 3);
+        assert_eq!(stripped[1].content, "WITHOUT_WORLD");
+        assert_eq!(stripped[2].content, "hello");
+        // Without a World there is nothing to strip, so the original borrow is reused.
+        assert!(world_free_history(&history, None).is_none());
+        assert!(world_free_history(
+            &history,
+            Some(&crate::runtime::context::world::turn::WorldLive::without_blocks())
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn response_retry_reuses_the_failed_input_message() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database opens");
+        crate::persistence::schema::initialize_database(&connection).expect("database initializes");
+        let state = crate::test_support::app_state(connection);
+        let first = StartTurnInput {
+            run_id: "run-first".to_string(),
+            conversation_id: crate::PRIMARY_CONVERSATION_ID.to_string(),
+            content: "retry this response".to_string(),
+            workspace_path: None,
+            retry_input_message_id: None,
+            source_id: None,
+            scope_refs: Vec::new(),
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
+        };
+        crate::runtime::turns::prepare_runtime_run(&state, &first).expect("first run prepares");
+        let input_message_id: String = state
+            .sqlite_writer
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
+                [&first.run_id],
+                |row| row.get(0),
+            )
+            .expect("input message reads");
+        state
+            .sqlite_writer
+            .lock()
+            .expect("database lock")
+            .execute(
+                "UPDATE runtime_runs SET status = 'failed' WHERE id = ?1",
+                [&first.run_id],
+            )
+            .expect("first run fails");
+
+        let retry = StartTurnInput {
+            run_id: "run-retry".to_string(),
+            retry_input_message_id: Some(input_message_id.clone()),
+            source_id: None,
+            scope_refs: Vec::new(),
+            input_origin: "text".to_string(),
+            presentation_mode: "visual".to_string(),
+            ..first
+        };
+        crate::runtime::turns::prepare_runtime_run(&state, &retry).expect("retry prepares");
+        let connection = state.sqlite_writer.lock().expect("database lock");
+        let message_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_messages WHERE role = 'user'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("message count reads");
+        let retry_input: String = connection
+            .query_row(
+                "SELECT input_message_id FROM runtime_runs WHERE id = 'run-retry'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("retry input reads");
+        assert_eq!(message_count, 1);
+        assert_eq!(retry_input, input_message_id);
+    }
+
+    #[test]
+    fn provider_fallback_policy_is_failure_kind_and_output_aware() {
+        for kind in [
+            ProviderFailureKind::Capacity,
+            ProviderFailureKind::Unavailable,
+            ProviderFailureKind::Upstream,
+            ProviderFailureKind::Network,
+            ProviderFailureKind::Timeout,
+            ProviderFailureKind::AllocationLost,
+        ] {
+            assert!(provider_fallback_allowed(kind, false), "{}", kind.as_str());
+            assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
+        }
+        for kind in [
+            ProviderFailureKind::Policy,
+            ProviderFailureKind::Authentication,
+            ProviderFailureKind::Contract,
+            ProviderFailureKind::Protocol,
+            ProviderFailureKind::RequestTooLarge,
+            ProviderFailureKind::PartialOutput,
+            ProviderFailureKind::ClientDisconnected,
+            ProviderFailureKind::Cancelled,
+            ProviderFailureKind::Internal,
+        ] {
+            assert!(!provider_fallback_allowed(kind, false), "{}", kind.as_str());
+            assert!(!provider_fallback_allowed(kind, true), "{}", kind.as_str());
+        }
+    }
+
+    #[test]
+    fn authentication_never_switches_providers() {
+        let dynamic_lan = crate::test_support::dynamic_lan_provider("dynamic_lan-primary");
+        let direct = crate::test_support::provider("direct-primary", "local");
+        assert!(!provider_route_fallback_allowed(
+            &dynamic_lan,
+            ProviderFailureKind::Authentication,
+            false
+        ));
+        assert!(!provider_route_fallback_allowed(
+            &dynamic_lan,
+            ProviderFailureKind::Authentication,
+            true
+        ));
+        assert!(!provider_route_fallback_allowed(
+            &direct,
+            ProviderFailureKind::Authentication,
+            false
+        ));
+    }
+}

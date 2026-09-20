@@ -22,11 +22,6 @@ pub(crate) fn save_voice_enrollment_sample(
     state: tauri::State<'_, AppState>,
     mut input: voice::profile::SaveVoiceEnrollmentSampleInput,
 ) -> Result<voice::profile::VoiceProfileSnapshot, String> {
-    if state.meeting.blocks_tts() {
-        return Err(
-            "Voice enrollment is unavailable while a meeting is active or paused".to_string(),
-        );
-    }
     if state.streaming_tts.is_active() {
         return Err("Stop speech playback before recording an enrollment sample".to_string());
     }

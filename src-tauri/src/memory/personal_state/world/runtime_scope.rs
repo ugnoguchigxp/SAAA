@@ -182,7 +182,6 @@ pub(crate) fn authorize_frame_request(
         let scope_key = runtime_scope_key(reference);
         let (kind, opaque_id) = scope_kind(c, &scope_key)?;
         let expected_kind = match reference.kind {
-            RuntimeKind::MeetingSession => "resource",
             RuntimeKind::CodingJob => "task",
         };
         if kind != expected_kind || opaque_id != reference.id {
@@ -244,13 +243,6 @@ mod tests {
 
     #[test]
     fn runtime_scope_key_matches_kind() {
-        assert_eq!(
-            runtime_scope_key(&RuntimeRef {
-                kind: RuntimeKind::MeetingSession,
-                id: "m1".into()
-            }),
-            "resource:m1"
-        );
         assert_eq!(
             runtime_scope_key(&RuntimeRef {
                 kind: RuntimeKind::CodingJob,

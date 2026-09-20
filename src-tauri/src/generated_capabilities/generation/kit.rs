@@ -31,13 +31,19 @@ pub const MAX_KIT_STDERR_BYTES: usize = 64 * 1024;
 struct KitManifest {
     format_version: u32,
     entrypoint: String,
-    #[allow(dead_code)]
-    commands: serde_json::Value,
+    commands: KitCommands,
     bun_version: String,
     llang_version: Option<String>,
     llang_dirty: Option<bool>,
     files: BTreeMap<String, String>,
     digest: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KitCommands {
+    package: String,
+    inspect: String,
 }
 
 #[derive(Clone, Debug)]
@@ -78,6 +84,12 @@ impl GenerationKit {
             return Err(super::contracts::encode_error(
                 GenerationErrorCode::Unavailable,
                 "unsupported generation kit manifest",
+            ));
+        }
+        if manifest.commands.package != "package" || manifest.commands.inspect != "inspect" {
+            return Err(super::contracts::encode_error(
+                GenerationErrorCode::Unavailable,
+                "the generation kit does not declare the fixed package/inspect commands",
             ));
         }
         if !safe_relative(&manifest.entrypoint)

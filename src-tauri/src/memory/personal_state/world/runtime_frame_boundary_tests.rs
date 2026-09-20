@@ -6,13 +6,11 @@
 
 use super::evidence_eligibility::assess_contextstill_v1;
 use super::runtime_test_support::*;
-use crate::meeting::MeetingState;
 
 #[test]
 fn m2_28_frame_reads_do_not_mutate_schema_or_world() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
 
     let tables_before = fixture.table_names();
     let assertions_before = fixture.table_count("personal_assertions");
@@ -26,7 +24,7 @@ fn m2_28_frame_reads_do_not_mutate_schema_or_world() {
         let access = fixture.access();
         let request = fixture.request(
             access,
-            vec![fixture.meeting_ref(MEETING_ID)],
+            vec![fixture.coding_ref(CODING_ID)],
             Some(fixture.graph_request("ent0")),
         );
         let prepared = service.prepare_frame(request).unwrap();
@@ -55,12 +53,11 @@ fn m2_28_frame_reads_do_not_mutate_schema_or_world() {
 
 #[test]
 fn m2_28_no_context_generation_or_broker_row_is_created() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let _ = service.prepare_frame(request).unwrap();
     assert_eq!(fixture.table_count("context_generations"), 0);
     assert_eq!(fixture.table_count("personal_generations"), 0);

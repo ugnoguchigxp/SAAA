@@ -11,6 +11,7 @@ pub mod lifecycle;
 pub mod limits;
 pub mod package_store;
 pub mod publication;
+pub mod publication_sync;
 pub mod recovery;
 pub mod repository;
 pub mod retirement;

@@ -7,11 +7,8 @@ use super::source::{
     prepare_calls, prepare_candidate, reset_prepare_calls, WorldOmission, WorldSourceRequest,
     WORLD_SHADOW_KIND,
 };
-use crate::meeting::MeetingState;
 use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
-use crate::memory::personal_state::world::runtime_test_support::{
-    Fixture, CODING_ID, MEETING_ID, RUN_ID,
-};
+use crate::memory::personal_state::world::runtime_test_support::{Fixture, CODING_ID, RUN_ID};
 use crate::memory::personal_state::world::test_support::PROJECT;
 use rusqlite::Connection;
 use std::collections::BTreeSet;
@@ -65,7 +62,7 @@ fn existing(id: &str, bytes: usize, utility: u16) -> Candidate {
 
 fn shadow_input(_fixture: &Fixture, limit: usize, candidates: Vec<Candidate>) -> ShadowInput {
     let mut allowed = BTreeSet::from([PROJECT.to_string()]);
-    allowed.insert(format!("resource:{MEETING_ID}"));
+    allowed.insert(format!("task:{CODING_ID}"));
     allowed.insert(format!("task:{CODING_ID}"));
     ShadowInput {
         run_id: RUN_ID.into(),
@@ -86,7 +83,7 @@ fn shadow(
     let service = fixture.service();
     let access = fixture.access();
     let refs = if runtime {
-        vec![fixture.meeting_ref(MEETING_ID)]
+        vec![fixture.coding_ref(CODING_ID)]
     } else {
         Vec::new()
     };
@@ -113,9 +110,8 @@ fn shadow(
 
 #[test]
 fn m3_08_summary_has_no_payload_and_input_stays_put() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let input = shadow_input(&fixture, 8_192, Vec::new());
     let before = input.clone();
     let summary = shadow(&fixture, true, false, &input, 1_000);
@@ -128,9 +124,8 @@ fn m3_08_summary_has_no_payload_and_input_stays_put() {
 
 #[test]
 fn m3_09_baseline_matches_broker_and_skips_prepare_on_error() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let input = shadow_input(&fixture, 8_192, vec![existing("a", 8, 0)]);
     let envelope = broker::compose(BrokerInput {
         base: input.base.clone(),
@@ -156,9 +151,8 @@ fn m3_09_baseline_matches_broker_and_skips_prepare_on_error() {
 
 #[test]
 fn m3_10_partial_scope_is_denied_without_second_compose_success() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let mut input = shadow_input(&fixture, 8_192, Vec::new());
     input.allowed_scope_keys = BTreeSet::from([PROJECT.to_string()]);
     let summary = shadow(&fixture, true, false, &input, 1_000);
@@ -167,9 +161,8 @@ fn m3_10_partial_scope_is_denied_without_second_compose_success() {
 
 #[test]
 fn m3_11_same_utility_does_not_displace_existing() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let sized = shadow(
         &fixture,
         true,
@@ -193,9 +186,8 @@ fn m3_11_same_utility_does_not_displace_existing() {
 
 #[test]
 fn m3_12_expired_clock_and_other_run_do_not_retry() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let input = shadow_input(&fixture, 8_192, Vec::new());
     reset_prepare_calls();
     let summary = shadow(&fixture, true, false, &input, 2_000);
@@ -272,11 +264,11 @@ fn m3_13_shadow_kind_is_rejected_before_record() {
         std::slice::from_ref(&shadow),
         &[],
         &[],
-        None,
+        false,
     )
     .unwrap_err();
     assert_eq!(error, "world-shadow-not-dispatchable");
-    let omitted_error = record(&generation, "green", &[], &[shadow], &[], None).unwrap_err();
+    let omitted_error = record(&generation, "green", &[], &[shadow], &[], false).unwrap_err();
     assert_eq!(omitted_error, "world-shadow-not-dispatchable");
     let after = state
         .sqlite_readers
@@ -299,7 +291,7 @@ fn m3_13_shadow_kind_is_rejected_before_record() {
 
 #[test]
 fn m3_14_real_frame_paths_select_without_fake_candidates() {
-    let graph = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
+    let graph = Fixture::with_entities(&[("task", CODING_ID)], 2);
     let now = crate::memory::personal_state::now();
     graph.set_now(now);
     let input = shadow_input(&graph, 8_192, Vec::new());
@@ -310,16 +302,14 @@ fn m3_14_real_frame_paths_select_without_fake_candidates() {
         "{summary:?}"
     );
 
-    let runtime = Fixture::new(&[("resource", MEETING_ID)]);
-    runtime.add_meeting(MEETING_ID, "active", "100", None, None);
-    runtime.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let runtime = Fixture::new(&[("task", CODING_ID)]);
+    runtime.add_coding_job(1, "running", "running", "accepted");
     let input = shadow_input(&runtime, 8_192, Vec::new());
     let summary = shadow(&runtime, true, false, &input, 1_000);
     assert!(summary.world_selected);
 
-    let both = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    both.add_meeting(MEETING_ID, "active", "100", None, None);
-    both.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let both = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    both.add_coding_job(1, "running", "running", "accepted");
     let input = shadow_input(&both, 8_192, Vec::new());
     let summary = shadow(&both, true, true, &input, 1_000);
     assert!(summary.world_selected);
@@ -327,14 +317,13 @@ fn m3_14_real_frame_paths_select_without_fake_candidates() {
 
 #[test]
 fn m3_15_source_and_link_changes_drop_stale_candidates() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let scope = fixture
@@ -405,9 +394,8 @@ fn m3_15_source_and_link_changes_drop_stale_candidates() {
 
 #[test]
 fn m3_17_yellow_health_survives_and_instruction_stays_one() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let mut input = shadow_input(&fixture, 8_192, Vec::new());
     input.base.health.status = "yellow";
     input.source_warning = Some("fixture-warning".into());

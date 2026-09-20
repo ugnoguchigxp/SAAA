@@ -69,16 +69,14 @@ pub(crate) fn policy_snapshot(
             crate::persistence::load_voice_settings(connection)?,
         ))
     })?;
-    Ok(snapshot_from(state.meeting.blocks_tts(), policy, voice))
+    Ok(snapshot_from(policy, voice))
 }
 
 pub(super) fn snapshot_from(
-    meeting_blocked: bool,
     policy: PolicyRow,
     voice: VoiceRuntimeSettings,
 ) -> ConversationVoicePolicySnapshot {
     let presentation = effective_presentation_from(
-        meeting_blocked,
         voice.auto_speak,
         None,
         &policy.speech_output_override,

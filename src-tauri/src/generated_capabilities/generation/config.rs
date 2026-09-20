@@ -300,7 +300,9 @@ fn validate_entry(entry: RequestEntryFile) -> CapabilityResult<RegisteredRequest
     let request_path = absolute_existing(&entry.request_path)?;
     let suite_path = absolute_existing(&entry.suite_path)?;
     let metadata_path = absolute_existing(&entry.metadata_path)?;
-    let request_hash = hash_file(&request_path)?;
+    let request_bytes = read_registered_file(&request_path)?;
+    validate_request_contract(&request_bytes, &entry.capability_id, &entry.fields)?;
+    let request_hash = sha256_hex(&request_bytes);
     let suite_hash = hash_file(&suite_path)?;
     let metadata_hash = hash_file(&metadata_path)?;
     Ok(RegisteredRequest {
@@ -335,6 +337,54 @@ fn absolute_existing(value: &str) -> CapabilityResult<PathBuf> {
 }
 
 fn hash_file(path: &Path) -> CapabilityResult<String> {
+    Ok(sha256_hex(&read_registered_file(path)?))
+}
+
+/// The request's id and contract field order/names must match the registered entry, so the model
+/// prompt and the package build use the same contract the host approved.
+fn validate_request_contract(
+    request_bytes: &[u8],
+    capability_id: &str,
+    fields: &[String],
+) -> CapabilityResult<()> {
+    let value: serde_json::Value = serde_json::from_slice(request_bytes).map_err(|_| {
+        encode_error(
+            GenerationErrorCode::InvalidInput,
+            "the registered request is not valid JSON",
+        )
+    })?;
+    if value.get("id").and_then(serde_json::Value::as_str) != Some(capability_id) {
+        return Err(encode_error(
+            GenerationErrorCode::InvalidInput,
+            "the registered request id does not match the capability id",
+        ));
+    }
+    let names = value
+        .get("contract")
+        .and_then(|contract| contract.get("fields"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|field| field.get("name").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>()
+        })
+        .ok_or_else(|| {
+            encode_error(
+                GenerationErrorCode::InvalidInput,
+                "the registered request has no contract fields",
+            )
+        })?;
+    if names.len() != fields.len() || names.iter().zip(fields).any(|(left, right)| *left != right) {
+        return Err(encode_error(
+            GenerationErrorCode::InvalidInput,
+            "the registered request contract does not match the registered fields",
+        ));
+    }
+    Ok(())
+}
+
+fn read_registered_file(path: &Path) -> CapabilityResult<Vec<u8>> {
     let metadata = fs::symlink_metadata(path).map_err(|_| {
         CapabilityError::new(
             CapabilityErrorCode::InvalidInput,
@@ -349,13 +399,12 @@ fn hash_file(path: &Path) -> CapabilityResult<String> {
             "registered file is not a regular file within the 1 MiB package limit",
         ));
     }
-    let bytes = fs::read(path).map_err(|_| {
+    fs::read(path).map_err(|_| {
         CapabilityError::new(
             CapabilityErrorCode::StorageError,
             "registered file is unreadable",
         )
-    })?;
-    Ok(sha256_hex(&bytes))
+    })
 }
 
 fn is_request_id(value: &str) -> bool {
@@ -415,7 +464,23 @@ mod tests {
         let request = dir.join("request.json");
         let suite = dir.join("tests.json");
         let metadata = dir.join("metadata.json");
-        write(&request, b"{\"version\":2}");
+        write(
+            &request,
+            serde_json::json!({
+                "version": 2,
+                "id": "req-cap",
+                "body": "x",
+                "contract": {
+                    "version": 1,
+                    "fields": [
+                        { "name": "enabled", "kind": "boolean", "values": [], "nullable": false, "undefinable": false, "optional": false },
+                        { "name": "suspended", "kind": "boolean", "values": [], "nullable": false, "undefinable": false, "optional": false }
+                    ]
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        );
         write(&suite, b"{\"version\":1}");
         write(&metadata, b"{\"id\":\"req-cap\"}");
         let path = dir.join("requests.json");
@@ -509,6 +574,17 @@ mod tests {
         assert!(load_requests(&path).is_err());
 
         value["entries"][0]["fields"] = serde_json::json!(["enabled", "9bad"]);
+        write(&path, value.to_string().as_bytes());
+        assert!(load_requests(&path).is_err());
+    }
+
+    #[test]
+    fn request_contract_mismatch_is_rejected() {
+        let dir = temp_dir("contract");
+        let path = sample_requests(&dir);
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        value["entries"][0]["fields"] = serde_json::json!(["suspended", "enabled"]);
         write(&path, value.to_string().as_bytes());
         assert!(load_requests(&path).is_err());
     }

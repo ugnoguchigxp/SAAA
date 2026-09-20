@@ -35,7 +35,7 @@
 
 | コマンド | 初回 | 最終 |
 | --- | --- | --- |
-| `cargo test --lib generated_capabilities` | 78 passed | 101 passed / 0 failed |
+| `cargo test --lib generated_capabilities` | 78 passed | 111 passed / 0 failed |
 | `cargo test --lib tool_selection` | （既存） | 183 passed / 0 failed |
 | `cargo test --lib providers` | （既存） | 79 passed / 0 failed / 2 ignored |
 | `cargo test --lib runtime::capability_commands` | — | 4 passed / 0 failed |
@@ -99,8 +99,10 @@
   の `not-checked` 固定、1 MiB 上限。
 - `inspection/repository.rs`: `(revision_id, inspector_digest)` 一意、完全成功のみ記録。
 - `inspection/service.rs`: owner・project 検査（他人は not-authorized）、revision 固定、managed package
-  再検査、report の hash 照合、staging→atomic rename→DB 確定、同 revision/digest の証拠再利用。
-- 試験: 公開と再利用、別 principal 拒否、比較不一致で非公開。
+  再検査、report の hash 照合と contract hash 照合、staging→atomic rename→DB 確定、同 revision/digest
+  の証拠再利用。
+- 試験: 公開と再利用、別 principal 拒否、project 不一致拒否、contract 不一致拒否、欠落成果物は
+  再生成せず明示エラー、比較不一致で非公開。
 
 ### C06（T04）projection/Wasm 比較
 
@@ -200,3 +202,25 @@ builder の決定試験までで、live 実行は行っていない。model 名�
   `tool_selection/{backends/mod,backends/llang,gateway,service}.rs`、
   `providers/openai_compatible/{.rs,structured.rs}`、`providers/stream/agent_dispatch.rs`。
 - 依存記録: `spec/evidence/llang-generation/dependencies.md`。
+
+## 10. コードレビュー指摘と修正
+
+実装後の自己レビューで見つけた不具合を、失敗試験を先に追加してから修正した。
+
+| 指摘 | 内容 | 修正 | 追加試験 |
+| --- | --- | --- | --- |
+| R-01 | kit 実行で stdout/stderr を `wait_with_output` まで読まず、子が pipe を埋めるとデッドロックし timeout 誤判定になっていた | 両 pipe を専用 thread で同時 drain し、上限超過を別判定 | `drain_keeps_at_most_the_limit_and_reports_overflow` |
+| R-02 | `KitInspector` が `inspect --out-dir` の出力先を事前作成しており、CLI の「新規ディレクトリ必須」で必ず失敗していた | 親のみ作成し、leaf は CLI に作らせて読み後に削除 | `builder` 経路のレビュー |
+| R-03 | コマンド parse が前方一致のため `/capabilityfoo` を malformed command として拾っていた | 語境界を `/capability ` に固定 | `parse` の追加 assert |
+| R-04 | inspection が revision の contract hash と report の contract を照合していなかった | `contracts::contract_hash` で照合し不一致を integrity 拒否 | `a_contract_mismatch_with_the_revision_is_refused` |
+| R-05 | inspection の INSERT conflict が not-authorized に誤写像されていた | `conflict` を `InspectionErrorCode::Conflict` に分離 | `error_codes_round_trip_including_the_inspection_extras` |
+| R-06 | 登録要求の request 本文と fields の順序・名前を照合していなかった | load 時に request id と contract fields を照合 | `request_contract_mismatch_is_rejected` |
+| R-07 | 登録ファイルの byte を job へコピーする際に hash を再確認していなかった | `stage_registered_files` が load 時 hash を再検証し、改変を拒否 | `staged_files_are_rechecked_against_the_load_time_hash` |
+| R-08 | モデル出力 64 KiB 上限が未実装だった | `parse_model_response` で超過を budget 拒否 | contract 試験 |
+| R-09 | budget-exceeded が cancel と同じ error に写像されていた | `budget-exceeded` を timeout に分離 | `error_to_capability_mapping_keeps_budget_and_cancel_distinct` |
+| R-10 | 未使用の helper/field（`completed_job_ids`、`coverage_marker`、`inspection_error`、`supported_profile`、`GenerationReceipt::refused`、`INSPECT_DIR`）が残っていた | 削除、または意味のある検証に置換（kit `commands` 検証、`within_budget` 利用） | 既存試験 |
+| R-11 | project 付き call の拒否試験がなかった（G10） | project 不一致拒否と一致時成功の試験を追加 | `a_project_scoped_call_requires_the_same_project` |
+| R-12 | 表示上限判定が事前見積で、fence 分だけ 64 KiB を超え得た | 完成後の message 長で判定 | `oversized_typescript_is_summarised_not_truncated_silently` |
+
+未修正のまま残る既知の改善点（C07/C10 の実装対象）: 生成 service からの cancellation
+伝播、inspection の runtime digest 照合、同 revision/digest の single-flight mutex。

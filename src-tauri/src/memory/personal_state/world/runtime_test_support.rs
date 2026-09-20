@@ -1,12 +1,11 @@
 #![cfg(test)]
 #![allow(dead_code)]
 
-//! Deterministic M2A fixtures. Synthetic DB, fixed clock, fake meeting owner.
+//! Deterministic M2A fixtures. Synthetic DB, fixed clock, fake coding owner.
 //! No ASR, model, pi process or external service is started.
 
-use super::runtime_frame::{GraphRequest, MeetingReader, WorldFrameService};
+use super::runtime_frame::{GraphRequest, WorldFrameService};
 use super::test_support::{insert_source, v2_entity_assertion, writer_db, Committer, PROJECT};
-use crate::meeting::{MeetingState, WorldMeetingSnapshot};
 use crate::persistence::sqlite::{SqliteReaders, SqliteWriter};
 use crate::runtime::context::scope;
 use rusqlite::params;
@@ -15,57 +14,18 @@ use saaa_personal_state_core::world::runtime_frame::RuntimeRef;
 use saaa_personal_state_core::world::traversal_v2::{CausalDirection, LimitsV2};
 use saaa_personal_state_core::{AccessRequest, Classification, Purpose};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub(crate) const RUN_ID: &str = "run1";
 pub(crate) const MESSAGE_ID: &str = "msg1";
-pub(crate) const MEETING_ID: &str = "m1";
 pub(crate) const CODING_ID: &str = "j1";
 pub(crate) const CODING_SOURCE: &str = "csrc1";
 pub(crate) const START_MS: i64 = 1_000;
 pub(crate) const TTL_MS: u64 = 1_000;
 
-pub(crate) struct FakeMeetingReader {
-    pub(crate) state: Mutex<Option<WorldMeetingSnapshot>>,
-}
-
-impl FakeMeetingReader {
-    pub(crate) fn new() -> Self {
-        Self {
-            state: Mutex::new(None),
-        }
-    }
-
-    pub(crate) fn set(&self, session_id: Option<&str>, state: MeetingState) {
-        *self.state.lock().expect("meeting state") = Some(WorldMeetingSnapshot {
-            session_id: session_id.map(str::to_string),
-            state,
-        });
-    }
-
-    pub(crate) fn clear(&self) {
-        *self.state.lock().expect("meeting state") = None;
-    }
-}
-
-impl MeetingReader for FakeMeetingReader {
-    fn world_snapshot(&self) -> Result<WorldMeetingSnapshot, String> {
-        Ok(self
-            .state
-            .lock()
-            .expect("meeting state")
-            .clone()
-            .unwrap_or(WorldMeetingSnapshot {
-                session_id: None,
-                state: MeetingState::Idle,
-            }))
-    }
-}
-
 pub(crate) struct Fixture {
     pub(crate) writer: Arc<SqliteWriter>,
     pub(crate) clock: Arc<AtomicI64>,
-    pub(crate) meeting: Arc<FakeMeetingReader>,
     pub(crate) principal: String,
     pub(crate) policy_revision: u64,
     pub(crate) project: String,
@@ -261,7 +221,6 @@ impl Fixture {
         Self {
             writer,
             clock: Arc::new(AtomicI64::new(START_MS)),
-            meeting: Arc::new(FakeMeetingReader::new()),
             principal,
             policy_revision,
             project,
@@ -283,7 +242,7 @@ impl Fixture {
         let clock = self.clock.clone();
         let clock_fn: Arc<dyn Fn() -> i64 + Send + Sync> =
             Arc::new(move || clock.load(Ordering::SeqCst));
-        WorldFrameService::new(self.readers(), self.meeting.clone(), clock_fn)
+        WorldFrameService::new(self.readers(), clock_fn)
     }
 
     pub(crate) fn now(&self) -> i64 {
@@ -323,41 +282,11 @@ impl Fixture {
         }
     }
 
-    pub(crate) fn meeting_ref(&self, id: &str) -> RuntimeRef {
-        RuntimeRef {
-            kind: saaa_personal_state_core::world::runtime_frame::RuntimeKind::MeetingSession,
-            id: id.to_string(),
-        }
-    }
-
     pub(crate) fn coding_ref(&self, id: &str) -> RuntimeRef {
         RuntimeRef {
             kind: saaa_personal_state_core::world::runtime_frame::RuntimeKind::CodingJob,
             id: id.to_string(),
         }
-    }
-
-    pub(crate) fn add_meeting(
-        &self,
-        id: &str,
-        status: &str,
-        started_at: &str,
-        ended_at: Option<&str>,
-        saved_at: Option<&str>,
-    ) {
-        self.writer
-            .write(|c| {
-                c.execute(
-                    "INSERT INTO meeting_sessions(
-                       id,status,microphone_enabled,system_audio_enabled,stt_provider_id,
-                       stt_model_label,persistence_mode,started_at,ended_at,saved_at)
-                     VALUES(?1,?2,1,0,'local-whisper','model','explicit-save',?3,?4,?5)",
-                    params![id, status, started_at, ended_at, saved_at],
-                )
-                .map_err(crate::database_error)?;
-                Ok(())
-            })
-            .expect("meeting row");
     }
 
     pub(crate) fn add_coding_job(
@@ -380,19 +309,14 @@ impl Fixture {
     ) {
         self.writer
             .write(|c| {
-                // The coding source is distinct from the run's input message so a
-                // forgotten coding source does not deny the whole run scope.
+                // Distinct from the run input so forgetting the coding source
+                // does not deny the whole run scope. Finalize and complete the
+                // job so the World projection is not left in pending review.
+                insert_source(c, PROJECT, CODING_SOURCE, "coding source");
                 c.execute(
-                    "INSERT OR IGNORE INTO conversation_messages(
-                       id,conversation_id,role,content,created_at)
-                     VALUES(?1,?2,'user','coding source','1000')",
-                    params![CODING_SOURCE, crate::PRIMARY_CONVERSATION_ID],
-                )
-                .map_err(crate::database_error)?;
-                c.execute(
-                    "INSERT OR REPLACE INTO personal_source_scope_refs(source_id,version,scope_key)
-                     VALUES(?1,1,?2)",
-                    params![CODING_SOURCE, PROJECT],
+                    "UPDATE personal_jobs SET status='completed' WHERE source_sequence=(
+                       SELECT sequence FROM personal_sources WHERE message_id=?1)",
+                    [CODING_SOURCE],
                 )
                 .map_err(crate::database_error)?;
                 c.execute(
@@ -424,6 +348,10 @@ impl Fixture {
                     params![CODING_ID, CODING_SOURCE, delivery, run_state, result_json],
                 )
                 .map_err(crate::database_error)?;
+                crate::memory::personal_state::store::rebuild(
+                    c,
+                    crate::memory::personal_state::now(),
+                )?;
                 Ok(())
             })
             .expect("coding job");

@@ -30,7 +30,7 @@ impl AudioUploadStore {
             .headers()
             .get(PURPOSE_HEADER)
             .and_then(|value| value.to_str().ok())
-            .filter(|value| matches!(*value, "meeting-segment" | "voice-enrollment"))
+            .filter(|value| *value == "voice-enrollment")
             .ok_or_else(|| "Invalid audio upload purpose".to_string())?;
         let InvokeBody::Raw(bytes) = request.body() else {
             return Err("Audio upload must use binary IPC".to_string());
@@ -114,10 +114,10 @@ mod tests {
         let store = AudioUploadStore::default();
         let body = InvokeBody::Raw(vec![0, 0, 0xff, 0x7f]);
         let mut headers = HeaderMap::new();
-        headers.insert(PURPOSE_HEADER, "meeting-segment".parse().unwrap());
+        headers.insert(PURPOSE_HEADER, "voice-enrollment".parse().unwrap());
         // Request fields are private, so the command boundary exercises staging; conversion is covered here.
         let upload = StagedAudio {
-            purpose: "meeting-segment".to_string(),
+            purpose: "voice-enrollment".to_string(),
             bytes: Zeroizing::new(match body {
                 InvokeBody::Raw(bytes) => bytes,
                 _ => unreachable!(),
@@ -129,9 +129,9 @@ mod tests {
             .lock()
             .unwrap()
             .insert("audio_test".to_string(), upload);
-        let samples = store.consume("audio_test", "meeting-segment").unwrap();
+        let samples = store.consume("audio_test", "voice-enrollment").unwrap();
         assert_eq!(samples, vec![0.0, 1.0]);
-        assert!(store.consume("audio_test", "meeting-segment").is_err());
+        assert!(store.consume("audio_test", "voice-enrollment").is_err());
         assert!(!headers.is_empty());
     }
 
@@ -141,7 +141,7 @@ mod tests {
         store.uploads.lock().unwrap().insert(
             "audio_expired".to_string(),
             StagedAudio {
-                purpose: "meeting-segment".to_string(),
+                purpose: "voice-enrollment".to_string(),
                 bytes: Zeroizing::new(vec![0, 0]),
                 created_at: Instant::now() - UPLOAD_TTL - Duration::from_millis(1),
             },

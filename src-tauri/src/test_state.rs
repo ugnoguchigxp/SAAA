@@ -3,7 +3,7 @@
 
 use crate::{
     generated_capabilities::{publication::GeneratedToolsConfig, service::CapabilityService},
-    meeting, memory,
+    memory,
     persistence::{SqliteReaders, SqliteWriter},
     situation, voice, AppState,
 };
@@ -49,12 +49,12 @@ pub(crate) fn app_state_with_capabilities(
             situation::SituationRuntime::new(settings, None)
                 .expect("Situation runtime initializes"),
         ),
-        meeting: Arc::new(meeting::MeetingRuntime::new()),
         voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
             PathBuf::new(),
         )),
         voice_asr: voice::streaming_asr::AsrSessionManager::default(),
         generated_capabilities,
+        generation: None,
         generated_tools: GeneratedToolsConfig::disabled(),
         tool_selection,
         mcp_server: std::sync::Mutex::new(None),

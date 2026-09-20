@@ -2,16 +2,18 @@ use super::migrate::{
     ensure_provider_configuration_fingerprint, migrate_direct_dynamic_lan_provider_to_discovery,
     migrate_legacy_settings_documents, migrate_pristine_provider_defaults_to_dynamic_lan,
     migrate_provider_reasoning_effort_default, migrate_v4_to_v5, migrate_v6_to_v7,
-    migrate_v7_to_v8, migrate_v8_to_v9,
+    migrate_v7_to_v8, migrate_v8_to_v9, migrate_v26_to_v27,
 };
 use super::provider_identity::migrate_dynamic_lan_provider_identity;
 use super::runs::reconcile_interrupted_runs;
 use super::settings::default_settings_documents;
 use super::settings_migration::migrate_settings_to_current;
-use crate::{meeting, memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
+use crate::{memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
 use rusqlite::{params, Connection};
 
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 26;
+/// Current schema. 26 added steward tables and generated-capability generation/inspection
+/// tables. 27 dropped Meeting session tables. The next additive DDL must bump this to 28.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 27;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -127,29 +129,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
            corrected_scene TEXT,
            created_at TEXT NOT NULL,
            FOREIGN KEY(ledger_id) REFERENCES situation_ledger(id) ON DELETE CASCADE
-         );
-         CREATE TABLE IF NOT EXISTS meeting_sessions (
-           id TEXT PRIMARY KEY,
-           status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
-           microphone_enabled INTEGER NOT NULL CHECK(microphone_enabled IN (0,1)),
-           system_audio_enabled INTEGER NOT NULL CHECK(system_audio_enabled IN (0,1)),
-           stt_provider_id TEXT NOT NULL CHECK(stt_provider_id IN ('local-whisper','network-asr')),
-           stt_model_label TEXT NOT NULL CHECK(length(stt_model_label) <= 256),
-           translation_provider_id TEXT,
-           persistence_mode TEXT NOT NULL CHECK(persistence_mode IN ('discard','explicit-save')),
-           started_at TEXT NOT NULL, ended_at TEXT, saved_at TEXT, error_code TEXT
-         );
-         CREATE INDEX IF NOT EXISTS idx_meeting_sessions_started ON meeting_sessions(started_at DESC);
-         CREATE TABLE IF NOT EXISTS meeting_transcript_entries (
-           id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
-           lane TEXT NOT NULL CHECK(lane IN ('microphone','system-audio')),
-           sequence INTEGER NOT NULL CHECK(sequence >= 0),
-           original_text TEXT NOT NULL CHECK(length(original_text) BETWEEN 1 AND 8000),
-           original_language TEXT, translated_text TEXT CHECK(translated_text IS NULL OR length(translated_text) <= 8000), translated_language TEXT,
-           started_at_ms INTEGER NOT NULL CHECK(started_at_ms >= 0), ended_at_ms INTEGER NOT NULL CHECK(ended_at_ms >= started_at_ms), created_at TEXT NOT NULL,
-           FOREIGN KEY(session_id) REFERENCES meeting_sessions(id) ON DELETE CASCADE, UNIQUE(session_id,lane,sequence)
-         );
-         CREATE INDEX IF NOT EXISTS idx_meeting_transcript_session_sequence ON meeting_transcript_entries(session_id,lane,sequence);",
+         );",
     )?;
 
     super::settings_migration::initialize_revision(connection)?;
@@ -162,6 +142,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     migrate_v6_to_v7(&transaction)?;
     migrate_v7_to_v8(&transaction)?;
     migrate_v8_to_v9(&transaction)?;
+    migrate_v26_to_v27(&transaction)?;
     memory::recall::migrate_v9_to_v10(&transaction)?;
     voice::profile::migrate_v10_to_v11(&transaction)?;
     memory::control_plane::migrate_v11_to_v12(&transaction)?;
@@ -193,6 +174,14 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;
     crate::generated_capabilities::schema::migrate(&transaction)?;
+    crate::generated_capabilities::generation::repository::interrupt_running(
+        &transaction,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0),
+    )
+    .map_err(|error| rusqlite::Error::InvalidParameterName(error.encode()))?;
     crate::tool_selection::schema::migrate(&transaction)?;
     // Version 25 binds learned corrections to the remote endpoint they were learned on. Existing
     // remote rules are recorded as unconfirmed rather than guessed onto the current endpoint.
@@ -214,7 +203,6 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     migrate_settings_to_current(&transaction)?;
     super::remove_legacy_provider::migrate(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
-    meeting::reconcile(&transaction)?;
     super::audit::initialize_schema(&transaction)?;
     transaction.execute(
         "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,attributes_json)

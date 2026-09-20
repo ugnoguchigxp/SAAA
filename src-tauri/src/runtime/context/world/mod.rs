@@ -1,5 +1,5 @@
-//! WorldFrame adapter.
 #![allow(dead_code)]
+mod live;
 pub(crate) mod render;
 #[cfg(test)]
 mod render_tests;

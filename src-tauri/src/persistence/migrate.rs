@@ -325,6 +325,12 @@ pub(crate) fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> 
         return Ok(());
     }
 
+    let meeting_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_sessions')",
+        [],
+        |row| row.get(0),
+    )?;
+    if meeting_exists {
     let meeting_schema: String = connection.query_row(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_sessions'",
         [],
@@ -369,6 +375,7 @@ pub(crate) fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> 
              CREATE INDEX idx_meeting_transcript_session_sequence
                ON meeting_transcript_entries(session_id,lane,sequence);",
         )?;
+    }
     }
 
     for (namespace, key, _, template) in default_settings_documents() {
@@ -428,6 +435,21 @@ pub(crate) fn normalize_json_to_template(value: &Value, template: &Value) -> Val
         ),
         _ => value.clone(),
     }
+}
+
+pub(crate) fn migrate_v26_to_v27(connection: &Connection) -> rusqlite::Result<()> {
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= 27 {
+        return Ok(());
+    }
+    connection.execute_batch(
+        "DROP TRIGGER IF EXISTS audit_meeting_sessions_after_insert;
+         DROP TRIGGER IF EXISTS audit_meeting_sessions_after_update;
+         DROP TRIGGER IF EXISTS audit_meeting_transcript_entries_after_insert;
+         DROP TABLE IF EXISTS meeting_transcript_entries;
+         DROP TABLE IF EXISTS meeting_sessions;",
+    )?;
+    Ok(())
 }
 
 pub(crate) fn backup_before_migration(
@@ -1146,8 +1168,8 @@ mod tests {
             .expect("v8 voice settings write");
         connection
         .execute_batch(
-            "DROP TABLE meeting_transcript_entries;
-             DROP TABLE meeting_sessions;
+            "DROP TABLE IF EXISTS meeting_transcript_entries;
+             DROP TABLE IF EXISTS meeting_sessions;
              CREATE TABLE meeting_sessions (
                id TEXT PRIMARY KEY,
                status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
@@ -1205,39 +1227,27 @@ mod tests {
             )
             .expect("voice settings read");
         let voice: Value = serde_json::from_str(&voice).expect("voice settings decode");
-        let meeting_schema: String = connection
+        let meeting_exists: bool = connection
             .query_row(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_sessions'",
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_sessions')",
                 [],
                 |row| row.get(0),
             )
-            .expect("meeting schema reads");
-        let transcript: String = connection
+            .expect("meeting table check");
+        let transcript_exists: bool = connection
             .query_row(
-                "SELECT original_text FROM meeting_transcript_entries
-             WHERE id='legacy-entry'",
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')",
                 [],
                 |row| row.get(0),
             )
-            .expect("legacy transcript remains");
+            .expect("transcript table check");
         assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         assert_eq!(voice.pointer("/allowedLanguages"), Some(&json!(["ja"])));
         assert_eq!(voice.pointer("/listeningEnabled"), Some(&json!(false)));
         assert!(voice.pointer("/sttProviderId").is_none());
         assert!(voice.pointer("/sttModel").is_none());
-        assert!(meeting_schema.contains("network-asr"));
-        assert_eq!(transcript, "kept transcript");
-        connection
-            .execute("DELETE FROM meeting_sessions WHERE id='legacy-meeting'", [])
-            .expect("cascading delete succeeds");
-        let remaining: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM meeting_transcript_entries WHERE id='legacy-entry'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("cascade count reads");
-        assert_eq!(remaining, 0);
+        assert!(!meeting_exists);
+        assert!(!transcript_exists);
     }
 
     #[test]
@@ -1264,7 +1274,7 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("version reads");
         assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
-        assert!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table exists"));
+        assert!(!connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_transcript_entries')", [], |row| row.get::<_, bool>(0)).expect("meeting table dropped"));
         initialize_database(&connection).expect("migration idempotent");
     }
 
@@ -1802,21 +1812,37 @@ mod tests {
     }
 
     #[test]
-    fn startup_reconciles_unfinished_meeting_without_persisted_transcript() {
+    fn startup_drops_meeting_product_tables() {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("schema initializes");
-        connection.execute("INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at) VALUES('meeting_recover','active',1,0,'local-whisper','model.bin','discard','1')", []).expect("meeting fixture");
-        initialize_database(&connection).expect("startup reconciliation");
-        let status: String = connection
+        connection.execute_batch(
+            "CREATE TABLE meeting_sessions (
+               id TEXT PRIMARY KEY,
+               status TEXT NOT NULL,
+               microphone_enabled INTEGER NOT NULL,
+               system_audio_enabled INTEGER NOT NULL,
+               stt_provider_id TEXT NOT NULL,
+               stt_model_label TEXT NOT NULL,
+               translation_provider_id TEXT,
+               persistence_mode TEXT NOT NULL,
+               started_at TEXT NOT NULL, ended_at TEXT, saved_at TEXT, error_code TEXT
+             );
+             INSERT INTO meeting_sessions(id,status,microphone_enabled,system_audio_enabled,stt_provider_id,stt_model_label,persistence_mode,started_at)
+             VALUES('meeting_recover','active',1,0,'local-whisper','model.bin','discard','1');",
+        )
+        .expect("legacy meeting fixture");
+        connection
+            .pragma_update(None, "user_version", 26)
+            .expect("v26 fixture");
+        initialize_database(&connection).expect("v27 drops meeting tables");
+        let exists: bool = connection
             .query_row(
-                "SELECT status FROM meeting_sessions WHERE id='meeting_recover'",
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meeting_sessions')",
                 [],
                 |row| row.get(0),
             )
-            .expect("status reads");
-        let transcript_count: i64 = connection.query_row("SELECT COUNT(*) FROM meeting_transcript_entries WHERE session_id='meeting_recover'", [], |row| row.get(0)).expect("transcript count");
-        assert_eq!(status, "interrupted");
-        assert_eq!(transcript_count, 0);
+            .expect("table check");
+        assert!(!exists);
     }
 
     #[test]

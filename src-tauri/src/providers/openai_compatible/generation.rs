@@ -11,7 +11,6 @@ use crate::{OpenAiCompatibleProviderSettings, RunCancellation};
 const GENERATION_TIMEOUT_MS: u64 = 90_000;
 const GENERATION_MAX_TOKENS: u32 = 4096;
 
-#[allow(dead_code)]
 /// One generation-only tool-less completion. It reuses the same provider resolution and HTTP path
 /// as extraction but applies the generation output ceiling and outer deadline.
 pub(crate) async fn complete_generation(

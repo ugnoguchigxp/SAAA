@@ -497,22 +497,6 @@
       "total": 7,
       "production": 7
     },
-    "src-tauri/src/meeting/commands.rs": {
-      "total": 261,
-      "production": 261
-    },
-    "src-tauri/src/meeting/mod.rs": {
-      "total": 1082,
-      "production": 684
-    },
-    "src-tauri/src/meeting/speaker.rs": {
-      "total": 101,
-      "production": 46
-    },
-    "src-tauri/src/meeting/types.rs": {
-      "total": 153,
-      "production": 153
-    },
     "src-tauri/src/memory/context_still_recall.rs": {
       "total": 1284,
       "production": 712
@@ -732,14 +716,6 @@
     "src-tauri/src/memory/personal_state/world/runtime_graph.rs": {
       "total": 120,
       "production": 120
-    },
-    "src-tauri/src/memory/personal_state/world/runtime_meeting_tests.rs": {
-      "total": 204,
-      "production": 0
-    },
-    "src-tauri/src/memory/personal_state/world/runtime_meeting.rs": {
-      "total": 164,
-      "production": 164
     },
     "src-tauri/src/memory/personal_state/world/runtime_scope_tests.rs": {
       "total": 233,
@@ -964,6 +940,10 @@
     "src-tauri/src/providers/chat_completions/voice_progress.rs": {
       "total": 124,
       "production": 103
+    },
+    "src-tauri/src/providers/chat_completions/world_body.rs": {
+      "total": 82,
+      "production": 82
     },
     "src-tauri/src/providers/completion.rs": {
       "total": 161,
@@ -1208,6 +1188,10 @@
     "src-tauri/src/runtime/context/source.rs": {
       "total": 93,
       "production": 93
+    },
+    "src-tauri/src/runtime/context/world/live.rs": {
+      "total": 192,
+      "production": 192
     },
     "src-tauri/src/runtime/context/world/mod.rs": {
       "total": 17,
@@ -1889,10 +1873,6 @@
       "total": 85,
       "production": 85
     },
-    "src/components/SituationTabs.tsx": {
-      "total": 60,
-      "production": 60
-    },
     "src/components/useDialogFocus.ts": {
       "total": 49,
       "production": 49
@@ -2101,26 +2081,6 @@
       "total": 77,
       "production": 77
     },
-    "src/features/meeting/audio/meetingAudio.worker.ts": {
-      "total": 40,
-      "production": 40
-    },
-    "src/features/meeting/audio/meetingAudioResampler.ts": {
-      "total": 126,
-      "production": 126
-    },
-    "src/features/meeting/audio/segmentQueue.ts": {
-      "total": 25,
-      "production": 25
-    },
-    "src/features/meeting/MeetingPage.tsx": {
-      "total": 224,
-      "production": 224
-    },
-    "src/features/meeting/useMeetingSession.ts": {
-      "total": 540,
-      "production": 540
-    },
     "src/features/settings/ApiKeyControl.tsx": {
       "total": 146,
       "production": 146
@@ -2204,10 +2164,6 @@
     "src/features/settings/VoiceTranscriptionScope.tsx": {
       "total": 46,
       "production": 46
-    },
-    "src/features/situation/review/SituationReview.tsx": {
-      "total": 429,
-      "production": 429
     },
     "src/features/voice/ambientVoiceCapture.ts": {
       "total": 157,
@@ -2604,18 +2560,6 @@
     "tests/local-provider-address.test.ts": {
       "total": 26,
       "production": 26
-    },
-    "tests/meeting-audio-worker.test.ts": {
-      "total": 62,
-      "production": 62
-    },
-    "tests/meeting-contracts.test.ts": {
-      "total": 39,
-      "production": 39
-    },
-    "tests/meeting-segment-queue.test.ts": {
-      "total": 19,
-      "production": 19
     },
     "tests/microphone-bundle.test.ts": {
       "total": 19,

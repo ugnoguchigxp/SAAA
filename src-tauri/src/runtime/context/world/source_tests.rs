@@ -3,12 +3,11 @@ use super::source::{
     inspect_request, prepare_candidate, reset_prepare_calls, PreparedWorldCandidate, WorldOmission,
     WorldSourceOutcome, WorldSourceRequest, WORLD_SHADOW_KIND,
 };
-use crate::meeting::MeetingState;
 use crate::memory::personal_state::world::query::WorldSeed;
 use crate::memory::personal_state::world::runtime_frame::{
     FrameRequest, GraphRequest, WorldFrameService,
 };
-use crate::memory::personal_state::world::runtime_test_support::{Fixture, MEETING_ID, RUN_ID};
+use crate::memory::personal_state::world::runtime_test_support::{Fixture, CODING_ID, RUN_ID};
 use crate::runtime::context::scope::ScopeSnapshot;
 use saaa_personal_state_core::world::runtime_frame::FrameValidity;
 use saaa_personal_state_core::world::traversal_v2::{CausalDirection, LimitsV2};
@@ -59,21 +58,20 @@ fn entity_graph(count: usize) -> GraphRequest {
     }
 }
 
-fn meeting_fixture() -> Fixture {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+fn coding_fixture() -> Fixture {
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     fixture
 }
 
 #[test]
 fn m3_01_request_types_are_not_serde_and_fields_stay_private() {
     assert!(!std::any::type_name::<WorldSourceRequest>().contains("Serialize"));
-    let fixture = meeting_fixture();
+    let fixture = coding_fixture();
     let access = fixture.access();
     inspect(
         &fixture,
-        fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None),
+        fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None),
     )
     .expect("inspect");
 }
@@ -100,15 +98,12 @@ fn m3_02_exact_name_and_over_limit_seeds_are_rejected() {
 
 #[test]
 fn m3_02_four_seeds_and_eight_refs_are_accepted_empty_is_omitted() {
-    let meeting_ids: Vec<String> = (1..=8).map(|index| format!("m{index}")).collect();
-    let targets: Vec<(&str, &str)> = meeting_ids
-        .iter()
-        .map(|id| ("resource", id.as_str()))
-        .collect();
+    let coding_ids: Vec<String> = (1..=8).map(|index| format!("m{index}")).collect();
+    let targets: Vec<(&str, &str)> = coding_ids.iter().map(|id| ("task", id.as_str())).collect();
     let fixture = Fixture::with_entities(&targets, 4);
     let access = fixture.access();
     let refs: Vec<_> = (1..=8)
-        .map(|index| fixture.meeting_ref(&format!("m{index}")))
+        .map(|index| fixture.coding_ref(&format!("m{index}")))
         .collect();
     inspect(
         &fixture,
@@ -130,10 +125,10 @@ fn m3_02_four_seeds_and_eight_refs_are_accepted_empty_is_omitted() {
 
 #[test]
 fn m3_02_nine_refs_and_missing_project_are_omitted() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
     let access = fixture.access();
     let refs: Vec<_> = (1..=9)
-        .map(|index| fixture.meeting_ref(&format!("x{index}")))
+        .map(|index| fixture.coding_ref(&format!("x{index}")))
         .collect();
     assert_eq!(
         inspect(&fixture, fixture.request(access, refs, None)).expect_err("nine refs"),
@@ -141,7 +136,7 @@ fn m3_02_nine_refs_and_missing_project_are_omitted() {
     );
 
     let access = fixture.access();
-    let mut request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let mut request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     request.project_scope = "";
     assert_eq!(
         inspect(&fixture, request).expect_err("no project"),
@@ -149,7 +144,7 @@ fn m3_02_nine_refs_and_missing_project_are_omitted() {
     );
 
     let access = fixture.access();
-    let mut request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let mut request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     request.project_scope = "project:p,project:q";
     assert_eq!(
         inspect(&fixture, request).expect_err("ambiguous"),
@@ -157,7 +152,7 @@ fn m3_02_nine_refs_and_missing_project_are_omitted() {
     );
 
     let access = fixture.access();
-    let mut request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let mut request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     request.project_scope = "project:other";
     assert_eq!(
         inspect(&fixture, request).expect_err("unknown project"),
@@ -167,13 +162,13 @@ fn m3_02_nine_refs_and_missing_project_are_omitted() {
 
 #[test]
 fn m3_05_one_frame_becomes_one_untrusted_candidate() {
-    let fixture = meeting_fixture();
+    let fixture = coding_fixture();
     let service = fixture.service();
     let access = fixture.access();
     let ready = prepare(
         &service,
         &fixture,
-        fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None),
+        fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None),
     )
     .unwrap_or_else(|omission| panic!("omitted {}", omission.as_str()));
     let candidate = ready.candidate();
@@ -196,15 +191,14 @@ fn m3_05_one_frame_becomes_one_untrusted_candidate() {
 
 #[test]
 fn m3_06_prepare_and_revalidate_use_one_service() {
-    let fixture = Fixture::file(&[("resource", MEETING_ID)], 0, false);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::file(&[("task", CODING_ID)], 0, false);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
     let ready = prepare(
         &service,
         &fixture,
-        fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None),
+        fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None),
     )
     .unwrap_or_else(|omission| panic!("omitted {}", omission.as_str()));
     assert!(matches!(
@@ -222,9 +216,8 @@ fn m3_06_prepare_and_revalidate_use_one_service() {
 
 #[test]
 fn m3_07_ttl_boundaries_and_scope_denial_on_file_db() {
-    let fixture = Fixture::file(&[("resource", MEETING_ID)], 1, false);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::file(&[("task", CODING_ID)], 1, false);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
     let ready = prepare(
@@ -232,7 +225,7 @@ fn m3_07_ttl_boundaries_and_scope_denial_on_file_db() {
         &fixture,
         fixture.request(
             access,
-            vec![fixture.meeting_ref(MEETING_ID)],
+            vec![fixture.coding_ref(CODING_ID)],
             Some(fixture.graph_request("ent0")),
         ),
     )
@@ -260,7 +253,7 @@ fn m3_07_ttl_boundaries_and_scope_denial_on_file_db() {
             connection
                 .execute(
                     "DELETE FROM context_scope_links WHERE parent_scope_key=?1 AND child_scope_key=?2",
-                    [fixture.project.clone(), format!("resource:{MEETING_ID}")],
+                    [fixture.project.clone(), format!("task:{CODING_ID}")],
                 )
                 .map_err(crate::database_error)?;
             Ok(())
@@ -270,7 +263,7 @@ fn m3_07_ttl_boundaries_and_scope_denial_on_file_db() {
     let omission = match prepare(
         &service,
         &fixture,
-        fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None),
+        fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None),
     ) {
         Err(omission) => omission,
         Ok(_) => panic!("expected denial"),

@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use super::super::errors::CapabilityResult;
 use super::config::RegisteredRequest;
@@ -83,7 +84,7 @@ pub trait Generator: Send + Sync {
 pub struct FakeGenerator {
     id: String,
     fields: Vec<String>,
-    body: FakeBody,
+    body: Mutex<FakeBody>,
     pub model_calls: AtomicUsize,
 }
 
@@ -92,9 +93,13 @@ impl FakeGenerator {
         Self {
             id: request.capability_id.clone(),
             fields: request.fields.clone(),
-            body,
+            body: Mutex::new(body),
             model_calls: AtomicUsize::new(0),
         }
+    }
+
+    pub fn set_body(&self, body: FakeBody) {
+        *self.body.lock().expect("fake generator body") = body;
     }
 
     pub fn model_calls(&self) -> usize {
@@ -104,7 +109,7 @@ impl FakeGenerator {
     fn body_value(&self) -> Value {
         let first = self.fields.first().cloned().unwrap_or_default();
         let second = self.fields.get(1).cloned().unwrap_or_default();
-        match self.body {
+        match *self.body.lock().expect("fake generator body") {
             FakeBody::EnabledAndNotSuspended => serde_json::json!({
                 "kind": "all",
                 "conditions": [

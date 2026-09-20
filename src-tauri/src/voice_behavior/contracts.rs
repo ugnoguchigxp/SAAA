@@ -10,7 +10,7 @@ pub(crate) struct VoicePresentationDecision {
     #[ts(type = "\"speak\" | \"silent\"")]
     pub(crate) decision: String,
     #[ts(
-        type = "\"meeting_blocked\" | \"global_opt_out\" | \"turn_override\" | \"conversation_override\" | \"global_default\" | \"route_blocked\" | \"situation_hold\""
+        type = "\"global_opt_out\" | \"turn_override\" | \"conversation_override\" | \"global_default\" | \"route_blocked\" | \"situation_hold\""
     )]
     pub(crate) reason_code: String,
 }
@@ -29,7 +29,7 @@ pub(crate) struct ConversationVoicePolicySnapshot {
     #[ts(type = "\"speak\" | \"silent\"")]
     pub(crate) effective_speech_output: String,
     #[ts(
-        type = "\"meeting_blocked\" | \"global_opt_out\" | \"conversation_override\" | \"global_default\""
+        type = "\"global_opt_out\" | \"conversation_override\" | \"global_default\""
     )]
     pub(crate) speech_reason_code: String,
     #[ts(type = "\"quick\" | \"balanced\" | \"patient\"")]

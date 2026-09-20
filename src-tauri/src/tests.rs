@@ -432,150 +432,6 @@ fn normal_turns_reject_legacy_conversation_ids_without_writing_partial_state() {
 }
 
 #[test]
-fn active_meeting_rejects_coding_turn_before_writing_partial_state() {
-    let connection = Connection::open_in_memory().expect("database opens");
-    initialize_database(&connection).expect("database initializes");
-    connection
-        .execute(
-            "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
-                 VALUES ('meeting-blocked-coding', 'Coding', 'coding', '0', '0')",
-            [],
-        )
-        .expect("coding conversation inserts");
-    let state = app_state(connection);
-    state
-        .meeting
-        .preflight(
-            &meeting::PreflightInput {
-                microphone_device_id: "default".to_string(),
-                system_audio_enabled: false,
-                translation_enabled: false,
-            },
-            Ok(()),
-            Ok(None),
-        )
-        .expect("meeting preflight succeeds");
-    state
-        .meeting
-        .start(
-            &meeting::StartInput {
-                session_id: "meeting-agent-policy".to_string(),
-                microphone_device_id: "default".to_string(),
-                microphone_enabled: true,
-                system_audio_enabled: false,
-                translation_enabled: false,
-                persistence_mode: "discard".to_string(),
-            },
-            &state.sqlite_writer,
-        )
-        .expect("meeting starts");
-    let input = StartTurnInput {
-        run_id: "run-meeting-blocked-coding".to_string(),
-        conversation_id: "meeting-blocked-coding".to_string(),
-        content: "inspect only".to_string(),
-        workspace_path: Some("/tmp/fixture".to_string()),
-        retry_input_message_id: None,
-        source_id: None,
-        scope_refs: Vec::new(),
-        input_origin: "text".to_string(),
-        presentation_mode: "visual".to_string(),
-    };
-
-    let error = prepare_runtime_run(&state, &input).expect_err("coding turn is blocked");
-    let connection = state.sqlite_writer.lock().expect("database lock");
-    let message_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = 'meeting-blocked-coding'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("message count loads");
-    let run_count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM runtime_runs WHERE id = 'run-meeting-blocked-coding'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("run count loads");
-
-    assert_eq!(
-        error,
-        "MEETING_POLICY_AGENT_BLOCKED: Coding Agent is disabled during a meeting."
-    );
-    assert_eq!(message_count, 0);
-    assert_eq!(run_count, 0);
-}
-
-#[test]
-fn running_coding_turn_rejects_meeting_start_before_writing_partial_state() {
-    let connection = Connection::open_in_memory().expect("database opens");
-    initialize_database(&connection).expect("database initializes");
-    connection
-        .execute(
-            "INSERT INTO conversations(id, title, task_mode, created_at, updated_at)
-                 VALUES ('agent-blocks-meeting', 'Coding', 'coding', '0', '0')",
-            [],
-        )
-        .expect("coding conversation inserts");
-    let state = app_state(connection);
-    let workspace = tempfile::tempdir().expect("workspace creates");
-    let turn = StartTurnInput {
-        run_id: "run-agent-blocks-meeting".to_string(),
-        conversation_id: "agent-blocks-meeting".to_string(),
-        content: "inspect only".to_string(),
-        workspace_path: Some(workspace.path().to_string_lossy().into_owned()),
-        retry_input_message_id: None,
-        source_id: None,
-        scope_refs: Vec::new(),
-        input_origin: "text".to_string(),
-        presentation_mode: "visual".to_string(),
-    };
-    assert_eq!(
-        prepare_runtime_run(&state, &turn).expect("coding run prepares"),
-        "coding"
-    );
-    state
-        .meeting
-        .preflight(
-            &meeting::PreflightInput {
-                microphone_device_id: "default".to_string(),
-                system_audio_enabled: false,
-                translation_enabled: false,
-            },
-            Ok(()),
-            Ok(None),
-        )
-        .expect("meeting preflight succeeds");
-
-    let error = meeting::commands::start_meeting_inner(
-        &state,
-        &meeting::StartInput {
-            session_id: "meeting-blocked-by-agent".to_string(),
-            microphone_device_id: "default".to_string(),
-            microphone_enabled: true,
-            system_audio_enabled: false,
-            translation_enabled: false,
-            persistence_mode: "discard".to_string(),
-        },
-    )
-    .expect_err("meeting start is blocked");
-    let snapshot = state.meeting.snapshot().expect("meeting snapshot loads");
-    let connection = state.sqlite_writer.lock().expect("database lock");
-    let meeting_count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM meeting_sessions", [], |row| {
-            row.get(0)
-        })
-        .expect("meeting count loads");
-
-    assert_eq!(
-        error,
-        "MEETING_POLICY_AGENT_BLOCKED: Stop the Coding Agent and retry."
-    );
-    assert_eq!(snapshot.state, meeting::MeetingState::Ready);
-    assert_eq!(meeting_count, 0);
-}
-
-#[test]
 fn task_specific_workspace_validation_precedes_runtime_writes() {
     let connection = Connection::open_in_memory().expect("database opens");
     initialize_database(&connection).expect("database initializes");
@@ -2465,5 +2321,128 @@ fn codex_live_read_only_turn_cancels_after_turn_start() {
             .count(),
         0,
         "cancelled read-only Codex turn must not create workspace files"
+    );
+}
+
+fn world_body_history(conversation_id: &str) -> Vec<ConversationMessage> {
+    vec![
+        ConversationMessage {
+            parts: None,
+            id: "context-system".into(),
+            conversation_id: conversation_id.into(),
+            role: "system".into(),
+            content: "policy".into(),
+            created_at: "system".into(),
+        },
+        ConversationMessage {
+            parts: None,
+            id: "context-world".into(),
+            conversation_id: conversation_id.into(),
+            role: "assistant".into(),
+            content: "WORLD_BLOCK_PRESENT".into(),
+            created_at: "1".into(),
+        },
+        ConversationMessage {
+            parts: None,
+            id: "context-current".into(),
+            conversation_id: conversation_id.into(),
+            role: "user".into(),
+            content: "hello".into(),
+            created_at: "2".into(),
+        },
+    ]
+}
+
+async fn run_world_body_case(valid: bool, run_id: &str, session_provider_id: &str) -> Value {
+    let (endpoint, captures, server) =
+        spawn_llm_http_fixture(vec![LlmHttpStep::Delta("ok"), LlmHttpStep::Complete]).await;
+    let connection = Connection::open_in_memory().expect("database opens");
+    initialize_database(&connection).expect("database initializes");
+    let state = app_state(connection);
+    let input = StartTurnInput {
+        run_id: run_id.to_string(),
+        conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
+        content: "hello".to_string(),
+        workspace_path: None,
+        retry_input_message_id: None,
+        source_id: None,
+        scope_refs: Vec::new(),
+        input_origin: "text".to_string(),
+        presentation_mode: "visual".to_string(),
+    };
+    prepare_runtime_run(&state, &input).expect("runtime prepares");
+    let session_id = begin_test_provider_session(
+        &state,
+        &input.run_id,
+        session_provider_id,
+        "openai-compatible",
+    )
+    .expect("provider session starts");
+    let world = crate::runtime::context::world::turn::WorldLive::for_test(
+        valid,
+        "WORLD_BLOCK_PRESENT",
+        Some("WORLD_BLOCK_ABSENT"),
+    );
+    let history = world_body_history(&input.conversation_id);
+    let provider = OpenAiCompatibleProviderSettings {
+        endpoint,
+        ..direct_provider(session_provider_id, "local")
+    };
+    let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+    let outcome = stream_model_provider(
+        &provider,
+        &history,
+        5_000,
+        ModelStreamContext {
+            reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
+            max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
+            input: &input,
+            on_event: &channel,
+            cancellation: Arc::new(RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
+            output_persistence: Some(ProviderOutputPersistence {
+                state: &state,
+                session_id: &session_id,
+                world: Some(&world),
+            }),
+        },
+    )
+    .await;
+    server.await.expect("fixture joins");
+    let ProviderAttemptOutcome::Completed { .. } = outcome else {
+        panic!("provider stream should complete");
+    };
+    let captures = captures.lock().expect("capture lock");
+    assert_eq!(captures.len(), 1, "one provider request");
+    serde_json::from_str(&captures[0]).expect("request JSON")
+}
+
+#[tokio::test]
+async fn expired_world_block_is_removed_from_the_sent_provider_body() {
+    let body = run_world_body_case(false, "run-world-expired", "world-expired-fixture").await;
+    let rendered = body["messages"].to_string();
+    assert!(
+        !rendered.contains("WORLD_BLOCK_PRESENT"),
+        "an expired World block must not reach the provider body"
+    );
+    assert!(
+        rendered.contains("WORLD_BLOCK_ABSENT"),
+        "the World-free rendering must reach the provider body"
+    );
+}
+
+#[tokio::test]
+async fn valid_world_block_is_sent_to_the_provider_body() {
+    let body = run_world_body_case(true, "run-world-valid", "world-valid-fixture").await;
+    let rendered = body["messages"].to_string();
+    assert!(
+        rendered.contains("WORLD_BLOCK_PRESENT"),
+        "a current World block must reach the provider body"
+    );
+    assert!(
+        !rendered.contains("WORLD_BLOCK_ABSENT"),
+        "the World-free rendering must not replace a current World block"
     );
 }

@@ -21,8 +21,6 @@ mod runtime_frame_perf_tests;
 mod runtime_frame_snapshot_tests;
 mod runtime_frame_tests;
 pub mod runtime_graph;
-pub mod runtime_meeting;
-mod runtime_meeting_tests;
 pub mod runtime_scope;
 mod runtime_scope_tests;
 pub(crate) mod runtime_test_support;

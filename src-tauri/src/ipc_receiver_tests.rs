@@ -12,13 +12,6 @@ fn ipc_receiver_fixture_matches_rust_serialization() {
         route: "conversation.respond".into(),
         provider_id: "provider-fixture".into(),
     };
-    let meeting = meeting::MeetingEvent::TranscriptFinal {
-        session_id: "meeting-fixture".into(),
-        lane: meeting::MeetingLane::Microphone,
-        sequence: 1,
-        text: "Fixture transcript".into(),
-        language: Some("ja".into()),
-    };
     let asr = voice::streaming_asr::contracts::VoiceAsrStreamEvent::Final {
         session_id: "asr-fixture".into(),
         utterance_id: "utterance-fixture".into(),
@@ -28,7 +21,7 @@ fn ipc_receiver_fixture_matches_rust_serialization() {
         text: "Fixture transcript".into(),
         language: Some("ja".into()),
     };
-    let mut value = serde_json::json!({ "snapshot": snapshot, "runtime": runtime, "meeting": meeting, "asr": asr });
+    let mut value = serde_json::json!({ "snapshot": snapshot, "runtime": runtime, "asr": asr });
     fn stable_timestamps(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(fields) => {

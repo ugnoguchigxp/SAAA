@@ -2,9 +2,8 @@ use super::super::broker::{self, BrokerInput};
 use super::super::source::{Candidate, Requirement};
 use super::shadow::{run_shadow, ShadowInput};
 use super::source::WorldSourceRequest;
-use crate::meeting::MeetingState;
 use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
-use crate::memory::personal_state::world::runtime_test_support::{Fixture, MEETING_ID, RUN_ID};
+use crate::memory::personal_state::world::runtime_test_support::{Fixture, CODING_ID, RUN_ID};
 use crate::memory::personal_state::world::test_support::PROJECT;
 use std::collections::BTreeSet;
 
@@ -44,20 +43,19 @@ fn window() -> ContextWindow {
 
 #[test]
 fn m3_18_shadow_does_not_write_or_dispatch() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let generations = fixture.table_count("context_generations");
     let changes = fixture.total_changes();
     let service = fixture.service();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let input = ShadowInput {
         run_id: RUN_ID.into(),
         base: window(),
         existing_candidates: Vec::new(),
         source_warning: None,
-        allowed_scope_keys: BTreeSet::from([PROJECT.to_string(), format!("resource:{MEETING_ID}")]),
+        allowed_scope_keys: BTreeSet::from([PROJECT.to_string(), format!("task:{CODING_ID}")]),
     };
     let scope = fixture
         .writer
@@ -91,7 +89,7 @@ fn m3_18_shadow_does_not_write_or_dispatch() {
     })
     .unwrap();
     assert_eq!(baseline.selected[0].source_kind, "fixture");
-    let turns = include_str!("../../turns.rs");
+    let turns = include_str!("../../conversation_turn.rs");
     let controller = include_str!("../../conversation_controller/mod.rs");
     let chat = include_str!("../../../providers/chat_completions/mod.rs");
     let agent = include_str!("../../../providers/agent_session.rs");

@@ -10,3 +10,4 @@ pub mod kit;
 pub mod recovery;
 pub mod repository;
 pub mod schema;
+pub mod service;

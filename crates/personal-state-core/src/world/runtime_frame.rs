@@ -1,5 +1,5 @@
 //! M2A WorldFrame: the persisted WorldSlice plus the *current* state of trusted
-//! runtimes (meeting / coding). Pure types, normalization, canonical digests and
+//! runtimes (coding). Pure types, normalization, canonical digests and
 //! bounded budget assembly. No IO, no clock, no owner mutation.
 //!
 //! A `WorldFrame` is a diagnostic snapshot valid at one instant. It is not a
@@ -23,7 +23,6 @@ pub const MAX_TTL_MS: u64 = 1_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeKind {
-    MeetingSession,
     CodingJob,
 }
 
@@ -43,53 +42,6 @@ pub enum RuntimePhase {
     Stopping,
     Terminal,
     Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MeetingLivePhase {
-    Idle,
-    Preflight,
-    Ready,
-    Active,
-    Paused,
-    Stopping,
-    Completed,
-    Failed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MeetingOwnerState {
-    Active,
-    Paused,
-    Stopping,
-    Completed,
-    Saved,
-    Failed,
-    Interrupted,
-}
-
-impl MeetingOwnerState {
-    pub fn parse(value: &str) -> Option<Self> {
-        Some(match value {
-            "active" => Self::Active,
-            "paused" => Self::Paused,
-            "stopping" => Self::Stopping,
-            "completed" => Self::Completed,
-            "saved" => Self::Saved,
-            "failed" => Self::Failed,
-            "interrupted" => Self::Interrupted,
-            _ => return None,
-        })
-    }
-
-    pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Completed | Self::Saved | Self::Failed | Self::Interrupted
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,11 +71,10 @@ impl CodingOwnerState {
     }
 }
 
-/// Explicit `kind`/`state` wire shape: `{"kind":"meeting_session","state":"paused"}`.
+/// Explicit `kind`/`state` wire shape: `{"kind":"coding_job","state":"running"}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "state", rename_all = "snake_case")]
 pub enum RuntimeOwnerState {
-    MeetingSession(MeetingOwnerState),
     CodingJob(CodingOwnerState),
 }
 
@@ -312,7 +263,6 @@ pub fn validate_frame_identifier(value: &str) -> bool {
 
 pub fn runtime_scope_key(reference: &RuntimeRef) -> String {
     match reference.kind {
-        RuntimeKind::MeetingSession => format!("resource:{}", reference.id),
         RuntimeKind::CodingJob => format!("task:{}", reference.id),
     }
 }
@@ -392,177 +342,6 @@ pub fn compare_stamp(old: &FrameStamp, new: &FrameStamp) -> FrameValidity {
 /// Strictly `captured_at <= now < expires_at`.
 pub fn is_within_validity(captured_at_ms: i64, expires_at_ms: i64, now_ms: i64) -> bool {
     now_ms >= captured_at_ms && now_ms < expires_at_ms
-}
-
-// ---------------------------------------------------------------------------
-// Meeting owner mapping (R3)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Default)]
-pub struct MeetingSnapshotInput<'a> {
-    /// `None` when the session row is absent.
-    pub db_status: Option<&'a str>,
-    pub started_at: Option<&'a str>,
-    pub ended_at: Option<&'a str>,
-    pub saved_at: Option<&'a str>,
-    /// The live runtime's current session id and phase, if any.
-    pub live_session_id: Option<&'a str>,
-    pub live_state: Option<MeetingLivePhase>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MeetingMapping {
-    Unavailable,
-    Unstable,
-    Present {
-        owner_state: MeetingOwnerState,
-        phase: RuntimePhase,
-        digest: String,
-    },
-}
-
-fn live_state_str(state: MeetingLivePhase) -> &'static str {
-    match state {
-        MeetingLivePhase::Idle => "idle",
-        MeetingLivePhase::Preflight => "preflight",
-        MeetingLivePhase::Ready => "ready",
-        MeetingLivePhase::Active => "active",
-        MeetingLivePhase::Paused => "paused",
-        MeetingLivePhase::Stopping => "stopping",
-        MeetingLivePhase::Completed => "completed",
-        MeetingLivePhase::Failed => "failed",
-    }
-}
-
-fn meeting_digest(
-    id: &str,
-    status: &str,
-    started_at: Option<&str>,
-    ended_at: Option<&str>,
-    saved_at: Option<&str>,
-    live_session_id: Option<&str>,
-    live_state: Option<MeetingLivePhase>,
-) -> String {
-    let live_id = live_session_id
-        .map(serde_json::Value::from)
-        .unwrap_or(serde_json::Value::Null);
-    let live = live_state
-        .map(|s| serde_json::Value::from(live_state_str(s)))
-        .unwrap_or(serde_json::Value::Null);
-    let values = [
-        serde_json::Value::from("meeting_session"),
-        serde_json::Value::from(id),
-        serde_json::Value::from(status),
-        started_at
-            .map(serde_json::Value::from)
-            .unwrap_or(serde_json::Value::Null),
-        ended_at
-            .map(serde_json::Value::from)
-            .unwrap_or(serde_json::Value::Null),
-        saved_at
-            .map(serde_json::Value::from)
-            .unwrap_or(serde_json::Value::Null),
-        live_id,
-        live,
-    ];
-    hex_sha256(canonical_array(&values).as_bytes())
-}
-
-/// Map the meeting owner's DB row and live snapshot to a runtime view. The
-/// function is pure so the same rule can feed both the "before" and "after"
-/// live snapshot checks.
-pub fn map_meeting(id: &str, input: &MeetingSnapshotInput<'_>) -> MeetingMapping {
-    let Some(status) = input.db_status else {
-        return MeetingMapping::Unavailable;
-    };
-    if status == "discarded" {
-        return MeetingMapping::Unavailable;
-    }
-    let Some(owner_state) = MeetingOwnerState::parse(status) else {
-        return MeetingMapping::Unstable;
-    };
-    let same_live = input.live_session_id == Some(id);
-    let live = if same_live { input.live_state } else { None };
-
-    if owner_state.is_terminal() {
-        // Terminal rows ignore a different/absent live session. A live session
-        // that claims the same id is still progressing is an inconsistency.
-        if same_live
-            && matches!(
-                input.live_state,
-                Some(
-                    MeetingLivePhase::Active
-                        | MeetingLivePhase::Paused
-                        | MeetingLivePhase::Stopping
-                )
-            )
-        {
-            return MeetingMapping::Unstable;
-        }
-        // Normalize unrelated live information to null/null. A same-id live
-        // session (in a non-progressing state) keeps its id and state.
-        let live_session_id = if same_live { Some(id) } else { None };
-        let digest = meeting_digest(
-            id,
-            status,
-            input.started_at,
-            input.ended_at,
-            input.saved_at,
-            live_session_id,
-            live,
-        );
-        return MeetingMapping::Present {
-            owner_state,
-            phase: RuntimePhase::Terminal,
-            digest,
-        };
-    }
-
-    match (owner_state, live) {
-        (MeetingOwnerState::Active, Some(MeetingLivePhase::Active)) => MeetingMapping::Present {
-            owner_state,
-            phase: RuntimePhase::Running,
-            digest: meeting_digest(
-                id,
-                status,
-                input.started_at,
-                input.ended_at,
-                input.saved_at,
-                Some(id),
-                live,
-            ),
-        },
-        (MeetingOwnerState::Paused, Some(MeetingLivePhase::Paused)) => MeetingMapping::Present {
-            owner_state,
-            phase: RuntimePhase::Paused,
-            digest: meeting_digest(
-                id,
-                status,
-                input.started_at,
-                input.ended_at,
-                input.saved_at,
-                Some(id),
-                live,
-            ),
-        },
-        (MeetingOwnerState::Active, Some(MeetingLivePhase::Stopping))
-        | (MeetingOwnerState::Paused, Some(MeetingLivePhase::Stopping)) => {
-            MeetingMapping::Present {
-                owner_state: MeetingOwnerState::Stopping,
-                phase: RuntimePhase::Stopping,
-                digest: meeting_digest(
-                    id,
-                    status,
-                    input.started_at,
-                    input.ended_at,
-                    input.saved_at,
-                    Some(id),
-                    live,
-                ),
-            }
-        }
-        _ => MeetingMapping::Unstable,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -671,7 +450,6 @@ pub fn focus_for(view: &RuntimeStateView, project_scope: &str) -> Option<Runtime
         return None;
     }
     let reason = match view.reference.kind {
-        RuntimeKind::MeetingSession => RuntimeFocusReason::ActiveProject,
         RuntimeKind::CodingJob => RuntimeFocusReason::CurrentWork,
     };
     Some(RuntimeFocus {
@@ -835,15 +613,15 @@ pub fn assemble_frame(input: FrameAssembly<'_>) -> Result<WorldFrame, FrameError
 mod tests {
     use super::*;
 
-    fn meeting_view(id: &str, phase: RuntimePhase) -> RuntimeUnit {
+    fn coding_view(id: &str, phase: RuntimePhase) -> RuntimeUnit {
         let reference = RuntimeRef {
-            kind: RuntimeKind::MeetingSession,
+            kind: RuntimeKind::CodingJob,
             id: id.into(),
         };
         let view = RuntimeStateView {
             scope_key: runtime_scope_key(&reference),
             reference: reference.clone(),
-            owner_state: RuntimeOwnerState::MeetingSession(MeetingOwnerState::Active),
+            owner_state: RuntimeOwnerState::CodingJob(CodingOwnerState::Running),
             phase,
             job_revision: None,
             current_run_id: None,
@@ -882,12 +660,12 @@ mod tests {
 
     #[test]
     fn m2_02_owner_state_wire_shape_is_explicit() {
-        let owner = RuntimeOwnerState::MeetingSession(MeetingOwnerState::Paused);
+        let owner = RuntimeOwnerState::CodingJob(CodingOwnerState::Queued);
         assert_eq!(
             serde_json::to_value(owner).unwrap(),
-            serde_json::json!({"kind":"meeting_session","state":"paused"})
+            serde_json::json!({"kind":"coding_job","state":"queued"})
         );
-        let unknown = serde_json::json!({"kind":"meeting_session","state":"bogus"});
+        let unknown = serde_json::json!({"kind":"coding_job","state":"bogus"});
         assert!(serde_json::from_value::<RuntimeOwnerState>(unknown).is_err());
     }
 
@@ -896,11 +674,11 @@ mod tests {
         let refs = vec![
             RuntimeRef {
                 kind: RuntimeKind::CodingJob,
-                id: "j1".into(),
+                id: "j2".into(),
             },
             RuntimeRef {
-                kind: RuntimeKind::MeetingSession,
-                id: "m1".into(),
+                kind: RuntimeKind::CodingJob,
+                id: "j1".into(),
             },
             RuntimeRef {
                 kind: RuntimeKind::CodingJob,
@@ -909,8 +687,8 @@ mod tests {
         ];
         let normalized = normalize_runtime_refs(&refs).unwrap();
         assert_eq!(normalized.len(), 2);
-        assert_eq!(normalized[0].kind, RuntimeKind::MeetingSession);
-        assert_eq!(normalized[1].kind, RuntimeKind::CodingJob);
+        assert_eq!(normalized[0].id, "j1");
+        assert_eq!(normalized[1].id, "j2");
     }
 
     #[test]
@@ -958,112 +736,6 @@ mod tests {
         assert!(!is_within_validity(1_000, 2_000, 999));
         assert!(is_within_validity(1_000, 2_000, 1_999));
         assert!(!is_within_validity(1_000, 2_000, 2_000));
-    }
-
-    #[test]
-    fn m2_09_meeting_mapping_covers_r3_table() {
-        let base = MeetingSnapshotInput {
-            db_status: Some("active"),
-            started_at: Some("100"),
-            ended_at: None,
-            saved_at: None,
-            live_session_id: Some("m1"),
-            live_state: Some(MeetingLivePhase::Active),
-        };
-        assert_eq!(
-            map_meeting("m1", &base),
-            MeetingMapping::Present {
-                owner_state: MeetingOwnerState::Active,
-                phase: RuntimePhase::Running,
-                digest: match map_meeting("m1", &base) {
-                    MeetingMapping::Present { digest, .. } => digest,
-                    _ => unreachable!(),
-                },
-            }
-        );
-        assert!(matches!(
-            map_meeting(
-                "m1",
-                &MeetingSnapshotInput {
-                    live_state: Some(MeetingLivePhase::Paused),
-                    ..base.clone()
-                }
-            ),
-            MeetingMapping::Unstable
-        ));
-        let paused = MeetingSnapshotInput {
-            db_status: Some("paused"),
-            live_state: Some(MeetingLivePhase::Paused),
-            ..base.clone()
-        };
-        assert!(matches!(
-            map_meeting("m1", &paused),
-            MeetingMapping::Present {
-                phase: RuntimePhase::Paused,
-                ..
-            }
-        ));
-        let stopping = MeetingSnapshotInput {
-            db_status: Some("paused"),
-            live_state: Some(MeetingLivePhase::Stopping),
-            ..base.clone()
-        };
-        assert!(matches!(
-            map_meeting("m1", &stopping),
-            MeetingMapping::Present {
-                phase: RuntimePhase::Stopping,
-                ..
-            }
-        ));
-        let terminal = MeetingSnapshotInput {
-            db_status: Some("saved"),
-            ended_at: Some("900"),
-            saved_at: Some("950"),
-            live_session_id: None,
-            live_state: None,
-            ..base.clone()
-        };
-        assert!(matches!(
-            map_meeting("m1", &terminal),
-            MeetingMapping::Present {
-                phase: RuntimePhase::Terminal,
-                owner_state: MeetingOwnerState::Saved,
-                ..
-            }
-        ));
-        // A different live session must not change the terminal digest.
-        let other_live = MeetingSnapshotInput {
-            live_session_id: Some("m2"),
-            live_state: Some(MeetingLivePhase::Active),
-            ..terminal.clone()
-        };
-        assert_eq!(map_meeting("m1", &terminal), map_meeting("m1", &other_live));
-        assert_eq!(
-            map_meeting(
-                "m1",
-                &MeetingSnapshotInput {
-                    db_status: Some("discarded"),
-                    ..base.clone()
-                }
-            ),
-            MeetingMapping::Unavailable
-        );
-        assert_eq!(
-            map_meeting("m1", &MeetingSnapshotInput::default()),
-            MeetingMapping::Unavailable
-        );
-        assert!(matches!(
-            map_meeting(
-                "m1",
-                &MeetingSnapshotInput {
-                    db_status: Some("active"),
-                    live_session_id: None,
-                    live_state: None,
-                    ..base
-                }
-            ),
-            MeetingMapping::Unstable
-        ));
     }
 
     #[test]
@@ -1141,7 +813,7 @@ mod tests {
     #[test]
     fn m2_14_runtime_units_are_bounded_by_bytes_and_count() {
         let units: Vec<_> = (0..8)
-            .map(|i| meeting_view(&format!("m{i}"), RuntimePhase::Running))
+            .map(|i| coding_view(&format!("m{i}"), RuntimePhase::Running))
             .collect();
         let frame = assemble_frame(assembly(MAX_FRAME_BYTES, units)).unwrap();
         assert!(frame.runtime.len() <= MAX_RUNTIME_REFS);
@@ -1170,10 +842,10 @@ mod tests {
 
     #[test]
     fn m2_14_focus_never_dangles() {
-        let mut unit = meeting_view("m1", RuntimePhase::Terminal);
+        let mut unit = coding_view("m1", RuntimePhase::Terminal);
         unit.focus = Some(RuntimeFocus {
             reference: RuntimeRef {
-                kind: RuntimeKind::MeetingSession,
+                kind: RuntimeKind::CodingJob,
                 id: "ghost".into(),
             },
             project_scope: "project:p".into(),

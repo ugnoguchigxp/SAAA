@@ -680,6 +680,101 @@ mod tests {
     }
 
     #[test]
+    fn a_project_scoped_call_requires_the_same_project() {
+        let data = tempfile::tempdir().unwrap();
+        let writer = test_writer();
+        let service = service(&writer, data.path());
+        // The seed owner has no project; record a project-scoped owner instead.
+        writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "UPDATE generated_capability_call_owners SET project_id = 'proj-A'
+                         WHERE call_id = 'call-1'",
+                        [],
+                    )
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let without_project = InspectionContext {
+            principal_id: "P1".into(),
+            conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
+            project_id: None,
+        };
+        assert_eq!(
+            service
+                .inspect_execution(
+                    &writer,
+                    &without_project,
+                    "call-1",
+                    &StaticInspector(report_for(true)),
+                    &ProductEval,
+                    &ProductEval,
+                )
+                .unwrap_err()
+                .code,
+            InspectionErrorCode::NotAuthorized
+        );
+        let with_project = InspectionContext {
+            principal_id: "P1".into(),
+            conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
+            project_id: Some("proj-A".into()),
+        };
+        assert!(service
+            .inspect_execution(
+                &writer,
+                &with_project,
+                "call-1",
+                &StaticInspector(report_for(true)),
+                &ProductEval,
+                &ProductEval,
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn a_missing_stored_artifact_is_reported_not_regenerated() {
+        let data = tempfile::tempdir().unwrap();
+        let writer = test_writer();
+        let service = service(&writer, data.path());
+        let context = InspectionContext {
+            principal_id: "P1".into(),
+            conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
+            project_id: None,
+        };
+        let receipt = service
+            .inspect_execution(
+                &writer,
+                &context,
+                "call-1",
+                &StaticInspector(report_for(true)),
+                &ProductEval,
+                &ProductEval,
+            )
+            .unwrap();
+        std::fs::remove_file(
+            service
+                .store()
+                .directory(&receipt.inspection_id)
+                .join(super::super::service::TYPESCRIPT_FILE),
+        )
+        .unwrap();
+        let again = service.inspect_execution(
+            &writer,
+            &context,
+            "call-1",
+            &StaticInspector(report_for(true)),
+            &ProductEval,
+            &ProductEval,
+        );
+        assert_eq!(
+            again.unwrap_err().code,
+            InspectionErrorCode::ArtifactMissing
+        );
+    }
+
+    #[test]
     fn a_contract_mismatch_with_the_revision_is_refused() {
         let data = tempfile::tempdir().unwrap();
         let writer = test_writer();

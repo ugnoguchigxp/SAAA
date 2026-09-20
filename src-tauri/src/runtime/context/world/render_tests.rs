@@ -3,7 +3,7 @@ use super::render::{
     MAX_WRAPPED_BYTES, WORLD_FOOTER, WORLD_HEADER,
 };
 use saaa_personal_state_core::world::runtime_frame::{
-    MeetingOwnerState, RuntimeKind, RuntimeOwnerState, RuntimePhase, RuntimeRef, RuntimeStateView,
+    CodingOwnerState, RuntimeKind, RuntimeOwnerState, RuntimePhase, RuntimeRef, RuntimeStateView,
     WorldFrame,
 };
 
@@ -11,11 +11,11 @@ fn occupied(project: &str) -> WorldFrame {
     let mut frame = WorldFrame::empty("run1", project, 1_000, 2_000);
     frame.runtime.push(RuntimeStateView {
         reference: RuntimeRef {
-            kind: RuntimeKind::MeetingSession,
+            kind: RuntimeKind::CodingJob,
             id: "m1".into(),
         },
-        scope_key: "resource:m1".into(),
-        owner_state: RuntimeOwnerState::MeetingSession(MeetingOwnerState::Active),
+        scope_key: "task:m1".into(),
+        owner_state: RuntimeOwnerState::CodingJob(CodingOwnerState::Running),
         phase: RuntimePhase::Running,
         job_revision: None,
         current_run_id: None,

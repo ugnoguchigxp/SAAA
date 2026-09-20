@@ -24,18 +24,11 @@ fn m2_27_frame_and_revalidation_gates() {
     let targets: Vec<(&str, &str)> = (1..=8)
         .map(|index| {
             let id: &'static str = Box::leak(format!("m{index}").into_boxed_str());
-            ("resource", id)
+            ("task", id)
         })
         .collect();
     let build_start = Instant::now();
     let fixture = Fixture::with_entities(&targets, 100);
-    for index in 1..=8 {
-        let id = format!("m{index}");
-        fixture.add_meeting(&id, "active", "100", None, None);
-    }
-    fixture
-        .meeting
-        .set(Some("m1"), crate::meeting::MeetingState::Active);
     let ledger = fixture.ledger_count();
     if ledger < 2_000 {
         fixture.fill_coverage(2_000 - ledger as usize);
@@ -47,7 +40,7 @@ fn m2_27_frame_and_revalidation_gates() {
         "fixture build exceeded the 5s certification budget: {build:?}"
     );
     let runtime_refs: Vec<_> = (1..=8)
-        .map(|index| fixture.meeting_ref(&format!("m{index}")))
+        .map(|index| fixture.coding_ref(&format!("m{index}")))
         .collect();
 
     let service = fixture.service();
@@ -128,5 +121,5 @@ fn m2_27_frame_and_revalidation_gates() {
         "revalidate p95 {revalidate_p95:?}"
     );
 
-    assert_eq!(runtime_refs[0].kind, RuntimeKind::MeetingSession);
+    assert_eq!(runtime_refs[0].kind, RuntimeKind::CodingJob);
 }

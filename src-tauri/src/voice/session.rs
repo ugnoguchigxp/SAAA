@@ -6,7 +6,7 @@ pub(crate) mod asr_routes;
 mod tts;
 
 pub(crate) use asr::{
-    probe_selected_asr, select_streaming_asr, transcribe_selected_audio, vad_rms_threshold,
+    select_streaming_asr, vad_rms_threshold,
     AsrRoute,
 };
 pub(crate) use tts::{selected_tts_route, stop_tts, TtsRoute};

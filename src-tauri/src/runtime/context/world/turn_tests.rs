@@ -4,11 +4,8 @@ use super::super::source::{Candidate, Requirement};
 use super::render::parse_rendered_json;
 use super::source::{prepare_calls, reset_prepare_calls, WorldOmission, WORLD_KIND};
 use super::turn::{compose_parts, explicit_project};
-use crate::meeting::MeetingState;
 use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
-use crate::memory::personal_state::world::runtime_test_support::{
-    Fixture, CODING_ID, MEETING_ID, RUN_ID,
-};
+use crate::memory::personal_state::world::runtime_test_support::{Fixture, CODING_ID, RUN_ID};
 use crate::memory::personal_state::world::test_support::PROJECT;
 use crate::runtime::context::scope::{ResolvedScope, ScopeSnapshot};
 use rusqlite::Connection;
@@ -136,11 +133,11 @@ fn m3b_01_project_counts_and_refs_come_from_scope() {
         ])),
         Err(WorldOmission::AmbiguousProject)
     );
-    let meeting = format!("resource:{MEETING_ID}");
+    let coding = format!("task:{CODING_ID}");
     assert_eq!(
         super::turn::runtime_refs(&snap(vec![
-            item("resource", &meeting, "current"),
-            item("resource", &meeting, "focus"),
+            item("task", &coding, "current"),
+            item("task", &coding, "focus"),
         ]))
         .len(),
         1
@@ -152,9 +149,8 @@ fn m3b_01_project_counts_and_refs_come_from_scope() {
 
 #[test]
 fn m3b_06_memory_off_skips_world() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     reset_prepare_calls();
     let composed = compose(&fixture, false, Vec::new(), 8_192, "green");
     assert!(!world_selected(&composed));
@@ -180,10 +176,9 @@ fn m3b_06_memory_off_skips_world() {
 }
 
 #[test]
-fn m3b_06_meeting_only_selects_world_without_other_project() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+fn m3b_06_coding_only_selects_world_without_other_project() {
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     reset_prepare_calls();
     let composed = compose(&fixture, true, Vec::new(), 8_192, "green");
     assert!(world_selected(&composed));
@@ -201,10 +196,10 @@ fn m3b_06_meeting_only_selects_world_without_other_project() {
         .expect("world");
     let json = parse_rendered_json(&world.content);
     assert_eq!(json["project_scope"], PROJECT);
-    assert!(json.to_string().contains(MEETING_ID));
+    assert!(json.to_string().contains(CODING_ID));
     assert!(!json.to_string().contains("project:other"));
     assert!(world.scope_refs.iter().all(|key| key == PROJECT
-        || key == &format!("resource:{MEETING_ID}")
+        || key == &format!("task:{CODING_ID}")
         || key.starts_with("task:")));
 }
 
@@ -235,9 +230,8 @@ fn m3b_06_project_only_is_empty_request() {
 
 #[test]
 fn m3b_06_expired_world_is_omitted_from_record() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let composed = compose(&fixture, true, Vec::new(), 8_192, "green");
     assert!(composed.world.is_some());
     fixture.set_now(3_000);
@@ -271,13 +265,18 @@ fn m3b_06_expired_world_is_omitted_from_record() {
         },
     )
     .unwrap();
+    let include_world = composed
+        .world
+        .as_ref()
+        .map(|world| world.revalidate_current())
+        .unwrap_or(false);
     record(
         &generation,
         "green",
         &composed.envelope.selected,
         &composed.envelope.omitted,
         &[],
-        composed.world.as_ref(),
+        include_world,
     )
     .expect("record");
     let selected_world: i64 = state
@@ -298,9 +297,8 @@ fn m3b_06_expired_world_is_omitted_from_record() {
 
 #[test]
 fn m3b_07_would_displace_keeps_baseline() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let sized = compose(&fixture, true, Vec::new(), 8_192, "green");
     let world_bytes = sized
         .envelope
@@ -322,9 +320,8 @@ fn m3b_07_would_displace_keeps_baseline() {
 
 #[test]
 fn m3b_07_yellow_and_japanese_fixture_stay_in_envelope() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let composed = compose(&fixture, true, Vec::new(), 8_192, "yellow");
     assert_eq!(composed.envelope.health.status.as_str(), "yellow");
     assert_eq!(
@@ -344,9 +341,8 @@ fn m3b_07_yellow_and_japanese_fixture_stay_in_envelope() {
 
 #[test]
 fn m3b_04_expired_after_dispatch_does_not_fail_complete() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let composed = compose(&fixture, true, Vec::new(), 8_192, "green");
     let connection = Connection::open_in_memory().expect("db");
     crate::persistence::schema::initialize_database(&connection).expect("schema");
@@ -378,13 +374,23 @@ fn m3b_04_expired_after_dispatch_does_not_fail_complete() {
         },
     )
     .unwrap();
+    let include_world = composed
+        .world
+        .as_ref()
+        .map(|world| world.revalidate_current())
+        .unwrap_or(false);
+    if include_world {
+        if let Some(world) = composed.world.as_ref() {
+            world.bind(&generation);
+        }
+    }
     record(
         &generation,
         "green",
         &composed.envelope.selected,
         &composed.envelope.omitted,
         &[],
-        composed.world.as_ref(),
+        include_world,
     )
     .expect("record");
     let frame_rows: i64 = state
@@ -416,8 +422,9 @@ fn m3b_05_agent_session_does_not_record_world_kind() {
         .split("generation_inputs::record")
         .nth(1)
         .expect("record call");
-    assert!(call.contains("None"));
+    assert!(call.contains("false"));
     assert!(!call.contains("persistence.world"));
+    assert!(!call.contains("WorldLive"));
     assert!(!agent.contains("world-model"));
     let chat = include_str!("../../../providers/chat_completions/generation.rs");
     assert!(chat.contains("persistence.world"));

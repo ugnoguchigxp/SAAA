@@ -82,21 +82,16 @@ fn policy_is_conversation_scoped_and_deleted_with_its_conversation() {
 #[test]
 fn presentation_precedence_keeps_hard_and_global_blocks_above_overrides() {
     assert_eq!(
-        effective_presentation_from(true, true, Some(RunSpeechOverride::Speak), "inherit")
-            .reason_code,
-        "meeting_blocked"
-    );
-    assert_eq!(
-        effective_presentation_from(false, false, Some(RunSpeechOverride::Speak), "inherit")
+        effective_presentation_from(false, Some(RunSpeechOverride::Speak), "inherit")
             .reason_code,
         "global_opt_out"
     );
     assert_eq!(
-        effective_presentation_from(false, true, Some(RunSpeechOverride::Speak), "muted").decision,
+        effective_presentation_from(true, Some(RunSpeechOverride::Speak), "muted").decision,
         "speak"
     );
     assert_eq!(
-        effective_presentation_from(false, true, None, "muted").reason_code,
+        effective_presentation_from(true, None, "muted").reason_code,
         "conversation_override"
     );
 }

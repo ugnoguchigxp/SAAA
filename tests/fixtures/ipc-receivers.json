@@ -9,14 +9,6 @@
     "type": "final",
     "utteranceId": "utterance-fixture"
   },
-  "meeting": {
-    "lane": "microphone",
-    "language": "ja",
-    "sequence": 1,
-    "sessionId": "meeting-fixture",
-    "text": "Fixture transcript",
-    "type": "transcriptFinal"
-  },
   "runtime": {
     "providerId": "provider-fixture",
     "route": "conversation.respond",

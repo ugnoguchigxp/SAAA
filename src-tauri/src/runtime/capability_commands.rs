@@ -127,8 +127,7 @@ pub fn render_inspection(receipt: &InspectionReceipt) -> Result<InspectionDispla
         "{summary}\n```{fence}\n{}\n```{fence}\n",
         receipt.typescript_text
     );
-    let limit = MAX_DISPLAY_BYTES.saturating_sub(summary.len() + 64);
-    if receipt.typescript_text.len() > limit {
+    if body.len() > MAX_DISPLAY_BYTES {
         return Ok(InspectionDisplay {
             content: format!(
                 "{summary}\nartifact-too-large: the TypeScript projection exceeds the display limit; the managed artifact is retained.\n"

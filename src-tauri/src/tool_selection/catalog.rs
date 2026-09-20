@@ -182,6 +182,24 @@ pub fn seed_user_grants(
     Ok(granted)
 }
 
+pub fn unpublish_tool(connection: &Connection, tool_id: &str) -> ToolSelectionResult<()> {
+    if repository::tool_by_id(connection, tool_id)
+        .map_err(|_| ToolSelectionError::storage())?
+        .is_none()
+    {
+        return Ok(());
+    }
+    connection
+        .execute(
+            "UPDATE tool_selection_catalog SET enabled = 0 WHERE id = ?1",
+            rusqlite::params![tool_id],
+        )
+        .map_err(|_| ToolSelectionError::storage())?;
+    repository::bump_epochs(connection, true, false, false)
+        .map_err(|_| ToolSelectionError::storage())?;
+    Ok(())
+}
+
 pub fn grant_user(
     connection: &Connection,
     principal_id: &str,

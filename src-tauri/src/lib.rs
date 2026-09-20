@@ -26,7 +26,6 @@ mod diagnostics;
 pub mod generated_capabilities;
 mod generative_ui;
 pub mod ipc_contract;
-mod meeting;
 mod memory;
 mod models;
 mod persistence;
@@ -36,6 +35,8 @@ mod providers;
 pub mod quality_eval;
 mod redact;
 mod runtime;
+#[path = "runtime/command_registry.rs"]
+mod command_registry;
 mod situation;
 mod steward;
 #[cfg(test)]
@@ -302,115 +303,6 @@ fn cancel_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), S
 }
 
 #[tauri::command]
-async fn meeting_preflight(
-    state: tauri::State<'_, AppState>,
-    input: meeting::PreflightInput,
-) -> Result<meeting::PreflightResult, String> {
-    let asr_health = voice::session::probe_selected_asr(&state).await;
-    let voice_profile = state.voice_profile.clone();
-    let microphone_device_id = input.microphone_device_id.clone();
-    let speaker_scorer = state.sqlite_readers.read_async(move |connection| {
-        let verifier = voice_profile.prepare_streaming_verifier(connection)?;
-        if verifier.is_some()
-            && persistence::load_voice_settings(connection)?.input_device_id
-                != microphone_device_id
-        {
-            return Err("TARGET_SPEAKER_UNAVAILABLE: Meeting microphone does not match the configured voice input".to_string());
-        }
-        Ok(verifier.map(|value| {
-            Arc::new(
-                voice::streaming_asr::speaker_gate_runtime::PreparedSpeakerScorer::new(value),
-            ) as Arc<dyn voice::streaming_asr::speaker_gate_runtime::SpeakerScorer>
-        }))
-    }).await;
-    let result = state
-        .meeting
-        .preflight(&input, asr_health, speaker_scorer)?;
-    state.meeting.emit(meeting::MeetingEvent::StateChanged {
-        session_id: None,
-        state: result.state.clone(),
-    });
-    Ok(result)
-}
-
-#[tauri::command]
-fn start_meeting(
-    state: tauri::State<'_, AppState>,
-    input: meeting::StartInput,
-) -> Result<meeting::MeetingSnapshot, String> {
-    meeting::commands::start_meeting_inner(&state, &input)
-}
-
-#[tauri::command]
-fn pause_meeting(
-    state: tauri::State<'_, AppState>,
-    input: meeting::SessionInput,
-) -> Result<meeting::MeetingSnapshot, String> {
-    meeting::commands::pause_meeting(&state, input)
-}
-
-#[tauri::command]
-fn resume_meeting(
-    state: tauri::State<'_, AppState>,
-    input: meeting::SessionInput,
-) -> Result<meeting::MeetingSnapshot, String> {
-    meeting::commands::resume_meeting(&state, input)
-}
-
-#[tauri::command]
-fn stop_meeting(
-    state: tauri::State<'_, AppState>,
-    input: meeting::SessionInput,
-) -> Result<meeting::MeetingSnapshot, String> {
-    meeting::commands::stop_meeting(&state, input)
-}
-
-#[tauri::command]
-async fn append_meeting_audio_segment(
-    state: tauri::State<'_, AppState>,
-    input: meeting::SegmentInput,
-) -> Result<meeting::SegmentResult, String> {
-    meeting::commands::append_meeting_audio_segment(&state, input).await
-}
-
-#[tauri::command]
-fn save_meeting_transcript(
-    state: tauri::State<'_, AppState>,
-    input: meeting::SessionInput,
-) -> Result<meeting::MeetingSnapshot, String> {
-    meeting::commands::save_meeting_transcript(&state, input)
-}
-
-#[tauri::command]
-fn discard_meeting(
-    state: tauri::State<'_, AppState>,
-    input: meeting::SessionInput,
-) -> Result<(), String> {
-    meeting::commands::discard_meeting(&state, input)
-}
-
-#[tauri::command]
-fn get_meeting_snapshot(
-    state: tauri::State<'_, AppState>,
-) -> Result<meeting::MeetingSnapshot, String> {
-    state.meeting.snapshot()
-}
-
-#[tauri::command]
-fn watch_meeting(
-    state: tauri::State<'_, AppState>,
-    subscriber_id: String,
-    on_event: tauri::ipc::Channel<meeting::MeetingEvent>,
-) -> Result<(), String> {
-    state.meeting.watch(&subscriber_id, on_event)
-}
-
-#[tauri::command]
-fn unwatch_meeting(state: tauri::State<'_, AppState>, subscriber_id: String) -> Result<(), String> {
-    state.meeting.unwatch(&subscriber_id)
-}
-
-#[tauri::command]
 fn save_settings_documents(
     state: tauri::State<'_, AppState>,
     input: SaveSettingsDocumentsInput,
@@ -501,7 +393,6 @@ fn shutdown_app_state(state: &AppState) {
             cancellation.cancel();
         }
     }
-    state.meeting.shutdown(&state.sqlite_writer);
     let _ = state.situation.flush_quality(&state.sqlite_writer);
     state
         .situation
@@ -596,6 +487,22 @@ pub fn run() {
                 sqlite_writer.clone(),
                 &voice_data_directory,
             ));
+            let inspections = generated_capabilities::inspection::service::InspectionStore::open(
+                &voice_data_directory,
+            );
+            match generated_capabilities::generation::recovery::reconcile(
+                &sqlite_writer,
+                &inspections,
+            ) {
+                Ok(summary) => {
+                    if summary.interrupted_jobs + summary.orphan_inspections.len() > 0 {
+                        eprintln!("generated capability generation recovery applied: {summary:?}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("generated capability generation recovery skipped: {error}");
+                }
+            }
             if generated_capabilities.is_ready() {
                 match generated_capabilities::recovery::reconcile_startup(&generated_capabilities) {
                     Ok(summary) => {
@@ -662,10 +569,10 @@ pub fn run() {
                 streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
                 voice_behavior: voice_behavior::VoiceBehaviorRuntime::default(),
                 situation,
-                meeting: Arc::new(meeting::MeetingRuntime::new()),
                 voice_profile,
                 voice_asr: AsrSessionManager::default(),
                 generated_capabilities,
+                generation: None,
                 generated_tools,
                 tool_selection,
                 mcp_server: Mutex::new(mcp_server),
@@ -703,83 +610,7 @@ pub fn run() {
                 let _ = window.close();
             });
         })
-        .invoke_handler(tauri::generate_handler![
-            memory::personal_state::commands::personal_state_snapshot,
-            memory::personal_state::commands::personal_source_page,
-            memory::personal_state::commands::forget_personal_source,
-            memory::personal_state::commands::personal_state_extract_once,
-            get_app_snapshot,
-            get_voice_profile_snapshot,
-            stage_audio_upload,
-            save_voice_enrollment_sample,
-            set_target_speaker_filter_enabled,
-            delete_voice_enrollment_sample,
-            delete_voice_profile,
-            read_voice_enrollment_sample,
-            frontend_ready,
-            export_diagnostics,
-            persistence::audit::list_audit_events,
-            database_backup::backup_database,
-            get_situation_snapshot,
-            get_situation_review_snapshot,
-            set_situation_monitoring,
-            report_owned_signal,
-            submit_situation_feedback,
-            create_situation_calibration_candidate,
-            run_situation_calibration,
-            decide_situation_calibration,
-            clear_situation_history,
-            runtime::turns::command::start_turn,
-            record_frontend_audit_event,
-            cancel_run,
-            test_model_provider,
-            resolve_service_harness,
-            set_provider_api_key,
-            delete_provider_api_key,
-            get_provider_credential_state,
-            start_voice_asr_session,
-            append_voice_asr_audio,
-            commit_voice_asr_utterance,
-            stop_voice_asr_session,
-            stop_tts,
-            meeting_preflight,
-            start_meeting,
-            get_meeting_snapshot,
-            watch_meeting,
-            unwatch_meeting,
-            pause_meeting,
-            resume_meeting,
-            stop_meeting,
-            append_meeting_audio_segment,
-            save_meeting_transcript,
-            discard_meeting,
-            save_settings_documents,
-            set_voice_listening_enabled,
-            larm_voice::begin_larm_voice_session,
-            larm_voice::end_larm_voice_session,
-            list_messages,
-            generative_ui::history::list_message_window,
-            coding::commands::get_coding_settings,
-            coding::commands::save_coding_settings,
-            coding::commands::probe_coding,
-            coding::commands::register_coding_workspace,
-            coding::commands::coding_snapshot,
-            coding::commands::cancel_coding_job, steward::commands::register_steward_goal, steward::commands::withdraw_steward_delegation, steward::commands::list_steward_tasks,
-            generative_ui::get_ui_enabled,
-            generative_ui::set_ui_enabled,
-            generative_ui::get_ui_instance,
-            generative_ui::query_ui_source,
-            generative_ui::save_ui_instance_state,
-            generative_ui::publish_ui_view,
-            generative_ui::search_ui_views,
-            generative_ui::archive_ui_view,
-            generative_ui::open_ui_view,
-            generative_ui::snapshot_ui_view,
-            generative_ui::cancel_ui_run,
-            get_conversation_voice_policy,
-            update_conversation_voice_policy,
-            reset_conversation_voice_policy
-        ])
+        .invoke_handler(command_registry::saaa_invoke_handler!())
         .build(tauri::generate_context!())
         .expect("error while building SAAA")
         .run(|_, event| {

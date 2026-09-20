@@ -88,11 +88,6 @@ impl StreamingSpeechRuntime {
         on_event: tauri::ipc::Channel<RuntimeEvent>,
         voice_conversation: Option<&str>,
     ) -> Result<(), String> {
-        if state.meeting.blocks_tts() {
-            return Err(
-                "MEETING_POLICY_TTS_BLOCKED: Speech is disabled during a meeting.".to_string(),
-            );
-        }
         let (mut route, _provider_id, timeout_ms) = selected_tts_route(state)?;
         if let Some(conversation) = voice_conversation.filter(|_| crate::larm_voice::enabled()) {
             let harness = state

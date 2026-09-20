@@ -6,13 +6,13 @@ use saaa_personal_state_core::world::slice_v2::WorldSliceV2;
 
 fn view(id: &str, phase: RuntimePhase) -> RuntimeUnit {
     let reference = RuntimeRef {
-        kind: RuntimeKind::MeetingSession,
+        kind: RuntimeKind::CodingJob,
         id: id.into(),
     };
     let view = RuntimeStateView {
         scope_key: runtime_scope_key(&reference),
         reference: reference.clone(),
-        owner_state: RuntimeOwnerState::MeetingSession(MeetingOwnerState::Active),
+        owner_state: RuntimeOwnerState::CodingJob(CodingOwnerState::Running),
         phase,
         job_revision: None,
         current_run_id: None,
@@ -45,7 +45,7 @@ fn m2_04_stamp_change_classification() {
         scope_digest: "scope".into(),
         owner_digests: vec![(
             RuntimeRef {
-                kind: RuntimeKind::MeetingSession,
+                kind: RuntimeKind::CodingJob,
                 id: "m1".into(),
             },
             owner.into(),
@@ -134,41 +134,4 @@ fn m2_14_graph_whole_omission_sets_truncated() {
 fn m2_02_unknown_runtime_kind_is_rejected() {
     let value = serde_json::json!({"kind": "spaceship", "id": "x"});
     assert!(serde_json::from_value::<RuntimeRef>(value).is_err());
-}
-
-#[test]
-fn m2_09_terminal_meeting_normalizes_unrelated_live_identity() {
-    let base = MeetingSnapshotInput {
-        db_status: Some("saved"),
-        started_at: Some("100"),
-        ended_at: Some("150"),
-        saved_at: Some("160"),
-        live_session_id: None,
-        live_state: None,
-    };
-    let absent = map_meeting("m1", &base);
-    let different = map_meeting(
-        "m1",
-        &MeetingSnapshotInput {
-            live_session_id: Some("other"),
-            live_state: Some(MeetingLivePhase::Active),
-            ..base.clone()
-        },
-    );
-    assert_eq!(
-        absent, different,
-        "a different or absent live session is normalized to null/null"
-    );
-    let same_idle = map_meeting(
-        "m1",
-        &MeetingSnapshotInput {
-            live_session_id: Some("m1"),
-            live_state: Some(MeetingLivePhase::Idle),
-            ..base.clone()
-        },
-    );
-    assert_ne!(
-        absent, same_idle,
-        "a same-id live session keeps its id and state in the digest"
-    );
 }

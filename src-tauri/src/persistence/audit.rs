@@ -345,47 +345,6 @@ pub(crate) fn initialize_schema(connection: &Connection) -> rusqlite::Result<()>
           );
         END;
 
-        CREATE TRIGGER IF NOT EXISTS audit_meeting_sessions_after_insert
-        AFTER INSERT ON meeting_sessions
-        BEGIN
-          INSERT INTO audit_events(
-            id,occurred_at,component,event_name,phase,correlation_id,session_id,subject_id,attributes_json
-          ) VALUES(
-            'audit_' || lower(hex(randomblob(16))),NEW.started_at,'meeting','meeting-session-started','start',
-            NEW.id,NEW.id,NEW.id,json_object('state',NEW.status,'providerId',NEW.stt_provider_id,
-                                             'microphoneEnabled',NEW.microphone_enabled,
-                                             'systemAudioEnabled',NEW.system_audio_enabled)
-          );
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS audit_meeting_sessions_after_update
-        AFTER UPDATE OF status,error_code ON meeting_sessions
-        WHEN NEW.status IS NOT OLD.status OR NEW.error_code IS NOT OLD.error_code
-        BEGIN
-          INSERT INTO audit_events(
-            id,occurred_at,component,event_name,phase,outcome,correlation_id,session_id,subject_id,failure_code,attributes_json
-          ) VALUES(
-            'audit_' || lower(hex(randomblob(16))),COALESCE(NEW.ended_at,NEW.saved_at,strftime('%s','now') || '000'),
-            'meeting','meeting-session-state','state',
-            CASE NEW.status WHEN 'completed' THEN 'success' WHEN 'saved' THEN 'success'
-                 WHEN 'discarded' THEN 'cancelled' WHEN 'interrupted' THEN 'interrupted'
-                 WHEN 'failed' THEN 'failure' ELSE NULL END,
-            NEW.id,NEW.id,NEW.id,NEW.error_code,json_object('previousState',OLD.status,'state',NEW.status)
-          );
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS audit_meeting_transcript_entries_after_insert
-        AFTER INSERT ON meeting_transcript_entries
-        BEGIN
-          INSERT INTO audit_events(
-            id,occurred_at,component,event_name,phase,outcome,correlation_id,session_id,subject_id,attributes_json
-          ) VALUES(
-            'audit_' || lower(hex(randomblob(16))),NEW.created_at,'meeting','transcript-segment-persisted','terminal','success',
-            NEW.session_id,NEW.session_id,NEW.id,
-            json_object('lane',NEW.lane,'sequence',NEW.sequence)
-          );
-        END;
-
         CREATE TRIGGER IF NOT EXISTS audit_settings_documents_after_insert
         AFTER INSERT ON settings_documents
         BEGIN

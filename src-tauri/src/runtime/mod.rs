@@ -7,6 +7,7 @@ pub(crate) mod codex_process;
 pub(crate) mod codex_supervise;
 pub(crate) mod codex_turn;
 pub(crate) mod context;
+pub(crate) mod conversation_turn;
 pub mod contracts;
 pub(crate) mod event_hub;
 pub(crate) mod pi;

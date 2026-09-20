@@ -8,15 +8,13 @@ use super::query_v2::IncludeFlags;
 use super::runtime_capacity;
 use super::runtime_coding;
 use super::runtime_graph::{self, GraphOutcome};
-use super::runtime_meeting::{self, MeetingDbRow};
 use super::runtime_scope::{authorize_frame_request, AuthorizedFrame};
-use crate::meeting::WorldMeetingSnapshot;
 use crate::persistence::sqlite::SqliteReaders;
 use rusqlite::Connection;
 use saaa_personal_state_core::world::runtime_frame::{
     assemble_frame, compare_stamp, content_digest, effective_max_bytes, is_within_validity,
     normalize_runtime_refs, normalize_ttl, FrameAssembly, FrameError, FrameNotice, FrameNoticeCode,
-    FrameStamp, FrameValidity, MeetingMapping, RuntimeKind, RuntimeRef, RuntimeUnit, WorldFrame,
+    FrameStamp, FrameValidity, RuntimeKind, RuntimeRef, RuntimeUnit, WorldFrame,
 };
 use saaa_personal_state_core::world::slice_v2::WorldSliceV2;
 use saaa_personal_state_core::world::traversal_v2::{CausalDirection, LimitsV2};
@@ -221,33 +219,11 @@ impl PreparedWorldFrame {
     }
 }
 
-pub(crate) trait MeetingReader: Send + Sync {
-    fn world_snapshot(&self) -> Result<WorldMeetingSnapshot, String>;
-}
-
-/// Product binding: the existing meeting owner behind its short-lived mutex.
-pub(crate) struct RuntimeMeetingReader(pub(crate) Arc<crate::meeting::MeetingRuntime>);
-
-impl MeetingReader for RuntimeMeetingReader {
-    fn world_snapshot(&self) -> Result<WorldMeetingSnapshot, String> {
-        self.0.world_snapshot()
-    }
-}
-
 struct DbOutcome {
     runtime: Vec<RuntimeUnit>,
     runtime_notices: Vec<FrameNotice>,
-    meeting_probes: Vec<(RuntimeRef, MeetingDbRow, MeetingMapping)>,
     graph: Option<WorldSliceV2>,
     graph_notice: Option<FrameNoticeCode>,
-}
-
-fn meeting_notice_code(mapping: &MeetingMapping) -> FrameNoticeCode {
-    match mapping {
-        MeetingMapping::Unavailable => FrameNoticeCode::RuntimeUnavailable,
-        MeetingMapping::Unstable => FrameNoticeCode::RuntimeUnstable,
-        MeetingMapping::Present { .. } => FrameNoticeCode::RuntimeUnavailable,
-    }
 }
 
 fn read_db(
@@ -255,29 +231,11 @@ fn read_db(
     request: &FrameRequest<'_>,
     authorized: &AuthorizedFrame,
     now: i64,
-    live_before: Option<&WorldMeetingSnapshot>,
 ) -> Result<DbOutcome, FrameError> {
     let mut runtime = Vec::new();
     let mut notices = Vec::new();
-    let mut probes = Vec::new();
     for target in &authorized.targets {
         match target.reference.kind {
-            RuntimeKind::MeetingSession => {
-                let read = runtime_meeting::read_view(
-                    c,
-                    &authorized.project_scope,
-                    &target.reference,
-                    live_before,
-                )?;
-                match read.unit {
-                    Some(unit) => runtime.push(unit),
-                    None => notices.push(FrameNotice::for_ref(
-                        meeting_notice_code(&read.mapping),
-                        target.reference.clone(),
-                    )),
-                }
-                probes.push((target.reference.clone(), read.db, read.mapping));
-            }
             RuntimeKind::CodingJob => {
                 let read = runtime_coding::read_view(c, authorized, &target.reference)?;
                 match read.unit {
@@ -318,7 +276,6 @@ fn read_db(
     Ok(DbOutcome {
         runtime,
         runtime_notices: notices,
-        meeting_probes: probes,
         graph,
         graph_notice,
     })
@@ -326,7 +283,6 @@ fn read_db(
 
 pub(crate) struct WorldFrameService {
     readers: SqliteReaders,
-    meeting: Arc<dyn MeetingReader>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     instance_id: String,
 }
@@ -334,12 +290,10 @@ pub(crate) struct WorldFrameService {
 impl WorldFrameService {
     pub(crate) fn new(
         readers: SqliteReaders,
-        meeting: Arc<dyn MeetingReader>,
         clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     ) -> Self {
         Self {
             readers,
-            meeting,
             clock,
             instance_id: crate::new_id("world_frame"),
         }
@@ -360,15 +314,6 @@ impl WorldFrameService {
         let now = (self.clock)();
         let expires = now.saturating_add(owned.ttl_ms as i64);
         let first = self.run(|c| authorize_frame_request(c, &request))?;
-        let has_meeting = request
-            .runtime_refs
-            .iter()
-            .any(|reference| reference.kind == RuntimeKind::MeetingSession);
-        let live_before = if has_meeting {
-            Some(self.meeting.world_snapshot().map_err(FrameError::Other)?)
-        } else {
-            None
-        };
         let outcome = self.run(|c| {
             let authorized = authorize_frame_request(c, &request)?;
             if authorized.scope_digest != first.scope_digest
@@ -378,23 +323,12 @@ impl WorldFrameService {
             {
                 return Err(FrameError::Changed);
             }
-            read_db(c, &request, &authorized, now, live_before.as_ref())
+            read_db(c, &request, &authorized, now)
         })?;
 
-        let observed = if has_meeting {
-            Some(self.meeting.world_snapshot().map_err(FrameError::Other)?)
-        } else {
-            None
-        };
-        let mut runtime = outcome.runtime;
+        let runtime = outcome.runtime;
         let mut notices = outcome.runtime_notices;
         let mut graph_capacity_omitted = false;
-        for (reference, db, before) in &outcome.meeting_probes {
-            if let Some(code) = runtime_meeting::recheck(reference, db, before, observed.as_ref()) {
-                runtime.retain(|unit| unit.view.reference != *reference);
-                notices.push(FrameNotice::for_ref(code, reference.clone()));
-            }
-        }
         if let Some(code) = outcome.graph_notice {
             notices.push(FrameNotice::global(code));
             if code == FrameNoticeCode::WorldCapacityOmitted {

@@ -9,21 +9,15 @@ use saaa_personal_state_core::world::runtime_frame::FrameValidity;
 
 #[test]
 fn m2_25_persistent_readers_report_current_then_changed() {
-    let fixture = Fixture::file(&[("resource", MEETING_ID)], 2, false);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture
-        .meeting
-        .set(Some(MEETING_ID), crate::meeting::MeetingState::Active);
+    let fixture = Fixture::file(&[("task", CODING_ID)], 2, false);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let clock = fixture.clock.clone();
-    let service = super::runtime_frame::WorldFrameService::new(
-        fixture.readers_open(),
-        fixture.meeting.clone(),
-        std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+    let service = super::runtime_frame::WorldFrameService::new(fixture.readers_open(), std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
     );
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let prepared = service.prepare_frame(request).unwrap();
@@ -32,21 +26,8 @@ fn m2_25_persistent_readers_report_current_then_changed() {
         FrameValidity::Current
     );
 
-    // A live change between the two reads rejects the old frame.
-    fixture
-        .meeting
-        .set(Some(MEETING_ID), crate::meeting::MeetingState::Paused);
-    fixture
-        .writer
-        .write(|c| {
-            c.execute(
-                "UPDATE meeting_sessions SET status='paused' WHERE id=?1",
-                [MEETING_ID],
-            )
-            .map_err(crate::database_error)?;
-            Ok(())
-        })
-        .unwrap();
+    // A coding owner change between the two reads rejects the old frame.
+    fixture.set_coding_state(1, "cancel_requested", "running", "accepted");
     assert_eq!(
         service.revalidate_frame(&prepared).unwrap(),
         FrameValidity::Changed
@@ -55,21 +36,15 @@ fn m2_25_persistent_readers_report_current_then_changed() {
 
 #[test]
 fn m2_25_policy_and_epoch_changes_are_rejected() {
-    let fixture = Fixture::file(&[("resource", MEETING_ID)], 2, false);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture
-        .meeting
-        .set(Some(MEETING_ID), crate::meeting::MeetingState::Active);
+    let fixture = Fixture::file(&[("task", CODING_ID)], 2, false);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let clock = fixture.clock.clone();
-    let service = super::runtime_frame::WorldFrameService::new(
-        fixture.readers_open(),
-        fixture.meeting.clone(),
-        std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+    let service = super::runtime_frame::WorldFrameService::new(fixture.readers_open(), std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
     );
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let prepared = service.prepare_frame(request).unwrap();
@@ -94,26 +69,20 @@ fn m2_25_policy_and_epoch_changes_are_rejected() {
 
 #[test]
 fn m2_25_scope_epoch_change_is_rejected() {
-    let fixture = Fixture::file(&[("resource", MEETING_ID)], 2, false);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture
-        .meeting
-        .set(Some(MEETING_ID), crate::meeting::MeetingState::Active);
+    let fixture = Fixture::file(&[("task", CODING_ID)], 2, false);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let clock = fixture.clock.clone();
-    let service = super::runtime_frame::WorldFrameService::new(
-        fixture.readers_open(),
-        fixture.meeting.clone(),
-        std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+    let service = super::runtime_frame::WorldFrameService::new(fixture.readers_open(), std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
     );
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let prepared = service.prepare_frame(request).unwrap();
 
     fixture
         .writer
         .write(|c| {
             c.execute(
-                "UPDATE context_scope_epochs SET epoch=epoch+1 WHERE scope_key='resource:m1'",
+                "UPDATE context_scope_epochs SET epoch=epoch+1 WHERE scope_key='task:j1'",
                 [],
             )
             .map_err(crate::database_error)?;
@@ -129,7 +98,7 @@ fn m2_25_scope_epoch_change_is_rejected() {
 
 #[test]
 fn m2_25_reader_connections_reject_writes() {
-    let fixture = Fixture::file(&[("resource", MEETING_ID)], 2, false);
+    let fixture = Fixture::file(&[("task", CODING_ID)], 2, false);
     let readers = fixture.readers_open();
     let result = readers.read(|c| {
         c.execute(

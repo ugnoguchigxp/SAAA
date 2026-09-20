@@ -2,7 +2,6 @@ use super::super::broker::{self, BrokerInput};
 use super::render::render_world_frame;
 use super::shadow::{run_shadow, ShadowInput};
 use super::source::WorldSourceRequest;
-use crate::meeting::MeetingState;
 use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
 use crate::memory::personal_state::world::runtime_test_support::{Fixture, RUN_ID};
 use crate::memory::personal_state::world::test_support::PROJECT;
@@ -54,22 +53,15 @@ fn window() -> ContextWindow {
 #[test]
 #[ignore]
 fn m3_19_shadow_path_stays_within_dev_gates() {
-    let meeting_ids: Vec<String> = (1..=8).map(|index| format!("m{index}")).collect();
-    let targets: Vec<(&str, &str)> = meeting_ids
-        .iter()
-        .map(|id| ("resource", id.as_str()))
-        .collect();
+    let coding_ids: Vec<String> = (1..=8).map(|index| format!("m{index}")).collect();
+    let targets: Vec<(&str, &str)> = coding_ids.iter().map(|id| ("task", id.as_str())).collect();
     let fixture = Fixture::with_entities(&targets, 100);
-    for index in 1..=8 {
-        fixture.add_meeting(&format!("m{index}"), "active", "100", None, None);
-    }
-    fixture.meeting.set(Some("m1"), MeetingState::Active);
     let ledger = fixture.ledger_count();
     if ledger < 2_000 {
         fixture.fill_coverage(2_000 - ledger as usize);
     }
     let runtime_refs: Vec<_> = (1..=8)
-        .map(|index| fixture.meeting_ref(&format!("m{index}")))
+        .map(|index| fixture.coding_ref(&format!("m{index}")))
         .collect();
     let mut allowed = BTreeSet::from([PROJECT.to_string()]);
     for index in 1..=8 {

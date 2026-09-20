@@ -7,6 +7,7 @@ impl RequestGeneration {
         context: &ModelStreamContext<'_>,
         body: &Value,
         calls: usize,
+        include_world: bool,
     ) -> Result<Self, Failure> {
         let request_payload = serde_json::to_vec(body).map_err(|_| Failure::Internal)?;
         let oversized =
@@ -41,15 +42,21 @@ impl RequestGeneration {
         }
         let generation = generation.map_err(|_| Failure::Internal)?;
         if let Some(generation) = &generation {
+            if include_world {
+                if let Some(world) = context
+                    .output_persistence
+                    .and_then(|persistence| persistence.world)
+                {
+                    world.bind(generation);
+                }
+            }
             crate::runtime::context::generation_inputs::record(
                 generation,
                 context.context_health,
                 context.context_sources,
                 context.context_omissions,
                 body["tools"].as_array().map(Vec::as_slice).unwrap_or(&[]),
-                context
-                    .output_persistence
-                    .and_then(|persistence| persistence.world),
+                include_world,
             )
             .map_err(|_| Failure::Internal)?;
         }

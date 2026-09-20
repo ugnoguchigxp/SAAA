@@ -3,56 +3,29 @@
 //! M2-16 / M2-17 / M2-19 / M2-24 / M2-26: the WorldFrame service lifecycle,
 //! revalidation, graph omission and budget boundaries.
 
-use super::runtime_frame::{MeetingReader, WorldFrameService};
 use super::runtime_test_support::*;
-use crate::meeting::{MeetingState, WorldMeetingSnapshot};
 use saaa_personal_state_core::world::runtime_frame::{
     FrameNoticeCode, FrameValidity, RuntimePhase,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-
-/// Returns a different live snapshot on each read so the before/after checks
-/// inside one `prepare_frame` can be exercised.
-struct SequencedMeetingReader {
-    snapshots: Mutex<Vec<WorldMeetingSnapshot>>,
-    calls: Arc<AtomicUsize>,
-}
-
-impl MeetingReader for SequencedMeetingReader {
-    fn world_snapshot(&self) -> Result<WorldMeetingSnapshot, String> {
-        let index = self.calls.fetch_add(1, Ordering::SeqCst);
-        let snapshots = self.snapshots.lock().unwrap();
-        Ok(snapshots
-            .get(index)
-            .or_else(|| snapshots.last())
-            .cloned()
-            .unwrap_or(WorldMeetingSnapshot {
-                session_id: None,
-                state: MeetingState::Idle,
-            }))
-    }
-}
 
 #[test]
 fn m2_16_instance_id_is_stable_per_service_and_unique_across_services() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
     let first = service
-        .prepare_frame(fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None))
+        .prepare_frame(fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None))
         .unwrap();
     let access = fixture.access();
     let second = service
-        .prepare_frame(fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None))
+        .prepare_frame(fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None))
         .unwrap();
     assert_eq!(first.instance_id(), second.instance_id());
     let other = fixture.service();
     let access = fixture.access();
     let rebuilt = other
-        .prepare_frame(fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None))
+        .prepare_frame(fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None))
         .unwrap();
     assert_ne!(first.instance_id(), rebuilt.instance_id());
     // A frame prepared by another service instance is expired, never current.
@@ -63,49 +36,13 @@ fn m2_16_instance_id_is_stable_per_service_and_unique_across_services() {
 }
 
 #[test]
-fn m2_17_live_change_between_reads_omits_only_that_unit() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let reader = Arc::new(SequencedMeetingReader {
-        snapshots: Mutex::new(vec![
-            WorldMeetingSnapshot {
-                session_id: Some(MEETING_ID.into()),
-                state: MeetingState::Active,
-            },
-            WorldMeetingSnapshot {
-                session_id: Some(MEETING_ID.into()),
-                state: MeetingState::Paused,
-            },
-        ]),
-        calls: calls.clone(),
-    });
-    let clock = fixture.clock.clone();
-    let service = WorldFrameService::new(
-        fixture.readers(),
-        reader,
-        Arc::new(move || clock.load(Ordering::SeqCst)),
-    );
-    let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
-    let frame = service.prepare_frame(request).unwrap().frame().clone();
-    assert!(frame.runtime.is_empty());
-    assert!(frame
-        .notices
-        .iter()
-        .any(|n| n.code == FrameNoticeCode::RuntimeUnstable));
-    assert_eq!(calls.load(Ordering::SeqCst), 2, "no automatic retry");
-}
-
-#[test]
 fn m2_17_read_path_writes_nothing() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let before = fixture.total_changes();
     let service = fixture.service();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let prepared = service.prepare_frame(request).unwrap();
     let _ = service.revalidate_frame(&prepared).unwrap();
     assert_eq!(fixture.total_changes(), before);
@@ -113,19 +50,18 @@ fn m2_17_read_path_writes_nothing() {
 
 #[test]
 fn m2_19_scope_link_removal_makes_the_old_frame_scope_denied() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let prepared = service.prepare_frame(request).unwrap();
     fixture
         .writer
         .write(|c| {
             c.execute(
                 "DELETE FROM context_scope_links WHERE parent_scope_key=?1 AND child_scope_key=?2",
-                rusqlite::params![&fixture.project, "resource:m1"],
+                rusqlite::params![&fixture.project, "task:j1"],
             )
             .map_err(crate::database_error)?;
             Ok(())
@@ -141,12 +77,11 @@ fn m2_19_scope_link_removal_makes_the_old_frame_scope_denied() {
 
 #[test]
 fn m2_19_source_content_change_makes_the_old_frame_changed() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let prepared = service.prepare_frame(request).unwrap();
     fixture
         .writer
@@ -171,12 +106,11 @@ fn m2_19_source_content_change_makes_the_old_frame_changed() {
 
 #[test]
 fn m2_19_clock_rollback_is_expired() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let prepared = service.prepare_frame(request).unwrap();
     fixture.set_now(999);
     assert_eq!(
@@ -197,13 +131,12 @@ fn m2_19_clock_rollback_is_expired() {
 
 #[test]
 fn m2_24_graph_and_runtime_are_returned_together() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let frame = fixture
@@ -219,13 +152,12 @@ fn m2_24_graph_and_runtime_are_returned_together() {
 
 #[test]
 fn m2_24_pending_projection_omits_graph_but_keeps_runtime() {
-    let fixture = Fixture::build(&[("resource", MEETING_ID)], 2, true);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::build(&[("task", CODING_ID)], 2, true);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let frame = fixture
@@ -244,13 +176,12 @@ fn m2_24_pending_projection_omits_graph_but_keeps_runtime() {
 
 #[test]
 fn m2_24_projection_capacity_omits_graph_but_keeps_runtime() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 101);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 101);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let frame = fixture
@@ -270,15 +201,14 @@ fn m2_24_projection_capacity_omits_graph_but_keeps_runtime() {
 
 #[test]
 fn m2_26_budget_is_never_exceeded_and_notices_are_bounded() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 4);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 4);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     for max_bytes in [600usize, 800, 1_200, 2_000, 8_192] {
         let access = fixture.access();
         let mut request = fixture.request(
             access,
-            vec![fixture.meeting_ref(MEETING_ID)],
+            vec![fixture.coding_ref(CODING_ID)],
             Some(fixture.graph_request("ent0")),
         );
         request.max_bytes = max_bytes;
@@ -291,7 +221,7 @@ fn m2_26_budget_is_never_exceeded_and_notices_are_bounded() {
 
 #[test]
 fn m2_26_impossible_budget_is_rejected() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
     let access = fixture.access();
     let mut request = fixture.request(access, vec![], None);
     request.max_bytes = 1;
@@ -303,13 +233,12 @@ fn m2_26_impossible_budget_is_rejected() {
 
 #[test]
 fn m2_26_long_japanese_content_preserves_evidence() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 4);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 4);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let frame = fixture
@@ -332,14 +261,13 @@ fn m2_26_long_japanese_content_preserves_evidence() {
 fn m2_19_ledger_revision_change_invalidates_the_old_frame() {
     use super::test_support::{v2_entity_assertion, Committer, PROJECT};
     use saaa_personal_state_core::world::model_v2::EntityKindV2;
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let prepared = service.prepare_frame(request).unwrap();
@@ -389,14 +317,13 @@ fn m2_19_ledger_revision_change_invalidates_the_old_frame() {
 }
 #[test]
 fn m2_19_source_forget_invalidates_the_old_frame() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let prepared = service.prepare_frame(request).unwrap();
@@ -421,13 +348,12 @@ fn m2_19_source_forget_invalidates_the_old_frame() {
 
 #[test]
 fn m2_13_projection_100_is_allowed_and_101_is_omitted() {
-    let allowed = Fixture::with_entities(&[("resource", MEETING_ID)], 100);
-    allowed.add_meeting(MEETING_ID, "active", "100", None, None);
-    allowed.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let allowed = Fixture::with_entities(&[("task", CODING_ID)], 100);
+    allowed.add_coding_job(1, "running", "running", "accepted");
     let access = allowed.access();
     let request = allowed.request(
         access,
-        vec![allowed.meeting_ref(MEETING_ID)],
+        vec![allowed.coding_ref(CODING_ID)],
         Some(allowed.graph_request("ent0")),
     );
     let frame = allowed
@@ -438,14 +364,13 @@ fn m2_13_projection_100_is_allowed_and_101_is_omitted() {
         .clone();
     assert!(frame.graph.is_some(), "100 projected entities are allowed");
 
-    let omitted = Fixture::with_entities(&[("resource", MEETING_ID)], 101);
-    omitted.add_meeting(MEETING_ID, "active", "100", None, None);
-    omitted.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let omitted = Fixture::with_entities(&[("task", CODING_ID)], 101);
+    omitted.add_coding_job(1, "running", "running", "accepted");
     let assertions_before = omitted.table_count("personal_assertions");
     let access = omitted.access();
     let request = omitted.request(
         access,
-        vec![omitted.meeting_ref(MEETING_ID)],
+        vec![omitted.coding_ref(CODING_ID)],
         Some(omitted.graph_request("ent0")),
     );
     let frame = omitted
@@ -464,16 +389,15 @@ fn m2_13_projection_100_is_allowed_and_101_is_omitted() {
 
 #[test]
 fn m2_13_ledger_2000_is_allowed_and_2001_is_omitted() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let current = fixture.ledger_count() as usize;
     fixture.fill_coverage(2_000 - current);
     assert_eq!(fixture.ledger_count(), 2_000);
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let frame = fixture
@@ -490,7 +414,7 @@ fn m2_13_ledger_2000_is_allowed_and_2001_is_omitted() {
     let access = fixture.access();
     let request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     let frame = fixture
@@ -509,14 +433,13 @@ fn m2_13_ledger_2000_is_allowed_and_2001_is_omitted() {
 
 #[test]
 fn m2_15_empty_seed_does_not_fabricate_a_node() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let mut graph = fixture.graph_request("ent0");
     graph.seeds.clear();
     graph.explicit_question = false;
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], Some(graph));
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], Some(graph));
     let frame = fixture
         .service()
         .prepare_frame(request)
@@ -534,15 +457,14 @@ fn m2_15_empty_seed_does_not_fabricate_a_node() {
 #[test]
 fn m2_15_five_distinct_seeds_are_a_limit() {
     use super::query::WorldSeed;
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let mut graph = fixture.graph_request("ent0");
     graph.seeds = (0..5)
         .map(|index| WorldSeed::EntityId(format!("ent{index}")))
         .collect();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], Some(graph));
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], Some(graph));
     assert_eq!(
         fixture.service().prepare_frame(request).unwrap_err().code(),
         "frame-limit"
@@ -552,9 +474,8 @@ fn m2_15_five_distinct_seeds_are_a_limit() {
 #[test]
 fn m2_15_duplicate_seeds_are_deduplicated_not_truncated() {
     use super::query::WorldSeed;
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let mut graph = fixture.graph_request("ent0");
     graph.seeds = vec![
         WorldSeed::EntityId("ent0".into()),
@@ -563,7 +484,7 @@ fn m2_15_duplicate_seeds_are_deduplicated_not_truncated() {
         WorldSeed::ExactName("名前0".into()),
     ];
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], Some(graph));
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], Some(graph));
     let frame = fixture
         .service()
         .prepare_frame(request)
@@ -575,12 +496,11 @@ fn m2_15_duplicate_seeds_are_deduplicated_not_truncated() {
 
 #[test]
 fn m2_19_deleted_run_input_source_denies_scope() {
-    let fixture = Fixture::new(&[("resource", MEETING_ID)]);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::new(&[("task", CODING_ID)]);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let service = fixture.service();
     let access = fixture.access();
-    let request = fixture.request(access, vec![fixture.meeting_ref(MEETING_ID)], None);
+    let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);
     let prepared = service.prepare_frame(request).unwrap();
     fixture
         .writer
@@ -601,13 +521,12 @@ fn m2_19_deleted_run_input_source_denies_scope() {
 
 #[test]
 fn m2_26_small_budget_with_graph_omits_graph_not_frame() {
-    let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 4);
-    fixture.add_meeting(MEETING_ID, "active", "100", None, None);
-    fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
+    let fixture = Fixture::with_entities(&[("task", CODING_ID)], 4);
+    fixture.add_coding_job(1, "running", "running", "accepted");
     let access = fixture.access();
     let mut request = fixture.request(
         access,
-        vec![fixture.meeting_ref(MEETING_ID)],
+        vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
     request.max_bytes = 320;

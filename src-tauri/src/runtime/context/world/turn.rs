@@ -1,32 +1,20 @@
 //! Production WorldFrame compose for conversation.respond (M3B).
 use super::super::broker::{self, BrokerInput, Envelope};
-use super::super::generation::GenerationHandle;
 use super::super::source::Candidate;
 use super::source::{
     omission_from_frame, omission_from_validity, prepare_candidate, with_kind, WorldOmission,
     WorldSourceOutcome, WorldSourceRequest, WORLD_KIND,
 };
 use crate::memory::context_window::ContextWindow;
-use crate::memory::personal_state::world::runtime_frame::{
-    FrameRequest, PreparedWorldFrame, RuntimeMeetingReader, WorldFrameService,
-};
+use crate::memory::personal_state::world::runtime_frame::{FrameRequest, WorldFrameService};
 use crate::runtime::context::scope::ScopeSnapshot;
 use crate::AppState;
 use saaa_personal_state_core::world::runtime_frame::{RuntimeKind, RuntimeRef, MAX_RUNTIME_REFS};
 use saaa_personal_state_core::{AccessRequest, Classification, Purpose};
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-pub(crate) struct WorldReceipt {
-    pub(crate) service: Arc<WorldFrameService>,
-    pub(crate) prepared: PreparedWorldFrame,
-    pub(crate) dispatched_at_ms: i64,
-}
-
-pub(crate) struct WorldLive {
-    service: Arc<WorldFrameService>,
-    prepared: Mutex<Option<PreparedWorldFrame>>,
-}
+pub(crate) use super::live::{for_record, observe_receipt, WorldBlocks, WorldLive, WorldReceipt};
 
 pub(crate) struct TurnCompose {
     pub(crate) envelope: Envelope,
@@ -53,7 +41,6 @@ pub(crate) fn compose_for_app(
     };
     let service = Arc::new(WorldFrameService::new(
         state.sqlite_readers.clone(),
-        Arc::new(RuntimeMeetingReader(state.meeting.clone())),
         Arc::new(crate::memory::personal_state::now),
     ));
     compose_parts(
@@ -180,10 +167,16 @@ pub(crate) fn compose_parts(
         .iter()
         .any(|candidate| candidate.source_kind == WORLD_KIND);
     let world = if selected {
-        Some(WorldLive {
+        let with_world = proposed.combined_block.clone();
+        let without_world = baseline.combined_block.clone();
+        Some(WorldLive::live(
             service,
-            prepared: Mutex::new(Some(ready.into_prepared())),
-        })
+            ready.into_prepared(),
+            with_world.map(|with_world| WorldBlocks {
+                with_world,
+                without_world,
+            }),
+        ))
     } else {
         None
     };
@@ -233,10 +226,6 @@ pub(crate) fn runtime_refs(scope: &ScopeSnapshot) -> Vec<RuntimeRef> {
             continue;
         }
         let reference = match item.kind.as_str() {
-            "resource" => item.key.strip_prefix("resource:").map(|id| RuntimeRef {
-                kind: RuntimeKind::MeetingSession,
-                id: id.to_string(),
-            }),
             "task" => item.key.strip_prefix("task:").map(|id| RuntimeRef {
                 kind: RuntimeKind::CodingJob,
                 id: id.to_string(),
@@ -293,90 +282,5 @@ fn done(
         compose_count,
         #[cfg(test)]
         omission,
-    }
-}
-
-pub(crate) fn observe_receipt(receipt: &WorldReceipt) -> &'static str {
-    match receipt.service.revalidate_frame(&receipt.prepared) {
-        Ok(saaa_personal_state_core::world::runtime_frame::FrameValidity::Current) => "current",
-        Ok(saaa_personal_state_core::world::runtime_frame::FrameValidity::Expired) => {
-            "expired-after-dispatch"
-        }
-        Ok(saaa_personal_state_core::world::runtime_frame::FrameValidity::Changed) => {
-            "changed-after-dispatch"
-        }
-        Ok(saaa_personal_state_core::world::runtime_frame::FrameValidity::ScopeDenied) => {
-            "scope-denied-after-dispatch"
-        }
-        Ok(saaa_personal_state_core::world::runtime_frame::FrameValidity::Unavailable) | Err(_) => {
-            "unavailable-after-dispatch"
-        }
-    }
-}
-
-pub(crate) fn for_record<'a>(
-    selected: &'a [Candidate],
-    omitted: &'a [Candidate],
-    world: Option<&WorldLive>,
-    generation: &GenerationHandle,
-) -> (Vec<&'a Candidate>, Vec<&'a Candidate>) {
-    let mut kept: Vec<&Candidate> = selected
-        .iter()
-        .filter(|candidate| candidate.source_kind != WORLD_KIND)
-        .collect();
-    let omitted: Vec<&Candidate> = omitted
-        .iter()
-        .filter(|candidate| candidate.source_kind != WORLD_KIND)
-        .collect();
-    if let Some(candidate) = selected
-        .iter()
-        .find(|candidate| candidate.source_kind == WORLD_KIND)
-    {
-        if let Some(live) = world {
-            if live.revalidate_current() {
-                live.bind(generation);
-                kept.push(candidate);
-            }
-        }
-    }
-    (kept, omitted)
-}
-
-impl WorldLive {
-    fn revalidate_current(&self) -> bool {
-        let frame = {
-            let prepared = self
-                .prepared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let Some(frame) = prepared.as_ref() else {
-                return false;
-            };
-            frame.clone()
-        };
-        match self.service.revalidate_frame(&frame) {
-            Ok(saaa_personal_state_core::world::runtime_frame::FrameValidity::Current) => true,
-            _ => {
-                *self
-                    .prepared
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                false
-            }
-        }
-    }
-
-    fn bind(&self, generation: &GenerationHandle) {
-        let prepared = self
-            .prepared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(prepared) = prepared.as_ref() {
-            generation.attach_world(WorldReceipt {
-                service: self.service.clone(),
-                prepared: prepared.clone(),
-                dispatched_at_ms: crate::memory::personal_state::now(),
-            });
-        }
     }
 }

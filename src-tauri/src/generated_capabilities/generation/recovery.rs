@@ -11,14 +11,12 @@ use super::super::{inspection::repository as inspection_repository, lifecycle};
 use super::repository::{self, unix_ms};
 use crate::persistence::SqliteWriter;
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GenerationRecoverySummary {
     pub interrupted_jobs: usize,
     pub orphan_inspections: Vec<String>,
 }
 
-#[allow(dead_code)]
 pub(crate) fn reconcile(
     writer: &SqliteWriter,
     inspections: &InspectionStore,
@@ -112,5 +110,23 @@ mod tests {
             read_job("job-3").status,
             GenerationStatus::AwaitingActivation
         );
+    }
+
+    #[test]
+    fn rw_05_initialize_database_interrupts_running_jobs() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        initialize_database(&connection).unwrap();
+        gen_repo::insert_job(&connection, &job("job-run")).unwrap();
+        gen_repo::cas_status(
+            &connection,
+            "job-run",
+            GenerationStatus::Requested,
+            GenerationStatus::Generating,
+            gen_repo::unix_ms(),
+        )
+        .unwrap();
+        initialize_database(&connection).unwrap();
+        let status = gen_repo::job_by_id(&connection, "job-run").unwrap().status;
+        assert_eq!(status, GenerationStatus::Interrupted);
     }
 }

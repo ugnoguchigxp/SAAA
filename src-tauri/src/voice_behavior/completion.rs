@@ -18,9 +18,8 @@ pub(crate) fn presentation_and_snapshot(
     run_id: Option<&str>,
     conversation_id: &str,
 ) -> Result<(VoicePresentationDecision, ConversationVoicePolicySnapshot), String> {
-    let (presentation, policy, voice, meeting_blocked) =
-        resolved_presentation(state, run_id, conversation_id)?;
-    let snapshot = snapshot_from(meeting_blocked, policy, voice);
+    let (presentation, policy, voice) = resolved_presentation(state, run_id, conversation_id)?;
+    let snapshot = snapshot_from(policy, voice);
     Ok((presentation, snapshot))
 }
 
@@ -28,15 +27,7 @@ fn resolved_presentation(
     state: &AppState,
     run_id: Option<&str>,
     conversation_id: &str,
-) -> Result<
-    (
-        VoicePresentationDecision,
-        PolicyRow,
-        VoiceRuntimeSettings,
-        bool,
-    ),
-    String,
-> {
+) -> Result<(VoicePresentationDecision, PolicyRow, VoiceRuntimeSettings), String> {
     let run_override = match run_id {
         Some(run_id) => {
             let runs = state
@@ -62,7 +53,6 @@ fn resolved_presentation(
             crate::persistence::load_voice_settings(connection)?,
         ))
     })?;
-    let meeting_blocked = state.meeting.blocks_tts();
     if crate::situation::apply_tts_hold(state, run_id, conversation_id) {
         return Ok((
             VoicePresentationDecision {
@@ -71,16 +61,14 @@ fn resolved_presentation(
             },
             policy,
             voice,
-            meeting_blocked,
         ));
     }
     let presentation = effective_presentation_from(
-        meeting_blocked,
         voice.auto_speak,
         run_override,
         &policy.speech_output_override,
     );
-    Ok((presentation, policy, voice, meeting_blocked))
+    Ok((presentation, policy, voice))
 }
 
 pub(crate) fn completion_state(
@@ -104,7 +92,7 @@ pub(crate) fn completion_state(
 }
 
 pub(crate) fn upper_policies_allow_speech(state: &AppState) -> Result<bool, String> {
-    if crate::situation::speech_holds_tts(state) || state.meeting.blocks_tts() {
+    if crate::situation::speech_holds_tts(state) {
         return Ok(false);
     }
     state
@@ -113,14 +101,11 @@ pub(crate) fn upper_policies_allow_speech(state: &AppState) -> Result<bool, Stri
 }
 
 pub(super) fn effective_presentation_from(
-    meeting_blocked: bool,
     auto_speak: bool,
     run_override: Option<RunSpeechOverride>,
     conversation_override: &str,
 ) -> VoicePresentationDecision {
-    let (decision, reason_code) = if meeting_blocked {
-        ("silent", "meeting_blocked")
-    } else if !auto_speak {
+    let (decision, reason_code) = if !auto_speak {
         ("silent", "global_opt_out")
     } else if run_override == Some(RunSpeechOverride::Silent) {
         ("silent", "turn_override")
