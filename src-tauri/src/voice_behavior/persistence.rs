@@ -76,11 +76,8 @@ pub(super) fn snapshot_from(
     policy: PolicyRow,
     voice: VoiceRuntimeSettings,
 ) -> ConversationVoicePolicySnapshot {
-    let presentation = effective_presentation_from(
-        voice.auto_speak,
-        None,
-        &policy.speech_output_override,
-    );
+    let presentation =
+        effective_presentation_from(voice.auto_speak, None, &policy.speech_output_override);
     let effective_listening_pace = match policy.listening_pace_override.as_str() {
         "inherit" => "balanced".to_string(),
         value => value.to_string(),

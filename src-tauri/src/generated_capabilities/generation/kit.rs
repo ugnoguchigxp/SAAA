@@ -137,6 +137,12 @@ impl GenerationKit {
         &self.root
     }
 
+    /// The trusted Bun executable. Used by inspection to evaluate the trusted projection in an
+    /// isolated process; the candidate's own JavaScript is never an entrypoint.
+    pub fn bun_path(&self) -> &Path {
+        &self.bun_path
+    }
+
     pub fn files(&self) -> &BTreeMap<String, String> {
         &self.files
     }
@@ -150,11 +156,24 @@ impl GenerationKit {
         timeout: Duration,
         working_directory: &Path,
     ) -> CapabilityResult<KitOutput> {
+        self.run_script(&self.entrypoint, args, timeout, working_directory)
+    }
+
+    /// Runs an arbitrary trusted Bun script with the kit's Bun and the same environment, output and
+    /// wall-clock limits as [`Self::run`]. Used to evaluate the inspector's own projection; the
+    /// candidate's JavaScript is never passed here.
+    pub fn run_script(
+        &self,
+        script: &Path,
+        args: &[&str],
+        timeout: Duration,
+        working_directory: &Path,
+    ) -> CapabilityResult<KitOutput> {
         self.revalidate(&self.digest)?;
         let path_var = std::env::var("PATH").unwrap_or_default();
         let mut command = Command::new(&self.bun_path);
         command
-            .arg(&self.entrypoint)
+            .arg(script)
             .args(args)
             .current_dir(working_directory)
             .env_clear()

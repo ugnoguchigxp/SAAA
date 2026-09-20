@@ -222,6 +222,76 @@ export const situationSettingsSchema = z
   })
   .strict();
 
+export const roleRoutingSettingsSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    enabled: z.boolean(),
+    actors: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            label: z.string(),
+            aliases: z.array(z.string()),
+            transport: z.enum(["provider", "codex_sdk"]),
+            providerId: z.string().nullable(),
+            model: z.string().nullable(),
+            location: z.enum(["local", "cloud"]),
+            resourceGroup: z.string(),
+            maxInputBytes: z.number(),
+            capabilities: z.array(z.string()),
+          })
+          .strict(),
+      )
+      .max(16),
+    roles: z
+      .object({
+        frontend: z.string().nullable(),
+        reasoner: z.string().nullable(),
+        advanced: z.string().nullable(),
+        reviewer: z.string().nullable(),
+        premium: z.string().nullable(),
+        toolSpecialist: z.string().nullable(),
+      })
+      .strict(),
+    recipes: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            action: z.enum([
+              "respond",
+              "explain",
+              "clarify",
+              "reconsider_same",
+              "reconsider_other",
+              "review_other",
+              "revise",
+              "propose_upgrade",
+              "finalize",
+              "cancel",
+            ]),
+            roles: z.array(z.string()),
+            enabled: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(32),
+    limits: z
+      .object({
+        maxReasoningSteps: z.number(), maxToolCalls: z.number(), rootTimeoutMs: z.number(),
+        stepTimeoutMs: z.number(), frontendTimeoutMs: z.number(), classificationTimeoutMs: z.number(),
+        maxQueuedInputs: z.number(), maxReviewRounds: z.number(), maxAutomaticSwitches: z.number(),
+        maxEstimatedCostMicros: z.number().nullable(),
+      })
+      .strict(),
+    speech: z.object({ mode: z.literal("author_verbatim"), ackDelayMs: z.number(), maxAckChars: z.number(), progressMinIntervalMs: z.number(), maxProgressPerRoot: z.number() }).strict(),
+    selection: z.object({ mode: z.enum(["rules", "shadow"]), shadowArtifactId: z.string().nullable(), classificationMinConfidence: z.number(), weights: z.object({ quality: z.number(), latency: z.number(), cost: z.number() }).strict(), switchMargin: z.number() }).strict(),
+    premiumApproval: z.enum(["per_request", "never"]),
+    learning: z.object({ enabled: z.boolean(), localStart: z.string(), localEnd: z.string(), idleSeconds: z.number(), maxRunSeconds: z.number(), batchSize: z.number(), allowLocalLabeler: z.boolean() }).strict(),
+  })
+  .strict();
+
 const settingsDocumentBaseSchema = z
   .object({
     namespace: z.enum([
@@ -232,15 +302,16 @@ const settingsDocumentBaseSchema = z
       "security.runtime",
       "ui.preferences",
       "situation.runtime",
+      "routing.roles",
     ]),
     key: z.enum(["default", "codex-sdk"]),
-    schemaVersion: z.literal(15),
+    schemaVersion: z.union([z.literal(1), z.literal(15)]),
     valueJson: z.record(z.string(), z.unknown()),
   })
   .strict();
 
 export function validateSettingsDocuments(documents: unknown[]): void {
-  const parsed = z.array(settingsDocumentBaseSchema).length(7).parse(documents);
+  const parsed = z.array(settingsDocumentBaseSchema).length(8).parse(documents);
   const expectedDocuments = new Set([
     "providers.model:default",
     "providers.agent:codex-sdk",
@@ -249,6 +320,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
     "security.runtime:default",
     "ui.preferences:default",
     "situation.runtime:default",
+    "routing.roles:default",
   ]);
   const namespaces = new Set(parsed.map((document) => `${document.namespace}:${document.key}`));
   if (
@@ -265,6 +337,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   const security = securitySettingsSchema.parse(values.get("security.runtime"));
   regionalPreferencesSchema.parse(values.get("ui.preferences"));
   situationSettingsSchema.parse(values.get("situation.runtime"));
+  roleRoutingSettingsSchema.parse(values.get("routing.roles"));
   const providers = providerSettings.providers;
   const usesHarness =
     routing.conversationRespond.source === "harness" ||

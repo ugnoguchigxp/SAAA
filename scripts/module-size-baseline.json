@@ -257,6 +257,10 @@
       "total": 483,
       "production": 334
     },
+    "src-tauri/src/generated_capabilities/generation/generator_providers.rs": {
+      "total": 62,
+      "production": 62
+    },
     "src-tauri/src/generated_capabilities/generation/generator.rs": {
       "total": 265,
       "production": 189
@@ -269,6 +273,14 @@
       "total": 13,
       "production": 13
     },
+    "src-tauri/src/generated_capabilities/generation/packager.rs": {
+      "total": 188,
+      "production": 188
+    },
+    "src-tauri/src/generated_capabilities/generation/projection.rs": {
+      "total": 120,
+      "production": 120
+    },
     "src-tauri/src/generated_capabilities/generation/recovery.rs": {
       "total": 117,
       "production": 38
@@ -280,6 +292,10 @@
     "src-tauri/src/generated_capabilities/generation/schema.rs": {
       "total": 41,
       "production": 41
+    },
+    "src-tauri/src/generated_capabilities/generation/service.rs": {
+      "total": 392,
+      "production": 392
     },
     "src-tauri/src/generated_capabilities/guards.rs": {
       "total": 126,
@@ -301,6 +317,10 @@
       "total": 56,
       "production": 56
     },
+    "src-tauri/src/generated_capabilities/inspection_invoke.rs": {
+      "total": 40,
+      "production": 40
+    },
     "src-tauri/src/generated_capabilities/inspection/comparison.rs": {
       "total": 254,
       "production": 134
@@ -308,6 +328,10 @@
     "src-tauri/src/generated_capabilities/inspection/contracts.rs": {
       "total": 480,
       "production": 480
+    },
+    "src-tauri/src/generated_capabilities/inspection/evaluator.rs": {
+      "total": 54,
+      "production": 54
     },
     "src-tauri/src/generated_capabilities/inspection/mod.rs": {
       "total": 9,
@@ -340,6 +364,14 @@
     "src-tauri/src/generated_capabilities/package_store.rs": {
       "total": 354,
       "production": 354
+    },
+    "src-tauri/src/generated_capabilities/publication_sync.rs": {
+      "total": 298,
+      "production": 202
+    },
+    "src-tauri/src/generated_capabilities/publication_unpublish.rs": {
+      "total": 65,
+      "production": 65
     },
     "src-tauri/src/generated_capabilities/publication.rs": {
       "total": 249,
@@ -384,6 +416,18 @@
     "src-tauri/src/generated_capabilities/tests/adapter.rs": {
       "total": 262,
       "production": 262
+    },
+    "src-tauri/src/generated_capabilities/tests/generation_closeout.rs": {
+      "total": 643,
+      "production": 643
+    },
+    "src-tauri/src/generated_capabilities/tests/generation_fail.rs": {
+      "total": 48,
+      "production": 48
+    },
+    "src-tauri/src/generated_capabilities/tests/generation_flow.rs": {
+      "total": 211,
+      "production": 211
     },
     "src-tauri/src/generated_capabilities/tests/hanging.rs": {
       "total": 76,
@@ -813,6 +857,10 @@
       "total": 213,
       "production": 213
     },
+    "src-tauri/src/persistence/settings_defaults.rs": {
+      "total": 131,
+      "production": 131
+    },
     "src-tauri/src/persistence/settings_migration.rs": {
       "total": 654,
       "production": 360
@@ -1117,6 +1165,42 @@
       "total": 20,
       "production": 20
     },
+    "src-tauri/src/role_routing/contracts.rs": {
+      "total": 357,
+      "production": 348
+    },
+    "src-tauri/src/role_routing/learning/mod.rs": {
+      "total": 2,
+      "production": 2
+    },
+    "src-tauri/src/role_routing/learning/schema.rs": {
+      "total": 45,
+      "production": 45
+    },
+    "src-tauri/src/role_routing/mod.rs": {
+      "total": 14,
+      "production": 14
+    },
+    "src-tauri/src/role_routing/repository_policy.rs": {
+      "total": 45,
+      "production": 45
+    },
+    "src-tauri/src/role_routing/repository_turns.rs": {
+      "total": 127,
+      "production": 127
+    },
+    "src-tauri/src/role_routing/repository.rs": {
+      "total": 65,
+      "production": 46
+    },
+    "src-tauri/src/role_routing/schema.rs": {
+      "total": 36,
+      "production": 16
+    },
+    "src-tauri/src/role_routing/selection.rs": {
+      "total": 85,
+      "production": 54
+    },
     "src-tauri/src/runtime/agent_tools.rs": {
       "total": 540,
       "production": 322
@@ -1124,6 +1208,26 @@
     "src-tauri/src/runtime/capability_commands.rs": {
       "total": 263,
       "production": 174
+    },
+    "src-tauri/src/runtime/capability_inspect_run.rs": {
+      "total": 140,
+      "production": 140
+    },
+    "src-tauri/src/runtime/capability_inspect_store.rs": {
+      "total": 87,
+      "production": 87
+    },
+    "src-tauri/src/runtime/capability_inspect_tests.rs": {
+      "total": 120,
+      "production": 120
+    },
+    "src-tauri/src/runtime/capability_inspect.rs": {
+      "total": 173,
+      "production": 173
+    },
+    "src-tauri/src/runtime/capability_turn.rs": {
+      "total": 230,
+      "production": 140
     },
     "src-tauri/src/runtime/codex_app_server.rs": {
       "total": 334,
@@ -1156,6 +1260,10 @@
     "src-tauri/src/runtime/coding_live_canary.rs": {
       "total": 83,
       "production": 83
+    },
+    "src-tauri/src/runtime/command_registry.rs": {
+      "total": 80,
+      "production": 80
     },
     "src-tauri/src/runtime/context/broker.rs": {
       "total": 209,
@@ -1257,9 +1365,17 @@
       "total": 135,
       "production": 135
     },
+    "src-tauri/src/runtime/conversation_inputs_roles.rs": {
+      "total": 38,
+      "production": 38
+    },
     "src-tauri/src/runtime/conversation_inputs.rs": {
       "total": 74,
       "production": 74
+    },
+    "src-tauri/src/runtime/conversation_turn.rs": {
+      "total": 702,
+      "production": 527
     },
     "src-tauri/src/runtime/event_hub.rs": {
       "total": 406,
@@ -2081,6 +2197,14 @@
       "total": 77,
       "production": 77
     },
+    "src/features/coding/stewardApi.ts": {
+      "total": 35,
+      "production": 35
+    },
+    "src/features/coding/StewardPanel.tsx": {
+      "total": 62,
+      "production": 62
+    },
     "src/features/settings/ApiKeyControl.tsx": {
       "total": 146,
       "production": 146
@@ -2141,9 +2265,21 @@
       "total": 20,
       "production": 20
     },
+    "src/features/settings/SettingsGeneralSection.tsx": {
+      "total": 163,
+      "production": 163
+    },
     "src/features/settings/SettingsPage.tsx": {
       "total": 597,
       "production": 597
+    },
+    "src/features/settings/settingsRoleRouting.ts": {
+      "total": 46,
+      "production": 46
+    },
+    "src/features/settings/settingsRoleRoutingDefaults.ts": {
+      "total": 55,
+      "production": 55
     },
     "src/features/settings/useVoiceSamplePlayback.ts": {
       "total": 71,
@@ -2172,6 +2308,10 @@
     "src/features/voice/ambientVoiceTypes.ts": {
       "total": 26,
       "production": 26
+    },
+    "src/features/voice/idleVoiceCapture.ts": {
+      "total": 30,
+      "production": 30
     },
     "src/features/voice/useAmbientVoiceSession.ts": {
       "total": 797,
@@ -2361,6 +2501,14 @@
       "total": 55,
       "production": 55
     },
+    "src/lib/roleRoutingSettingsParts.ts": {
+      "total": 80,
+      "production": 80
+    },
+    "src/lib/roleRoutingTypes.ts": {
+      "total": 24,
+      "production": 24
+    },
     "src/lib/runtime.ts": {
       "total": 299,
       "production": 299
@@ -2453,6 +2601,10 @@
       "total": 16,
       "production": 16
     },
+    "tests/coding-steward.test.ts": {
+      "total": 9,
+      "production": 9
+    },
     "tests/conversation-quality-eval.test.ts": {
       "total": 154,
       "production": 154
@@ -2524,6 +2676,10 @@
     "tests/i18n.test.ts": {
       "total": 48,
       "production": 48
+    },
+    "tests/idle-voice-capture.test.ts": {
+      "total": 21,
+      "production": 21
     },
     "tests/interrupted-streaming-ui.test.ts": {
       "total": 18,
@@ -2668,14 +2824,6 @@
     "tests/setup-checklist.test.tsx": {
       "total": 68,
       "production": 68
-    },
-    "tests/situation-input-activity.test.ts": {
-      "total": 76,
-      "production": 76
-    },
-    "tests/situation-review.test.tsx": {
-      "total": 155,
-      "production": 155
     },
     "tests/situation.test.ts": {
       "total": 27,

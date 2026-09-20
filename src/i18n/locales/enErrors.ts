@@ -7,8 +7,6 @@ export const errors = {
     operationFailed: "SAAA could not complete that operation. Try again.",
   },
   chat: {
-    voiceBlockedDuringMeeting:
-      "Always-on listening is unavailable while a meeting is active or paused.",
     voiceSettingsUnavailable: "Voice settings are unavailable.",
     recordedAudioUnavailable: "Recorded audio is unavailable. Try again.",
     voiceQueueFull: "Voice processing is busy, so the latest utterance was not sent.",
@@ -25,17 +23,6 @@ export const errors = {
     voiceTargetSpeakerModeUnavailable:
       "Target-speaker filtering is not yet available for always-on listening. Turn it off in Voice settings and try again.",
     operationFailed: "The conversation operation could not be completed. Try again.",
-  },
-  meeting: {
-    transcriptionBackpressure:
-      "Meeting transcription cannot keep up. Capture was paused; no queued audio was removed.",
-    captureInactive: "Meeting capture is no longer active.",
-    voiceSettingsUnavailable: "Voice settings are unavailable.",
-    startFailed:
-      "The meeting could not start. Check the microphone and ASR settings, then try again.",
-    runtimeFailure:
-      "The meeting runtime reported a failure. Check the meeting settings and try again.",
-    operationFailed: "The meeting operation could not be completed. Try again.",
   },
   settings: {
     agentSessionEventStreamMissing:

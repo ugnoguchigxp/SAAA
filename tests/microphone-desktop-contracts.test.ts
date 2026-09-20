@@ -22,10 +22,6 @@ describe("macOS microphone bundle configuration", () => {
 
   test("routes every frontend microphone entry point through the checked boundary", () => {
     const app = chatVoiceSource();
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
-      "utf8",
-    );
     const enrollment = readFileSync(
       join(import.meta.dir, "../src/features/settings/VoiceProfileCard.tsx"),
       "utf8",
@@ -38,7 +34,6 @@ describe("macOS microphone bundle configuration", () => {
       ),
     ].join("\n");
     expect(containsSource(app, "requestMicrophoneStream(audio)")).toBe(true);
-    expect(containsSource(meeting, "requestMicrophoneStream(")).toBe(true);
     expect(
       containsSource(
         enrollment,
@@ -47,21 +42,17 @@ describe("macOS microphone bundle configuration", () => {
     ).toBe(true);
     expect(containsSource(settings, "enumerateAudioInputDevices()")).toBe(true);
     expect(
-      containsSource(`${app}\n${meeting}\n${enrollment}\n${settings}`, "navigator.mediaDevices"),
+      containsSource(`${app}\n${enrollment}\n${settings}`, "navigator.mediaDevices"),
     ).toBe(false);
   });
 
   test("keeps microphone processing constraints centralized", () => {
     const app = chatVoiceSource();
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
-      "utf8",
-    );
     const enrollment = readFileSync(
       join(import.meta.dir, "../src/features/settings/VoiceProfileCard.tsx"),
       "utf8",
     );
-    for (const source of [app, meeting, enrollment]) {
+    for (const source of [app, enrollment]) {
       expect(containsSource(source, "microphoneCaptureConstraints")).toBe(true);
     }
     expect(
@@ -74,15 +65,8 @@ describe("macOS microphone bundle configuration", () => {
 
   test("registers acquired streams before AudioContext construction can fail", () => {
     const app = chatVoiceSource();
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
-      "utf8",
-    );
     expect(app.indexOf("context.stream.current = stream")).toBeLessThan(
       app.indexOf("audioContext = new AudioContext({ sampleRate: 16_000 })"),
-    );
-    expect(meeting.indexOf("stream.current = nextStream")).toBeLessThan(
-      meeting.indexOf("const nextContext = new AudioContext()"),
     );
   });
 
@@ -100,10 +84,6 @@ describe("macOS microphone bundle configuration", () => {
     const app = chatVoiceSource();
     const chatPage = readFileSync(
       join(import.meta.dir, "../src/features/chat/ChatPage.tsx"),
-      "utf8",
-    );
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
       "utf8",
     );
     expect(containsSource(app, "detector(context.settings, activeContext.sampleRate)")).toBe(true);
@@ -135,7 +115,6 @@ describe("macOS microphone bundle configuration", () => {
     expect(containsSource(chatPage, 't("chat.listeningHint"')).toBe(true);
     expect(containsSource(chatPage, 't("chat.micPause")')).toBe(true);
     expect(containsSource(chatPage, "filterEnabled")).toBe(false);
-    expect(containsSource(meeting, "VoiceActivityDetector")).toBe(false);
     expect(containsSource(app, "suspendVoiceForSpeech")).toBe(true);
     expect(containsSource(app, "resumeVoiceAfterSpeech")).toBe(true);
   });
@@ -171,7 +150,7 @@ describe("macOS microphone bundle configuration", () => {
     expect(containsSource(app, "if (context.node.current !== node) return")).toBe(true);
     expect(containsSource(app, "voiceNodeRef.current.port.onmessage = null")).toBe(true);
     expect(containsSource(app, 'voiceStarting ? t("chat.micCancel")')).toBe(true);
-    expect(containsSource(app, "disabled={meetingActive}")).toBe(true);
+    expect(containsSource(app, "disabled={meetingActive}")).toBe(false);
     expect(containsSource(app, "aria-pressed={listeningEnabled}")).toBe(true);
     expect(containsSource(app, "disabled={!composer.trim() || !selectedConversation}")).toBe(true);
   });
@@ -217,17 +196,6 @@ describe("macOS microphone bundle configuration", () => {
     expect(
       handler.indexOf("voiceAsrStopWaitersRef.current.get(event.sessionId)?.resolve()"),
     ).toBeLessThan(handler.indexOf("acceptedVoiceAsrSessionsRef.current.has(event.sessionId)"));
-  });
-
-  test("hands microphone ownership to Meeting before preflight capture", () => {
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
-      "utf8",
-    );
-    expect(meeting.indexOf("await onBeforeCapture()")).toBeLessThan(
-      meeting.indexOf('acquireAudioCapture("meeting")', meeting.indexOf("async function start()")),
-    );
-    expect(containsSource(meeting, "node.current.port.onmessage = null")).toBe(true);
   });
 
   test("keeps automatic voice turns connected to LLM submission and response speech", () => {
@@ -276,46 +244,5 @@ describe("macOS microphone bundle configuration", () => {
     expect(containsSource(app, "sender.enqueueAudio(packet)")).toBe(true);
     expect(containsSource(app, "voiceAsrPacketizerRef.current.flushPadded()")).toBe(true);
     expect(containsSource(app, "event.data.fill(0)")).toBe(true);
-  });
-
-  test("blocks chat capture while Meeting is still in preflight", () => {
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
-      "utf8",
-    );
-    expect(
-      containsSource(
-        meeting,
-        'applySnapshot({ ...snapshotRef.current, state: "preflight", error: null })',
-      ),
-    ).toBe(true);
-  });
-
-  test("does not leave Meeting stuck in preflight when recovery lookup fails", () => {
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
-      "utf8",
-    );
-    expect(
-      containsSource(meeting, "const restored = await getMeetingSnapshot().catch(() => null)"),
-    ).toBe(true);
-    expect(containsSource(meeting, "applySnapshot(restored ?? idle)")).toBe(true);
-  });
-
-  test("reconciles Meeting state after a post-start microphone failure", () => {
-    const meeting = readFileSync(
-      join(import.meta.dir, "../src/features/meeting/useMeetingSession.ts"),
-      "utf8",
-    );
-    const recovery = meeting.slice(
-      meeting.indexOf("} catch (cause) {", meeting.indexOf("async function start()")),
-      meeting.indexOf("} finally {", meeting.indexOf("async function start()")),
-    );
-    expect(recovery.indexOf("discardMeeting(startedSession)")).toBeLessThan(
-      recovery.indexOf("getMeetingSnapshot()"),
-    );
-    expect(containsSource(recovery, "if (startedSession) {\n        applySnapshot(idle)")).toBe(
-      false,
-    );
   });
 });

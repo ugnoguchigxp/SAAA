@@ -180,6 +180,26 @@ pub fn load_config(path: &Path) -> CapabilityResult<GenerationConfig> {
     })
 }
 
+/// Loads the administrator config when `SAAA_LLANG_GENERATION_CONFIG` is set and enabled.
+/// Loads the enabled configuration without reading the requests catalog. Inspection needs only the
+/// kit, so a broken requests file must not disable it.
+pub fn enabled_config() -> CapabilityResult<Option<GenerationConfig>> {
+    let path = match std::env::var(GENERATION_CONFIG_ENV) {
+        Ok(path) if !path.is_empty() => PathBuf::from(path),
+        _ => return Ok(None),
+    };
+    let config = load_config(&path)?;
+    Ok(config.enabled.then_some(config))
+}
+
+pub fn from_environment() -> CapabilityResult<Option<(GenerationConfig, Vec<RegisteredRequest>)>> {
+    let Some(config) = enabled_config()? else {
+        return Ok(None);
+    };
+    let requests = load_requests(&config.requests_path)?;
+    Ok(Some((config, requests)))
+}
+
 /// Reads the registered request catalog, validating every entry and hashing its three files.
 pub fn load_requests(path: &Path) -> CapabilityResult<Vec<RegisteredRequest>> {
     let bytes = read_bounded(
@@ -599,5 +619,17 @@ mod tests {
         value["entries"].as_array_mut().unwrap().push(entry);
         write(&path, value.to_string().as_bytes());
         assert!(load_requests(&path).is_err());
+    }
+
+    #[test]
+    fn unset_environment_skips_generation_config() {
+        let previous = std::env::var_os(GENERATION_CONFIG_ENV);
+        std::env::remove_var(GENERATION_CONFIG_ENV);
+        let loaded = from_environment();
+        match previous {
+            Some(value) => std::env::set_var(GENERATION_CONFIG_ENV, value),
+            None => std::env::remove_var(GENERATION_CONFIG_ENV),
+        }
+        assert!(loaded.unwrap().is_none());
     }
 }

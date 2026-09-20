@@ -178,3 +178,5 @@ export type SituationSettings = {
   heartbeatIntervalMs: number;
   sensitiveApplicationCategories: true;
 };
+
+export type { RoleRoutingSettings } from "./roleRoutingTypes";

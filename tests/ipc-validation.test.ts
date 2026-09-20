@@ -4,7 +4,6 @@ import fixtures from "./fixtures/ipc-receivers.json";
 import {
   appSnapshotSchema,
   runtimeEventSchema,
-  meetingEventSchema,
   voiceAsrEventSchema,
   guardedReceiver,
   parseIpc,
@@ -13,7 +12,6 @@ import {
 test("Rust-serialized receiver fixtures satisfy frontend schemas", () => {
   expect(appSnapshotSchema.safeParse(fixtures.snapshot).success).toBe(true);
   expect(runtimeEventSchema.safeParse(fixtures.runtime).success).toBe(true);
-  expect(meetingEventSchema.safeParse(fixtures.meeting).success).toBe(true);
   expect(voiceAsrEventSchema.safeParse(fixtures.asr).success).toBe(true);
 });
 test("malformed payloads fail without echoing private data", () => {
@@ -42,7 +40,6 @@ test("malformed payloads fail without echoing private data", () => {
       conversations: new Array(10001).fill(fixtures.snapshot.conversations[0]),
     }).success,
   ).toBe(false);
-  expect(meetingEventSchema.safeParse({ ...fixtures.meeting, sequence: NaN }).success).toBe(false);
 });
 test("invalid or foreign events quarantine the receiver without a synthetic terminal", () => {
   const env = installJsdom();

@@ -1,4 +1,4 @@
-export type AudioCaptureOwner = "chat" | "meeting" | "voice-enrollment";
+export type AudioCaptureOwner = "chat" | "voice-enrollment";
 
 let activeLease: { owner: AudioCaptureOwner; token: symbol } | null = null;
 

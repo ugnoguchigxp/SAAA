@@ -4,18 +4,18 @@ import {
   voiceStartupMessage,
   captureAvailability,
 } from "./voiceCaptureSettings";
+import { idleCaptureShouldStart } from "./idleVoiceCapture";
 export { effectiveCaptureSettings } from "./voiceCaptureSettings";
 import { VoiceCaptureResources } from "./VoiceCaptureResources";
 import { useCommittedCallback } from "../../useCommittedCallback";
 import { useLarmVoiceLifetime } from "./useLarmVoiceLifetime";
 import { cancelReasoningRun } from "../../lib/reasoningRunControl";
 import { useEffect, useRef, useState } from "react";
-import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
+import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
 import { appendConversationActivity } from "../../lib/conversationActivity";
 import type {
   ConversationVoicePolicySnapshot,
-  MeetingState,
   VoiceSettings,
 } from "../../lib/contracts";
 
@@ -61,13 +61,12 @@ export type AmbientVoiceAvailability =
   | "listening"
   | "suspended"
   | "blocked";
-type SuspensionReason = "speech" | "meeting";
+type SuspensionReason = "speech";
 
 export function useAmbientVoiceSession({
   selectedConversationId,
   voiceSettings,
   voicePolicy,
-  meetingState,
   conversationSessionRef,
   pendingVoicePromptsRef,
   setError,
@@ -120,11 +119,9 @@ export function useAmbientVoiceSession({
   } = resources;
   const previousInputDeviceIdRef = useRef<string | null>(null);
   const previousConversationIdRef = useRef<string | null>(null);
-  const meetingStateRef = useRef<MeetingState>("idle");
   const selectedConversationIdRef = useRef<string | null>(null);
   const voiceSettingsRef = useRef<VoiceSettings | null>(null);
   const voicePolicyRef = useRef<ConversationVoicePolicySnapshot | null>(null);
-  meetingStateRef.current = meetingState;
   selectedConversationIdRef.current = selectedConversationId;
   voiceSettingsRef.current = voiceSettings;
   voicePolicyRef.current = voicePolicy;
@@ -149,7 +146,6 @@ export function useAmbientVoiceSession({
     restartCaptureForConversationChange,
   );
   const attachVoiceCaptureCommitted = useCommittedCallback(attachVoiceCapture);
-  const resumeVoiceAfterMeetingCommitted = useCommittedCallback(resumeVoiceAfterMeeting);
   useEffect(() => {
     const enabled = voiceSettings?.listeningEnabled ?? false;
     updateListeningEnabledCommitted(enabled);
@@ -216,31 +212,25 @@ export function useAmbientVoiceSession({
 
   useEffect(() => {
     if (
-      !listeningEnabled ||
-      !selectedConversationId ||
-      !voiceSettings ||
-      isMeetingBlocking(meetingState) ||
-      conversationSessionRef.current.speechRunId ||
-      voiceSessionRef.current.capture !== "idle" ||
-      voiceStreamRef.current
+      !idleCaptureShouldStart({
+        listeningEnabled,
+        selectedConversationId,
+        voiceSettings,
+        speechRunId: conversationSessionRef.current.speechRunId,
+        capture: voiceSessionRef.current.capture,
+        hasStream: Boolean(voiceStreamRef.current),
+      })
     )
       return;
     void attachVoiceCaptureCommitted();
   }, [
     listeningEnabled,
-    meetingState,
     selectedConversationId,
     voiceSettings,
     conversationSessionRef,
     attachVoiceCaptureCommitted,
     voiceStreamRef,
   ]);
-
-  useEffect(() => {
-    if (!isMeetingBlocking(meetingState) && suspensionReasonRef.current === "meeting") {
-      void resumeVoiceAfterMeetingCommitted();
-    }
-  }, [meetingState, resumeVoiceAfterMeetingCommitted]);
 
   function updateListeningEnabled(enabled: boolean) {
     listeningEnabledRef.current = enabled;
@@ -268,10 +258,6 @@ export function useAmbientVoiceSession({
       }
       if (listeningEnabledRef.current) {
         await attachVoiceCapture();
-        return;
-      }
-      if (isMeetingBlocking(meetingStateRef.current)) {
-        setError(uiMessage("chatVoiceBlockedDuringMeeting"));
         return;
       }
       if (!selectedConversationIdRef.current || !voiceSettingsRef.current) {
@@ -338,7 +324,6 @@ export function useAmbientVoiceSession({
       disposedRef.current ||
       !listeningEnabledRef.current ||
       voiceSettingsRef.current?.inputDeviceId !== inputDeviceId ||
-      isMeetingBlocking(meetingStateRef.current) ||
       conversationSessionRef.current.speechRunId
     )
       return;
@@ -352,7 +337,6 @@ export function useAmbientVoiceSession({
       disposedRef.current ||
       !listeningEnabledRef.current ||
       !selectedConversationIdRef.current ||
-      isMeetingBlocking(meetingStateRef.current) ||
       conversationSessionRef.current.speechRunId
     )
       return;
@@ -421,7 +405,6 @@ export function useAmbientVoiceSession({
         settings,
         disposed: disposedRef,
         listeningEnabled: listeningEnabledRef,
-        meetingState: meetingStateRef,
         captureAttempt: voiceCaptureAttemptRef,
         stream: voiceStreamRef,
         audioContext: voiceContextRef,
@@ -473,20 +456,11 @@ export function useAmbientVoiceSession({
     return suspendVoice("speech");
   }
 
-  async function suspendVoiceForMeeting(): Promise<void> {
-    speechResumeTokenRef.current = null;
-    await suspendVoice("meeting");
-  }
-
   async function resumeVoice(reason: SuspensionReason): Promise<void> {
     if (disposedRef.current || suspensionReasonRef.current !== reason) return;
     if (!listeningEnabledRef.current) {
       suspensionReasonRef.current = null;
       applyVoiceEvent({ type: "captureDetached" });
-      return;
-    }
-    if (isMeetingBlocking(meetingStateRef.current)) {
-      suspensionReasonRef.current = "meeting";
       return;
     }
     suspensionReasonRef.current = null;
@@ -500,16 +474,8 @@ export function useAmbientVoiceSession({
       await resumeVoice("speech");
       return;
     }
-    if (
-      listeningEnabledRef.current &&
-      voiceSessionRef.current.capture === "idle" &&
-      !isMeetingBlocking(meetingStateRef.current)
-    )
+    if (listeningEnabledRef.current && voiceSessionRef.current.capture === "idle")
       await attachVoiceCapture();
-  }
-
-  async function resumeVoiceAfterMeeting(): Promise<void> {
-    await resumeVoice("meeting");
   }
 
   async function finishVoiceCapture(keepListening: boolean, reason: CommitReason = "silence") {
@@ -569,15 +535,12 @@ export function useAmbientVoiceSession({
       } else if (
         !keepListening &&
         listeningEnabledRef.current &&
-        !isMeetingBlocking(meetingStateRef.current) &&
         !conversationSessionRef.current.speechRunId
       ) {
         if (stoppedBeforeRestart) await stoppedBeforeRestart;
         if (
           disposedRef.current ||
-          !listeningEnabledRef.current ||
-          isMeetingBlocking(meetingStateRef.current) ||
-          conversationSessionRef.current.speechRunId
+          !listeningEnabledRef.current || conversationSessionRef.current.speechRunId
         )
           return;
         void attachVoiceCapture();
@@ -676,7 +639,6 @@ export function useAmbientVoiceSession({
     voiceProcessing: voiceSessionProcessing(voiceSession),
     interimTranscript: { text: interimTranscript, projection: asrProjection },
     toggleAmbientListening,
-    suspendVoiceForMeeting,
     suspendVoiceForSpeech,
     resumeVoiceAfterSpeech,
   };

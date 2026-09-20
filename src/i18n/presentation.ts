@@ -1,12 +1,11 @@
 import type { TFunction } from "i18next";
 import type { ConversationRuntimeActivity } from "../lib/conversationActivity";
 
-type ErrorScope = "app" | "chat" | "meeting" | "settings" | "situation" | "voice";
+type ErrorScope = "app" | "chat" | "settings" | "situation" | "voice";
 
 const messageKeys = {
   appPrimaryConversationUnavailable: "errors.app.primaryConversationUnavailable",
   appSurfaceSwitchBlocked: "app.surfaceSwitchBlocked",
-  chatVoiceBlockedDuringMeeting: "errors.chat.voiceBlockedDuringMeeting",
   chatVoiceSettingsUnavailable: "errors.chat.voiceSettingsUnavailable",
   chatRecordedAudioUnavailable: "errors.chat.recordedAudioUnavailable",
   chatVoiceQueueFull: "errors.chat.voiceQueueFull",
@@ -28,12 +27,6 @@ const messageKeys = {
   voiceProfileNoAudio: "voice.profile.noAudio",
   voiceProfileMicrophoneTimeout: "errors.voice.microphoneStartupTimedOut",
   voiceProfileProcessorTimeout: "errors.voice.audioProcessorStartupTimedOut",
-  meetingCaptureDisconnected: "meeting.health.captureDisconnected",
-  meetingTranscriptionBackpressure: "errors.meeting.transcriptionBackpressure",
-  meetingCaptureInactive: "errors.meeting.captureInactive",
-  meetingVoiceSettingsUnavailable: "errors.meeting.voiceSettingsUnavailable",
-  meetingStartFailed: "errors.meeting.startFailed",
-  meetingRuntimeFailure: "errors.meeting.runtimeFailure",
   settingsAgentConnectionTokenInvalid: "settings.connection.agentConnectionTokenInvalid",
   settingsAgentConnectionAuthorizationRejected:
     "settings.connection.agentConnectionAuthorizationRejected",
@@ -54,8 +47,6 @@ export function uiMessage(name: UiMessageName): string {
 
 const legacyMessageNames: Record<string, UiMessageName> = {
   "Primary conversation is unavailable.": "appPrimaryConversationUnavailable",
-  "Chat voice capture is disabled while a meeting is active or paused.":
-    "chatVoiceBlockedDuringMeeting",
   "Voice settings are unavailable.": "chatVoiceSettingsUnavailable",
   "Recorded audio is unavailable.": "chatRecordedAudioUnavailable",
   "音声処理が追いつかないため、新しい発話は送信しませんでした。": "chatVoiceQueueFull",
@@ -64,10 +55,6 @@ const legacyMessageNames: Record<string, UiMessageName> = {
   "Voice query queued until the active response completes": "chatVoiceQueryQueued",
   "Generation cancelled": "chatGenerationCancelled",
   "サンプルを再生できませんでした。": "voiceSamplePlaybackFailed",
-  "Meeting transcription cannot keep up. Capture was paused without evicting queued audio.":
-    "meetingTranscriptionBackpressure",
-  "Meeting capture is no longer active.": "meetingCaptureInactive",
-  "capture disconnected — pause or stop to recover": "meetingCaptureDisconnected",
   "Loading local speaker verification…": "voiceProfileLoading",
   "Microphone startup timed out": "voiceProfileMicrophoneTimeout",
   "Audio processor startup timed out": "voiceProfileProcessorTimeout",
@@ -98,7 +85,7 @@ const statusKeys: Record<string, string> = {
   active: "common.active",
   available: "common.ready",
   busy: "situation.signalStates.busy",
-  "capture-disconnected": "meeting.health.captureDisconnected",
+  "capture-disconnected": "common.failed",
   completed: "common.completed",
   configured: "common.configured",
   degraded: "common.degraded",
@@ -121,8 +108,8 @@ const statusKeys: Record<string, string> = {
   "saaa-speaking": "situation.signalStates.saaaSpeaking",
   "saaa-transcribing": "situation.signalStates.saaaTranscribing",
   silent: "situation.signalStates.silent",
-  stopped: "meeting.health.stopped",
-  stopping: "meeting.health.stopping",
+  stopped: "common.completed",
+  stopping: "common.paused",
   transcribing: "chat.voiceStates.transcribing",
   unavailable: "common.unavailable",
   unchecked: "common.unchecked",
@@ -175,7 +162,6 @@ export function localizeUiMessage(
     return t(messageKeys.chatMicrophoneResumeFailed);
   if (trimmed.startsWith("Voice capture initialization failed:"))
     return t(messageKeys.chatVoiceCaptureInitializationFailed);
-  if (trimmed.startsWith("Meeting start failed:")) return t(messageKeys.meetingStartFailed);
 
   const microphone = microphoneMessageNames.find(([pattern]) => pattern.test(trimmed));
   if (microphone) return t(microphone[1]);
@@ -221,12 +207,6 @@ export function localizeSituationAttention(t: TFunction, attention: string): str
 export function localizeSituationEntryKind(t: TFunction, entryKind: string): string {
   return entryKind === "transition" || entryKind === "decision" || entryKind === "heartbeat"
     ? t(`situation.entryKinds.${entryKind}`)
-    : t("common.unknown");
-}
-
-export function localizeMeetingLane(t: TFunction, lane: string): string {
-  return lane === "microphone" || lane === "system-audio"
-    ? t(`meeting.lanes.${lane}`)
     : t("common.unknown");
 }
 

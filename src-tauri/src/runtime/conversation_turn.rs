@@ -1,15 +1,14 @@
 //! Conversation provider path. `turns::execute_turn` dispatches here after coding / capability.
-#[path = "conversation_inputs.rs"]
-mod conversation_inputs;
 #[path = "conversation_context.rs"]
 mod conversation_context;
 #[path = "conversation_controller/mod.rs"]
 mod conversation_controller;
+#[path = "conversation_inputs.rs"]
+mod conversation_inputs;
 
 use super::event_hub::RuntimeEventSender;
 use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
 use crate::providers::routing::{effective_conversation_route_ids, resolve_harness_llm_provider};
-use crate::redact::redact_runtime_text;
 use crate::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session, memory,
     now_iso, persist_conversation_success, stream_model_provider,
@@ -20,15 +19,6 @@ use crate::{
 use conversation_context::compose_provider_history;
 use conversation_controller::execute as execute_reasoning;
 use std::sync::Arc;
-
-pub(crate) async fn try_capability_command(
-    _state: &AppState,
-    _input: &StartTurnInput,
-    _on_event: &dyn RuntimeEventSender,
-    _cancellation: Arc<RunCancellation>,
-) -> Result<bool, TurnExecutionFailure> {
-    Ok(false)
-}
 
 /// The World-free rendering of a composed history. `None` when the history carries no World block,
 /// so the caller can reuse the original borrow without cloning.
@@ -576,6 +566,14 @@ mod tests {
         assert_eq!(stripped.len(), 3);
         assert_eq!(stripped[1].content, "WITHOUT_WORLD");
         assert_eq!(stripped[2].content, "hello");
+        // When the World was the only selected candidate the block disappears entirely.
+        let only_world =
+            crate::runtime::context::world::turn::WorldLive::for_test(true, "WITH_WORLD", None);
+        let stripped =
+            world_free_history(&history, Some(&only_world)).expect("world block present");
+        assert_eq!(stripped.len(), 2);
+        assert_eq!(stripped[0].content, "policy");
+        assert_eq!(stripped[1].content, "hello");
         // Without a World there is nothing to strip, so the original borrow is reused.
         assert!(world_free_history(&history, None).is_none());
         assert!(world_free_history(

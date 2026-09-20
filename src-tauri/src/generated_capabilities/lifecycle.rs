@@ -37,7 +37,9 @@ pub(crate) fn suspend_revision(
 ) -> CapabilityResult<repository::CapabilityRow> {
     let now = now_iso();
     transaction(writer, |transaction| {
-        repository::suspend(transaction, revision_id, expected_epoch, &now)
+        let capability = repository::suspend(transaction, revision_id, expected_epoch, &now)?;
+        super::publication_sync::unpublish_catalog_for_capability(transaction, &capability.id)?;
+        Ok(capability)
     })
 }
 

@@ -35,7 +35,6 @@ export function ChatPage({
   onSubmit,
   onToggleVoice,
   voiceStarting,
-  meetingActive,
   activeRunId,
   modelProviderStatus,
   onOpenSettings,
@@ -228,27 +227,22 @@ export function ChatPage({
             aria-label={
               voiceStarting
                 ? t("chat.micCancel")
-                : meetingActive
-                  ? t("chat.micPausedForMeeting")
-                  : !listeningEnabled
-                    ? t("chat.micResume")
-                    : voiceState === "recording" || voiceState === "transcribing" || activeTtsRunId
-                      ? t("chat.micPause")
-                      : t("chat.micRetry")
+                : !listeningEnabled
+                  ? t("chat.micResume")
+                  : voiceState === "recording" || voiceState === "transcribing" || activeTtsRunId
+                    ? t("chat.micPause")
+                    : t("chat.micRetry")
             }
             title={
               voiceStarting
                 ? t("chat.micCancel")
-                : meetingActive
-                  ? t("chat.micResumeAfterMeeting")
-                  : !listeningEnabled
-                    ? t("chat.micResume")
-                    : voiceState === "recording" || voiceState === "transcribing" || activeTtsRunId
-                      ? t("chat.micPause")
-                      : t("chat.micRetry")
+                : !listeningEnabled
+                  ? t("chat.micResume")
+                  : voiceState === "recording" || voiceState === "transcribing" || activeTtsRunId
+                    ? t("chat.micPause")
+                    : t("chat.micRetry")
             }
             onClick={onToggleVoice}
-            disabled={meetingActive}
           >
             <AppIcon
               name={

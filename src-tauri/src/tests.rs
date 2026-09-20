@@ -2353,7 +2353,7 @@ fn world_body_history(conversation_id: &str) -> Vec<ConversationMessage> {
     ]
 }
 
-async fn run_world_body_case(valid: bool, run_id: &str, session_provider_id: &str) -> Value {
+async fn run_world_body_case(valid: bool, run_id: &str, session_provider_id: &str) -> (Value, i64) {
     let (endpoint, captures, server) =
         spawn_llm_http_fixture(vec![LlmHttpStep::Delta("ok"), LlmHttpStep::Complete]).await;
     let connection = Connection::open_in_memory().expect("database opens");
@@ -2384,6 +2384,18 @@ async fn run_world_body_case(valid: bool, run_id: &str, session_provider_id: &st
         Some("WORLD_BLOCK_ABSENT"),
     );
     let history = world_body_history(&input.conversation_id);
+    // The record must list the World source exactly when the body carries its block.
+    let world_candidate = crate::runtime::context::source::Candidate::untrusted(
+        "world-candidate".to_string(),
+        crate::runtime::context::world::source::WORLD_KIND,
+        Vec::new(),
+        crate::runtime::context::source::Requirement::May,
+        "world-source".to_string(),
+        1,
+        0,
+        "world".to_string(),
+    );
+    let context_sources = std::slice::from_ref(&world_candidate);
     let provider = OpenAiCompatibleProviderSettings {
         endpoint,
         ..direct_provider(session_provider_id, "local")
@@ -2400,7 +2412,7 @@ async fn run_world_body_case(valid: bool, run_id: &str, session_provider_id: &st
             on_event: &channel,
             cancellation: Arc::new(RunCancellation::default()),
             context_health: "green",
-            context_sources: &[],
+            context_sources,
             context_omissions: &[],
             output_persistence: Some(ProviderOutputPersistence {
                 state: &state,
@@ -2416,12 +2428,28 @@ async fn run_world_body_case(valid: bool, run_id: &str, session_provider_id: &st
     };
     let captures = captures.lock().expect("capture lock");
     assert_eq!(captures.len(), 1, "one provider request");
-    serde_json::from_str(&captures[0]).expect("request JSON")
+    let body = serde_json::from_str(&captures[0]).expect("request JSON");
+    drop(captures);
+    let selected_world: i64 = state
+        .sqlite_readers
+        .read(|connection| {
+            connection
+                .query_row(
+                    "SELECT COALESCE(MAX(selected),0) FROM context_generation_inputs \
+                     WHERE source_kind=?1",
+                    [crate::runtime::context::world::source::WORLD_KIND],
+                    |row| row.get(0),
+                )
+                .map_err(crate::database_error)
+        })
+        .expect("world input record reads");
+    (body, selected_world)
 }
 
 #[tokio::test]
-async fn expired_world_block_is_removed_from_the_sent_provider_body() {
-    let body = run_world_body_case(false, "run-world-expired", "world-expired-fixture").await;
+async fn expired_world_block_is_removed_from_the_sent_provider_body_and_record() {
+    let (body, selected_world) =
+        run_world_body_case(false, "run-world-expired", "world-expired-fixture").await;
     let rendered = body["messages"].to_string();
     assert!(
         !rendered.contains("WORLD_BLOCK_PRESENT"),
@@ -2431,11 +2459,16 @@ async fn expired_world_block_is_removed_from_the_sent_provider_body() {
         rendered.contains("WORLD_BLOCK_ABSENT"),
         "the World-free rendering must reach the provider body"
     );
+    assert_eq!(
+        selected_world, 0,
+        "an expired World must not be recorded as selected"
+    );
 }
 
 #[tokio::test]
-async fn valid_world_block_is_sent_to_the_provider_body() {
-    let body = run_world_body_case(true, "run-world-valid", "world-valid-fixture").await;
+async fn valid_world_block_is_sent_to_the_provider_body_and_record() {
+    let (body, selected_world) =
+        run_world_body_case(true, "run-world-valid", "world-valid-fixture").await;
     let rendered = body["messages"].to_string();
     assert!(
         rendered.contains("WORLD_BLOCK_PRESENT"),
@@ -2444,5 +2477,9 @@ async fn valid_world_block_is_sent_to_the_provider_body() {
     assert!(
         !rendered.contains("WORLD_BLOCK_ABSENT"),
         "the World-free rendering must not replace a current World block"
+    );
+    assert_eq!(
+        selected_world, 1,
+        "a current World must be recorded as selected"
     );
 }

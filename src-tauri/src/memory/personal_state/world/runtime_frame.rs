@@ -288,10 +288,7 @@ pub(crate) struct WorldFrameService {
 }
 
 impl WorldFrameService {
-    pub(crate) fn new(
-        readers: SqliteReaders,
-        clock: Arc<dyn Fn() -> i64 + Send + Sync>,
-    ) -> Self {
+    pub(crate) fn new(readers: SqliteReaders, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
         Self {
             readers,
             clock,

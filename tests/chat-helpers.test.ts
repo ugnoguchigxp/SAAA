@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isMeetingBlocking, toMessage } from "../src/lib/appHelpers";
+import { toMessage } from "../src/lib/appHelpers";
 import { findPrimaryRoute, updateConversationTimestamp } from "../src/lib/conversationRouting";
 import { mergePcmFrames } from "../src/lib/pcm";
 import type { AppSnapshot, SettingsDocument } from "../src/lib/contracts";
@@ -62,15 +62,6 @@ describe("chat helpers", () => {
     expect(updated.conversations[0]?.title).toBe("a".repeat(60));
     expect(updated.conversations[0]?.updatedAt).toBe("pending");
     expect(updateConversationTimestamp(snapshot, "missing", "x")).toBe(snapshot);
-  });
-
-  test("isMeetingBlocking covers preflight through stopping", () => {
-    expect(isMeetingBlocking("idle")).toBe(false);
-    expect(isMeetingBlocking("preflight")).toBe(true);
-    expect(isMeetingBlocking("active")).toBe(true);
-    expect(isMeetingBlocking("paused")).toBe(true);
-    expect(isMeetingBlocking("stopping")).toBe(true);
-    expect(isMeetingBlocking("review")).toBe(false);
   });
 
   test("toMessage unwraps Error and stringifies other values", () => {

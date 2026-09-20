@@ -43,17 +43,17 @@
       </tr>
       <tr>
         <td>Meeting</td>
-        <td>マイク入力、途中・確定文字起こし、保存・破棄を実装済み</td>
-        <td>状態遷移、音声queue、保存境界を検証済み</td>
-        <td>実マイクによるU06は待ち</td>
-        <td>システム音声、翻訳、話者分離、overlayは非対応</td>
+        <td>製品から削除済み。会議セッション画面・IPC・保存は提供しない</td>
+        <td>旧表は schema v27 で DROP。フロントエンド契約は不在を検証</td>
+        <td>—</td>
+        <td>システム音声・翻訳・overlayを含む会議製品は対象外</td>
       </tr>
       <tr>
         <td>Situation</td>
-        <td>macOSの前面アプリ・入力状態をshadow-onlyで観測</td>
-        <td>ledger、保持、校正、8時間fixtureを検証済み</td>
-        <td>VoiceOverと権限lifecycleは待ち</td>
-        <td>自動通知、TTS、Meeting開始、アプリ操作は行わない</td>
+        <td>校正コンソールと画面は削除。内部の状況観測は TTS hold 用に残る</td>
+        <td>状況ランタイムの Rust 契約は内部試験で検証</td>
+        <td>—</td>
+        <td>自動通知、アプリ操作、ユーザー向け状況画面は行わない</td>
       </tr>
       <tr>
         <td>Memory</td>

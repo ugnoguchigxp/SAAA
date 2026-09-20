@@ -12,7 +12,9 @@ fn m2_25_persistent_readers_report_current_then_changed() {
     let fixture = Fixture::file(&[("task", CODING_ID)], 2, false);
     fixture.add_coding_job(1, "running", "running", "accepted");
     let clock = fixture.clock.clone();
-    let service = super::runtime_frame::WorldFrameService::new(fixture.readers_open(), std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+    let service = super::runtime_frame::WorldFrameService::new(
+        fixture.readers_open(),
+        std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
     );
     let access = fixture.access();
     let request = fixture.request(
@@ -39,7 +41,9 @@ fn m2_25_policy_and_epoch_changes_are_rejected() {
     let fixture = Fixture::file(&[("task", CODING_ID)], 2, false);
     fixture.add_coding_job(1, "running", "running", "accepted");
     let clock = fixture.clock.clone();
-    let service = super::runtime_frame::WorldFrameService::new(fixture.readers_open(), std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+    let service = super::runtime_frame::WorldFrameService::new(
+        fixture.readers_open(),
+        std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
     );
     let access = fixture.access();
     let request = fixture.request(
@@ -72,7 +76,9 @@ fn m2_25_scope_epoch_change_is_rejected() {
     let fixture = Fixture::file(&[("task", CODING_ID)], 2, false);
     fixture.add_coding_job(1, "running", "running", "accepted");
     let clock = fixture.clock.clone();
-    let service = super::runtime_frame::WorldFrameService::new(fixture.readers_open(), std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+    let service = super::runtime_frame::WorldFrameService::new(
+        fixture.readers_open(),
+        std::sync::Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
     );
     let access = fixture.access();
     let request = fixture.request(access, vec![fixture.coding_ref(CODING_ID)], None);

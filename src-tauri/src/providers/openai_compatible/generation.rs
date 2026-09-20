@@ -17,6 +17,7 @@ pub(crate) async fn complete_generation(
     provider: &OpenAiCompatibleProviderSettings,
     system: &str,
     user: &str,
+    cancellation: &RunCancellation,
 ) -> Result<String, String> {
     let stored_key = super::provider_api_key(provider)?;
     let authorization = stored_key.map(|key| format!("Bearer {}", key.as_str()));
@@ -69,7 +70,7 @@ pub(crate) async fn complete_generation(
             max_output_tokens: GENERATION_MAX_TOKENS,
             input: &input,
             on_event: &sink,
-            cancellation: Arc::new(RunCancellation::default()),
+            cancellation: Arc::new(cancellation.clone()),
             context_health: "green",
             context_sources: &[],
             context_omissions: &[],

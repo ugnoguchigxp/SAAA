@@ -56,13 +56,6 @@ pub(crate) async fn resolve(address: &str) -> Result<HarnessResolution, String> 
     Ok(resolution_from_descriptor(descriptor).await)
 }
 
-pub(crate) async fn resolve_service(
-    address: &str,
-    capability: &str,
-) -> Result<ServiceDescriptor, String> {
-    resolve_service_inner(address, capability).await
-}
-
 pub(crate) async fn resolve_service_cancellable(
     address: &str,
     capability: &str,

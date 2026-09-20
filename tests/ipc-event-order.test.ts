@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { runtimeEventOrder, voiceAsrEventOrder, meetingEventOrder } from "../src/lib/ipcEventOrder";
+import { runtimeEventOrder, voiceAsrEventOrder } from "../src/lib/ipcEventOrder";
 import { guardedReceiver, runtimeEventSchema, voiceAsrEventSchema } from "../src/lib/ipcValidation";
 import type { VoiceAsrStreamEvent } from "../src/lib/generated/voiceAsr";
 
@@ -105,29 +105,6 @@ test("ASR stopped seals the channel without forwarding late finals", () => {
   expect(failures).toBe(1);
 });
 
-test("meeting scopes sequences to session and lane without rejecting out-of-order completion", () => {
-  const order = meetingEventOrder();
-  expect(order({ type: "stateChanged", sessionId: null, state: "idle" })).toBe(true);
-  expect(order({ type: "stateChanged", sessionId: "m", state: "active" })).toBe(true);
-  const transcript = {
-    type: "transcriptFinal",
-    sessionId: "m",
-    lane: "microphone",
-    sequence: 1,
-    text: "ok",
-    language: null,
-  } as const;
-  expect(order(transcript)).toBe(true);
-  expect(order({ ...transcript, sequence: 0 })).toBe(true);
-  expect(order({ ...transcript, lane: "system-audio" })).toBe(true);
-  expect(order(transcript)).toBe(false);
-  expect(order({ type: "stateChanged", sessionId: "m", state: "completed" })).toBe(true);
-  expect(order({ ...transcript, sequence: 2 })).toBe(false);
-  expect(order({ type: "stateChanged", sessionId: "m", state: "active" })).toBe(false);
-  expect(order({ type: "stateChanged", sessionId: "next", state: "active" })).toBe(true);
-  expect(order({ ...transcript, sessionId: "next" })).toBe(true);
-});
-
 test("fatal ASR failure permits cleanup but rejects further transcripts", () => {
   const order = voiceAsrEventOrder("s");
   expect(order(ready)).toBe(true);
@@ -147,44 +124,4 @@ test("fatal ASR failure permits cleanup but rejects further transcripts", () => 
     order({ type: "utteranceDiscarded", sessionId: "s", utteranceId: "u", reason: "cancelled" }),
   ).toBe(true);
   expect(order({ type: "stopped", sessionId: "s" })).toBe(true);
-});
-
-test("meeting preflight can follow idle while failure seals the active session", () => {
-  const order = meetingEventOrder();
-  expect(order({ type: "stateChanged", sessionId: null, state: "idle" })).toBe(true);
-  expect(order({ type: "stateChanged", sessionId: null, state: "ready" })).toBe(true);
-  expect(order({ type: "stateChanged", sessionId: "m", state: "active" })).toBe(true);
-  expect(
-    order({
-      type: "failed",
-      sessionId: "m",
-      code: "MEETING_ASR_FAILED",
-      message: "failed",
-      recovery: "retry",
-    }),
-  ).toBe(true);
-  expect(
-    order({
-      type: "transcriptFinal",
-      sessionId: "m",
-      lane: "microphone",
-      sequence: 0,
-      text: "late",
-      language: null,
-    }),
-  ).toBe(false);
-});
-
-test("meeting subscription accepts a failure notice after its initial failed snapshot", () => {
-  const order = meetingEventOrder();
-  expect(order({ type: "stateChanged", sessionId: "m", state: "failed" })).toBe(true);
-  expect(
-    order({
-      type: "failed",
-      sessionId: "m",
-      code: "MEETING_ASR_FAILED",
-      message: "failed",
-      recovery: "retry",
-    }),
-  ).toBe(true);
 });

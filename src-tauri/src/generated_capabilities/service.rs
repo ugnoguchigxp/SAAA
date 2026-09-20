@@ -159,7 +159,7 @@ impl CapabilityService {
         self.unavailable.as_ref()
     }
 
-    fn ensure_accepting(&self) -> CapabilityResult<()> {
+    pub(crate) fn ensure_accepting(&self) -> CapabilityResult<()> {
         if self.is_shutting_down() {
             return error(
                 CapabilityErrorCode::Unavailable,
@@ -173,7 +173,7 @@ impl CapabilityService {
         execution::register(&self.executions, id, cancellation);
     }
 
-    fn require_host(&self) -> CapabilityResult<&Arc<WasmHost>> {
+    pub(crate) fn require_host(&self) -> CapabilityResult<&Arc<WasmHost>> {
         match (&self.host, &self.unavailable) {
             (Some(host), _) => Ok(host),
             (None, Some(error)) => Err(error.clone()),
@@ -195,7 +195,7 @@ impl CapabilityService {
         }
     }
 
-    fn acquire_process_slot(&self) -> CapabilityResult<OwnedSemaphorePermit> {
+    pub(crate) fn acquire_process_slot(&self) -> CapabilityResult<OwnedSemaphorePermit> {
         self.process.clone().try_acquire_owned().map_err(|_| {
             CapabilityError::new(
                 CapabilityErrorCode::Busy,

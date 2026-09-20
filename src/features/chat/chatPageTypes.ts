@@ -28,7 +28,6 @@ export type ChatPageProps = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onToggleVoice: () => void;
   voiceStarting: boolean;
-  meetingActive: boolean;
   activeRunId: string | null;
   modelProviderStatus: {
     ready: boolean;

@@ -82,8 +82,7 @@ fn policy_is_conversation_scoped_and_deleted_with_its_conversation() {
 #[test]
 fn presentation_precedence_keeps_hard_and_global_blocks_above_overrides() {
     assert_eq!(
-        effective_presentation_from(false, Some(RunSpeechOverride::Speak), "inherit")
-            .reason_code,
+        effective_presentation_from(false, Some(RunSpeechOverride::Speak), "inherit").reason_code,
         "global_opt_out"
     );
     assert_eq!(

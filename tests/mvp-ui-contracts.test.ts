@@ -61,7 +61,9 @@ describe("MVP UI reachability contracts", () => {
     expect(settingsPersistence).toContain("...draft.codex");
   });
   test("lets users configure conversation identity names in General settings", () => {
-    const settings = source("src/features/settings/SettingsPage.tsx");
+    const settings =
+      source("src/features/settings/SettingsPage.tsx") +
+      source("src/features/settings/SettingsGeneralSection.tsx");
     const defaults = source("src/features/settings/settingsDefaults.ts");
     const settingsPersistence = source("src/features/settings/settingsDraft.ts");
     expect(settings).toContain('t("settings.general.agentName")');
@@ -72,17 +74,16 @@ describe("MVP UI reachability contracts", () => {
     expect(settings).toContain('t("settings.general.userNamePlaceholder")');
     expect(settingsPersistence).toContain("userName: draft.codex.userName.trim()");
   });
-  test("uses one bounded final-segment path for Meeting transcription", () => {
+  test("uses one bounded final-segment path for voice transcription", () => {
     const contracts = source("src/lib/contracts.ts");
     const voice = source("src/features/voice/useAmbientVoiceSession.ts");
     const transcriber = source("src/features/voice/voiceAsrPacketSender.ts");
-    const meeting = source("src/features/meeting/useMeetingSession.ts");
     expect(contracts).not.toContain('type: "transcriptDelta"');
     expect(voice).toContain("packetVoiceFrame");
     expect(transcriber).toContain("enqueueAudio");
     expect(transcriber).toContain("this.operations.push");
     expect(contracts).not.toContain('type: "transcriptPartial"');
-    expect(meeting).toContain('event.type === "transcriptFinal"');
-    expect(meeting).not.toContain("previewMeetingAudioSegment");
+    expect(contracts).not.toContain("MeetingSnapshot");
+    expect(source("src/App.tsx")).not.toContain("MeetingPage");
   });
 });

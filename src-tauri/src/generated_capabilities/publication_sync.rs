@@ -12,7 +12,11 @@ use super::generation::repository as generation_repository;
 use super::repository::{self, Activation};
 use crate::now_iso;
 use crate::tool_selection::catalog::{self, CatalogEntry, UsagePage};
-use crate::tool_selection::catalog::{hex_sha256, canonical_json};
+use crate::tool_selection::catalog::{canonical_json, hex_sha256};
+
+#[path = "publication_unpublish.rs"]
+mod publication_unpublish;
+pub use publication_unpublish::{unpublish_catalog_for_capability, unpublish_tool_for_capability};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PublishStep {
@@ -77,7 +81,7 @@ pub fn activate_and_publish(
         &revision.contract_hash,
         activation.catalog_epoch,
     );
-    let entry = catalog_entry(&tool, &revision)?;
+    let entry = catalog_entry(&tool, &revision, activation.catalog_epoch)?;
     fail(request.fail_at, PublishStep::Catalog)?;
     catalog::register_revision(
         connection,
@@ -96,10 +100,7 @@ pub fn activate_and_publish(
     if request.grant_on_create {
         fail(request.fail_at, PublishStep::Grant)?;
         catalog::grant_user(connection, request.principal_id, &tool).map_err(|_| {
-            CapabilityError::new(
-                CapabilityErrorCode::StorageError,
-                "initial grant failed",
-            )
+            CapabilityError::new(CapabilityErrorCode::StorageError, "initial grant failed")
         })?;
     }
     if let Some(job_id) = request.job_id {
@@ -123,29 +124,22 @@ pub fn activate_and_publish(
     Ok(activation)
 }
 
-pub fn unpublish_tool_for_capability(
-    connection: &Connection,
-    principal_id: &str,
-    capability_id: &str,
-) -> CapabilityResult<()> {
-    let source = source_id(principal_id);
-    let tool = tool_id(&source, capability_id);
-    catalog::unpublish_tool(connection, &tool).map_err(|_| {
-        CapabilityError::new(
-            CapabilityErrorCode::StorageError,
-            "tool catalog unpublish failed",
-        )
-    })
-}
-
-fn catalog_entry(tool: &str, revision: &repository::RevisionRow) -> CapabilityResult<CatalogEntry> {
+fn catalog_entry(
+    tool: &str,
+    revision: &repository::RevisionRow,
+    catalog_epoch: i64,
+) -> CapabilityResult<CatalogEntry> {
     let contract: WasmContract = serde_json::from_str(&revision.contract_json).map_err(|_| {
         CapabilityError::new(
             CapabilityErrorCode::IntegrityError,
             "revision contract is not valid JSON",
         )
     })?;
-    let fields: Vec<String> = contract.fields.iter().map(|field| field.name.clone()).collect();
+    let fields: Vec<String> = contract
+        .fields
+        .iter()
+        .map(|field| field.name.clone())
+        .collect();
     let schema = json!({
         "type": "object",
         "properties": fields.iter().cloned().map(|name| (name, json!({"type":"boolean"}))).collect::<serde_json::Map<String, Value>>(),
@@ -157,7 +151,7 @@ fn catalog_entry(tool: &str, revision: &repository::RevisionRow) -> CapabilityRe
         "revisionId": revision.id,
         "packageHash": revision.package_hash,
         "contractHash": revision.contract_hash,
-        "catalogEpoch": 0,
+        "catalogEpoch": catalog_epoch,
         "inputFields": fields
     });
     Ok(CatalogEntry {
@@ -172,9 +166,9 @@ fn catalog_entry(tool: &str, revision: &repository::RevisionRow) -> CapabilityRe
         required_inputs: fields,
         input_schema: schema,
         output_schema: Some(json!({"type":"boolean"})),
-        effect: "none",
+        effect: "pure",
         usage_pages: vec![UsagePage {
-            section: "overview",
+            section: "usage",
             page: 1,
             text: format!("Generated capability {}", revision.capability_id),
         }],
@@ -208,10 +202,7 @@ mod tests {
 
     async fn verified(env: &TestEnv) -> (String, i64) {
         let revision = env.import(CANDIDATE_A, ACCEPTANCE_A).await.expect("import");
-        let summary = env
-            .verify(&revision, ACCEPTANCE_A)
-            .await
-            .expect("verify");
+        let summary = env.verify(&revision, ACCEPTANCE_A).await.expect("verify");
         assert!(summary.passed);
         let epoch = env
             .service
@@ -224,8 +215,8 @@ mod tests {
     async fn rw_04_catalog_failure_rolls_back_activation() {
         let env = TestEnv::start(true);
         let (revision_id, epoch) = verified(&env).await;
-        let principal = crate::tool_selection::service::ensure_principal(&env.writer)
-            .expect("principal");
+        let principal =
+            crate::tool_selection::service::ensure_principal(&env.writer).expect("principal");
         let result = lifecycle::transaction(&env.writer, |transaction| {
             activate_and_publish(
                 transaction,
@@ -261,8 +252,8 @@ mod tests {
     async fn rw_04_publish_registers_one_catalog_revision() {
         let env = TestEnv::start(true);
         let (revision_id, epoch) = verified(&env).await;
-        let principal = crate::tool_selection::service::ensure_principal(&env.writer)
-            .expect("principal");
+        let principal =
+            crate::tool_selection::service::ensure_principal(&env.writer).expect("principal");
         lifecycle::transaction(&env.writer, |transaction| {
             activate_and_publish(
                 transaction,
@@ -295,5 +286,20 @@ mod tests {
             })
             .expect("grants");
         assert_eq!(grants, 1);
+        let binding: String = env
+            .writer
+            .read_serialized(|connection| {
+                connection
+                    .query_row(
+                        "SELECT backend_binding_json FROM tool_selection_revisions
+                         ORDER BY rowid DESC LIMIT 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })
+            .expect("binding");
+        let value: serde_json::Value = serde_json::from_str(&binding).expect("json");
+        assert_eq!(value["catalogEpoch"].as_i64(), Some(1), "{binding}");
     }
 }

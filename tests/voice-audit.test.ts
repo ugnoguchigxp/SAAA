@@ -20,7 +20,7 @@ describe("voice audit projections", () => {
     auditCaptureFailed("s1", "c1", new MicrophoneCaptureError("permission-denied", "denied"));
     auditCaptureFailed("s1", "c1", "asr-provider-unavailable");
     auditCaptureFailed("s1", "c1", "other");
-    auditCaptureSuspended("s1", "c1", "meeting");
+    auditCaptureSuspended("s1", "c1", "speech");
     auditVoiceDeliveryBlocked("s1", "u1", "c1", 2);
     auditVoiceDeliveryBlocked("s1", "u1", "c1");
     const utterance = { sessionId: "s1", utteranceId: "u1", conversationId: "c1", text: "hello" };

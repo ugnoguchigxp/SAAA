@@ -1,8 +1,8 @@
 use super::migrate::{
     ensure_provider_configuration_fingerprint, migrate_direct_dynamic_lan_provider_to_discovery,
     migrate_legacy_settings_documents, migrate_pristine_provider_defaults_to_dynamic_lan,
-    migrate_provider_reasoning_effort_default, migrate_v4_to_v5, migrate_v6_to_v7,
-    migrate_v7_to_v8, migrate_v8_to_v9, migrate_v26_to_v27,
+    migrate_provider_reasoning_effort_default, migrate_v26_to_v27, migrate_v4_to_v5,
+    migrate_v6_to_v7, migrate_v7_to_v8, migrate_v8_to_v9,
 };
 use super::provider_identity::migrate_dynamic_lan_provider_identity;
 use super::runs::reconcile_interrupted_runs;
@@ -12,8 +12,9 @@ use crate::{memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATIO
 use rusqlite::{params, Connection};
 
 /// Current schema. 26 added steward tables and generated-capability generation/inspection
-/// tables. 27 dropped Meeting session tables. The next additive DDL must bump this to 28.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 27;
+/// tables. 27 dropped Meeting session tables. 28 adds the role-routing ledger; 29 adds its
+/// local learning ledger.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 29;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -183,6 +184,16 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     )
     .map_err(|error| rusqlite::Error::InvalidParameterName(error.encode()))?;
     crate::tool_selection::schema::migrate(&transaction)?;
+    crate::role_routing::schema::migrate(&transaction)?;
+    crate::role_routing::learning::schema::migrate(&transaction)?;
+    crate::role_routing::repository::capture_current_policy(
+        &transaction,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0),
+    )
+    .map_err(rusqlite::Error::InvalidParameterName)?;
     // Version 25 binds learned corrections to the remote endpoint they were learned on. Existing
     // remote rules are recorded as unconfirmed rather than guessed onto the current endpoint.
     if previous_version < 25 {

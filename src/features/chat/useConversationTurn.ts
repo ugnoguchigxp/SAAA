@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { isMeetingBlocking, toMessage } from "../../lib/appHelpers";
+import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
 import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
 import {
@@ -29,7 +29,6 @@ import {
 import type {
   AppSnapshot,
   ConversationMessage,
-  MeetingState,
   RuntimeEvent,
   VoiceSettings,
 } from "../../lib/contracts";
@@ -61,7 +60,6 @@ type RetryAction = {
 export function useConversationTurn({
   selectedConversationId,
   voiceSettings,
-  meetingState,
   pendingVoicePromptsRef,
   conversationSessionRef,
   suspendVoiceForSpeech,
@@ -71,7 +69,6 @@ export function useConversationTurn({
 }: {
   selectedConversationId: string | null;
   voiceSettings: VoiceSettings | null;
-  meetingState: MeetingState;
   pendingVoicePromptsRef: MutableRefObject<PendingConversationPrompt[]>;
   conversationSessionRef: MutableRefObject<ConversationSession>;
   suspendVoiceForSpeech: (speechRunId: string) => Promise<boolean>;
@@ -99,14 +96,12 @@ export function useConversationTurn({
   const voice = useConversationVoicePolicy(selectedConversationId, setError);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
-  const meetingStateRef = useRef<MeetingState>("idle");
   const failedRunIdsRef = useRef(new Set<string>());
   const incompleteRunIdsRef = useRef(new Set<string>());
   const speechStopRequestsRef = useRef(new Set<string>());
   const issueCoordinatorRef = useRef(new ConversationIssueCoordinator());
   const disposedRef = useRef(false);
   selectedConversationIdRef.current = selectedConversationId;
-  meetingStateRef.current = meetingState;
   useEffect(() => {
     disposedRef.current = false;
     const coordinator = issueCoordinatorRef.current;
@@ -235,7 +230,7 @@ export function useConversationTurn({
     beginRunPerformance(runId);
     const issueScope = issueCoordinatorRef.current.begin();
     const shouldStreamSpeech =
-      Boolean(voiceSettings?.autoSpeak) && !isMeetingBlocking(meetingStateRef.current);
+      Boolean(voiceSettings?.autoSpeak);
     const presentationMode = shouldStreamSpeech ? "visual-and-spoken" : "visual";
     let delivered = false;
     let deliverySettled = false;

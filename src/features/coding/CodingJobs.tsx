@@ -1,6 +1,8 @@
 import "./coding.css";
 import { useEffect, useState } from "react";
 import { codingApi, type CodingSnapshot } from "./api";
+import { StewardPanel } from "./StewardPanel";
+import { stewardErrorMessage } from "./stewardApi";
 const labels: Record<string, string> = {
   queued: "受付済み",
   running: "実行中",
@@ -29,7 +31,7 @@ export function CodingJobs({ conversationId }: { conversationId?: string }) {
           setData(next);
         }
       } catch (e) {
-        if (live) setError(String(e));
+        if (live) setError(stewardErrorMessage(e));
       }
     };
     void refresh();
@@ -46,7 +48,7 @@ export function CodingJobs({ conversationId }: { conversationId?: string }) {
       setData(await codingApi.snapshot(conversationId));
       setError("");
     } catch (e) {
-      setError(String(e));
+      setError(stewardErrorMessage(e));
     }
   }
   async function cancel(jobId: string, revision: number) {
@@ -56,7 +58,7 @@ export function CodingJobs({ conversationId }: { conversationId?: string }) {
       setData(await codingApi.snapshot(conversationId));
       setError("");
     } catch (e) {
-      setError(String(e));
+      setError(stewardErrorMessage(e));
     }
   }
   if (!conversationId || (!enabled && !data?.jobs.length)) return null;
@@ -78,6 +80,13 @@ export function CodingJobs({ conversationId }: { conversationId?: string }) {
           </button>
           <p>選択後、会話で実装を依頼してください。</p>
         </details>
+      )}
+      {enabled && (
+        <StewardPanel
+          conversationId={conversationId}
+          workspaceId={data?.workspace?.workspaceId}
+          onError={setError}
+        />
       )}
       {data?.jobs.map((job) => (
         <details key={job.jobId}>

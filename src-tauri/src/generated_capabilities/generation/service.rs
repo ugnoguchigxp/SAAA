@@ -1,74 +1,37 @@
 //! Generation job orchestration (plan 12.6, C10). Does not live in M1 `CapabilityService`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::builder::CandidateBuild;
 use super::config::RegisteredRequest;
 use super::contracts::{
     parse_model_response, GenerateInput, GenerationContext, GenerationErrorCode, GenerationReceipt,
     GenerationStatus,
 };
 use super::generator::Generator;
-use super::repository::{self, unix_ms, NewGenerationJob};
+use super::packager::Packager;
 use super::recovery;
-use crate::generated_capabilities::errors::{CapabilityError, CapabilityErrorCode, CapabilityResult};
+use super::repository::{self, unix_ms, NewGenerationJob};
+use crate::generated_capabilities::errors::{
+    CapabilityError, CapabilityErrorCode, CapabilityResult,
+};
+use crate::generated_capabilities::host::process::Cancellation;
 use crate::generated_capabilities::inspection::service::InspectionStore;
 use crate::generated_capabilities::lifecycle;
 use crate::generated_capabilities::publication_sync::{self, PublishRequest};
 use crate::generated_capabilities::service::{CapabilityService, ImportCandidate};
-use crate::generated_capabilities::host::process::Cancellation;
 use crate::new_id;
 use crate::persistence::SqliteWriter;
 use crate::RunCancellation;
 
+#[cfg(not(test))]
 const JOB_DEADLINE: Duration = Duration::from_secs(180);
+#[cfg(test)]
+const JOB_DEADLINE: Duration = Duration::from_millis(250);
 
-pub(crate) trait Packager: Send + Sync {
-    fn package(&self, capability_id: &str, job_id: &str) -> CapabilityResult<CandidateBuild>;
-}
-
-/// Copies a pre-built fixture candidate. Unit tests use this instead of the live L-Lang CLI.
-pub(crate) struct FixturePackager {
-    pub directory: PathBuf,
-}
-
-impl Packager for FixturePackager {
-    fn package(&self, _capability_id: &str, _job_id: &str) -> CapabilityResult<CandidateBuild> {
-        Ok(CandidateBuild {
-            directory: self.directory.clone(),
-            package_hash: "fixture".into(),
-        })
-    }
-}
-
-pub(crate) struct SequencePackager {
-    pub directories: Vec<PathBuf>,
-    index: std::sync::atomic::AtomicUsize,
-}
-
-impl SequencePackager {
-    pub(crate) fn new(directories: Vec<PathBuf>) -> Self {
-        Self {
-            directories,
-            index: std::sync::atomic::AtomicUsize::new(0),
-        }
-    }
-}
-
-impl Packager for SequencePackager {
-    fn package(&self, _capability_id: &str, _job_id: &str) -> CapabilityResult<CandidateBuild> {
-        let index = self
-            .index
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            .min(self.directories.len().saturating_sub(1));
-        Ok(CandidateBuild {
-            directory: self.directories[index].clone(),
-            package_hash: "fixture".into(),
-        })
-    }
-}
+#[cfg(test)]
+pub(crate) use super::packager::{FixturePackager, SequencePackager};
 
 pub(crate) struct GenerationService {
     writer: Arc<SqliteWriter>,
@@ -108,14 +71,26 @@ impl GenerationService {
         input: GenerateInput,
         cancellation: RunCancellation,
     ) -> GenerationReceipt {
-        match self.generate_inner(context, input, cancellation).await {
+        let mut job_id = String::new();
+        let mut phase = GenerationStatus::Requested;
+        match self
+            .generate_inner(context, input, cancellation, &mut job_id, &mut phase)
+            .await
+        {
             Ok(receipt) => receipt,
-            Err(error) => GenerationReceipt {
-                job_id: String::new(),
-                status: status_for(&error),
-                revision_id: None,
-                error_code: Some(map_error(&error)),
-            },
+            Err(error) => {
+                let error_code = map_error(&error);
+                if !job_id.is_empty() && error_code != GenerationErrorCode::Conflict {
+                    let terminal = status_for(&error);
+                    let _ = self.complete(&job_id, phase, terminal, Some(error_code));
+                }
+                GenerationReceipt {
+                    job_id,
+                    status: status_for(&error),
+                    revision_id: None,
+                    error_code: Some(error_code),
+                }
+            }
         }
     }
 
@@ -124,7 +99,15 @@ impl GenerationService {
         context: GenerationContext,
         input: GenerateInput,
         cancellation: RunCancellation,
+        job_id: &mut String,
+        phase: &mut GenerationStatus,
     ) -> CapabilityResult<GenerationReceipt> {
+        if context.input_message_id.is_empty() {
+            return Err(CapabilityError::new(
+                CapabilityErrorCode::InvalidInput,
+                "generation identity requires an input message",
+            ));
+        }
         let request = self
             .requests
             .iter()
@@ -167,7 +150,6 @@ impl GenerationService {
                 "another generation job is running for this capability",
             ));
         }
-        let job_id = new_id("gcjob");
         let snapshot = std::fs::read_to_string(&request.request_path).map_err(|_| {
             CapabilityError::new(
                 CapabilityErrorCode::StorageError,
@@ -175,18 +157,22 @@ impl GenerationService {
             )
         })?;
         let digest = request.request_hash.clone();
-        let expected_epoch = if input.base_revision_id.is_some() {
-            self.capabilities
-                .catalog_epoch(&request.capability_id)
-                .unwrap_or(0)
-        } else {
-            0
+        let expected_epoch = match &input.base_revision_id {
+            Some(base) => {
+                let capability_id = lifecycle::read(&self.writer, |connection| {
+                    crate::generated_capabilities::repository::revision_by_id(connection, base)
+                        .map(|revision| revision.capability_id)
+                })?;
+                self.capabilities.catalog_epoch(&capability_id)?
+            }
+            None => 0,
         };
+        let assigned = new_id("gcjob");
         lifecycle::transaction(&self.writer, |transaction| {
             repository::insert_job(
                 transaction,
                 &NewGenerationJob {
-                    id: job_id.clone(),
+                    id: assigned.clone(),
                     principal_id: context.principal_id.clone(),
                     conversation_id: context.conversation_id.clone(),
                     run_id: context.run_id.clone(),
@@ -202,31 +188,55 @@ impl GenerationService {
                 },
             )
         })?;
-        self.advance(&job_id, GenerationStatus::Requested, GenerationStatus::Generating)?;
+        *job_id = assigned;
+        *phase = GenerationStatus::Requested;
+        self.advance(job_id, *phase, GenerationStatus::Generating)?;
+        *phase = GenerationStatus::Generating;
         check_cancel(&cancellation)?;
         let prompt = super::generator::build_prompt(request, snapshot.as_bytes())?;
-        let generated = tokio::time::timeout(JOB_DEADLINE, self.generator.generate(&prompt))
-            .await
-            .map_err(|_| {
-                CapabilityError::new(CapabilityErrorCode::Timeout, "generation budget exceeded")
-            })?
-            .map_err(|code| CapabilityError::new(code.capability_code(), "generator failed"))?;
-        let _source = parse_model_response(&generated)?;
+        let generated = tokio::time::timeout(
+            JOB_DEADLINE,
+            self.generator.generate(&prompt, &cancellation),
+        )
+        .await
+        .map_err(|_| {
+            CapabilityError::new(CapabilityErrorCode::Timeout, "generation budget exceeded")
+        })?
+        .map_err(|code| CapabilityError::new(code.capability_code(), "generator failed"))?;
+        let source = parse_model_response(&generated)?;
         check_cancel(&cancellation)?;
-        self.advance(&job_id, GenerationStatus::Generating, GenerationStatus::Building)?;
-        let built = self.packager.package(&request.capability_id, &job_id)?;
+        self.advance(job_id, *phase, GenerationStatus::Building)?;
+        *phase = GenerationStatus::Building;
+        // Packaging runs the fixed kit (a subprocess, up to the package budget), so it is kept off
+        // the async worker threads. The model call and build never hold a DB lock.
+        let packager = self.packager.clone();
+        let request_for_build = request.clone();
+        let job_for_build = job_id.clone();
+        let source_for_build = source.clone();
+        let built = tokio::task::spawn_blocking(move || {
+            packager.package(&request_for_build, &job_for_build, &source_for_build)
+        })
+        .await
+        .map_err(|_| {
+            CapabilityError::new(
+                CapabilityErrorCode::Unavailable,
+                "the packaging task did not complete",
+            )
+        })??;
         check_cancel(&cancellation)?;
-        self.advance(&job_id, GenerationStatus::Building, GenerationStatus::Importing)?;
+        self.advance(job_id, *phase, GenerationStatus::Importing)?;
+        *phase = GenerationStatus::Importing;
         let imported = self
             .capabilities
             .import_candidate(&ImportCandidate {
-                capability_id: Some(request.capability_id.clone()),
+                capability_id: None,
                 candidate_directory: built.directory,
                 acceptance_id: request.acceptance_id.clone(),
                 provenance: "generated".to_string(),
             })
             .await?;
-        self.advance(&job_id, GenerationStatus::Importing, GenerationStatus::Verifying)?;
+        self.advance(job_id, *phase, GenerationStatus::Verifying)?;
+        *phase = GenerationStatus::Verifying;
         let host_cancel = Cancellation::default();
         if cancellation.is_cancelled() {
             host_cancel.cancel();
@@ -236,46 +246,52 @@ impl GenerationService {
             .verify_candidate(&imported.revision_id, &request.acceptance_id, &host_cancel)
             .await?;
         if !verified.passed {
-            self.fail(&job_id, GenerationStatus::Verifying, GenerationErrorCode::AcceptanceFailed)?;
-            return Ok(GenerationReceipt {
+            self.complete(
                 job_id,
+                *phase,
+                GenerationStatus::Failed,
+                Some(GenerationErrorCode::AcceptanceFailed),
+            )?;
+            return Ok(GenerationReceipt {
+                job_id: job_id.clone(),
                 status: GenerationStatus::Failed,
                 revision_id: Some(imported.revision_id),
                 error_code: Some(GenerationErrorCode::AcceptanceFailed),
             });
         }
         lifecycle::transaction(&self.writer, |transaction| {
-            repository::set_revision(transaction, &job_id, &imported.revision_id)
+            repository::set_revision(transaction, job_id, &imported.revision_id)
         })?;
-        self.advance(
-            &job_id,
-            GenerationStatus::Verifying,
-            GenerationStatus::AwaitingActivation,
-        )?;
+        self.advance(job_id, *phase, GenerationStatus::AwaitingActivation)?;
+        *phase = GenerationStatus::AwaitingActivation;
         if request.auto_activate {
-            let epoch = self.capabilities.catalog_epoch(&request.capability_id)?;
+            // Activation uses the epoch fixed when the job started, so an update that raced another
+            // change conflicts instead of publishing on top of it (plan 12.6, G08).
+            let job = lifecycle::read(&self.writer, |connection| {
+                repository::job_by_id(connection, job_id.as_str())
+            })?;
             lifecycle::transaction(&self.writer, |transaction| {
                 publication_sync::activate_and_publish(
                     transaction,
                     PublishRequest {
                         principal_id: &context.principal_id,
                         revision_id: &imported.revision_id,
-                        expected_epoch: epoch,
-                        job_id: Some(&job_id),
+                        expected_epoch: job.expected_epoch,
+                        job_id: Some(job_id.as_str()),
                         grant_on_create: request.grant_on_create,
                         fail_at: None,
                     },
                 )
             })?;
             return Ok(GenerationReceipt {
-                job_id,
+                job_id: job_id.clone(),
                 status: GenerationStatus::Active,
                 revision_id: Some(imported.revision_id),
                 error_code: None,
             });
         }
         Ok(GenerationReceipt {
-            job_id,
+            job_id: job_id.clone(),
             status: GenerationStatus::AwaitingActivation,
             revision_id: Some(imported.revision_id),
             error_code: None,
@@ -300,15 +316,15 @@ impl GenerationService {
         Ok(())
     }
 
-    fn fail(
+    fn complete(
         &self,
         job_id: &str,
         from: GenerationStatus,
-        code: GenerationErrorCode,
+        status: GenerationStatus,
+        code: Option<GenerationErrorCode>,
     ) -> CapabilityResult<()> {
         lifecycle::transaction(&self.writer, |transaction| {
-            repository::finish(transaction, job_id, from, GenerationStatus::Failed, Some(code), None, unix_ms())
-                .map(|_| ())
+            repository::finish(transaction, job_id, from, status, code, None, unix_ms()).map(|_| ())
         })
     }
 }
@@ -342,7 +358,9 @@ fn map_error(error: &CapabilityError) -> GenerationErrorCode {
         CapabilityErrorCode::Cancelled => GenerationErrorCode::Cancelled,
         CapabilityErrorCode::Conflict => GenerationErrorCode::Conflict,
         CapabilityErrorCode::VerificationFailed => GenerationErrorCode::AcceptanceFailed,
-        _ => GenerationErrorCode::parse(error.code.as_str()).unwrap_or(GenerationErrorCode::Storage),
+        _ => {
+            GenerationErrorCode::parse(error.code.as_str()).unwrap_or(GenerationErrorCode::Storage)
+        }
     }
 }
 
@@ -353,3 +371,13 @@ fn status_for(error: &CapabilityError) -> GenerationStatus {
         _ => GenerationStatus::Failed,
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/generation_closeout.rs"]
+mod generation_closeout;
+#[cfg(test)]
+#[path = "../tests/generation_fail.rs"]
+mod generation_fail;
+#[cfg(test)]
+#[path = "../tests/generation_flow.rs"]
+mod generation_flow;

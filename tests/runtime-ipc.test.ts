@@ -4,48 +4,29 @@ import { invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
 import { markReasoningRun } from "../src/lib/reasoningRun";
 
 const {
-  appendMeetingAudioSegment,
   backupDatabase,
   cancelRun,
-  clearSituationHistory,
-  createSituationCalibrationCandidate,
-  decideSituationCalibration,
   deleteProviderApiKey,
   deleteVoiceEnrollmentSample,
   deleteVoiceProfile,
-  discardMeeting,
   exportDiagnostics,
   getAppSnapshot,
-  getMeetingSnapshot,
   getProviderCredentialState,
-  getSituationReviewSnapshot,
-  getSituationSnapshot,
   getVoiceProfileSnapshot,
   listAuditEvents,
   listMessages,
-  meetingPreflight,
-  pauseMeeting,
   readVoiceEnrollmentSample,
   reportFrontendReady,
   reportOwnedSignal,
   resolveServiceHarness,
-  resumeMeeting,
-  runSituationCalibration,
-  saveMeetingTranscript,
   saveSettingsDocuments,
   saveVoiceEnrollmentSample,
   setProviderApiKey,
-  setSituationMonitoring,
   setTargetSpeakerFilterEnabled,
   setVoiceListeningEnabled,
-  startMeeting,
   startTurn,
-  stopMeeting,
   stopTts,
-  submitSituationFeedback,
   testModelProvider,
-  unwatchMeeting,
-  watchMeeting,
 } = await import("../src/lib/runtime");
 const { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } =
   await import("../src/lib/voiceAsrRuntime");
@@ -236,64 +217,21 @@ describe("frontend IPC wrappers", () => {
     await saveSettingsDocuments(settingsDocuments());
     await setVoiceListeningEnabled(false);
     await listMessages("c1", null);
-    await getSituationSnapshot();
-    await setSituationMonitoring(true);
     await reportOwnedSignal({
       conversationState: "idle",
       microphoneState: "inactive",
       audioState: "silent",
     });
-    await submitSituationFeedback({
-      ledgerId: "ledger-1",
-      verdict: "accurate",
-      impact: "none",
-      correctedScene: null,
-      reasonCode: null,
-    });
-    await getSituationReviewSnapshot();
-    await createSituationCalibrationCandidate({
-      classificationMinConfidence: 70,
-      lowConfidenceMax: 45,
-      enterSampleCount: 3,
-      exitSampleCount: 5,
-      cooldownMs: 10_000,
-      inputActiveMaxMs: 30_000,
-      inputRecentMaxMs: 300_000,
-    });
-    await runSituationCalibration("profile-1");
-    await decideSituationCalibration("profile-1", "accept", "insufficient-evidence");
-    await clearSituationHistory();
-    await meetingPreflight({
-      microphoneDeviceId: "default",
-      systemAudioEnabled: false,
-      translationEnabled: false,
-    });
-    await startMeeting({
-      sessionId: "meeting-1",
-      microphoneDeviceId: "default",
-      microphoneEnabled: true,
-      systemAudioEnabled: false,
-      translationEnabled: false,
-      persistenceMode: "discard",
-    });
-    await getMeetingSnapshot();
-    await watchMeeting("sub-1", () => undefined);
-    await unwatchMeeting("sub-1");
-    await pauseMeeting("meeting-1");
-    await resumeMeeting("meeting-1");
-    await stopMeeting("meeting-1");
-    await saveMeetingTranscript("meeting-1");
-    await discardMeeting("meeting-1");
 
     const names = invokeCalls.map((call) => call.command);
     expect(names).toContain("start_turn");
     expect(names).toContain("save_settings_documents");
-    expect(names).toContain("watch_meeting");
-    expect(names).toContain("discard_meeting");
+    expect(names).not.toContain("watch_meeting");
+    expect(names).not.toContain("get_situation_snapshot");
     expect(events).toEqual([]);
   });
 
-  test("stages enrollment and meeting audio before invoking", async () => {
+  test("stages enrollment audio before invoking", async () => {
     invokeImpl.handler = async (command) =>
       command === "stage_audio_upload" ? "upload-1" : { id: command };
     const enrollment = new Float32Array([0.1, -0.2]);
@@ -304,23 +242,9 @@ describe("frontend IPC wrappers", () => {
       effectiveAec: false,
     });
     expect(enrollment[0]).toBe(0);
-    const meeting = new Float32Array([0.5]);
-    await appendMeetingAudioSegment({
-      sessionId: "meeting-1",
-      captureToken: "token",
-      lane: "microphone",
-      sequence: 1,
-      samples: meeting,
-      sampleRate: 16_000,
-      startedAtMs: 0,
-      durationMs: 100,
-    });
-    expect(meeting[0]).toBe(0);
     expect(invokeCalls.map((call) => call.command)).toEqual([
       "stage_audio_upload",
       "save_voice_enrollment_sample",
-      "stage_audio_upload",
-      "append_meeting_audio_segment",
     ]);
   });
 
@@ -426,6 +350,6 @@ describe("frontend IPC wrappers", () => {
     await expect(stageAudioUpload(new Float32Array(), "voice-enrollment")).rejects.toThrow("empty");
     invokeImpl.handler = async () => "upload-2";
     const samples = new Float32Array([1]);
-    expect(await stageAudioUpload(samples, "meeting-segment")).toBe("upload-2");
+    expect(await stageAudioUpload(samples, "voice-enrollment")).toBe("upload-2");
   });
 });

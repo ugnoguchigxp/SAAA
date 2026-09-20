@@ -75,8 +75,12 @@ pub fn build_prompt(
 }
 
 #[async_trait]
-pub trait Generator: Send + Sync {
-    async fn generate(&self, prompt: &GenerationPrompt) -> Result<String, GenerationErrorCode>;
+pub(crate) trait Generator: Send + Sync {
+    async fn generate(
+        &self,
+        prompt: &GenerationPrompt,
+        cancellation: &crate::RunCancellation,
+    ) -> Result<String, GenerationErrorCode>;
 }
 
 /// Deterministic fake generator. It assembles `source.body` from the request contract and never
@@ -135,7 +139,11 @@ impl FakeGenerator {
 
 #[async_trait]
 impl Generator for FakeGenerator {
-    async fn generate(&self, _prompt: &GenerationPrompt) -> Result<String, GenerationErrorCode> {
+    async fn generate(
+        &self,
+        _prompt: &GenerationPrompt,
+        _cancellation: &crate::RunCancellation,
+    ) -> Result<String, GenerationErrorCode> {
         self.model_calls.fetch_add(1, Ordering::SeqCst);
         let fields = self
             .fields
@@ -166,31 +174,23 @@ impl Generator for FakeGenerator {
     }
 }
 
-/// Provider-backed generator over the existing tool-less structured completion path.
-#[allow(dead_code)]
-pub(crate) struct ProviderGenerator {
-    provider: crate::OpenAiCompatibleProviderSettings,
-}
-
-impl ProviderGenerator {
-    #[allow(dead_code)]
-    pub(crate) fn new(provider: crate::OpenAiCompatibleProviderSettings) -> Self {
-        Self { provider }
-    }
-}
+/// Provider-backed generator that fails closed when generation is not configured.
+pub(crate) struct DisabledGenerator;
 
 #[async_trait]
-impl Generator for ProviderGenerator {
-    async fn generate(&self, prompt: &GenerationPrompt) -> Result<String, GenerationErrorCode> {
-        crate::providers::openai_compatible::complete_generation(
-            &self.provider,
-            &prompt.system,
-            &prompt.user,
-        )
-        .await
-        .map_err(|_| GenerationErrorCode::ModelError)
+impl Generator for DisabledGenerator {
+    async fn generate(
+        &self,
+        _prompt: &GenerationPrompt,
+        _cancellation: &crate::RunCancellation,
+    ) -> Result<String, GenerationErrorCode> {
+        Err(GenerationErrorCode::Unavailable)
     }
 }
+
+#[path = "generator_providers.rs"]
+mod generator_providers;
+pub(crate) use generator_providers::ConversationProviderGenerator;
 
 #[cfg(test)]
 mod tests {
@@ -241,7 +241,10 @@ mod tests {
         let fake = FakeGenerator::new(&request, FakeBody::EnabledAndNotSuspended);
         let prompt =
             build_prompt(&request, br#"{"version":2,"id":"enabled-user","body":"x"}"#).unwrap();
-        let text = fake.generate(&prompt).await.unwrap();
+        let text = fake
+            .generate(&prompt, &crate::RunCancellation::default())
+            .await
+            .unwrap();
         let source = super::super::contracts::parse_model_response(&text).unwrap();
         assert_eq!(source.id, "enabled-user");
         assert_eq!(fake.model_calls(), 1);
@@ -259,7 +262,10 @@ mod tests {
         let fake = FakeGenerator::new(&request, FakeBody::Wrong);
         let prompt =
             build_prompt(&request, br#"{"version":2,"id":"enabled-user","body":"x"}"#).unwrap();
-        let text = fake.generate(&prompt).await.unwrap();
+        let text = fake
+            .generate(&prompt, &crate::RunCancellation::default())
+            .await
+            .unwrap();
         let source = super::super::contracts::parse_model_response(&text).unwrap();
         let property = source.body["conditions"][0]["property"][0]
             .as_str()

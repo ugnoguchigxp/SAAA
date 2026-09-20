@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type AudioUploadPurpose = "meeting-segment" | "voice-enrollment";
+export type AudioUploadPurpose = "voice-enrollment";
 const MAX_AUDIO_SAMPLES = 16_000 * 120;
 
 export function encodePcm16(samples: Float32Array): Uint8Array {

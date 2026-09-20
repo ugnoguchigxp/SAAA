@@ -3,6 +3,7 @@ import {
   type CodexAgentSettings,
   type ModelProvidersSettings,
   type RoutingSettings,
+  type RoleRoutingSettings,
   type RegionalPreferencesSettings,
   type SecuritySettings,
   type SettingsDocument,
@@ -15,6 +16,7 @@ import {
   modelProvidersSettingsSchema,
   regionalPreferencesSchema,
   routingSettingsSchema,
+  roleRoutingSettingsSchema,
   securitySettingsSchema,
   situationSettingsSchema,
   voiceSettingsSchema,
@@ -28,6 +30,7 @@ export type SettingsDraft = {
   security: SecuritySettings;
   regional: RegionalPreferencesSettings;
   situation: SituationSettings;
+  roleRouting: RoleRoutingSettings;
 };
 
 export function draftFromDocuments(
@@ -43,6 +46,7 @@ export function draftFromDocuments(
   const security = find("security.runtime", "default");
   const regional = find("ui.preferences", "default");
   const situation = find("situation.runtime", "default");
+  const roleRouting = find("routing.roles", "default");
   const parsedModel = modelProvidersSettingsSchema.safeParse(model);
   const parsedCodex = codexAgentSettingsSchema.safeParse(codex);
   const parsedRouting = routingSettingsSchema.safeParse(routing);
@@ -50,6 +54,7 @@ export function draftFromDocuments(
   const parsedSecurity = securitySettingsSchema.safeParse(security);
   const parsedRegional = regionalPreferencesSchema.safeParse(regional);
   const parsedSituation = situationSettingsSchema.safeParse(situation);
+  const parsedRoleRouting = roleRoutingSettingsSchema.safeParse(roleRouting);
   return {
     providers: parsedModel.success ? parsedModel.data : fallback.providers,
     codex: parsedCodex.success ? parsedCodex.data : fallback.codex,
@@ -58,6 +63,7 @@ export function draftFromDocuments(
     security: parsedSecurity.success ? parsedSecurity.data : fallback.security,
     regional: parsedRegional.success ? parsedRegional.data : fallback.regional,
     situation: parsedSituation.success ? parsedSituation.data : fallback.situation,
+    roleRouting: parsedRoleRouting.success ? parsedRoleRouting.data : fallback.roleRouting,
   };
 }
 
@@ -76,6 +82,7 @@ export function documentsFromDraft(
     document("security.runtime", "default", draft.security),
     document("ui.preferences", "default", draft.regional),
     document("situation.runtime", "default", draft.situation),
+    document("routing.roles", "default", draft.roleRouting, 1),
   ];
 }
 
@@ -109,6 +116,7 @@ function document(
   namespace: SettingsNamespace,
   key: "default" | "codex-sdk",
   valueJson: Record<string, unknown>,
+  schemaVersion: 1 | 15 = 15,
 ): Omit<SettingsDocument, "updatedAt"> {
-  return { namespace, key, schemaVersion: 15, valueJson };
+  return { namespace, key, schemaVersion, valueJson };
 }

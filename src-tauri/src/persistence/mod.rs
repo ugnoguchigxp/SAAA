@@ -14,8 +14,9 @@ pub(crate) mod sqlite;
 pub(crate) use conversation_page::list_message_page_from_connection;
 pub(crate) use conversations::list_conversations_from_connection;
 pub(crate) use settings::{
-    list_settings_documents, load_codex_settings, load_model_providers, load_routing_settings,
-    load_security_settings, load_voice_settings, save_settings_documents_to_connection,
-    validate_model_providers, validate_settings_batch, validate_settings_document,
+    list_settings_documents, load_codex_settings, load_model_providers, load_role_routing_settings,
+    load_routing_settings, load_security_settings, load_voice_settings,
+    save_settings_documents_to_connection, validate_model_providers, validate_settings_batch,
+    validate_settings_document,
 };
 pub(crate) use sqlite::{SqliteReaders, SqliteWriter};

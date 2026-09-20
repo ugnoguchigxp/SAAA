@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { renderSafeMarkdown } from "../src/features/chat/markdownRenderer";
-import { SegmentQueue } from "../src/features/meeting/audio/segmentQueue";
 import { productionLines } from "../scripts/module-size";
 import {
   availableTimeZones,
@@ -20,7 +19,6 @@ import i18n from "../src/i18n";
 import {
   formatRegionalDateTime,
   localizeForegroundCategory,
-  localizeMeetingLane,
   localizeProviderKind,
   localizeProviderLabel,
   localizeRuntimeActivity,
@@ -51,17 +49,6 @@ describe("extended coverage helpers", () => {
     expect(html).toContain("<em>em</em>");
     expect(html).toContain("<del>del</del>");
     expect(html).toContain("<code>code</code>");
-  });
-
-  test("discards overflow and clears remaining segments", () => {
-    const discarded: number[] = [];
-    const queue = new SegmentQueue<number>(1, (value) => discarded.push(value));
-    expect(queue.push(1)).toBe(true);
-    expect(queue.push(2)).toBe(false);
-    expect(discarded).toEqual([2]);
-    queue.clear();
-    expect(queue.length).toBe(0);
-    expect(discarded).toEqual([2, 1]);
   });
 
   test("counts production lines around comments, strings, and character literals", () => {
@@ -99,7 +86,7 @@ describe("extended coverage helpers", () => {
     expect(runPerformanceSnapshot("run_perf_cancel")).toBeNull();
   });
 
-  test("maps remaining situation, meeting, and provider labels", async () => {
+  test("maps remaining situation and provider labels", async () => {
     await i18n.changeLanguage("en");
     expect(localizeForegroundCategory(i18n.t, "coding")).toBe("Coding app");
     expect(localizeForegroundCategory(i18n.t, "mystery")).toBe("Unknown");
@@ -107,8 +94,6 @@ describe("extended coverage helpers", () => {
     expect(localizeSituationAttention(i18n.t, "busy")).not.toBe("");
     expect(localizeSituationAttention(i18n.t, "other")).toBe("Unknown");
     expect(localizeSituationEntryKind(i18n.t, "other")).toBe("Unknown");
-    expect(localizeMeetingLane(i18n.t, "microphone")).not.toBe("");
-    expect(localizeMeetingLane(i18n.t, "other")).toBe("Unknown");
     expect(localizeProviderKind(i18n.t, "larm")).not.toBe("");
     expect(localizeProviderKind(i18n.t, "other")).toBe("Unknown");
     expect(localizeProviderLabel(i18n.t, "Model not selected")).not.toBe("Model not selected");

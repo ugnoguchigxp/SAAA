@@ -96,7 +96,7 @@ impl SqliteReaders {
             .map_err(|error| format!("Database reader task failed: {error}"))?
     }
 
-    /// Returns the validated seven-document settings snapshot without decoding
+    /// Returns the validated settings snapshot without decoding
     /// the same JSON again until the settings revision trigger reports a change.
     /// The caller must pass the connection supplied to `read`, preserving the
     /// operation's single read transaction.

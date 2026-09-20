@@ -1,4 +1,4 @@
-import type { MeetingEvent, RuntimeEvent } from "./contracts";
+import type { RuntimeEvent } from "./contracts";
 import type { VoiceAsrStreamEvent } from "./generated/voiceAsr";
 
 export function runtimeEventOrder(runId: string) {
@@ -49,39 +49,6 @@ export function voiceAsrEventOrder(sessionId: string) {
       revision: event.revision,
       terminal: event.type === "final",
     });
-    return true;
-  };
-}
-
-export function meetingEventOrder() {
-  let sessionId: string | null = null;
-  let initialized = false;
-  let terminal = false;
-  const sequences = new Set<string>();
-  return (event: MeetingEvent) => {
-    if (event.type === "stateChanged") {
-      if (event.sessionId !== sessionId) {
-        sessionId = event.sessionId;
-        terminal = false;
-        sequences.clear();
-      }
-      const ended = sessionId !== null && ["completed", "failed", "idle"].includes(event.state);
-      if (initialized && terminal && !ended) return false;
-      initialized = true;
-      terminal = ended;
-      return true;
-    }
-    if (!initialized || event.sessionId !== sessionId) return false;
-    if (event.type === "failed") {
-      // The initial snapshot may already report failed before its notice arrives.
-      terminal = true;
-      return true;
-    }
-    if (terminal || !sessionId) return false;
-    // Two lanes and multiple in-flight segments can complete out of order.
-    const key = `${event.lane}:${event.sequence}`;
-    if (sequences.has(key)) return false;
-    sequences.add(key);
     return true;
   };
 }

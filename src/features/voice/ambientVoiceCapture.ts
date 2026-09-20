@@ -1,7 +1,6 @@
 import type { MutableRefObject } from "react";
-import { isMeetingBlocking } from "../../lib/appHelpers";
 import { acquireAudioCapture } from "../../lib/audioCaptureCoordinator";
-import type { MeetingState, VoiceSettings } from "../../lib/contracts";
+import type { VoiceSettings } from "../../lib/contracts";
 import {
   disposeMicrophoneCapture,
   ensureMicrophoneAudioContextRunning,
@@ -28,7 +27,6 @@ export async function attachAmbientVoiceCapture(context: {
   settings: VoiceSettings;
   disposed: MutableRefObject<boolean>;
   listeningEnabled: MutableRefObject<boolean>;
-  meetingState: MutableRefObject<MeetingState>;
   captureAttempt: MutableRefObject<number>;
   stream: MutableRefObject<MediaStream | null>;
   audioContext: MutableRefObject<AudioContext | null>;
@@ -44,7 +42,7 @@ export async function attachAmbientVoiceCapture(context: {
   clearTranscript: () => void;
 }): Promise<void> {
   if (context.disposed.current || context.stream.current || context.captureLease.current) return;
-  if (!context.listeningEnabled.current || isMeetingBlocking(context.meetingState.current)) return;
+  if (!context.listeningEnabled.current) return;
   const captureAttempt = ++context.captureAttempt.current;
   let stream: MediaStream | null = null;
   let audioContext: AudioContext | null = null;
@@ -55,8 +53,7 @@ export async function attachAmbientVoiceCapture(context: {
   const stale = () =>
     context.disposed.current ||
     context.captureAttempt.current !== captureAttempt ||
-    !context.listeningEnabled.current ||
-    isMeetingBlocking(context.meetingState.current);
+    !context.listeningEnabled.current;
   const releaseOwnedCapture = () => {
     const release = releaseCapture;
     if (!release) return;

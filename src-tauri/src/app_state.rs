@@ -9,7 +9,6 @@ pub(super) struct AppState {
     pub(super) provider_probes: Mutex<HashMap<String, ProviderProbeStatus>>,
     pub(super) interaction_policy: Mutex<()>,
     pub(super) shutdown_started: AtomicBool,
-    pub(super) network_asr: voice::network_asr::NetworkAsrRuntime,
     pub(super) audio_uploads: voice::audio_upload::AudioUploadStore,
     pub(super) streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime,
     pub(super) voice_behavior: voice_behavior::VoiceBehaviorRuntime,
@@ -17,7 +16,8 @@ pub(super) struct AppState {
     pub(super) voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
     pub(super) voice_asr: AsrSessionManager,
     pub(super) generated_capabilities: Arc<generated_capabilities::service::CapabilityService>,
-    pub(super) generation: Option<Arc<generated_capabilities::generation::service::GenerationService>>,
+    pub(super) generation:
+        Option<Arc<generated_capabilities::generation::service::GenerationService>>,
     pub(super) generated_tools: generated_capabilities::publication::GeneratedToolsConfig,
     pub(super) tool_selection: Arc<tool_selection::ToolSelectionService>,
     pub(super) mcp_server: Mutex<Option<tool_selection::mcp_server::ServerHandle>>,

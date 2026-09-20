@@ -331,13 +331,13 @@ pub(crate) fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> 
         |row| row.get(0),
     )?;
     if meeting_exists {
-    let meeting_schema: String = connection.query_row(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_sessions'",
-        [],
-        |row| row.get(0),
-    )?;
-    if !meeting_schema.contains("network-asr") {
-        connection.execute_batch(
+        let meeting_schema: String = connection.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='meeting_sessions'",
+            [],
+            |row| row.get(0),
+        )?;
+        if !meeting_schema.contains("network-asr") {
+            connection.execute_batch(
             "CREATE TABLE meeting_sessions_v9 (
                id TEXT PRIMARY KEY,
                status TEXT NOT NULL CHECK(status IN ('active','paused','completed','saved','discarded','failed','interrupted')),
@@ -375,7 +375,7 @@ pub(crate) fn migrate_v8_to_v9(connection: &Connection) -> rusqlite::Result<()> 
              CREATE INDEX idx_meeting_transcript_session_sequence
                ON meeting_transcript_entries(session_id,lane,sequence);",
         )?;
-    }
+        }
     }
 
     for (namespace, key, _, template) in default_settings_documents() {
@@ -745,10 +745,11 @@ mod tests {
         let connection = Connection::open_in_memory().expect("in-memory sqlite");
         initialize_database(&connection).expect("migration succeeds");
         let documents = list_settings_documents(&connection).expect("documents load");
-        assert_eq!(documents.len(), 7);
+        assert_eq!(documents.len(), 8);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == SETTINGS_SCHEMA_VERSION));
+            .all(|document| document.namespace == "routing.roles"
+                || document.schema_version == SETTINGS_SCHEMA_VERSION));
         let providers = documents
             .iter()
             .find(|document| document.namespace == "providers.model")
@@ -1350,9 +1351,10 @@ mod tests {
 
         initialize_database(&connection).expect("v8 migration");
         let documents = list_settings_documents(&connection).expect("strict settings load");
-        assert_eq!(documents.len(), 7);
+        assert_eq!(documents.len(), 8);
         assert!(documents.iter().all(|document| {
-            document.schema_version == SETTINGS_SCHEMA_VERSION
+            (document.namespace == "routing.roles"
+                || document.schema_version == SETTINGS_SCHEMA_VERSION)
                 && document.value_json.get("legacyField").is_none()
         }));
         let providers = documents
@@ -1894,10 +1896,11 @@ mod tests {
             .expect("version reads");
         assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
         let documents = list_settings_documents(&reopened).expect("settings load");
-        assert_eq!(documents.len(), 7);
+        assert_eq!(documents.len(), 8);
         assert!(documents
             .iter()
-            .all(|document| document.schema_version == SETTINGS_SCHEMA_VERSION));
+            .all(|document| document.namespace == "routing.roles"
+                || document.schema_version == SETTINGS_SCHEMA_VERSION));
         let thread: String = reopened
             .query_row(
                 "SELECT thread_id FROM codex_threads WHERE conversation_id = 'kept-conversation'",

@@ -1,5 +1,6 @@
 import type { SettingsDraft } from "./settingsDraft";
 import { DEFAULT_CONVERSATION_TIMEOUT_MS } from "../../lib/conversationTimeout";
+import { defaultRoleRouting } from "./settingsRoleRouting";
 
 export const DEFAULT_AGENT_NAME = "SAAA";
 const DEFAULT_DYNAMIC_LAN_HOST = "localhost";
@@ -88,4 +89,5 @@ export const defaultSettingsDraft: SettingsDraft = {
     heartbeatIntervalMs: 300_000,
     sensitiveApplicationCategories: true,
   },
+  roleRouting: defaultRoleRouting,
 };

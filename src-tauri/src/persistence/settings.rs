@@ -1,10 +1,12 @@
 mod voice_fallbacks;
 use rusqlite::{params, Connection};
-use serde_json::{json, Value};
 
 mod provider_validation;
 pub(crate) mod regional_preferences;
+#[path = "settings_defaults.rs"]
+mod settings_defaults;
 pub(crate) use provider_validation::validate_model_providers;
+pub(crate) use settings_defaults::default_settings_documents;
 
 pub(crate) const SETTINGS_SCHEMA_VERSION: i64 = 15;
 const DEFAULT_CONVERSATION_TIMEOUT_MS: u64 = 1_800_000;
@@ -13,8 +15,7 @@ const MAX_CONVERSATION_TIMEOUT_MS: u64 = 3_600_000;
 use crate::{
     database_error, now_iso, providers, situation, CodexAgentRuntimeSettings,
     ModelProviderSettings, ModelProvidersSettings, RoutingSettings, SaveSettingsDocumentInput,
-    SecurityRuntimeSettings, SettingsDocument, VoiceRuntimeSettings, DEFAULT_AGENT_NAME,
-    DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME, DYNAMIC_LAN_PROVIDER_ID,
+    SecurityRuntimeSettings, SettingsDocument, VoiceRuntimeSettings,
 };
 
 pub(crate) fn load_codex_settings(
@@ -86,6 +87,16 @@ pub(crate) fn load_routing_settings(connection: &Connection) -> Result<RoutingSe
     Ok(settings)
 }
 
+pub(crate) fn load_role_routing_settings(
+    connection: &Connection,
+) -> Result<crate::role_routing::RoleRoutingSettings, String> {
+    let document = read_settings_document(connection, "routing.roles", "default")?;
+    let settings = serde_json::from_value(document.value_json)
+        .map_err(|error| format!("Could not decode role routing settings: {error}"))?;
+    crate::role_routing::contracts::validate_settings(&settings)?;
+    Ok(settings)
+}
+
 pub(crate) fn load_security_settings(
     connection: &Connection,
 ) -> Result<SecurityRuntimeSettings, String> {
@@ -129,6 +140,18 @@ pub(crate) fn save_settings_documents_to_connection(
             )
             .map_err(database_error)?;
     }
+    if documents
+        .iter()
+        .any(|document| document.namespace == "routing.roles" && document.key == "default")
+    {
+        crate::role_routing::repository::capture_current_policy(
+            &transaction,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0),
+        )?;
+    }
     transaction.commit().map_err(database_error)?;
 
     let saved = documents
@@ -136,122 +159,6 @@ pub(crate) fn save_settings_documents_to_connection(
         .map(|document| read_settings_document(connection, &document.namespace, &document.key))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(saved)
-}
-
-pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i64, Value)> {
-    vec![
-        (
-            "providers.model",
-            "default",
-            SETTINGS_SCHEMA_VERSION,
-            json!({
-                "harness": {
-                    "address": format!("http://{}:9810", DEFAULT_DYNAMIC_LAN_HOST)
-                },
-                "providers": [{
-                    "kind": "dynamic-lan",
-                    "id": DYNAMIC_LAN_PROVIDER_ID,
-                    "enabled": true,
-                    "label": "Provider Harness LLM",
-                    "location": "local",
-                    "host": DEFAULT_DYNAMIC_LAN_HOST
-                }, {
-                    "kind": "system-tts",
-                    "id": "system-tts",
-                    "enabled": true,
-                    "label": "System Voice",
-                    "location": "local",
-                    "voice": "default"
-                }],
-                "reasoningEffort": providers::DEFAULT_CONVERSATION_REASONING_EFFORT
-            }),
-        ),
-        (
-            "providers.agent",
-            "codex-sdk",
-            SETTINGS_SCHEMA_VERSION,
-            json!({
-                "agentName": DEFAULT_AGENT_NAME,
-                "userName": DEFAULT_USER_NAME,
-                "enabled": false,
-                "provider": "codex-sdk",
-                "model": "gpt-5.6-luna",
-                "runtimeMode": "app-server",
-                "health": "unchecked",
-                "sandboxMode": "read-only",
-                "approvalPolicy": "never",
-                "networkEnabled": false,
-                "webSearchEnabled": false,
-                "workspacePolicy": "select-per-conversation"
-            }),
-        ),
-        (
-            "routing.tasks",
-            "default",
-            SETTINGS_SCHEMA_VERSION,
-            json!({
-                "conversationRespond": {
-                    "source": "harness",
-                    "primaryProviderId": null,
-                    "fallbackProviderIds": [],
-                    "timeoutMs": DEFAULT_CONVERSATION_TIMEOUT_MS
-                },
-                "voiceTranscribe": {
-                    "source": "harness",
-                    "providerId": null,
-                    "timeoutMs": 120000
-                },
-                "voiceSpeak": {
-                    "source": "provider",
-                    "providerId": "system-tts",
-                    "timeoutMs": 30000
-                },
-                "codingAssist": {
-                    "providerId": "codex-sdk",
-                    "timeoutMs": 120000,
-                    "readOnly": true,
-                    "networkEnabled": false,
-                    "webSearchEnabled": false
-                }
-            }),
-        ),
-        (
-            "voice.runtime",
-            "default",
-            SETTINGS_SCHEMA_VERSION,
-            json!({
-                "listeningEnabled": false,
-                "inputDeviceId": "default",
-                "outputDeviceId": "default",
-                "vadSensitivity": "medium",
-                "silenceTimeoutMs": 1500,
-                "allowedLanguages": [crate::voice::language::DEFAULT_LANGUAGE_CODE],
-                "autoSpeak": true
-            }),
-        ),
-        (
-            "security.runtime",
-            "default",
-            SETTINGS_SCHEMA_VERSION,
-            json!({
-                "localOnlyWhenSelected": true,
-                "diagnosticsRedaction": true
-            }),
-        ),
-        (
-            "ui.preferences",
-            "default",
-            SETTINGS_SCHEMA_VERSION,
-            regional_preferences::default_value(),
-        ),
-        (
-            "situation.runtime",
-            "default",
-            SETTINGS_SCHEMA_VERSION,
-            serde_json::to_value(situation::contracts::SituationRuntimeSettings::default())
-                .expect("default Situation settings serialize"),
-        ),
-    ]
 }
 
 pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> Result<(), String> {
@@ -264,6 +171,7 @@ pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> R
             | ("security.runtime", "default")
             | ("ui.preferences", "default")
             | ("situation.runtime", "default")
+            | ("routing.roles", "default")
     );
     if !allowed {
         return Err("Unsupported settings document".to_string());
@@ -309,6 +217,13 @@ pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> R
                 .map_err(|error| format!("Invalid Situation settings: {error}"))?;
             situation::validate_settings(&settings)
         }
+        ("routing.roles", "default") => {
+            let settings = serde_json::from_value::<crate::role_routing::RoleRoutingSettings>(
+                input.value_json.clone(),
+            )
+            .map_err(|error| format!("Invalid role routing settings: {error}"))?;
+            crate::role_routing::contracts::validate_settings(&settings)
+        }
         _ => Err("Unsupported settings document".to_string()),
     }
 }
@@ -316,15 +231,22 @@ pub(crate) fn validate_settings_document(input: &SaveSettingsDocumentInput) -> R
 pub(crate) fn validate_settings_batch(
     documents: &[SaveSettingsDocumentInput],
 ) -> Result<(), String> {
-    if documents.len() != 7 {
-        return Err("A complete seven-document settings snapshot is required".to_string());
+    if !(7..=8).contains(&documents.len()) {
+        return Err("A complete settings snapshot is required".to_string());
     }
     let unique = documents
         .iter()
         .map(|document| (document.namespace.as_str(), document.key.as_str()))
         .collect::<std::collections::HashSet<_>>();
-    if unique.len() != 7 {
+    if unique.len() != documents.len() {
         return Err("Each settings document must appear exactly once".to_string());
+    }
+    if documents.len() == 8
+        && !documents
+            .iter()
+            .any(|document| document.namespace == "routing.roles" && document.key == "default")
+    {
+        return Err("Role routing settings are required in an eight-document snapshot".to_string());
     }
     let providers = documents
         .iter()
@@ -338,12 +260,28 @@ pub(crate) fn validate_settings_batch(
         .iter()
         .find(|document| document.namespace == "security.runtime" && document.key == "default")
         .ok_or_else(|| "Security settings are required".to_string())?;
+    let role_policy = documents
+        .iter()
+        .find(|document| document.namespace == "routing.roles" && document.key == "default");
+    let codex = documents
+        .iter()
+        .find(|document| document.namespace == "providers.agent" && document.key == "codex-sdk")
+        .ok_or_else(|| "Codex settings are required".to_string())?;
     let providers = serde_json::from_value::<ModelProvidersSettings>(providers.value_json.clone())
         .map_err(|error| format!("Invalid model provider settings: {error}"))?;
     let routing = serde_json::from_value::<RoutingSettings>(routing.value_json.clone())
         .map_err(|error| format!("Invalid routing settings: {error}"))?;
     let security = serde_json::from_value::<SecurityRuntimeSettings>(security.value_json.clone())
         .map_err(|error| format!("Invalid security settings: {error}"))?;
+    let codex = serde_json::from_value::<CodexAgentRuntimeSettings>(codex.value_json.clone())
+        .map_err(|error| format!("Invalid Codex settings: {error}"))?;
+    if let Some(role_policy) = role_policy {
+        let policy = serde_json::from_value::<crate::role_routing::RoleRoutingSettings>(
+            role_policy.value_json.clone(),
+        )
+        .map_err(|error| format!("Invalid role routing settings: {error}"))?;
+        validate_role_routing_provider_bindings(&policy, &providers, &codex)?;
+    }
     let uses_harness = routing.conversation_respond.source == "harness"
         || routing.voice_transcribe.source == "harness"
         || routing.voice_speak.source == "harness";
@@ -450,6 +388,57 @@ pub(crate) fn validate_settings_batch(
         },
         "TTS",
     )?;
+    Ok(())
+}
+
+fn validate_role_routing_provider_bindings(
+    policy: &crate::role_routing::RoleRoutingSettings,
+    providers: &ModelProvidersSettings,
+    codex: &CodexAgentRuntimeSettings,
+) -> Result<(), String> {
+    if !policy.enabled {
+        return Ok(());
+    }
+    for actor in &policy.actors {
+        match actor.transport.as_str() {
+            "provider" => {
+                let provider = providers
+                    .providers
+                    .iter()
+                    .find(|provider| {
+                        actor.provider_id.as_deref() == Some(provider.id()) && provider.enabled()
+                    })
+                    .ok_or_else(|| {
+                        format!("Role routing actor provider is not enabled: {}", actor.id)
+                    })?;
+                if !matches!(
+                    provider,
+                    ModelProviderSettings::OpenAiCompatible(_)
+                        | ModelProviderSettings::AgentSession(_)
+                        | ModelProviderSettings::DynamicLan(_)
+                ) {
+                    return Err(format!(
+                        "Role routing actor provider does not support LLM: {}",
+                        actor.id
+                    ));
+                }
+                if provider.location() != actor.location {
+                    return Err(format!(
+                        "Role routing actor location conflicts with provider: {}",
+                        actor.id
+                    ));
+                }
+            }
+            "codex_sdk" if codex.enabled && codex.health == "ready" => {}
+            "codex_sdk" => {
+                return Err(format!(
+                    "Role routing Codex actor is unavailable until the Codex SDK is enabled and ready: {}",
+                    actor.id
+                ));
+            }
+            _ => return Err("Invalid role routing actor transport".to_string()),
+        }
+    }
     Ok(())
 }
 
@@ -674,7 +663,8 @@ mod tests {
     };
     use crate::{
         initialize_database, providers, CodexAgentRuntimeSettings, ModelProviderSettings,
-        ModelProvidersSettings, OpenAiCompatibleProviderSettings, DYNAMIC_LAN_PROVIDER_ID,
+        ModelProvidersSettings, OpenAiCompatibleProviderSettings, DEFAULT_AGENT_NAME,
+        DEFAULT_USER_NAME, DYNAMIC_LAN_PROVIDER_ID,
     };
     use rusqlite::Connection;
     use serde_json::{json, Value};
@@ -690,6 +680,35 @@ mod tests {
             routing.3.pointer("/conversationRespond/timeoutMs"),
             Some(&json!(1_800_000))
         );
+    }
+
+    #[test]
+    fn enabled_role_policy_requires_a_matching_enabled_llm_provider() {
+        let mut documents = default_settings_input();
+        let role_policy_index = documents
+            .iter()
+            .position(|document| document.namespace == "routing.roles")
+            .expect("role routing settings");
+        documents[role_policy_index].value_json = json!({
+            "schemaVersion": 1,
+            "enabled": true,
+            "actors": [{
+                "id": "reasoner", "label": "Reasoner", "aliases": [],
+                "transport": "provider", "providerId": DYNAMIC_LAN_PROVIDER_ID,
+                "model": null, "location": "local", "resourceGroup": "gpu",
+                "maxInputBytes": 4096, "capabilities": ["reason"]
+            }],
+            "roles": {"frontend": null, "reasoner": "reasoner", "advanced": null, "reviewer": null, "premium": null, "toolSpecialist": null},
+            "recipes": [{"id": "direct", "action": "respond", "roles": ["reasoner"], "enabled": true}],
+            "limits": {"maxReasoningSteps": 4, "maxToolCalls": 32, "rootTimeoutMs": 180000, "stepTimeoutMs": 60000, "frontendTimeoutMs": 1200, "classificationTimeoutMs": 1500, "maxQueuedInputs": 4, "maxReviewRounds": 1, "maxAutomaticSwitches": 2, "maxEstimatedCostMicros": null},
+            "speech": {"mode": "author_verbatim", "ackDelayMs": 250, "maxAckChars": 80, "progressMinIntervalMs": 15000, "maxProgressPerRoot": 2},
+            "selection": {"mode": "rules", "shadowArtifactId": null, "classificationMinConfidence": 0.85, "weights": {"quality": 0.6, "latency": 0.25, "cost": 0.15}, "switchMargin": 0.15},
+            "premiumApproval": "per_request",
+            "learning": {"enabled": false, "localStart": "02:00", "localEnd": "05:00", "idleSeconds": 300, "maxRunSeconds": 600, "batchSize": 100, "allowLocalLabeler": false}
+        });
+        assert!(validate_settings_batch(&documents).is_ok());
+        documents[role_policy_index].value_json["actors"][0]["providerId"] = json!("missing");
+        assert!(validate_settings_batch(&documents).is_err());
     }
 
     #[test]

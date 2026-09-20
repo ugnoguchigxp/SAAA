@@ -7,8 +7,6 @@ export const errors = {
     operationFailed: "SAAAはこの操作を完了できませんでした。もう一度お試しください。",
   },
   chat: {
-    voiceBlockedDuringMeeting:
-      "ミーティングが進行中または一時停止中のため、常時待ち受けを利用できません。",
     voiceSettingsUnavailable: "音声設定を利用できません。",
     recordedAudioUnavailable: "録音した音声を利用できません。もう一度お試しください。",
     voiceQueueFull: "音声処理が混み合っているため、最新の発話は送信しませんでした。",
@@ -25,17 +23,6 @@ export const errors = {
     voiceTargetSpeakerModeUnavailable:
       "本人の声だけを認識する設定は常時待ち受けではまだ利用できません。声の設定で本人確認をオフにしてからお試しください。",
     operationFailed: "会話の操作を完了できませんでした。もう一度お試しください。",
-  },
-  meeting: {
-    transcriptionBackpressure:
-      "ミーティングの文字起こし処理が追いついていません。キャプチャを一時停止しましたが、待機中の音声は削除していません。",
-    captureInactive: "ミーティングのキャプチャはすでに停止しています。",
-    voiceSettingsUnavailable: "音声設定を利用できません。",
-    startFailed:
-      "ミーティングを開始できませんでした。マイクとASRの設定を確認してからもう一度お試しください。",
-    runtimeFailure:
-      "ミーティングのランタイムで失敗が発生しました。ミーティング設定を確認してからもう一度お試しください。",
-    operationFailed: "ミーティングの操作を完了できませんでした。もう一度お試しください。",
   },
   settings: {
     agentSessionEventStreamMissing:

@@ -89,11 +89,9 @@ function App() {
     const parsed = voiceSettingsSchema.safeParse(document?.valueJson);
     return parsed.success ? parsed.data : null;
   }, [snapshot.settings]);
-  const meetingState = "idle" as const;
   const turn = useConversationTurn({
     selectedConversationId,
     voiceSettings,
-    meetingState,
     pendingVoicePromptsRef,
     conversationSessionRef,
     suspendVoiceForSpeech: (runId) => suspendVoiceForSpeechRef.current(runId),
@@ -105,7 +103,6 @@ function App() {
     selectedConversationId,
     voiceSettings,
     voicePolicy: turn.voicePolicy,
-    meetingState,
     conversationSessionRef,
     pendingVoicePromptsRef,
     setError: setVoiceError,
@@ -157,7 +154,7 @@ function App() {
       if (activeTtsRunId) void stopSpeech();
     }
   });
-  useOwnedSignalHeartbeat({ activeRunId, activeTtsRunId, composer, meetingState, voiceState });
+  useOwnedSignalHeartbeat({ activeRunId, activeTtsRunId, composer, voiceState });
 
   async function initialize() {
     try {
@@ -256,7 +253,6 @@ function App() {
             onSubmit={(event) => void turn.handleSubmit(event)}
             onToggleVoice={() => void voice.toggleAmbientListening()}
             voiceStarting={voice.voiceStarting}
-            meetingActive={false}
             activeRunId={activeRunId}
             modelProviderStatus={modelProviderStatus}
             onOpenSettings={openSettings}

@@ -149,7 +149,7 @@ describe("ambient voice session", () => {
     expect(effectiveCaptureSettings(voiceSettings, voicePolicy)?.silenceTimeoutMs).toBe(1_500);
   });
 
-  test("captures, delivers a final utterance, and suspends for a meeting", async () => {
+  test("captures, delivers a final utterance, and suspends for speech", async () => {
     restoreDom = installJsdom().restore;
     restoreAudio = installAudioGlobals();
     const { createRoot } = await import("react-dom/client");
@@ -205,9 +205,6 @@ describe("ambient voice session", () => {
     });
     await act(async () => {
       await apiRef.current!.resumeVoiceAfterSpeech("speech-1");
-    });
-    await act(async () => {
-      await apiRef.current!.suspendVoiceForMeeting();
     });
     await act(async () => {
       await apiRef.current!.toggleAmbientListening(false);

@@ -7,7 +7,7 @@ export function AuditLogModal({ onClose }: { onClose: () => void }) {
   const { dialogRef, fallbackRef } = useDialogFocus(true, onClose);
 
   return (
-    <div
+    <section
       ref={fallbackRef}
       className="workspace-modal-backdrop"
       tabIndex={-1}
@@ -33,6 +33,6 @@ export function AuditLogModal({ onClose }: { onClose: () => void }) {
           <AuditLogPage />
         </div>
       </section>
-    </div>
+    </section>
   );
 }

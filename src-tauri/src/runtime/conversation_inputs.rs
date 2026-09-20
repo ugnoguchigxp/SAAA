@@ -5,6 +5,9 @@ use crate::persistence::{
 use crate::{database_error, AppState, StartTurnInput};
 use rusqlite::params;
 
+#[path = "conversation_inputs_roles.rs"]
+mod conversation_inputs_roles;
+
 pub(super) struct Inputs {
     pub(super) providers: crate::ModelProvidersSettings,
     pub(super) route: crate::ConversationRouteSettings,
@@ -52,7 +55,8 @@ pub(super) fn load(state: &AppState, input: &StartTurnInput) -> Result<Inputs, S
         let identity = load_codex_settings(connection)?;
         let regional = crate::persistence::settings::regional_preferences::load(connection)?;
         let providers = load_model_providers(connection)?;
-        let route = load_routing_settings(connection)?.conversation_respond;
+        let mut route = load_routing_settings(connection)?.conversation_respond;
+        conversation_inputs_roles::apply_enabled_role_route(connection, &mut route)?;
         let configuration_fingerprint =
             crate::persistence::effective_route::conversation_configuration_fingerprint(
                 &providers, &route,

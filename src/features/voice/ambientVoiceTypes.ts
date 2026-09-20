@@ -1,9 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type {
-  VoiceSettings,
-  ConversationVoicePolicySnapshot,
-  MeetingState,
-} from "../../lib/contracts";
+import type { VoiceSettings, ConversationVoicePolicySnapshot } from "../../lib/contracts";
 import type { ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type {
   ConversationSession,
@@ -14,7 +10,6 @@ export type AmbientVoiceSessionOptions = {
   selectedConversationId: string | null;
   voiceSettings: VoiceSettings | null;
   voicePolicy: ConversationVoicePolicySnapshot | null;
-  meetingState: MeetingState;
   conversationSessionRef: MutableRefObject<ConversationSession>;
   pendingVoicePromptsRef: MutableRefObject<PendingConversationPrompt[]>;
   setError: Dispatch<SetStateAction<string | null>>;

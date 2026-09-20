@@ -211,7 +211,6 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         provider_probes: Mutex::new(HashMap::new()),
         interaction_policy: Mutex::new(()),
         shutdown_started: AtomicBool::new(false),
-        network_asr: voice::network_asr::NetworkAsrRuntime::new()?,
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
         streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
         voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),

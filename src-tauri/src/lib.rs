@@ -20,6 +20,8 @@ use tauri::Manager;
 mod app_paths;
 mod backup;
 mod coding;
+#[path = "runtime/command_registry.rs"]
+mod command_registry;
 mod credentials;
 mod database_backup;
 mod diagnostics;
@@ -34,9 +36,9 @@ mod providers;
 #[cfg(feature = "quality-eval-harness")]
 pub mod quality_eval;
 mod redact;
+mod role_routing;
 mod runtime;
-#[path = "runtime/command_registry.rs"]
-mod command_registry;
+mod schedule;
 mod situation;
 mod steward;
 #[cfg(test)]
@@ -487,20 +489,33 @@ pub fn run() {
                 sqlite_writer.clone(),
                 &voice_data_directory,
             ));
-            let inspections = generated_capabilities::inspection::service::InspectionStore::open(
-                &voice_data_directory,
-            );
-            match generated_capabilities::generation::recovery::reconcile(
-                &sqlite_writer,
-                &inspections,
-            ) {
-                Ok(summary) => {
-                    if summary.interrupted_jobs + summary.orphan_inspections.len() > 0 {
+            let (requests, generator, packager) =
+                generated_capabilities::generation::packager::production_runtime(
+                    sqlite_writer.clone(),
+                    &voice_data_directory,
+                );
+            let generation = Some(Arc::new(
+                generated_capabilities::generation::service::GenerationService::new(
+                    sqlite_writer.clone(),
+                    generated_capabilities.clone(),
+                    requests,
+                    generator,
+                    packager,
+                    &voice_data_directory,
+                ),
+            ));
+            if let Some(generation) = generation.as_ref() {
+                match generation.reconcile() {
+                    Ok(summary)
+                        if summary.interrupted_jobs > 0
+                            || !summary.orphan_inspections.is_empty() =>
+                    {
                         eprintln!("generated capability generation recovery applied: {summary:?}");
                     }
-                }
-                Err(error) => {
-                    eprintln!("generated capability generation recovery skipped: {error}");
+                    Ok(_) => {}
+                    Err(error) => {
+                        eprintln!("generated capability generation recovery skipped: {error}")
+                    }
                 }
             }
             if generated_capabilities.is_ready() {
@@ -563,8 +578,6 @@ pub fn run() {
                 provider_probes: Mutex::new(HashMap::new()),
                 interaction_policy: Mutex::new(()),
                 shutdown_started: AtomicBool::new(false),
-                network_asr: voice::network_asr::NetworkAsrRuntime::new()
-                    .map_err(std::io::Error::other)?,
                 audio_uploads: voice::audio_upload::AudioUploadStore::default(),
                 streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
                 voice_behavior: voice_behavior::VoiceBehaviorRuntime::default(),
@@ -572,7 +585,7 @@ pub fn run() {
                 voice_profile,
                 voice_asr: AsrSessionManager::default(),
                 generated_capabilities,
-                generation: None,
+                generation,
                 generated_tools,
                 tool_selection,
                 mcp_server: Mutex::new(mcp_server),

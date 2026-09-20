@@ -7,15 +7,16 @@
 
 | 区分 | 結果 |
 | --- | --- |
-| 決定的コア（C01〜C06、C08、C11/C12 の純ロジック） | 実装・試験済み |
-| C04 actor 伝播 | 実装済み。所有権記録は unit 試験済み、会話/MCP からの end-to-end は未検証 |
-| C07 公開同期（両台帳・grant・epoch の 1 transaction） | **未実装** |
-| C09 生成（fake/prompt/kit/build は実装、provider 実行は未接続） | 一部実装 |
-| C10 GenerationService オーケストレーション | **未実装**（状態機械の部品のみ） |
-| C11/C12 会話ターンへの接続 | **未接続**（parser/display の純ロジックのみ） |
-| C13 会話/MCP 通し試験 | **未実装** |
-| C14 実モデル live 実証 | **未実施**（kit と credential の接続前段） |
-| **全体（G01〜G12）** | **未完了**。上記未達のため |
+| C01 kit / C02 設定契約 / C03 DDL repository | 実装・試験済み |
+| C04 actor 伝播 | 実装・試験済み（所有権は call と同一 transaction、M2A/MCP/通常会話の actor 伝播、owner 検査） |
+| C05 inspection / C06 比較 | 実装・offline合格。保存済み成果物の表示は kit 無し。on-demand kit CLI は設定時のみ（live） |
+| C07 公開同期 | 実装・offline合格（`activate_and_publish` 1tx。suspend は同一 transaction で catalog 非公開） |
+| C08 retire/復帰 | 実装・offline合格。active は先に suspend。過去 inspect は残る |
+| C09/C10 生成オーケストレーション | 実装・offline合格（fake/fixture。cancel→cancelled、timeout→failed、epoch conflict。live kit は C14） |
+| C11/C12 会話入口と表示 | 実装・offline合格（command 経路、未記録 call は成功を装わない、他人拒否、改変 TS は integrity） |
+| C13 通し試験 | offline合格（A 生成→invoke→inspect→B 更新で A の TS/revision 不変。`gc_02`） |
+| C14 実モデル live 実証 | **live未検証**（credential / 実 kit。fake で埋めない） |
+| **全体（G01〜G12）** | 決定的（offline）範囲は GC-00〜07 で閉じた。G11/C14 のみ live未検証 |
 
 計画 11 章のとおり、未達を成功として報告しない。汎用 ABI・host API・WASI 等の後続項目は
 今回の対象外である。
@@ -35,10 +36,12 @@
 
 | コマンド | 初回 | 最終 |
 | --- | --- | --- |
-| `cargo test --lib generated_capabilities` | 78 passed | 111 passed / 0 failed |
+| `cargo test --lib generated_capabilities` | 78 passed | 128 passed / 0 failed |
+| `cargo test --lib rw_` | — | 8 passed / 0 failed |
+| `cargo test --lib gc_` | — | 9 passed / 0 failed |
 | `cargo test --lib tool_selection` | （既存） | 183 passed / 0 failed |
-| `cargo test --lib providers` | （既存） | 79 passed / 0 failed / 2 ignored |
-| `cargo test --lib runtime::capability_commands` | — | 4 passed / 0 failed |
+| `cargo test --lib providers` | （既存） | 80 passed / 0 failed / 2 ignored |
+| `cargo test --lib runtime::capability_commands` | — | 7 passed / 0 failed |
 | `cargo fmt --check` | 成功 | 成功 |
 | `cargo clippy --lib -- -D warnings` | — | 成功（新規モジュールの警告 0） |
 | `bun run size:check` | — | **未完了**（下記 2.1） |
@@ -109,7 +112,13 @@
 - `inspection/comparison.rs`: 最大 8 boolean（256 ケース）の全列挙、不一致は必ず fail、評価器エラーも
   不一致、`checkedCases`/`mismatches`/`inputDomain`/`projectionHash`/`artifactHash`、
   `semanticEquivalence: not-checked` を保存。
-- 試験: 列挙順 `00,10,01,11`、8 field=256、意図的不一致、評価器エラー、9 field 拒否。
+- `inspection/evaluator.rs::PrecomputedEvaluator`: 列挙順に揃えた結果を比較harnessへ供給。
+- `generation/projection.rs::evaluate_projection`: 信頼 inspection が生成した TypeScript だけを隔離
+  Bun プロセスで全入力評価（候補 JS は entrypointにしない）。
+- `generated_capabilities/inspection_invoke.rs`: 保存済み managed package を trusted host で全入力
+  実行（active pointer を参照せず、suspend/retire 済みでも所有者は検査可能）。
+- 試験: 列挙順 `00,10,01,11`、8 field=256、意図的不一致、評価器エラー、9 field 拒否、
+  `PrecomputedEvaluator` の順序再生と件数不一致拒否。
 
 ### C08（T05）retire/復帰
 
@@ -119,32 +128,46 @@
 
 ### C09（T06）生成の部品
 
-- `generation/kit.rs`: kit manifest の hash/digest 検証、env 消去・wall-clock 制限つき実行。
+- `generation/kit.rs`: kit manifest の hash/digest 検証、env 消去・wall-clock 制限つき実行
+  （`run_script` で信頼スクリプトを同一制限下で実行）。
 - `generation/generator.rs`: 固定 system prompt、request 本文のみを渡し独立 acceptance を渡さない
-  prompt builder、decision 的な `FakeGenerator`（要求から body を組立て、事前 package を選ばない）、
-  `ProviderGenerator`。
-- `generation/builder.rs`: request/suite/metadata の workspace copy、metadata の id/release をホスト生成、
-  固定 `package` CLI 実行、`KitInspector`。
-- `providers/openai_compatible/structured.rs::complete_generation`: 生成専用 max output 4096 と外側
-  deadline（既存抽出 700/5s は不変）。
-- 試験: prompt に acceptance 正解表が入らない、fake A/B の body 差、kit hash/digest 検証。
-- 未接続: `GenerationService` からの実呼出し、実 provider 実行、import/verify/publication 接続。
+  prompt builder、decision 的な `FakeGenerator`、`DisabledGenerator`、`ProviderGenerator`、
+  `ConversationProviderGenerator`（既存設定から provider を解決、取消を伝播）。
+- `generation/packager.rs`: request/suite/metadata の workspace への byte copy（load 時 hash 再検証）、
+  metadata の id/release をホスト生成、固定 `package` CLI 実行、`KitInspector`、
+  `production_runtime` で `SAAA_LLANG_GENERATION_CONFIG` から実装を構築（未設定・不正なら unavailable）。
+- `providers/openai_compatible/generation.rs::complete_generation`: 生成専用 max output 4096 と外側
+  deadline、caller cancellation の伝播（既存抽出 700/5s は不変）。
+- 試験: prompt に acceptance 正解表が入らない、fake A/B の body 差、kit hash/digest 検証、
+  登録ファイル改変拒否、metadata identity のホスト生成。
 
 ### C10（T07）状態機械・復旧
 
 - `generation/recovery.rs`: 起動時に requested/generating/building/importing/verifying → interrupted、
   `awaiting_activation` は保持、inspection orphan ディレクトリのみ削除。
-- 試験: interrupted 化と awaiting_activation 保持、orphan 削除。
-- 未実装: 正常系の状態遷移オーケストレーション（requested→…→active）、予算・取消・conflict の統合、
-  import/verify/activate 接続。
+- `generation/service.rs`: `(principal,run,message)` idempotency、同 capability の同時 job を conflict、
+  `requested→generating→building→importing→verifying→awaiting_activation→active` の CAS 遷移、
+  モデル/package 予算と取消、`import_candidate`→`verify_candidate`→`activate_and_publish` 接続、
+  activation は job 開始時の `expected_epoch` を使い競合を conflict とする。
+  cancel は `cancelled`、モデル待ち超過は `failed`（試験期限 250ms）。
+- 試験: interrupted 化と awaiting_activation 保持、orphan 削除、A 生成→実行→B 更新で A の call 行が
+  revision A に固定、reconcile がモデルを再呼出ししない、`gc_05` cancel/timeout、`gc_06` epoch conflict。
 
 ### C11/C12（T08）会話入口
 
 - `runtime/capability_commands.rs`: 3 command の厳密 parse（trim のみ、改行・追加引数・引用内 command
-  拒否、通常文は NotACommand）、inspection 表示（fence 長の自動選択、64 KiB 超は summary +
-  artifact-too-large）。
-- 試験: 完全一致のみ command、update の base revision 必須、fence escape、表示上限。
-- 未接続: `runtime/turns.rs` の分岐（job 起動、assistant message 永続化）。
+  拒否、通常文は NotACommand）。
+- `runtime/capability_turn.rs`: 通常会話ターン経路（ユーザー入力永続化後・最初の provider 呼出し前）で
+  command を処理し、既存の assistant message 永続化・terminal event 経路を使う。
+- `runtime/capability_inspect.rs` + `capability_inspect_run.rs`: `/capability inspect` は保存済み成果物を先に表示する。無ければ `SAAA_LLANG_GENERATION_CONFIG` の kit で on-demand。file の TS と report `typescript.source` が食い違えば integrity。他人の call は not-authorized。
+- 試験: 完全一致のみ command、update の base revision 必須、fence escape、表示上限、
+  存在しない call は成功を主張しない、保存済み表示、他人拒否、改変 TS、fixture inspector（live kit 0）。
+
+### C13 通し
+
+- `generation_flow.rs` の `rw_13` に加え `generation_closeout.rs` の `gc_02`〜`gc_06`。
+- A 生成→会話 invoke→inspect→B 更新で、同じ A call の TypeScript と revision は変わらない。
+- 試験は fake + fixture。credential 0。
 
 ## 4. 生成 job と実行 ID の対応
 
@@ -175,7 +198,8 @@ builder の決定試験までで、live 実行は行っていない。model 名�
 2. モデルが触れる field: `SourceDocument` の header は登録要求と比較し、body のみ自由。suite/
    metadata/path/command は未知 field として拒否（試験済み）。
 3. 検証前公開の不存在: inspection は比較不一致・report 不一致で directory も DB 行も作らない
-   （試験済み）。生成の import/verify 前公開は C07/C10 未実装のため該当経路自体がまだ無い。
+   （試験済み）。生成は import/verify 成功後にだけ `activate_and_publish` する。acceptance 失敗は
+   grant を増やさない（`gc_03`）。
 4. DB transaction 境界: owner は call と同一 transaction。inspection は file publish 後に DB 確定、
    DB 失敗時は directory を破棄。
 5. 過去版 inspection の所有者: owner の principal/project 一致を必須とし、grant 撤回では過去履歴の
@@ -187,12 +211,9 @@ builder の決定試験までで、live 実行は行っていない。model 名�
 
 | 未達 | 内容 | 次の一手 |
 | --- | --- | --- |
-| C07 | 両台帳・grant・job・epoch を 1 transaction で更新する `publication_sync::activate_and_publish`、suspend/retire 時の tool 非公開化 | `tool_selection` catalog の既存関数を transaction 内用に抽出し、`guards` の最終条件を再利用 |
-| C09 live / C10 | `GenerationService` の状態遷移、予算/取消/conflict、import/verify/publication 接続 | C07 の上に generation service を載せ、`CapabilityService::import_candidate`/`verify_candidate` を呼ぶ |
-| C11 接続 | `turns.rs` の command 分岐と assistant message 永続化 | `runtime/mod.rs` に service を保持し、ユーザー入力永続化後・最初の provider 呼出し前に分岐 |
-| C13 | A→実行→B→A 検査→停止→復帰の会話/MCP 通し試験 | C10/C11 完了後 |
-| C14 | 実モデルでの新規/変更生成の実証 | 実 credential・kit 配置後に live lane として実施 |
-| G01〜G12 | 上記未達のため未検証 | 各カード完了後 |
+| C14 / G11 実モデル | live lane の実モデル生成と usage/latency | kit 配置と実 credential。fake で代替しない |
+| Clippy 全ターゲット | `cargo clippy --lib -- -D warnings` は既存 ASR `dead_code` で赤。生成・検査の新規 warning は 0 | ASR 側の収束後。`#![allow(dead_code)]` では通さない |
+| inspection の性能 | 最大 256 入力の Wasm 比較を逐次実行 | 将来、kit 側の比較 worker |
 
 ## 9. 提出物
 
@@ -222,5 +243,5 @@ builder の決定試験までで、live 実行は行っていない。model 名�
 | R-11 | project 付き call の拒否試験がなかった（G10） | project 不一致拒否と一致時成功の試験を追加 | `a_project_scoped_call_requires_the_same_project` |
 | R-12 | 表示上限判定が事前見積で、fence 分だけ 64 KiB を超え得た | 完成後の message 長で判定 | `oversized_typescript_is_summarised_not_truncated_silently` |
 
-未修正のまま残る既知の改善点（C07/C10 の実装対象）: 生成 service からの cancellation
-伝播、inspection の runtime digest 照合、同 revision/digest の single-flight mutex。
+未修正のまま残る既知の改善点: inspection の runtime digest 照合、同 revision/digest の
+single-flight mutex。生成 job の cancel/timeout 終端は `gc_05` で offline合格。

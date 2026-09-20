@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import { installJsdom } from "./jsdomGlobals";
 import { useWindowShortcut } from "../src/useWindowShortcut";
 import { useDialogFocus } from "../src/components/useDialogFocus";
-import { SituationTabs } from "../src/components/SituationTabs";
 
 test("shortcuts use the latest committed callback once and dialogs consume Escape", async () => {
   const env = installJsdom();
@@ -67,50 +66,6 @@ test("shortcuts use the latest committed callback once and dialogs consume Escap
     await key("Escape");
     expect(calls).toEqual([1, 2]);
   } finally {
-    env.dom.window.close();
-    env.restore();
-  }
-});
-
-test("Situation tabs support arrow, Home and End with a single tab stop", async () => {
-  const env = installJsdom();
-  const root = createRoot(document.getElementById("root")!);
-  function Harness() {
-    const [view, setView] = useState<"overview" | "review">("overview");
-    return (
-      <SituationTabs
-        view={view}
-        onChange={setView}
-        labels={{ overview: "Overview", review: "Review" }}
-      >
-        {view}
-      </SituationTabs>
-    );
-  }
-  try {
-    await act(() => root.render(<Harness />));
-    const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-    tabs[0].focus();
-    for (const [key, index] of [
-      ["ArrowRight", 1],
-      ["Home", 0],
-      ["End", 1],
-      ["ArrowLeft", 0],
-    ] as const) {
-      await act(() =>
-        document.activeElement!.dispatchEvent(
-          new env.dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
-        ),
-      );
-      expect(document.activeElement).toBe(tabs[index]);
-      expect(tabs[index].getAttribute("aria-selected")).toBe("true");
-      expect(tabs.filter((tab) => tab.tabIndex === 0)).toHaveLength(1);
-      expect(document.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby")).toBe(
-        tabs[index].id,
-      );
-    }
-  } finally {
-    await act(() => root.unmount());
     env.dom.window.close();
     env.restore();
   }

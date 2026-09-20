@@ -1,21 +1,11 @@
 import { z } from "zod";
-import type { AppSnapshot, MeetingEvent, RuntimeEvent } from "./contracts";
+import type { AppSnapshot, RuntimeEvent } from "./contracts";
 import { runtimeFailureCodes } from "./generated/runtimeEvent";
 import type { VoiceAsrStreamEvent } from "./generated/voiceAsr";
 
 const text = z.string();
 const id = text.min(1).max(1024);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const state = z.enum([
-  "idle",
-  "preflight",
-  "ready",
-  "active",
-  "paused",
-  "stopping",
-  "completed",
-  "failed",
-]);
 const pace = z.enum(["quick", "balanced", "patient"]);
 const speechReason = z.enum([
   "meeting_blocked",
@@ -68,9 +58,10 @@ export const appSnapshotSchema = z.object({
           "security.runtime",
           "ui.preferences",
           "situation.runtime",
+          "routing.roles",
         ]),
         key: z.enum(["default", "codex-sdk"]),
-        schemaVersion: z.literal(15),
+        schemaVersion: z.union([z.literal(1), z.literal(15)]),
         valueJson: z.record(z.string(), z.unknown()),
         updatedAt: text,
       }),
@@ -156,24 +147,6 @@ export const runtimeEventSchema = z.discriminatedUnion("type", [
     recovery: text,
   }),
 ]);
-export const meetingEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("stateChanged"), sessionId: text.nullable(), state }),
-  z.object({
-    type: z.literal("transcriptFinal"),
-    sessionId: id,
-    lane: z.enum(["microphone", "system-audio"]),
-    sequence: count,
-    text,
-    language: text.nullable(),
-  }),
-  z.object({
-    type: z.literal("failed"),
-    sessionId: text.nullable(),
-    code: text,
-    message: text,
-    recovery: text,
-  }),
-]);
 const asrCode = z.enum([
   "asr-session-exists",
   "asr-session-not-found",
@@ -242,12 +215,11 @@ type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
 export type SnapshotSchemaContract = Assert<Equal<z.infer<typeof appSnapshotSchema>, AppSnapshot>>;
 export type RuntimeSchemaContract = Assert<Equal<z.infer<typeof runtimeEventSchema>, RuntimeEvent>>;
-export type MeetingSchemaContract = Assert<Equal<z.infer<typeof meetingEventSchema>, MeetingEvent>>;
 export type VoiceAsrSchemaContract = Assert<
   Equal<z.infer<typeof voiceAsrEventSchema>, VoiceAsrStreamEvent>
 >;
 
-export type IpcBoundary = "snapshot" | "runtime" | "meeting" | "voice-asr";
+export type IpcBoundary = "snapshot" | "runtime" | "voice-asr";
 export class IpcBoundaryError extends Error {
   constructor(public readonly boundary: IpcBoundary) {
     super(`Invalid ${boundary} IPC payload. Reload the application and retry.`);

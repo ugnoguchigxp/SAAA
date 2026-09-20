@@ -40,8 +40,6 @@ pub(crate) fn app_state_with_capabilities(
         provider_probes: Mutex::new(HashMap::new()),
         interaction_policy: Mutex::new(()),
         shutdown_started: AtomicBool::new(false),
-        network_asr: voice::network_asr::NetworkAsrRuntime::new()
-            .expect("Network ASR runtime initializes"),
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
         streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
         voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),

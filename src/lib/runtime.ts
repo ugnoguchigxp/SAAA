@@ -1,11 +1,5 @@
-import { runtimeEventOrder, meetingEventOrder } from "./ipcEventOrder";
-import {
-  appSnapshotSchema,
-  runtimeEventSchema,
-  meetingEventSchema,
-  parseIpc,
-  guardedReceiver,
-} from "./ipcValidation";
+import { runtimeEventOrder } from "./ipcEventOrder";
+import { appSnapshotSchema, runtimeEventSchema, parseIpc, guardedReceiver } from "./ipcValidation";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { stageAudioUpload } from "./audioIpc";
 import type {
@@ -17,16 +11,7 @@ import type {
   ProviderTestResult,
   RuntimeEvent,
   SettingsDocument,
-  SituationSnapshot,
-  SituationReviewSnapshot,
-  CalibrationParameters,
-  CalibrationProfile,
-  CalibrationRun,
   VoiceProfileSnapshot,
-  MeetingPreflightResult,
-  MeetingSegmentResult,
-  MeetingSnapshot,
-  MeetingEvent,
 } from "./contracts";
 import { validateSettingsDocuments } from "./schemas";
 export {
@@ -169,14 +154,6 @@ export async function listMessages(
   );
 }
 
-export async function getSituationSnapshot(): Promise<SituationSnapshot> {
-  return invoke<SituationSnapshot>("get_situation_snapshot");
-}
-
-export async function setSituationMonitoring(enabled: boolean): Promise<SituationSnapshot> {
-  return invoke<SituationSnapshot>("set_situation_monitoring", { enabled });
-}
-
 export async function reportOwnedSignal(input: {
   conversationState: "idle" | "user-input" | "model-running" | "agent-running";
   microphoneState:
@@ -188,103 +165,4 @@ export async function reportOwnedSignal(input: {
   audioState: "silent" | "saaa-speaking" | "external-media" | "unknown";
 }): Promise<void> {
   return invoke<void>("report_owned_signal", { input });
-}
-
-export async function submitSituationFeedback(input: {
-  ledgerId: string;
-  verdict: "accurate" | "inaccurate" | "unsure";
-  impact: "none" | "no-effect" | "harmful";
-  correctedScene: string | null;
-  reasonCode: string | null;
-}): Promise<SituationSnapshot> {
-  return invoke<SituationSnapshot>("submit_situation_feedback", { input });
-}
-
-export const getSituationReviewSnapshot = (): Promise<SituationReviewSnapshot> =>
-  invoke("get_situation_review_snapshot");
-export const createSituationCalibrationCandidate = (
-  parameters: CalibrationParameters,
-): Promise<CalibrationProfile> => invoke("create_situation_calibration_candidate", { parameters });
-export const runSituationCalibration = (profileId: string): Promise<CalibrationRun> =>
-  invoke("run_situation_calibration", { profileId });
-export const decideSituationCalibration = (
-  profileId: string,
-  decision: "accept" | "reject" | "rollback",
-  reasonCode: string,
-): Promise<SituationReviewSnapshot> =>
-  invoke("decide_situation_calibration", { profileId, decision, reasonCode });
-
-export async function clearSituationHistory(): Promise<SituationSnapshot> {
-  return invoke<SituationSnapshot>("clear_situation_history");
-}
-
-export async function meetingPreflight(input: {
-  microphoneDeviceId: string;
-  systemAudioEnabled: boolean;
-  translationEnabled: boolean;
-}): Promise<MeetingPreflightResult> {
-  return invoke("meeting_preflight", { input });
-}
-export async function startMeeting(input: {
-  sessionId: string;
-  microphoneDeviceId: string;
-  microphoneEnabled: boolean;
-  systemAudioEnabled: boolean;
-  translationEnabled: boolean;
-  persistenceMode: "discard";
-}): Promise<MeetingSnapshot> {
-  return invoke("start_meeting", { input });
-}
-export async function getMeetingSnapshot(): Promise<MeetingSnapshot> {
-  return invoke("get_meeting_snapshot");
-}
-export async function watchMeeting(
-  subscriberId: string,
-  onEvent: (event: MeetingEvent) => void,
-): Promise<void> {
-  const channel = new Channel<unknown>();
-  channel.onmessage = guardedReceiver(
-    meetingEventSchema,
-    "meeting",
-    onEvent,
-    meetingEventOrder(),
-    () => {
-      void unwatchMeeting(subscriberId).catch(() => undefined);
-    },
-  );
-  return invoke("watch_meeting", { subscriberId, onEvent: channel });
-}
-export async function unwatchMeeting(subscriberId: string): Promise<void> {
-  return invoke("unwatch_meeting", { subscriberId });
-}
-export async function pauseMeeting(sessionId: string): Promise<MeetingSnapshot> {
-  return invoke("pause_meeting", { input: { sessionId } });
-}
-export async function resumeMeeting(sessionId: string): Promise<MeetingSnapshot> {
-  return invoke("resume_meeting", { input: { sessionId } });
-}
-export async function stopMeeting(sessionId: string): Promise<MeetingSnapshot> {
-  return invoke("stop_meeting", { input: { sessionId } });
-}
-export async function appendMeetingAudioSegment(input: {
-  sessionId: string;
-  captureToken: string;
-  lane: "microphone";
-  sequence: number;
-  samples: Float32Array;
-  sampleRate: number;
-  startedAtMs: number;
-  durationMs: number;
-}): Promise<MeetingSegmentResult> {
-  const { samples, ...metadata } = input;
-  const audioUploadId = await stageAudioUpload(samples, "meeting-segment").finally(() =>
-    samples.fill(0),
-  );
-  return invoke("append_meeting_audio_segment", { input: { ...metadata, audioUploadId } });
-}
-export async function saveMeetingTranscript(sessionId: string): Promise<MeetingSnapshot> {
-  return invoke("save_meeting_transcript", { input: { sessionId } });
-}
-export async function discardMeeting(sessionId: string): Promise<void> {
-  return invoke("discard_meeting", { input: { sessionId } });
 }

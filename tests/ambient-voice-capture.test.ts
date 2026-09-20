@@ -60,7 +60,6 @@ function context(overrides: Record<string, unknown> = {}) {
     settings,
     disposed: ref(false),
     listeningEnabled: ref(true),
-    meetingState: ref("idle" as const),
     captureAttempt: ref(0),
     stream: ref<MediaStream | null>(null),
     audioContext: ref<AudioContext | null>(null),
@@ -145,7 +144,6 @@ describe("ambient voice capture", () => {
       context({ stream: ref(stream), captureLease: ref(() => undefined) }) as never,
     );
     await attachAmbientVoiceCapture(context({ listeningEnabled: ref(false) }) as never);
-    await attachAmbientVoiceCapture(context({ meetingState: ref("active") }) as never);
     expect(currentAudioCaptureOwner()).toBeNull();
   });
 });

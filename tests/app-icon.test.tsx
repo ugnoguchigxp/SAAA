@@ -12,7 +12,6 @@ const names: AppIconName[] = [
   "model",
   "send",
   "settings",
-  "situation",
   "stop",
 ];
 

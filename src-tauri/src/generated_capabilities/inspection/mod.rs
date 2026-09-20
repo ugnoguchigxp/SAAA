@@ -3,6 +3,7 @@
 
 pub mod comparison;
 pub mod contracts;
+pub mod evaluator;
 pub mod repository;
 pub mod schema;
 pub mod service;

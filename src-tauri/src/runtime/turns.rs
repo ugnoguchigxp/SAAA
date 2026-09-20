@@ -85,8 +85,13 @@ pub(crate) async fn execute_turn(
         return result.map(|_| ());
     }
 
-    if super::conversation_turn::try_capability_command(state, input, on_event, cancellation.clone())
-        .await?
+    if crate::runtime::capability_commands::handle_user_turn(
+        state,
+        input,
+        on_event,
+        cancellation.clone(),
+    )
+    .await?
     {
         state
             .situation
@@ -126,7 +131,13 @@ pub(crate) async fn execute_turn(
 
     let response_task =
         crate::runtime::voice_response::start(state, input, on_event, cancellation.clone());
-    let result = super::conversation_turn::execute_conversation_turn(state, input, on_event, cancellation.clone()).await;
+    let result = super::conversation_turn::execute_conversation_turn(
+        state,
+        input,
+        on_event,
+        cancellation.clone(),
+    )
+    .await;
     if let Some(task) = response_task {
         task.abort();
         let _ = task.await;
@@ -191,6 +202,29 @@ pub(crate) async fn execute_turn(
         TurnExecutionFailure::unsupervised(
             crate::runtime::contracts::RunFailureCode::InternalError,
             message,
+        )
+    })?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    let (status, message_id) = match &result {
+        Ok(message) => ("completed", Some(message.id.as_str())),
+        Err(error)
+            if cancellation.is_cancelled()
+                || error.code == crate::runtime::contracts::RunFailureCode::UserCancelled =>
+        {
+            ("cancelled", None)
+        }
+        Err(_) => ("failed", None),
+    };
+    state.sqlite_writer.write(|connection| {
+        crate::role_routing::repository::record_provider_turn_finish(
+            connection,
+            &input.run_id,
+            status,
+            message_id,
+            now_ms,
         )
     })?;
     result.map(|_| ())
@@ -335,6 +369,20 @@ pub(crate) fn prepare_runtime_run(
     };
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
+        if task_mode == "conversation"
+            && crate::persistence::load_role_routing_settings(&transaction)?.enabled
+        {
+            let active_root: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM rr_roots WHERE conversation_id=?1 AND phase IN ('queued','responding','draining'))",
+                    params![input.conversation_id],
+                    |row| row.get(0),
+                )
+                .map_err(database_error)?;
+            if active_root {
+                return Err("Role-routing conversation is busy; wait for the current response or cancel it".to_string());
+            }
+        }
         let now = now_iso();
         let new_message = input.retry_input_message_id.is_none();
         let input_message_id = if let Some(message_id) = input.retry_input_message_id.as_deref() {
@@ -394,6 +442,18 @@ pub(crate) fn prepare_runtime_run(
             &input_message_id,
             new_message,
         )?;
+        if task_mode == "conversation" {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0);
+            crate::role_routing::repository::record_provider_turn_start_in_transaction(
+                &transaction,
+                &input.run_id,
+                &input.conversation_id,
+                now_ms,
+            )?;
+        }
         transaction
             .execute(
                 "UPDATE conversations SET updated_at = ?1, title = COALESCE(title, ?2) WHERE id = ?3",
@@ -432,4 +492,3 @@ pub(crate) fn finish_runtime_run(
         Ok(())
     })
 }
-

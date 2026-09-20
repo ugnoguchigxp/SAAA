@@ -3,22 +3,13 @@ import { CodingSettingsSection } from "../coding/CodingSettingsSection";
 import { SecuritySection } from "./SecuritySection";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type {
-  RegionalPreferencesSettings,
-  SettingsDocument,
-  SituationSettings,
-  SituationSnapshot,
-  VoiceProfileSnapshot,
-} from "../../lib/contracts";
+import type { SettingsDocument, VoiceProfileSnapshot } from "../../lib/contracts";
 import { setDisplayLanguagePreference } from "../../i18n";
-import { localizeStatus, localizeUiMessage } from "../../i18n/presentation";
-import { availableTimeZones, CURRENCY_CODES, systemTimeZone } from "../../lib/regionalPreferences";
-import { getSituationSnapshot, saveSettingsDocuments } from "../../lib/runtime";
+import { localizeUiMessage } from "../../i18n/presentation";
+import { saveSettingsDocuments } from "../../lib/runtime";
 import { deleteProviderApiKey } from "../../lib/providerRuntime";
 import { IndividualProvidersSection } from "./IndividualProvidersSection";
 import { ServiceConnectionsSection } from "./ServiceConnectionsSection";
-import { Field, Metric } from "./SettingsFields";
-import { defaultSettingsDraft, DEFAULT_AGENT_NAME } from "./settingsDefaults";
 import {
   credentialCleanupProviderIds,
   documentsFromDraft,
@@ -26,10 +17,13 @@ import {
   reconcileSavedDraft,
   type SettingsDraft,
 } from "./settingsDraft";
+import { defaultSettingsDraft } from "./settingsDefaults";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
+import { SettingsGeneralSection } from "./SettingsGeneralSection";
+import { RoleRoutingSection } from "./RoleRoutingSection";
 import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 
-type SettingsTab = "general" | "connection" | "providers" | "voice" | "situation" | "security";
+type SettingsTab = "general" | "connection" | "providers" | "routing" | "voice" | "security";
 type SaveNotice =
   | { kind: "saved"; cleanupFailures: number; savedAt: number }
   | { kind: "error"; message: string };
@@ -76,12 +70,8 @@ export function SettingsPage({
       label: t("settings.tabs.providers.label"),
       detail: t("settings.tabs.providers.detail"),
     },
+    { id: "routing", label: "Role routing", detail: "モデルの役割と学習" },
     { id: "voice", label: t("settings.tabs.voice.label"), detail: t("settings.tabs.voice.detail") },
-    {
-      id: "situation",
-      label: t("settings.tabs.situation.label"),
-      detail: t("settings.tabs.situation.detail"),
-    },
     {
       id: "security",
       label: t("settings.tabs.security.label"),
@@ -216,7 +206,9 @@ export function SettingsPage({
             <h2>{activeTabMeta.label}</h2>
             <p>{activeTabMeta.detail}</p>
           </header>
-          {activeTab === "general" && <GeneralSection draft={draft} onChange={changeDraft} />}
+          {activeTab === "general" && (
+            <SettingsGeneralSection draft={draft} onChange={changeDraft} />
+          )}
           {activeTab === "general" && <PersonalStateSection />}
           {activeTab === "connection" && (
             <ServiceConnectionsSection
@@ -237,6 +229,12 @@ export function SettingsPage({
               onChange={(providers) => changeDraft((current) => ({ ...current, providers }))}
             />
           )}
+          {activeTab === "routing" && (
+            <RoleRoutingSection
+              settings={draft.roleRouting}
+              onChange={(roleRouting) => changeDraft((current) => ({ ...current, roleRouting }))}
+            />
+          )}
           {activeTab === "voice" && (
             <VoiceSettingsSection
               voice={{ ...draft.voice, listeningEnabled: voiceListeningEnabled }}
@@ -253,12 +251,6 @@ export function SettingsPage({
                   voice: { ...voice, listeningEnabled: current.voice.listeningEnabled },
                 }))
               }
-            />
-          )}
-          {activeTab === "situation" && (
-            <SituationSection
-              situation={draft.situation}
-              onChange={(situation) => changeDraft((current) => ({ ...current, situation }))}
             />
           )}
           {activeTab === "security" && (
@@ -289,227 +281,5 @@ export function SettingsPage({
         </div>
       </footer>
     </section>
-  );
-}
-
-function GeneralSection({
-  draft,
-  onChange,
-}: {
-  draft: SettingsDraft;
-  onChange: (draft: SettingsDraft) => void;
-}) {
-  const { t, i18n } = useTranslation();
-  const timeZones = useMemo(availableTimeZones, []);
-  const localTimeZone = systemTimeZone();
-  const currencyNames = useMemo(
-    () => new Intl.DisplayNames([i18n.resolvedLanguage ?? "en"], { type: "currency" }),
-    [i18n.resolvedLanguage],
-  );
-  const enabledProviders = draft.providers.providers.filter(
-    (provider) => provider.enabled && provider.kind !== "dynamic-lan",
-  ).length;
-  function changeRegional<K extends keyof RegionalPreferencesSettings>(
-    key: K,
-    value: RegionalPreferencesSettings[K],
-  ) {
-    onChange({ ...draft, regional: { ...draft.regional, [key]: value } });
-  }
-  return (
-    <div className="settings-stack">
-      <section className="settings-card">
-        <h3>{t("settings.general.regionalPreferences")}</h3>
-        <p>{t("settings.general.regionalPreferencesDescription")}</p>
-        <div className="settings-form-grid">
-          <Field label={t("settings.general.displayLanguage")}>
-            <select
-              value={draft.regional.language}
-              onChange={(event) => {
-                const language = event.currentTarget
-                  .value as RegionalPreferencesSettings["language"];
-                changeRegional("language", language);
-                void setDisplayLanguagePreference(language);
-              }}
-            >
-              <option value="system">{t("settings.general.systemLanguage")}</option>
-              <option value="ja">{t("common.japanese")}</option>
-              <option value="en">{t("common.english")}</option>
-            </select>
-          </Field>
-          <Field label={t("settings.general.timeZone")}>
-            <select
-              value={draft.regional.timeZone}
-              onChange={(event) => changeRegional("timeZone", event.currentTarget.value)}
-            >
-              <option value="system">
-                {t("settings.general.systemTimeZone", { timeZone: localTimeZone })}
-              </option>
-              {timeZones.map((timeZone) => (
-                <option key={timeZone} value={timeZone}>
-                  {timeZone}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t("settings.general.lengthUnit")}>
-            <select
-              value={draft.regional.lengthUnit}
-              onChange={(event) =>
-                changeRegional(
-                  "lengthUnit",
-                  event.currentTarget.value as RegionalPreferencesSettings["lengthUnit"],
-                )
-              }
-            >
-              <option value="metric">{t("settings.general.metric")}</option>
-              <option value="imperial">{t("settings.general.imperial")}</option>
-            </select>
-          </Field>
-          <Field label={t("settings.general.weightUnit")}>
-            <select
-              value={draft.regional.weightUnit}
-              onChange={(event) =>
-                changeRegional(
-                  "weightUnit",
-                  event.currentTarget.value as RegionalPreferencesSettings["weightUnit"],
-                )
-              }
-            >
-              <option value="kilogram">{t("settings.general.kilogram")}</option>
-              <option value="pound">{t("settings.general.pound")}</option>
-            </select>
-          </Field>
-          <Field label={t("settings.general.currency")}>
-            <select
-              value={draft.regional.currency}
-              onChange={(event) =>
-                changeRegional(
-                  "currency",
-                  event.currentTarget.value as RegionalPreferencesSettings["currency"],
-                )
-              }
-            >
-              {CURRENCY_CODES.map((currency) => (
-                <option key={currency} value={currency}>
-                  {currency} — {currencyNames.of(currency) ?? currency}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-      </section>
-      <section className="settings-card">
-        <h3>{t("settings.general.identity")}</h3>
-        <div className="settings-form-grid">
-          <Field label={t("settings.general.agentName")}>
-            <input
-              value={draft.codex.agentName}
-              maxLength={80}
-              placeholder={DEFAULT_AGENT_NAME}
-              onChange={(event) =>
-                onChange({ ...draft, codex: { ...draft.codex, agentName: event.target.value } })
-              }
-            />
-          </Field>
-          <Field label={t("settings.general.userName")}>
-            <input
-              value={draft.codex.userName}
-              maxLength={80}
-              placeholder={t("settings.general.userNamePlaceholder")}
-              onChange={(event) =>
-                onChange({ ...draft, codex: { ...draft.codex, userName: event.target.value } })
-              }
-            />
-          </Field>
-        </div>
-      </section>
-      <section className="settings-card">
-        <h3>{t("settings.general.runtimeState")}</h3>
-        <div className="settings-summary-grid">
-          <Metric
-            label={t("settings.general.harness")}
-            value={draft.providers.harness.address || t("common.notConfigured")}
-          />
-          <Metric
-            label={t("settings.general.individualProviders")}
-            value={t("settings.general.enabledCount", { count: enabledProviders })}
-          />
-          <Metric
-            label={t("settings.general.listening")}
-            value={
-              draft.voice.listeningEnabled ? t("settings.general.alwaysOn") : t("common.paused")
-            }
-          />
-          <Metric
-            label={t("settings.general.situation")}
-            value={
-              draft.situation.enabled ? t("settings.general.shadowMonitoring") : t("common.paused")
-            }
-          />
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function SituationSection({
-  situation,
-  onChange,
-}: {
-  situation: SituationSettings;
-  onChange: (value: SituationSettings) => void;
-}) {
-  const { t } = useTranslation();
-  const [snapshot, setSnapshot] = useState<SituationSnapshot | null>(null);
-  useEffect(() => {
-    let active = true;
-    void getSituationSnapshot()
-      .then((value) => {
-        if (active) setSnapshot(value);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
-  return (
-    <div className="settings-stack">
-      <section className="settings-card">
-        <div className="card-title-row">
-          <div>
-            <h3>{t("settings.situation.title")}</h3>
-            <p className="settings-help">{t("settings.situation.description")}</p>
-          </div>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={situation.enabled}
-              onChange={(event) => onChange({ ...situation, enabled: event.target.checked })}
-            />
-            <span />
-          </label>
-        </div>
-        <div className="settings-summary-grid">
-          <Metric
-            label={t("settings.situation.sampling")}
-            value={`${situation.sampleIntervalMs} ms`}
-          />
-          <Metric
-            label={t("settings.situation.calendar")}
-            value={
-              snapshot ? localizeStatus(t, snapshot.signals.calendar.health) : t("common.disabled")
-            }
-          />
-          <Metric
-            label={t("settings.situation.retention")}
-            value={t("settings.situation.days", { count: situation.retentionDays })}
-          />
-          <Metric
-            label={t("settings.situation.rawAudio")}
-            value={t("settings.situation.neverStored")}
-          />
-        </div>
-      </section>
-    </div>
   );
 }

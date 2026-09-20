@@ -9,13 +9,13 @@ English | [日本語](README.ja.md)
 [Get started](#run-locally) · [Contribute](CONTRIBUTING.md) · [Get help](SUPPORT.md) · [Security](SECURITY.md) · [License](LICENSE)
 
 
-SAAA is a local-first AI runtime that brings conversation, voice, meeting transcription, and work-context observation into one desktop application. It is built with React and Tauri, and stores conversations and settings in a local SQLite database. Model traffic can be routed to a local LLM server on a private network, an OpenAI-compatible API, or the feature-gated LARM provider.
+SAAA is a local-first AI runtime that brings conversation and voice into one desktop application. It is built with React and Tauri, and stores conversations and settings in a local SQLite database. Model traffic can be routed to a local LLM server on a private network, an OpenAI-compatible API, or the feature-gated LARM provider.
 
-The long-term goal is a resident runtime that does more than answer prompts: it should decide whether to assist at all, based on the user's current situation. The implementation has not reached that goal yet. Situation observation currently runs only in an evaluation-oriented shadow mode and never operates applications or sends notifications automatically.
+The long-term goal is a resident runtime that does more than answer prompts: it should decide whether to assist at all, based on the user's current situation. The implementation has not reached that goal yet. The app never operates applications or sends notifications automatically.
 
 ## Project status
 
-This repository is an MVP under active development. It implements text and voice conversation, microphone-based meeting transcription, Situation recording and calibration, local database backups, and redacted diagnostics.
+This repository is an MVP under active development. It implements text and voice conversation, local database backups, and redacted diagnostics.
 
 Normal development and offline verification are available. Production use through LARM is not yet approved: the API contract, isolated canary environment, 30-minute canary, two-hour soak test, and other gates still have open work. See the [Product Readiness Status](spec/docs/product-readiness-status.html) for the current feature and verification matrix. The older [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html) remains route-specific historical evidence.
 
@@ -23,12 +23,10 @@ Normal development and offline verification are available. Production use throug
 
 | Surface | Main capabilities | Current safety boundary |
 | --- | --- | --- |
-| Chat | Text and microphone input, streamed responses, and playback through the OS speech runtime | Cloud fallback is disabled by default when a local route is selected |
-| Meeting | Partial and final microphone transcripts, pause and resume, and reviewed saving | Only explicitly started sessions capture audio; TTS is blocked during capture |
-| Situation | Classify the foreground application, input activity, and SAAA's own state; record and replay intervention decisions | Disabled by default; never starts a model, notification, TTS, Meeting, or application action automatically |
-| Settings | Manage model routes, voice, Situation, and privacy settings | Credentials are never stored in Settings or SQLite |
+| Chat | Text and microphone input, streamed responses, and playback through the OS speech runtime. The audit log opens from the conversation menu as a modal | Cloud fallback is disabled by default when a local route is selected |
+| Settings | Manage model routes, voice, and privacy settings | Credentials are never stored in Settings or SQLite |
 
-Voice chat and Meeting transcription use the configured harness ASR service or an individual ASR provider. Text-only use does not require ASR or voice enrollment. ASR is the service that converts speech to text. The current Meeting implementation captures the microphone only. System audio, translation, and a floating overlay are not available.
+Voice chat uses the configured harness ASR service or an individual ASR provider. Text-only use does not require ASR or voice enrollment. ASR is the service that converts speech to text. The current implementation captures the microphone only. System audio, translation, and a floating overlay are not available.
 
 ## Requirements
 
@@ -36,9 +34,9 @@ Voice chat and Meeting transcription use the configured harness ASR service or a
 - Rust 1.92.0 with rustfmt and Clippy, selected by `rust-toolchain.toml`
 - The Tauri 2 build prerequisites for the target OS (on macOS, install Xcode Command Line Tools with `xcode-select --install`)
 - To use the local conversation route, a local LLM server reachable over the private network. `LARM_API_TOKEN` is optional when that server permits anonymous LAN access and required when it enforces Bearer authentication.
-- For voice input or Meeting, access to the configured ASR service
+- For voice input, access to the configured ASR service
 
-macOS is the primary verification target. System TTS is implemented for macOS, Linux, and Windows, but Situation foreground/input signals depend on macOS facilities.
+macOS is the primary verification target. System TTS is implemented for macOS, Linux, and Windows.
 
 ## Run locally
 
@@ -65,7 +63,7 @@ SAAA uses the connection API on the configured host to obtain a connection to th
 
 SAAA sends `LARM_API_TOKEN` as a Bearer credential when the variable is set. It can be left unset for a trusted LAN server that explicitly allows anonymous access; this does not mean every server accepts unauthenticated requests. SAAA does not create an SSH tunnel, so both the connection API and the model endpoint returned by the server must be reachable over the private network.
 
-Voice chat and Meeting reuse the LAN host configured under Settings → Model Providers. SAAA derives the private ASR origin, queries `/v1/models` and `/health`, and reflects the resolved model under Settings → Voice. No separate ASR environment variable is required.
+Voice chat reuses the LAN host configured under Settings → Model Providers. SAAA derives the private ASR origin, queries `/v1/models` and `/health`, and reflects the resolved model under Settings → Voice. No separate ASR environment variable is required.
 
 ### OpenAI-compatible APIs
 
@@ -97,7 +95,7 @@ Settings → Voice → My voice profile can configure an on-device filter that m
 
 Voice samples are stored as unencrypted WAV files in the application-data directory, and speaker embeddings are stored unencrypted in SQLite. On macOS, the sample directory uses mode `0700` and sample files use mode `0600`. When the filter is enabled, SAAA sends audio to the local ASR server only after it passes local speaker matching. Model, stored-data, timeout, and ambiguous-speaker failures are fail-closed; they never fall back to sending unfiltered audio.
 
-This filter applies to both Voice chat and Meeting transcription. It is a transcription privacy filter, not identity authentication, liveness detection, replay protection, speaker diarization, or simultaneous-speaker separation.
+This filter applies to Voice chat. It is a transcription privacy filter, not identity authentication, liveness detection, replay protection, speaker diarization, or simultaneous-speaker separation.
 
 ## Develop and verify
 
@@ -145,17 +143,14 @@ SAAA creates one SQLite database in the application-data directory for `com.saaa
 
 The main database has exactly one read-write owner: a Rust `SqliteWriter` created once in the Tauri process and reused by every write path. Startup acquires an exclusive OS lock before opening SQLite, so a second SAAA process using the same data directory is rejected before it can open or migrate the database. Read-only operations use separate SQLite connections opened with both the read-only flag and `query_only=ON`; each operation runs in one read transaction so its queries share a consistent snapshot. This allows multiple readers while keeping all writes serialized through the single Writer. The adjacent `saaa.sqlite3.writer.lock` file may remain after shutdown; the OS releases its lock automatically, so it must not be deleted while SAAA is running.
 
-The database stores settings, conversations, completed messages, run state, unencrypted speaker embeddings, and a bounded structured audit trail. The audit trail retains lifecycle events for seven days; events older than seven days are removed when the application opens its database at startup. It links microphone capture, ASR utterances, conversation runs, provider sessions, TTS, meetings, and settings changes by correlation and causation identifiers. It stores event names, states, timestamps, outcomes, and failure codes. It does not evaluate or store voice-quality metrics, raw audio, transcript or prompt text, model output, credentials, endpoint addresses, or ephemeral allocation/request identifiers.
+The database stores settings, conversations, completed messages, run state, unencrypted speaker embeddings, and a bounded structured audit trail. The audit trail retains lifecycle events for seven days; events older than seven days are removed when the application opens its database at startup. It links microphone capture, ASR utterances, conversation runs, provider sessions, TTS, and settings changes by correlation and causation identifiers. It stores event names, states, timestamps, outcomes, and failure codes. It does not evaluate or store voice-quality metrics, raw audio, transcript or prompt text, model output, credentials, endpoint addresses, or ephemeral allocation/request identifiers.
 
-The top-level Audit log screen shows the latest 200 structured audit events in a read-only list. Settings → Privacy & Security can create a consistent SQLite backup or a redacted diagnostics JSON file. Diagnostics include the latest 1,000 structured audit events and exclude conversation text, local paths, credentials, and connection secrets.
+The conversation menu opens the latest 200 structured audit events in a read-only modal. Settings → Privacy & Security can create a consistent SQLite backup or a redacted diagnostics JSON file. Diagnostics include the latest 1,000 structured audit events and exclude conversation text, local paths, credentials, and connection secrets.
 
 Database backups include the unencrypted speaker embeddings but not the WAV voice samples. Restoring a database backup alone therefore cannot restore a usable voice profile. SAAA also creates a pre-migration database backup automatically before opening an older schema.
 
 ## Current limitations
 
-- Situation is an evaluation-only shadow mode. Automatic intervention and application control are not implemented.
-- Meeting supports microphone input only. System audio, translation, speaker diarization, and a floating overlay are unavailable.
-- Meeting transcripts remain in memory until the user stops the session, reviews the save target and contents, and selects Save. They are discarded otherwise.
 - LARM production use is awaiting approval. Do not treat it as a production route until the API contract, isolated environment, canary, soak, security, rollback, and runbook reviews are complete.
 
 ## Repository layout
@@ -178,7 +173,6 @@ spec/docs/       design documents, ADRs, runbooks, and release evidence
 - [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html)
 - [LARM Operations Runbook](spec/docs/mvp-2.6-larm-operations-runbook.html)
 - [Runtime Boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.html)
-- [Situation Privacy ADR](spec/docs/adr/0002-situation-signal-privacy.html)
 - [Input Activity Privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html)
 
 ## Contributing

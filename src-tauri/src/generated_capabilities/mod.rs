@@ -1,5 +1,3 @@
-//! Dynamically registered capabilities: import/verify/activate/invoke/suspend behind one service.
-
 pub mod contracts;
 pub mod errors;
 pub mod execution;
@@ -7,6 +5,7 @@ pub mod generation;
 pub mod guards;
 pub mod host;
 pub mod inspection;
+pub mod inspection_invoke;
 pub mod lifecycle;
 pub mod limits;
 pub mod package_store;

@@ -9,7 +9,7 @@ function source(path: string): string {
 
 describe("audit log UI", () => {
   test("keeps a bounded read-only audit command and page", () => {
-    const backend = source("src-tauri/src/lib.rs");
+    const backend = source("src-tauri/src/runtime/command_registry.rs");
     const audit = source("src-tauri/src/persistence/audit.rs");
     const app = source("src/App.tsx");
     const settings = source("src/features/settings/SettingsPage.tsx");
