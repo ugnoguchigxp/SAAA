@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Runtime wiring lands with C11/C13; parsing/display are unit-tested here.
-
 //! Strict conversation commands for the restricted generation/inspection flow (plan 12.7).
 //!
 //! Only the exact saved user input is a command. Leading/trailing whitespace is trimmed, but a
@@ -7,8 +5,15 @@
 //! tool output can never start one.
 
 use serde_json::Value;
+use std::sync::Arc;
 
+use crate::generated_capabilities::generation::contracts::{GenerateInput, GenerationContext};
 use crate::generated_capabilities::inspection::contracts::InspectionReceipt;
+use crate::ipc_contract::RuntimeEvent;
+use crate::runtime::event_hub::RuntimeEventSender;
+use crate::{
+    persist_conversation_success, AppState, RunCancellation, StartTurnInput, TurnExecutionFailure,
+};
 
 pub const COMMAND_PREFIX: &str = "/capability";
 pub const MAX_DISPLAY_BYTES: usize = 64 * 1024;
@@ -171,6 +176,116 @@ pub fn fence_for(typescript: &str) -> String {
         }
     }
     "`".repeat(longest.max(2) + 1)
+}
+
+/// Intercepts a saved user message that is a `/capability` command. `Ok(false)` continues the
+/// ordinary conversation provider path. `Ok(true)` means this turn is finished.
+pub(crate) async fn handle_user_turn(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: Arc<RunCancellation>,
+) -> Result<bool, TurnExecutionFailure> {
+    match parse(&input.content) {
+        Err(CommandError::NotACommand) => Ok(false),
+        Err(CommandError::Malformed) => {
+            complete_command(
+                state,
+                input,
+                on_event,
+                "That is not a valid /capability command. Use `/capability generate <request-id>`, `/capability update <request-id> <revision-id>`, or `/capability inspect <call-id>`. Natural-language generation is not offered.",
+            )
+            .await?;
+            Ok(true)
+        }
+        Ok(command) => {
+            let content = dispatch(state, input, command, cancellation).await;
+            complete_command(state, input, on_event, &content).await?;
+            Ok(true)
+        }
+    }
+}
+
+async fn dispatch(
+    state: &AppState,
+    input: &StartTurnInput,
+    command: CapabilityCommand,
+    cancellation: Arc<RunCancellation>,
+) -> String {
+    match command {
+        CapabilityCommand::Inspect { call_id } => format!(
+            "Capability inspection for `{call_id}` is recorded against the call owner. Use this command after a generated call. Natural-language generation is not offered."
+        ),
+        CapabilityCommand::Generate { request_id } | CapabilityCommand::Update { request_id, .. } => {
+            let Some(generation) = state.generation.clone() else {
+                return "Capability generation is not configured on this host. Natural-language generation is not offered.".into();
+            };
+            let Ok(principal_id) = crate::tool_selection::service::ensure_principal(&state.sqlite_writer)
+            else {
+                return "Capability generation is unavailable because no principal is recorded.".into();
+            };
+            let input_message_id = state
+                .sqlite_readers
+                .read(|connection| {
+                    connection
+                        .query_row(
+                            "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
+                            rusqlite::params![input.run_id],
+                            |row| row.get::<_, Option<String>>(0),
+                        )
+                        .map_err(|error| error.to_string())
+                })
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let base_revision_id = match command {
+                CapabilityCommand::Update {
+                    base_revision_id, ..
+                } => Some(base_revision_id),
+                _ => None,
+            };
+            let receipt = generation
+                .generate(
+                    GenerationContext {
+                        principal_id,
+                        conversation_id: input.conversation_id.clone(),
+                        run_id: input.run_id.clone(),
+                        input_message_id,
+                        project_id: None,
+                    },
+                    GenerateInput {
+                        request_id: request_id.clone(),
+                        base_revision_id,
+                    },
+                    (*cancellation).clone(),
+                )
+                .await;
+            format!(
+                "Capability generation\nrequest: {request_id}\nstatus: {}\njob: {}\nrevision: {}\nerror: {}\nAfter a revision is active, search and call it through the usual conversation tools. Do not expect a side-effect tool to run automatically. Natural-language generation is not offered.",
+                receipt.status.as_str(),
+                receipt.job_id,
+                receipt.revision_id.as_deref().unwrap_or("-"),
+                receipt
+                    .error_code
+                    .map(|code| code.as_str().to_string())
+                    .unwrap_or_else(|| "-".into()),
+            )
+}
+
+async fn complete_command(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &dyn RuntimeEventSender,
+    content: &str,
+) -> Result<(), TurnExecutionFailure> {
+    let _ = on_event.send(RuntimeEvent::Started {
+        run_id: input.run_id.clone(),
+        route: "conversation.respond".to_string(),
+        provider_id: "capability".to_string(),
+    });
+    let message = persist_conversation_success(state, input, content)?;
+    crate::memory::personal_state::output::send_completed(state, input, on_event, &message)?;
+    Ok(())
 }
 
 #[cfg(test)]
