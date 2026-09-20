@@ -20,9 +20,7 @@ use super::descriptors;
 use super::repository as mcp_repository;
 use super::session::{CallError, McpSessionPool, SessionState};
 use super::sync::{self, SyncError, SyncOutcome};
-use super::{
-    MCP_NOTIFICATION_DEBOUNCE, MCP_SOURCE_POLL_INTERVAL, MCP_SOURCE_STALE_AFTER_MILLIS,
-};
+use super::{MCP_NOTIFICATION_DEBOUNCE, MCP_SOURCE_POLL_INTERVAL, MCP_SOURCE_STALE_AFTER_MILLIS};
 use crate::persistence::SqliteWriter;
 
 pub struct McpManager {
@@ -283,10 +281,8 @@ impl McpManager {
                 self.ready.write().await.insert(source_id.to_string());
                 self.source_diagnostics.write().await.remove(source_id);
                 self.apply_config_grants(source_id, generation).await;
-                if let Err(error) = self.index_missing_embeddings().await {
-                    // A failed embedding pass degrades to BM25 and is retried on the next sync.
-                    let _ = error;
-                }
+                // A failed embedding pass degrades to BM25 and is retried on the next sync.
+                let _ = self.index_missing_embeddings().await;
                 self.watch_notifications(source_id).await;
                 Ok(outcome)
             }
@@ -398,9 +394,8 @@ impl McpManager {
             let transaction = connection
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(crate::database_error)?;
-            let existing =
-                mcp_repository::managed_grants_for_source(&transaction, &source)
-                    .map_err(|_| "storage".to_string())?;
+            let existing = mcp_repository::managed_grants_for_source(&transaction, &source)
+                .map_err(|_| "storage".to_string())?;
             let desired_set: HashSet<(String, String, String, String)> = desired
                 .iter()
                 .map(|grant| {
@@ -619,17 +614,15 @@ impl McpManager {
 
     /// Pre-flight check used by `invoke` before an invocation row is opened. It performs exactly
     /// the same source gate as `invoke` minus the send.
-    pub async fn preflight(
-        &self,
-        source_id: &str,
-        endpoint_hash: &str,
-    ) -> Result<(), CallError> {
+    pub async fn preflight(&self, source_id: &str, endpoint_hash: &str) -> Result<(), CallError> {
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err(CallError::Closed);
         }
         let gate = self.gate_for(source_id).await;
         let _guard = gate.read().await;
-        self.check_locked(source_id, endpoint_hash).await.map(|_| ())
+        self.check_locked(source_id, endpoint_hash)
+            .await
+            .map(|_| ())
     }
 
     async fn check_locked(

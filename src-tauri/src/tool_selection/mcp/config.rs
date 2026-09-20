@@ -182,10 +182,12 @@ fn validate_source_id(id: &str) -> Result<(), McpConfigDiagnostic> {
     if id.len() > 64 {
         return Err("mcp-sources-id-invalid");
     }
-    if !id
-        .chars()
-        .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_' || character == '-')
-    {
+    if !id.chars().all(|character| {
+        character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || character == '_'
+            || character == '-'
+    }) {
         return Err("mcp-sources-id-invalid");
     }
     Ok(())

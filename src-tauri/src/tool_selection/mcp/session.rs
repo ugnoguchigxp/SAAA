@@ -359,7 +359,8 @@ impl McpSessionPool {
             tokio::spawn(async move { old.shutdown().await });
         }
         let transport = Arc::new(
-            HttpTransport::new(&spec.url, token).map_err(|_| CallError::Unavailable("transport"))?,
+            HttpTransport::new(&spec.url, token)
+                .map_err(|_| CallError::Unavailable("transport"))?,
         );
         let session = Arc::new(SourceSession::new(&spec.id, config_generation, transport));
         sessions.insert(spec.id.clone(), session.clone());

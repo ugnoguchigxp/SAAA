@@ -106,7 +106,11 @@ impl ToolBackend for McpBackend {
 }
 
 fn outcome_from_result(result: &Value) -> BackendOutcome {
-    if result.get("isError").and_then(Value::as_bool).unwrap_or(false) {
+    if result
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return BackendOutcome {
             status: TechnicalStatus::Failed,
             result: Some(result.clone()),

@@ -17,12 +17,14 @@ use super::descriptors;
 use super::manager::McpManager;
 use super::results;
 use crate::persistence::SqliteWriter;
-use crate::tool_selection::backends::router::BackendRouter;
 use crate::tool_selection::backends::mcp::McpBackend;
+use crate::tool_selection::backends::router::BackendRouter;
 use crate::tool_selection::backends::FixtureBackend;
 use crate::tool_selection::contracts::now_ms;
-use crate::tool_selection::inference::{EmbedKind, EmbeddingProvider, FixedReranker, InferenceError};
 use crate::tool_selection::extraction::UnconfiguredExtractor;
+use crate::tool_selection::inference::{
+    EmbedKind, EmbeddingProvider, FixedReranker, InferenceError,
+};
 use crate::tool_selection::repository;
 use crate::tool_selection::service::ToolSelectionService;
 use crate::tool_selection::{RequestContext, Scenario};
@@ -54,7 +56,6 @@ struct ServerState {
 
 struct MockServer {
     address: SocketAddr,
-    state: Arc<ServerState>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -74,11 +75,7 @@ impl MockServer {
                 });
             }
         });
-        MockServer {
-            address,
-            state,
-            task,
-        }
+        MockServer { address, task }
     }
 
     fn url(&self) -> String {
@@ -120,7 +117,9 @@ fn default_state() -> Arc<ServerState> {
     state
 }
 
-async fn read_request(socket: &mut tokio::net::TcpStream) -> Option<(String, HashMap<String, String>, Vec<u8>)> {
+async fn read_request(
+    socket: &mut tokio::net::TcpStream,
+) -> Option<(String, HashMap<String, String>, Vec<u8>)> {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
     let header_end;
@@ -170,7 +169,12 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-async fn write_response(socket: &mut tokio::net::TcpStream, status: &str, content_type: &str, body: &[u8]) -> std::io::Result<()> {
+async fn write_response(
+    socket: &mut tokio::net::TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -188,11 +192,18 @@ async fn write_sse(socket: &mut tokio::net::TcpStream, message: &Value) -> std::
     socket.flush().await
 }
 
-async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> std::io::Result<()> {
+async fn serve(
+    socket: &mut tokio::net::TcpStream,
+    state: &Arc<ServerState>,
+) -> std::io::Result<()> {
     let Some((request_line, headers, body)) = read_request(socket).await else {
         return Ok(());
     };
-    let method = request_line.split(' ').next().unwrap_or_default().to_string();
+    let method = request_line
+        .split(' ')
+        .next()
+        .unwrap_or_default()
+        .to_string();
     if method == "GET" {
         if state.get_supported.load(Ordering::SeqCst) {
             let notification = json!({
@@ -208,13 +219,18 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
         return write_response(socket, "200 OK", "application/json", b"{}").await;
     }
     let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    let rpc_method = request.get("method").and_then(Value::as_str).unwrap_or_default();
+    let rpc_method = request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let id = request.get("id").cloned();
     let session_matches = {
         let session = state.session.lock().unwrap().clone();
         match session {
             None => true,
-            Some(session) => headers.get("mcp-session-id").map(String::as_str) == Some(session.as_str()),
+            Some(session) => {
+                headers.get("mcp-session-id").map(String::as_str) == Some(session.as_str())
+            }
         }
     };
     match rpc_method {
@@ -227,7 +243,9 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
             if state.tools_capability.load(Ordering::SeqCst) {
                 result["capabilities"]["tools"] = json!({});
             }
-            let mut head = String::from("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n");
+            let mut head = String::from(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n",
+            );
             if let Some(session) = state.session.lock().unwrap().clone() {
                 head.push_str(&format!("Mcp-Session-Id: {session}\r\n"));
             }
@@ -235,7 +253,7 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
             head.push_str(&format!("Content-Length: {}\r\n\r\n", body.len()));
             socket.write_all(head.as_bytes()).await?;
             socket.write_all(body.as_bytes()).await?;
-            return socket.flush().await;
+            socket.flush().await
         }
         "notifications/initialized" => {
             state.initialized_seen.store(true, Ordering::SeqCst);
@@ -246,7 +264,9 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
                 return write_response(socket, "404 Not Found", "text/plain", b"").await;
             }
             if !state.initialized_seen.load(Ordering::SeqCst) {
-                state.calls_while_uninitialized.fetch_add(1, Ordering::SeqCst);
+                state
+                    .calls_while_uninitialized
+                    .fetch_add(1, Ordering::SeqCst);
             }
             let index = state.list_count.fetch_add(1, Ordering::SeqCst);
             let bad = state.injected_bad_page.lock().unwrap().as_ref().copied();
@@ -277,9 +297,8 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
                 .get("nextCursor")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let next = explicit.or_else(|| {
-                (page_index + 1 < pages.len()).then(|| format!("cursor-{page_index}"))
-            });
+            let next = explicit
+                .or_else(|| (page_index + 1 < pages.len()).then(|| format!("cursor-{page_index}")));
             match next {
                 Some(next) => {
                     result["nextCursor"] = json!(next);
@@ -299,7 +318,13 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
             if state.sse.load(Ordering::SeqCst) {
                 return write_sse(socket, &message).await;
             }
-            return write_response(socket, "200 OK", "application/json", message.to_string().as_bytes()).await;
+            return write_response(
+                socket,
+                "200 OK",
+                "application/json",
+                message.to_string().as_bytes(),
+            )
+            .await;
         }
         "tools/call" => {
             state.call_count.fetch_add(1, Ordering::SeqCst);
@@ -313,7 +338,13 @@ async fn serve(socket: &mut tokio::net::TcpStream, state: &Arc<ServerState>) -> 
             if state.sse.load(Ordering::SeqCst) {
                 return write_sse(socket, &message).await;
             }
-            return write_response(socket, "200 OK", "application/json", message.to_string().as_bytes()).await;
+            return write_response(
+                socket,
+                "200 OK",
+                "application/json",
+                message.to_string().as_bytes(),
+            )
+            .await;
         }
         "notifications/cancelled" => {
             return write_response(socket, "202 Accepted", "application/json", b"").await;
@@ -355,7 +386,11 @@ impl EmbeddingProvider for HashEmbeddingAdapter {
     fn dimension(&self) -> usize {
         16
     }
-    async fn embed(&self, _kind: EmbedKind, texts: &[String]) -> Result<Vec<Vec<f32>>, InferenceError> {
+    async fn embed(
+        &self,
+        _kind: EmbedKind,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, InferenceError> {
         Ok(texts
             .iter()
             .map(|text| {
@@ -377,6 +412,14 @@ impl EmbeddingProvider for HashEmbeddingAdapter {
 
 impl Harness {
     fn new(server: &MockServer, grants: Vec<McpGrantSpec>) -> Self {
+        Self::new_with_embedder(server, grants, true)
+    }
+
+    fn new_with_embedder(
+        server: &MockServer,
+        grants: Vec<McpGrantSpec>,
+        with_embedder: bool,
+    ) -> Self {
         let connection = Connection::open_in_memory().expect("in-memory");
         crate::persistence::schema::initialize_database(&connection).expect("schema");
         let writer = Arc::new(SqliteWriter::from_connection(connection));
@@ -394,7 +437,8 @@ impl Harness {
             .expect("conversation");
         // The principal is created through the settings document so the manager and the service
         // share one id.
-        let principal = crate::tool_selection::service::ensure_principal(&writer).expect("principal");
+        let principal =
+            crate::tool_selection::service::ensure_principal(&writer).expect("principal");
         let source = McpSourceSpec {
             id: "mcp-test".to_string(),
             url: server.url(),
@@ -410,16 +454,21 @@ impl Harness {
             principal.clone(),
             None,
             sources,
-            Some(hash_embedding()),
+            with_embedder.then(hash_embedding),
             None,
         );
         let router = Arc::new(BackendRouter::new(
             Arc::new(FixtureBackend::new()),
             Arc::new(McpBackend::new(manager.clone())),
         ));
+        let embedding: Arc<dyn EmbeddingProvider> = if with_embedder {
+            hash_embedding()
+        } else {
+            Arc::new(crate::tool_selection::inference::UnavailableEmbedding)
+        };
         let mut service = ToolSelectionService::new(
             writer.clone(),
-            hash_embedding(),
+            embedding,
             Arc::new(FixedReranker::new(&[])),
             Arc::new(UnconfiguredExtractor),
             router,
@@ -436,34 +485,16 @@ impl Harness {
     }
 
     fn context(&self) -> RequestContext {
-        RequestContext::new(&self.principal, "conversation-d4")
-            .with_run(Some("run-d4".to_string()))
-    }
-
-    fn insert_message(&self) -> String {
-        let id = crate::new_id("msg");
-        let message = id.clone();
-        let now = crate::now_iso();
-        self.writer
-            .write(move |connection| {
-                connection
-                    .execute(
-                        "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
-                         VALUES (?1, 'conversation-d4', 'user', 'fixture', ?2)",
-                        rusqlite::params![message, now],
-                    )
-                    .map_err(|error| error.to_string())?;
-                Ok(())
-            })
-            .expect("insert message");
-        id
+        RequestContext::new(&self.principal, "conversation-d4").with_run(Some("run-d4".to_string()))
     }
 
     fn count(&self, table: &str) -> i64 {
         self.writer
             .read_serialized(|connection| {
                 connection
-                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                        row.get(0)
+                    })
                     .map_err(|error| error.to_string())
             })
             .expect("count")
@@ -573,9 +604,14 @@ fn descriptor(name: &str, description: &str) -> Value {
 #[test]
 fn t03_ids_are_stable_and_source_scoped() {
     let endpoint = "e".repeat(64);
-    let a = descriptors::normalize_tool("src-a", &endpoint, &descriptor("search", "one")).expect("a");
-    let b = descriptors::normalize_tool("src-b", &endpoint, &descriptor("search", "one")).expect("b");
-    assert_ne!(a.tool_id, b.tool_id, "same name in different sources is a different tool");
+    let a =
+        descriptors::normalize_tool("src-a", &endpoint, &descriptor("search", "one")).expect("a");
+    let b =
+        descriptors::normalize_tool("src-b", &endpoint, &descriptor("search", "one")).expect("b");
+    assert_ne!(
+        a.tool_id, b.tool_id,
+        "same name in different sources is a different tool"
+    );
     assert!(a.tool_id.starts_with("mcpt_"));
     assert!(a.revision_id.starts_with("mcpr_"));
 
@@ -600,7 +636,8 @@ fn t03_a_to_b_to_a_returns_to_a_and_detects_changes() {
     assert_eq!(a.revision_id, a_again.revision_id);
     assert_eq!(a.tool_id, b.tool_id);
 
-    let other_endpoint = descriptors::normalize_tool("src", &"f".repeat(64), &descriptor("x", "A")).expect("e");
+    let other_endpoint =
+        descriptors::normalize_tool("src", &"f".repeat(64), &descriptor("x", "A")).expect("e");
     assert_ne!(a.revision_id, other_endpoint.revision_id);
 }
 
@@ -686,7 +723,11 @@ async fn t05_failed_page_keeps_the_previous_snapshot_and_epoch() {
     let state = default_state();
     let server = MockServer::start(state.clone()).await;
     let harness = Harness::new(&server, vec![user_grant("search")]);
-    harness.manager.sync_source("mcp-test").await.expect("first sync");
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("first sync");
     let epoch_before = harness.epochs().catalog;
     let count_before = harness.count("tool_selection_catalog");
 
@@ -702,9 +743,17 @@ async fn t05_same_content_resync_does_not_move_the_epoch() {
     let state = default_state();
     let server = MockServer::start(state).await;
     let harness = Harness::new(&server, vec![user_grant("search")]);
-    harness.manager.sync_source("mcp-test").await.expect("first");
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("first");
     let epoch = harness.epochs().catalog;
-    harness.manager.sync_source("mcp-test").await.expect("second");
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("second");
     assert_eq!(harness.epochs().catalog, epoch);
 }
 
@@ -713,11 +762,19 @@ async fn t05_changed_description_bumps_the_epoch_once() {
     let state = default_state();
     let server = MockServer::start(state.clone()).await;
     let harness = Harness::new(&server, vec![user_grant("search")]);
-    harness.manager.sync_source("mcp-test").await.expect("first");
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("first");
     let epoch = harness.epochs().catalog;
     state.list_pages.lock().unwrap()[0]["tools"][0]["description"] =
         json!("Search notes, now with more detail.");
-    harness.manager.sync_source("mcp-test").await.expect("second");
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("second");
     assert_eq!(harness.epochs().catalog, epoch + 1);
 }
 
@@ -726,13 +783,21 @@ async fn t05_disappearing_tool_is_disabled_and_reappears() {
     let state = default_state();
     let server = MockServer::start(state.clone()).await;
     let harness = Harness::new(&server, vec![user_grant("search")]);
-    harness.manager.sync_source("mcp-test").await.expect("first");
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("first");
     state.list_pages.lock().unwrap()[0]["tools"] = json!([{
         "name": "search",
         "description": "Search notes.",
         "inputSchema": { "type": "object", "properties": { "q": { "type": "string" } }, "required": ["q"] }
     }]);
-    harness.manager.sync_source("mcp-test").await.expect("second");
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("second");
     let other_id = descriptors::tool_id("mcp-test", "other");
     let enabled = harness
         .writer
@@ -775,7 +840,12 @@ async fn t05_cursor_loop_and_duplicate_names_fail_the_sync() {
     let server = MockServer::start(state).await;
     let harness = Harness::new(&server, vec![user_grant("a")]);
     assert_eq!(
-        harness.manager.sync_source("mcp-test").await.unwrap_err().code,
+        harness
+            .manager
+            .sync_source("mcp-test")
+            .await
+            .unwrap_err()
+            .code,
         "sync-cursor-loop"
     );
 
@@ -788,7 +858,12 @@ async fn t05_cursor_loop_and_duplicate_names_fail_the_sync() {
     let server = MockServer::start(state).await;
     let harness = Harness::new(&server, vec![user_grant("dup")]);
     assert_eq!(
-        harness.manager.sync_source("mcp-test").await.unwrap_err().code,
+        harness
+            .manager
+            .sync_source("mcp-test")
+            .await
+            .unwrap_err()
+            .code,
         "sync-duplicate-name"
     );
 }
@@ -797,7 +872,11 @@ async fn t05_cursor_loop_and_duplicate_names_fail_the_sync() {
 async fn t05_empty_page_with_cursor_is_allowed() {
     let state = default_state();
     state.list_pages.lock().unwrap().clear();
-    state.list_pages.lock().unwrap().push(json!({ "tools": [], "nextCursor": "B" }));
+    state
+        .list_pages
+        .lock()
+        .unwrap()
+        .push(json!({ "tools": [], "nextCursor": "B" }));
     state.list_pages.lock().unwrap().push(json!({
         "tools": [{ "name": "a", "inputSchema": { "type": "object" } }]
     }));
@@ -826,8 +905,7 @@ async fn t06_import_alone_creates_no_grant_and_config_grants_are_managed() {
             let principal = principal.clone();
             let tool_id = tool_id.clone();
             move |c| {
-                repository::grant_exists(c, &principal, &tool_id, None)
-                    .map_err(|e| e.to_string())
+                repository::grant_exists(c, &principal, &tool_id, None).map_err(|e| e.to_string())
             }
         })
         .unwrap();
@@ -859,14 +937,8 @@ async fn t06_removing_a_source_revokes_only_managed_grants() {
             let other_id = other_id.clone();
             let principal = principal.clone();
             move |connection| {
-                repository::upsert_grant(
-                    connection,
-                    &principal,
-                    &other_id,
-                    "user",
-                    &principal,
-                )
-                .map_err(|e| e.to_string())?;
+                repository::upsert_grant(connection, &principal, &other_id, "user", &principal)
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             }
         })
@@ -875,7 +947,9 @@ async fn t06_removing_a_source_revokes_only_managed_grants() {
 
     harness
         .manager
-        .apply_sources(McpSources { sources: Vec::new() })
+        .apply_sources(McpSources {
+            sources: Vec::new(),
+        })
         .await;
 
     let (search_granted, other_granted) = harness
@@ -894,7 +968,10 @@ async fn t06_removing_a_source_revokes_only_managed_grants() {
     assert!(!search_granted, "config grant is revoked");
     assert!(other_granted, "manual grant is preserved");
     assert!(harness.epochs().acl > acl_before, "acl epoch moves");
-    assert!(harness.epochs().catalog > 0, "catalog epoch moves when tools are disabled");
+    assert!(
+        harness.epochs().catalog > 0,
+        "catalog epoch moves when tools are disabled"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -933,7 +1010,10 @@ async fn t07_real_http_invoke_returns_success_and_records_one_call() {
     let harness = Harness::new(&server, vec![user_grant("search")]);
     harness.manager.sync_source("mcp-test").await.expect("sync");
     let response = describe_and_invoke(&harness, json!({ "q": "value" })).await;
-    assert_eq!(response.status, crate::tool_selection::backends::TechnicalStatus::Succeeded);
+    assert_eq!(
+        response.status,
+        crate::tool_selection::backends::TechnicalStatus::Succeeded
+    );
     assert_eq!(state.call_count.load(Ordering::SeqCst), 1);
 }
 
@@ -948,7 +1028,10 @@ async fn t07_is_error_result_is_failed_and_bounded() {
     let harness = Harness::new(&server, vec![user_grant("search")]);
     harness.manager.sync_source("mcp-test").await.expect("sync");
     let response = describe_and_invoke(&harness, json!({ "q": "value" })).await;
-    assert_eq!(response.status, crate::tool_selection::backends::TechnicalStatus::Failed);
+    assert_eq!(
+        response.status,
+        crate::tool_selection::backends::TechnicalStatus::Failed
+    );
     assert_eq!(response.error_code, Some("remote-tool-error"));
     assert!(response.result.is_some());
 }
@@ -961,7 +1044,10 @@ async fn t07_disconnect_after_side_effect_is_unknown_and_not_retried() {
     let harness = Harness::new(&server, vec![user_grant("search")]);
     harness.manager.sync_source("mcp-test").await.expect("sync");
     let response = describe_and_invoke(&harness, json!({ "q": "value" })).await;
-    assert_eq!(response.status, crate::tool_selection::backends::TechnicalStatus::Unknown);
+    assert_eq!(
+        response.status,
+        crate::tool_selection::backends::TechnicalStatus::Unknown
+    );
     // The server observed exactly one side effect and the client never retried.
     assert_eq!(state.call_count.load(Ordering::SeqCst), 1);
 }
@@ -988,9 +1074,17 @@ async fn t07_cancel_before_send_makes_zero_calls() {
     cancellation.cancel();
     let result = harness
         .service
-        .invoke(&context, &execution_ref, &json!({ "q": "value" }), &cancellation)
+        .invoke(
+            &context,
+            &execution_ref,
+            &json!({ "q": "value" }),
+            &cancellation,
+        )
         .await;
-    assert!(result.is_err(), "a cancelled-before-send call is reported to the caller");
+    assert!(
+        result.is_err(),
+        "a cancelled-before-send call is reported to the caller"
+    );
     assert_eq!(state.call_count.load(Ordering::SeqCst), 0);
 }
 
@@ -1006,7 +1100,10 @@ async fn t08_large_result_is_paged_and_reassembles_exactly() {
     let harness = Harness::new(&server, vec![user_grant("search")]);
     harness.manager.sync_source("mcp-test").await.expect("sync");
     let response = describe_and_invoke(&harness, json!({ "q": "value" })).await;
-    assert_eq!(response.status, crate::tool_selection::backends::TechnicalStatus::Succeeded);
+    assert_eq!(
+        response.status,
+        crate::tool_selection::backends::TechnicalStatus::Succeeded
+    );
     assert_eq!(response.result, None);
     assert_eq!(response.result_availability, Some("stored"));
     let result_ref = response.result_ref.clone().expect("result ref");
@@ -1044,8 +1141,12 @@ async fn t08_result_scope_ttl_and_acl_are_enforced() {
 
     // Another run cannot read the stored result.
     let principal = harness.principal.clone();
-    let other = RequestContext::new(&principal, "conversation-d4").with_run(Some("run-other".into()));
-    assert!(harness.service.describe_result(&other, &result_ref, 0).is_err());
+    let other =
+        RequestContext::new(&principal, "conversation-d4").with_run(Some("run-other".into()));
+    assert!(harness
+        .service
+        .describe_result(&other, &result_ref, 0)
+        .is_err());
 
     // An expired row is refused.
     harness
@@ -1063,7 +1164,10 @@ async fn t08_result_scope_ttl_and_acl_are_enforced() {
             }
         })
         .unwrap();
-    assert!(harness.service.describe_result(&context, &result_ref, 0).is_err());
+    assert!(harness
+        .service
+        .describe_result(&context, &result_ref, 0)
+        .is_err());
 }
 
 #[tokio::test]
@@ -1089,7 +1193,10 @@ async fn t08_size_limit_keeps_the_scan_bounded() {
         })
         .unwrap();
     // A payload above 1 MiB is reported as a size limit and is never inserted.
-    let oversized = format!("{{\"big\":\"{}\"}}", "z".repeat(super::MCP_RESULT_MAX_BYTES));
+    let oversized = format!(
+        "{{\"big\":\"{}\"}}",
+        "z".repeat(super::MCP_RESULT_MAX_BYTES)
+    );
     let outcome = harness
         .writer
         .write(move |connection| {
@@ -1277,8 +1384,10 @@ async fn t10_same_name_in_two_sources_makes_a_name_only_correction_ambiguous() {
     assert!(outcome.ambiguous);
     let rules: i64 = writer
         .read_serialized(|c| {
-            c.query_row("SELECT COUNT(*) FROM tool_selection_rules", [], |row| row.get(0))
-                .map_err(|e| e.to_string())
+            c.query_row("SELECT COUNT(*) FROM tool_selection_rules", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| e.to_string())
         })
         .unwrap();
     assert_eq!(rules, 0);
@@ -1314,11 +1423,19 @@ async fn a01_two_sources_with_1500_tools_publish_and_search_is_bounded() {
     };
     state_a.list_pages.lock().unwrap().clear();
     for chunk in 0..5 {
-        state_a.list_pages.lock().unwrap().push(page("alpha", chunk * 100, 100));
+        state_a
+            .list_pages
+            .lock()
+            .unwrap()
+            .push(page("alpha", chunk * 100, 100));
     }
     state_b.list_pages.lock().unwrap().clear();
     for chunk in 0..10 {
-        state_b.list_pages.lock().unwrap().push(page("beta", chunk * 100, 100));
+        state_b
+            .list_pages
+            .lock()
+            .unwrap()
+            .push(page("beta", chunk * 100, 100));
     }
     let server_a = MockServer::start(state_a).await;
     let server_b = MockServer::start(state_b).await;
@@ -1360,13 +1477,18 @@ async fn a01_two_sources_with_1500_tools_publish_and_search_is_bounded() {
     };
     // Grant every tool through a wildcard-free loop after sync, matching how the config grants
     // are declarative per tool. For scale we insert user grants directly.
-    let manager = McpManager::new(writer.clone(), principal.clone(), None, sources, Some(hash_embedding()), None);
+    let manager = McpManager::new(
+        writer.clone(),
+        principal.clone(),
+        None,
+        sources,
+        Some(hash_embedding()),
+        None,
+    );
     manager.sync_source("alpha").await.expect("alpha");
     manager.sync_source("beta").await.expect("beta");
     let tool_count = writer
-        .read_serialized(|c| {
-            mcp_repo::published_tool_count(c, "alpha").map_err(|e| e.to_string())
-        })
+        .read_serialized(|c| mcp_repo::published_tool_count(c, "alpha").map_err(|e| e.to_string()))
         .unwrap();
     assert_eq!(tool_count, 500);
     writer
@@ -1399,7 +1521,8 @@ async fn a01_two_sources_with_1500_tools_publish_and_search_is_bounded() {
     );
     service.set_discovery_configured(true);
     service.set_mcp_manager(manager);
-    let context = RequestContext::new(&principal, "conversation-d4").with_run(Some("run-d4".into()));
+    let context =
+        RequestContext::new(&principal, "conversation-d4").with_run(Some("run-d4".into()));
     service.set_scenario(&context, scenario());
     let response = service
         .search(&context, "alpha 0001", 8)
@@ -1413,3 +1536,202 @@ async fn a01_two_sources_with_1500_tools_publish_and_search_is_bounded() {
 
 // Alias so the tests can call the MCP table accessors without a long path.
 use super::repository as mcp_repo;
+
+// ---------------------------------------------------------------------------------------------
+// T02 migration
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn t02_v23_sources_are_rebuilt_without_losing_data() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("ledger.sqlite");
+    let connection = Connection::open(&path).expect("open");
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE tool_selection_sources (
+               id TEXT PRIMARY KEY,
+               kind TEXT NOT NULL CHECK(kind IN ('llang')),
+               owner_principal TEXT NOT NULL CHECK(length(owner_principal) BETWEEN 1 AND 160),
+               enabled INTEGER NOT NULL CHECK(enabled IN (0, 1))
+             );
+             CREATE TABLE tool_selection_catalog (
+               id TEXT PRIMARY KEY,
+               source_id TEXT NOT NULL,
+               backend_key TEXT NOT NULL,
+               current_revision_id TEXT,
+               enabled INTEGER NOT NULL,
+               FOREIGN KEY(source_id) REFERENCES tool_selection_sources(id)
+             );
+             INSERT INTO tool_selection_sources(id, kind, owner_principal, enabled)
+               VALUES ('llang', 'llang', 'P1', 1);
+             INSERT INTO tool_selection_catalog(id, source_id, backend_key, current_revision_id, enabled)
+               VALUES ('legacy-tool', 'llang', 'web', NULL, 1);",
+        )
+        .expect("old schema");
+    // Running the current migration widens the CHECK constraint and preserves rows.
+    crate::persistence::schema::initialize_database(&connection).expect("migrate");
+    let kind: String = connection
+        .query_row(
+            "SELECT kind FROM tool_selection_sources WHERE id = 'llang'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("preserved source");
+    assert_eq!(kind, "llang");
+    let catalog: i64 = connection
+        .query_row("SELECT COUNT(*) FROM tool_selection_catalog", [], |row| {
+            row.get(0)
+        })
+        .expect("catalog");
+    assert_eq!(catalog, 1);
+    // The new kind is accepted by the rebuilt CHECK constraint.
+    connection
+        .execute(
+            "INSERT INTO tool_selection_sources(id, kind, owner_principal, enabled)
+             VALUES ('mcp', 'mcp_http', 'P1', 1)",
+            [],
+        )
+        .expect("mcp_http accepted");
+    let violations: i64 = connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .expect("fk check");
+    assert_eq!(violations, 0);
+    drop(connection);
+    // The database reopens with the same schema version.
+    let reopened = Connection::open(&path).expect("reopen");
+    let version: i64 = reopened
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("version");
+    assert_eq!(version, crate::persistence::schema::DATABASE_SCHEMA_VERSION);
+}
+
+// ---------------------------------------------------------------------------------------------
+// T06 pending grants appear after a later sync
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn t06_grant_declared_before_the_tool_appears_is_applied_on_a_later_sync() {
+    let state = default_state();
+    let server = MockServer::start(state.clone()).await;
+    let harness = Harness::new(&server, vec![user_grant("later")]);
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("first");
+    let later_id = descriptors::tool_id("mcp-test", "later");
+    let principal = harness.principal.clone();
+    let before = harness
+        .writer
+        .read_serialized({
+            let principal = principal.clone();
+            let later_id = later_id.clone();
+            move |c| {
+                repository::grant_exists(c, &principal, &later_id, None).map_err(|e| e.to_string())
+            }
+        })
+        .unwrap();
+    assert!(!before, "a declaration for a missing tool stays pending");
+
+    state.list_pages.lock().unwrap()[0]["tools"] = json!([
+        { "name": "later", "inputSchema": { "type": "object" } }
+    ]);
+    harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect("second");
+    let after = harness
+        .writer
+        .read_serialized(move |c| {
+            repository::grant_exists(c, &principal, &later_id, None).map_err(|e| e.to_string())
+        })
+        .unwrap();
+    assert!(
+        after,
+        "the pending declaration is applied once the name appears"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// T07 binding validation refuses before send
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn t07_endpoint_change_and_unknown_kind_are_refused_before_send() {
+    let state = default_state();
+    let server = MockServer::start(state.clone()).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let backend = McpBackend::new(harness.manager.clone());
+    let cancellation = crate::RunCancellation::default();
+
+    // A changed endpoint hash is rejected before any HTTP call.
+    let tampered = crate::tool_selection::backends::BackendRequest {
+        call_id: "c1".to_string(),
+        tool_id: descriptors::tool_id("mcp-test", "search"),
+        revision_id: "r1".to_string(),
+        backend_key: "search".to_string(),
+        binding: json!({
+            "kind": "mcp_http",
+            "sourceId": "mcp-test",
+            "toolName": "search",
+            "endpointHash": "f".repeat(64),
+        }),
+        arguments: json!({ "q": "v" }),
+        timeout: std::time::Duration::from_secs(5),
+    };
+    let outcome =
+        crate::tool_selection::backends::ToolBackend::invoke(&backend, tampered, &cancellation)
+            .await;
+    assert_eq!(
+        outcome.status,
+        crate::tool_selection::backends::TechnicalStatus::Failed
+    );
+    assert_eq!(state.call_count.load(Ordering::SeqCst), 0);
+
+    // A missing kind never falls back to the remote backend. A complete legacy L-Lang binding is
+    // recognized; anything else is refused.
+    let llang_binding = json!({
+        "capabilityId": "x",
+        "revisionId": "r",
+        "packageHash": "p",
+        "contractHash": "c",
+        "catalogEpoch": 0,
+        "inputFields": []
+    });
+    assert_eq!(BackendRouter::kind(&llang_binding), "llang");
+    assert_eq!(
+        BackendRouter::kind(&json!({ "capabilityId": "x" })),
+        "unknown"
+    );
+    assert_eq!(BackendRouter::kind(&json!({ "kind": "other" })), "unknown");
+}
+
+// ---------------------------------------------------------------------------------------------
+// T09 degraded embedding lane
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn t09_missing_embeddings_degrade_to_lexical_without_inventing_confidence() {
+    let state = default_state();
+    let server = MockServer::start(state).await;
+    // A manager with no embedding provider leaves the vector lane empty.
+    let harness = Harness::new_with_embedder(&server, vec![user_grant("search")], false);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let context = harness.context();
+    harness.service.set_scenario(&context, scenario());
+    let response = harness
+        .service
+        .search(&context, "search notes", 3)
+        .await
+        .expect("search");
+    assert_eq!(
+        response.status,
+        crate::tool_selection::contracts::DecisionStatus::Degraded
+    );
+    assert!(response.degraded);
+}

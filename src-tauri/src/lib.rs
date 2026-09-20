@@ -480,6 +480,11 @@ fn shutdown_app_state(state: &AppState) {
     memory::personal_state::worker::interrupt();
     coding::commands::shutdown(state);
     state.generated_capabilities.shutdown();
+    // Stop admitting new external MCP calls and close sessions. The task is spawned because the
+    // close path is synchronous; in-flight calls keep their indeterminate outcome.
+    if let Some(manager) = state.tool_selection.mcp_manager() {
+        tauri::async_runtime::spawn(async move { manager.shutdown().await });
+    }
     state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
     if let Ok(active_runs) = state.active_runs.lock() {
@@ -619,6 +624,11 @@ pub fn run() {
                 &tool_selection_config,
                 Some(generated_capabilities.clone()),
             ));
+            // The external MCP poll loop is opt-in: it only exists when a sources file is
+            // configured. It performs an immediate sync before serving.
+            if let Some(manager) = tool_selection.mcp_manager() {
+                manager.start_background();
+            }
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,

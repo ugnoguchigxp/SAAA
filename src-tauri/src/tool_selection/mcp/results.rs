@@ -85,11 +85,7 @@ pub fn page_text(payload: &str, page: i64) -> Option<String> {
         return None;
     }
     if start == payload.len() {
-        return if page == 0 {
-            Some(String::new())
-        } else {
-            None
-        };
+        return if page == 0 { Some(String::new()) } else { None };
     }
     let mut end = (start + MCP_RESULT_PAGE_BYTES).min(payload.len());
     while end > start && !payload.is_char_boundary(end) {
@@ -103,6 +99,7 @@ pub fn page_text(payload: &str, page: i64) -> Option<String> {
 
 /// Stores a normalized result. Expired rows are removed first so a profile that is exactly at the
 /// budget can still make progress. The caller supplies an open transaction connection.
+#[allow(clippy::too_many_arguments)]
 pub fn store_result(
     connection: &Connection,
     invocation_id: &str,

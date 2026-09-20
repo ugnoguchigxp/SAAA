@@ -181,10 +181,7 @@ pub fn managed_grant_exists(
         .map(|value| value == 1)
 }
 
-pub fn insert_managed_grant(
-    connection: &Connection,
-    grant: &ManagedGrant,
-) -> rusqlite::Result<()> {
+pub fn insert_managed_grant(connection: &Connection, grant: &ManagedGrant) -> rusqlite::Result<()> {
     connection.execute(
         "INSERT OR IGNORE INTO tool_selection_mcp_managed_grants(
            source_id, principal_id, tool_id, scope_kind, scope_id)
@@ -233,10 +230,7 @@ pub fn delete_managed_grant(
     Ok(removed == 1)
 }
 
-pub fn insert_result(
-    connection: &Connection,
-    row: &NewMcpResult<'_>,
-) -> rusqlite::Result<()> {
+pub fn insert_result(connection: &Connection, row: &NewMcpResult<'_>) -> rusqlite::Result<()> {
     connection.execute(
         "INSERT INTO tool_selection_mcp_results(
            id, invocation_id, principal_id, conversation_id, scope_key, tool_id, revision_id,
@@ -398,9 +392,6 @@ pub fn fresh_now(connection: &Connection, source_id: &str) -> rusqlite::Result<b
 }
 
 /// Marks a source's ledger row disabled as part of config removal. The revision history remains.
-pub fn disable_source(
-    connection: &Connection,
-    source_id: &str,
-) -> rusqlite::Result<usize> {
+pub fn disable_source(connection: &Connection, source_id: &str) -> rusqlite::Result<usize> {
     repository::set_source_enabled(connection, source_id, false)
 }

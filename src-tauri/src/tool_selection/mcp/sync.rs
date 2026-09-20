@@ -34,9 +34,7 @@ impl SyncError {
 
 impl From<CallError> for SyncError {
     fn from(error: CallError) -> Self {
-        Self {
-            code: error.code(),
-        }
+        Self { code: error.code() }
     }
 }
 
@@ -145,8 +143,8 @@ fn prepare(
     let mut normalized = Vec::with_capacity(tools.len());
     let mut seen = HashSet::new();
     for tool in tools {
-        let item = descriptors::normalize_tool(source_id, endpoint_hash, &tool)
-            .map_err(SyncError::new)?;
+        let item =
+            descriptors::normalize_tool(source_id, endpoint_hash, &tool).map_err(SyncError::new)?;
         if !seen.insert(item.tool_id.clone()) {
             return Err(SyncError::new("sync-duplicate-name"));
         }
@@ -197,8 +195,8 @@ fn publish_inner(
     now: i64,
 ) -> Result<SyncOutcome, SyncError> {
     // A settings change during the fetch invalidates this snapshot before anything is written.
-    let recorded = mcp_repository::source(connection, source_id)
-        .map_err(|_| SyncError::new("storage"))?;
+    let recorded =
+        mcp_repository::source(connection, source_id).map_err(|_| SyncError::new("storage"))?;
     if let Some(recorded) = recorded.as_ref() {
         if recorded.config_generation != config_generation {
             return Err(SyncError::new("sync-generation-changed"));
@@ -319,9 +317,8 @@ fn write_revision(
 ) -> Result<(), SyncError> {
     let entry = &tool.entry;
     let search_text = entry.search_text();
-    let schema_hash = descriptors::hex_sha256(
-        descriptors::canonical_json_string(&entry.input_schema).as_bytes(),
-    );
+    let schema_hash =
+        descriptors::hex_sha256(descriptors::canonical_json_string(&entry.input_schema).as_bytes());
     let description_hash = tool.descriptor_hash.clone();
     repository::insert_revision(
         connection,
