@@ -1185,7 +1185,15 @@ pub fn reconcile_interrupted_invocations(writer: &SqliteWriter) -> ToolSelection
             connection
                 .execute(
                     "UPDATE tool_selection_invocations
-                        SET technical_status = 'interrupted', finished_at = ?1
+                        SET technical_status = 'interrupted',
+                            finished_at = ?1,
+                            error_code = CASE
+                              WHEN error_code IS NULL AND EXISTS (
+                                SELECT 1 FROM tool_selection_revisions r
+                                 WHERE r.id = revision_id
+                                   AND json_extract(r.backend_binding_json, '$.kind') = 'mcp_http')
+                              THEN 'remote-outcome-unknown'
+                              ELSE error_code END
                       WHERE technical_status = 'running'",
                     rusqlite::params![now_ms()],
                 )

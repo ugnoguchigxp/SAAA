@@ -1831,3 +1831,53 @@ async fn a15_unsupported_server_request_is_refused_with_method_not_found() {
     }
     assert_eq!(reply, Some(-32601));
 }
+
+#[tokio::test]
+async fn t07_restart_reconcile_marks_mcp_calls_as_indeterminate() {
+    let state = default_state();
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let tool_id = descriptors::tool_id("mcp-test", "search");
+    let revision_id = harness
+        .writer
+        .read_serialized(move |c| {
+            repository::tool_by_id(c, &tool_id)
+                .map_err(|e| e.to_string())?
+                .and_then(|tool| tool.current_revision_id)
+                .ok_or_else(|| "missing".to_string())
+        })
+        .unwrap();
+    harness
+        .writer
+        .write({
+            let revision_id = revision_id.clone();
+            move |connection| {
+                connection
+                    .execute(
+                        "INSERT INTO tool_selection_invocations(
+                           id, decision_id, revision_id, technical_status, satisfaction, started_at)
+                         VALUES ('mcp-running', NULL, ?1, 'running', 'unknown', 1)",
+                        rusqlite::params![revision_id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+        .unwrap();
+    crate::tool_selection::service::reconcile_interrupted_invocations(&harness.writer)
+        .expect("reconcile");
+    let (status, error): (String, Option<String>) = harness
+        .writer
+        .read_serialized(|c| {
+            c.query_row(
+                "SELECT technical_status, error_code FROM tool_selection_invocations WHERE id = 'mcp-running'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .unwrap();
+    assert_eq!(status, "interrupted");
+    assert_eq!(error.as_deref(), Some("remote-outcome-unknown"));
+}
