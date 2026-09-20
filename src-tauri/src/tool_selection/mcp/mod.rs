@@ -15,11 +15,13 @@ pub mod descriptors;
 pub mod manager;
 pub mod repository;
 pub mod results;
+pub mod schema;
+pub mod service_support;
 pub mod session;
 pub mod sync;
 pub mod transport;
+pub mod wiring;
 
-#[cfg(test)]
 mod tests;
 
 pub use config::{McpGrantScope, McpGrantSpec, McpSourceSpec, McpSources};
@@ -51,8 +53,7 @@ pub const MCP_RESULT_TTL_MILLIS: i64 = 10 * 60 * 1000;
 pub const MCP_RESULT_PAGE_BYTES: usize = 8 * 1024;
 pub const MCP_SOURCE_STALE_AFTER_MILLIS: i64 = 300 * 1000;
 pub const MCP_SOURCE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-pub const MCP_NOTIFICATION_DEBOUNCE: std::time::Duration =
-    std::time::Duration::from_millis(500);
+pub const MCP_NOTIFICATION_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
 pub const MCP_CALLS_PER_SOURCE_MAX: usize = 4;
 pub const MCP_CALLS_PER_PROFILE_MAX: usize = 16;
 pub const MCP_CALL_QUEUE_MAX: usize = 64;

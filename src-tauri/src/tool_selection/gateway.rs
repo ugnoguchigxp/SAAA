@@ -82,35 +82,7 @@ pub fn invoke_schema() -> Value {
 
 /// OpenAI Chat Completions tool definitions. The MCP layer (D4/D5) reuses the same neutral
 /// schemas and only changes the transport wrapper.
-pub fn definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "type": "function",
-            "function": {
-                "name": TOOL_SEARCH,
-                "description": "Search the tool ledger for tools that match the stated intent. \
-                                Returns a small number of candidates; a candidate is not a decision to run.",
-                "parameters": search_schema(),
-            }
-        }),
-        json!({
-            "type": "function",
-            "function": {
-                "name": TOOL_DESCRIBE,
-                "description": "Fetch the contract or usage of one candidate returned by tools_search.",
-                "parameters": describe_schema(),
-            }
-        }),
-        json!({
-            "type": "function",
-            "function": {
-                "name": TOOL_INVOKE,
-                "description": "Execute one previously described tool with the given arguments.",
-                "parameters": invoke_schema(),
-            }
-        }),
-    ]
-}
+pub use super::gateway_schemas::definitions;
 
 pub fn ok(data: Value) -> Value {
     json!({ "ok": true, "data": data })

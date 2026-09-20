@@ -253,10 +253,16 @@ impl SourceSession {
             None => json!({}),
         };
         let id = crate::new_id("mcp-list");
-        self.transport
+        let result = self
+            .transport
             .request(&id, "tools/list", params, timeout)
             .await
-            .map_err(map_transport)
+            .map_err(map_transport);
+        if matches!(result, Err(CallError::SessionExpired)) {
+            let mut state = self.state.lock().await;
+            *state = SessionState::Reconnecting;
+        }
+        result
     }
 
     pub async fn shutdown(&self) {
@@ -277,6 +283,9 @@ fn map_transport(error: TransportError) -> CallError {
         TransportError::Protocol(code) => CallError::Protocol(code),
         TransportError::BodyTooLarge => CallError::Protocol("remote-too-large"),
         TransportError::Rpc { .. } => CallError::RpcError,
+        // A 401/403 is a definite, non-retryable refusal and is kept distinct from an
+        // indeterminate outcome.
+        TransportError::Http(401 | 403) => CallError::Unavailable("remote-unauthorized"),
         TransportError::Http(_) => CallError::Unknown("remote-http"),
         TransportError::Closed => CallError::Closed,
     }
@@ -353,7 +362,8 @@ impl McpSessionPool {
             tokio::spawn(async move { old.shutdown().await });
         }
         let transport = Arc::new(
-            HttpTransport::new(&spec.url, token).map_err(|_| CallError::Unavailable("transport"))?,
+            HttpTransport::new(&spec.url, token)
+                .map_err(|_| CallError::Unavailable("transport"))?,
         );
         let session = Arc::new(SourceSession::new(&spec.id, config_generation, transport));
         sessions.insert(spec.id.clone(), session.clone());

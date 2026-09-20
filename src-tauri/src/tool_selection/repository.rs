@@ -338,10 +338,7 @@ pub fn tool_id_by_name(connection: &Connection, name: &str) -> rusqlite::Result<
         .optional()
 }
 
-pub fn source_kind(
-    connection: &Connection,
-    source_id: &str,
-) -> rusqlite::Result<Option<String>> {
+pub fn source_kind(connection: &Connection, source_id: &str) -> rusqlite::Result<Option<String>> {
     connection
         .query_row(
             "SELECT kind FROM tool_selection_sources WHERE id = ?1",
@@ -419,7 +416,7 @@ pub fn eligible_revisions(
             AND (s.kind <> 'mcp_http' OR EXISTS (
               SELECT 1 FROM tool_selection_mcp_sources ms
                WHERE ms.source_id = s.id AND ms.last_success_at IS NOT NULL
-                 AND ms.last_success_at >= ?4))
+                 AND ms.last_success_at >= ?3))
             AND EXISTS (
               SELECT 1 FROM tool_selection_grants g
                WHERE g.principal_id = ?1 AND g.tool_id = c.id
@@ -428,15 +425,12 @@ pub fn eligible_revisions(
             )
           ORDER BY r.tool_id ASC, r.id ASC",
     )?;
-    let rows = statement.query_map(
-        params![principal_id, project_id, 0_i64, stale_before],
-        |row| {
-            Ok(EligibleRevision {
-                revision: revision_from_row(row)?,
-                tool_enabled: row.get::<_, i64>(12)? == 1,
-            })
-        },
-    )?;
+    let rows = statement.query_map(params![principal_id, project_id, stale_before], |row| {
+        Ok(EligibleRevision {
+            revision: revision_from_row(row)?,
+            tool_enabled: row.get::<_, i64>(12)? == 1,
+        })
+    })?;
     rows.collect()
 }
 
@@ -474,7 +468,13 @@ pub fn lexical_candidates(
           LIMIT ?4",
     )?;
     let rows = statement.query_map(
-        params![match_expression, principal_id, project_id, limit as i64, stale_before],
+        params![
+            match_expression,
+            principal_id,
+            project_id,
+            limit as i64,
+            stale_before
+        ],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
     )?;
     rows.collect()

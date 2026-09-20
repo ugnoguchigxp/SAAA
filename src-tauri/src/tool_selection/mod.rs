@@ -9,12 +9,14 @@ pub mod contracts;
 pub mod extraction;
 pub mod feedback;
 pub mod gateway;
+pub mod gateway_schemas;
 pub mod inference;
 pub mod mcp;
 pub mod provider_extraction;
 pub mod ranking;
 pub mod references;
 pub mod repository;
+pub mod resolve;
 pub mod retrieval;
 pub mod rules;
 pub mod schema;
@@ -42,8 +44,6 @@ pub(crate) fn build_service(
 
     // A crash can leave invocations in `running`; settle them before serving again.
     let _ = service::reconcile_interrupted_invocations(&writer);
-    let llang: Arc<dyn backends::ToolBackend> =
-        Arc::new(backends::llang::LlangBackend::new(capabilities));
     let extractor: Arc<dyn extraction::CorrectionExtractor> = if config.discovery_enabled() {
         Arc::new(provider_extraction::ConversationProviderExtractor::new(
             writer.clone(),
@@ -89,47 +89,13 @@ pub(crate) fn build_service(
             f64::NEG_INFINITY,
         )
     };
-    let manager = build_mcp_manager(writer.clone(), config, embedding.clone());
-    let backend: Arc<dyn backends::ToolBackend> = match &manager {
-        Some(manager) => Arc::new(backends::router::BackendRouter::new(
-            llang,
-            Arc::new(backends::mcp::McpBackend::new(manager.clone())),
-        )),
-        None => llang,
-    };
+    let (backend, manager) =
+        mcp::wiring::assemble(writer.clone(), config, capabilities, embedding.clone());
     let mut service =
         ToolSelectionService::new(writer, embedding, reranker, extractor, backend, threshold);
     service.set_discovery_configured(config.discovery_enabled());
-    if let Some(manager) = manager {
-        service.set_mcp_manager(manager);
-    }
+    mcp::wiring::attach(&mut service, manager);
     service
-}
-
-/// Builds the external MCP manager when a sources file is configured. A first-load parse failure
-/// starts MCP disabled with a diagnostic instead of partially applying the file.
-fn build_mcp_manager(
-    writer: std::sync::Arc<crate::persistence::SqliteWriter>,
-    config: &ToolSelectionConfig,
-    embedding: std::sync::Arc<dyn inference::EmbeddingProvider>,
-) -> Option<std::sync::Arc<mcp::manager::McpManager>> {
-    let path = config.mcp_sources_path.clone()?;
-    let principal = match service::ensure_principal(&writer) {
-        Ok(principal) => principal,
-        Err(_) => return None,
-    };
-    let (sources, diagnostic) = match mcp::config::McpSources::load(&path) {
-        Ok(sources) => (sources, None),
-        Err(code) => (mcp::config::McpSources::default(), Some(code)),
-    };
-    Some(mcp::manager::McpManager::new(
-        writer,
-        principal,
-        Some(path),
-        sources,
-        Some(embedding),
-        diagnostic,
-    ))
 }
 
 /// Opens (or creates) a tool-selection database at `database_path` and builds the live service.
