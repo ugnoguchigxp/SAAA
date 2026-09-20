@@ -29,8 +29,8 @@ D5（SAAA自身のMCP公開）とD6（順位学習）は未実施。L-Lang proce
 | 時点 | 内容 |
 | --- | --- |
 | 開始 | HEAD `f5a1069`、DB schema version 23、作業ツリーに M2 計画の未追跡docsのみ |
-| 初回実装 | 外部MCP一式を `tool_selection/mcp/` に新設。作業中に同一workspaceの別タスク（World Model M2）が本作業を `git stash` で退避したため、git worktree `/Users/y.noguchi/Code/SAAA-d4`（branch `d4-work`）で隔離して継続し、最終的にmainへfast-forwardで統合 |
-| 最終 | branch `d4-work`。`src-tauri/src/tool_selection/{mcp,backends,resolve,gateway_schemas}.rs`、`persistence/schema.rs`、`lib.rs`、`scripts/module-size-baseline.json` |
+| 初回実装 | 外部MCP一式を `tool_selection/mcp/` に新設。作業中に同一workspaceの別タスク（World Model M2）が本作業を `git stash` で退避したため、git worktree `/Users/y.noguchi/Code/SAAA-d4`（branch `d4-work`）で隔離して継続した |
+| 最終 | main `98e2b91`（D4コード・検証報告）、`1544883`（新規moduleのsize baseline登録）。worktree隔離中もコードはworktreeとmainでbyte一致を確認し、main上で全試験を再実行した |
 
 ## 3. 実装ファイル
 
@@ -64,7 +64,7 @@ D5（SAAA自身のMCP公開）とD6（順位学習）は未実施。L-Lang proce
 - `migrate_sources_kind` 後に `PRAGMA foreign_key_check` が空であることを実DB fixture（T02）で確認。同じDBを再openして version 24 を確認。
 - D4追加tableは `tool_selection_mcp_sources` / `tool_selection_mcp_managed_grants` / `tool_selection_mcp_results`。token/session id/HTTP header/生エラー本文/URLは保存しない（`endpoint_hash` のみ）。
 
-## 5. 検証コマンドと結果（worktree `d4-work`）
+## 5. 検証コマンドと結果（main working tree）
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml --lib tool_selection      # 123 passed
@@ -80,6 +80,8 @@ bun run size:check                                                        # modu
 - T01 config表駆動、T02 v23→v24、T03 ID/descriptor、T04 JSON+SSE/404再初期化/405、T05 失敗時不変・epoch・消失再出現・cursor循環・重複名・空page、T06 grant保留/撤回、T07 実HTTP invoke/isError/disconnect unknown/cancel前call0/endpoint変更拒否/reconcile unknown、T08 100KiB page復元/scope/TTL/1MiB size-limit、T09 stale候補0・degraded、T10 同名別source ambiguous、A01 2source 1500tools、A06 progress混在、A15 401/unsupported server request。
 
 A01 は 2 source 1500 tools を各100件pageで同期し、search最大8件・LLM定義3件・SystemContextに全説明なしを確認した。
+
+`bun run check` は frontend build・quality・ipc・typecheck・fmt/clippy・frontend test・cargo test を通過し、`tests/sqlite_architecture.rs` で失敗した。失敗内容は `memory/personal_state/world/runtime_test_support.rs`（同時実行中のWorld Model M2タスクの未コミットfile）が `SqliteWriter::open(` を含むという指摘であり、D4の変更（SqliteWriterを構築しない）とは無関係である。
 
 ### 実ML・負荷測定（未実施）
 
