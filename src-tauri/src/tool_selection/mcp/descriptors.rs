@@ -161,12 +161,16 @@ pub fn normalize_tool(
         .filter(|value| value.is_object())
         .cloned();
 
-    let effect = management
+    let effect = match management
         .as_ref()
         .and_then(|value| value.get("effect"))
         .and_then(Value::as_str)
-        .filter(|effect| matches!(*effect, "pure" | "read" | "write" | "unknown"))
-        .unwrap_or("unknown");
+    {
+        Some("pure") => "pure",
+        Some("read") => "read",
+        Some("write") => "write",
+        _ => "unknown",
+    };
     let operations = management_strings(management.as_ref(), "operations");
     let objects = management_strings(management.as_ref(), "objects");
     let suitable = management_strings(management.as_ref(), "suitable");

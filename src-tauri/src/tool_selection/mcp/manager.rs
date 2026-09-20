@@ -51,6 +51,7 @@ impl McpManager {
         config_path: Option<PathBuf>,
         sources: McpSources,
         embedder: Option<Arc<dyn EmbeddingProvider>>,
+        diagnostic: Option<&'static str>,
     ) -> Arc<Self> {
         Arc::new(Self {
             writer,
@@ -67,7 +68,7 @@ impl McpManager {
             dirty: Arc::new(Mutex::new(HashSet::new())),
             dirty_notify: Arc::new(Notify::new()),
             source_diagnostics: RwLock::new(HashMap::new()),
-            config_diagnostic: RwLock::new(None),
+            config_diagnostic: RwLock::new(diagnostic),
             shutting_down: AtomicBool::new(false),
         })
     }
@@ -191,9 +192,9 @@ impl McpManager {
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(crate::database_error)?;
             for (id, endpoint_hash) in &register {
-                repository::upsert_source(connection, id, "mcp_http", &owner, true)
+                repository::upsert_source(&transaction, id, "mcp_http", &owner, true)
                     .map_err(|_| "storage".to_string())?;
-                mcp_repository::upsert_source(connection, id, generation, endpoint_hash)
+                mcp_repository::upsert_source(&transaction, id, generation, endpoint_hash)
                     .map_err(|_| "storage".to_string())?;
             }
             transaction.commit().map_err(crate::database_error)?;
@@ -211,14 +212,14 @@ impl McpManager {
             let mut catalog_changed = false;
             let mut acl_changed = false;
             for id in &ids {
-                let disabled = mcp_repository::set_source_tools_enabled(connection, id, false)
+                let disabled = mcp_repository::set_source_tools_enabled(&transaction, id, false)
                     .map_err(|_| "storage".to_string())?;
-                repository::set_source_enabled(connection, id, false)
+                repository::set_source_enabled(&transaction, id, false)
                     .map_err(|_| "storage".to_string())?;
-                let grants = mcp_repository::managed_grants_for_source(connection, id)
+                let grants = mcp_repository::managed_grants_for_source(&transaction, id)
                     .map_err(|_| "storage".to_string())?;
                 for grant in grants {
-                    if mcp_repository::delete_managed_grant(connection, &grant)
+                    if mcp_repository::delete_managed_grant(&transaction, &grant)
                         .map_err(|_| "storage".to_string())?
                     {
                         acl_changed = true;
@@ -227,11 +228,11 @@ impl McpManager {
                 catalog_changed |= disabled > 0;
             }
             if catalog_changed {
-                repository::bump_epochs(connection, true, false, false)
+                repository::bump_epochs(&transaction, true, false, false)
                     .map_err(|_| "storage".to_string())?;
             }
             if acl_changed {
-                repository::bump_epochs(connection, false, true, false)
+                repository::bump_epochs(&transaction, false, true, false)
                     .map_err(|_| "storage".to_string())?;
             }
             transaction.commit().map_err(crate::database_error)?;
@@ -347,10 +348,13 @@ impl McpManager {
         self.dirty_notify.notify_waiters();
     }
 
-    /// Spawns the periodic poll loop. Tests call the individual methods instead.
+    /// Spawns the periodic poll loop and performs one immediate sync so a restart never serves a
+    /// remote invoke before this process has observed a successful sync. Tests call the
+    /// individual methods instead.
     pub fn start_background(self: &Arc<Self>) {
         let manager = self.clone();
         tokio::spawn(async move {
+            manager.sync_all().await;
             loop {
                 if manager.shutting_down.load(Ordering::SeqCst) {
                     break;
@@ -395,7 +399,7 @@ impl McpManager {
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(crate::database_error)?;
             let existing =
-                mcp_repository::managed_grants_for_source(connection, &source)
+                mcp_repository::managed_grants_for_source(&transaction, &source)
                     .map_err(|_| "storage".to_string())?;
             let desired_set: HashSet<(String, String, String, String)> = desired
                 .iter()
@@ -417,7 +421,7 @@ impl McpManager {
                     grant.scope_id.clone(),
                 );
                 if !desired_set.contains(&key)
-                    && mcp_repository::delete_managed_grant(connection, grant)
+                    && mcp_repository::delete_managed_grant(&transaction, grant)
                         .map_err(|_| "storage".to_string())?
                 {
                     acl_changed = true;
@@ -425,7 +429,7 @@ impl McpManager {
             }
             for grant in &desired {
                 let already_managed = mcp_repository::managed_grant_exists(
-                    connection,
+                    &transaction,
                     &grant.source_id,
                     &grant.principal_id,
                     &grant.tool_id,
@@ -437,19 +441,19 @@ impl McpManager {
                     continue;
                 }
                 repository::upsert_grant(
-                    connection,
+                    &transaction,
                     &grant.principal_id,
                     &grant.tool_id,
                     &grant.scope_kind,
                     &grant.scope_id,
                 )
                 .map_err(|_| "storage".to_string())?;
-                mcp_repository::insert_managed_grant(connection, grant)
+                mcp_repository::insert_managed_grant(&transaction, grant)
                     .map_err(|_| "storage".to_string())?;
                 acl_changed = true;
             }
             if acl_changed {
-                repository::bump_epochs(connection, false, true, false)
+                repository::bump_epochs(&transaction, false, true, false)
                     .map_err(|_| "storage".to_string())?;
             }
             let _ = &principal;
@@ -599,6 +603,7 @@ impl McpManager {
                 .map(|(id, _)| id.clone())
                 .zip(vectors)
                 .collect();
+            let pair_count = pairs.len();
             let model_hash = model_hash.clone();
             let _ = self.writer.write(move |connection| {
                 for (revision_id, vector) in &pairs {
@@ -607,27 +612,31 @@ impl McpManager {
                 }
                 Ok(())
             });
-            indexed += pairs.len();
+            indexed += pair_count;
         }
         Ok(indexed)
     }
 
-    /// Checks whether a call may be sent for this binding. Config stop always wins if it happened
-    /// first; already-sent requests are never claimed to be reversible.
-    pub async fn invoke(
+    /// Pre-flight check used by `invoke` before an invocation row is opened. It performs exactly
+    /// the same source gate as `invoke` minus the send.
+    pub async fn preflight(
         &self,
         source_id: &str,
         endpoint_hash: &str,
-        tool_name: &str,
-        arguments: Value,
-        timeout: Duration,
-        cancellation: &crate::RunCancellation,
-    ) -> Result<Value, CallError> {
+    ) -> Result<(), CallError> {
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err(CallError::Closed);
         }
         let gate = self.gate_for(source_id).await;
         let _guard = gate.read().await;
+        self.check_locked(source_id, endpoint_hash).await.map(|_| ())
+    }
+
+    async fn check_locked(
+        &self,
+        source_id: &str,
+        endpoint_hash: &str,
+    ) -> Result<super::config::McpSourceSpec, CallError> {
         if self.stopped.read().await.contains(source_id) {
             return Err(CallError::Closed);
         }
@@ -651,6 +660,27 @@ impl McpManager {
         if !fresh {
             return Err(CallError::Unavailable("source-stale"));
         }
+        Ok(spec)
+    }
+
+    /// Checks whether a call may be sent for this binding. Config stop always wins if it happened
+    /// first; already-sent requests are never claimed to be reversible.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn invoke(
+        &self,
+        source_id: &str,
+        endpoint_hash: &str,
+        tool_name: &str,
+        arguments: Value,
+        timeout: Duration,
+        cancellation: &crate::RunCancellation,
+    ) -> Result<Value, CallError> {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(CallError::Closed);
+        }
+        let gate = self.gate_for(source_id).await;
+        let _guard = gate.read().await;
+        let spec = self.check_locked(source_id, endpoint_hash).await?;
         self.pool
             .call(
                 &spec,

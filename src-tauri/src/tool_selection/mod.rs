@@ -1,6 +1,7 @@
-//! Tool-selection D0–D3: a SQLite-backed ledger of L-Lang capabilities, hybrid retrieval with a
-//! local ML worker, conditional user-correction memory, and the three conversation entry points.
-//! MCP transport and ranking learning are explicitly out of scope for this milestone.
+//! Tool-selection ledger: a SQLite-backed catalog of L-Lang capabilities and external MCP tools,
+//! hybrid retrieval with a local ML worker, conditional user-correction memory, and the three
+//! conversation entry points. D4 adds external MCP Streamable HTTP sources; D5 (publishing SAAA
+//! itself as an MCP server) and D6 (ranking learning) remain out of scope.
 
 pub mod backends;
 pub mod catalog;
@@ -9,6 +10,7 @@ pub mod extraction;
 pub mod feedback;
 pub mod gateway;
 pub mod inference;
+pub mod mcp;
 pub mod provider_extraction;
 pub mod ranking;
 pub mod references;
@@ -29,7 +31,8 @@ pub use contracts::{
 pub use service::ToolSelectionService;
 
 /// Builds the live service from the parsed configuration. Discovery loads only local model files;
-/// a missing manifest degrades inference but never falls back to another model.
+/// a missing manifest degrades inference but never falls back to another model. External MCP
+/// sources are wired whenever an `mcpSourcesPath` is configured, independent of discovery mode.
 pub(crate) fn build_service(
     writer: std::sync::Arc<crate::persistence::SqliteWriter>,
     config: &ToolSelectionConfig,
@@ -39,7 +42,7 @@ pub(crate) fn build_service(
 
     // A crash can leave invocations in `running`; settle them before serving again.
     let _ = service::reconcile_interrupted_invocations(&writer);
-    let backend: Arc<dyn backends::ToolBackend> =
+    let llang: Arc<dyn backends::ToolBackend> =
         Arc::new(backends::llang::LlangBackend::new(capabilities));
     let extractor: Arc<dyn extraction::CorrectionExtractor> = if config.discovery_enabled() {
         Arc::new(provider_extraction::ConversationProviderExtractor::new(
@@ -48,49 +51,85 @@ pub(crate) fn build_service(
     } else {
         Arc::new(extraction::UnconfiguredExtractor)
     };
-    if !config.discovery_enabled() {
-        let mut service = ToolSelectionService::new(
-            writer,
-            Arc::new(inference::UnavailableEmbedding),
-            Arc::new(inference::UnavailableReranker),
-            extractor,
-            backend,
-            f64::NEG_INFINITY,
-        );
-        service.set_discovery_configured(false);
-        return service;
-    }
-    let manifest_path = config
-        .model_manifest_path
-        .clone()
-        .expect("discovery requires a manifest path");
-    let manifest = inference::load_manifest(&manifest_path);
     let (embedding, reranker, threshold): (
         Arc<dyn inference::EmbeddingProvider>,
         Arc<dyn inference::RerankProvider>,
         f64,
-    ) = match (manifest, config.python_path.clone()) {
-        (Ok(manifest), Some(python_path)) => {
-            let script = worker_script_path();
-            let worker = Arc::new(worker::MlWorker::new(
-                python_path,
-                script,
-                manifest_path,
-                manifest.clone(),
-            ));
-            (
-                worker.clone() as Arc<dyn inference::EmbeddingProvider>,
-                worker as Arc<dyn inference::RerankProvider>,
-                manifest.no_match_threshold,
-            )
+    ) = if config.discovery_enabled() {
+        let manifest_path = config
+            .model_manifest_path
+            .clone()
+            .expect("discovery requires a manifest path");
+        let manifest = inference::load_manifest(&manifest_path);
+        match (manifest, config.python_path.clone()) {
+            (Ok(manifest), Some(python_path)) => {
+                let script = worker_script_path();
+                let worker = Arc::new(worker::MlWorker::new(
+                    python_path,
+                    script,
+                    manifest_path,
+                    manifest.clone(),
+                ));
+                (
+                    worker.clone() as Arc<dyn inference::EmbeddingProvider>,
+                    worker as Arc<dyn inference::RerankProvider>,
+                    manifest.no_match_threshold,
+                )
+            }
+            _ => (
+                Arc::new(inference::UnavailableEmbedding),
+                Arc::new(inference::UnavailableReranker),
+                f64::NEG_INFINITY,
+            ),
         }
-        _ => (
+    } else {
+        (
             Arc::new(inference::UnavailableEmbedding),
             Arc::new(inference::UnavailableReranker),
             f64::NEG_INFINITY,
-        ),
+        )
     };
-    ToolSelectionService::new(writer, embedding, reranker, extractor, backend, threshold)
+    let manager = build_mcp_manager(writer.clone(), config, embedding.clone());
+    let backend: Arc<dyn backends::ToolBackend> = match &manager {
+        Some(manager) => Arc::new(backends::router::BackendRouter::new(
+            llang,
+            Arc::new(backends::mcp::McpBackend::new(manager.clone())),
+        )),
+        None => llang,
+    };
+    let mut service =
+        ToolSelectionService::new(writer, embedding, reranker, extractor, backend, threshold);
+    service.set_discovery_configured(config.discovery_enabled());
+    if let Some(manager) = manager {
+        service.set_mcp_manager(manager);
+    }
+    service
+}
+
+/// Builds the external MCP manager when a sources file is configured. A first-load parse failure
+/// starts MCP disabled with a diagnostic instead of partially applying the file.
+fn build_mcp_manager(
+    writer: std::sync::Arc<crate::persistence::SqliteWriter>,
+    config: &ToolSelectionConfig,
+    embedding: std::sync::Arc<dyn inference::EmbeddingProvider>,
+) -> Option<std::sync::Arc<mcp::manager::McpManager>> {
+    let path = config.mcp_sources_path.clone()?;
+    let principal = match service::ensure_principal(&writer) {
+        Ok(principal) => principal,
+        Err(_) => return None,
+    };
+    let (sources, diagnostic) = match mcp::config::McpSources::load(&path) {
+        Ok(sources) => (sources, None),
+        Err(code) => (mcp::config::McpSources::default(), Some(code)),
+    };
+    Some(mcp::manager::McpManager::new(
+        writer,
+        principal,
+        Some(path),
+        sources,
+        Some(embedding),
+        diagnostic,
+    ))
 }
 
 /// Opens (or creates) a tool-selection database at `database_path` and builds the live service.

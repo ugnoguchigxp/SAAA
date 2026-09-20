@@ -8,6 +8,8 @@
 //! transport, OAuth, sampling, elicitation, roots and resources/read are not implemented. An
 //! unsupported server request receives a JSON-RPC method-not-found error and is never executed.
 
+#![allow(private_interfaces)]
+
 pub mod config;
 pub mod descriptors;
 pub mod manager;

@@ -6,7 +6,7 @@
 //! Redirects are never followed, proxy environment variables are never consulted implicitly, and
 //! TLS verification is never disabled.
 
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::StreamExt;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -69,7 +69,6 @@ pub struct SseEvent {
 /// sequence at the end of a chunk is retained until the continuation arrives.
 #[derive(Default)]
 pub struct SseDecoder {
-    buffer: Vec<u8>,
     pending: Vec<u8>,
     current: SseEvent,
     saw_data: bool,
@@ -505,8 +504,7 @@ fn extract_result(id: &str, message: &Value) -> Result<Value, TransportError> {
 
 /// Collects the byte stream of a JSON response without the SSE machinery. Kept for the GET path.
 pub async fn drain_json(response: reqwest::Response) -> Result<Value, TransportError> {
-    let stream = response.bytes_stream().map_err(|_| TransportError::Connect);
-    let bytes: Vec<u8> = stream.try_collect().await?;
+    let bytes = response.bytes().await.map_err(|_| TransportError::Connect)?;
     if bytes.len() > MCP_CALL_RESPONSE_MAX_BYTES {
         return Err(TransportError::BodyTooLarge);
     }
