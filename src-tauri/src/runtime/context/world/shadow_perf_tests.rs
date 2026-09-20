@@ -1,11 +1,11 @@
-use super::broker::{self, BrokerInput};
-use super::world_render::render_world_frame;
-use super::world_shadow::{run_shadow, ShadowInput};
-use super::world_source::WorldSourceRequest;
+use super::super::broker::{self, BrokerInput};
+use super::render::render_world_frame;
+use super::shadow::{run_shadow, ShadowInput};
+use super::source::WorldSourceRequest;
+use crate::meeting::MeetingState;
 use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
 use crate::memory::personal_state::world::runtime_test_support::{Fixture, RUN_ID};
 use crate::memory::personal_state::world::test_support::PROJECT;
-use crate::meeting::MeetingState;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
@@ -54,11 +54,10 @@ fn window() -> ContextWindow {
 #[test]
 #[ignore]
 fn m3_19_shadow_path_stays_within_dev_gates() {
-    let targets: Vec<(&str, &str)> = (1..=8)
-        .map(|index| {
-            let id: &'static str = Box::leak(format!("m{index}").into_boxed_str());
-            ("resource", id)
-        })
+    let meeting_ids: Vec<String> = (1..=8).map(|index| format!("m{index}")).collect();
+    let targets: Vec<(&str, &str)> = meeting_ids
+        .iter()
+        .map(|id| ("resource", id.as_str()))
         .collect();
     let fixture = Fixture::with_entities(&targets, 100);
     for index in 1..=8 {
@@ -96,20 +95,19 @@ fn m3_19_shadow_path_stays_within_dev_gates() {
             Some(fixture.graph_request("ent0")),
         );
         let full_start = Instant::now();
-        let summary = fixture
+        let scope = fixture
             .writer
-            .read_serialized(|connection| {
-                Ok(run_shadow(
-                    &service,
-                    connection,
-                    WorldSourceRequest {
-                        frame_request: request,
-                    },
-                    &input,
-                    &|| 1_000,
-                ))
-            })
-            .expect("shadow");
+            .read_serialized(|connection| crate::runtime::context::scope::load(connection, RUN_ID))
+            .expect("scope");
+        let summary = run_shadow(
+            &service,
+            WorldSourceRequest {
+                frame_request: request,
+            },
+            &input,
+            &|| 1_000,
+            &scope,
+        );
         let full = full_start.elapsed();
         prepared += 1;
         if summary.world_selected {
@@ -131,8 +129,11 @@ fn m3_19_shadow_path_stays_within_dev_gates() {
             allowed_scope_keys: allowed.clone(),
         });
         if let Ok(content) = rendered {
-            let candidate =
-                super::world_source::frame_candidate(RUN_ID, prepared_frame.frame(), &content);
+            let candidate = super::source::frame_candidate(
+                prepared_frame.frame(),
+                &content,
+                super::source::WORLD_SHADOW_KIND,
+            );
             let _ = broker::compose(BrokerInput {
                 base: window(),
                 candidates: vec![candidate],

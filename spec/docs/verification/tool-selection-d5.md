@@ -254,3 +254,47 @@ SAAA_TOOL_GATEWAY_MCP_CONFIG=/absolute/path/mcp-server.json <saaa>
 # mcp-server.json: {"formatVersion":1,"enabled":true,"port":43127,"tokenFile":"/abs/token","projectId":null}
 # token file: base64url of 32+ random bytes, mode 0600
 ```
+
+## 12. 独立再検証（R2 追補）
+
+本節は、実装完了後に別セッションで計画§10の全コマンドを再実行した記録である。HEADは `84ead97`。同時刻、別タスクがWorld Model M3（`src-tauri/src/runtime/context/world/` への移動）を未コミットで編集中だったため、その作業ツリーをそのまま保護し、D5側のファイルは一切変更していない。
+
+| コマンド | 結果 |
+| --- | --- |
+| `cargo test --manifest-path src-tauri/Cargo.toml --lib tool_selection` | 176 passed / 0 failed |
+| `cargo test --manifest-path src-tauri/Cargo.toml --lib generated_capabilities` | 67 passed / 0 failed |
+| `cargo test --manifest-path src-tauri/Cargo.toml --lib providers` | 79 passed / 2 ignored |
+| `cargo test --manifest-path src-tauri/Cargo.toml --test sqlite_architecture` | 1 passed / 0 failed |
+| `cargo fmt --check --manifest-path src-tauri/Cargo.toml` | clean（D5範囲に差分0） |
+| `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` | clean（D5範囲に指摘0） |
+| `bun run size:check` | module-size ok |
+| `bun run check` | exit 0（全test binary合計1058 passed） |
+
+補足:
+
+- 初回観測時点では、並走タスクの旧 `runtime/context/world_*.rs` が `-D warnings` とmodule-size ratchetで失敗していた。その後、並走タスクが当該ファイルを `runtime/context/world/` へ移動したため、上表のとおり全体gateは通過した。この失敗はD5範囲外であり、D5の実装・試験には影響しない。
+- この再検証でD5側に追加修正は不要だった。計画のP00〜P04、S01〜S09、R1/R2の成果物はHEAD `84ead97` に含まれる。
+- 再検証時点のworktreeは並走タスクの未コミット変更を含むため、上表の全体gate結果は当該時点のスナップショットである。D5範囲のコマンドは並走変更の有無にかかわらず再現する。
+
+## 13. コードレビューと改善（R2 追加）
+
+認証→session→context→scenario→search→revision参照→認可→実行→終端と、HTTP切断→管理task継続→DB終端をファイル横断で追い、次の指摘を実装で閉じた。
+
+| # | 指摘 | 修正 | 確認 |
+| --- | --- | --- | --- |
+| 1 | P01/§7: `tools/call` のpermitをHTTP handlerが所有し、client切断やdeadlineで早期解放され得る | permitを管理taskへ移動して所有させる | `review_deadline_keeps_the_call_slot_until_the_management_task_settles` |
+| 2 | §7: shutdownがin-flight終端前に参照/resultを清掃 | listener停止→session Closing→取消→drain→cleanupの順へ | `h08_shutdown_cancels_in_flight_calls` |
+| 3 | §5: 初期化10秒deadlineが `ping` で延長される | `created_at` 基準のhard deadlineへ | `initialization_deadline_is_not_extended_by_activity` |
+| 4 | §4: Bearer schemeが大文字限定（RFC 7235違反） | schemeをcase-insensitive化 | `h02_authentication_origin_and_host_are_enforced` |
+| 5 | §4: token比較が長さ不一致でearly return | SHA-256同士の定数時間比較へ | `h02`／config試験 |
+| 6 | §4: self参照guardがtrailing slash・`[::1]`・`https` 表記をすり抜け得る | `normalize_loopback` で正規化 | `review_self_endpoint_source_is_refused` |
+| 7 | §5: idle失効sessionへのDELETEが204 | `get` を介して404へ | `review_delete_of_an_expired_session_is_not_found` |
+| 8 | §7: ID履歴満杯が汎用-32600でsession再作成を促さない | server busy(-32000)の専用messageへ | `id_history_is_bounded_and_a_full_history_refuses_new_ids` |
+| 9 | 未使用の `used_order` フィールド | 削除 | clippy |
+| 10 | S01: 本番port 0拒否が未試験 | `from_config` へ分離して試験 | `runtime_rules_reject_ephemeral_ports_and_disable_cleanly` |
+| 11 | 受入試験の不足（全method認証、media param、初期化中ping、重複initialized、cancel no-op、別session同ID cancel、global call上限、ID上限） | H02/H03/H06/H07とsessions試験へ追加 | `cargo test --lib tool_selection`（183 passed） |
+| 12 | module-size ratchet超過（`mod.rs` 209/205、`router.rs` 503/496） | HTTP境界を新規 `mcp_server/http.rs` へ分離し、新規fileのみbaseline登録 | `bun run size:check`（D5範囲ok） |
+
+検証方法: 並走World Model M3作業がworktreeを一時的にコンパイル不能にしたため、HEAD `84ead97` の隔離worktreeへ本変更のみを適用して確認した。`tool_selection` は183 passed、clippyの `tool_selection` 指摘は0。
+
+未達（D5範囲外）: 並走World Model M3の `src-tauri/src/runtime/context/world/source.rs` がsize ratchet（277/274）を超過しており、`bun run size:check` と `bun run check` はこの1件のみで赤になる。計画どおり他作業を変更していない。

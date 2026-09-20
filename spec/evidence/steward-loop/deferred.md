@@ -12,4 +12,5 @@
 - Situation 分類器・シグナル・hysteresis 定数の変更
 - 進行中 TTS チャンクの即時 mute（Step 3 は開始抑止のみ）
 - 自然文からの Goal 抽出（M3C）
+- live「今会議中ですか」の正答ゲート（M4。M3B は envelope 検査まで）
 - M2B 会話外 Source の永続更新

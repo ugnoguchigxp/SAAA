@@ -57,6 +57,7 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
+                world: None,
             }),
         },
         RequestMode::JsonTools,

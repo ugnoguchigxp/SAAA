@@ -482,15 +482,15 @@ pub(crate) async fn execute_conversation_turn(
     }
     let base_context = memory::context_window::compose(loaded_context)?;
     let broker_started = std::time::Instant::now();
-    let envelope = match crate::runtime::context::broker::compose(
-        crate::runtime::context::broker::BrokerInput {
-            base: base_context,
-            candidates: personal_candidates,
-            source_warning: None,
-            allowed_scope_keys: scope.scopes.iter().map(|scope| scope.key.clone()).collect(),
-        },
+    let composed = match crate::runtime::context::world::turn::compose_for_app(
+        state,
+        &input.run_id,
+        &scope,
+        base_context,
+        personal_candidates,
+        scope.scopes.iter().map(|scope| scope.key.clone()).collect(),
     ) {
-        Ok(envelope) => envelope,
+        Ok(composed) => composed,
         Err(error) => {
             crate::runtime::context::generation::record_red(
                 state,
@@ -500,6 +500,8 @@ pub(crate) async fn execute_conversation_turn(
             return Err(TurnExecutionFailure::configuration(error));
         }
     };
+    let envelope = composed.envelope;
+    let world_live = composed.world;
     crate::providers::http_metrics::record("contextBrokerCompose", broker_started.elapsed());
     if envelope.health.status == crate::runtime::context::health::Status::Yellow {
         let _ = on_event.send(RuntimeEvent::Activity {
@@ -711,6 +713,7 @@ pub(crate) async fn execute_conversation_turn(
                         output_persistence: Some(ProviderOutputPersistence {
                             state,
                             session_id: &session_id,
+                            world: world_live.as_ref(),
                         }),
                     },
                 )
@@ -733,6 +736,7 @@ pub(crate) async fn execute_conversation_turn(
                         output_persistence: Some(ProviderOutputPersistence {
                             state,
                             session_id: &session_id,
+                            world: None,
                         }),
                     },
                 )
@@ -751,6 +755,7 @@ pub(crate) async fn execute_conversation_turn(
                     output_persistence: Some(ProviderOutputPersistence {
                         state,
                         session_id: &session_id,
+                        world: None,
                     }),
                 };
                 stream_voice_aware_dynamic_lan_provider(

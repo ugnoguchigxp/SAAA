@@ -61,9 +61,7 @@ impl Capability {
             .min(MAX_CERTIFIED_INPUT_TOKENS))
     }
     pub fn output_limit(&self) -> Result<u64, String> {
-        let limit = self
-            .output_reserve_tokens
-            .min(MAX_CERTIFIED_OUTPUT_TOKENS);
+        let limit = self.output_reserve_tokens.min(MAX_CERTIFIED_OUTPUT_TOKENS);
         (limit > 0)
             .then_some(limit)
             .ok_or("personal-capability-budget".into())

@@ -326,6 +326,19 @@ async fn h02_authentication_origin_and_host_are_enforced() {
         .expect("bad token");
     assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
 
+    // The auth scheme is case-insensitive: authentication passes and only the missing session
+    // produces an HTTP error.
+    let response = harness
+        .client
+        .post(&harness.base)
+        .header("Authorization", format!("bearer {}", harness.token))
+        .header("Accept", ACCEPT_BOTH)
+        .json(&body)
+        .send()
+        .await
+        .expect("lowercase scheme");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+
     // Origin is refused.
     let response = harness
         .client
@@ -352,6 +365,31 @@ async fn h02_authentication_origin_and_host_are_enforced() {
         .expect("host");
     assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
 
+    // Every method requires the same bearer authentication, not just POST.
+    let response = harness
+        .client
+        .get(&harness.base)
+        .send()
+        .await
+        .expect("get no auth");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let response = harness
+        .client
+        .delete(&harness.base)
+        .send()
+        .await
+        .expect("delete no auth");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let response = harness
+        .client
+        .get(&harness.base)
+        .header("Authorization", format!("Bearer {}", harness.token))
+        .header("Origin", "https://evil.example")
+        .send()
+        .await
+        .expect("get origin");
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+
     // A rejected request never reaches the ledger: no decision row was written.
     let decisions: i64 = harness
         .writer
@@ -370,6 +408,15 @@ async fn h02_authentication_origin_and_host_are_enforced() {
 async fn h03_protocol_and_session_errors() {
     let harness = harness(1).await;
     let initialized = harness.initialize(1).await;
+    // ping is permitted during initialization and returns an empty result.
+    let (status, value) = harness
+        .rpc(
+            &json!({ "jsonrpc": "2.0", "id": 11, "method": "ping" }),
+            Some(&initialized),
+        )
+        .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(value.pointer("/result"), Some(&json!({})));
     // Not ready yet: a normal operation is a JSON-RPC -32002, not an HTTP error.
     let (status, value) = harness
         .rpc(
@@ -381,6 +428,14 @@ async fn h03_protocol_and_session_errors() {
     assert_eq!(value.pointer("/error/code"), Some(&json!(-32002)));
 
     let session = harness.ready_session().await;
+    // A duplicate initialized notification has no side effect and is still accepted.
+    let (status, _) = harness
+        .rpc(
+            &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+            Some(&session),
+        )
+        .await;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED);
     // Missing session.
     let (status, _) = harness
         .rpc(
@@ -462,6 +517,20 @@ async fn h03_protocol_and_session_errors() {
         .await
         .expect("accept");
     assert_eq!(response.status(), reqwest::StatusCode::NOT_ACCEPTABLE);
+
+    // Media types are not compared by exact string: charset and q parameters are accepted.
+    let response = harness
+        .client
+        .post(&harness.base)
+        .header("Authorization", format!("Bearer {}", harness.token))
+        .header("Accept", "application/json;q=0.9, text/event-stream;q=0.8")
+        .header("Content-Type", "application/json; charset=utf-8")
+        .body(r#"{"jsonrpc":"2.0","id":10,"method":"ping"}"#)
+        .send()
+        .await
+        .expect("media parameters");
+    // Auth and media types pass; the missing session is the only failure.
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
 
     // Oversized body is refused before dispatch.
     let huge = json!({
@@ -566,6 +635,19 @@ async fn h06_typed_and_duplicate_request_ids() {
         )
         .await;
     assert_eq!(reused.pointer("/error/code"), Some(&json!(-32600)));
+
+    // Cancelling an unknown or already completed id is a side-effect-free 202.
+    let (status, _) = harness
+        .rpc(
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": { "requestId": "no-such-id" }
+            }),
+            Some(&session),
+        )
+        .await;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED);
 }
 
 #[tokio::test]
@@ -738,6 +820,27 @@ impl ToolBackend for PanicBackend {
     }
 }
 
+/// Backend that ignores cancellation and parks until released, so the management task outlives a
+/// deadline and a dropped HTTP handler. Proves the D5 call slot stays reserved until the task
+/// actually settles (the management task, not the handler, owns the permit).
+struct StubbornBackend {
+    entered: Arc<Semaphore>,
+    release: Arc<Semaphore>,
+}
+
+#[async_trait::async_trait]
+impl ToolBackend for StubbornBackend {
+    async fn invoke(
+        &self,
+        _request: BackendRequest,
+        _cancellation: &crate::RunCancellation,
+    ) -> BackendOutcome {
+        self.entered.add_permits(1);
+        let _released = self.release.acquire().await;
+        BackendOutcome::succeeded(json!({ "ok": true, "value": true }))
+    }
+}
+
 #[tokio::test]
 async fn h07_http_disconnect_does_not_cancel_the_managed_call() {
     let entered = Arc::new(Semaphore::new(0));
@@ -830,6 +933,71 @@ async fn h07_http_disconnect_does_not_cancel_the_managed_call() {
     assert_eq!(
         status, "succeeded",
         "a dropped HTTP connection must not stop or leak the managed call"
+    );
+}
+
+#[tokio::test]
+async fn h07_cancelling_one_session_does_not_cancel_another_with_the_same_id() {
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let (writer, service) = ledger_with_backend(
+        4,
+        Arc::new(BlockingBackend {
+            entered: entered.clone(),
+            release: release.clone(),
+        }),
+    );
+    let harness = serve_with(writer.clone(), service).await;
+    let first = harness.ready_session().await;
+    let second = harness.ready_session().await;
+    let first_ref = prepare_execution_ref(&harness, &first).await;
+    let second_ref = prepare_execution_ref(&harness, &second).await;
+
+    // Both sessions run a call with the same typed request id at the same time.
+    let first_call = spawn_tool_call(&harness, &first, 7, &first_ref);
+    let second_call = spawn_tool_call(&harness, &second, 7, &second_ref);
+    for _ in 0..2 {
+        let _entry = tokio::time::timeout(Duration::from_secs(5), entered.acquire())
+            .await
+            .expect("backend entered")
+            .expect("permit");
+    }
+
+    // Cancel id 7 in the first session only.
+    let (status, _) = harness
+        .rpc(
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": { "requestId": 7 }
+            }),
+            Some(&first),
+        )
+        .await;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED);
+    release.add_permits(2);
+    let _ = tokio::time::timeout(Duration::from_secs(5), first_call).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), second_call).await;
+
+    let statuses: Vec<String> = writer
+        .read_serialized(|connection| {
+            let mut statement = connection
+                .prepare("SELECT technical_status FROM tool_selection_invocations ORDER BY rowid")
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())
+        })
+        .expect("statuses");
+    assert!(
+        statuses.contains(&"cancelled".to_string()),
+        "the targeted session must be cancelled: {statuses:?}"
+    );
+    assert!(
+        statuses.contains(&"succeeded".to_string()),
+        "the other session's same id must keep running: {statuses:?}"
     );
 }
 
@@ -1121,6 +1289,53 @@ async fn s09_search_latency_at_scale() {
 }
 
 #[tokio::test]
+async fn review_deadline_keeps_the_call_slot_until_the_management_task_settles() {
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let (writer, service) = ledger_with_backend(
+        4,
+        Arc::new(StubbornBackend {
+            entered: entered.clone(),
+            release: release.clone(),
+        }),
+    );
+    let harness = serve_with(writer.clone(), service).await;
+    harness
+        .server
+        .inner
+        .call_deadline_ms
+        .store(150, std::sync::atomic::Ordering::SeqCst);
+    let session = harness.ready_session().await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    // The response times out, but this backend ignores cancellation and is still running.
+    let value = harness
+        .call(
+            3,
+            "tools_invoke",
+            json!({ "executionRef": execution_ref, "arguments": { "q": "v" } }),
+            &session,
+        )
+        .await;
+    assert_eq!(value.pointer("/error/code"), Some(&json!(-32001)));
+    let _entered = tokio::time::timeout(Duration::from_secs(5), entered.acquire())
+        .await
+        .expect("backend entered")
+        .expect("permit");
+    // The management task owns the slot: the handler returning on deadline must not release it.
+    assert_eq!(harness.server.inner.sessions.global_in_flight(), 1);
+    release.add_permits(1);
+    for _ in 0..500 {
+        if harness.server.inner.sessions.global_in_flight() == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(harness.server.inner.sessions.global_in_flight(), 0);
+    assert_eq!(wait_for_invocation_status(&writer).await, "succeeded");
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
 async fn h08_deadline_cancels_and_settles_the_call() {
     let entered = Arc::new(Semaphore::new(0));
     let release = Arc::new(Semaphore::new(0));
@@ -1151,6 +1366,30 @@ async fn h08_deadline_cancels_and_settles_the_call() {
     assert_eq!(value.pointer("/error/code"), Some(&json!(-32001)));
     // The management task still reaches a terminal DB state after the deadline.
     assert_eq!(wait_for_invocation_status(&writer).await, "cancelled");
+}
+
+#[tokio::test]
+async fn review_delete_of_an_expired_session_is_not_found() {
+    let harness = harness(1).await;
+    let session = harness.ready_session().await;
+    let arc = harness
+        .server
+        .inner
+        .sessions
+        .get(&session)
+        .expect("session");
+    arc.force_last_activity(now_ms() - super::sessions::SESSION_IDLE_TTL_MILLIS - 1);
+    let response = harness
+        .client
+        .delete(&harness.base)
+        .header("Authorization", format!("Bearer {}", harness.token))
+        .header("Accept", ACCEPT_BOTH)
+        .header("Mcp-Session-Id", &session)
+        .send()
+        .await
+        .expect("delete");
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    harness.server.shutdown().await;
 }
 
 #[tokio::test]

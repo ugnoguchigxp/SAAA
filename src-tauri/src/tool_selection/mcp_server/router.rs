@@ -5,24 +5,27 @@
 
 use std::sync::Arc;
 
-use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::post;
 use axum::Router;
 use serde_json::{json, Value};
 
 use super::calls::{self, CallPermit};
 use super::context;
+use super::http::{
+    accept_is_supported, authenticate, content_type_is_json, empty, header_str, json_response,
+    read_body,
+};
 use super::protocol::{
     self, JsonRpcError, Parsed, TypedRequestId, DEADLINE_EXCEEDED, INTERNAL_ERROR, INVALID_PARAMS,
     INVALID_REQUEST, METHOD_NOT_FOUND, NOT_INITIALIZED, SERVER_BUSY,
 };
 use super::sessions::{ReserveResult, Session, SessionState, SESSION_MAX};
 use super::{
-    ServerInner, BODY_MAX_BYTES, BODY_READ_TIMEOUT, MCP_SERVER_ENDPOINT, MCP_SERVER_NAME,
-    MCP_SERVER_PROTOCOL_VERSION, MCP_SERVER_VERSION, PROTOCOL_HEADER, SESSION_HEADER,
+    ServerInner, MCP_SERVER_ENDPOINT, MCP_SERVER_NAME, MCP_SERVER_PROTOCOL_VERSION,
+    MCP_SERVER_VERSION, PROTOCOL_HEADER, SESSION_HEADER,
 };
 use crate::tool_selection::gateway;
 use crate::RunCancellation;
@@ -265,10 +268,18 @@ async fn tools_call(
         .reserve_call(&session, id, cancellation.clone())
     {
         ReserveResult::Reserved => {}
-        ReserveResult::Duplicate | ReserveResult::HistoryFull => {
+        ReserveResult::Duplicate => {
             return Ok(RpcReply::value(protocol::error_response(
                 Some(id),
                 &JsonRpcError::new(INVALID_REQUEST, "Invalid Request"),
+            )));
+        }
+        ReserveResult::HistoryFull => {
+            // The id history is never pruned; a full history needs a fresh session rather than a
+            // silent replay of a side effect.
+            return Ok(RpcReply::value(protocol::error_response(
+                Some(id),
+                &JsonRpcError::new(SERVER_BUSY, "Session request history is full"),
             )));
         }
         ReserveResult::SessionLimit | ReserveResult::GlobalLimit => {
@@ -276,8 +287,6 @@ async fn tools_call(
         }
         ReserveResult::Closing => return Err(empty(StatusCode::NOT_FOUND)),
     }
-    // The permit releases the slot even if this handler future is dropped on client disconnect.
-    let permit = CallPermit::new(inner.clone(), session.clone(), id.clone());
     let context = context::session_context(&session);
     let service = inner.service.clone();
     let name = name.to_string();
@@ -287,7 +296,12 @@ async fn tools_call(
             .call_deadline_ms
             .load(std::sync::atomic::Ordering::SeqCst),
     );
+    // The management task owns the reserved slot. If the HTTP handler future is dropped on client
+    // disconnect (or the deadline detaches the task), the slot stays reserved until the backend
+    // actually settles, so the in-flight counter and shutdown drain remain accurate.
+    let permit = CallPermit::new(inner.clone(), session.clone(), id.clone());
     let task = tokio::spawn(async move {
+        let _permit = permit;
         calls::execute_tool_call(&service, &context, &name, &arguments, &task_cancellation).await
     });
     let reply = match tokio::time::timeout(deadline, task).await {
@@ -305,7 +319,6 @@ async fn tools_call(
             )
         }
     };
-    drop(permit);
     session.touch();
     Ok(RpcReply::value(reply))
 }
@@ -333,7 +346,12 @@ async fn handle_delete(State(inner): State<Arc<ServerInner>>, headers: HeaderMap
     let Some(session_id) = header_str(&headers, SESSION_HEADER) else {
         return empty(StatusCode::BAD_REQUEST);
     };
-    let Some(session) = inner.sessions.remove(session_id) else {
+    // Resolve through `get` first so an idle-expired session is unknown (404), not silently
+    // accepted as a valid delete target.
+    let Some(session) = inner.sessions.get(session_id) else {
+        return empty(StatusCode::NOT_FOUND);
+    };
+    let Some(session) = inner.sessions.remove(session.id()) else {
         return empty(StatusCode::NOT_FOUND);
     };
     session.cancel_all();
@@ -399,91 +417,4 @@ fn not_initialized(id: &TypedRequestId) -> Value {
         Some(id),
         &JsonRpcError::new(NOT_INITIALIZED, "Server not initialized"),
     )
-}
-
-fn authenticate(inner: &ServerInner, headers: &HeaderMap) -> Result<(), Response> {
-    // A browser-supplied Origin is always refused: this endpoint is not CORS-enabled.
-    if headers.contains_key(header::ORIGIN) {
-        return Err(empty(StatusCode::FORBIDDEN));
-    }
-    // Only the exact loopback listener host is accepted.
-    match header_str(headers, "host") {
-        Some(host) if host == inner.host => {}
-        _ => return Err(empty(StatusCode::FORBIDDEN)),
-    }
-    let Some(value) = header_str(headers, "authorization") else {
-        return Err(empty(StatusCode::UNAUTHORIZED));
-    };
-    let Some(token) = value.strip_prefix("Bearer ") else {
-        return Err(empty(StatusCode::UNAUTHORIZED));
-    };
-    if !constant_time_eq(token.as_bytes(), inner.token.as_bytes()) {
-        return Err(empty(StatusCode::UNAUTHORIZED));
-    }
-    Ok(())
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut difference = 0u8;
-    for (left, right) in left.iter().zip(right.iter()) {
-        difference |= left ^ right;
-    }
-    difference == 0
-}
-
-fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers.get(name).and_then(|value| value.to_str().ok())
-}
-
-fn content_type_is_json(headers: &HeaderMap) -> bool {
-    let Some(value) = header_str(headers, "content-type") else {
-        return false;
-    };
-    let media = value.split(';').next().unwrap_or("").trim();
-    media.eq_ignore_ascii_case("application/json")
-}
-
-fn accept_is_supported(headers: &HeaderMap) -> bool {
-    let Some(value) = header_str(headers, "accept") else {
-        return false;
-    };
-    accepts_media(value, "application/json") && accepts_media(value, "text/event-stream")
-}
-
-fn accepts_media(value: &str, media: &str) -> bool {
-    value.split(',').any(|part| {
-        let token = part.split(';').next().unwrap_or("").trim();
-        token.eq_ignore_ascii_case(media)
-            || token == "*/*"
-            || (media.starts_with("application/") && token.eq_ignore_ascii_case("application/*"))
-    })
-}
-
-async fn read_body(body: Body) -> Result<axum::body::Bytes, Response> {
-    match tokio::time::timeout(
-        BODY_READ_TIMEOUT,
-        axum::body::to_bytes(body, BODY_MAX_BYTES),
-    )
-    .await
-    {
-        Ok(Ok(bytes)) => Ok(bytes),
-        Ok(Err(_)) => Err(empty(StatusCode::PAYLOAD_TOO_LARGE)),
-        Err(_) => Err(empty(StatusCode::REQUEST_TIMEOUT)),
-    }
-}
-
-fn empty(status: StatusCode) -> Response {
-    status.into_response()
-}
-
-fn json_response(status: StatusCode, body: &Value) -> Response {
-    (
-        status,
-        [(header::CONTENT_TYPE, "application/json")],
-        body.to_string(),
-    )
-        .into_response()
 }

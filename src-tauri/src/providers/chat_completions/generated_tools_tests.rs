@@ -134,6 +134,7 @@ async fn c01_generated_definition_is_offered_and_its_result_returns_to_the_conve
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
+                world: None,
             }),
         },
     )
@@ -219,6 +220,7 @@ async fn c02_a_mixed_batch_with_an_unoffered_name_is_refused_before_any_call() {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
+                world: None,
             }),
         },
     )
@@ -255,6 +257,7 @@ async fn c03_generated_tools_need_persistence_and_respect_the_call_budget() {
     let persistence = Some(crate::ProviderOutputPersistence {
         state: &state,
         session_id: "unused",
+        world: None,
     });
     let offered = available_agent_tools(persistence, &input, 0, 0);
     assert_eq!(offered.generated.descriptors().len(), 1);

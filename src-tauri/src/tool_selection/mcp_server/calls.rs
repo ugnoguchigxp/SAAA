@@ -96,8 +96,8 @@ fn envelope_is_error(envelope: &Value) -> bool {
     )
 }
 
-/// Releases the reserved call slot exactly once, including when the HTTP handler future is dropped
-/// while the call is still running.
+/// Releases the reserved call slot exactly once. It is owned by the management task, so a dropped
+/// HTTP handler future (client disconnect or deadline) cannot release a call that is still running.
 pub struct CallPermit {
     inner: Arc<ServerInner>,
     session: Arc<Session>,

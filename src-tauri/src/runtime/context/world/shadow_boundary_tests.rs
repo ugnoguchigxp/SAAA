@@ -1,11 +1,11 @@
-use super::broker::{self, BrokerInput};
-use super::source::{Candidate, Requirement};
-use super::world_shadow::{run_shadow, ShadowInput};
-use super::world_source::WorldSourceRequest;
+use super::super::broker::{self, BrokerInput};
+use super::super::source::{Candidate, Requirement};
+use super::shadow::{run_shadow, ShadowInput};
+use super::source::WorldSourceRequest;
+use crate::meeting::MeetingState;
 use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
 use crate::memory::personal_state::world::runtime_test_support::{Fixture, MEETING_ID, RUN_ID};
 use crate::memory::personal_state::world::test_support::PROJECT;
-use crate::meeting::MeetingState;
 use std::collections::BTreeSet;
 
 fn window() -> ContextWindow {
@@ -57,26 +57,21 @@ fn m3_18_shadow_does_not_write_or_dispatch() {
         base: window(),
         existing_candidates: Vec::new(),
         source_warning: None,
-        allowed_scope_keys: BTreeSet::from([
-            PROJECT.to_string(),
-            format!("resource:{MEETING_ID}"),
-        ]),
+        allowed_scope_keys: BTreeSet::from([PROJECT.to_string(), format!("resource:{MEETING_ID}")]),
     };
-    fixture
+    let scope = fixture
         .writer
-        .read_serialized(|connection| {
-            let _ = run_shadow(
-                &service,
-                connection,
-                WorldSourceRequest {
-                    frame_request: request,
-                },
-                &input,
-                &|| 1_000,
-            );
-            Ok(())
-        })
-        .unwrap();
+        .read_serialized(|connection| crate::runtime::context::scope::load(connection, RUN_ID))
+        .expect("scope");
+    let _ = run_shadow(
+        &service,
+        WorldSourceRequest {
+            frame_request: request,
+        },
+        &input,
+        &|| 1_000,
+        &scope,
+    );
     assert_eq!(fixture.table_count("context_generations"), generations);
     assert_eq!(fixture.total_changes(), changes);
     let baseline = broker::compose(BrokerInput {
@@ -96,7 +91,14 @@ fn m3_18_shadow_does_not_write_or_dispatch() {
     })
     .unwrap();
     assert_eq!(baseline.selected[0].source_kind, "fixture");
-    let turns = include_str!("../turns.rs");
-    assert!(!turns.contains("world-model-shadow"));
-    assert!(!turns.contains("run_shadow"));
+    let turns = include_str!("../../turns.rs");
+    let controller = include_str!("../../conversation_controller/mod.rs");
+    let chat = include_str!("../../../providers/chat_completions/mod.rs");
+    let agent = include_str!("../../../providers/agent_session.rs");
+    assert!(turns.contains("compose_for_app"));
+    for source in [turns, controller, chat, agent] {
+        assert!(!source.contains("world-model-shadow"));
+        assert!(!source.contains("run_shadow"));
+        assert!(!source.contains("prepare_candidate"));
+    }
 }

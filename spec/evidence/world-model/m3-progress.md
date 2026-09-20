@@ -6,16 +6,43 @@
 
 | 項目 | 値 |
 | --- | --- |
-| HEAD | `c0eda5ea6c67e7471ef4a011fc673fa41a45d2e1` (`docs(d5): add MCP server implementation and verification report`) |
-| M2報告 | [m2-results.md](m2-results.md)。M2A 完了、Broker 未接続。G1〜G6 は当時 passed |
-| 今回の `cargo check --locked --manifest-path src-tauri/Cargo.toml --lib` | passed（Finished dev, 2026-09-20） |
-| 計画§3の旧コンパイル停止（`tool_selection/service.rs` の `invocation`） | 今回の check では再現せず。当時の失敗を今回の成功と混同しない |
-| M3 機能試験 | 本カードでは未実施 |
+| HEAD | `c0eda5ea6c67e7471ef4a011fc673fa41a45d2e1` |
+| M2報告 | [m2-results.md](m2-results.md)。Broker 未接続 |
+| `cargo check --locked --manifest-path src-tauri/Cargo.toml --lib` | passed |
+| 計画§3の旧コンパイル停止 | 今回は再現せず。当時の失敗と混同しない |
+| dirty | Role Routing 文書、Tool Selection D5、執事循環計画。巻き戻していない |
 
-dirty（本作業開始時、巻き戻さない）:
+## カード記録
 
-- Role Routing 文書・evidence
-- Tool Selection D5 MCP の src と scripts
-- 執事循環フェーズ計画（本フェーズの文書。M3A コードではない）
+| ID | 試験 | 件数 | 結果 |
+| --- | --- | --- | --- |
+| M3-00 | 文書 | 試験未追加 | baseline 記録 |
+| M3-01 | `m3_01_request_types_are_not_serde_and_fields_stay_private` | 1 | passed |
+| M3-02 | `m3_02_*` 3件 | 3 | passed。ExactName拒否、5 seed/9 ref Limit、重複seed正規化、空要求 empty_request、カンマ Project は ambiguous、未知 Project は scope_denied |
+| M3-03 | `m3_03_wrapper_preserves_frame_fields` | 1 | passed |
+| M3-04 | `m3_04_utf8_limits_omit_the_whole_candidate` | 1 | passed |
+| M3-05 | `m3_05_one_frame_becomes_one_untrusted_candidate` | 1 | passed。May/Untrusted/Base/utility0 |
+| M3-06 | `m3_06_prepare_and_revalidate_use_one_service` | 1 | passed。別serviceは Expired |
+| M3-07 | `m3_07_ttl_*` `m3_07_notice_*` | 2 | passed。1999 Current / 2000 Expired / 999 Expired。実file DB。notice のみは empty_frame |
+| M3-08 | `m3_08_summary_has_no_payload_and_input_stays_put` | 1 | passed |
+| M3-09 | `m3_09_baseline_matches_broker_and_skips_prepare_on_error` | 1 | passed。baseline_error 時 prepare 0 |
+| M3-10 | `m3_10_partial_scope_is_denied_without_second_compose_success` | 1 | passed |
+| M3-11 | `m3_11_same_utility_does_not_displace_existing` | 1 | passed |
+| M3-12 | `m3_12_expired_clock_and_other_run_do_not_retry` | 1 | passed |
+| M3-13 | `m3_13_shadow_kind_is_rejected_before_record` | 1 | passed。planned 維持、input件数不変 |
+| M3-14 | `m3_14_real_frame_paths_select_without_fake_candidates` | 1 | passed。graph は now=entity valid_from |
+| M3-15 | `m3_15_source_and_link_changes_drop_stale_candidates` | 1 | passed。旧 Frame の revalidate が Current でない。revision 据置の coding 状態変更も検出 |
+| M3-16 | `m3_16_json_escapes_quotes_and_fake_delimiters` | 1 | passed |
+| M3-17 | `m3_17_yellow_health_survives_and_instruction_stays_one` | 1 | passed。40 byte 上限は Budget、world 不採用 |
+| M3-18 | `m3_18_shadow_does_not_write_or_dispatch` | 1 | passed。generation 増分0。turns / conversation_controller / chat_completions / agent_session 非配線 |
+| M3-19 | `m3_19_shadow_path_stays_within_dev_gates` ignored | 1 | passed。extra p95 0.447 ms、full p95 29.358 ms、max 34.968 ms、prepared=35 selected=35 ledger=2000 |
+| M3-20 | 下表ゲート | — | `check:local` passed。clippy / size / `m3_` / personal-state / world suite / spec-html / `test:rust-packages` |
+| M3-21 | [m3-results.md](m3-results.md) | — | 記録 |
 
-M3A の対象コードはこの時点では未追加。
+`cargo test --locked --manifest-path src-tauri/Cargo.toml --lib m3_`: 21 passed / 0 failed / 1 ignored。
+
+`cargo test --locked --manifest-path src-tauri/Cargo.toml --lib runtime::context`: 34 passed / 0 failed / 1 ignored。
+
+配置: `src-tauri/src/runtime/context/world/`（source / render / shadow）。通常 turns へ未配線。`WorldFrameService` は変更せず組み合わせ。
+
+size: 新規9ファイルを baseline 登録。既存 `generation_inputs.rs` / `mod.rs` は 10% ratchet 内。閾値は緩めていない。

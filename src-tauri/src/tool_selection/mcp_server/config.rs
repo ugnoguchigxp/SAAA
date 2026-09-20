@@ -37,6 +37,13 @@ pub fn from_environment() -> Result<Option<McpServerConfig>, &'static str> {
         return Ok(None);
     };
     let config = load(&path)?;
+    from_config(config)
+}
+
+/// Applies the runtime rules that depend on the document rather than the environment. Kept
+/// separate from `from_environment` so the port and enabled rules are testable without mutating
+/// process-global environment variables.
+fn from_config(config: McpServerConfig) -> Result<Option<McpServerConfig>, &'static str> {
     if !config.enabled {
         return Ok(None);
     }
@@ -189,6 +196,29 @@ mod tests {
     }
 
     #[test]
+    fn runtime_rules_reject_ephemeral_ports_and_disable_cleanly() {
+        let enabled = McpServerConfig {
+            enabled: true,
+            port: 43127,
+            token_file: Some(PathBuf::from("/tmp/token")),
+            project_id: None,
+        };
+        assert_eq!(from_config(enabled.clone()).unwrap(), Some(enabled.clone()));
+        let ephemeral = McpServerConfig { port: 0, ..enabled };
+        assert_eq!(
+            from_config(ephemeral).unwrap_err(),
+            "mcp-server-config-port-invalid"
+        );
+        let disabled = McpServerConfig {
+            enabled: false,
+            port: 0,
+            token_file: None,
+            project_id: None,
+        };
+        assert!(from_config(disabled).unwrap().is_none());
+    }
+
+    #[test]
     fn invalid_documents_are_rejected() {
         let cases: &[(&[u8], &str)] = &[
             (b"not json", "mcp-server-config-invalid-json"),
@@ -255,8 +285,23 @@ mod tests {
         let path = write_token(directory.path(), b"short\n", 0o600);
         let config = McpServerConfig {
             token_file: Some(path),
-            ..config
+            ..config.clone()
         };
         assert!(load_token(&config).is_err());
+
+        // Exactly one trailing newline is tolerated; any other whitespace or control character is
+        // rejected so a pasted or truncated value cannot silently compare equal.
+        for contents in [
+            format!("{}\n\n", token_value()),
+            format!("{} {}", &token_value()[..8], &token_value()[8..]),
+            format!("{}\t", token_value()),
+        ] {
+            let path = write_token(directory.path(), contents.as_bytes(), 0o600);
+            let config = McpServerConfig {
+                token_file: Some(path),
+                ..config.clone()
+            };
+            assert_eq!(load_token(&config).unwrap_err(), "mcp-server-token-invalid");
+        }
     }
 }

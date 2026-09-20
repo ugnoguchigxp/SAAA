@@ -63,6 +63,18 @@ fn resolved_presentation(
         ))
     })?;
     let meeting_blocked = state.meeting.blocks_tts();
+    if let Some(hold) = crate::situation::inspect_tts_hold(state) {
+        crate::situation::record_tts_held(state, run_id, conversation_id, &hold);
+        return Ok((
+            VoicePresentationDecision {
+                decision: "silent".into(),
+                reason_code: "situation_hold".into(),
+            },
+            policy,
+            voice,
+            meeting_blocked,
+        ));
+    }
     let presentation = effective_presentation_from(
         meeting_blocked,
         voice.auto_speak,
@@ -93,7 +105,7 @@ pub(crate) fn completion_state(
 }
 
 pub(crate) fn upper_policies_allow_speech(state: &AppState) -> Result<bool, String> {
-    if state.meeting.blocks_tts() {
+    if crate::situation::speech_holds_tts(state) || state.meeting.blocks_tts() {
         return Ok(false);
     }
     state

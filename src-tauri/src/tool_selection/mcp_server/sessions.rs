@@ -4,7 +4,7 @@
 //! and stored continuation results are scoped to that run, so nothing can be reused across
 //! sessions. The registry enforces the 16-session cap, the idle TTL and the in-flight call caps.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -42,7 +42,6 @@ struct SessionInner {
     state: SessionState,
     last_activity_ms: i64,
     used_ids: HashSet<TypedRequestId>,
-    used_order: VecDeque<TypedRequestId>,
     inflight: HashMap<TypedRequestId, RunCancellation>,
 }
 
@@ -54,6 +53,7 @@ pub struct Session {
     run_id: String,
     principal_id: String,
     project_id: Option<String>,
+    created_at_ms: i64,
     closing: AtomicBool,
     ready: AtomicBool,
     inner: Mutex<SessionInner>,
@@ -79,13 +79,13 @@ impl Session {
             run_id,
             principal_id,
             project_id,
+            created_at_ms: now,
             closing: AtomicBool::new(false),
             ready: AtomicBool::new(false),
             inner: Mutex::new(SessionInner {
                 state: SessionState::Initializing,
                 last_activity_ms: now,
                 used_ids: HashSet::new(),
-                used_order: VecDeque::new(),
                 inflight: HashMap::new(),
             }),
         }
@@ -202,12 +202,14 @@ impl Session {
             .unwrap_or(false)
     }
 
+    /// An uninitialized session expires 10 seconds after `initialize`, a hard deadline that
+    /// `ping`/`tools/list` cannot extend; a client that keeps pinging still loses the slot.
     fn initializing_expired(&self, now: i64) -> bool {
         self.inner
             .lock()
             .map(|inner| {
                 inner.state == SessionState::Initializing
-                    && now - inner.last_activity_ms > SESSION_INITIALIZE_TIMEOUT_MILLIS
+                    && now - self.created_at_ms > SESSION_INITIALIZE_TIMEOUT_MILLIS
             })
             .unwrap_or(false)
     }
@@ -229,6 +231,12 @@ impl Session {
         if let Ok(mut inner) = self.inner.lock() {
             inner.last_activity_ms = at_ms;
         }
+    }
+
+    /// Test-only: backdates creation so the initialization deadline can be exercised.
+    #[cfg(test)]
+    fn force_created_at(&mut self, at_ms: i64) {
+        self.created_at_ms = at_ms;
     }
 }
 
@@ -375,7 +383,6 @@ impl SessionRegistry {
             }
         }
         inner.used_ids.insert(id.clone());
-        inner.used_order.push_back(id.clone());
         inner.inflight.insert(id.clone(), cancellation);
         inner.last_activity_ms = now_ms();
         ReserveResult::Reserved
@@ -469,6 +476,63 @@ mod tests {
     }
 
     #[test]
+    fn global_call_limit_is_enforced_across_sessions() {
+        let registry = SessionRegistry::new();
+        let sessions: Vec<Arc<Session>> = (0..SESSION_GLOBAL_CALLS_MAX / SESSION_CALLS_MAX)
+            .map(|index| {
+                registry
+                    .insert(session(&format!("s{index}")))
+                    .expect("insert")
+            })
+            .collect();
+        for (session_index, session) in sessions.iter().enumerate() {
+            for call in 0..SESSION_CALLS_MAX {
+                let id = TypedRequestId::Integer((session_index * SESSION_CALLS_MAX + call) as i64);
+                assert_eq!(
+                    registry.reserve_call(session, &id, RunCancellation::default()),
+                    ReserveResult::Reserved
+                );
+            }
+        }
+        assert_eq!(registry.global_in_flight(), SESSION_GLOBAL_CALLS_MAX);
+        let extra = registry.insert(session("extra")).expect("insert");
+        assert_eq!(
+            registry.reserve_call(
+                &extra,
+                &TypedRequestId::Integer(999),
+                RunCancellation::default()
+            ),
+            ReserveResult::GlobalLimit
+        );
+        // A refused global reservation must not leak a per-session slot either.
+        assert_eq!(extra.in_flight_count(), 0);
+    }
+
+    #[test]
+    fn id_history_is_bounded_and_a_full_history_refuses_new_ids() {
+        let registry = SessionRegistry::new();
+        let session = registry.insert(session("ids")).expect("insert");
+        for index in 0..SESSION_ID_HISTORY_MAX {
+            let id = TypedRequestId::Integer(index as i64);
+            assert_eq!(
+                registry.reserve_call(&session, &id, RunCancellation::default()),
+                ReserveResult::Reserved
+            );
+            registry.finish_call(&session, &id);
+        }
+        // Every slot is free, but the history is full: refuse rather than pruning evidence.
+        assert_eq!(
+            registry.reserve_call(
+                &session,
+                &TypedRequestId::Integer(-1),
+                RunCancellation::default()
+            ),
+            ReserveResult::HistoryFull
+        );
+        assert_eq!(registry.global_in_flight(), 0);
+    }
+
+    #[test]
     fn session_cap_is_enforced() {
         let registry = SessionRegistry::new();
         for index in 0..SESSION_MAX {
@@ -487,6 +551,19 @@ mod tests {
         assert!(registry.get("idle").is_none());
         let purged = registry.purge_expired();
         assert_eq!(purged.len(), 1);
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn initialization_deadline_is_not_extended_by_activity() {
+        let registry = SessionRegistry::new();
+        let mut session = session("init");
+        session.force_created_at(now_ms() - SESSION_INITIALIZE_TIMEOUT_MILLIS - 1);
+        // Any later request (ping/tools/list) touches the session; the hard deadline still wins.
+        session.touch();
+        let session = registry.insert(session).expect("insert");
+        assert!(session.initializing_expired(now_ms()));
+        assert_eq!(registry.purge_expired().len(), 1);
         assert_eq!(registry.len(), 0);
     }
 }

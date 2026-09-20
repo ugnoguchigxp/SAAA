@@ -2,13 +2,16 @@ use crate::persistence::SqliteWriter;
 use crate::{database_error, new_id, now_iso, AppState};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub(crate) const MAX_PROVIDER_REQUEST_BYTES: usize = 96_000;
 
 pub(crate) struct GenerationHandle {
     writer: Arc<SqliteWriter>,
     id: String,
+    world: Mutex<Option<super::world::turn::WorldReceipt>>,
+    #[cfg(test)]
+    world_observation: Mutex<Option<&'static str>>,
 }
 
 impl GenerationHandle {
@@ -113,7 +116,44 @@ impl GenerationHandle {
                 return Err("Context generation was already finalized".into());
             }
             Ok(())
-        })
+        })?;
+        self.observe_world();
+        Ok(())
+    }
+
+    pub(crate) fn attach_world(&self, receipt: super::world::turn::WorldReceipt) {
+        *self
+            .world
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(receipt);
+    }
+
+    fn observe_world(&self) {
+        let receipt = self
+            .world
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(receipt) = receipt {
+            let outcome = super::world::turn::observe_receipt(&receipt);
+            #[cfg(test)]
+            {
+                *self
+                    .world_observation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+            }
+            #[cfg(not(test))]
+            let _ = outcome;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn world_observation(&self) -> Option<&'static str> {
+        *self
+            .world_observation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -272,6 +312,9 @@ pub(crate) fn begin(
     Ok(GenerationHandle {
         writer: state.sqlite_writer.clone(),
         id,
+        world: Mutex::new(None),
+        #[cfg(test)]
+        world_observation: Mutex::new(None),
     })
 }
 

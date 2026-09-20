@@ -5,7 +5,9 @@ mod classifier;
 pub mod contracts;
 pub mod platform;
 pub mod repository;
+mod speech;
 mod tick;
+pub(crate) use speech::{inspect_tts_hold, record_tts_held, speech_holds_tts};
 
 use crate::persistence::{SqliteReaders, SqliteWriter};
 #[cfg(test)]

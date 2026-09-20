@@ -1004,6 +1004,7 @@ async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
             output_persistence: Some(ProviderOutputPersistence {
                 state: &state,
                 session_id: &session_id,
+                world: None,
             }),
         },
     )
@@ -1069,6 +1070,7 @@ fn voice_policy_tool_quota_is_independent_from_other_agent_tools() {
     let persistence = Some(ProviderOutputPersistence {
         state: &state,
         session_id: "unused-session",
+        world: None,
     });
 
     let after_general_quota = available_agent_tools(
@@ -1154,6 +1156,7 @@ async fn typed_memory_tools_are_routed_only_from_a_valid_typed_manifest() {
     let persistence = Some(ProviderOutputPersistence {
         state: &state,
         session_id: "unused-session",
+        world: None,
     });
     let names = available_agent_tools(persistence, &input, 0, 0)
         .definitions
@@ -1286,6 +1289,7 @@ async fn typed_memory_execution_cannot_exceed_the_provider_deadline() {
     let persistence = Some(ProviderOutputPersistence {
         state: &state,
         session_id: "session-typed-memory-timeout",
+        world: None,
     });
     let call = runtime::agent_tools::AgentToolCall {
         id: "call-typed-timeout".to_string(),
@@ -1331,6 +1335,7 @@ fn malformed_recall_calls_consume_the_persistent_turn_limit() {
     let persistence = Some(ProviderOutputPersistence {
         state: &state,
         session_id: "unused-session",
+        world: None,
     });
     for index in 0..3 {
         let content = execute_recall_tool(
@@ -1432,6 +1437,7 @@ async fn recall_tool_rounds_share_one_provider_timeout_budget() {
             output_persistence: Some(ProviderOutputPersistence {
                 state: &state,
                 session_id: &session_id,
+                world: None,
             }),
         },
     )

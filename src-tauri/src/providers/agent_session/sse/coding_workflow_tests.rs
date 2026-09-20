@@ -143,6 +143,7 @@ async fn coding_roundtrip(accepted: bool) {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &persistence_id,
+                world: None,
             }),
         },
     )

@@ -50,6 +50,7 @@ async fn c03_tools_false_never_offers_or_runs_a_generated_tool() {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
+                world: None,
             }),
         },
         RequestMode::Stream,
@@ -94,6 +95,7 @@ async fn c03_json_probe_never_offers_generated_tools() {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
+                world: None,
             }),
         },
         RequestMode::JsonProbe,

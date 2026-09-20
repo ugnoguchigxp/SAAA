@@ -40,20 +40,14 @@ fn capability(context: u64, output: u64, margin: u64) -> Capability {
 fn certified_qwen38_budget_is_125k_input_and_4096_output() {
     let capability = capability(131_072, 4_096, 1_976);
     assert_eq!(capability.input_limit(), Ok(MAX_CERTIFIED_INPUT_TOKENS));
-    assert_eq!(
-        capability.output_limit(),
-        Ok(MAX_CERTIFIED_OUTPUT_TOKENS)
-    );
+    assert_eq!(capability.output_limit(), Ok(MAX_CERTIFIED_OUTPUT_TOKENS));
 }
 
 #[test]
 fn larger_provider_claims_do_not_raise_the_saaa_certified_limits() {
     let capability = capability(262_144, 32_768, 4_096);
     assert_eq!(capability.input_limit(), Ok(MAX_CERTIFIED_INPUT_TOKENS));
-    assert_eq!(
-        capability.output_limit(),
-        Ok(MAX_CERTIFIED_OUTPUT_TOKENS)
-    );
+    assert_eq!(capability.output_limit(), Ok(MAX_CERTIFIED_OUTPUT_TOKENS));
 }
 
 #[test]

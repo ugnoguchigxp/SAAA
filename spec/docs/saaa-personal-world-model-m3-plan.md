@@ -97,7 +97,7 @@ bun run test:rust-packages
 
 ## 8. 次段M3Bへ渡す判断
 
-M3A完了後、Provider投入前に別計画で次を確定する。
+M3A完了後の投入計画は [M3B計画](saaa-personal-world-model-m3b-plan.md)。確定済みの判断は次のとおり（詳細は M3B 文書）。
 
 1. dispatchまでの鮮度TTLと、生成中の意味・権限の再検証を別の型・APIにする。M2AのExpiredを無視する変更は禁止する。
 2. stream本文・音声・保存・Tool実行のどの境界で検証するか、無効化時に何を公開しないかをProviderごとに決める。complete時だけの検査で済ませない。
@@ -111,4 +111,4 @@ M3Aのshadow比較は回答品質を測らない。M3Bでは同じ質問で有�
 
 実装時に `spec/evidence/world-model/m3-progress.md` と `m3-results.md` を作成する。各カードの変更関数、試験名・件数、期待値、未実施、性能、A〜L対応を記録する。本文・会議名・Source内容をログへ残さず、合成fixtureの出力例だけを保存する。
 
-完了条件は22カードとA〜L、全体ゲート、性能、非接続の証拠。M2B、M3B、M3Cは未実装として引き渡す。
+完了条件は22カードとA〜L、全体ゲート、性能、非接続の証拠。M2B、M3Cは未実装として引き渡す。M3B の計画は別文書。

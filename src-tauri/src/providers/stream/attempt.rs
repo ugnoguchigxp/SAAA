@@ -169,6 +169,7 @@ pub(crate) fn provider_failure_from_dynamic_lan(
 pub(crate) struct ProviderOutputPersistence<'a> {
     pub(crate) state: &'a AppState,
     pub(crate) session_id: &'a str,
+    pub(crate) world: Option<&'a crate::runtime::context::world::turn::WorldLive>,
 }
 
 impl ProviderOutputPersistence<'_> {

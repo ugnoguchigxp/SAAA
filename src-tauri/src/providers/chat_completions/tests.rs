@@ -426,6 +426,7 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
+                world: None,
             }),
         },
     )

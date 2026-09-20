@@ -1,5 +1,4 @@
-use super::{generation::GenerationHandle, source::Candidate};
-use super::world_source::WORLD_SHADOW_KIND;
+use super::{generation::GenerationHandle, source::Candidate, world::turn::WorldLive};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -9,22 +8,18 @@ pub(crate) fn record(
     selected: &[Candidate],
     omitted: &[Candidate],
     tools: &[Value],
+    world: Option<&WorldLive>,
 ) -> Result<(), String> {
-    if selected
-        .iter()
-        .chain(omitted.iter())
-        .any(|candidate| candidate.source_kind == WORLD_SHADOW_KIND)
-    {
-        return Err("world-shadow-not-dispatchable".into());
-    }
+    super::world::source::reject_dispatch(selected, omitted)?;
+    let (selected, omitted) = super::world::turn::for_record(selected, omitted, world, generation);
     generation.set_health(health)?;
     for (candidate, included, reason) in selected
         .iter()
-        .map(|candidate| (candidate, true, None))
+        .map(|candidate| (*candidate, true, None))
         .chain(
             omitted
                 .iter()
-                .map(|candidate| (candidate, false, Some("budget-or-policy"))),
+                .map(|candidate| (*candidate, false, Some("budget-or-policy"))),
         )
     {
         generation.add_input(

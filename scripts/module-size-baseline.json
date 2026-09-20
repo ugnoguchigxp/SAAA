@@ -1133,13 +1133,49 @@
       "total": 93,
       "production": 93
     },
-    "src-tauri/src/runtime/context/world_render.rs": {
-      "total": 55,
-      "production": 55
+    "src-tauri/src/runtime/context/world/mod.rs": {
+      "total": 17,
+      "production": 17
     },
-    "src-tauri/src/runtime/context/world_source.rs": {
-      "total": 243,
-      "production": 243
+    "src-tauri/src/runtime/context/world/render_tests.rs": {
+      "total": 67,
+      "production": 67
+    },
+    "src-tauri/src/runtime/context/world/render.rs": {
+      "total": 48,
+      "production": 48
+    },
+    "src-tauri/src/runtime/context/world/shadow_boundary_tests.rs": {
+      "total": 98,
+      "production": 98
+    },
+    "src-tauri/src/runtime/context/world/shadow_perf_tests.rs": {
+      "total": 169,
+      "production": 169
+    },
+    "src-tauri/src/runtime/context/world/shadow_tests.rs": {
+      "total": 394,
+      "production": 394
+    },
+    "src-tauri/src/runtime/context/world/shadow.rs": {
+      "total": 276,
+      "production": 276
+    },
+    "src-tauri/src/runtime/context/world/source_tests.rs": {
+      "total": 301,
+      "production": 301
+    },
+    "src-tauri/src/runtime/context/world/source.rs": {
+      "total": 249,
+      "production": 249
+    },
+    "src-tauri/src/runtime/context/world/turn_tests.rs": {
+      "total": 404,
+      "production": 404
+    },
+    "src-tauri/src/runtime/context/world/turn.rs": {
+      "total": 358,
+      "production": 358
     },
     "src-tauri/src/runtime/contracts.rs": {
       "total": 153,
@@ -1277,6 +1313,14 @@
       "total": 816,
       "production": 591
     },
+    "src-tauri/src/situation/speech_tests.rs": {
+      "total": 299,
+      "production": 299
+    },
+    "src-tauri/src/situation/speech.rs": {
+      "total": 93,
+      "production": 93
+    },
     "src-tauri/src/situation/tick.rs": {
       "total": 272,
       "production": 272
@@ -1364,6 +1408,10 @@
     "src-tauri/src/tool_selection/mcp_server/context.rs": {
       "total": 89,
       "production": 53
+    },
+    "src-tauri/src/tool_selection/mcp_server/http.rs": {
+      "total": 106,
+      "production": 106
     },
     "src-tauri/src/tool_selection/mcp_server/mod.rs": {
       "total": 186,

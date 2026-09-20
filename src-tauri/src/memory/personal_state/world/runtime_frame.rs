@@ -191,7 +191,7 @@ impl OwnedFrameRequest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PreparedWorldFrame {
     frame: WorldFrame,
     request: OwnedFrameRequest,

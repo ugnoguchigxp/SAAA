@@ -1,25 +1,23 @@
 //! Trusted WorldFrame → one untrusted Broker candidate (S1/S3/S4).
-use super::source::{Candidate, Requirement};
-use super::world_render::{render_world_frame, RenderOmission};
+use super::super::source::{Candidate, Requirement};
+use super::render::{render_world_frame, RenderOmission};
 use crate::memory::personal_state::world::query::WorldSeed;
 use crate::memory::personal_state::world::runtime_frame::{
     FrameRequest, PreparedWorldFrame, WorldFrameService,
 };
 use crate::runtime::context::scope::ScopeSnapshot;
-use rusqlite::Connection;
 use saaa_personal_state_core::world::runtime_frame::{FrameError, FrameValidity, MAX_RUNTIME_REFS};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(crate) const WORLD_SHADOW_KIND: &str = "world-model-shadow";
+pub(crate) const WORLD_KIND: &str = "world-model";
 const MAX_GRAPH_SEEDS: usize = 4;
 
 #[cfg(test)]
-pub(crate) static PREPARE_CALLS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(not(test))]
-#[allow(dead_code)]
-static PREPARE_CALLS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static PREPARE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorldOmission {
@@ -75,10 +73,25 @@ impl PreparedWorldCandidate {
     pub(crate) fn prepared(&self) -> &PreparedWorldFrame {
         &self.prepared
     }
+
+    pub(crate) fn into_prepared(self) -> PreparedWorldFrame {
+        self.prepared
+    }
+}
+
+pub(crate) fn with_kind(
+    ready: Box<PreparedWorldCandidate>,
+    kind: &str,
+) -> Box<PreparedWorldCandidate> {
+    let candidate = frame_candidate(ready.prepared.frame(), &ready.candidate.content, kind);
+    Box::new(PreparedWorldCandidate {
+        prepared: ready.prepared,
+        candidate,
+    })
 }
 
 pub(crate) enum WorldSourceOutcome {
-    Ready(PreparedWorldCandidate),
+    Ready(Box<PreparedWorldCandidate>),
     Omitted(WorldOmission),
 }
 
@@ -98,8 +111,7 @@ fn inspect_project(project_scope: &str, scope: &ScopeSnapshot) -> Result<(), Wor
     if project_scope.is_empty() {
         return Err(WorldOmission::NoExplicitProject);
     }
-    if project_scope.contains(',') || project_scope.contains('\n') || project_scope.contains(';')
-    {
+    if project_scope.contains(',') || project_scope.contains('\n') || project_scope.contains(';') {
         return Err(WorldOmission::AmbiguousProject);
     }
     let projects: BTreeSet<&str> = scope
@@ -149,16 +161,10 @@ fn inspect_graph_and_refs(request: &WorldSourceRequest<'_>) -> Result<(), WorldO
 
 pub(crate) fn prepare_candidate(
     service: &WorldFrameService,
-    connection: &Connection,
     request: WorldSourceRequest<'_>,
+    scope: &ScopeSnapshot,
 ) -> WorldSourceOutcome {
-    PREPARE_CALLS.fetch_add(1, Ordering::SeqCst);
-    let scope = match crate::runtime::context::scope::load(connection, request.frame_request.run_id)
-    {
-        Ok(scope) => scope,
-        Err(_) => return WorldSourceOutcome::Omitted(WorldOmission::ScopeDenied),
-    };
-    if let Err(omission) = inspect_request(&request, &scope) {
+    if let Err(omission) = inspect_request(&request, scope) {
         return WorldSourceOutcome::Omitted(omission);
     }
     let mut request = request;
@@ -167,6 +173,8 @@ pub(crate) fn prepare_candidate(
             request.frame_request.graph_request = None;
         }
     }
+    #[cfg(test)]
+    PREPARE_CALLS.with(|count| count.set(count.get() + 1));
     let prepared = match service.prepare_frame(request.frame_request) {
         Ok(prepared) => prepared,
         Err(error) => return WorldSourceOutcome::Omitted(omission_from_frame(error)),
@@ -179,23 +187,31 @@ pub(crate) fn prepare_candidate(
         Err(RenderOmission::Budget) => {
             return WorldSourceOutcome::Omitted(WorldOmission::Budget);
         }
+        Err(RenderOmission::Encode) => {
+            return WorldSourceOutcome::Omitted(WorldOmission::SourceError);
+        }
     };
-    let candidate = frame_candidate(prepared.frame().run_id.as_str(), prepared.frame(), &content);
-    WorldSourceOutcome::Ready(PreparedWorldCandidate {
+    let candidate = frame_candidate(prepared.frame(), &content, WORLD_SHADOW_KIND);
+    WorldSourceOutcome::Ready(Box::new(PreparedWorldCandidate {
         prepared,
         candidate,
-    })
+    }))
 }
 
-pub(crate) fn frame_candidate(run_id: &str, frame: &saaa_personal_state_core::world::runtime_frame::WorldFrame, content: &str) -> Candidate {
+pub(crate) fn frame_candidate(
+    frame: &saaa_personal_state_core::world::runtime_frame::WorldFrame,
+    content: &str,
+    kind: &str,
+) -> Candidate {
     let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+    let run_id = frame.run_id.as_str();
     let mut scope_refs = BTreeSet::from([frame.project_scope.clone()]);
     for view in &frame.runtime {
         scope_refs.insert(view.scope_key.clone());
     }
     Candidate::untrusted(
         format!("world-frame:{run_id}:{digest}"),
-        WORLD_SHADOW_KIND,
+        kind,
         scope_refs.into_iter().collect(),
         Requirement::May,
         format!("world-frame:{run_id}:{digest}"),
@@ -231,12 +247,23 @@ pub(crate) fn omission_from_validity(validity: FrameValidity) -> Option<WorldOmi
     }
 }
 
+pub(crate) fn reject_dispatch(selected: &[Candidate], omitted: &[Candidate]) -> Result<(), String> {
+    if selected
+        .iter()
+        .chain(omitted.iter())
+        .any(|candidate| candidate.source_kind == WORLD_SHADOW_KIND)
+    {
+        return Err("world-shadow-not-dispatchable".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn reset_prepare_calls() {
-    PREPARE_CALLS.store(0, Ordering::SeqCst);
+    PREPARE_CALLS.with(|count| count.set(0));
 }
 
 #[cfg(test)]
 pub(crate) fn prepare_calls() -> usize {
-    PREPARE_CALLS.load(Ordering::SeqCst)
+    PREPARE_CALLS.with(|count| count.get())
 }

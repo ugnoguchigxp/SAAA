@@ -11,6 +11,7 @@ pub mod calls;
 pub mod cleanup;
 pub mod config;
 pub mod context;
+pub mod http;
 pub mod protocol;
 pub mod router;
 pub mod sessions;
@@ -88,20 +89,19 @@ impl ServerHandle {
         self.inner.is_shutting_down()
     }
 
-    /// Stops admitting new work, cancels in-flight calls, waits briefly for their management tasks
-    /// to settle and closes the listener.
+    /// Stops the listener, cancels in-flight calls, waits briefly for their management tasks to
+    /// settle, then releases session scope state. Audit history is never deleted.
     pub async fn shutdown(mut self) {
         self.inner.shutting_down.store(true, Ordering::SeqCst);
+        let _ = self.shutdown.take().map(|sender| sender.send(()));
         let closing = self.inner.sessions.close_all();
-        for session in &closing {
-            self.inner.discard_session_scope(session);
-        }
         let deadline = tokio::time::Instant::now() + SHUTDOWN_DRAIN_TIMEOUT;
         while self.inner.sessions.global_in_flight() > 0 && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        if let Some(sender) = self.shutdown.take() {
-            let _ = sender.send(());
+        // Release session scope only after in-flight tasks settle; audit history is kept.
+        for session in &closing {
+            self.inner.discard_session_scope(session);
         }
         let _ = tokio::time::timeout(SHUTDOWN_GRACE_TIMEOUT, self.task).await;
     }

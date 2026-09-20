@@ -65,6 +65,7 @@ async fn coding_http_request_includes_host_workspace_reference() {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &session,
+                world: None,
             }),
         },
     )

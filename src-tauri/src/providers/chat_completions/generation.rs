@@ -47,6 +47,9 @@ impl RequestGeneration {
                 context.context_sources,
                 context.context_omissions,
                 body["tools"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                context
+                    .output_persistence
+                    .and_then(|persistence| persistence.world),
             )
             .map_err(|_| Failure::Internal)?;
         }

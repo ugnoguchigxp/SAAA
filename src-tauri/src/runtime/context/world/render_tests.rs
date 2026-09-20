@@ -1,6 +1,6 @@
-use super::world_render::{
-    is_empty_frame, parse_rendered_json, render_world_frame, MAX_FRAME_JSON_BYTES, MAX_WRAPPED_BYTES,
-    WORLD_FOOTER, WORLD_HEADER,
+use super::render::{
+    is_empty_frame, parse_rendered_json, render_world_frame, MAX_FRAME_JSON_BYTES,
+    MAX_WRAPPED_BYTES, WORLD_FOOTER, WORLD_HEADER,
 };
 use saaa_personal_state_core::world::runtime_frame::{
     MeetingOwnerState, RuntimeKind, RuntimeOwnerState, RuntimePhase, RuntimeRef, RuntimeStateView,
@@ -59,8 +59,8 @@ fn m3_16_json_escapes_quotes_and_fake_delimiters() {
     let rendered = render_world_frame(&frame).expect("render");
     let value = parse_rendered_json(&rendered);
     assert_eq!(value["project_scope"], name);
-    assert_eq!(rendered.matches(WORLD_HEADER).count(), 1);
-    assert_eq!(rendered.matches(WORLD_FOOTER).count(), 1);
+    assert!(rendered.starts_with(WORLD_HEADER));
+    assert!(rendered.ends_with(WORLD_FOOTER));
     assert_eq!(value["runtime"][0]["phase"], "running");
     assert!(value["runtime_focus"].as_array().unwrap().is_empty());
 }

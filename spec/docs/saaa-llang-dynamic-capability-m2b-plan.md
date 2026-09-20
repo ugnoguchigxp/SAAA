@@ -237,3 +237,7 @@ D0で1,500件の再現可能な台帳を用意する。少なくとも100件は�
 ## 14. 技術的な参照資料
 
 検索・再ランキングの構成は[Sentence Transformers](https://www.sbert.net/examples/sentence_transformer/applications/retrieve_rerank/README.html)、全文検索は[SQLite FTS5](https://www.sqlite.org/fts5.html)を参照する。観測された反応の偏りは[Microsoft Research](https://www.microsoft.com/en-us/research/publication/unbiased-learning-rank-biased-feedback/)、Banditの部分観測は[Vowpal Wabbit](https://vowpalwabbit.org/docs/vowpal_wabbit/python/9.0.1/tutorials/python_Contextual_bandits_and_Vowpal_Wabbit.html)を参照する。本書の数値上限・段階・訂正保存規約はSAAAの設計指定であり、これらの資料の推奨値ではない。
+
+## 後続の動的生成・検査
+
+D0〜D5の利用基盤に続く未実装M3/M4は[実行版検査・動的生成 統合実装計画](saaa-llang-generation-inspection-plan.md)を参照する。旧初期計画・詳細手順の重複指示は同書へ移管済み。

@@ -1,13 +1,13 @@
 //! Same-process World shadow comparison against the real Context Broker (S5/S6).
-use super::broker::{self, BrokerInput, Envelope};
-use super::source::Candidate;
-use super::world_source::{
+use super::super::broker::{self, BrokerInput, Envelope};
+use super::super::source::Candidate;
+use super::source::{
     omission_from_frame, omission_from_validity, prepare_candidate, WorldOmission,
-    WorldSourceOutcome, WorldSourceRequest,
+    WorldSourceOutcome, WorldSourceRequest, WORLD_SHADOW_KIND,
 };
 use crate::memory::context_window::ContextWindow;
 use crate::memory::personal_state::world::runtime_frame::WorldFrameService;
-use rusqlite::Connection;
+use crate::runtime::context::scope::ScopeSnapshot;
 use std::collections::BTreeSet;
 use std::time::Instant;
 
@@ -41,10 +41,10 @@ pub(crate) struct ShadowSummary {
 
 pub(crate) fn run_shadow(
     service: &WorldFrameService,
-    connection: &Connection,
     source_request: WorldSourceRequest<'_>,
     input: &ShadowInput,
     clock: &dyn Fn() -> i64,
+    scope: &ScopeSnapshot,
 ) -> ShadowSummary {
     let started = Instant::now();
     if input.run_id != source_request.frame_request.run_id {
@@ -83,7 +83,7 @@ pub(crate) fn run_shadow(
     };
     let baseline_bytes = baseline.health.projected_bytes;
     let existing_selected_count = baseline.selected.len();
-    let outcome = prepare_candidate(service, connection, source_request);
+    let outcome = prepare_candidate(service, source_request, scope);
     let ready = match outcome {
         WorldSourceOutcome::Omitted(omission) => {
             return omitted(
@@ -167,7 +167,7 @@ pub(crate) fn run_shadow(
     if proposed
         .omitted
         .iter()
-        .any(|candidate| candidate.source_kind == super::world_source::WORLD_SHADOW_KIND)
+        .any(|candidate| candidate.source_kind == WORLD_SHADOW_KIND)
     {
         return omitted(
             started,
@@ -189,7 +189,7 @@ pub(crate) fn run_shadow(
     let world_selected = proposed
         .selected
         .iter()
-        .any(|candidate| candidate.source_kind == super::world_source::WORLD_SHADOW_KIND);
+        .any(|candidate| candidate.source_kind == WORLD_SHADOW_KIND);
     finish(
         started,
         ShadowSummary {
@@ -223,11 +223,7 @@ fn scope_subset(scope_refs: &[String], allowed: &BTreeSet<String>) -> bool {
 }
 
 fn displaced(baseline: &Envelope, proposed: &Envelope) -> bool {
-    let proposed_ids: BTreeSet<_> = proposed
-        .selected
-        .iter()
-        .map(identity)
-        .collect();
+    let proposed_ids: BTreeSet<_> = proposed.selected.iter().map(identity).collect();
     baseline
         .selected
         .iter()

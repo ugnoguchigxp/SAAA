@@ -916,5 +916,10 @@ fn normalize_loopback(raw: &str) -> Option<String> {
         _ => return None,
     };
     let port = parsed.port_or_known_default()?;
-    Some(format!("{host}:{port}{}", parsed.path()))
+    // Treat a trailing slash as the same endpoint, so `.../mcp/` cannot slip past the guard.
+    let mut path = parsed.path().to_string();
+    if path.len() > 1 && path.ends_with('/') {
+        path.pop();
+    }
+    Some(format!("{host}:{port}{path}"))
 }

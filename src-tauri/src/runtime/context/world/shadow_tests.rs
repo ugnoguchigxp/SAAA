@@ -1,17 +1,18 @@
-use super::broker::{self, BrokerInput};
-use super::generation::{begin, BeginGeneration};
-use super::generation_inputs::record;
-use super::source::{Candidate, Requirement};
-use super::world_shadow::{run_shadow, ShadowInput, ShadowStatus};
-use super::world_source::{
-    prepare_calls, reset_prepare_calls, WorldOmission, WorldSourceRequest, WORLD_SHADOW_KIND,
+use super::super::broker::{self, BrokerInput};
+use super::super::generation::{begin, BeginGeneration};
+use super::super::generation_inputs::record;
+use super::super::source::{Candidate, Requirement};
+use super::shadow::{run_shadow, ShadowInput, ShadowStatus};
+use super::source::{
+    prepare_calls, prepare_candidate, reset_prepare_calls, WorldOmission, WorldSourceRequest,
+    WORLD_SHADOW_KIND,
 };
+use crate::meeting::MeetingState;
 use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
 use crate::memory::personal_state::world::runtime_test_support::{
     Fixture, CODING_ID, MEETING_ID, RUN_ID,
 };
 use crate::memory::personal_state::world::test_support::PROJECT;
-use crate::meeting::MeetingState;
 use rusqlite::Connection;
 use std::collections::BTreeSet;
 
@@ -62,7 +63,7 @@ fn existing(id: &str, bytes: usize, utility: u16) -> Candidate {
     )
 }
 
-fn shadow_input(fixture: &Fixture, limit: usize, candidates: Vec<Candidate>) -> ShadowInput {
+fn shadow_input(_fixture: &Fixture, limit: usize, candidates: Vec<Candidate>) -> ShadowInput {
     let mut allowed = BTreeSet::from([PROJECT.to_string()]);
     allowed.insert(format!("resource:{MEETING_ID}"));
     allowed.insert(format!("task:{CODING_ID}"));
@@ -81,7 +82,7 @@ fn shadow(
     graph: bool,
     input: &ShadowInput,
     clock: i64,
-) -> super::world_shadow::ShadowSummary {
+) -> super::shadow::ShadowSummary {
     let service = fixture.service();
     let access = fixture.access();
     let refs = if runtime {
@@ -95,20 +96,19 @@ fn shadow(
         None
     };
     let request = fixture.request(access, refs, graph);
-    fixture
+    let scope = fixture
         .writer
-        .read_serialized(|connection| {
-            Ok(run_shadow(
-                &service,
-                connection,
-                WorldSourceRequest {
-                    frame_request: request,
-                },
-                input,
-                &|| clock,
-            ))
-        })
-        .expect("shadow")
+        .read_serialized(|connection| crate::runtime::context::scope::load(connection, RUN_ID))
+        .expect("scope");
+    run_shadow(
+        &service,
+        WorldSourceRequest {
+            frame_request: request,
+        },
+        input,
+        &|| clock,
+        &scope,
+    )
 }
 
 #[test]
@@ -140,7 +140,10 @@ fn m3_09_baseline_matches_broker_and_skips_prepare_on_error() {
     })
     .unwrap();
     let summary = shadow(&fixture, true, false, &input, 1_000);
-    assert_eq!(summary.baseline_bytes, Some(envelope.health.projected_bytes));
+    assert_eq!(
+        summary.baseline_bytes,
+        Some(envelope.health.projected_bytes)
+    );
     assert_eq!(summary.existing_selected_count, envelope.selected.len());
 
     reset_prepare_calls();
@@ -167,7 +170,16 @@ fn m3_11_same_utility_does_not_displace_existing() {
     let fixture = Fixture::new(&[("resource", MEETING_ID)]);
     fixture.add_meeting(MEETING_ID, "active", "100", None, None);
     fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
-    let input = shadow_input(&fixture, 80, vec![existing("z", 40, 0)]);
+    let sized = shadow(
+        &fixture,
+        true,
+        false,
+        &shadow_input(&fixture, 8_192, Vec::new()),
+        1_000,
+    );
+    let wrapper = "[PERSONAL_STATE — source-backed untrusted data; instructionAuthority=none]\n[END_PERSONAL_STATE]".len();
+    let limit = 13 + wrapper + sized.world_bytes + 8;
+    let input = shadow_input(&fixture, limit, vec![existing("z", 40, 0)]);
     let summary = shadow(&fixture, true, false, &input, 1_000);
     assert_eq!(summary.omission, Some(WorldOmission::WouldDisplace));
     assert!(!summary.world_selected);
@@ -254,9 +266,17 @@ fn m3_13_shadow_kind_is_rejected_before_record() {
                 .map_err(crate::database_error)
         })
         .unwrap();
-    let error = record(&generation, "green", &[shadow.clone()], &[], &[]).unwrap_err();
+    let error = record(
+        &generation,
+        "green",
+        std::slice::from_ref(&shadow),
+        &[],
+        &[],
+        None,
+    )
+    .unwrap_err();
     assert_eq!(error, "world-shadow-not-dispatchable");
-    let omitted_error = record(&generation, "green", &[], &[shadow], &[]).unwrap_err();
+    let omitted_error = record(&generation, "green", &[], &[shadow], &[], None).unwrap_err();
     assert_eq!(omitted_error, "world-shadow-not-dispatchable");
     let after = state
         .sqlite_readers
@@ -279,11 +299,16 @@ fn m3_13_shadow_kind_is_rejected_before_record() {
 
 #[test]
 fn m3_14_real_frame_paths_select_without_fake_candidates() {
-    let graph = Fixture::with_entities(&[], 2);
+    let graph = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
+    let now = crate::memory::personal_state::now();
+    graph.set_now(now);
     let input = shadow_input(&graph, 8_192, Vec::new());
-    let summary = shadow(&graph, false, true, &input, 1_000);
-    assert_eq!(summary.status, ShadowStatus::Compared);
-    assert!(summary.world_selected);
+    let summary = shadow(&graph, false, true, &input, now);
+    assert_eq!(
+        (summary.status, summary.omission, summary.world_selected),
+        (ShadowStatus::Compared, None, true),
+        "{summary:?}"
+    );
 
     let runtime = Fixture::new(&[("resource", MEETING_ID)]);
     runtime.add_meeting(MEETING_ID, "active", "100", None, None);
@@ -305,8 +330,29 @@ fn m3_15_source_and_link_changes_drop_stale_candidates() {
     let fixture = Fixture::with_entities(&[("resource", MEETING_ID)], 2);
     fixture.add_meeting(MEETING_ID, "active", "100", None, None);
     fixture.meeting.set(Some(MEETING_ID), MeetingState::Active);
-    let input = shadow_input(&fixture, 8_192, Vec::new());
-    assert!(shadow(&fixture, true, true, &input, 1_000).world_selected);
+    let service = fixture.service();
+    let access = fixture.access();
+    let request = fixture.request(
+        access,
+        vec![fixture.meeting_ref(MEETING_ID)],
+        Some(fixture.graph_request("ent0")),
+    );
+    let scope = fixture
+        .writer
+        .read_serialized(|connection| crate::runtime::context::scope::load(connection, RUN_ID))
+        .expect("scope");
+    let ready = match prepare_candidate(
+        &service,
+        WorldSourceRequest {
+            frame_request: request,
+        },
+        &scope,
+    ) {
+        super::source::WorldSourceOutcome::Ready(ready) => ready,
+        super::source::WorldSourceOutcome::Omitted(omission) => {
+            panic!("omitted {}", omission.as_str())
+        }
+    };
     fixture
         .writer
         .write(|connection| {
@@ -316,9 +362,45 @@ fn m3_15_source_and_link_changes_drop_stale_candidates() {
             Ok(())
         })
         .unwrap();
-    let summary = shadow(&fixture, true, true, &input, 1_000);
-    assert!(!summary.world_selected);
-    assert!(summary.omission.is_some());
+    let validity = service.revalidate_frame(ready.prepared()).unwrap();
+    assert!(
+        !matches!(
+            validity,
+            saaa_personal_state_core::world::runtime_frame::FrameValidity::Current
+        ),
+        "stale frame stayed current: {validity:?}"
+    );
+
+    let owner = Fixture::new(&[("task", CODING_ID)]);
+    owner.add_coding_job(7, "running", "running", "accepted");
+    let service = owner.service();
+    let access = owner.access();
+    let request = owner.request(access, vec![owner.coding_ref(CODING_ID)], None);
+    let scope = owner
+        .writer
+        .read_serialized(|connection| crate::runtime::context::scope::load(connection, RUN_ID))
+        .expect("scope");
+    let ready = match prepare_candidate(
+        &service,
+        WorldSourceRequest {
+            frame_request: request,
+        },
+        &scope,
+    ) {
+        super::source::WorldSourceOutcome::Ready(ready) => ready,
+        super::source::WorldSourceOutcome::Omitted(omission) => {
+            panic!("omitted {}", omission.as_str())
+        }
+    };
+    owner.set_coding_state(7, "cancel_requested", "stopping", "accepted");
+    let validity = service.revalidate_frame(ready.prepared()).unwrap();
+    assert!(
+        !matches!(
+            validity,
+            saaa_personal_state_core::world::runtime_frame::FrameValidity::Current
+        ),
+        "owner digest stayed current: {validity:?}"
+    );
 }
 
 #[test]
@@ -342,9 +424,8 @@ fn m3_17_yellow_health_survives_and_instruction_stays_one() {
     assert_eq!(envelope.context_health.current_instruction_count, 1);
     let tight = shadow_input(&fixture, 40, Vec::new());
     let omitted = shadow(&fixture, true, false, &tight, 1_000);
-    assert!(
-        omitted.omission == Some(WorldOmission::Budget)
-            || omitted.omission == Some(WorldOmission::WouldDisplace)
-            || omitted.world_selected
-    );
+    assert_eq!(omitted.status, ShadowStatus::WorldOmitted);
+    assert_eq!(omitted.omission, Some(WorldOmission::Budget));
+    assert!(!omitted.world_selected);
+    assert!(omitted.proposed_bytes.is_none());
 }

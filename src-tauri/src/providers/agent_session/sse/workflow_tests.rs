@@ -204,6 +204,7 @@ async fn sse_generates_edits_saves_searches_and_reopens_without_control_deltas()
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &persistence_id,
+                world: None,
             }),
         },
     )
@@ -407,6 +408,7 @@ async fn live_muse_sse_ui_workflow() {
             output_persistence: Some(crate::ProviderOutputPersistence {
                 state: &state,
                 session_id: &persistence_id,
+                world: None,
             }),
         },
     )

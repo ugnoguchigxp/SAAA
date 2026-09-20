@@ -45,6 +45,7 @@ impl Envelope {
                 context.context_sources,
                 context.context_omissions,
                 offered_tools,
+                None,
             )
             .map_err(|_| ProviderFailureKind::Internal)?;
         }

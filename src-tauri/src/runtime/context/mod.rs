@@ -10,17 +10,4 @@ pub(crate) mod health;
 pub(crate) mod schema;
 pub(crate) mod scope;
 pub(crate) mod source;
-pub(crate) mod world_render;
-pub(crate) mod world_shadow;
-pub(crate) mod world_source;
-
-#[cfg(test)]
-mod world_render_tests;
-#[cfg(test)]
-mod world_shadow_boundary_tests;
-#[cfg(test)]
-mod world_shadow_perf_tests;
-#[cfg(test)]
-mod world_shadow_tests;
-#[cfg(test)]
-mod world_source_tests;
+pub(crate) mod world;

@@ -1,7 +1,7 @@
 # SAAA × L-Lang 動的拡張 — 詳細実装手順・契約・試験仕様
 
 作成日: 2026-09-19  
-状態: 実装指示案 v0.1 / 実装未着手  
+状態: M0/M1の初期実装仕様・記録 / 未実装M3/M4は統合計画へ移管
 上位文書: [初期実装計画](saaa-llang-dynamic-capability-initial-plan.md)
 
 ## 0. 担当AIが最初に読むこと
@@ -438,31 +438,9 @@ M1: PASS / PARTIAL / BLOCKED
 - 初期動作: 再一覧取得で追加・停止を反映。自動list change通知は最初は対応を宣言しない。UUIDベースの版付き名のため、旧名callを新しい版へ転送しない。
 - 試験: protocol clientからinitialize/list/call、無認証、Origin付き要求、未知名、不正入力、取消、追加後の再list、停止後の旧名call。会話経路と同じrevision/hash/valueを検証する。
 
-### M3-A — 更新・復帰・検査
+### M3・M4 — 統合計画へ移管
 
-- M1のactivate/suspend/epochを再利用する。MCPと会話に独立したcurrent pointerを置かない。
-- retiredはactive以外に限定。旧版への復帰は再検証→activate。互換性は初期にはcontract_hash完全一致のみをcompatibleとし、部分互換を推測しない。
-- inspectionはM0-I=PASSを前提とする。`inspect_execution(call_id)`が実行記録のrevisionを参照し、現在版を参照しない。
-- TypeScriptとreportを版ごとの保存領域へ出力し、取得時にもhashを照合する。未出力/欠落/不一致を区別し、LLMによる書き直しで補完しない。
-- 比較試験はboolean fieldの全組合せを有効入力として、固定projectionとWasmで実施する。projectionが契約妥当入力を前提とする点を表示する。任意candidate由来JSを実行する一般入口は作らない。
-- 合格: A実行→B更新→AのTypeScript取得→B停止→A再検証・復帰。非互換Cを追加して旧schemaが拒否されることも確認する。
-
-### M4-A — 生成の決定的な接続試験
-
-- まずfake generatorで要求からcandidateを生成する経路を作る。package選択だけを「生成」と報告しない。
-- 要求には能力の用途、固定したboolean field、期待する判定、独立acceptanceを含める。初期は事前登録した評価要求だけを対象とし、任意自然言語の正しさを保証しない。
-- ModelはL-Lang入力を出力する。SAAAが受け取るのはversioned生成結果であり、起動コマンドや任意JSではない。
-- 生成・buildの実行領域をWasm実行領域と分ける。model credentialは生成processだけへ渡す。候補から渡されたpathを信用しない。
-- 生成結果はM1 import/verify/activateへ渡し、新しい近道を作らない。変更要求では元revisionを固定する。
-- 試験: 正常生成、構文不正、予算超過、未対応要求、独立acceptance不合格、同時更新conflict。失敗しても現行能力を維持する。
-
-### M4-B — 実モデルによる実証
-
-- 前提: M4-A合格、M0-I合格、採用v2の生成・build入口が固定済み。
-- 初期予算: 一要求につきmodel call 1回、max output 4096 tokens、壁時計120秒。既存providerのcontext制限も適用する。超過時は失敗として終了し、予算を増やして自動再試行しない。
-- 実証: fixtureの選択ではない新規要求でcandidateを作り、会話/MCPから利用する。続いて一つの変更要求で別hashを生成し、同じ経路で更新する。
-- 記録: 使用モデル、消費量（取得できなければunknown）、latency、candidate/hash、独立ケース、呼び出し結果、inspection対応を記録する。生成成功とユーザー要求達成を別判定する。
-- 制約: 任意機能の自動採点、汎用effect、修復loopは未実装のままとする。失敗を隠して手書きcandidateへ置換し、実モデル成功と報告しない。
+M3-A、M4-A、M4-Bの実装指示・予算・比較試験・実モデル実証は[実行版検査・動的生成 統合実装計画](saaa-llang-generation-inspection-plan.md)へ集約した。重複した指示は削除し、以後は同書のT00〜T09・R1/R2を使用する。M0-Iの依存確認とM0/M1の実装記録は本書に残す。
 
 ## 11. 実装担当へ渡す開始指示
 

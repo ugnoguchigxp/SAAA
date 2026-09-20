@@ -90,43 +90,21 @@ Concept §5.1 と指示書をそのまま守る。
 既知の実装漏れ（許容し、カード外で埋めない）:
 
 - M2B（会話外 Source の永続更新）
-- 通常 Provider への投入（M3B）
+- 通常 Provider への投入は M3B で完了。agent_session / 音声 / Codex 本文と live 正答は未接続
 - Frame TTL 1,000 ms と生成時間の差。M3A で TTL を延ばさない
 - `turns.rs` からの直接呼び出し
 
-## 6. Step 2 — M3B（M3A結果の後に短く書く）
+## 6. Step 2 — M3B（通常 generation への限定投入）
 
-今は骨格だけ残す。カードは M3-21 の §8 を読んでから、1文書・10枚以内で追加する。ファイル名は `spec/docs/saaa-personal-world-model-m3b-plan.md`。先回りで generation 配線しない。
-
-対象を次の3つの現在状態に限る。グラフ探索は深化しない。
-
-1. 現在の会議
-2. 進行中 Task 参照（既存 coding snapshot）
-3. 明示 Project
-
-有効化は既存 Memory 設定配下、default OFF。有効化前後を固定日本語 corpus で比較する。誤断定の増加 0件、Scope 漏洩 0件、現在入力の命令位置 1回。
-
-完了条件（開発環境 `SAAA_MEMORY_ENABLED=1`）:
-
-- 「今会議中ですか」に WorldFrame 由来の根拠付き回答が返る。
-- 「SAAAの改善で今何を進めていますか」も同様。
-- Frame 期限切れ後は unknown と答える。Expired を無視して TTL を延ばす変更は禁止。
-
-M3A の p95 や漏洩ゲートを満たせなければ M3B に進まず、本フェーズの「現在状態を答える」は未着手として報告する。P2/P3 を空の World の上で無理に完成扱いにしない。P2 の TTS だけは前項どおり先行してよい。
+正本は [M3B計画](saaa-personal-world-model-m3b-plan.md)。実装完了記録は `spec/evidence/world-model/m3b-results.md`。live 回答品質は完了条件にしない。
 
 ## 7. Step 3 — Situation を判断へ届ける
 
-追加は一点だけ。Interaction Policy の最初の実体。
+正本は [TTSゲート計画](saaa-situation-tts-gate-plan.md)（契約 B0–B7 とカード ST-00〜07）。先回りで分類器や Meeting 所有者を変えない。実装はカード順。
 
-条件: Situation が `MEETING` かつ `ShadowDecision.proposed_attention` が `IGNORE` または `OBSERVE`。
+追加は一点だけ。Interaction Policy の最初の実体。条件は `MEETING` かつ `proposed_attention` が `IGNORE` または `OBSERVE`。抑止は runtime の TTS **開始**（`voice_response` と `streaming_tts.begin` の両方）。`mode=shadow` のまま。`meeting.blocks_tts()` は別政策として残す。
 
-動作: `runtime/voice_response.rs` の TTS 開始（ack / thinking / complete）を抑止する。抑止した事実を監査イベントに残す。本文のテキスト応答、Meeting そのもの、Situation 分類器、シグナル、hysteresis 定数は変更しない。
-
-現行の `ShadowDecision` は `actual_execution=NONE`、`actual_presentation=SILENT`、`mode=shadow` のままにする。本番の自動介入へ昇格しない。抑止は runtime 側の強制であり、分類結果の書き換えではない。
-
-注意: 現行分類は会議中に `user_attention=busy`、policy は `OBSERVE`（`user-busy`）。明示的な SAAA 入力中は `RESPOND`（`explicit-saaa-interaction`）になる。会議中にユーザーが SAAA へ話しかけた場合は本ゲートを通さない。黙る対象は、会議中の勝手な発話開始である。
-
-完了: 実DB試験で、会議中に音声応答が出ないこと、会議終了後に hysteresis 経過後へ復帰すること。
+完了: 正本 §6 のゲートと `spec/evidence/situation/tts-gate-results.md`。
 
 ## 8. Step 4 — 最小の執事循環
 

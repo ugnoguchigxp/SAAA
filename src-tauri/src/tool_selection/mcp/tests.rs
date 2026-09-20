@@ -2727,7 +2727,13 @@ async fn review_self_endpoint_source_is_refused() {
         .manager
         .set_self_endpoint(Some("loopback:43127/mcp".to_string()))
         .await;
-    for url in ["http://127.0.0.1:43127/mcp", "http://localhost:43127/mcp"] {
+    for url in [
+        "http://127.0.0.1:43127/mcp",
+        "http://localhost:43127/mcp",
+        "http://127.0.0.1:43127/mcp/",
+        "http://[::1]:43127/mcp",
+        "https://127.0.0.1:43127/mcp",
+    ] {
         harness
             .manager
             .apply_sources(McpSources {

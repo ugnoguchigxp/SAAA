@@ -186,6 +186,7 @@ fn generative_ui_tool_retries_are_idempotent_and_disabled_mode_exposes_no_tools(
         Some(crate::ProviderOutputPersistence {
             state: &state,
             session_id: "unused",
+            world: None,
         }),
         &input,
         0,
