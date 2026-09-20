@@ -116,7 +116,43 @@ pub async fn dispatch(
         Err(_) => return error_envelope(&ToolSelectionError::invalid()),
     };
     let result = match internal_name(name) {
-        Some("tools.search") => dispatch_search(service, context, &parsed).await,
+        Some("tools.search") => dispatch_search(service, context, &parsed, None).await,
+        Some("tools.describe") => dispatch_describe(service, context, &parsed),
+        Some("tools.invoke") => dispatch_invoke(service, context, &parsed, cancellation).await,
+        _ => Err(ToolSelectionError::invalid()),
+    };
+    match result {
+        Ok(data) => ok(data),
+        Err(error) => error_envelope(&error),
+    }
+}
+
+/// MCP-facing dispatch. It shares the three entry points' validation and schemas with the
+/// conversation path, but a search uses a request-local scenario extracted from the intent and
+/// never persists the intent as user feedback.
+pub async fn dispatch_external(
+    service: &ToolSelectionService,
+    context: &RequestContext,
+    name: &str,
+    arguments: &str,
+    cancellation: &RunCancellation,
+) -> Value {
+    if arguments.len() > GATEWAY_INPUT_MAX_BYTES {
+        return error_envelope(&ToolSelectionError::invalid());
+    }
+    let parsed: Value = match serde_json::from_str(arguments) {
+        Ok(value) => value,
+        Err(_) => return error_envelope(&ToolSelectionError::invalid()),
+    };
+    let result = match internal_name(name) {
+        Some("tools.search") => {
+            let intent = match parsed.get("intent").and_then(Value::as_str) {
+                Some(intent) => intent,
+                None => return error_envelope(&ToolSelectionError::invalid()),
+            };
+            let scenario = service.extract_scenario_only(context, intent).await;
+            dispatch_search(service, context, &parsed, Some(&scenario)).await
+        }
         Some("tools.describe") => dispatch_describe(service, context, &parsed),
         Some("tools.invoke") => dispatch_invoke(service, context, &parsed, cancellation).await,
         _ => Err(ToolSelectionError::invalid()),
@@ -131,6 +167,7 @@ async fn dispatch_search(
     service: &ToolSelectionService,
     context: &RequestContext,
     arguments: &Value,
+    scenario: Option<&Scenario>,
 ) -> ToolSelectionResult<Value> {
     let object = arguments
         .as_object()
@@ -149,7 +186,14 @@ async fn dispatch_search(
             .filter(|limit| (1..=SEARCH_LIMIT_MAX as u64).contains(limit))
             .ok_or_else(ToolSelectionError::invalid)? as usize,
     };
-    let response = service.search(context, intent, limit).await?;
+    let response = match scenario {
+        Some(scenario) => {
+            service
+                .search_with_scenario(context, intent, limit, scenario)
+                .await?
+        }
+        None => service.search(context, intent, limit).await?,
+    };
     let candidates: Vec<Value> = response
         .candidates
         .iter()

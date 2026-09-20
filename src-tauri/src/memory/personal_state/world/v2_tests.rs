@@ -583,12 +583,15 @@ fn d37_outcome_resend_is_a_noop_and_second_outcome_is_rejected() {
 /// D41 performance fixture. Run explicitly:
 /// `cargo test --lib d41_v2_performance -- --ignored --nocapture`
 /// The 10,000 scale is outside the interrupt budget by design in M1.
+/// M2-01: requested / created are reported separately, every measured
+/// operation must succeed, and the p95 is the nearest-rank 29th of 30 samples.
 #[test]
 #[ignore]
 fn d41_v2_performance() {
     use std::time::Instant;
     let scales: [usize; 3] = [0, 100, 1_000];
     for scale in scales {
+        let requested = scale;
         let writer = writer_db();
         let now_ms = now();
         let source = writer
@@ -622,24 +625,36 @@ fn d41_v2_performance() {
                     )
                 })
                 .collect();
+            let batch_len = batch.len();
             committer.commit(&format!("perf-{created}"), batch).unwrap();
-            created += 8.min(scale - created);
+            created += batch_len;
         }
         let build = build_start.elapsed();
+        assert!(
+            interrupted || created == requested,
+            "created {created} != requested {requested}"
+        );
         let measure = |label: &str, mut op: Box<dyn FnMut() -> u128>| {
-            let mut samples = Vec::new();
             for _ in 0..5 {
+                let _ = op();
+            }
+            let mut samples = Vec::with_capacity(30);
+            for _ in 0..30 {
                 samples.push(op());
             }
             samples.sort();
+            // nearest-rank p95 for 30 samples is the 29th ascending value.
+            let p95 = samples[(30f64 * 0.95).ceil() as usize - 1];
             eprintln!(
-                "WORLD_V2_PERF scale={scale} {label} median_ms={} max_ms={}",
-                samples[samples.len() / 2] as f64 / 1000.0,
+                "WORLD_V2_PERF scale={scale} requested={requested} created={created} \
+                 interrupted={interrupted} {label} p95_ms={} max_ms={}",
+                p95 as f64 / 1000.0,
                 samples[samples.len() - 1] as f64 / 1000.0
             );
         };
         eprintln!(
-            "WORLD_V2_PERF scale={scale} build_ms={} interrupted={interrupted}",
+            "WORLD_V2_PERF scale={scale} requested={requested} created={created} \
+             interrupted={interrupted} build_ms={}",
             build.as_millis()
         );
         measure(
@@ -651,7 +666,7 @@ fn d41_v2_performance() {
                         store::load(c)?;
                         Ok(())
                     })
-                    .unwrap();
+                    .expect("load succeeds");
                 start.elapsed().as_micros()
             }),
         );
@@ -664,7 +679,7 @@ fn d41_v2_performance() {
                         store::rebuild(c, now())?;
                         Ok(())
                     })
-                    .unwrap();
+                    .expect("rebuild succeeds");
                 start.elapsed().as_micros()
             }),
         );
@@ -672,18 +687,29 @@ fn d41_v2_performance() {
             "query",
             Box::new(|| {
                 let start = Instant::now();
-                let _ = run_v2(
+                run_v2(
                     &writer,
                     &[WorldSeed::EntityId("peer0".into())],
                     IncludeFlags::default(),
                     8_192,
                     now(),
-                );
+                )
+                .expect("query succeeds");
                 start.elapsed().as_micros()
             }),
         );
         let _ = key;
     }
+}
+
+/// M2-01: nearest-rank p95 for exactly 30 samples is the 29th ascending value.
+#[test]
+fn m2_01_nearest_rank_p95_method() {
+    let mut samples: Vec<u128> = (1..=30).collect();
+    samples.sort();
+    let p95 = samples[(30f64 * 0.95).ceil() as usize - 1];
+    assert_eq!(p95, 29);
+    assert_eq!(samples.len(), 30);
 }
 
 #[test]

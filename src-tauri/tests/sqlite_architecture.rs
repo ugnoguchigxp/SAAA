@@ -31,6 +31,11 @@ fn main_database_open_and_connection_ownership_are_centralized() {
             .strip_prefix(&source_root)
             .expect("source path is relative");
         let source = fs::read_to_string(&path).expect("source reads");
+        // A whole-file `#![cfg(test)]` module is test code, like `tests.rs` and
+        // inline `#[cfg(test)] mod tests` blocks; it is not a production path.
+        if source.trim_start().starts_with("#![cfg(test)]") {
+            continue;
+        }
         let production = production_prefix(&source);
         let compact = production
             .chars()

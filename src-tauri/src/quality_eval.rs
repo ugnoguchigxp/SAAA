@@ -197,6 +197,11 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
             None,
         ),
     );
+    let tool_selection = Arc::new(crate::tool_selection::build_service(
+        sqlite_writer.clone(),
+        &crate::tool_selection::ToolSelectionConfig::direct(),
+        Some(generated_capabilities.clone()),
+    ));
     Ok(AppState {
         sqlite_writer,
         sqlite_readers,
@@ -219,6 +224,8 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         generated_capabilities,
         generated_tools: crate::generated_capabilities::publication::GeneratedToolsConfig::disabled(
         ),
+        tool_selection,
+        mcp_server: std::sync::Mutex::new(None),
     })
 }
 

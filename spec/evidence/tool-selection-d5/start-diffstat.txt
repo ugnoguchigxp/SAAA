@@ -1,0 +1,14 @@
+ crates/personal-state-core/src/world/mod.rs        |   1 +
+ scripts/module-size-baseline.json                  | 232 +++++++++++++--------
+ .../docs/saaa-llang-dynamic-capability-m2b-plan.md |   6 +-
+ ...g-dynamic-capability-m2b-transport-reference.md |   2 +-
+ spec/docs/saaa-personal-world-model-concept.md     |   2 +-
+ .../docs/saaa-personal-world-model-initial-plan.md |   2 +
+ src-tauri/src/coding/mod.rs                        |   1 +
+ src-tauri/src/meeting/mod.rs                       |  40 ++++
+ src-tauri/src/meeting/types.rs                     |   8 +
+ src-tauri/src/memory/personal_state/world/mod.rs   |  15 ++
+ .../src/memory/personal_state/world/v2_tests.rs    |  44 +++-
+ src-tauri/src/quality_eval.rs                      |   6 +
+ src-tauri/tests/sqlite_architecture.rs             |   5 +
+ 13 files changed, 268 insertions(+), 96 deletions(-)

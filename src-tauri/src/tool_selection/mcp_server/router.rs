@@ -1,0 +1,468 @@
+#![allow(clippy::result_large_err)]
+//! Axum wiring for the MCP endpoint: authentication, media-type checks, body limits and the
+//! JSON-RPC method dispatch. HTTP-boundary failures (auth, host, origin, session, version) are
+//! HTTP statuses; JSON-RPC failures are HTTP 200 with an error object.
+
+use std::sync::Arc;
+
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::post;
+use axum::Router;
+use serde_json::{json, Value};
+
+use super::calls::{self, CallPermit, CALL_DEADLINE};
+use super::context;
+use super::protocol::{
+    self, JsonRpcError, Parsed, TypedRequestId, DEADLINE_EXCEEDED, INTERNAL_ERROR, INVALID_PARAMS,
+    INVALID_REQUEST, METHOD_NOT_FOUND, NOT_INITIALIZED, SERVER_BUSY,
+};
+use super::sessions::{ReserveResult, Session, SessionState, SESSION_MAX};
+use super::{
+    ServerInner, BODY_MAX_BYTES, BODY_READ_TIMEOUT, MCP_SERVER_ENDPOINT, MCP_SERVER_NAME,
+    MCP_SERVER_PROTOCOL_VERSION, MCP_SERVER_VERSION, PROTOCOL_HEADER, SESSION_HEADER,
+};
+use crate::tool_selection::gateway;
+use crate::RunCancellation;
+
+pub fn router(inner: Arc<ServerInner>) -> Router {
+    Router::new()
+        .route(
+            MCP_SERVER_ENDPOINT,
+            post(handle_post).get(handle_get).delete(handle_delete),
+        )
+        .with_state(inner)
+}
+
+struct RpcReply {
+    value: Value,
+    session_id: Option<String>,
+}
+
+impl RpcReply {
+    fn value(value: Value) -> Self {
+        Self {
+            value,
+            session_id: None,
+        }
+    }
+}
+
+async fn handle_post(State(inner): State<Arc<ServerInner>>, request: Request) -> Response {
+    if inner.is_shutting_down() {
+        return empty(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let (parts, body) = request.into_parts();
+    if let Err(response) = authenticate(&inner, &parts.headers) {
+        return response;
+    }
+    if !content_type_is_json(&parts.headers) {
+        return empty(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    if !accept_is_supported(&parts.headers) {
+        return empty(StatusCode::NOT_ACCEPTABLE);
+    }
+    let bytes = match read_body(body).await {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+    match protocol::parse(&bytes) {
+        Parsed::Error(error) => {
+            json_response(StatusCode::OK, &protocol::error_response(None, &error))
+        }
+        Parsed::Notification { method, params } => {
+            handle_notification(&inner, &parts.headers, &method, &params);
+            empty(StatusCode::ACCEPTED)
+        }
+        Parsed::Request(request) => {
+            match handle_request(
+                &inner,
+                &parts.headers,
+                &request.id,
+                &request.method,
+                &request.params,
+            )
+            .await
+            {
+                Ok(reply) => {
+                    let mut response = json_response(StatusCode::OK, &reply.value);
+                    if let Some(session_id) = reply.session_id {
+                        if let Ok(value) = HeaderValue::from_str(&session_id) {
+                            response
+                                .headers_mut()
+                                .insert(HeaderName::from_static(SESSION_HEADER), value);
+                        }
+                    }
+                    response
+                }
+                Err(response) => response,
+            }
+        }
+    }
+}
+
+async fn handle_request(
+    inner: &Arc<ServerInner>,
+    headers: &HeaderMap,
+    id: &TypedRequestId,
+    method: &str,
+    params: &Value,
+) -> Result<RpcReply, Response> {
+    match method {
+        "initialize" => initialize(inner, headers, id, params).await,
+        "ping" => {
+            let _session = require_session(inner, headers)?;
+            Ok(RpcReply::value(protocol::success_response(id, json!({}))))
+        }
+        "tools/list" => {
+            let session = require_session(inner, headers)?;
+            if session.state() != SessionState::Ready {
+                return Ok(RpcReply::value(not_initialized(id)));
+            }
+            if let Some(error) = validate_list_params(params) {
+                return Ok(RpcReply::value(protocol::error_response(Some(id), &error)));
+            }
+            Ok(RpcReply::value(protocol::success_response(
+                id,
+                calls::tools_list(),
+            )))
+        }
+        "tools/call" => tools_call(inner, headers, id, params).await,
+        _ => Ok(RpcReply::value(protocol::error_response(
+            Some(id),
+            &JsonRpcError::new(METHOD_NOT_FOUND, "Method not found"),
+        ))),
+    }
+}
+
+fn handle_notification(
+    inner: &Arc<ServerInner>,
+    headers: &HeaderMap,
+    method: &str,
+    params: &Value,
+) {
+    match method {
+        "notifications/initialized" => {
+            if let Ok(session) = require_session(inner, headers) {
+                session.mark_ready();
+            }
+        }
+        "notifications/cancelled" => {
+            if let Ok(session) = require_session(inner, headers) {
+                if let Some(request_id) =
+                    params.get("requestId").and_then(TypedRequestId::from_value)
+                {
+                    session.cancel(&request_id);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn initialize(
+    inner: &Arc<ServerInner>,
+    headers: &HeaderMap,
+    id: &TypedRequestId,
+    params: &Value,
+) -> Result<RpcReply, Response> {
+    if headers.contains_key(SESSION_HEADER) {
+        return Err(empty(StatusCode::BAD_REQUEST));
+    }
+    let Some(object) = params.as_object() else {
+        return Ok(RpcReply::value(invalid_params(id)));
+    };
+    if object
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Ok(RpcReply::value(invalid_params(id)));
+    }
+    if let Some(capabilities) = object.get("capabilities") {
+        if !capabilities.is_object() {
+            return Ok(RpcReply::value(invalid_params(id)));
+        }
+    }
+    let client_info = object.get("clientInfo").cloned();
+    if let Some(client_info) = &client_info {
+        if !client_info.is_object() {
+            return Ok(RpcReply::value(invalid_params(id)));
+        }
+    }
+    if inner.sessions.len() >= SESSION_MAX {
+        return Ok(RpcReply::value(server_busy(id)));
+    }
+    let conversation_id = crate::new_id("mcpconv");
+    let run_id = format!("mcp-session:{}", uuid::Uuid::new_v4());
+    if context::create_conversation(&inner.writer, &conversation_id).is_err() {
+        return Ok(RpcReply::value(protocol::error_response(
+            Some(id),
+            &JsonRpcError::new(INTERNAL_ERROR, "Internal error"),
+        )));
+    }
+    let session = super::sessions::Session::new(
+        uuid::Uuid::new_v4().to_string(),
+        MCP_SERVER_PROTOCOL_VERSION.to_string(),
+        client_info,
+        conversation_id,
+        run_id,
+        inner.principal.clone(),
+        inner.project_id.clone(),
+    );
+    let session = match inner.sessions.insert(session) {
+        Ok(session) => session,
+        Err(_) => return Ok(RpcReply::value(server_busy(id))),
+    };
+    let result = json!({
+        "protocolVersion": MCP_SERVER_PROTOCOL_VERSION,
+        "capabilities": { "tools": { "listChanged": false } },
+        "serverInfo": { "name": MCP_SERVER_NAME, "version": MCP_SERVER_VERSION }
+    });
+    Ok(RpcReply {
+        value: protocol::success_response(id, result),
+        session_id: Some(session.id().to_string()),
+    })
+}
+
+async fn tools_call(
+    inner: &Arc<ServerInner>,
+    headers: &HeaderMap,
+    id: &TypedRequestId,
+    params: &Value,
+) -> Result<RpcReply, Response> {
+    let session = require_session(inner, headers)?;
+    if session.state() != SessionState::Ready {
+        return Ok(RpcReply::value(not_initialized(id)));
+    }
+    let Some(object) = params.as_object() else {
+        return Ok(RpcReply::value(invalid_params(id)));
+    };
+    let Some(name) = object.get("name").and_then(Value::as_str) else {
+        return Ok(RpcReply::value(invalid_params(id)));
+    };
+    if gateway::internal_name(name).is_none() {
+        return Ok(RpcReply::value(invalid_params(id)));
+    }
+    let arguments = object
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !arguments.is_object() {
+        return Ok(RpcReply::value(invalid_params(id)));
+    }
+    let cancellation = RunCancellation::default();
+    match inner
+        .sessions
+        .reserve_call(&session, id, cancellation.clone())
+    {
+        ReserveResult::Reserved => {}
+        ReserveResult::Duplicate | ReserveResult::HistoryFull => {
+            return Ok(RpcReply::value(protocol::error_response(
+                Some(id),
+                &JsonRpcError::new(INVALID_REQUEST, "Invalid Request"),
+            )));
+        }
+        ReserveResult::SessionLimit | ReserveResult::GlobalLimit => {
+            return Ok(RpcReply::value(server_busy(id)));
+        }
+        ReserveResult::Closing => return Err(empty(StatusCode::NOT_FOUND)),
+    }
+    // The permit releases the slot even if this handler future is dropped on client disconnect.
+    let permit = CallPermit::new(inner.clone(), session.clone(), id.clone());
+    let context = context::session_context(&session);
+    let service = inner.service.clone();
+    let name = name.to_string();
+    let task_cancellation = cancellation.clone();
+    let task = tokio::spawn(async move {
+        calls::execute_tool_call(&service, &context, &name, &arguments, &task_cancellation).await
+    });
+    let reply = match tokio::time::timeout(CALL_DEADLINE, task).await {
+        Ok(Ok(Ok(result))) => protocol::success_response(id, result),
+        Ok(Ok(Err(error))) => protocol::error_response(Some(id), &error),
+        Ok(Err(_)) => protocol::error_response(
+            Some(id),
+            &JsonRpcError::new(INTERNAL_ERROR, "Internal error"),
+        ),
+        Err(_) => {
+            cancellation.cancel();
+            protocol::error_response(
+                Some(id),
+                &JsonRpcError::new(DEADLINE_EXCEEDED, "Request timed out"),
+            )
+        }
+    };
+    drop(permit);
+    session.touch();
+    Ok(RpcReply::value(reply))
+}
+
+async fn handle_get(State(inner): State<Arc<ServerInner>>, headers: HeaderMap) -> Response {
+    if let Err(response) = authenticate(&inner, &headers) {
+        return response;
+    }
+    match require_session(&inner, &headers) {
+        Ok(_) => {
+            let mut response = empty(StatusCode::METHOD_NOT_ALLOWED);
+            response
+                .headers_mut()
+                .insert(header::ALLOW, HeaderValue::from_static("POST, DELETE"));
+            response
+        }
+        Err(response) => response,
+    }
+}
+
+async fn handle_delete(State(inner): State<Arc<ServerInner>>, headers: HeaderMap) -> Response {
+    if let Err(response) = authenticate(&inner, &headers) {
+        return response;
+    }
+    let Some(session_id) = header_str(&headers, SESSION_HEADER) else {
+        return empty(StatusCode::BAD_REQUEST);
+    };
+    let Some(session) = inner.sessions.remove(session_id) else {
+        return empty(StatusCode::NOT_FOUND);
+    };
+    session.cancel_all();
+    inner.discard_session_scope(&session);
+    empty(StatusCode::NO_CONTENT)
+}
+
+fn require_session(inner: &ServerInner, headers: &HeaderMap) -> Result<Arc<Session>, Response> {
+    let Some(session_id) = header_str(headers, SESSION_HEADER) else {
+        return Err(empty(StatusCode::BAD_REQUEST));
+    };
+    let Some(session) = inner.sessions.get(session_id) else {
+        return Err(empty(StatusCode::NOT_FOUND));
+    };
+    if session.is_closing() {
+        return Err(empty(StatusCode::NOT_FOUND));
+    }
+    if let Some(version) = header_str(headers, PROTOCOL_HEADER) {
+        if version != session.protocol_version() {
+            return Err(empty(StatusCode::BAD_REQUEST));
+        }
+    }
+    Ok(session)
+}
+
+fn validate_list_params(params: &Value) -> Option<JsonRpcError> {
+    match params {
+        Value::Null => None,
+        Value::Object(object) => {
+            if object.contains_key("cursor") {
+                Some(JsonRpcError::new(INVALID_PARAMS, "Invalid params"))
+            } else {
+                None
+            }
+        }
+        _ => Some(JsonRpcError::new(INVALID_PARAMS, "Invalid params")),
+    }
+}
+
+fn invalid_params(id: &TypedRequestId) -> Value {
+    protocol::error_response(
+        Some(id),
+        &JsonRpcError::new(INVALID_PARAMS, "Invalid params"),
+    )
+}
+
+fn server_busy(id: &TypedRequestId) -> Value {
+    protocol::error_response(Some(id), &JsonRpcError::new(SERVER_BUSY, "Server busy"))
+}
+
+fn not_initialized(id: &TypedRequestId) -> Value {
+    protocol::error_response(
+        Some(id),
+        &JsonRpcError::new(NOT_INITIALIZED, "Server not initialized"),
+    )
+}
+
+fn authenticate(inner: &ServerInner, headers: &HeaderMap) -> Result<(), Response> {
+    // A browser-supplied Origin is always refused: this endpoint is not CORS-enabled.
+    if headers.contains_key(header::ORIGIN) {
+        return Err(empty(StatusCode::FORBIDDEN));
+    }
+    // Only the exact loopback listener host is accepted.
+    match header_str(headers, "host") {
+        Some(host) if host == inner.host => {}
+        _ => return Err(empty(StatusCode::FORBIDDEN)),
+    }
+    let Some(value) = header_str(headers, "authorization") else {
+        return Err(empty(StatusCode::UNAUTHORIZED));
+    };
+    let Some(token) = value.strip_prefix("Bearer ") else {
+        return Err(empty(StatusCode::UNAUTHORIZED));
+    };
+    if !constant_time_eq(token.as_bytes(), inner.token.as_bytes()) {
+        return Err(empty(StatusCode::UNAUTHORIZED));
+    }
+    Ok(())
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (left, right) in left.iter().zip(right.iter()) {
+        difference |= left ^ right;
+    }
+    difference == 0
+}
+
+fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+fn content_type_is_json(headers: &HeaderMap) -> bool {
+    let Some(value) = header_str(headers, "content-type") else {
+        return false;
+    };
+    let media = value.split(';').next().unwrap_or("").trim();
+    media.eq_ignore_ascii_case("application/json")
+}
+
+fn accept_is_supported(headers: &HeaderMap) -> bool {
+    let Some(value) = header_str(headers, "accept") else {
+        return false;
+    };
+    accepts_media(value, "application/json") && accepts_media(value, "text/event-stream")
+}
+
+fn accepts_media(value: &str, media: &str) -> bool {
+    value.split(',').any(|part| {
+        let token = part.split(';').next().unwrap_or("").trim();
+        token.eq_ignore_ascii_case(media)
+            || token == "*/*"
+            || (media.starts_with("application/") && token.eq_ignore_ascii_case("application/*"))
+    })
+}
+
+async fn read_body(body: Body) -> Result<axum::body::Bytes, Response> {
+    match tokio::time::timeout(
+        BODY_READ_TIMEOUT,
+        axum::body::to_bytes(body, BODY_MAX_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(_)) => Err(empty(StatusCode::PAYLOAD_TOO_LARGE)),
+        Err(_) => Err(empty(StatusCode::REQUEST_TIMEOUT)),
+    }
+}
+
+fn empty(status: StatusCode) -> Response {
+    status.into_response()
+}
+
+fn json_response(status: StatusCode, body: &Value) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}

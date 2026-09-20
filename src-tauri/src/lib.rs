@@ -485,6 +485,13 @@ fn shutdown_app_state(state: &AppState) {
     if let Some(manager) = state.tool_selection.mcp_manager() {
         tauri::async_runtime::spawn(async move { manager.shutdown().await });
     }
+    // Stop the published MCP listener: refuse new work, cancel in-flight calls and release the
+    // session scopes. The D4 manager and the result writer stay alive until their own tasks end.
+    if let Ok(mut guard) = state.mcp_server.lock() {
+        if let Some(server) = guard.take() {
+            tauri::async_runtime::spawn(async move { server.shutdown().await });
+        }
+    }
     state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
     if let Ok(active_runs) = state.active_runs.lock() {
@@ -629,6 +636,15 @@ pub fn run() {
             if let Some(manager) = tool_selection.mcp_manager() {
                 manager.start_background();
             }
+            // D5: publish the same three entry points over the local MCP server. An invalid
+            // configuration or bind failure disables only this listener; the conversation path
+            // and the D4 client connections continue unchanged.
+            let mcp_server = tauri::async_runtime::block_on(
+                tool_selection::mcp_server::start_from_environment(
+                    tool_selection.clone(),
+                    sqlite_writer.clone(),
+                ),
+            );
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,
@@ -651,6 +667,7 @@ pub fn run() {
                 generated_capabilities,
                 generated_tools,
                 tool_selection,
+                mcp_server: Mutex::new(mcp_server),
             });
             Ok(())
         })

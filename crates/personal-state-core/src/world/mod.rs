@@ -8,6 +8,7 @@ pub mod model_v2;
 pub mod outcome_v2;
 pub mod relevance;
 pub mod relevance_v2;
+pub mod runtime_frame;
 pub mod slice_v2;
 pub mod traversal;
 pub mod traversal_v2;

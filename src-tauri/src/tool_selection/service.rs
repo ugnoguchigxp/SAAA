@@ -182,6 +182,22 @@ impl ToolSelectionService {
             .unwrap_or_else(|| Scenario::degraded(intent))
     }
 
+    /// Releases the per-run state an MCP session owns: its cached scenario, its opaque references
+    /// and any stored continuation result. Decision, invocation and correction audit rows are
+    /// deliberately kept.
+    pub fn discard_run_scope(&self, run_id: &str) {
+        if let Ok(mut scenarios) = self.scenarios.lock() {
+            scenarios.remove(run_id);
+        }
+        self.references.invalidate_scope(run_id);
+        let scope_key = run_id.to_string();
+        let _ = self.writer.write(move |connection| {
+            super::mcp::results::cleanup_scope(connection, &scope_key)
+                .map(|_| ())
+                .map_err(|error| error.code.as_str().to_string())
+        });
+    }
+
     pub async fn begin_turn(&self, context: &RequestContext, user_message: &str) -> TurnOutcome {
         let intent = repository::truncate_utf8(user_message, EXTRACT_USER_MESSAGE_MAX_BYTES);
         let (allowed_decisions, allowed_tools, recent, prompt_tools) =
@@ -578,6 +594,45 @@ impl ToolSelectionService {
         intent: &str,
         limit: usize,
     ) -> ToolSelectionResult<SearchResponse> {
+        let intent_trimmed = intent.trim();
+        let scenario = self.cached_scenario(context, intent_trimmed);
+        self.search_with_scenario(context, intent_trimmed, limit, &scenario)
+            .await
+    }
+
+    /// Extracts only the scenario for one host call. Correction candidates are deliberately
+    /// discarded and the session scenario cache is not touched, so an external MCP intent can
+    /// never be persisted as a user correction or bleed into another search.
+    pub async fn extract_scenario_only(
+        &self,
+        context: &RequestContext,
+        user_message: &str,
+    ) -> Scenario {
+        let intent = repository::truncate_utf8(user_message, EXTRACT_USER_MESSAGE_MAX_BYTES);
+        let (allowed_decisions, allowed_tools, recent, prompt_tools) =
+            self.allowed_for_extraction(context);
+        let request = ExtractionRequest {
+            user_message: intent.to_string(),
+            recent_decisions: recent,
+            allowed_decisions,
+            allowed_tools,
+            prompt_tools,
+        };
+        match self.extractor.extract(request).await {
+            Ok(parsed) => parsed.scenario,
+            Err(_) => Scenario::degraded(intent),
+        }
+    }
+
+    /// Search with a request-local scenario. The scenario is never written to the shared session
+    /// cache, so concurrent searches in one session cannot observe each other's intent.
+    pub async fn search_with_scenario(
+        &self,
+        context: &RequestContext,
+        intent: &str,
+        limit: usize,
+        scenario: &Scenario,
+    ) -> ToolSelectionResult<SearchResponse> {
         let intent = intent.trim();
         if intent.is_empty() || intent.len() > SEARCH_INTENT_MAX_BYTES {
             return Err(ToolSelectionError::invalid());
@@ -585,13 +640,12 @@ impl ToolSelectionService {
         if !(1..=SEARCH_LIMIT_MAX).contains(&limit) {
             return Err(ToolSelectionError::invalid());
         }
-        let scenario = self.cached_scenario(context, intent);
         let mut outcome = None;
         for _ in 0..MAX_SEARCH_ATTEMPTS {
             let snapshot = self.snapshot(context, intent).await?;
-            let ranking = self.rank(context, &scenario, intent, &snapshot).await?;
+            let ranking = self.rank(context, scenario, intent, &snapshot).await?;
             let decision_id = crate::new_id("tsdecision");
-            match self.persist(context, &scenario, &decision_id, &snapshot, &ranking) {
+            match self.persist(context, scenario, &decision_id, &snapshot, &ranking) {
                 Ok(()) => {
                     outcome = Some((snapshot.epochs, decision_id, ranking));
                     break;
@@ -974,52 +1028,27 @@ impl ToolSelectionService {
             arguments: arguments.clone(),
             timeout: std::time::Duration::from_millis(BACKEND_TIMEOUT_MS),
         };
-        let outcome = self.backend.invoke(request, run_cancellation).await;
-        let finalized = super::mcp::service_support::finalize_outcome(
-            &self.writer,
-            &invocation_id,
-            context,
-            &tool.id,
-            &revision,
-            current_epochs.acl,
-            binding_kind,
-            outcome.status,
-            outcome.error_code,
-            outcome.result,
-        );
-        let finished = now_ms();
-        {
-            let invocation_id = invocation_id.clone();
-            let status = finalized.status;
-            let error_code = finalized.error_code;
-            write_transaction(&self.writer, move |connection| {
-                repository::finish_invocation(
-                    connection,
-                    &invocation_id,
-                    status.as_str(),
-                    error_code,
-                    finished,
-                )
-                .map_err(|_| "storage".to_string())
-            })
-            .map_err(|_| ToolSelectionError::storage())?;
+        // The management task owns the backend call, the cancellation handle, the result storage
+        // and the terminal DB write. Dropping this caller future (HTTP disconnect, aborted
+        // provider turn) detaches it but does not stop or leak the invocation.
+        let receiver = super::invocation::spawn(super::invocation::ManagedInvocation {
+            writer: self.writer.clone(),
+            backend: self.backend.clone(),
+            invocation_id: invocation_id.clone(),
+            context: context.clone(),
+            tool_id: tool.id.clone(),
+            revision: revision.clone(),
+            acl_epoch: current_epochs.acl,
+            binding_kind: binding_kind.to_string(),
+            request,
+            cancellation: run_cancellation.clone(),
+        });
+        match receiver.await {
+            Ok(response) => response,
+            // The management task panicked before reporting; the row is settled by the
+            // crash-reconcile path at the next startup.
+            Err(_) => Err(ToolSelectionError::unavailable()),
         }
-        if finalized.status == TechnicalStatus::Cancelled {
-            return Err(ToolSelectionError::new(
-                ToolSelectionErrorCode::Cancelled,
-                "The tool call was cancelled.",
-            ));
-        }
-        Ok(InvokeResponse {
-            invocation_id,
-            status: finalized.status,
-            result: finalized.result,
-            error_code: finalized.error_code,
-            result_ref: finalized.result_ref,
-            byte_count: finalized.byte_count,
-            page_count: finalized.page_count,
-            result_availability: finalized.result_availability,
-        })
     }
 
     /// Resolves one continuation page of a stored MCP result. Ownership, scope, TTL and the

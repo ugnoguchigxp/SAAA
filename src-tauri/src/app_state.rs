@@ -20,6 +20,7 @@ pub(super) struct AppState {
     pub(super) generated_capabilities: Arc<generated_capabilities::service::CapabilityService>,
     pub(super) generated_tools: generated_capabilities::publication::GeneratedToolsConfig,
     pub(super) tool_selection: Arc<tool_selection::ToolSelectionService>,
+    pub(super) mcp_server: Mutex<Option<tool_selection::mcp_server::ServerHandle>>,
 }
 
 #[derive(Clone)]
@@ -30,27 +31,35 @@ pub(super) struct ProviderProbeStatus {
     pub(super) prior_session_rowid: i64,
 }
 
-#[derive(Default)]
+/// Cheap-to-clone cancellation handle. The state lives behind an `Arc` so a management task can
+/// own a handle and observe cancellation even after the original caller future is dropped.
+#[derive(Clone, Default)]
 pub(super) struct RunCancellation {
-    pub(super) acceptance: Mutex<()>,
-    pub(super) cancelled: AtomicBool,
-    pub(super) notify: tokio::sync::Notify,
+    inner: Arc<RunCancellationInner>,
+}
+
+#[derive(Default)]
+struct RunCancellationInner {
+    acceptance: Mutex<()>,
+    cancelled: AtomicBool,
+    notify: tokio::sync::Notify,
 }
 
 impl RunCancellation {
     pub(crate) fn cancel(&self) {
         let _acceptance = self
+            .inner
             .acceptance
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !self.cancelled.swap(true, Ordering::SeqCst) {
-            self.notify.notify_waiters();
-            self.notify.notify_one();
+        if !self.inner.cancelled.swap(true, Ordering::SeqCst) {
+            self.inner.notify.notify_waiters();
+            self.inner.notify.notify_one();
         }
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst)
+        self.inner.cancelled.load(Ordering::SeqCst)
     }
 
     pub(crate) fn with_active<T>(
@@ -58,6 +67,7 @@ impl RunCancellation {
         action: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
         let _acceptance = self
+            .inner
             .acceptance
             .lock()
             .map_err(|_| "Run acceptance lock unavailable")?;
@@ -68,7 +78,7 @@ impl RunCancellation {
     }
 
     pub(super) async fn cancelled(&self) {
-        let notified = self.notify.notified();
+        let notified = self.inner.notify.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
         if self.is_cancelled() {

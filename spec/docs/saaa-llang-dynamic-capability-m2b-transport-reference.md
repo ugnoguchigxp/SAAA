@@ -2,7 +2,7 @@
 
 この文書は2026-09-20改訂前の計画を保存した参考資料です。実装指示の正本は[M2B改訂計画](saaa-llang-dynamic-capability-m2b-plan.md)です。以下の直接gc_公開、8件の登録制限、listのoffer保存、boolean限定のgateway入力は新計画へ持ち込まないでください。HTTP認証・セッション・所有task・取消の扱いだけを参照し、矛盾時は新計画を優先します。
 
-# SAAA × L-Lang — M2B ローカルMCP公開の実装計画
+## SAAA × L-Lang — M2B ローカルMCP公開の実装計画
 
 作成日: 2026-09-20
 

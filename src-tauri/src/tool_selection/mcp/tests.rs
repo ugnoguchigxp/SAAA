@@ -2229,3 +2229,178 @@ async fn review_describe_refuses_a_stale_source_reference() {
         crate::tool_selection::ToolSelectionErrorCode::StaleReference
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// P02: correction rules are bound to the endpoint they were learned on
+// ---------------------------------------------------------------------------------------------
+
+/// Applies one avoid-correction for the remote tool `search` and returns the created rule count.
+fn apply_remote_avoid_correction(harness: &Harness) {
+    harness
+        .writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO conversation_messages(id, conversation_id, role, content, created_at)
+                     VALUES ('msg-p02', 'conversation-d4', 'user', 'fixture', '1')",
+                    [],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("message");
+    let context = harness.context().with_message(Some("msg-p02".to_string()));
+    let parsed = crate::tool_selection::feedback::ParsedExtraction {
+        scenario: scenario(),
+        accepted: vec![crate::tool_selection::contracts::ExtractedFeedback {
+            kind: crate::tool_selection::contracts::FeedbackKind::ToolChoice,
+            decision_id: None,
+            rejected_tool_id: Some("search".to_string()),
+            preferred_tool_id: None,
+            scope: crate::tool_selection::contracts::ScopeKind::Conversation,
+            duration: crate::tool_selection::contracts::Duration::Persistent,
+            evidence: crate::tool_selection::contracts::Evidence {
+                start: 0,
+                end: 6,
+                text: "search".to_string(),
+            },
+            condition: crate::tool_selection::contracts::FeedbackCondition {
+                operation: Some(crate::tool_selection::Operation::Search),
+                object_type: Some(crate::tool_selection::ObjectType::Document),
+                phase: None,
+                input_kind: None,
+            },
+        }],
+        rejected: Vec::new(),
+    };
+    let outcome = harness
+        .service
+        .apply_parsed(&context, &parsed)
+        .expect("apply");
+    assert!(outcome.applied, "the correction must become a rule");
+}
+
+fn active_rule_ids(harness: &Harness) -> Vec<String> {
+    harness
+        .writer
+        .read_serialized(|connection| {
+            repository::active_rules(
+                connection,
+                &harness.principal,
+                "conversation-d4",
+                None,
+                None,
+                now_ms(),
+            )
+            .map(|rules| rules.into_iter().map(|rule| rule.id).collect())
+            .map_err(|error| error.to_string())
+        })
+        .expect("active rules")
+}
+
+fn binding_hash(harness: &Harness) -> Option<String> {
+    harness
+        .writer
+        .read_serialized(|connection| {
+            connection
+                .query_row(
+                    "SELECT endpoint_hash FROM tool_selection_rule_source_bindings LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .ok()
+}
+
+#[tokio::test]
+async fn p02_remote_rule_is_bound_and_survives_only_the_learned_endpoint() {
+    let server_a = MockServer::start(default_state()).await;
+    let harness = Harness::new(&server_a, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    apply_remote_avoid_correction(&harness);
+
+    let source_hash: String = harness
+        .writer
+        .read_serialized(|connection| {
+            connection
+                .query_row(
+                    "SELECT endpoint_hash FROM tool_selection_mcp_sources WHERE source_id = 'mcp-test'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("source hash");
+    assert_eq!(
+        binding_hash(&harness).as_deref(),
+        Some(source_hash.as_str()),
+        "a rule learned on a remote tool records that endpoint"
+    );
+    assert_eq!(active_rule_ids(&harness).len(), 1);
+    let epoch_before = harness.epochs().rule;
+
+    // The source moves to a different endpoint: the learned correction must stop applying.
+    let server_b = MockServer::start(default_state()).await;
+    let moved = McpSources {
+        sources: vec![McpSourceSpec {
+            id: "mcp-test".to_string(),
+            url: server_b.url(),
+            enabled: true,
+            bearer_token_env: None,
+            grants: vec![user_grant("search")],
+        }],
+    };
+    harness.manager.apply_sources(moved).await;
+    assert_eq!(
+        binding_hash(&harness).as_deref(),
+        Some(""),
+        "an endpoint change leaves the binding unconfirmed"
+    );
+    assert!(harness.epochs().rule > epoch_before);
+    assert!(active_rule_ids(&harness).is_empty());
+
+    // Returning to the original URL must not silently revive the stale correction.
+    let restored = McpSources {
+        sources: vec![McpSourceSpec {
+            id: "mcp-test".to_string(),
+            url: server_a.url(),
+            enabled: true,
+            bearer_token_env: None,
+            grants: vec![user_grant("search")],
+        }],
+    };
+    harness.manager.apply_sources(restored).await;
+    assert_eq!(binding_hash(&harness).as_deref(), Some(""));
+    assert!(active_rule_ids(&harness).is_empty());
+}
+
+#[tokio::test]
+async fn p02_backfill_marks_pre_version_remote_rules_unconfirmed() {
+    let server = MockServer::start(default_state()).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    apply_remote_avoid_correction(&harness);
+    // Simulate a rule created before version 25: no binding row exists.
+    harness
+        .writer
+        .write(|connection| {
+            connection
+                .execute("DELETE FROM tool_selection_rule_source_bindings", [])
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("delete binding");
+    assert_eq!(active_rule_ids(&harness).len(), 1);
+
+    harness
+        .writer
+        .write(|connection| {
+            super::schema::backfill_rule_source_bindings(connection)
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("backfill");
+    assert_eq!(binding_hash(&harness).as_deref(), Some(""));
+    assert!(active_rule_ids(&harness).is_empty());
+}

@@ -723,7 +723,61 @@ pub fn insert_rule(connection: &Connection, rule: &NewRule<'_>) -> rusqlite::Res
     Ok(())
 }
 
-/// Marks older soft rules for the same target and condition as superseded, so a repeated
+/// The current endpoint hash to bind into a new correction rule for this tool, or `None` when the
+/// tool is not a remote MCP tool. An MCP tool whose source has no endpoint yet returns the empty
+/// string, which keeps a rule learned while the source is unconfirmed inapplicable until a new
+/// correction is recorded against a confirmed endpoint.
+pub fn source_binding_hash(
+    connection: &Connection,
+    tool_id: &str,
+) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT s.kind, m.endpoint_hash
+               FROM tool_selection_catalog c
+               JOIN tool_selection_sources s ON s.id = c.source_id
+               LEFT JOIN tool_selection_mcp_sources m ON m.source_id = c.source_id
+              WHERE c.id = ?1",
+            params![tool_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map(|row| match row {
+            Some((kind, hash)) if kind == "mcp_http" => Some(hash.unwrap_or_default()),
+            _ => None,
+        })
+}
+
+/// Records the endpoint a correction rule was learned on for one referenced remote tool.
+pub fn insert_rule_source_binding(
+    connection: &Connection,
+    rule_id: &str,
+    tool_id: &str,
+    endpoint_hash: &str,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "INSERT OR REPLACE INTO tool_selection_rule_source_bindings(rule_id, tool_id, endpoint_hash)
+         VALUES (?1, ?2, ?3)",
+        params![rule_id, tool_id, endpoint_hash],
+    )?;
+    Ok(())
+}
+
+/// Clears the endpoint of every binding for the tools of one source, so once a source endpoint
+/// changes its learned rules stay unconfirmed even if the original URL is configured again.
+/// Returns the number of bindings invalidated.
+pub fn invalidate_source_rule_bindings(
+    connection: &Connection,
+    source_id: &str,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "UPDATE tool_selection_rule_source_bindings SET endpoint_hash = ''
+          WHERE endpoint_hash <> ''
+            AND tool_id IN (SELECT id FROM tool_selection_catalog WHERE source_id = ?1)",
+        params![source_id],
+    )
+}
+
 /// correction does not accumulate and shift the score twice.
 pub fn supersede_soft_rules(
     connection: &Connection,
@@ -782,6 +836,14 @@ pub fn active_rules(
               OR (scope_kind = 'conversation' AND scope_id = ?3)
               OR (scope_kind = 'project' AND ?4 IS NOT NULL AND scope_id = ?4)
               OR (scope_kind = 'task' AND ?5 IS NOT NULL AND scope_id = ?5)
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM tool_selection_rule_source_bindings b
+                LEFT JOIN tool_selection_catalog c ON c.id = b.tool_id
+                LEFT JOIN tool_selection_mcp_sources s ON s.source_id = c.source_id
+               WHERE b.rule_id = tool_selection_rules.id
+                 AND (b.endpoint_hash = '' OR s.endpoint_hash IS NULL
+                      OR s.endpoint_hash <> b.endpoint_hash)
             )
           ORDER BY strength DESC, id ASC",
     )?;

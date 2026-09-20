@@ -740,6 +740,14 @@ fn insert_soft_rule(
         },
     )
     .map_err(|_| ToolSelectionError::storage())?;
+    // A rule that names a remote MCP tool is bound to the endpoint it was learned on. L-Lang rules
+    // carry no binding and are never filtered by endpoint.
+    if let Some(endpoint_hash) = repository::source_binding_hash(connection, tool_id)
+        .map_err(|_| ToolSelectionError::storage())?
+    {
+        repository::insert_rule_source_binding(connection, &rule_id, tool_id, &endpoint_hash)
+            .map_err(|_| ToolSelectionError::storage())?;
+    }
     repository::supersede_soft_rules(
         connection,
         tool_id,

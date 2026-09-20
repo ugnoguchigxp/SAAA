@@ -1,0 +1,659 @@
+diff --git a/crates/personal-state-core/src/world/mod.rs b/crates/personal-state-core/src/world/mod.rs
+index 2e2fbb6..3928ff5 100644
+--- a/crates/personal-state-core/src/world/mod.rs
++++ b/crates/personal-state-core/src/world/mod.rs
+@@ -8,6 +8,7 @@ pub mod model_v2;
+ pub mod outcome_v2;
+ pub mod relevance;
+ pub mod relevance_v2;
++pub mod runtime_frame;
+ pub mod slice_v2;
+ pub mod traversal;
+ pub mod traversal_v2;
+diff --git a/scripts/module-size-baseline.json b/scripts/module-size-baseline.json
+index a6dc15a..833a43a 100644
+--- a/scripts/module-size-baseline.json
++++ b/scripts/module-size-baseline.json
+@@ -170,8 +170,8 @@
+       "production": 275
+     },
+     "src-tauri/src/coding/mod.rs": {
+-      "total": 9,
+-      "production": 9
++      "total": 11,
++      "production": 11
+     },
+     "src-tauri/src/coding/recovery.rs": {
+       "total": 56,
+@@ -209,6 +209,10 @@
+       "total": 31,
+       "production": 31
+     },
++    "src-tauri/src/coding/world_snapshot.rs": {
++      "total": 131,
++      "production": 131
++    },
+     "src-tauri/src/credentials.rs": {
+       "total": 193,
+       "production": 157
+@@ -593,9 +597,13 @@
+       "total": 353,
+       "production": 353
+     },
++    "src-tauri/src/memory/personal_state/world/evidence_eligibility.rs": {
++      "total": 132,
++      "production": 72
++    },
+     "src-tauri/src/memory/personal_state/world/mod.rs": {
+-      "total": 19,
+-      "production": 19
++      "total": 34,
++      "production": 34
+     },
+     "src-tauri/src/memory/personal_state/world/observations_v2.rs": {
+       "total": 119,
+@@ -621,6 +629,62 @@
+       "total": 785,
+       "production": 785
+     },
++    "src-tauri/src/memory/personal_state/world/runtime_capacity.rs": {
++      "total": 101,
++      "production": 90
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_coding_tests.rs": {
++      "total": 271,
++      "production": 0
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_coding.rs": {
++      "total": 153,
++      "production": 153
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_frame_boundary_tests.rs": {
++      "total": 68,
++      "production": 0
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_frame_perf_tests.rs": {
++      "total": 133,
++      "production": 0
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_frame_snapshot_tests.rs": {
++      "total": 109,
++      "production": 0
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_frame_tests.rs": {
++      "total": 533,
++      "production": 0
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_frame.rs": {
++      "total": 417,
++      "production": 417
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_graph.rs": {
++      "total": 89,
++      "production": 89
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_meeting_tests.rs": {
++      "total": 204,
++      "production": 0
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_meeting.rs": {
++      "total": 164,
++      "production": 164
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_scope_tests.rs": {
++      "total": 233,
++      "production": 0
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_scope.rs": {
++      "total": 283,
++      "production": 250
++    },
++    "src-tauri/src/memory/personal_state/world/runtime_test_support.rs": {
++      "total": 542,
++      "production": 0
++    },
+     "src-tauri/src/memory/personal_state/world/test_support.rs": {
+       "total": 580,
+       "production": 0
+@@ -897,6 +961,10 @@
+       "total": 79,
+       "production": 79
+     },
++    "src-tauri/src/providers/openai_compatible/structured.rs": {
++      "total": 113,
++      "production": 102
++    },
+     "src-tauri/src/providers/probe_state.rs": {
+       "total": 149,
+       "production": 88
+@@ -1225,10 +1293,18 @@
+       "total": 157,
+       "production": 157
+     },
++    "src-tauri/src/tool_selection/backends/mcp.rs": {
++      "total": 122,
++      "production": 122
++    },
+     "src-tauri/src/tool_selection/backends/mod.rs": {
+       "total": 160,
+       "production": 160
+     },
++    "src-tauri/src/tool_selection/backends/router.rs": {
++      "total": 56,
++      "production": 56
++    },
+     "src-tauri/src/tool_selection/catalog.rs": {
+       "total": 221,
+       "production": 221
+@@ -1245,6 +1321,10 @@
+       "total": 837,
+       "production": 751
+     },
++    "src-tauri/src/tool_selection/gateway_schemas.rs": {
++      "total": 41,
++      "production": 41
++    },
+     "src-tauri/src/tool_selection/gateway.rs": {
+       "total": 399,
+       "production": 361
+@@ -1253,10 +1333,66 @@
+       "total": 355,
+       "production": 324
+     },
++    "src-tauri/src/tool_selection/mcp/config.rs": {
++      "total": 259,
++      "production": 259
++    },
++    "src-tauri/src/tool_selection/mcp/descriptors.rs": {
++      "total": 343,
++      "production": 343
++    },
++    "src-tauri/src/tool_selection/mcp/manager.rs": {
++      "total": 796,
++      "production": 796
++    },
++    "src-tauri/src/tool_selection/mcp/mod.rs": {
++      "total": 62,
++      "production": 62
++    },
++    "src-tauri/src/tool_selection/mcp/repository.rs": {
++      "total": 398,
++      "production": 398
++    },
++    "src-tauri/src/tool_selection/mcp/results.rs": {
++      "total": 256,
++      "production": 256
++    },
++    "src-tauri/src/tool_selection/mcp/schema.rs": {
++      "total": 102,
++      "production": 102
++    },
++    "src-tauri/src/tool_selection/mcp/service_support.rs": {
++      "total": 274,
++      "production": 274
++    },
++    "src-tauri/src/tool_selection/mcp/session.rs": {
++      "total": 442,
++      "production": 442
++    },
++    "src-tauri/src/tool_selection/mcp/sync.rs": {
++      "total": 383,
++      "production": 383
++    },
++    "src-tauri/src/tool_selection/mcp/tests.rs": {
++      "total": 1884,
++      "production": 0
++    },
++    "src-tauri/src/tool_selection/mcp/transport.rs": {
++      "total": 577,
++      "production": 516
++    },
++    "src-tauri/src/tool_selection/mcp/wiring.rs": {
++      "total": 69,
++      "production": 69
++    },
+     "src-tauri/src/tool_selection/mod.rs": {
+       "total": 138,
+       "production": 138
+     },
++    "src-tauri/src/tool_selection/provider_extraction.rs": {
++      "total": 189,
++      "production": 140
++    },
+     "src-tauri/src/tool_selection/ranking.rs": {
+       "total": 326,
+       "production": 196
+@@ -1269,6 +1405,10 @@
+       "total": 884,
+       "production": 884
+     },
++    "src-tauri/src/tool_selection/resolve.rs": {
++      "total": 90,
++      "production": 90
++    },
+     "src-tauri/src/tool_selection/retrieval.rs": {
+       "total": 112,
+       "production": 80
+@@ -1285,6 +1425,10 @@
+       "total": 1191,
+       "production": 1191
+     },
++    "src-tauri/src/tool_selection/source_lookup.rs": {
++      "total": 71,
++      "production": 71
++    },
+     "src-tauri/src/tool_selection/tests/mod.rs": {
+       "total": 1515,
+       "production": 1515
+@@ -2480,86 +2624,6 @@
+     "tests/webfetch-sidecar.test.ts": {
+       "total": 67,
+       "production": 67
+-    },
+-    "src-tauri/src/providers/openai_compatible/structured.rs": {
+-      "total": 113,
+-      "production": 102
+-    },
+-    "src-tauri/src/tool_selection/provider_extraction.rs": {
+-      "total": 189,
+-      "production": 140
+-    },
+-    "src-tauri/src/tool_selection/backends/mcp.rs": {
+-      "total": 122,
+-      "production": 122
+-    },
+-    "src-tauri/src/tool_selection/backends/router.rs": {
+-      "total": 56,
+-      "production": 56
+-    },
+-    "src-tauri/src/tool_selection/gateway_schemas.rs": {
+-      "total": 41,
+-      "production": 41
+-    },
+-    "src-tauri/src/tool_selection/mcp/config.rs": {
+-      "total": 259,
+-      "production": 259
+-    },
+-    "src-tauri/src/tool_selection/mcp/descriptors.rs": {
+-      "total": 343,
+-      "production": 343
+-    },
+-    "src-tauri/src/tool_selection/mcp/manager.rs": {
+-      "total": 796,
+-      "production": 796
+-    },
+-    "src-tauri/src/tool_selection/mcp/mod.rs": {
+-      "total": 62,
+-      "production": 62
+-    },
+-    "src-tauri/src/tool_selection/mcp/repository.rs": {
+-      "total": 398,
+-      "production": 398
+-    },
+-    "src-tauri/src/tool_selection/mcp/results.rs": {
+-      "total": 256,
+-      "production": 256
+-    },
+-    "src-tauri/src/tool_selection/mcp/schema.rs": {
+-      "total": 102,
+-      "production": 102
+-    },
+-    "src-tauri/src/tool_selection/mcp/service_support.rs": {
+-      "total": 274,
+-      "production": 274
+-    },
+-    "src-tauri/src/tool_selection/mcp/session.rs": {
+-      "total": 442,
+-      "production": 442
+-    },
+-    "src-tauri/src/tool_selection/mcp/sync.rs": {
+-      "total": 383,
+-      "production": 383
+-    },
+-    "src-tauri/src/tool_selection/mcp/tests.rs": {
+-      "total": 1884,
+-      "production": 0
+-    },
+-    "src-tauri/src/tool_selection/mcp/transport.rs": {
+-      "total": 577,
+-      "production": 516
+-    },
+-    "src-tauri/src/tool_selection/mcp/wiring.rs": {
+-      "total": 69,
+-      "production": 69
+-    },
+-    "src-tauri/src/tool_selection/resolve.rs": {
+-      "total": 90,
+-      "production": 90
+-    },
+-    "src-tauri/src/tool_selection/source_lookup.rs": {
+-      "total": 71,
+-      "production": 71
+     }
+   }
+ }
+diff --git a/spec/docs/saaa-llang-dynamic-capability-m2b-plan.md b/spec/docs/saaa-llang-dynamic-capability-m2b-plan.md
+index c30273e..730915e 100644
+--- a/spec/docs/saaa-llang-dynamic-capability-m2b-plan.md
++++ b/spec/docs/saaa-llang-dynamic-capability-m2b-plan.md
+@@ -2,10 +2,14 @@
+ 
+ 更新日: 2026-09-20 / v2 / 実装指示
+ 
+-この文書は旧M2B「少数の生成能力を直接MCP公開する計画」を置き換える。今回は計画の改訂であり、以下の新規機能は未実装。上位文書は[初期計画](saaa-llang-dynamic-capability-initial-plan.md)、既存基盤は[M2A](saaa-llang-dynamic-capability-m2a-plan.md)。旧HTTP案は[transport参考資料](saaa-llang-dynamic-capability-m2b-transport-reference.md)へ移した。
++この文書は旧M2B「少数の生成能力を直接MCP公開する計画」を置き換える。D0〜D3の実装・検証報告が追加され、次の実装対象はD4。これは実装品質のレビュー合格を意味しない。上位文書は[初期計画](saaa-llang-dynamic-capability-initial-plan.md)、既存基盤は[M2A](saaa-llang-dynamic-capability-m2a-plan.md)。旧HTTP案は[transport参考資料](saaa-llang-dynamic-capability-m2b-transport-reference.md)へ移した。
+ 
+ 実装担当者は先に[D0〜D3詳細実装手順](saaa-tool-selection-d0-d3-implementation-guide.md)を読むこと。型・DB制約・推論backend・条件判定・カード順は詳細手順を正本とする。初版は検索cacheを作らず、大結果の継続取得はD4へ延期する。
+ 
++次の作業には[D4 外部MCP接続・台帳同期 実装計画](saaa-tool-selection-d4-mcp-implementation-plan.md)を使用する。D4の設定・transport・同期・実行状態・大結果の契約と実装カードは同書を正本とする。以下のD0〜D3依頼文は初回実装時の指示として残す。
++
++2026-09-20追記: D4実装と残件報告の追加後、次の作業は[D4残件解消・D5 MCP公開計画](saaa-tool-selection-d5-mcp-server-plan.md)に従う。D4の未達を完了扱いせず、公開前の修正カードを先に実施する。上記D4への着手案内は経緯として残す。
++
+ ## 1. 新しい到達点
+ 
+ 1,000件を超えるツールをSQLite台帳で管理し、その場の目的に合う候補だけを検索・順位付けする。schemaと使い方は選択後に取得する。ユーザーの訂正は根拠と適用条件を持つ記憶として保存し、その条件でだけ次回の順位を補正する。無反応を成功・満足として学習しない。
+diff --git a/spec/docs/saaa-llang-dynamic-capability-m2b-transport-reference.md b/spec/docs/saaa-llang-dynamic-capability-m2b-transport-reference.md
+index 5294764..f434bc0 100644
+--- a/spec/docs/saaa-llang-dynamic-capability-m2b-transport-reference.md
++++ b/spec/docs/saaa-llang-dynamic-capability-m2b-transport-reference.md
+@@ -2,7 +2,7 @@
+ 
+ この文書は2026-09-20改訂前の計画を保存した参考資料です。実装指示の正本は[M2B改訂計画](saaa-llang-dynamic-capability-m2b-plan.md)です。以下の直接gc_公開、8件の登録制限、listのoffer保存、boolean限定のgateway入力は新計画へ持ち込まないでください。HTTP認証・セッション・所有task・取消の扱いだけを参照し、矛盾時は新計画を優先します。
+ 
+-# SAAA × L-Lang — M2B ローカルMCP公開の実装計画
++## SAAA × L-Lang — M2B ローカルMCP公開の実装計画
+ 
+ 作成日: 2026-09-20
+ 
+diff --git a/spec/docs/saaa-personal-world-model-concept.md b/spec/docs/saaa-personal-world-model-concept.md
+index 2e7b7d2..8acfb94 100644
+--- a/spec/docs/saaa-personal-world-model-concept.md
++++ b/spec/docs/saaa-personal-world-model-concept.md
+@@ -5,7 +5,7 @@
+ 
+ 状態: 5要素を中心とするコンセプト改訂。今回の改訂は文書のみで、機能・DB・公開APIは変更していない。
+ 
+-実装への具体化: [5要素改訂実装計画](saaa-personal-world-model-initial-plan.md)で、M1の再確認と五要素への拡張をW2-00〜20の到達点に分け、実装担当にはD00〜D42の詳細カードと固定契約を渡す。旧WM-M1計画は履歴資料として保存する。本書の5要素への拡張が既に実装されたとは扱わない。
++実装への具体化: [5要素改訂実装計画](saaa-personal-world-model-initial-plan.md)で、M1の再確認と五要素への拡張をW2-00〜20の到達点に分け、実装担当にはD00〜D42の詳細カードと固定契約を渡す。旧WM-M1計画は履歴資料として保存する。五要素の実装報告後の次段階は[M2実装計画](saaa-personal-world-model-m2-plan.md)を参照する。現在の確認範囲と未検証事項は同計画に記録し、本書だけでは実装完了を判定しない。
+ 
+ ## 1. 採用する方向
+ 
+diff --git a/spec/docs/saaa-personal-world-model-initial-plan.md b/spec/docs/saaa-personal-world-model-initial-plan.md
+index b43e9a1..6c02d6a 100644
+--- a/spec/docs/saaa-personal-world-model-initial-plan.md
++++ b/spec/docs/saaa-personal-world-model-initial-plan.md
+@@ -6,6 +6,8 @@
+ 
+ 本書は旧WM-M1計画を置き換える。旧計画は `spec/evidence/world-model/m1-plan-original-2026-09-19.md` に保存し、WM-00〜15 / T01〜22の過去記録を読むためだけに使う。W2番号は到達点のまとまりとし、今後の実装指示には詳細カードのD番号を使う。旧計画の「関係型は6種」「confidenceは対象外」を新しい契約へ持ち込まない。
+ 
++次段階: 五要素の実装報告を受けた[M2実装計画](saaa-personal-world-model-m2-plan.md)。本書の保存形式・五要素の意味を維持し、Runtimeの現在状態への参照を追加する。
++
+ ## この計画の読み方
+ 
+ 本書は全体の範囲・段階・受入条件を管理する。DeepSeek等へ渡す実装単位は、次の二文書で固定する。
+diff --git a/src-tauri/src/coding/mod.rs b/src-tauri/src/coding/mod.rs
+index 4534f39..d838e37 100644
+--- a/src-tauri/src/coding/mod.rs
++++ b/src-tauri/src/coding/mod.rs
+@@ -7,3 +7,4 @@ mod settings;
+ #[cfg(test)]
+ mod tests;
+ pub(crate) mod tools;
++pub(crate) mod world_snapshot;
+diff --git a/src-tauri/src/meeting/mod.rs b/src-tauri/src/meeting/mod.rs
+index d787d90..29b963c 100644
+--- a/src-tauri/src/meeting/mod.rs
++++ b/src-tauri/src/meeting/mod.rs
+@@ -104,6 +104,46 @@ impl MeetingRuntime {
+         let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
+         Ok(snapshot(&r))
+     }
++
++    /// Read-only, token-free state for the World Frame. Holds the owner mutex
++    /// only long enough to copy the id and state; never touches the DB or the
++    /// network and never mutates the runtime.
++    pub fn world_snapshot(&self) -> Result<WorldMeetingSnapshot, String> {
++        let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
++        Ok(WorldMeetingSnapshot {
++            session_id: r.session.as_ref().map(|session| session.id.clone()),
++            state: r.state.clone(),
++        })
++    }
++
++    /// Test-only state injection so the World projection can be exercised
++    /// without starting ASR or audio capture.
++    #[cfg(test)]
++    pub(crate) fn set_test_world_state(&self, session_id: Option<&str>, state: MeetingState) {
++        let mut runtime = self.inner.lock().expect("meeting lock");
++        runtime.state = state;
++        runtime.session = session_id.map(|id| Session {
++            id: id.to_string(),
++            token: Some("capture_token_must_not_leak".to_string()),
++            entries: vec![Entry {
++                lane: MeetingLane::Microphone,
++                sequence: 0,
++                text: "transcript_must_not_leak".to_string(),
++                language: None,
++                started_at_ms: 0,
++                ended_at_ms: 0,
++            }],
++            total_text_chars: 0,
++            next_sequences: HashMap::new(),
++            in_flight: HashMap::new(),
++            error: Some(MeetingError {
++                code: "MEETING_TEST".into(),
++                message: "error_must_not_leak".into(),
++                recovery: "none".into(),
++            }),
++            speaker_filter: None,
++        });
++    }
+     pub fn preflight(
+         &self,
+         input: &PreflightInput,
+diff --git a/src-tauri/src/meeting/types.rs b/src-tauri/src/meeting/types.rs
+index fbe1602..110c49b 100644
+--- a/src-tauri/src/meeting/types.rs
++++ b/src-tauri/src/meeting/types.rs
+@@ -48,6 +48,14 @@ pub struct MeetingSnapshot {
+     pub error: Option<MeetingError>,
+ }
+ 
++/// Minimal, read-only World projection of the meeting owner. It intentionally
++/// omits the capture token, transcript entries and error text.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct WorldMeetingSnapshot {
++    pub session_id: Option<String>,
++    pub state: MeetingState,
++}
++
+ #[derive(Debug, Clone, Serialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct MeetingError {
+diff --git a/src-tauri/src/memory/personal_state/world/mod.rs b/src-tauri/src/memory/personal_state/world/mod.rs
+index 7f17050..2d69e2b 100644
+--- a/src-tauri/src/memory/personal_state/world/mod.rs
++++ b/src-tauri/src/memory/personal_state/world/mod.rs
+@@ -2,6 +2,7 @@
+ //! the shared-commit validation hook. The canonical history stays in the
+ //! existing Personal State tables (WM-05..WM-13, D16..D37).
+ 
++pub mod evidence_eligibility;
+ pub mod observations_v2;
+ #[allow(dead_code)]
+ pub mod outcome_v2;
+@@ -11,6 +12,20 @@ pub mod projection_v2;
+ pub mod query;
+ #[allow(dead_code)]
+ pub mod query_v2;
++pub mod runtime_capacity;
++pub mod runtime_coding;
++mod runtime_coding_tests;
++pub mod runtime_frame;
++mod runtime_frame_boundary_tests;
++mod runtime_frame_perf_tests;
++mod runtime_frame_snapshot_tests;
++mod runtime_frame_tests;
++pub mod runtime_graph;
++pub mod runtime_meeting;
++mod runtime_meeting_tests;
++pub mod runtime_scope;
++mod runtime_scope_tests;
++mod runtime_test_support;
+ pub mod test_support;
+ mod tests;
+ mod v2_tests;
+diff --git a/src-tauri/src/memory/personal_state/world/v2_tests.rs b/src-tauri/src/memory/personal_state/world/v2_tests.rs
+index f8d2388..fec2277 100644
+--- a/src-tauri/src/memory/personal_state/world/v2_tests.rs
++++ b/src-tauri/src/memory/personal_state/world/v2_tests.rs
+@@ -583,12 +583,15 @@ fn d37_outcome_resend_is_a_noop_and_second_outcome_is_rejected() {
+ /// D41 performance fixture. Run explicitly:
+ /// `cargo test --lib d41_v2_performance -- --ignored --nocapture`
+ /// The 10,000 scale is outside the interrupt budget by design in M1.
++/// M2-01: requested / created are reported separately, every measured
++/// operation must succeed, and the p95 is the nearest-rank 29th of 30 samples.
+ #[test]
+ #[ignore]
+ fn d41_v2_performance() {
+     use std::time::Instant;
+     let scales: [usize; 3] = [0, 100, 1_000];
+     for scale in scales {
++        let requested = scale;
+         let writer = writer_db();
+         let now_ms = now();
+         let source = writer
+@@ -622,24 +625,36 @@ fn d41_v2_performance() {
+                     )
+                 })
+                 .collect();
++            let batch_len = batch.len();
+             committer.commit(&format!("perf-{created}"), batch).unwrap();
+-            created += 8.min(scale - created);
++            created += batch_len;
+         }
+         let build = build_start.elapsed();
++        assert!(
++            interrupted || created == requested,
++            "created {created} != requested {requested}"
++        );
+         let measure = |label: &str, mut op: Box<dyn FnMut() -> u128>| {
+-            let mut samples = Vec::new();
+             for _ in 0..5 {
++                let _ = op();
++            }
++            let mut samples = Vec::with_capacity(30);
++            for _ in 0..30 {
+                 samples.push(op());
+             }
+             samples.sort();
++            // nearest-rank p95 for 30 samples is the 29th ascending value.
++            let p95 = samples[(30f64 * 0.95).ceil() as usize - 1];
+             eprintln!(
+-                "WORLD_V2_PERF scale={scale} {label} median_ms={} max_ms={}",
+-                samples[samples.len() / 2] as f64 / 1000.0,
++                "WORLD_V2_PERF scale={scale} requested={requested} created={created} \
++                 interrupted={interrupted} {label} p95_ms={} max_ms={}",
++                p95 as f64 / 1000.0,
+                 samples[samples.len() - 1] as f64 / 1000.0
+             );
+         };
+         eprintln!(
+-            "WORLD_V2_PERF scale={scale} build_ms={} interrupted={interrupted}",
++            "WORLD_V2_PERF scale={scale} requested={requested} created={created} \
++             interrupted={interrupted} build_ms={}",
+             build.as_millis()
+         );
+         measure(
+@@ -651,7 +666,7 @@ fn d41_v2_performance() {
+                         store::load(c)?;
+                         Ok(())
+                     })
+-                    .unwrap();
++                    .expect("load succeeds");
+                 start.elapsed().as_micros()
+             }),
+         );
+@@ -664,7 +679,7 @@ fn d41_v2_performance() {
+                         store::rebuild(c, now())?;
+                         Ok(())
+                     })
+-                    .unwrap();
++                    .expect("rebuild succeeds");
+                 start.elapsed().as_micros()
+             }),
+         );
+@@ -672,13 +687,14 @@ fn d41_v2_performance() {
+             "query",
+             Box::new(|| {
+                 let start = Instant::now();
+-                let _ = run_v2(
++                run_v2(
+                     &writer,
+                     &[WorldSeed::EntityId("peer0".into())],
+                     IncludeFlags::default(),
+                     8_192,
+                     now(),
+-                );
++                )
++                .expect("query succeeds");
+                 start.elapsed().as_micros()
+             }),
+         );
+@@ -686,6 +702,16 @@ fn d41_v2_performance() {
+     }
+ }
+ 
++/// M2-01: nearest-rank p95 for exactly 30 samples is the 29th ascending value.
++#[test]
++fn m2_01_nearest_rank_p95_method() {
++    let mut samples: Vec<u128> = (1..=30).collect();
++    samples.sort();
++    let p95 = samples[(30f64 * 0.95).ceil() as usize - 1];
++    assert_eq!(p95, 29);
++    assert_eq!(samples.len(), 30);
++}
++
+ #[test]
+ fn d20_v1_reader_treats_a_v2_projection_as_stale() {
+     use super::query::{activate, ActivateInput};
+diff --git a/src-tauri/src/quality_eval.rs b/src-tauri/src/quality_eval.rs
+index 0f9d63f..004b704 100644
+--- a/src-tauri/src/quality_eval.rs
++++ b/src-tauri/src/quality_eval.rs
+@@ -197,6 +197,11 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
+             None,
+         ),
+     );
++    let tool_selection = Arc::new(crate::tool_selection::build_service(
++        sqlite_writer.clone(),
++        &crate::tool_selection::ToolSelectionConfig::direct(),
++        Some(generated_capabilities.clone()),
++    ));
+     Ok(AppState {
+         sqlite_writer,
+         sqlite_readers,
+@@ -219,6 +224,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
+         generated_capabilities,
+         generated_tools: crate::generated_capabilities::publication::GeneratedToolsConfig::disabled(
+         ),
++        tool_selection,
+     })
+ }
+ 
+diff --git a/src-tauri/tests/sqlite_architecture.rs b/src-tauri/tests/sqlite_architecture.rs
+index b24cacf..8430814 100644
+--- a/src-tauri/tests/sqlite_architecture.rs
++++ b/src-tauri/tests/sqlite_architecture.rs
+@@ -31,6 +31,11 @@ fn main_database_open_and_connection_ownership_are_centralized() {
+             .strip_prefix(&source_root)
+             .expect("source path is relative");
+         let source = fs::read_to_string(&path).expect("source reads");
++        // A whole-file `#![cfg(test)]` module is test code, like `tests.rs` and
++        // inline `#[cfg(test)] mod tests` blocks; it is not a production path.
++        if source.trim_start().starts_with("#![cfg(test)]") {
++            continue;
++        }
+         let production = production_prefix(&source);
+         let compact = production
+             .chars()

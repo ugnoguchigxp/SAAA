@@ -1,3 +1,4 @@
+#![cfg(test)]
 //! Deterministic G01–G20 fixtures from the implementation guide. Ranker/extractor doubles return
 //! fixed values; the same semantics are exercised against real models in the separate ML lane.
 
@@ -9,7 +10,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::backends::FixtureBackend;
+use super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
 use super::catalog::{self, CatalogEntry, UsagePage};
 use super::contracts::*;
 use super::extraction::{CorrectionExtractor, FixtureExtractor};
@@ -53,6 +54,26 @@ impl EmbeddingProvider for ConstantEmbedding {
                 vector
             })
             .collect())
+    }
+}
+
+/// Backend that parks after recording the call until the test releases it, so the caller future can
+/// be aborted while the invocation is genuinely in flight.
+struct BarrierBackend {
+    entered: Arc<tokio::sync::Semaphore>,
+    release: Arc<tokio::sync::Semaphore>,
+}
+
+#[async_trait]
+impl ToolBackend for BarrierBackend {
+    async fn invoke(
+        &self,
+        _request: BackendRequest,
+        _cancellation: &crate::RunCancellation,
+    ) -> BackendOutcome {
+        self.entered.add_permits(1);
+        let _permit = self.release.acquire().await;
+        BackendOutcome::succeeded(json!({ "ok": true }))
     }
 }
 
@@ -616,6 +637,76 @@ async fn g09_successful_invocation_does_not_create_positive_feedback() {
         })
         .expect("satisfaction");
     assert_eq!(satisfaction, "unknown");
+}
+
+#[tokio::test]
+async fn p01_caller_abort_does_not_leave_the_invocation_running() {
+    let harness = Harness::new();
+    harness.register_pair();
+    let message = harness.insert_message();
+    let context = harness.context(Some(message), Some("A"));
+    let entered = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let backend: Arc<dyn ToolBackend> = Arc::new(BarrierBackend {
+        entered: entered.clone(),
+        release: release.clone(),
+    });
+    let service = Arc::new(harness.service_with_backend(backend, NO_FEEDBACK));
+    let response = service
+        .search(&context, USER_MESSAGE, 8)
+        .await
+        .expect("search");
+    let candidate = response.candidates.first().expect("candidate");
+    let described = service
+        .describe(&context, &candidate.reference, "contract", None)
+        .expect("describe");
+    let execution_ref = described.execution_ref.expect("execution ref");
+    let cancellation = crate::RunCancellation::default();
+
+    let caller = {
+        let service = service.clone();
+        let context = context.clone();
+        let cancellation = cancellation.clone();
+        tokio::spawn(async move {
+            service
+                .invoke(
+                    &context,
+                    &execution_ref,
+                    &json!({ "q": "value" }),
+                    &cancellation,
+                )
+                .await
+        })
+    };
+    let _entry_permit = tokio::time::timeout(std::time::Duration::from_secs(5), entered.acquire())
+        .await
+        .expect("backend entered within timeout")
+        .expect("entry permit");
+    // Aborting the caller drops only the response future; the management task must continue.
+    caller.abort();
+    let _ = caller.await;
+    release.add_permits(1);
+
+    let mut status = String::new();
+    for _ in 0..400 {
+        status = harness
+            .writer
+            .read_serialized(|connection| {
+                connection
+                    .query_row(
+                        "SELECT technical_status FROM tool_selection_invocations LIMIT 1",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(|error| error.to_string())
+            })
+            .expect("invocation status");
+        if status != "running" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(status, "succeeded", "aborted caller left the row unsettled");
 }
 
 #[tokio::test]

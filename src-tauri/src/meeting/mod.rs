@@ -104,6 +104,46 @@ impl MeetingRuntime {
         let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
         Ok(snapshot(&r))
     }
+
+    /// Read-only, token-free state for the World Frame. Holds the owner mutex
+    /// only long enough to copy the id and state; never touches the DB or the
+    /// network and never mutates the runtime.
+    pub fn world_snapshot(&self) -> Result<WorldMeetingSnapshot, String> {
+        let r = self.inner.lock().map_err(|_| "Meeting lock unavailable")?;
+        Ok(WorldMeetingSnapshot {
+            session_id: r.session.as_ref().map(|session| session.id.clone()),
+            state: r.state.clone(),
+        })
+    }
+
+    /// Test-only state injection so the World projection can be exercised
+    /// without starting ASR or audio capture.
+    #[cfg(test)]
+    pub(crate) fn set_test_world_state(&self, session_id: Option<&str>, state: MeetingState) {
+        let mut runtime = self.inner.lock().expect("meeting lock");
+        runtime.state = state;
+        runtime.session = session_id.map(|id| Session {
+            id: id.to_string(),
+            token: Some("capture_token_must_not_leak".to_string()),
+            entries: vec![Entry {
+                lane: MeetingLane::Microphone,
+                sequence: 0,
+                text: "transcript_must_not_leak".to_string(),
+                language: None,
+                started_at_ms: 0,
+                ended_at_ms: 0,
+            }],
+            total_text_chars: 0,
+            next_sequences: HashMap::new(),
+            in_flight: HashMap::new(),
+            error: Some(MeetingError {
+                code: "MEETING_TEST".into(),
+                message: "error_must_not_leak".into(),
+                recovery: "none".into(),
+            }),
+            speaker_filter: None,
+        });
+    }
     pub fn preflight(
         &self,
         input: &PreflightInput,

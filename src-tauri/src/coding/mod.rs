@@ -7,3 +7,4 @@ mod settings;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tools;
+pub(crate) mod world_snapshot;

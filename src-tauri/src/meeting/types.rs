@@ -48,6 +48,14 @@ pub struct MeetingSnapshot {
     pub error: Option<MeetingError>,
 }
 
+/// Minimal, read-only World projection of the meeting owner. It intentionally
+/// omits the capture token, transcript entries and error text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldMeetingSnapshot {
+    pub session_id: Option<String>,
+    pub state: MeetingState,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingError {

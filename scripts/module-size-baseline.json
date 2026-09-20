@@ -170,8 +170,8 @@
       "production": 275
     },
     "src-tauri/src/coding/mod.rs": {
-      "total": 9,
-      "production": 9
+      "total": 11,
+      "production": 11
     },
     "src-tauri/src/coding/recovery.rs": {
       "total": 56,
@@ -208,6 +208,10 @@
     "src-tauri/src/coding/workspace.rs": {
       "total": 31,
       "production": 31
+    },
+    "src-tauri/src/coding/world_snapshot.rs": {
+      "total": 131,
+      "production": 131
     },
     "src-tauri/src/credentials.rs": {
       "total": 193,
@@ -430,16 +434,16 @@
       "production": 261
     },
     "src-tauri/src/meeting/mod.rs": {
-      "total": 1082,
-      "production": 684
+      "total": 1174,
+      "production": 735
     },
     "src-tauri/src/meeting/speaker.rs": {
       "total": 101,
       "production": 46
     },
     "src-tauri/src/meeting/types.rs": {
-      "total": 153,
-      "production": 153
+      "total": 149,
+      "production": 149
     },
     "src-tauri/src/memory/context_still_recall.rs": {
       "total": 1284,
@@ -593,9 +597,13 @@
       "total": 353,
       "production": 353
     },
+    "src-tauri/src/memory/personal_state/world/evidence_eligibility.rs": {
+      "total": 132,
+      "production": 72
+    },
     "src-tauri/src/memory/personal_state/world/mod.rs": {
-      "total": 19,
-      "production": 19
+      "total": 34,
+      "production": 34
     },
     "src-tauri/src/memory/personal_state/world/observations_v2.rs": {
       "total": 119,
@@ -621,6 +629,62 @@
       "total": 785,
       "production": 785
     },
+    "src-tauri/src/memory/personal_state/world/runtime_capacity.rs": {
+      "total": 101,
+      "production": 90
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_coding_tests.rs": {
+      "total": 336,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_coding.rs": {
+      "total": 163,
+      "production": 163
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_frame_boundary_tests.rs": {
+      "total": 78,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_frame_perf_tests.rs": {
+      "total": 133,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_frame_snapshot_tests.rs": {
+      "total": 144,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_frame_tests.rs": {
+      "total": 623,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_frame.rs": {
+      "total": 500,
+      "production": 500
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_graph.rs": {
+      "total": 120,
+      "production": 120
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_meeting_tests.rs": {
+      "total": 204,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_meeting.rs": {
+      "total": 164,
+      "production": 164
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_scope_tests.rs": {
+      "total": 233,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_scope.rs": {
+      "total": 263,
+      "production": 230
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_test_support.rs": {
+      "total": 542,
+      "production": 0
+    },
     "src-tauri/src/memory/personal_state/world/test_support.rs": {
       "total": 580,
       "production": 0
@@ -630,7 +694,7 @@
       "production": 0
     },
     "src-tauri/src/memory/personal_state/world/v2_tests.rs": {
-      "total": 688,
+      "total": 1609,
       "production": 0
     },
     "src-tauri/src/memory/personal_state/world/validation_v2.rs": {
@@ -896,6 +960,10 @@
     "src-tauri/src/providers/openai_compatible/probe.rs": {
       "total": 79,
       "production": 79
+    },
+    "src-tauri/src/providers/openai_compatible/structured.rs": {
+      "total": 113,
+      "production": 102
     },
     "src-tauri/src/providers/probe_state.rs": {
       "total": 149,
@@ -1225,9 +1293,17 @@
       "total": 157,
       "production": 157
     },
+    "src-tauri/src/tool_selection/backends/mcp.rs": {
+      "total": 122,
+      "production": 122
+    },
     "src-tauri/src/tool_selection/backends/mod.rs": {
       "total": 160,
       "production": 160
+    },
+    "src-tauri/src/tool_selection/backends/router.rs": {
+      "total": 56,
+      "production": 56
     },
     "src-tauri/src/tool_selection/catalog.rs": {
       "total": 221,
@@ -1245,6 +1321,10 @@
       "total": 837,
       "production": 751
     },
+    "src-tauri/src/tool_selection/gateway_schemas.rs": {
+      "total": 41,
+      "production": 41
+    },
     "src-tauri/src/tool_selection/gateway.rs": {
       "total": 399,
       "production": 361
@@ -1253,9 +1333,65 @@
       "total": 355,
       "production": 324
     },
+    "src-tauri/src/tool_selection/mcp/config.rs": {
+      "total": 259,
+      "production": 259
+    },
+    "src-tauri/src/tool_selection/mcp/descriptors.rs": {
+      "total": 343,
+      "production": 343
+    },
+    "src-tauri/src/tool_selection/mcp/manager.rs": {
+      "total": 796,
+      "production": 796
+    },
+    "src-tauri/src/tool_selection/mcp/mod.rs": {
+      "total": 62,
+      "production": 62
+    },
+    "src-tauri/src/tool_selection/mcp/repository.rs": {
+      "total": 398,
+      "production": 398
+    },
+    "src-tauri/src/tool_selection/mcp/results.rs": {
+      "total": 256,
+      "production": 256
+    },
+    "src-tauri/src/tool_selection/mcp/schema.rs": {
+      "total": 102,
+      "production": 102
+    },
+    "src-tauri/src/tool_selection/mcp/service_support.rs": {
+      "total": 274,
+      "production": 274
+    },
+    "src-tauri/src/tool_selection/mcp/session.rs": {
+      "total": 442,
+      "production": 442
+    },
+    "src-tauri/src/tool_selection/mcp/sync.rs": {
+      "total": 383,
+      "production": 383
+    },
+    "src-tauri/src/tool_selection/mcp/tests.rs": {
+      "total": 1884,
+      "production": 0
+    },
+    "src-tauri/src/tool_selection/mcp/transport.rs": {
+      "total": 577,
+      "production": 516
+    },
+    "src-tauri/src/tool_selection/mcp/wiring.rs": {
+      "total": 69,
+      "production": 69
+    },
     "src-tauri/src/tool_selection/mod.rs": {
       "total": 138,
       "production": 138
+    },
+    "src-tauri/src/tool_selection/provider_extraction.rs": {
+      "total": 189,
+      "production": 140
     },
     "src-tauri/src/tool_selection/ranking.rs": {
       "total": 326,
@@ -1268,6 +1404,10 @@
     "src-tauri/src/tool_selection/repository.rs": {
       "total": 884,
       "production": 884
+    },
+    "src-tauri/src/tool_selection/resolve.rs": {
+      "total": 90,
+      "production": 90
     },
     "src-tauri/src/tool_selection/retrieval.rs": {
       "total": 112,
@@ -1284,6 +1424,10 @@
     "src-tauri/src/tool_selection/service.rs": {
       "total": 1191,
       "production": 1191
+    },
+    "src-tauri/src/tool_selection/source_lookup.rs": {
+      "total": 71,
+      "production": 71
     },
     "src-tauri/src/tool_selection/tests/mod.rs": {
       "total": 1515,
@@ -2480,86 +2624,6 @@
     "tests/webfetch-sidecar.test.ts": {
       "total": 67,
       "production": 67
-    },
-    "src-tauri/src/providers/openai_compatible/structured.rs": {
-      "total": 113,
-      "production": 102
-    },
-    "src-tauri/src/tool_selection/provider_extraction.rs": {
-      "total": 189,
-      "production": 140
-    },
-    "src-tauri/src/tool_selection/backends/mcp.rs": {
-      "total": 122,
-      "production": 122
-    },
-    "src-tauri/src/tool_selection/backends/router.rs": {
-      "total": 56,
-      "production": 56
-    },
-    "src-tauri/src/tool_selection/gateway_schemas.rs": {
-      "total": 41,
-      "production": 41
-    },
-    "src-tauri/src/tool_selection/mcp/config.rs": {
-      "total": 259,
-      "production": 259
-    },
-    "src-tauri/src/tool_selection/mcp/descriptors.rs": {
-      "total": 343,
-      "production": 343
-    },
-    "src-tauri/src/tool_selection/mcp/manager.rs": {
-      "total": 796,
-      "production": 796
-    },
-    "src-tauri/src/tool_selection/mcp/mod.rs": {
-      "total": 62,
-      "production": 62
-    },
-    "src-tauri/src/tool_selection/mcp/repository.rs": {
-      "total": 398,
-      "production": 398
-    },
-    "src-tauri/src/tool_selection/mcp/results.rs": {
-      "total": 256,
-      "production": 256
-    },
-    "src-tauri/src/tool_selection/mcp/schema.rs": {
-      "total": 102,
-      "production": 102
-    },
-    "src-tauri/src/tool_selection/mcp/service_support.rs": {
-      "total": 274,
-      "production": 274
-    },
-    "src-tauri/src/tool_selection/mcp/session.rs": {
-      "total": 442,
-      "production": 442
-    },
-    "src-tauri/src/tool_selection/mcp/sync.rs": {
-      "total": 383,
-      "production": 383
-    },
-    "src-tauri/src/tool_selection/mcp/tests.rs": {
-      "total": 1884,
-      "production": 0
-    },
-    "src-tauri/src/tool_selection/mcp/transport.rs": {
-      "total": 577,
-      "production": 516
-    },
-    "src-tauri/src/tool_selection/mcp/wiring.rs": {
-      "total": 69,
-      "production": 69
-    },
-    "src-tauri/src/tool_selection/resolve.rs": {
-      "total": 90,
-      "production": 90
-    },
-    "src-tauri/src/tool_selection/source_lookup.rs": {
-      "total": 71,
-      "production": 71
     }
   }
 }

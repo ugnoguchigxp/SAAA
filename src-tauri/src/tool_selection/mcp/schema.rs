@@ -46,7 +46,41 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_tool_selection_mcp_results_scope
            ON tool_selection_mcp_results(principal_id, scope_key);
          CREATE INDEX IF NOT EXISTS idx_tool_selection_mcp_results_expiry
-           ON tool_selection_mcp_results(expires_at);",
+           ON tool_selection_mcp_results(expires_at);
+         CREATE TABLE IF NOT EXISTS tool_selection_rule_source_bindings (
+           rule_id TEXT NOT NULL,
+           tool_id TEXT NOT NULL,
+           endpoint_hash TEXT NOT NULL CHECK(length(endpoint_hash) <= 64),
+           PRIMARY KEY(rule_id, tool_id),
+           FOREIGN KEY(rule_id) REFERENCES tool_selection_rules(id) ON DELETE CASCADE,
+           FOREIGN KEY(tool_id) REFERENCES tool_selection_catalog(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_tool_selection_rule_source_bindings_tool
+           ON tool_selection_rule_source_bindings(tool_id);",
+    )
+}
+
+/// Version-25 migration. A correction rule that names a remote MCP tool is only applicable to the
+/// endpoint it was learned on. Existing rules predate endpoint capture, so their bindings are
+/// created empty and therefore unconfirmed: they are not silently reattached to whatever endpoint
+/// is current, and an operator must re-create the correction to confirm a new binding.
+///
+/// This must run inside the schema transaction after `migrate`, and only when the database is
+/// upgraded from a version older than 25. It is idempotent because of `INSERT OR IGNORE`.
+pub fn backfill_rule_source_bindings(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "INSERT OR IGNORE INTO tool_selection_rule_source_bindings(rule_id, tool_id, endpoint_hash)
+           SELECT r.id, r.target_tool_id, ''
+             FROM tool_selection_rules r
+             JOIN tool_selection_catalog c ON c.id = r.target_tool_id
+             JOIN tool_selection_sources s ON s.id = c.source_id
+            WHERE s.kind = 'mcp_http' AND r.target_tool_id IS NOT NULL;
+         INSERT OR IGNORE INTO tool_selection_rule_source_bindings(rule_id, tool_id, endpoint_hash)
+           SELECT r.id, r.preferred_tool_id, ''
+             FROM tool_selection_rules r
+             JOIN tool_selection_catalog c ON c.id = r.preferred_tool_id
+             JOIN tool_selection_sources s ON s.id = c.source_id
+            WHERE s.kind = 'mcp_http' AND r.preferred_tool_id IS NOT NULL;",
     )
 }
 

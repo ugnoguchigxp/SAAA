@@ -11,7 +11,9 @@ pub mod feedback;
 pub mod gateway;
 pub mod gateway_schemas;
 pub mod inference;
+pub mod invocation;
 pub mod mcp;
+pub mod mcp_server;
 pub mod provider_extraction;
 pub mod ranking;
 pub mod references;
@@ -24,7 +26,6 @@ pub mod service;
 pub mod source_lookup;
 pub mod worker;
 
-#[cfg(test)]
 mod tests;
 
 pub use contracts::{

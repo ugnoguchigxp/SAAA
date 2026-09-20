@@ -40,6 +40,9 @@ pub struct McpManager {
     watchers: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     source_diagnostics: RwLock<HashMap<String, &'static str>>,
     config_diagnostic: RwLock<Option<&'static str>>,
+    /// Canonical loopback endpoint of this process's own MCP listener, when one is running. A D4
+    /// source pointing at it would call the gateway back into itself and is refused.
+    self_endpoint: RwLock<Option<String>>,
     shutting_down: AtomicBool,
 }
 
@@ -69,8 +72,21 @@ impl McpManager {
             watchers: Mutex::new(HashMap::new()),
             source_diagnostics: RwLock::new(HashMap::new()),
             config_diagnostic: RwLock::new(diagnostic),
+            self_endpoint: RwLock::new(None),
             shutting_down: AtomicBool::new(false),
         })
+    }
+
+    /// Records this process's own MCP endpoint so a D4 source that points at it can be refused.
+    pub async fn set_self_endpoint(&self, endpoint: Option<String>) {
+        *self.self_endpoint.write().await = endpoint;
+    }
+
+    async fn is_self_endpoint(&self, url: &str) -> bool {
+        let Some(self_endpoint) = self.self_endpoint.read().await.clone() else {
+            return false;
+        };
+        normalize_loopback(url).as_deref() == Some(self_endpoint.as_str())
     }
 
     pub fn principal_id(&self) -> &str {
@@ -197,10 +213,29 @@ impl McpManager {
             let transaction = connection
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(crate::database_error)?;
+            let mut rules_invalidated = false;
             for (id, endpoint_hash) in &register {
+                let previous_endpoint = mcp_repository::source(&transaction, id)
+                    .ok()
+                    .flatten()
+                    .map(|row| row.endpoint_hash);
                 repository::upsert_source(&transaction, id, "mcp_http", &owner, true)
                     .map_err(|_| "storage".to_string())?;
                 mcp_repository::upsert_source(&transaction, id, generation, endpoint_hash)
+                    .map_err(|_| "storage".to_string())?;
+                // A changed endpoint invalidates the corrections learned on the old one. They stay
+                // unconfirmed even if the original URL is configured again, so a re-created
+                // correction is required before they affect selection.
+                if let Some(previous) = previous_endpoint {
+                    if previous != *endpoint_hash && !previous.is_empty() {
+                        let changed = repository::invalidate_source_rule_bindings(&transaction, id)
+                            .map_err(|_| "storage".to_string())?;
+                        rules_invalidated |= changed > 0;
+                    }
+                }
+            }
+            if rules_invalidated {
+                repository::bump_epochs(&transaction, false, false, true)
                     .map_err(|_| "storage".to_string())?;
             }
             transaction.commit().map_err(crate::database_error)?;
@@ -271,6 +306,11 @@ impl McpManager {
                 code: "source-unknown",
             });
         };
+        if self.is_self_endpoint(&spec.url).await {
+            return Err(SyncError {
+                code: "source-self-reference",
+            });
+        }
         if !spec.enabled {
             return Err(SyncError {
                 code: "source-disabled",
@@ -697,6 +737,9 @@ impl McpManager {
         if !spec.enabled || spec.endpoint_hash() != endpoint_hash {
             return Err(CallError::Unavailable("source-changed"));
         }
+        if self.is_self_endpoint(&spec.url).await {
+            return Err(CallError::Unavailable("source-self-reference"));
+        }
         if !self.ready.read().await.contains(source_id) {
             return Err(CallError::Unavailable("source-not-synced"));
         }
@@ -856,4 +899,22 @@ impl McpManager {
             .ok()?;
         Some(session.state().await)
     }
+}
+
+/// Canonical `loopback:{port}{path}` for a loopback HTTP URL. `localhost`, `127.0.0.1` and `[::1]`
+/// are treated as the same host, so a D4 source cannot reach the gateway's own listener by
+/// respelling the address.
+fn normalize_loopback(raw: &str) -> Option<String> {
+    let parsed = url::Url::parse(raw).ok()?;
+    if parsed.scheme() != "http" {
+        return None;
+    }
+    let host = match parsed.host()? {
+        url::Host::Ipv4(address) if address.is_loopback() => "loopback",
+        url::Host::Ipv6(address) if address.is_loopback() => "loopback",
+        url::Host::Domain(domain) if domain.eq_ignore_ascii_case("localhost") => "loopback",
+        _ => return None,
+    };
+    let port = parsed.port_or_known_default()?;
+    Some(format!("{host}:{port}{}", parsed.path()))
 }

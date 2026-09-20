@@ -1,0 +1,40 @@
+ M crates/personal-state-core/src/world/mod.rs
+ M scripts/module-size-baseline.json
+ M spec/docs/saaa-llang-dynamic-capability-m2b-plan.md
+ M spec/docs/saaa-llang-dynamic-capability-m2b-transport-reference.md
+ M spec/docs/saaa-personal-world-model-concept.md
+ M spec/docs/saaa-personal-world-model-initial-plan.md
+ M src-tauri/src/coding/mod.rs
+ M src-tauri/src/meeting/mod.rs
+ M src-tauri/src/meeting/types.rs
+ M src-tauri/src/memory/personal_state/world/mod.rs
+ M src-tauri/src/memory/personal_state/world/v2_tests.rs
+ M src-tauri/src/quality_eval.rs
+ M src-tauri/tests/sqlite_architecture.rs
+?? crates/personal-state-core/src/world/runtime_frame.rs
+?? crates/personal-state-core/tests/world_m2_frame.rs
+?? spec/docs/saaa-personal-world-model-m2-execution-contract.md
+?? spec/docs/saaa-personal-world-model-m2-plan.md
+?? spec/docs/saaa-personal-world-model-m2-work-cards.md
+?? spec/docs/saaa-tool-selection-d4-mcp-implementation-plan.md
+?? spec/docs/saaa-tool-selection-d5-mcp-server-plan.md
+?? spec/evidence/tool-selection-d5/
+?? spec/evidence/world-model/m2-planning-baseline.md
+?? spec/evidence/world-model/m2-progress.md
+?? spec/evidence/world-model/m2-results.md
+?? src-tauri/src/coding/world_snapshot.rs
+?? src-tauri/src/memory/personal_state/world/evidence_eligibility.rs
+?? src-tauri/src/memory/personal_state/world/runtime_capacity.rs
+?? src-tauri/src/memory/personal_state/world/runtime_coding.rs
+?? src-tauri/src/memory/personal_state/world/runtime_coding_tests.rs
+?? src-tauri/src/memory/personal_state/world/runtime_frame.rs
+?? src-tauri/src/memory/personal_state/world/runtime_frame_boundary_tests.rs
+?? src-tauri/src/memory/personal_state/world/runtime_frame_perf_tests.rs
+?? src-tauri/src/memory/personal_state/world/runtime_frame_snapshot_tests.rs
+?? src-tauri/src/memory/personal_state/world/runtime_frame_tests.rs
+?? src-tauri/src/memory/personal_state/world/runtime_graph.rs
+?? src-tauri/src/memory/personal_state/world/runtime_meeting.rs
+?? src-tauri/src/memory/personal_state/world/runtime_meeting_tests.rs
+?? src-tauri/src/memory/personal_state/world/runtime_scope.rs
+?? src-tauri/src/memory/personal_state/world/runtime_scope_tests.rs
+?? src-tauri/src/memory/personal_state/world/runtime_test_support.rs
