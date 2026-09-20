@@ -11,11 +11,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use super::backends::{BackendRequest, TechnicalStatus, ToolBackend};
+use super::backends::router::BackendRouter;
 use super::catalog::{self, CatalogEntry};
 use super::contracts::*;
 use super::extraction::{CorrectionExtractor, ExtractionRequest, RecentDecision};
 use super::feedback::{apply_extraction, ParsedExtraction};
 use super::inference::{EmbedKind, EmbeddingProvider, RerankProvider};
+use super::backends::mcp::McpBinding;
+use super::mcp::manager::McpManager;
+use super::mcp::session::CallError;
+use super::mcp::{results, MCP_RESULT_MAX_BYTES};
 use super::references::{ReferenceEntry, ReferenceKind, ReferenceStore};
 use super::repository::{self, EligibleRevision, Epochs};
 use super::{ranking, retrieval, rules};
@@ -64,6 +69,20 @@ pub struct InvokeResponse {
     pub status: TechnicalStatus,
     pub result: Option<Value>,
     pub error_code: Option<&'static str>,
+    /// Set when a 16 KiB–1 MiB result was stored for continuation.
+    pub result_ref: Option<String>,
+    pub byte_count: Option<i64>,
+    pub page_count: Option<i64>,
+    /// `inline`, `stored` or `unavailable`.
+    pub result_availability: Option<&'static str>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResultPageResponse {
+    pub result_ref: String,
+    pub page: i64,
+    pub page_count: i64,
+    pub text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -97,6 +116,7 @@ pub struct ToolSelectionService {
     reranker: Arc<dyn RerankProvider>,
     extractor: Arc<dyn CorrectionExtractor>,
     backend: Arc<dyn ToolBackend>,
+    mcp_manager: Option<Arc<McpManager>>,
     no_match_threshold: f64,
     scenarios: Mutex<HashMap<String, Scenario>>,
     discovery_configured: bool,
@@ -118,10 +138,19 @@ impl ToolSelectionService {
             reranker,
             extractor,
             backend,
+            mcp_manager: None,
             no_match_threshold,
             scenarios: Mutex::new(HashMap::new()),
             discovery_configured: true,
         }
+    }
+
+    pub fn set_mcp_manager(&mut self, manager: Arc<McpManager>) {
+        self.mcp_manager = Some(manager);
+    }
+
+    pub fn mcp_manager(&self) -> Option<Arc<McpManager>> {
+        self.mcp_manager.clone()
     }
 
     pub fn set_discovery_configured(&mut self, configured: bool) {
@@ -216,11 +245,16 @@ impl ToolSelectionService {
         let principal = context.principal_id.clone();
         let conversation = context.conversation_id.clone();
         let project = context.project_id.clone();
+        let now = now_ms();
         self.writer
             .read_serialized(|connection| {
-                let eligible =
-                    repository::eligible_revisions(connection, &principal, project.as_deref())
-                        .map_err(|error| error.to_string())?;
+                let eligible = repository::eligible_revisions(
+                    connection,
+                    &principal,
+                    project.as_deref(),
+                    now,
+                )
+                .map_err(|error| error.to_string())?;
                 let mut tools: HashSet<String> = HashSet::new();
                 for item in &eligible {
                     tools.insert(item.revision.tool_id.clone());
@@ -277,9 +311,13 @@ impl ToolSelectionService {
         self.writer
             .read_serialized(|connection| {
                 let epochs = repository::epochs(connection).map_err(|error| error.to_string())?;
-                let eligible =
-                    repository::eligible_revisions(connection, &principal, project.as_deref())
-                        .map_err(|error| error.to_string())?;
+                let eligible = repository::eligible_revisions(
+                    connection,
+                    &principal,
+                    project.as_deref(),
+                    now,
+                )
+                .map_err(|error| error.to_string())?;
                 let lexical = match (lexical_ok, lexical_query.as_deref()) {
                     (true, Some(match_expression)) => repository::lexical_candidates(
                         connection,
@@ -287,6 +325,7 @@ impl ToolSelectionService {
                         &principal,
                         project.as_deref(),
                         SEARCH_CANDIDATE_POOL,
+                        now,
                     )
                     .map_err(|error| error.to_string())?
                     .into_iter()
@@ -299,6 +338,7 @@ impl ToolSelectionService {
                     &model_hash,
                     &principal,
                     project.as_deref(),
+                    now,
                 )
                 .map_err(|error| error.to_string())?;
                 let rules = repository::active_rules(
@@ -860,6 +900,20 @@ impl ToolSelectionService {
         }
         validate_arguments(&revision.input_schema, arguments)?;
         let binding = revision.backend_binding.clone();
+        let binding_kind = BackendRouter::kind(&binding);
+        // For an external MCP binding the source must still be enabled, freshly synced and
+        // matched to the recorded endpoint before an invocation row is even opened.
+        if binding_kind == "mcp_http" {
+            let parsed = McpBinding::parse(&binding).ok_or_else(ToolSelectionError::stale)?;
+            let manager = self
+                .mcp_manager
+                .clone()
+                .ok_or_else(ToolSelectionError::unavailable)?;
+            manager
+                .preflight(&parsed.source_id, &parsed.endpoint_hash)
+                .await
+                .map_err(map_mcp_error)?;
+        }
         let invocation_id = crate::new_id("tsinv");
         let decision_id = reference.decision_id.clone();
         let now = now_ms();
@@ -892,16 +946,98 @@ impl ToolSelectionService {
         let mut status = outcome.status;
         let mut error_code = outcome.error_code;
         let mut result = outcome.result;
-        if let Some(value) = &result {
-            let too_large = serde_json::to_vec(value)
-                .map(|bytes| bytes.len() > BACKEND_RESULT_MAX_BYTES)
-                .unwrap_or(true);
-            if too_large {
-                result = None;
-                status = TechnicalStatus::Failed;
-                error_code = Some("output-limit");
+        let mut result_ref = None;
+        let mut byte_count = None;
+        let mut page_count = None;
+        let mut result_availability = None;
+
+        // An output schema that does not accept the structured content must not be presented as a
+        // normal success.
+        if status == TechnicalStatus::Succeeded {
+            if let (Some(schema), Some(structured)) = (
+                revision.output_schema.as_ref(),
+                result
+                    .as_ref()
+                    .and_then(|value| value.get("structuredContent")),
+            ) {
+                let valid = jsonschema::validator_for(schema)
+                    .map(|validator| validator.is_valid(structured))
+                    .unwrap_or(false);
+                if !valid {
+                    status = TechnicalStatus::Failed;
+                    error_code = Some("remote-result-invalid");
+                    result = None;
+                }
             }
         }
+
+        if status == TechnicalStatus::Succeeded {
+            if let Some(value) = result.take() {
+                let canonical = super::mcp::descriptors::canonical_json_string(&value);
+                let bytes = canonical.len();
+                if bytes > BACKEND_RESULT_MAX_BYTES {
+                    if binding_kind == "mcp_http" {
+                        if bytes > MCP_RESULT_MAX_BYTES {
+                            result_availability = Some("unavailable");
+                            error_code = Some("result-size-limit");
+                        } else {
+                            match self.store_large_result(
+                                &invocation_id,
+                                context,
+                                &tool.id,
+                                &revision.id,
+                                &revision.schema_hash,
+                                current_epochs.acl,
+                                &canonical,
+                            ) {
+                                Ok(store) => match store {
+                                    results::StoreOutcome::Stored {
+                                        result_ref: reference_id,
+                                        byte_count: stored_bytes,
+                                        page_count: pages,
+                                    } => {
+                                        result_ref = Some(reference_id);
+                                        byte_count = Some(stored_bytes);
+                                        page_count = Some(pages);
+                                        result_availability = Some("stored");
+                                    }
+                                    results::StoreOutcome::StorageLimit => {
+                                        result_availability = Some("unavailable");
+                                        error_code = Some("result-storage-limit");
+                                    }
+                                    results::StoreOutcome::SizeLimit => {
+                                        result_availability = Some("unavailable");
+                                        error_code = Some("result-size-limit");
+                                    }
+                                },
+                                Err(_) => {
+                                    result_availability = Some("unavailable");
+                                    error_code = Some("result-storage-limit");
+                                }
+                            }
+                        }
+                    } else {
+                        // Existing L-Lang behavior is preserved: the result is bounded at 16 KiB.
+                        status = TechnicalStatus::Failed;
+                        error_code = Some("output-limit");
+                    }
+                } else {
+                    result = Some(value);
+                    result_availability = Some("inline");
+                }
+            } else {
+                result_availability = Some("inline");
+            }
+        } else if let Some(value) = &result {
+            let bytes = super::mcp::descriptors::canonical_json_string(value).len();
+            if bytes > MCP_RESULT_MAX_BYTES {
+                result = None;
+            }
+            result_availability = Some("inline");
+        } else {
+            result_availability = Some("unavailable");
+        }
+
         let finished = now_ms();
         {
             let invocation_id = invocation_id.clone();
@@ -928,7 +1064,87 @@ impl ToolSelectionService {
             status,
             result,
             error_code,
+            result_ref,
+            byte_count,
+            page_count,
+            result_availability,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn store_large_result(
+        &self,
+        invocation_id: &str,
+        context: &RequestContext,
+        tool_id: &str,
+        revision_id: &str,
+        schema_hash: &str,
+        acl_epoch: i64,
+        canonical: &str,
+    ) -> ToolSelectionResult<results::StoreOutcome> {
+        let invocation_id = invocation_id.to_string();
+        let principal = context.principal_id.clone();
+        let conversation = context.conversation_id.clone();
+        let scope_key = context.scope_key();
+        let tool_id = tool_id.to_string();
+        let revision_id = revision_id.to_string();
+        let schema_hash = schema_hash.to_string();
+        let canonical = canonical.to_string();
+        self.writer
+            .write(move |connection| {
+                let transaction = connection
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(crate::database_error)?;
+                let outcome = results::store_result(
+                    &transaction,
+                    &invocation_id,
+                    &principal,
+                    &conversation,
+                    &scope_key,
+                    &tool_id,
+                    &revision_id,
+                    &schema_hash,
+                    acl_epoch,
+                    &canonical,
+                )
+                .map_err(|error| error.code.as_str().to_string())?;
+                transaction.commit().map_err(crate::database_error)?;
+                Ok(outcome)
+            })
+            .map_err(|_| ToolSelectionError::storage())
+    }
+
+    /// Resolves one continuation page of a stored MCP result. Ownership, scope, TTL and the
+    /// current ACL are re-checked on every read; a revoked or foreign reference is refused.
+    pub fn describe_result(
+        &self,
+        context: &RequestContext,
+        result_ref: &str,
+        page: i64,
+    ) -> ToolSelectionResult<ResultPageResponse> {
+        if result_ref.is_empty() {
+            return Err(ToolSelectionError::invalid());
+        }
+        let principal = context.principal_id.clone();
+        let scope_key = context.scope_key();
+        let result_ref = result_ref.to_string();
+        self.writer
+            .read_serialized(move |connection| {
+                results::read_page(connection, &principal, &scope_key, &result_ref, page)
+                    .map(|page| ResultPageResponse {
+                        result_ref: result_ref.clone(),
+                        page: page.page,
+                        page_count: page.page_count,
+                        text: page.text,
+                    })
+                    .map_err(|error| error.code.as_str().to_string())
+            })
+            .map_err(|code| match code.as_str() {
+                "not-found" => ToolSelectionError::not_found(),
+                "not-authorized" => ToolSelectionError::unauthorized(),
+                "invalid-input" => ToolSelectionError::invalid(),
+                _ => ToolSelectionError::storage(),
+            })
     }
 
     /// Development/management API for importing a fixture catalog. Import is never a grant, but
@@ -980,9 +1196,15 @@ impl ToolSelectionService {
             .read_serialized({
                 let principal = principal_id.to_string();
                 let project = project_id.map(str::to_string);
+                let now = now_ms();
                 move |connection| {
-                    repository::eligible_revisions(connection, &principal, project.as_deref())
-                        .map_err(|error| error.to_string())
+                    repository::eligible_revisions(
+                        connection,
+                        &principal,
+                        project.as_deref(),
+                        now,
+                    )
+                    .map_err(|error| error.to_string())
                 }
             })
             .map_err(|_| ToolSelectionError::storage())?;
@@ -1050,6 +1272,29 @@ impl ToolSelectionService {
                 repository::epochs(connection).map_err(|error| error.to_string())
             })
             .map_err(|_| ToolSelectionError::storage())
+    }
+}
+
+/// Maps an admission or source-eligibility failure to the existing gateway error contract. A
+/// stale source, revoked configuration or unsynced source is refused before any HTTP write.
+fn map_mcp_error(error: CallError) -> ToolSelectionError {
+    match error {
+        CallError::Unavailable(code)
+            if matches!(code, "source-changed" | "source-stale" | "source-not-synced") =>
+        {
+            ToolSelectionError::stale()
+        }
+        CallError::Unavailable(_) => ToolSelectionError::unavailable(),
+        CallError::Busy => ToolSelectionError::capacity(),
+        CallError::CancelledBeforeSend => ToolSelectionError::new(
+            ToolSelectionErrorCode::Cancelled,
+            "The tool call was cancelled.",
+        ),
+        CallError::Closed
+        | CallError::SessionExpired
+        | CallError::Protocol(_)
+        | CallError::Unknown(_)
+        | CallError::RpcError => ToolSelectionError::unavailable(),
     }
 }
 

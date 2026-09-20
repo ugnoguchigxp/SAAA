@@ -297,6 +297,17 @@ pub fn upsert_embedding(
     Ok(())
 }
 
+pub fn set_source_enabled(
+    connection: &Connection,
+    id: &str,
+    enabled: bool,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "UPDATE tool_selection_sources SET enabled = ?2 WHERE id = ?1",
+        params![id, enabled as i64],
+    )
+}
+
 pub fn tool_by_id(connection: &Connection, tool_id: &str) -> rusqlite::Result<Option<ToolRow>> {
     connection
         .query_row(
@@ -325,6 +336,15 @@ pub fn tool_id_by_name(connection: &Connection, name: &str) -> rusqlite::Result<
             |row| row.get(0),
         )
         .optional()
+}
+
+/// Every catalog id whose display name matches. Used to refuse name-only corrections when two
+/// sources publish the same tool name, instead of silently picking one with `LIMIT 1`.
+pub fn tool_ids_by_name(connection: &Connection, name: &str) -> rusqlite::Result<Vec<String>> {
+    let mut statement = connection
+        .prepare("SELECT id FROM tool_selection_catalog WHERE backend_key = ?1 ORDER BY id ASC")?;
+    let rows = statement.query_map(params![name], |row| row.get::<_, String>(0))?;
+    rows.collect()
 }
 
 pub fn revision_by_id(
@@ -366,12 +386,15 @@ fn revision_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RevisionRow> {
 }
 
 /// Enabled, current revisions authorized for the principal/project pair. ACL is applied inside
-/// this query so neither lexical nor vector top-K can see an unauthorized tool.
+/// this query so neither lexical nor vector top-K can see an unauthorized tool. For `mcp_http`
+/// sources the last successful sync must also be within the freshness window.
 pub fn eligible_revisions(
     connection: &Connection,
     principal_id: &str,
     project_id: Option<&str>,
+    now: i64,
 ) -> rusqlite::Result<Vec<EligibleRevision>> {
+    let stale_before = now - super::mcp::MCP_SOURCE_STALE_AFTER_MILLIS;
     let mut statement = connection.prepare(
         "SELECT r.id, r.tool_id, r.schema_hash, r.description_hash, r.input_schema_json,
                 r.output_schema_json, r.search_text, r.operations_json, r.objects_json, r.effect,
@@ -380,6 +403,10 @@ pub fn eligible_revisions(
            JOIN tool_selection_catalog c ON c.id = r.tool_id
            JOIN tool_selection_sources s ON s.id = c.source_id
           WHERE c.enabled = 1 AND s.enabled = 1 AND c.current_revision_id = r.id
+            AND (s.kind <> 'mcp_http' OR EXISTS (
+              SELECT 1 FROM tool_selection_mcp_sources ms
+               WHERE ms.source_id = s.id AND ms.last_success_at IS NOT NULL
+                 AND ms.last_success_at >= ?4))
             AND EXISTS (
               SELECT 1 FROM tool_selection_grants g
                WHERE g.principal_id = ?1 AND g.tool_id = c.id
@@ -388,12 +415,15 @@ pub fn eligible_revisions(
             )
           ORDER BY r.tool_id ASC, r.id ASC",
     )?;
-    let rows = statement.query_map(params![principal_id, project_id], |row| {
-        Ok(EligibleRevision {
-            revision: revision_from_row(row)?,
-            tool_enabled: row.get::<_, i64>(12)? == 1,
-        })
-    })?;
+    let rows = statement.query_map(
+        params![principal_id, project_id, 0_i64, stale_before],
+        |row| {
+            Ok(EligibleRevision {
+                revision: revision_from_row(row)?,
+                tool_enabled: row.get::<_, i64>(12)? == 1,
+            })
+        },
+    )?;
     rows.collect()
 }
 
@@ -406,7 +436,9 @@ pub fn lexical_candidates(
     principal_id: &str,
     project_id: Option<&str>,
     limit: usize,
+    now: i64,
 ) -> rusqlite::Result<Vec<(String, f64)>> {
+    let stale_before = now - super::mcp::MCP_SOURCE_STALE_AFTER_MILLIS;
     let mut statement = connection.prepare(
         "SELECT f.revision_id, bm25(tool_selection_fts) AS score
            FROM tool_selection_fts f
@@ -415,6 +447,10 @@ pub fn lexical_candidates(
            JOIN tool_selection_sources s ON s.id = c.source_id
           WHERE f.search_text MATCH ?1
             AND c.enabled = 1 AND s.enabled = 1 AND c.current_revision_id = r.id
+            AND (s.kind <> 'mcp_http' OR EXISTS (
+              SELECT 1 FROM tool_selection_mcp_sources ms
+               WHERE ms.source_id = s.id AND ms.last_success_at IS NOT NULL
+                 AND ms.last_success_at >= ?5))
             AND EXISTS (
               SELECT 1 FROM tool_selection_grants g
                WHERE g.principal_id = ?2 AND g.tool_id = c.id
@@ -425,7 +461,7 @@ pub fn lexical_candidates(
           LIMIT ?4",
     )?;
     let rows = statement.query_map(
-        params![match_expression, principal_id, project_id, limit as i64],
+        params![match_expression, principal_id, project_id, limit as i64, stale_before],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
     )?;
     rows.collect()
@@ -436,7 +472,9 @@ pub fn load_embeddings(
     model_hash: &str,
     principal_id: &str,
     project_id: Option<&str>,
+    now: i64,
 ) -> rusqlite::Result<Vec<(String, Vec<f32>)>> {
+    let stale_before = now - super::mcp::MCP_SOURCE_STALE_AFTER_MILLIS;
     let mut statement = connection.prepare(
         "SELECT e.revision_id, e.dimension, e.vector
            FROM tool_selection_embeddings e
@@ -445,6 +483,10 @@ pub fn load_embeddings(
            JOIN tool_selection_sources s ON s.id = c.source_id
           WHERE e.model_hash = ?1 AND c.enabled = 1 AND s.enabled = 1
             AND c.current_revision_id = r.id
+            AND (s.kind <> 'mcp_http' OR EXISTS (
+              SELECT 1 FROM tool_selection_mcp_sources ms
+               WHERE ms.source_id = s.id AND ms.last_success_at IS NOT NULL
+                 AND ms.last_success_at >= ?4))
             AND EXISTS (
               SELECT 1 FROM tool_selection_grants g
                WHERE g.principal_id = ?2 AND g.tool_id = c.id
@@ -452,15 +494,18 @@ pub fn load_embeddings(
                    OR (g.scope_kind = 'project' AND ?3 IS NOT NULL AND g.scope_id = ?3))
             )",
     )?;
-    let rows = statement.query_map(params![model_hash, principal_id, project_id], |row| {
-        let dimension: i64 = row.get(1)?;
-        let bytes: Vec<u8> = row.get(2)?;
-        let mut vector = Vec::with_capacity(dimension as usize);
-        for chunk in bytes.chunks_exact(4) {
-            vector.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-        }
-        Ok((row.get::<_, String>(0)?, vector))
-    })?;
+    let rows = statement.query_map(
+        params![model_hash, principal_id, project_id, stale_before],
+        |row| {
+            let dimension: i64 = row.get(1)?;
+            let bytes: Vec<u8> = row.get(2)?;
+            let mut vector = Vec::with_capacity(dimension as usize);
+            for chunk in bytes.chunks_exact(4) {
+                vector.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            }
+            Ok((row.get::<_, String>(0)?, vector))
+        },
+    )?;
     rows.collect()
 }
 pub fn insert_decision(connection: &Connection, decision: &DecisionRecord) -> rusqlite::Result<()> {

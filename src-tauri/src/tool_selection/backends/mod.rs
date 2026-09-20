@@ -4,6 +4,8 @@
 #![allow(private_interfaces)]
 
 pub mod llang;
+pub mod mcp;
+pub mod router;
 
 use async_trait::async_trait;
 use serde_json::Value;

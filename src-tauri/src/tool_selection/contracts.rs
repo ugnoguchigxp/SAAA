@@ -79,6 +79,9 @@ pub struct ToolSelectionConfig {
     pub mode: SelectionMode,
     pub python_path: Option<PathBuf>,
     pub model_manifest_path: Option<PathBuf>,
+    /// Optional absolute path to the host-managed external MCP source document. Presence is
+    /// independent of discovery mode: MCP sources can be registered in direct mode too.
+    pub mcp_sources_path: Option<PathBuf>,
     pub extraction: ExtractionSetting,
     pub diagnostic: Option<&'static str>,
 }
@@ -89,6 +92,7 @@ impl ToolSelectionConfig {
             mode: SelectionMode::Direct,
             python_path: None,
             model_manifest_path: None,
+            mcp_sources_path: None,
             extraction: ExtractionSetting::ConfiguredConversationProvider,
             diagnostic: None,
         }
@@ -99,6 +103,7 @@ impl ToolSelectionConfig {
             mode: SelectionMode::Disabled,
             python_path: None,
             model_manifest_path: None,
+            mcp_sources_path: None,
             extraction: ExtractionSetting::ConfiguredConversationProvider,
             diagnostic: Some(diagnostic),
         }
@@ -146,6 +151,8 @@ struct ConfigDocument {
     mode: String,
     python_path: Option<String>,
     model_manifest_path: Option<String>,
+    #[serde(default)]
+    mcp_sources_path: Option<String>,
     extraction: Option<String>,
 }
 
@@ -171,10 +178,24 @@ impl ConfigDocument {
         {
             return ToolSelectionConfig::disabled("tool-selection discovery paths are missing");
         }
+        let mcp_sources_path = match self.mcp_sources_path {
+            None => None,
+            Some(path) if path.is_empty() => None,
+            Some(path) => {
+                let path = PathBuf::from(path);
+                if !path.is_absolute() {
+                    return ToolSelectionConfig::disabled(
+                        "tool-selection mcp sources path must be absolute",
+                    );
+                }
+                Some(path)
+            }
+        };
         ToolSelectionConfig {
             mode,
             python_path,
             model_manifest_path,
+            mcp_sources_path,
             extraction: ExtractionSetting::ConfiguredConversationProvider,
             diagnostic: None,
         }

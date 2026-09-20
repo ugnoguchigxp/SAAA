@@ -11,7 +11,7 @@ use super::settings_migration::migrate_settings_to_current;
 use crate::{meeting, memory, now_iso, voice, PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE};
 use rusqlite::{params, Connection};
 
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 23;
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 24;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
@@ -151,6 +151,9 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     )?;
 
     super::settings_migration::initialize_revision(connection)?;
+    // D4 widens tool_selection_sources.kind to mcp_http. This rebuild touches a parent table, so
+    // it must run with foreign keys disabled before the main schema transaction opens.
+    crate::tool_selection::schema::migrate_sources_kind(connection)?;
     let transaction = connection.unchecked_transaction()?;
     migrate_legacy_settings_documents(&transaction)?;
     migrate_v4_to_v5(&transaction)?;
