@@ -19,8 +19,7 @@ CREATE TABLE IF NOT EXISTS schedule_entries (
   created_at INTEGER NOT NULL,
   fired_at INTEGER,
   fire_result TEXT,
-  payload_id TEXT REFERENCES schedule_payloads(id),
-  CHECK(status != 'superseded' OR supersedes IS NOT NULL)
+  payload_id TEXT REFERENCES schedule_payloads(id)
 );
 CREATE INDEX IF NOT EXISTS schedule_due ON schedule_entries(status, due_at);
 CREATE TABLE IF NOT EXISTS calendar_projections (
