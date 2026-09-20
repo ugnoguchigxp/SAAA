@@ -52,6 +52,10 @@ struct ServerState {
     injected_bad_page: Mutex<Option<usize>>,
     cursor_map: Mutex<HashMap<String, usize>>,
     calls_while_uninitialized: AtomicUsize,
+    unauthorized: AtomicBool,
+    emit_progress: AtomicBool,
+    server_request: AtomicBool,
+    unsupported_reply: Mutex<Option<i64>>,
 }
 
 struct MockServer {
@@ -185,10 +189,19 @@ async fn write_response(
 }
 
 async fn write_sse(socket: &mut tokio::net::TcpStream, message: &Value) -> std::io::Result<()> {
+    write_sse_messages(socket, std::slice::from_ref(message)).await
+}
+
+async fn write_sse_messages(
+    socket: &mut tokio::net::TcpStream,
+    messages: &[Value],
+) -> std::io::Result<()> {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
     socket.write_all(head.as_bytes()).await?;
-    let event = format!("data: {message}\n\n");
-    socket.write_all(event.as_bytes()).await?;
+    for message in messages {
+        let event = format!("data: {message}\n\n");
+        socket.write_all(event.as_bytes()).await?;
+    }
     socket.flush().await
 }
 
@@ -206,6 +219,16 @@ async fn serve(
         .to_string();
     if method == "GET" {
         if state.get_supported.load(Ordering::SeqCst) {
+            if state.server_request.load(Ordering::SeqCst) {
+                // An unsupported server request must receive a JSON-RPC method-not-found reply.
+                let request = json!({
+                    "jsonrpc": "2.0",
+                    "id": "srv-1",
+                    "method": "sampling/createMessage",
+                    "params": {}
+                });
+                return write_sse(socket, &request).await;
+            }
             let notification = json!({
                 "jsonrpc": "2.0",
                 "method": "notifications/tools/list_changed"
@@ -219,6 +242,9 @@ async fn serve(
         return write_response(socket, "200 OK", "application/json", b"{}").await;
     }
     let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    if state.unauthorized.load(Ordering::SeqCst) {
+        return write_response(socket, "401 Unauthorized", "text/plain", b"").await;
+    }
     let rpc_method = request
         .get("method")
         .and_then(Value::as_str)
@@ -336,6 +362,14 @@ async fn serve(
             let result = state.call_result.lock().unwrap().clone();
             let message = json!({ "jsonrpc": "2.0", "id": id.clone(), "result": result });
             if state.sse.load(Ordering::SeqCst) {
+                if state.emit_progress.load(Ordering::SeqCst) {
+                    let progress = json!({
+                        "jsonrpc": "2.0",
+                        "method": "notifications/progress",
+                        "params": { "progress": 1, "total": 2 }
+                    });
+                    return write_sse_messages(socket, &[progress, message]).await;
+                }
                 return write_sse(socket, &message).await;
             }
             return write_response(
@@ -352,6 +386,9 @@ async fn serve(
         _ => {
             // A response to a server request carries no method.
             if request.get("result").is_some() || request.get("error").is_some() {
+                if let Some(code) = request.pointer("/error/code").and_then(Value::as_i64) {
+                    *state.unsupported_reply.lock().unwrap() = Some(code);
+                }
                 return write_response(socket, "202 Accepted", "application/json", b"").await;
             }
             return write_response(socket, "200 OK", "application/json", b"{}").await;
@@ -1734,4 +1771,63 @@ async fn t09_missing_embeddings_degrade_to_lexical_without_inventing_confidence(
         crate::tool_selection::contracts::DecisionStatus::Degraded
     );
     assert!(response.degraded);
+}
+
+// ---------------------------------------------------------------------------------------------
+// A06/A15 transport edge cases
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a06_progress_notifications_are_ignored_and_the_result_is_returned() {
+    let state = default_state();
+    state.sse.store(true, Ordering::SeqCst);
+    state.emit_progress.store(true, Ordering::SeqCst);
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    let response = describe_and_invoke(&harness, json!({ "q": "v" })).await;
+    assert_eq!(
+        response.status,
+        crate::tool_selection::backends::TechnicalStatus::Succeeded
+    );
+}
+
+#[tokio::test]
+async fn a15_unauthorized_is_a_remote_failure() {
+    let state = default_state();
+    state.unauthorized.store(true, Ordering::SeqCst);
+    let server = MockServer::start(state).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    let error = harness
+        .manager
+        .sync_source("mcp-test")
+        .await
+        .expect_err("401 fails the sync");
+    assert_eq!(error.code, "remote-unauthorized");
+    // No source success is recorded for an unauthorized server.
+    let fresh = harness
+        .writer
+        .read_serialized(|c| mcp_repo::is_fresh(c, "mcp-test", now_ms()).map_err(|e| e.to_string()))
+        .unwrap();
+    assert!(!fresh);
+}
+
+#[tokio::test]
+async fn a15_unsupported_server_request_is_refused_with_method_not_found() {
+    let state = default_state();
+    state.server_request.store(true, Ordering::SeqCst);
+    state.get_supported.store(true, Ordering::SeqCst);
+    let server = MockServer::start(state.clone()).await;
+    let harness = Harness::new(&server, vec![user_grant("search")]);
+    harness.manager.sync_source("mcp-test").await.expect("sync");
+    // The GET watcher reads the server request and replies with -32601; the request is never run.
+    let mut reply = None;
+    for _ in 0..100 {
+        reply = *state.unsupported_reply.lock().unwrap();
+        if reply.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(reply, Some(-32601));
 }

@@ -283,6 +283,9 @@ fn map_transport(error: TransportError) -> CallError {
         TransportError::Protocol(code) => CallError::Protocol(code),
         TransportError::BodyTooLarge => CallError::Protocol("remote-too-large"),
         TransportError::Rpc { .. } => CallError::RpcError,
+        // A 401/403 is a definite, non-retryable refusal and is kept distinct from an
+        // indeterminate outcome.
+        TransportError::Http(401 | 403) => CallError::Unavailable("remote-unauthorized"),
         TransportError::Http(_) => CallError::Unknown("remote-http"),
         TransportError::Closed => CallError::Closed,
     }
