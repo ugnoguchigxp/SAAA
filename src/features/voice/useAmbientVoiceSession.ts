@@ -9,11 +9,10 @@ export { effectiveCaptureSettings } from "./voiceCaptureSettings";
 import { VoiceCaptureResources } from "./VoiceCaptureResources";
 import { useCommittedCallback } from "../../useCommittedCallback";
 import { useLarmVoiceLifetime } from "./useLarmVoiceLifetime";
-import { cancelReasoningRun } from "../../lib/reasoningRunControl";
+import { receiveLfmUtterance, speakLfmReply } from "../../lib/lfmConversationRuntime";
 import { useEffect, useRef, useState } from "react";
 import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
-import { appendConversationActivity } from "../../lib/conversationActivity";
 import type { ConversationVoicePolicySnapshot, VoiceSettings } from "../../lib/contracts";
 
 import {
@@ -67,12 +66,13 @@ export function useAmbientVoiceSession({
   conversationSessionRef,
   pendingVoicePromptsRef,
   setError,
-  setRuntimeActivity,
   stopSpeech,
   submitPrompt,
   persistListeningEnabled,
 }: AmbientVoiceSessionOptions) {
   const [voiceSession, setVoiceSession] = useState(initialVoiceSession);
+  const lfmInputQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingLfmInputsRef = useRef(0);
   const [listeningEnabled, setListeningEnabled] = useState(false);
   const updateLarmLifetime = useLarmVoiceLifetime(
     listeningEnabled,
@@ -81,7 +81,7 @@ export function useAmbientVoiceSession({
       voiceSessionProcessing(voiceSessionRef.current) ||
       acceptedVoiceAsrSessionsRef.current.size > 0 ||
       !!conversationSessionRef.current.runId ||
-      pendingVoicePromptsRef.current.length > 0,
+      pendingVoicePromptsRef.current.length > 0 || pendingLfmInputsRef.current > 0,
     (message) => setError((current) => current ?? message),
   );
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -585,42 +585,35 @@ export function useAmbientVoiceSession({
       return;
     }
     if (result !== "accepted") return;
-    const queueBehindActiveTurn = Boolean(conversationSessionRef.current.runId);
-    if (queueBehindActiveTurn && pendingVoicePromptsRef.current.length >= 2) {
-      auditVoiceDeliveryBlocked(
-        event.sessionId,
-        event.utteranceId,
-        conversationId,
-        pendingVoicePromptsRef.current.length,
-      );
-      setError((current) => current ?? uiMessage("chatVoicePendingLimit"));
-      void terminateFailedVoiceCapture();
-      return;
-    }
     const queued = voiceFinalDeliveryRef.current.claim(event.utteranceId);
     if (!queued) return;
     const onSettled = auditVoiceDeliverySettlement(queued, (delivered) =>
       voiceFinalDeliveryRef.current.settle(queued.utteranceId, delivered),
     );
-    if (queueBehindActiveTurn) {
-      auditVoiceDeliveryDecision(queued, "queued", pendingVoicePromptsRef.current.length + 1);
-      pendingVoicePromptsRef.current.push({
-        content: queued.text,
-        inputOrigin: "voice",
-        sourceId: queued.utteranceId,
-        onSettled,
-      });
-      setRuntimeActivity((current) =>
-        appendConversationActivity(current, { type: "voiceQueryQueued" }),
-      );
-      void cancelReasoningRun(conversationSessionRef.current.runId).catch(() => undefined);
-      return;
-    }
     auditVoiceDeliveryDecision(queued, "immediate");
-    void submitPrompt(queued.text, {
-      inputOrigin: "voice",
-      sourceId: queued.utteranceId,
-      onSettled,
+    pendingLfmInputsRef.current += 1;
+    // Serialize LFM inputs only. Never wait for or cancel Qwen to accept the next utterance.
+    lfmInputQueueRef.current = lfmInputQueueRef.current.then(async () => {
+      if (disposedRef.current || selectedConversationIdRef.current !== conversationId) {
+        onSettled(false);
+        pendingLfmInputsRef.current -= 1;
+        return;
+      }
+      try {
+        const decision = await receiveLfmUtterance(conversationId, queued.utteranceId, queued.text);
+        onSettled(true);
+        if (disposedRef.current || selectedConversationIdRef.current !== conversationId) return;
+        void speakLfmReply(conversationId, queued.utteranceId, decision.speechEpoch,
+          (message) => setError(message)).catch((cause) => setError(`LFM 音声: ${toMessage(cause)}`));
+        if (decision.handoffId && decision.requestContent) {
+          void submitPrompt(decision.requestContent, { inputOrigin: "voice", sourceId: decision.handoffId });
+        }
+      } catch (cause) {
+        onSettled(false);
+        setError(`LFM 応対失敗: ${toMessage(cause)}`);
+      } finally {
+        pendingLfmInputsRef.current -= 1;
+      }
     });
   }
 

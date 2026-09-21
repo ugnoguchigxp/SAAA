@@ -1,19 +1,15 @@
 import { WorldScopeSelector } from "./WorldScopeSelector";
-import { CodingJobs } from "../coding/CodingJobs";
 import { SetupChecklist } from "./SetupChecklist";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
 import {
-  localizeProviderLabel,
   localizeRuntimeActivity,
   localizeStatus,
   localizeUiMessage,
 } from "../../i18n/presentation";
 import { DEFAULT_VOICE_SILENCE_TIMEOUT_MS } from "../../lib/voiceActivity";
-import { ChatOverflowMenu } from "./ChatOverflowMenu";
-import { ConversationVoiceBehaviorBar } from "./ConversationVoiceBehaviorBar";
-import { UiControls } from "./ui/UiControls";
+import { ConversationBehaviorMenu } from "./ConversationBehaviorMenu";
 import { VirtualMessages } from "./VirtualMessages";
 import { StreamingPlainText } from "./ChatMessages";
 import { RoutingProposal } from "./RoutingProposal";
@@ -100,53 +96,6 @@ export function ChatPage({
   }
   return (
     <section className="chat-panel">
-      <header className="topbar">
-        <div className="topbar-heading">
-          <ChatOverflowMenu />
-          <div>
-            <p className="eyebrow">{t("chat.eyebrow")}</p>
-            <h1>{t("chat.title")}</h1>
-          </div>
-        </div>
-        <div className="topbar-status">
-          <UiControls conversationId={selectedConversation?.id} />
-          <span className="status-pill local-status">
-            <span className="status-dot" />
-            {modelProviderStatus.location === "cloud"
-              ? t("chat.cloudProcessing")
-              : modelProviderStatus.location === "local"
-                ? t("chat.localProcessing")
-                : t("chat.processingNotSelected")}
-          </span>
-          <button
-            className={
-              !modelProviderStatus.ready
-                ? "status-pill provider-status warning"
-                : "status-pill provider-status"
-            }
-            onClick={onOpenSettings}
-          >
-            <AppIcon name="model" />
-            {localizeProviderLabel(t, modelProviderStatus.label)}
-            {modelProviderStatus.state === "failed"
-              ? t("chat.failedSuffix")
-              : modelProviderStatus.state === "unchecked"
-                ? t("chat.uncheckedSuffix")
-                : modelProviderStatus.fallbackUsed
-                  ? t("chat.fallbackSuffix")
-                  : ""}
-          </button>
-          <button
-            type="button"
-            className="status-pill"
-            onClick={onOpenSettings}
-            aria-label={t("app.settings")}
-            title={t("app.settings")}
-          >
-            <AppIcon name="settings" />
-          </button>
-        </div>
-      </header>
       {worldScope && (
         <WorldScopeSelector
           status={worldScope.status}
@@ -154,7 +103,6 @@ export function ChatPage({
           onChange={worldScope.select}
         />
       )}
-      <CodingJobs conversationId={selectedConversation?.id} />
       <RoutingProposal
         snapshot={routingSnapshot}
         events={routingEvents}
@@ -164,16 +112,6 @@ export function ChatPage({
         onCancel={onCancelRouting}
         onDecideProposal={onDecideRoutingProposal}
       />
-      {voicePolicy && (
-        <ConversationVoiceBehaviorBar
-          policy={voicePolicy}
-          disabled={voicePolicyUpdating}
-          onOpenSettings={onOpenSettings}
-          onSetSpeechOutput={onSetConversationSpeechOutput}
-          onSetListeningPace={onSetConversationListeningPace}
-          onReset={onResetConversationVoiceOverrides}
-        />
-      )}
       <div
         className="message-area"
         ref={messageAreaRef}
@@ -301,6 +239,17 @@ export function ChatPage({
             disabled={Boolean(activeRunId)}
           />
           <div className="composer-end">
+            {voicePolicy && (
+              <ConversationBehaviorMenu
+                conversationId={selectedConversation?.id}
+                policy={voicePolicy}
+                disabled={voicePolicyUpdating}
+                onOpenSettings={onOpenSettings}
+                onSetSpeechOutput={onSetConversationSpeechOutput}
+                onSetListeningPace={onSetConversationListeningPace}
+                onReset={onResetConversationVoiceOverrides}
+              />
+            )}
             {activeRunId ? (
               <button className="stop-button composer-stop" type="button" onClick={onStopRun}>
                 <AppIcon name="stop" />
@@ -319,6 +268,17 @@ export function ChatPage({
           </div>
         </div>
         <div className="composer-meta" aria-live="polite">
+          {!modelProviderStatus.ready && (
+            <button
+              className="text-button provider-recovery"
+              type="button"
+              onClick={onOpenSettings}
+            >
+              {modelProviderStatus.state === "failed"
+                ? t("chat.providerUnavailable")
+                : t("chat.processingNotSelected")}
+            </button>
+          )}
           {voiceState === "recording" && (
             <span className="composer-hint">
               {t("chat.listeningHint", {

@@ -436,7 +436,9 @@ fn dw_10_settled_read_step_durably_enqueues_one_dependent_test_step() {
         insert_job(&state, &first, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "settled", Some("run")))
+            .write(|connection| {
+                repo::apply_terminal_event(connection, "job", "settled", Some("run"))
+            })
             .unwrap();
         assert_eq!(
             count(
@@ -468,7 +470,9 @@ fn dw_10_settled_read_step_durably_enqueues_one_dependent_test_step() {
         assert_eq!(successor_step, "test");
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "settled", Some("run")))
+            .write(|connection| {
+                repo::apply_terminal_event(connection, "job", "settled", Some("run"))
+            })
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
     });
@@ -508,7 +512,9 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
         insert_job(&state, &first, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "failed", Some("run")))
+            .write(|connection| {
+                repo::apply_terminal_event(connection, "job", "failed", Some("run"))
+            })
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 2);
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
@@ -555,7 +561,9 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
         insert_job(&state, &second, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "failed", Some("run")))
+            .write(|connection| {
+                repo::apply_terminal_event(connection, "job", "failed", Some("run"))
+            })
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 3);
         let third: String = state
@@ -590,7 +598,9 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
         insert_job(&state, &third, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "failed", Some("run")))
+            .write(|connection| {
+                repo::apply_terminal_event(connection, "job", "failed", Some("run"))
+            })
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 3);
     });
@@ -1399,4 +1409,44 @@ fn ml_08_acceptance_register_divert_complete_withdraw() {
             .unwrap();
         assert!(listed.as_array().is_some_and(|rows| !rows.is_empty()));
     });
+}
+
+#[test]
+fn ui_queue_reorder_is_durable_and_changes_dispatch_priority() {
+    let connection = db();
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO steward_goals(id,conversation_id,origin,success_condition,status,created_at,summary) VALUES
+               ('g1','{PRIMARY_CONVERSATION_ID}','user_explicit','one','active','1','one'),
+               ('g2','{PRIMARY_CONVERSATION_ID}','user_explicit','two','active','2','two');
+             INSERT INTO steward_delegations(id,goal_id,conversation_id,workspace_id,ops,budget_runs,budget_ms,notify,status,created_at) VALUES
+               ('d1','g1','{PRIMARY_CONVERSATION_ID}','ws','read',2,1000,'silent','active','1'),
+               ('d2','g2','{PRIMARY_CONVERSATION_ID}','ws','read',2,1000,'silent','active','2');
+             INSERT INTO steward_tasks(id,delegation_id,conversation_id,trigger_kind,source_id,dedupe_key,loop_state,created_at,updated_at,queue_rank) VALUES
+               ('t1','d1','{PRIMARY_CONVERSATION_ID}','start','s1','k1','queued','1','1',1),
+               ('t2','d2','{PRIMARY_CONVERSATION_ID}','start','s2','k2','queued','2','2',2);"
+        ))
+        .unwrap();
+
+    repo::reorder_queue(
+        &connection,
+        PRIMARY_CONVERSATION_ID,
+        &["t2".into(), "t1".into()],
+    )
+    .unwrap();
+
+    let ordered = connection
+        .prepare("SELECT id FROM steward_tasks ORDER BY queue_rank")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(ordered, vec!["t2", "t1"]);
+    assert_eq!(
+        repo::next_queued_work(&connection, PRIMARY_CONVERSATION_ID)
+            .unwrap()
+            .map(|(_, task)| task),
+        Some("t2".into())
+    );
 }

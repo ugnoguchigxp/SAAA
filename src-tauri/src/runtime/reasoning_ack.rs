@@ -12,6 +12,11 @@ pub(in crate::runtime) async fn speak(
     conversation_id: &str,
     cancellation: Arc<RunCancellation>,
 ) {
+    // Voice conversation acknowledgements belong to the LFM front desk, not Qwen's timer.
+    let delegated_voice = state.sqlite_readers.read(|c|c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM lfm_voice_utterances WHERE claimed_run_id=?1)",
+        [run_id],|r|r.get::<_,bool>(0)).map_err(crate::database_error)).unwrap_or(false);
+    if delegated_voice { return; }
     if !hub.streaming_speech || cancellation.is_cancelled() {
         return;
     }

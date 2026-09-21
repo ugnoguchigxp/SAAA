@@ -37,6 +37,7 @@ pub(crate) fn list_ui_view_revisions(
         .sqlite_readers
         .read(|c| store::list_revisions(c, &view_id))
 }
+
 #[tauri::command]
 pub(crate) fn query_ui_source(
     state: tauri::State<'_, AppState>,

@@ -1,8 +1,5 @@
 use super::{holds_speech, inspect_tts_hold, speech_holds_runtime, speech_holds_tts};
-use crate::ipc_contract::RuntimeEvent;
 use crate::persistence::schema::initialize_database;
-use crate::runtime::event_hub::RuntimeEventSender;
-use crate::runtime::voice_response;
 use crate::situation::contracts::{
     CalendarSignal, CalendarState, ForegroundCategory, ForegroundSignal, InputActivitySignal,
     InputActivityState, SituationRuntimeSettings, TimeBucket,
@@ -10,26 +7,8 @@ use crate::situation::contracts::{
 use crate::situation::SituationSample;
 use crate::test_support::app_state;
 use crate::voice_behavior::{self, begin_run};
-use crate::{AppState, RunCancellation, StartTurnInput};
+use crate::{AppState, StartTurnInput};
 use rusqlite::Connection;
-use std::sync::Arc;
-
-#[derive(Clone)]
-struct VoiceOn;
-
-impl RuntimeEventSender for VoiceOn {
-    fn send(&self, _event: RuntimeEvent) -> tauri::Result<()> {
-        Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn RuntimeEventSender> {
-        Box::new(self.clone())
-    }
-
-    fn voice_response_enabled(&self) -> bool {
-        true
-    }
-}
 
 fn state() -> AppState {
     let connection = Connection::open_in_memory().expect("database opens");
@@ -156,13 +135,7 @@ fn st_03_hold_blocks_voice_start_and_streaming_policy() {
         .situation
         .set_scene_attention_for_test("MEETING", "OBSERVE");
     let start_input = ready_run(&state, "st-03-hold");
-    let handle = voice_response::start(
-        &state,
-        &start_input,
-        &VoiceOn,
-        Arc::new(RunCancellation::default()),
-    );
-    assert!(handle.is_none());
+    assert_eq!(voice_behavior::effective_presentation(&state, Some(&start_input.run_id), &start_input.conversation_id).unwrap().decision, "silent");
     voice_behavior::end_run(&state, &start_input.run_id);
     let stream_input = voice_input("st-03-stream");
     let (streaming, enabled) =
@@ -191,14 +164,7 @@ fn st_03_non_hold_allows_speak_policy() {
         voice_behavior::begin_turn_speech_policy(&state, &input).expect("policy");
     assert!(streaming);
     assert!(enabled);
-    let handle = voice_response::start(
-        &state,
-        &input,
-        &VoiceOn,
-        Arc::new(RunCancellation::default()),
-    );
-    assert!(handle.is_some());
-    handle.expect("spawned").abort();
+    assert_eq!(voice_behavior::effective_presentation(&state, Some(&input.run_id), &input.conversation_id).unwrap().decision, "speak");
     voice_behavior::end_run(&state, &input.run_id);
 }
 
@@ -238,7 +204,7 @@ fn st_04_held_audit_has_no_body() {
 }
 
 #[test]
-fn st_05_start_none_then_some_after_hysteresis() {
+fn st_05_speech_policy_changes_after_hysteresis() {
     let state = state();
     state
         .situation
@@ -262,13 +228,7 @@ fn st_05_start_none_then_some_after_hysteresis() {
     }
     assert!(speech_holds_tts(&state));
     let held = ready_run(&state, "st-05-held");
-    let handle = voice_response::start(
-        &state,
-        &held,
-        &VoiceOn,
-        Arc::new(RunCancellation::default()),
-    );
-    assert!(handle.is_none());
+    assert_eq!(voice_behavior::effective_presentation(&state, Some(&held.run_id), &held.conversation_id).unwrap().decision, "silent");
     voice_behavior::end_run(&state, &held.run_id);
 
     for observed_ms in [26_000_u128, 28_000, 30_000] {
@@ -282,14 +242,7 @@ fn st_05_start_none_then_some_after_hysteresis() {
     }
     assert!(!speech_holds_tts(&state));
     let open = ready_run(&state, "st-05-open");
-    let handle = voice_response::start(
-        &state,
-        &open,
-        &VoiceOn,
-        Arc::new(RunCancellation::default()),
-    );
-    assert!(handle.is_some());
-    handle.expect("spawned").abort();
+    assert_eq!(voice_behavior::effective_presentation(&state, Some(&open.run_id), &open.conversation_id).unwrap().decision, "speak");
     voice_behavior::end_run(&state, &open.run_id);
 }
 

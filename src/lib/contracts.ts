@@ -141,6 +141,19 @@ export type AuditEvent = {
   attributes: Record<string, boolean | number | string>;
 };
 
+export type AuditEventSortField =
+  | "occurredAt"
+  | "component"
+  | "eventName"
+  | "phase"
+  | "outcome"
+  | "failureCode";
+
+export type AuditEventListInput = {
+  sortBy: AuditEventSortField;
+  direction: "asc" | "desc";
+};
+
 export function findSettingsDocument(
   documents: SettingsDocument[],
   namespace: SettingsNamespace,

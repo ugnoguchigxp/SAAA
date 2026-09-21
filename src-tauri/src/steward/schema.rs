@@ -179,6 +179,15 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         "steward_tasks",
         "revision INTEGER NOT NULL DEFAULT 1",
     )?;
+    add_column(
+        connection,
+        "steward_tasks",
+        "queue_rank INTEGER NOT NULL DEFAULT 0",
+    )?;
+    connection.execute(
+        "UPDATE steward_tasks SET queue_rank=rowid WHERE queue_rank=0",
+        [],
+    )?;
     add_column(connection, "steward_tasks", "goal_plan_id TEXT")?;
     add_column(connection, "steward_tasks", "plan_step_id TEXT")?;
     add_column(

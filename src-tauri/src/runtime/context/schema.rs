@@ -113,6 +113,64 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         "scope_digest",
         "TEXT CHECK(scope_digest IS NULL OR length(scope_digest)=64)",
     )?;
+    backfill_legacy_coding_scopes(connection)?;
+    Ok(())
+}
+
+fn backfill_legacy_coding_scopes(connection: &Connection) -> rusqlite::Result<()> {
+    let has_workspaces: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='coding_workspaces')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_workspaces {
+        return Ok(());
+    }
+    connection.execute_batch(
+        "INSERT INTO context_scopes(scope_key,kind,opaque_id,state,created_at)
+         SELECT 'project:' || id,'project',id,'active',strftime('%s','now') || '000'
+         FROM coding_workspaces
+         WHERE true
+         ON CONFLICT(scope_key) DO UPDATE SET state='active';
+         INSERT INTO context_scopes(scope_key,kind,opaque_id,state,created_at)
+         SELECT 'resource:' || id,'resource',id,'active',strftime('%s','now') || '000'
+         FROM coding_workspaces
+         WHERE true
+         ON CONFLICT(scope_key) DO UPDATE SET state='active';
+         INSERT OR IGNORE INTO context_scope_epochs(scope_key,epoch)
+         SELECT scope_key,0 FROM context_scopes
+         WHERE kind IN ('project','resource');
+         INSERT OR IGNORE INTO context_scope_links(
+           parent_scope_key,child_scope_key,relation,created_at
+         )
+         SELECT 'project:' || id,'resource:' || id,'parent',strftime('%s','now') || '000'
+         FROM coding_workspaces;",
+    )?;
+
+    let has_jobs: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='coding_jobs')",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_jobs {
+        connection.execute_batch(
+            "INSERT OR IGNORE INTO context_scopes(scope_key,kind,opaque_id,state,created_at)
+             SELECT 'task:' || jobs.id,'task',jobs.id,'active',strftime('%s','now') || '000'
+             FROM coding_jobs AS jobs
+             JOIN coding_workspaces AS workspaces ON workspaces.id=jobs.workspace_id
+             WHERE jobs.state IN ('queued','running','cancel_requested');
+             INSERT OR IGNORE INTO context_scope_epochs(scope_key,epoch)
+             SELECT scope_key,0 FROM context_scopes WHERE kind='task';
+             INSERT OR IGNORE INTO context_scope_links(
+               parent_scope_key,child_scope_key,relation,created_at
+             )
+             SELECT 'resource:' || jobs.workspace_id,'task:' || jobs.id,'parent',
+                    strftime('%s','now') || '000'
+             FROM coding_jobs AS jobs
+             JOIN coding_workspaces AS workspaces ON workspaces.id=jobs.workspace_id
+             WHERE jobs.state IN ('queued','running','cancel_requested');",
+        )?;
+    }
     Ok(())
 }
 
@@ -198,5 +256,60 @@ mod tests {
         assert_eq!(receipt.0, None);
         assert_eq!(receipt.1, None);
         assert_eq!(receipt.2.len(), 64);
+    }
+
+    #[test]
+    fn migration_registers_scopes_for_legacy_coding_workspaces() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);
+                 CREATE TABLE provider_sessions(id TEXT PRIMARY KEY);
+                 CREATE TABLE conversation_messages(id TEXT PRIMARY KEY, content TEXT);
+                 CREATE TABLE coding_workspaces(
+                   id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL,path TEXT NOT NULL
+                 );
+                 INSERT INTO coding_workspaces VALUES('workspace_legacy','conversation','/tmp/project');",
+            )
+            .unwrap();
+
+        migrate(&connection).unwrap();
+        migrate(&connection).unwrap();
+
+        let scopes: Vec<(String, String, String)> = connection
+            .prepare(
+                "SELECT scope_key,kind,state FROM context_scopes
+                 WHERE opaque_id='workspace_legacy' ORDER BY scope_key",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            scopes,
+            vec![
+                (
+                    "project:workspace_legacy".into(),
+                    "project".into(),
+                    "active".into()
+                ),
+                (
+                    "resource:workspace_legacy".into(),
+                    "resource".into(),
+                    "active".into()
+                )
+            ]
+        );
+        let linked: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM context_scope_links
+                 WHERE parent_scope_key='project:workspace_legacy'
+                   AND child_scope_key='resource:workspace_legacy')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(linked);
     }
 }

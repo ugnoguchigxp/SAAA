@@ -51,15 +51,15 @@ describe("conversation voice behavior", () => {
     ).toContain("update_conversation_voice_behavior");
   });
 
-  test("maps the conversation listening profile into the next detector snapshot", () => {
+  test("voice segmentation stays at 1.5 seconds; LFM decides whether the request is complete", () => {
     const snapshot = effectiveCaptureSettings(voiceSettings, voicePolicy);
 
-    expect(snapshot?.silenceTimeoutMs).toBe(2_500);
+    expect(snapshot?.silenceTimeoutMs).toBe(1_500);
     expect(voiceSettings.silenceTimeoutMs).toBe(1_500);
   });
 
   test("keeps the global detector timing when no conversation override is loaded", () => {
-    expect(effectiveCaptureSettings(voiceSettings, null)).toBe(voiceSettings);
+    expect(effectiveCaptureSettings(voiceSettings, null)).toEqual(voiceSettings);
   });
 
   test("does not let a delayed completion replace a newer manual policy update", () => {

@@ -15,7 +15,7 @@ use rusqlite::{params, Connection};
 /// tables. 27 dropped Meeting session tables. 28 adds the role-routing ledger; 29 adds its
 /// local learning ledger. 30 adds the schedule ledger (CREATE IF NOT EXISTS only).
 /// 31 adds steward execution progress, expanded task states, recipes, and source bindings.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 32;
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 33;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -227,6 +227,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     super::remove_legacy_provider::migrate(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     super::audit::initialize_schema(&transaction)?;
+    crate::larm_voice::frontdesk_repository::migrate(&transaction)?;
     transaction.execute(
         "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,attributes_json)
          VALUES(?1,?2,'app','database-ready','terminal','success','{}')",

@@ -263,7 +263,8 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
                     (SELECT r.speech_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1),
                     COALESCE((SELECT group_concat(a.reference, char(31)) FROM steward_task_artifacts a WHERE a.task_id=t.id), ''),
                     (SELECT o.outcome FROM steward_verifier_outcomes o WHERE o.task_id=t.id ORDER BY o.rowid DESC LIMIT 1),
-                    (SELECT o.reason_code FROM steward_verifier_outcomes o WHERE o.task_id=t.id ORDER BY o.rowid DESC LIMIT 1)
+                    (SELECT o.reason_code FROM steward_verifier_outcomes o WHERE o.task_id=t.id ORDER BY o.rowid DESC LIMIT 1),
+                    t.revision,t.queue_rank,t.created_at,t.updated_at
              FROM steward_tasks t
              JOIN steward_delegations d ON d.id=t.delegation_id
              JOIN steward_goals g ON g.id=d.goal_id
@@ -293,6 +294,10 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
                 "artifactRefs": artifacts.split('\u{1f}').filter(|value| !value.is_empty()).collect::<Vec<_>>(),
                 "verifierOutcome": row.get::<_, Option<String>>(16)?,
                 "evidenceReason": row.get::<_, Option<String>>(17)?,
+                "revision": row.get::<_, i64>(18)?,
+                "queueRank": row.get::<_, i64>(19)?,
+                "createdAt": row.get::<_, String>(20)?,
+                "updatedAt": row.get::<_, String>(21)?,
             }))
         })
         .map_err(database_error)?;
@@ -525,6 +530,10 @@ pub(crate) fn queue_task(
         params![id, work.delegation_id, conversation_id, kind, source_id, key, now, goal_plan_id, plan_step_id],
     ) {
         Ok(_) => {
+            connection.execute(
+                "UPDATE steward_tasks SET queue_rank=(SELECT COALESCE(MAX(queue_rank),0)+1 FROM steward_tasks WHERE conversation_id=?2 AND id<>?1) WHERE id=?1",
+                params![id, conversation_id],
+            ).map_err(database_error)?;
             connection.execute(
                 "INSERT INTO steward_budget_reservations(id,delegation_id,task_id,state,created_at) VALUES(?1,?2,?3,'reserved',?4)",
                 params![new_id("budget"), work.delegation_id, id, now],
@@ -891,9 +900,50 @@ pub(crate) fn next_queued_work(
         "SELECT g.id,g.status,d.id,d.workspace_id,d.budget_runs,d.budget_ms,0,d.ops,g.verifier,t.id
          FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id JOIN steward_goals g ON g.id=d.goal_id
          WHERE t.conversation_id=?1 AND t.loop_state='queued' AND g.status='active' AND g.superseded_by IS NULL
-           AND d.status='active' AND d.superseded_by IS NULL ORDER BY t.rowid LIMIT 1",
+           AND d.status='active' AND d.superseded_by IS NULL ORDER BY t.queue_rank,t.rowid LIMIT 1",
         [conversation_id], |r| Ok((ActiveWork { goal_id:r.get(0)?, goal_status:r.get(1)?, delegation_id:r.get(2)?, workspace_id:r.get(3)?, budget_runs:r.get(4)?, budget_ms:r.get(5)?, superseded:r.get::<_, i64>(6)? != 0, ops:r.get(7)?, verifier:r.get(8)? }, r.get(9)?)),
     ).optional().map_err(database_error)
+}
+
+pub(crate) fn reorder_queue(
+    connection: &Connection,
+    conversation_id: &str,
+    task_ids: &[String],
+) -> Result<(), String> {
+    if task_ids.len() > 256 {
+        return Err("work_queue_too_large".into());
+    }
+    let unique = task_ids.iter().collect::<std::collections::HashSet<_>>();
+    if unique.len() != task_ids.len() {
+        return Err("work_queue_duplicate".into());
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT id FROM steward_tasks WHERE conversation_id=?1 AND loop_state='queued' ORDER BY queue_rank,rowid",
+        )
+        .map_err(database_error)?;
+    let current = statement
+        .query_map([conversation_id], |row| row.get::<_, String>(0))
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    drop(statement);
+    let current_set = current.iter().collect::<std::collections::HashSet<_>>();
+    if current_set != unique {
+        return Err("work_queue_stale".into());
+    }
+    for (index, task_id) in task_ids.iter().enumerate() {
+        let changed = connection
+            .execute(
+                "UPDATE steward_tasks SET queue_rank=?1,revision=revision+1,updated_at=?2 WHERE id=?3 AND conversation_id=?4 AND loop_state='queued'",
+                params![(index as i64) + 1, now_iso(), task_id, conversation_id],
+            )
+            .map_err(database_error)?;
+        if changed != 1 {
+            return Err("work_queue_stale".into());
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn inspectable_jobs(

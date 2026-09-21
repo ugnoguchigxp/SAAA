@@ -5,6 +5,7 @@ import { stageAudioUpload } from "./audioIpc";
 import type {
   AppSnapshot,
   AuditEvent,
+  AuditEventListInput,
   ConversationMessage,
   ModelProviderSettings,
   LocalArtifactResult,
@@ -121,8 +122,8 @@ export async function exportDiagnostics(): Promise<LocalArtifactResult> {
   return invoke<LocalArtifactResult>("export_diagnostics");
 }
 
-export async function listAuditEvents(): Promise<AuditEvent[]> {
-  return invoke<AuditEvent[]>("list_audit_events");
+export async function listAuditEvents(input: AuditEventListInput): Promise<AuditEvent[]> {
+  return invoke<AuditEvent[]>("list_audit_events", { input });
 }
 
 export async function backupDatabase(): Promise<LocalArtifactResult> {

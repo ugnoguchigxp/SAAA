@@ -1,5 +1,6 @@
 import { recordAuditEvent } from "../../lib/auditRuntime";
 import type { RuntimeEvent } from "../../lib/contracts";
+import { isHarnessFailureCode, isHarnessProgressCode } from "../../lib/harnessFailureDiagnostics";
 
 export function recordRuntimeLifecycleAudit(event: RuntimeEvent, conversationId: string) {
   const common = { correlationId: event.runId, conversationId, runtimeRunId: event.runId };
@@ -22,6 +23,7 @@ export function recordRuntimeLifecycleAudit(event: RuntimeEvent, conversationId:
         eventName: "runtime-activity-received",
         phase: "progress",
         subjectId: event.runId,
+        attributes: isHarnessProgressCode(event.kind) ? { reasonCode: event.kind } : {},
       });
       break;
     case "providerFailed":
@@ -32,7 +34,7 @@ export function recordRuntimeLifecycleAudit(event: RuntimeEvent, conversationId:
         phase: "error",
         outcome: "failure",
         subjectId: event.providerId,
-        failureCode: "provider-failed",
+        failureCode: isHarnessFailureCode(event.reason) ? event.reason : "provider-failed",
       });
       break;
     case "messageCompleted":

@@ -9,7 +9,7 @@ export function WorldScopeSelector({
   onChange: (key: string) => void;
 }) {
   return (
-    <aside aria-label="会話の対象">
+    <aside className="world-scope-selector" aria-label="会話の対象">
       <label>
         対象{" "}
         <select value={value} onChange={(event) => onChange(event.target.value)}>

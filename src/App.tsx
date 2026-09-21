@@ -35,8 +35,14 @@ import { SettingsPage } from "./appPages";
 import { DesignSystemProvider } from "./design-system";
 import "./design-system/styles.css";
 import { ArtifactWorkspaceProvider } from "./features/chat/artifacts/ArtifactDrawer";
+import { AppShell } from "./shell/AppShell";
+import type { AppRoute } from "./shell/appRoute";
+import { MemoryPage } from "./features/memory/MemoryPage";
+import { WorkPage } from "./features/work/WorkPage";
+import { RecordsPage } from "./features/records/RecordsPage";
+import { AuditLogPage } from "./features/audit/AuditLogPage";
+import type { PersonalStateItem } from "./features/memory/api";
 
-type Surface = "chat" | "settings";
 const initialSnapshot: AppSnapshot = {
   settings: [],
   conversations: [],
@@ -67,7 +73,8 @@ const initialSnapshot: AppSnapshot = {
 function App() {
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<AppSnapshot>(initialSnapshot);
-  const [surface, setSurface] = useState<Surface>("chat");
+  const [route, setRoute] = useState<AppRoute>("conversation");
+  const [recordTargetId, setRecordTargetId] = useState<string | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const { errors, error, setAppError, setConversationError, setVoiceError } = useAppErrors();
@@ -157,12 +164,12 @@ function App() {
     const command = event.metaKey || event.ctrlKey;
     if (command && event.key === ",") {
       event.preventDefault();
-      if (surface === "settings") openChatSurface();
-      else openSettings();
+      if (route === "settings") navigate("conversation");
+      else navigate("settings");
     } else if (event.key === "Escape") {
-      if (surface === "settings") {
+      if (route !== "conversation") {
         event.preventDefault();
-        openChatSurface();
+        navigate("conversation");
         return;
       }
       if (activeRunId) void turn.stopActiveRun();
@@ -211,100 +218,123 @@ function App() {
     return true;
   }
 
-  function openChatSurface() {
-    if (conversationSessionRef.current.runId) {
-      setAppError(null);
-      setSurface("chat");
-      return;
-    }
+  function navigate(next: AppRoute) {
+    if (next === "settings" && !canChangeConversation()) return;
     setAppError(null);
-    setSurface("chat");
+    setRoute(next);
   }
 
   function openSettings() {
-    if (!canChangeConversation()) return;
-    setSurface("settings");
+    navigate("settings");
+  }
+
+  function openRecord(sourceId: string) {
+    setRecordTargetId(sourceId);
+    navigate("records");
+  }
+
+  function correctMemory(item: PersonalStateItem) {
+    turn.setComposer(
+      `この記録を訂正してください。\n\n対象: ${item.key}\n現在値: ${JSON.stringify(item.value)}`,
+    );
+    navigate("conversation");
   }
 
   if (loading) return <main className="boot-screen">{t("app.booting")}</main>;
   return (
     <main className="app-shell">
       <Suspense fallback={<main className="boot-screen">{t("app.booting")}</main>}>
-        {surface === "settings" ? (
-          <SettingsPage
-            documents={snapshot.settings}
-            voiceProfile={snapshot.voiceProfile}
-            voiceEnrollmentBlocked={voiceBusy || Boolean(activeTtsRunId)}
-            voiceListeningEnabled={voice.listeningEnabled}
-            voiceListeningBusy={voice.voiceActionInProgress}
-            voiceAvailability={voice.voiceAvailability}
-            voiceError={errors.voice}
-            onClose={openChatSurface}
-            onToggleVoiceListening={(enabled) => void voice.toggleAmbientListening(enabled)}
-            onSaved={(settings) => {
-              setSnapshot((current) => ({ ...current, settings }));
-              void refreshSnapshot();
-            }}
-            onVoiceProfileChanged={(voiceProfile) =>
-              setSnapshot((current) => ({ ...current, voiceProfile }))
-            }
-          />
-        ) : (
-          <ArtifactWorkspaceProvider>
-            <ChatPage
-              worldScope={turn.worldScope}
-              setupSnapshot={snapshot}
-              messages={turn.messages}
-              hasMoreMessages={turn.hasMoreMessages}
-              loadingOlderMessages={turn.loadingOlderMessages}
-              onLoadOlderMessages={turn.loadOlderMessages}
-              hasNewerMessages={turn.hasNewerMessages}
-              loadingNewerMessages={turn.loadingNewerMessages}
-              onLoadNewerMessages={turn.loadNewerMessages}
-              streamingText={turn.streamingText}
-              interimTranscript={voice.interimTranscript}
-              voiceState={voiceState}
-              listeningEnabled={voice.listeningEnabled}
-              runtimeActivity={turn.runtimeActivity}
-              composer={composer}
-              onComposerChange={turn.setComposer}
-              onSubmit={(event) => void turn.handleSubmit(event)}
-              onToggleVoice={() => void voice.toggleAmbientListening()}
-              voiceStarting={voice.voiceStarting}
-              activeRunId={activeRunId}
-              modelProviderStatus={modelProviderStatus}
-              onOpenSettings={openSettings}
-              onStopRun={() => void turn.stopActiveRun()}
-              onStopSpeech={() => void stopSpeech()}
-              onRetry={() => void turn.retryFailedAction()}
-              selectedConversation={selectedConversation}
-              activeTtsRunId={activeTtsRunId}
-              error={error}
-              lastPrompt={turn.lastPrompt}
-              retryKind={turn.retryKind}
-              requiredContextFailure={turn.requiredContextFailure}
-              onPrepareRequiredContextRecovery={turn.prepareRequiredContextRecovery}
-              voicePolicy={turn.voicePolicy}
-              voicePolicyUpdating={turn.voicePolicyUpdating}
-              onSetConversationSpeechOutput={(value) =>
-                void turn.setConversationSpeechOutput(value)
-              }
-              onSetConversationListeningPace={(value) =>
-                void turn.setConversationListeningPace(value)
-              }
-              onResetConversationVoiceOverrides={() => void turn.resetConversationVoiceOverrides()}
-              routingSnapshot={routing.snapshot}
-              routingEvents={routing.events}
-              routingCancellingRootId={routing.cancellingRootId}
-              routingDecidingProposalId={routing.decidingProposalId}
-              routingProposalError={routing.proposalError}
-              onCancelRouting={(rootId) => void routing.cancel(rootId)}
-              onDecideRoutingProposal={(proposalId, candidateId, approve) =>
-                void routing.decideProposal(proposalId, candidateId, approve)
-              }
-            />
-          </ArtifactWorkspaceProvider>
-        )}
+        <ArtifactWorkspaceProvider>
+          <AppShell route={route} onRouteChange={navigate}>
+            {route === "settings" ? (
+              <SettingsPage
+                documents={snapshot.settings}
+                voiceProfile={snapshot.voiceProfile}
+                voiceEnrollmentBlocked={voiceBusy || Boolean(activeTtsRunId)}
+                voiceListeningEnabled={voice.listeningEnabled}
+                voiceListeningBusy={voice.voiceActionInProgress}
+                voiceAvailability={voice.voiceAvailability}
+                voiceError={errors.voice}
+                onToggleVoiceListening={(enabled) => void voice.toggleAmbientListening(enabled)}
+                onSaved={(settings) => {
+                  setSnapshot((current) => ({ ...current, settings }));
+                  void refreshSnapshot();
+                }}
+                onVoiceProfileChanged={(voiceProfile) =>
+                  setSnapshot((current) => ({ ...current, voiceProfile }))
+                }
+              />
+            ) : route === "memory" ? (
+              <MemoryPage onOpenRecord={openRecord} onCorrect={correctMemory} />
+            ) : route === "work" ? (
+              <WorkPage conversationId={selectedConversation?.id} onOpenSettings={openSettings} />
+            ) : route === "records" ? (
+              <RecordsPage
+                conversations={snapshot.conversations}
+                initialConversationId={selectedConversation?.id ?? null}
+                targetMessageId={recordTargetId}
+                onTargetHandled={() => setRecordTargetId(null)}
+              />
+            ) : route === "audit" ? (
+              <AuditLogPage />
+            ) : (
+              <ChatPage
+                worldScope={turn.worldScope}
+                setupSnapshot={snapshot}
+                messages={turn.messages}
+                hasMoreMessages={turn.hasMoreMessages}
+                loadingOlderMessages={turn.loadingOlderMessages}
+                onLoadOlderMessages={turn.loadOlderMessages}
+                hasNewerMessages={turn.hasNewerMessages}
+                loadingNewerMessages={turn.loadingNewerMessages}
+                onLoadNewerMessages={turn.loadNewerMessages}
+                streamingText={turn.streamingText}
+                interimTranscript={voice.interimTranscript}
+                voiceState={voiceState}
+                listeningEnabled={voice.listeningEnabled}
+                runtimeActivity={turn.runtimeActivity}
+                composer={composer}
+                onComposerChange={turn.setComposer}
+                onSubmit={(event) => void turn.handleSubmit(event)}
+                onToggleVoice={() => void voice.toggleAmbientListening()}
+                voiceStarting={voice.voiceStarting}
+                activeRunId={activeRunId}
+                modelProviderStatus={modelProviderStatus}
+                onOpenSettings={openSettings}
+                onStopRun={() => void turn.stopActiveRun()}
+                onStopSpeech={() => void stopSpeech()}
+                onRetry={() => void turn.retryFailedAction()}
+                selectedConversation={selectedConversation}
+                activeTtsRunId={activeTtsRunId}
+                error={error}
+                lastPrompt={turn.lastPrompt}
+                retryKind={turn.retryKind}
+                requiredContextFailure={turn.requiredContextFailure}
+                onPrepareRequiredContextRecovery={turn.prepareRequiredContextRecovery}
+                voicePolicy={turn.voicePolicy}
+                voicePolicyUpdating={turn.voicePolicyUpdating}
+                onSetConversationSpeechOutput={(value) =>
+                  void turn.setConversationSpeechOutput(value)
+                }
+                onSetConversationListeningPace={(value) =>
+                  void turn.setConversationListeningPace(value)
+                }
+                onResetConversationVoiceOverrides={() =>
+                  void turn.resetConversationVoiceOverrides()
+                }
+                routingSnapshot={routing.snapshot}
+                routingEvents={routing.events}
+                routingCancellingRootId={routing.cancellingRootId}
+                routingDecidingProposalId={routing.decidingProposalId}
+                routingProposalError={routing.proposalError}
+                onCancelRouting={(rootId) => void routing.cancel(rootId)}
+                onDecideRoutingProposal={(proposalId, candidateId, approve) =>
+                  void routing.decideProposal(proposalId, candidateId, approve)
+                }
+              />
+            )}
+          </AppShell>
+        </ArtifactWorkspaceProvider>
       </Suspense>
     </main>
   );

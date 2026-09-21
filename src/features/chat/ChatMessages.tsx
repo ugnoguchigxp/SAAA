@@ -60,7 +60,7 @@ export const CompletedMessage = memo(function CompletedMessage({
       className={`message ${message.role}${message.parts?.some((part) => part.type === "ui") ? " has-ui" : ""}`}
     >
       <span className="message-role">
-        {message.role === "user" ? t("chat.you") : t("chat.assistant")}
+        {message.id.startsWith("lfm_request_") ? "Qwenへの依頼 · 発言の原文" : message.role === "user" ? t("chat.you") : message.id.startsWith("lfm_reply_") ? "LFM · 会話応対" : t("chat.assistant")}
       </span>
       {scopeKeys?.length ? <p className="message-scope">対象: {scopeKeys.join("、")}</p> : null}
       {message.parts?.length ? (

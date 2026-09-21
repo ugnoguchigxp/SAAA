@@ -183,6 +183,7 @@ impl StreamingSpeechRuntime {
                 active.remove(&run_id);
             }
             situation.set_audio_state(crate::situation::contracts::AudioState::Silent);
+            crate::larm_voice::speech_priority::finished(&run_id);
             let _ = on_event.send(RuntimeEvent::SpeechEnded { run_id });
         });
         Ok(())

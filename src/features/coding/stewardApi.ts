@@ -4,6 +4,10 @@ import { z } from "zod";
 const stewardTask = z.object({
   taskId: z.string(),
   loopState: z.string(),
+  revision: z.number(),
+  queueRank: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
   dedupeKey: z.string(),
   codingJobId: z.string().nullable(),
   goalStatus: z.string(),
@@ -62,6 +66,8 @@ export const stewardApi = {
     invoke("work_amend", { conversationId, goalId, notify }),
   listTasks: async (conversationId: string) =>
     z.array(stewardTask).parse(await invoke("list_steward_tasks", { conversationId })),
+  reorderQueue: (conversationId: string, taskIds: string[]) =>
+    invoke("reorder_steward_queue", { conversationId, taskIds }),
   listGoals: async (conversationId: string) =>
     z
       .object({

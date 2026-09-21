@@ -23,6 +23,12 @@ crate-type = ["rlib"]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 quality-eval-harness = []
+provider-diagnostics = []
+
+[[bin]]
+name = "harness_llm_diagnostic"
+path = "src/bin/harness_llm_diagnostic.rs"
+required-features = ["provider-diagnostics"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -212,7 +212,7 @@ describe("frontend IPC wrappers", () => {
     await readVoiceEnrollmentSample("sample-1");
     await reportFrontendReady();
     await exportDiagnostics();
-    await listAuditEvents();
+    await listAuditEvents({ sortBy: "occurredAt", direction: "desc" });
     await backupDatabase();
     await saveSettingsDocuments(settingsDocuments());
     await setVoiceListeningEnabled(false);
@@ -226,6 +226,9 @@ describe("frontend IPC wrappers", () => {
     const names = invokeCalls.map((call) => call.command);
     expect(names).toContain("start_turn");
     expect(names).toContain("save_settings_documents");
+    expect(invokeCalls.find((call) => call.command === "list_audit_events")?.args).toEqual({
+      input: { sortBy: "occurredAt", direction: "desc" },
+    });
     expect(names).not.toContain("watch_meeting");
     expect(names).not.toContain("get_situation_snapshot");
     expect(events).toEqual([]);

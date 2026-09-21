@@ -29,6 +29,8 @@ mod database_backup;
 mod diagnostics;
 pub mod generated_capabilities;
 mod generative_ui;
+#[cfg(feature = "provider-diagnostics")]
+pub mod harness_llm_diagnostic;
 pub mod ipc_contract;
 mod memory;
 mod models;

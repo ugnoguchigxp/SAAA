@@ -33,6 +33,7 @@ pub(crate) mod tools;
 pub(crate) mod verifier;
 #[allow(dead_code)] // Offline projection helpers are retained for acceptance gates.
 pub(crate) mod views;
+pub(crate) mod work_queue;
 
 pub(crate) use dispatch::dispatch_scheduled;
 pub(crate) use invalidation::forget_source;

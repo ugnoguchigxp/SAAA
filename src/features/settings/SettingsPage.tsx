@@ -44,7 +44,6 @@ export function SettingsPage({
   voiceListeningBusy,
   voiceAvailability,
   voiceError,
-  onClose,
   onSaved,
   onVoiceProfileChanged,
   onToggleVoiceListening,
@@ -56,7 +55,6 @@ export function SettingsPage({
   voiceListeningBusy: boolean;
   voiceAvailability: AmbientVoiceAvailability;
   voiceError: string | null;
-  onClose: () => void;
   onSaved: (documents: SettingsDocument[]) => void;
   onVoiceProfileChanged: (profile: VoiceProfileSnapshot) => void;
   onToggleVoiceListening: (enabled: boolean) => void;
@@ -171,14 +169,7 @@ export function SettingsPage({
   return (
     <section className="settings-page">
       <header className="settings-page-header">
-        <div>
-          <button type="button" className="text-button" onClick={onClose}>
-            {t("common.back")}
-          </button>
-          <p className="eyebrow">{t("settings.eyebrow")}</p>
-          <h1>{t("settings.title")}</h1>
-          <p>{t("settings.description")}</p>
-        </div>
+        <h1>{t("settings.title")}</h1>
         <div className="settings-save-status" aria-live="polite">
           {dirty && saveState === "idle" && (
             <span className="unsaved">{t("settings.unsaved")}</span>
@@ -210,14 +201,12 @@ export function SettingsPage({
               onClick={() => setActiveTab(tab.id)}
             >
               <strong>{tab.label}</strong>
-              <span>{tab.detail}</span>
             </button>
           ))}
         </nav>
         <div className="settings-content">
           <header className="settings-content-header">
             <h2>{activeTabMeta.label}</h2>
-            <p>{activeTabMeta.detail}</p>
           </header>
           {activeTab === "general" && (
             <SettingsGeneralSection draft={draft} onChange={changeDraft} />

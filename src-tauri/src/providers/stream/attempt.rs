@@ -86,6 +86,10 @@ impl ProviderFailureKind {
 pub(crate) struct BoundedProviderMessage(&'static str);
 
 impl BoundedProviderMessage {
+    /// Only locally authored static diagnostics; never provider response bodies.
+    pub(crate) fn from_static_diagnostic(message: &'static str) -> Self {
+        Self(message)
+    }
     pub(crate) fn as_str(self) -> &'static str {
         self.0
     }

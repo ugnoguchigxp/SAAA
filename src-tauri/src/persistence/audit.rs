@@ -13,6 +13,31 @@ const AUDIT_UI_EVENT_LIMIT: usize = 200;
 const MILLISECONDS_PER_DAY: i64 = 86_400_000;
 const MAX_ATTRIBUTES_JSON_BYTES: usize = 2_048;
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum AuditEventSortField {
+    OccurredAt,
+    Component,
+    EventName,
+    Phase,
+    Outcome,
+    FailureCode,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AuditEventListInput {
+    sort_by: AuditEventSortField,
+    direction: SortDirection,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub(crate) enum AuditAttributeValue {
@@ -615,6 +640,7 @@ fn is_allowed_attribute(key: &str) -> bool {
             | "previousState"
             | "nextState"
             | "reasonCode"
+            | "handoffId"
             | "providerId"
             | "providerKind"
             | "routeKind"
@@ -680,45 +706,89 @@ pub(crate) fn recent_events(connection: &Connection, limit: usize) -> Result<Vec
         )
         .map_err(database_error)?;
     let events = statement
-        .query_map([limit], |row| {
-            let attributes_json: String = row.get(14)?;
-            let attributes =
-                serde_json::from_str::<Value>(&attributes_json).unwrap_or_else(|_| json!({}));
-            Ok(json!({
-                "sequence": row.get::<_, i64>(0)?,
-                "id": row.get::<_, String>(1)?,
-                "occurredAt": row.get::<_, String>(2)?,
-                "component": row.get::<_, String>(3)?,
-                "eventName": row.get::<_, String>(4)?,
-                "phase": row.get::<_, String>(5)?,
-                "outcome": row.get::<_, Option<String>>(6)?,
-                "correlationId": row.get::<_, Option<String>>(7)?,
-                "causationId": row.get::<_, Option<String>>(8)?,
-                "conversationId": row.get::<_, Option<String>>(9)?,
-                "runtimeRunId": row.get::<_, Option<String>>(10)?,
-                "sessionId": row.get::<_, Option<String>>(11)?,
-                "subjectId": row.get::<_, Option<String>>(12)?,
-                "failureCode": row.get::<_, Option<String>>(13)?,
-                "attributes": attributes
-            }))
-        })
+        .query_map([limit], audit_event_from_row)
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
     Ok(events)
 }
 
-pub(crate) fn list_ui_events(state: &AppState) -> Result<Vec<Value>, String> {
+fn audit_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let attributes_json: String = row.get(14)?;
+    let attributes = serde_json::from_str::<Value>(&attributes_json).unwrap_or_else(|_| json!({}));
+    Ok(json!({
+        "sequence": row.get::<_, i64>(0)?,
+        "id": row.get::<_, String>(1)?,
+        "occurredAt": row.get::<_, String>(2)?,
+        "component": row.get::<_, String>(3)?,
+        "eventName": row.get::<_, String>(4)?,
+        "phase": row.get::<_, String>(5)?,
+        "outcome": row.get::<_, Option<String>>(6)?,
+        "correlationId": row.get::<_, Option<String>>(7)?,
+        "causationId": row.get::<_, Option<String>>(8)?,
+        "conversationId": row.get::<_, Option<String>>(9)?,
+        "runtimeRunId": row.get::<_, Option<String>>(10)?,
+        "sessionId": row.get::<_, Option<String>>(11)?,
+        "subjectId": row.get::<_, Option<String>>(12)?,
+        "failureCode": row.get::<_, Option<String>>(13)?,
+        "attributes": attributes
+    }))
+}
+
+pub(crate) fn list_ui_events(
+    state: &AppState,
+    input: AuditEventListInput,
+) -> Result<Vec<Value>, String> {
     state.sqlite_readers.read(|connection| {
-        let mut events = recent_events(connection, AUDIT_UI_EVENT_LIMIT)?;
-        events.reverse();
+        let sort_column = match input.sort_by {
+            AuditEventSortField::OccurredAt => "CAST(occurred_at AS INTEGER)",
+            AuditEventSortField::Component => "component",
+            AuditEventSortField::EventName => "event_name",
+            AuditEventSortField::Phase => "phase",
+            AuditEventSortField::Outcome => "outcome",
+            AuditEventSortField::FailureCode => "failure_code",
+        };
+        let direction = match input.direction {
+            SortDirection::Asc => "ASC",
+            SortDirection::Desc => "DESC",
+        };
+        let sql = format!(
+            "SELECT sequence,id,occurred_at,component,event_name,phase,outcome,correlation_id,
+                    causation_id,conversation_id,runtime_run_id,session_id,subject_id,failure_code,attributes_json
+             FROM (
+               SELECT audit.sequence,audit.id,audit.occurred_at,audit.component,audit.event_name,
+                      audit.phase,audit.outcome,audit.correlation_id,audit.causation_id,
+                      audit.conversation_id,audit.runtime_run_id,audit.session_id,audit.subject_id,
+                      COALESCE(
+                        audit.failure_code,
+                        CASE WHEN audit.event_name='runtime-run-finished' THEN (
+                          SELECT run.failure_code FROM runtime_runs AS run WHERE run.id=audit.runtime_run_id
+                        ) END,
+                        CASE WHEN audit.event_name='provider-session-state' THEN (
+                          SELECT COALESCE(provider.failure_kind,provider.release_failure_kind)
+                          FROM provider_sessions AS provider WHERE provider.id=audit.session_id
+                        ) END
+                      ) AS failure_code,
+                      audit.attributes_json
+               FROM audit_events AS audit ORDER BY audit.sequence DESC LIMIT ?1
+             ) ORDER BY {sort_column} {direction}, sequence DESC"
+        );
+        let mut statement = connection.prepare(&sql).map_err(database_error)?;
+        let events = statement
+            .query_map([AUDIT_UI_EVENT_LIMIT as i64], audit_event_from_row)
+            .map_err(database_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error)?;
         Ok(events)
     })
 }
 
 #[tauri::command]
-pub(crate) fn list_audit_events(state: tauri::State<'_, AppState>) -> Result<Vec<Value>, String> {
-    list_ui_events(&state)
+pub(crate) fn list_audit_events(
+    input: AuditEventListInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<Value>, String> {
+    list_ui_events(&state, input)
 }
 
 #[cfg(test)]
@@ -984,7 +1054,14 @@ mod tests {
         }
         let state = crate::test_support::app_state(connection);
 
-        let events = list_ui_events(&state).expect("UI events load");
+        let events = list_ui_events(
+            &state,
+            AuditEventListInput {
+                sort_by: AuditEventSortField::OccurredAt,
+                direction: SortDirection::Desc,
+            },
+        )
+        .expect("UI events load");
 
         assert_eq!(events.len(), AUDIT_UI_EVENT_LIMIT);
         assert_eq!(
@@ -995,5 +1072,37 @@ mod tests {
             events.last().and_then(|event| event["id"].as_str()),
             Some("audit_ui_5")
         );
+    }
+
+    #[test]
+    fn ui_events_apply_requested_sort_on_the_bounded_result() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        for (id, component) in [("audit_sort_b", "tts"), ("audit_sort_a", "app")] {
+            connection
+                .execute(
+                    "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,attributes_json)
+                     VALUES(?1,'100',?2,'ui-probe','terminal','success','{}')",
+                    params![id, component],
+                )
+                .expect("UI audit fixture inserts");
+        }
+        let state = crate::test_support::app_state(connection);
+
+        let events = list_ui_events(
+            &state,
+            AuditEventListInput {
+                sort_by: AuditEventSortField::Component,
+                direction: SortDirection::Asc,
+            },
+        )
+        .expect("sorted UI events load");
+
+        let positions = events
+            .iter()
+            .filter_map(|event| event["id"].as_str())
+            .filter(|id| id.starts_with("audit_sort_"))
+            .collect::<Vec<_>>();
+        assert_eq!(positions, vec!["audit_sort_a", "audit_sort_b"]);
     }
 }

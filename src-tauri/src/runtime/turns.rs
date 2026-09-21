@@ -155,8 +155,6 @@ pub(crate) async fn execute_turn(
         }
     }
 
-    let response_task =
-        crate::runtime::voice_response::start(state, input, on_event, cancellation.clone());
     let result = super::conversation_turn::execute_conversation_turn(
         state,
         input,
@@ -164,10 +162,6 @@ pub(crate) async fn execute_turn(
         cancellation.clone(),
     )
     .await;
-    if let Some(task) = response_task {
-        task.abort();
-        let _ = task.await;
-    }
     let finalization = match &result {
         Ok(message) => {
             crate::runtime::voice_response::complete(
@@ -565,8 +559,13 @@ pub(crate) fn prepare_runtime_run(
             None
         };
         let now = now_iso();
-        let new_message = input.retry_input_message_id.is_none();
-        let input_message_id = if let Some(message_id) = input.retry_input_message_id.as_deref() {
+        let handoff_message = if input.retry_input_message_id.is_none() {
+            crate::larm_voice::frontdesk_repository::claim_handoff(&transaction, input)?
+        } else { None };
+        let new_message = input.retry_input_message_id.is_none() && handoff_message.is_none();
+        let input_message_id = if let Some(message_id) = handoff_message {
+            message_id
+        } else if let Some(message_id) = input.retry_input_message_id.as_deref() {
             crate::validate_identifier(message_id, "retry input message id")?;
             let retryable: bool = transaction
                 .query_row(

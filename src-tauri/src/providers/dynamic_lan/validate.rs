@@ -2,10 +2,10 @@ use url::Url;
 
 use super::urls::{url_is_local, url_is_loopback};
 use super::{
-    contract_error, valid_provider_auth, AgentProfiles, ConnectionClaim, ConnectionIdentity,
+    contract_error, valid_provider_auth, AgentProfileCatalog, ConnectionClaim, ConnectionIdentity,
     ConnectionState, DynamicLanError, ErrorKind, ProviderCapacity, ProviderDescriptor,
-    SelectedProfile, AGENT_PROFILE, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS, CONNECTION_TTL_SECONDS,
-    CONTROL_PORT,
+    SelectedLlmProfile, AGENT_PROFILE, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS,
+    CONNECTION_TTL_SECONDS, CONTROL_PORT,
 };
 
 fn valid_llm_protocol(value: &str) -> bool {
@@ -28,7 +28,7 @@ pub(crate) fn validate_revision(revision: &str) -> Result<(), DynamicLanError> {
 pub(crate) fn validate_initial_state(
     state: &ConnectionState,
     expected_audience: &str,
-    expected_profile: &SelectedProfile,
+    expected_profile: &SelectedLlmProfile,
 ) -> Result<ConnectionIdentity, DynamicLanError> {
     validate_state_shape(state, expected_audience, expected_profile)?;
     let created_at =
@@ -134,7 +134,7 @@ pub(crate) fn validate_renewed_state(
 pub(crate) fn validate_state_shape(
     state: &ConnectionState,
     expected_audience: &str,
-    expected_profile: &SelectedProfile,
+    expected_profile: &SelectedLlmProfile,
 ) -> Result<(), DynamicLanError> {
     validate_connection_id(&state.id)?;
     if !valid_bounded_identifier(&state.allocation_id, 192)
@@ -199,11 +199,18 @@ pub(crate) fn validate_create_location(
     }
 }
 
-pub(crate) fn validate_profiles(
-    profiles: &AgentProfiles,
-) -> Result<SelectedProfile, DynamicLanError> {
-    if profiles.contract_version != "agent-connection.v1" {
-        return Err(contract_error(()));
+pub(crate) fn select_default_llm_profile(
+    profiles: &AgentProfileCatalog,
+) -> Result<SelectedLlmProfile, DynamicLanError> {
+    if !matches!(
+        profiles.contract_version.as_str(),
+        "agent-connection.v1" | "agent-connection.v3"
+    ) {
+        return Err(DynamicLanError::with_code(
+            ErrorKind::Contract,
+            "Unsupported profile catalog version.",
+            "harness-catalog-version-unsupported",
+        ));
     }
     let profile_id = profiles
         .default_agent_profile
@@ -226,6 +233,27 @@ pub(crate) fn validate_profiles(
         .providers
         .first()
         .ok_or_else(|| contract_error(()))?;
+    let context_window = if profiles.contract_version == "agent-connection.v3" {
+        provider.context_window
+    } else {
+        profile
+            .legacy_profile_context_window
+            .or(provider.context_window)
+    }
+    .ok_or_else(|| {
+        DynamicLanError::with_code(
+            ErrorKind::Contract,
+            "Selected LLM provider has no context window.",
+            "harness-llm-context-window-missing",
+        )
+    })?;
+    if !valid_context_window(&context_window) {
+        return Err(DynamicLanError::with_code(
+            ErrorKind::Contract,
+            "Selected LLM provider has an invalid context window.",
+            "harness-llm-context-window-invalid",
+        ));
+    }
     let supported_capabilities_are_valid = provider.supported_capabilities.is_empty()
         || (provider
             .supported_capabilities
@@ -237,7 +265,6 @@ pub(crate) fn validate_profiles(
                 .any(|capability| capability == &provider.capability));
     if matching.next().is_some()
         || profile.providers.len() != 1
-        || !valid_context_window(&profile.context_window)
         || provider.name != "llm"
         || !valid_llm_capability(&provider.capability)
         || !supported_capabilities_are_valid
@@ -246,15 +273,15 @@ pub(crate) fn validate_profiles(
     {
         return Err(contract_error(()));
     }
-    Ok(SelectedProfile {
+    Ok(SelectedLlmProfile {
         id: profile.id.clone(),
         capability: provider.capability.clone(),
         model: provider.model.clone(),
-        context_window: profile.context_window,
+        context_window,
     })
 }
 
-fn valid_context_window(window: &super::ContextWindow) -> bool {
+fn valid_context_window(window: &super::ProviderContextWindow) -> bool {
     window.max_tokens > 0
         && window.output_reserve_tokens > 0
         && window.safety_margin_tokens > 0

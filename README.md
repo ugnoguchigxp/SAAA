@@ -275,6 +275,10 @@ Provider API keys registered in Settings use macOS Keychain rather than Settings
 
 The structured audit trail records lifecycle metadata rather than raw prompt, transcript, or model-output text. Conversation text remains in its own records. Settings provides consistent SQLite backups and redacted diagnostics. Database backups include voice embeddings but not the WAV samples or every external capability/model file, so a database backup alone is not a complete runtime or voice-profile backup. Older schemas receive a pre-migration database backup.
 
+For a Harness LLM failure, inspect the voice monitor's request timestamp and diagnostic code. Refreshing the monitor does not retry a historical request. `harness-catalog-schema-invalid` identifies catalog decoding; `harness-llm-context-window-missing` identifies a missing budget on the selected LLM; claim, health and connection schema errors have separate codes. Remote response bodies and credentials are not copied into audit records.
+
+To check the provider without changing conversation history, run `cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features provider-diagnostics --bin harness_llm_diagnostic -- 192.168.0.130` (replace the host as needed). It uses the ordinary library build and credential loader, checks an exact fixed response through the allocated provider path, and verifies connection release. This checks Harness-to-LLM integration, not microphone capture or TTS. Catalog wire types must never use test-only deserialization defaults; v3 context budgets belong to individual providers, not profiles.
+
 ## Develop and verify
 
 Install the pinned dependencies, then run the checks appropriate to your change:

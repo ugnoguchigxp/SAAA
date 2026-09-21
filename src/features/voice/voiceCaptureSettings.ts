@@ -5,6 +5,7 @@ import { MicrophoneCaptureError, microphoneErrorMessage } from "../../lib/microp
 
 export function voiceStartupMessage(cause: unknown): string {
   if (cause instanceof MicrophoneCaptureError) return microphoneErrorMessage(cause);
+  if (toMessage(cause).startsWith("lfm-")) return `LFMを準備できません: ${toMessage(cause)}`;
   switch (toMessage(cause)) {
     case "asr-provider-unavailable":
       return uiMessage("chatVoiceAsrUnavailable");
@@ -22,7 +23,9 @@ export function effectiveCaptureSettings(
   policy: ConversationVoicePolicySnapshot | null,
 ): VoiceSettings | null {
   if (!settings) return null;
-  return policy ? { ...settings, silenceTimeoutMs: policy.effectiveSilenceTimeoutMs } : settings;
+  // A pause submits a conversational segment to LFM, not a completed request to Qwen.
+  void policy;
+  return { ...settings, silenceTimeoutMs: 1_500 };
 }
 
 export function captureAvailability(

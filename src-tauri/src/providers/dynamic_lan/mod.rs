@@ -11,11 +11,13 @@ mod auth;
 pub(crate) mod credential;
 mod http;
 pub(crate) mod probe;
+mod profile_catalog;
 mod urls;
 mod validate;
 
 use auth::*;
 use http::*;
+use profile_catalog::*;
 use urls::*;
 pub(crate) use urls::{control_base_url, url_is_local};
 use validate::*;
@@ -91,49 +93,12 @@ impl DynamicLanError {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentProfiles {
-    contract_version: String,
-    #[serde(default)]
-    default_agent_profile: Option<String>,
-    profiles: Vec<AgentProfile>,
-    audiences: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AgentProfile {
-    id: String,
-    #[serde(rename = "contextWindow")]
-    #[cfg_attr(test, serde(default = "test_context_window"))]
-    context_window: ContextWindow,
-    providers: Vec<ProfileProvider>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct ContextWindow {
-    max_tokens: u32,
-    output_reserve_tokens: u32,
-    safety_margin_tokens: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProfileProvider {
-    name: String,
-    capability: String,
-    #[serde(default)]
-    supported_capabilities: Vec<String>,
-    protocol: String,
-    model: String,
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct SelectedProfile {
+struct SelectedLlmProfile {
     id: String,
     capability: String,
     model: String,
-    context_window: ContextWindow,
+    context_window: ProviderContextWindow,
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,7 +194,6 @@ struct ProviderHealthDescriptor {
 struct ProviderHealth {
     ready: bool,
     accepting_requests: bool,
-    #[cfg_attr(test, serde(default = "test_provider_capacity"))]
     capacity: ProviderCapacity,
 }
 
@@ -252,8 +216,8 @@ fn capacity_gate(capacity: &ProviderCapacity) -> Arc<tokio::sync::Semaphore> {
 }
 
 #[cfg(test)]
-fn test_context_window() -> ContextWindow {
-    ContextWindow {
+fn test_context_window() -> ProviderContextWindow {
+    ProviderContextWindow {
         max_tokens: 32_768,
         output_reserve_tokens: 4_096,
         safety_margin_tokens: 1_024,
@@ -311,7 +275,7 @@ struct ConnectionIdentity {
     catalog_revision: String,
     profile_revision: String,
     audience_revision: String,
-    profile: SelectedProfile,
+    profile: SelectedLlmProfile,
     created_at: chrono::DateTime<chrono::FixedOffset>,
     expires_at: chrono::DateTime<chrono::FixedOffset>,
 }
@@ -325,7 +289,7 @@ pub(crate) struct DynamicLanConnection {
     endpoint: String,
     model: String,
     api_key: Option<Zeroizing<String>>,
-    context_window: ContextWindow,
+    context_window: ProviderContextWindow,
     capacity: ProviderCapacity,
     capacity_gate: Arc<tokio::sync::Semaphore>,
     prior_release_failure: Option<ErrorKind>,
@@ -402,7 +366,7 @@ impl DynamicLanConnection {
         cancellation: Arc<RunCancellation>,
     ) -> Result<Self, DynamicLanError> {
         let control_is_loopback = url_is_loopback(&control_base);
-        let profiles = send_json_response::<AgentProfiles>(
+        let profiles = send_json_response::<AgentProfileCatalog>(
             &client,
             Method::GET,
             control_base
@@ -415,7 +379,7 @@ impl DynamicLanConnection {
         )
         .await?;
         validate_config_revision(profiles.config_revision.as_deref())?;
-        let selected_profile = validate_profiles(&profiles.value)?;
+        let selected_profile = select_default_llm_profile(&profiles.value)?;
         let audience = select_audience(&profiles.value.audiences)?.to_string();
 
         let idempotency_key = format!("saaa-{}", Uuid::new_v4().simple());
@@ -825,7 +789,7 @@ mod tests {
             "audienceRevision": TEST_REVISION,
             "status": status,
             "providers": [{
-                "name": "llm",
+                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                 "capability": PROFILE_CAPABILITY,
                 "route": "llm-agent-35b",
                 "protocol": "openai.chat-completions.v1",
@@ -847,7 +811,7 @@ mod tests {
             catalog_revision: TEST_REVISION.to_string(),
             profile_revision: TEST_REVISION.to_string(),
             audience_revision: TEST_REVISION.to_string(),
-            profile: SelectedProfile {
+            profile: SelectedLlmProfile {
                 id: AGENT_PROFILE.to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
                 model: AGENT_PROFILE.to_string(),
@@ -868,7 +832,7 @@ mod tests {
             "audience": audience,
             "expiresAt": expires_at,
             "providers": [{
-                "name": "llm",
+                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                 "capability": PROFILE_CAPABILITY,
                 "apiStyle": "openai",
                 "protocol": "openai.chat-completions.v1",
@@ -967,10 +931,11 @@ mod tests {
 
     #[test]
     fn accepts_the_legacy_profile_when_no_default_is_advertised() {
-        let profile = || AgentProfile {
+        let profile = || CatalogAgentProfile {
             id: AGENT_PROFILE.to_string(),
-            context_window: test_context_window(),
-            providers: vec![ProfileProvider {
+            legacy_profile_context_window: Some(test_context_window()),
+            providers: vec![CatalogProvider {
+                context_window: None,
                 name: "llm".to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
                 supported_capabilities: Vec::new(),
@@ -978,15 +943,15 @@ mod tests {
                 model: AGENT_PROFILE.to_string(),
             }],
         };
-        let profiles = AgentProfiles {
+        let profiles = AgentProfileCatalog {
             contract_version: "agent-connection.v1".to_string(),
             default_agent_profile: None,
             profiles: vec![profile()],
             audiences: vec!["saaa-desktop".to_string()],
         };
         assert_eq!(
-            validate_profiles(&profiles).expect("legacy profile remains compatible"),
-            SelectedProfile {
+            select_default_llm_profile(&profiles).expect("legacy profile remains compatible"),
+            SelectedLlmProfile {
                 id: AGENT_PROFILE.to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
                 model: AGENT_PROFILE.to_string(),
@@ -994,24 +959,24 @@ mod tests {
             }
         );
 
-        let duplicate = AgentProfiles {
+        let duplicate = AgentProfileCatalog {
             contract_version: profiles.contract_version.clone(),
             default_agent_profile: None,
             profiles: vec![profile(), profile()],
             audiences: profiles.audiences.clone(),
         };
-        assert!(validate_profiles(&duplicate).is_err());
+        assert!(select_default_llm_profile(&duplicate).is_err());
     }
 
     #[test]
     fn selects_the_advertised_default_compatible_profile() {
-        let profiles = serde_json::from_value::<AgentProfiles>(json!({
+        let profiles = serde_json::from_value::<AgentProfileCatalog>(json!({
             "contractVersion": "agent-connection.v1",
             "defaultAgentProfile": "coding-default",
             "profiles": [{
                 "id": "coding-default",
                 "providers": [{
-                    "name": "llm",
+                    "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                     "capability": "llm.coding",
                     "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
                     "protocol": "openai.chat-completions.v1",
@@ -1023,8 +988,8 @@ mod tests {
         .expect("current agent profile descriptor decodes");
 
         assert_eq!(
-            validate_profiles(&profiles).expect("compatible default profile is selected"),
-            SelectedProfile {
+            select_default_llm_profile(&profiles).expect("compatible default profile is selected"),
+            SelectedLlmProfile {
                 id: "coding-default".to_string(),
                 capability: "llm.coding".to_string(),
                 model: "coding-default".to_string(),
@@ -1035,12 +1000,12 @@ mod tests {
 
     #[test]
     fn selected_profile_can_bind_a_different_public_model() {
-        let profiles = serde_json::from_value::<AgentProfiles>(json!({
+        let profiles = serde_json::from_value::<AgentProfileCatalog>(json!({
             "contractVersion": "agent-connection.v1",
             "profiles": [{
                 "id": AGENT_PROFILE,
                 "providers": [{
-                    "name": "llm",
+                    "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                     "capability": PROFILE_CAPABILITY,
                     "protocol": "openai.chat-completions.v1",
                     "model": "coding-default"
@@ -1051,14 +1016,44 @@ mod tests {
         .expect("compatibility alias descriptor decodes");
 
         assert_eq!(
-            validate_profiles(&profiles).expect("compatibility alias is selected"),
-            SelectedProfile {
+            select_default_llm_profile(&profiles).expect("compatibility alias is selected"),
+            SelectedLlmProfile {
                 id: AGENT_PROFILE.to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
                 model: "coding-default".to_string(),
                 context_window: test_context_window(),
             }
         );
+    }
+
+    #[test]
+    fn current_v3_profile_catalog_is_accepted() {
+        let profiles: AgentProfileCatalog = serde_json::from_value(json!({
+            "contractVersion": "agent-connection.v3",
+            "defaultAgentProfile": "coding-default",
+            "profiles": [{
+                "id": "coding-default",
+                "providers": [{
+                    "name": "llm", "contextWindow": {"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976},
+                    "capability": "llm.coding",
+                    "supportedCapabilities": [
+                        "llm.coding",
+                        "llm.general",
+                        "llm.reasoning"
+                    ],
+                    "protocol": "openai.chat-completions.v1",
+                    "model": "coding-default"
+                }]
+            }],
+            "audiences": [AUDIENCE]
+        }))
+        .expect("v3 catalog deserializes");
+
+        let selected = select_default_llm_profile(&profiles).expect("v3 catalog is compatible");
+        assert_eq!(selected.id, "coding-default");
+        assert_eq!(selected.model, "coding-default");
+        assert_eq!(selected.capability, "llm.coding");
+        assert_eq!(selected.context_window.max_tokens, 230400);
     }
 
     #[test]
@@ -1081,7 +1076,7 @@ mod tests {
     #[test]
     fn validates_profile_context_budget() {
         let profiles = |max_tokens, output_reserve_tokens, safety_margin_tokens| {
-            serde_json::from_value::<AgentProfiles>(json!({
+            serde_json::from_value::<AgentProfileCatalog>(json!({
                 "contractVersion": "agent-connection.v1",
                 "profiles": [{
                     "id": AGENT_PROFILE,
@@ -1091,7 +1086,7 @@ mod tests {
                         "safetyMarginTokens": safety_margin_tokens
                     },
                     "providers": [{
-                        "name": "llm",
+                        "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                         "capability": PROFILE_CAPABILITY,
                         "protocol": "openai.chat-completions.v1",
                         "model": AGENT_PROFILE
@@ -1101,11 +1096,11 @@ mod tests {
             }))
             .unwrap()
         };
-        let selected = validate_profiles(&profiles(32_768, 4_096, 1_024)).unwrap();
+        let selected = select_default_llm_profile(&profiles(32_768, 4_096, 1_024)).unwrap();
         assert_eq!(selected.context_window, test_context_window());
-        assert!(validate_profiles(&profiles(0, 4_096, 1_024)).is_err());
-        assert!(validate_profiles(&profiles(4_096, 4_096, 1)).is_err());
-        assert!(validate_profiles(&profiles(4_096, 3_000, 2_000)).is_err());
+        assert!(select_default_llm_profile(&profiles(0, 4_096, 1_024)).is_err());
+        assert!(select_default_llm_profile(&profiles(4_096, 4_096, 1)).is_err());
+        assert!(select_default_llm_profile(&profiles(4_096, 3_000, 2_000)).is_err());
     }
 
     #[test]
@@ -1363,7 +1358,7 @@ mod tests {
                             "profiles": [{
                                 "id": AGENT_PROFILE,
                                 "providers": [{
-                                    "name": "llm",
+                                    "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                                     "capability": PROFILE_CAPABILITY,
                                     "protocol": "openai.chat-completions.v1",
                                     "model": AGENT_PROFILE
@@ -1450,7 +1445,7 @@ mod tests {
                         "profiles": [{
                             "id": AGENT_PROFILE,
                             "providers": [{
-                                "name": "llm",
+                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                                 "capability": PROFILE_CAPABILITY,
                                 "protocol": "openai.chat-completions.v1",
                                 "model": AGENT_PROFILE
@@ -1476,7 +1471,7 @@ mod tests {
                             .remove("streaming");
                         claim.to_string()
                     }
-                    3 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
+                    3 => json!({ "ready": true, "acceptingRequests": true, "capacity": {"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":2,"queueDepth":0,"queueTimeoutMs":5000,"retryAfterMs":100,"completionGuaranteed":false} }).to_string(),
                     4 => format!(
                         "data: {}\n\ndata: [DONE]\n\n",
                         json!({"model": AGENT_PROFILE, "choices":[{"index":0,"delta":{"content":"HTTP claim works"},"finish_reason":"stop"}]})
@@ -1607,7 +1602,7 @@ mod tests {
                         "profiles": [{
                             "id": AGENT_PROFILE,
                             "providers": [{
-                                "name": "llm",
+                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                                 "capability": PROFILE_CAPABILITY,
                                 "protocol": "openai.chat-completions.v1",
                                 "model": AGENT_PROFILE
@@ -1633,7 +1628,7 @@ mod tests {
                             .remove("streaming");
                         claim.to_string()
                     }
-                    3 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
+                    3 => json!({ "ready": true, "acceptingRequests": true, "capacity": {"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":2,"queueDepth":0,"queueTimeoutMs":5000,"retryAfterMs":100,"completionGuaranteed":false} }).to_string(),
                     4 => format!(
                         "data: {}\n\ndata: [DONE]\n\n",
                         json!({"model": AGENT_PROFILE, "choices":[{"index":0,"delta":{"content":"HTTP claim works"},"finish_reason":"stop"}]})
@@ -1763,7 +1758,7 @@ mod tests {
                         "profiles": [{
                             "id": "coding-default",
                             "providers": [{
-                                "name": "llm",
+                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                                 "capability": "llm.coding",
                                 "supportedCapabilities": [
                                     "llm.coding",
@@ -1799,7 +1794,9 @@ mod tests {
                             json!("coding-default");
                         claim
                     }
-                    3 => json!({ "ready": true, "acceptingRequests": true }),
+                    3 => {
+                        json!({ "ready": true, "acceptingRequests": true, "capacity": {"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":2,"queueDepth":0,"queueTimeoutMs":5000,"retryAfterMs":100,"completionGuaranteed":false} })
+                    }
                     4 => Value::Null,
                     _ => unreachable!(),
                 };
@@ -1856,7 +1853,7 @@ mod tests {
                         "profiles": [{
                             "id": AGENT_PROFILE,
                             "providers": [{
-                                "name": "llm",
+                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                                 "capability": PROFILE_CAPABILITY,
                                 "protocol": "openai.chat-completions.v1",
                                 "model": AGENT_PROFILE
@@ -1875,7 +1872,7 @@ mod tests {
                     .to_string(),
                     2 => anonymous_claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at)
                         .to_string(),
-                    3 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
+                    3 => json!({ "ready": true, "acceptingRequests": true, "capacity": {"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":2,"queueDepth":0,"queueTimeoutMs":5000,"retryAfterMs":100,"completionGuaranteed":false} }).to_string(),
                     4 => String::new(),
                     _ => unreachable!(),
                 };
@@ -1934,7 +1931,7 @@ mod tests {
                         "profiles": [{
                             "id": AGENT_PROFILE,
                             "providers": [{
-                                "name": "llm",
+                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                                 "capability": PROFILE_CAPABILITY,
                                 "protocol": "openai.chat-completions.v1",
                                 "model": AGENT_PROFILE
@@ -1952,7 +1949,7 @@ mod tests {
                     )
                     .to_string(),
                     2 => claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at).to_string(),
-                    3 => json!({ "ready": true, "acceptingRequests": false }).to_string(),
+                    3 => json!({ "ready": true, "acceptingRequests": false, "capacity": {"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":2,"queueDepth":0,"queueTimeoutMs":5000,"retryAfterMs":100,"completionGuaranteed":false} }).to_string(),
                     4 => String::new(),
                     _ => unreachable!(),
                 };
@@ -2009,7 +2006,7 @@ mod tests {
                         "profiles": [{
                             "id": AGENT_PROFILE,
                             "providers": [{
-                                "name": "llm",
+                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                                 "capability": PROFILE_CAPABILITY,
                                 "protocol": "openai.chat-completions.v1",
                                 "model": AGENT_PROFILE
@@ -2028,7 +2025,7 @@ mod tests {
                     .to_string(),
                     2 => claim_json("127.0.0.1", address.port(), AUDIENCE, &initial_expires_at)
                         .to_string(),
-                    3 | 6 => json!({ "ready": true, "acceptingRequests": true }).to_string(),
+                    3 | 6 => json!({ "ready": true, "acceptingRequests": true, "capacity": {"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":2,"queueDepth":0,"queueTimeoutMs":5000,"retryAfterMs":100,"completionGuaranteed":false} }).to_string(),
                     4 => connection_state_json(
                         "aconn_test",
                         "ready",

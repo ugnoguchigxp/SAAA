@@ -97,6 +97,7 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
     body: Option<&Value>,
     cancellation: &RunCancellation,
 ) -> Result<JsonResponse<T>, DynamicLanError> {
+    let schema_failure_code = response_schema_failure_code(url.path());
     let mut request = client.request(method, url).timeout(REQUEST_TIMEOUT);
     if let Some(credential) = credential {
         request = request.header(AUTHORIZATION, credential.clone());
@@ -138,7 +139,13 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
     if !is_json_content_type(&content_type) {
         return Err(contract_error(()));
     }
-    let value = serde_json::from_slice(&body).map_err(|_| contract_error(()))?;
+    let value = serde_json::from_slice(&body).map_err(|_| {
+        DynamicLanError::with_code(
+            ErrorKind::Contract,
+            "Harness response does not match the expected schema.",
+            schema_failure_code,
+        )
+    })?;
     Ok(JsonResponse {
         value,
         status,
@@ -146,6 +153,58 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
         location,
         config_revision,
     })
+}
+
+// Classify using our requested operation, never text supplied by the remote server.
+fn response_schema_failure_code(path: &str) -> &'static str {
+    if path.ends_with("/agent-profiles") {
+        "harness-catalog-schema-invalid"
+    } else if path.ends_with("/claim") {
+        "harness-claim-schema-invalid"
+    } else if path.ends_with("/health") {
+        "harness-health-schema-invalid"
+    } else {
+        "harness-connection-schema-invalid"
+    }
+}
+
+#[cfg(test)]
+mod response_diagnostic_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    #[tokio::test]
+    async fn malformed_catalog_preserves_stage_without_exposing_response_text() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).unwrap();
+            let body = r#"{"private":"DO_NOT_PERSIST_PROVIDER_TEXT"}"#;
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let result = send_json_response::<crate::providers::dynamic_lan::AgentProfileCatalog>(
+            &reqwest::Client::new(),
+            Method::GET,
+            Url::parse(&format!("http://{address}/v3/agent-profiles")).unwrap(),
+            None,
+            None,
+            None,
+            &RunCancellation::default(),
+        )
+        .await;
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("malformed catalog accepted"),
+        };
+        assert_eq!(error.public_message(), "harness-catalog-schema-invalid");
+        assert!(!format!("{error:?}").contains("DO_NOT_PERSIST"));
+        server.join().unwrap();
+    }
 }
 
 pub(crate) fn is_json_content_type(value: &str) -> bool {

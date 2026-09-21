@@ -14,6 +14,13 @@ pub(crate) async fn stream_dynamic_lan_provider(
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
     let started = std::time::Instant::now();
+    let _ = context
+        .on_event
+        .send(crate::ipc_contract::RuntimeEvent::Activity {
+            run_id: context.input.run_id.clone(),
+            kind: "harness-connection-preparing".into(),
+            summary: "Preparing the Harness LLM connection.".into(),
+        });
     let (connection, prior_cleanup) = match resolve_dynamic_lan_connection_for_request(
         provider,
         timeout_ms,
@@ -32,13 +39,22 @@ pub(crate) async fn stream_dynamic_lan_provider(
             } else {
                 ProviderAttemptOutcome::Failed {
                     kind,
-                    public_message: kind.public_message(),
+                    public_message: BoundedProviderMessage::from_static_diagnostic(
+                        failure.error.public_message(),
+                    ),
                     output_started: false,
                     cleanup: failure.cleanup,
                 }
             };
         }
     };
+    let _ = context
+        .on_event
+        .send(crate::ipc_contract::RuntimeEvent::Activity {
+            run_id: context.input.run_id.clone(),
+            kind: "harness-connection-ready".into(),
+            summary: "Harness LLM connection is ready.".into(),
+        });
     stream_allocated_dynamic_lan(
         provider,
         history,
@@ -65,7 +81,7 @@ pub(crate) async fn stream_allocated_dynamic_lan(
             merge_dynamic_lan_cleanup(prior_cleanup, release_in_background(connection).await);
         return ProviderAttemptOutcome::Failed {
             kind,
-            public_message: kind.public_message(),
+            public_message: BoundedProviderMessage::from_static_diagnostic(error.public_message()),
             output_started: false,
             cleanup,
         };
@@ -78,7 +94,9 @@ pub(crate) async fn stream_allocated_dynamic_lan(
                 merge_dynamic_lan_cleanup(prior_cleanup, release_in_background(connection).await);
             return ProviderAttemptOutcome::Failed {
                 kind,
-                public_message: kind.public_message(),
+                public_message: BoundedProviderMessage::from_static_diagnostic(
+                    error.public_message(),
+                ),
                 output_started: false,
                 cleanup,
             };

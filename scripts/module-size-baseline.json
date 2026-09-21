@@ -1,6 +1,11 @@
 {
   "generatedAt": "2026-08-29T12:22:13.425Z",
   "files": {
+    "src-tauri/src/bin/harness_llm_diagnostic.rs": { "total": 16, "production": 16 },
+    "src-tauri/src/harness_llm_diagnostic.rs": { "total": 90, "production": 90 },
+    "src-tauri/src/providers/dynamic_lan/profile_catalog.rs": { "total": 105, "production": 42 },
+    "src/lib/harnessFailureDiagnostics.ts": { "total": 15, "production": 15 },
+    "tests/harness-failure-diagnostics.test.ts": { "total": 10, "production": 10 },
     "scripts/codex-sdk-canary.ts": {
       "total": 50,
       "production": 50
@@ -2533,9 +2538,21 @@
       "total": 287,
       "production": 287
     },
+    "src/features/audit/VoicePipelineMonitorPanel.css": {
+      "total": 167,
+      "production": 167
+    },
+    "src/features/audit/VoicePipelineMonitorPanel.tsx": {
+      "total": 78,
+      "production": 78
+    },
     "src/features/audit/auditTimestamp.ts": {
       "total": 27,
       "production": 27
+    },
+    "src/features/audit/voicePipelineMonitor.ts": {
+      "total": 208,
+      "production": 208
     },
     "src/features/chat/artifacts/artifact.css": {
       "total": 39,
@@ -3564,6 +3581,10 @@
     "tests/voice-final-delivery.test.ts": {
       "total": 36,
       "production": 36
+    },
+    "tests/voice-pipeline-monitor.test.ts": {
+      "total": 158,
+      "production": 158
     },
     "tests/voice-profile.test.ts": {
       "total": 83,

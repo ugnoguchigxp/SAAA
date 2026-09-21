@@ -21,15 +21,25 @@ describe("audit log UI", () => {
     expect(containsSource(audit, "fn list_audit_events")).toBe(true);
     expect(containsSource(backend, "persistence::audit::list_audit_events,")).toBe(true);
     expect(containsSource(audit, "const AUDIT_UI_EVENT_LIMIT: usize = 200;")).toBe(true);
-    expect(containsSource(app, "AuditLogPage")).toBe(false);
-    expect(containsSource(page, "aliveRef.current")).toBe(true);
+    expect(containsSource(app, "AuditLogPage")).toBe(true);
+    expect(containsSource(app, 'route === "audit"')).toBe(true);
+    expect(containsSource(page, "useQuery({")).toBe(true);
+    expect(containsSource(page, 'queryKey: ["audit-events", sortBy, direction]')).toBe(true);
+    expect(containsSource(page, "manualSorting: true")).toBe(true);
+    expect(containsSource(page, "getToggleSortingHandler()")).toBe(true);
+    expect(containsSource(page, 'selectedEvent.outcome === "failure"')).toBe(true);
+    expect(containsSource(page, "buildAuditDebugContext(event)")).toBe(true);
+    expect(containsSource(page, "navigator.clipboard?.writeText")).toBe(true);
     expect(containsSource(settings, "AuditLog")).toBe(false);
-    expect(containsSource(runtime, 'invoke<AuditEvent[]>("list_audit_events")')).toBe(true);
+    expect(containsSource(runtime, 'invoke<AuditEvent[]>("list_audit_events", { input })')).toBe(
+      true,
+    );
+    expect(containsSource(packageJson, '"@tanstack/react-query"')).toBe(true);
     expect(containsSource(packageJson, '"@tanstack/react-table"')).toBe(true);
     expect(containsSource(page, 'from "@tanstack/react-table"')).toBe(true);
     expect(containsSource(page, "table.getHeaderGroups()")).toBe(true);
     expect(containsSource(page, "table.getRowModel().rows")).toBe(true);
-    expect(containsSource(page, "setSelectedEvent(row.original)")).toBe(true);
+    expect(containsSource(page, "setSelectedEventId(row.original.id)")).toBe(true);
     expect(containsSource(page, 'role="dialog"')).toBe(true);
     expect(containsSource(page, "selectedEvent.attributes")).toBe(true);
     expect(containsSource(styles, ".audit-table-scroll::-webkit-scrollbar")).toBe(true);

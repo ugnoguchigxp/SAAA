@@ -1,0 +1,119 @@
+.app-primary-region {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: #0d1118;
+}
+
+.top-navigation {
+  min-width: 0;
+  min-height: 54px;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 clamp(16px, 2.4vw, 34px);
+  overflow-x: auto;
+  border-bottom: 1px solid #252d38;
+  background: #0d1118;
+  scrollbar-width: none;
+}
+
+.top-navigation::-webkit-scrollbar {
+  display: none;
+}
+
+.top-navigation-item {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border: 0;
+  color: #8694a6;
+  background: transparent;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.top-navigation-item:hover {
+  color: #dbe4ee;
+}
+.top-navigation-item.active {
+  color: #f1f5f9;
+}
+.top-navigation-item.active::after {
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: #67d5c5;
+  content: "";
+}
+
+.app-page-region {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-page {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: #0d1118;
+}
+
+.workspace-page-header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px clamp(20px, 3vw, 44px);
+  border-bottom: 1px solid #202833;
+}
+
+.workspace-page-header h1 {
+  margin: 0;
+  color: #ecf2f8;
+  font-size: 0.95rem;
+  font-weight: 680;
+}
+
+.workspace-page-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px clamp(20px, 3vw, 44px) 36px;
+}
+
+.workspace-empty,
+.workspace-error {
+  margin: 24px 0;
+  color: #8593a5;
+  font-size: 0.8rem;
+}
+
+.workspace-error {
+  color: #f0a4ad;
+}
+
+@media (max-width: 720px) {
+  .top-navigation {
+    padding-inline: 8px;
+  }
+  .top-navigation-item {
+    padding-inline: 11px;
+  }
+  .workspace-page-header,
+  .workspace-page-content {
+    padding-inline: 16px;
+  }
+}

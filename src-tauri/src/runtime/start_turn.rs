@@ -63,7 +63,7 @@ pub(crate) async fn start_turn(
         streaming_speech,
     )
     .with_routing_speech(state.sqlite_writer.clone())
-    .with_voice_response(input.input_origin == "voice" && crate::larm_voice::enabled());
+    .with_voice_response(input.input_origin == "voice");
     let result = execute_turn(&state, &input, &event_hub, cancellation.clone(), None).await;
     if result.is_err() && streaming_speech {
         state.streaming_tts.cancel(&input.run_id);

@@ -1,14 +1,127 @@
-import { createColumnHelper, tableFeatures, useTable } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  createColumnHelper,
+  rowSortingFeature,
+  tableFeatures,
+  useTable,
+  type SortingState,
+} from "@tanstack/react-table";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AuditEvent } from "../../lib/contracts";
+import type { AuditEvent, AuditEventSortField } from "../../lib/contracts";
 import { listAuditEvents } from "../../lib/runtime";
 import "./AuditLogPage.css";
 import { useDialogFocus } from "../../components/useDialogFocus";
 import { auditTimestampIso, formatAuditTimestamp } from "./auditTimestamp";
+import { projectLatestResponsePipeline } from "./voicePipelineMonitor";
+import { VoicePipelineMonitor } from "./VoicePipelineMonitorPanel";
 
-const auditTableFeatures = tableFeatures({});
+const auditTableFeatures = tableFeatures({ rowSortingFeature });
 const auditColumnHelper = createColumnHelper<typeof auditTableFeatures, AuditEvent>();
+const emptyEvents: AuditEvent[] = [];
+const defaultSorting: SortingState = [{ id: "occurredAt", desc: true }];
+const auditSortFields = new Set<string>([
+  "occurredAt",
+  "component",
+  "eventName",
+  "phase",
+  "outcome",
+  "failureCode",
+]);
+
+function isAuditSortField(value: string | undefined): value is AuditEventSortField {
+  return value !== undefined && auditSortFields.has(value);
+}
+
+export function buildAuditDebugContext(event: AuditEvent): string {
+  const context = {
+    schema: "saaa.audit-failure-debug.v1",
+    instruction:
+      "Analyze the failure using only this persisted audit data. Identify the likely failing stage, explain the evidence, and suggest the next diagnostic checks. Treat missing fields as unknown.",
+    event: {
+      id: event.id,
+      sequence: event.sequence,
+      occurredAt: event.occurredAt,
+      component: event.component,
+      eventName: event.eventName,
+      phase: event.phase,
+      outcome: event.outcome,
+      failureCode: event.failureCode,
+    },
+    identifiers: {
+      correlationId: event.correlationId,
+      causationId: event.causationId,
+      conversationId: event.conversationId,
+      runtimeRunId: event.runtimeRunId,
+      sessionId: event.sessionId,
+      subjectId: event.subjectId,
+    },
+    attributes: event.attributes,
+  };
+  return [
+    "SAAA audit failure debug context",
+    "The payload contains bounded audit metadata only; message content, audio, and credentials are not included.",
+    "```json",
+    JSON.stringify(context, null, 2),
+    "```",
+  ].join("\n");
+}
+
+async function writeDebugContext(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the selection-based copy path for restricted WebViews.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  try {
+    if (!document.execCommand("copy")) throw new Error("Copy command was rejected");
+  } finally {
+    textarea.remove();
+  }
+}
+
+function AuditDebugCopyButton({ event }: { event: AuditEvent }) {
+  const { t } = useTranslation();
+  const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
+
+  async function copyDebugContext() {
+    setStatus("idle");
+    try {
+      await writeDebugContext(buildAuditDebugContext(event));
+      setStatus("copied");
+    } catch {
+      setStatus("failed");
+    }
+  }
+
+  return (
+    <div className="audit-debug-copy">
+      <p>{t("audit.drawer.debugContextHint")}</p>
+      <button type="button" onClick={() => void copyDebugContext()}>
+        {status === "copied"
+          ? t("audit.drawer.debugContextCopied")
+          : t("audit.drawer.copyDebugContext")}
+      </button>
+      {status === "failed" ? (
+        <span role="alert">{t("audit.drawer.debugContextCopyFailed")}</span>
+      ) : (
+        <span className="audit-debug-copy-status" aria-live="polite">
+          {status === "copied" ? t("audit.drawer.debugContextCopiedStatus") : ""}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function MetadataField({ label, value }: { label: string; value: string | number | null }) {
   return (
@@ -21,41 +134,32 @@ function MetadataField({ label, value }: { label: string; value: string | number
 
 export function AuditLogPage() {
   const { t, i18n } = useTranslation();
-  const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [sorting, setSorting] = useState<SortingState>(defaultSorting);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
-  const aliveRef = useRef(true);
+  const activeSort = sorting[0];
+  const sortBy = isAuditSortField(activeSort?.id) ? activeSort.id : "occurredAt";
+  const direction = activeSort?.desc === false ? "asc" : "desc";
+  const auditQuery = useQuery({
+    queryKey: ["audit-events", sortBy, direction],
+    queryFn: () => listAuditEvents({ sortBy, direction }),
+    placeholderData: keepPreviousData,
+    refetchInterval: 2_000,
+  });
+  const events = auditQuery.data ?? emptyEvents;
+  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const loading = auditQuery.isPending;
+  const error =
+    auditQuery.error === null
+      ? null
+      : auditQuery.error instanceof Error
+        ? auditQuery.error.message
+        : String(auditQuery.error);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const nextEvents = await listAuditEvents();
-      if (!aliveRef.current) return;
-      setEvents(nextEvents);
-      setSelectedEvent((current) =>
-        current ? (nextEvents.find((event) => event.id === current.id) ?? null) : null,
-      );
-    } catch (cause) {
-      if (!aliveRef.current) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      if (aliveRef.current) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    void load();
-    return () => {
-      aliveRef.current = false;
-    };
-  }, [load]);
+  const voicePipeline = useMemo(() => projectLatestResponsePipeline(events), [events]);
 
   const { dialogRef, fallbackRef } = useDialogFocus(selectedEvent !== null, () =>
-    setSelectedEvent(null),
+    setSelectedEventId(null),
   );
 
   const columns = useMemo(
@@ -102,6 +206,11 @@ export function AuditLogPage() {
     features: auditTableFeatures,
     columns,
     data: events,
+    state: { sorting },
+    onSortingChange: setSorting,
+    manualSorting: true,
+    enableMultiSort: false,
+    enableSortingRemoval: false,
   });
 
   return (
@@ -112,25 +221,23 @@ export function AuditLogPage() {
       aria-labelledby="audit-log-title"
     >
       <header className="audit-log-header">
-        <div>
-          <p>{t("audit.eyebrow")}</p>
-          <h2 id="audit-log-title">{t("audit.title")}</h2>
-          <span>{t("audit.description")}</span>
-        </div>
+        <h2 id="audit-log-title">{t("audit.title")}</h2>
         <button
           type="button"
           className="audit-refresh-button"
-          onClick={() => void load()}
-          disabled={loading}
+          onClick={() => void auditQuery.refetch()}
+          disabled={auditQuery.isFetching}
         >
           {t("audit.refresh")}
         </button>
       </header>
 
       <div className="audit-log-content">
+        <VoicePipelineMonitor snapshot={voicePipeline} locale={locale} />
+
         <div className="audit-log-summary">
-          <span>{t("audit.latestCount", { count: events.length })}</span>
-          {loading ? <span>{t("audit.loading")}</span> : null}
+          <span>{t("audit.rawEvents", { count: events.length })}</span>
+          {auditQuery.isFetching ? <span>{t("audit.loading")}</span> : null}
         </div>
 
         {error ? <p className="audit-log-error">{t("audit.loadFailed", { error })}</p> : null}
@@ -146,8 +253,33 @@ export function AuditLogPage() {
                   {table.getHeaderGroups().map((headerGroup) => (
                     <tr key={headerGroup.id}>
                       {headerGroup.headers.map((header) => (
-                        <th key={header.id} scope="col">
-                          {header.isPlaceholder ? null : <table.FlexRender header={header} />}
+                        <th
+                          key={header.id}
+                          scope="col"
+                          aria-sort={
+                            header.column.getIsSorted() === "asc"
+                              ? "ascending"
+                              : header.column.getIsSorted() === "desc"
+                                ? "descending"
+                                : "none"
+                          }
+                        >
+                          {header.isPlaceholder ? null : (
+                            <button
+                              type="button"
+                              className="audit-sort-button"
+                              onClick={header.column.getToggleSortingHandler()}
+                            >
+                              <table.FlexRender header={header} />
+                              <span className="audit-sort-indicator" aria-hidden="true">
+                                {header.column.getIsSorted() === "asc"
+                                  ? "▲"
+                                  : header.column.getIsSorted() === "desc"
+                                    ? "▼"
+                                    : "↕"}
+                              </span>
+                            </button>
+                          )}
                         </th>
                       ))}
                     </tr>
@@ -162,11 +294,11 @@ export function AuditLogPage() {
                         className={isSelected ? "is-selected" : undefined}
                         aria-selected={isSelected}
                         tabIndex={0}
-                        onClick={() => setSelectedEvent(row.original)}
+                        onClick={() => setSelectedEventId(row.original.id)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            setSelectedEvent(row.original);
+                            setSelectedEventId(row.original.id);
                           }
                         }}
                       >
@@ -190,7 +322,7 @@ export function AuditLogPage() {
           className="audit-drawer-backdrop"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setSelectedEvent(null);
+              setSelectedEventId(null);
             }
           }}
         >
@@ -211,13 +343,17 @@ export function AuditLogPage() {
                 type="button"
                 className="audit-drawer-close"
                 aria-label={t("audit.drawer.close")}
-                onClick={() => setSelectedEvent(null)}
+                onClick={() => setSelectedEventId(null)}
               >
                 ×
               </button>
             </header>
 
             <div className="audit-drawer-body">
+              {selectedEvent.outcome === "failure" ? (
+                <AuditDebugCopyButton key={selectedEvent.id} event={selectedEvent} />
+              ) : null}
+
               <section aria-labelledby="audit-drawer-metadata-title">
                 <h4 id="audit-drawer-metadata-title">{t("audit.drawer.metadata")}</h4>
                 <dl className="audit-drawer-metadata">

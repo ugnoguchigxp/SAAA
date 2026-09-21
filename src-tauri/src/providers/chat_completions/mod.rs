@@ -153,6 +153,11 @@ pub(crate) async fn run_with_options(
                     return Err(Failure::ContextScopeChanged);
                 }
             }
+            let _ = context.on_event.send(RuntimeEvent::Activity {
+                run_id: context.input.run_id.clone(),
+                kind: "llm-request-sending".into(),
+                summary: "Sending the LLM request and waiting for its response.".into(),
+            });
             let response = match super::http::send(request, &context.cancellation, !started).await {
                 Ok(response) => response,
                 Err(error) => {

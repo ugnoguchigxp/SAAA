@@ -214,6 +214,12 @@ export function useConversationTurn({
       sourceId = null,
       onSettled,
     } = options;
+    const lfmHandoff = sourceId?.startsWith("lfm_handoff_") ?? false;
+    if (lfmHandoff && conversationSessionRef.current.runId) {
+      // A separate reasoning request is queued, without interrupting the existing answer.
+      pendingVoicePromptsRef.current.push({content: prompt,inputOrigin,sourceId: sourceId!,onSettled});
+      return;
+    }
     const replacement =
       !disposedRef.current && selectedConversationId
         ? queueReasoningReplacement(
@@ -268,7 +274,7 @@ export function useConversationTurn({
       incompleteRunIdsRef.current.clear();
       resetStreamingText();
       setRuntimeActivity([]);
-      if (!retryInputMessageId && !history.isBrowsingOlder()) {
+      if (!lfmHandoff && !retryInputMessageId && !history.isBrowsingOlder()) {
         setMessages((current) => [
           ...current,
           {
@@ -282,7 +288,7 @@ export function useConversationTurn({
       }
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
-      if (shouldStreamSpeech) {
+      if (shouldStreamSpeech && !lfmHandoff) {
         await stopSpeech(issueScope);
       }
       // A registered coding workspace is a user-selected Project. Carry that selection over the
@@ -381,7 +387,7 @@ export function useConversationTurn({
         ? undefined
         : pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
-        if (conversationSessionRef.current.speechRunId) await stopSpeech(issueScope);
+        if (conversationSessionRef.current.speechRunId && !nextVoicePrompt.sourceId?.startsWith("lfm_handoff_")) await stopSpeech(issueScope);
         await submitPrompt(nextVoicePrompt.content, {
           inputOrigin: nextVoicePrompt.inputOrigin,
           sourceId: nextVoicePrompt.sourceId,
