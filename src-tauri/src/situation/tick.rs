@@ -191,6 +191,11 @@ impl SituationRuntime {
                 push_event(&mut inner, SituationEvent::ShadowDecisionChanged { entry });
             }
         }
+        let wake = decision_changed || transitioned;
+        drop(inner);
+        if wake {
+            crate::steward::pump::signal_committed();
+        }
         Ok(())
     }
 

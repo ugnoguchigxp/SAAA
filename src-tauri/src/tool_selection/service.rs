@@ -1031,6 +1031,37 @@ impl ToolSelectionService {
         Ok(result)
     }
 
+    /// Resolves the trusted effect for an execution reference without opening an invocation.
+    /// Role routing uses this immediately before its own atomic reservation; the later invoke
+    /// repeats all reference/epoch checks before the backend owner is started.
+    pub(crate) fn execution_effect(
+        &self,
+        context: &RequestContext,
+        execution_ref: &str,
+    ) -> ToolSelectionResult<String> {
+        let reference = self
+            .references
+            .resolve(execution_ref, ReferenceKind::Execution, now_ms())
+            .ok_or_else(ToolSelectionError::not_found)?;
+        if reference.principal_id != context.principal_id
+            || reference.scope_key() != context.scope_key()
+        {
+            return Err(ToolSelectionError::unauthorized());
+        }
+        let (_, revision) = self.current_revision(&reference)?;
+        let current_epochs = self.read_epochs()?;
+        if current_epochs.rule != reference.rule_epoch {
+            return Err(ToolSelectionError::changed());
+        }
+        if current_epochs.catalog != reference.catalog_epoch
+            || current_epochs.acl != reference.acl_epoch
+            || revision.schema_hash != reference.schema_hash
+        {
+            return Err(ToolSelectionError::stale());
+        }
+        Ok(revision.effect)
+    }
+
     pub async fn invoke(
         &self,
         context: &RequestContext,

@@ -109,6 +109,23 @@ fn insert_job(state: &AppState, task_id: &str, job_state: &str, identity: Option
                 )
                 .map_err(crate::database_error)?;
             repo::set_loop_state(connection, task_id, "running", Some("job"), None)?;
+            super::evidence::persist(
+                connection,
+                &super::evidence::from_host_session(
+                    task_id,
+                    "job",
+                    "run",
+                    job_state,
+                    "/tmp",
+                    Some("report"),
+                    "host report",
+                    Some("read"),
+                    Some(1),
+                    Some("digest"),
+                    Some(0),
+                    super::evidence::PRODUCER_HOST_RECIPE,
+                ),
+            )?;
             Ok(())
         })
         .expect("job");
@@ -412,7 +429,7 @@ fn dw_10_settled_read_step_durably_enqueues_one_dependent_test_step() {
         insert_job(&state, &first, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "settled"))
+            .write(|connection| repo::apply_terminal_event(connection, "job", "settled", Some("run")))
             .unwrap();
         assert_eq!(
             count(
@@ -444,7 +461,7 @@ fn dw_10_settled_read_step_durably_enqueues_one_dependent_test_step() {
         assert_eq!(successor_step, "test");
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "settled"))
+            .write(|connection| repo::apply_terminal_event(connection, "job", "settled", Some("run")))
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
     });
@@ -484,7 +501,7 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
         insert_job(&state, &first, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "failed"))
+            .write(|connection| repo::apply_terminal_event(connection, "job", "failed", Some("run")))
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 2);
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
@@ -531,7 +548,7 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
         insert_job(&state, &second, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "failed"))
+            .write(|connection| repo::apply_terminal_event(connection, "job", "failed", Some("run")))
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 3);
         let third: String = state
@@ -566,7 +583,7 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
         insert_job(&state, &third, "running", None);
         state
             .sqlite_writer
-            .write(|connection| repo::apply_terminal_event(connection, "job", "failed"))
+            .write(|connection| repo::apply_terminal_event(connection, "job", "failed", Some("run")))
             .unwrap();
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 3);
     });
@@ -847,7 +864,7 @@ fn dw_13_late_terminal_event_cannot_revive_cancelled_task() {
             .unwrap();
         state
             .sqlite_writer
-            .write(|c| repo::apply_terminal_event(c, "job", "settled"))
+            .write(|c| repo::apply_terminal_event(c, "job", "settled", Some("run")))
             .unwrap();
         let state_name: String = state
             .sqlite_readers

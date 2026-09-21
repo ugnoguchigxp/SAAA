@@ -55,6 +55,8 @@ pub(crate) async fn run_with_options(
         let mut output = String::new();
         let mut calls = 0;
         let mut voice_calls = 0;
+        let mut context_still_calls = 0;
+        let mut context_still_call_keys = std::collections::HashSet::new();
         let mut spoken_tool_progress = 0;
         loop {
             crate::runtime::context::world::dispatch::refresh_json(
@@ -72,6 +74,7 @@ pub(crate) async fn run_with_options(
                     context.input,
                     calls,
                     voice_calls,
+                    context_still_calls,
                 )
             } else {
                 AgentToolOffer::empty()
@@ -261,18 +264,34 @@ pub(crate) async fn run_with_options(
                 if call.name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME {
                     voice_calls += 1;
                 }
+                let duplicate_context_still_call =
+                    crate::runtime::agent_tools::context_still_call_key(&call)
+                        .is_some_and(|key| !context_still_call_keys.insert(key));
+                if crate::runtime::agent_tools::is_context_still_tool(&call.name) {
+                    context_still_calls += 1;
+                }
                 let report_progress = context.on_event.voice_response_enabled()
                     && spoken_tool_progress < voice_progress::MAX_SPOKEN_PER_ATTEMPT
                     && voice_progress::supports(&call.name);
                 // The tool budget is the turn's actual remaining time, never a fixed constant.
-                let (result, progress_spoken) = voice_progress::execute(
-                    &context,
-                    &call,
-                    report_progress,
-                    Duration::from_millis(timeout_ms).saturating_sub(request_started.elapsed()),
-                    &offer.generated,
-                )
-                .await;
+                let (result, progress_spoken) = if duplicate_context_still_call {
+                    (
+                        crate::runtime::agent_tools::tool_error_content(
+                            "duplicate-memory-recall",
+                            "The same typed memory query was already completed in this turn.",
+                        ),
+                        false,
+                    )
+                } else {
+                    voice_progress::execute(
+                        &context,
+                        &call,
+                        report_progress,
+                        Duration::from_millis(timeout_ms).saturating_sub(request_started.elapsed()),
+                        &offer.generated,
+                    )
+                    .await
+                };
                 if progress_spoken {
                     spoken_tool_progress += 1;
                 }

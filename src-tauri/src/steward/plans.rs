@@ -23,7 +23,7 @@ pub(crate) fn finish_goal_if_complete(
     if pending == 0 {
         connection
             .execute(
-                "UPDATE steward_goal_progress SET work_status='done',revision=revision+1,updated_at=?2 WHERE goal_id=?1",
+                "UPDATE steward_goal_progress SET work_status='done',revision=revision+1,updated_at=?2,technical_state='complete',verified_success=1 WHERE goal_id=?1",
                 params![goal_id, crate::now_iso()],
             )
             .map_err(database_error)?;

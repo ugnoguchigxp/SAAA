@@ -18,6 +18,8 @@ const stewardTask = z.object({
   deliveryState: z.string().nullable(),
   speechState: z.string().nullable(),
   artifactRefs: z.array(z.string()),
+  verifierOutcome: z.string().nullable().optional(),
+  evidenceReason: z.string().nullable().optional(),
 });
 const stewardRegister = z.object({
   goalId: z.string(),

@@ -63,10 +63,10 @@ lane が `offline` の行は認証済みモデル・実機を起動しない。`
 
 | A | 担当 E | 目標試験名 | lane | 本表作成時の結果 |
 | --- | --- | --- | --- | --- |
-| A01 | E10 | `rr_05_normal_turn_two_steps` | offline | 未実装 |
+| A01 | E10 | `rr_05_normal_turn_two_steps` | offline | pass（`rr_05_normal_turn_two_steps_commits_only_the_final_answer`。通常 `execute_turn` から2 provider stepを順次実行） |
 | A02 | E01/E07 | `rr_03_policy_cas_conflict`, `rr_03_policy_validation` | offline | 部分（CAS は `rr_03_policy_cas_conflict` pass。製品 validator は `validate_settings`。E07 の recipe 検査待ち） |
 | A03 | E05 | `rr_04_receipt_retry`, `rr_04_same_id_changed_payload` | offline | pass（`rr_04_receipt_retry_and_conflict` が retry/conflict を検証。`rr_04_queue_full_leaves_no_input_message` も pass） |
-| A04 | E10/E23 | `rr_05_frontend_ack_then_reasoner` | offline | 未実装 |
+| A04 | E10/E23 | `rr_05_frontend_ack_then_reasoner` | offline | pass（frontend draftは非公開・非採用、reasoner回答だけを1件commit） |
 | A05 | E23 | `rr_08_mixed_greeting` | offline | pass（`rr_08_mixed_greeting_is_not_a_valid_action`） |
 | A06 | E23 | `rr_08_timeout_unclear` | offline | pass |
 | A07 | E11 | `rr_09_shared_resource_group` | offline | 未実装 |
@@ -90,7 +90,7 @@ lane が `offline` の行は認証済みモデル・実機を起動しない。`
 | A25 | E11/E18 | `rr_22_loop_budget` | offline | 未実装 |
 | A26 | E20 | `rr_26_premium_no_implicit_execution` | offline | pass |
 | A27 | E20 | `rr_26_approval_consumed_once` | offline | 未実装 |
-| A28 | E11/E20 | `rr_22_cloud_revoked_before_dispatch` | offline | 未実装 |
+| A28 | E11/E20 | `rr_22_cloud_revoked_before_dispatch` | offline | pass（receipt 後に SDK availability を剥奪し、provider session 0件を確認） |
 | A29 | E16 | `rr_21_changed_revision_new_thread` | offline | 未実装 |
 | A30 | E16/L01 | `rr_21_sol_tool_roundtrip` | offline/live | 未実装 |
 | A31 | E28 | `rr_30_feature_snapshot_immutable` | offline | 未実装 |

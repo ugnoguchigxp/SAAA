@@ -28,6 +28,17 @@ pub enum SessionState {
     Closing,
 }
 
+/// Immutable routing authority captured when the host creates an MCP session. None of these
+/// fields may be supplied or changed by the MCP client.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleSessionBinding {
+    pub root_id: String,
+    pub step_id: String,
+    pub revision: i64,
+    pub attempt_started_at_ms: i64,
+    pub config_fingerprint: String,
+}
+
 impl SessionState {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -51,7 +62,7 @@ pub struct Session {
     client_info: Option<Value>,
     conversation_id: String,
     run_id: String,
-    role_root_id: Option<String>,
+    role_binding: Option<RoleSessionBinding>,
     principal_id: String,
     project_id: Option<String>,
     created_at_ms: i64,
@@ -68,7 +79,7 @@ impl Session {
         client_info: Option<Value>,
         conversation_id: String,
         run_id: String,
-        role_root_id: Option<String>,
+        role_binding: Option<RoleSessionBinding>,
         principal_id: String,
         project_id: Option<String>,
     ) -> Self {
@@ -79,7 +90,7 @@ impl Session {
             client_info,
             conversation_id,
             run_id,
-            role_root_id,
+            role_binding,
             principal_id,
             project_id,
             created_at_ms: now,
@@ -110,7 +121,12 @@ impl Session {
         &self.run_id
     }
     pub fn role_root_id(&self) -> Option<&str> {
-        self.role_root_id.as_deref()
+        self.role_binding
+            .as_ref()
+            .map(|binding| binding.root_id.as_str())
+    }
+    pub fn role_binding(&self) -> Option<&RoleSessionBinding> {
+        self.role_binding.as_ref()
     }
     pub fn principal_id(&self) -> &str {
         &self.principal_id

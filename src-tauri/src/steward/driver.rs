@@ -16,7 +16,7 @@ pub(crate) fn consume(connection: &Connection) -> Result<(), String> {
         .map_err(crate::database_error)?;
     let mut stmt = connection
         .prepare(
-            "SELECT sequence,job_id,kind FROM coding_events WHERE sequence>?1 ORDER BY sequence",
+            "SELECT sequence,job_id,run_id,kind FROM coding_events WHERE sequence>?1 ORDER BY sequence",
         )
         .map_err(crate::database_error)?;
     let events = stmt
@@ -25,6 +25,7 @@ pub(crate) fn consume(connection: &Connection) -> Result<(), String> {
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
             ))
         })
         .map_err(crate::database_error)?;
@@ -33,9 +34,12 @@ pub(crate) fn consume(connection: &Connection) -> Result<(), String> {
         .map_err(crate::database_error)?;
     drop(stmt);
     for event in events {
-        let (sequence, job, kind) = event;
-        if matches!(kind.as_str(), "settled" | "failed" | "interrupted") {
-            repo::apply_terminal_event(connection, &job, &kind)?;
+        let (sequence, job, run_id, kind) = event;
+        if matches!(
+            kind.as_str(),
+            "settled" | "failed" | "interrupted" | "outcome_unknown"
+        ) {
+            repo::apply_terminal_event(connection, &job, &kind, Some(&run_id))?;
         }
         connection
             .execute(

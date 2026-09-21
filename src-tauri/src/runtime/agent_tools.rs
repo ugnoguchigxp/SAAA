@@ -249,12 +249,25 @@ pub fn is_supported_agent_tool(name: &str) -> bool {
         || crate::steward::tools::NAMES.contains(&name)
         || name == RECALL_TOOL_NAME
         || is_typed_recall_tool(name)
+        || crate::memory::context_still_search::is_search_tool(name)
         || crate::runtime::web_fetch::is_web_fetch_tool(name)
         || name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
 }
 
 pub fn is_typed_memory_tool(name: &str) -> bool {
     is_typed_recall_tool(name)
+}
+
+pub fn is_context_still_tool(name: &str) -> bool {
+    is_typed_memory_tool(name) || crate::memory::context_still_search::is_search_tool(name)
+}
+
+pub fn context_still_call_key(call: &AgentToolCall) -> Option<String> {
+    if !is_context_still_tool(&call.name) {
+        return None;
+    }
+    let arguments: Value = serde_json::from_str(&call.arguments).ok()?;
+    Some(format!("{}:{arguments}", call.name))
 }
 
 #[cfg(test)]
@@ -413,6 +426,19 @@ mod tests {
         );
         assert_eq!(agent_tool_definitions(false, true, false).len(), 5);
         assert_eq!(agent_tool_definitions(false, false, false).len(), 2);
+        for definition in all.iter().filter(|definition| {
+            definition
+                .pointer("/function/name")
+                .and_then(Value::as_str)
+                .is_some_and(is_typed_recall_tool)
+        }) {
+            let description = definition
+                .pointer("/function/description")
+                .and_then(Value::as_str)
+                .expect("typed recall description exists");
+            assert!(description.contains("substantial task"));
+            assert!(description.contains("Do not use this for greetings, simple questions"));
+        }
         assert_eq!(
             agent_tool_definitions(false, false, true)
                 .last()
@@ -550,6 +576,24 @@ mod tests {
                 }]}}]
             })),
             Err(ToolProtocolError::Protocol)
+        );
+    }
+
+    #[test]
+    fn typed_memory_call_keys_normalize_json_object_order() {
+        let first = AgentToolCall {
+            id: "first".to_string(),
+            name: "recall_experience".to_string(),
+            arguments: r#"{"query":"release","limit":3}"#.to_string(),
+        };
+        let second = AgentToolCall {
+            id: "second".to_string(),
+            name: "recall_experience".to_string(),
+            arguments: r#"{"limit":3,"query":"release"}"#.to_string(),
+        };
+        assert_eq!(
+            context_still_call_key(&first),
+            context_still_call_key(&second)
         );
     }
 

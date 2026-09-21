@@ -98,7 +98,11 @@ macro_rules! saaa_invoke_handler {
             role_routing::ipc::cancel_routing_root,
             role_routing::ipc::run_routing_learning_once,
             role_routing::ipc::get_routing_learning_snapshot,
-            role_routing::ipc::rollback_adaptive_artifact
+            role_routing::ipc::rollback_adaptive_artifact,
+            adaptive_evaluation::list_adaptive_evaluations,
+            adaptive_evaluation::import_adaptive_evaluation,
+            adaptive_evaluation::approve_adaptive_artifact,
+            adaptive_evaluation::activate_adaptive_artifact
         ]
     };
 }

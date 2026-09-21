@@ -26,18 +26,29 @@ pub(crate) struct CompiledRecipe {
     pub(crate) steps: Vec<PlannedStep>,
 }
 
-/// The fixed purpose sequence for each supported action. The list length fixes how many roles the
-/// recipe must resolve; an action with no execution (Finalize/Cancel) yields no steps.
-fn step_purposes(action: &RoutingAction) -> &'static [&'static str] {
-    match action {
-        RoutingAction::Respond | RoutingAction::Explain => &["respond"],
-        RoutingAction::Clarify => &["frontend"],
-        RoutingAction::ReconsiderSame | RoutingAction::ReconsiderOther => &["reconsider"],
-        RoutingAction::ReviewOther => &["review", "revise"],
-        RoutingAction::Revise => &["revise"],
-        RoutingAction::ProposeUpgrade => &["propose"],
-        RoutingAction::Finalize | RoutingAction::Cancel => &[],
-    }
+/// The bounded purpose sequence for each supported action. Respond/Explain may prepend one
+/// frontend acknowledgement step, but only in that exact position; arbitrary role loops remain
+/// unrepresentable. An action with no execution (Finalize/Cancel) yields no steps.
+fn step_purposes(action: &RoutingAction, roles: &[String]) -> Result<Vec<&'static str>, String> {
+    let purposes = match action {
+        RoutingAction::Respond | RoutingAction::Explain => match roles {
+            [_] => vec!["respond"],
+            [frontend, _] if frontend == "frontend" => vec!["frontend", "respond"],
+            _ => {
+                return Err(
+                    "Role-routing response recipe supports only reasoner or frontend+reasoner"
+                        .into(),
+                )
+            }
+        },
+        RoutingAction::Clarify => vec!["frontend"],
+        RoutingAction::ReconsiderSame | RoutingAction::ReconsiderOther => vec!["reconsider"],
+        RoutingAction::ReviewOther => vec!["review", "revise"],
+        RoutingAction::Revise => vec!["revise"],
+        RoutingAction::ProposeUpgrade => vec!["propose"],
+        RoutingAction::Finalize | RoutingAction::Cancel => Vec::new(),
+    };
+    Ok(purposes)
 }
 
 fn purpose_depends_on(purposes: &[&'static str], ordinal: usize) -> Vec<u32> {
@@ -122,7 +133,7 @@ pub(crate) fn compile_recipe_by_id(
         return Err("Role-routing recipe is disabled".into());
     }
     let action = recipe.action.clone();
-    let purposes = step_purposes(&action);
+    let purposes = step_purposes(&action, &recipe.roles)?;
     if purposes.len() != recipe.roles.len() {
         return Err("Role-routing recipe roles do not match its template".into());
     }
@@ -136,7 +147,7 @@ pub(crate) fn compile_recipe_by_id(
             purpose,
             role: role.clone(),
             actor_id,
-            depends_on: purpose_depends_on(purposes, index),
+            depends_on: purpose_depends_on(&purposes, index),
         });
     }
     // The reviewer of a `review_other` recipe must be a different deployment from the author.
@@ -255,6 +266,28 @@ mod tests {
             compile_recipe(&settings, RoutingAction::ReviewOther).expect("compiled review recipe");
         assert_eq!(compiled.steps.len(), 2);
         assert_eq!(compiled.steps[1].depends_on, vec![0]);
+    }
+
+    #[test]
+    fn rr_05_frontend_ack_then_reasoner_compiles_as_two_bounded_steps() {
+        let mut settings = review_settings();
+        settings.roles.frontend = Some("qwen".into());
+        settings.roles.reasoner = Some("sol".into());
+        settings.recipes = vec![RoutingRecipe {
+            id: "ack-then-reason".into(),
+            action: RoutingAction::Respond,
+            roles: vec!["frontend".into(), "reasoner".into()],
+            enabled: true,
+        }];
+        let compiled = compile_recipe_by_id(&settings, "ack-then-reason").expect("compile");
+        assert_eq!(compiled.steps.len(), 2);
+        assert_eq!(compiled.steps[0].purpose, "frontend");
+        assert_eq!(compiled.steps[0].actor_id, "qwen");
+        assert_eq!(compiled.steps[1].purpose, "respond");
+        assert_eq!(compiled.steps[1].actor_id, "sol");
+
+        settings.recipes[0].roles = vec!["reasoner".into(), "frontend".into()];
+        assert!(compile_recipe_by_id(&settings, "ack-then-reason").is_err());
     }
 
     #[test]

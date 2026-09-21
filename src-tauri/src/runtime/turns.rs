@@ -285,8 +285,11 @@ async fn wait_for_role_routing_dispatch(
             ));
         }
         match phase.as_str() {
-            "responding" | "draining" => return Ok(()),
-            "queued" => {
+            "responding" => return Ok(()),
+            // `draining` is a durable input/cancel barrier. A task that has not dispatched yet
+            // must wait for Release/Resume instead of starting provider I/O that cannot be
+            // adopted. An already-running provider never passes through this pre-dispatch wait.
+            "queued" | "draining" => {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
             "cancelled" => {

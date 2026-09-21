@@ -8,7 +8,8 @@ use crate::generated_capabilities::generation::contracts::{GenerateInput, Genera
 use crate::ipc_contract::RuntimeEvent;
 use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{
-    persist_conversation_success, AppState, RunCancellation, StartTurnInput, TurnExecutionFailure,
+    persist_conversation_success_with_state, AppState, RunCancellation, StartTurnInput,
+    TurnExecutionFailure,
 };
 
 pub(crate) async fn handle_user_turn(
@@ -147,7 +148,19 @@ async fn complete_command(
         route: "conversation.respond".to_string(),
         provider_id: "capability".to_string(),
     });
-    let message = persist_conversation_success(state, input, content)?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    let message =
+        persist_conversation_success_with_state(state, input, content, |connection, message| {
+            crate::role_routing::repository::accept_provider_turn(
+                connection,
+                &input.run_id,
+                &message.id,
+                now_ms,
+            )
+        })?;
     crate::memory::personal_state::output::send_completed(state, input, on_event, &message)?;
     Ok(())
 }
@@ -184,6 +197,42 @@ mod tests {
         }
     }
 
+    fn enable_role_routing(connection: &mut rusqlite::Connection) {
+        let mut settings = crate::role_routing::RoleRoutingSettings::default();
+        settings.enabled = true;
+        settings
+            .actors
+            .push(crate::role_routing::contracts::RoutingActor {
+                id: "local".into(),
+                label: "Local".into(),
+                aliases: Vec::new(),
+                transport: "provider".into(),
+                provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),
+                model: None,
+                location: "local".into(),
+                resource_group: "test".into(),
+                max_input_bytes: 4096,
+                capabilities: vec!["reason".into()],
+            });
+        settings.roles.reasoner = Some("local".into());
+        settings
+            .recipes
+            .push(crate::role_routing::contracts::RoutingRecipe {
+                id: "direct".into(),
+                action: crate::role_routing::contracts::RoutingAction::Respond,
+                roles: vec!["reasoner".into()],
+                enabled: true,
+            });
+        let mut documents = crate::test_support::default_settings_input();
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.roles")
+            .expect("role settings")
+            .value_json = serde_json::to_value(settings).expect("serialize role settings");
+        crate::persistence::settings::save_settings_documents_to_connection(connection, &documents)
+            .expect("enable role routing");
+    }
+
     #[tokio::test]
     async fn rw_06_ordinary_text_is_not_intercepted() {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
@@ -203,8 +252,9 @@ mod tests {
 
     #[tokio::test]
     async fn rw_06_malformed_command_finishes_without_a_model_provider() {
-        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
         crate::persistence::schema::initialize_database(&connection).unwrap();
+        enable_role_routing(&mut connection);
         let state = crate::test_support::app_state(connection);
         let input = turn("run-cap-bad", "/capability generate");
         let events = Sink::default();
@@ -239,6 +289,20 @@ mod tests {
             event,
             RuntimeEvent::Started { provider_id, .. } if provider_id != "capability"
         )));
+        drop(events);
+        let routing_state: (String, i64, i64) = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT r.phase,(SELECT count(*) FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=r.root_id AND o.accepted=1),(SELECT count(*) FROM rr_roots active WHERE active.conversation_id=r.conversation_id AND active.phase IN ('responding','draining')) FROM rr_roots r WHERE r.root_id=?1",
+                        [&input.run_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .map_err(|error| error.to_string())
+            })
+            .expect("routing completion");
+        assert_eq!(routing_state, ("completed".into(), 1, 0));
     }
 
     #[tokio::test]

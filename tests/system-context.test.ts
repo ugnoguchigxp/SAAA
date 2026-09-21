@@ -43,6 +43,14 @@ test("renders voice transcription context for every conversation provider", () =
     "Use `fetch_content` when a search result or public URL needs closer reading.",
   );
   expect(invocation.content.text).toContain("the location for a weather request");
+  expect(invocation.content.text).toContain(
+    "Before deciding how to approach a substantial task, proactively use the available ContextStill tools",
+  );
+  expect(invocation.content.text).toContain(
+    "Do not use these tools for greetings, simple questions, trivial edits",
+  );
+  expect(invocation.content.text).toContain("Use `search_knowledge`");
+  expect(invocation.content.text).toContain("`search_episodes` for similar past work");
   expect(invocation.content.text).toContain("The configured agent name is {{agentNameJson}}.");
   expect(invocation.content.text).toContain(
     "use that exact name whenever you identify or refer to yourself.",

@@ -6,6 +6,7 @@ import {
   rollbackAdaptiveArtifact,
   runRoutingLearningOnce,
 } from "../../lib/roleRoutingApi";
+import { AdaptiveImprovementSection } from "./AdaptiveImprovementSection";
 import { useEffect, useState } from "react";
 
 export function RoleRoutingSection({
@@ -292,6 +293,7 @@ export function RoleRoutingSection({
           )}
         </div>
       )}
+      <AdaptiveImprovementSection />
     </section>
   );
 }

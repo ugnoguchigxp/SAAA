@@ -261,7 +261,9 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
             "SELECT t.id,t.loop_state,t.dedupe_key,t.coding_job_id,g.status,g.id,g.summary,g.verifier,d.workspace_id,d.ops,d.budget_runs,d.budget_ms,d.notify,
                     (SELECT r.delivery_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1),
                     (SELECT r.speech_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1),
-                    COALESCE((SELECT group_concat(a.reference, char(31)) FROM steward_task_artifacts a WHERE a.task_id=t.id), '')
+                    COALESCE((SELECT group_concat(a.reference, char(31)) FROM steward_task_artifacts a WHERE a.task_id=t.id), ''),
+                    (SELECT o.outcome FROM steward_verifier_outcomes o WHERE o.task_id=t.id ORDER BY o.rowid DESC LIMIT 1),
+                    (SELECT o.reason_code FROM steward_verifier_outcomes o WHERE o.task_id=t.id ORDER BY o.rowid DESC LIMIT 1)
              FROM steward_tasks t
              JOIN steward_delegations d ON d.id=t.delegation_id
              JOIN steward_goals g ON g.id=d.goal_id
@@ -289,6 +291,8 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
                 "deliveryState": row.get::<_, Option<String>>(13)?,
                 "speechState": row.get::<_, Option<String>>(14)?,
                 "artifactRefs": artifacts.split('\u{1f}').filter(|value| !value.is_empty()).collect::<Vec<_>>(),
+                "verifierOutcome": row.get::<_, Option<String>>(16)?,
+                "evidenceReason": row.get::<_, Option<String>>(17)?,
             }))
         })
         .map_err(database_error)?;
@@ -626,12 +630,13 @@ pub(crate) fn settle_dispatch(
     Ok(())
 }
 
-/// Applies an already-committed coding terminal event.  `settled` only marks a
-/// verifier as satisfied for report-obtained work; it never claims tests pass.
+/// Applies an already-committed coding terminal event. Runner settlement is
+/// technical completion only; Goal success requires host evidence.
 pub(crate) fn apply_terminal_event(
     connection: &Connection,
     job_id: &str,
     kind: &str,
+    run_id: Option<&str>,
 ) -> Result<(), String> {
     let Some((task_id, _conversation_id, goal_id, goal_status, task_state)): Option<(String, String, String, String, String)> = connection.query_row(
         "SELECT t.id,t.conversation_id,g.id,g.status,t.loop_state FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id JOIN steward_goals g ON g.id=d.goal_id WHERE t.coding_job_id=?1",
@@ -645,11 +650,17 @@ pub(crate) fn apply_terminal_event(
     {
         return Ok(());
     }
+    let evaluation = if kind == "settled" {
+        Some(super::verifier::evaluate_task(
+            connection, &task_id, run_id,
+        )?)
+    } else {
+        None
+    };
     let state = match kind {
         "failed" | "interrupted" => "failed",
-        "settled" => super::verifier::map_to_task_state(&super::verifier::evaluate_task(
-            connection, &task_id,
-        )?),
+        "outcome_unknown" => "outcome_unknown",
+        "settled" => super::verifier::map_to_task_state(evaluation.as_ref().expect("evaluated")),
         _ => return Ok(()),
     };
     set_loop_state(connection, &task_id, state, None, None)?;
@@ -658,14 +669,31 @@ pub(crate) fn apply_terminal_event(
          VALUES(?1,?2,'coding_job',?3,?4,?5)",
         params![new_id("artifact"), task_id, job_id, kind, now_iso()],
     ).map_err(database_error)?;
-    // A dependency-satisfied successor is inserted in the same transaction
-    // as the terminal event; no in-memory callback is evidence of progress.
     if state == "done" {
         let _ = queue_dependent_step(connection, &task_id)?;
         super::plans::finish_goal_if_complete(connection, &goal_id)?;
     } else if kind == "failed" {
         let _ = replan_after_failure(connection, &task_id)?;
     }
+    record_learning_labels(
+        connection,
+        &task_id,
+        job_id,
+        kind,
+        state,
+        evaluation.as_ref(),
+    )?;
+    Ok(())
+}
+
+fn record_learning_labels(
+    connection: &Connection,
+    task_id: &str,
+    job_id: &str,
+    kind: &str,
+    state: &str,
+    evaluation: Option<&super::execution_contracts::VerifierOutcome>,
+) -> Result<(), String> {
     let plan_decision_id = format!("ai-plan-{task_id}");
     let adaptive_schema_ready: bool = connection
         .query_row(
@@ -682,27 +710,32 @@ pub(crate) fn apply_terminal_event(
                 |row| row.get(0),
             )
             .map_err(database_error)?;
-    if has_plan_decision {
-        crate::adaptive_improvement::record_outcome(
-            connection,
-            &plan_decision_id,
-            Some(kind == "settled"),
-            (state == "done").then_some(true),
-            None,
-            None,
-            None,
-            None,
-            None,
-            job_id,
-            1,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_millis() as i64)
-                .unwrap_or(0),
-        )?;
+    if !has_plan_decision {
+        return Ok(());
     }
-    // `claim_terminals` owns the outbox insertion. It needs the delegation's notification
-    // policy, so terminal consumption must not manufacture an immediate report here.
+    let verifier_success = match evaluation {
+        Some(super::execution_contracts::VerifierOutcome::Pass) => Some(true),
+        Some(super::execution_contracts::VerifierOutcome::Fail) => Some(false),
+        _ => None,
+    };
+    crate::adaptive_improvement::record_outcome(
+        connection,
+        &plan_decision_id,
+        Some(kind == "settled"),
+        verifier_success,
+        None,
+        None,
+        None,
+        None,
+        None,
+        job_id,
+        1,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0),
+    )?;
+    let _ = state;
     Ok(())
 }
 
@@ -1034,7 +1067,7 @@ pub(crate) fn sync_from_coding(
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
-    for (task_id, previous, job_state, verifier, goal_status) in rows {
+    for (task_id, previous, job_state, _verifier, goal_status) in rows {
         let withdrawn = goal_status == "withdrawn";
         let open = matches!(
             previous.as_str(),
@@ -1051,7 +1084,13 @@ pub(crate) fn sync_from_coding(
             previous.as_str()
         } else {
             match job_state.as_deref() {
-                Some("settled") if verifier != "test_report_obtained" => "awaiting_user",
+                Some("settled") => {
+                    if matches!(previous.as_str(), "done" | "failed" | "cancelled") {
+                        previous.as_str()
+                    } else {
+                        "verifying"
+                    }
+                }
                 Some(state) => map_coding_state(state),
                 None => previous.as_str(),
             }

@@ -10,6 +10,8 @@ mod prepare;
 use prepare::{
     compose_after_connect, provider_input_budget, world_free_history, FreshProviderContext,
 };
+#[path = "role_step_sink.rs"]
+mod role_step_sink;
 #[path = "conversation_state_answer.rs"]
 mod state_answer;
 #[path = "conversation_stream.rs"]
@@ -53,6 +55,16 @@ pub(crate) async fn execute_conversation_turn(
         role_dispatch,
         ..
     } = conversation_inputs::load(state, input)?;
+    let role_provider_step = matches!(
+        &role_dispatch,
+        Some(conversation_inputs::conversation_inputs_roles::RoleDispatch::Provider { .. })
+    );
+    let role_provider_max_input_bytes = match &role_dispatch {
+        Some(conversation_inputs::conversation_inputs_roles::RoleDispatch::Provider {
+            max_input_bytes,
+        }) => Some(*max_input_bytes as usize),
+        _ => None,
+    };
     crate::providers::http_metrics::record("contextInputsLoad", context_started.elapsed());
     if scope.status != "resolved" {
         crate::runtime::context::generation::record_red(
@@ -368,6 +380,22 @@ pub(crate) async fn execute_conversation_turn(
                 },
             );
         }
+        if let Some(max_input_bytes) = role_provider_max_input_bytes {
+            let encoded_bytes = serde_json::to_vec(&history)
+                .map_err(|error| TurnExecutionFailure::configuration(error.to_string()))?
+                .len();
+            if encoded_bytes > max_input_bytes {
+                finish_provider_session(
+                    state,
+                    &session_id,
+                    "failed",
+                    Some(ProviderFailureKind::Contract),
+                )?;
+                return Err(TurnExecutionFailure::configuration(format!(
+                    "Role-routing provider input exceeds actor limit ({encoded_bytes} > {max_input_bytes} bytes)"
+                )));
+            }
+        }
         if envelope.health.status == crate::runtime::context::health::Status::Yellow {
             let _ = on_event.send(RuntimeEvent::Activity {
                 run_id: input.run_id.clone(),
@@ -399,6 +427,15 @@ pub(crate) async fn execute_conversation_turn(
             });
             context_health_recorded = true;
         }
+        // Role child output is a candidate until the ledger transaction adopts it. Keep stream
+        // text inside the step sink so neither the UI nor TTS can observe an uncommitted draft.
+        let role_step_sink = role_provider_step.then(|| {
+            role_step_sink::BufferedRoleStepSink::new(input.run_id.clone(), on_event.clone_box())
+        });
+        let provider_events: &dyn RuntimeEventSender = role_step_sink
+            .as_ref()
+            .map(|sink| sink as &dyn RuntimeEventSender)
+            .unwrap_or(on_event);
         let outcome = streaming::attempt(
             &provider,
             &history,
@@ -407,7 +444,7 @@ pub(crate) async fn execute_conversation_turn(
                 reasoning_effort: &reasoning_effort,
                 max_output_tokens,
                 input,
-                on_event,
+                on_event: provider_events,
                 cancellation: cancellation.clone(),
                 context_health: envelope.health.status.as_str(),
                 context_sources: &envelope.selected,
@@ -453,6 +490,26 @@ pub(crate) async fn execute_conversation_turn(
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|duration| duration.as_millis() as i64)
                     .unwrap_or(0);
+                if role_provider_step
+                    && state.sqlite_writer.write(|connection| {
+                        crate::role_routing::repository::advance_provider_step(
+                            connection,
+                            &input.run_id,
+                            &content,
+                            now_ms,
+                        )
+                    })?
+                {
+                    // Re-enter through the normal loader so the next dispatch comes from the
+                    // newly claimed persisted step. The finite recipe budget bounds recursion.
+                    return Box::pin(execute_conversation_turn(
+                        state,
+                        input,
+                        on_event,
+                        cancellation,
+                    ))
+                    .await;
+                }
                 return persist_conversation_success_with_state(
                     state,
                     input,

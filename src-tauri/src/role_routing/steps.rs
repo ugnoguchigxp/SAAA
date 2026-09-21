@@ -43,7 +43,7 @@ pub(crate) fn claim_next_planned_step(
         )
         .map_err(|error| error.to_string())?;
     if changed != 1 {
-        return Ok(None);
+        return Err("Role-routing planned step changed before it could be claimed".into());
     }
     Ok(Some(step_id))
 }
@@ -85,7 +85,45 @@ pub(crate) fn complete_step(
             params![status, now_ms, step_id, root_id],
         )
         .map_err(|error| error.to_string())?;
-    Ok(changed == 1)
+    if changed == 1 {
+        return Ok(true);
+    }
+    // Never report an unconfirmed zero-row mutation as a successful no-op. Re-read the row so
+    // an exact duplicate remains idempotent while every conflicting transition fails closed.
+    let settled: Option<String> = transaction
+        .query_row(
+            "SELECT status FROM rr_steps WHERE id=?1 AND root_id=?2",
+            params![step_id, root_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    match settled.as_deref() {
+        Some(current) if current == status => Ok(false),
+        Some(_) => Err("Role-routing step changed during completion".into()),
+        None => Err("Role-routing step disappeared during completion".into()),
+    }
+}
+
+/// Settles every unfinished step in the current revision after the root reaches a terminal
+/// failure/cancellation state. A failed root must not retain `planned` work that recovery could
+/// later mistake for resumable work.
+pub(crate) fn settle_unfinished_steps(
+    transaction: &Connection,
+    root_id: &str,
+    revision: i64,
+    status: &str,
+    now_ms: i64,
+) -> Result<usize, String> {
+    if !matches!(status, "cancelled" | "interrupted") {
+        return Err("Unfinished role-routing steps require a non-success terminal status".into());
+    }
+    transaction
+        .execute(
+            "UPDATE rr_steps SET status=?1,completed_at_ms=?2 WHERE root_id=?3 AND revision=?4 AND status IN ('planned','running','draining')",
+            params![status, now_ms, root_id, revision],
+        )
+        .map_err(|error| error.to_string())
 }
 
 /// Returns the currently active reasoning step for a root, if any. This replaces the ordinal-0

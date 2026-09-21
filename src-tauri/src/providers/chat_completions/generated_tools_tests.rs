@@ -182,6 +182,81 @@ async fn c01_generated_definition_is_offered_and_its_result_returns_to_the_conve
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "operator-only SAAA E2E against the live ContextStill daemon"]
+async fn context_still_search_runs_through_the_real_conversation_tool_loop() {
+    let (env, mut state, _revision_id, _generated_name) = ready_state().await;
+    state.context_still_search =
+        crate::memory::context_still_search::ContextStillSearchClient::from_environment();
+    assert!(state.context_still_search.is_configured());
+    let run_id = "context-still-conversation-e2e";
+    let session = seeded_state(&env, &state, run_id);
+    let (endpoint, server) = fixture(vec![
+        (
+            200,
+            tool_call_stream(
+                crate::memory::context_still_search::SEARCH_KNOWLEDGE_TOOL_NAME,
+                r#"{"query":"SAAA cross-cutting diagnostics implementation verification","limit":1}"#,
+            ),
+            0,
+        ),
+        (200, content_stream("ContextStillを参照して実装計画を作成しました。"), 0),
+    ])
+    .await;
+    let mut input = turn_input(run_id);
+    input.content = "SAAAに横断的な診断機能を追加する実装計画を、再利用できる設計ルールと検証方法を踏まえて作ってください。".into();
+    env.writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "UPDATE conversation_messages SET content=?1 WHERE id='m2a-source'",
+                    [&input.content],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("source task updates");
+    let mut task_history = history();
+    task_history[0].content = input.content.clone();
+    let result = run(
+        &endpoint,
+        None,
+        "fixture",
+        &task_history,
+        10_000,
+        ModelStreamContext {
+            reasoning_effort: "provider-default",
+            max_output_tokens: 1000,
+            input: &input,
+            on_event: &Sink::default(),
+            cancellation: Arc::new(crate::RunCancellation::default()),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
+            output_persistence: Some(crate::ProviderOutputPersistence {
+                state: &state,
+                session_id: &session,
+                world: None,
+            }),
+        },
+    )
+    .await
+    .expect("SAAA conversation tool loop completes");
+    assert_eq!(result, "ContextStillを参照して実装計画を作成しました。");
+
+    let requests = server.await.unwrap();
+    assert!(requests[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["function"]["name"]
+            == crate::memory::context_still_search::SEARCH_KNOWLEDGE_TOOL_NAME));
+    let content = tool_message_content(&requests);
+    assert_eq!(content["source"], "context_still", "{content}");
+    assert_eq!(content["memoryType"], "knowledge", "{content}");
+    assert_eq!(content["trust"]["instructionAuthority"], "none");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c02_a_mixed_batch_with_an_unoffered_name_is_refused_before_any_call() {
     let (env, state, revision_id, name) = ready_state().await;
     let run_id = "m2a-mixed";
@@ -251,7 +326,7 @@ async fn c02_a_mixed_batch_with_an_unoffered_name_is_refused_before_any_call() {
 async fn c03_generated_tools_need_persistence_and_respect_the_call_budget() {
     let (_env, state, _revision_id, name) = ready_state().await;
     let input = turn_input("m2a-budget");
-    let without_persistence = available_agent_tools(None, &input, 0, 0);
+    let without_persistence = available_agent_tools(None, &input, 0, 0, 0);
     assert!(without_persistence.generated.is_empty());
 
     let persistence = Some(crate::ProviderOutputPersistence {
@@ -259,11 +334,11 @@ async fn c03_generated_tools_need_persistence_and_respect_the_call_budget() {
         session_id: "unused",
         world: None,
     });
-    let offered = available_agent_tools(persistence, &input, 0, 0);
+    let offered = available_agent_tools(persistence, &input, 0, 0, 0);
     assert_eq!(offered.generated.descriptors().len(), 1);
     assert!(offered.generated.resolve(&name).is_some());
 
-    let over_budget = available_agent_tools(persistence, &input, 12, 0);
+    let over_budget = available_agent_tools(persistence, &input, 12, 0, 0);
     assert!(
         over_budget.generated.is_empty(),
         "the 12-call admission rule also bounds generated tools"

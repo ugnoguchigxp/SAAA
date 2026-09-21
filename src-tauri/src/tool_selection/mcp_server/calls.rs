@@ -12,6 +12,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::protocol::{JsonRpcError, TypedRequestId, INVALID_PARAMS};
+use super::sessions::RoleSessionBinding;
 use super::sessions::Session;
 use super::ServerInner;
 use crate::persistence::SqliteWriter;
@@ -63,7 +64,7 @@ pub async fn execute_tool_call(
     service: &crate::tool_selection::ToolSelectionService,
     writer: &SqliteWriter,
     context: &RequestContext,
-    role_root_id: Option<&str>,
+    role_binding: Option<&RoleSessionBinding>,
     name: &str,
     arguments: &Value,
     cancellation: &RunCancellation,
@@ -76,13 +77,19 @@ pub async fn execute_tool_call(
     }
     let argument_text = serde_json::to_string(arguments)
         .map_err(|_| JsonRpcError::new(INVALID_PARAMS, "Invalid params"))?;
-    let envelope = match role_root_id {
-        Some(root_id) => {
+    let envelope = match role_binding {
+        Some(binding) => {
             gateway::execute_for_role_root(
                 service,
                 writer,
                 &context.conversation_id,
-                root_id,
+                &gateway::RoleStepBinding {
+                    root_id: &binding.root_id,
+                    step_id: &binding.step_id,
+                    revision: binding.revision,
+                    attempt_started_at_ms: binding.attempt_started_at_ms,
+                    config_fingerprint: &binding.config_fingerprint,
+                },
                 None,
                 name,
                 &argument_text,

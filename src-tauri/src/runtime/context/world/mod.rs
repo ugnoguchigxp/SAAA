@@ -7,6 +7,7 @@ pub(crate) mod g1_tests;
 pub(crate) mod host_answer;
 pub(crate) mod inputs;
 mod live;
+pub(crate) mod query_understand;
 pub(crate) mod question;
 pub(crate) mod question_input;
 pub(crate) mod render;

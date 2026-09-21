@@ -35,7 +35,13 @@ pub(crate) fn materialize_dirty_roots(
     now_ms: i64,
     batch_size: u16,
 ) -> Result<Option<String>, String> {
-    let upper_rowid: i64 = connection
+    if batch_size == 0 {
+        return Err("Role-routing learning batch size must be positive".into());
+    }
+    let tx = connection
+        .unchecked_transaction()
+        .map_err(|e| e.to_string())?;
+    let upper_rowid: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(rowid),0) FROM rr_learning_dirty",
             [],
@@ -45,31 +51,55 @@ pub(crate) fn materialize_dirty_roots(
     if upper_rowid == 0 {
         return Ok(None);
     }
-    let dataset_id = format!("rr-dataset-{now_ms}-{upper_rowid}");
-    let job_id = format!("rr-learning-extract-{upper_rowid}");
-    let tx = connection
-        .unchecked_transaction()
-        .map_err(|e| e.to_string())?;
-    tx.execute("INSERT OR IGNORE INTO rr_datasets(id,upper_seq,feature_version,labeler_version,manifest_json,state,created_at_ms) VALUES(?1,?2,?3,?4,'{}','building',?5)", params![dataset_id,upper_rowid,FEATURE_VERSION,LABELER_VERSION,now_ms]).map_err(|e| e.to_string())?;
-    tx.execute("INSERT OR IGNORE INTO rr_learning_jobs(id,job_key,stage,status,upper_seq,cursor_seq,dataset_id,created_at_ms,updated_at_ms) VALUES(?1,?2,'extract','running',?3,0,?4,?5,?5)", params![job_id,format!("extract:{upper_rowid}"),upper_rowid,dataset_id,now_ms]).map_err(|e| e.to_string())?;
     let roots = {
-        let mut stmt = tx.prepare("SELECT rowid,root_id FROM rr_learning_dirty WHERE rowid<=?1 ORDER BY rowid LIMIT ?2").map_err(|e| e.to_string())?;
+        let mut stmt = tx.prepare("SELECT rowid,root_id,cause_seq FROM rr_learning_dirty WHERE rowid<=?1 ORDER BY rowid LIMIT ?2").map_err(|e| e.to_string())?;
         let roots = stmt
             .query_map(params![upper_rowid, i64::from(batch_size)], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
             })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
         roots
     };
-    for (rowid, root_id) in &roots {
+    let page_lower = roots
+        .first()
+        .map(|(rowid, _, _)| *rowid)
+        .ok_or_else(|| "Role-routing learning dirty page is empty".to_string())?;
+    let page_upper = roots
+        .last()
+        .map(|(rowid, _, _)| *rowid)
+        .ok_or_else(|| "Role-routing learning dirty page is empty".to_string())?;
+    let page_fingerprint = sha256(
+        roots
+            .iter()
+            .map(|(rowid, root_id, cause_seq)| format!("{rowid}:{root_id}:{cause_seq}"))
+            .collect::<Vec<_>>()
+            .join("|")
+            .as_bytes(),
+    );
+    let page_key = &page_fingerprint[..24];
+    let dataset_id = format!("rr-dataset-{now_ms}-{page_key}");
+    let job_id = format!("rr-learning-extract-{now_ms}-{page_key}");
+    tx.execute("INSERT INTO rr_datasets(id,upper_seq,feature_version,labeler_version,manifest_json,state,created_at_ms) VALUES(?1,?2,?3,?4,'{}','building',?5)", params![dataset_id,page_upper,FEATURE_VERSION,LABELER_VERSION,now_ms]).map_err(|e| e.to_string())?;
+    tx.execute("INSERT INTO rr_learning_jobs(id,job_key,stage,status,upper_seq,cursor_seq,dataset_id,created_at_ms,updated_at_ms) VALUES(?1,?2,'extract','running',?3,0,?4,?5,?5)", params![job_id,format!("extract:{now_ms}:{page_key}"),page_upper,dataset_id,now_ms]).map_err(|e| e.to_string())?;
+    for (rowid, root_id, _cause_seq) in &roots {
         materialize_root(&tx, &dataset_id, root_id, now_ms)?;
-        tx.execute(
-            "DELETE FROM rr_learning_dirty WHERE root_id=?1 AND rowid=?2",
-            params![root_id, rowid],
-        )
-        .map_err(|e| e.to_string())?;
+        let changed = tx
+            .execute(
+                "DELETE FROM rr_learning_dirty WHERE root_id=?1 AND rowid=?2",
+                params![root_id, rowid],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed != 1 {
+            return Err(
+                "Role-routing learning dirty receipt changed during materialization".into(),
+            );
+        }
     }
     let count: i64 = tx
         .query_row(
@@ -78,21 +108,28 @@ pub(crate) fn materialize_dirty_roots(
             |r| r.get(0),
         )
         .map_err(|e| e.to_string())?;
-    let manifest = json!({"datasetId":dataset_id,"upperDirtyRowid":upper_rowid,"featureVersion":FEATURE_VERSION,"labelerVersion":LABELER_VERSION,"exampleCount":count,"rootCount":roots.len()});
-    tx.execute(
-        "UPDATE rr_datasets SET manifest_json=?1,digest=?2,state='ready' WHERE id=?3",
-        params![
-            manifest.to_string(),
-            sha256(manifest.to_string().as_bytes()),
-            dataset_id
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-    tx.execute(
+    let manifest = json!({"datasetId":dataset_id,"lowerDirtyRowid":page_lower,"upperDirtyRowid":page_upper,"featureVersion":FEATURE_VERSION,"labelerVersion":LABELER_VERSION,"exampleCount":count,"rootCount":roots.len()});
+    let dataset_changed = tx
+        .execute(
+            "UPDATE rr_datasets SET manifest_json=?1,digest=?2,state='ready' WHERE id=?3",
+            params![
+                manifest.to_string(),
+                sha256(manifest.to_string().as_bytes()),
+                dataset_id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    if dataset_changed != 1 {
+        return Err("Role-routing learning dataset was not finalized".into());
+    }
+    let job_changed = tx.execute(
         "UPDATE rr_learning_jobs SET status='completed',cursor_seq=?1,updated_at_ms=?2 WHERE id=?3",
-        params![upper_rowid, now_ms, job_id],
+        params![page_upper, now_ms, job_id],
     )
     .map_err(|e| e.to_string())?;
+    if job_changed != 1 {
+        return Err("Role-routing learning job was not finalized".into());
+    }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(Some(dataset_id))
 }
@@ -196,21 +233,49 @@ mod tests {
             [],
         )
         .expect("event");
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r2','c','p','completed','text','visual',2,'')",[]).expect("second root");
+        c.execute("INSERT INTO rr_decisions VALUES('d2','r2',0,NULL,'{\"complexity\":1}','[]','qwen','respond','[]','rules-v1','p',2)",[]).expect("second decision");
+        c.execute(
+            "INSERT INTO rr_events VALUES('r2',1,'answer_committed','{}',2)",
+            [],
+        )
+        .expect("second event");
         mark_root_dirty(&c, "r").expect("dirty");
-        let dataset = materialize_dirty_roots(&mut c, 10, 10)
+        mark_root_dirty(&c, "r2").expect("second dirty");
+        assert!(materialize_dirty_roots(&mut c, 9, 0).is_err());
+        let dataset = materialize_dirty_roots(&mut c, 10, 1)
             .expect("run")
             .expect("dataset");
         let row: (i64, String) = c
             .query_row(
                 "SELECT eligible,exclusion_reason FROM rr_examples WHERE dataset_id=?1",
-                [dataset],
+                [&dataset],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .expect("example");
         assert_eq!(row, (0, "no_explicit_feedback".into()));
-        assert!(materialize_dirty_roots(&mut c, 11, 10)
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM rr_learning_dirty", [], |r| r
+                .get::<_, i64>(0))
+                .expect("one dirty remains"),
+            1
+        );
+        let second_dataset = materialize_dirty_roots(&mut c, 11, 1)
+            .expect("second page")
+            .expect("second dataset");
+        assert_ne!(dataset, second_dataset);
+        assert!(materialize_dirty_roots(&mut c, 12, 1)
             .expect("again")
             .is_none());
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM rr_learning_jobs j JOIN rr_datasets d ON d.id=j.dataset_id WHERE j.status='completed' AND j.cursor_seq=j.upper_seq AND d.state='ready'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .expect("completed pages"),
+            2
+        );
     }
 
     #[test]

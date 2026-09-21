@@ -9,7 +9,7 @@ pub(crate) mod ledger;
 pub(crate) mod notify;
 pub(crate) mod runtime;
 pub(crate) mod schema;
-mod tick;
+pub(crate) mod tick;
 pub(crate) use handle::Handle;
 pub(crate) use schema::migrate;
 pub(crate) use tick::start_loop;

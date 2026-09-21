@@ -17,6 +17,7 @@ use std::{
 };
 use tauri::Manager;
 
+mod adaptive_evaluation;
 mod adaptive_improvement;
 mod app_paths;
 mod backup;
@@ -591,6 +592,8 @@ pub fn run() {
                 data_directory: voice_data_directory,
                 context_still_recall:
                     memory::context_still_recall::ContextStillRecallClient::from_environment(),
+                context_still_search:
+                    memory::context_still_search::ContextStillSearchClient::from_environment(),
                 active_runs: Mutex::new(HashMap::new()),
                 provider_probes: Mutex::new(HashMap::new()),
                 interaction_policy: Mutex::new(()),

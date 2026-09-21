@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use super::contracts::RoleRoutingSettings;
-use super::limits::{self, BudgetState};
+use super::limits::BudgetState;
 use super::recipe::{CompiledRecipe, PlannedStep};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -28,7 +28,7 @@ pub(crate) struct DispatchPermit {
 pub(crate) fn load_budget(connection: &Connection, root_id: &str) -> Result<BudgetState, String> {
     let steps: i64 = connection
         .query_row(
-            "SELECT count(*) FROM rr_steps WHERE root_id=?1 AND status IN ('running','draining','succeeded','failed','cancelled','interrupted')",
+            "SELECT count(*) FROM rr_steps WHERE root_id=?1 AND (status IN ('running','draining','succeeded','failed','interrupted') OR (status='cancelled' AND started_at_ms IS NOT NULL))",
             [root_id],
             |row| row.get(0),
         )
@@ -49,7 +49,7 @@ pub(crate) fn load_budget(connection: &Connection, root_id: &str) -> Result<Budg
         .map_err(|error| error.to_string())?;
     let review_rounds: i64 = connection
         .query_row(
-            "SELECT count(*) FROM rr_steps WHERE root_id=?1 AND purpose='review' AND status NOT IN ('planned')",
+            "SELECT count(*) FROM rr_steps WHERE root_id=?1 AND purpose='review' AND started_at_ms IS NOT NULL",
             [root_id],
             |row| row.get(0),
         )
@@ -96,16 +96,17 @@ pub(crate) fn project_context(
     )
 }
 
-/// Checks the cumulative step/cost budget without a wall-clock deadline comparison. The runtime
-/// enforces the root and step deadlines at the real dispatch point; this guard prevents a route
-/// from starting when the root has already exhausted its step or cost budget.
+/// Checks that the already-claimed active step still fits the cumulative budget. Running steps
+/// are included in `load_budget`, so this check must not reserve the current step a second time.
 pub(crate) fn ensure_step_budget(
     connection: &Connection,
     settings: &RoleRoutingSettings,
     root_id: &str,
 ) -> Result<(), String> {
     let budget = load_budget(connection, root_id)?;
-    limits::reserve_step(&settings.limits, budget).map_err(|violation| format!("{violation:?}"))?;
+    if budget.steps > settings.limits.max_reasoning_steps {
+        return Err("Role-routing step budget exceeded".into());
+    }
     if let Some(max_cost) = settings.limits.max_estimated_cost_micros {
         if budget.spent_cost_micros > max_cost {
             return Err("Role-routing cost budget exceeded".into());
@@ -175,12 +176,24 @@ pub(crate) fn permit_next_step(
         return Err("Role-routing step deadline reached".into());
     }
     let budget = load_budget(connection, root_id)?;
-    limits::reserve_step(&settings.limits, budget).map_err(|violation| format!("{violation:?}"))?;
+    // The running step was reserved when it was claimed and is already present in `budget`.
+    // Reserving again here makes a one-step policy reject its first and only valid dispatch.
+    if budget.steps > settings.limits.max_reasoning_steps {
+        return Err("Role-routing step budget exceeded".into());
+    }
     if let Some(max_cost) = settings.limits.max_estimated_cost_micros {
-        // This layer has no trusted per-step price, so it can only prove the already-spent cost is
-        // within budget. Unknown or positive next cost is rejected where the price is known.
         if budget.spent_cost_micros > max_cost {
             return Err("Role-routing cost budget exceeded".into());
+        }
+        let actor = settings
+            .actors
+            .iter()
+            .find(|actor| actor.id == actor_id)
+            .ok_or_else(|| "Role-routing active actor is unavailable".to_string())?;
+        // Local actors have no metered provider cost. A cloud actor has no trusted price at this
+        // boundary, so a configured monetary cap must fail closed instead of treating it as zero.
+        if actor.location != "local" {
+            return Err("Role-routing next-step cost is unavailable".into());
         }
     }
     Ok(Some(DispatchPermit {
@@ -274,10 +287,45 @@ mod tests {
             limits.max_reasoning_steps = 1;
         });
         insert_root_and_step(&connection, "running", 2);
-        // One executed step already consumes the single-step budget.
-        assert!(permit_next_step(&connection, &settings, "r", 3).is_err());
+        // The running step is the one already reserved slot, not a request for a second slot.
+        assert!(permit_next_step(&connection, &settings, "r", 3).is_ok());
         let budget = load_budget(&connection, "r").expect("budget");
         assert_eq!(budget.steps, 1);
+        connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('spent','r',0,1,'qwen','respond','succeeded','{}','{}',1)",
+                [],
+            )
+            .expect("spent step");
+        assert!(permit_next_step(&connection, &settings, "r", 3).is_err());
+    }
+
+    #[test]
+    fn rr_22_unstarted_cancelled_step_does_not_spend_budget() {
+        let (connection, settings) = fixture(|limits| {
+            limits.max_reasoning_steps = 1;
+        });
+        insert_root_and_step(&connection, "running", 2);
+        connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('never-started','r',0,1,'qwen','respond','cancelled','{}','{}')",
+                [],
+            )
+            .expect("cancelled planned step");
+        assert_eq!(load_budget(&connection, "r").expect("budget").steps, 1);
+        assert!(permit_next_step(&connection, &settings, "r", 3).is_ok());
+    }
+
+    #[test]
+    fn rr_22_cloud_dispatch_requires_a_known_cost_under_a_cap() {
+        let (connection, mut settings) = fixture(|limits| {
+            limits.max_estimated_cost_micros = Some(1_000);
+        });
+        settings.actors[0].location = "cloud".into();
+        insert_root_and_step(&connection, "running", 2);
+        assert!(permit_next_step(&connection, &settings, "r", 3).is_err());
+        settings.actors[0].location = "local".into();
+        assert!(permit_next_step(&connection, &settings, "r", 3).is_ok());
     }
 
     #[test]

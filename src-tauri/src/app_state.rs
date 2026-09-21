@@ -5,6 +5,7 @@ pub(super) struct AppState {
     pub(super) sqlite_readers: SqliteReaders,
     pub(super) data_directory: PathBuf,
     pub(super) context_still_recall: memory::context_still_recall::ContextStillRecallClient,
+    pub(super) context_still_search: memory::context_still_search::ContextStillSearchClient,
     pub(super) active_runs: Mutex<HashMap<String, Arc<RunCancellation>>>,
     pub(super) provider_probes: Mutex<HashMap<String, ProviderProbeStatus>>,
     pub(super) interaction_policy: Mutex<()>,

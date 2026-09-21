@@ -5,6 +5,7 @@ pub(crate) mod commands;
 pub(crate) mod contracts;
 pub(crate) mod dispatch;
 pub(crate) mod driver;
+pub(crate) mod evidence;
 pub(crate) mod execution_contracts;
 pub(crate) mod faults;
 pub(crate) mod intake;
@@ -18,6 +19,7 @@ mod reduce;
 pub(crate) mod report;
 pub(crate) mod report_content;
 mod repository;
+pub(crate) mod request_intent;
 pub(crate) mod schema;
 pub(crate) mod schema_execution;
 pub(crate) mod tools;
@@ -55,4 +57,9 @@ mod migration_tests {
 #[cfg(test)]
 mod latency_tests {
     include!("tests/latency.rs");
+}
+
+#[cfg(test)]
+mod rf5_tests {
+    include!("tests/rf5.rs");
 }

@@ -200,6 +200,22 @@ fn prepare_candidate(
             .map_err(crate::database_error)?;
         return Ok(None);
     }
+    if source_now_forbids(connection, &conversation_id, &task_id, &work)? {
+        repo::set_loop_state(
+            connection,
+            &task_id,
+            "cancelled",
+            None,
+            Some("source_withdrawn"),
+        )?;
+        connection
+            .execute(
+                "UPDATE steward_dispatch_intents SET state='failed',last_reason='source_withdrawn',updated_at=?2 WHERE task_id=?1",
+                params![task_id, crate::now_iso()],
+            )
+            .map_err(crate::database_error)?;
+        return Ok(None);
+    }
     if !repo::delegated_profile_available(connection)? {
         repo::set_loop_state(
             connection,
@@ -267,4 +283,53 @@ fn finish(state: &AppState, prepared: Option<Prepared>) -> Result<(), String> {
 
 pub(crate) fn wake(state: &AppState) {
     state.steward_wake.signal();
+}
+
+fn source_now_forbids(
+    connection: &rusqlite::Connection,
+    conversation_id: &str,
+    task_id: &str,
+    work: &repo::ActiveWork,
+) -> Result<bool, String> {
+    let (source_id, bound_version): (String, Option<String>) = connection
+        .query_row(
+            "SELECT t.source_id,
+                    (SELECT b.source_version FROM steward_source_bindings b
+                     WHERE b.subject_id=t.id OR b.subject_id=?2
+                     ORDER BY b.rowid DESC LIMIT 1)
+             FROM steward_tasks t WHERE t.id=?1",
+            rusqlite::params![task_id, work.goal_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(crate::database_error)?;
+    let Ok(current) =
+        super::authority::current_source_digest(connection, conversation_id, &source_id)
+    else {
+        return Ok(false);
+    };
+    if bound_version
+        .as_deref()
+        .is_some_and(|version| version != current)
+    {
+        return Ok(true);
+    }
+    let text: Result<String, _> = connection.query_row(
+        "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2",
+        rusqlite::params![source_id, conversation_id],
+        |row| row.get(0),
+    );
+    let Ok(text) = text else {
+        return Ok(true);
+    };
+    let operations = match work.ops.as_str() {
+        "read" => vec![super::contracts::Operation::Read],
+        "test_run" => vec![super::contracts::Operation::TestRun],
+        _ => vec![
+            super::contracts::Operation::Read,
+            super::contracts::Operation::TestRun,
+        ],
+    };
+    let decision =
+        super::request_intent::overall(&super::request_intent::classify_source(&text, &operations));
+    Ok(decision == super::request_intent::IntentDecision::Denied)
 }

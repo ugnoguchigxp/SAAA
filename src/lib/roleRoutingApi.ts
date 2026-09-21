@@ -33,3 +33,22 @@ export function rollbackAdaptiveArtifact(artifactId: string): Promise<RoutingLea
     input: { artifactId },
   });
 }
+
+export function listAdaptiveEvaluations(): Promise<import("./generated/runtimeEvent").EvaluationView[]> {
+  return invoke("list_adaptive_evaluations");
+}
+
+export function approveAdaptiveArtifact(
+  artifactId: string,
+  expectedRevision: bigint | number | null,
+): Promise<void> {
+  return invoke("approve_adaptive_artifact", {
+    input: { artifactId, expectedRevision },
+  });
+}
+
+export function activateAdaptiveArtifact(artifactId: string, expectedRevision: number): Promise<void> {
+  return invoke("activate_adaptive_artifact", {
+    input: { artifactId, expectedRevision },
+  });
+}

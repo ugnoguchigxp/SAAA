@@ -205,11 +205,12 @@ fn compile_selected_plan(
         .iter()
         .map(|step| step.actor_id.as_str())
         .collect::<Vec<_>>();
-    if !candidate
+    let candidate_actors = candidate
         .actor_ids
         .iter()
-        .all(|actor_id| planned_actors.contains(&actor_id.as_str()))
-    {
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if planned_actors != candidate_actors {
         return Err("Role-routing compiled plan does not match the selected candidate".into());
     }
     Ok(compiled.steps)
@@ -236,13 +237,13 @@ fn select_dispatch_candidate(
         crate::role_routing::contracts::RoutingAction::Respond,
     )
     .into_iter()
-    .filter(|candidate| candidate.exclusion_reason.is_none() && candidate.actor_ids.len() == 1)
+    .filter(|candidate| candidate.exclusion_reason.is_none())
     .collect::<Vec<_>>();
     eligible.sort_by(|left, right| left.recipe_id.cmp(&right.recipe_id));
     let rules = eligible
         .first()
         .cloned()
-        .ok_or_else(|| "No single-actor role-routing response recipe is configured".to_string())?;
+        .ok_or_else(|| "No eligible role-routing response recipe is configured".to_string())?;
     if !policy.adaptive_improvement.enabled || !policy.adaptive_improvement.provider_recipe {
         return Ok(DispatchSelection {
             candidate: rules,
@@ -299,6 +300,85 @@ fn candidate_receipt(
         .collect::<Vec<_>>())
 }
 
+/// Commits a non-final provider candidate and claims the next planned step atomically. The draft
+/// body remains process-local; the routing ledger stores only a digest and byte count. Returns
+/// `false` without mutation when the active step is the final step, leaving final adoption to the
+/// assistant-message transaction.
+pub(crate) fn advance_provider_step(
+    connection: &Connection,
+    run_id: &str,
+    content: &str,
+    now_ms: i64,
+) -> Result<bool, String> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    let root: Option<(i64, i64, String)> = transaction
+        .query_row(
+            "SELECT revision,cancel_requested,phase FROM rr_roots WHERE root_id=?1",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((revision, cancel_requested, phase)) = root else {
+        return Ok(false);
+    };
+    if phase != "responding" || cancel_requested != 0 {
+        return Err("Role-routing intermediate result is not adoptable".into());
+    }
+    let active_step: Option<(String, i64)> = transaction
+        .query_row(
+            "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((step_id, step_revision)) = active_step else {
+        return Err("Role-routing intermediate result has no active step".into());
+    };
+    if step_revision != revision {
+        return Err("Role-routing intermediate result is stale".into());
+    }
+    let has_next: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM rr_steps current JOIN rr_steps next ON next.root_id=current.root_id AND next.revision=current.revision AND next.ordinal>current.ordinal AND next.status='planned' WHERE current.id=?1 AND current.root_id=?2)",
+            params![step_id, run_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !has_next {
+        return Ok(false);
+    }
+    if !crate::role_routing::steps::complete_step(
+        &transaction,
+        run_id,
+        &step_id,
+        "succeeded",
+        now_ms,
+    )? {
+        return Err("Role-routing intermediate step was already completed".into());
+    }
+    let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+    crate::role_routing::steps::record_step_output(
+        &transaction,
+        run_id,
+        &step_id,
+        revision,
+        "intermediate",
+        &json!({"sha256": digest, "bytes": content.len()}).to_string(),
+        false,
+        now_ms,
+    )?;
+    crate::role_routing::steps::claim_next_planned_step(&transaction, run_id, revision, now_ms)?
+        .ok_or_else(|| "Role-routing next step disappeared before claim".to_string())?;
+    append_event(&transaction, run_id, "step_completed", now_ms)?;
+    append_event(&transaction, run_id, "step_started", now_ms)?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
 pub(crate) fn record_provider_turn_finish(
     connection: &Connection,
     run_id: &str,
@@ -306,21 +386,24 @@ pub(crate) fn record_provider_turn_finish(
     message_id: Option<&str>,
     now_ms: i64,
 ) -> Result<(), String> {
-    let root: Option<(String, i64)> = connection
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    let root: Option<(String, i64, i64)> = transaction
         .query_row(
-            "SELECT phase,cancel_requested FROM rr_roots WHERE root_id=?1",
+            "SELECT phase,cancel_requested,revision FROM rr_roots WHERE root_id=?1",
             [run_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some((phase, cancel_requested)) = root else {
+    let Some((current_phase, cancel_requested, root_revision)) = root else {
         return Ok(());
     };
     // `accept_provider_turn` runs inside the assistant-message transaction first.  The outer
     // runtime finalizer still observes the provider terminal result afterwards, but must not
     // append a second terminal event or overwrite the already adopted root.
-    if matches!(phase.as_str(), "completed" | "cancelled" | "failed") {
+    if matches!(current_phase.as_str(), "completed" | "cancelled" | "failed") {
         return Ok(());
     }
     // A cancelled or barrier-held root is owned by the cancel / barrier path. The outer
@@ -328,71 +411,89 @@ pub(crate) fn record_provider_turn_finish(
     if cancel_requested != 0 {
         return Ok(());
     }
-    if phase == "draining" {
-        let step = active_step_or_ordinal_zero(connection, run_id)?;
+    if current_phase == "draining" {
+        let step = active_step_or_ordinal_zero(&transaction, run_id)?;
         if let Some((step_id, _)) = step.as_ref() {
             let step_status = match status {
                 "completed" => "succeeded",
                 "cancelled" => "cancelled",
                 _ => "failed",
             };
-            let _ = crate::role_routing::steps::complete_step(
-                connection,
+            crate::role_routing::steps::complete_step(
+                &transaction,
                 run_id,
                 step_id,
                 step_status,
                 now_ms,
-            );
+            )?;
         }
-        return Ok(());
+        return transaction.commit().map_err(|error| error.to_string());
+    }
+    if current_phase != "responding" {
+        return Err("Role-routing root has an invalid phase at provider completion".into());
     }
     let step_status = match status {
         "completed" => "succeeded",
         "cancelled" => "cancelled",
         _ => "failed",
     };
-    let phase = match status {
+    let terminal_phase = match status {
         "completed" => "completed",
         "cancelled" => "cancelled",
         _ => "failed",
     };
-    let step = active_step_or_ordinal_zero(connection, run_id)?;
-    let transaction = connection
-        .unchecked_transaction()
-        .map_err(|error| error.to_string())?;
-    let step_revision = match step {
-        Some((step_id, revision)) => {
-            crate::role_routing::steps::complete_step(
-                &transaction,
-                run_id,
-                &step_id,
-                step_status,
-                now_ms,
-            )?;
-            if let Some(message_id) = message_id {
-                if status == "completed" {
-                    crate::role_routing::steps::record_step_output(
-                        &transaction,
-                        run_id,
-                        &step_id,
-                        revision,
-                        "answer",
-                        &json!({ "messageId": message_id }).to_string(),
-                        true,
-                        now_ms,
-                    )?;
-                }
-            }
-            revision
-        }
-        None => 0,
+    let Some((step_id, step_revision)) = active_step_or_ordinal_zero(&transaction, run_id)? else {
+        return Err("Role-routing root has no step to complete".into());
     };
-    transaction
+    if step_revision != root_revision {
+        return Err("Role-routing provider result belongs to a stale revision".into());
+    }
+    if !crate::role_routing::steps::complete_step(
+        &transaction,
+        run_id,
+        &step_id,
+        step_status,
+        now_ms,
+    )? {
+        return Err("Role-routing provider step was already completed".into());
+    }
+    if status != "completed" {
+        let remaining_status = if status == "cancelled" {
+            "cancelled"
+        } else {
+            "interrupted"
+        };
+        crate::role_routing::steps::settle_unfinished_steps(
+            &transaction,
+            run_id,
+            root_revision,
+            remaining_status,
+            now_ms,
+        )?;
+    }
+    if status == "completed" {
+        let message_id =
+            message_id.ok_or_else(|| "Completed role-routing result has no message".to_string())?;
+        crate::role_routing::steps::record_step_output(
+            &transaction,
+            run_id,
+            &step_id,
+            step_revision,
+            "answer",
+            &json!({ "messageId": message_id }).to_string(),
+            true,
+            now_ms,
+        )?;
+    }
+    let changed = transaction
         .execute(
-            "UPDATE rr_roots SET phase=?1, result_message_id=?2, active_slot=NULL WHERE root_id=?3",
-            params![phase, message_id, run_id],
+            "UPDATE rr_roots SET phase=?1, result_message_id=?2, active_slot=NULL WHERE root_id=?3 AND phase='responding' AND revision=?4 AND cancel_requested=0",
+            params![terminal_phase, message_id, run_id, root_revision],
         )
         .map_err(|error| error.to_string())?;
+    if changed != 1 {
+        return Err("Role-routing root changed before provider completion committed".into());
+    }
     append_event(
         &transaction,
         run_id,
@@ -799,6 +900,35 @@ mod tests {
     use crate::role_routing::contracts::{RoleRoutingSettings, RoutingActor, RoutingRecipe};
 
     #[test]
+    fn rr_05_normal_turn_advances_two_steps_without_persisting_the_draft_body() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY); INSERT INTO conversations VALUES('c');")
+            .expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        c.execute_batch("INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1); INSERT INTO rr_roots(root_id,conversation_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','p',0,'responding','reasoning','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('front','run',0,0,'front-actor','frontend','running','{}','{}',1),('reason','run',0,1,'reason-actor','respond','planned','{}','{}',NULL);")
+            .expect("root and plan");
+
+        assert!(advance_provider_step(&c, "run", "private acknowledgement", 2).expect("advance"));
+        let statuses = c
+            .prepare("SELECT status FROM rr_steps WHERE root_id='run' ORDER BY ordinal")
+            .expect("statement")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("statuses");
+        assert_eq!(statuses, vec!["succeeded", "running"]);
+        let payload: String = c
+            .query_row(
+                "SELECT payload_json FROM rr_outputs WHERE step_id='front'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("digest output");
+        assert!(!payload.contains("private acknowledgement"));
+        assert!(!advance_provider_step(&c, "run", "final answer", 3).expect("final remains"));
+    }
+
+    #[test]
     fn rr_09_activity_has_no_payload_and_stops_at_terminal_root() {
         let c = Connection::open_in_memory().expect("db");
         c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');")
@@ -826,6 +956,54 @@ mod tests {
         )
         .expect("complete");
         assert!(!record_actor_activity(&c, "r", "provider_progress", 3).expect("terminal"));
+    }
+
+    #[test]
+    fn rr_12_finish_requires_a_confirmed_step_transition() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');")
+            .expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning");
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+            [],
+        )
+        .expect("policy");
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('missing-step','c','p','responding','text','visual',1,'')", [])
+            .expect("root without step");
+        assert!(record_provider_turn_finish(&c, "missing-step", "failed", None, 2).is_err());
+        assert_eq!(
+            c.query_row(
+                "SELECT phase FROM rr_roots WHERE root_id='missing-step'",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .expect("phase"),
+            "responding"
+        );
+
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES('held','c','p','draining','draining','text','visual',2,'')", [])
+            .expect_err("only one active root per conversation");
+        c.execute(
+            "UPDATE rr_roots SET phase='failed',active_slot=NULL WHERE root_id='missing-step'",
+            [],
+        )
+        .expect("release active slot");
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES('held','c','p','draining','draining','text','visual',2,'')", [])
+            .expect("held root");
+        c.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('held-step','held',0,0,'actor','respond','succeeded','{}','{}')", [])
+            .expect("settled step");
+        assert!(record_provider_turn_finish(&c, "held", "failed", None, 3).is_err());
+        assert_eq!(
+            c.query_row(
+                "SELECT phase FROM rr_roots WHERE root_id='held'",
+                [],
+                |row| { row.get::<_, String>(0) }
+            )
+            .expect("held phase"),
+            "draining"
+        );
     }
 
     #[test]

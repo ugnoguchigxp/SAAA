@@ -84,7 +84,7 @@ fn reaches(steps: &[PlanStep], from: &str, target: &str, seen: &mut Vec<String>)
     false
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Operation {
     Read,

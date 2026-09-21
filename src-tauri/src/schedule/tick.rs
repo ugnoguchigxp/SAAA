@@ -309,6 +309,8 @@ pub(crate) fn start_loop(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         {
             let state = app.state::<crate::AppState>();
+            state.steward_wake.install_process();
+            let _ = crate::steward::pump::drain(&state);
             if state.schedule.enabled() {
                 let _ = tick(&state, now_ms());
             }
@@ -324,6 +326,13 @@ pub(crate) fn start_loop(app: tauri::AppHandle) {
             {
                 break;
             }
+            let due = state.steward_wake.next_due_ms(&state);
+            let wait = due.map(|at| {
+                let now = now_ms();
+                std::time::Duration::from_millis(
+                    at.saturating_sub(now).clamp(1, TICK_MS as i64) as u64
+                )
+            });
             tokio::select! {
                 _ = interval.tick() => {
                     if state.schedule.enabled() {
@@ -332,6 +341,15 @@ pub(crate) fn start_loop(app: tauri::AppHandle) {
                     let _ = crate::steward::pump::drain(&state);
                 }
                 _ = state.steward_wake.notified() => {
+                    let _ = crate::steward::pump::drain(&state);
+                }
+                _ = async {
+                    if let Some(duration) = wait {
+                        tokio::time::sleep(duration).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
                     let _ = crate::steward::pump::drain(&state);
                 }
             }

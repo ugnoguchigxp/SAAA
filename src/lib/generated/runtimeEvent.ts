@@ -33,6 +33,15 @@ export type RoutingRootSnapshot = { rootId: string, runtimeRunId: string | null,
 export type RoutingSnapshot = { active: RoutingRootSnapshot | null, queued: Array<RoutingRootSnapshot>, };
 
 export type RoutingEventRecord = { rootId: string, seq: bigint, kind: string, dataJson: string, createdAtMs: bigint, };
+export type EvaluationPair = { groupKey: string, split: string, candidateSuccess: number, rulesSuccess: number, candidateResource: number | null, rulesResource: number | null, candidateOtherResource: number | null, rulesOtherResource: number | null, evidenceDigest: string, };
+
+export type EvaluationBundle = { artifactId: string, datasetDigest: string, seed: bigint, pairs: Array<EvaluationPair>, };
+
+export type EvaluationView = { artifactId: string, domain: string, scopeKey: string, state: string, stopReason: string | null, examples: bigint, groups: bigint, successLower: number | null, policyRevision: bigint | null, };
+
+export type AdaptiveEvaluateInput = { bundle: EvaluationBundle, };
+
+export type AdaptiveArtifactAction = { artifactId: string, expectedRevision: bigint | null, };
 export type WorldCapabilities = { stateInput: boolean, graph: boolean, freshToolContinuation: boolean, verifiedStateAnswer: boolean, answerMode: string, };
 export type ScopeRef = { kind: string, id: string, relation: string, };
 export type ScopeChoice = { key: string, label: string, refs: Array<ScopeRef>, };

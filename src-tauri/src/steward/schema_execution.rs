@@ -1,6 +1,7 @@
 //! Additive execution schema for delegated work. Goal authority status stays on
 //! `steward_goals`; work progress lives here so reopen cannot recreate a one-Goal index.
 use rusqlite::Connection;
+use std::collections::HashSet;
 
 const TASK_STATES: &str = "'queued','dispatching','running','awaiting_dependency','awaiting_user','verifying','done','failed','cancelled','outcome_unknown'";
 
@@ -28,6 +29,25 @@ fn migrate_task_loop_states_inner(connection: &Connection) -> rusqlite::Result<(
     if sql.contains("outcome_unknown") && sql.contains("dispatching") {
         return Ok(());
     }
+    let columns = connection
+        .prepare("PRAGMA table_info(steward_tasks)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    let revision = if columns.contains("revision") {
+        "COALESCE(revision,1)"
+    } else {
+        "1"
+    };
+    let goal_plan_id = if columns.contains("goal_plan_id") {
+        "goal_plan_id"
+    } else {
+        "NULL"
+    };
+    let plan_step_id = if columns.contains("plan_step_id") {
+        "plan_step_id"
+    } else {
+        "NULL"
+    };
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch(&format!(
         "CREATE TABLE steward_tasks_v31 (
@@ -61,7 +81,7 @@ fn migrate_task_loop_states_inner(connection: &Connection) -> rusqlite::Result<(
                   ELSE 'outcome_unknown'
                 END,
                 coding_job_id,report_json,last_error,created_at,updated_at,
-                COALESCE(revision,1),goal_plan_id,plan_step_id
+                {revision},{goal_plan_id},{plan_step_id}
            FROM steward_tasks;
          DROP TABLE steward_tasks;
          ALTER TABLE steward_tasks_v31 RENAME TO steward_tasks;
@@ -135,6 +155,25 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            revision INTEGER NOT NULL,
            last_message_id TEXT,
            updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS steward_execution_evidence (
+           run_id TEXT PRIMARY KEY,
+           task_id TEXT NOT NULL,
+           job_id TEXT NOT NULL,
+           schema_version INTEGER NOT NULL,
+           recipe_id TEXT,
+           recipe_revision INTEGER,
+           recipe_digest TEXT,
+           target_digest TEXT NOT NULL,
+           terminal_kind TEXT NOT NULL,
+           exit_code INTEGER,
+           result_ref TEXT,
+           result_digest TEXT,
+           producer TEXT NOT NULL,
+           readable INTEGER NOT NULL CHECK(readable IN (0,1)),
+           reason_code TEXT NOT NULL,
+           payload_json TEXT NOT NULL,
+           created_at TEXT NOT NULL
          );",
     )?;
     add_column(
@@ -159,6 +198,18 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection,
         "steward_reports",
         "invalidated INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column(connection, "steward_verifier_outcomes", "run_id TEXT")?;
+    add_column(
+        connection,
+        "steward_verifier_outcomes",
+        "reason_code TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column(connection, "steward_goal_progress", "technical_state TEXT")?;
+    add_column(
+        connection,
+        "steward_goal_progress",
+        "verified_success INTEGER NOT NULL DEFAULT 0",
     )?;
     connection.execute_batch(
         "INSERT OR IGNORE INTO steward_goal_progress(goal_id,work_status,revision,updated_at)
@@ -187,4 +238,39 @@ fn add_column(connection: &Connection, table: &str, definition: &str) -> rusqlit
         connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_state_rebuild_accepts_the_pre_plan_schema() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE steward_delegations(id TEXT PRIMARY KEY);
+                 CREATE TABLE steward_tasks(
+                   id TEXT PRIMARY KEY, delegation_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                   trigger_kind TEXT NOT NULL, source_id TEXT NOT NULL, dedupe_key TEXT NOT NULL,
+                   loop_state TEXT NOT NULL CHECK(loop_state IN ('queued','running','awaiting_user','done','failed','cancelled')),
+                   coding_job_id TEXT, report_json TEXT, last_error TEXT,
+                   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                 );
+                 INSERT INTO steward_delegations VALUES('d');
+                 INSERT INTO steward_tasks VALUES('t','d','c','start','s','k','running',NULL,NULL,NULL,'1','1');",
+            )
+            .unwrap();
+
+        migrate_task_loop_states(&connection).unwrap();
+
+        let migrated: (String, i64, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT loop_state,revision,goal_plan_id,plan_step_id FROM steward_tasks WHERE id='t'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated, ("running".into(), 1, None, None));
+    }
 }

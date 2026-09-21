@@ -9,8 +9,9 @@ pub(crate) use repository_policy::capture_current_policy;
 #[allow(unused_imports)]
 pub(crate) use repository_policy::capture_policy_version;
 pub(crate) use repository_turns::{
-    accept_provider_turn, record_actor_activity, record_provider_turn_finish,
-    record_provider_turn_start, record_provider_turn_start_in_transaction, record_step_usage,
+    accept_provider_turn, advance_provider_step, record_actor_activity,
+    record_provider_turn_finish, record_provider_turn_start,
+    record_provider_turn_start_in_transaction, record_step_usage,
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -54,10 +55,32 @@ pub(crate) fn record_feedback(
         "{:x}",
         Sha256::digest(format!("{target_answer_id}:{source_message_id}:{kind}").as_bytes())
     );
+    let feedback_id = format!("rr-feedback-{}", &digest[..24]);
+    let evidence_json = json!({"start":evidence_start,"end":evidence_end}).to_string();
     let inserted = connection.execute(
         "INSERT OR IGNORE INTO rr_feedback(id,target_answer_id,target_root_id,source_message_id,kind,evidence_json,label_source,confidence,extractor_version,status,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,'host',1.0,'host-v1','recorded',?7)",
-        params![format!("rr-feedback-{}", &digest[..24]),target_answer_id,root_id,source_message_id,kind,json!({"start":evidence_start,"end":evidence_end}).to_string(),now_ms],
+        params![feedback_id,target_answer_id,root_id,source_message_id,kind,evidence_json,now_ms],
     ).map_err(|e| e.to_string())? == 1;
+    if !inserted {
+        let existing: Option<(String, String, String, String)> = connection
+            .query_row(
+                "SELECT target_answer_id,source_message_id,kind,evidence_json FROM rr_feedback WHERE id=?1",
+                [&feedback_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if existing
+            != Some((
+                target_answer_id.to_string(),
+                source_message_id.to_string(),
+                kind.to_string(),
+                evidence_json,
+            ))
+        {
+            return Err("Role-routing feedback receipt conflicts with the original".into());
+        }
+    }
     if inserted {
         if let Some(root_id) = root_id {
             crate::role_routing::learning::repository::mark_root_dirty(connection, &root_id)?;
@@ -145,12 +168,27 @@ pub(crate) fn record_review_response(
     )?;
     let encoded = serde_json::to_string(response)
         .map_err(|error| format!("Could not encode role-routing review: {error}"))?;
+    let existing: Option<String> = connection
+        .query_row(
+            "SELECT payload_json FROM rr_outputs WHERE step_id=?1 AND revision=?2 AND kind='review' AND accepted=1 ORDER BY created_at_ms,id LIMIT 1",
+            params![review_step_id, revision],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if let Some(existing) = existing {
+        return if existing == encoded {
+            Ok(false)
+        } else {
+            Err("Role-routing review step already has a different accepted output".into())
+        };
+    }
     let digest = format!(
         "{:x}",
         Sha256::digest(format!("{review_step_id}:{encoded}").as_bytes())
     );
     connection.execute(
-        "INSERT OR IGNORE INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'review',?4,1,?5)",
+        "INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'review',?4,1,?5)",
         params![format!("rr-review-{}", &digest[..24]), review_step_id, revision, encoded, now_ms],
     ).map_err(|error| error.to_string()).map(|changed| changed == 1)
 }
@@ -193,6 +231,28 @@ pub(crate) fn record_review_revision_decision(
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(|_| "Role-routing accepted review output is unavailable".to_string())?;
+    let decision_id = format!("rr-revision-decision-{review_output_id}");
+    let existing: Option<String> = connection
+        .query_row(
+            "SELECT payload_json FROM rr_outputs WHERE id=?1",
+            [&decision_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if let Some(existing) = existing {
+        let persisted =
+            serde_json::from_str::<crate::role_routing::revision::ReviewRevisionDecision>(
+                &existing,
+            )
+            .map_err(|_| "Persisted role-routing revision decision is invalid".to_string())?;
+        if persisted.max_rounds != max_rounds {
+            return Err(
+                "Role-routing revision decision conflicts with its persisted receipt".into(),
+            );
+        }
+        return Ok(persisted);
+    }
     let review = serde_json::from_str::<crate::role_routing::review::ReviewResponse>(&payload)
         .map_err(|_| "Role-routing review output is invalid".to_string())?;
     let completed_rounds: i64 = connection
@@ -215,8 +275,8 @@ pub(crate) fn record_review_revision_decision(
     let payload = serde_json::to_string(&decision)
         .map_err(|error| format!("Could not encode role-routing revision decision: {error}"))?;
     connection.execute(
-        "INSERT OR IGNORE INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'revision-decision',?4,1,?5)",
-        params![format!("rr-revision-decision-{review_output_id}"), review_step_id, revision, payload, now_ms],
+        "INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'revision-decision',?4,1,?5)",
+        params![decision_id, review_step_id, revision, payload, now_ms],
     ).map_err(|error| error.to_string())?;
     Ok(decision)
 }
@@ -284,6 +344,11 @@ mod tests {
             record_feedback(&connection, "c", "u", "a", "answer_challenge", 0, 7, 2)
                 .expect("feedback")
         );
+        assert!(
+            !record_feedback(&connection, "c", "u", "a", "answer_challenge", 0, 7, 3)
+                .expect("exact retry")
+        );
+        assert!(record_feedback(&connection, "c", "u", "a", "answer_challenge", 0, 6, 4).is_err());
         assert_eq!(
             connection
                 .query_row("SELECT root_id FROM rr_learning_dirty", [], |r| r
@@ -355,6 +420,12 @@ mod tests {
             }],
         };
         assert!(record_review_response(&connection, "reviewer", &response, 2).expect("saved"));
+        assert!(
+            !record_review_response(&connection, "reviewer", &response, 3).expect("exact retry")
+        );
+        let mut conflicting = response.clone();
+        conflicting.issues[0].claim = "different finding".into();
+        assert!(record_review_response(&connection, "reviewer", &conflicting, 4).is_err());
         assert_eq!(
             connection
                 .query_row(
@@ -406,6 +477,11 @@ mod tests {
         assert!(decision.revision_allowed);
         assert_eq!(decision.verified_issues.len(), 1);
         assert_eq!(decision.unresolved_issues.len(), 1);
+        assert_eq!(
+            record_review_revision_decision(&connection, &output_id, 1, 4).expect("exact retry"),
+            decision
+        );
+        assert!(record_review_revision_decision(&connection, &output_id, 2, 5).is_err());
         assert_eq!(
             connection
                 .query_row(

@@ -3,6 +3,7 @@ use super::contracts::{GoalProposal, Operation};
 use crate::{database_error, now_iso};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +76,7 @@ pub(crate) fn binding_from_message(
     if !matches!(role.as_str(), "user" | "transcript") {
         return Err("source_unavailable".into());
     }
+    let version = source_digest(&content);
     if let (Some(start), Some(end)) = (quote_start, quote_end) {
         let quoted = unicode_slice(&content, start, end)?;
         if quoted.is_empty() {
@@ -84,7 +86,7 @@ pub(crate) fn binding_from_message(
             SourceBinding {
                 kind: SourceKind::UserMessage,
                 id: message_id.into(),
-                version: format!("{}:{}", content.len(), content.chars().count()),
+                version,
                 quote_start,
                 quote_end,
             },
@@ -95,12 +97,36 @@ pub(crate) fn binding_from_message(
         SourceBinding {
             kind: SourceKind::UserMessage,
             id: message_id.into(),
-            version: format!("{}:{}", content.len(), content.chars().count()),
+            version,
             quote_start: None,
             quote_end: None,
         },
         content,
     ))
+}
+
+pub(crate) fn source_digest(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+pub(crate) fn current_source_digest(
+    connection: &Connection,
+    conversation_id: &str,
+    message_id: &str,
+) -> Result<String, String> {
+    let (role, content): (String, String) = connection
+        .query_row(
+            "SELECT role,content FROM conversation_messages WHERE id=?1 AND conversation_id=?2",
+            params![message_id, conversation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or("source_unavailable")?;
+    if !matches!(role.as_str(), "user" | "transcript") {
+        return Err("source_unavailable".into());
+    }
+    Ok(source_digest(&content))
 }
 
 pub(crate) fn covering_grant(

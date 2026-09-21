@@ -123,7 +123,10 @@ pub(crate) fn approve(
     ) {
         return Err("Role-routing premium approval failed revalidation".into());
     }
-    connection.execute("UPDATE rr_premium_proposals SET status='approved',approved_at_ms=?1 WHERE id=?2 AND status='proposed'", params![now_ms, proposal.id]).map_err(|error| error.to_string())?;
+    let changed = connection.execute("UPDATE rr_premium_proposals SET status='approved',approved_at_ms=?1 WHERE id=?2 AND status='proposed'", params![now_ms, proposal.id]).map_err(|error| error.to_string())?;
+    if changed != 1 {
+        return Err("Role-routing premium proposal changed during approval".into());
+    }
     Ok(ProposalReceipt {
         id: proposal.id,
         root_id: proposal.root_id,
@@ -207,12 +210,15 @@ pub(crate) fn consume_approval(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Role-routing premium approval is unavailable or already consumed".to_string())?;
     if now_ms > proposal.expires_at_ms {
-        connection
+        let changed = connection
             .execute(
                 "UPDATE rr_premium_proposals SET status='expired' WHERE id=?1 AND status='approved' AND consumed_at_ms IS NULL",
                 [&proposal.id],
             )
             .map_err(|error| error.to_string())?;
+        if changed != 1 {
+            return Err("Role-routing premium approval changed during expiry".into());
+        }
         return Err("Role-routing premium approval has expired".into());
     }
     if proposal.policy_id != expected_policy_id

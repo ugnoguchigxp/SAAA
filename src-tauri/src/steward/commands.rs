@@ -266,7 +266,7 @@ pub(crate) fn work_amend(
     if !matches!(notify.as_str(), "both" | "silent" | "speak") {
         return Err("work_amend_invalid".into());
     }
-    state.sqlite_writer.write(|connection| {
+    let value = state.sqlite_writer.write(|connection| {
         let changed = connection.execute(
             "UPDATE steward_delegations SET notify=?1,revision=revision+1 WHERE goal_id=?2 AND conversation_id=?3 AND status='active' AND superseded_by IS NULL",
             rusqlite::params![&notify, &goal_id, &conversation_id],
@@ -294,7 +294,9 @@ pub(crate) fn work_amend(
             now,
         )?;
         Ok(serde_json::json!({"goalId": goal_id, "status":"active", "revisioned":true}))
-    })
+    })?;
+    crate::steward::dispatch::wake(&state);
+    Ok(value)
 }
 
 pub(crate) fn next_resolve_state(

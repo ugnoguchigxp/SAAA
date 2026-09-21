@@ -27,12 +27,11 @@ pub(crate) async fn execute_for_root(
     service: &ToolSelectionService,
     writer: &SqliteWriter,
     conversation_id: &str,
-    root_id: &str,
+    binding: &crate::tool_selection::gateway::RoleStepBinding<'_>,
     input_message_id: Option<String>,
     request: &SpecialistRequest,
     enabled: bool,
     offered_tools: &[String],
-    revision_matches: bool,
     cancellation: &RunCancellation,
 ) -> Result<serde_json::Value, String> {
     validate(request, enabled)?;
@@ -43,7 +42,7 @@ pub(crate) async fn execute_for_root(
         "tool_specialist",
         &request.tool_name,
         offered_tools,
-        revision_matches,
+        true,
         super::tools::classify_effect(effect.as_deref()),
     )
     .map_err(str::to_string)?;
@@ -53,7 +52,7 @@ pub(crate) async fn execute_for_root(
         service,
         writer,
         conversation_id,
-        root_id,
+        binding,
         input_message_id,
         &request.tool_name,
         &arguments,

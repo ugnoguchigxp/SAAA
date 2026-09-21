@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RoleDispatch {
-    Provider,
+    Provider { max_input_bytes: u32 },
     CodexSdk { model: String, max_input_bytes: u32 },
 }
 
@@ -18,71 +18,95 @@ pub(super) fn apply_enabled_role_route(
         return Ok(None);
     }
     // Candidate construction is the hard filter. Adaptive improvement may only reorder this
-    // exact set, so it cannot enable an unavailable actor or a multi-step recipe this runtime
-    // does not execute.
+    // exact set, so it cannot enable an unavailable actor.
     let mut eligible = crate::role_routing::selection::candidates_for_action(
         &role_policy,
         crate::role_routing::contracts::RoutingAction::Respond,
     )
     .into_iter()
-    .filter(|candidate| candidate.exclusion_reason.is_none() && candidate.actor_ids.len() == 1)
+    .filter(|candidate| candidate.exclusion_reason.is_none())
     .collect::<Vec<_>>();
     eligible.sort_by(|left, right| left.recipe_id.cmp(&right.recipe_id));
     let rules_candidate = eligible
         .first()
         .cloned()
-        .ok_or_else(|| "No single-actor role-routing response recipe is configured".to_string())?;
-    let candidate_ids = eligible
-        .iter()
-        .map(|candidate| candidate.recipe_id.clone())
-        .collect::<Vec<_>>();
-    let selected_id = if role_policy.adaptive_improvement.enabled
-        && role_policy.adaptive_improvement.provider_recipe
-    {
-        crate::adaptive_improvement::choose(
-            connection,
-            crate::adaptive_improvement::Domain::ProviderRecipe,
-            "conversation.respond",
-            &candidate_ids,
-            &rules_candidate.recipe_id,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_millis() as i64)
-                .unwrap_or(0),
-        )?
-        .0
-    } else {
-        rules_candidate.recipe_id.clone()
+        .ok_or_else(|| "No eligible role-routing response recipe is configured".to_string())?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    let selected_id = match root_id {
+        // The receipt's decision is immutable. Re-running adaptive selection here could dispatch
+        // a different actor than the one recorded before the input transaction committed.
+        Some(root_id) => connection
+            .query_row(
+                "SELECT d.selected_id FROM rr_decisions d JOIN rr_roots r ON r.root_id=d.root_id AND r.revision=d.revision WHERE d.root_id=?1 ORDER BY d.created_at_ms DESC LIMIT 1",
+                [root_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .flatten()
+            .ok_or_else(|| "Role-routing receipt has no selected recipe".to_string())?,
+        None if role_policy.adaptive_improvement.enabled
+            && role_policy.adaptive_improvement.provider_recipe =>
+        {
+            let candidate_ids = eligible
+                .iter()
+                .map(|candidate| candidate.recipe_id.clone())
+                .collect::<Vec<_>>();
+            crate::adaptive_improvement::choose(
+                connection,
+                crate::adaptive_improvement::Domain::ProviderRecipe,
+                "conversation.respond",
+                &candidate_ids,
+                &rules_candidate.recipe_id,
+                now_ms,
+            )?
+            .0
+        }
+        None => rules_candidate.recipe_id.clone(),
     };
     let candidate = eligible
         .into_iter()
         .find(|candidate| candidate.recipe_id == selected_id)
-        .unwrap_or(rules_candidate);
+        .ok_or_else(|| "Role-routing receipt selected an ineligible recipe".to_string())?;
     // Compile the selected recipe before dispatch. An unbounded or invalid plan returns an error
     // here, so no provider is started for a recipe the executor cannot run.
     let compiled =
         crate::role_routing::recipe::compile_recipe_by_id(&role_policy, &candidate.recipe_id)?;
-    let actor_id = candidate
+    let first_actor_id = candidate
         .actor_ids
         .first()
         .ok_or_else(|| "Role-routing response recipe has no actor".to_string())?;
-    if compiled
-        .steps
-        .first()
-        .is_none_or(|step| &step.actor_id != actor_id)
-    {
-        return Err("Role-routing plan does not match the selected actor".into());
-    }
-    // Enforce the cumulative step/cost budget when the root is already active. The wall-clock
-    // deadline is enforced at the real dispatch point; a queued root is checked after claim.
-    if let Some(root_id) = root_id {
-        crate::role_routing::executor::ensure_step_budget(connection, &role_policy, root_id)?;
-    }
+    // Validate the exact claimed step at the real dispatch boundary. The permit checks revision,
+    // deadline and cumulative budget, and prevents a receipt/actor mismatch from reaching I/O.
+    let actor_id = if let Some(root_id) = root_id {
+        let permit = crate::role_routing::executor::permit_next_step(
+            connection,
+            &role_policy,
+            root_id,
+            now_ms,
+        )?
+        .ok_or_else(|| "Role-routing root is still queued".to_string())?;
+        let planned = compiled
+            .steps
+            .iter()
+            .find(|step| step.ordinal == permit.ordinal)
+            .ok_or_else(|| "Role-routing permit references an unknown plan step".to_string())?;
+        if planned.actor_id != permit.actor_id {
+            return Err("Role-routing receipt actor does not match the claimed step".into());
+        }
+        permit.actor_id
+    } else {
+        first_actor_id.clone()
+    };
     let actor = role_policy
         .actors
         .iter()
-        .find(|actor| &actor.id == actor_id)
+        .find(|actor| actor.id == actor_id)
         .ok_or_else(|| "Role-routing response actor is unavailable".to_string())?;
+    validate_actor_host(connection, actor)?;
     if actor.transport == "codex_sdk" {
         return Ok(Some(RoleDispatch::CodexSdk {
             model: actor
@@ -107,7 +131,56 @@ pub(super) fn apply_enabled_role_route(
             .step_timeout_ms
             .min(role_policy.limits.root_timeout_ms),
     );
-    Ok(Some(RoleDispatch::Provider))
+    Ok(Some(RoleDispatch::Provider {
+        max_input_bytes: actor.max_input_bytes,
+    }))
+}
+
+/// Re-checks mutable host facts at the last synchronous boundary before any provider/SDK I/O.
+/// A policy snapshot authorizes an actor identity, but does not freeze provider availability.
+fn validate_actor_host(
+    connection: &Connection,
+    actor: &crate::role_routing::contracts::RoutingActor,
+) -> Result<(), String> {
+    match actor.transport.as_str() {
+        "provider" => {
+            let provider_id = actor
+                .provider_id
+                .as_deref()
+                .ok_or_else(|| "Role-routing provider actor has no provider id".to_string())?;
+            let providers = crate::persistence::load_model_providers(connection)?;
+            let provider = providers
+                .providers
+                .iter()
+                .find(|provider| provider.id() == provider_id && provider.enabled())
+                .ok_or_else(|| "Role-routing provider was revoked before dispatch".to_string())?;
+            if provider.location() != actor.location {
+                return Err("Role-routing provider location changed before dispatch".into());
+            }
+            if !matches!(
+                provider,
+                crate::ModelProviderSettings::OpenAiCompatible(_)
+                    | crate::ModelProviderSettings::AgentSession(_)
+                    | crate::ModelProviderSettings::DynamicLan(_)
+            ) {
+                return Err(
+                    "Role-routing provider no longer supports conversation inference".into(),
+                );
+            }
+            Ok(())
+        }
+        "codex_sdk" => {
+            let codex = crate::persistence::load_codex_settings(connection)?;
+            if !codex.enabled || codex.health != "ready" {
+                return Err("Role-routing Codex actor was revoked before dispatch".into());
+            }
+            if actor.model.as_deref() != Some(codex.model.as_str()) {
+                return Err("Role-routing Codex model changed before dispatch".into());
+            }
+            Ok(())
+        }
+        _ => Err("Role-routing actor has an unsupported transport".into()),
+    }
 }
 
 /// A receipt owns its policy for its full lifetime. In particular, a queued root must not pick up
@@ -146,6 +219,13 @@ mod tests {
     use rusqlite::Connection;
     use serde_json::json;
 
+    fn test_now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_millis() as i64
+    }
+
     #[test]
     fn enabled_direct_recipe_overrides_the_legacy_conversation_route() {
         let mut connection = Connection::open_in_memory().expect("database opens");
@@ -172,7 +252,9 @@ mod tests {
             .conversation_respond;
         assert_eq!(
             apply_enabled_role_route(&connection, None, &mut route).expect("role route applies"),
-            Some(RoleDispatch::Provider)
+            Some(RoleDispatch::Provider {
+                max_input_bytes: 4096
+            })
         );
         assert_eq!(route.source, "provider");
         assert_eq!(
@@ -195,6 +277,7 @@ mod tests {
             .expect("Codex settings");
         codex.value_json["enabled"] = json!(true);
         codex.value_json["health"] = json!("ready");
+        codex.value_json["model"] = json!("gpt-5.6-sol");
         let policy = documents
             .iter_mut()
             .find(|document| document.namespace == "routing.roles")
@@ -246,11 +329,12 @@ mod tests {
         save_settings_documents_to_connection(&mut connection, &documents).expect("settings save");
         connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('immutable-input','conversation_primary','user','hello','1')", []).expect("input");
         connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('immutable-run','conversation_primary','conversation.respond','running','immutable-input','1')", []).expect("run");
+        let started_at = test_now_ms();
         assert!(crate::role_routing::repository::record_provider_turn_start(
             &connection,
             "immutable-run",
             "conversation_primary",
-            1,
+            started_at,
         )
         .expect("receipt"));
 
@@ -267,7 +351,9 @@ mod tests {
         assert_eq!(
             apply_enabled_role_route(&connection, Some("immutable-run"), &mut route)
                 .expect("receipt route"),
-            Some(RoleDispatch::Provider)
+            Some(RoleDispatch::Provider {
+                max_input_bytes: 4096
+            })
         );
         assert_eq!(
             route.primary_provider_id.as_deref(),
@@ -293,11 +379,12 @@ mod tests {
         save_settings_documents_to_connection(&mut connection, &documents).expect("save policy");
         connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('input','conversation_primary','user','hello','1')", []).expect("input");
         connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('run','conversation_primary','conversation.respond','running','input','1')", []).expect("run");
+        let started_at = test_now_ms();
         assert!(crate::role_routing::repository::record_provider_turn_start(
             &connection,
             "run",
             "conversation_primary",
-            1
+            started_at
         )
         .expect("start"));
         connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('answer','conversation_primary','assistant','answer','2')", []).expect("answer");
@@ -306,7 +393,7 @@ mod tests {
             "run",
             "completed",
             Some("answer"),
-            2,
+            started_at + 1,
         )
         .expect("finish");
         crate::role_routing::repository::record_provider_turn_finish(
@@ -314,7 +401,7 @@ mod tests {
             "run",
             "completed",
             Some("answer"),
-            3,
+            started_at + 2,
         )
         .expect("duplicate finish");
         let outputs: i64 = connection
@@ -345,17 +432,96 @@ mod tests {
         save_settings_documents_to_connection(&mut connection, &documents).expect("save policy");
         connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('budget-input','conversation_primary','user','hello','1')", []).expect("input");
         connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('budget-run','conversation_primary','conversation.respond','running','budget-input','1')", []).expect("run");
+        let started_at = test_now_ms();
         assert!(crate::role_routing::repository::record_provider_turn_start(
             &connection,
             "budget-run",
             "conversation_primary",
-            1
+            started_at
         )
         .expect("receipt"));
         let mut route = crate::persistence::load_routing_settings(&connection)
             .expect("routing")
             .conversation_respond;
-        // The single permitted step is already running, so a second dispatch budget check fails.
+        // The single running step is the already-reserved first dispatch and remains valid.
+        assert_eq!(
+            apply_enabled_role_route(&connection, Some("budget-run"), &mut route)
+                .expect("first dispatch fits the budget"),
+            Some(RoleDispatch::Provider {
+                max_input_bytes: 4096
+            })
+        );
+        connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms,completed_at_ms) SELECT 'budget-spent',root_id,decision_id,revision,1,actor_id,purpose,'succeeded',config_fingerprint,'{}',?1,?1 FROM rr_steps WHERE id='rr-step-budget-run-0'",
+                [started_at],
+            )
+            .expect("spent step");
         assert!(apply_enabled_role_route(&connection, Some("budget-run"), &mut route).is_err());
+    }
+
+    #[test]
+    fn rr_22_cloud_revoked_before_dispatch() {
+        let mut connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut documents = default_settings_input();
+        let codex = documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.agent" && document.key == "codex-sdk")
+            .expect("Codex settings");
+        codex.value_json["enabled"] = json!(true);
+        codex.value_json["health"] = json!("ready");
+        codex.value_json["model"] = json!("gpt-5.6-sol");
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.roles")
+            .expect("policy")
+            .value_json = json!({
+            "schemaVersion":1,"enabled":true,
+            "actors":[{"id":"sol","label":"Sol","aliases":[],"transport":"codex_sdk","providerId":null,"model":"gpt-5.6-sol","location":"cloud","resourceGroup":"codex","maxInputBytes":4096,"capabilities":["reason"]}],
+            "roles":{"frontend":null,"reasoner":"sol","advanced":null,"reviewer":null,"premium":null,"toolSpecialist":null},
+            "recipes":[{"id":"direct","action":"respond","roles":["reasoner"],"enabled":true}],
+            "limits":{"maxReasoningSteps":1,"maxToolCalls":0,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":0,"maxAutomaticSwitches":0,"maxEstimatedCostMicros":null},
+            "speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},
+            "selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},
+            "premiumApproval":"never","learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false}
+        });
+        save_settings_documents_to_connection(&mut connection, &documents).expect("settings save");
+        connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('cloud-input','conversation_primary','user','hello','1')", []).expect("input");
+        connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('cloud-run','conversation_primary','conversation.respond','running','cloud-input','1')", []).expect("run");
+        assert!(crate::role_routing::repository::record_provider_turn_start(
+            &connection,
+            "cloud-run",
+            "conversation_primary",
+            test_now_ms(),
+        )
+        .expect("receipt"));
+
+        let mut codex_document = crate::persistence::settings::read_settings_document(
+            &connection,
+            "providers.agent",
+            "codex-sdk",
+        )
+        .expect("Codex document");
+        codex_document.value_json["enabled"] = json!(false);
+        connection
+            .execute(
+                "UPDATE settings_documents SET value_json=?1 WHERE namespace='providers.agent' AND key='codex-sdk'",
+                [codex_document.value_json.to_string()],
+            )
+            .expect("revoke Codex");
+        let mut route = crate::persistence::load_routing_settings(&connection)
+            .expect("routing")
+            .conversation_respond;
+        let error = apply_enabled_role_route(&connection, Some("cloud-run"), &mut route)
+            .expect_err("revoked cloud actor must not dispatch");
+        assert!(error.contains("revoked before dispatch"));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM provider_sessions", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("provider sessions"),
+            0
+        );
     }
 }

@@ -48,6 +48,7 @@ pub(super) fn provider_input_budget(
         input,
         0,
         0,
+        0,
     );
     // The chat-completions adapter omits both fields for an empty offer, so reserve the same
     // fragment it actually adds to the wire body rather than a synthetic empty `tools` array.

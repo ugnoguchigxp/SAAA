@@ -437,6 +437,7 @@ pub async fn execute_for_turn(
         &call.arguments,
         cancellation,
         false,
+        None,
     )
     .await
     .to_string()
@@ -445,11 +446,19 @@ pub async fn execute_for_turn(
 /// Executes a role-routed tool call through the existing gateway while keeping the operation
 /// receipt owned by the role root. This is also used by the restricted MCP bridge; the bridge
 /// never obtains a second, session-local routing id.
+pub struct RoleStepBinding<'a> {
+    pub root_id: &'a str,
+    pub step_id: &'a str,
+    pub revision: i64,
+    pub attempt_started_at_ms: i64,
+    pub config_fingerprint: &'a str,
+}
+
 pub async fn execute_for_role_root(
     service: &ToolSelectionService,
     writer: &SqliteWriter,
     conversation_id: &str,
-    root_id: &str,
+    binding: &RoleStepBinding<'_>,
     input_message_id: Option<String>,
     name: &str,
     arguments: &str,
@@ -459,12 +468,13 @@ pub async fn execute_for_role_root(
         service,
         writer,
         conversation_id,
-        root_id,
+        binding.root_id,
         input_message_id,
         name,
         arguments,
         cancellation,
         true,
+        Some(binding),
     )
     .await
 }
@@ -479,6 +489,7 @@ async fn execute_for_root(
     arguments: &str,
     cancellation: &RunCancellation,
     external: bool,
+    role_binding: Option<&RoleStepBinding<'_>>,
 ) -> Value {
     let Ok(principal) = service::ensure_principal(writer) else {
         return json!({"error":{"code":"unavailable","message":"Tool selection is temporarily unavailable."}});
@@ -492,10 +503,11 @@ async fn execute_for_root(
     );
     // Enforce the role permit from the trusted tool effect before anything reaches the owner. A
     // reviewer can never reach a mutating tool, and an unpublished/unknown tool is fail-closed.
-    if let Err(reason) = authorize_routing_tool(writer, root_id, name) {
+    let resolved_effect = resolve_role_tool_effect(service, &context, name, arguments);
+    if let Err(reason) = authorize_routing_tool(writer, root_id, resolved_effect, role_binding) {
         return json!({"error":{"code":"role-tool-denied","message":format!("Role-routing tool permit denied: {reason}")}});
     }
-    match reserve_routing_operation(writer, root_id, &operation_key) {
+    match reserve_routing_operation(writer, root_id, &operation_key, role_binding) {
         Ok(true) => {}
         Ok(false) => {
             return json!({"error":{"code":"operation-not-retryable","message":"This routing tool operation is already owned by an earlier invocation."}});
@@ -516,20 +528,50 @@ async fn execute_for_root(
 /// Maps the active routing step purpose to its role and checks the trusted tool effect. Steps that
 /// do not belong to a routing root (or a conversation without a running step) keep the legacy
 /// unrestricted meaning because this gateway only routes role-root calls.
-fn authorize_routing_tool(writer: &SqliteWriter, root_id: &str, name: &str) -> Result<(), String> {
+fn authorize_routing_tool(
+    writer: &SqliteWriter,
+    root_id: &str,
+    effect: crate::role_routing::tools::ToolEffect,
+    binding: Option<&RoleStepBinding<'_>>,
+) -> Result<(), String> {
     let root_id = root_id.to_string();
-    let name = name.to_string();
+    let binding = binding.map(|binding| {
+        (
+            binding.step_id.to_string(),
+            binding.revision,
+            binding.attempt_started_at_ms,
+            binding.config_fingerprint.to_string(),
+        )
+    });
     writer.read_serialized(move |connection| {
-        let purpose: Option<String> = connection
+        let purpose: Option<String> = if let Some((step_id, revision, started_at, fingerprint)) = &binding {
+            connection
             .query_row(
-                "SELECT purpose FROM rr_steps WHERE root_id=?1 AND status IN ('running','draining') ORDER BY ordinal LIMIT 1",
-                [&root_id],
+                "SELECT s.purpose FROM rr_steps s JOIN rr_roots r ON r.root_id=s.root_id
+                 WHERE s.root_id=?1 AND s.id=?2 AND s.revision=?3 AND s.started_at_ms=?4
+                   AND s.config_fingerprint=?5 AND s.status='running' AND r.phase='responding'
+                   AND r.revision=s.revision AND r.cancel_requested=0",
+                rusqlite::params![&root_id, step_id, revision, started_at, fingerprint],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+        } else {
+            connection
+                .query_row(
+                    "SELECT purpose FROM rr_steps WHERE root_id=?1 AND status IN ('running','draining') ORDER BY ordinal LIMIT 1",
+                    [&root_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+        };
         let Some(purpose) = purpose else {
-            return Ok(());
+            return if binding.is_some() {
+                Err("routing MCP session binding is stale".into())
+            } else {
+                Ok(())
+            };
         };
         let role = match purpose.as_str() {
             "review" => "reviewer",
@@ -538,13 +580,32 @@ fn authorize_routing_tool(writer: &SqliteWriter, root_id: &str, name: &str) -> R
             "frontend" => "frontend",
             other => return Err(format!("Role-routing step purpose {other} has no tool role")),
         };
-        let effect = crate::tool_selection::repository::effect_for_backend_key(connection, &name)?;
-        crate::role_routing::tools::permits_effect(
-            role,
-            crate::role_routing::tools::classify_effect(effect.as_deref()),
-        )
-        .map_err(str::to_string)
+        crate::role_routing::tools::permits_effect(role, effect).map_err(str::to_string)
     })
+}
+
+fn resolve_role_tool_effect(
+    service: &ToolSelectionService,
+    context: &RequestContext,
+    name: &str,
+    arguments: &str,
+) -> crate::role_routing::tools::ToolEffect {
+    match name {
+        TOOL_SEARCH | "tools.search" | TOOL_DESCRIBE | "tools.describe" => {
+            crate::role_routing::tools::ToolEffect::ReadOnly
+        }
+        TOOL_INVOKE | "tools.invoke" => serde_json::from_str::<Value>(arguments)
+            .ok()
+            .and_then(|arguments| {
+                arguments
+                    .get("executionRef")
+                    .and_then(Value::as_str)
+                    .and_then(|reference| service.execution_effect(context, reference).ok())
+            })
+            .map(|effect| crate::role_routing::tools::classify_effect(Some(&effect)))
+            .unwrap_or(crate::role_routing::tools::ToolEffect::Mutating),
+        _ => crate::role_routing::tools::ToolEffect::Mutating,
+    }
 }
 
 /// The existing tool-selection service remains the invocation owner.  Role routing only reserves
@@ -554,24 +615,44 @@ fn reserve_routing_operation(
     writer: &SqliteWriter,
     root_id: &str,
     operation_key: &str,
+    binding: Option<&RoleStepBinding<'_>>,
 ) -> Result<bool, String> {
     let root_id = root_id.to_string();
     let operation_key = operation_key.to_string();
+    let binding = binding.map(|binding| {
+        (
+            binding.step_id.to_string(),
+            binding.revision,
+            binding.attempt_started_at_ms,
+            binding.config_fingerprint.to_string(),
+        )
+    });
     writer.write(move |connection| {
         let transaction = connection.transaction().map_err(|error| error.to_string())?;
-        let step: Option<(String, u32)> = transaction
-            .query_row(
-                "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
-                [&root_id],
+        let step: Option<(String, u32)> = if let Some((step_id, revision, started_at, fingerprint)) = &binding {
+            transaction.query_row(
+                "SELECT s.id,s.revision FROM rr_steps s JOIN rr_roots r ON r.root_id=s.root_id
+                 WHERE s.root_id=?1 AND s.id=?2 AND s.revision=?3 AND s.started_at_ms=?4
+                   AND s.config_fingerprint=?5 AND s.status='running' AND r.phase='responding'
+                   AND r.revision=s.revision AND r.cancel_requested=0",
+                rusqlite::params![&root_id, step_id, revision, started_at, fingerprint],
                 |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?;
+            ).optional().map_err(|error| error.to_string())?
+        } else {
+            transaction
+                .query_row(
+                    "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
+                    [&root_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+        };
         let step = match step {
             Some(step) => Some(step),
             // Before the coordinator claims a step, fall back to the lowest planned step so the
             // reservation still binds to the step the result will belong to.
-            None => transaction
+            None if binding.is_none() => transaction
                 .query_row(
                     "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status IN ('planned','draining') ORDER BY ordinal LIMIT 1",
                     [&root_id],
@@ -579,6 +660,7 @@ fn reserve_routing_operation(
                 )
                 .optional()
                 .map_err(|error| error.to_string())?,
+            None => return Err("Role-routing MCP session binding is stale".into()),
         };
         let Some((step_id, revision)) = step else {
             transaction.commit().map_err(|error| error.to_string())?;
@@ -587,6 +669,25 @@ fn reserve_routing_operation(
         if crate::role_routing::tool_ledger::find_by_operation(&transaction, &root_id, &operation_key)?.is_some() {
             transaction.commit().map_err(|error| error.to_string())?;
             return Ok(false);
+        }
+        let policy_json: String = transaction
+            .query_row(
+                "SELECT p.config_json FROM rr_roots r JOIN rr_policy_versions p ON p.id=r.policy_id WHERE r.root_id=?1",
+                [&root_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        let policy: crate::role_routing::RoleRoutingSettings = serde_json::from_str(&policy_json)
+            .map_err(|error| format!("Role-routing tool budget policy is invalid: {error}"))?;
+        let used: i64 = transaction
+            .query_row(
+                "SELECT count(*) FROM rr_tool_links WHERE root_id=?1",
+                [&root_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if used >= i64::from(policy.limits.max_tool_calls) {
+            return Err("Role-routing tool budget exceeded".into());
         }
         // The link id must include the root so the same name+arguments used by two different roots
         // cannot collide on the primary key.
@@ -666,6 +767,24 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+
+    fn role_writer() -> SqliteWriter {
+        let connection = Connection::open_in_memory().expect("database");
+        crate::initialize_database(&connection).expect("schema");
+        connection.execute("INSERT INTO conversations(id,title,task_mode,created_at,updated_at) VALUES('c',NULL,'conversation','1','1')", []).expect("conversation");
+        connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,started_at) VALUES('r','c','conversation.respond','running','1')", []).expect("run");
+        let policy_id: String = connection
+            .query_row(
+                "SELECT id FROM rr_policy_versions ORDER BY version DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("policy");
+        connection.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','r',?1,0,'responding','text','visual',1,'')", [&policy_id]).expect("root");
+        connection.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('s0','r',0,0,'actor','respond','running','f0','{}',10)", []).expect("step");
+        SqliteWriter::from_connection(connection)
+    }
 
     #[test]
     fn the_three_entry_points_are_fixed() {
@@ -698,5 +817,127 @@ mod tests {
             Some(&json!("invalid-input"))
         );
         assert_eq!(envelope.pointer("/error/retryable"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn rr_21_old_session_cannot_use_new_step() {
+        let writer = role_writer();
+        let old = RoleStepBinding {
+            root_id: "r",
+            step_id: "s0",
+            revision: 0,
+            attempt_started_at_ms: 10,
+            config_fingerprint: "f0",
+        };
+        writer
+            .write(|connection| {
+                connection
+                    .execute("UPDATE rr_steps SET status='succeeded',completed_at_ms=20 WHERE id='s0'", [])
+                    .map_err(|error| error.to_string())?;
+                connection
+                    .execute("UPDATE rr_roots SET revision=1 WHERE root_id='r'", [])
+                    .map_err(|error| error.to_string())?;
+                connection.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('s1','r',1,1,'actor','respond','running','f1','{}',20)", []).map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("advance root");
+        assert!(reserve_routing_operation(&writer, "r", "old-operation", Some(&old)).is_err());
+        let links = writer
+            .read_serialized(|connection| {
+                connection
+                    .query_row("SELECT count(*) FROM rr_tool_links", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .map_err(|error| error.to_string())
+            })
+            .expect("links");
+        assert_eq!(links, 0);
+    }
+
+    #[test]
+    fn rr_21_missing_step_denied() {
+        let writer = role_writer();
+        let missing = RoleStepBinding {
+            root_id: "r",
+            step_id: "missing",
+            revision: 0,
+            attempt_started_at_ms: 10,
+            config_fingerprint: "f0",
+        };
+        assert!(reserve_routing_operation(&writer, "r", "missing-step", Some(&missing)).is_err());
+        assert!(authorize_routing_tool(&writer, "r", "tools.search", Some(&missing)).is_err());
+    }
+
+    #[test]
+    fn rr_21_tool_budget_is_reserved_before_owner_dispatch() {
+        let writer = role_writer();
+        writer
+            .write(|connection| {
+                let policy_id: String = connection
+                    .query_row(
+                        "SELECT policy_id FROM rr_roots WHERE root_id='r'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let mut policy = crate::role_routing::RoleRoutingSettings::default();
+                policy.limits.max_tool_calls = 0;
+                connection
+                    .execute(
+                        "UPDATE rr_policy_versions SET config_json=?1 WHERE id=?2",
+                        rusqlite::params![
+                            serde_json::to_string(&policy).map_err(|error| error.to_string())?,
+                            policy_id
+                        ],
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("zero tool budget");
+        let binding = RoleStepBinding {
+            root_id: "r",
+            step_id: "s0",
+            revision: 0,
+            attempt_started_at_ms: 10,
+            config_fingerprint: "f0",
+        };
+        assert!(
+            reserve_routing_operation(&writer, "r", "over-budget", Some(&binding))
+                .expect_err("budget must reject")
+                .contains("budget exceeded")
+        );
+        assert_eq!(
+            writer
+                .read_serialized(|connection| connection
+                    .query_row("SELECT count(*) FROM rr_tool_links", [], |row| row
+                        .get::<_, i64>(0))
+                    .map_err(|error| error.to_string()))
+                .expect("links"),
+            0
+        );
+    }
+
+    #[test]
+    fn rr_10_cancel_update_before_reserve_prevents_invoke() {
+        let writer = role_writer();
+        writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "UPDATE rr_roots SET cancel_requested=1,phase='draining' WHERE root_id='r'",
+                        [],
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .expect("cancel root");
+        let binding = RoleStepBinding {
+            root_id: "r",
+            step_id: "s0",
+            revision: 0,
+            attempt_started_at_ms: 10,
+            config_fingerprint: "f0",
+        };
+        assert!(reserve_routing_operation(&writer, "r", "cancelled", Some(&binding)).is_err());
     }
 }

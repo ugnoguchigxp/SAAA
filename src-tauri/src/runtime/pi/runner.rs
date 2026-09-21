@@ -7,7 +7,7 @@ use crate::{
     database_error,
     persistence::SqliteWriter,
 };
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
@@ -18,7 +18,7 @@ use std::{
 pub fn run(writer: Arc<SqliteWriter>, run: String) {
     let _personal_slot = crate::memory::personal_state::worker::blocking_generation();
     let result = execute(&writer, &run);
-    let _ = writer.write(|c| {
+    let committed = writer.write(|c| {
         let tx = c.transaction().map_err(database_error)?;
         let (job, delivery, status): (String, String, String) = tx
             .query_row(
@@ -71,12 +71,54 @@ pub fn run(writer: Arc<SqliteWriter>, run: String) {
             state,
             json!({"complete":value["complete"]}),
         )?;
-        // The delegated-work cursor is advanced in this same writer
-        // transaction.  A crash cannot leave a terminal job without a durable
-        // follow-up event; delivery remains an outbox concern.
+        if let Ok(Some(task_id)) = tx
+            .query_row(
+                "SELECT id FROM steward_tasks WHERE coding_job_id=?1 LIMIT 1",
+                [&job],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+        {
+            let last_entry = value["lastEntryId"].as_str();
+            let host_body = serde_json::json!({
+                "lastEntryId": value.get("lastEntryId"),
+                "complete": value.get("complete"),
+                "exitCode": value.get("exitCode"),
+                "tools": value.get("tools"),
+            })
+            .to_string();
+            let evidence = crate::steward::evidence::from_host_session(
+                &task_id,
+                &job,
+                &run,
+                state,
+                workspace_for_run(&tx, &run).as_deref().unwrap_or(""),
+                last_entry,
+                &host_body,
+                None,
+                None,
+                None,
+                value["exitCode"].as_i64(),
+                crate::steward::evidence::PRODUCER_HOST_PI,
+            );
+            let _ = crate::steward::evidence::persist(&tx, &evidence);
+        }
         crate::steward::driver::consume(&tx)?;
         tx.commit().map_err(database_error)
     });
+    if committed.is_ok() {
+        crate::steward::pump::signal_committed();
+    }
+}
+
+fn workspace_for_run(connection: &rusqlite::Connection, run: &str) -> Option<String> {
+    connection
+        .query_row(
+            "SELECT j.workspace_path FROM coding_runs r JOIN coding_jobs j ON j.id=r.job_id WHERE r.id=?1",
+            [run],
+            |row| row.get(0),
+        )
+        .ok()
 }
 fn execute(writer: &SqliteWriter, run: &str) -> Result<Value, String> {
     let (job,workspace,session,settings,payload,binding):(String,String,String,String,String,Option<String>)=writer.read_serialized(|c|c.query_row("SELECT j.id,j.workspace_path,j.session_path,j.settings_json,r.payload,j.session_id FROM coding_runs r JOIN coding_jobs j ON j.id=r.job_id WHERE r.id=?1",[run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(database_error))?;

@@ -207,6 +207,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         sqlite_readers,
         data_directory: PathBuf::new(),
         context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(),
+        context_still_search: memory::context_still_search::ContextStillSearchClient::disabled(),
         active_runs: Mutex::new(HashMap::new()),
         provider_probes: Mutex::new(HashMap::new()),
         interaction_policy: Mutex::new(()),

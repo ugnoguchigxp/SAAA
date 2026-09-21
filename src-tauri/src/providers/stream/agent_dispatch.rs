@@ -17,8 +17,8 @@ pub(crate) fn available_agent_tools(
     input: &StartTurnInput,
     calls_this_attempt: usize,
     voice_calls_this_attempt: usize,
+    context_still_calls_this_attempt: usize,
 ) -> AgentToolOffer {
-    let non_voice_calls = calls_this_attempt.saturating_sub(voice_calls_this_attempt);
     let include_conversation = output_persistence.is_some_and(|persistence| {
         persistence
             .state
@@ -30,13 +30,19 @@ pub(crate) fn available_agent_tools(
             .ok()
             .is_some_and(|remaining| remaining > 0)
     });
-    let include_typed_memory = output_persistence
-        .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
-    let mut definitions = if non_voice_calls < crate::memory::contracts::MAX_RECALL_CALLS_PER_TURN {
-        agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false)
-    } else {
-        Vec::new()
-    };
+    let context_still_within_budget = context_still_calls_this_attempt
+        < crate::memory::context_still_search::MAX_CONTEXT_STILL_CALLS_PER_TURN;
+    let include_typed_memory = context_still_within_budget
+        && output_persistence
+            .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
+    let mut definitions =
+        agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false);
+    if context_still_within_budget
+        && output_persistence
+            .is_some_and(|persistence| persistence.state.context_still_search.is_configured())
+    {
+        definitions.extend(crate::memory::context_still_search::tool_definitions());
+    }
     if voice_calls_this_attempt == 0 && output_persistence.is_some() {
         definitions.push(crate::voice_behavior::tool_definition());
     }
@@ -183,6 +189,34 @@ pub(crate) async fn execute_agent_tool(
             Err(_) => crate::runtime::agent_tools::tool_error_content(
                 "typed-memory-unavailable",
                 "Typed memory recall is temporarily unavailable.",
+            ),
+        };
+    }
+    if crate::memory::context_still_search::is_search_tool(&call.name) {
+        let Some(persistence) = output_persistence else {
+            return crate::runtime::agent_tools::tool_error_content(
+                "context-still-unavailable",
+                "ContextStill search is temporarily unavailable.",
+            );
+        };
+        return match tokio::time::timeout(
+            timeout,
+            persistence.state.context_still_search.search(
+                &call.name,
+                &call.arguments,
+                input.workspace_path.as_deref(),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(content)) => content,
+            Ok(Err(error)) => crate::runtime::agent_tools::tool_error_content(
+                error.tool_code(),
+                error.safe_message(),
+            ),
+            Err(_) => crate::runtime::agent_tools::tool_error_content(
+                "context-still-unavailable",
+                "ContextStill search is temporarily unavailable.",
             ),
         };
     }

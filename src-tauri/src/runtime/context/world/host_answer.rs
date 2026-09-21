@@ -23,6 +23,23 @@ fn prepare_current_card(
     run_id: &str,
     content: &str,
 ) -> Result<PreparedCard, String> {
+    match super::query_understand::understand(content) {
+        super::query_understand::QueryUnderstanding::Ambiguous { candidates, reason } => {
+            let names = if candidates.is_empty() {
+                reason
+            } else {
+                candidates.join(" / ")
+            };
+            return Ok(PreparedCard {
+                text: format!("どれを指していますか: {names}"),
+                world: None,
+            });
+        }
+        super::query_understand::QueryUnderstanding::Unavailable { reason } => {
+            let _ = reason;
+        }
+        _ => {}
+    }
     let (service, frame) = super::app_frame::prepare(state, run_id)?;
     let claims = claims_for_query(frame.frame(), content);
     let raw = serde_json::json!({"claims":claims}).to_string();

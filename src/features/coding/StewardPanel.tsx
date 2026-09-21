@@ -42,6 +42,8 @@ export function StewardPanel({
       deliveryState: string | null;
       speechState: string | null;
       artifactRefs: string[];
+      verifierOutcome?: string | null;
+      evidenceReason?: string | null;
     }[]
   >([]);
   const refresh = useCallback(async () => {
@@ -184,6 +186,11 @@ export function StewardPanel({
           {task.summary || task.goalId} / 対象: {task.workspaceId} / 操作: {task.operations} / 予算:{" "}
           {task.budgetRuns}回・{task.budgetMs}ms / 完了条件: {task.verifier} / 通知: {task.notify} /{" "}
           {task.goalStatus} / {task.loopState}
+          {task.verifierOutcome && <> / 検証: {task.verifierOutcome}</>}
+          {task.evidenceReason && <> / 根拠: {task.evidenceReason}</>}
+          {task.loopState !== "done" && task.verifierOutcome === "missing" && (
+            <> / 証拠不足のため未完了</>
+          )}
           {task.deliveryState && <> / 配信: {task.deliveryState}</>}
           {task.speechState && <> / 音声: {task.speechState}</>}
           {task.artifactRefs.length > 0 && <> / 成果物: {task.artifactRefs.join(", ")}</>}

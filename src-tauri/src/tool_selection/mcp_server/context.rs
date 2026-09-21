@@ -7,7 +7,7 @@
 
 use rusqlite::params;
 
-use super::sessions::Session;
+use super::sessions::{RoleSessionBinding, Session};
 use crate::persistence::SqliteWriter;
 use crate::tool_selection::RequestContext;
 
@@ -47,7 +47,10 @@ pub fn project_exists(writer: &SqliteWriter, project_id: &str) -> bool {
 /// Resolves the conversation owned by a currently active role-routing root. The bridge never
 /// creates a synthetic conversation for this case: doing so would detach tool receipts from the
 /// root that owns the answer.
-pub fn active_role_root_conversation(writer: &SqliteWriter, root_id: &str) -> Option<String> {
+pub fn active_role_binding(
+    writer: &SqliteWriter,
+    root_id: &str,
+) -> Option<(String, RoleSessionBinding)> {
     if root_id.is_empty() || root_id.len() > 160 || root_id.chars().any(char::is_control) {
         return None;
     }
@@ -56,9 +59,21 @@ pub fn active_role_root_conversation(writer: &SqliteWriter, root_id: &str) -> Op
         .read_serialized(move |connection| {
             connection
                 .query_row(
-                    "SELECT conversation_id FROM rr_roots WHERE root_id=?1 AND phase IN ('preparing','queued','responding','draining')",
-                    [root_id],
-                    |row| row.get(0),
+                    "SELECT r.conversation_id,s.id,s.revision,s.started_at_ms,s.config_fingerprint
+                     FROM rr_roots r JOIN rr_steps s ON s.root_id=r.root_id AND s.revision=r.revision
+                     WHERE r.root_id=?1 AND r.phase='responding' AND s.status='running'
+                     ORDER BY s.ordinal LIMIT 1",
+                    [&root_id],
+                    |row| {
+                        let conversation_id = row.get(0)?;
+                        Ok((conversation_id, RoleSessionBinding {
+                            root_id: root_id.clone(),
+                            step_id: row.get(1)?,
+                            revision: row.get(2)?,
+                            attempt_started_at_ms: row.get(3)?,
+                            config_fingerprint: row.get(4)?,
+                        }))
+                    },
                 )
                 .map_err(|error| error.to_string())
         })

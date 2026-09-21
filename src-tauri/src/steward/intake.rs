@@ -5,7 +5,7 @@ use super::{
     execution_contracts::{ProposeDecision, WorkProposeResult},
 };
 use crate::database_error;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -56,26 +56,29 @@ pub(crate) fn classify(
         proposal.quote_start,
         proposal.quote_end,
     )?;
-    if quoted_negative(&excerpt) || hypothetical(&excerpt) {
+    let full_text = connection
+        .query_row(
+            "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2",
+            rusqlite::params![bound_source_id, conversation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| "source_unavailable".to_string())?;
+    let intents = super::request_intent::classify_source(&full_text, &proposal.operations);
+    let decision = super::request_intent::overall(&intents);
+    if decision != super::request_intent::IntentDecision::Allowed {
         return Ok(WorkProposeResult {
-            decision: ProposeDecision::Rejected,
+            decision: match decision {
+                super::request_intent::IntentDecision::Ambiguous => ProposeDecision::Clarify,
+                _ => ProposeDecision::Rejected,
+            },
             proposal_id: None,
             goal_id: None,
             task_id: None,
-            reason: "quoted_or_negative_source".into(),
+            reason: super::request_intent::reason_for(decision).into(),
             duplicate: false,
         });
     }
-    if ambiguous(&excerpt) {
-        return Ok(WorkProposeResult {
-            decision: ProposeDecision::Clarify,
-            proposal_id: None,
-            goal_id: None,
-            task_id: None,
-            reason: "ambiguous_request".into(),
-            duplicate: false,
-        });
-    }
+    let _ = excerpt;
     if let Some(grant) = authority::covering_grant(connection, conversation_id, proposal)? {
         return super::admission::admit_existing(
             connection,
@@ -99,33 +102,6 @@ pub(crate) fn proposal_digest(proposal: &GoalProposal) -> String {
         proposal.recipe_id
     );
     format!("{:x}", Sha256::digest(payload.as_bytes()))
-}
-
-fn quoted_negative(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let negative = [
-        "しない",
-        "しないで",
-        "やめて",
-        "撤回",
-        "don't",
-        "do not",
-        "never",
-    ];
-    let quoted = text.contains('「') || text.contains('"') || text.contains('“');
-    negative.iter().any(|marker| lower.contains(marker)) && (quoted || text.contains("と言"))
-}
-
-fn hypothetical(text: &str) -> bool {
-    ["もし", "仮に", "suppose", "if we"]
-        .iter()
-        .any(|marker| text.to_lowercase().contains(marker))
-        && !text.contains("実行して")
-}
-
-fn ambiguous(text: &str) -> bool {
-    let trimmed = text.trim();
-    matches!(trimmed, "それをお願い" | "お願い" | "do it" | "それ")
 }
 
 pub(crate) fn load_proposal(
@@ -157,6 +133,32 @@ pub(crate) fn confirm(
     let proposal: GoalProposal =
         serde_json::from_str(&payload).map_err(|_| "proposal_unavailable")?;
     if proposal.workspace_id.is_empty() {
+        return Err("stale_confirmation".into());
+    }
+    let bound_version: Option<String> = connection
+        .query_row(
+            "SELECT source_version FROM steward_source_bindings
+             WHERE subject_kind='proposal' AND subject_id=?1
+             ORDER BY rowid DESC LIMIT 1",
+            [proposal_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(database_error)?;
+    let current =
+        authority::current_source_digest(connection, conversation_id, &proposal.source_message_id)?;
+    if bound_version.as_deref() != Some(current.as_str()) {
+        return Err("stale_confirmation".into());
+    }
+    let full_text: String = connection
+        .query_row(
+            "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2",
+            rusqlite::params![proposal.source_message_id, conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "source_unavailable".to_string())?;
+    let intents = super::request_intent::classify_source(&full_text, &proposal.operations);
+    if super::request_intent::overall(&intents) != super::request_intent::IntentDecision::Allowed {
         return Err("stale_confirmation".into());
     }
     let receipt = crate::new_id("ui_receipt");

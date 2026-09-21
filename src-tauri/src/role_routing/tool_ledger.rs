@@ -30,8 +30,14 @@ pub(crate) fn reserve(
             params![link.id, link.root_id, link.step_id, link.revision, link.operation_key, now_ms],
         )
         .map_err(|error| error.to_string())?;
-    find_by_operation(connection, &link.root_id, &link.operation_key)?
-        .ok_or_else(|| "Role-routing tool reservation was not persisted".into())
+    let stored = find_by_operation(connection, &link.root_id, &link.operation_key)?
+        .ok_or_else(|| "Role-routing tool reservation was not persisted".to_string())?;
+    // The operation key is idempotent only inside the execution envelope that first reserved it.
+    // Reusing it from another step or revision must not inherit the original authorization.
+    if stored.step_id != link.step_id || stored.revision != link.revision {
+        return Err("Role-routing tool operation belongs to a different execution envelope".into());
+    }
+    Ok(stored)
 }
 
 pub(crate) fn settle(
@@ -51,10 +57,14 @@ pub(crate) fn settle(
     // A settled link is idempotent only for the same terminal request. Everything else is a
     // conflict that the caller must see: a silent no-op would hide a lost or duplicated mutation.
     if existing.dispatch_state == "settled" {
-        return if state == "settled" {
+        let same_invocation =
+            invocation_id.is_none_or(|value| existing.invocation_id.as_deref() == Some(value));
+        let same_result =
+            result_ref.is_none_or(|value| existing.result_ref.as_deref() == Some(value));
+        return if state == "settled" && same_invocation && same_result {
             Ok(existing)
         } else {
-            Err("Role-routing tool link is already settled".into())
+            Err("Role-routing tool link conflicts with its settled receipt".into())
         };
     }
     let allowed = match existing.dispatch_state.as_str() {
@@ -179,6 +189,30 @@ mod tests {
     }
 
     #[test]
+    fn rr_11_operation_key_cannot_cross_step_or_revision() {
+        let connection = fixture();
+        reserve(&connection, &proposed(), 1).expect("reserve");
+        connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('other-step','root',1,1,'actor','respond','planned','{}','{}')",
+                [],
+            )
+            .expect("other step");
+        let mut conflicting = proposed();
+        conflicting.id = "other-link".into();
+        conflicting.step_id = "other-step".into();
+        conflicting.revision = 1;
+        assert!(reserve(&connection, &conflicting, 2).is_err());
+        assert_eq!(
+            find_by_operation(&connection, "root", "operation")
+                .expect("lookup")
+                .expect("original")
+                .step_id,
+            "step"
+        );
+    }
+
+    #[test]
     fn rr_11_unknown_no_retry() {
         let connection = fixture();
         reserve(&connection, &proposed(), 1).expect("reserve");
@@ -245,6 +279,43 @@ mod tests {
             Some("result"),
             "dispatched",
             5,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rr_11_settled_receipt_rejects_conflicting_replay() {
+        let connection = fixture();
+        let link = proposed();
+        reserve(&connection, &link, 1).expect("reserve");
+        settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation-1"),
+            Some("result-1"),
+            "settled",
+            2,
+        )
+        .expect("settle");
+        assert!(settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation-1"),
+            Some("result-1"),
+            "settled",
+            3,
+        )
+        .is_ok());
+        assert!(settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation-1"),
+            Some("different-result"),
+            "settled",
+            4,
         )
         .is_err());
     }

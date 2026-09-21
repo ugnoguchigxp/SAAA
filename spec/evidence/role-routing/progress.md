@@ -128,3 +128,67 @@ final は root の新しい revision のみ。ASR の同 sourceId 再送は inpu
 - `bun run typecheck`: pass
 - `bun run desktop:smoke -- --report-dir spec/evidence/role-routing/desktop-smoke-20260921-role-routing`: pass（build / bundle / launch / IPC ready）
 - `bun run desktop:smoke -- --report-dir spec/evidence/role-routing/desktop-smoke-20260921-codex-actor`: pass（Codex actor dispatch 経路を含む build / bundle / launch / IPC ready）
+
+## 実装・コード監査追補（2026-09-21、offline）
+
+結論は引き続き未完了。特に E10 の実 multi-step turn 接続、E18、E21/E22、E24 の永続 speech、
+E26/E27 の E2E、E35/E37 の受入・報告、および live lane L01〜L04 は完了していない。
+live model / 認証済み SDK は費用と外部副作用を伴うため、この監査では起動していない。
+
+今回のコード監査では、既存実装の次の不変条件を修正・回帰試験化した。
+
+- dispatch は receipt に保存済みの `selected_id` を使い、実行直前に同じ actor/revision/deadline/budget を再検証する。
+- 実行中 step を二重計上しない。未開始 cancel step は予算を消費せず、費用上限下の cloud unknown cost は拒否する。
+- `draining` 中は provider I/O を開始しない。
+- step/tool/proposal/root の条件付き更新が0件なら成功扱いせず、同一 terminal の真の再送だけを冪等とする。
+- provider finish は step と root を同一 transaction で確定し、step不在・revision不一致・message不在を拒否する。
+- operation key は元の step/revision を越えて再利用できない。
+- tool/review/feedback/revision-decision の再送は、元receiptと完全に整合する場合だけ冪等とし、異なるpayloadを拒否する。
+- learning materialize は dirty page ごとに一意な dataset/job を作り、0件更新や `batch_size=0` を拒否する。
+- role routing 有効時の `/capability` 早期応答も routing root を同一 transaction で完了させる。
+
+検証実績:
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib role_routing:: -- --test-threads=1`: **130 pass / 0 fail**
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib runtime:: -- --test-threads=1`: **197 pass / 0 fail / 6 ignored**
+- `bun test ./tests/role-routing-codex.test.ts`: **2 pass / 0 fail**
+- `bun run ipc:check`: **6 pass / 0 fail**
+- `bun run typecheck`: pass
+- `bun run lint`: pass
+- 今回変更した role-routing Rust ファイルの `rustfmt --check`: pass。全crateの `cargo fmt --check` は並行変更中の `steward/dispatch.rs` と `steward/intake.rs` のみで fail（本作業では未変更）。
+- `git diff --check`: pass
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --lib`: pass（未接続 planned module を含む既存 warning あり）
+- `bun run size:check`: fail。role routing 内外の多数の既存未登録/超過ファイルがあり、baseline 緩和や自動登録は行っていない。
+
+## E10 完了追補（2026-09-21、offline）
+
+E10 の通常 turn / Provider / 内部 Sink 接続を完了した。`frontend → reasoner` の保存済み plan を
+通常の `execute_turn` 入口から順次 dispatch し、中間 provider の delta は process 内 Sink にのみ保持する。
+中間 step は本文ではなく SHA-256 と byte 数だけを ledger に記録し、最終 step の採用 transaction が
+成功した後に限り assistant message と完了通知を公開する。partial stream / timeout / disconnect は旧経路や
+後続 actor へ自動再実行せず、active step と未開始 step を同一 revision 上で終端化する。
+
+追加検証:
+
+- `rr_05_normal_turn_two_steps_commits_only_the_final_answer`: pass。frontend/reasoner 各1回、assistant 1件、accepted output 1件、frontend delta 0件。
+- `rr_09_partial_role_step_leaks_no_draft_and_cancels_remaining_work`: pass。assistant 0件、delta 0件、後続 provider 起動0、step は `failed/interrupted`。
+- `rr_09_child_delta_is_buffered_and_activity_is_bodyless`: pass。
+- `rr_09_child_cannot_emit_completion_or_speech`: pass。
+- `rr_05_frontend_ack_then_reasoner_compiles_as_two_bounded_steps`: pass。
+- role-routing suite（E10 完了時点）: **132 pass / 0 fail**。
+
+E11 は継続中。dispatch 直前の provider/SDK enabled・health・model・location 再検査と、provider actor の
+`maxInputBytes` を実送信前に強制する実装を追加した。`rr_22_cloud_revoked_before_dispatch` は pass（receipt
+後の SDK 剥奪で provider session 0件）。E10 を含む `rr_0` 抽出 47 test も 0 fail。
+
+## E12 完了追補（2026-09-21、offline）
+
+restricted MCP session は初期化時に host DB から `rootId / stepId / revision / startedAt /
+configFingerprint` を取得して immutable に保持する。各 tool call の authorize と operation reserve は
+この完全な束縛を同じ DB 条件で再検査し、現在 step の root-only 推定を routing session から除去した。
+step/revision/attempt/fingerprint が変わった旧 session は、新 step の tool link を作成できない。
+
+- `rr_21_old_session_cannot_use_new_step`: pass（旧束縛から link 0件）。
+- `rr_21_missing_step_denied`: pass。
+- `tool_selection::mcp_server::`: **41 pass / 0 fail**（generic 非routing session の回帰を含む）。
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml --lib`: pass。

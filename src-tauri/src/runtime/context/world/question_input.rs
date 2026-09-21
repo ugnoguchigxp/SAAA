@@ -4,17 +4,17 @@
 //! points at: the same conversation, a running run, and a user/transcript row. Assistant history,
 //! tool results and recall bodies are never parsed. A missing or unavailable source-of-record is
 //! `NotRequested` (fail closed), never an error that blocks the turn.
-use super::question::{parse_graph_question, QuestionParse};
+use super::query_understand::{understand, QueryUnderstanding};
 use crate::{database_error, AppState};
 use rusqlite::{params, Connection, OptionalExtension};
 
-pub(crate) fn read(state: &AppState, run_id: &str) -> QuestionParse {
+pub(crate) fn read(state: &AppState, run_id: &str) -> QueryUnderstanding {
     match state
         .sqlite_readers
         .read(|connection| read_text(connection, run_id))
     {
-        Ok(Some(text)) => parse_graph_question(&text),
-        _ => QuestionParse::NotRequested,
+        Ok(Some(text)) => understand(&text),
+        _ => QueryUnderstanding::NotRequested,
     }
 }
 
@@ -46,6 +46,7 @@ pub(crate) fn read_text(connection: &Connection, run_id: &str) -> Result<Option<
 
 #[cfg(test)]
 mod tests {
+    use super::super::question::parse_graph_question;
     use super::*;
 
     fn empty_connection() -> Connection {

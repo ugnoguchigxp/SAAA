@@ -207,13 +207,11 @@ async fn initialize(
     if inner.sessions.len() >= SESSION_MAX {
         return Ok(RpcReply::value(server_busy(id)));
     }
-    let (conversation_id, run_id, role_root_id) = match role_root_id {
-        Some(root_id) => match context::active_role_root_conversation(&inner.writer, root_id) {
-            Some(conversation_id) => (
-                conversation_id,
-                root_id.to_string(),
-                Some(root_id.to_string()),
-            ),
+    let (conversation_id, run_id, role_binding) = match role_root_id {
+        Some(root_id) => match context::active_role_binding(&inner.writer, root_id) {
+            Some((conversation_id, binding)) => {
+                (conversation_id, root_id.to_string(), Some(binding))
+            }
             None => return Ok(RpcReply::value(invalid_params(id))),
         },
         None => (
@@ -228,7 +226,7 @@ async fn initialize(
         client_info,
         conversation_id.clone(),
         run_id,
-        role_root_id,
+        role_binding,
         inner.principal.clone(),
         inner.project_id.clone(),
     );
@@ -313,7 +311,7 @@ async fn tools_call(
     let context = context::session_context(&session);
     let service = inner.service.clone();
     let writer = inner.writer.clone();
-    let role_root_id = session.role_root_id().map(str::to_string);
+    let role_binding = session.role_binding().cloned();
     let name = name.to_string();
     let task_cancellation = cancellation.clone();
     let deadline = std::time::Duration::from_millis(
@@ -331,7 +329,7 @@ async fn tools_call(
             &service,
             &writer,
             &context,
-            role_root_id.as_deref(),
+            role_binding.as_ref(),
             &name,
             &arguments,
             &task_cancellation,

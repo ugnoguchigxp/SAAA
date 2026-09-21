@@ -1,32 +1,174 @@
 # SAAA
 
-Situation-Aware Ambient Agent Runtime
+**Situation-Aware Ambient Agent Runtime**
 
 [English](README.md) | 日本語
 
-**MIT · 開発中のMVP · 主な検証対象：macOS**
+**ローカルファースト · 開発中 · MIT · 主な検証対象：macOS**
 
-[起動する](#ローカルで起動する) · [開発に参加](CONTRIBUTING.md) · [困ったとき](SUPPORT.md) · [セキュリティ](SECURITY.md) · [ライセンス](LICENSE)
+[起動する](#ローカルで起動する) · [アーキテクチャ](#ランタイムの構成) · [ドキュメント](#ドキュメント) · [開発に参加](CONTRIBUTING.md)
 
+SAAAは、ユーザーの仕事と状況を理解し、目標や制約を覚え、任された範囲でツールを使い、行動するタイミングと静かに待つタイミングを判断するPersonal AIのためのデスクトップランタイムです。状況の観測、永続的な記憶、個人のワールドモデル、役割別のモデル実行、バックグラウンドの仕事を、共通のランタイムへ接続しています。
 
-SAAA は、会話と音声を一つのデスクトップアプリにまとめる、ローカルファーストの AI ランタイムです。React と Tauri で作られており、会話と設定は端末内の SQLite に保存します。モデルの接続先は、プライベートネットワーク上のローカル LLM サーバー、OpenAI 互換 API、または機能フラグで有効にする LARM から選べます。
+中心にあるのは、依頼と理解の継続性です。依頼を追跡可能な仕事へ変え、その場のやり取りが終わった後も背景と委任範囲を保持する。結果は仕事の台帳へ戻し、ユーザーの状況に応じて届ける。テキストと音声はその窓口となり、背後の状態管理・実行・配送をランタイムが担います。
 
-SAAA が目指しているのは、入力された質問へ答えるだけでなく、利用者の状況に応じて「今は支援するべきか、何もしないべきか」を判断できる常駐型のランタイムです。ただし、現在の実装はその途中段階にあります。アプリの自動操作や自動通知は行いません。
+このリポジトリでは、そのシステムを実装しています。メモリーとContextの供給、WorldFrameの構成、ツール探索と実行、委任仕事の台帳と報告処理、ロールルーティングの実行器がすでに存在します。利用できる範囲は、設定したProvider、実行プロファイル、有効なサービスによって異なります。目指す体験と設計原則は[Personal AI Concept](spec/docs/saaa-personal-ai-concept.md)、現在の接続・改善課題は本書の後半で説明しています。
 
-## 現在の状態
+## 中核となる循環
 
-このリポジトリは開発中の MVP（実用に必要な一部機能へ範囲を絞った試作版）です。テキスト・音声会話、ローカルデータのバックアップと診断情報の出力まで実装されています。
+```text
+ユーザー入力・許可された状況の観測・期限・実行結果
+                         │
+                  イベントと出典を永続化
+                         │
+        Personal State・World Model・目標と委任を参照
+                         │
+       Context BrokerでScope・鮮度・必須Contextを確認
+                         │
+          役割別モデル選択・ツール選択・実行可否の判断
+                         │
+               応答する／仕事を進める／待つ／尋ねる
+                         │
+                  結果の検証と仕事の進捗更新
+                         │
+          状況に応じた報告・feedbackと学習記録への反映
+```
 
-通常の開発とオフライン検証は実行できますが、LARM 経由の本番利用はまだ承認されていません。API 契約、隔離環境で段階的にトラフィックを流す 30 分の canary、2 時間連続で安定性を確かめる soak test などに未完了項目があります。機能別の現行状態は[製品準備状況](spec/docs/product-readiness-status.html)を参照してください。旧[MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html)はLARM経路に限定した過去の証跡として残します。
+観測されたこと、現在の理解、ユーザーが望むこと、実際に実行されたことは、それぞれ別の記録で管理します。モデルの返答や検索結果だけで実行権限は増えません。仕事の状態は実行台帳が管理し、World Modelはその参照用の状態を構成します。
 
-## できること
+## 実装されている仕組み
 
-| 画面 | 主な機能 | 現在の安全上の制約 |
+| 領域 | リポジトリにある機能 |
+| --- | --- |
+| 会話と成果物 | ストリーミング応答、マイク入力、読み上げ、会話の永続化、Scope選択、Markdown/Mermaidの成果物、版とデータsnapshotを持つ生成UI |
+| 状況認識 | 前面アプリと入力活動の分類、会話・マイク・音声の状態、シーン判定、確信度、状態変化の安定化、発話・配送方針 |
+| メモリーと継続性 | ローカル会話検索、出典付きPersonal State、背景での抽出、訂正と失効、ContextStill経由の経験・ルール・スキル検索 |
+| World Model | 型付きの実体と関係、観測と仮説、上限付きグラフ探索、仕事・予定・状況・実行容量の現在状態 |
+| 共通Context | generationごとのContext構成、必須・任意情報への予算配分、Scope検査、出典の依存管理、Providerへの最終入力検査 |
+| ツールとCapability | Web取得、検索可能なツールカタログ、外部MCP、ローカルMCP gateway、生成したL-Lang/Wasm能力の管理 |
+| 委任仕事 | 出典に結び付いた提案、目標と権限、有限stepの計画、read/test recipe、実行待ち行列、取消、復旧、結果検証、永続報告outbox |
+| ロールルーティング | モデルactorと役割の設定、有限recipeの実行、レビューと修正、上位モデルへの提案、共通予算、永続実行台帳 |
+| 適応・学習 | 判断と結果の記録、Scope付きの明示的な訂正、背景での候補学習、評価gate、有効化とrollbackの処理 |
+
+この表は実装領域の一覧です。すべてが初期状態で有効、または全経路の統合受入が完了していることを意味しません。
+
+## メモリーと継続性
+
+SAAAでは、記憶の用途と管理責任を分けています。
+
+| 層 | 保存・検索するもの | 使い方 |
 | --- | --- | --- |
-| Chat | テキスト入力、マイク入力、ストリーミング応答、OS の音声合成による読み上げ。監査ログは会話メニューからモーダルで開く | ローカル接続を選んだ場合、Cloud への自動フォールバックは既定で無効 |
-| Settings | モデル経路、音声、プライバシー設定を管理 | APIキーはKeychainへ保存し、設定JSONやSQLiteには保存しない |
+| 会話台帳 | 原文、時刻、runへの参照 | `recall_conversation`で全文検索と期間指定を組み合わせ、必要な会話区間を取得 |
+| Personal State | 目標、制約、決定、未決事項、未完了事項、現在の参照対象、進捗参照 | 背景抽出で出典付きの状態を作り、次のgenerationへ供給 |
+| 型付き知識検索 | 経験、ルール、スキル | `recall_experience`、`recall_rule`、`recall_skill`でローカルのContextStillを参照 |
+| Worldの投影 | 実体、関係、注目対象、根拠 | 現在のScopeに関係する状態とつながりを構成 |
+| 学習台帳 | 候補、選択、結果、訂正、policyの版 | 明示的な訂正の反映と、実測に基づく選択方針の改善 |
 
-音声会話の音声認識には、設定したHarness側のASR、または個別のASR Providerを使います。音声入力を使わない場合、ASRや話者登録は不要です。ASR は音声をテキストへ変換する仕組みです。現在はマイクのみを扱い、システム音声、翻訳、フローティングオーバーレイには対応していません。
+Personal Stateは、候補・有効・競合・解決済み・置換済み・撤回・無効・古い状態を区別します。訂正前の情報と訂正後の情報を、両方とも現在の事実として扱わないためです。派生した状態には出典とScopeを持たせ、削除や失効を依存先へ反映します。
+
+**Context Broker**は、これらの情報と現在の依頼から、generationごとの入力を構成します。必要な制約や実行継続情報の領域を先に確保し、残りを会話履歴や検索結果へ配分して、送信前に依存関係を検査します。検索した過去の文章は履歴データとして扱います。モデルごとのtoken予算や、更新が続く全adapterの網羅は引き続き改善対象です。
+
+Personal Stateの抽出には`SAAA_MEMORY_ENABLED=1`と抽出先の設定が必要です。型付き知識検索には、利用可能なContextStillサービスが別途必要です。ContextStillの知識DBをSAAAが内蔵するわけではなく、接続できないときに自動でクラウドへ切り替える仕組みでもありません。
+
+実装: [`memory/`](src-tauri/src/memory/)、[`personal-state-core`](crates/personal-state-core/)、[`runtime/context/`](src-tauri/src/runtime/context/)。
+
+## 個人のワールドモデル
+
+World Modelは、プロジェクト、概念、指標、目標、関係者と、それらのつながりを扱います。関係には依存、目標への関連、影響、因果、相関などがあります。観測と仮説を分け、根拠と有効性の情報を保持します。
+
+**WorldFrame**は、次の2つを組み合わせた、その時点の参照用データです。
+
+- 保存済みWorldの状態から、Scopeと探索量を制限して取り出したグラフ。
+- coding job、委任仕事、予定、状況、実行容量などを、管理元のruntimeから読み出した最新状態。
+
+Frameには容量上限、有効期間、出典参照、変化を検知するstampがあります。対応するProviderへは共通Context経由で供給します。現在状態への回答は、claim検査やhostが構成するカードを通じて、供給した根拠との対応を確認します。
+
+画面では現在のScopeを選べます。仕事の進捗は管理元から読み出し、グラフ側で独立に更新しません。グラフを質問する入口は現在、明示的な定型文が中心です。自然な言い換えや曖昧な指示語の解決は改善計画に含まれています。また、関係が記録されていることと、因果仮説が証明されたことは区別します。
+
+実装: [`world/`](src-tauri/src/memory/personal_state/world/)、[`WorldFrameの供給`](src-tauri/src/runtime/context/world/)。設計: [Personal World Model](spec/docs/saaa-personal-world-model-concept.md)。
+
+## ツールシステムとCapability
+
+SAAAは、能力を探す処理、契約を読む処理、実行する処理を分けています。カタログの入口は3つの共通ツールです。
+
+1. `tools_search`: やりたいことに合う候補を探す。
+2. `tools_describe`: 候補の入出力契約、使い方、結果の続きを取得する。
+3. `tools_invoke`: 検証された実行参照を使って呼び出す。
+
+カタログには生成Capabilityと設定済み外部MCPツールを登録します。ローカルembeddingとrerankerによる探索、Scopeに応じた訂正ルール、呼出し台帳を備えています。実行参照、引数、アクセス権、取消、結果サイズはhost側で検査します。探索モデルが不足している場合は機能不足として扱い、勝手に外部モデルへ置き換えません。
+
+外部MCPにはStreamable HTTPで接続します。SAAA自身も、同じ3つの入口を認証付き・loopback限定のMCP serverとして公開でき、アプリと同じカタログ・台帳を使います。このほか会話runtimeには、Web取得、記憶検索、仕事の提案、生成UIなどの直接呼出しツールがあります。
+
+### L-Lang / Wasmによる能力の生成
+
+生成Capabilityには、生成、buildとpackage化、検証、inspection、公開、実行、廃止の処理があります。能力の版を保持し、Wasmは契約と資源上限を検査する別host processで動かします。生成と実行にはProvider、build tool、runtime bundleの設定が必要です。能力の説明文が生成できただけでは、実行可能な状態にはなりません。
+
+詳細は[Capability / Tool Runtime Concept](spec/docs/saaa-capability-tool-runtime-concept.md)、[ツール選択の実装ガイド](spec/docs/saaa-tool-selection-d0-d3-implementation-guide.md)、[L-Lang能力の実装ガイド](spec/docs/saaa-llang-dynamic-capability-implementation-guide.md)を参照してください。
+
+## ロールルーティング
+
+ロールルーティングでは、モデルの実行先を役割へ割り当てます。**actor**はtransport、Provider/model、実行場所、resource group、能力、入力上限を持ちます。**role**はactorを参照し、**recipe**はある判断に必要な役割の実行順を定義します。
+
+| Role | 担当 |
+| --- | --- |
+| `frontend` | その場の応対と確認 |
+| `reasoner` | 主な推論と回答 |
+| `advanced` | より難しい再検討 |
+| `reviewer` | 別の設定済み実行先によるレビュー |
+| `premium` | 設定された承認方針に従う上位モデルへの切替 |
+| `tool_specialist` | 共通のツール実行境界を使った専門処理 |
+
+応答、説明、確認、再検討、レビュー後の修正、上位モデルへの提案などを扱います。recipeは依存関係のある有限stepへ変換します。hostはactorの適格性、Context、版、期限、step・tool・reviewの回数、設定された費用上限を確認してから実行します。rootとstepの台帳で取消、古い結果の処理、復旧を管理し、短い相づちや進捗の読み上げは推論結果と分けて調整します。
+
+ロールルーティングはSettingsで有効にして使います。actorを割り当てるだけで任意のProviderが同じように動くわけではなく、transportと能力がその役割に対応している必要があります。選択と学習の記録は品質・遅延・費用の比較に使い、学習済み方針にも適格性と有効化のgateを適用します。
+
+実装: [`role_routing/`](src-tauri/src/role_routing/)。設計: [実行契約](spec/docs/saaa-role-routing-execution-contract.md)、[学習契約](spec/docs/saaa-role-routing-learning-contract.md)。
+
+## 状況認識と委任仕事
+
+状況認識では、会話、会議、coding、執筆、media、集中、solo、不明などを分類します。macOSでは前面アプリと入力からの経過時間をカテゴリへ変換し、入力文字列や画面内容は収集しません。確信度、状態遷移を安定させる処理、信号の取得状態を使い、一瞬の変化や観測できない状態を確定情報として扱うことを避けます。
+
+委任仕事では、**目標・権限・計画・実行記録**を分けます。提案はユーザーの原文と要求された操作へ結び付け、受け付けた仕事を有限の計画、待ち行列、対応するcoding実行プロファイルへ渡します。永続driverが結果を取り込み、条件を満たす次のstepへ進め、報告をoutboxへ保存します。scheduleと状況の方針によって、実行・保留・延期・確認を判断します。
+
+報告処理は、新しいユーザー発話がなくても動きます。定期復旧とwakeの仕組みがあり、完了や保留解除の全経路から速やかに起床させる接続を改善中です。結果の証拠、否定依頼の扱い、統合受入も進めています。現在の実行範囲は対応recipe・profileと委任権限で定まり、任意のデスクトップアプリを無制限に自動操作するものではありません。
+
+実装: [`situation/`](src-tauri/src/situation/)、[`steward/`](src-tauri/src/steward/)、[`schedule/`](src-tauri/src/schedule/)。
+
+## 適応・学習と現在の改善課題
+
+Provider/recipe、tool、plan、notificationの選択と結果を記録します。ユーザーの明示的な指定は学習した順位より優先します。背景workerがdatasetと学習候補を作り、評価、承認、有効化、失効、rollbackを分けて扱います。
+
+実測評価と昇格を通常の管理導線へ接続する作業が残っています。候補を学習できること、効果が実証されていること、実際に有効化されていることは、それぞれ別の状態です。
+
+現在の主な接続課題は[改善5点の実装計画](spec/docs/saaa-review-five-improvements-terra-plan.md)にまとめています。
+
+- 仕事の完了を、その実行に対応する実際の成果証拠で判定する。
+- 原文全体と最新の権限から、禁止・撤回された依頼を保護する。
+- 学習候補を通常の評価・有効化導線へ接続する。
+- 自然なグラフ質問と指示対象をScope内で解決する。
+- 完了や状況変化から、報告処理を速やかに起床させる。
+
+## ランタイムの構成
+
+Reactが会話・操作・状態確認の画面を担い、Tauri内のRust runtimeが実行方針、Providerとtoolの境界、永続化を管理します。SQLiteをローカルの正本とし、投影やProvider向けContextは、その記録とruntimeの現在状態から作ります。
+
+```text
+src/                         Reactの会話・設定・仕事・成果物UI
+src-tauri/src/runtime/       会話の実行制御と共通Context Broker
+src-tauri/src/memory/        Recall、Personal State、World Model、背景抽出
+src-tauri/src/role_routing/  Actor選択、recipe実行、予算、学習
+src-tauri/src/tool_selection/ ツールカタログ、探索、MCP、呼出し台帳
+src-tauri/src/generated_capabilities/ L-Lang/Wasm能力の管理とhost
+src-tauri/src/steward/       委任目標、計画、実行、報告
+src-tauri/src/situation/     状況の観測・分類・注意状態の方針
+src-tauri/src/schedule/      永続化された期限と実行判断
+src-tauri/src/persistence/   SQLite writer、reader、schema、backup
+crates/                     共通Rust契約と中核ロジック
+services/                   連携service
+contexts/                   s11tnextのsystem context原本
+scripts/                    開発・評価・受入runner
+spec/                       Concept、契約、計画、証跡
+```
 
 ## 必要なもの
 
@@ -71,6 +213,10 @@ Settings から接続先とモデル名を追加できます。API-key 認証を
 
 現行の OpenAI 互換 Provider は、`SAAA_PROVIDER_<PROVIDER_ID>_API_KEY` や `OPENAI_API_KEY` への fallback を行いません。下記の LARM token は別のランタイム経路で使用します。
 
+### Agent-sessionによる実行
+
+Runtimeにはagent-sessionの連携とcoding実行adapterもあります。routing actorや委任recipeへ割り当てる前に、対応するProviderまたはcoding profileと、必要なローカルruntimeを設定してください。OpenAI互換endpointへの接続だけで同じ実行能力が使えるわけではありません。基本の接続確認とは別に、roleとtoolの適格性を検査します。
+
 ### LARM Provider
 
 LARM Provider は既定で無効です。オフライン検証済みの経路を開発環境で試す場合だけ、起動時に次の値を設定します。
@@ -97,97 +243,82 @@ Settings → Voice → My voice profile では、利用者本人の声を端末�
 
 この機能は文字起こし時のプライバシーフィルターです。本人確認や、録音した声によるなりすましを防ぐ認証機能ではありません。
 
-## 開発と検証
+## 追加機能の有効化
 
-変更前後の基本確認には次を使います。
+基本のテキスト会話はSettingsで設定できます。追加機能にはそれぞれ前提があり、フラグを有効にしても必要なserviceやmodelが自動で導入されるわけではありません。
 
-```sh
-bun run check:local
-bun run test:rust-packages
-bun run spec:check
-bun run desktop:smoke
-bun run desktop:e2e --report-dir /absolute/path/to/new-report-directory
-bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
-```
+| 機能 | 設定の入口 |
+| --- | --- |
+| Personal Stateの抽出 | `SAAA_MEMORY_ENABLED=1`と利用可能な抽出Provider |
+| 型付きメモリー検索 | `SAAA_MEMORY_ENABLED=1`とローカルContextStillのendpoint discovery。探索先は`SAAA_CONTEXT_STILL_RUN_DIR`で変更可能 |
+| ツール探索・外部MCP | `SAAA_TOOL_SELECTION_CONFIG`でツール選択のJSON設定を指定 |
+| SAAAのローカルMCP gateway | `SAAA_TOOL_GATEWAY_MCP_CONFIG`でlistener・認証設定を指定 |
+| L-Lang生成 | `SAAA_LLANG_GENERATION_CONFIG`で生成設定を指定。実行にはruntime bundleも必要 |
+| ロールルーティング・適応設定 | Role Routing設定でactor、role、recipe、上限、学習条件を設定 |
+| 状況認識・schedule | 各設定とOSの権限によって、観測・実行できる範囲が決まる |
 
-- `bun run check:local`: oxfmtの整形検査とoxlintを実行してから、既存の`check`を実行します。
-- `bun run test:rust-packages`: 独立したRust crateとサービスのテストを実行します。
-- `bun run spec:check`: 仕様書の構造と書式を確認します。
-- `bun run check`: モジュールサイズ、生成物、型、Rust の format・Clippy、フロントエンドと Rust のテストを確認します。
-- `bun run test:coverage`: ローカル用の HTML/LCOV レポートを `coverage/` に出力します。`bun run check` には含まれません。
-- `bun run build`: TypeScript を検査し、フロントエンドの production build を作成します。
-- `bun run desktop:smoke`: debug 版デスクトップアプリを一時データディレクトリで起動し、IPC の準備完了を確認します。macOS では同梱した話者照合ランタイムも確認します。
-- `bun run desktop:e2e`: debug 版デスクトップアプリをビルド・起動し、主要画面、IPC、初期スナップショット、主会話、SQLite、Situation 採取を一時データ上で検証します。macOS では話者照合ランタイムも対象です。結果は `summary.json` とログへ保存します。
-- `bun run readiness:verify`: 3つの自動検証laneを実行し、本文を含まず上書きできないJSON証跡を出力します。実行ごとに新しい絶対pathを指定します。dirtyなworking treeの結果はrelease根拠にできません。
-- `bun run tauri build`: 対象 OS の配布用デスクトップアプリを作成します。
-
-System Context は `contexts/` で管理しています。変更した場合は `bun run s11tnext:build` を実行してください。Rust 側の IPC 型を変更した場合は `bun run ipc:generate` で TypeScript の型を更新します。通常の build と check は、生成物が古い場合に失敗します。
-
-LARM の canary と soak test、MVP 2 / 2.5 の手動受け入れ検証には専用 runner があります。必要な環境変数、隔離ディレクトリ、実行順は、コマンドを直接試す前に各 runbook と release evidence で確認してください。
-
-## カバレッジレポート
-
-行カバレッジの割合はローカル確認用であり、出荷条件ではありません。次で生成します。
-
-```sh
-bun run test:coverage
-```
-
-フロントエンドの LCOV は `coverage/frontend/` に出力されます。`cargo-llvm-cov` が入っていれば、Rust の HTML レポートは `coverage/rust/` に出力されます。`coverage/` は git に含めません。
+設定形式の詳細は各機能のガイドを参照してください。mock/fixtureは隔離した開発用で、実Providerへの対応を証明するものではありません。
 
 ## ローカルデータとプライバシー
 
-SAAA は `com.saaa.desktop` のアプリデータディレクトリに SQLite データベースを一つ作成します。macOS では次の場所です。
+DBは`com.saaa.desktop`のアプリデータディレクトリへ保存します。macOSでは次の場所です。
 
 ```text
 ~/Library/Application Support/com.saaa.desktop/saaa.sqlite3
 ```
 
-メインデータベースを read-write で所有するのは、Tauri プロセスの起動時に一度だけ作成し、すべての書込み処理で使い回す Rust の `SqliteWriter` 一つだけです。SQLite を開く前に OS の排他ロックを取得するため、同じデータディレクトリを使う二つ目の SAAA プロセスは、データベースを開いたり移行したりする前に拒否されます。参照処理は read-only flag と `query_only=ON` を設定した別接続を使い、一回の操作を一つの read transaction で包むため、操作内の各クエリは同じスナップショットを参照します。複数の Reader を許可しながら、書込みは単一 Writer を通して直列化されます。隣に作られる `saaa.sqlite3.writer.lock` は終了後も残ることがありますが、ロック自体は OS が自動解放します。SAAA の実行中にこのファイルを削除しないでください。
+DBの書込みは一つのRust `SqliteWriter`が管理します。OSのlockで、別processが同じデータディレクトリを書込み用に開くことを防ぎます。読取り専用接続は一貫したtransactionで参照します。稼働中の`saaa.sqlite3.writer.lock`は削除しないでください。終了時にOSがlockを解放します。
 
-データベースには、設定、会話、確定済みメッセージ、実行状態、暗号化していない話者埋め込み、構造化した監査イベントを保存します。監査イベントは7日間保持し、7日を過ぎたものは起動時にデータベースを開く際に削除します。マイク、ASR、会話、Provider、TTS、設定変更のライフサイクルを相関・因果IDで関連づけ、イベント名、状態、時刻、結果、失敗コードを記録します。音声品質の評価値、生音声、文字起こし・プロンプト・モデル出力の本文、認証情報、接続先アドレス、一時的なallocation/request IDは監査に保存しません。モデルの API key、`LARM_API_TOKEN`、ローカル LLM サーバーから受け取った一時的な接続情報は保存しません。
+会話と設定、Personal StateとWorldの状態、仕事とtoolの台帳、routingと学習の記録、生成viewの状態、構造化監査イベントをローカルに保存します。保存先がローカルでも、推論やtool処理のすべてが端末内で完結するわけではありません。選んだProviderとtoolには、その処理に必要な入力が送信されます。ローカル会話経路を選択した場合、cloudへの自動fallbackは既定で無効です。
 
-会話メニューから、最新200件の監査イベントを読み取り専用のモーダルで確認できます。Settings → Privacy & Security から、SQLite の整合性を保ったバックアップと、内容を伏せた診断 JSON を作成できます。診断情報には最新1,000件の監査イベントを含め、会話本文、ローカルパス、認証情報を含めません。
+Settingsで登録したProvider APIキーはmacOS Keychainへ保存し、設定JSONやSQLiteには入れません。メインDBとvoice profileはSAAAでは暗号化していません。任意の話者filterはWAVをアプリデータディレクトリ、embeddingをSQLiteへ保存します。適用範囲と制約は上のvoice profileの説明を参照してください。
 
-データベースのバックアップには暗号化していない話者埋め込みが含まれますが、WAV 音声サンプルは含まれません。そのため、バックアップだけを戻しても音声プロファイルは復元できません。古いスキーマを開く前には、移行前のデータベースバックアップを自動作成します。
+構造化監査ログには、prompt・transcript・モデル出力の原文ではなく、実行の状態や結果などのmetadataを記録します。会話原文は会話の記録へ保存します。Settingsでは整合性のあるSQLite backupと秘匿情報を除いた診断情報を出力できます。DB backupには話者embeddingが含まれますが、WAVや外部の能力・model fileをすべて含むわけではありません。DBだけではvoice profileやruntime全体を復元できません。旧schemaの移行前にはDB backupを作ります。
 
-## 現在の制約
+## 開発と検証
 
-- LARM の本番利用は承認待ちです。API 契約、隔離環境、canary、soak test、セキュリティ、ロールバック、運用手順の確認がすべて終わるまで、本番経路として扱わないでください。
+固定された依存関係を導入し、変更に応じた検証を実行します。
 
-## リポジトリ構成
-
-```text
-src/             React UI
-src-tauri/       Rust runtime and Tauri desktop shell
-contexts/        s11tnext system-context sources
-scripts/         smoke tests and readiness runners
-tests/           frontend and contract tests
-spec/docs/       design documents, ADRs, runbooks, and release evidence
+```sh
+bun run check:local
+bun run test:rust-packages
+bun run spec:check
 ```
 
-## 関連ドキュメント
+`check:local`はformat、lint、生成物、型、module size、Rust/frontendの検証を実行します。個別修正では、先に`bun test tests/<file>`または`cargo test --manifest-path src-tauri/Cargo.toml <filter>`で対象を確認します。filter付きの成功は、目的のテストが実際に実行されたことも確認してください。
 
-- [Project Concept & Direction](spec/docs/plan.html)
-- [製品準備状況](spec/docs/product-readiness-status.html)
-- [製品受入手順](spec/docs/product-readiness-acceptance-runbook.html)
-- [Internal Design Documents](spec/docs/README.html)
-- [MVP 2.6 Release Evidence](spec/docs/mvp-2.6-release-evidence.html)
-- [LARM Operations Runbook](spec/docs/mvp-2.6-larm-operations-runbook.html)
-- [Runtime Boundary ADR](spec/docs/adr/0001-mvp-runtime-boundaries.html)
-- [Input Activity Privacy ADR](spec/docs/adr/0003-input-activity-signal-privacy.html)
+`contexts/`の変更後は`bun run s11tnext:build`、公開するRust IPC型の変更後は`bun run ipc:generate`を実行し、生成差分を確認します。`bun run build`はfrontend buildとIPC契約検査、`bun run tauri build`はdesktop bundleを作成します。任意のcoverage reportは`bun run test:coverage`で生成できます。
 
-## 開発に参加する
+desktopと実serviceを使う受入には、各手順書で指定された環境が必要です。
 
-不具合の再現手順、ドキュメントや翻訳の修正、テストの追加も歓迎します。大きな動作変更は、実装前に目的と利用例をIssueで共有してください。
+```sh
+bun run desktop:smoke
+bun run desktop:e2e --report-dir /absolute/path/to/new-report-directory
+bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
+```
 
-- [CONTRIBUTING](CONTRIBUTING.md)：環境構築、検査、生成物とPRの扱い
-- [SUPPORT](SUPPORT.md)：よくある問題と報告時に必要な情報（日英）
-- [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md)：コミュニティでの行動指針
-- [SECURITY](SECURITY.md)：脆弱性情報の扱い。非公開報告先は未確定です
+隔離データと新しいreport directoryを使ってください。smokeの成功は起動とIPC準備の証明です。委任仕事の完遂や学習による改善の証明には、それぞれの検証が必要です。失敗と実行不能は分けて記録し、実接続の未検証をfixture成功で置き換えません。OS・経路ごとの条件は[製品準備状況](spec/docs/product-readiness-status.html)と[受入手順](spec/docs/product-readiness-acceptance-runbook.html)を参照してください。機能フラグ付きLARMの本番経路には、別途[運用条件](spec/docs/mvp-2.6-larm-operations-runbook.html)があります。
+
+## ドキュメント
+
+- [Personal AI Concept](spec/docs/saaa-personal-ai-concept.md): 現在の製品Visionと共通runtimeの原則
+- [Capability / Tool Runtime](spec/docs/saaa-capability-tool-runtime-concept.md): 能力の探索と実行の責任分担
+- [Personal State architecture](spec/docs/personal-state-architecture-roadmap.md): 永続的な継続性とメモリー
+- [Personal World Model](spec/docs/saaa-personal-world-model-concept.md): 実体、関係、根拠、現在の理解
+- [ロールルーティング実行契約](spec/docs/saaa-role-routing-execution-contract.md): Actor、recipe、予算、版管理
+- [Adaptive Learning and Memory](spec/docs/saaa-adaptive-learning-memory-concept.html): Feedbackと選択的な記憶
+- [Interface / Artifact Runtime](spec/docs/saaa-interface-artifact-runtime-concept.md): 対話的な出力と成果物
+- [現在の改善計画](spec/docs/saaa-review-five-improvements-terra-plan.md): 接続課題と完了条件
+- [設計文書一覧](spec/docs/README.html): 詳細計画、手順書、証跡
+
+Conceptは目指す振る舞いを示します。実装計画と証跡では、完成した部分と残作業を区別しています。
+
+## 開発への参加
+
+不具合の再現手順、実装修正、文書や翻訳の改善、回帰テストを歓迎します。大きな振る舞いの変更では、問題と具体的な利用例をissueに記載してください。
+
+[Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Security](SECURITY.md)
 
 ## ライセンス
 
-SAAAのソースコードは [MIT License](LICENSE) で公開しています。同梱している話者照合コンポーネントはそれぞれの条件に従います。[THIRD_PARTY_NOTICES](src-tauri/resources/voice/THIRD_PARTY_NOTICES.md) を参照してください。
-
-依存パッケージやモデルを含む案内は[第三者ライセンス](THIRD_PARTY_NOTICES.md)を参照してください。
+[MIT](LICENSE)。同梱する依存ライブラリとmodelにはそれぞれの条件があります。[第三者ライセンス](THIRD_PARTY_NOTICES.md)と[話者照合のライセンス](src-tauri/resources/voice/THIRD_PARTY_NOTICES.md)を参照してください。

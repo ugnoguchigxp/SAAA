@@ -1,11 +1,11 @@
 //! Transactional boundary for restarting a root after a condition amendment.
 use rusqlite::{Connection, Transaction};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The host-derived input for a future author revision.  Only verified issues can request a
 /// revision; unverified and unresolved findings are preserved for visibility but are never an
 /// automatic instruction to reverse an answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewRevisionDecision {
     pub(crate) revision_allowed: bool,

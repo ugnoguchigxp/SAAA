@@ -65,7 +65,8 @@ impl SpeechQueue {
                     return false;
                 }
             }
-            self.final_revisions.insert(item.root_id.clone(), item.revision);
+            self.final_revisions
+                .insert(item.root_id.clone(), item.revision);
             self.queued.retain(|queued| {
                 !(queued.root_id == item.root_id
                     && matches!(

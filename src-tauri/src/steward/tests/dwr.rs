@@ -245,7 +245,7 @@ fn dw_r04_duplicate_at_goal_limit_returns_original_receipt() {
             })
             .unwrap();
     }
-    prepare_runtime_run(&state, &turn("lim", "任せる")).unwrap();
+    prepare_runtime_run(&state, &turn("lim", "失敗テストをテストして")).unwrap();
     let source = source_of(&state, "lim");
     let mut ninth = proposal(&source, "9件目");
     ninth.operations = vec![Operation::TestRun];
@@ -266,7 +266,7 @@ fn dw_r04_admission_fault_rolls_back_every_row() {
             Ok(())
         })
         .unwrap();
-    prepare_runtime_run(&state, &turn("fault", "任せる")).unwrap();
+    prepare_runtime_run(&state, &turn("fault", "失敗テストを調べて")).unwrap();
     let source = source_of(&state, "fault");
     crate::steward::faults::set(Some("admission_after_proposal"));
     let error = state

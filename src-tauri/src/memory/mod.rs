@@ -1,4 +1,5 @@
 pub mod context_still_recall;
+pub mod context_still_search;
 pub mod context_window;
 pub mod contracts;
 pub mod control_plane;
