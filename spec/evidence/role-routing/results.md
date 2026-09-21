@@ -6,7 +6,8 @@
 
 ## 実施済み
 
-- 隔離test binaryで `rr_` 80件: pass
+- 隔離test binaryで `rr_` 81件: pass
+- RR-29 manual Barrier fixture: update後に届く旧revision completionをdrainingのまま保持することを確認
 - V2 regression: `runtime::context` 100件pass（性能gate 2件ignored）、`providers::chat_completions` 24件pass、`tool_selection` 191件pass
 - V3: `bun run typecheck` pass、`bun test ./tests/role-routing-codex.test.ts` 2件pass（explicit loopback gatewayのみ、gatewayなしではMCPなし）
 - `cargo fmt --check`: role-routing変更範囲でpass

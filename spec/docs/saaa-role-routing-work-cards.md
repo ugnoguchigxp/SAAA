@@ -52,7 +52,7 @@
 | RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate。premium proposalをroot/policy/revision/candidate/見積費用へ束縛して永続化し、候補名を指定した承諾時に再検証 | Astra提案・承諾のIPC/UIと実dispatch接続、dispatch直前のprovider capability再検証 |
 | RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
 | RR-28 | 部分 | chatで永続snapshotのphase/revision/queue先頭を表示 | 実行履歴・選択理由UI |
-| RR-29 | 部分 | 隔離role-routing suite 80件がpass。queue/cancel/tool/sidecar/review/proposalの単体・限定統合を確認。sidecar bridge fixtureを起動負荷と無関係な10秒timeoutで安定化 | Provider/TTS/tool完了順のBarrier競合fixture、live lane、A13〜A30受入 |
+| RR-29 | 部分 | 隔離role-routing suite 81件がpass。queue/cancel/tool/sidecar/review/proposalの単体・限定統合と、manual Barrierによるupdate後late completion保留を確認。sidecar bridge fixtureを起動負荷と無関係な10秒timeoutで安定化 | Provider/TTS/tool完了順のBarrier競合fixture、live lane、A13〜A30受入 |
 | RR-30 | 部分 | R3 tables、限定feature snapshot | immutable全feature snapshot・C6確認 |
 | RR-31 | 部分 | dirty queueとdataset materialize | event上限/checkpoint/page再開 |
 | RR-32 | 部分 | explicit feedbackの限定ラベル | L2全label/conflict/revision |

@@ -84,6 +84,8 @@ pub(crate) fn reduce(state: &State, event: Event) -> Transition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
     #[test]
     fn rr_17_cancel_prevents_late_candidate_acceptance() {
         let initial = State {
@@ -113,5 +115,37 @@ mod tests {
                 .phase,
             Phase::Draining
         );
+    }
+
+    #[test]
+    fn rr_29_manual_barrier_holds_a_completion_after_an_update() {
+        let release = Arc::new(Barrier::new(2));
+        let candidate_release = release.clone();
+        let candidate = thread::spawn(move || {
+            candidate_release.wait();
+            reduce(
+                &State {
+                    phase: Phase::Draining,
+                    revision: 0,
+                    barrier: true,
+                },
+                Event::CandidateReady { revision: 0 },
+            )
+        });
+        // The test intentionally does not sleep: the barrier fixes result delivery after the
+        // durable update boundary, which is the ordering an adapter must respect.
+        let updated = reduce(
+            &State {
+                phase: Phase::Responding,
+                revision: 0,
+                barrier: false,
+            },
+            Event::InputBarrier,
+        );
+        release.wait();
+        let late = candidate.join().expect("candidate completes");
+        assert_eq!(updated.state.phase, Phase::Draining);
+        assert_eq!(late.state.phase, Phase::Draining);
+        assert!(late.effects.is_empty());
     }
 }
