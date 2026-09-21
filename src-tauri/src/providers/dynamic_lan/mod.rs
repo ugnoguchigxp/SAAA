@@ -8,6 +8,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 mod auth;
+pub(crate) mod credential;
 mod http;
 pub(crate) mod probe;
 mod urls;
@@ -19,7 +20,7 @@ use urls::*;
 pub(crate) use urls::{control_base_url, url_is_local};
 use validate::*;
 pub(crate) const CONTROL_PORT: u16 = 9810;
-pub(crate) const AGENT_PROFILE: &str = "deep-reasoning-35b";
+pub(crate) const AGENT_PROFILE: &str = "saaa-qwen38";
 pub(crate) const AUDIENCE: &str = "saaa-desktop";
 const API_TOKEN_ENV: &str = "LARM_API_TOKEN";
 const CLIENT_ID: &str = "saaa-desktop";
@@ -53,6 +54,7 @@ pub(crate) enum ErrorKind {
 pub(crate) struct DynamicLanError {
     pub(crate) kind: ErrorKind,
     message: &'static str,
+    code: Option<&'static str>,
     release_failure: Option<ErrorKind>,
 }
 
@@ -61,16 +63,31 @@ impl DynamicLanError {
         Self {
             kind,
             message,
+            code: None,
+            release_failure: None,
+        }
+    }
+
+    pub(crate) fn with_code(kind: ErrorKind, message: &'static str, code: &'static str) -> Self {
+        Self {
+            kind,
+            message,
+            code: Some(code),
             release_failure: None,
         }
     }
 
     pub(crate) fn public_message(&self) -> &'static str {
-        self.message
+        self.code.unwrap_or(self.message)
     }
 
     pub(crate) fn release_failure(&self) -> Option<ErrorKind> {
         self.release_failure
+    }
+
+    #[cfg(test)]
+    pub(crate) fn code(&self) -> Option<&'static str> {
+        self.code
     }
 }
 
@@ -87,7 +104,18 @@ struct AgentProfiles {
 #[derive(Debug, Deserialize)]
 struct AgentProfile {
     id: String,
+    #[serde(rename = "contextWindow")]
+    #[cfg_attr(test, serde(default = "test_context_window"))]
+    context_window: ContextWindow,
     providers: Vec<ProfileProvider>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ContextWindow {
+    max_tokens: u32,
+    output_reserve_tokens: u32,
+    safety_margin_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +133,7 @@ struct SelectedProfile {
     id: String,
     capability: String,
     model: String,
+    context_window: ContextWindow,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,7 +177,7 @@ struct ErrorEnvelope {
     error: ApiError,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectionClaim {
     id: String,
@@ -159,7 +188,7 @@ struct ConnectionClaim {
     expires_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProviderDescriptor {
     name: String,
@@ -177,7 +206,7 @@ struct ProviderDescriptor {
     configuration: ProviderConfiguration,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProviderCredential {
     r#type: String,
@@ -200,6 +229,48 @@ struct ProviderHealthDescriptor {
 struct ProviderHealth {
     ready: bool,
     accepting_requests: bool,
+    #[cfg_attr(test, serde(default = "test_provider_capacity"))]
+    capacity: ProviderCapacity,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCapacity {
+    max_concurrent_requests: u32,
+    active_requests: u32,
+    max_queued_requests: u32,
+    queue_depth: u32,
+    queue_timeout_ms: u64,
+    retry_after_ms: u64,
+    completion_guaranteed: bool,
+}
+
+fn capacity_gate(capacity: &ProviderCapacity) -> Arc<tokio::sync::Semaphore> {
+    Arc::new(tokio::sync::Semaphore::new(
+        capacity.max_concurrent_requests as usize,
+    ))
+}
+
+#[cfg(test)]
+fn test_context_window() -> ContextWindow {
+    ContextWindow {
+        max_tokens: 32_768,
+        output_reserve_tokens: 4_096,
+        safety_margin_tokens: 1_024,
+    }
+}
+
+#[cfg(test)]
+fn test_provider_capacity() -> ProviderCapacity {
+    ProviderCapacity {
+        max_concurrent_requests: 1,
+        active_requests: 0,
+        max_queued_requests: 2,
+        queue_depth: 0,
+        queue_timeout_ms: 5_000,
+        retry_after_ms: 100,
+        completion_guaranteed: false,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -254,6 +325,9 @@ pub(crate) struct DynamicLanConnection {
     endpoint: String,
     model: String,
     api_key: Option<Zeroizing<String>>,
+    context_window: ContextWindow,
+    capacity: ProviderCapacity,
+    capacity_gate: Arc<tokio::sync::Semaphore>,
     prior_release_failure: Option<ErrorKind>,
 }
 
@@ -277,7 +351,7 @@ impl DynamicLanConnection {
         control_base: Url,
         cancellation: Arc<RunCancellation>,
     ) -> Result<Self, DynamicLanError> {
-        let control_credential = control_credential()?;
+        let control_credential = Some(control_credential()?);
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
@@ -332,7 +406,7 @@ impl DynamicLanConnection {
             &client,
             Method::GET,
             control_base
-                .join("v1/agent-profiles")
+                .join("v3/agent-profiles")
                 .map_err(contract_error)?,
             control_credential.as_ref(),
             None,
@@ -524,7 +598,7 @@ impl DynamicLanConnection {
             }
         }
 
-        let descriptor = match claim_and_probe(
+        let (descriptor, health) = match claim_and_probe(
             &client,
             &control_base,
             control_credential.as_ref(),
@@ -547,6 +621,7 @@ impl DynamicLanConnection {
             }
         };
 
+        let context_window = identity.profile.context_window;
         Ok(Self {
             client,
             control_base,
@@ -559,6 +634,9 @@ impl DynamicLanConnection {
                 .credential
                 .filter(|credential| credential.r#type == "bearer")
                 .map(|credential| Zeroizing::new(credential.token)),
+            context_window,
+            capacity: health.capacity,
+            capacity_gate: capacity_gate(&health.capacity),
             prior_release_failure: None,
         })
     }
@@ -585,6 +663,49 @@ impl DynamicLanConnection {
 
     pub(crate) fn prior_release_failure(&self) -> Option<ErrorKind> {
         self.prior_release_failure
+    }
+
+    pub(crate) fn validate_request_budget(
+        &self,
+        max_output_tokens: u32,
+    ) -> Result<(), DynamicLanError> {
+        if max_output_tokens == 0 || max_output_tokens > self.context_window.output_reserve_tokens {
+            return Err(DynamicLanError::new(
+                ErrorKind::Contract,
+                "The requested output exceeds the LARM profile context budget.",
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capacity(&self) -> (u32, u32, u32, u32, u64, u64, bool) {
+        (
+            self.capacity.max_concurrent_requests,
+            self.capacity.active_requests,
+            self.capacity.max_queued_requests,
+            self.capacity.queue_depth,
+            self.capacity.queue_timeout_ms,
+            self.capacity.retry_after_ms,
+            self.capacity.completion_guaranteed,
+        )
+    }
+
+    pub(crate) async fn acquire_capacity(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, DynamicLanError> {
+        tokio::time::timeout(
+            Duration::from_millis(self.capacity.queue_timeout_ms),
+            self.capacity_gate.clone().acquire_owned(),
+        )
+        .await
+        .map_err(|_| {
+            DynamicLanError::new(
+                ErrorKind::Capacity,
+                "The LARM provider capacity queue timed out.",
+            )
+        })?
+        .map_err(|_| DynamicLanError::new(ErrorKind::Internal, "The LARM capacity gate closed."))
     }
 
     pub(crate) async fn ensure_lifetime(
@@ -630,7 +751,7 @@ impl DynamicLanConnection {
             return Err(contract_error(()));
         }
         let next_identity = validate_renewed_state(&renewed.value, &self.identity, &self.audience)?;
-        let descriptor = claim_and_probe(
+        let (descriptor, health) = claim_and_probe(
             &self.client,
             &self.control_base,
             self.control_credential.as_ref(),
@@ -648,10 +769,13 @@ impl DynamicLanConnection {
             .credential
             .filter(|credential| credential.r#type == "bearer")
             .map(|credential| Zeroizing::new(credential.token));
+        self.capacity = health.capacity;
+        self.capacity_gate = capacity_gate(&health.capacity);
         Ok(())
     }
 
-    pub(crate) async fn release(&self) -> Result<(), DynamicLanError> {
+    pub(crate) async fn release(mut self) -> Result<(), DynamicLanError> {
+        self.api_key.take();
         let url = connection_resource_url(&self.control_base, &self.identity.id)?;
         release_connection(&self.client, &url, self.control_credential.as_ref()).await
     }
@@ -727,6 +851,7 @@ mod tests {
                 id: AGENT_PROFILE.to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
                 model: AGENT_PROFILE.to_string(),
+                context_window: test_context_window(),
             },
             created_at: chrono::DateTime::parse_from_rfc3339(created_at)
                 .expect("created timestamp"),
@@ -844,6 +969,7 @@ mod tests {
     fn accepts_the_legacy_profile_when_no_default_is_advertised() {
         let profile = || AgentProfile {
             id: AGENT_PROFILE.to_string(),
+            context_window: test_context_window(),
             providers: vec![ProfileProvider {
                 name: "llm".to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
@@ -864,6 +990,7 @@ mod tests {
                 id: AGENT_PROFILE.to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
                 model: AGENT_PROFILE.to_string(),
+                context_window: test_context_window(),
             }
         );
 
@@ -901,6 +1028,7 @@ mod tests {
                 id: "coding-default".to_string(),
                 capability: "llm.coding".to_string(),
                 model: "coding-default".to_string(),
+                context_window: test_context_window(),
             }
         );
     }
@@ -928,6 +1056,7 @@ mod tests {
                 id: AGENT_PROFILE.to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
                 model: "coding-default".to_string(),
+                context_window: test_context_window(),
             }
         );
     }
@@ -947,6 +1076,103 @@ mod tests {
         assert!(is_json_content_type("application/json; charset=utf-8"));
         assert!(!is_json_content_type("application/jsonp"));
         assert!(!is_json_content_type("application/problem+json"));
+    }
+
+    #[test]
+    fn validates_profile_context_budget() {
+        let profiles = |max_tokens, output_reserve_tokens, safety_margin_tokens| {
+            serde_json::from_value::<AgentProfiles>(json!({
+                "contractVersion": "agent-connection.v1",
+                "profiles": [{
+                    "id": AGENT_PROFILE,
+                    "contextWindow": {
+                        "maxTokens": max_tokens,
+                        "outputReserveTokens": output_reserve_tokens,
+                        "safetyMarginTokens": safety_margin_tokens
+                    },
+                    "providers": [{
+                        "name": "llm",
+                        "capability": PROFILE_CAPABILITY,
+                        "protocol": "openai.chat-completions.v1",
+                        "model": AGENT_PROFILE
+                    }]
+                }],
+                "audiences": [AUDIENCE]
+            }))
+            .unwrap()
+        };
+        let selected = validate_profiles(&profiles(32_768, 4_096, 1_024)).unwrap();
+        assert_eq!(selected.context_window, test_context_window());
+        assert!(validate_profiles(&profiles(0, 4_096, 1_024)).is_err());
+        assert!(validate_profiles(&profiles(4_096, 4_096, 1)).is_err());
+        assert!(validate_profiles(&profiles(4_096, 3_000, 2_000)).is_err());
+    }
+
+    #[test]
+    fn validates_provider_capacity_without_treating_completion_as_guaranteed() {
+        let capacity = test_provider_capacity();
+        assert!(!capacity.completion_guaranteed);
+        assert!(valid_capacity(&capacity));
+        assert!(!valid_capacity(&ProviderCapacity {
+            max_concurrent_requests: 0,
+            ..capacity
+        }));
+        assert!(!valid_capacity(&ProviderCapacity {
+            active_requests: 2,
+            ..capacity
+        }));
+        assert!(!valid_capacity(&ProviderCapacity {
+            queue_depth: 3,
+            ..capacity
+        }));
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_requests_one_serializes_three_requests() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let capacity = ProviderCapacity {
+            max_concurrent_requests: 1,
+            ..test_provider_capacity()
+        };
+        let gate = capacity_gate(&capacity);
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+        for _ in 0..3 {
+            let gate = gate.clone();
+            let active = active.clone();
+            let peak = peak.clone();
+            tasks.push(tokio::spawn(async move {
+                let _permit = gate.acquire_owned().await.unwrap();
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                active.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn unauthorized_is_authentication_and_never_provider_unavailable() {
+        let error = classify_status(StatusCode::UNAUTHORIZED, "");
+        assert_eq!(error.kind, ErrorKind::Authentication);
+        assert_ne!(error.kind, ErrorKind::Unavailable);
+    }
+
+    #[test]
+    fn credential_error_code_contains_no_secret() {
+        let error = DynamicLanError::with_code(
+            ErrorKind::Authentication,
+            "LARM control credential is not safely configured.",
+            "credential_missing",
+        );
+        assert_eq!(error.code(), Some("credential_missing"));
+        assert!(!format!("{error:?}").contains("dummy-secret-token"));
     }
 
     #[test]
@@ -1065,7 +1291,7 @@ mod tests {
         let error = match send_json_response::<Value>(
             &client,
             Method::GET,
-            Url::parse(&format!("http://{address}/v1/agent-profiles")).expect("test URL"),
+            Url::parse(&format!("http://{address}/v3/agent-profiles")).expect("test URL"),
             Some(&provider_credential("test-control-token").expect("test credential")),
             None,
             None,
@@ -1280,6 +1506,9 @@ mod tests {
         );
         assert_eq!(connection.model(), AGENT_PROFILE);
         assert_eq!(connection.api_key(), Some("short-lived-provider-token"));
+        assert_eq!(connection.capacity(), (1, 0, 2, 0, 5_000, 100, false));
+        connection.validate_request_budget(4_096).unwrap();
+        assert!(connection.validate_request_budget(4_097).is_err());
         let input = crate::StartTurnInput {
             run_id: "claim-fixture".into(),
             conversation_id: "claim-fixture".into(),
@@ -1318,9 +1547,9 @@ mod tests {
 
         let requests = captured_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 6);
-        assert!(requests[0].starts_with("GET /v1/agent-profiles HTTP/1.1"));
+        assert!(requests[0].starts_with("GET /v3/agent-profiles HTTP/1.1"));
         assert!(requests[1].starts_with("POST /v1/agent-connections HTTP/1.1"));
-        assert!(requests[1].contains("\"agentProfile\":\"deep-reasoning-35b\""));
+        assert!(requests[1].contains("\"agentProfile\":\"saaa-qwen38\""));
         assert!(requests[1].contains("\"ttlSeconds\":300"));
         assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
         assert!(!requests[2]
@@ -1479,9 +1708,9 @@ mod tests {
         let body: Value =
             serde_json::from_str(requests[4].split_once("\r\n\r\n").unwrap().1).unwrap();
         harness.assert_wire(&body);
-        assert!(requests[0].starts_with("GET /v1/agent-profiles HTTP/1.1"));
+        assert!(requests[0].starts_with("GET /v3/agent-profiles HTTP/1.1"));
         assert!(requests[1].starts_with("POST /v1/agent-connections HTTP/1.1"));
-        assert!(requests[1].contains("\"agentProfile\":\"deep-reasoning-35b\""));
+        assert!(requests[1].contains("\"agentProfile\":\"saaa-qwen38\""));
         assert!(requests[1].contains("\"ttlSeconds\":300"));
         assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
         assert!(!requests[2]
@@ -1515,7 +1744,7 @@ mod tests {
     async fn resolves_the_advertised_default_profile_through_state_and_claim() {
         let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
-        env::remove_var(API_TOKEN_ENV);
+        env::set_var(API_TOKEN_ENV, "test-control-token");
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
         let address = listener.local_addr().expect("listener address");
@@ -1606,10 +1835,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolves_and_releases_without_control_or_provider_credentials() {
+    async fn uses_control_credential_even_when_claim_explicitly_needs_no_provider_credential() {
         let _environment = crate::test_environment::larm_lock().lock().await;
         let previous_token = env::var(API_TOKEN_ENV).ok();
-        env::remove_var(API_TOKEN_ENV);
+        env::set_var(API_TOKEN_ENV, "test-control-token");
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
         let address = listener.local_addr().expect("listener address");
@@ -1663,16 +1892,19 @@ mod tests {
             Arc::new(RunCancellation::default()),
         )
         .await
-        .expect("anonymous connection resolves");
+        .expect("authenticated control connection resolves");
         assert_eq!(connection.api_key(), None);
         connection.release().await.expect("connection releases");
         server.join().expect("server joins");
 
         let requests = captured_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 5);
-        for request in requests {
-            assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        for index in [0, 1, 2, 4] {
+            assert!(requests[index]
+                .to_ascii_lowercase()
+                .contains("authorization: bearer test-control-token"));
         }
+        assert!(!requests[3].to_ascii_lowercase().contains("authorization:"));
 
         if let Some(token) = previous_token {
             env::set_var(API_TOKEN_ENV, token);

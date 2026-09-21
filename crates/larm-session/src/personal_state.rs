@@ -4,10 +4,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub const VERSION: &str = "larm-personal-state.v1";
-/// Production limit certified for the Qwen 3.8 release used by SAAA.
-pub const MAX_CERTIFIED_INPUT_TOKENS: u64 = 125_000;
-/// Output budget reserved by the certified 128k context configuration.
-pub const MAX_CERTIFIED_OUTPUT_TOKENS: u64 = 4_096;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Capability {
@@ -52,18 +48,15 @@ impl Capability {
         Ok(instant(&self.lease_expires_at)?.min(instant(&self.credential_expires_at)?))
     }
     pub fn input_limit(&self) -> Result<u64, String> {
-        Ok(self
-            .context_limit_tokens
+        self.context_limit_tokens
             .checked_sub(self.output_reserve_tokens)
             .and_then(|n| n.checked_sub(self.safety_margin_tokens))
             .filter(|n| *n > 0)
-            .ok_or("personal-capability-budget")?
-            .min(MAX_CERTIFIED_INPUT_TOKENS))
+            .ok_or_else(|| "personal-capability-budget".into())
     }
     pub fn output_limit(&self) -> Result<u64, String> {
-        let limit = self.output_reserve_tokens.min(MAX_CERTIFIED_OUTPUT_TOKENS);
-        (limit > 0)
-            .then_some(limit)
+        (self.output_reserve_tokens > 0)
+            .then_some(self.output_reserve_tokens)
             .ok_or("personal-capability-budget".into())
     }
     pub fn validate(

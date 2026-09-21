@@ -113,6 +113,7 @@ pub(crate) fn validate(
 pub(crate) fn host_verify(
     issue: &ReviewIssue,
     allowed_evidence_refs: &[String],
+    verified_evidence_refs: &[String],
     revoked_evidence_refs: &[String],
 ) -> HostVerification {
     let in_scope = allowed_evidence_refs
@@ -121,7 +122,15 @@ pub(crate) fn host_verify(
     let revoked = revoked_evidence_refs
         .iter()
         .any(|reference| reference == &issue.evidence_ref);
-    if issue.verdict == "verified" && in_scope && !revoked && !issue.claim.trim().is_empty() {
+    let verified = verified_evidence_refs
+        .iter()
+        .any(|reference| reference == &issue.evidence_ref);
+    if issue.verdict == "verified"
+        && in_scope
+        && verified
+        && !revoked
+        && !issue.claim.trim().is_empty()
+    {
         HostVerification::Verified
     } else {
         HostVerification::Unverified
@@ -133,13 +142,18 @@ pub(crate) fn host_verify(
 pub(crate) fn host_verified_count(
     issues: &[ReviewIssue],
     allowed_evidence_refs: &[String],
+    verified_evidence_refs: &[String],
     revoked_evidence_refs: &[String],
 ) -> usize {
     issues
         .iter()
         .filter(|issue| {
-            host_verify(issue, allowed_evidence_refs, revoked_evidence_refs)
-                == HostVerification::Verified
+            host_verify(
+                issue,
+                allowed_evidence_refs,
+                verified_evidence_refs,
+                revoked_evidence_refs,
+            ) == HostVerification::Verified
         })
         .count()
 }
@@ -190,23 +204,37 @@ mod tests {
         let model = issue("answer-1", "verified");
         // The model claims verified, but the evidence ref is out of scope for the host.
         assert_eq!(
-            host_verify(&model, &["answer-2".into()], &[]),
+            host_verify(&model, &["answer-2".into()], &["answer-1".into()], &[]),
             HostVerification::Unverified
         );
         assert_eq!(
-            host_verify(&model, &["answer-1".into()], &[]),
+            host_verify(&model, &["answer-1".into()], &["answer-1".into()], &[]),
             HostVerification::Verified
         );
         // A revoked evidence reference can never be host-verified even if the model said verified.
         assert_eq!(
-            host_verify(&model, &["answer-1".into()], &["answer-1".into()]),
+            host_verify(
+                &model,
+                &["answer-1".into()],
+                &["answer-1".into()],
+                &["answer-1".into()]
+            ),
             HostVerification::Unverified
         );
         assert!(!revision_allowed(
-            host_verified_count(&[model], &["answer-2".into()], &[]),
+            host_verified_count(&[model], &["answer-2".into()], &["answer-1".into()], &[]),
             0,
             1
         ));
+    }
+
+    #[test]
+    fn rr_24_existing_reference_without_host_verifier_is_not_verified() {
+        let model = issue("answer-1", "verified");
+        assert_eq!(
+            host_verify(&model, &["answer-1".into()], &[], &[]),
+            HostVerification::Unverified
+        );
     }
 
     #[test]

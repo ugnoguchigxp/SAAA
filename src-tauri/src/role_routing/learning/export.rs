@@ -38,7 +38,10 @@ pub(crate) fn export_ready_dataset(
         return Err("Learning dataset is not ready".into());
     }
     let mut statement = connection
-        .prepare("SELECT id,decision_id,feature_version,labeler_version,features_json,labels_json,eligible,exclusion_reason FROM rr_examples WHERE dataset_id=?1 ORDER BY id")
+        .prepare("SELECT e.id,e.decision_id,e.feature_version,e.labeler_version,e.features_json,e.labels_json,e.eligible,e.exclusion_reason,
+                         COALESCE((SELECT r.conversation_id FROM rr_example_sources s JOIN rr_roots r ON r.root_id=s.scope_key WHERE s.example_id=e.id AND s.source_kind='decision' LIMIT 1),
+                                  (SELECT s.scope_key FROM rr_example_sources s WHERE s.example_id=e.id AND s.source_kind='decision' LIMIT 1), e.decision_id)
+                  FROM rr_examples e WHERE e.dataset_id=?1 ORDER BY e.id")
         .map_err(|error| error.to_string())?;
     let examples = statement
         .query_map([dataset_id], |row| {
@@ -51,6 +54,7 @@ pub(crate) fn export_ready_dataset(
                 row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)?,
                 row.get::<_, Option<String>>(7)?,
+                row.get::<_, String>(8)?,
             ))
         })
         .map_err(|error| error.to_string())?
@@ -66,6 +70,7 @@ pub(crate) fn export_ready_dataset(
         labels,
         eligible,
         exclusion_reason,
+        group_key,
     ) in examples.iter()
     {
         let features: Value = serde_json::from_str(features)
@@ -75,7 +80,7 @@ pub(crate) fn export_ready_dataset(
         if contains_textual_payload(&features) || contains_textual_payload(&labels) {
             return Err("Learning export refuses text-bearing fields".into());
         }
-        serde_json::to_writer(&mut jsonl, &json!({"id":id,"decisionId":decision_id,"featureVersion":feature_version,"labelerVersion":labeler_version,"features":features,"labels":labels,"eligible":eligible != &0,"exclusionReason":exclusion_reason}))
+        serde_json::to_writer(&mut jsonl, &json!({"id":id,"decisionId":decision_id,"groupKey":group_key,"split":group_split(group_key),"featureVersion":feature_version,"labelerVersion":labeler_version,"features":features,"labels":labels,"eligible":eligible != &0,"exclusionReason":exclusion_reason}))
             .map_err(|error| error.to_string())?;
         jsonl.push(b'\n');
     }
@@ -98,6 +103,15 @@ pub(crate) fn export_ready_dataset(
         examples_digest: digest,
         example_count: examples.len(),
     })
+}
+
+fn group_split(group_key: &str) -> &'static str {
+    let digest = Sha256::digest(group_key.as_bytes());
+    if digest[0] % 5 == 0 {
+        "eval"
+    } else {
+        "train"
+    }
 }
 
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
@@ -138,7 +152,7 @@ mod tests {
     #[test]
     fn rr_33_partial_file_not_ready_and_export_is_deterministic() {
         let connection = Connection::open_in_memory().expect("database");
-        connection.execute_batch("CREATE TABLE rr_roots(root_id TEXT PRIMARY KEY); CREATE TABLE rr_decisions(id TEXT PRIMARY KEY); INSERT INTO rr_roots VALUES('r'); INSERT INTO rr_decisions VALUES('d');").expect("base");
+        connection.execute_batch("CREATE TABLE rr_roots(root_id TEXT PRIMARY KEY,conversation_id TEXT); CREATE TABLE rr_decisions(id TEXT PRIMARY KEY); INSERT INTO rr_roots VALUES('r','conversation-1'); INSERT INTO rr_decisions VALUES('d');").expect("base");
         super::super::schema::migrate(&connection).expect("schema");
         connection.execute("INSERT INTO rr_datasets(id,upper_seq,feature_version,labeler_version,manifest_json,state,created_at_ms) VALUES('d',1,'f','l','{}','building',1)", []).expect("dataset");
         let directory = tempfile::tempdir().expect("directory");
@@ -148,10 +162,20 @@ mod tests {
             .execute("UPDATE rr_datasets SET state='ready' WHERE id='d'", [])
             .expect("ready");
         connection.execute("INSERT INTO rr_examples(id,dataset_id,decision_id,label_revision,feature_version,labeler_version,features_json,labels_json,eligible,created_at_ms) VALUES('e','d','d',1,'f','l','{\"complexity\":2}','{\"outcome\":\"positive\"}',1,1)", []).expect("example");
+        connection.execute("INSERT INTO rr_example_sources(example_id,source_kind,source_id,source_version,scope_key) VALUES('e','decision','d','1','r')", []).expect("source");
         let first = export_ready_dataset(&connection, directory.path(), "d").expect("export");
         let second =
             export_ready_dataset(&connection, directory.path(), "d").expect("export again");
         assert_eq!(first.examples_digest, second.examples_digest);
         assert!(first.examples_path.exists() && first.manifest_path.exists());
+    }
+
+    #[test]
+    fn rr_33_group_split_keeps_one_conversation_in_one_partition() {
+        assert_eq!(group_split("conversation-a"), group_split("conversation-a"));
+        let groups = (0..100)
+            .map(|index| group_split(&format!("conversation-{index}")))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(groups, std::collections::BTreeSet::from(["eval", "train"]));
     }
 }

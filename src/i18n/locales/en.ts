@@ -279,7 +279,7 @@ export const en = {
       eyebrow: "PRIMARY CONNECTION",
       title: "Agent Connection / Provider Harness",
       description:
-        "Port 9810 validates an Agent Connection directly and uses the HTTP API advertised by its claim. Local-LAN connections work without authentication; Bearer authentication is used only when LARM_API_TOKEN is set. Other addresses resolve services through the Harness.",
+        "Port 9810 validates an authenticated Agent Connection directly and uses the HTTP API advertised by its claim. LARM_API_TOKEN is required for the control API, and the short-lived credential returned by the claim is used for the Provider API. Other addresses resolve services through the Harness.",
       resolving: "Resolving…",
       harnessAddress: "Harness address",
       providerDefault: "Omit (HTTP provider default)",
@@ -296,12 +296,12 @@ export const en = {
       resolvedPartial: "Only some services were resolved.",
       agentConnectionReady: "Agent Connection claim and LLM health checks succeeded.",
       resolutionHint:
-        "The connection check validates the Agent Connection claim and health. Authentication is optional.",
+        "The connection check validates the authenticated Agent Connection claim and health. A control credential is required.",
       resolveServices: "Check connection",
       agentConnectionTokenInvalid:
-        "The configured LARM_API_TOKEN is invalid or was rejected by Agent Connection. Remove the environment variable to use anonymous local-LAN access.",
+        "The configured LARM_API_TOKEN is invalid or was rejected by Agent Connection. Check the secure credential configuration.",
       agentConnectionAuthorizationRejected:
-        "Agent Connection rejected the request. Allow anonymous local-LAN access or configure a valid LARM_API_TOKEN.",
+        "Agent Connection rejected the request. Securely configure a valid LARM_API_TOKEN.",
       sourcesTitle: "Service sources",
       sourcesDescription:
         "Choose the Harness or an individual provider for each of LLM, ASR, and TTS. No implicit switching occurs.",

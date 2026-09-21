@@ -18,6 +18,7 @@ use std::{
 
 const CANCEL_GRACE: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const MAX_REQUEST_FRAME_BYTES: usize = 1_024 * 1_024;
 
 pub(crate) static BUNDLED_ROLE_ROUTING_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
 type BeforeSend<'a> = Option<&'a mut dyn FnMut(&mut Value) -> Result<(), String>>;
@@ -113,6 +114,10 @@ fn run_at_with_bridge(
     {
         return Err("Invalid role-routing sidecar request".into());
     }
+    if let Some(schema) = request.output_schema.as_ref() {
+        jsonschema::validator_for(schema)
+            .map_err(|_| "Codex sidecar output schema is invalid".to_string())?;
+    }
     if cancellation.is_cancelled() {
         return Ok(SidecarOutcome::Cancelled);
     }
@@ -168,10 +173,14 @@ fn run_at_with_bridge(
         "stepId": request.step_id,
         "model": request.model,
         "prompt": request.prompt,
-        "outputSchema": request.output_schema,
-        "toolGatewayUrl": bridge.map(|bridge| &bridge.url),
         "timeoutMs": request.timeout_ms,
     });
+    if let Some(output_schema) = &request.output_schema {
+        frame["outputSchema"] = output_schema.clone();
+    }
+    if let Some(bridge) = bridge {
+        frame["toolGatewayUrl"] = Value::String(bridge.url.clone());
+    }
     if let Some(before_send) = before_send {
         before_send(&mut frame)?;
     }
@@ -202,7 +211,8 @@ fn run_at_with_bridge(
             Ok(Ok(line)) => match validator.validate(line.trim_ascii_end())? {
                 SidecarEvent::Started | SidecarEvent::Activity => continue,
                 SidecarEvent::Result { text, usage } => {
-                    break Ok(SidecarOutcome::Result { text, usage })
+                    validate_output_schema(request.output_schema.as_ref(), &text)?;
+                    break Ok(SidecarOutcome::Result { text, usage });
                 }
                 SidecarEvent::Failed { code } => break Ok(SidecarOutcome::Failed(code)),
                 SidecarEvent::Cancelled => break Ok(SidecarOutcome::Cancelled),
@@ -221,6 +231,21 @@ fn run_at_with_bridge(
     child.terminate();
     let _ = reader.join();
     outcome
+}
+
+fn validate_output_schema(schema: Option<&Value>, text: &str) -> Result<(), String> {
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    let instance: Value = serde_json::from_str(text)
+        .map_err(|_| "Codex sidecar result does not match its output schema".to_string())?;
+    let validator = jsonschema::validator_for(schema)
+        .map_err(|_| "Codex sidecar output schema is invalid".to_string())?;
+    if validator.is_valid(&instance) {
+        Ok(())
+    } else {
+        Err("Codex sidecar result does not match its output schema".into())
+    }
 }
 
 /// The role sidecar may connect only to the application's authenticated loopback gateway. The
@@ -270,10 +295,14 @@ fn configure_sidecar_environment(command: &mut Command) {
 }
 
 fn write_frame(stdin: &mut impl Write, frame: &Value) -> Result<(), String> {
-    serde_json::to_writer(&mut *stdin, frame)
+    let encoded = serde_json::to_vec(frame)
         .map_err(|error| format!("Could not encode role-routing sidecar request: {error}"))?;
+    if encoded.len() > MAX_REQUEST_FRAME_BYTES {
+        return Err("Role-routing sidecar request exceeds the protocol limit".into());
+    }
     stdin
-        .write_all(b"\n")
+        .write_all(&encoded)
+        .and_then(|_| stdin.write_all(b"\n"))
         .and_then(|_| stdin.flush())
         .map_err(|error| format!("Could not write to role-routing Codex sidecar: {error}"))
 }
@@ -381,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn rr_21_bridge_keeps_bearer_token_out_of_jsonl() {
+    fn rr_21_sdk_child_receives_token_without_recording() {
         let (_directory, executable) = fixture("test \"$SAAA_ROLE_ROUTING_MCP_TOKEN\" = 'bridge-secret' || exit 9; read line; case \"$line\" in *bridge-secret*) exit 10;; *toolGatewayUrl*) ;; *) exit 11;; esac; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"bridged\"}'");
         let mut input = request();
         // This fixture proves environment/protocol separation, not process startup latency.
@@ -404,5 +433,67 @@ mod tests {
                 usage: None
             }
         );
+    }
+
+    #[test]
+    fn rr_19_wrong_step_terminal() {
+        let (_directory, executable) = fixture("read line; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"other\",\"op\":\"result\",\"text\":\"wrong\"}'");
+        let error = run_at(&executable, &request(), &RunCancellation::default())
+            .expect_err("wrong-step terminal must fail");
+        assert!(error.contains("does not belong to this step"), "{error}");
+    }
+
+    #[test]
+    fn rr_19_host_validates_the_declared_output_schema() {
+        let (_directory, executable) = fixture("read line; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"{\\\"verdict\\\":7}\"}'");
+        let mut input = request();
+        input.output_schema = Some(json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["verdict"],
+            "properties": { "verdict": { "type": "string" } }
+        }));
+        let error = run_at(&executable, &input, &RunCancellation::default())
+            .expect_err("host schema mismatch must fail");
+        assert_eq!(
+            error,
+            "Codex sidecar result does not match its output schema"
+        );
+    }
+
+    #[test]
+    fn rr_21_changed_revision_new_thread() {
+        let directory = TempDir::new().expect("temporary fixture directory");
+        let counter = directory.path().join("starts");
+        let script = format!(
+            "printf x >> '{}'; read line; if printf '%s' \"$line\" | grep -q '\"stepId\":\"step-v1\"'; then step=step-v1; elif printf '%s' \"$line\" | grep -q '\"stepId\":\"step-v2\"'; then step=step-v2; else exit 8; fi; printf '{{\"version\":1,\"id\":\"root\",\"stepId\":\"%s\",\"op\":\"result\",\"text\":\"done\"}}\\n' \"$step\"",
+            counter.display()
+        );
+        let (_fixture_directory, executable) = fixture(&script);
+        let mut first = request();
+        first.step_id = "step-v1".into();
+        let mut second = request();
+        second.step_id = "step-v2".into();
+        run_at(&executable, &first, &RunCancellation::default()).expect("revision one");
+        run_at(&executable, &second, &RunCancellation::default()).expect("revision two");
+        assert_eq!(fs::read_to_string(counter).expect("start count"), "xx");
+    }
+
+    #[test]
+    fn rr_21_changed_model_new_thread() {
+        let directory = TempDir::new().expect("temporary fixture directory");
+        let counter = directory.path().join("starts");
+        let script = format!(
+            "printf x >> '{}'; read line; if printf '%s' \"$line\" | grep -Eq '\"model\":\"model-(a|b)\"'; then printf '%s\\n' '{{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"done\"}}'; else exit 8; fi",
+            counter.display()
+        );
+        let (_fixture_directory, executable) = fixture(&script);
+        let mut first = request();
+        first.model = "model-a".into();
+        let mut second = request();
+        second.model = "model-b".into();
+        run_at(&executable, &first, &RunCancellation::default()).expect("model a");
+        run_at(&executable, &second, &RunCancellation::default()).expect("model b");
+        assert_eq!(fs::read_to_string(counter).expect("start count"), "xx");
     }
 }

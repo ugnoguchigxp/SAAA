@@ -3,8 +3,9 @@ use url::Url;
 use super::urls::{url_is_local, url_is_loopback};
 use super::{
     contract_error, valid_provider_auth, AgentProfiles, ConnectionClaim, ConnectionIdentity,
-    ConnectionState, DynamicLanError, ErrorKind, ProviderDescriptor, SelectedProfile,
-    AGENT_PROFILE, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS, CONNECTION_TTL_SECONDS, CONTROL_PORT,
+    ConnectionState, DynamicLanError, ErrorKind, ProviderCapacity, ProviderDescriptor,
+    SelectedProfile, AGENT_PROFILE, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS, CONNECTION_TTL_SECONDS,
+    CONTROL_PORT,
 };
 
 fn valid_llm_protocol(value: &str) -> bool {
@@ -236,6 +237,7 @@ pub(crate) fn validate_profiles(
                 .any(|capability| capability == &provider.capability));
     if matching.next().is_some()
         || profile.providers.len() != 1
+        || !valid_context_window(&profile.context_window)
         || provider.name != "llm"
         || !valid_llm_capability(&provider.capability)
         || !supported_capabilities_are_valid
@@ -248,7 +250,27 @@ pub(crate) fn validate_profiles(
         id: profile.id.clone(),
         capability: provider.capability.clone(),
         model: provider.model.clone(),
+        context_window: profile.context_window,
     })
+}
+
+fn valid_context_window(window: &super::ContextWindow) -> bool {
+    window.max_tokens > 0
+        && window.output_reserve_tokens > 0
+        && window.safety_margin_tokens > 0
+        && window
+            .output_reserve_tokens
+            .checked_add(window.safety_margin_tokens)
+            .is_some_and(|reserved| reserved < window.max_tokens)
+}
+
+pub(crate) fn valid_capacity(capacity: &ProviderCapacity) -> bool {
+    capacity.max_concurrent_requests > 0
+        && capacity.active_requests <= capacity.max_concurrent_requests
+        && capacity.queue_depth <= capacity.max_queued_requests
+        && capacity.queue_timeout_ms > 0
+        && capacity.queue_timeout_ms <= 300_000
+        && capacity.retry_after_ms <= capacity.queue_timeout_ms
 }
 
 fn valid_llm_capability(value: &str) -> bool {

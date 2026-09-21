@@ -117,9 +117,14 @@ fn classify_operation(full_text: &str, operation: Operation) -> OperationIntent 
 }
 
 fn explanation_of_quoted_command(text: &str, lower: &str) -> bool {
-    let quoted_command = ["「実行して」", "『実行して』", "\"run this\"", "\"実行して\""]
-        .iter()
-        .any(|marker| text.contains(marker));
+    let quoted_command = [
+        "「実行して」",
+        "『実行して』",
+        "\"run this\"",
+        "\"実行して\"",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker));
     quoted_command
         && ["説明して", "explain", "どういう", "means"]
             .iter()
@@ -193,12 +198,7 @@ fn explicit_request(lower: &str, operation: Operation) -> bool {
         Operation::TestRun => {
             contains_any(
                 lower,
-                &[
-                    "テストして",
-                    "テストを実行",
-                    "run tests",
-                    "run the tests",
-                ],
+                &["テストして", "テストを実行", "run tests", "run the tests"],
             ) && !contains_any(lower, &["しないで", "do not", "don't"])
         }
     }

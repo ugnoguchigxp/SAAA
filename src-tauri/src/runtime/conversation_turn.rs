@@ -32,15 +32,39 @@ use conversation_controller::execute as execute_reasoning;
 use std::sync::Arc;
 #[path = "conversation_role_codex.rs"]
 mod role_codex;
-use role_codex::execute_role_codex_actor;
 #[cfg(test)]
 use role_codex::role_codex_prompt;
+use role_codex::{execute_role_codex_step, CodexStepRequest};
 
 pub(crate) async fn execute_conversation_turn(
     state: &AppState,
     input: &StartTurnInput,
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
+) -> Result<ConversationMessage, TurnExecutionFailure> {
+    execute_conversation_turn_with_candidates(state, input, on_event, cancellation, Vec::new())
+        .await
+}
+
+#[derive(Clone)]
+struct RoleCandidate {
+    step_id: String,
+    purpose: String,
+    content: String,
+}
+
+#[derive(Clone)]
+struct ActiveRoleStep {
+    step_id: String,
+    purpose: String,
+}
+
+async fn execute_conversation_turn_with_candidates(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: Arc<RunCancellation>,
+    mut role_candidates: Vec<RoleCandidate>,
 ) -> Result<ConversationMessage, TurnExecutionFailure> {
     let context_started = std::time::Instant::now();
     let conversation_inputs::Inputs {
@@ -64,6 +88,25 @@ pub(crate) async fn execute_conversation_turn(
             max_input_bytes,
         }) => Some(*max_input_bytes as usize),
         _ => None,
+    };
+    let active_provider_step = if role_provider_step {
+        state.sqlite_writer.write(|connection| {
+            connection
+                .query_row(
+                    "SELECT id,purpose FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
+                    [&input.run_id],
+                    |row| {
+                        Ok(ActiveRoleStep {
+                            step_id: row.get(0)?,
+                            purpose: row.get(1)?,
+                        })
+                    },
+                )
+                .map(Some)
+                .map_err(|error| error.to_string())
+        })?
+    } else {
+        None
     };
     crate::providers::http_metrics::record("contextInputsLoad", context_started.elapsed());
     if scope.status != "resolved" {
@@ -102,8 +145,14 @@ pub(crate) async fn execute_conversation_turn(
     if let Some(conversation_inputs::conversation_inputs_roles::RoleDispatch::CodexSdk {
         model,
         max_input_bytes,
+        binding,
     }) = role_dispatch
     {
+        let binding = binding.ok_or_else(|| {
+            TurnExecutionFailure::configuration(
+                "Role-routing Codex dispatch has no persisted step binding",
+            )
+        })?;
         let FreshProviderContext { history, world, .. } = compose_after_connect(
             state,
             input,
@@ -112,18 +161,135 @@ pub(crate) async fn execute_conversation_turn(
             crate::runtime::context::broker::ProviderInputBudget::openai_compatible(),
         )
         .map_err(|error| TurnExecutionFailure::configuration(context_recovery_message(&error)))?;
-        return execute_role_codex_actor(
+        let result = execute_role_codex_step(
             state,
             input,
             on_event,
-            cancellation,
-            &model,
-            max_input_bytes as usize,
+            cancellation.clone(),
+            CodexStepRequest {
+                step_id: binding.step_id.clone(),
+                revision: binding.revision,
+                config_fingerprint: binding.config_fingerprint,
+                purpose: binding.purpose.clone(),
+                model,
+                max_input_bytes: max_input_bytes as usize,
+                current_request: role_step_request(
+                    &binding.purpose,
+                    &input.content,
+                    &role_candidates,
+                )?,
+            },
             &history,
             route.timeout_ms,
             world,
         )
-        .await;
+        .await?;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0);
+        let usage_json = result.usage.as_ref().map(|usage| usage.as_json());
+        if binding.purpose == "review" {
+            let response = parse_review_response(&result.content)?;
+            let review_outcome = state.sqlite_writer.write(|connection| {
+                crate::role_routing::repository::advance_review_step(
+                    connection,
+                    &input.run_id,
+                    &response,
+                    usage_json.as_deref(),
+                    now_ms,
+                )
+            })?;
+            let draft = role_candidates
+                .iter()
+                .find(|candidate| matches!(candidate.purpose.as_str(), "respond" | "reconsider"))
+                .cloned()
+                .ok_or_else(|| {
+                    TurnExecutionFailure::configuration(
+                        "Role-routing reviewed response lost its author draft",
+                    )
+                })?;
+            match review_outcome {
+                crate::role_routing::repository::ReviewStepOutcome::Revise(decision) => {
+                    role_candidates.push(RoleCandidate {
+                        step_id: binding.step_id,
+                        purpose: "review".into(),
+                        content: serde_json::to_string(&decision).map_err(|error| {
+                            TurnExecutionFailure::configuration(error.to_string())
+                        })?,
+                    });
+                    return Box::pin(execute_conversation_turn_with_candidates(
+                        state,
+                        input,
+                        on_event,
+                        cancellation,
+                        role_candidates,
+                    ))
+                    .await;
+                }
+                crate::role_routing::repository::ReviewStepOutcome::KeepDraft => {
+                    return persist_conversation_success_with_state(
+                        state,
+                        input,
+                        &draft.content,
+                        |connection, message| {
+                            crate::role_routing::repository::accept_reviewed_draft(
+                                connection,
+                                &input.run_id,
+                                &draft.step_id,
+                                &message.id,
+                                now_ms,
+                            )
+                        },
+                    )
+                    .map_err(Into::into);
+                }
+            }
+        }
+        if state.sqlite_writer.write(|connection| {
+            crate::role_routing::repository::advance_provider_step_with_usage(
+                connection,
+                &input.run_id,
+                &result.content,
+                usage_json.as_deref(),
+                now_ms,
+            )
+        })? {
+            role_candidates.push(RoleCandidate {
+                step_id: binding.step_id,
+                purpose: binding.purpose,
+                content: result.content,
+            });
+            return Box::pin(execute_conversation_turn_with_candidates(
+                state,
+                input,
+                on_event,
+                cancellation,
+                role_candidates,
+            ))
+            .await;
+        }
+        return persist_conversation_success_with_state(
+            state,
+            input,
+            &result.content,
+            |connection, message| {
+                if let Some(usage_json) = usage_json.as_deref() {
+                    crate::role_routing::repository::record_step_usage(
+                        connection,
+                        &input.run_id,
+                        usage_json,
+                    )?;
+                }
+                crate::role_routing::repository::accept_provider_turn(
+                    connection,
+                    &input.run_id,
+                    &message.id,
+                    now_ms,
+                )
+            },
+        )
+        .map_err(Into::into);
     }
     let shared_larm_voice =
         route.source == "harness" && input.input_origin == "voice" && crate::larm_voice::enabled();
@@ -380,6 +546,35 @@ pub(crate) async fn execute_conversation_turn(
                 },
             );
         }
+        if let Some(step) = active_provider_step.as_ref() {
+            let task = role_step_request(&step.purpose, &input.content, &role_candidates)?;
+            if task != input.content {
+                let current_index = history
+                    .iter()
+                    .rposition(|message| {
+                        message.role == "user" && message.content.trim() == input.content.trim()
+                    })
+                    .ok_or_else(|| {
+                        TurnExecutionFailure::configuration(
+                            "Role-routing task could not bind the persisted input message",
+                        )
+                    })?;
+                // Keep the persisted user input as the final user message. Generation
+                // accounting uses that exact message to prove there is one current
+                // instruction; the role-specific work is host-owned control context.
+                history.insert(
+                    current_index,
+                    crate::ipc_contract::ConversationMessage {
+                        id: format!("host-role-task-{}", step.step_id),
+                        conversation_id: input.conversation_id.clone(),
+                        role: "system".into(),
+                        content: task,
+                        parts: None,
+                        created_at: now_iso(),
+                    },
+                );
+            }
+        }
         if let Some(max_input_bytes) = role_provider_max_input_bytes {
             let encoded_bytes = serde_json::to_vec(&history)
                 .map_err(|error| TurnExecutionFailure::configuration(error.to_string()))?
@@ -490,6 +685,72 @@ pub(crate) async fn execute_conversation_turn(
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|duration| duration.as_millis() as i64)
                     .unwrap_or(0);
+                if active_provider_step
+                    .as_ref()
+                    .is_some_and(|step| step.purpose == "review")
+                {
+                    let response = parse_review_response(&content)?;
+                    let review_outcome = state.sqlite_writer.write(|connection| {
+                        crate::role_routing::repository::advance_review_step(
+                            connection,
+                            &input.run_id,
+                            &response,
+                            None,
+                            now_ms,
+                        )
+                    })?;
+                    let draft = role_candidates
+                        .iter()
+                        .find(|candidate| {
+                            matches!(candidate.purpose.as_str(), "respond" | "reconsider")
+                        })
+                        .cloned()
+                        .ok_or_else(|| {
+                            TurnExecutionFailure::configuration(
+                                "Role-routing reviewed response lost its author draft",
+                            )
+                        })?;
+                    match review_outcome {
+                        crate::role_routing::repository::ReviewStepOutcome::Revise(decision) => {
+                            role_candidates.push(RoleCandidate {
+                                step_id: active_provider_step
+                                    .as_ref()
+                                    .expect("review step")
+                                    .step_id
+                                    .clone(),
+                                purpose: "review".into(),
+                                content: serde_json::to_string(&decision).map_err(|error| {
+                                    TurnExecutionFailure::configuration(error.to_string())
+                                })?,
+                            });
+                            return Box::pin(execute_conversation_turn_with_candidates(
+                                state,
+                                input,
+                                on_event,
+                                cancellation,
+                                role_candidates,
+                            ))
+                            .await;
+                        }
+                        crate::role_routing::repository::ReviewStepOutcome::KeepDraft => {
+                            return persist_conversation_success_with_state(
+                                state,
+                                input,
+                                &draft.content,
+                                |connection, message| {
+                                    crate::role_routing::repository::accept_reviewed_draft(
+                                        connection,
+                                        &input.run_id,
+                                        &draft.step_id,
+                                        &message.id,
+                                        now_ms,
+                                    )
+                                },
+                            )
+                            .map_err(Into::into);
+                        }
+                    }
+                }
                 if role_provider_step
                     && state.sqlite_writer.write(|connection| {
                         crate::role_routing::repository::advance_provider_step(
@@ -502,11 +763,19 @@ pub(crate) async fn execute_conversation_turn(
                 {
                     // Re-enter through the normal loader so the next dispatch comes from the
                     // newly claimed persisted step. The finite recipe budget bounds recursion.
-                    return Box::pin(execute_conversation_turn(
+                    if let Some(step) = active_provider_step.as_ref() {
+                        role_candidates.push(RoleCandidate {
+                            step_id: step.step_id.clone(),
+                            purpose: step.purpose.clone(),
+                            content,
+                        });
+                    }
+                    return Box::pin(execute_conversation_turn_with_candidates(
                         state,
                         input,
                         on_event,
                         cancellation,
+                        role_candidates,
                     ))
                     .await;
                 }
@@ -631,6 +900,115 @@ pub(crate) async fn execute_conversation_turn(
                     .join("; ")
             ),
         ))
+    }
+}
+
+fn role_step_request(
+    purpose: &str,
+    original_request: &str,
+    candidates: &[RoleCandidate],
+) -> Result<String, TurnExecutionFailure> {
+    match purpose {
+        "review" => {
+            let target = candidates
+                .iter()
+                .rev()
+                .find(|candidate| matches!(candidate.purpose.as_str(), "respond" | "reconsider"))
+                .ok_or_else(|| {
+                    TurnExecutionFailure::configuration(
+                        "Role-routing review has no exact author draft",
+                    )
+                })?;
+            Ok(format!(
+                "Independently review the draft against the original request. Return only one JSON object matching the supplied schema. Do not rewrite the answer. Every issue evidenceRef must be exactly `rr-output-{}`; use an empty issues array when there is no supported issue.\n\n<original-request>\n{}\n</original-request>\n\n<review-target>\n{}\n</review-target>",
+                target.step_id, original_request, target.content
+            ))
+        }
+        "revise" => {
+            let target = candidates
+                .iter()
+                .find(|candidate| matches!(candidate.purpose.as_str(), "respond" | "reconsider"))
+                .ok_or_else(|| {
+                    TurnExecutionFailure::configuration("Role-routing revision has no author draft")
+                })?;
+            let review = candidates
+                .iter()
+                .rev()
+                .find(|candidate| candidate.purpose == "review")
+                .ok_or_else(|| {
+                    TurnExecutionFailure::configuration(
+                        "Role-routing revision has no independent review",
+                    )
+                })?;
+            Ok(format!(
+                "Revise the draft only where the review identifies supported issues. Preserve correct claims and do not mention the review process.\n\n<original-request>\n{}\n</original-request>\n\n<draft>\n{}\n</draft>\n\n<review>\n{}\n</review>",
+                original_request, target.content, review.content
+            ))
+        }
+        "respond" | "reconsider" | "frontend" => Ok(original_request.to_string()),
+        _ => Err(TurnExecutionFailure::configuration(format!(
+            "Unsupported role-routing step purpose: {purpose}"
+        ))),
+    }
+}
+
+fn parse_review_response(
+    content: &str,
+) -> Result<crate::role_routing::review::ReviewResponse, TurnExecutionFailure> {
+    if content.len() > 64 * 1024 {
+        return Err(TurnExecutionFailure::configuration(
+            "Role-routing review exceeds its output limit",
+        ));
+    }
+    serde_json::from_str(content).map_err(|_| {
+        TurnExecutionFailure::configuration(
+            "Role-routing reviewer returned an invalid structured response",
+        )
+    })
+}
+
+#[cfg(test)]
+mod role_review_tests {
+    use super::*;
+
+    #[test]
+    fn rr_24_review_target_is_exact_draft() {
+        let candidates = vec![RoleCandidate {
+            step_id: "author-step".into(),
+            purpose: "respond".into(),
+            content: "exact private draft".into(),
+        }];
+        let prompt =
+            role_step_request("review", "original request", &candidates).expect("review prompt");
+        assert!(prompt.contains("<review-target>\nexact private draft\n</review-target>"));
+        assert!(prompt.contains("rr-output-author-step"));
+        assert!(!prompt.contains("model"));
+        assert!(!prompt.contains("actor"));
+    }
+
+    #[test]
+    fn rr_24_provider_review_rejects_unknown_fields() {
+        assert!(parse_review_response(r#"{"issues":[],"trusted":true}"#).is_err());
+        assert!(parse_review_response(r#"{"issues":[]}"#).is_ok());
+    }
+
+    #[test]
+    fn rr_25_reviser_receives_host_decision_not_model_instructions() {
+        let candidates = vec![
+            RoleCandidate {
+                step_id: "author-step".into(),
+                purpose: "respond".into(),
+                content: "draft".into(),
+            },
+            RoleCandidate {
+                step_id: "review-step".into(),
+                purpose: "review".into(),
+                content: r#"{"revisionAllowed":true,"verifiedIssues":[],"unresolvedIssues":[],"completedRounds":0,"maxRounds":1}"#.into(),
+            },
+        ];
+        let prompt = role_step_request("revise", "request", &candidates).expect("revise prompt");
+        assert!(prompt.contains("revisionAllowed"));
+        assert!(prompt.contains("<draft>\ndraft\n</draft>"));
     }
 }
 

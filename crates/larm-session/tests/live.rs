@@ -17,7 +17,7 @@ async fn live_four_provider_session() {
         .build()
         .unwrap();
     let result=async {
-        for name in ["decision-default","llm"] {
+        for name in ["backchannel","llm"] {
             let lease=session.acquire(name).await?; let p=lease.provider();
             let value:serde_json::Value=client.post(p.endpoint("chat/completions")?).bearer_auth(p.token())
                 .json(&json!({"model":p.model,"messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false,"max_tokens":64}))

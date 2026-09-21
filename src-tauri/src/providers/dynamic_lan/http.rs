@@ -5,14 +5,14 @@ use reqwest::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{env, time::Duration};
+use std::time::Duration;
 use url::Url;
 
 use super::validate::{connection_claim_url, validate_claim};
 use super::{
     contract_error, ConnectionClaim, ConnectionIdentity, DynamicLanError, ErrorEnvelope, ErrorKind,
-    JsonResponse, ProviderDescriptor, ProviderHealth, API_TOKEN_ENV, MAX_RETRY_AFTER_SECONDS,
-    RELEASE_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_LIMIT,
+    JsonResponse, ProviderDescriptor, ProviderHealth, MAX_RETRY_AFTER_SECONDS, RELEASE_TIMEOUT,
+    REQUEST_TIMEOUT, RESPONSE_LIMIT,
 };
 use crate::RunCancellation;
 use zeroize::Zeroizing;
@@ -25,7 +25,7 @@ pub(crate) async fn claim_and_probe(
     audience: &str,
     control_is_loopback: bool,
     cancellation: &RunCancellation,
-) -> Result<ProviderDescriptor, DynamicLanError> {
+) -> Result<(ProviderDescriptor, ProviderHealth), DynamicLanError> {
     let claim = send_json_response::<ConnectionClaim>(
         client,
         Method::POST,
@@ -40,15 +40,15 @@ pub(crate) async fn claim_and_probe(
         return Err(contract_error(()));
     }
     let descriptor = validate_claim(claim.value, identity, audience, control_is_loopback)?;
-    probe_provider_health(client, &descriptor, cancellation).await?;
-    Ok(descriptor)
+    let health = probe_provider_health(client, &descriptor, cancellation).await?;
+    Ok((descriptor, health))
 }
 
 pub(crate) async fn probe_provider_health(
     client: &reqwest::Client,
     descriptor: &ProviderDescriptor,
     cancellation: &RunCancellation,
-) -> Result<(), DynamicLanError> {
+) -> Result<ProviderHealth, DynamicLanError> {
     let credential = descriptor
         .credential
         .as_ref()
@@ -65,13 +65,17 @@ pub(crate) async fn probe_provider_health(
         cancellation,
     )
     .await?;
-    if health.status != StatusCode::OK || !health.value.ready || !health.value.accepting_requests {
+    if health.status != StatusCode::OK
+        || !health.value.ready
+        || !health.value.accepting_requests
+        || !super::validate::valid_capacity(&health.value.capacity)
+    {
         return Err(DynamicLanError::new(
             ErrorKind::Unavailable,
             "The dynamic LAN provider did not pass semantic readiness checks.",
         ));
     }
-    Ok(())
+    Ok(health.value)
 }
 
 pub(crate) async fn cancellable_sleep(
@@ -232,20 +236,25 @@ pub(crate) async fn read_limited(
     }
 }
 
-pub(crate) fn control_credential() -> Result<Option<HeaderValue>, DynamicLanError> {
-    let token = match env::var(API_TOKEN_ENV) {
-        Ok(token) => Zeroizing::new(token),
-        Err(env::VarError::NotPresent) => return Ok(None),
-        Err(env::VarError::NotUnicode(_)) => {
-            return Err(DynamicLanError::new(
-                ErrorKind::Authentication,
-                "LARM_API_TOKEN is invalid.",
-            ));
-        }
-    };
-    provider_credential(token.as_str())
-        .map(Some)
-        .map_err(|_| DynamicLanError::new(ErrorKind::Authentication, "LARM_API_TOKEN is invalid."))
+pub(crate) fn control_credential() -> Result<HeaderValue, DynamicLanError> {
+    #[cfg(not(test))]
+    let loaded = super::credential::load();
+    #[cfg(test)]
+    let loaded = super::credential::load_environment_only_for_test();
+    let loaded = loaded.map_err(|error| {
+        DynamicLanError::with_code(
+            ErrorKind::Authentication,
+            "LARM control credential is not safely configured.",
+            error.code(),
+        )
+    })?;
+    provider_credential(loaded.token()).map_err(|_| {
+        DynamicLanError::with_code(
+            ErrorKind::Authentication,
+            "LARM control credential is invalid.",
+            "credential_invalid",
+        )
+    })
 }
 
 pub(crate) fn provider_credential(token: &str) -> Result<HeaderValue, DynamicLanError> {

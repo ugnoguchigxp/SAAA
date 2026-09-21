@@ -41,9 +41,7 @@ pub(crate) async fn begin_larm_voice_session(
         .sqlite_readers
         .read(|c| Ok(crate::persistence::load_model_providers(c)?.harness))?;
     let base = harness.address;
-    let profile = harness
-        .larm_profile
-        .unwrap_or_else(|| "saaa-qwen38-kv-mem".into());
+    let profile = harness.larm_profile.unwrap_or_else(|| "saaa-qwen38".into());
     crate::validate_identifier(&owner_id, "voice owner")?;
     crate::validate_identifier(&conversation_id, "conversation id")?;
     let mut current = OWNER.lock().await;
@@ -86,13 +84,27 @@ async fn close_owner(owner: &Owner) -> Result<(), String> {
 }
 
 async fn initialize(owner: &Owner) -> Result<Arc<Ready>, StartupError> {
-    let session =
-        Session::connect_with_profile(&owner.base, &owner.profile, owner.cancel.subscribe())
-            .await
-            .map_err(|error| StartupError {
-                message: error.to_string(),
-                cleanup: error.cleanup,
-            })?;
+    #[cfg(not(test))]
+    let credential =
+        crate::providers::dynamic_lan::credential::load().map_err(|error| StartupError {
+            message: error.code().into(),
+            cleanup: None,
+        })?;
+    #[cfg(not(test))]
+    let control_token = credential.token().to_string();
+    #[cfg(test)]
+    let control_token = "test-control-token".to_string();
+    let session = Session::connect_with_profile_and_credential(
+        &owner.base,
+        &owner.profile,
+        control_token,
+        owner.cancel.subscribe(),
+    )
+    .await
+    .map_err(|error| StartupError {
+        message: error.to_string(),
+        cleanup: error.cleanup,
+    })?;
     if *owner.cancel.borrow() {
         let cleanup = session.close().await.err().map(|_| session.clone());
         return Err(StartupError {
@@ -155,10 +167,7 @@ pub(crate) async fn current_at(
     conversation: &str,
     settings: &crate::HarnessSettings,
 ) -> Result<Arc<Ready>, String> {
-    let profile = settings
-        .larm_profile
-        .as_deref()
-        .unwrap_or("saaa-qwen38-kv-mem");
+    let profile = settings.larm_profile.as_deref().unwrap_or("saaa-qwen38");
     {
         let mut slot = OWNER.lock().await;
         let owner = slot.as_ref().ok_or("LARM voice session is not started")?;

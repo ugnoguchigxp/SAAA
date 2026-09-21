@@ -17,6 +17,105 @@ async fn wr_t22_http_route_transition_matrix() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "operator E2E using the running ContextStill MCP endpoint"]
+async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_flow() {
+    let _environment = crate::test_environment::larm_lock().lock().await;
+    let mut h = Harness::new();
+    h.state.context_still_search =
+        crate::memory::context_still_search::ContextStillSearchClient::from_environment();
+    assert!(h.state.context_still_search.is_configured());
+    let (f, server) = Fake::start("shared-larm", "context-still", h.fixture.clock.clone()).await;
+    let (cancel, _) = watch::channel(false);
+    *OWNER.lock().await = Some(Arc::new(Owner {
+        id: "context-still-owner".into(),
+        conversation: crate::PRIMARY_CONVERSATION_ID.into(),
+        base: f.base.clone(),
+        profile: "saaa-qwen38".into(),
+        cancel,
+        ready: OnceCell::new(),
+        started: AtomicBool::new(false),
+    }));
+    let input: crate::StartTurnInput = serde_json::from_value(json!({
+        "runId": crate::memory::personal_state::world::runtime_test_support::RUN_ID,
+        "conversationId": crate::PRIMARY_CONVERSATION_ID,
+        "content": "hello",
+        "inputOrigin": "voice",
+        "presentationMode": "visual"
+    }))
+    .unwrap();
+    let sink = tauri::ipc::Channel::<crate::RuntimeEvent>::new(|_| Ok(()));
+    let context = crate::providers::stream::ModelStreamContext {
+        reasoning_effort: "low",
+        max_output_tokens: 128,
+        input: &input,
+        on_event: &sink,
+        cancellation: Arc::default(),
+        context_health: "green",
+        context_sources: &h.composed.envelope.selected,
+        context_omissions: &h.composed.envelope.omitted,
+        output_persistence: Some(crate::ProviderOutputPersistence {
+            state: &h.state,
+            session_id: &h.session,
+            world: h.composed.world.as_ref(),
+        }),
+    };
+    let outcome = crate::providers::stream::stream_voice_aware_dynamic_lan_provider(
+        &crate::DynamicLanProviderSettings {
+            id: "fixture".into(),
+            enabled: true,
+            label: "fixture".into(),
+            location: "local".into(),
+            host: "127.0.0.1".into(),
+            request_options: None,
+        },
+        &crate::HarnessSettings {
+            address: f.base.clone(),
+            larm_profile: Some("saaa-qwen38".into()),
+            tts_voice: None,
+        },
+        true,
+        crate::PRIMARY_CONVERSATION_ID,
+        &h.history,
+        10_000,
+        context,
+    )
+    .await;
+    let crate::ProviderAttemptOutcome::Completed { content, .. } = outcome else {
+        panic!("expected completion: {outcome:?}");
+    };
+    assert_eq!(content, "ContextStillの検索結果を確認しました。");
+    let bodies = f.bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    let tool_content = bodies[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap();
+    let tool_content: Value = serde_json::from_str(tool_content).unwrap();
+    assert_eq!(tool_content["source"], "context_still");
+    drop(bodies);
+    end("context-still-owner").await.unwrap();
+    assert!(f.released.load(Ordering::SeqCst));
+    let projected = crate::larm_voice::render_response(
+        crate::PRIMARY_CONVERSATION_ID,
+        crate::larm_voice::ResponseKind::Final,
+        &content,
+        "ja",
+        Arc::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        projected, content,
+        "backchannel must not rewrite Qwen output"
+    );
+    server.abort();
+}
 async fn matrix_case(route: &'static str, transition: &'static str, emit: bool) {
     let _environment = crate::test_environment::larm_lock().lock().await;
     let h = Harness::new();

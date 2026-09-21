@@ -17,7 +17,10 @@ async fn larm(State(fake): State<Arc<Fake>>, request: Request) -> Response {
     let path = request.uri().path().to_string();
     let expires = chrono_expiry();
     if path.starts_with("/v1/agent-connections") {
-        assert!(request.headers().get("authorization").is_none());
+        assert_eq!(
+            request.headers()["authorization"],
+            "Bearer test-control-token"
+        );
         if request.method() == "DELETE" {
             fake.released.store(true, Ordering::SeqCst);
             return axum::http::StatusCode::NO_CONTENT.into_response();
@@ -26,10 +29,11 @@ async fn larm(State(fake): State<Arc<Fake>>, request: Request) -> Response {
         if path.ends_with("/claim") {
             value["providers"]=json!([
                 ("llm","openai.chat-completions.v1"),("tts","openai.audio-speech.v1"),
-                ("decision-default","openai.chat-completions.v1"),("asr","openai.audio-transcriptions.v1")
+                ("backchannel","openai.chat-completions.v1"),("asr","openai.audio-transcriptions.v1")
             ].iter().map(|(name,protocol)|json!({"name":name,"protocol":protocol,
                 "configuration":{"fields":{"baseURL":format!("{}/{name}/v1",fake.base),"model":format!("{name}-from-claim")}},
-                "credential":{"token":format!("{name}-exclusive-token")},"health":{"url":format!("{}/{name}/health",fake.base),"maxAgeMs":10000}})).collect::<Vec<_>>());
+                "credential":{"token":format!("{name}-exclusive-token")},"health":{"url":format!("{}/{name}/health",fake.base),"maxAgeMs":10000},
+                "contextWindow":if *protocol=="openai.chat-completions.v1" {json!({"maxTokens":65536,"outputReserveTokens":4096,"safetyMarginTokens":1024})} else {Value::Null}})).collect::<Vec<_>>());
             return Json(value).into_response();
         }
         return (axum::http::StatusCode::CREATED, Json(value)).into_response();
@@ -45,7 +49,7 @@ async fn larm(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             "tts" => "openai.audio-speech.v1",
             _ => "openai.chat-completions.v1",
         };
-        return Json(json!({"ready":true,"acceptingRequests":true,"probe":{"validated":true,"protocol":protocol}})).into_response();
+        return Json(json!({"ready":true,"acceptingRequests":true,"capacity":{"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":1,"queueDepth":0,"queueTimeoutMs":1000,"retryAfterMs":0,"completionGuaranteed":false},"probe":{"validated":true,"protocol":protocol}})).into_response();
     }
     assert_eq!(path, "/llm/v1/chat/completions");
     assert!(request.headers().get("x-larm-context-view-id").is_none());
@@ -73,9 +77,14 @@ async fn mcp_uses_the_session_claim_and_does_not_invent_context_headers() {
         axum::serve(listener, router).await.unwrap();
     });
     let (_stop, receiver) = tokio::sync::watch::channel(false);
-    let session = saaa_larm_session::Session::connect(&fake.base, receiver)
-        .await
-        .unwrap();
+    let session = saaa_larm_session::Session::connect_with_profile_and_credential(
+        &fake.base,
+        "saaa-qwen38",
+        "test-control-token".into(),
+        receiver,
+    )
+    .await
+    .unwrap();
     let provider = saaa_reasoning_mcp::provider::Provider::from_larm(session.clone()).unwrap();
     let service =
         saaa_reasoning_mcp::Service::new(provider, "fixture-mcp-exclusive-token".into()).unwrap();

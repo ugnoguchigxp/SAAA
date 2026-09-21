@@ -17,6 +17,8 @@ pub(super) struct Completion {
     pub(super) done: bool,
     tools: BTreeMap<u64, Tool>,
     response_model: Option<String>,
+    reasoning_started: bool,
+    tool_started: bool,
 }
 
 impl Completion {
@@ -81,11 +83,19 @@ impl Completion {
             Some(Value::String(content)) => content,
             _ => return Err(Failure::Protocol),
         };
+        match delta.get("reasoning_content") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(reasoning)) => {
+                self.reasoning_started |= !reasoning.is_empty();
+            }
+            _ => return Err(Failure::Protocol),
+        }
         self.content.push_str(content);
         if self.content.len() > 1_048_576 {
             return Err(Failure::RequestTooLarge);
         }
         if let Some(calls) = delta.get("tool_calls").filter(|v| !v.is_null()) {
+            self.tool_started = true;
             for call in calls.as_array().ok_or(Failure::Protocol)? {
                 let index = call
                     .get("index")
@@ -134,6 +144,14 @@ impl Completion {
         Ok(content.to_string())
     }
 
+    pub(super) fn provider_progressed(&self) -> bool {
+        self.reasoning_started
+            || self.tool_started
+            || !self.content.is_empty()
+            || self.finish.is_some()
+            || self.done
+    }
+
     pub(super) fn complete(&self) -> Result<Vec<AgentToolCall>, Failure> {
         if !self.done {
             return Err(Failure::Protocol);
@@ -163,5 +181,35 @@ impl Completion {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn reasoning_tool_and_finish_are_distinct_provider_progress() {
+        let mut reasoning = Completion::default();
+        assert_eq!(
+            reasoning.absorb(
+                r#"{"choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}"#,
+                "model"
+            ),
+            Ok(String::new())
+        );
+        assert!(reasoning.provider_progressed());
+        assert!(reasoning.content.is_empty());
+
+        let mut empty = Completion::default();
+        assert!(!empty.provider_progressed());
+        empty
+            .absorb(
+                r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+                "model",
+            )
+            .unwrap();
+        assert!(empty.provider_progressed());
+        assert!(empty.content.is_empty());
     }
 }

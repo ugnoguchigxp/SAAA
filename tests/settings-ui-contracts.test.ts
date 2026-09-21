@@ -41,6 +41,7 @@ describe("settings provider UI contracts", () => {
     const dynamicLan = [
       source("src-tauri/src/providers/dynamic_lan/mod.rs"),
       source("src-tauri/src/providers/dynamic_lan/http.rs"),
+      source("src-tauri/src/providers/dynamic_lan/credential.rs"),
       source("src-tauri/src/providers/dynamic_lan/urls.rs"),
       source("src-tauri/src/providers/dynamic_lan/validate.rs"),
     ].join("\n");
@@ -48,7 +49,7 @@ describe("settings provider UI contracts", () => {
       true,
     );
     expect(containsSource(settings, 't("settings.connection.description")')).toBe(true);
-    expect(containsSource(japanese, "ローカルLANでは認証なしで利用でき")).toBe(true);
+    expect(containsSource(japanese, "control APIにはLARM_API_TOKENが必須")).toBe(true);
     expect(containsSource(japanese, "接続を確認")).toBe(true);
     expect(containsSource(japanese, "Agent Connectionのclaim・LLMヘルスチェックに成功")).toBe(true);
     expect(containsSource(settings, 'next.revision === "agent-connection.v1"')).toBe(true);
@@ -60,7 +61,7 @@ describe("settings provider UI contracts", () => {
     expect(containsSource(settings, 'placeholder="http://provider.local:9810"')).toBe(true);
     expect(containsSource(dynamicLan, 'format!("http://{host}:{CONTROL_PORT}/")')).toBe(true);
     expect(containsSource(dynamicLan, 'Command::new("ssh")')).toBe(false);
-    expect(containsSource(dynamicLan, '.join("v1/agent-profiles")')).toBe(true);
+    expect(containsSource(dynamicLan, '.join("v3/agent-profiles")')).toBe(true);
     expect(containsSource(dynamicLan, '.extend(["v1", "agent-connections", id])')).toBe(true);
     expect(containsSource(dynamicLan, '.push("claim")')).toBe(true);
     expect(containsSource(dynamicLan, '"openai-provider-v1"')).toBe(true);
@@ -68,7 +69,8 @@ describe("settings provider UI contracts", () => {
       true,
     );
     expect(containsSource(dynamicLan, 'value == "openai.chat-completions.v1"')).toBe(true);
-    expect(containsSource(dynamicLan, "Err(env::VarError::NotPresent) => return Ok(None)")).toBe(
+    expect(containsSource(dynamicLan, 'CredentialLoadError::new("credential_missing")')).toBe(true);
+    expect(containsSource(dynamicLan, 'CredentialLoadError::new("credential_conflict")')).toBe(
       true,
     );
   });

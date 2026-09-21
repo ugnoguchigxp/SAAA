@@ -17,10 +17,17 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
                     .unwrap_or_else(|_| "http://gnosis.local:9810".into());
                 let (_alive, rx) = watch::channel(false);
                 // Keep the sender alive for the entire creation handshake.
+                let credential = crate::providers::dynamic_lan::credential::load()
+                    .map_err(|error| error.code())?;
                 *cached = Some(
-                    Session::connect(&base, rx)
-                        .await
-                        .map_err(|_| "personal-connection-unavailable")?,
+                    Session::connect_with_profile_and_credential(
+                        &base,
+                        "saaa-qwen38",
+                        credential.token().to_string(),
+                        rx,
+                    )
+                    .await
+                    .map_err(|_| "personal-connection-unavailable")?,
                 );
             }
             cached
@@ -36,6 +43,10 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
         }
     };
     let subject = lease.context_subject().map_err(str::to_string)?.to_string();
+    let claimed_window = lease
+        .provider()
+        .context_window
+        .ok_or("personal-context-window-unavailable")?;
     let endpoint = lease.provider().base_url.origin().ascii_serialization();
     let client = Client::new(&endpoint, lease.provider().token().to_string())?;
     let runtime = std::env::var("SAAA_PERSONAL_STATE_RUNTIME")
@@ -70,6 +81,12 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
         })
         .map_err(database_error)
     })?;
+    if cap.context_limit_tokens != claimed_window.max_tokens
+        || cap.output_reserve_tokens != claimed_window.output_reserve_tokens
+        || cap.safety_margin_tokens != claimed_window.safety_margin_tokens
+    {
+        return Err("personal-context-window-mismatch".into());
+    }
     super::subject_pin::pin_subject(&owner, &subject)?;
     let mut cert = certification(&cap, &owner, &endpoint, &lease.provider().model)?;
     if !can_generate {

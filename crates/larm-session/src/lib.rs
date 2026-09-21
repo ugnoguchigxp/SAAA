@@ -5,7 +5,7 @@ mod error;
 mod http;
 pub mod http_api;
 use contract::Snapshot;
-pub use contract::{local_url, Provider};
+pub use contract::{local_url, Capacity, ContextWindow, Provider};
 pub use error::ConnectError;
 use serde_json::json;
 use std::{
@@ -19,6 +19,7 @@ use tokio::sync::{watch, OwnedRwLockReadGuard, RwLock};
 
 pub struct Session {
     client: reqwest::Client,
+    control_token: zeroize::Zeroizing<String>,
     connection: url::Url,
     id: String,
     snapshot: Arc<RwLock<Option<Snapshot>>>,
@@ -30,6 +31,7 @@ pub struct Use {
     snapshot: OwnedRwLockReadGuard<Option<Snapshot>>,
     name: String,
     _session: Arc<Session>,
+    _capacity_permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl Use {
     pub fn context_subject(&self) -> Result<&str, &'static str> {
@@ -42,6 +44,13 @@ impl Use {
     }
     pub fn provider(&self) -> &Provider {
         &self.snapshot.as_ref().expect("live snapshot").providers[&self.name]
+    }
+    pub fn capacity(&self) -> Result<Capacity, &'static str> {
+        self.provider()
+            .capacity
+            .get()
+            .copied()
+            .ok_or("larm_capacity_unavailable")
     }
     /// Never start provider I/O beyond the pinned credential's expiry.
     pub fn request_budget(&self, requested: Duration) -> Result<Duration, &'static str> {
@@ -64,13 +73,33 @@ impl Session {
         base: &str,
         cancellation: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
-        Self::connect_with_profile(base, "saaa-qwen38-kv-mem", cancellation).await
+        Self::connect_with_profile(base, "saaa-qwen38", cancellation).await
     }
     pub async fn connect_with_profile(
         base: &str,
         profile: &str,
         cancellation: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
+        #[cfg(not(test))]
+        let token = std::env::var("LARM_API_TOKEN")
+            .map_err(|_| ConnectError::from("credential_missing"))?;
+        #[cfg(test)]
+        let token = "test-control-token".to_string();
+        Self::connect_with_profile_and_credential(base, profile, token, cancellation).await
+    }
+    pub async fn connect_with_profile_and_credential(
+        base: &str,
+        profile: &str,
+        token: String,
+        cancellation: watch::Receiver<bool>,
+    ) -> Result<Arc<Self>, ConnectError> {
+        if token.is_empty()
+            || token.trim().is_empty()
+            || token.len() > 4096
+            || token.bytes().any(|byte| matches!(byte, 0 | b'\r' | b'\n'))
+        {
+            return Err("credential_invalid".into());
+        }
         if profile.is_empty()
             || profile.len() > 160
             || !profile
@@ -84,7 +113,7 @@ impl Session {
         let (alive, abandoned) = watch::channel(false);
         let (send, receive) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let result = Self::connect_inner(&base, &profile, cancellation, abandoned).await;
+            let result = Self::connect_inner(&base, &profile, token, cancellation, abandoned).await;
             if let Err(result) = send.send(result) {
                 let cleanup = match result {
                     Ok(session) => Some(session),
@@ -104,6 +133,7 @@ impl Session {
     async fn connect_inner(
         base: &str,
         profile: &str,
+        token: String,
         mut cancellation: watch::Receiver<bool>,
         mut abandoned: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
@@ -125,15 +155,18 @@ impl Session {
             .map_err(|_| "larm_client_failed")?;
         // Do not race creation against cancellation: receive the id, then release it.
         let created = http::json(
-            client
-                .post(base.clone())
-                .header(
-                    "Idempotency-Key",
-                    format!("saaa-session-{}", uuid::Uuid::new_v4()),
-                )
-                .json(&json!({"agentProfile":profile,"explicitAgentProfile":true,
+            authorize(
+                client
+                    .post(base.clone())
+                    .header(
+                        "Idempotency-Key",
+                        format!("saaa-session-{}", uuid::Uuid::new_v4()),
+                    )
+                    .json(&json!({"agentProfile":profile,"explicitAgentProfile":true,
                 "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
                 "allowFallback":false,"deploymentPolicy":"existing-only"})),
+                &token,
+            )?,
             &[201, 202],
         )
         .await?;
@@ -151,6 +184,7 @@ impl Session {
         let (stop, _) = watch::channel(false);
         let session = Arc::new(Self {
             client,
+            control_token: zeroize::Zeroizing::new(token),
             connection: base,
             id: id.clone(),
             snapshot: Arc::new(RwLock::new(None)),
@@ -167,7 +201,11 @@ impl Session {
                     _ => return Err("larm_startup_terminal"),
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                state = http::json(session.client.get(session.connection.clone()), &[200]).await?;
+                state = http::json(
+                    session.authorize(session.client.get(session.connection.clone()))?,
+                    &[200],
+                )
+                .await?;
                 if state["id"] != id {
                     return Err("larm_connection_mismatch");
                 }
@@ -214,21 +252,36 @@ impl Session {
         url.path_segments_mut().expect("validated base").push(name);
         url
     }
+    fn authorize(
+        &self,
+        call: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, &'static str> {
+        authorize(call, self.control_token.as_str())
+    }
     async fn claim(&self) -> Result<Snapshot, &'static str> {
         let value = http::json(
-            self.client
-                .post(self.operation("claim"))
-                .json(&json!({"format":"openai-provider-v1"})),
+            self.authorize(
+                self.client
+                    .post(self.operation("claim"))
+                    .json(&json!({"format":"openai-provider-v1"})),
+            )?,
             &[200],
         )
         .await?;
         let snapshot = contract::parse(value, &self.id)?;
         Ok(snapshot)
     }
-    async fn health(&self, provider: &Provider) -> Result<(), &'static str> {
+    async fn health(
+        &self,
+        provider: &Provider,
+    ) -> Result<Arc<tokio::sync::Semaphore>, &'static str> {
         let mut checked = provider.checked_at.lock().await;
         if checked.is_some_and(|at| at.elapsed() < provider.max_age) {
-            return Ok(());
+            return provider
+                .limiter
+                .get()
+                .cloned()
+                .ok_or("larm_invalid_capacity");
         }
         let at = Instant::now();
         let value = http::json(
@@ -245,11 +298,57 @@ impl Session {
         {
             return Err("larm_unhealthy_provider");
         }
+        let raw = &value["capacity"];
+        let capacity = Capacity {
+            max_concurrent_requests: raw["maxConcurrentRequests"]
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| (1..=1024).contains(value))
+                .ok_or("larm_invalid_capacity")?,
+            active_requests: raw["activeRequests"]
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or("larm_invalid_capacity")?,
+            max_queued_requests: raw["maxQueuedRequests"]
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or("larm_invalid_capacity")?,
+            queue_depth: raw["queueDepth"]
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or("larm_invalid_capacity")?,
+            queue_timeout_ms: raw["queueTimeoutMs"]
+                .as_u64()
+                .ok_or("larm_invalid_capacity")?,
+            retry_after_ms: raw["retryAfterMs"]
+                .as_u64()
+                .ok_or("larm_invalid_capacity")?,
+            completion_guaranteed: raw["completionGuaranteed"]
+                .as_bool()
+                .ok_or("larm_invalid_capacity")?,
+        };
+        if capacity.active_requests > capacity.max_concurrent_requests
+            || capacity.queue_depth > capacity.max_queued_requests
+            || capacity.queue_timeout_ms > 600_000
+            || capacity.retry_after_ms > 600_000
+        {
+            return Err("larm_invalid_capacity");
+        }
+        provider.capacity.get_or_init(|| async { capacity }).await;
+        let limiter = provider
+            .limiter
+            .get_or_init(|| async {
+                Arc::new(tokio::sync::Semaphore::new(
+                    capacity.max_concurrent_requests,
+                ))
+            })
+            .await
+            .clone();
         if at.elapsed() >= provider.max_age {
             return Err("larm_stale_health");
         }
         *checked = Some(at);
-        Ok(())
+        Ok(limiter)
     }
     pub async fn acquire(self: &Arc<Self>, name: &str) -> Result<Use, &'static str> {
         if self.closed.load(Ordering::Acquire) {
@@ -268,11 +367,13 @@ impl Session {
             .providers
             .get(name)
             .ok_or("larm_unknown_provider")?;
-        self.health(provider).await?;
+        let limiter = self.health(provider).await?;
+        let permit = limiter.acquire_owned().await.map_err(|_| "larm_capacity")?;
         Ok(Use {
             snapshot: guard,
             name: name.to_string(),
             _session: self.clone(),
+            _capacity_permit: permit,
         })
     }
     pub async fn renew_if_due(self: &Arc<Self>) -> Result<(), &'static str> {
@@ -314,13 +415,15 @@ impl Session {
         *snapshot = None;
         let result = async {
             let renewed = http::json(
-                self.client
-                    .post(self.operation("renew"))
-                    .header(
-                        "Idempotency-Key",
-                        format!("saaa-renew-{}", uuid::Uuid::new_v4()),
-                    )
-                    .json(&json!({"ttlSeconds":600})),
+                self.authorize(
+                    self.client
+                        .post(self.operation("renew"))
+                        .header(
+                            "Idempotency-Key",
+                            format!("saaa-renew-{}", uuid::Uuid::new_v4()),
+                        )
+                        .json(&json!({"ttlSeconds":600})),
+                )?,
                 &[200],
             )
             .await?;
@@ -364,7 +467,13 @@ impl Session {
         if self.released.load(Ordering::Acquire) {
             return Ok(());
         }
-        if let Err(error) = release(&self.client, self.connection.clone()).await {
+        if let Err(error) = release(
+            &self.client,
+            self.connection.clone(),
+            self.control_token.as_str(),
+        )
+        .await
+        {
             eprintln!("LARM release failed; connection remains closed and can be released again");
             return Err(error);
         }
@@ -379,9 +488,17 @@ async fn cancelled(receiver: &mut watch::Receiver<bool>) {
         }
     }
 }
-async fn release(client: &reqwest::Client, url: url::Url) -> Result<(), &'static str> {
-    let response = client
-        .delete(url)
+fn authorize(
+    call: reqwest::RequestBuilder,
+    token: &str,
+) -> Result<reqwest::RequestBuilder, &'static str> {
+    let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+        .map_err(|_| "credential_invalid")?;
+    value.set_sensitive(true);
+    Ok(call.header(reqwest::header::AUTHORIZATION, value))
+}
+async fn release(client: &reqwest::Client, url: url::Url, token: &str) -> Result<(), &'static str> {
+    let response = authorize(client.delete(url), token)?
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -397,8 +514,9 @@ impl Drop for Session {
             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                 let client = self.client.clone();
                 let url = self.connection.clone();
+                let token = self.control_token.clone();
                 runtime.spawn(async move {
-                    if release(&client, url).await.is_err() {
+                    if release(&client, url, token.as_str()).await.is_err() {
                         eprintln!("LARM release failed during cleanup");
                     }
                 });

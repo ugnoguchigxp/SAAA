@@ -24,13 +24,11 @@ describe("localized UI presentation", () => {
       "使用言語を判定できなかったため、発話を送信しませんでした。",
     );
     expect(localizeUiMessage(i18n.t, "LARM_API_TOKEN is invalid.", "settings")).toBe(
-      "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。認証なしで使う場合は環境変数を削除してください。",
+      "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。安全なcredential設定を確認してください。",
     );
     expect(
       localizeUiMessage(i18n.t, "dynamic_lan rejected the connection authorization.", "settings"),
-    ).toBe(
-      "Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。",
-    );
+    ).toBe("Agent Connectionが接続を拒否しました。正しいLARM_API_TOKENを安全に設定してください。");
     expect(
       localizeUiMessage(
         i18n.t,

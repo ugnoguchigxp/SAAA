@@ -59,6 +59,31 @@ pub(crate) async fn stream_allocated_dynamic_lan(
     prior_cleanup: CleanupOutcome,
     context: ModelStreamContext<'_>,
 ) -> ProviderAttemptOutcome {
+    if let Err(error) = connection.validate_request_budget(context.max_output_tokens) {
+        let kind = provider_failure_from_dynamic_lan(error.kind);
+        let cleanup =
+            merge_dynamic_lan_cleanup(prior_cleanup, release_in_background(connection).await);
+        return ProviderAttemptOutcome::Failed {
+            kind,
+            public_message: kind.public_message(),
+            output_started: false,
+            cleanup,
+        };
+    }
+    let _capacity_permit = match connection.acquire_capacity().await {
+        Ok(permit) => permit,
+        Err(error) => {
+            let kind = provider_failure_from_dynamic_lan(error.kind);
+            let cleanup =
+                merge_dynamic_lan_cleanup(prior_cleanup, release_in_background(connection).await);
+            return ProviderAttemptOutcome::Failed {
+                kind,
+                public_message: kind.public_message(),
+                output_started: false,
+                cleanup,
+            };
+        }
+    };
     let resolved = OpenAiCompatibleProviderSettings {
         request_options: provider.request_options.clone(),
         id: provider.id.clone(),

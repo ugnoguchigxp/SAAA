@@ -28,6 +28,12 @@ enum LlmHttpStep {
 async fn spawn_llm_http_fixture(
     steps: Vec<LlmHttpStep>,
 ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+    spawn_llm_http_sequence_fixture(vec![steps]).await
+}
+
+async fn spawn_llm_http_sequence_fixture(
+    requests: Vec<Vec<LlmHttpStep>>,
+) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     async fn accept(
         listener: &tokio::net::TcpListener,
@@ -81,14 +87,15 @@ async fn spawn_llm_http_fixture(
     let captures = Arc::new(Mutex::new(Vec::new()));
     let captured = captures.clone();
     let server = tokio::spawn(async move {
-        let mut socket = accept(&listener, &captured).await;
-        if let Some(LlmHttpStep::Fail) = steps.first() {
-            socket.write_all(b"HTTP/1.1 503 Unavailable\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
-            return;
-        }
-        start(&mut socket).await;
-        for step in steps {
-            match step {
+        for steps in requests {
+            let mut socket = accept(&listener, &captured).await;
+            if let Some(LlmHttpStep::Fail) = steps.first() {
+                socket.write_all(b"HTTP/1.1 503 Unavailable\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+                continue;
+            }
+            start(&mut socket).await;
+            for step in steps {
+                match step {
                     LlmHttpStep::Delta(text) => { if !event(&mut socket,json!({"content":text}),Value::Null).await {return;} }
                     LlmHttpStep::ToolCall {call_id,name,arguments} => {
                         if !event(&mut socket,json!({"tool_calls":[{"index":0,"id":call_id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]}),Value::Null).await {return;}
@@ -110,6 +117,7 @@ async fn spawn_llm_http_fixture(
                     LlmHttpStep::Fail => panic!("failure must precede output"),
                     LlmHttpStep::Delay(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
                 }
+            }
         }
     });
     (format!("http://{address}/v1"), captures, server)
@@ -2550,6 +2558,314 @@ fn two_step_role_policy(front_provider: &str, reason_provider: &str) -> Value {
         "learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false},
         "adaptiveImprovement":{"enabled":false,"providerRecipe":false,"tool":false,"plan":false,"notification":false}
     })
+}
+
+fn reviewed_role_policy(author_provider: &str, reviewer_provider: &str) -> Value {
+    json!({
+        "schemaVersion": 1, "enabled": true,
+        "actors": [{
+            "id":"author","label":"Author","aliases":[],"transport":"provider",
+            "providerId":author_provider,"model":null,"location":"local",
+            "resourceGroup":"author","maxInputBytes":65536,"capabilities":["reason"]
+        }, {
+            "id":"reviewer","label":"Reviewer","aliases":[],"transport":"provider",
+            "providerId":reviewer_provider,"model":null,"location":"local",
+            "resourceGroup":"reviewer","maxInputBytes":65536,"capabilities":["reason"]
+        }],
+        "roles":{"frontend":null,"reasoner":"author","advanced":null,"reviewer":"reviewer","premium":null,"toolSpecialist":null},
+        "recipes":[{"id":"reviewed-response","action":"respond","roles":["reasoner","reviewer","reasoner"],"enabled":true}],
+        "limits":{"maxReasoningSteps":3,"maxToolCalls":0,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":1,"maxAutomaticSwitches":0,"maxEstimatedCostMicros":null},
+        "speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},
+        "selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},
+        "premiumApproval":"never",
+        "learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false},
+        "adaptiveImprovement":{"enabled":false,"providerRecipe":false,"tool":false,"plan":false,"notification":false}
+    })
+}
+
+fn single_role_policy(provider_id: &str) -> Value {
+    json!({
+        "schemaVersion": 1, "enabled": true,
+        "actors": [{
+            "id":"author","label":"Author","aliases":[],"transport":"provider",
+            "providerId":provider_id,"model":null,"location":"local",
+            "resourceGroup":"author","maxInputBytes":16384,"capabilities":["reason"]
+        }],
+        "roles":{"frontend":null,"reasoner":"author","advanced":null,"reviewer":null,"premium":null,"toolSpecialist":null},
+        "recipes":[{"id":"direct-response","action":"respond","roles":["reasoner"],"enabled":true}],
+        "limits":{"maxReasoningSteps":1,"maxToolCalls":0,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":0,"maxAutomaticSwitches":0,"maxEstimatedCostMicros":null},
+        "speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},
+        "selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},
+        "premiumApproval":"never",
+        "learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false},
+        "adaptiveImprovement":{"enabled":false,"providerRecipe":false,"tool":false,"plan":false,"notification":false}
+    })
+}
+
+#[tokio::test]
+async fn rr_25_normal_turn_author_review_revise() {
+    let (author_endpoint, author_requests, author_server) = spawn_llm_http_sequence_fixture(vec![
+        vec![LlmHttpStep::Delta("author draft"), LlmHttpStep::Complete],
+        vec![LlmHttpStep::Delta("revised final"), LlmHttpStep::Complete],
+    ])
+    .await;
+    let (reviewer_endpoint, reviewer_requests, reviewer_server) = spawn_llm_http_fixture(vec![
+        LlmHttpStep::Delay(50),
+        LlmHttpStep::Delta(
+            r#"{"issues":[{"kind":"logic","claim":"the conclusion does not follow","severity":"major","code":"non-sequitur","evidenceRef":"rr-output-rr-step-rr-reviewed-run-0","verdict":"verified"}]}"#,
+        ),
+        LlmHttpStep::Complete,
+    ])
+    .await;
+    let connection = Connection::open_in_memory().expect("database opens");
+    initialize_database(&connection).expect("database initializes");
+    let state = app_state(connection);
+    let mut documents = default_settings_input();
+    documents
+        .iter_mut()
+        .find(|document| document.namespace == "providers.model")
+        .expect("provider settings")
+        .value_json = json!({
+        "harness": { "address": "http://localhost:9810" },
+        "providers": [{
+            "kind":"openai-compatible","id":"author-provider","enabled":true,
+            "label":"Author","location":"local","endpoint":author_endpoint,
+            "model":"author-model","authentication":"none"
+        }, {
+            "kind":"openai-compatible","id":"reviewer-provider","enabled":true,
+            "label":"Reviewer","location":"local","endpoint":reviewer_endpoint,
+            "model":"reviewer-model","authentication":"none"
+        }],
+        "reasoningEffort":"medium"
+    });
+    documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.roles")
+        .expect("role policy")
+        .value_json = reviewed_role_policy("author-provider", "reviewer-provider");
+    let task_routes = documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.tasks")
+        .expect("task routes");
+    task_routes.value_json["voiceSpeak"]["source"] = json!("harness");
+    task_routes.value_json["voiceSpeak"]["providerId"] = Value::Null;
+    save_settings_documents_to_connection(
+        &mut state.sqlite_writer.lock().expect("database lock"),
+        &documents,
+    )
+    .expect("settings save");
+    let verifier_db = state.sqlite_writer.clone();
+    let verifier = tokio::spawn(async move {
+        for _ in 0..1_000 {
+            let changed = verifier_db
+                .write(|connection| {
+                    connection
+                        .execute(
+                            "UPDATE rr_outputs SET payload_json=json_set(payload_json,'$.hostVerification','verified','$.verifierVersion','fixture-v1') WHERE id='rr-output-rr-step-rr-reviewed-run-0'",
+                            [],
+                        )
+                        .map_err(|error| error.to_string())
+                })
+                .expect("verification update");
+            if changed == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        panic!("draft output was not produced");
+    });
+    let input = StartTurnInput {
+        run_id: "rr-reviewed-run".into(),
+        conversation_id: PRIMARY_CONVERSATION_ID.into(),
+        content: "review this answer path".into(),
+        workspace_path: None,
+        retry_input_message_id: None,
+        source_id: None,
+        scope_refs: Vec::new(),
+        input_origin: "text".into(),
+        presentation_mode: "visual".into(),
+    };
+    let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+    let execution = execute_turn(
+        &state,
+        &input,
+        &channel,
+        Arc::new(RunCancellation::default()),
+        None,
+    )
+    .await;
+    if let Err(error) = execution {
+        let database = state.sqlite_writer.lock().expect("database lock");
+        let statuses = database
+            .prepare(
+                "SELECT ordinal,purpose,status FROM rr_steps WHERE root_id=?1 ORDER BY ordinal",
+            )
+            .expect("debug steps")
+            .query_map([&input.run_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("debug rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("debug statuses");
+        let phase = database
+            .query_row(
+                "SELECT phase FROM rr_roots WHERE root_id=?1",
+                [&input.run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "missing".into());
+        let sessions = database
+            .prepare("SELECT provider_id,status,failure_reason FROM provider_sessions ORDER BY started_at,id")
+            .expect("debug sessions")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .expect("debug session rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("debug session states");
+        let reviewer_bodies = reviewer_requests.lock().expect("reviewer debug").clone();
+        panic!("reviewed turn failed: {error:?}; phase={phase}; steps={statuses:?}; sessions={sessions:?}; reviewerBodies={reviewer_bodies:?}");
+    }
+    verifier.await.expect("verifier");
+    author_server.await.expect("author server");
+    reviewer_server.await.expect("reviewer server");
+    assert_eq!(author_requests.lock().expect("author requests").len(), 2);
+    assert_eq!(
+        reviewer_requests.lock().expect("reviewer requests").len(),
+        1
+    );
+    let review_body = reviewer_requests.lock().expect("reviewer requests")[0].clone();
+    assert!(review_body.contains("author draft"));
+    assert!(review_body.contains("rr-output-rr-step-rr-reviewed-run-0"));
+    let revise_body = author_requests.lock().expect("author requests")[1].clone();
+    assert!(revise_body.contains("verifiedIssues"));
+    let database = state.sqlite_writer.lock().expect("database lock");
+    assert_eq!(
+        database
+            .query_row(
+                "SELECT content FROM conversation_messages WHERE role='assistant' ORDER BY created_at DESC LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("final message"),
+        "revised final"
+    );
+    let statuses = database
+        .prepare("SELECT status FROM rr_steps WHERE root_id=?1 ORDER BY ordinal")
+        .expect("steps")
+        .query_map([&input.run_id], |row| row.get::<_, String>(0))
+        .expect("rows")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("statuses");
+    assert_eq!(statuses, vec!["succeeded", "succeeded", "succeeded"]);
+}
+
+#[tokio::test]
+async fn rr_23_challenge_starts_new_root_without_reopening_completed_root() {
+    let (endpoint, requests, server) = spawn_llm_http_sequence_fixture(vec![
+        vec![LlmHttpStep::Delta("first answer"), LlmHttpStep::Complete],
+        vec![
+            LlmHttpStep::Delta("reconsidered answer"),
+            LlmHttpStep::Complete,
+        ],
+    ])
+    .await;
+    let connection = Connection::open_in_memory().expect("database opens");
+    initialize_database(&connection).expect("database initializes");
+    let state = app_state(connection);
+    let mut documents = default_settings_input();
+    documents
+        .iter_mut()
+        .find(|document| document.namespace == "providers.model")
+        .expect("provider settings")
+        .value_json = json!({
+        "harness": { "address": "http://localhost:9810" },
+        "providers": [{
+            "kind":"openai-compatible","id":"author-provider","enabled":true,
+            "label":"Author","location":"local","endpoint":endpoint,
+            "model":"author-model","authentication":"none"
+        }],
+        "reasoningEffort":"medium"
+    });
+    documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.roles")
+        .expect("role policy")
+        .value_json = single_role_policy("author-provider");
+    let task_routes = documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.tasks")
+        .expect("task routes");
+    task_routes.value_json["voiceSpeak"]["source"] = json!("harness");
+    task_routes.value_json["voiceSpeak"]["providerId"] = Value::Null;
+    save_settings_documents_to_connection(
+        &mut state.sqlite_writer.lock().expect("database lock"),
+        &documents,
+    )
+    .expect("settings save");
+    let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
+    for (run_id, content) in [
+        ("rr-feedback-original", "give an answer"),
+        (
+            "rr-feedback-challenge",
+            "その回答は本当に正しいですか。根拠を再考して",
+        ),
+    ] {
+        execute_turn(
+            &state,
+            &StartTurnInput {
+                run_id: run_id.into(),
+                conversation_id: PRIMARY_CONVERSATION_ID.into(),
+                content: content.into(),
+                workspace_path: None,
+                retry_input_message_id: None,
+                source_id: None,
+                scope_refs: Vec::new(),
+                input_origin: "text".into(),
+                presentation_mode: "visual".into(),
+            },
+            &channel,
+            Arc::new(RunCancellation::default()),
+            None,
+        )
+        .await
+        .expect("turn completes");
+    }
+    server.await.expect("provider server");
+    assert_eq!(requests.lock().expect("requests").len(), 2);
+    let database = state.sqlite_writer.lock().expect("database lock");
+    for root_id in ["rr-feedback-original", "rr-feedback-challenge"] {
+        assert_eq!(
+            database
+                .query_row(
+                    "SELECT phase FROM rr_roots WHERE root_id=?1",
+                    [root_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("root"),
+            "completed"
+        );
+    }
+    let (target_root, source_root): (String, String) = database
+        .query_row(
+            "SELECT f.target_root_id, i.root_id
+             FROM rr_feedback f
+             JOIN rr_inputs i ON i.message_id=f.source_message_id
+             WHERE f.kind='answer_challenge'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("challenge feedback");
+    assert_eq!(target_root, "rr-feedback-original");
+    assert_eq!(source_root, "rr-feedback-challenge");
 }
 
 #[tokio::test]

@@ -1,6 +1,4 @@
-use saaa_larm_session::personal_state::{
-    Capability, MAX_CERTIFIED_INPUT_TOKENS, MAX_CERTIFIED_OUTPUT_TOKENS,
-};
+use saaa_larm_session::personal_state::Capability;
 
 fn capability(context: u64, output: u64, margin: u64) -> Capability {
     Capability {
@@ -37,17 +35,17 @@ fn capability(context: u64, output: u64, margin: u64) -> Capability {
 }
 
 #[test]
-fn certified_qwen38_budget_is_125k_input_and_4096_output() {
-    let capability = capability(131_072, 4_096, 1_976);
-    assert_eq!(capability.input_limit(), Ok(MAX_CERTIFIED_INPUT_TOKENS));
-    assert_eq!(capability.output_limit(), Ok(MAX_CERTIFIED_OUTPUT_TOKENS));
+fn qwen38_budget_is_derived_from_the_api_contract() {
+    let capability = capability(230_400, 4_096, 1_976);
+    assert_eq!(capability.input_limit(), Ok(224_328));
+    assert_eq!(capability.output_limit(), Ok(4_096));
 }
 
 #[test]
-fn larger_provider_claims_do_not_raise_the_saaa_certified_limits() {
+fn provider_budget_is_not_replaced_by_a_local_cap() {
     let capability = capability(262_144, 32_768, 4_096);
-    assert_eq!(capability.input_limit(), Ok(MAX_CERTIFIED_INPUT_TOKENS));
-    assert_eq!(capability.output_limit(), Ok(MAX_CERTIFIED_OUTPUT_TOKENS));
+    assert_eq!(capability.input_limit(), Ok(225_280));
+    assert_eq!(capability.output_limit(), Ok(32_768));
 }
 
 #[test]

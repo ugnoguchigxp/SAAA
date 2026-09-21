@@ -140,25 +140,44 @@ fn materialize_root(
     root_id: &str,
     now_ms: i64,
 ) -> Result<(), String> {
-    let decision: Option<(String,String,String)> = connection.query_row("SELECT id,features_json,selected_id FROM rr_decisions WHERE root_id=?1 ORDER BY revision DESC,created_at_ms DESC LIMIT 1", [root_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e| e.to_string())?;
-    let Some((decision_id, features_json, selected_id)) = decision else {
+    let decision: Option<(String,String,String,String)> = connection.query_row("SELECT d.id,d.features_json,d.selected_id,r.phase FROM rr_decisions d JOIN rr_roots r ON r.root_id=d.root_id WHERE d.root_id=?1 ORDER BY d.revision DESC,d.created_at_ms DESC LIMIT 1", [root_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e| e.to_string())?;
+    let Some((decision_id, features_json, selected_id, root_phase)) = decision else {
         return Ok(());
     };
     let features: Value = serde_json::from_str(&features_json)
         .map_err(|_| "Stored routing features are invalid".to_string())?;
-    let feedback: Option<String> = connection.query_row("SELECT kind FROM rr_feedback WHERE target_root_id=?1 ORDER BY created_at_ms DESC LIMIT 1", [root_id], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
-    let (outcome, eligible, reason) = match feedback.as_deref() {
-        Some("explicit_positive") => ("positive", 1, None),
-        Some("explicit_negative") | Some("answer_challenge") => ("negative", 1, None),
-        Some(_) => ("unknown", 0, Some("unsupported_feedback")),
-        None => ("unknown", 0, Some("no_explicit_feedback")),
+    let feedback = connection
+        .prepare("SELECT kind FROM rr_feedback WHERE target_root_id=?1 ORDER BY created_at_ms,id")
+        .map_err(|e| e.to_string())?
+        .query_map([root_id], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let positive = feedback.iter().any(|kind| kind == "explicit_positive");
+    let negative = feedback.iter().any(|kind| kind == "explicit_negative");
+    let challenge = feedback.iter().any(|kind| kind == "answer_challenge");
+    let (outcome, eligible, reason) = if root_phase != "completed" {
+        ("unknown", 0, Some("root_not_completed"))
+    } else if positive && negative {
+        ("unknown", 0, Some("conflicting_explicit_feedback"))
+    } else if positive {
+        ("positive", 1, None)
+    } else if negative {
+        ("negative", 1, None)
+    } else if challenge {
+        ("unknown", 0, Some("challenge_is_not_an_outcome_label"))
+    } else if feedback.is_empty() {
+        ("unknown", 0, Some("no_explicit_feedback"))
+    } else {
+        ("unknown", 0, Some("unsupported_feedback"))
     };
+    let label_revision = i64::try_from(feedback.len()).unwrap_or(i64::MAX).max(1);
     let id = format!(
         "rr-example-{}",
-        &sha256(format!("{dataset_id}:{decision_id}:1").as_bytes())[..24]
+        &sha256(format!("{dataset_id}:{decision_id}:{label_revision}").as_bytes())[..24]
     );
-    let labels = json!({"outcome":outcome,"selectedRecipeId":selected_id,"feedbackKind":feedback});
-    connection.execute("INSERT OR IGNORE INTO rr_examples(id,dataset_id,decision_id,label_revision,feature_version,labeler_version,features_json,labels_json,eligible,exclusion_reason,created_at_ms) VALUES(?1,?2,?3,1,?4,?5,?6,?7,?8,?9,?10)",params![id,dataset_id,decision_id,FEATURE_VERSION,LABELER_VERSION,features.to_string(),labels.to_string(),eligible,reason,now_ms]).map_err(|e| e.to_string())?;
+    let labels = json!({"outcome":outcome,"selectedRecipeId":selected_id,"feedbackKinds":feedback});
+    connection.execute("INSERT OR IGNORE INTO rr_examples(id,dataset_id,decision_id,label_revision,feature_version,labeler_version,features_json,labels_json,eligible,exclusion_reason,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![id,dataset_id,decision_id,label_revision,FEATURE_VERSION,LABELER_VERSION,features.to_string(),labels.to_string(),eligible,reason,now_ms]).map_err(|e| e.to_string())?;
     connection.execute("INSERT OR IGNORE INTO rr_example_sources(example_id,source_kind,source_id,source_version,scope_key) VALUES(?1,'decision',?2,'1',?3)",params![id,decision_id,root_id]).map_err(|e| e.to_string())?;
     connection.execute("INSERT OR IGNORE INTO rr_example_sources(example_id,source_kind,source_id,source_version,scope_key) SELECT ?1,'feedback',id,extractor_version,?2 FROM rr_feedback WHERE target_root_id=?2",params![id,root_id]).map_err(|e| e.to_string())?;
     Ok(())
@@ -215,6 +234,80 @@ fn sha256(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn materialized_label(feedback: &[&str], phase: &str) -> (String, i64, String, i64) {
+        let mut connection = Connection::open_in_memory().expect("db");
+        connection.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');INSERT INTO conversation_messages VALUES('answer','c','assistant','answer','1');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("routing");
+        super::super::schema::migrate(&connection).expect("learning");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest,result_message_id) VALUES('r','c','p',?1,'text','visual',1,'','answer')", [phase]).expect("root");
+        connection.execute("INSERT INTO rr_decisions VALUES('d','r',0,NULL,'{\"complexity\":2}','[]','qwen','respond','[]','rules-v1','p',1)", []).expect("decision");
+        connection
+            .execute(
+                "INSERT INTO rr_events VALUES('r',1,'answer_committed','{}',1)",
+                [],
+            )
+            .expect("event");
+        for (index, kind) in feedback.iter().enumerate() {
+            let source = format!("source-{index}");
+            connection
+                .execute(
+                    "INSERT INTO conversation_messages VALUES(?1,'c','user','feedback',?2)",
+                    params![source, (index + 2).to_string()],
+                )
+                .expect("source");
+            connection.execute("INSERT INTO rr_feedback(id,target_answer_id,target_root_id,source_message_id,kind,evidence_json,label_source,confidence,extractor_version,status,created_at_ms) VALUES(?1,'answer','r',?2,?3,'{}','host',1.0,'host-v1','recorded',?4)", params![format!("feedback-{index}"), source, kind, index as i64 + 2]).expect("feedback");
+        }
+        mark_root_dirty(&connection, "r").expect("dirty");
+        let dataset = materialize_dirty_roots(&mut connection, 20, 10)
+            .expect("materialize")
+            .expect("dataset");
+        connection.query_row(
+            "SELECT json_extract(labels_json,'$.outcome'),eligible,exclusion_reason,label_revision FROM rr_examples WHERE dataset_id=?1",
+            [dataset],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+        ).expect("label")
+    }
+
+    #[test]
+    fn rr_32_silence_and_challenge_are_not_success_or_failure() {
+        assert_eq!(
+            materialized_label(&[], "completed"),
+            ("unknown".into(), 0, "no_explicit_feedback".into(), 1)
+        );
+        assert_eq!(
+            materialized_label(&["answer_challenge"], "completed"),
+            (
+                "unknown".into(),
+                0,
+                "challenge_is_not_an_outcome_label".into(),
+                1
+            )
+        );
+    }
+
+    #[test]
+    fn rr_32_cancel_not_failure_and_conflict_is_excluded() {
+        assert_eq!(
+            materialized_label(&["explicit_negative"], "cancelled"),
+            ("unknown".into(), 0, "root_not_completed".into(), 1)
+        );
+        assert_eq!(
+            materialized_label(&["explicit_positive", "explicit_negative"], "completed"),
+            (
+                "unknown".into(),
+                0,
+                "conflicting_explicit_feedback".into(),
+                2
+            )
+        );
+    }
     #[test]
     fn rr_28_materialization_is_incremental_and_explicit() {
         let mut c = Connection::open_in_memory().expect("db");
@@ -276,6 +369,66 @@ mod tests {
             .expect("completed pages"),
             2
         );
+    }
+
+    #[test]
+    fn rr_31_crash_before_checkpoint_keeps_the_page_retryable() {
+        let mut connection = Connection::open_in_memory().expect("db");
+        connection.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("routing");
+        super::super::schema::migrate(&connection).expect("learning");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p','completed','text','visual',1,'')", []).expect("root");
+        connection.execute("INSERT INTO rr_decisions VALUES('d','r',0,NULL,'{\"quality\":null}','[]','qwen','respond','[]','rules-v1','p',1)", []).expect("decision");
+        connection
+            .execute(
+                "INSERT INTO rr_events VALUES('r',1,'answer_committed','{}',1)",
+                [],
+            )
+            .expect("event");
+        mark_root_dirty(&connection, "r").expect("dirty");
+        connection.execute_batch("CREATE TRIGGER fail_learning_page BEFORE INSERT ON rr_examples BEGIN SELECT RAISE(ABORT,'fixture crash'); END;").expect("trigger");
+        assert!(materialize_dirty_roots(&mut connection, 10, 10).is_err());
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM rr_learning_dirty", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("dirty count"),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM rr_datasets", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("dataset count"),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM rr_learning_jobs", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("job count"),
+            0
+        );
+        connection
+            .execute_batch("DROP TRIGGER fail_learning_page")
+            .expect("drop trigger");
+        let dataset = materialize_dirty_roots(&mut connection, 11, 10)
+            .expect("retry")
+            .expect("dataset");
+        let row: (String, i64) = connection
+            .query_row(
+                "SELECT features_json,label_revision FROM rr_examples WHERE dataset_id=?1",
+                [dataset],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("example");
+        assert_eq!(row, ("{\"quality\":null}".into(), 1));
     }
 
     #[test]

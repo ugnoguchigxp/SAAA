@@ -549,10 +549,21 @@ pub(crate) fn prepare_runtime_run(
             message_id
         };
         if task_mode == "conversation" && new_message {
-            if matches!(
-                crate::role_routing::signals::classify_follow_up(input.content.trim()),
-                crate::role_routing::signals::SignalKind::AnswerChallenge
+            let feedback_kind = match crate::role_routing::signals::classify_follow_up(
+                input.content.trim(),
             ) {
+                crate::role_routing::signals::SignalKind::AnswerChallenge => {
+                    Some("answer_challenge")
+                }
+                crate::role_routing::signals::SignalKind::ExplicitPositive => {
+                    Some("explicit_positive")
+                }
+                crate::role_routing::signals::SignalKind::ExplicitNegative => {
+                    Some("explicit_negative")
+                }
+                _ => None,
+            };
+            if let Some(feedback_kind) = feedback_kind {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|duration| duration.as_millis() as i64)
@@ -561,7 +572,7 @@ pub(crate) fn prepare_runtime_run(
                     &transaction,
                     &input.conversation_id,
                     &input_message_id,
-                    "answer_challenge",
+                    feedback_kind,
                     0,
                     input.content.trim().len(),
                     now_ms,

@@ -497,10 +497,7 @@ async fn execute_for_root(
     let context = RequestContext::new(&principal, conversation_id)
         .with_run(Some(root_id.to_string()))
         .with_message(input_message_id);
-    let operation_key = format!(
-        "{:x}",
-        Sha256::digest(format!("{name}:{arguments}").as_bytes())
-    );
+    let operation_key = routing_operation_key(name, arguments);
     // Enforce the role permit from the trusted tool effect before anything reaches the owner. A
     // reviewer can never reach a mutating tool, and an unpublished/unknown tool is fail-closed.
     let resolved_effect = resolve_role_tool_effect(service, &context, name, arguments);
@@ -521,8 +518,20 @@ async fn execute_for_root(
     } else {
         dispatch(service, &context, name, arguments, cancellation).await
     };
-    settle_routing_operation(writer, root_id, &operation_key, &output);
+    if settle_routing_operation(writer, root_id, &operation_key, &output).is_err() {
+        return json!({"error":{"code":"routing-settle-failed","message":"The tool owner finished, but its routing receipt could not be settled. Do not retry automatically."}});
+    }
     output
+}
+
+fn routing_operation_key(name: &str, arguments: &str) -> String {
+    let canonical = serde_json::from_str::<Value>(arguments)
+        .map(|value| crate::tool_selection::catalog::canonical_json(&value))
+        .unwrap_or_else(|_| arguments.to_string());
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{name}\0{canonical}").as_bytes())
+    )
 }
 
 /// Maps the active routing step purpose to its role and checks the trusted tool effect. Steps that
@@ -726,7 +735,7 @@ fn settle_routing_operation(
     root_id: &str,
     operation_key: &str,
     output: &Value,
-) {
+) -> Result<(), String> {
     let invocation_id = output
         .pointer("/data/invocationId")
         .and_then(Value::as_str)
@@ -743,7 +752,7 @@ fn settle_routing_operation(
     let state = if unknown { "unknown" } else { "settled" };
     let root_id = root_id.to_string();
     let operation_key = operation_key.to_string();
-    let _ = writer.write(move |connection| {
+    writer.write(move |connection| {
         crate::role_routing::tool_ledger::settle(
             connection,
             &root_id,
@@ -754,7 +763,7 @@ fn settle_routing_operation(
             now_ms(),
         )
         .map(|_| ())
-    });
+    })
 }
 
 fn now_ms() -> i64 {
@@ -875,7 +884,7 @@ mod tests {
     }
 
     #[test]
-    fn rr_21_tool_budget_is_reserved_before_owner_dispatch() {
+    fn rr_21_tool_budget() {
         let writer = role_writer();
         writer
             .write(|connection| {
@@ -924,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn rr_10_cancel_update_before_reserve_prevents_invoke() {
+    fn rr_10_update_between_reserve_and_invoke() {
         let writer = role_writer();
         writer
             .write(|connection| {
@@ -979,5 +988,30 @@ mod tests {
             Some(&binding),
         )
         .is_ok());
+    }
+
+    #[test]
+    fn rr_11_duplicate_operation_once_uses_canonical_payload() {
+        assert_eq!(
+            routing_operation_key("tools_invoke", r#"{"a":1,"b":{"x":2,"y":3}}"#),
+            routing_operation_key("tools_invoke", r#"{"b":{"y":3,"x":2},"a":1}"#),
+        );
+        assert_ne!(
+            routing_operation_key("tools_invoke", r#"{"a":1}"#),
+            routing_operation_key("tools_invoke", r#"{"a":2}"#),
+        );
+    }
+
+    #[test]
+    fn rr_11_settle_failure_blocks_continuation() {
+        let writer = role_writer();
+        let error = settle_routing_operation(
+            &writer,
+            "r",
+            "operation-that-was-never-reserved",
+            &json!({"ok":true,"data":{"status":"succeeded"}}),
+        )
+        .expect_err("missing reservation must be visible to caller");
+        assert!(error.contains("reservation is unavailable"));
     }
 }

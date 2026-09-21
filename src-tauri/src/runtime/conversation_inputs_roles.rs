@@ -4,8 +4,22 @@ use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RoleDispatch {
-    Provider { max_input_bytes: u32 },
-    CodexSdk { model: String, max_input_bytes: u32 },
+    Provider {
+        max_input_bytes: u32,
+    },
+    CodexSdk {
+        model: String,
+        max_input_bytes: u32,
+        binding: Option<CodexStepBinding>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexStepBinding {
+    pub(crate) step_id: String,
+    pub(crate) revision: u32,
+    pub(crate) config_fingerprint: String,
+    pub(crate) purpose: String,
 }
 
 pub(super) fn apply_enabled_role_route(
@@ -81,7 +95,7 @@ pub(super) fn apply_enabled_role_route(
         .ok_or_else(|| "Role-routing response recipe has no actor".to_string())?;
     // Validate the exact claimed step at the real dispatch boundary. The permit checks revision,
     // deadline and cumulative budget, and prevents a receipt/actor mismatch from reaching I/O.
-    let actor_id = if let Some(root_id) = root_id {
+    let (actor_id, step_binding) = if let Some(root_id) = root_id {
         let permit = crate::role_routing::executor::permit_next_step(
             connection,
             &role_policy,
@@ -97,9 +111,17 @@ pub(super) fn apply_enabled_role_route(
         if planned.actor_id != permit.actor_id {
             return Err("Role-routing receipt actor does not match the claimed step".into());
         }
-        permit.actor_id
+        (
+            permit.actor_id,
+            Some(CodexStepBinding {
+                step_id: permit.step_id,
+                revision: permit.revision,
+                config_fingerprint: permit.config_fingerprint,
+                purpose: permit.purpose,
+            }),
+        )
     } else {
-        first_actor_id.clone()
+        (first_actor_id.clone(), None)
     };
     let actor = role_policy
         .actors
@@ -114,6 +136,7 @@ pub(super) fn apply_enabled_role_route(
                 .clone()
                 .ok_or_else(|| "Role-routing Codex actor has no model".to_string())?,
             max_input_bytes: actor.max_input_bytes,
+            binding: step_binding,
         }));
     }
     if actor.transport != "provider" {
@@ -302,9 +325,31 @@ mod tests {
             Some(RoleDispatch::CodexSdk {
                 model: "gpt-5.6-sol".into(),
                 max_input_bytes: 4096,
+                binding: None,
             })
         );
         assert_eq!(route.primary_provider_id, prior);
+
+        connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('codex-input','conversation_primary','user','hello','1')", []).expect("input");
+        connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('codex-run','conversation_primary','conversation.respond','running','codex-input','1')", []).expect("run");
+        assert!(crate::role_routing::repository::record_provider_turn_start(
+            &connection,
+            "codex-run",
+            "conversation_primary",
+            test_now_ms(),
+        )
+        .expect("receipt"));
+        let dispatch = apply_enabled_role_route(&connection, Some("codex-run"), &mut route)
+            .expect("bound Codex route")
+            .expect("dispatch");
+        let RoleDispatch::CodexSdk { binding, .. } = dispatch else {
+            panic!("expected Codex dispatch");
+        };
+        let binding = binding.expect("persisted step binding");
+        assert_eq!(binding.step_id, "rr-step-codex-run-0");
+        assert_eq!(binding.revision, 0);
+        assert!(!binding.config_fingerprint.is_empty());
+        assert_eq!(binding.purpose, "respond");
     }
 
     #[test]

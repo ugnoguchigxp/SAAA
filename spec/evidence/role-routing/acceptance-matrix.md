@@ -79,19 +79,19 @@ lane が `offline` の行は認証済みモデル・実機を起動しない。`
 | A14 | E23 | `rr_16_status_does_not_cancel` | offline | pass |
 | A15 | E23/E26 | `rr_16_clarification_keeps_barrier` | offline | 未実装 |
 | A16 | E02 | `rr_12_old_revision_result_rejected` | offline | pass（E02 実装） |
-| A17 | E13/E14 | `rr_10_update_between_reserve_and_invoke` | offline | 未実装 |
-| A18 | E14 | `rr_11_detached_owner_settles` | offline | 未実装 |
+| A17 | E13/E14 | `rr_10_update_between_reserve_and_invoke` | offline | pass（cancel/revision を owner reservation transaction で再検査し、link 0件） |
+| A18 | E14 | `rr_11_detached_owner_settles` | offline | pass（実loopback MCP、client timeout後も owner成功と全routing link settleを確認） |
 | A19 | E25 | `rr_18_restart_no_replay` | offline | 未検証（`rr_18_*` pass） |
 | A20 | E25 | `rr_14_subscribe_replay_race` | offline | 未実装 |
 | A21 | E19 | `rr_23_challenge_starts_new_root` | offline | 未実装 |
-| A22 | E18 | `rr_25_normal_turn_author_review_revise` | offline | 未実装 |
+| A22 | E18 | `rr_25_normal_turn_author_review_revise` | offline | pass（author→reviewer→revise、最終assistant 1件、中間公開0） |
 | A23 | E19 | `rr_23_wrong_conversation`, `rr_23_quoted_negative` | offline | pass（`rr_08_quote_not_feedback`, `rr_08_bad_target_is_rejected`, `rr_23_*`） |
 | A24 | E17 | `rr_24_false_evidence` | offline | pass |
-| A25 | E11/E18 | `rr_22_loop_budget` | offline | 未実装 |
+| A25 | E11/E18 | `rr_22_loop_budget` | offline | pass（executor loop budget と review round 上限） |
 | A26 | E20 | `rr_26_premium_no_implicit_execution` | offline | pass |
 | A27 | E20 | `rr_26_approval_consumed_once` | offline | 未実装 |
 | A28 | E11/E20 | `rr_22_cloud_revoked_before_dispatch` | offline | pass（receipt 後に SDK availability を剥奪し、provider session 0件を確認） |
-| A29 | E16 | `rr_21_changed_revision_new_thread` | offline | 未実装 |
+| A29 | E16 | `rr_21_changed_revision_new_thread` | offline | pass（revision/model fingerprint 変更時に別 sidecar process） |
 | A30 | E16/L01 | `rr_21_sol_tool_roundtrip` | offline/live | 未実装 |
 | A31 | E28 | `rr_30_feature_snapshot_immutable` | offline | 未実装 |
 | A32 | E29 | `rr_31_crash_before_checkpoint` | offline | 未実装 |

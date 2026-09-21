@@ -9,9 +9,10 @@ pub(crate) use repository_policy::capture_current_policy;
 #[allow(unused_imports)]
 pub(crate) use repository_policy::capture_policy_version;
 pub(crate) use repository_turns::{
-    accept_provider_turn, advance_provider_step, record_actor_activity,
+    accept_provider_turn, accept_reviewed_draft, advance_provider_step,
+    advance_provider_step_with_usage, advance_review_step, record_actor_activity,
     record_provider_turn_finish, record_provider_turn_start,
-    record_provider_turn_start_in_transaction, record_step_usage,
+    record_provider_turn_start_in_transaction, record_step_usage, ReviewStepOutcome,
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -47,10 +48,17 @@ pub(crate) fn record_feedback(
     {
         return Err("Feedback evidence range is invalid".into());
     }
-    let root_id: Option<String> = connection.query_row(
-        "SELECT r.root_id FROM conversation_messages m LEFT JOIN rr_roots r ON r.result_message_id=m.id WHERE m.id=?1 AND m.conversation_id=?2 AND m.role='assistant'",
-        params![target_answer_id, conversation_id], |r| r.get(0),
-    ).optional().map_err(|_| "Feedback target answer is unavailable".to_string())?.flatten();
+    let target_root: Option<Option<String>> = connection
+        .query_row(
+            "SELECT r.root_id FROM conversation_messages m LEFT JOIN rr_roots r ON r.result_message_id=m.id WHERE m.id=?1 AND m.conversation_id=?2 AND m.role='assistant'",
+            params![target_answer_id, conversation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| "Feedback target answer is unavailable".to_string())?;
+    let root_id = target_root
+        .ok_or_else(|| "Feedback target answer is unavailable".to_string())?
+        .ok_or_else(|| "Feedback target is not a completed role-routing answer".to_string())?;
     let digest = format!(
         "{:x}",
         Sha256::digest(format!("{target_answer_id}:{source_message_id}:{kind}").as_bytes())
@@ -82,9 +90,7 @@ pub(crate) fn record_feedback(
         }
     }
     if inserted {
-        if let Some(root_id) = root_id {
-            crate::role_routing::learning::repository::mark_root_dirty(connection, &root_id)?;
-        }
+        crate::role_routing::learning::repository::mark_root_dirty(connection, &root_id)?;
     }
     Ok(inserted)
 }
@@ -203,7 +209,7 @@ fn accepted_evidence_refs(
     let refs = {
         let mut statement = connection
             .prepare(
-                "SELECT o.id FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=?1 AND o.accepted=1 AND o.revision<=?2",
+                "SELECT o.id FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=?1 AND (o.accepted=1 OR o.kind='intermediate') AND o.revision<=?2",
             )
             .map_err(|error| error.to_string())?;
         let rows = statement
@@ -213,6 +219,23 @@ fn accepted_evidence_refs(
             .map_err(|error| error.to_string())?
     };
     Ok(refs)
+}
+
+fn host_verified_evidence_refs(
+    connection: &Connection,
+    root_id: &str,
+    revision: i64,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT o.id FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=?1 AND o.revision<=?2 AND json_extract(o.payload_json,'$.hostVerification')='verified' AND length(COALESCE(json_extract(o.payload_json,'$.verifierVersion'),''))>0",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![root_id, revision], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
 }
 
 /// Stores a deterministic revision decision for an accepted review output.  It deliberately does
@@ -265,9 +288,11 @@ pub(crate) fn record_review_revision_decision(
     let completed_rounds = u8::try_from(completed_rounds)
         .map_err(|_| "Role-routing revision round count is invalid".to_string())?;
     let allowed_evidence_refs = accepted_evidence_refs(connection, &root_id, revision)?;
+    let verified_evidence_refs = host_verified_evidence_refs(connection, &root_id, revision)?;
     let decision = crate::role_routing::revision::decide_from_review(
         &review,
         &allowed_evidence_refs,
+        &verified_evidence_refs,
         &[],
         completed_rounds,
         max_rounds,
@@ -398,6 +423,31 @@ mod tests {
     }
 
     #[test]
+    fn rr_23_wrong_conversation_target_is_rejected() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT); INSERT INTO conversations VALUES('c1'); INSERT INTO conversations VALUES('c2');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("routing");
+        crate::role_routing::learning::schema::migrate(&connection).expect("learning");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute_batch("INSERT INTO conversation_messages VALUES('a','c2','assistant','answer','1'); INSERT INTO conversation_messages VALUES('u','c1','user','違う','2'); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest,result_message_id) VALUES('r','c2','p','completed','text','visual',1,'','a');").expect("rows");
+        assert!(
+            record_feedback(&connection, "c1", "u", "a", "explicit_negative", 0, 6, 3).is_err()
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM rr_feedback", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("feedback count"),
+            0
+        );
+    }
+
+    #[test]
     fn rr_24_sol_reviewed_by_qwen_and_saved_against_scoped_evidence() {
         let connection = Connection::open_in_memory().expect("connection");
         connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY); INSERT INTO conversations VALUES('c');").expect("base");
@@ -443,7 +493,7 @@ mod tests {
         let connection = Connection::open_in_memory().expect("connection");
         connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY); INSERT INTO conversations VALUES('c');").expect("base");
         crate::role_routing::schema::migrate(&connection).expect("routing");
-        connection.execute_batch("INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p','completed','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('author','r',0,0,'sol','respond','succeeded','{}','{}'),('reviewer','r',0,1,'qwen','review','succeeded','{}','{}'); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('answer-1','author',0,'answer','{}',1,1);").expect("fixture");
+        connection.execute_batch("INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p','completed','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('author','r',0,0,'sol','respond','succeeded','{}','{}'),('reviewer','r',0,1,'qwen','review','succeeded','{}','{}'); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('answer-1','author',0,'answer','{\"hostVerification\":\"verified\",\"verifierVersion\":\"fixture-v1\"}',1,1);").expect("fixture");
         let review = crate::role_routing::review::ReviewResponse {
             issues: vec![
                 crate::role_routing::review::ReviewIssue {

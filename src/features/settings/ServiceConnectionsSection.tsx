@@ -197,7 +197,7 @@ export function ServiceConnectionsSection({
           </Field>
           <Field label={t("settings.compatibility.voiceProfile")}>
             <input
-              value={providers.harness.larmProfile ?? "saaa-qwen38-kv-mem"}
+              value={providers.harness.larmProfile ?? "saaa-qwen38"}
               onChange={(e) =>
                 onProvidersChange({
                   ...providers,

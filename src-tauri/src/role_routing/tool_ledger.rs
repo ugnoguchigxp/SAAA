@@ -213,6 +213,32 @@ mod tests {
     }
 
     #[test]
+    fn rr_11_same_payload_different_roots() {
+        let connection = fixture();
+        connection
+            .execute("INSERT INTO conversations VALUES('c2')", [])
+            .expect("conversation");
+        connection.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('root2','c2','p','responding','text','visual',1,'')", []).expect("root2");
+        connection.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('step2','root2',0,0,'actor','respond','running','{}','{}')", []).expect("step2");
+        reserve(&connection, &proposed(), 1).expect("root1 reserve");
+        let mut second = proposed();
+        second.id = "link2".into();
+        second.root_id = "root2".into();
+        second.step_id = "step2".into();
+        reserve(&connection, &second, 1).expect("root2 reserve");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM rr_tool_links WHERE operation_key='operation'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("links"),
+            2
+        );
+    }
+
+    #[test]
     fn rr_11_unknown_no_retry() {
         let connection = fixture();
         reserve(&connection, &proposed(), 1).expect("reserve");

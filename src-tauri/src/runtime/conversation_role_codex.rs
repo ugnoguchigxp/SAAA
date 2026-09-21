@@ -1,23 +1,49 @@
 //! Role-routed Codex actor and final-wire World receipt.
 use super::*;
+
+#[derive(Debug, Clone)]
+pub(super) struct CodexStepRequest {
+    pub(super) step_id: String,
+    pub(super) revision: u32,
+    pub(super) config_fingerprint: String,
+    pub(super) purpose: String,
+    pub(super) model: String,
+    pub(super) max_input_bytes: usize,
+    pub(super) current_request: String,
+}
+
+pub(super) struct CodexStepResult {
+    pub(super) content: String,
+    pub(super) usage: Option<crate::role_routing::adapters::codex_protocol::SidecarUsage>,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn execute_role_codex_actor(
+pub(super) async fn execute_role_codex_step(
     state: &AppState,
     input: &StartTurnInput,
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
-    model: &str,
-    max_input_bytes: usize,
+    step: CodexStepRequest,
     history: &[ConversationMessage],
     timeout_ms: u64,
     world: Option<crate::runtime::context::world::turn::WorldLive>,
-) -> Result<ConversationMessage, TurnExecutionFailure> {
+) -> Result<CodexStepResult, TurnExecutionFailure> {
+    validate_step_binding(state, input, &step)?;
+    let CodexStepRequest {
+        step_id,
+        revision: _,
+        config_fingerprint: _,
+        purpose,
+        model,
+        max_input_bytes,
+        current_request,
+    } = step;
     let request = crate::role_routing::adapters::codex::SidecarRequest {
         id: input.run_id.clone(),
-        step_id: format!("rr-step-{}-0", input.run_id),
-        model: model.to_string(),
-        prompt: role_codex_prompt(history, &input.content, max_input_bytes)?,
-        output_schema: None,
+        step_id,
+        model,
+        prompt: role_codex_prompt(history, &current_request, max_input_bytes)?,
+        output_schema: output_schema_for_purpose(&purpose),
         timeout_ms: timeout_ms.clamp(1_000, 300_000),
     };
     crate::update_runtime_provider(state, &input.run_id, "codex-sdk")?;
@@ -105,35 +131,11 @@ pub(super) async fn execute_role_codex_actor(
         TurnExecutionFailure::configuration(format!("Role-routing Codex task failed: {error}"))
     })?;
     match outcome {
-        Ok(crate::role_routing::adapters::codex::SidecarOutcome::Result {
-            text: content,
-            usage,
-        }) => {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_millis() as i64)
-                .unwrap_or(0);
-            persist_conversation_success_with_state(
-                state,
-                input,
-                &content,
-                |connection, message| {
-                    if let Some(usage) = usage.as_ref() {
-                        crate::role_routing::repository::record_step_usage(
-                            connection,
-                            &input.run_id,
-                            &usage.as_json(),
-                        )?;
-                    }
-                    crate::role_routing::repository::accept_provider_turn(
-                        connection,
-                        &input.run_id,
-                        &message.id,
-                        now_ms,
-                    )
-                },
-            )
-            .map_err(Into::into)
+        Ok(crate::role_routing::adapters::codex::SidecarOutcome::Result { text, usage }) => {
+            Ok(CodexStepResult {
+                content: text,
+                usage,
+            })
         }
         Ok(crate::role_routing::adapters::codex::SidecarOutcome::Cancelled) => {
             Err(TurnExecutionFailure::provider(
@@ -151,6 +153,58 @@ pub(super) async fn execute_role_codex_actor(
             ProviderFailureKind::Upstream,
             error,
         )),
+    }
+}
+
+fn output_schema_for_purpose(purpose: &str) -> Option<serde_json::Value> {
+    (purpose == "review").then(|| {
+        serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["issues"],
+            "properties": {
+                "issues": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["kind", "claim", "severity", "code", "evidenceRef", "verdict"],
+                        "properties": {
+                            "kind": {"enum": ["condition", "logic", "evidence", "calculation", "tool_result"]},
+                            "claim": {"type": "string", "minLength": 1, "maxLength": 2000},
+                            "severity": {"enum": ["minor", "major"]},
+                            "code": {"type": "string", "minLength": 1, "maxLength": 160},
+                            "evidenceRef": {"type": "string", "minLength": 1, "maxLength": 200},
+                            "verdict": {"enum": ["verified", "unverified", "unresolved"]}
+                        }
+                    }
+                }
+            }
+        })
+    })
+}
+
+fn validate_step_binding(
+    state: &AppState,
+    input: &StartTurnInput,
+    step: &CodexStepRequest,
+) -> Result<(), TurnExecutionFailure> {
+    let valid = state.sqlite_writer.write(|connection| {
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM rr_steps s JOIN rr_roots r ON r.root_id=s.root_id AND r.revision=s.revision WHERE s.id=?1 AND s.root_id=?2 AND s.revision=?3 AND s.config_fingerprint=?4 AND s.status='running' AND r.phase='responding' AND r.cancel_requested=0)",
+                rusqlite::params![step.step_id, input.run_id, step.revision, step.config_fingerprint],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| error.to_string())
+    })?;
+    if valid {
+        Ok(())
+    } else {
+        Err(TurnExecutionFailure::configuration(
+            "Role-routing Codex step binding changed before dispatch",
+        ))
     }
 }
 

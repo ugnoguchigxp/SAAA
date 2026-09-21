@@ -3,11 +3,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-function environment(): Record<string, string> {
+function environment(includeBridgeToken: boolean): Record<string, string> {
   const result: Record<string, string> = {};
   for (const key of ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SSL_CERT_FILE", "SSL_CERT_DIR"]) {
     const value = process.env[key];
     if (value) result[key] = value;
+  }
+  if (includeBridgeToken) {
+    const bridgeToken = process.env.SAAA_ROLE_ROUTING_MCP_TOKEN;
+    if (bridgeToken) result.SAAA_ROLE_ROUTING_MCP_TOKEN = bridgeToken;
   }
   return result;
 }
@@ -22,7 +26,7 @@ export function isolatedCodex(toolGatewayUrl?: string): Codex {
       }
     : {};
   return new Codex({
-    env: environment(),
+    env: environment(Boolean(toolGatewayUrl)),
     config: {
       mcp_servers: mcpServers,
       web_search: "disabled",

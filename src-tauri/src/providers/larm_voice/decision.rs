@@ -15,10 +15,16 @@ pub(crate) async fn classify_shadow(
         let ready = super::current(conversation).await?;
         let lease = ready
             .session
-            .acquire("decision-default")
+            .acquire("backchannel")
             .await
             .map_err(str::to_string)?;
         let provider = lease.provider();
+        if provider
+            .context_window
+            .is_none_or(|window| window.output_reserve_tokens < 32)
+        {
+            return Err("Backchannel context contract invalid".to_string());
+        }
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -26,8 +32,8 @@ pub(crate) async fn classify_shadow(
             .map_err(|_| "Decision client failed")?;
         let response = client.post(provider.endpoint("chat/completions").map_err(str::to_string)?)
             .bearer_auth(provider.token()).json(&serde_json::json!({"model":provider.model,
-                "messages":[{"role":"system","content":"Classify the user message. Return only JSON: {\"route\":\"delegate\"} or {\"route\":\"simple_reply\",\"replyKey\":\"greeting\"} or {\"route\":\"simple_reply\",\"replyKey\":\"acknowledgement\"}. Use delegate for questions, requests and ambiguous input."},
-                    {"role":"user","content":text}],"stream":false,"max_tokens":128})).send().await.map_err(|_| "Decision request failed")?;
+                "messages":[{"role":"system","content":"Classify whether a brief host-owned acknowledgement may be played now. Return only {\"decision\":\"ack\"} or {\"decision\":\"defer\"}. Never generate user-visible prose."},
+                    {"role":"user","content":text}],"stream":false,"max_tokens":32})).send().await.map_err(|_| "Decision request failed")?;
         if !response.status().is_success() {
             return Err("Decision request rejected".to_string());
         }
@@ -56,19 +62,10 @@ pub(crate) async fn classify_shadow(
 }
 
 #[derive(serde::Deserialize)]
-#[serde(tag = "route", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "decision", rename_all = "snake_case", deny_unknown_fields)]
 enum Classification {
-    Delegate {},
-    SimpleReply {
-        #[serde(rename = "replyKey")]
-        reply: Reply,
-    },
-}
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Reply {
-    Greeting,
-    Acknowledgement,
+    Ack {},
+    Defer {},
 }
 fn parse(bytes: &[u8]) -> Result<&'static str, &'static str> {
     let value: serde_json::Value =
@@ -91,13 +88,8 @@ fn parse(bytes: &[u8]) -> Result<&'static str, &'static str> {
     match serde_json::from_str::<Classification>(content)
         .map_err(|_| "Decision classification invalid")?
     {
-        Classification::Delegate {} => Ok("decisionShadowDelegate"),
-        Classification::SimpleReply {
-            reply: Reply::Greeting,
-        } => Ok("decisionShadowGreeting"),
-        Classification::SimpleReply {
-            reply: Reply::Acknowledgement,
-        } => Ok("decisionShadowAcknowledgement"),
+        Classification::Ack {} => Ok("backchannelAck"),
+        Classification::Defer {} => Ok("backchannelDefer"),
     }
 }
 #[cfg(test)]
@@ -109,23 +101,20 @@ mod tests {
     #[test]
     fn shadow_classifications_require_the_exact_contract_and_complete_response() {
         assert_eq!(
-            parse(&completion(r#"{"route":"delegate"}"#, "stop")),
-            Ok("decisionShadowDelegate")
+            parse(&completion(r#"{"decision":"ack"}"#, "stop")),
+            Ok("backchannelAck")
         );
         assert_eq!(
-            parse(&completion(
-                r#"{"route":"simple_reply","replyKey":"greeting"}"#,
-                "stop"
-            )),
-            Ok("decisionShadowGreeting")
+            parse(&completion(r#"{"decision":"defer"}"#, "stop")),
+            Ok("backchannelDefer")
         );
         for content in [
-            r#"{"route":"simple_reply"}"#,
-            r#"{"route":"simple_reply","replyKey":"made_up"}"#,
-            r#"{"route":"delegate","text":"untrusted reply"}"#,
+            r#"{"decision":"made_up"}"#,
+            r#"{"decision":"ack","text":"untrusted reply"}"#,
+            r#"{"route":"delegate"}"#,
         ] {
             assert!(parse(&completion(content, "stop")).is_err());
         }
-        assert!(parse(&completion(r#"{"route":"delegate"}"#, "length")).is_err());
+        assert!(parse(&completion(r#"{"decision":"ack"}"#, "length")).is_err());
     }
 }

@@ -21,6 +21,7 @@ pub(crate) struct DispatchPermit {
     pub(crate) ordinal: u32,
     pub(crate) actor_id: String,
     pub(crate) purpose: String,
+    pub(crate) config_fingerprint: String,
 }
 
 /// Loads the cumulative root budget from the ledger. Steps count executed reasoning steps, tool
@@ -147,9 +148,9 @@ pub(crate) fn permit_next_step(
     if deadline_at_ms.is_some_and(|deadline| now_ms >= deadline) {
         return Err("Role-routing root deadline reached".into());
     }
-    let step: Option<(String, i64, u32, String, String, Option<i64>)> = connection
+    let step: Option<(String, i64, u32, String, String, String, Option<i64>)> = connection
         .query_row(
-            "SELECT id,revision,ordinal,actor_id,purpose,started_at_ms FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
+            "SELECT id,revision,ordinal,actor_id,purpose,config_fingerprint,started_at_ms FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
             [root_id],
             |row| {
                 Ok((
@@ -159,12 +160,22 @@ pub(crate) fn permit_next_step(
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some((step_id, step_revision, ordinal, actor_id, purpose, started_at_ms)) = step else {
+    let Some((
+        step_id,
+        step_revision,
+        ordinal,
+        actor_id,
+        purpose,
+        config_fingerprint,
+        started_at_ms,
+    )) = step
+    else {
         return Err("Role-routing root has no running step".into());
     };
     if step_revision != revision {
@@ -203,6 +214,7 @@ pub(crate) fn permit_next_step(
         ordinal,
         actor_id,
         purpose,
+        config_fingerprint,
     }))
 }
 

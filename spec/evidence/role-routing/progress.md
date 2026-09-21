@@ -192,3 +192,76 @@ step/revision/attempt/fingerprint が変わった旧 session は、新 step の 
 - `rr_21_missing_step_denied`: pass。
 - `tool_selection::mcp_server::`: **41 pass / 0 fail**（generic 非routing session の回帰を含む）。
 - `cargo check --locked --manifest-path src-tauri/Cargo.toml --lib`: pass。
+
+## E13 完了追補（2026-09-21、offline）
+
+Provider / SDK MCP / specialist が通る共通 gateway に、step束縛・root取消・revision・role・解決後 effect・
+root累積 tool budget の二段検査を接続した。`tools_invoke` は署名済み execution ref を host service で解決し、
+catalog の trusted effect を reviewer permit に使う。tool budget と operation link は同一 transaction で検査・
+予約され、上限/取消/古いstepの場合は owner invocation を開始しない。
+
+- `rr_10_reviewer_resolved_mutation_denied_at_gateway`: pass。
+- `rr_21_tool_budget`: pass（予算0で link 0件）。
+- `rr_10_update_between_reserve_and_invoke`: pass（取消後 link 0件）。
+- gateway E12/E13 抽出: **5 pass / 0 fail**。
+
+## E14 完了追補（2026-09-21、offline）
+
+tool operation key を canonical JSON digest に変更し、同じ意味のpayloadでキー順だけが違う再送を同一操作として
+扱う。link ID は root を含み、別 root の同payloadは独立する。owner 終了後の routing settle failure は
+`routing-settle-failed` として呼出元へ返し、`dispatched` receipt を成功扱いして continuation しない。
+loopback MCP の client timeout fixture で、HTTP handler detach後も management taskが owner と routing linkを
+最後まで settleすることを確認した。
+
+- `rr_11_same_payload_different_roots`: pass。
+- `rr_11_duplicate_operation_once_uses_canonical_payload`: pass。
+- `rr_11_detached_owner_settles`: pass。
+- `rr_11_settle_failure_blocks_continuation`: pass。
+
+## E15 完了追補（2026-09-21、offline）
+
+Codex sidecar の bridge token は、gateway が明示された場合だけ SDK 子プロセス環境へ渡し、JSONL、
+SDK config、診断本文には含めない。sidecar 入力は用途別の完全な key 集合、byte 上限、timeout、loopback
+gateway を検査し、出力は host 側でも step/id/terminal/固定 error code と JSON Schema を再検証する。
+任意の SDK 例外文は `sdk_error` に閉じ、schema や protocol 違反時に本文を保存しない。
+
+- `rr_21_sdk_child_receives_token_without_recording`: pass。
+- `rr_19_wrong_step_terminal`: pass。
+- `rr_19_host_validates_the_declared_output_schema`: pass。
+- `rr_19_failure_codes_are_closed_and_do_not_accept_exception_text`: pass。
+- Codex adapter/protocol 抽出: **12 pass / 0 fail**。
+- `bun test ./tests/role-routing-codex.test.ts`: **2 pass / 0 fail**。
+- `bun run typecheck`、`cargo check --locked --manifest-path src-tauri/Cargo.toml --lib`、`git diff --check`: pass。
+
+実認証 SDK の隔離確認は費用・外部呼出しを伴うため、計画どおり L01 に残す。
+
+## E16〜E18 追補（2026-09-21、offline）
+
+E16 は SDK adapter から最終 message の保存責務を外し、host が固定した
+`stepId / revision / configFingerprint / purpose` と完全一致する dispatch だけを sidecar へ渡す。
+SDK は候補と usage だけを返し、採用・中間保存・最終公開は通常 Provider と同じ host transaction が行う。
+revision または model fingerprint が変わる dispatch は別 sidecar process/thread になり、古い束縛を再利用しない。
+mock SDK→実 gateway→tool roundtrip（A30）はまだ未実装のため、E16 は部分完了のままとする。
+
+- `rr_21_changed_revision_new_thread`: pass。
+- `rr_21_changed_model_new_thread`: pass。
+- bound Codex dispatch / output schema / terminal protocol 抽出: pass。
+
+E17 は review target、author step、evidence scope と host verifier を分離した。実在するだけの ref や
+model の `verdict="verified"` では revision を許可せず、payload に
+`hostVerification="verified"` と非空の `verifierVersion` を持つ evidence だけを verified issue とする。
+review JSON は未知 field、8件超過、過大 claim、別 revision・失効・scope 外 ref を拒否する。
+
+E18 は通常 `respond` recipe の `author → independent reviewer → author` を
+`respond → review → revise` step として実行する。draft と review は process-local 候補として次 step にだけ渡し、
+review decision の消費と revise claim を同一 transaction にした。verified issue が0件なら review 済み draft を
+1件だけ採用し、verified issue があれば host が整形した decision のみを reviser へ渡す。review/revise の中間本文・
+completion・speech は公開しない。
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib rr_24_ -- --test-threads=1`: **10 pass / 0 fail**。
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib rr_25_ -- --test-threads=1`: **8 pass / 0 fail**。
+- `rr_25_normal_turn_author_review_revise`: author 2回、reviewer 1回、最終 assistant 1件、3 step succeeded。
+- `rr_25_decision_consumed_once_and_claims_revise_atomically`: pass。
+- `rr_25_review_round_limit_requires_verified_issue`: pass。
+
+以上により E17/E18 の offline 完了条件は満たした。live model の品質確認は L01/L03 に残す。

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 use super::openai_compatible::provider_api_key;
 use crate::ipc_contract::ConversationMessage;
@@ -106,7 +107,7 @@ pub(crate) async fn stream_model_provider_inner(
     };
     let authorization = api_key
         .or(configured_api_key.as_deref().map(String::as_str))
-        .map(|credential| format!("Bearer {credential}"));
+        .map(|credential| Zeroizing::new(format!("Bearer {credential}")));
     if provider.authentication == "api-key" && authorization.is_none() {
         return Err(ProviderAttemptError::failed(
             ProviderFailureKind::Authentication,
@@ -120,7 +121,7 @@ pub(crate) async fn stream_model_provider_inner(
     });
     crate::providers::chat_completions::run_with_options(
         &provider.endpoint,
-        authorization.as_deref(),
+        authorization.as_deref().map(String::as_str),
         &provider.model,
         history,
         timeout_ms,

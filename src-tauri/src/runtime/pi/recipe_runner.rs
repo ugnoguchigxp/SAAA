@@ -17,12 +17,11 @@ pub(crate) fn run(
         return Err("recipe_invalid".into());
     }
     let root = std::fs::canonicalize(workspace).map_err(|_| "workspace_missing")?;
-    let canonical_cwd = crate::steward::evidence::path_within_root(workspace, Path::new(&cwd)).map_err(
-        |reason| match reason.as_str() {
+    let canonical_cwd = crate::steward::evidence::path_within_root(workspace, Path::new(&cwd))
+        .map_err(|reason| match reason.as_str() {
             "target_outside_root" => "recipe_cwd_escape".to_string(),
             _ => "recipe_cwd_invalid".to_string(),
-        },
-    )?;
+        })?;
     let output = workspace.join(&output_dir);
     if !output.starts_with(&root) && output_dir != "/tmp" && !output_dir.starts_with("/tmp/") {
         return Err("recipe_output_escape".into());

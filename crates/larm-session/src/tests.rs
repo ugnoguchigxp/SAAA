@@ -29,7 +29,12 @@ impl Fake {
             "name":name,"protocol":protocol,
             "configuration":{"fields":{"baseURL":format!("{}/{name}/v1",self.base),"model":format!("claimed-{name}-{generation}")}},
             "credential":{"token":format!("token-{name}-{generation}")},
-            "health":{"url":format!("{}/{name}/health",self.base),"maxAgeMs":10000}
+            "health":{"url":format!("{}/{name}/health",self.base),"maxAgeMs":10000},
+            "contextWindow": if *protocol == "openai.chat-completions.v1" {
+                json!({"maxTokens": if *name == "llm" {230400} else {65536},
+                    "outputReserveTokens": if *name == "llm" {4096} else {512},
+                    "safetyMarginTokens": if *name == "llm" {1976} else {1024}})
+            } else { Value::Null }
         })).collect::<Vec<_>>();
         if self.bad_claim.load(Ordering::SeqCst) {
             providers[0]["protocol"] = json!("invalid-protocol");
@@ -45,7 +50,10 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
     let method = request.method().to_string();
     fake.log.lock().unwrap().push(format!("{method} {path}"));
     if path.starts_with("/v1/agent-connections") {
-        assert!(request.headers().get("authorization").is_none());
+        assert_eq!(
+            request.headers()["authorization"],
+            "Bearer test-control-token"
+        );
         if method == "DELETE" {
             if fake.fail_release.load(Ordering::SeqCst) {
                 return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -90,7 +98,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             }
             assert_eq!(
                 value,
-                json!({"agentProfile":"saaa-qwen38-kv-mem","explicitAgentProfile":true,
+                json!({"agentProfile":"saaa-qwen38","explicitAgentProfile":true,
                 "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
                 "allowFallback":false,"deploymentPolicy":"existing-only"})
             );
@@ -128,6 +136,8 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
         .unwrap()
         .1;
     Json(json!({"ready":!fake.stale_health.load(Ordering::SeqCst),"acceptingRequests":true,
+        "capacity":{"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":1,
+            "queueDepth":0,"queueTimeoutMs":1000,"retryAfterMs":0,"completionGuaranteed":false},
         "probe":{"validated":true,"protocol":if fake.bad_protocol.load(Ordering::SeqCst) {"wrong"} else {protocol}}})).into_response()
 }
 async fn fixture() -> (Arc<Fake>, tokio::task::JoinHandle<()>) {
@@ -169,6 +179,23 @@ async fn maps_reordered_providers_and_caches_health_then_releases_once() {
         assert_eq!(lease.provider().model, format!("claimed-{name}-0"));
         assert_eq!(lease.provider().token(), format!("token-{name}-0"));
         assert_eq!(lease.allocation_id(), "allocation-0");
+        match name {
+            "llm" => {
+                let window = lease.provider().context_window.unwrap();
+                assert_eq!(window.max_tokens, 230400);
+                assert_eq!(window.output_reserve_tokens, 4096);
+                assert_eq!(window.safety_margin_tokens, 1976);
+                assert_eq!(window.max_input_tokens(), 224328);
+            }
+            "backchannel" => {
+                let window = lease.provider().context_window.unwrap();
+                assert_eq!(window.max_tokens, 65536);
+                assert_eq!(window.output_reserve_tokens, 512);
+                assert_eq!(window.safety_margin_tokens, 1024);
+            }
+            "asr" | "tts" => assert!(lease.provider().context_window.is_none()),
+            _ => unreachable!(),
+        }
         assert_eq!(count(&fake, &format!("/{name}/health")), 1);
     }
     session.close().await.unwrap();
@@ -183,6 +210,29 @@ async fn maps_reordered_providers_and_caches_health_then_releases_once() {
             .count(),
         1
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn provider_capacity_one_serializes_requests_and_does_not_imply_guaranteed_completion() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let session = Session::connect(&fake.base, receiver).await.unwrap();
+    let first = session.acquire("llm").await.unwrap();
+    assert_eq!(first.capacity().unwrap().max_concurrent_requests, 1);
+    assert!(!first.capacity().unwrap().completion_guaranteed);
+    let cloned = session.clone();
+    let second = tokio::spawn(async move { cloned.acquire("llm").await });
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(!second.is_finished());
+    drop(first);
+    let second = tokio::time::timeout(Duration::from_secs(1), second)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    drop(second);
+    session.close().await.unwrap();
     server.abort();
 }
 #[tokio::test]
@@ -395,16 +445,45 @@ async fn renew_rejects_a_response_for_a_different_connection() {
 }
 
 #[tokio::test]
-async fn a_single_advertised_capability_is_a_valid_claim() {
+async fn claim_requires_the_complete_saaa_provider_set() {
     let (fake, server) = fixture().await;
     let mut value = fake.claim();
     value["providers"]
         .as_array_mut()
         .unwrap()
         .retain(|p| p["name"] == "llm");
-    let parsed = contract::parse(value, "session-1").unwrap();
-    assert!(parsed.providers.contains_key("llm"));
-    assert!(!parsed.providers.contains_key("asr"));
+    assert_eq!(
+        contract::parse(value, "session-1").err(),
+        Some("larm_missing_provider")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_require_it() {
+    let (fake, server) = fixture().await;
+    let mut missing = fake.claim();
+    missing["providers"].as_array_mut().unwrap()[0]
+        .as_object_mut()
+        .unwrap()
+        .remove("contextWindow");
+    assert_eq!(
+        contract::parse(missing, "session-1").err(),
+        Some("larm_missing_context_window")
+    );
+
+    let mut invalid = fake.claim();
+    let chat = invalid["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|provider| provider["name"] == "llm")
+        .unwrap();
+    chat["contextWindow"]["safetyMarginTokens"] = json!(230400);
+    assert_eq!(
+        contract::parse(invalid, "session-1").err(),
+        Some("larm_invalid_context_window")
+    );
     server.abort();
 }
 

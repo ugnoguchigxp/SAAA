@@ -310,6 +310,16 @@ pub(crate) fn advance_provider_step(
     content: &str,
     now_ms: i64,
 ) -> Result<bool, String> {
+    advance_provider_step_with_usage(connection, run_id, content, None, now_ms)
+}
+
+pub(crate) fn advance_provider_step_with_usage(
+    connection: &Connection,
+    run_id: &str,
+    content: &str,
+    usage_json: Option<&str>,
+    now_ms: i64,
+) -> Result<bool, String> {
     let transaction = connection
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
@@ -351,6 +361,9 @@ pub(crate) fn advance_provider_step(
     if !has_next {
         return Ok(false);
     }
+    if let Some(usage_json) = usage_json {
+        record_step_usage(&transaction, run_id, usage_json)?;
+    }
     if !crate::role_routing::steps::complete_step(
         &transaction,
         run_id,
@@ -377,6 +390,150 @@ pub(crate) fn advance_provider_step(
     append_event(&transaction, run_id, "step_started", now_ms)?;
     transaction.commit().map_err(|error| error.to_string())?;
     Ok(true)
+}
+
+#[derive(Debug)]
+pub(crate) enum ReviewStepOutcome {
+    Revise(crate::role_routing::revision::ReviewRevisionDecision),
+    KeepDraft,
+}
+
+/// Persists a typed review and its host decision, then atomically claims or cancels revision.
+pub(crate) fn advance_review_step(
+    connection: &Connection,
+    run_id: &str,
+    response: &crate::role_routing::review::ReviewResponse,
+    usage_json: Option<&str>,
+    now_ms: i64,
+) -> Result<ReviewStepOutcome, String> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    let (revision, cancel_requested, phase, policy_json): (i64, i64, String, String) = transaction
+        .query_row(
+            "SELECT r.revision,r.cancel_requested,r.phase,p.config_json FROM rr_roots r JOIN rr_policy_versions p ON p.id=r.policy_id WHERE r.root_id=?1",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| "Role-routing review root is unavailable".to_string())?;
+    if phase != "responding" || cancel_requested != 0 {
+        return Err("Role-routing review is not adoptable".into());
+    }
+    let (step_id, step_revision): (String, i64) = transaction
+        .query_row(
+            "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status='running' AND purpose='review'",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "Role-routing review has no active step".to_string())?;
+    if step_revision != revision {
+        return Err("Role-routing review is stale".into());
+    }
+    if let Some(usage_json) = usage_json {
+        transaction
+            .execute(
+                "UPDATE rr_steps SET usage_json=?1 WHERE id=?2 AND root_id=?3 AND revision=?4 AND status='running'",
+                params![usage_json, step_id, run_id, revision],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    crate::role_routing::repository::record_review_response(
+        &transaction,
+        &step_id,
+        response,
+        now_ms,
+    )?;
+    let review_output_id: String = transaction
+        .query_row(
+            "SELECT id FROM rr_outputs WHERE step_id=?1 AND revision=?2 AND kind='review' AND accepted=1",
+            params![step_id, revision],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let policy: crate::role_routing::RoleRoutingSettings = serde_json::from_str(&policy_json)
+        .map_err(|_| "Stored role-routing policy is invalid".to_string())?;
+    let decision = crate::role_routing::repository::record_review_revision_decision(
+        &transaction,
+        &review_output_id,
+        policy.limits.max_review_rounds,
+        now_ms,
+    )?;
+    if !crate::role_routing::steps::complete_step(
+        &transaction,
+        run_id,
+        &step_id,
+        "succeeded",
+        now_ms,
+    )? {
+        return Err("Role-routing review step was already completed".into());
+    }
+    let outcome = if decision.revision_allowed {
+        crate::role_routing::steps::claim_next_planned_step(
+            &transaction,
+            run_id,
+            revision,
+            now_ms,
+        )?
+        .ok_or_else(|| "Role-routing revise step disappeared before claim".to_string())?;
+        append_event(&transaction, run_id, "step_started", now_ms)?;
+        ReviewStepOutcome::Revise(decision)
+    } else {
+        crate::role_routing::steps::settle_unfinished_steps(
+            &transaction,
+            run_id,
+            revision,
+            "cancelled",
+            now_ms,
+        )?;
+        ReviewStepOutcome::KeepDraft
+    };
+    append_event(&transaction, run_id, "review_completed", now_ms)?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(outcome)
+}
+
+/// Adopts the original process-local draft after review found no verified reason to revise.
+pub(crate) fn accept_reviewed_draft(
+    connection: &Connection,
+    run_id: &str,
+    draft_step_id: &str,
+    message_id: &str,
+    now_ms: i64,
+) -> Result<(), String> {
+    let (revision, phase, cancelled): (i64, String, i64) = connection
+        .query_row(
+            "SELECT revision,phase,cancel_requested FROM rr_roots WHERE root_id=?1",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| "Role-routing reviewed root is unavailable".to_string())?;
+    if phase != "responding" || cancelled != 0 {
+        return Err("Role-routing reviewed draft is not adoptable".into());
+    }
+    let eligible: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM rr_steps d WHERE d.id=?1 AND d.root_id=?2 AND d.revision=?3 AND d.status='succeeded' AND d.purpose IN ('respond','reconsider') AND EXISTS(SELECT 1 FROM rr_steps v WHERE v.root_id=d.root_id AND v.revision=d.revision AND v.purpose='review' AND v.status='succeeded') AND NOT EXISTS(SELECT 1 FROM rr_steps x WHERE x.root_id=d.root_id AND x.revision=d.revision AND x.status IN ('planned','running','draining')))",
+            params![draft_step_id, run_id, revision],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !eligible {
+        return Err("Role-routing reviewed draft receipt is incomplete".into());
+    }
+    if !crate::role_routing::steps::finalize_root(connection, run_id, revision, message_id, now_ms)?
+    {
+        return Err("Role-routing reviewed draft was already accepted".into());
+    }
+    connection
+        .execute(
+            "INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'answer',?4,1,?5)",
+            params![format!("rr-final-{draft_step_id}"), draft_step_id, revision, json!({"messageId": message_id}).to_string(), now_ms],
+        )
+        .map_err(|error| error.to_string())?;
+    append_event(connection, run_id, "answer_committed", now_ms)?;
+    record_provider_outcome(connection, run_id, true, message_id, revision, now_ms)?;
+    crate::role_routing::learning::repository::mark_root_dirty(connection, run_id)?;
+    Ok(())
 }
 
 pub(crate) fn record_provider_turn_finish(
@@ -522,7 +679,15 @@ fn active_step_or_ordinal_zero(
     connection: &Connection,
     run_id: &str,
 ) -> Result<Option<(String, i64)>, String> {
-    match crate::role_routing::steps::active_reasoning_step(connection, run_id)? {
+    let running = connection
+        .query_row(
+            "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status IN ('running','draining') ORDER BY ordinal LIMIT 1",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    match running {
         Some(active) => Ok(Some(active)),
         None => connection
             .query_row(
@@ -898,6 +1063,97 @@ fn append_event(
 mod tests {
     use super::*;
     use crate::role_routing::contracts::{RoleRoutingSettings, RoutingActor, RoutingRecipe};
+
+    fn review_flow_fixture() -> Connection {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT); INSERT INTO conversations VALUES('c'); INSERT INTO runtime_runs VALUES('run');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning");
+        let mut policy = RoleRoutingSettings::default();
+        policy.limits.max_review_rounds = 1;
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,?1,'d',1)",
+            [serde_json::to_string(&policy).expect("policy")],
+        )
+        .expect("policy row");
+        c.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p',0,'responding','reasoning','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms,completed_at_ms) VALUES('draft','run',0,0,'author','respond','succeeded','a','{}',1,2),('review','run',0,1,'reviewer','review','running','b','{}',2,NULL),('revise','run',0,2,'author','revise','planned','c','{}',NULL,NULL); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('rr-output-draft','draft',0,'intermediate','{\"sha256\":\"d\",\"bytes\":5,\"hostVerification\":\"verified\",\"verifierVersion\":\"fixture-v1\"}',0,2); INSERT INTO rr_events VALUES('run',1,'input_accepted','{}',1);").expect("review plan");
+        c
+    }
+
+    fn review_issue(verdict: &str) -> crate::role_routing::review::ReviewIssue {
+        crate::role_routing::review::ReviewIssue {
+            kind: "logic".into(),
+            claim: "the conclusion does not follow".into(),
+            severity: "major".into(),
+            code: "non-sequitur".into(),
+            evidence_ref: "rr-output-draft".into(),
+            verdict: verdict.into(),
+        }
+    }
+
+    #[test]
+    fn rr_25_decision_consumed_once_and_claims_revise_atomically() {
+        let c = review_flow_fixture();
+        let response = crate::role_routing::review::ReviewResponse {
+            issues: vec![review_issue("verified")],
+        };
+        let outcome = advance_review_step(&c, "run", &response, None, 3).expect("review");
+        assert!(matches!(outcome, ReviewStepOutcome::Revise(_)));
+        let statuses = c
+            .prepare("SELECT status FROM rr_steps WHERE root_id='run' ORDER BY ordinal")
+            .expect("query")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("statuses");
+        assert_eq!(statuses, vec!["succeeded", "succeeded", "running"]);
+        assert!(advance_review_step(&c, "run", &response, None, 4).is_err());
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM rr_outputs WHERE kind='revision-decision'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .expect("decision count"),
+            1
+        );
+    }
+
+    #[test]
+    fn rr_25_no_verified_issue_keeps_the_reviewed_draft() {
+        let mut c = review_flow_fixture();
+        let response = crate::role_routing::review::ReviewResponse { issues: vec![] };
+        assert!(matches!(
+            advance_review_step(&c, "run", &response, None, 3).expect("review"),
+            ReviewStepOutcome::KeepDraft
+        ));
+        c.execute(
+            "INSERT INTO conversation_messages VALUES('answer','c','assistant','draft','4')",
+            [],
+        )
+        .expect("answer");
+        let tx = c.transaction().expect("tx");
+        accept_reviewed_draft(&tx, "run", "draft", "answer", 4).expect("accept draft");
+        tx.commit().expect("commit");
+        assert_eq!(
+            c.query_row(
+                "SELECT phase FROM rr_roots WHERE root_id='run'",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .expect("phase"),
+            "completed"
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM rr_outputs WHERE kind='answer' AND accepted=1",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .expect("answer output"),
+            1
+        );
+    }
 
     #[test]
     fn rr_05_normal_turn_advances_two_steps_without_persisting_the_draft_body() {

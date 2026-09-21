@@ -10,6 +10,15 @@ const VERSION = 1;
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 const MAX_FINAL_BYTES = 64 * 1024;
+const MAX_ID_BYTES = 160;
+const MAX_MODEL_BYTES = 160;
+const FIXED_ERROR_CODES = new Set([
+  "invalid_request",
+  "stream_limit",
+  "sdk_error",
+  "incomplete_result",
+  "invalid_output_schema",
+]);
 
 type RunFrame = {
   version: number;
@@ -40,19 +49,41 @@ function fail(frame: Pick<Frame, "id" | "stepId">, code: string) {
   emit({ id: frame.id, stepId: frame.stepId, op: "failed", code });
 }
 
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === allowed.length && keys.every((key) => allowed.includes(key));
+}
+
+function boundedText(value: unknown, maxBytes: number): value is string {
+  return typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= maxBytes;
+}
+
 function valid(frame: unknown): frame is Frame {
   if (!frame || typeof frame !== "object") return false;
-  const value = frame as Partial<Frame>;
-  if (value.version !== VERSION || typeof value.id !== "string" || typeof value.stepId !== "string")
+  const value = frame as Record<string, unknown>;
+  if (
+    value.version !== VERSION ||
+    !boundedText(value.id, MAX_ID_BYTES) ||
+    !boundedText(value.stepId, MAX_ID_BYTES)
+  )
     return false;
-  if (value.op === "cancel") return true;
+  if (value.op === "cancel") {
+    return exactKeys(value, ["version", "id", "op", "stepId"]);
+  }
+  const allowed = ["version", "id", "op", "stepId", "model", "prompt", "timeoutMs"];
+  if (value.outputSchema !== undefined) allowed.push("outputSchema");
+  if (value.toolGatewayUrl !== undefined) allowed.push("toolGatewayUrl");
   return (
+    exactKeys(value, allowed) &&
     value.op === "run" &&
-    typeof value.model === "string" &&
-    typeof value.prompt === "string" &&
+    boundedText(value.model, MAX_MODEL_BYTES) &&
+    boundedText(value.prompt, MAX_FINAL_BYTES * 8) &&
     typeof value.timeoutMs === "number" &&
     Number.isInteger(value.timeoutMs) &&
-    value.timeoutMs >= 1 &&
+    value.timeoutMs >= 1_000 &&
+    value.timeoutMs <= 300_000 &&
+    (value.outputSchema === undefined ||
+      (typeof value.outputSchema === "object" && value.outputSchema !== null && !Array.isArray(value.outputSchema))) &&
     (value.toolGatewayUrl === undefined || validToolGatewayUrl(value.toolGatewayUrl))
   );
 }
@@ -140,11 +171,13 @@ async function run(frame: RunFrame) {
     }
     emit({ id: frame.id, stepId: frame.stepId, op: "result", text: finalText, usage });
   } catch (error) {
+    const requestedCode = error instanceof Error ? error.message : "sdk_error";
+    const code = FIXED_ERROR_CODES.has(requestedCode) ? requestedCode : "sdk_error";
     emit({
       id: frame.id,
       stepId: frame.stepId,
       op: controller.signal.aborted ? "cancelled" : "failed",
-      code: error instanceof Error ? error.message.slice(0, 120) : "sdk_error",
+      ...(controller.signal.aborted ? {} : { code }),
     });
   } finally {
     clearTimeout(timeout);

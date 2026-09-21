@@ -34,6 +34,11 @@ fn step_purposes(action: &RoutingAction, roles: &[String]) -> Result<Vec<&'stati
         RoutingAction::Respond | RoutingAction::Explain => match roles {
             [_] => vec!["respond"],
             [frontend, _] if frontend == "frontend" => vec!["frontend", "respond"],
+            [author, reviewer, reviser]
+                if reviewer == "reviewer" && author == reviser && author != reviewer =>
+            {
+                vec!["respond", "review", "revise"]
+            }
             _ => {
                 return Err(
                     "Role-routing response recipe supports only reasoner or frontend+reasoner"
@@ -150,8 +155,8 @@ pub(crate) fn compile_recipe_by_id(
             depends_on: purpose_depends_on(&purposes, index),
         });
     }
-    // The reviewer of a `review_other` recipe must be a different deployment from the author.
-    if action == RoutingAction::ReviewOther {
+    // Any recipe containing a review step must use a deployment independent from its author.
+    if steps.iter().any(|step| step.purpose == "review") {
         let reviewer = steps
             .iter()
             .find(|step| step.purpose == "review")
@@ -163,7 +168,7 @@ pub(crate) fn compile_recipe_by_id(
             });
         let author = steps
             .iter()
-            .find(|step| step.purpose == "revise")
+            .find(|step| matches!(step.purpose, "respond" | "revise"))
             .and_then(|step| {
                 settings
                     .actors
@@ -288,6 +293,30 @@ mod tests {
 
         settings.recipes[0].roles = vec!["reasoner".into(), "frontend".into()];
         assert!(compile_recipe_by_id(&settings, "ack-then-reason").is_err());
+    }
+
+    #[test]
+    fn rr_25_normal_turn_author_review_revise_compiles_in_order() {
+        let mut settings = review_settings();
+        settings.roles.advanced = Some("sol".into());
+        settings.roles.reviewer = Some("qwen".into());
+        settings.recipes = vec![RoutingRecipe {
+            id: "reviewed-response".into(),
+            action: RoutingAction::Respond,
+            roles: vec!["advanced".into(), "reviewer".into(), "advanced".into()],
+            enabled: true,
+        }];
+        settings.limits.max_reasoning_steps = 3;
+        let compiled = compile_recipe_by_id(&settings, "reviewed-response").expect("compile");
+        assert_eq!(
+            compiled
+                .steps
+                .iter()
+                .map(|step| step.purpose)
+                .collect::<Vec<_>>(),
+            vec!["respond", "review", "revise"]
+        );
+        assert_eq!(compiled.steps[2].depends_on, vec![1]);
     }
 
     #[test]

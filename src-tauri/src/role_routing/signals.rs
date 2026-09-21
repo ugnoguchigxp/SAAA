@@ -6,6 +6,8 @@ pub(crate) enum SignalKind {
     ConstraintUpdate,
     Cancel,
     AnswerChallenge,
+    ExplicitPositive,
+    ExplicitNegative,
     PremiumApproval,
     Unclear,
 }
@@ -76,8 +78,25 @@ pub(crate) fn classify_follow_up(input: &str) -> SignalKind {
     {
         return SignalKind::ConstraintUpdate;
     }
+    let quoted = (text.contains('「') && text.contains('」'))
+        || (text.contains('“') && text.contains('”'))
+        || (text.contains('"') && text.matches('"').count() >= 2);
+    if !quoted
+        && ["この回答は正しい", "この回答で解決", "回答が役に立った"]
+            .iter()
+            .any(|marker| text.contains(marker))
+    {
+        return SignalKind::ExplicitPositive;
+    }
+    if !quoted
+        && ["この回答は間違い", "この回答は誤り", "回答が役に立たない"]
+            .iter()
+            .any(|marker| text.contains(marker))
+    {
+        return SignalKind::ExplicitNegative;
+    }
     // A quotation of an answer is not feedback by itself. Require a direct challenge marker.
-    if !text.starts_with('「')
+    if !quoted
         && ["本当に", "違う", "おかしい", "再考", "根拠"]
             .iter()
             .any(|x| text.contains(x))
@@ -94,6 +113,34 @@ mod tests {
     fn rr_08_quote_not_feedback() {
         assert_eq!(
             classify_follow_up("「本当に正しい」ですか"),
+            SignalKind::Unclear
+        );
+    }
+
+    #[test]
+    fn rr_23_quoted_negative_is_not_feedback() {
+        assert_eq!(
+            classify_follow_up("先ほどの『違う』ではなく「おかしい」という語の意味を教えて"),
+            SignalKind::Unclear
+        );
+        assert_eq!(
+            classify_follow_up("The phrase \"this is wrong\" means what?"),
+            SignalKind::Unclear
+        );
+    }
+
+    #[test]
+    fn rr_23_explicit_feedback_requires_an_unquoted_answer_marker() {
+        assert_eq!(
+            classify_follow_up("この回答は正しいです"),
+            SignalKind::ExplicitPositive
+        );
+        assert_eq!(
+            classify_follow_up("この回答は間違いです"),
+            SignalKind::ExplicitNegative
+        );
+        assert_eq!(
+            classify_follow_up("「この回答は間違い」という例文を説明して"),
             SignalKind::Unclear
         );
     }

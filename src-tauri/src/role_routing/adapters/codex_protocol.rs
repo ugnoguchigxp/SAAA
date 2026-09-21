@@ -7,6 +7,13 @@ use serde::Deserialize;
 const PROTOCOL_VERSION: u8 = 1;
 const MAX_FRAME_BYTES: usize = 1_024 * 1_024;
 const MAX_FINAL_BYTES: usize = 64 * 1_024;
+const FIXED_FAILURE_CODES: &[&str] = &[
+    "invalid_request",
+    "stream_limit",
+    "sdk_error",
+    "incomplete_result",
+    "invalid_output_schema",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidecarEvent {
@@ -151,6 +158,9 @@ impl FrameValidator {
     }
 
     pub(crate) fn validate(&mut self, line: &[u8]) -> Result<SidecarEvent, String> {
+        if self.terminal {
+            return Err("Codex sidecar emitted a frame after its terminal frame".into());
+        }
         if line.len() > MAX_FRAME_BYTES {
             return Err("Codex sidecar frame exceeds the protocol limit".into());
         }
@@ -169,7 +179,7 @@ impl FrameValidator {
                 return Err("Codex sidecar result is invalid".into());
             }
         }
-        if matches!(event, SidecarEvent::Failed { ref code } if code.is_empty() || code.len() > 120)
+        if matches!(event, SidecarEvent::Failed { ref code } if !FIXED_FAILURE_CODES.contains(&code.as_str()))
         {
             return Err("Codex sidecar failure code is invalid".into());
         }
@@ -177,9 +187,6 @@ impl FrameValidator {
             event,
             SidecarEvent::Result { .. } | SidecarEvent::Failed { .. } | SidecarEvent::Cancelled
         ) {
-            if self.terminal {
-                return Err("Codex sidecar emitted a duplicate terminal frame".into());
-            }
             self.terminal = true;
         }
         Ok(event)
@@ -227,6 +234,23 @@ mod tests {
             .is_err());
         assert!(validator
             .validate(br#"{"version":1,"id":"request","stepId":"step","op":"result","text":""}"#)
+            .is_err());
+    }
+
+    #[test]
+    fn rr_19_failure_codes_are_closed_and_do_not_accept_exception_text() {
+        let mut valid = FrameValidator::new("request", "step");
+        assert_eq!(
+            valid
+                .validate(br#"{"version":1,"id":"request","stepId":"step","op":"failed","code":"sdk_error"}"#)
+                .expect("fixed code"),
+            SidecarEvent::Failed {
+                code: "sdk_error".into()
+            }
+        );
+        let mut invalid = FrameValidator::new("request", "step");
+        assert!(invalid
+            .validate(br#"{"version":1,"id":"request","stepId":"step","op":"failed","code":"credential at /secret/path"}"#)
             .is_err());
     }
 

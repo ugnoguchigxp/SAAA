@@ -43,6 +43,7 @@ pub(crate) async fn run_with_options(
     let request_started = Instant::now();
     let mut first_content = true;
     let mut started = false;
+    let mut provider_progressed = false;
     let mut messages = world_body::build_messages(history, &context);
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
         let url = super::openai_compatible::provider_operation_url(endpoint, "chat/completions")
@@ -133,7 +134,10 @@ pub(crate) async fn run_with_options(
                 )
                 .json(&body);
             if let Some(value) = authorization {
-                request = request.header("Authorization", value);
+                let mut value = reqwest::header::HeaderValue::from_str(value)
+                    .map_err(|_| Failure::Authentication)?;
+                value.set_sensitive(true);
+                request = request.header(reqwest::header::AUTHORIZATION, value);
             }
             if let Some(world) = context.output_persistence.and_then(|p| p.world) {
                 let sent = world.blocks().is_some_and(|blocks| {
@@ -201,6 +205,7 @@ pub(crate) async fn run_with_options(
                 let received_at = Instant::now();
                 for data in events {
                     let text = completion.absorb(&data, model)?;
+                    provider_progressed |= completion.provider_progressed();
                     if context.cancellation.is_cancelled() {
                         return Err(Failure::Cancelled);
                     }
@@ -319,6 +324,20 @@ pub(crate) async fn run_with_options(
         result = result => result.unwrap_or(Err(Failure::Timeout)),
     };
     result.map_err(|kind| {
+        let kind = if provider_progressed
+            && !started
+            && matches!(
+                kind,
+                Failure::Unavailable
+                    | Failure::Upstream
+                    | Failure::Network
+                    | Failure::Timeout
+                    | Failure::AllocationLost
+            ) {
+            Failure::PartialOutput
+        } else {
+            kind
+        };
         if kind == Failure::Cancelled {
             Error::Cancelled {
                 output_started: started,

@@ -242,6 +242,37 @@ impl D5 {
         session
     }
 
+    async fn ready_role_session(&self, root_id: &str) -> String {
+        let url = format!("{}?rrRoot={root_id}", self.base);
+        let response = self
+            .client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .header("Accept", ACCEPT_BOTH)
+            .json(&json!({
+                "jsonrpc":"2.0","id":1,"method":"initialize",
+                "params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"role-test","version":"1"}}
+            }))
+            .send()
+            .await
+            .expect("role initialize");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let session = response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("role session id")
+            .to_string();
+        let response = self
+            .post(
+                &json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                Some(&session),
+            )
+            .await;
+        assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+        session
+    }
+
     async fn call(&self, id: i64, name: &str, arguments: Value, session: &str) -> Value {
         let (status, value) = self
             .rpc(
@@ -934,6 +965,69 @@ async fn h07_http_disconnect_does_not_cancel_the_managed_call() {
         status, "succeeded",
         "a dropped HTTP connection must not stop or leak the managed call"
     );
+}
+
+#[tokio::test]
+async fn rr_11_detached_owner_settles() {
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let (writer, service) = ledger_with_backend(
+        4,
+        Arc::new(BlockingBackend {
+            entered: entered.clone(),
+            release: release.clone(),
+        }),
+    );
+    writer
+        .write(|connection| {
+            let policy_id: String = connection
+                .query_row("SELECT id FROM rr_policy_versions ORDER BY version DESC LIMIT 1", [], |row| row.get(0))
+                .map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('role-detach','conversation_primary',?1,0,'responding','text','visual',1,'')", [&policy_id]).map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('role-detach-step','role-detach',0,0,'actor','respond','running','fingerprint','{}',1)", []).map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("role root");
+    let harness = serve_with(writer.clone(), service).await;
+    let session = harness.ready_role_session("role-detach").await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    let client = harness.client.clone();
+    let url = harness.base.clone();
+    let token = harness.token.clone();
+    let session_for_task = session.clone();
+    let request = tokio::spawn(async move {
+        client
+            .post(url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", ACCEPT_BOTH)
+            .header("Mcp-Session-Id", session_for_task)
+            .json(&json!({
+                "jsonrpc":"2.0","id":3,"method":"tools/call",
+                "params":{"name":"tools_invoke","arguments":{"executionRef":execution_ref,"arguments":{"q":"v"}}}
+            }))
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await
+    });
+    let _entry = tokio::time::timeout(Duration::from_secs(5), entered.acquire())
+        .await
+        .expect("backend entered")
+        .expect("permit");
+    let _ = request.await.expect("request task");
+    release.add_permits(1);
+    assert_eq!(wait_for_invocation_status(&writer).await, "succeeded");
+    for _ in 0..200 {
+        let unsettled = writer
+            .read_serialized(|connection| connection
+                .query_row("SELECT count(*) FROM rr_tool_links WHERE root_id='role-detach' AND dispatch_state<>'settled'", [], |row| row.get::<_, i64>(0))
+                .map_err(|error| error.to_string()))
+            .expect("routing links");
+        if unsettled == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("detached role owner did not settle its routing link");
 }
 
 #[tokio::test]

@@ -76,6 +76,14 @@ async fn stream_larm_voice_provider(
         _ => return failed(ProviderFailureKind::AllocationLost),
     };
     let provider = lease.provider();
+    let Some(context_window) = provider.context_window else {
+        return failed(ProviderFailureKind::Contract);
+    };
+    if context.max_output_tokens == 0
+        || u64::from(context.max_output_tokens) > context_window.output_reserve_tokens
+    {
+        return failed(ProviderFailureKind::Contract);
+    }
     let resolved = OpenAiCompatibleProviderSettings {
         request_options,
         id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),

@@ -18,6 +18,7 @@ pub(crate) struct ReviewRevisionDecision {
 pub(crate) fn decide_from_review(
     review: &super::review::ReviewResponse,
     allowed_evidence_refs: &[String],
+    verified_evidence_refs: &[String],
     revoked_evidence_refs: &[String],
     completed_rounds: u8,
     max_rounds: u8,
@@ -26,8 +27,12 @@ pub(crate) fn decide_from_review(
         .issues
         .iter()
         .filter(|issue| {
-            super::review::host_verify(issue, allowed_evidence_refs, revoked_evidence_refs)
-                == super::review::HostVerification::Verified
+            super::review::host_verify(
+                issue,
+                allowed_evidence_refs,
+                verified_evidence_refs,
+                revoked_evidence_refs,
+            ) == super::review::HostVerification::Verified
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -35,8 +40,12 @@ pub(crate) fn decide_from_review(
         .issues
         .iter()
         .filter(|issue| {
-            super::review::host_verify(issue, allowed_evidence_refs, revoked_evidence_refs)
-                != super::review::HostVerification::Verified
+            super::review::host_verify(
+                issue,
+                allowed_evidence_refs,
+                verified_evidence_refs,
+                revoked_evidence_refs,
+            ) != super::review::HostVerification::Verified
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -149,7 +158,7 @@ mod tests {
                 verdict: "unverified".into(),
             }],
         };
-        let decision = decide_from_review(&review, &["answer-1".into()], &[], 0, 1);
+        let decision = decide_from_review(&review, &["answer-1".into()], &[], &[], 0, 1);
         assert!(!decision.revision_allowed);
         assert!(decision.verified_issues.is_empty());
         assert_eq!(decision.unresolved_issues, review.issues);

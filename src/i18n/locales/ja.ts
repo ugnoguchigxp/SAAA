@@ -276,7 +276,7 @@ export const ja = {
       eyebrow: "主要な接続",
       title: "Agent Connection / Provider Harness",
       description:
-        "ポート9810ではAgent Connectionを直接検証し、claimで通知されたHTTP APIへ接続します。ローカルLANでは認証なしで利用でき、LARM_API_TOKENがある場合だけBearer認証を使用します。その他のアドレスではHarnessから各サービスを解決します。",
+        "ポート9810では認証付きAgent Connectionを直接検証し、claimで通知されたHTTP APIへ接続します。control APIにはLARM_API_TOKENが必須で、Provider APIにはclaimが返す短期credentialを使用します。その他のアドレスではHarnessから各サービスを解決します。",
       resolving: "解決中…",
       harnessAddress: "Harnessのアドレス",
       providerDefault: "指定しない（HTTP Providerの既定値）",
@@ -293,12 +293,12 @@ export const ja = {
       resolvedPartial: "一部のサービスだけを解決しました。",
       agentConnectionReady: "Agent Connectionのclaim・LLMヘルスチェックに成功しました。",
       resolutionHint:
-        "接続確認ではAgent Connectionのclaim・ヘルスチェックまで検証します。認証は任意です。",
+        "接続確認では認証付きAgent Connectionのclaim・ヘルスチェックまで検証します。control credentialは必須です。",
       resolveServices: "接続を確認",
       agentConnectionTokenInvalid:
-        "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。認証なしで使う場合は環境変数を削除してください。",
+        "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。安全なcredential設定を確認してください。",
       agentConnectionAuthorizationRejected:
-        "Agent Connectionが接続を拒否しました。ローカルLANの匿名アクセスを許可するか、正しいLARM_API_TOKENを設定してください。",
+        "Agent Connectionが接続を拒否しました。正しいLARM_API_TOKENを安全に設定してください。",
       sourcesTitle: "サービスの接続元",
       sourcesDescription:
         "LLM・ASR・TTSはそれぞれHarnessまたは個別プロバイダーを選べます。暗黙の切り替えは行いません。",
