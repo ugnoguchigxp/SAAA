@@ -24,6 +24,7 @@
 - RR-24: `rr_24_` 5件（独立actor、evidence scope、model/actor名を含めないreview packet、review output保存、mutating tool拒否）はpass。review executor、read-only MCP gateway接続、通常turnのreview step組込みは未実施。
 - RR-25: `rr_25_` 3件（round limit、unsupported critiqueの保存と自動revision拒否、verified/unresolvedの分離保存）はpass。review後のauthor revision executorとrootへの再dispatchは未実施。
 - RR-26: `rr_26_` 3件（implicit execution拒否、stale/cloud拒否、root/policy/revision/candidate/costへ束縛したproposal receipt）はpass。提案・承諾のIPC/UIと承諾後の実dispatchは未実施。
+- RR-38: `rr_38_` 3件（無効/不正request拒否、host tool permit/revision確認）はpass。specialist wrapperは既存role-root gatewayにのみ接続しtool envelopeだけを返す。通常executorからの実呼出しは未実施。
 - 全体 `cargo check` はrole-routing外のcalendar変更にあるmodule/command重複とOAuth API不整合で停止する。
 
 したがってRR-39、および計画全体を完了とは判定しない。

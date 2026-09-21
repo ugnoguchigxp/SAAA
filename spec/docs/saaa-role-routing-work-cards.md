@@ -61,7 +61,7 @@
 | RR-35 | 部分 | shadow artifact保存とpure score | 観測集計、shadow記録、最低例数 |
 | RR-36 | 部分 | hash・feature/candidate検証済みlinear-v1 loader、観測label限定のoffline評価 | selection接続、昇格証跡 |
 | RR-37 | 部分 | forget sourceからdataset/artifactを同一transactionで失効。設定画面で本文なし学習状況/手動materialize | filesystem journal |
-| RR-38 | 部分 | specialistは型付きhost tool requestのみ返し、無効時や不正requestを拒否。最終回答権限を持たない | specialist差替え、既存tool gatewayへの実接続 |
+| RR-38 | 部分 | specialistは型付きhost tool requestのみ返し、無効時や不正requestを拒否。enabled/offered tool/revisionをhostで検査して既存role-root gatewayへ接続し、最終回答権限を持たない | specialist executorからの実呼出し、specialist差替え |
 | RR-39 | 部分 | offline suite 80件・desktop smokeの証跡と未完一覧を`results.md`へ記録 | V1〜V6、A01〜A42、性能・live報告 |
 
 ## 共通規則
@@ -396,6 +396,8 @@
 - Needle3の実接続は未検証のままmockで契約を確認。結果解釈と最終回答は親reasonerへ戻す。
 - 試験: `rr_38_specialist_same_gate`、`rr_38_specialist_no_final_authority`、`rr_38_specialist_disabled`。V1。
 - 合格: specialistを替えても認可/ledger/voice ownerが変わらない。
+
+実装状況（2026-09-21）: `execute_for_root` はspecialist requestを既存のrole-root tool gatewayへ渡す。gatewayがoperation receiptを予約・settleし、wrapper自身はtool envelopeだけを返すため会話回答を採用できない。enabled、型、offered tool、revision不一致はdispatch前に拒否する。`rr_38_` 3件はpass。通常のrole executorからspecialist stepを作成してこのwrapperを呼ぶ経路と、実providerによるspecialist差替えは未実装である。
 
 ### RR-39 全体gate・性能・報告
 
