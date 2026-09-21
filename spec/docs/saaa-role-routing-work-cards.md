@@ -49,7 +49,7 @@
 | RR-23 | 部分 | host feedback保存とdirty mark。新規user inputの明示challengeは、会話の最新assistantがcompleted role rootの回答である場合だけ同一transactionで保存 | explicit positive/negativeの実入力接続、challengeを新rootとして起動する経路 |
 | RR-24 | 部分 | model/actor名を含めないreview packet、issueの型付きvalidator、author/reviewer独立性、同一root・revision内のaccepted evidence scope検証、review outputの台帳保存、reviewerのmutating tool拒否 | 独立評価executor、read-only toolの実gateway接続、通常turnへのreview step組込み |
 | RR-25 | 部分 | verified issueとreview round上限を照合するrevision gate。accepted reviewからverified/unresolvedを分離し、root revisionを変更せずrevision decisionとして永続化 | 評価後revision executor、decision消費時のroot状態再検証、authorへの修正prompt組込み |
-| RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate | Astra提案・承諾のIPC/UIと実dispatch接続 |
+| RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate。premium proposalをroot/policy/revision/candidate/見積費用へ束縛して永続化し、候補名を指定した承諾時に再検証 | Astra提案・承諾のIPC/UIと実dispatch接続、dispatch直前のprovider capability再検証 |
 | RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
 | RR-28 | 部分 | chatで永続snapshotのphase/revision/queue先頭を表示 | 実行履歴・選択理由UI |
 | RR-29 | 部分 | 隔離role-routing suite 67件がpass。queue/cancel/tool/sidecarの単体・限定統合を確認 | Provider/TTS/tool完了順のBarrier競合fixture、live lane、A13〜A30受入 |
@@ -292,6 +292,8 @@
 - 契約: C10。N `rr/proposals.rs`。M IPC/selection。
 - proposalをcandidate/revision/policyへ束縛。期限、decline、価格不明表示、利用不可を実装。
 - 承諾で新しいreasoning stepを開始する前にhard filterを再実行。「はい」だけで承諾しない。
+
+実装状況（2026-09-21）: `rr_premium_proposals` にproposal receiptを保存する。作成時はactive rootのpolicy/revision、premium actor、cloud location、期限、設定済みの費用上限を検査する。承諾はproposal IDと候補IDの両方を必須とし、rootのpolicy/revision/phaseと期限・cloud許可を再照合するため、単独の「はい」は承諾にならない。`rr_26_` 3件はpass。提案・承諾のIPC/UI、承諾後のprovider dispatch、dispatch直前のcapability/価格hard filter再検証は未実装である。
 - 試験: `rr_26_premium_no_implicit_execution`、`rr_26_stale_approval`、`rr_26_accept_but_cloud_forbidden`。V1。
 - 合格: 提案だけではSDK起動0回。明示承諾と有効設定でのみ起動。
 
