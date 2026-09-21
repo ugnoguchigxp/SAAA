@@ -473,6 +473,26 @@ pub(crate) fn record_input_receipt(
         }
         return Err("Role-routing input receipt conflicts with a different payload".into());
     }
+    // A retransmitted capture (for example a repeated ASR final) shares its source id but may
+    // arrive with a fresh input id. Only the first receipt per source is accepted.
+    if let Some(source_id) = source_id {
+        let existing_source: Option<(String, String)> = connection
+            .query_row(
+                "SELECT input_id,payload_digest FROM rr_inputs WHERE conversation_id=?1 AND source_id=?2",
+                params![conversation_id, source_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if let Some((existing_input, existing_digest)) = existing_source {
+            if existing_input != input_id && existing_digest == payload_digest {
+                return Ok(InputReceiptDisposition::Duplicate);
+            }
+            if existing_input != input_id && existing_digest != payload_digest {
+                return Err("Role-routing input source conflicts with a different payload".into());
+            }
+        }
+    }
     connection
         .execute(
             "INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,source_id,disposition,generation,received_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
@@ -1246,6 +1266,69 @@ mod tests {
             .is_err(),
             "the same input id with a changed payload is a conflict"
         );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM rr_inputs", [], |row| row
+                .get::<_, i64>(0))
+                .expect("count"),
+            1
+        );
+    }
+
+    #[test]
+    fn rr_14_asr_duplicate_receipt() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY);INSERT INTO conversations VALUES('c');INSERT INTO conversation_messages VALUES('m1');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        assert_eq!(
+            record_input_receipt(
+                &c,
+                None,
+                "in-1",
+                "c",
+                "m1",
+                "digest-a",
+                Some("asr-src-1"),
+                "voice",
+                "accepted",
+                0,
+                1
+            )
+            .expect("first"),
+            InputReceiptDisposition::Accepted
+        );
+        // A repeated ASR final shares the source id but arrives with a new input id.
+        assert_eq!(
+            record_input_receipt(
+                &c,
+                None,
+                "in-2",
+                "c",
+                "m1",
+                "digest-a",
+                Some("asr-src-1"),
+                "voice",
+                "accepted",
+                0,
+                2
+            )
+            .expect("retransmit"),
+            InputReceiptDisposition::Duplicate
+        );
+        let conflict = record_input_receipt(
+            &c,
+            None,
+            "in-3",
+            "c",
+            "m1",
+            "digest-b",
+            Some("asr-src-1"),
+            "voice",
+            "accepted",
+            0,
+            3,
+        )
+        .expect_err("same source with a different payload conflicts");
+        assert!(conflict.contains("source conflicts"));
         assert_eq!(
             c.query_row("SELECT count(*) FROM rr_inputs", [], |row| row
                 .get::<_, i64>(0))

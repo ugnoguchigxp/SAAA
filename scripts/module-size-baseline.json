@@ -561,6 +561,10 @@
       "total": 355,
       "production": 355
     },
+    "src-tauri/src/generative_ui/revisions.rs": {
+      "total": 57,
+      "production": 57
+    },
     "src-tauri/src/generative_ui/store.rs": {
       "total": 283,
       "production": 283
@@ -2461,6 +2465,10 @@
       "total": 260,
       "production": 249
     },
+    "src-tauri/src/window_size.rs": {
+      "total": 78,
+      "production": 54
+    },
     "src-tauri/src/wasm_host_poc/contracts.rs": {
       "total": 614,
       "production": 614
@@ -2533,9 +2541,21 @@
       "total": 39,
       "production": 39
     },
+    "src/features/chat/artifacts/ArtifactDrawer.tsx": {
+      "total": 230,
+      "production": 230
+    },
     "src/features/chat/artifacts/ArtifactPanel.tsx": {
       "total": 180,
       "production": 180
+    },
+    "src/features/chat/artifacts/artifactWidth.ts": {
+      "total": 9,
+      "production": 9
+    },
+    "src/features/chat/artifacts/lineDiff.ts": {
+      "total": 42,
+      "production": 42
     },
     "src/features/chat/ChatMessages.tsx": {
       "total": 105,
@@ -2637,9 +2657,29 @@
       "total": 123,
       "production": 123
     },
+    "src/features/chat/ui/MarkdownView.tsx": {
+      "total": 28,
+      "production": 28
+    },
+    "src/features/chat/ui/mermaid.ts": {
+      "total": 196,
+      "production": 196
+    },
+    "src/features/chat/ui/ModelStatusView.tsx": {
+      "total": 27,
+      "production": 27
+    },
+    "src/features/chat/ui/mutationsApi.ts": {
+      "total": 33,
+      "production": 33
+    },
     "src/features/chat/ui/queryCache.ts": {
       "total": 71,
       "production": 71
+    },
+    "src/features/chat/ui/revisionsApi.ts": {
+      "total": 6,
+      "production": 6
     },
     "src/features/chat/ui/SemanticRenderer.tsx": {
       "total": 45,
@@ -3165,6 +3205,14 @@
       "total": 20,
       "production": 20
     },
+    "tests/artifact-line-diff.test.ts": {
+      "total": 23,
+      "production": 23
+    },
+    "tests/artifact-workspace.test.tsx": {
+      "total": 245,
+      "production": 245
+    },
     "tests/chat-helpers.test.ts": {
       "total": 81,
       "production": 81
@@ -3260,6 +3308,14 @@
     "tests/generative-ui-state.test.ts": {
       "total": 136,
       "production": 136
+    },
+    "tests/markdown-mermaid-limits.test.ts": {
+      "total": 24,
+      "production": 24
+    },
+    "tests/mermaid-sanitizer.test.ts": {
+      "total": 65,
+      "production": 65
     },
     "tests/generative-ui-views.test.tsx": {
       "total": 181,

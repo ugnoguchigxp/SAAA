@@ -41,7 +41,7 @@ pub(crate) fn list_revisions(
             "SELECT revision,summary,created_at FROM ui_view_revisions WHERE view_id=?1 ORDER BY revision DESC",
         )
         .map_err(database_error)?;
-    statement
+    let revisions = statement
         .query_map([view_id], |row| {
             Ok(UiViewRevision {
                 revision: row.get(0)?,
@@ -51,5 +51,6 @@ pub(crate) fn list_revisions(
         })
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(database_error)
+        .map_err(database_error)?;
+    Ok(revisions)
 }

@@ -42,6 +42,36 @@ E05: `rr_inputs.generation` を追加し、同 inputId 同 digest は duplicate�
 active root 入力は barrier と同一 transaction で保存。
 E06: policy 取得を compare-and-swap 化。queued root の deadline は claim 時に開始。
 
+## E07〜E25 追加作業（offline、継続セッション）
+
+本セッションは live lane（L01〜L04）を一切起動していない。事前の dirty 変更（別プロセスが編集中の
+`steward/*`、`role_routing/adapters/codex.rs`、`runtime/conversation_turn.rs`）は上書き・revert・取り込み
+していない。`src/generative_ui/revisions.rs` にあった既存の borrow error（本作業外）は crate の build を
+塞いでいたため最小修正した。
+
+| 単位 | 状態 | 今回変更ファイル | test 名 | 結果 |
+| --- | --- | --- | --- | --- |
+| E07 | 部分（offline compiler 完了、実行接続は executor 経由） | `role_routing/recipe.rs`（新規）、`repository_turns.rs` | `rr_06_recipe_invalid_dependency`, `rr_22_recipe_all_branches_bounded`, `rr_06_self_review_alias_rejected` | pass |
+| E08 | 部分（registry/driver 完了、AppState 常駐接続待ち） | `role_routing/driver.rs`（新規） | `rr_05_one_actor_per_conversation`, `rr_05_io_does_not_block_input`, `rr_05_two_steps_run_in_order` | pass |
+| E09 | 部分（context projection 完了、通常 turn 未接続） | `role_routing/context.rs`（新規） | `rr_07_amendment_present_once`, `rr_07_scope_no_widening`, `rr_07_revoked_source` | pass |
+| E10 | 部分（executor/permit/budget 完了、実 turn 未接続） | `role_routing/executor.rs`（新規） | `rr_22_loop_budget_at_the_executor`, `rr_22_deadline_at_the_executor`, `rr_05_queued_root_is_not_dispatchable_yet`, `rr_07_compile_reuses_the_recipe_plan` | pass |
+| E11 | 部分（step budget を receipt へ接続） | `role_routing/limits.rs`, `runtime/conversation_inputs_roles.rs` | `rr_22_role_route_enforces_the_step_budget`, `rr_22_loop_budget`, `rr_09_shared_resource_group` | pass |
+| E17 | 部分（host 検証を model verdict から分離） | `role_routing/review.rs`, `revision.rs`, `repository.rs` | `rr_24_model_verified_does_not_authorize_revision`, `rr_24_issue_shape_and_count_are_bounded`, `rr_25_unsupported_critique_is_preserved_but_cannot_revise` | pass |
+| E20 | 部分（一度だけの消費と step 同時 commit） | `role_routing/proposals.rs`, `schema.rs` | `rr_26_receipt_requires_named_candidate_and_rechecks_revision`（consume 二重拒否を含む） | pass |
+| E23 | 部分（generation/revision 束縛を追加） | `role_routing/classifier.rs` | `rr_08_late_classification_is_dropped`, `rr_08_mixed_greeting_is_not_a_valid_action`, `rr_08_timeout_unclear` | pass |
+| E24 | 部分（話者・revision 束縛を追加、永続 repository 未接続） | `role_routing/speech_queue.rs` | `rr_13_speech_is_bound_to_speaker_and_revision`, `rr_13_final_before_ack_speaks_final_only` | pass |
+| E25 | 部分（sourceId 重複受付拒否を追加） | `role_routing/repository_turns.rs` | `rr_14_asr_duplicate_receipt`, `rr_18_queue_order_and_restart_are_safe` | pass |
+
+command: `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib role_routing:: -- --test-threads=1` = **125 passed / 0 failed**。
+
+E17 の要点: model の `verdict="verified"` は host 検証を経ない限り revision を許可しない。
+`host_verify` は evidence ref が scope 内かつ未失効のときだけ `Verified` を返し、
+`revision_allowed` は host-verified 件数のみを見る。issue は最大 8 件・claim 2000 bytes に制限。
+E20 の要点: `consume_approval` は approved かつ未消費の proposal のみを対象に、snapshot と
+step 作成を同一 ambient transaction で行う。二重消費・stale・期限切れ・cloud 剥奪は起動0。
+E23/E24/E25 の要点: 分類結果は generation と revision の両一致時のみ適用。speech は話者必須・
+final は root の新しい revision のみ。ASR の同 sourceId 再送は inputId が違っても duplicate を返す。
+
 ## 実装監査（2026-09-21、未完了）
 
 このファイルは完了報告ではない。作業カードの合格条件に対しては、R1〜R3すべて未完了である。詳細なカード別の状態、根拠、残作業は[作業カード](../../docs/saaa-role-routing-work-cards.md#実装監査2026-09-21)を正本とする。
