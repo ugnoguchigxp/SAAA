@@ -7,16 +7,26 @@ export function projectLfmConversation(
   projectWorker: (events: AuditEvent[]) => VoicePipelineSnapshot,
 ): VoicePipelineSnapshot | null {
   const ordered = [...events].sort((a, b) => b.sequence - a.sequence);
-  const received = ordered.find((e) => e.eventName === "lfm-utterance-received");
+  const received = ordered.find((e) =>
+    ["lfm-utterance-received", "lfm-utterance-rejected"].includes(e.eventName),
+  );
   if (!received) return null;
-  const latestAsr = ordered.find((e) =>
+  const newestAsr = ordered.find((e) =>
     ["asr-final-received", "asr-failed", "capture-start-failed"].includes(e.eventName),
   );
-  if (latestAsr && latestAsr.sequence > received.sequence) return null;
+  if (newestAsr && newestAsr.sequence > received.sequence) return null;
+  const matchingAsr = ordered.find(
+    (e) =>
+      e.subjectId === received.subjectId &&
+      ["asr-final-received", "asr-failed", "capture-start-failed"].includes(e.eventName),
+  );
+  const utterance = received.subjectId;
+  const lfmEvents = ordered.filter(
+    (e) => e.subjectId === utterance && e.eventName.startsWith("lfm-"),
+  );
   const reasoningRequests = new Set(
-    ordered
-      .filter((e) => e.conversationId === received.conversationId)
-      .map((e) => e.attributes.reasoningRequestId)
+    lfmEvents
+      .map((e) => e.attributes.reasoningRequestId ?? e.attributes.handoffId)
       .filter((id): id is string => typeof id === "string"),
   );
   const newestTurn = ordered.find((e) => e.eventName === "turn-requested");
@@ -26,14 +36,15 @@ export function projectLfmConversation(
     !reasoningRequests.has(newestTurn.causationId ?? "")
   )
     return null;
-  const utterance = received.subjectId;
-  const lfmEvents = ordered.filter(
-    (e) => e.subjectId === utterance && e.eventName.startsWith("lfm-"),
-  );
   const decision = lfmEvents.find((e) =>
-    ["lfm-replied-without-delegation", "lfm-delegated-to-qwen", "lfm-response-failed"].includes(
-      e.eventName,
-    ),
+    [
+      "lfm-replied-without-reasoning-request",
+      "lfm-requested-qwen-reasoning",
+      "lfm-replied-without-delegation",
+      "lfm-delegated-to-qwen",
+      "lfm-response-failed",
+      "lfm-utterance-rejected",
+    ].includes(e.eventName),
   );
   const lfm: PipelineStage = {
     key: "lfm",
@@ -58,7 +69,11 @@ export function projectLfmConversation(
     ? { ...worker.stages[1]!, key: "qwen" }
     : {
         key: "qwen",
-        state: decision?.eventName === "lfm-delegated-to-qwen" ? "waiting" : "skipped",
+        state: ["lfm-requested-qwen-reasoning", "lfm-delegated-to-qwen"].includes(
+          decision?.eventName ?? "",
+        )
+          ? "waiting"
+          : "skipped",
         event: null,
         failureCode: null,
       };
@@ -74,11 +89,11 @@ export function projectLfmConversation(
         };
   return {
     anchor: received,
-    sessionId: latestAsr?.sessionId ?? null,
+    sessionId: matchingAsr?.sessionId ?? null,
     utteranceId: utterance,
     runId: turn?.runtimeRunId ?? null,
     stages: [
-      { key: "asr", state: "success", event: latestAsr ?? received, failureCode: null },
+      { key: "asr", state: "success", event: matchingAsr ?? received, failureCode: null },
       lfm,
       qwen,
       tts,
@@ -90,7 +105,7 @@ export function projectLfmConversation(
           ? "lfm-running"
           : qwen.state === "skipped"
             ? "lfm-responded"
-            : (worker?.diagnosis ?? "lfm-delegated"),
+            : (worker?.diagnosis ?? "lfm-reasoning-requested"),
     relatedEvents: ordered.filter((e) => e.conversationId === received.conversationId),
   };
 }

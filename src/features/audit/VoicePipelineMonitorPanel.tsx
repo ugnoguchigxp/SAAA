@@ -15,11 +15,12 @@ const failureHintKeys: Partial<Record<string, string>> = {
   "required-context-unavailable": "chat.contextRecovery.required-context-unavailable",
 };
 
-const lfmDiagnosis: Record<string,string> = {
-  "lfm-failed":"LFMの会話応対が失敗しました。LFMカードの具体的な失敗コードを確認してください。",
-  "lfm-running":"LFMが発言を受け取り、応対と委譲の要否を判断しています。",
-  "lfm-responded":"LFMが応対しました。この発言はQwenへの委譲を必要としません。",
-  "lfm-delegated":"LFMがQwenへ推論を依頼しました。追加の発言は引き続きLFMが受け取ります。",
+const lfmDiagnosis: Record<string, string> = {
+  "lfm-failed": "LFMの会話応対が失敗しました。LFMカードの具体的な失敗コードを確認してください。",
+  "lfm-running": "LFMが発言を受け取り、応対と思考依頼の要否を判断しています。",
+  "lfm-responded": "LFMが応対しました。この発言はQwenへの思考依頼を必要としません。",
+  "lfm-reasoning-requested":
+    "LFMがQwenへ思考を依頼しました。追加の発言は引き続きLFMが受け取ります。",
 };
 
 export function VoicePipelineMonitor({
@@ -63,7 +64,13 @@ export function VoicePipelineMonitor({
           <div className="pipeline-stage-wrap" key={stage.key}>
             <article className={`pipeline-stage pipeline-stage-${stage.state}`}>
               <div className="pipeline-stage-title">
-                <strong>{stage.key === "lfm" ? "LFM · 会話応対" : stage.key === "qwen" ? "Qwen · 推論・実行" : t(`audit.monitor.stages.${stage.key}`)}</strong>
+                <strong>
+                  {stage.key === "lfm"
+                    ? "LFM · 会話応対"
+                    : stage.key === "qwen"
+                      ? "Qwen · 推論・実行"
+                      : t(`audit.monitor.stages.${stage.key}`)}
+                </strong>
                 <span>{t(`audit.monitor.states.${stage.state}`)}</span>
               </div>
               <p>{stage.failureCode ?? stage.event?.eventName ?? t("audit.monitor.noEvent")}</p>

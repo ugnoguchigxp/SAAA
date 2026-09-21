@@ -42,49 +42,139 @@ pub(crate) fn migrate(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_lfm_voice_reasoning_request ON lfm_voice_utterances(reasoning_request_id)")
 }
 
+#[derive(Debug)]
+pub(crate) enum AcceptOutcome {
+    Process,
+    Completed {
+        reasoning_request_id: Option<String>,
+        request_content: Option<String>,
+    },
+}
+
+fn validate_frontend_binding(c: &Connection) -> Result<(), String> {
+    let routing = crate::persistence::load_role_routing_settings(c)?;
+    if !routing.enabled {
+        return Err("role-routing-disabled".into());
+    }
+    let frontend_id = routing
+        .roles
+        .frontend
+        .as_deref()
+        .ok_or("role-routing-frontend-not-configured")?;
+    let frontend = routing
+        .actors
+        .iter()
+        .find(|actor| actor.id == frontend_id)
+        .ok_or("role-routing-frontend-actor-missing")?;
+    if frontend.transport != "provider"
+        || frontend.provider_id.as_deref() != Some(crate::DYNAMIC_LAN_PROVIDER_ID)
+        || !frontend
+            .capabilities
+            .iter()
+            .any(|capability| capability == "social_reply")
+    {
+        return Err("role-routing-frontend-binding-mismatch".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn accept(
     c: &Connection,
     conversation: &str,
     utterance: &str,
     text: &str,
-) -> Result<(), String> {
+) -> Result<AcceptOutcome, String> {
     let tx = c.unchecked_transaction().map_err(database_error)?;
-    let exists: bool = tx
+    validate_frontend_binding(&tx)?;
+    let existing: Option<(
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = tx
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM lfm_voice_utterances WHERE utterance_id=?1)",
+            "SELECT u.conversation_id,input.content,u.status,u.reply_message_id,
+                    u.reasoning_request_id,request.content,u.claimed_run_id
+             FROM lfm_voice_utterances u
+             JOIN conversation_messages input ON input.id=u.user_message_id
+             LEFT JOIN conversation_messages request ON request.id=u.request_message_id
+             WHERE u.utterance_id=?1",
             [utterance],
-            |r| r.get(0),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
         )
+        .optional()
         .map_err(database_error)?;
-    if exists {
-        return Err("lfm-utterance-already-received".into());
+    if let Some((
+        stored_conversation,
+        stored_text,
+        status,
+        reply_message_id,
+        reasoning_request_id,
+        request_content,
+        claimed_run_id,
+    )) = existing
+    {
+        if stored_conversation != conversation || stored_text != text {
+            return Err("lfm-utterance-conflicts-with-original".into());
+        }
+        if matches!(status.as_str(), "respond" | "delegate") {
+            if reply_message_id.is_none() || (status == "delegate" && request_content.is_none()) {
+                return Err("lfm-utterance-completed-state-invalid".into());
+            }
+            let (reasoning_request_id, request_content) = if claimed_run_id.is_some() {
+                (None, None)
+            } else {
+                (reasoning_request_id, request_content)
+            };
+            return Ok(AcceptOutcome::Completed {
+                reasoning_request_id,
+                request_content,
+            });
+        }
+        tx.execute(
+            "UPDATE lfm_voice_utterances SET status='pending',failure_code=NULL WHERE utterance_id=?1",
+            [utterance],
+        ).map_err(database_error)?;
+        tx.commit().map_err(database_error)?;
+        return Ok(AcceptOutcome::Process);
     }
     let id = new_id("message");
     tx.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES(?1,?2,'user',?3,?4)", params![id,conversation,text,now_iso()]).map_err(database_error)?;
     tx.execute("INSERT INTO lfm_voice_utterances(utterance_id,conversation_id,user_message_id,status) VALUES(?1,?2,?3,'pending')",params![utterance,conversation,id]).map_err(database_error)?;
-    let routing_enabled = crate::persistence::load_role_routing_settings(&tx)?.enabled;
-    if routing_enabled {
-        let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
-        crate::role_routing::repository::record_input_receipt(
-            &tx,
-            None,
-            &format!("rr-voice-{utterance}"),
-            conversation,
-            &id,
-            &digest,
-            Some(utterance),
-            "voice",
-            "frontend_pending",
-            0,
-            now_ms(),
-        )?;
-    }
+    let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+    crate::role_routing::repository::record_input_receipt(
+        &tx,
+        None,
+        &format!("rr-voice-{utterance}"),
+        conversation,
+        &id,
+        &digest,
+        Some(utterance),
+        "voice",
+        "frontend_pending",
+        0,
+        now_ms(),
+    )?;
     tx.execute(
         "UPDATE conversations SET updated_at=?2 WHERE id=?1",
         params![conversation, now_iso()],
     )
     .map_err(database_error)?;
-    tx.commit().map_err(database_error)
+    tx.commit().map_err(database_error)?;
+    Ok(AcceptOutcome::Process)
 }
 
 pub(crate) fn context(c: &Connection, conversation: &str) -> Result<(Vec<Value>, bool), String> {

@@ -11,6 +11,7 @@ import { RoutingProposal } from "./RoutingProposal";
 import type { ChatPageProps } from "./chatPageTypes";
 
 const LATEST_THRESHOLD_PX = 24;
+const VOICE_BAR_WEIGHTS = [0.18, 0.32, 0.54, 0.78, 1, 0.7, 0.48, 0.72, 0.46, 0.28, 0.16];
 const scrollMemory = new Map<string, { scrollTop: number; followLatest: boolean }>();
 
 export function ChatPage({
@@ -27,6 +28,7 @@ export function ChatPage({
   streamingText,
   voiceState,
   voiceActivityLevel,
+  voiceActivityDetected,
   listeningEnabled,
   runtimeActivity,
   composer,
@@ -266,19 +268,25 @@ export function ChatPage({
             />
           </button>
           <div
-            className={`voice-activity-indicator${listeningEnabled ? " listening" : " paused"}${voiceActivityLevel >= 0.12 ? " detecting" : ""}`}
-            style={{ "--voice-level": voiceActivityLevel } as CSSProperties}
+            className={`voice-activity-indicator${listeningEnabled ? " listening" : " paused"}${voiceActivityDetected ? " detecting" : ""}`}
             role="img"
             aria-label={t(
               !listeningEnabled
                 ? "chat.voiceIndicatorPaused"
-                : voiceActivityLevel >= 0.12
+                : voiceActivityDetected
                   ? "chat.voiceIndicatorActive"
                   : "chat.voiceIndicatorIdle",
             )}
           >
-            {Array.from({ length: 11 }, (_, index) => (
-              <span key={index} />
+            {VOICE_BAR_WEIGHTS.map((weight, index) => (
+              <span
+                key={index}
+                style={
+                  {
+                    transform: `scaleY(${0.62 + voiceActivityLevel * (0.75 + weight * 1.35)})`,
+                  } as CSSProperties
+                }
+              />
             ))}
           </div>
           <textarea

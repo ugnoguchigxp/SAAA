@@ -27,6 +27,7 @@ export type ChatPageProps = {
   streamingText: StreamingTextProjection;
   voiceState: VoiceCaptureState;
   voiceActivityLevel: number;
+  voiceActivityDetected: boolean;
   listeningEnabled: boolean;
   runtimeActivity: ConversationRuntimeActivity[];
   composer: string;

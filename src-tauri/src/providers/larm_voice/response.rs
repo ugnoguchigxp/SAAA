@@ -5,8 +5,6 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResponseKind {
-    Acknowledgement,
-    Thinking,
     ToolProgress,
     Final,
 }
@@ -14,10 +12,8 @@ pub(crate) enum ResponseKind {
 impl ResponseKind {
     pub(crate) fn sequence(self) -> u8 {
         match self {
-            Self::Acknowledgement => 0,
-            Self::Thinking => 1,
-            Self::ToolProgress => 2,
-            Self::Final => 3,
+            Self::ToolProgress => 0,
+            Self::Final => 1,
         }
     }
 }

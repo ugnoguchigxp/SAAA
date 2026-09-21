@@ -292,6 +292,7 @@ function App() {
                 streamingText={turn.streamingText}
                 voiceState={voiceState}
                 voiceActivityLevel={voice.voiceActivityLevel}
+                voiceActivityDetected={voice.voiceActivityDetected}
                 listeningEnabled={voice.listeningEnabled}
                 runtimeActivity={turn.runtimeActivity}
                 composer={composer}

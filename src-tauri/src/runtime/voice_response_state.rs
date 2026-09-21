@@ -76,31 +76,4 @@ mod tests {
         state.enable(true, true);
         assert!(state.enabled());
     }
-
-    #[test]
-    fn later_progress_suppresses_a_delayed_acknowledgement() {
-        let mut state = HubState::default();
-        state.enable(true, true);
-        let queued = Arc::new(Mutex::new(Vec::new()));
-        for (kind, text) in [
-            (crate::larm_voice::ResponseKind::ToolProgress, "progress"),
-            (
-                crate::larm_voice::ResponseKind::Acknowledgement,
-                "acknowledgement",
-            ),
-            (crate::larm_voice::ResponseKind::ToolProgress, "progress-2"),
-        ] {
-            let queued = queued.clone();
-            state
-                .queue_in_sequence("run", kind, || {
-                    queued.lock().expect("queue lock").push(text);
-                    Ok(())
-                })
-                .unwrap();
-        }
-        assert_eq!(
-            *queued.lock().expect("queue lock"),
-            vec!["progress", "progress-2"]
-        );
-    }
 }

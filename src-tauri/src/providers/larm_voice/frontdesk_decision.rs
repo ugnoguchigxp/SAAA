@@ -9,6 +9,10 @@ use serde_json::{json, Value};
 pub(crate) struct ConversationDecision {
     pub say: String,
     pub think: bool,
+    #[serde(skip, default)]
+    pub classifier_failure: Option<&'static str>,
+    #[serde(skip, default)]
+    pub plain_text_fallback: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,19 +39,34 @@ pub(crate) async fn decide(
             .map_err(|_| "qwen-classifier-timeout")?
         },
     );
-    let mut decision = lfm?;
-    // Qwen is a supporting classifier, not the conversational owner. If its short classification
-    // is unavailable (for example while the reasoning slot is occupied), LFM keeps responding.
+    let decision = lfm?;
+    Ok(apply_reasoning_need(
+        decision,
+        qwen.map(|need| need.think),
+        pending_reasoning,
+    ))
+}
+
+fn apply_reasoning_need(
+    mut decision: ConversationDecision,
+    qwen: Result<bool, &'static str>,
+    pending_reasoning: bool,
+) -> ConversationDecision {
+    // LFM owns the reasoning-request decision whenever it returned the two-field contract. Qwen's
+    // parallel classification is used only when the LFM endpoint had to fall back to plain text.
     // A pending request is fenced in the host so no model can launch it twice.
     if pending_reasoning {
         decision.think = false;
-    } else if let Ok(reasoning) = qwen {
-        decision.think = reasoning.think;
+    } else if decision.plain_text_fallback {
+        match qwen {
+            Ok(reasoning) => decision.think = reasoning,
+            Err(code) => decision.classifier_failure = Some(code),
+        }
     }
     if decision.think {
         decision.say = "少々お待ちください、考えます。".into();
     }
-    Ok(decision)
+    decision
 }
 
 async fn respond_with_lfm(
@@ -61,10 +80,10 @@ async fn respond_with_lfm(
         .await
         .map_err(|_| "lfm-provider-acquire-failed")?;
     let provider = lease.provider();
-    let reserve = provider
+    let context_window = provider
         .context_window
-        .ok_or("lfm-context-window-missing")?
-        .output_reserve_tokens;
+        .ok_or("lfm-context-window-missing")?;
+    let reserve = context_window.output_reserve_tokens;
     if reserve < 256 {
         return Err("lfm-output-budget-too-small");
     }
@@ -88,7 +107,7 @@ async fn respond_with_lfm(
             .iter()
             .map(|m| m["content"].as_str().map_or(0, str::len) + 64)
             .sum::<usize>();
-        if input_bytes as u64 <= provider.context_window.unwrap().max_input_tokens() {
+        if input_bytes as u64 <= context_window.max_input_tokens() {
             break;
         }
         if messages.len() <= 3 {
@@ -96,8 +115,10 @@ async fn respond_with_lfm(
         }
         messages.remove(2); // Evict oldest history, never the final current utterance.
     }
-    let response = client.post(provider.endpoint("chat/completions")
-        .map_err(|_| "lfm-endpoint-invalid")?).bearer_auth(provider.token())
+    let endpoint = provider
+        .endpoint("chat/completions")
+        .map_err(|_| "lfm-endpoint-invalid")?;
+    let response = client.post(endpoint.clone()).bearer_auth(provider.token())
         .json(&json!({"model":provider.model,"messages":messages,"stream":false,
             "max_tokens":256,"temperature":0.1,
             "response_format":{"type":"json_schema","json_schema":{"name":"lfm_conversation_response","strict":true,"schema":{
@@ -105,9 +126,30 @@ async fn respond_with_lfm(
                 "required":["say","think"],"additionalProperties":false
             }}}})).send().await
         .map_err(|_| "lfm-request-failed")?;
-    if !response.status().is_success() {
+    let response = if response.status().is_success() {
+        response
+    } else if matches!(response.status().as_u16(), 400 | 422) {
+        // Some OpenAI-compatible LFM servers reject response_format. Keep LFM as the speaker and
+        // let the already parallel Qwen classifier supply only the `think` decision.
+        messages[0] = json!({"role":"system","content":
+            "あなたはSAAAの会話担当LFMです。最新のユーザー発言への短い自然な日本語応答だけを80文字以内で返してください。JSON、説明、思考タグは禁止です。自発的に話し続けたり、未開始の処理を約束したりしません。"});
+        let fallback = client
+            .post(endpoint)
+            .bearer_auth(provider.token())
+            .json(
+                &json!({"model":provider.model,"messages":messages,"stream":false,
+                "max_tokens":128,"temperature":0.1}),
+            )
+            .send()
+            .await
+            .map_err(|_| "lfm-plain-fallback-request-failed")?;
+        if !fallback.status().is_success() {
+            return Err("lfm-plain-fallback-rejected");
+        }
+        fallback
+    } else {
         return Err("lfm-http-request-rejected");
-    }
+    };
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -134,6 +176,9 @@ async fn classify_with_qwen(
         .await
         .map_err(|_| "qwen-classifier-acquire-failed")?;
     let provider = lease.provider();
+    let context_window = provider
+        .context_window
+        .ok_or("qwen-classifier-context-window-missing")?;
     let timeout = lease
         .request_budget(std::time::Duration::from_secs(15))
         .map_err(|_| "qwen-classifier-lease-expired")?;
@@ -146,6 +191,19 @@ async fn classify_with_qwen(
     let mut messages = vec![json!({"role":"system","content":
         "音声会話の最新発言が、具体的でまとまった依頼として調査・推論・計算・ツール実行を開始できるならthink=true。挨拶、相槌、話の途中、希望を述べただけ、確認待ちはfalse。出力はJSON {\"think\":trueまたはfalse} だけ。"})];
     messages.extend(history);
+    loop {
+        let input_bytes = messages
+            .iter()
+            .map(|message| message["content"].as_str().map_or(0, str::len) + 64)
+            .sum::<usize>();
+        if input_bytes as u64 <= context_window.max_input_tokens() {
+            break;
+        }
+        if messages.len() <= 2 {
+            return Err("qwen-classifier-context-too-large");
+        }
+        messages.remove(1);
+    }
     let response = client.post(provider.endpoint("chat/completions")
         .map_err(|_| "qwen-classifier-endpoint-invalid")?).bearer_auth(provider.token())
         .json(&json!({"model":provider.model,"messages":messages,"stream":false,
@@ -157,12 +215,14 @@ async fn classify_with_qwen(
     if !response.status().is_success() {
         return Err("qwen-classifier-rejected");
     }
-    let body = response
-        .bytes()
-        .await
-        .map_err(|_| "qwen-classifier-interrupted")?;
-    if body.len() > 32_768 {
-        return Err("qwen-classifier-too-large");
+    let mut stream = response.bytes_stream();
+    let mut body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| "qwen-classifier-interrupted")?;
+        if body.len() + chunk.len() > 32_768 {
+            return Err("qwen-classifier-too-large");
+        }
+        body.extend_from_slice(&chunk);
     }
     let value: Value = serde_json::from_slice(&body).map_err(|_| "qwen-classifier-json-invalid")?;
     let choices = value["choices"]
@@ -171,6 +231,14 @@ async fn classify_with_qwen(
         .ok_or("qwen-classifier-choices-invalid")?;
     if choices[0]["finish_reason"] != "stop" {
         return Err("qwen-classifier-incomplete");
+    }
+    if choices[0]["message"]
+        .get("tool_calls")
+        .is_some_and(|value| {
+            !value.is_null() && value.as_array().is_none_or(|items| !items.is_empty())
+        })
+    {
+        return Err("qwen-classifier-tool-call-not-allowed");
     }
     serde_json::from_str(
         choices[0]["message"]["content"]
@@ -196,12 +264,20 @@ fn parse(bytes: &[u8]) -> Result<ConversationDecision, &'static str> {
     {
         return Err("lfm-tool-call-not-allowed");
     }
-    let mut decision: ConversationDecision = serde_json::from_str(
-        choice["message"]["content"]
-            .as_str()
-            .ok_or("lfm-reply-missing")?,
-    )
-    .map_err(|_| "lfm-decision-contract-invalid")?;
+    let content = choice["message"]["content"]
+        .as_str()
+        .ok_or("lfm-reply-missing")?
+        .trim();
+    let mut decision: ConversationDecision = match serde_json::from_str(content) {
+        Ok(decision) => decision,
+        Err(_) if plain_say_is_safe(content) => ConversationDecision {
+            say: content.into(),
+            think: false,
+            classifier_failure: None,
+            plain_text_fallback: true,
+        },
+        Err(_) => return Err("lfm-decision-contract-invalid"),
+    };
     if decision.say.trim().is_empty() || decision.say.chars().count() > 80 {
         return Err("lfm-say-length-invalid");
     }
@@ -210,6 +286,15 @@ fn parse(bytes: &[u8]) -> Result<ConversationDecision, &'static str> {
         decision.say = "少々お待ちください、考えます。".into();
     }
     Ok(decision)
+}
+
+fn plain_say_is_safe(content: &str) -> bool {
+    !content.is_empty()
+        && content.chars().count() <= 80
+        && !content.starts_with('{')
+        && !content.starts_with('[')
+        && !content.starts_with("```")
+        && !content.to_ascii_lowercase().contains("<think")
 }
 
 #[cfg(test)]
@@ -242,5 +327,28 @@ mod tests {
             assert!(parse(&response(invalid, "stop")).is_err());
         }
         assert!(parse(&response(r#"{"say":"考えます。","think":true}"#, "length")).is_err());
+        let plain = parse(&response("はい、続きをどうぞ。", "stop")).unwrap();
+        assert!(plain.plain_text_fallback);
+        assert_eq!(plain.say, "はい、続きをどうぞ。");
+        assert!(parse(&response(r#"{"say":"途中"#, "stop")).is_err());
+    }
+
+    #[test]
+    fn lfm_owns_the_reasoning_decision_unless_plain_text_fallback_was_needed() {
+        let structured = ConversationDecision {
+            say: "続きをどうぞ。".into(),
+            think: false,
+            classifier_failure: None,
+            plain_text_fallback: false,
+        };
+        assert!(!apply_reasoning_need(structured, Ok(true), false).think);
+
+        let plain = ConversationDecision {
+            say: "承知しました。".into(),
+            think: false,
+            classifier_failure: None,
+            plain_text_fallback: true,
+        };
+        assert!(apply_reasoning_need(plain, Ok(true), false).think);
     }
 }

@@ -43,7 +43,18 @@ pub fn enable(database: &str) -> Result<String, String> {
             .as_array_mut()
             .ok_or("Role-routing actors are invalid")?;
         let frontend_id = "local-conversation-frontend";
-        if !actors.iter().any(|actor| actor["id"] == frontend_id) {
+        if let Some(actor) = actors.iter().find(|actor| actor["id"] == frontend_id) {
+            let capabilities = actor["capabilities"].as_array();
+            if actor["transport"] != "provider"
+                || actor["providerId"] != provider.id()
+                || !capabilities
+                    .is_some_and(|items| items.iter().any(|item| item == "social_reply"))
+            {
+                return Err(
+                    "Existing conversation frontend actor has an incompatible binding".into(),
+                );
+            }
+        } else {
             actors.push(serde_json::json!({
                 "id":frontend_id,
                 "label":"Harness conversation frontend",
@@ -59,6 +70,7 @@ pub fn enable(database: &str) -> Result<String, String> {
         }
         value["roles"]["frontend"] = serde_json::json!(frontend_id);
     }
+    value["limits"]["frontendTimeoutMs"] = serde_json::json!(3_000);
     value["enabled"] = serde_json::json!(true);
     crate::persistence::save_settings_documents_to_connection(&mut connection, &documents)?;
     let policy = crate::persistence::load_role_routing_settings(&connection)?;

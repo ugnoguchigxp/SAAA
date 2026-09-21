@@ -88,7 +88,9 @@ export function useAmbientVoiceSession({
   const [interimTranscript, setInterimTranscript] = useState("");
   const [asrProjection, setAsrProjection] = useState(initialVoiceAsrProjection);
   const [voiceActivityLevel, setVoiceActivityLevel] = useState(0);
+  const [voiceActivityDetected, setVoiceActivityDetected] = useState(false);
   const voiceActivityLevelRef = useRef(0);
+  const voiceActivityDetectedRef = useRef(false);
   const voiceActivityUpdatedAtRef = useRef(0);
   const voiceSessionRef = useRef(initialVoiceSession);
   const suspensionReasonRef = useRef<SuspensionReason | null>(null);
@@ -141,7 +143,9 @@ export function useAmbientVoiceSession({
   useEffect(() => {
     if (voiceState === "recording") return;
     voiceActivityLevelRef.current = 0;
+    voiceActivityDetectedRef.current = false;
     setVoiceActivityLevel(0);
+    setVoiceActivityDetected(false);
   }, [voiceState]);
 
   const updateListeningEnabledCommitted = useCommittedCallback(updateListeningEnabled);
@@ -427,8 +431,12 @@ export function useAmbientVoiceSession({
         packetFrame: packetVoiceFrame,
         packetCount: () => voiceAsrPacketCountRef.current,
         clearTranscript: () => setInterimTranscript(""),
-        onActivity: ({ rms }) => {
+        onActivity: ({ hasSpeech, rms }) => {
           if (disposedRef.current) return;
+          if (hasSpeech !== voiceActivityDetectedRef.current) {
+            voiceActivityDetectedRef.current = hasSpeech;
+            setVoiceActivityDetected(hasSpeech);
+          }
           const level = Math.max(0, Math.min(1, (rms - 0.003) / 0.027));
           const now = performance.now();
           if (
@@ -658,6 +666,7 @@ export function useAmbientVoiceSession({
     voiceBusy: voiceSessionBusy(voiceSession),
     voiceProcessing: voiceSessionProcessing(voiceSession),
     voiceActivityLevel,
+    voiceActivityDetected,
     interimTranscript: { text: interimTranscript, projection: asrProjection },
     toggleAmbientListening,
     suspendVoiceForSpeech,

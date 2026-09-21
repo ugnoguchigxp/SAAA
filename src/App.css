@@ -432,7 +432,6 @@ h3 {
   gap: 12px;
 }
 .voice-activity-indicator {
-  --voice-level: 0;
   width: 32px;
   height: 34px;
   display: flex;
@@ -460,32 +459,14 @@ h3 {
   flex: 0 0 auto;
   border-radius: 999px;
   background: currentColor;
-  transform: scaleY(0.75);
   transform-origin: center;
-  transition: transform 140ms ease;
+  transition: transform 90ms linear;
 }
 .voice-activity-indicator span:nth-child(3n + 1) {
   height: 7px;
 }
 .voice-activity-indicator span:nth-child(4n + 2) {
   height: 11px;
-}
-.voice-activity-indicator.detecting span {
-  animation: voice-level-pulse 560ms ease-in-out infinite alternate;
-}
-.voice-activity-indicator.detecting span:nth-child(2n) {
-  animation-delay: -180ms;
-}
-.voice-activity-indicator.detecting span:nth-child(3n) {
-  animation-delay: -360ms;
-}
-@keyframes voice-level-pulse {
-  from {
-    transform: scaleY(0.7);
-  }
-  to {
-    transform: scaleY(calc(1.25 + var(--voice-level)));
-  }
 }
 .composer textarea {
   min-width: 0;
@@ -1277,8 +1258,7 @@ h3 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .llm-thinking-indicator span,
-  .voice-activity-indicator.detecting span {
+  .llm-thinking-indicator span {
     animation: none;
   }
   .llm-thinking-indicator span:nth-child(2) {

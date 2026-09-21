@@ -81,10 +81,47 @@ pub(crate) async fn receive_lfm_utterance(
     let ready = super::current(&conversation_id)
         .await
         .map_err(|_| "lfm-session-not-ready")?;
-    state
+    let accepted = match state
         .sqlite_writer
-        .write(|c| repository::accept(c, &conversation_id, &utterance_id, text.trim()))?;
+        .write(|c| repository::accept(c, &conversation_id, &utterance_id, text.trim()))
+    {
+        Ok(accepted) => accepted,
+        Err(code) => {
+            let safe = if code.starts_with("lfm-") || code.starts_with("role-routing-") {
+                code
+            } else {
+                "lfm-persistence-failed".into()
+            };
+            record(
+                &state,
+                &conversation_id,
+                &utterance_id,
+                "lfm-utterance-rejected",
+                Some(&safe),
+            );
+            return Err(safe);
+        }
+    };
     let _ = on_received.send(());
+    let speech_epoch = speech_priority::epoch(&conversation_id);
+    if let repository::AcceptOutcome::Completed {
+        reasoning_request_id,
+        request_content,
+    } = accepted
+    {
+        record(
+            &state,
+            &conversation_id,
+            &utterance_id,
+            "lfm-utterance-restored",
+            None,
+        );
+        return Ok(LfmUtteranceResult {
+            reasoning_request_id,
+            request_content,
+            speech_epoch,
+        });
+    }
     record(
         &state,
         &conversation_id,
@@ -92,7 +129,11 @@ pub(crate) async fn receive_lfm_utterance(
         "lfm-utterance-received",
         None,
     );
-    let speech_epoch = speech_priority::epoch(&conversation_id);
+    let frontend_timeout_ms = state.sqlite_readers.read(|connection| {
+        Ok(crate::persistence::load_role_routing_settings(connection)?
+            .limits
+            .frontend_timeout_ms)
+    })?;
     let result = async {
         let (history, pending) = state
             .sqlite_readers
@@ -105,16 +146,37 @@ pub(crate) async fn receive_lfm_utterance(
             None,
         );
         let decision = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
+            std::time::Duration::from_millis(frontend_timeout_ms),
             frontdesk_decision::decide(&ready, history, pending),
         )
         .await
         .map_err(|_| "lfm-response-timeout")?
         .map_err(str::to_string)?;
+        if let Some(code) = decision.classifier_failure {
+            record(
+                &state,
+                &conversation_id,
+                &utterance_id,
+                "lfm-reasoning-classifier-degraded",
+                Some(code),
+            );
+        }
+        if decision.plain_text_fallback {
+            record(
+                &state,
+                &conversation_id,
+                &utterance_id,
+                "lfm-output-mode-fallback",
+                None,
+            );
+        }
         // An owner switch cancels stale decisions instead of handing work to a different chat.
-        super::current(&conversation_id)
+        let current = super::current(&conversation_id)
             .await
             .map_err(|_| "lfm-session-changed")?;
+        if !std::sync::Arc::ptr_eq(&ready, &current) {
+            return Err("lfm-session-changed".into());
+        }
         let reasoning_request = state
             .sqlite_writer
             .write(|c| repository::complete(c, &utterance_id, &decision))?;

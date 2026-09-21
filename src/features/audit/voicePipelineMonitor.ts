@@ -26,7 +26,10 @@ export type VoicePipelineSnapshot = {
   utteranceId: string | null;
   runId: string | null;
   diagnosis:
-    | "lfm-failed" | "lfm-running" | "lfm-responded" | "lfm-delegated"
+    | "lfm-failed"
+    | "lfm-running"
+    | "lfm-responded"
+    | "lfm-reasoning-requested"
     | "no-voice-events"
     | "asr-failed"
     | "delivery-waiting"
@@ -72,7 +75,10 @@ function terminalLlmEvent(events: AuditEvent[]) {
 }
 
 export function projectLatestResponsePipeline(events: AuditEvent[]): VoicePipelineSnapshot {
-  return projectLfmConversation(events, projectStandardResponsePipeline) ?? projectStandardResponsePipeline(events);
+  return (
+    projectLfmConversation(events, projectStandardResponsePipeline) ??
+    projectStandardResponsePipeline(events)
+  );
 }
 
 function projectStandardResponsePipeline(events: AuditEvent[]): VoicePipelineSnapshot {

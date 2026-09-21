@@ -4,6 +4,8 @@ fn decision(think: bool) -> ConversationDecision {
     ConversationDecision {
         say: "はい。".into(),
         think,
+        classifier_failure: None,
+        plain_text_fallback: false,
     }
 }
 
@@ -14,11 +16,19 @@ fn enable_role_routing(connection: &mut rusqlite::Connection) {
         .find(|document| document.namespace == "routing.roles")
         .unwrap();
     policy.value_json["enabled"] = serde_json::json!(true);
-    policy.value_json["actors"] = serde_json::json!([{
-        "id":"qwen","label":"Qwen","aliases":[],"transport":"provider",
-        "providerId":crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"location":"local",
-        "resourceGroup":"harness-reasoning","maxInputBytes":65536,"capabilities":["reason"]
-    }]);
+    policy.value_json["actors"] = serde_json::json!([
+        {
+            "id":"lfm","label":"LFM","aliases":[],"transport":"provider",
+            "providerId":crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"location":"local",
+            "resourceGroup":"harness-backchannel","maxInputBytes":16000,"capabilities":["social_reply","classify"]
+        },
+        {
+            "id":"qwen","label":"Qwen","aliases":[],"transport":"provider",
+            "providerId":crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"location":"local",
+            "resourceGroup":"harness-reasoning","maxInputBytes":65536,"capabilities":["reason"]
+        }
+    ]);
+    policy.value_json["roles"]["frontend"] = serde_json::json!("lfm");
     policy.value_json["roles"]["reasoner"] = serde_json::json!("qwen");
     policy.value_json["recipes"] = serde_json::json!([{
         "id":"reasoner-response","action":"respond","roles":["reasoner"],"enabled":true
@@ -40,6 +50,19 @@ fn reasoning_request_keeps_all_segments_and_claims_one_qwen_run_without_duplicat
     repo::accept(&c, CONVERSATION, "u2", "2泊3日の計画を作って。").unwrap();
     let (reasoning_request, content) = repo::complete(&c, "u2", &decision(true)).unwrap().unwrap();
     assert_eq!(content, "京都へ行きたい。\n2泊3日の計画を作って。");
+    match repo::accept(&c, CONVERSATION, "u2", "2泊3日の計画を作って。").unwrap() {
+        repo::AcceptOutcome::Completed {
+            reasoning_request_id,
+            request_content,
+        } => {
+            assert_eq!(
+                reasoning_request_id.as_deref(),
+                Some(reasoning_request.as_str())
+            );
+            assert_eq!(request_content.as_deref(), Some(content.as_str()));
+        }
+        repo::AcceptOutcome::Process => panic!("completed utterance must be restored"),
+    }
     assert_eq!(
         c.query_row(
             "SELECT count(*) FROM rr_inputs WHERE root_id IS NULL",
@@ -90,6 +113,24 @@ fn reasoning_request_keeps_all_segments_and_claims_one_qwen_run_without_duplicat
             Ok(())
         })
         .unwrap();
+    state
+        .sqlite_writer
+        .write(|c| {
+            match repo::accept(c, CONVERSATION, "u2", "2泊3日の計画を作って。")? {
+                repo::AcceptOutcome::Completed {
+                    reasoning_request_id,
+                    request_content,
+                } => {
+                    assert!(reasoning_request_id.is_none());
+                    assert!(request_content.is_none());
+                }
+                repo::AcceptOutcome::Process => {
+                    panic!("a claimed reasoning request must remain completed")
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
     input.run_id = "run_duplicate".into();
     assert!(crate::runtime::turns::prepare_runtime_run(&state, &input)
         .unwrap_err()
@@ -113,8 +154,9 @@ fn reasoning_request_keeps_all_segments_and_claims_one_qwen_run_without_duplicat
 
 #[test]
 fn altered_or_cross_conversation_reasoning_request_is_rejected() {
-    let c = rusqlite::Connection::open_in_memory().unwrap();
+    let mut c = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::schema::initialize_database(&c).unwrap();
+    enable_role_routing(&mut c);
     repo::accept(&c, CONVERSATION, "u1", "計算して。").unwrap();
     let (reasoning_request, _) = repo::complete(&c, "u1", &decision(true)).unwrap().unwrap();
     let input: crate::StartTurnInput = serde_json::from_value(serde_json::json!({
@@ -123,6 +165,25 @@ fn altered_or_cross_conversation_reasoning_request_is_rejected() {
     }))
     .unwrap();
     assert!(repo::claim_reasoning_request(&c, &input).is_err());
+}
+
+#[test]
+fn disabled_role_routing_rejects_voice_before_persisting_it() {
+    let c = rusqlite::Connection::open_in_memory().unwrap();
+    crate::persistence::schema::initialize_database(&c).unwrap();
+    assert_eq!(
+        repo::accept(&c, CONVERSATION, "u-disabled", "保存しないで。").unwrap_err(),
+        "role-routing-disabled"
+    );
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM conversation_messages WHERE content='保存しないで。'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        0
+    );
 }
 
 #[test]

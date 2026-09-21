@@ -336,13 +336,12 @@ async fn execute_conversation_turn_with_candidates(
         )
         .map_err(Into::into);
     }
-    let shared_larm_voice = route.source == "harness"
-        && input.input_origin == "voice"
-        && (crate::larm_voice::enabled()
-            || input
-                .source_id
-                .as_deref()
-                .is_some_and(crate::larm_voice::frontdesk_repository::is_reasoning_request_id));
+    let shared_larm_voice = should_share_larm_voice_session(
+        &route.source,
+        route.primary_provider_id.as_deref(),
+        &input.input_origin,
+        input.source_id.as_deref(),
+    );
     let harness = providers.harness.clone();
     if let Some(client) =
         crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)
@@ -1002,6 +1001,19 @@ async fn execute_conversation_turn_with_candidates(
     }
 }
 
+fn should_share_larm_voice_session(
+    route_source: &str,
+    primary_provider_id: Option<&str>,
+    input_origin: &str,
+    source_id: Option<&str>,
+) -> bool {
+    let routes_to_dynamic_lan = route_source == "harness"
+        || primary_provider_id.is_some_and(|id| id == crate::DYNAMIC_LAN_PROVIDER_ID);
+    let is_larm_request = crate::larm_voice::enabled()
+        || source_id.is_some_and(crate::larm_voice::frontdesk_repository::is_reasoning_request_id);
+    routes_to_dynamic_lan && input_origin == "voice" && is_larm_request
+}
+
 async fn await_premium_step(
     state: &AppState,
     input: &StartTurnInput,
@@ -1363,6 +1375,30 @@ use recovery::{context_recovery_message, provider_route_fallback_allowed};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn role_routed_voice_reasoning_reuses_the_lfm_session() {
+        let reasoning_request_id = "lfm_reasoning_utterance-1";
+
+        assert!(should_share_larm_voice_session(
+            "provider",
+            Some(crate::DYNAMIC_LAN_PROVIDER_ID),
+            "voice",
+            Some(reasoning_request_id),
+        ));
+        assert!(!should_share_larm_voice_session(
+            "provider",
+            Some("some-other-provider"),
+            "voice",
+            Some(reasoning_request_id),
+        ));
+        assert!(!should_share_larm_voice_session(
+            "provider",
+            Some(crate::DYNAMIC_LAN_PROVIDER_ID),
+            "text",
+            Some(reasoning_request_id),
+        ));
+    }
 
     #[test]
     fn rr_19_codex_prompt_keeps_current_request_and_bounds_history() {
