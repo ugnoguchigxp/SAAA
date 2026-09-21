@@ -5,7 +5,7 @@ mod repository_policy;
 #[path = "repository_turns.rs"]
 mod repository_turns;
 
-pub(crate) use repository_policy::capture_current_policy;
+pub(crate) use repository_policy::{capture_current_policy, capture_policy_version};
 pub(crate) use repository_turns::{
     accept_provider_turn, record_actor_activity, record_provider_turn_finish,
     record_provider_turn_start, record_provider_turn_start_in_transaction, record_step_usage,

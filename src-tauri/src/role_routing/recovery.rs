@@ -138,7 +138,7 @@ mod tests {
 
     fn fixture() -> Connection {
         let connection = Connection::open_in_memory().expect("database");
-        connection.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY);INSERT INTO conversations VALUES('c');").expect("base");
+        connection.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY);CREATE TABLE settings_documents(namespace TEXT, key TEXT, value_json TEXT, UNIQUE(namespace,key));INSERT INTO conversations VALUES('c');").expect("base");
         crate::role_routing::schema::migrate(&connection).expect("schema");
         connection
             .execute(
@@ -185,6 +185,50 @@ mod tests {
             queued_root_ids(&connection, 8).expect("queue after restart"),
             vec!["queued-a", "queued-b"]
         );
+    }
+
+    #[test]
+    fn rr_18_queued_policy_immutable() {
+        let mut connection = fixture();
+        connection
+            .execute(
+                "UPDATE rr_roots SET phase='failed',active_slot=NULL WHERE root_id='running'",
+                [],
+            )
+            .expect("finish existing root");
+        connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('step-queued-a','queued-a',0,0,'actor','respond','planned','fp-1','{}')",
+                [],
+            )
+            .expect("step");
+        interface_capture_new_policy(&connection);
+        let claimed = claim_next_queued(&mut connection, 4)
+            .expect("claim")
+            .expect("queued root");
+        assert_eq!(claimed.root_id, "queued-a");
+        let (policy_id, fingerprint): (String, String) = connection
+            .query_row(
+                "SELECT r.policy_id,s.config_fingerprint FROM rr_roots r JOIN rr_steps s ON s.root_id=r.root_id WHERE r.root_id='queued-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("claimed root");
+        // The queued receipt keeps the policy snapshot it was created with, even after a newer
+        // policy version exists.
+        assert_eq!(policy_id, "p");
+        assert_eq!(fingerprint, "fp-1");
+    }
+
+    fn interface_capture_new_policy(connection: &Connection) {
+        connection
+            .execute(
+                "INSERT INTO settings_documents(namespace,key,value_json) VALUES('routing.roles','default','{\"enabled\":true}')",
+                [],
+            )
+            .expect("settings");
+        crate::role_routing::repository::capture_policy_version(connection, None, 10)
+            .expect("capture");
     }
 
     #[test]

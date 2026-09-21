@@ -39,7 +39,6 @@ pub(super) fn provider_route_fallback_allowed(
     provider_fallback_allowed(kind, output_started)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::context_recovery_message;

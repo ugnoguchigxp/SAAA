@@ -16,7 +16,7 @@ fn wr_t15_codex_wire_contains_graph_and_source_frame_with_receipt() {
     dispatch.world = Some((service, frame));
     let policy = dispatch.thread_context().unwrap();
     assert!(!policy.contains("correlates_with"));
-    f.set_now(f.now()+3000); // Thread allocation exceeds the old Frame TTL.
+    f.set_now(f.now() + 3000); // Thread allocation exceeds the old Frame TTL.
     let prompt = dispatch.turn_input("hello").unwrap();
     assert!(prompt.contains("correlates_with"));
     assert!(prompt.contains("situation"));
@@ -56,41 +56,53 @@ fn codex_matrix_case(transition: &str) {
     let initial = service.prepare_frame(request).unwrap();
     let mut bodies = Vec::new();
 
-    let mut send = |succeeded: bool| -> Result<(), String> {
-        let mut dispatch = Dispatch::new(h.fixture.writer.clone(), RUN_ID.into());
-        dispatch.world = Some((service.clone(), initial.clone()));
-        let policy = dispatch.thread_context()?;
-        let prompt = dispatch.turn_input("hello")?;
-        let thread = json!({"params":{"developerInstructions":policy}});
-        let turn = json!({"params":{"input":[{"type":"text","text":prompt}]}});
-        dispatch.dispatch(&thread, &turn)?;
-        dispatch.finish(succeeded)?;
-        bodies.push(turn);
-        Ok(())
-    };
-
     if matches!(transition, "correction" | "forget" | "scope-switch") {
         h.transition(transition);
     }
     let denied = transition == "scope-switch";
-    let first = send(transition != "fallback");
-    if denied {
-        assert!(first.is_err(), "Codex scope switch must stop before turn/start");
-    } else {
-        first.unwrap();
+    {
+        let mut send = |succeeded: bool| -> Result<(), String> {
+            let mut dispatch = Dispatch::new(h.fixture.writer.clone(), RUN_ID.into());
+            dispatch.world = Some((service.clone(), initial.clone()));
+            let policy = dispatch.thread_context()?;
+            let prompt = dispatch.turn_input("hello")?;
+            let thread = json!({"params":{"developerInstructions":policy}});
+            let turn = json!({"params":{"input":[{"type":"text","text":prompt}]}});
+            dispatch.dispatch(&thread, &turn)?;
+            dispatch.finish(succeeded)?;
+            bodies.push(turn);
+            Ok(())
+        };
+        let first = send(transition != "fallback");
+        if denied {
+            assert!(
+                first.is_err(),
+                "Codex scope switch must stop before turn/start"
+            );
+        } else {
+            first.unwrap();
+        }
+        if matches!(
+            transition,
+            "tool-continuation" | "fallback" | "session-resume"
+        ) {
+            h.fixture.set_now(h.fixture.now() + 3_000);
+            send(true).unwrap();
+        }
     }
-    if matches!(transition, "tool-continuation" | "fallback" | "session-resume") {
-        h.fixture.set_now(h.fixture.now() + 3_000);
-        send(true).unwrap();
-    }
-    drop(send);
 
     let frame = bodies.last().and_then(|body| {
         let text = body["params"]["input"][0]["text"].as_str()?;
-        serde_json::from_str::<Value>(text).ok().map(|v| v["world_evidence"]["frame"].clone())
+        serde_json::from_str::<Value>(text)
+            .ok()
+            .map(|v| v["world_evidence"]["frame"].clone())
     });
     if matches!(transition, "correction" | "forget") {
-        assert!(!frame.as_ref().unwrap().to_string().contains("Speculative Decoding"));
+        assert!(!frame
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("Speculative Decoding"));
     }
     let request_count = bodies.len();
     println!(

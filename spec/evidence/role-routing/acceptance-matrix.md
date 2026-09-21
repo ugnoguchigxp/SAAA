@@ -64,21 +64,21 @@ lane が `offline` の行は認証済みモデル・実機を起動しない。`
 | A | 担当 E | 目標試験名 | lane | 本表作成時の結果 |
 | --- | --- | --- | --- | --- |
 | A01 | E10 | `rr_05_normal_turn_two_steps` | offline | 未実装 |
-| A02 | E01/E07 | `rr_03_policy_validation` | offline | 未検証（actor/recipe validator は存在） |
-| A03 | E05 | `rr_04_receipt_retry`, `rr_04_same_id_changed_payload` | offline | 未実装（`rr_04_queue_full_leaves_no_input_message` は pass） |
+| A02 | E01/E07 | `rr_03_policy_cas_conflict`, `rr_03_policy_validation` | offline | 部分（CAS は `rr_03_policy_cas_conflict` pass。製品 validator は `validate_settings`。E07 の recipe 検査待ち） |
+| A03 | E05 | `rr_04_receipt_retry`, `rr_04_same_id_changed_payload` | offline | pass（`rr_04_receipt_retry_and_conflict` が retry/conflict を検証。`rr_04_queue_full_leaves_no_input_message` も pass） |
 | A04 | E10/E23 | `rr_05_frontend_ack_then_reasoner` | offline | 未実装 |
 | A05 | E23 | `rr_08_mixed_greeting` | offline | pass（`rr_08_mixed_greeting_is_not_a_valid_action`） |
 | A06 | E23 | `rr_08_timeout_unclear` | offline | pass |
 | A07 | E11 | `rr_09_shared_resource_group` | offline | 未実装 |
 | A08 | E13/E22 | `rr_10_reviewer_resolved_mutation_denied` | offline | pass（`rr_10_*`, `rr_24_reviewer_cannot_call_a_mutating_tool`） |
 | A09 | E14 | `rr_11_duplicate_operation_once` | offline | pass（`rr_11_duplicate_operation_keeps_the_original_reservation`） |
-| A10 | E02 | `rr_12_db_failure_no_speech` | offline | 未実装 |
+| A10 | E02 | `rr_12_db_failure_no_speech` | offline | pass（E02 実装） |
 | A11 | E24 | `rr_13_late_synthesis_not_played` | offline | pass（`rr_13_*`） |
 | A12 | E27 | `rr_15_asr_tool_tts_reconnect_e2e` | offline | 未実装 |
-| A13 | E05 | `rr_16_multiple_pending_inputs` | offline | 未実装 |
+| A13 | E05 | `rr_16_multiple_pending_inputs` | offline | pass（E05 実装） |
 | A14 | E23 | `rr_16_status_does_not_cancel` | offline | pass |
 | A15 | E23/E26 | `rr_16_clarification_keeps_barrier` | offline | 未実装 |
-| A16 | E02 | `rr_12_old_revision_result_rejected` | offline | 未実装 |
+| A16 | E02 | `rr_12_old_revision_result_rejected` | offline | pass（E02 実装） |
 | A17 | E13/E14 | `rr_10_update_between_reserve_and_invoke` | offline | 未実装 |
 | A18 | E14 | `rr_11_detached_owner_settles` | offline | 未実装 |
 | A19 | E25 | `rr_18_restart_no_replay` | offline | 未検証（`rr_18_*` pass） |

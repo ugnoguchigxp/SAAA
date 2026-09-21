@@ -1,5 +1,47 @@
 # Role Routing 実装進捗
 
+## E00〜E06 完了作業（2026-09-22）
+
+基準 HEAD: 作業開始時 `7471ecadc1d64a5b3c1d4e6a898669be80a2cb8a`。作業中に別プロセスが
+`e8c79608b138324e51839ef15bff5914f4146771`（`feat: complete delegated work and world delivery updates`）を
+commit し、その commit には当時の E00〜E02 成果物が含まれた。E03 以降の変更は現時点で未 commit。
+本作業は git の書き込み操作を行っていない。別プロセスの dirty 変更（`adapters/codex.rs` 等）は
+上書き・取り込み・revert していない。
+E00〜E06（P0 基準・契約と P1 台帳・採用境界）を実装し、下表の test を通した。
+lane はすべて offline。live lane（L01〜L04）は未実行で、認証済みモデルを起動していない。
+
+| 単位 | 状態 | 今回変更ファイル | test 名 / command | 結果 |
+| --- | --- | --- | --- | --- |
+| E00 | 完了 | `spec/evidence/role-routing/acceptance-matrix.md`（新規）、`baseline.md`、`progress.md` | 文書整合（RR40/A42/P5 欠落0・重複0） | pass |
+| E01 | 完了 | `role_routing/contracts.rs` | `rr_01_unknown_field`, `rr_01_utf8_limit`, `rr_01_invalid_id` | 3 pass |
+| E02 | 完了 | `role_routing/repository_turns.rs` | `rr_12_old_revision_result_rejected`, `rr_16_pending_input_blocks_real_acceptance`, `rr_12_db_failure_no_speech` | 3 pass |
+| E03 | 完了 | `role_routing/schema.rs`, `role_routing/steps.rs`（新規）、`coordinator.rs`, `mod.rs` | `rr_02_start_claims_one_planned_step`, `rr_02_one_active_reasoning_step`, `rr_02_migrate_existing_partial_state`, `rr_05_duplicate_completion_once` | 4 pass |
+| E04 | 完了 | `role_routing/steps.rs`, `repository_turns.rs` | `rr_12_intermediate_output_not_final`, `rr_12_finalize_once`, `rr_22_usage_is_saved_with_the_active_step` | 3 pass |
+| E05 | 完了 | `role_routing/schema.rs`, `repository_turns.rs`, `coordinator.rs` | `rr_04_receipt_retry_and_conflict`, `rr_16_multiple_pending_inputs` | 2 pass |
+| E06 | 完了 | `role_routing/repository_policy.rs`, `repository.rs`, `coordinator.rs`, `repository_turns.rs`, `recovery.rs` | `rr_03_policy_cas_conflict`, `rr_18_queued_policy_immutable`, `rr_22_deadline_starts_at_claim` | 3 pass |
+| E07 | 部分（offline compiler 完了、executor 未接続） | `role_routing/recipe.rs`（新規）、`mod.rs` | `rr_06_recipe_invalid_dependency`, `rr_22_recipe_all_branches_bounded`, `rr_06_self_review_alias_rejected` | 3 pass |
+| E08 | 部分（driver/registry 完了、AppState 接続待ち） | `role_routing/driver.rs`（新規）、`mod.rs` | `rr_05_one_actor_per_conversation`, `rr_05_io_does_not_block_input`, `rr_05_two_steps_run_in_order`（+ 既存 `rr_05_commit_before_dispatch`） | 4 pass |
+| E09 | 部分（projection 検証完了、通常 turn 未接続） | `role_routing/context.rs`（新規）、`mod.rs` | `rr_07_amendment_present_once`, `rr_07_scope_no_widening`, `rr_07_revoked_source` | 3 pass |
+| E11 | 部分（pure budget/resourceGroup 完了、dispatch 接続待ち） | `role_routing/limits.rs` | `rr_22_loop_budget`, `rr_09_shared_resource_group`（+ 既存 cost/deadline） | 4 pass |
+| E10 | 未着手 | - | `rr_05_normal_turn_two_steps` | 未実装 |
+| E12〜E37 | 未着手 | - | - | 未実装 |
+
+command: `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib role_routing::` = 111 passed / 0 failed（E09 追加後）。
+command: `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib runtime::` = 193 passed / 0 failed / 6 ignored。
+full lib: 1322 passed / 1 failed / 23 ignored。唯一の failure は role-routing 外の既存 dirty 変更
+`larm_voice::world_tests::wr_t22_http_route_transition_matrix`（`world_wire_fixture.rs` の
+`Bearer token-llm` vs `Bearer token-v1`）で、本作業では触れていない。
+
+E02 の採用境界: 採用は root phase=`responding`・cancel=0・result 側 step の revision 一致時のみ。
+`draining`（入力 barrier / 停止要求）と terminal は拒否、DB 失敗は assistant message と同時に rollback。
+E03/E04: `idx_rr_steps_one_active_reasoning` で root ごと active reasoning step を1つに制限し、
+Start は `steps::claim_next_planned_step` で最小 ordinal の planned 1件だけ running にする。
+完了は `steps::complete_step`（同一 terminal は no-op、別 terminal は conflict）、採用は
+`steps::finalize_root`（1回だけ）に分離。usage/output は ordinal 0 固定を廃止し active step に保存。
+E05: `rr_inputs.generation` を追加し、同 inputId 同 digest は duplicate、別 digest は conflict、
+active root 入力は barrier と同一 transaction で保存。
+E06: policy 取得を compare-and-swap 化。queued root の deadline は claim 時に開始。
+
 ## 実装監査（2026-09-21、未完了）
 
 このファイルは完了報告ではない。作業カードの合格条件に対しては、R1〜R3すべて未完了である。詳細なカード別の状態、根拠、残作業は[作業カード](../../docs/saaa-role-routing-work-cards.md#実装監査2026-09-21)を正本とする。

@@ -39,7 +39,17 @@ pub(crate) async fn stream_dynamic_lan_provider(
             };
         }
     };
-    stream_allocated_dynamic_lan(provider, history, timeout_ms.saturating_sub(started.elapsed().as_millis() as u64).max(1), connection, prior_cleanup, context).await
+    stream_allocated_dynamic_lan(
+        provider,
+        history,
+        timeout_ms
+            .saturating_sub(started.elapsed().as_millis() as u64)
+            .max(1),
+        connection,
+        prior_cleanup,
+        context,
+    )
+    .await
 }
 pub(crate) async fn stream_allocated_dynamic_lan(
     provider: &DynamicLanProviderSettings,

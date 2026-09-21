@@ -1,8 +1,8 @@
 # World Model 実装残件専用計画 — Terra作業カード
 
-作成日: 2026-09-21。状態: 実装・回帰検証中。対象は現在の作業ツリーからの差分実装。
+作成日: 2026-09-21。状態: **offline実装残件完了・live製品受入待ち**。対象は現在の作業ツリーからの差分実装。
 
-進捗は [残件の実装状況](../evidence/world-delivery/remaining-progress.md) を参照。合格条件は本書を維持し、未検証カードを完了扱いにしない。
+進捗は `spec/evidence/world-delivery/remaining-progress.md`、最終判定は `spec/evidence/world-delivery/remaining-results.md` を参照。T00〜T24はoffline合格済み。親計画WD-13のlive項目は未完了として維持する。
 
 ## 1. 目的とこの計画の使い方
 

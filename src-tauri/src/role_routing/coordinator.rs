@@ -3,7 +3,7 @@
 //! Effects are returned only after their state and audit event commit.  The caller owns dispatch;
 //! this module intentionally performs no provider, tool, or speech I/O.
 use super::reducer::{self, Event, Phase, State, Transition};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension};
 
 pub(crate) fn apply(
     connection: &mut Connection,
@@ -22,7 +22,7 @@ pub(crate) fn apply(
 /// Applies a transition within the caller's receipt transaction. This is the path used when a
 /// newly accepted root is promoted from `queued` immediately before provider dispatch.
 pub(crate) fn apply_in_transaction(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     root_id: &str,
     event: Event,
     now_ms: i64,
@@ -48,11 +48,31 @@ pub(crate) fn apply_in_transaction(
     if changed != 1 {
         return Err("Role-routing root disappeared during transition".into());
     }
-    if matches!(event, Event::Start) && transition.state.phase == Phase::Responding {
+    // Any dispatch effect comes from the committed transition, so a resume behaves the same as an
+    // initial start: supersede the prior revision's child, claim one planned step, and start the
+    // deadline only on the first claim.
+    if let Some(dispatch_revision) = transition.effects.iter().find_map(|effect| match effect {
+        super::reducer::Effect::DispatchActor { revision } => Some(*revision),
+        _ => None,
+    }) {
         transaction
             .execute(
-                "UPDATE rr_steps SET status='running',started_at_ms=COALESCE(started_at_ms,?1) WHERE root_id=?2 AND revision=?3 AND status='planned'",
-                params![now_ms, root_id, transition.state.revision],
+                "UPDATE rr_steps SET status='cancelled',completed_at_ms=?1 WHERE root_id=?2 AND revision<>?3 AND status IN ('planned','running','draining')",
+                params![now_ms, root_id, i64::from(dispatch_revision)],
+            )
+            .map_err(|error| error.to_string())?;
+        super::steps::claim_next_planned_step(
+            transaction,
+            root_id,
+            i64::from(dispatch_revision),
+            now_ms,
+        )?;
+        // The root deadline starts when the root is actually claimed for dispatch, not when its
+        // receipt was written. A queued root therefore does not consume its inference budget.
+        transaction
+            .execute(
+                "UPDATE rr_roots SET deadline_at_ms=?1 + COALESCE((SELECT json_extract(config_json,'$.limits.rootTimeoutMs') FROM rr_policy_versions WHERE id=rr_roots.policy_id),180000) WHERE root_id=?2 AND deadline_at_ms IS NULL",
+                params![now_ms, root_id],
             )
             .map_err(|error| error.to_string())?;
     }
@@ -131,6 +151,7 @@ fn event_name(event: &Event) -> &'static str {
         Event::Start => "root_started",
         Event::CandidateReady { .. } => "candidate_ready",
         Event::InputBarrier => "input_barrier",
+        Event::Release => "input_released",
         Event::Resume => "root_resumed",
         Event::Cancel => "root_cancelled",
         Event::Fail => "root_failed",
@@ -206,6 +227,57 @@ mod tests {
             )
             .expect("step");
         assert_eq!(step, ("running".into(), Some(2)));
+    }
+
+    #[test]
+    fn rr_02_start_claims_one_planned_step() {
+        let mut connection = fixture();
+        // A second planned step for the same revision must stay planned after Start.
+        connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('s2','r',0,1,'actor','review','planned','{}','{}')",
+                [],
+            )
+            .expect("second planned step");
+        apply(&mut connection, "r", Event::Start, 2).expect("start");
+        let statuses: Vec<(String, String)> = {
+            let mut statement = connection
+                .prepare("SELECT id,status FROM rr_steps WHERE root_id='r' ORDER BY ordinal")
+                .expect("prepare");
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .expect("query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("rows")
+        };
+        assert_eq!(
+            statuses,
+            vec![
+                ("s".to_string(), "running".to_string()),
+                ("s2".to_string(), "planned".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn rr_22_deadline_starts_at_claim() {
+        let mut connection = fixture();
+        connection
+            .execute(
+                "UPDATE rr_roots SET deadline_at_ms=NULL WHERE root_id='r'",
+                [],
+            )
+            .expect("clear deadline");
+        apply(&mut connection, "r", Event::Start, 5).expect("claim");
+        let deadline: Option<i64> = connection
+            .query_row(
+                "SELECT deadline_at_ms FROM rr_roots WHERE root_id='r'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("deadline");
+        // The policy fixture has no explicit limit, so the default 180000ms applies from claim.
+        assert_eq!(deadline, Some(180_005));
     }
 
     #[test]

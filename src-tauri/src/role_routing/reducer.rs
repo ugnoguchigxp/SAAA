@@ -13,6 +13,11 @@ pub(crate) enum Event {
     Start,
     CandidateReady { revision: u32 },
     InputBarrier,
+    /// Resolves an input barrier as status/social: resume the same revision and adopt the held
+    /// result without discarding the in-flight step.
+    Release,
+    /// Resolves an input barrier as an amendment: advance the revision, supersede the old child,
+    /// and dispatch a new step.
     Resume,
     Cancel,
     Fail,
@@ -20,6 +25,8 @@ pub(crate) enum Event {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Effect {
     DispatchActor { revision: u32 },
+    /// Adopt the result that was held while the barrier was up, at the current revision.
+    FinalizeHeld { revision: u32 },
     CancelChildren,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +55,18 @@ pub(crate) fn reduce(state: &State, event: Event) -> Transition {
             next.barrier = true;
             next.phase = Phase::Draining;
         }
+        Event::Release if next.phase == Phase::Draining && next.barrier => {
+            // Status/social input: keep the revision and the running step, then adopt the held
+            // result once the classifier resolves.
+            next.barrier = false;
+            next.phase = Phase::Responding;
+            effects.push(Effect::FinalizeHeld {
+                revision: next.revision,
+            });
+        }
         Event::Resume if next.phase == Phase::Draining && next.barrier => {
+            // Amendment: the old child is superseded, so the revision advances and a new step is
+            // dispatched. The coordinator cancels earlier-revision steps before claiming.
             next.barrier = false;
             next.revision += 1;
             next.phase = Phase::Responding;

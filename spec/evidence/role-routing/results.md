@@ -33,3 +33,37 @@
 - 全体 `cargo check` はrole-routing外のcalendar変更にあるmodule/command重複とOAuth API不整合で停止する。
 
 したがってRR-39、および計画全体を完了とは判定しない。
+
+## 実施済み（2026-09-22、E00〜E09）
+
+E00〜E06 は roadmap の P0/P1 として実装・単体実行済み。E07〜E09 は offline 部品まで。
+live lane（L01〜L04）は認証済みモデルを起動しておらず未実施。全体完成とは判定しない。
+
+- `cargo test --locked --lib role_routing::`: 111 passed / 0 failed。
+  - E01: `rr_01_unknown_field`, `rr_01_utf8_limit`, `rr_01_invalid_id`。
+  - E02: `rr_12_old_revision_result_rejected`, `rr_16_pending_input_blocks_real_acceptance`, `rr_12_db_failure_no_speech`。
+  - E03: `rr_02_start_claims_one_planned_step`, `rr_02_one_active_reasoning_step`, `rr_02_migrate_existing_partial_state`, `rr_05_duplicate_completion_once`。
+  - E04: `rr_12_intermediate_output_not_final`, `rr_12_finalize_once`。
+  - E05: `rr_04_receipt_retry_and_conflict`, `rr_16_multiple_pending_inputs`。
+  - E06: `rr_03_policy_cas_conflict`, `rr_18_queued_policy_immutable`, `rr_22_deadline_starts_at_claim`。
+  - E07: `rr_06_recipe_invalid_dependency`, `rr_22_recipe_all_branches_bounded`, `rr_06_self_review_alias_rejected`。
+  - E08: `rr_05_one_actor_per_conversation`, `rr_05_io_does_not_block_input`, `rr_05_two_steps_run_in_order`。
+  - E09: `rr_07_amendment_present_once`, `rr_07_scope_no_widening`, `rr_07_revoked_source`。
+  - E11(部分): `rr_22_loop_budget`, `rr_09_shared_resource_group`。
+- 全体 `cargo test --locked --lib`: 1340 passed / 0 failed / 23 ignored。
+- `cargo test --locked --lib runtime::`: 193 passed / 0 failed / 6 ignored。
+- `bun run typecheck`: pass。`bun test ./tests/role-routing-codex.test.ts`: 2 pass。
+- `git diff --check`: pass。変更した role_routing ファイルは `rustfmt --check` pass。
+
+## 未実施・部分（2026-09-22 時点）
+
+- E07 recipe compiler / E08 driver+registry / E09 context projection / E11 budget は単体 test 合格だが、
+  通常 turn の実 dispatch・AppState 登録・gateway 接続には未接続。したがって部分。
+- E10 通常 turn と Provider/Sink 接続、E12〜E37 は未着手。
+- V4 `sqlite_architecture`: `main_database_open_and_connection_ownership_are_centralized` が
+  `compose_after_connect` の定義を `conversation_turn.rs` 内に要求するが、並行する dirty 変更で
+  同関数が import へ移っているため fail。role-routing 変更とは無関係。
+- `bun run size:check`: role-routing と他機能の既存未登録/ratchet 超過で fail（主変更の範囲で fail）。
+  新規 `steps.rs` / `recipe.rs` / `driver.rs` / `context.rs` は未登録。roadmap の指示どおり
+  baseline の一括登録・一括緩和は行っていない。E36 で対象を絞って処理する。
+- L01〜L04、性能 P1〜P5、A01〜A42 の live/縦通し受入は未実施。

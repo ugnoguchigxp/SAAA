@@ -20,6 +20,7 @@ const CANCEL_GRACE: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub(crate) static BUNDLED_ROLE_ROUTING_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
+type BeforeSend<'a> = Option<&'a mut dyn FnMut(&mut Value) -> Result<(), String>>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SidecarRequest {
@@ -55,20 +56,6 @@ pub(crate) fn bundled_sidecar_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "Role-routing Codex sidecar is unavailable".to_string())
 }
 
-pub(crate) fn run(
-    request: &SidecarRequest,
-    cancellation: &RunCancellation,
-) -> Result<SidecarOutcome, String> {
-    let bridge = tool_gateway_bridge(&request.id)?;
-    run_at_with_bridge(
-        &bundled_sidecar_path()?,
-        request,
-        cancellation,
-        bridge.as_ref(),
-        None,
-    )
-}
-
 /// Binds the final JSONL body immediately before the child can receive it.
 pub(crate) fn run_observed(
     request: &SidecarRequest,
@@ -87,6 +74,7 @@ pub(crate) fn run_observed(
 
 /// Runs one request over a fresh JSONL sidecar process. `executable` is explicit so test
 /// fixtures can prove argv, EOF and cancellation behavior without a Codex credential.
+#[cfg(test)]
 pub(crate) fn run_at(
     executable: &Path,
     request: &SidecarRequest,
@@ -95,12 +83,27 @@ pub(crate) fn run_at(
     run_at_with_bridge(executable, request, cancellation, None, None)
 }
 
+#[cfg(test)]
+fn run_at_observed(
+    executable: &Path,
+    request: &SidecarRequest,
+    before_send: &mut dyn FnMut(&mut Value) -> Result<(), String>,
+) -> Result<SidecarOutcome, String> {
+    run_at_with_bridge(
+        executable,
+        request,
+        &RunCancellation::default(),
+        None,
+        Some(before_send),
+    )
+}
+
 fn run_at_with_bridge(
     executable: &Path,
     request: &SidecarRequest,
     cancellation: &RunCancellation,
     bridge: Option<&ToolGatewayBridge>,
-    before_send: Option<&mut dyn FnMut(&mut Value) -> Result<(), String>>,
+    before_send: BeforeSend<'_>,
 ) -> Result<SidecarOutcome, String> {
     if request.id.is_empty()
         || request.step_id.is_empty()
@@ -326,6 +329,23 @@ mod tests {
             run_at(&executable, &input, &RunCancellation::default()).expect("valid result"),
             SidecarOutcome::Result {
                 text: "done".into(),
+                usage: None
+            }
+        );
+    }
+
+    #[test]
+    fn wr_t15_role_sdk_observer_changes_the_actual_jsonl_frame() {
+        let (_directory, executable) = fixture("read line; case \"$line\" in *saaa.world-turn.v1*) ;; *) exit 12;; esac; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"observed\"}'");
+        let outcome = run_at_observed(&executable, &request(), &mut |wire| {
+            wire["prompt"] = Value::String("saaa.world-turn.v1 current request".into());
+            Ok(())
+        })
+        .expect("observed frame reaches sidecar");
+        assert_eq!(
+            outcome,
+            SidecarOutcome::Result {
+                text: "observed".into(),
                 usage: None
             }
         );

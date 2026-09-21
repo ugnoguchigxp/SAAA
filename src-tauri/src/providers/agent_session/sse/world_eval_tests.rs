@@ -3,8 +3,8 @@
 use super::workflow_tests::{request, respond, Sink};
 use super::*;
 use crate::memory::personal_state::world::runtime_test_support::RUN_ID;
-use crate::runtime::context::world::{g1_tests as graph, turn::compose_parts};
 use crate::runtime::context::world::wire_test_support::{Harness, TRANSITIONS};
+use crate::runtime::context::world::{g1_tests as graph, turn::compose_parts};
 use std::sync::Arc;
 
 fn messages(value: &Value) -> &Vec<Value> {
@@ -341,17 +341,31 @@ fn agent_matrix_case(transition: &str) {
     assert_eq!(refresh.is_err(), denied, "agent-session/{transition}");
 
     let input = crate::StartTurnInput {
-        run_id: RUN_ID.into(), conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
-        content: "hello".into(), workspace_path: None, retry_input_message_id: None,
-        source_id: None, scope_refs: vec![], input_origin: "text".into(),
+        run_id: RUN_ID.into(),
+        conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
+        content: "hello".into(),
+        workspace_path: None,
+        retry_input_message_id: None,
+        source_id: None,
+        scope_refs: vec![],
+        input_origin: "text".into(),
         presentation_mode: "visual".into(),
     };
     let sink = Sink::default();
     let context = ModelStreamContext {
-        reasoning_effort:"low", max_output_tokens:256, input:&input, on_event:&sink,
-        cancellation:Arc::default(), context_health:"green",
-        context_sources:&h.composed.envelope.selected, context_omissions:&h.composed.envelope.omitted,
-        output_persistence:Some(crate::ProviderOutputPersistence {state:&h.state,session_id:&h.session,world:Some(world)}),
+        reasoning_effort: "low",
+        max_output_tokens: 256,
+        input: &input,
+        on_event: &sink,
+        cancellation: Arc::default(),
+        context_health: "green",
+        context_sources: &h.composed.envelope.selected,
+        context_omissions: &h.composed.envelope.omitted,
+        output_persistence: Some(crate::ProviderOutputPersistence {
+            state: &h.state,
+            session_id: &h.session,
+            world: Some(world),
+        }),
     };
     let mut bodies = Vec::new();
     if !denied {
@@ -363,7 +377,9 @@ fn agent_matrix_case(transition: &str) {
             initial
         };
         let first_body = generation::turn_request_body(&first_input);
-        let first = envelope.begin(&context, 0, &first_input, &[], true).unwrap();
+        let first = envelope
+            .begin(&context, 0, &first_input, &[], true)
+            .unwrap();
         bodies.push(first_body);
         if transition == "fallback" {
             first.fail("upstream");
@@ -375,39 +391,89 @@ fn agent_matrix_case(transition: &str) {
         if matches!(transition, "tool-continuation" | "fallback") {
             let base = request::render_turn_input(&history).unwrap();
             let next = if transition == "tool-continuation" {
-                generation::Envelope::new(&base).follow_up(&json!({"callId":"world-tool","name":"present_ui","result":{"ok":true}}).to_string())
-            } else { base };
+                generation::Envelope::new(&base).follow_up(
+                    &json!({"callId":"world-tool","name":"present_ui","result":{"ok":true}})
+                        .to_string(),
+                )
+            } else {
+                base
+            };
             let body = generation::turn_request_body(&next);
-            let generation = generation::Envelope::new(&next).begin(&context, 1, &next, &[], true).unwrap();
+            let generation = generation::Envelope::new(&next)
+                .begin(&context, 1, &next, &[], true)
+                .unwrap();
             generation.complete().unwrap();
             bodies.push(body);
         }
     }
     let frame_content = bodies.last().and_then(agent_world_content);
     if matches!(transition, "correction" | "forget") {
-        assert!(!frame_content.as_deref().unwrap().contains("Speculative Decoding"));
+        assert!(!frame_content
+            .as_deref()
+            .unwrap()
+            .contains("Speculative Decoding"));
     }
     if let Some(body) = bodies.last() {
-        let digest:String=h.fixture.writer.read_serialized(|c|c.query_row("SELECT request_digest FROM context_generations ORDER BY ordinal DESC LIMIT 1",[],|r|r.get(0)).map_err(crate::database_error)).unwrap();
-        assert_eq!(digest,format!("{:x}",Sha256::digest(serde_json::to_vec(body).unwrap())));
+        let digest: String = h
+            .fixture
+            .writer
+            .read_serialized(|c| {
+                c.query_row(
+                    "SELECT request_digest FROM context_generations ORDER BY ordinal DESC LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(crate::database_error)
+            })
+            .unwrap();
+        assert_eq!(
+            digest,
+            format!("{:x}", Sha256::digest(serde_json::to_vec(body).unwrap()))
+        );
     }
-    println!("WORLD_MATRIX_CASE={}",json!({
-        "case_id":format!("agent-session:{transition}"),"route":"agent-session","transition":transition,
-        "source_kinds":[],"frame_digest":frame_content.as_deref().map(|v|format!("{:x}",Sha256::digest(v.as_bytes()))),
-        "wire_digest":bodies.last().map(|v|format!("{:x}",Sha256::digest(serde_json::to_vec(v).unwrap()))),
-        "expected":if denied{"denied-before-agent-turn"}else{"current-frame-and-matching-receipt"},
-        "actual":if denied{"denied-before-agent-turn"}else{"current-frame-and-matching-receipt"},
-        "pass":true,"verification_level":"offline-wire","omission_reason":if denied{Some("scope-changed")}else{None},
-        "request_count":bodies.len()
-    }));
+    let source_kinds = frame_content
+        .as_deref()
+        .and_then(|content| {
+            saaa_reasoning_contract::world::WorldEvidence::from_content(content).ok()
+        })
+        .map(|world| world.source_kinds)
+        .unwrap_or_default();
+    println!(
+        "WORLD_MATRIX_CASE={}",
+        json!({
+            "case_id":format!("agent-session:{transition}"),"route":"agent-session","transition":transition,
+            "source_kinds":source_kinds,"frame_digest":frame_content.as_deref().map(|v|format!("{:x}",Sha256::digest(v.as_bytes()))),
+            "wire_digest":bodies.last().map(|v|format!("{:x}",Sha256::digest(serde_json::to_vec(v).unwrap()))),
+            "expected":if denied{"denied-before-agent-turn"}else{"current-frame-and-matching-receipt"},
+            "actual":if denied{"denied-before-agent-turn"}else{"current-frame-and-matching-receipt"},
+            "pass":true,"verification_level":"offline-wire","omission_reason":if denied{Some("scope-changed")}else{None},
+            "request_count":bodies.len()
+        })
+    );
 }
 
 fn agent_world_content(body: &Value) -> Option<String> {
     let input = body["input"][0]["text"].as_str()?;
     let value: Value = serde_json::from_str(input).ok()?;
     fn messages(value: &Value) -> Option<&Vec<Value>> {
-        value.get("messages").and_then(Value::as_array)
+        value
+            .get("messages")
+            .and_then(Value::as_array)
             .or_else(|| value.get("conversation").and_then(messages))
     }
-    messages(&value)?.iter().filter_map(|m|m["content"].as_str()).find(|v|v.contains("[WORLD_MODEL")).map(str::to_owned)
+    let content = messages(&value)?
+        .iter()
+        .filter_map(|m| m["content"].as_str())
+        .find(|v| v.contains(crate::runtime::context::world::render::WORLD_HEADER))?;
+    let raw = content
+        .split_once(crate::runtime::context::world::render::WORLD_HEADER)?
+        .1
+        .split_once(crate::runtime::context::world::render::WORLD_FOOTER)?
+        .0;
+    Some(format!(
+        "{}{}{}",
+        crate::runtime::context::world::render::WORLD_HEADER,
+        raw,
+        crate::runtime::context::world::render::WORLD_FOOTER
+    ))
 }

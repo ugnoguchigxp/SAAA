@@ -76,7 +76,13 @@ impl Dispatch {
             .and_then(|items| items[0]["text"].as_str())
             .ok_or("Codex must send one current instruction")?;
         let decoded = serde_json::from_str::<Value>(instruction).ok();
-        let instruction = wire::instruction(self.world.is_some(),snapshot,thread_body,instruction,&decoded)?;
+        let instruction = wire::instruction(
+            self.world.is_some(),
+            snapshot,
+            thread_body,
+            instruction,
+            &decoded,
+        )?;
         let generation = generation::begin_with_writer(
             self.writer.clone(),
             BeginGeneration {

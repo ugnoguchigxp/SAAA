@@ -2,7 +2,7 @@
 
 作成日: 2026-09-21。状態: **計画のみ。実装完了を示す文書ではない。**
 
-[作業カード](saaa-role-routing-work-cards.md) / [全体計画](saaa-role-routing-plan.md) / [実行契約](saaa-role-routing-execution-contract.md) / [受入仕様](saaa-role-routing-acceptance.md) / [学習契約](saaa-role-routing-learning-contract.md) / [検証証跡](../evidence/role-routing/results.md)
+[作業カード](saaa-role-routing-work-cards.md) / [全体計画](saaa-role-routing-plan.md) / [実行契約](saaa-role-routing-execution-contract.md) / [受入仕様](saaa-role-routing-acceptance.md) / [学習契約](saaa-role-routing-learning-contract.md) / 検証証跡 `spec/evidence/role-routing/results.md`
 
 ## 1. 目的と使い方
 

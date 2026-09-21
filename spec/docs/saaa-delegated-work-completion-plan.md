@@ -1,22 +1,26 @@
 # 自然な依頼から実行・報告まで続く委任仕事 実装計画
 
-作成日: 2026-09-21。状態: 実装進行中（2026-09-21 更新）。担当想定: Terra。
+作成日: 2026-09-21。状態: 独立監査後の残件修正・再受入待ち（2026-09-21 更新）。担当想定: Terra。
 
 ## 0. 現在の実装状況
 
-この節は計画本文と実装の差を明示する進捗スナップショットである。詳細な試験結果は
-`spec/evidence/delegated-work/results.md`、個別証跡は
-`spec/evidence/delegated-work/progress.md` を正本とする。
+残件の実施順・対象ファイル・回帰試験・完了条件は、後続の
+[委任仕事の残件修正・統合受入計画（Terra向け）](saaa-delegated-work-repair-terra-plan.md)
+を正本とする。本書の実行契約・最終受入条件は維持する。
+独立監査は `spec/evidence/delegated-work/independent-audit-2026-09-21.md`。
+既存の `progress.md` / `results.md` は部品試験の成功履歴として保持するが、
+そこにある complete をカード全条件の達成として引き継がない。
 
 | 状態 | カード | 実装済み／残作業 |
 | --- | --- | --- |
-| 完了 | DW-00〜06（DW-07除く）、DW-08、DW-09、DW-11、DW-13 | 台帳・自然文受付・UI確認・起点分離・intent/recovery・イベント cursor・schedule 連携・report outbox・撤回/forget を実装し、対象試験で確認済み。 |
-| 完了 | DW-07 | `delegated-codex-sdk-macos-v1` は Pi adapter の状態を workspace 内 `.saaa` に固定し、モデル生成 shell は Codex SDK の `read-only` sandbox に分離した。追加 filesystem permission を空にして workspace 外の読取りを拒否し、実認証 SDK で workspace read 成功、write/network/scope 拒否を確認した。 |
-| 完了 | DW-10 | Goal plan と step/dependency を新旧 Goal に永続化。queue は step graph の依存を解釈し、終端 transaction で準備済み後続を一度だけ enqueue する。失敗時は最大2回の durable replan を実装し、Task 成果物参照を永続化して panel に表示する。 |
-| 完了 | DW-12 | 配送・音声状態の永続化、再起動時の二重再生防止、UI 再接続表示を実装。macOS System TTS の実再生で `playback_finished`、存在しない voice による実 renderer 失敗で `delivery_unknown` を確認した。 |
-| 部分完了 | DW-14 | 制約 SDK profile、IPC contract、desktop build/bundle/launch/IPC-ready/cleanup は確認済み。複数 Goal・話題切替・競合・hold・撤回・sleep/restart を一続きに実 UI で操作する最終統合受入が残る。 |
+| 完了済み部分を保持 | DW-00 | baselineと既存部品の成功履歴。後続DWR-00で現状を再採取する。 |
+| 部分完了・再受入待ち | DW-01〜06、DW-08、DW-09、DW-11、DW-13 | source/権限、自然文plan、複数Goal再openと撤回、busy復帰、receipt/binding、report transaction、wake/Chat更新、forget/revokeを修正する。origin分離・single slot・既存cursor等は再利用する。 |
+| 部分完了 | DW-07 | SDKの実readとwrite/network/scope拒否の証跡は保持。read/test別のtool境界、登録recipe、時間予算、再実行可能な拒否試験と実test受入が残る。 |
+| 部分完了 | DW-10 | plan/dependency/replan/artifact参照の部品を保持。自然文経路のplan作成、結果根拠によるverifier、Goal全体の完了を接続する。 |
+| 部分完了 | DW-12 | 実TTSのplayback_finished/delivery_unknownと再生抑止の証跡は保持。全入口の設定OFF/ON、配送・再接続・forgetとの組合せを再受入する。 |
+| 未完了 | DW-14 | desktop smokeと個別fixtureは成功。実装修正と、実モデル・実profile・実UI・sleep/restartを含む最終統合受入の両方が残る。 |
 
-`bun run desktop:smoke` は build、bundle、launch、IPC ready、cleanup を通過している。`bun run check:local` は共有ワークツリーの今回対象外ファイルの整形差分で停止しており、今回触れた frontend は型検査・整形済みである。
+既存の `bun run desktop:smoke` 成功は build、bundle、launch、IPC ready、cleanup の証明であり、業務操作の証明ではない。全体gateの対象外失敗と本テーマの未達を分け、steward自身のsize超過等は後続計画で解消する。
 
 ## 1. 解消する弱点と完成状態
 

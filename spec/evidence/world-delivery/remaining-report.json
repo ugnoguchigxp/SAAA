@@ -1,8 +1,11 @@
 {
   "suite": "world-remaining",
   "schemaVersion": 1,
-  "startedAt": "2026-09-21T04:02:42.502Z",
-  "completedAt": "2026-09-21T04:02:54.103Z",
+  "code_revision": "e8c79608b138324e51839ef15bff5914f4146771",
+  "dirty_diff_digest": "b3349f1a17a291ef5a3aaf28cf934c46eed3be743d2644f4a5b78ed5fb7dc596",
+  "generated_at": "2026-09-21T05:11:44.892Z",
+  "startedAt": "2026-09-21T05:11:44.785Z",
+  "completedAt": "2026-09-21T05:12:09.800Z",
   "complete": true,
   "liveVerified": false,
   "scope": "T01-T21 card regression; separate route matrix, performance and product gates are required",
@@ -33,17 +36,22 @@
       "manifest": "crates/personal-state-core/Cargo.toml"
     },
     {
+      "name": "memory::personal_state::world::extraction_tests::wr_t09_finalized_user_reaches_existing_world_ledger",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::extraction_tests::wr_t09_five_elements_commit_with_host_evidence_and_remain_hypotheses",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
       "name": "memory::personal_state::world::remaining_perf_tests::wr_t23_source_frame_additional_p95",
       "result": "ignored",
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "memory::personal_state::world::runtime_sources_tests::wr_t04_delegation_uses_workspace_ownership_and_detects_withdrawal",
-      "result": "ok",
-      "manifest": "src-tauri/Cargo.toml"
-    },
-    {
-      "name": "memory::personal_state::world::extraction_tests::wr_t09_finalized_user_reaches_existing_world_ledger",
+      "name": "memory::personal_state::world::extraction_tests::wr_t10_correction_and_revoked_source_cannot_revive_old_fact",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
@@ -53,17 +61,7 @@
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "memory::personal_state::world::extraction_tests::wr_t10_correction_and_revoked_source_cannot_revive_old_fact",
-      "result": "ok",
-      "manifest": "src-tauri/Cargo.toml"
-    },
-    {
-      "name": "memory::personal_state::world::runtime_sources_tests::wr_t11_refresh_replaces_actual_block_and_receipt_candidate",
-      "result": "ok",
-      "manifest": "src-tauri/Cargo.toml"
-    },
-    {
-      "name": "memory::personal_state::world::runtime_sources_tests::wr_t07_result_acceptance_expires_only_on_changed_dependencies",
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t04_delegation_uses_workspace_ownership_and_detects_withdrawal",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
@@ -78,7 +76,12 @@
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "providers::reasoning_mcp::tests::wr_t16_wire_world_metadata_matches_advertised_schema",
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t07_result_acceptance_expires_only_on_changed_dependencies",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t11_refresh_replaces_actual_block_and_receipt_candidate",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
@@ -88,7 +91,47 @@
       "manifest": "src-tauri/Cargo.toml"
     },
     {
+      "name": "providers::chat_completions::world_claim_tests::wr_t18_real_wire_claims_are_validated_before_display_and_changed_sources_rejected",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "providers::chat_completions::world_eval_tests::wr_t12_followup_and_fallback_rebuild_expired_frame",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
       "name": "providers::chat_completions::world_eval_tests::wr_t13_allocation_delay_uses_new_frame_on_shared_adapter",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "providers::agent_session::sse::world_eval_tests::wr_t22_agent_session_route_transition_matrix",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "providers::reasoning_mcp::tests::wr_t16_wire_world_metadata_matches_advertised_schema",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "role_routing::adapters::codex::tests::wr_t15_role_sdk_observer_changes_the_actual_jsonl_frame",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::codex_context::frame_tests::wr_t15_codex_wire_contains_graph_and_source_frame_with_receipt",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::codex_context::frame_tests::wr_t22_codex_route_transition_matrix",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::context::world::capabilities::tests::wr_t20_status_lists_registered_ids_without_source_text",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
@@ -118,6 +161,16 @@
       "manifest": "src-tauri/Cargo.toml"
     },
     {
+      "name": "runtime::conversation_turn::conversation_controller::world_eval_tests::wr_t16_mcp_refreshes_after_initialization_and_records_exact_frame",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "larm_voice::world_tests::wr_t13_shared_voice_lease_wait_refreshes_actual_http_frame",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
       "name": "situation::world_snapshot::tests::wr_t03_semantic_changes_and_staleness_are_explicit",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
@@ -128,19 +181,784 @@
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "runtime::codex_context::frame_tests::wr_t15_codex_wire_contains_graph_and_source_frame_with_receipt",
+      "name": "runtime::conversation_turn::conversation_controller::world_eval_tests::wr_t22_reasoning_mcp_route_transition_matrix",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "runtime::context::world::capabilities::tests::wr_t20_status_lists_registered_ids_without_source_text",
+      "name": "providers::dynamic_lan::tests::wr_t13_real_allocation_refreshes_source_frame_and_releases",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "providers::chat_completions::world_eval_tests::wr_t12_followup_and_fallback_rebuild_expired_frame",
+      "name": "larm_voice::world_tests::wr_t22_http_route_transition_matrix",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
+    }
+  ],
+  "matrix": [
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "agent-session:initial",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "2325e1e8bfdf2bac374ea6f90425c207e0f184a5cf5397b3215c9c0a4d602780",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "agent-session",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "initial",
+      "verification_level": "offline-wire",
+      "wire_digest": "8a6e4d4282cd73d315018f6834be08949fa1eaf83e35be83ab023e52783e2e29"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "agent-session:tool-continuation",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "8b225c71597bd4e113eb697775545f7aee87ea6464f23232f87ca92180d8ce69",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "agent-session",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "tool-continuation",
+      "verification_level": "offline-wire",
+      "wire_digest": "8284ff12e8216ff2c1e9bcefd6f5b0d234d40216d08f8d02c0e03e1020095fa2"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "agent-session:fallback",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "d47e7df2dd2b9a8c5f2210d825e9d4b7cba1ff2ff05322fdfd48e7ff7e21d593",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "agent-session",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "fallback",
+      "verification_level": "offline-wire",
+      "wire_digest": "7607e319dff2c884147de54b36362b417fd1701c86dc74e7e899a7ef273ba83c"
+    },
+    {
+      "actual": "denied-before-agent-turn",
+      "case_id": "agent-session:scope-switch",
+      "expected": "denied-before-agent-turn",
+      "frame_digest": null,
+      "omission_reason": "scope-changed",
+      "pass": true,
+      "request_count": 0,
+      "route": "agent-session",
+      "source_kinds": [],
+      "transition": "scope-switch",
+      "verification_level": "offline-wire",
+      "wire_digest": null
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "agent-session:correction",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "40ce149ab168353a79e73d744795a5feb833a6ca8f16c3ba87a626987ec04376",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "agent-session",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "correction",
+      "verification_level": "offline-wire",
+      "wire_digest": "e44dd8aa0841a313b175fb36c98a0527edc736ab3ac8098442dbee41ead22b1f"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "agent-session:forget",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "99e7f589e0c96c57724f4491bbf53ce5905526f30948b3b92e71be02a9788540",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "agent-session",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "forget",
+      "verification_level": "offline-wire",
+      "wire_digest": "ae23bd09005cd02494d78073c57fd430f9fc606c2c995bee549a4e4eccf0cfd6"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "agent-session:session-resume",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "f15879a1f0e85a062516bff66ac8875b5f64fd5de3b72859a7f529534b5469db",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "agent-session",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "session-resume",
+      "verification_level": "offline-wire",
+      "wire_digest": "722ff2222f73c31b6d13e4e82cc0811b434d479e2fbffb1667130d6397902dcd"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "codex:initial",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "c545fe685faaa79b75da3dff05ceb78a8abe3aa37e44abbd01b418b377bd2c6e",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "codex",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "initial",
+      "verification_level": "offline-wire",
+      "wire_digest": "38d267e11d49b63afd61a043ff0dfea09e0829c6f0c8a77b7ef03050c33cf76d"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "codex:tool-continuation",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "455561f954184e9079ebf7604d353a318dc0acea0cff812e30e17d7f25a2972a",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "codex",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "tool-continuation",
+      "verification_level": "offline-wire",
+      "wire_digest": "a90506094236b7dbf65c7235b9eed3242b430480a1a79864461ac830a09f309e"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "codex:fallback",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "9832bcdd8784756816ddc037fa4c157e30dd28c3e467b51358b254e3a49a4c60",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "codex",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "fallback",
+      "verification_level": "offline-wire",
+      "wire_digest": "78267edfa4a4d12f148ad25574537e025adeb2e3910e7c7f0a47566f5fce5e3c"
+    },
+    {
+      "actual": "denied-before-turn-start",
+      "case_id": "codex:scope-switch",
+      "expected": "denied-before-turn-start",
+      "frame_digest": null,
+      "omission_reason": "scope-changed",
+      "pass": true,
+      "request_count": 0,
+      "route": "codex",
+      "source_kinds": [],
+      "transition": "scope-switch",
+      "verification_level": "offline-wire",
+      "wire_digest": null
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "codex:correction",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "e2b3bb60b2caa19b0ed42c2a16e8937a192bcd423af0088ea4f036f6d6efb3fe",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "codex",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "correction",
+      "verification_level": "offline-wire",
+      "wire_digest": "654327a732beb5f8319d66766805d3bc96f434848c3d05d075298d6edcf16cf6"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "codex:forget",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "f2f24ec910b093f1c5de176e9ad7b7e372739a151c6ce8fed076dfb14fd4d337",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "codex",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "forget",
+      "verification_level": "offline-wire",
+      "wire_digest": "2668d523eac491e27fbfc392b8c965eb449a86e424f6247b9491fa35cf848469"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "codex:session-resume",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "3868e0cf9695ecb8b3ef656089095f986d274cb6b11d1050391bf869c6b91614",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "codex",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "session-resume",
+      "verification_level": "offline-wire",
+      "wire_digest": "125971142545262f57ff3b2846cc1e16e653687e0961c51920da4f60ba65b711"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "reasoning-mcp:initial",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "f848dcbe5def311a7731cfbc505416cf333ca4c934cc4c7f2574d2d7d59e589e",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "reasoning-mcp",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "initial",
+      "verification_level": "offline-wire",
+      "wire_digest": "0eb58f4e564c8a2493703c88071c9a9a5dc2d7a48a5bf20a706057770c6b51ae"
+    },
+    {
+      "actual": "n/a-no-host-tool-capability",
+      "case_id": "reasoning-mcp:tool-continuation",
+      "expected": "n/a-no-host-tool-capability",
+      "frame_digest": null,
+      "omission_reason": "unsupported-capability",
+      "pass": true,
+      "request_count": 0,
+      "route": "reasoning-mcp",
+      "source_kinds": [],
+      "transition": "tool-continuation",
+      "verification_level": "offline-contract",
+      "wire_digest": null
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "reasoning-mcp:fallback",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "89f67ad3ed68b4abc9b51211d9db8edd41d3a15e0b3efde86ed08c018ef503f7",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "reasoning-mcp",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "fallback",
+      "verification_level": "offline-wire",
+      "wire_digest": "23a410b7e3787284353aacc7566c8ee350f429179fa806847f6960d85b2e22b6"
+    },
+    {
+      "actual": "denied-before-tools-call",
+      "case_id": "reasoning-mcp:scope-switch",
+      "expected": "denied-before-tools-call",
+      "frame_digest": null,
+      "omission_reason": "scope-changed",
+      "pass": true,
+      "request_count": 0,
+      "route": "reasoning-mcp",
+      "source_kinds": [],
+      "transition": "scope-switch",
+      "verification_level": "offline-wire",
+      "wire_digest": null
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "openai-compatible:initial",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "ee425f070405b61def7a27a7f71efb293a849be4b6d6ab498bb2cece31b0e851",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "openai-compatible",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "initial",
+      "verification_level": "offline-wire",
+      "wire_digest": "297fec585eb472ee0fe57766e8fe682d27b877a22b8fe00e2e3c9f6197234ffd"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "reasoning-mcp:correction",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "12061e301b976cedf57e51d3ae8513925a9d1fbb232823557b98049778fe67b6",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "reasoning-mcp",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "correction",
+      "verification_level": "offline-wire",
+      "wire_digest": "1e63fc7f6db23724699573ac6ddb42bf176167cfcccca5c39d38fbec4c72e366"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "reasoning-mcp:forget",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "b9e5561e70e5d93f83e045b143b6f60d11c4d3f1c686ce5a710cd00a2f1c3995",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "reasoning-mcp",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "forget",
+      "verification_level": "offline-wire",
+      "wire_digest": "39c9980bbc5e64cf43abe0f31f841d76de5ff9ecc3eab0975c2d3643df1603f1"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "reasoning-mcp:session-resume",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "7129981bfd098e6cd9ee3ae6ef36d6719005a16d16742051d3288676c24caf2d",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "reasoning-mcp",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "session-resume",
+      "verification_level": "offline-wire",
+      "wire_digest": "8ee14f8af71a18f960e1b56aece1dac6fe05d65d72d954c23249b1131b9ff560"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "openai-compatible:tool-continuation",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "27b02b71af63b15de75ff7cdd691a816811a2577bc4c123a10e7304d29df5c64",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "openai-compatible",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "tool-continuation",
+      "verification_level": "offline-wire",
+      "wire_digest": "9a1ec49a4c8def7c3aa8eb84c00498d9fa8da0a5e49a458e7d43b7146d73ec63"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "openai-compatible:fallback",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "35ee8f574c8c6b31d8d91adac19b8a4aa25986c00bda226dd7c0b765f513c493",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 4,
+      "route": "openai-compatible",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "fallback",
+      "verification_level": "offline-wire",
+      "wire_digest": "899cd12b0ee092e46b58abdd5095a1a190595ba7c36b65787753a0690b9a90b0"
+    },
+    {
+      "actual": "denied-before-model-wire",
+      "case_id": "openai-compatible:scope-switch",
+      "expected": "denied-before-model-wire",
+      "frame_digest": null,
+      "omission_reason": "scope-changed",
+      "pass": true,
+      "request_count": 0,
+      "route": "openai-compatible",
+      "source_kinds": [],
+      "transition": "scope-switch",
+      "verification_level": "offline-wire",
+      "wire_digest": null
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "openai-compatible:correction",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "b22e91e3c1208ad65c8a3784d7e0a6c8e416c62bf2f72d0cf089421f75bece5b",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "openai-compatible",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "correction",
+      "verification_level": "offline-wire",
+      "wire_digest": "9d40267e8e014cd7ff54b36f048f8e329a728efe75cf0449ce8677868e3e3a4e"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "openai-compatible:forget",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "be360b58bb0117ad91b63c5664dbd19b4c33aeffdcac81427c9c30f3a6e82962",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "openai-compatible",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "forget",
+      "verification_level": "offline-wire",
+      "wire_digest": "2cbf7b45e6e304000a9583f13dbe0224b042a96c0a7463b229a499cc77cafd42"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "openai-compatible:session-resume",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "78c4a85f903f23d99008155aee9f66624b840e41c45d7c2f3f61e1bf030a4be2",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "openai-compatible",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "session-resume",
+      "verification_level": "offline-wire",
+      "wire_digest": "675cd0e174e9d65d929a2daee166fdb17f73a9d9773ea02a85a3967d483edf9a"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "dynamic-lan:initial",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "40b3c00c6deacd9f036f9d66ca6387c623518e641ca6d8749a08e82e47334570",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "dynamic-lan",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "initial",
+      "verification_level": "offline-wire",
+      "wire_digest": "2969eed0e8d8047466b0b6e45801bdb88fc646647275d15e8786b69d3f8d4997"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "dynamic-lan:tool-continuation",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "47502632608df67ff1f4a42d4939fa3b8918df41e626273081ef7c71df84f3bf",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "dynamic-lan",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "tool-continuation",
+      "verification_level": "offline-wire",
+      "wire_digest": "3dd85b738ac4e97b7669732ca824c271a8e3b78f6cc10af4a3fcc59629cc4f22"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "dynamic-lan:fallback",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "3f7c0d5a63388d62e2bf8b143d4db2620f374bd6565ca4abe0ca2ca8f709f44c",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 4,
+      "route": "dynamic-lan",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "fallback",
+      "verification_level": "offline-wire",
+      "wire_digest": "0bc56ff810d2b699b913cd4bbaf7b88da56c221aec081d2dbffdf873e2b6f59d"
+    },
+    {
+      "actual": "denied-before-model-wire",
+      "case_id": "dynamic-lan:scope-switch",
+      "expected": "denied-before-model-wire",
+      "frame_digest": null,
+      "omission_reason": "scope-changed",
+      "pass": true,
+      "request_count": 0,
+      "route": "dynamic-lan",
+      "source_kinds": [],
+      "transition": "scope-switch",
+      "verification_level": "offline-wire",
+      "wire_digest": null
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "dynamic-lan:correction",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "7dbdc3a3e891fbc9d32f8e4f32c430d31f4793a36f0d88b5feffca5f566c27dc",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "dynamic-lan",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "correction",
+      "verification_level": "offline-wire",
+      "wire_digest": "1626dc2dccd1152378a703942d3f7924a2340f4ab61d21f1617f3dc91a321290"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "dynamic-lan:forget",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "36450810917abb21f49b8bfacc9682ccd0a7a56b582d100fa92769be5ba4cea5",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "dynamic-lan",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "forget",
+      "verification_level": "offline-wire",
+      "wire_digest": "e699c40f62025d50871c2d751011c4c62ac7567d2a2f5c673225fc58765cb87f"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "dynamic-lan:session-resume",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "bb7929de2eaf12899c453bdebcfdfe1c0094c160337916186e21c2b9b77192f9",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "dynamic-lan",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "session-resume",
+      "verification_level": "offline-wire",
+      "wire_digest": "1155f196ff4036b57fbe0b256dc8e9f1e4caee11d73adcdb0f8807d7114b92ee"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "shared-larm:initial",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "a1401ec3b0efcfb06d041e2cccf9055aa27900024d1095c01be8e538c103722b",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "shared-larm",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "initial",
+      "verification_level": "offline-wire",
+      "wire_digest": "97143df5193d8e2eca0692672ee10d2dfe65194fe4b491adf94ee2a729495e38"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "shared-larm:tool-continuation",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "09e118b3e874d41fdc52ed80a7e11b02a4268f52fb3f2215c64f887e35cbdd78",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "shared-larm",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "tool-continuation",
+      "verification_level": "offline-wire",
+      "wire_digest": "1e546b00efb78d9753e0f4c7a70dce4c36fc7e18fbe9e076845dfc2a157c9baf"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "shared-larm:fallback",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "3737255d79dca1c984132d38044ffe7791e45801ace8e6d2ecc3867211f6713b",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 4,
+      "route": "shared-larm",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "fallback",
+      "verification_level": "offline-wire",
+      "wire_digest": "c89f79099d8aa0e4674bddca451f0c8cfa423773ae66e3e39dd0a877edf05438"
+    },
+    {
+      "actual": "denied-before-model-wire",
+      "case_id": "shared-larm:scope-switch",
+      "expected": "denied-before-model-wire",
+      "frame_digest": null,
+      "omission_reason": "scope-changed",
+      "pass": true,
+      "request_count": 0,
+      "route": "shared-larm",
+      "source_kinds": [],
+      "transition": "scope-switch",
+      "verification_level": "offline-wire",
+      "wire_digest": null
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "shared-larm:correction",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "9ee071981e36430b26ff2b51f1d3d6a042892fab6b38293711fcf8e07d9144a0",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "shared-larm",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "correction",
+      "verification_level": "offline-wire",
+      "wire_digest": "4188172e13843d6912dc226cdd1bcd29ca2b71ddcb458ab13c48019dba080331"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "shared-larm:forget",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "7edadaf9eb702aeecaab0397ac1dd5386d6c58b2486966d263b1756594a99b5d",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "shared-larm",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "forget",
+      "verification_level": "offline-wire",
+      "wire_digest": "133d197c68405d433e60b1877e5927ee8484e596a34ffbbe8c702774ddb01c18"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "shared-larm:session-resume",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "9ad4b425dc5b74374d1a379db7b1d5f5bd07b3c44082cd719ef8b057a3185491",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 2,
+      "route": "shared-larm",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "session-resume",
+      "verification_level": "offline-wire",
+      "wire_digest": "9163cca4c5d60562a65c0dc43b00c71e363362e6186af9d08818234149a54bf4"
     }
   ],
   "exits": [

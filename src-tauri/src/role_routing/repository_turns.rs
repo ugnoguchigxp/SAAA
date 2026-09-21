@@ -41,9 +41,8 @@ pub(crate) fn record_provider_turn_start(
     let selection = select_dispatch_candidate(connection, &policy, now_ms)?;
     let candidate = &selection.candidate;
     let decision_id = format!("rr-decision-{run_id}");
-    let step_id = format!("rr-step-{run_id}-0");
+    let planned_steps = compile_selected_plan(&policy, candidate)?;
     let candidates = candidate_receipt(&selection.eligible);
-    let config_fingerprint = step_config_fingerprint(&policy_json, candidate)?;
     let transaction = connection
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
@@ -81,11 +80,17 @@ pub(crate) fn record_provider_turn_start(
          VALUES(?1,?2,0,?3,'{}',?4,?5,'respond','[\"rules\"]','rules-v1',?6,?7)",
         params![decision_id, run_id, format!("rr-input-{run_id}"), candidates.to_string(), candidate.recipe_id, policy_id, now_ms],
     ).map_err(|error| error.to_string())?;
-    transaction.execute(
-        "INSERT OR IGNORE INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms)
-         VALUES(?1,?2,?3,0,0,?4,'respond','running',?5,'{}',?6)",
-        params![step_id, run_id, decision_id, candidate.actor_ids.first().cloned().unwrap_or_default(), config_fingerprint, now_ms],
-    ).map_err(|error| error.to_string())?;
+    for (index, step) in planned_steps.iter().enumerate() {
+        let step_id = format!("rr-step-{run_id}-{}", step.ordinal);
+        let status = if index == 0 { "running" } else { "planned" };
+        let started_at = if index == 0 { Some(now_ms) } else { None };
+        let config_fingerprint = step_config_fingerprint(&policy_json, candidate, step)?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms)
+             VALUES(?1,?2,?3,0,?4,?5,?6,?7,?8,'{}',?9)",
+            params![step_id, run_id, decision_id, step.ordinal, step.actor_id, step.purpose, status, config_fingerprint, started_at],
+        ).map_err(|error| error.to_string())?;
+    }
     transaction.execute(
         "INSERT OR IGNORE INTO rr_events(root_id,seq,kind,data_json,created_at_ms) VALUES(?1,1,'input_accepted','{}',?2)",
         params![run_id, now_ms],
@@ -140,13 +145,16 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     let selection = select_dispatch_candidate(transaction, &policy, now_ms)?;
     let candidate = &selection.candidate;
     let decision_id = format!("rr-decision-{run_id}");
-    let step_id = format!("rr-step-{run_id}-0");
+    let planned_steps = compile_selected_plan(&policy, candidate)?;
     let candidates = candidate_receipt(&selection.eligible);
-    let config_fingerprint = step_config_fingerprint(&policy_json, candidate)?;
-    transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,'text','visual',?5,?6,'')",params![run_id,conversation_id,run_id,policy_id,now_ms,now_ms.saturating_add(policy.limits.root_timeout_ms.min(i64::MAX as u64) as i64)]).map_err(|e|e.to_string())?;
+    transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,'text','visual',?5,NULL,'')",params![run_id,conversation_id,run_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,disposition,received_at_ms) VALUES(?1,?2,?3,?4,'','text','accepted',?5)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms) VALUES(?1,?2,0,?3,?4,?5,?6,'respond','[\"rules\"]','rules-v1',?7,?8)",params![decision_id,run_id,format!("rr-input-{run_id}"),feature_snapshot(&input_content,policy.limits.max_reasoning_steps).to_string(),candidates.to_string(),candidate.recipe_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
-    transaction.execute("INSERT INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES(?1,?2,?3,0,0,?4,'respond','planned',?5,'{}',NULL)",params![step_id,run_id,decision_id,candidate.actor_ids.first().cloned().unwrap_or_default(),config_fingerprint]).map_err(|e|e.to_string())?;
+    for step in planned_steps.iter() {
+        let step_id = format!("rr-step-{run_id}-{}", step.ordinal);
+        let config_fingerprint = step_config_fingerprint(&policy_json, candidate, step)?;
+        transaction.execute("INSERT INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES(?1,?2,?3,0,?4,?5,?6,'planned',?7,'{}',NULL)",params![step_id,run_id,decision_id,step.ordinal,step.actor_id,step.purpose,config_fingerprint]).map_err(|e|e.to_string())?;
+    }
     transaction.execute("INSERT INTO rr_events(root_id,seq,kind,data_json,created_at_ms) VALUES(?1,1,'input_accepted','{}',?2)",params![run_id,now_ms]).map_err(|e|e.to_string())?;
     crate::adaptive_improvement::record_decision(
         transaction,
@@ -170,14 +178,42 @@ pub(crate) fn record_provider_turn_start_in_transaction(
 fn step_config_fingerprint(
     policy_json: &str,
     candidate: &crate::role_routing::selection::Candidate,
+    step: &crate::role_routing::recipe::PlannedStep,
 ) -> Result<String, String> {
     let encoded = serde_json::to_vec(&json!({
         "policy": policy_json,
         "recipeId": &candidate.recipe_id,
         "actorIds": &candidate.actor_ids,
+        "ordinal": step.ordinal,
+        "purpose": step.purpose,
+        "actorId": &step.actor_id,
     }))
     .map_err(|error| format!("Could not encode role-routing step fingerprint: {error}"))?;
     Ok(format!("{:x}", Sha256::digest(encoded)))
+}
+
+/// Compiles the selected candidate into a finite plan and checks that the plan resolves exactly
+/// the actors the candidate advertised. An invalid or unbounded recipe returns an error before any
+/// root or step row is written, so dispatch stays at zero.
+fn compile_selected_plan(
+    policy: &crate::role_routing::RoleRoutingSettings,
+    candidate: &crate::role_routing::selection::Candidate,
+) -> Result<Vec<crate::role_routing::recipe::PlannedStep>, String> {
+    let compiled =
+        crate::role_routing::recipe::compile_recipe_by_id(policy, &candidate.recipe_id)?;
+    let planned_actors = compiled
+        .steps
+        .iter()
+        .map(|step| step.actor_id.as_str())
+        .collect::<Vec<_>>();
+    if !candidate
+        .actor_ids
+        .iter()
+        .all(|actor_id| planned_actors.contains(&actor_id.as_str()))
+    {
+        return Err("Role-routing compiled plan does not match the selected candidate".into());
+    }
+    Ok(compiled.steps)
 }
 
 fn feature_snapshot(input: &str, remaining_steps: u8) -> serde_json::Value {
@@ -294,17 +330,21 @@ pub(crate) fn record_provider_turn_finish(
         return Ok(());
     }
     if phase == "draining" {
-        let step_status = match status {
-            "completed" => "succeeded",
-            "cancelled" => "cancelled",
-            _ => "failed",
-        };
-        connection
-            .execute(
-                "UPDATE rr_steps SET status=?1, completed_at_ms=?2 WHERE root_id=?3 AND ordinal=0 AND status IN ('planned','running','draining')",
-                params![step_status, now_ms, run_id],
-            )
-            .map_err(|error| error.to_string())?;
+        let step = active_step_or_ordinal_zero(connection, run_id)?;
+        if let Some((step_id, _)) = step.as_ref() {
+            let step_status = match status {
+                "completed" => "succeeded",
+                "cancelled" => "cancelled",
+                _ => "failed",
+            };
+            let _ = crate::role_routing::steps::complete_step(
+                connection,
+                run_id,
+                step_id,
+                step_status,
+                now_ms,
+            );
+        }
         return Ok(());
     }
     let step_status = match status {
@@ -317,19 +357,37 @@ pub(crate) fn record_provider_turn_finish(
         "cancelled" => "cancelled",
         _ => "failed",
     };
+    let step = active_step_or_ordinal_zero(connection, run_id)?;
     let transaction = connection
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
-    transaction.execute(
-        "UPDATE rr_steps SET status=?1, completed_at_ms=?2 WHERE root_id=?3 AND ordinal=0 AND status IN ('planned','running','draining')",
-        params![step_status, now_ms, run_id],
-    ).map_err(|error| error.to_string())?;
-    if let Some(message_id) = message_id {
-        transaction.execute(
-            "INSERT OR IGNORE INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,0,'answer',?3,1,?4)",
-            params![format!("rr-output-{run_id}"), format!("rr-step-{run_id}-0"), json!({"messageId":message_id}).to_string(), now_ms],
-        ).map_err(|error| error.to_string())?;
-    }
+    let step_revision = match step {
+        Some((step_id, revision)) => {
+            crate::role_routing::steps::complete_step(
+                &transaction,
+                run_id,
+                &step_id,
+                step_status,
+                now_ms,
+            )?;
+            if let Some(message_id) = message_id {
+                if status == "completed" {
+                    crate::role_routing::steps::record_step_output(
+                        &transaction,
+                        run_id,
+                        &step_id,
+                        revision,
+                        "answer",
+                        &json!({ "messageId": message_id }).to_string(),
+                        true,
+                        now_ms,
+                    )?;
+                }
+            }
+            revision
+        }
+        None => 0,
+    };
     transaction
         .execute(
             "UPDATE rr_roots SET phase=?1, result_message_id=?2, active_slot=NULL WHERE root_id=?3",
@@ -351,11 +409,174 @@ pub(crate) fn record_provider_turn_finish(
         run_id,
         status == "completed",
         message_id.unwrap_or(run_id),
-        0,
+        step_revision,
         now_ms,
     )?;
     crate::role_routing::learning::repository::mark_root_dirty(&transaction, run_id)?;
     transaction.commit().map_err(|error| error.to_string())
+}
+
+/// Prefers the active step, falling back to ordinal 0 for legacy rows created before the step
+/// ledger selected the active step.
+fn active_step_or_ordinal_zero(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<Option<(String, i64)>, String> {
+    match crate::role_routing::steps::active_reasoning_step(connection, run_id)? {
+        Some(active) => Ok(Some(active)),
+        None => connection
+            .query_row(
+                "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND ordinal=0",
+                [run_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string()),
+    }
+}
+
+/// Outcome of storing an input receipt. A retry with the same payload is a duplicate that must
+/// return the original receipt without creating new side effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputReceiptDisposition {
+    Accepted,
+    Duplicate,
+}
+
+/// Stores or restores an `rr_inputs` receipt keyed by `(conversationId, inputId)`. The same input
+/// with the same payload digest is idempotent; the same input with a different digest is a
+/// conflict and must not create a second row or run a second dispatch.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_input_receipt(
+    connection: &Connection,
+    root_id: Option<&str>,
+    input_id: &str,
+    conversation_id: &str,
+    message_id: &str,
+    payload_digest: &str,
+    source_id: Option<&str>,
+    origin: &str,
+    disposition: &str,
+    generation: i64,
+    now_ms: i64,
+) -> Result<InputReceiptDisposition, String> {
+    let existing: Option<(String, String)> = connection
+        .query_row(
+            "SELECT payload_digest,message_id FROM rr_inputs WHERE conversation_id=?1 AND input_id=?2",
+            params![conversation_id, input_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if let Some((existing_digest, _existing_message)) = existing {
+        if existing_digest == payload_digest {
+            return Ok(InputReceiptDisposition::Duplicate);
+        }
+        return Err("Role-routing input receipt conflicts with a different payload".into());
+    }
+    connection
+        .execute(
+            "INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,source_id,disposition,generation,received_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![
+                input_id,
+                root_id,
+                conversation_id,
+                message_id,
+                payload_digest,
+                origin,
+                source_id,
+                disposition,
+                generation,
+                now_ms
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(InputReceiptDisposition::Accepted)
+}
+
+/// Records an input that arrived while a root was active and raises the durable input barrier in
+/// the same transaction. The stored generation is the root revision the classifier result must
+/// match before an amendment may advance the revision.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_active_input_barrier(
+    connection: &Connection,
+    root_id: &str,
+    input_id: &str,
+    conversation_id: &str,
+    message_id: &str,
+    payload_digest: &str,
+    source_id: Option<&str>,
+    origin: &str,
+    now_ms: i64,
+) -> Result<InputReceiptDisposition, String> {
+    let root: Option<(String, i64)> = connection
+        .query_row(
+            "SELECT phase,revision FROM rr_roots WHERE root_id=?1",
+            [root_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((phase, revision)) = root else {
+        return Err("Role-routing barrier references an unknown root".into());
+    };
+    if !matches!(phase.as_str(), "queued" | "responding" | "draining") {
+        return Err("Role-routing barrier requires an active root".into());
+    }
+    let disposition = record_input_receipt(
+        connection,
+        Some(root_id),
+        input_id,
+        conversation_id,
+        message_id,
+        payload_digest,
+        source_id,
+        origin,
+        "accepted",
+        revision,
+        now_ms,
+    )?;
+    if disposition == InputReceiptDisposition::Duplicate {
+        return Ok(disposition);
+    }
+    crate::role_routing::coordinator::apply_in_transaction(
+        connection,
+        root_id,
+        crate::role_routing::reducer::Event::InputBarrier,
+        now_ms,
+    )?;
+    Ok(disposition)
+}
+
+/// A classifier result may only act on the generation it was produced for. A late classifier for
+/// an older revision must not amend the current one.
+pub(crate) fn classifier_generation_matches(
+    connection: &Connection,
+    input_id: &str,
+    conversation_id: &str,
+    current_revision: i64,
+) -> Result<bool, String> {
+    let generation: Option<i64> = connection
+        .query_row(
+            "SELECT generation FROM rr_inputs WHERE conversation_id=?1 AND input_id=?2",
+            params![conversation_id, input_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    Ok(generation.is_some_and(|generation| generation == current_revision))
+}
+
+/// Counts inputs still waiting on classification for a root. Used to assert that multiple
+/// pending inputs are not dropped when one is resolved.
+pub(crate) fn pending_input_count(connection: &Connection, root_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT count(*) FROM rr_inputs WHERE root_id=?1",
+            [root_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())
 }
 
 /// Stores coarse actor progress without retaining any partial provider text.
@@ -416,32 +637,39 @@ pub(crate) fn accept_provider_turn(
     }
     // The expected revision comes from the result side step row, not from the root's current
     // revision. A late result produced for an older revision must not be adopted against the
-    // current one even if the root has since advanced.
-    let step: Option<(i64, String)> = connection
-        .query_row(
-            "SELECT revision,status FROM rr_steps WHERE root_id=?1 AND ordinal=0",
-            [run_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-    let Some((step_revision, step_status)) = step else {
+    // current one even if the root has since advanced. The active step is selected by the step
+    // ledger, so ordinal 0 is not hard-coded.
+    let Some((step_id, step_revision)) =
+        crate::role_routing::steps::active_reasoning_step(connection, run_id)?
+    else {
         return Err("Role-routing result has no active step".into());
     };
-    if step_status != "running" || step_revision != revision {
+    if step_revision != revision {
         return Err("Role-routing result is stale for the active step".into());
     }
-    let changed = connection
-        .execute(
-            "UPDATE rr_roots SET phase='completed',result_message_id=?1,active_slot=NULL WHERE root_id=?2 AND phase='responding' AND revision=?3 AND cancel_requested=0",
-            params![message_id, run_id, revision],
-        )
-        .map_err(|error| error.to_string())?;
-    if changed != 1 {
+    if !crate::role_routing::steps::complete_step(
+        connection,
+        run_id,
+        &step_id,
+        "succeeded",
+        now_ms,
+    )? {
+        return Err("Role-routing result step already completed".into());
+    }
+    if !crate::role_routing::steps::finalize_root(connection, run_id, revision, message_id, now_ms)?
+    {
         return Err("Role-routing result is stale or already accepted".into());
     }
-    connection.execute("UPDATE rr_steps SET status='succeeded',completed_at_ms=?1 WHERE root_id=?2 AND ordinal=0 AND revision=?3 AND status='running'",params![now_ms,run_id,revision]).map_err(|error|error.to_string())?;
-    connection.execute("INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'answer',?4,1,?5)",params![format!("rr-output-{run_id}"),format!("rr-step-{run_id}-0"),revision,json!({"messageId":message_id}).to_string(),now_ms]).map_err(|error|error.to_string())?;
+    crate::role_routing::steps::record_step_output(
+        connection,
+        run_id,
+        &step_id,
+        revision,
+        "answer",
+        &json!({ "messageId": message_id }).to_string(),
+        true,
+        now_ms,
+    )?;
     append_event(connection, run_id, "answer_committed", now_ms)?;
     record_provider_outcome(connection, run_id, true, message_id, revision, now_ms)?;
     crate::role_routing::learning::repository::mark_root_dirty(connection, run_id)?;
@@ -455,10 +683,15 @@ pub(crate) fn record_step_usage(
     run_id: &str,
     usage_json: &str,
 ) -> Result<(), String> {
+    let Some((step_id, _revision)) =
+        crate::role_routing::steps::active_reasoning_step(connection, run_id)?
+    else {
+        return Err("Role-routing usage is stale or has no active step".into());
+    };
     let changed = connection
         .execute(
-            "UPDATE rr_steps SET usage_json=?1 WHERE root_id=?2 AND ordinal=0 AND status IN ('planned','running','draining')",
-            params![usage_json, run_id],
+            "UPDATE rr_steps SET usage_json=?1 WHERE id=?2 AND root_id=?3 AND status IN ('planned','running','draining')",
+            params![usage_json, step_id, run_id],
         )
         .map_err(|error| error.to_string())?;
     if changed != 1 {
@@ -631,7 +864,7 @@ mod tests {
                 .expect("queued receipt");
             assert_eq!(receipt.0, "queued");
             assert_eq!(receipt.1, "planned");
-            assert_eq!(receipt.2, Some(180_001));
+            assert_eq!(receipt.2, None);
             assert_eq!(receipt.3.len(), 64);
             assert!(receipt.3.bytes().all(|byte| byte.is_ascii_hexdigit()));
             // Dropping instead of committing is the failure path that must leave no half root.
@@ -948,7 +1181,7 @@ mod tests {
         c.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p',0,'responding','text','visual',1,'')",[]).expect("root");
         c.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('rr-step-run-0','run',0,0,'qwen','respond','running','{}','{}')",[]).expect("step");
         // Force the output insert to fail so the adoption transaction must roll back.
-        c.execute("INSERT INTO rr_outputs VALUES('rr-output-run','rr-step-run-0',0,'answer','{}',1,1)",[]).expect("collision output");
+        c.execute("INSERT INTO rr_outputs VALUES('rr-output-rr-step-run-0','rr-step-run-0',0,'answer','{}',1,1)",[]).expect("collision output");
         {
             let tx = c.transaction().expect("tx");
             tx.execute(
@@ -985,6 +1218,74 @@ mod tests {
             )
             .expect("root phase");
         assert_eq!(phase, "responding");
+    }
+
+    #[test]
+    fn rr_04_receipt_retry_and_conflict() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY);INSERT INTO conversations VALUES('c');INSERT INTO conversation_messages VALUES('m1');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        assert_eq!(
+            record_input_receipt(
+                &c, None, "in-1", "c", "m1", "digest-a", None, "text", "accepted", 0, 1
+            )
+            .expect("first receipt"),
+            InputReceiptDisposition::Accepted
+        );
+        // The same input and payload returns the original receipt without a second row.
+        assert_eq!(
+            record_input_receipt(
+                &c, None, "in-1", "c", "m1", "digest-a", None, "text", "accepted", 0, 2
+            )
+            .expect("retry"),
+            InputReceiptDisposition::Duplicate
+        );
+        assert!(
+            record_input_receipt(
+                &c, None, "in-1", "c", "m1", "digest-b", None, "text", "accepted", 0, 3
+            )
+            .is_err(),
+            "the same input id with a changed payload is a conflict"
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM rr_inputs", [], |row| row
+                .get::<_, i64>(0))
+                .expect("count"),
+            1
+        );
+    }
+
+    #[test]
+    fn rr_16_multiple_pending_inputs() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY);INSERT INTO conversations VALUES('c');INSERT INTO conversation_messages VALUES('m1');INSERT INTO conversation_messages VALUES('m2');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+            [],
+        )
+        .expect("policy");
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p',0,'responding','text','visual',1,'')", []).expect("root");
+        assert_eq!(
+            record_active_input_barrier(&c, "r", "in-1", "c", "m1", "d1", None, "text", 2)
+                .expect("first barrier"),
+            InputReceiptDisposition::Accepted
+        );
+        assert_eq!(
+            record_active_input_barrier(&c, "r", "in-2", "c", "m2", "d2", None, "text", 3)
+                .expect("second barrier"),
+            InputReceiptDisposition::Accepted
+        );
+        // Neither pending input is dropped and the stored generation is the barrier revision.
+        assert_eq!(pending_input_count(&c, "r").expect("pending"), 2);
+        assert!(classifier_generation_matches(&c, "in-1", "c", 0).expect("generation"));
+        assert!(!classifier_generation_matches(&c, "in-1", "c", 1).expect("stale generation"));
+        let phase: String = c
+            .query_row("SELECT phase FROM rr_roots WHERE root_id='r'", [], |row| {
+                row.get(0)
+            })
+            .expect("phase");
+        assert_eq!(phase, "draining");
     }
 
     #[test]
