@@ -15,8 +15,12 @@ impl RequestGeneration {
         )
         .map_err(|_| Failure::Internal)?;
         let request_payload = serde_json::to_vec(body).map_err(|_| Failure::Internal)?;
-        let oversized =
-            request_payload.len() > crate::runtime::context::generation::MAX_PROVIDER_REQUEST_BYTES;
+        let wire_size = crate::runtime::context::generation::final_wire_size(
+            request_payload.len(),
+            context.context_sources.iter().any(|candidate| {
+                candidate.requirement == crate::runtime::context::source::Requirement::Must
+            }),
+        );
         let current_instruction_count = body["messages"]
             .as_array()
             .map(|messages| {
@@ -26,6 +30,15 @@ impl RequestGeneration {
                     .count()
             })
             .unwrap_or_default();
+        match wire_size {
+            crate::runtime::context::generation::FinalWireSize::Fits => {}
+            crate::runtime::context::generation::FinalWireSize::RequiredContextOverflow => {
+                return Err(Failure::RequiredContextOverflow);
+            }
+            crate::runtime::context::generation::FinalWireSize::RequestTooLarge => {
+                return Err(Failure::RequestTooLarge);
+            }
+        }
         let generation = context
             .output_persistence
             .map(|persistence| {
@@ -41,11 +54,8 @@ impl RequestGeneration {
                     current_instruction_count,
                 )
             })
-            .transpose();
-        if oversized {
-            return Err(Failure::RequestTooLarge);
-        }
-        let generation = generation.map_err(|_| Failure::Internal)?;
+            .transpose()
+            .map_err(|_| Failure::Internal)?;
         if let Some(generation) = &generation {
             if include_world {
                 if let Some(world) = context
@@ -73,8 +83,17 @@ impl RequestGeneration {
             .as_ref()
             .map(|generation| generation.complete())
             .transpose()
-            .map_err(|_| Failure::Internal)?;
+            .map_err(context_dependency_failure)?;
         Ok(())
+    }
+
+    pub(super) fn revalidate_before_tool(&self) -> Result<(), Failure> {
+        self.0
+            .as_ref()
+            .map(|generation| generation.revalidate_dependencies())
+            .transpose()
+            .map(|_| ())
+            .map_err(context_dependency_failure)
     }
 
     pub(super) fn fail(&self, reason: &str) {
@@ -91,5 +110,13 @@ impl RequestGeneration {
         } else {
             self.fail(error.as_str());
         }
+    }
+}
+
+fn context_dependency_failure(error: String) -> Failure {
+    if error.contains("scope dependency changed") {
+        Failure::ContextScopeChanged
+    } else {
+        Failure::RequiredContextUnavailable
     }
 }

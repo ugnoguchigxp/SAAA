@@ -1,7 +1,9 @@
 //! Model-independent, bounded contract shared by the desktop and MCP service.
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: &str = "reasoning-answer-v1";
+pub mod world;
+
+pub const VERSION: &str = "reasoning-answer-v2";
 pub const PROTOCOL: &str = "2025-06-18";
 pub const TOOL: &str = "reasoning.answer";
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;
@@ -44,6 +46,7 @@ pub enum Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Evidence {
+    pub world: Option<world::WorldEvidence>,
     pub id: String,
     pub source: String,
     pub content: String,
@@ -128,11 +131,15 @@ impl Request {
                 .messages
                 .iter()
                 .any(|m| !text(&m.content, 16_000))
-            || self
-                .context
-                .evidence
-                .iter()
-                .any(|e| !id(&e.id) || !text(&e.source, 512) || !text(&e.content, 16_000))
+            || self.context.evidence.iter().any(|e| {
+                !id(&e.id)
+                    || !text(&e.source, 512)
+                    || !text(&e.content, 16_000)
+                    || (e.source.starts_with("world-model:") != e.world.is_some())
+                    || e.world
+                        .as_ref()
+                        .is_some_and(|world| !world.matches_content(&e.content))
+            })
             || !matches!(self.constraints.language.as_str(), "ja" | "en" | "auto")
             || !self.constraints.local_only
             || !(1..=240).contains(&self.constraints.max_speech_chars)

@@ -141,6 +141,10 @@
       "total": 144,
       "production": 144
     },
+    "scripts/world-eval.ts": {
+      "total": 92,
+      "production": 92
+    },
     "src-tauri/src/app_paths.rs": {
       "total": 95,
       "production": 95
@@ -945,6 +949,10 @@
       "total": 25,
       "production": 25
     },
+    "src-tauri/src/providers/agent_session/sse/request.rs": {
+      "total": 54,
+      "production": 54
+    },
     "src-tauri/src/providers/agent_session/sse/ui_bridge.rs": {
       "total": 121,
       "production": 82
@@ -952,6 +960,10 @@
     "src-tauri/src/providers/agent_session/sse/workflow_tests.rs": {
       "total": 419,
       "production": 419
+    },
+    "src-tauri/src/providers/agent_session/sse/world_eval_tests.rs": {
+      "total": 265,
+      "production": 0
     },
     "src-tauri/src/providers/chat_completions/chunks.rs": {
       "total": 156,
@@ -1000,6 +1012,14 @@
     "src-tauri/src/providers/chat_completions/world_body.rs": {
       "total": 82,
       "production": 82
+    },
+    "src-tauri/src/providers/chat_completions/world_eval_fixture.rs": {
+      "total": 144,
+      "production": 0
+    },
+    "src-tauri/src/providers/chat_completions/world_eval_tests.rs": {
+      "total": 430,
+      "production": 0
     },
     "src-tauri/src/providers/completion.rs": {
       "total": 161,
@@ -1357,9 +1377,17 @@
       "total": 93,
       "production": 93
     },
+    "src-tauri/src/runtime/context/world/g1_perf_tests.rs": {
+      "total": 104,
+      "production": 0
+    },
     "src-tauri/src/runtime/context/world/g1_tests.rs": {
       "total": 666,
       "production": 666
+    },
+    "src-tauri/src/runtime/context/world/inputs.rs": {
+      "total": 173,
+      "production": 133
     },
     "src-tauri/src/runtime/context/world/live.rs": {
       "total": 192,
@@ -1433,9 +1461,17 @@
       "total": 251,
       "production": 251
     },
+    "src-tauri/src/runtime/conversation_controller/payload.rs": {
+      "total": 190,
+      "production": 190
+    },
     "src-tauri/src/runtime/conversation_controller/tests.rs": {
       "total": 135,
       "production": 135
+    },
+    "src-tauri/src/runtime/conversation_controller/world_eval_tests.rs": {
+      "total": 103,
+      "production": 0
     },
     "src-tauri/src/runtime/conversation_inputs_roles.rs": {
       "total": 38,

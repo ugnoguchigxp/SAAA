@@ -15,12 +15,15 @@ const stewardTask = z.object({
   budgetRuns: z.number(),
   budgetMs: z.number(),
   notify: z.string(),
+  deliveryState: z.string().nullable(),
+  speechState: z.string().nullable(),
 });
 const stewardRegister = z.object({
   goalId: z.string(),
   delegationId: z.string(),
   status: z.string(),
 });
+export type StewardNotify = "both" | "silent" | "speak";
 export const STEWARD_START_TRIGGER = "テストを確認して";
 export function stewardErrorMessage(error: unknown): string {
   const text = String(error);
@@ -42,7 +45,7 @@ export const stewardApi = {
       operations: "read" | "test_run" | "read_test";
       budgetRuns: number;
       budgetMs: number;
-      notify: "both" | "silent" | "speak";
+      notify: StewardNotify;
     },
   ) =>
     stewardRegister.parse(
@@ -52,6 +55,8 @@ export const stewardApi = {
     goalId
       ? invoke("work_withdraw", { conversationId, goalId })
       : invoke("withdraw_steward_delegation", { conversationId }),
+  amendNotification: (conversationId: string, goalId: string, notify: StewardNotify) =>
+    invoke("work_amend", { conversationId, goalId, notify }),
   listTasks: async (conversationId: string) =>
     z.array(stewardTask).parse(await invoke("list_steward_tasks", { conversationId })),
 };

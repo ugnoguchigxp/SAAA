@@ -47,6 +47,14 @@ impl ProviderInputBudget {
         }
     }
 
+    /// Replaces the conservative default with the exact schema fragment that this concrete
+    /// provider attempt will offer. This is resolved only after a provider session exists,
+    /// because generated and workspace tools depend on live application state.
+    pub(crate) const fn with_tool_schema_reserve_bytes(mut self, bytes: usize) -> Self {
+        self.tool_schema_reserve_bytes = bytes;
+        self
+    }
+
     pub(crate) const fn usable_context_bytes(self) -> usize {
         (if self.model_input_limit_bytes < self.transport_limit_bytes {
             self.model_input_limit_bytes
@@ -373,6 +381,13 @@ mod tests {
             ProviderInputBudget::agent_session().usable_context_bytes()
                 > ProviderInputBudget::openai_compatible().usable_context_bytes()
         );
+    }
+
+    #[test]
+    fn exact_tool_schema_reservation_replaces_the_conservative_default() {
+        let budget = ProviderInputBudget::openai_compatible().with_tool_schema_reserve_bytes(128);
+        assert_eq!(budget.tool_schema_reserve_bytes, 128);
+        assert_eq!(budget.usable_context_bytes(), 61_824);
     }
 
     #[test]

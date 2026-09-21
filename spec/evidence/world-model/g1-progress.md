@@ -3,7 +3,12 @@
 作成日: 2026-09-21。対象計画: `spec/docs/saaa-personal-world-model-graph-answer-plan.md`。
 未達を成功として報告しない。filter 0 件を合格にしない。並行差分は巻き戻していない。
 
-## G1-00 baseline・G0 証拠
+## 2026-09-21 再レビュー後の状態
+
+以下の旧記録の保留事項を補完した。M4A runner・実HTTP32ケース・保存入力のapp compose統合試験・実時計性能試験がある。AgentSessionはWDの初回限定契約へ計画を合わせた。
+G1-07/09/10/11/12の追加証拠と試験の範囲は `m4a-results.md`、修正は `review-2026-09-21.md`。旧G0の「runnerなし」は現在のBlockerではない。全体ゲートとWD live matrixは別の残件である。
+
+## G1-00 baseline・G0 証拠（以下は補完前の履歴）
 
 | 項目 | 値 |
 | --- | --- |
@@ -65,7 +70,7 @@ HTTP 受信本文レベル（G1-09/10/11）の完了は保留とする。
 - `src-tauri/src/memory/control_plane/mod.rs`: `CONTEXT_POLICY_VERSION` を 2 へ。
 - 試験: `g1_tests.rs`（新規）、`question.rs`/`question_input.rs` 内、`turn_tests.rs` 更新、`context_window.rs` 内。
 
-## TODO として残すもの
+## 補完前のTODO（上記更新で解消した範囲を参照）
 
 - G1-09/10/11 の実 HTTP 受信本文試験（M4A runner 不在のため前段扱い）。
 - G1-12 の性能測定（同一端末 debug、warm-up 5、30 sample、p95=昇順 29 番目）。

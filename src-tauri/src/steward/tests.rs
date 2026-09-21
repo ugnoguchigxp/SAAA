@@ -360,6 +360,66 @@ fn dw_01_plan_rejects_cycles_and_replan_limit() {
 }
 
 #[test]
+fn dw_10_settled_read_step_durably_enqueues_one_dependent_test_step() {
+    with_memory(true, || {
+        let state = app_state(db());
+        register_goal(&state);
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 1);
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_plan_steps"), 2);
+        prepare_runtime_run(&state, &turn("dw-10-start", START_TRIGGER)).unwrap();
+        super::on_user_message(&state, &turn("dw-10-start", START_TRIGGER));
+        let first = task_id(&state);
+        state
+            .sqlite_writer
+            .write(|connection| {
+                repo::persist_task_plan(connection, &first, "read", "inspect", "rules", 0)
+            })
+            .unwrap();
+        insert_job(&state, &first, "running", None);
+        state
+            .sqlite_writer
+            .write(|connection| repo::apply_terminal_event(connection, "job", "settled"))
+            .unwrap();
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
+        assert_eq!(
+            count(
+                &state,
+                "SELECT COUNT(*) FROM steward_tasks WHERE loop_state='queued'"
+            ),
+            1
+        );
+        state
+            .sqlite_writer
+            .write(|connection| repo::apply_terminal_event(connection, "job", "settled"))
+            .unwrap();
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
+    });
+}
+
+#[test]
+fn dw_10_migration_backfills_a_plan_for_an_existing_goal() {
+    let connection = db();
+    workspace(&connection);
+    repo::register(&connection, PRIMARY_CONVERSATION_ID, "ws", "tests pass").unwrap();
+    connection
+        .execute_batch("DROP TABLE steward_plan_steps; DROP TABLE steward_goal_plans;")
+        .unwrap();
+    super::schema::migrate(&connection).unwrap();
+    let plans: i64 = connection
+        .query_row("SELECT COUNT(*) FROM steward_goal_plans", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let steps: i64 = connection
+        .query_row("SELECT COUNT(*) FROM steward_plan_steps", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(plans, 1);
+    assert_eq!(steps, 2);
+}
+
+#[test]
 fn dw_03_proposal_binds_only_a_persisted_user_source_and_allows_multiple_goals() {
     let state = app_state(db());
     state
@@ -496,6 +556,52 @@ fn dw_06_dispatch_intent_is_claimed_once_and_records_receipt() {
         ),
         1
     );
+}
+
+#[test]
+fn dw_06_restart_marks_unreceived_dispatch_unknown_without_reclaiming() {
+    let state = app_state(db());
+    register_goal(&state);
+    prepare_runtime_run(&state, &turn("restart-intent-source", START_TRIGGER)).unwrap();
+    let source = state
+        .sqlite_readers
+        .read(|c| repo::input_message_id(c, "restart-intent-source"))
+        .unwrap()
+        .unwrap();
+    let task = state
+        .sqlite_writer
+        .write(|c| {
+            let work = repo::active_delegation(c, PRIMARY_CONVERSATION_ID)?.unwrap();
+            repo::queue_task(c, &work, PRIMARY_CONVERSATION_ID, &source, "start")
+        })
+        .unwrap()
+        .unwrap();
+    state
+        .sqlite_writer
+        .write(|c| {
+            assert!(repo::claim_dispatch(c, &task)?);
+            // This is the startup migration path: the process may have
+            // received the effect, so it is intentionally not replayed.
+            super::schema::migrate(c).map_err(crate::database_error)
+        })
+        .unwrap();
+    let intent: String = state
+        .sqlite_readers
+        .read(|c| {
+            c.query_row(
+                "SELECT state FROM steward_dispatch_intents WHERE task_id=?1",
+                [&task],
+                |row| row.get(0),
+            )
+            .map_err(crate::database_error)
+        })
+        .unwrap();
+    assert_eq!(intent, "outcome_unknown");
+    assert!(!state
+        .sqlite_writer
+        .write(|c| repo::claim_dispatch(c, &task))
+        .unwrap());
+    assert_eq!(count(&state, "SELECT COUNT(*) FROM coding_jobs"), 0);
 }
 
 #[test]
@@ -900,6 +1006,12 @@ fn ml_08_acceptance_register_divert_complete_withdraw() {
             ),
             1
         );
+        let delivered = state
+            .sqlite_readers
+            .read(|connection| repo::list(connection, PRIMARY_CONVERSATION_ID))
+            .unwrap();
+        assert_eq!(delivered[0]["deliveryState"], "delivered");
+        assert_eq!(delivered[0]["speechState"], "pending");
         state
             .sqlite_writer
             .write(|connection| repo::withdraw(connection, PRIMARY_CONVERSATION_ID))

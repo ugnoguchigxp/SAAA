@@ -78,9 +78,16 @@ fn try_start(state: &AppState, input: &StartTurnInput) -> Result<(), String> {
 /// Executes only the fixed read/test recipe against a persisted user source.
 /// Proposal text is never promoted into an executable prompt or permission.
 pub(crate) fn start_queued(state: &AppState, input: &StartTurnInput) -> Result<(), String> {
+    start_queued_for_conversation(state, &input.conversation_id)
+}
+
+pub(crate) fn start_queued_for_conversation(
+    state: &AppState,
+    conversation_id: &str,
+) -> Result<(), String> {
     let prepared = state.sqlite_writer.write(|connection| {
         let transaction = connection.unchecked_transaction().map_err(crate::database_error)?;
-        let Some((work, task_id)) = repo::next_queued_work(&transaction, &input.conversation_id)?
+        let Some((work, task_id)) = repo::next_queued_work(&transaction, conversation_id)?
         else {
             transaction.commit().map_err(crate::database_error)?;
             return Ok(None);
@@ -90,7 +97,7 @@ pub(crate) fn start_queued(state: &AppState, input: &StartTurnInput) -> Result<(
             transaction.commit().map_err(crate::database_error)?;
             return Ok(None);
         }
-        if !repo::workspace_registered(&transaction, &input.conversation_id, &work.workspace_id)? {
+        if !repo::workspace_registered(&transaction, conversation_id, &work.workspace_id)? {
             transaction.commit().map_err(crate::database_error)?;
             return Ok(None);
         }
@@ -148,7 +155,7 @@ pub(crate) fn start_queued(state: &AppState, input: &StartTurnInput) -> Result<(
     }
     let result = crate::coding::service::execute_delegated(
         state,
-        &input.conversation_id,
+        conversation_id,
         &task_id,
         &workspace_id,
         request,
@@ -253,14 +260,10 @@ fn select_plan_recipe(
     let (rules, eligible) = match (work.ops.as_str(), work.verifier.as_str()) {
         ("read", _) => ("read", vec!["read".to_string()]),
         ("test_run", _) => ("test_run", vec!["test_run".to_string()]),
-        ("read_test", "test_report_obtained" | "tests_pass") => (
-            "read_test",
-            vec!["read_test".to_string(), "test_run".to_string()],
-        ),
-        ("read_test", _) => (
-            "read_test",
-            vec!["read_test".to_string(), "read".to_string()],
-        ),
+        ("read_test", _) if repo::completed_recipe(connection, &work.delegation_id, "read")? => {
+            ("test_run", vec!["test_run".to_string()])
+        }
+        ("read_test", _) => ("read", vec!["read".to_string()]),
         _ => return Err("steward_plan_invalid".into()),
     };
     let settings = crate::persistence::load_role_routing_settings(connection)?;
@@ -307,22 +310,18 @@ fn now_ms() -> i64 {
 mod adaptive_plan_tests {
     #[test]
     fn registered_plan_recipes_are_strict_subsets_of_delegated_ops() {
-        let candidates = |ops: &str, verifier: &str| match (ops, verifier) {
+        let candidates = |ops: &str, read_completed: bool| match (ops, read_completed) {
             ("read", _) => vec!["read"],
             ("test_run", _) => vec!["test_run"],
-            ("read_test", "test_report_obtained" | "tests_pass") => {
-                vec!["read_test", "test_run"]
-            }
-            ("read_test", _) => vec!["read_test", "read"],
+            ("read_test", true) => vec!["test_run"],
+            ("read_test", false) => vec!["read"],
             _ => vec![],
         };
-        assert_eq!(candidates("read", "test_report_obtained"), ["read"]);
-        assert_eq!(candidates("test_run", "test_report_obtained"), ["test_run"]);
-        assert_eq!(
-            candidates("read_test", "test_report_obtained"),
-            ["read_test", "test_run"]
-        );
-        assert!(candidates("write", "test_report_obtained").is_empty());
+        assert_eq!(candidates("read", false), ["read"]);
+        assert_eq!(candidates("test_run", false), ["test_run"]);
+        assert_eq!(candidates("read_test", false), ["read"]);
+        assert_eq!(candidates("read_test", true), ["test_run"]);
+        assert!(candidates("write", false).is_empty());
     }
 }
 

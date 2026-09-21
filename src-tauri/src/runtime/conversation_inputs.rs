@@ -6,7 +6,7 @@ use crate::{database_error, AppState, StartTurnInput};
 use rusqlite::params;
 
 #[path = "conversation_inputs_roles.rs"]
-mod conversation_inputs_roles;
+pub(super) mod conversation_inputs_roles;
 
 pub(super) struct Inputs {
     pub(super) providers: crate::ModelProvidersSettings,
@@ -17,8 +17,10 @@ pub(super) struct Inputs {
     pub(super) loaded_context: memory::context_window::LoadedContextWindow,
     pub(super) scope: crate::runtime::context::scope::ScopeSnapshot,
     pub(super) personal_candidates: Vec<crate::runtime::context::source::Candidate>,
+    pub(super) continuation_candidates: Vec<crate::runtime::context::source::Candidate>,
     pub(super) personal_source_error: Option<String>,
     pub(super) configuration_fingerprint: String,
+    pub(super) role_dispatch: Option<conversation_inputs_roles::RoleDispatch>,
 }
 
 // Read identity, routing and source history from one consistent SQLite snapshot.
@@ -52,11 +54,14 @@ pub(super) fn load(state: &AppState, input: &StartTurnInput) -> Result<Inputs, S
             } else {
                 (Vec::new(), None)
             };
+        let continuation_candidates =
+            crate::runtime::context::continuations::load(connection, &input.conversation_id)?;
         let identity = load_codex_settings(connection)?;
         let regional = crate::persistence::settings::regional_preferences::load(connection)?;
         let providers = load_model_providers(connection)?;
         let mut route = load_routing_settings(connection)?.conversation_respond;
-        conversation_inputs_roles::apply_enabled_role_route(connection, &mut route)?;
+        let role_dispatch =
+            conversation_inputs_roles::apply_enabled_role_route(connection, &mut route)?;
         let configuration_fingerprint =
             crate::persistence::effective_route::conversation_configuration_fingerprint(
                 &providers, &route,
@@ -70,8 +75,10 @@ pub(super) fn load(state: &AppState, input: &StartTurnInput) -> Result<Inputs, S
             loaded_context,
             scope,
             personal_candidates,
+            continuation_candidates,
             personal_source_error,
             configuration_fingerprint,
+            role_dispatch,
         })
     })
 }

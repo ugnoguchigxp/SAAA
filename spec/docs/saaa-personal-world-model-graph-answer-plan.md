@@ -21,7 +21,7 @@
 次の証拠が揃うまで本番配線カードG1-07以降へ進まない。
 
 - 初回・Tool followupの失効で、実HTTP本文からWorldが除かれる。
-- AgentSession等の対象外ProviderにWorldが送られない。fallbackでも同じ。
+- 後続WDのProvider対応表に従う。AgentSessionは初回のみ再検証付きWorld、継続はWorld-free。fallback先でも独立して再検証する。
 - 実送信本文とgeneration manifestが一致する。
 - World除去時も通常の履歴・Personal State・Tool結果が残る。
 - M4Aのケースと改修後の対象試験のrevision・結果が確認できる。
@@ -140,7 +140,7 @@ Goal撤回、Relation/Source削除、条件や投影revision変更、Scope失効
 | G1-08 | C6・既存system template | World読取方針を追加 | ユーザー指示は一つ、データをsystem化しない、placeholder回帰通過 |
 | G1-09 | C4/5・統合試験 | 五要素とunknown/曖昧/不成立/競合の送信を検証 | HTTP JSONに根拠・条件・noticeが保持される |
 | G1-10 | C7・Provider試験 | Goal/Source/Relation変更を送信前に挟む | 初回/followupで古いgraph全文除去、manifest一致 |
-| G1-11 | G0/C7・対象外/fallback試験 | M4A回帰ケースへgraph fixture追加 | AgentSession等へ送信0、非World本文保持 |
+| G1-11 | G0/C7・対象外/fallback試験 | M4A回帰ケースへgraph fixture追加 | AgentSession初回は再検証、継続/失効時は送信0、非World本文保持 |
 | G1-12 | C4・性能試験 | 五要素profileで取得/再検証/整形計測 | 既存容量・byte・p95基準を維持、Errを成功計測にしない |
 | G1-13 | §5・全体検査 | suiteと全体ゲートを実行 | filter0不可、既存失敗を分離、size閾値未緩和 |
 | G1-14 | §6・evidence/検証文書 | 使える四形式と結果・制約を記録 | 「Coding状態のみ」からの差と未実装を説明できる |
@@ -193,3 +193,5 @@ world:evalはM4Aの実装済みコマンドを確認して使用する。存在�
 完了は、明示質問→認可済み名前解決→五要素Slice→Broker→実HTTP本文まで通り、失効・対象外で除去され、全体ゲートが通ること。固定応答のmock試験から「LLM回答品質が改善した」と結論しない。
 
 次は、会話から五要素の候補を抽出して既存commitへ渡す更新経路と、固定質問群による回答品質比較を別計画で進める。本計画では保存データをfixture/既存正規経路で準備するため、自動学習は未完成である。
+
+2026-09-21受入更新: M4A runner不在のBlockerは解消。現在の受入結果と未検証範囲は `../evidence/world-model/m4a-results.md`、修正理由は `../evidence/world-model/review-2026-09-21.md` を参照。

@@ -41,7 +41,7 @@ pub fn input() -> Value {
         "request":string(16000),
         "context":object(json!({
             "messages":array(object(json!({"role":{"enum":["user","assistant"]},"content":string(16000)})),32),
-            "evidence":array(object(json!({"id":string(160),"source":string(512),"content":string(16000)})),8),
+            "evidence":array(object(json!({"id":string(160),"source":string(512),"content":string(16000),"world":{"anyOf":[{"type":"null"},object(json!({"schemaVersion":{"const":super::world::VERSION},"instructionAuthority":{"const":"none"},"projectScope":string(512),"capturedAtMs":{"type":"integer"},"expiresAtMs":{"type":"integer"}}))]}})),8),
             "truncated":{"type":"boolean"}
         })),
         "constraints":object(json!({"language":{"enum":["ja","en","auto"]},"localOnly":{"const":true},"maxSpeechChars":{"type":"integer","minimum":1,"maximum":240}})),

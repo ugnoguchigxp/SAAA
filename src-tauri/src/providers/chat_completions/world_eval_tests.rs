@@ -1,3 +1,4 @@
+#![cfg(test)]
 //! M4A/G1 acceptance: real Frame -> Broker -> HTTP adapter -> received bytes and manifest.
 use super::world_eval_fixture::{frame, state, Sink, Wire};
 use super::*;
@@ -13,6 +14,7 @@ enum Change {
     At(i64),
     Owner,
     Source,
+    GraphSource,
     Policy,
     Scope,
     InputDeleted,
@@ -26,6 +28,7 @@ fn change(f: &Fixture, change: Change, start: i64) {
         Change::At(delta) => f.set_now(start + delta),
         Change::Owner => f.set_coding_state(7, "cancel_requested", "stopping", "accepted"),
         Change::Source => sql(f, "UPDATE personal_sources SET available=0 WHERE message_id='csrc1'"),
+        Change::GraphSource => sql(f, "UPDATE personal_sources SET available=0 WHERE message_id='g1-src'"),
         Change::Scope => sql(f, "UPDATE context_scope_epochs SET epoch=epoch+1"),
         Change::InputDeleted => sql(f, "DELETE FROM conversation_messages WHERE id='msg1'"),
         Change::Policy => sql(f, "UPDATE personal_scope SET policy_revision=policy_revision+1 WHERE id='primary'"),
@@ -50,6 +53,7 @@ struct Case {
     budget: bool,
     shadow: bool,
     topic: &'static str,
+    complete_after_change: bool,
 }
 fn case(id: &'static str) -> Case {
     Case {
@@ -63,6 +67,7 @@ fn case(id: &'static str) -> Case {
         budget: false,
         shadow: false,
         topic: "tech",
+        complete_after_change: false,
     }
 }
 
@@ -71,7 +76,12 @@ async fn evaluate(c: Case) -> Value {
         graph::g1_fixture()
     } else {
         let f = Fixture::new(&[("task", CODING_ID)]);
-        f.add_coding_job(7, "running", "running", "accepted");
+        f.add_coding_job(
+            if c.id == "W18b" { 18 } else { 7 },
+            "running",
+            "running",
+            "accepted",
+        );
         f
     };
     let start = f.now();
@@ -180,7 +190,7 @@ async fn evaluate(c: Case) -> Value {
             _ => {}
         }) as Box<dyn FnOnce() + Send>
     });
-    let wire = Wire::start(hook).await;
+    let wire = Wire::start(hook, c.complete_after_change).await;
     let session = crate::begin_provider_session(
         &app,
         RUN_ID,
@@ -261,6 +271,12 @@ async fn evaluate(c: Case) -> Value {
         if i > 0 {
             assert!(messages.iter().any(|m| m["role"] == "tool"));
         }
+        if c.id.starts_with("W18") {
+            assert_eq!(
+                actual.as_ref().unwrap()["runtime"][0]["job_revision"],
+                if c.id == "W18b" { 18 } else { 7 }
+            );
+        }
         if c.graph && c.expected[i] {
             let graph = &actual.as_ref().unwrap()["graph"];
             if c.topic == "missing" {
@@ -270,6 +286,10 @@ async fn evaluate(c: Case) -> Value {
                     .contains(&json!("unknown_seed")));
             } else {
                 assert!(!graph["nodes"].as_array().unwrap().is_empty());
+                assert!(
+                    !graph["relevant_goal_ids"].as_array().unwrap().is_empty(),
+                    "{graph}"
+                );
                 let relations = graph["relations"].as_array().unwrap();
                 assert!(relations
                     .iter()
@@ -384,8 +404,27 @@ async fn world_m4a_suite() {
         },
     ];
     let mut cases = cases;
-    cases.push(Case { before: Change::InputDeleted, expected: &[], ..case("W17a") });
-    cases.push(Case { before: Change::Policy, expected: &[false], ..case("policy-before-new-generation") });
+    cases.push(Case {
+        before: Change::InputDeleted,
+        expected: &[],
+        ..case("W17a")
+    });
+    cases.push(Case {
+        before: Change::Policy,
+        expected: &[false],
+        ..case("policy-before-new-generation")
+    });
+    cases.push(Case {
+        follow: Some(Change::At(1000)),
+        complete_after_change: true,
+        ..case("W19")
+    });
+    cases.push(Case {
+        graph: true,
+        before: Change::GraphSource,
+        expected: &[false],
+        ..case("G1-source-revoked")
+    });
     let mut reports = Vec::new();
     for c in cases {
         reports.push(evaluate(c).await);

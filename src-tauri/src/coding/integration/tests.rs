@@ -24,6 +24,151 @@ fn coding_service_codex_sdk_live() {
     run_adapter(true, false);
 }
 
+/// A delegated execution has no fabricated user turn.  Its durable steward
+/// task is the only origin, and the shared Coding service records that origin
+/// before the fixture Pi process is launched.
+#[cfg(unix)]
+#[test]
+fn coding_service_runs_through_a_delegated_event_origin() {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("fixture-pi");
+    std::fs::write(&executable, include_str!("../test_pi.py")).unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(&workspace)
+        .status()
+        .unwrap()
+        .success());
+    let connection = database();
+    let mut state = crate::test_support::app_state(connection);
+    state.data_directory = directory.path().to_owned();
+    let settings = contracts::CodingSettings {
+        enabled: true,
+        executable: executable.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    state
+        .sqlite_writer
+        .write(|c| {
+            c.execute(
+                "UPDATE coding_settings SET value_json=?1",
+                [serde_json::to_string(&settings).unwrap()],
+            )
+            .map_err(crate::database_error)?;
+            Ok(())
+        })
+        .unwrap();
+    let registered = service::register(
+        &state,
+        crate::PRIMARY_CONVERSATION_ID,
+        workspace.to_str().unwrap(),
+    )
+    .unwrap();
+    let workspace_id = registered["workspaceId"].as_str().unwrap();
+    state
+        .sqlite_writer
+        .write(|c| {
+            c.execute(
+                "INSERT INTO steward_goals(id,conversation_id,origin,success_condition,status,created_at)
+                 VALUES('goal',?1,'user_explicit','test_report_obtained','active','1')",
+                [crate::PRIMARY_CONVERSATION_ID],
+            )
+            .map_err(crate::database_error)?;
+            c.execute(
+                "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
+                 VALUES('source',?1,'user','inspect the failures','1')",
+                [crate::PRIMARY_CONVERSATION_ID],
+            )
+            .map_err(crate::database_error)?;
+            c.execute(
+                "INSERT INTO steward_delegations(id,goal_id,conversation_id,workspace_id,ops,budget_runs,budget_ms,notify,status,created_at)
+                 VALUES('delegation','goal',?1,?2,'read_test',1,60000,'silent','active','1')",
+                params![crate::PRIMARY_CONVERSATION_ID, workspace_id],
+            )
+            .map_err(crate::database_error)?;
+            c.execute(
+                "INSERT INTO steward_tasks(id,delegation_id,conversation_id,trigger_kind,source_id,dedupe_key,loop_state,created_at,updated_at)
+                 VALUES('task','delegation',?1,'start','source','delegation:source','queued','1','1')",
+                [crate::PRIMARY_CONVERSATION_ID],
+            )
+            .map_err(crate::database_error)?;
+            Ok(())
+        })
+        .unwrap();
+    let user_messages_before: i64 = state
+        .sqlite_readers
+        .read(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM conversation_messages WHERE role='user'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(crate::database_error)
+        })
+        .unwrap();
+    let accepted = service::execute_delegated(
+        &state,
+        crate::PRIMARY_CONVERSATION_ID,
+        "task",
+        workspace_id,
+        "inspect",
+    )
+    .unwrap();
+    let job = accepted["jobId"].as_str().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let settled = loop {
+        let current = state
+            .sqlite_readers
+            .read(|c| repo::inspect(c, crate::PRIMARY_CONVERSATION_ID, job, 0, 1))
+            .unwrap();
+        if current["state"] == "settled" {
+            break current;
+        }
+        assert!(Instant::now() < deadline, "{current}");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(settled["result"]["summary"], "fixture result 2");
+    let (origin_kind, origin_id, user_messages): (String, String, i64) = state
+        .sqlite_readers
+        .read(|c| {
+            Ok((
+                c.query_row(
+                    "SELECT origin_kind FROM coding_origin_bindings WHERE job_id=?1",
+                    [job],
+                    |row| row.get(0),
+                )
+                .map_err(crate::database_error)?,
+                c.query_row(
+                    "SELECT origin_id FROM coding_origin_bindings WHERE job_id=?1",
+                    [job],
+                    |row| row.get(0),
+                )
+                .map_err(crate::database_error)?,
+                c.query_row(
+                    "SELECT COUNT(*) FROM conversation_messages WHERE role='user'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(crate::database_error)?,
+            ))
+        })
+        .unwrap();
+    assert_eq!(
+        (origin_kind.as_str(), origin_id.as_str()),
+        ("delegated_event", "task")
+    );
+    // The user source already existed before dispatch. The delegated service
+    // did not manufacture another StartTurnInput/message.
+    assert_eq!(user_messages, user_messages_before);
+}
+
 #[cfg(unix)]
 fn run_adapter(live: bool, forget_source: bool) {
     use std::{

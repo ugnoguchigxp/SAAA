@@ -1,3 +1,4 @@
+#![cfg(test)]
 //! Local wire fixture for the World acceptance suite. No credentials or external services.
 use super::*;
 use crate::runtime::event_hub::RuntimeEventSender;
@@ -27,7 +28,10 @@ impl Drop for Wire {
 }
 
 impl Wire {
-    pub async fn start(after_first: Option<Box<dyn FnOnce() + Send>>) -> Self {
+    pub async fn start(
+        after_first: Option<Box<dyn FnOnce() + Send>>,
+        complete_after_change: bool,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
         let bodies = Arc::new(Mutex::new(Vec::new()));
@@ -67,8 +71,11 @@ impl Wire {
                     .unwrap()
                     .push(bytes[start..start + length].to_vec());
                 let tool = hook.take();
-                let message = if let Some(change) = tool {
+                let has_hook = tool.is_some();
+                if let Some(change) = tool {
                     change();
+                }
+                let message = if has_hook && !complete_after_change {
                     json!({"role":"assistant","content":null,"tool_calls":[{"id":"ui-world","type":"function","function":{"name":"present_ui","arguments":json!({"definition":"root=ModelStatus(\"larm.status\")","summary":"合成結果","mode":"live"}).to_string()}}]})
                 } else {
                     json!({"role":"assistant","content":"fixture complete"})

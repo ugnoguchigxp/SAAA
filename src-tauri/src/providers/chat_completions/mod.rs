@@ -14,9 +14,7 @@ mod sse;
 mod tests;
 mod voice_progress;
 mod world_body;
-#[cfg(test)]
 mod world_eval_fixture;
-#[cfg(test)]
 mod world_eval_tests;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -71,24 +69,47 @@ pub(crate) async fn run_with_options(
                 AgentToolOffer::empty()
             };
             let tools = &offer.definitions;
-            let world = context
-                .output_persistence
-                .and_then(|persistence| persistence.world);
-            let include_world = world_body::apply(&mut messages, world);
-            let mut body = json!({"model": model, "messages": messages, "stream": streaming,
-                "max_tokens": context.max_output_tokens});
-            options.apply(
-                &mut body,
-                model,
-                context.max_output_tokens,
-                context.reasoning_effort,
-            );
-            if !tools.is_empty() {
-                body["tools"] = json!(tools);
-                body["parallel_tool_calls"] = json!(false);
-            }
-            let generation =
-                generation::RequestGeneration::begin(&context, &body, calls, include_world)?;
+            let (body, generation) = {
+                let mut recompose_attempts = 0;
+                loop {
+                    let world = context
+                        .output_persistence
+                        .and_then(|persistence| persistence.world);
+                    let include_world = world_body::apply(&mut messages, world);
+                    let mut body = json!({"model": model, "messages": messages, "stream": streaming,
+                        "max_tokens": context.max_output_tokens});
+                    options.apply(
+                        &mut body,
+                        model,
+                        context.max_output_tokens,
+                        context.reasoning_effort,
+                    );
+                    if !tools.is_empty() {
+                        body["tools"] = json!(tools);
+                        body["parallel_tool_calls"] = json!(false);
+                    }
+                    match generation::RequestGeneration::begin(
+                        &context,
+                        &body,
+                        calls,
+                        include_world,
+                    ) {
+                        Ok(generation) => break (body, generation),
+                        Err(Failure::RequiredContextOverflow)
+                            if calls > 0 && recompose_attempts < 2 =>
+                        {
+                            recompose_attempts += 1;
+                            if !world_body::trim_optional_history_for_tool_follow_up(
+                                &mut messages,
+                                context.context_sources,
+                            ) {
+                                return Err(Failure::RequiredContextOverflow);
+                            }
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            };
             let mut request = client
                 .post(&url)
                 .header(
@@ -211,6 +232,7 @@ pub(crate) async fn run_with_options(
                 if !tool_was_offered(tools, &call.name) {
                     return Err(Failure::Protocol);
                 }
+                generation.revalidate_before_tool()?;
                 // Prevent transport/routing retries after a tool has executed, even with no visible text.
                 mark_started(&context, &mut started)?;
                 calls += 1;

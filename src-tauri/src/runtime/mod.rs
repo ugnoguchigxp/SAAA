@@ -6,6 +6,7 @@ pub(crate) mod codex_persist;
 pub(crate) mod codex_process;
 pub(crate) mod codex_supervise;
 pub(crate) mod codex_turn;
+mod codex_context;
 pub(crate) mod context;
 pub mod contracts;
 pub(crate) mod conversation_turn;

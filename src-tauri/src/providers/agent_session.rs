@@ -15,6 +15,13 @@ use super::stream::{
 mod creation;
 mod sse;
 
+pub(crate) fn initial_input_reserve(
+    state: &crate::AppState,
+    input: &crate::StartTurnInput,
+) -> Result<usize, String> {
+    sse::initial_input_reserve(state, input)
+}
+
 const MAX_HTTP_BODY_BYTES: usize = 1_048_576;
 
 #[derive(Debug, Deserialize)]
@@ -160,7 +167,11 @@ fn apply_release(
                 ProviderFailureKind::Capacity
                 | ProviderFailureKind::Upstream
                 | ProviderFailureKind::Unavailable => "upstream",
-                ProviderFailureKind::Contract | ProviderFailureKind::Protocol => "protocol",
+                ProviderFailureKind::Contract
+                | ProviderFailureKind::Protocol
+                | ProviderFailureKind::RequiredContextOverflow
+                | ProviderFailureKind::ContextScopeChanged
+                | ProviderFailureKind::RequiredContextUnavailable => "protocol",
                 _ => "internal",
             },
         }),

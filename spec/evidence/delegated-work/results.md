@@ -2,6 +2,16 @@
 
 ## Targeted checks
 
+- `bun run typecheck`: pass.
+- `bun test tests/coding-steward.test.ts`: 2 passed, 0 failed.
+- `cargo test ml_08_acceptance_register_divert_complete_withdraw --lib`: pass.
+- `cargo test coding_service_runs_through_a_delegated_event_origin --lib`: pass.
+- `cargo test dw_06_restart_marks_unreceived_dispatch_unknown_without_reclaiming --lib`: pass.
+- `cargo test dw_10_settled_read_step_durably_enqueues_one_dependent_test_step --lib`: pass.
+- `cargo test dw_10_migration_backfills_a_plan_for_an_existing_goal --lib`: pass.
+- `cargo test schedule::tests --lib`: 18 passed, 0 failed.
+- Packaged desktop smoke: pass (build 27.95s, bundle, launch, IPC ready,
+  cleanup; 31.21s total on the current worktree).
 - Rust formatting check for changed steward and runner sources: pass.
 - Targeted steward test binary: 27 passed, 0 failed; the agent-session
   delegated-work bridge regression test also passes. It initially exposed
@@ -12,10 +22,16 @@
 - `bun run spec:check`: pass.
 - `bun run typecheck`: pass after regenerating the IPC bindings and aligning
   the meeting-blocked voice-policy union.
-- `bun run ipc:check`: pass (runtime/UI/Coding/Schedule bindings and voice ASR).
+- `bun run ipc:check`: pass on the current worktree (4 general bindings and 1
+  voice-ASR binding). A transient unrelated `role_codex_prompt` arity mismatch
+  in concurrent work was resolved without changing any delegated-work source.
 - `bun run size:check`: fails on repository-wide pre-existing ratchet excesses
   and missing baselines (including files outside delegated work); no ratchet
   baseline was relaxed for this implementation.
+- `bun run check:local`: currently stops at TypeScript formatting in shared
+  files outside this work (`CodingConnectionFields.tsx` and
+  `RoleRoutingSection.tsx`). The touched `StewardPanel.tsx` was formatted;
+  `bun run typecheck` passes.
 
 ## Behavioural result
 
@@ -48,8 +64,38 @@
 - The pinned Pi 0.86.1 interface canary passed against its isolated scripted
   provider: session resume, result collection, model-error handling, abort,
   and orderly shutdown all completed. No live model was used for that canary.
-- The macOS delegated-profile boundary test and profile-contract test pass;
-  the current IPC contract suite also passes (4 general bindings and 1 voice
-  ASR binding).
+- The macOS delegated-profile boundary test and profile-contract test pass.
 - The production Pi-adapter fixture cancellation test passed and observes the
   Coding job terminal state as `interrupted`, not merely `cancel_requested`.
+- The production Pi-adapter forget integration passed: deleting an accepted
+  source causes the runner to abort the fixture process, and both the current
+  run and its job become `interrupted`. The authorization-aware inspection API
+  then correctly rejects the forgotten lineage.
+- The Steward panel now exposes the already host-validated, per-Goal
+  notification-only amendment. Broader operation or budget changes remain a
+  new confirmed registration, preserving the explicit authority boundary.
+- The frontend Steward API test confirms a notification amendment sends only
+  the selected Goal id and route to `work_amend`.
+- A steward restart-boundary test passes: an unreceived `dispatching` intent
+  becomes `outcome_unknown` during startup migration, cannot be reclaimed,
+  and creates no Coding job by replay.
+- All 18 targeted Schedule tests pass, including expiry before TaskRun dispatch
+  and crash recovery that closes `firing` work without rerunning it.
+- The production Pi fixture now verifies the shared Coding service's delegated
+  origin path end-to-end: it settles normally, persists `delegated_event` with
+  the steward task id, and does not fabricate a user turn during dispatch.
+- The packaged desktop smoke passed on the current worktree: build, bundle,
+  launch, IPC-ready observation, and cleanup all completed.
+- Speech-delivery claims are durable and restart-safe: a claimed report becomes
+  `delivery_unknown` on startup and cannot be replayed automatically. Speech
+  starts only after the conversation report is committed and only when the
+  existing Situation and global auto-speak policies permit it.
+- The task-list IPC now returns the latest durable report-delivery and speech
+  state; the Steward panel renders those values after each refresh/reconnect.
+  Its notification amendment button also sends the user-selected route.
+- A settled read step for a `read_test` delegation atomically creates one
+  queued test step with its own dispatch intent. Replaying the same terminal
+  event leaves the task count unchanged.
+- New and migrated Goals persist a bounded Goal plan and dependency rows;
+  the existing `TaskPlan` validator rejects invalid or cyclic plans before
+  those rows are written.

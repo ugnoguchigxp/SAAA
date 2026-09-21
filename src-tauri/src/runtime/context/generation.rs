@@ -5,6 +5,28 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
 pub(crate) const MAX_PROVIDER_REQUEST_BYTES: usize = 96_000;
+/// The conservative input portion of the 96 KiB provider envelope after reserving 20 KiB for
+/// output and 12 KiB for safety. This is measured on the final serialized wire body, not tokens.
+pub(crate) const MAX_PROVIDER_CONTEXT_WIRE_BYTES: usize = 64_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FinalWireSize {
+    Fits,
+    RequiredContextOverflow,
+    RequestTooLarge,
+}
+
+/// Classify the exact serialized provider body. Once the body contains a required item, crossing
+/// the conservative input allotment is a safe dispatch refusal, never permission to omit it.
+pub(crate) fn final_wire_size(payload_bytes: usize, has_required_context: bool) -> FinalWireSize {
+    if payload_bytes > MAX_PROVIDER_CONTEXT_WIRE_BYTES && has_required_context {
+        FinalWireSize::RequiredContextOverflow
+    } else if payload_bytes > MAX_PROVIDER_REQUEST_BYTES {
+        FinalWireSize::RequestTooLarge
+    } else {
+        FinalWireSize::Fits
+    }
+}
 
 pub(crate) struct GenerationHandle {
     writer: Arc<SqliteWriter>,
@@ -99,7 +121,15 @@ impl GenerationHandle {
     }
 
     pub(crate) fn dispatch(&self) -> Result<(), String> {
+        self.dispatch_checked(|_| Ok(()))
+    }
+
+    pub(crate) fn dispatch_checked(
+        &self,
+        check: impl FnOnce(&Connection) -> Result<(), String>,
+    ) -> Result<(), String> {
         self.writer.write(|connection| {
+            check(connection)?;
             validate_dependencies(connection, &self.id)?;
             let changed = connection
                 .execute(
@@ -114,6 +144,14 @@ impl GenerationHandle {
             }
             Ok(())
         })
+    }
+
+    /// Re-check host-owned dependencies before starting an irreversible Tool action. A completed
+    /// provider response is not authorization to act when a correction, forget, or withdrawal
+    /// arrived while that response was in flight.
+    pub(crate) fn revalidate_dependencies(&self) -> Result<(), String> {
+        self.writer
+            .write(|connection| validate_dependencies(connection, &self.id))
     }
 
     pub(crate) fn complete(&self) -> Result<(), String> {
@@ -215,8 +253,15 @@ pub(crate) fn begin(
     state: &AppState,
     input: BeginGeneration<'_>,
 ) -> Result<GenerationHandle, String> {
+    begin_with_writer(state.sqlite_writer.clone(), input)
+}
+
+pub(crate) fn begin_with_writer(
+    writer: Arc<SqliteWriter>,
+    input: BeginGeneration<'_>,
+) -> Result<GenerationHandle, String> {
     let id = new_id("context_generation");
-    let valid = state.sqlite_writer.write(|connection| {
+    let valid = writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
         let provider_id = resolve_provider(
             &transaction,
@@ -346,7 +391,7 @@ pub(crate) fn begin(
         .into());
     }
     Ok(GenerationHandle {
-        writer: state.sqlite_writer.clone(),
+        writer,
         id,
         world: Mutex::new(None),
         #[cfg(test)]
@@ -420,6 +465,43 @@ fn validate_dependencies(connection: &Connection, generation_id: &str) -> Result
         .map_err(database_error)?;
     if pending_source_stale {
         return Err("Context generation pending source dependency changed".into());
+    }
+    let task_continuation_stale: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM context_generation_inputs i
+               LEFT JOIN coding_jobs j ON j.id=i.source_id
+               LEFT JOIN coding_runs r ON r.id=j.current_run_id
+               WHERE i.generation_id=?1 AND i.source_kind='task-continuation' AND i.selected=1
+                 AND (j.id IS NULL OR i.source_version!=j.revision
+                      OR r.state NOT IN ('starting','running','stopping','outcome_unknown'))
+             )",
+            [generation_id],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    if task_continuation_stale {
+        return Err("Context generation task continuation changed".into());
+    }
+    let delegation_continuation_stale: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM context_generation_inputs i
+               LEFT JOIN steward_tasks t ON t.id=i.source_id
+               LEFT JOIN steward_delegations d ON d.id=t.delegation_id
+               LEFT JOIN steward_goals g ON g.id=d.goal_id
+               WHERE i.generation_id=?1 AND i.source_kind='delegation-continuation' AND i.selected=1
+                 AND (t.id IS NULL OR i.source_version!=t.revision
+                      OR t.loop_state NOT IN ('queued','running','awaiting_user')
+                      OR d.status!='active' OR d.superseded_by IS NOT NULL
+                      OR g.status!='active' OR g.superseded_by IS NOT NULL)
+             )",
+            [generation_id],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    if delegation_continuation_stale {
+        return Err("Context generation delegation continuation changed".into());
     }
     let current: Option<(String, String)> = connection
         .query_row(
@@ -584,6 +666,22 @@ mod tests {
         connection
     }
 
+    #[test]
+    fn final_wire_budget_never_demotes_required_context_to_a_normal_size_failure() {
+        assert_eq!(
+            final_wire_size(MAX_PROVIDER_CONTEXT_WIRE_BYTES + 1, true),
+            FinalWireSize::RequiredContextOverflow
+        );
+        assert_eq!(
+            final_wire_size(MAX_PROVIDER_CONTEXT_WIRE_BYTES + 1, false),
+            FinalWireSize::Fits
+        );
+        assert_eq!(
+            final_wire_size(MAX_PROVIDER_REQUEST_BYTES + 1, false),
+            FinalWireSize::RequestTooLarge
+        );
+    }
+
     fn bind_scope(connection: &Connection) {
         connection
             .execute(
@@ -645,6 +743,92 @@ mod tests {
                 None,
             )
             .unwrap();
+    }
+
+    fn insert_planned_generation(
+        connection: &Connection,
+        source_kind: &str,
+        source_id: &str,
+        version: u64,
+    ) {
+        connection.execute(
+            "INSERT INTO context_generations(
+               id,run_id,provider_id,ordinal,purpose,envelope_digest,request_digest,
+               projected_bytes,current_instruction_count,health_status,status,started_at
+             ) VALUES('continuation-generation','run','provider',1,'reasoning',?1,?1,42,1,'green','planned','1')",
+            [digest(b"request")],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO context_generation_inputs(
+               generation_id,source_kind,source_id,source_version,source_digest,
+               requirement,placement,selected,metadata_json
+             ) VALUES('continuation-generation','current-instruction','input',1,?1,'must','base',1,'{}')",
+            [digest(b"secret current request")],
+        ).unwrap();
+        connection
+            .execute(
+                "INSERT INTO context_generation_inputs(
+               generation_id,source_kind,source_id,source_version,source_digest,
+               requirement,placement,selected,metadata_json
+             ) VALUES('continuation-generation',?1,?2,?3,?4,'must','base',1,'{}')",
+                params![
+                    source_kind,
+                    source_id,
+                    version,
+                    digest(source_id.as_bytes())
+                ],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn delegation_withdrawal_before_dispatch_rejects_the_generation_cas() {
+        let connection = database();
+        connection.execute_batch(
+            "INSERT INTO steward_goals(id,conversation_id,origin,success_condition,status,created_at,summary,revision,verifier)
+               VALUES('goal', 'conversation-primary','user_explicit','verify','active','1','read docs',1,'user_confirmation_required');
+             INSERT INTO steward_delegations(id,goal_id,conversation_id,workspace_id,ops,budget_runs,budget_ms,notify,status,created_at,revision)
+               VALUES('delegation','goal','conversation-primary','workspace','read',1,1,'silent','active','1',1);
+             INSERT INTO steward_tasks(id,delegation_id,conversation_id,trigger_kind,source_id,dedupe_key,loop_state,created_at,updated_at,revision)
+               VALUES('task','delegation','conversation-primary','start','input','key','running','1','1',3);",
+        ).unwrap();
+        insert_planned_generation(&connection, "delegation-continuation", "task", 3);
+        assert!(validate_dependencies(&connection, "continuation-generation").is_ok());
+        connection
+            .execute(
+                "UPDATE steward_delegations SET status='withdrawn' WHERE id='delegation'",
+                [],
+            )
+            .unwrap();
+        assert!(
+            validate_dependencies(&connection, "continuation-generation")
+                .unwrap_err()
+                .contains("delegation continuation changed")
+        );
+    }
+
+    #[test]
+    fn completed_task_before_dispatch_rejects_the_generation_cas() {
+        let connection = database();
+        connection.execute_batch(
+            "INSERT INTO coding_jobs(id,conversation_id,source_id,workspace_id,workspace_path,settings_json,revision,session_path,state,current_run_id)
+               VALUES('coding-job','conversation-primary','input','workspace','/tmp','{}',4,'/tmp/session','running','coding-run');
+             INSERT INTO coding_runs(id,job_id,source_id,host_run_id,payload,digest,delivery,state,started_at)
+               VALUES('coding-run','coding-job','input','host','{}','digest','accepted','running','1');",
+        ).unwrap();
+        insert_planned_generation(&connection, "task-continuation", "coding-job", 4);
+        assert!(validate_dependencies(&connection, "continuation-generation").is_ok());
+        connection
+            .execute(
+                "UPDATE coding_runs SET state='settled' WHERE id='coding-run'",
+                [],
+            )
+            .unwrap();
+        assert!(
+            validate_dependencies(&connection, "continuation-generation")
+                .unwrap_err()
+                .contains("task continuation changed")
+        );
     }
 
     #[test]
@@ -1058,6 +1242,78 @@ mod tests {
             })
             .unwrap();
         assert!(generation.dispatch().is_err());
+    }
+
+    #[test]
+    fn corrected_assertion_before_dispatch_rejects_the_generation_cas() {
+        let connection = database();
+        bind_personal_assertion(&connection);
+        let state = crate::test_support::app_state(connection);
+        let generation = begin(
+            &state,
+            BeginGeneration {
+                run_id: "run",
+                provider_session_id: None,
+                provider_id: Some("provider"),
+                purpose: "reasoning",
+                request_payload: b"request",
+                envelope_payload: b"envelope",
+                current_instruction_count: 1,
+            },
+        )
+        .unwrap();
+        bind_selected_assertion(&generation);
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "INSERT INTO personal_transitions(sequence,event_id,assertion_id,metadata)
+                         VALUES(1,'correction','assertion','{}')",
+                        [],
+                    )
+                    .map_err(database_error)?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(generation.dispatch().is_err());
+    }
+
+    #[test]
+    fn correction_after_provider_response_is_rejected_before_a_tool_starts() {
+        let connection = database();
+        bind_personal_assertion(&connection);
+        let state = crate::test_support::app_state(connection);
+        let generation = begin(
+            &state,
+            BeginGeneration {
+                run_id: "run",
+                provider_session_id: None,
+                provider_id: Some("provider"),
+                purpose: "reasoning",
+                request_payload: b"request",
+                envelope_payload: b"envelope",
+                current_instruction_count: 1,
+            },
+        )
+        .unwrap();
+        bind_selected_assertion(&generation);
+        generation.dispatch().unwrap();
+        generation.complete().unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "INSERT INTO personal_transitions(sequence,event_id,assertion_id,metadata)
+                         VALUES(1,'correction-after-response','assertion','{}')",
+                        [],
+                    )
+                    .map_err(database_error)?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(generation.revalidate_dependencies().is_err());
     }
 
     #[test]

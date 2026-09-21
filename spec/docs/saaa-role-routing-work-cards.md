@@ -26,10 +26,10 @@
 | RR-16 | 部分 | barrier用pure reducerと分類候補 | 実行中入力の保存、保留、採用barrier |
 | RR-17 | 部分 | reducerのcancel/revision状態と、tool未確定中のtransactional restart拒否 | input更新/child drain実行、全順序試験 |
 | RR-18 | 部分 | queue順序・in-flight restart復旧を起動writerへ接続。queued turn は provider 前で待機し、終端後に最古 queued root を `IMMEDIATE` transaction で claim | 再接続、restart 後 queued receipt の明示的再開 UX |
-| RR-19 | 部分 | SDK固定版のJSONL sidecar、Rust JSONL protocol validator | mock SDK wire試験、実認証SDK呼び出し |
-| RR-20 | 部分 | sidecarをBun compiled resourceとして同梱し、ProcessGuardで起動・cancel回収。fake executableでEOF/cancel/config隔離を検証 | actor dispatcher接続、live isolation gate |
+| RR-19 | 部分 | SDK固定版のJSONL sidecar、Rust JSONL protocol validator。`codex_sdk` actor をconversationからsidecarへdispatchし、root採用transactionへ保存 | mock SDK wire試験、実認証SDK呼び出し |
+| RR-20 | 部分 | sidecarをBun compiled resourceとして同梱し、ProcessGuardで起動・cancel回収。fake executableでEOF/cancel/config隔離を検証 | live isolation gate |
 | RR-21 | 未着手 | Sol tool loopなし | Sol delegation、host tool loop |
-| RR-22 | 部分 | root/step deadlineと未知費用を拒否するpure判定 | 実dispatcher中断、usage集計 |
+| RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定 | active dispatchのusage集計、切替上限 |
 | RR-23 | 部分 | host feedback保存とdirty mark | active answer一意の実入力接続 |
 | RR-24 | 未着手 | review recipe型のみ | 独立評価実行 |
 | RR-25 | 未着手 | revise recipe型のみ | 評価後revision実行 |

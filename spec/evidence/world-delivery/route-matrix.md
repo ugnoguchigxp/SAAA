@@ -15,3 +15,12 @@ remain authoritative and are never merged with another project by name or text s
 For exact current-state questions, the host may return a StateAnswer card before any provider
 dispatch. The card includes `claim`, `source_ref`, `as_of`, and `status`; this is not evidence of
 full live-provider acceptance.
+
+## 2026-09-21 review evidence
+
+`../world-model/m4a-results.md` records offline HTTP acceptance for OpenAI-compatible,
+AgentSession initial/follow-up/expired fallback, and reasoning MCP current/expired requests.
+The MCP adapter now removes the duplicate World history block and records only evidence actually
+adopted into the bounded request. This does not certify live DynamicLan allocation, shared voice,
+Codex receipts, or the full live-provider/UI matrix. The M4A/G1 legacy AgentSession exclusion has
+been replaced with this table's initial-only contract.

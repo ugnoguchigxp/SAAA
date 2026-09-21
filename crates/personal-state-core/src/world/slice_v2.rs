@@ -377,7 +377,7 @@ pub fn assemble_slice(
     if max_bytes < 256 {
         return Err(WorldError::BudgetTooSmall);
     }
-    for unit in units {
+    for (index, unit) in units.iter().enumerate() {
         let mut candidate = slice.clone();
         candidate.union_unit(unit);
         candidate.prune_references();
@@ -399,7 +399,20 @@ pub fn assemble_slice(
                 continue;
             }
         }
-        if candidate.encoded_len().unwrap_or(usize::MAX) <= max_bytes {
+        // A later skipped unit must be able to add its reason without discarding the entire
+        // graph. Reserve only while there are still units to consider; keep whole units intact.
+        let mut budget_probe = candidate.clone();
+        if index + 1 < units.len() {
+            for reason in [
+                "truncated:nodes",
+                "truncated:edges",
+                "truncated:paths",
+                "truncated:budget",
+            ] {
+                push_reason(&mut budget_probe, reason);
+            }
+        }
+        if budget_probe.encoded_len().unwrap_or(usize::MAX) <= max_bytes {
             slice = candidate;
         } else {
             push_reason(&mut slice, "truncated:budget");
@@ -502,6 +515,29 @@ mod assemble_tests {
         let unit_len = probe.encoded_len().unwrap();
         let slice = assemble_slice(WorldSliceV2::empty(1, 0), &[unit()], unit_len - 1).unwrap();
         assert!(slice.nodes.is_empty());
+        assert!(slice.truncated.iter().any(|r| r == "truncated:budget"));
+    }
+
+    #[test]
+    fn world_g1_budget_notice_does_not_discard_previously_adopted_units() {
+        let first = unit();
+        let mut large = unit();
+        large.nodes[0].name = "x".repeat(10_000);
+        let full = assemble_slice(
+            WorldSliceV2::empty(1, 0),
+            std::slice::from_ref(&first),
+            8_192,
+        )
+        .unwrap();
+        let limit = full.encoded_len().unwrap();
+        let small = SliceUnitV2 {
+            nodes: vec![node("n1")],
+            ..Default::default()
+        };
+        let slice =
+            assemble_slice(WorldSliceV2::empty(1, 0), &[small, first, large], limit).unwrap();
+        assert!(slice.nodes.iter().any(|n| n.entity_id == "n1"));
+        assert!(slice.encoded_len().unwrap() <= limit);
         assert!(slice.truncated.iter().any(|r| r == "truncated:budget"));
     }
 

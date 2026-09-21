@@ -128,6 +128,33 @@ pub(crate) fn run_codex_turn_process_with_policy_and_context(
     on_event: &dyn RuntimeEventSender,
     cancellation: &RunCancellation,
 ) -> Result<CodexTurnOutcome, CodexTurnFailure> {
+    run_codex_turn_process_with_dispatch(
+        run_id,
+        prompt,
+        workspace,
+        model,
+        existing_thread_id,
+        host_context,
+        policy,
+        on_event,
+        cancellation,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_codex_turn_process_with_dispatch(
+    run_id: &str,
+    prompt: &str,
+    workspace: &std::path::Path,
+    model: &str,
+    existing_thread_id: Option<&str>,
+    host_context: &str,
+    policy: crate::runtime::contracts::RunSupervisionPolicy,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: &RunCancellation,
+    mut dispatch: Option<&mut super::codex_context::Dispatch>,
+) -> Result<CodexTurnOutcome, CodexTurnFailure> {
     use crate::runtime::codex_app_server::{CodexEventProjector, ProjectedCodexEvent};
     use crate::runtime::contracts::{RunFailureCode, RunOutcome, RunSignal, TerminalStatus};
     use crate::runtime::supervisor::RunSupervisor;
@@ -190,6 +217,17 @@ pub(crate) fn run_codex_turn_process_with_policy_and_context(
             code: RunFailureCode::ConfigurationError,
             last_progress_at: None,
         })?;
+        let fresh_context = dispatch
+            .as_deref_mut()
+            .map(|d| d.prepare())
+            .transpose()
+            .map_err(|message| CodexTurnFailure {
+                thread_id: thread_id.clone(),
+                message,
+                code: RunFailureCode::ConfigurationError,
+                last_progress_at: None,
+            })?;
+        let host_context = fresh_context.as_deref().unwrap_or(host_context);
         let mut params = json!({
             "cwd": workspace_text,
             "approvalPolicy": "never",
@@ -211,15 +249,14 @@ pub(crate) fn run_codex_turn_process_with_policy_and_context(
             params["ephemeral"] = Value::Bool(false);
             "thread/start"
         };
-        write_codex_message(
-            &mut stdin,
-            json!({ "method": method, "id": 2, "params": params }),
-        )
-        .map_err(|message| CodexTurnFailure {
-            thread_id: thread_id.clone(),
-            code: RunFailureCode::ChildExited,
-            message,
-            last_progress_at: None,
+        let thread_body = json!({ "method": method, "id": 2, "params": params });
+        write_codex_message(&mut stdin, thread_body.clone()).map_err(|message| {
+            CodexTurnFailure {
+                thread_id: thread_id.clone(),
+                code: RunFailureCode::ChildExited,
+                message,
+                last_progress_at: None,
+            }
         })?;
         let thread_response = receive_supervised_codex_result(
             &receiver,
@@ -255,20 +292,27 @@ pub(crate) fn run_codex_turn_process_with_policy_and_context(
         }
         thread_id = Some(resolved_thread_id.clone());
         let thread_id = resolved_thread_id;
-        write_codex_message(
-            &mut stdin,
-            json!({
-                "method": "turn/start",
-                "id": 3,
-                "params": {
-                    "threadId": thread_id,
-                    "input": [{ "type": "text", "text": prompt, "text_elements": [] }],
-                    "cwd": workspace_text,
-                    "approvalPolicy": "never"
-                }
-            }),
-        )
-        .map_err(|message| CodexTurnFailure {
+        let turn_body = json!({
+            "method": "turn/start",
+            "id": 3,
+            "params": {
+                "threadId": thread_id,
+                "input": [{ "type": "text", "text": prompt, "text_elements": [] }],
+                "cwd": workspace_text,
+                "approvalPolicy": "never"
+            }
+        });
+        if let Some(dispatch) = dispatch.as_deref_mut() {
+            dispatch
+                .dispatch(&thread_body, &turn_body)
+                .map_err(|message| CodexTurnFailure {
+                    thread_id: Some(thread_id.clone()),
+                    message,
+                    code: RunFailureCode::ConfigurationError,
+                    last_progress_at: None,
+                })?;
+        }
+        write_codex_message(&mut stdin, turn_body).map_err(|message| CodexTurnFailure {
             thread_id: Some(thread_id.clone()),
             code: RunFailureCode::ChildExited,
             message,
@@ -660,6 +704,16 @@ pub(crate) fn run_codex_turn_process_with_policy_and_context(
             code: RunFailureCode::InternalError,
             last_progress_at,
         });
+    }
+    if let Some(dispatch) = dispatch {
+        dispatch
+            .finish(result.is_ok())
+            .map_err(|message| CodexTurnFailure {
+                thread_id,
+                message,
+                code: RunFailureCode::ConfigurationError,
+                last_progress_at,
+            })?;
     }
     result
 }

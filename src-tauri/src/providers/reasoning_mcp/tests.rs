@@ -57,7 +57,11 @@ pub(crate) async fn fixture(mode: &'static str) -> Fixture {
                 let id=body["id"].clone();
                 let result=match body["method"].as_str().unwrap() {
                     "initialize"=>json!({"protocolVersion":PROTOCOL,"capabilities":{"tools":{}}}),
-                    "tools/list"=>json!({"tools":[saaa_reasoning_contract::schema::tool()]}),
+                    "tools/list"=>{
+                        let mut tool = saaa_reasoning_contract::schema::tool();
+                        if mode == "old-contract" { tool["inputSchema"]["properties"]["schemaVersion"]["const"] = json!("reasoning-answer-v1"); }
+                        json!({"tools":[tool]})
+                    },
                     "tools/call"=>{
                         signal.notify_one();
                         if mode=="slow" {tokio::time::sleep(Duration::from_secs(30)).await;}
@@ -135,4 +139,12 @@ async fn reasoning_client_cancellation_reaches_mcp_and_finishes_promptly() {
         .unwrap()
         .iter()
         .any(|c| c["method"] == "notifications/cancelled"));
+}
+
+#[tokio::test]
+async fn wd_10_rejects_old_input_contract_before_sending_any_context() {
+    let server = fixture("old-contract").await;
+    let client = Client::new(&server.url, "fixture-token-long-enough".into()).unwrap();
+    assert!(client.answer(&request(), Arc::default()).await.is_err());
+    assert!(!server.calls.lock().unwrap().iter().any(|r| r["method"] == "tools/call"));
 }

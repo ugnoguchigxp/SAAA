@@ -200,7 +200,7 @@ fn relation_payload(
         to,
         relation_type,
         effect_input,
-        &[("config", "a")],
+        if signed { &[("config", "a")] } else { &[] },
         comparison,
         target_direction,
         correlation_sign,
@@ -332,7 +332,24 @@ fn commit_relations(fixture: &Fixture, source: &SourceRef, now_ms: i64) {
 /// goal:natural and the tech→decode→voice, voice→goal and project→goal edges plus one correlation
 /// and one depends_on.
 pub(crate) fn g1_fixture() -> Fixture {
+    g1_fixture_input(None)
+}
+
+fn g1_fixture_input(question: Option<&str>) -> Fixture {
     let fixture = Fixture::new(&[]);
+    if let Some(question) = question {
+        fixture
+            .writer
+            .write(|c| {
+                c.execute(
+                    "UPDATE conversation_messages SET content=?1 WHERE id='msg1'",
+                    [question],
+                )
+                .map(|_| ())
+                .map_err(crate::database_error)
+            })
+            .unwrap();
+    }
     let now_ms = crate::memory::personal_state::now();
     let source = fixture
         .writer
@@ -359,9 +376,8 @@ pub(crate) fn g1_fixture() -> Fixture {
             Ok(())
         })
         .expect("complete job");
-    // The frame service uses the fixture clock; align it with the commit time so the fresh
-    // projection is within the entity validity window.
-    fixture.set_now(now_ms);
+    // Observe after all activation transitions, including the objective activation.
+    fixture.set_now(crate::memory::personal_state::now());
     fixture
 }
 
@@ -661,5 +677,43 @@ fn world_g1_01_not_requested_never_builds_a_graph_request() {
     assert_eq!(
         graph_request("Speculative Decoding").flags,
         IncludeFlags::default()
+    );
+}
+
+#[test]
+fn world_g1_saved_input_reaches_the_app_composer() {
+    let fixture = g1_fixture_input(Some(TECH_QUESTION));
+    fixture.writer.write(|c| {
+        c.execute("UPDATE runtime_run_scopes SET epoch=(SELECT epoch FROM context_scope_epochs e WHERE e.scope_key=runtime_run_scopes.scope_key)", []).map_err(crate::database_error)?;
+        Ok(())
+    }).unwrap();
+    let capabilities = Arc::new(
+        crate::generated_capabilities::service::CapabilityService::build(
+            fixture.writer.clone(),
+            &std::path::PathBuf::new(),
+            std::path::PathBuf::new(),
+            None,
+        ),
+    );
+    let state =
+        crate::test_state::app_state_with_capabilities(fixture.writer.clone(), capabilities);
+    let scope = load_scope(&fixture);
+    let composed = super::turn::compose_for_app_enabled(
+        &state,
+        RUN_ID,
+        &scope,
+        window(),
+        vec![],
+        allowed(&scope),
+        true,
+    )
+    .unwrap();
+    let candidate = world_candidate(&composed).expect("saved explicit question produces graph");
+    assert!(
+        parse_rendered_json(&candidate.content)["graph"]["nodes"]
+            .as_array()
+            .is_some_and(|n| !n.is_empty()),
+        "{}",
+        candidate.content
     );
 }

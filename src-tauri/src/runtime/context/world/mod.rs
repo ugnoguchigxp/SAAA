@@ -22,5 +22,4 @@ pub(crate) mod turn;
 #[cfg(test)]
 mod turn_tests;
 
-#[cfg(test)]
 mod g1_perf_tests;

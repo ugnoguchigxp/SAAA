@@ -106,9 +106,11 @@ impl WorldLive {
         &self,
         history: &[ConversationMessage],
     ) -> (Vec<ConversationMessage>, bool) {
-        let include_world = self.blocks().is_some_and(|blocks| history.iter().any(|message| {
-            message.role == "assistant" && message.content == blocks.with_world
-        })) && self.revalidate_current();
+        let include_world = self.blocks().is_some_and(|blocks| {
+            history
+                .iter()
+                .any(|message| message.role == "assistant" && message.content == blocks.with_world)
+        }) && self.revalidate_current();
         if include_world {
             return (history.to_vec(), true);
         }
@@ -140,25 +142,6 @@ impl WorldLive {
                 }
             })
             .collect()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(valid: bool, with_world: &str, without_world: Option<&str>) -> Self {
-        Self {
-            frame: WorldFrame::Fixed(valid),
-            blocks: Mutex::new(Some(WorldBlocks {
-                with_world: with_world.to_string(),
-                without_world: without_world.map(str::to_string),
-            })),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn without_blocks() -> Self {
-        Self {
-            frame: WorldFrame::Fixed(true),
-            blocks: Mutex::new(None),
-        }
     }
 
     pub(crate) fn bind(&self, generation: &GenerationHandle) {
@@ -227,7 +210,25 @@ pub(crate) fn for_record<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::WorldLive;
+    use super::*;
+    impl WorldLive {
+        pub(crate) fn for_test(valid: bool, with_world: &str, without_world: Option<&str>) -> Self {
+            Self {
+                frame: WorldFrame::Fixed(valid),
+                blocks: Mutex::new(Some(WorldBlocks {
+                    with_world: with_world.to_string(),
+                    without_world: without_world.map(str::to_string),
+                })),
+            }
+        }
+
+        pub(crate) fn without_blocks() -> Self {
+            Self {
+                frame: WorldFrame::Fixed(true),
+                blocks: Mutex::new(None),
+            }
+        }
+    }
     use crate::ipc_contract::ConversationMessage;
 
     fn message(content: &str) -> ConversationMessage {
@@ -262,5 +263,10 @@ mod tests {
         let world = WorldLive::for_test(true, "personal\nworld", Some("personal"));
         let history = world.without_world_history(&[message("personal\nworld")]);
         assert_eq!(history[0].content, "personal");
+    }
+    #[test]
+    fn world_g1_missing_wire_block_is_not_recorded_as_sent() {
+        let world = super::WorldLive::for_test(true, "world", None);
+        assert!(!world.provider_history(&[]).1);
     }
 }

@@ -134,3 +134,69 @@ fn add_column(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn additive_migration_preserves_old_generations_and_adds_digest_receipts() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);
+                 CREATE TABLE provider_sessions(id TEXT PRIMARY KEY);
+                 CREATE TABLE conversation_messages(id TEXT PRIMARY KEY, content TEXT);
+                 CREATE TABLE context_generations (
+                   id TEXT PRIMARY KEY,
+                   run_id TEXT NOT NULL,
+                   provider_session_id TEXT,
+                   provider_id TEXT NOT NULL,
+                   ordinal INTEGER NOT NULL,
+                   purpose TEXT NOT NULL,
+                   envelope_digest TEXT NOT NULL,
+                   request_digest TEXT NOT NULL,
+                   projected_bytes INTEGER NOT NULL,
+                   current_instruction_count INTEGER NOT NULL,
+                   health_status TEXT NOT NULL,
+                   status TEXT NOT NULL,
+                   failure_kind TEXT,
+                   started_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   UNIQUE(run_id, ordinal)
+                 );
+                 INSERT INTO runtime_runs VALUES('run');
+                 INSERT INTO context_generations VALUES(
+                   'generation','run',NULL,'provider',1,'reasoning',
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                   'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                   42,1,'green','completed',NULL,'1','1'
+                 );",
+            )
+            .unwrap();
+
+        migrate(&connection).unwrap();
+        migrate(&connection).unwrap();
+
+        let columns: Vec<String> = connection
+            .prepare("SELECT name FROM pragma_table_info('context_generations') ORDER BY cid")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(columns.contains(&"required_set_digest".to_string()));
+        assert!(columns.contains(&"scope_digest".to_string()));
+        let receipt: (Option<String>, Option<String>, String) = connection
+            .query_row(
+                "SELECT required_set_digest,scope_digest,request_digest
+                 FROM context_generations WHERE id='generation'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(receipt.0, None);
+        assert_eq!(receipt.1, None);
+        assert_eq!(receipt.2.len(), 64);
+    }
+}

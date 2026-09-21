@@ -104,6 +104,24 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            created_at TEXT NOT NULL,
            UNIQUE(task_id,revision)
          );
+         CREATE TABLE IF NOT EXISTS steward_goal_plans (
+           id TEXT PRIMARY KEY,
+           goal_id TEXT NOT NULL REFERENCES steward_goals(id),
+           revision INTEGER NOT NULL,
+           max_replans INTEGER NOT NULL,
+           created_at TEXT NOT NULL,
+           UNIQUE(goal_id,revision)
+         );
+         CREATE TABLE IF NOT EXISTS steward_plan_steps (
+           plan_id TEXT NOT NULL REFERENCES steward_goal_plans(id),
+           step_id TEXT NOT NULL,
+           ordinal INTEGER NOT NULL,
+           recipe TEXT NOT NULL CHECK(recipe IN ('read','test_run')),
+           verifier TEXT NOT NULL,
+           depends_on_json TEXT NOT NULL,
+           PRIMARY KEY(plan_id,step_id),
+           UNIQUE(plan_id,ordinal)
+         );
          DROP INDEX IF EXISTS steward_report_delivery_once;
          CREATE INDEX IF NOT EXISTS steward_report_delivery_lookup
            ON steward_reports(conversation_id,digest);",
@@ -133,6 +151,23 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         "revision INTEGER NOT NULL DEFAULT 1",
     )?;
     add_column(connection, "steward_delegations", "source_message_id TEXT")?;
+    // Existing active delegations predate durable goal plans.  Backfill the
+    // same finite host-selected plan without changing their authority.
+    connection.execute_batch(
+        "INSERT OR IGNORE INTO steward_goal_plans(id,goal_id,revision,max_replans,created_at)
+         SELECT 'migration-goal-plan-' || g.id,g.id,1,2,g.created_at
+         FROM steward_goals g
+         WHERE NOT EXISTS (SELECT 1 FROM steward_goal_plans p WHERE p.goal_id=g.id);
+         INSERT OR IGNORE INTO steward_plan_steps(plan_id,step_id,ordinal,recipe,verifier,depends_on_json)
+         SELECT p.id,'read',0,'read',g.verifier,'[]'
+         FROM steward_goal_plans p JOIN steward_goals g ON g.id=p.goal_id
+         JOIN steward_delegations d ON d.goal_id=g.id WHERE d.ops IN ('read','read_test');
+         INSERT OR IGNORE INTO steward_plan_steps(plan_id,step_id,ordinal,recipe,verifier,depends_on_json)
+         SELECT p.id,'test',CASE WHEN d.ops='read_test' THEN 1 ELSE 0 END,'test_run',g.verifier,
+                CASE WHEN d.ops='read_test' THEN '[\"read\"]' ELSE '[]' END
+         FROM steward_goal_plans p JOIN steward_goals g ON g.id=p.goal_id
+         JOIN steward_delegations d ON d.goal_id=g.id WHERE d.ops IN ('test_run','read_test');",
+    )?;
     add_column(
         connection,
         "steward_tasks",
@@ -159,6 +194,25 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection,
         "steward_reports",
         "delivery_state TEXT NOT NULL DEFAULT 'pending'",
+    )?;
+    add_column(
+        connection,
+        "steward_reports",
+        "speak_requested INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column(
+        connection,
+        "steward_reports",
+        "speech_state TEXT NOT NULL DEFAULT 'not_requested'",
+    )?;
+    add_column(connection, "steward_reports", "speech_run_id TEXT")?;
+    // Audio cannot be atomically committed with the database. A process that
+    // was already capable of speaking at shutdown is therefore made explicit
+    // unknown and is never replayed automatically after restart.
+    connection.execute(
+        "UPDATE steward_reports SET speech_state='delivery_unknown'
+         WHERE speech_state IN ('starting','playback_started')",
+        [],
     )?;
     connection.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS steward_report_task_delivery_once

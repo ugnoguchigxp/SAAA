@@ -1,6 +1,6 @@
 # Personal World Model G1 完了記録
 
-作成日: 2026-09-21。状態: 実装・offline 試験完了（本番 compose 配線まで）。HTTP 本文レベルの受入と性能測定は未検証。
+作成日: 2026-09-21。状態: 本番compose・実HTTP・性能のoffline受入まで補完。最新結果は `m4a-results.md`。
 計画は `spec/docs/saaa-personal-world-model-graph-answer-plan.md`。カード別は `g1-progress.md`。
 
 ## 1. 結論
@@ -63,17 +63,13 @@ topic は既存 `query_v2` の許可済み Entity 集合の name または alias
 通常 shadow の `empty_frame` 判定は変更していない。Scope 不許可・DB 破損は空 Frame へ変換せず、
 既存の省略/エラー境界を維持する。
 
-## 5. 未検証
+## 5. 2026-09-21 再レビューでの補完
 
-- `world:eval` は存在しない（M4A runner 未実装）。G1 では類似 runner を新設していない。
-- G1-09 は Broker の combined_block まで検証済み（graph JSON と notice が verbatim）。実 HTTP 受信本文は未検証。
-- G1-10/11 の実 HTTP graph fixture 検証は未実施。
-- G1-12 の性能測定（Frame/再検証 p95<=150ms、World 追加処理 p95<=350ms、Frame 最大<=500ms）は未実施。
-- live Provider の回答品質は測定していない。固定応答 mock から品質改善を結論しない。
-- AgentSession は WD 計画により初回のみ再検証付き World（followup は World-free）。G1 の『対象外 Provider へ送信 0』条件は満たさない。
+- M4A runnerを実装し、五要素・unknown・Goal/Source/Relation失効を実HTTPで検証した。
+- 保存入力のDB読取から `compose_for_app` 相当の本体を通る統合試験を追加した。
+- Goal有効化後のfixtureへ訂正し、byte上限付近で省略理由によってグラフ全体が落ちる問題を修正した。
+- 元TTLの再検証、本文に存在しないWorldの送信済み記録、AgentSession構築境界、MCPの二重掲載/receiptを修正した。
+- 実時計の100投影/2,000ledgerでG1性能基準を通過した。数値は `m4a-results.md`。
+- AgentSessionの契約はWDの初回限定を正本として計画を更新した。
 
-## 6. 次の作業
-
-1. M4A runner（G0 の 21 ケース）を確定し、G1-09/10/11 を実 HTTP で通す。
-2. 性能測定を同一端末・debug で実施し、既存 p95 基準を維持することを確認する。
-3. DynamicLan / reasoning MCP の World 契約を WD 計画と突き合わせて固定する。
+上の旧ゲート表は初回実装時の履歴。最新件数・未検証範囲は `m4a-results.md` と `review-2026-09-21.md` を正本とする。実モデル回答品質・WD全経路受入は未認定。

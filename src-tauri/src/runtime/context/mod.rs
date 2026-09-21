@@ -4,6 +4,7 @@
 //! Scope resolution and source selection are added behind this boundary.
 
 pub(crate) mod broker;
+pub(crate) mod continuations;
 pub(crate) mod generation;
 pub(crate) mod generation_inputs;
 pub(crate) mod health;

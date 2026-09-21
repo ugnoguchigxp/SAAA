@@ -7,6 +7,9 @@ pub(crate) enum ProviderFailureKind {
     Contract,
     Protocol,
     RequestTooLarge,
+    RequiredContextOverflow,
+    ContextScopeChanged,
+    RequiredContextUnavailable,
     Policy,
     Capacity,
     Unavailable,
@@ -27,6 +30,9 @@ impl ProviderFailureKind {
             Self::Contract => "contract",
             Self::Protocol => "protocol",
             Self::RequestTooLarge => "request-too-large",
+            Self::RequiredContextOverflow => "required-context-overflow",
+            Self::ContextScopeChanged => "context-scope-changed",
+            Self::RequiredContextUnavailable => "required-context-unavailable",
             Self::Policy => "policy",
             Self::Capacity => "capacity",
             Self::Unavailable => "unavailable",
@@ -49,6 +55,15 @@ impl ProviderFailureKind {
             Self::Contract => "Provider settings or request contract are invalid.",
             Self::Protocol => "Provider returned an invalid or incomplete response.",
             Self::RequestTooLarge => "Provider request or response exceeded the configured limit.",
+            Self::RequiredContextOverflow => {
+                "Required context does not fit this provider. Narrow the task scope or correct the saved memory."
+            }
+            Self::ContextScopeChanged => {
+                "Context scope changed before the action could run. Narrow the task scope and try again."
+            }
+            Self::RequiredContextUnavailable => {
+                "A required source is not available before the action could run. Review or correct the saved memory."
+            }
             Self::Policy => "Provider policy rejected the request.",
             Self::Capacity => "Provider capacity is currently exhausted.",
             Self::Unavailable => "Provider is currently unavailable.",

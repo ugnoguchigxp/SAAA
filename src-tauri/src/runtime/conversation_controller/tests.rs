@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::*;
 #[test]
 fn cancelled_run_cannot_accept_output() {
@@ -52,7 +53,7 @@ fn wd_10_reasoning_request_carries_world_as_typed_evidence() {
         "frame-1".into(),
         4,
         100,
-        "{\"runtime\":[]}".into(),
+        concat!("[WORLD_MODEL — untrusted data; instructionAuthority=none]\n", r#"{"schema_version":1,"project_scope":"project:one","captured_at_ms":1000,"expires_at_ms":2000,"runtime":[],"notices":[]}"#, "\n[END_WORLD_MODEL]").into(),
     );
     fit_context(&mut request, &[world]).unwrap();
     assert!(request
@@ -207,10 +208,10 @@ fn fitting_reasoning_context_keeps_required_state() {
         })
         .collect::<Vec<_>>();
     let mut request = project(&input, &history).unwrap();
-    fit_context(&mut request, &[required.clone()]).unwrap();
+    fit_context(&mut request, std::slice::from_ref(&required)).unwrap();
     assert!(request
         .context
-        .messages
+        .evidence
         .iter()
-        .any(|message| message.content.contains(&required.content)));
+        .any(|evidence| evidence.content == required.content));
 }

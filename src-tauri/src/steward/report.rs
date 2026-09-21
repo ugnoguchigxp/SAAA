@@ -38,6 +38,7 @@ pub(crate) fn queue_terminals(
             } else {
                 now
             },
+            delivery != "silent",
         )?;
         let decision_id = format!(
             "ai-notification-{}",
@@ -88,7 +89,11 @@ pub(crate) fn flush_held_reports(state: &AppState, conversation_id: &str) -> Res
     state.sqlite_writer.write(|connection| {
         publish(state, connection, conversation_id)?;
         flush_unflushed(connection, conversation_id, now_ms())
-    })
+    })?;
+    // The worker is woken by durable report/event processing, not by a new
+    // user turn. This also starts a dependency-satisfied successor.
+    super::reduce::start_queued_for_conversation(state, conversation_id)?;
+    start_pending_speech(state, conversation_id)
 }
 
 /// Delivery wake-up for the schedule loop.  It reads the outbox rather than a
@@ -110,6 +115,73 @@ pub(crate) fn flush_all_held_reports(state: &AppState) -> Result<(), String> {
     })?;
     for conversation_id in conversations {
         flush_held_reports(state, &conversation_id)?;
+    }
+    Ok(())
+}
+
+/// Starts speech strictly after the message-delivery transaction commits. The
+/// report rows are claimed first; completion callbacks only move those rows
+/// forward, and startup migration turns an interrupted claim into unknown.
+fn start_pending_speech(state: &AppState, conversation_id: &str) -> Result<(), String> {
+    if !crate::voice_behavior::upper_policies_allow_speech(state)? {
+        return state
+            .sqlite_writer
+            .write(|connection| repo::suppress_pending_speech(connection, conversation_id));
+    }
+    let run_id = new_id("steward_speech");
+    let reports = state
+        .sqlite_writer
+        .write(|connection| repo::claim_pending_speech(connection, conversation_id, &run_id))?;
+    if reports.is_empty() {
+        return Ok(());
+    }
+    let writer = state.sqlite_writer.clone();
+    let callback_run_id = run_id.clone();
+    let channel = tauri::ipc::Channel::new(move |body| {
+        let state = if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+            if json.contains("\"type\":\"speechStarted\"") {
+                Some("playback_started")
+            } else if json.contains("\"type\":\"speechEnded\"") {
+                Some("playback_finished")
+            } else if json.contains("\"type\":\"speechFailed\"") {
+                Some("delivery_unknown")
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(state) = state {
+            let _ = writer
+                .write(|connection| repo::mark_speech_state(connection, &callback_run_id, state));
+        }
+        Ok(())
+    });
+    if let Err(error) = tauri::async_runtime::block_on(
+        state
+            .streaming_tts
+            .begin(state, &run_id, true, channel, None),
+    ) {
+        state
+            .sqlite_writer
+            .write(|connection| repo::mark_speech_state(connection, &run_id, "delivery_unknown"))?;
+        return Err(error);
+    }
+    let digest = reports
+        .iter()
+        .map(|report| report.digest.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if state
+        .streaming_tts
+        .queue_utterance(&run_id, &digest)
+        .is_err()
+        || state.streaming_tts.finish(&run_id, &digest).is_err()
+    {
+        state.streaming_tts.cancel(&run_id);
+        state
+            .sqlite_writer
+            .write(|connection| repo::mark_speech_state(connection, &run_id, "delivery_unknown"))?;
     }
     Ok(())
 }
@@ -306,6 +378,7 @@ mod tests {
             &terminal,
             None,
             0,
+            false,
         )
         .expect("first");
         repo::enqueue_task_report(
@@ -314,6 +387,7 @@ mod tests {
             &terminal,
             None,
             0,
+            false,
         )
         .expect("replay");
         let count: i64 = connection
@@ -330,5 +404,47 @@ mod tests {
             .expect("delivery");
         assert_eq!(state.0, "delivered");
         assert!(state.1.is_some());
+    }
+
+    #[test]
+    fn speech_claim_is_not_replayed_after_a_restart() {
+        let connection = rusqlite::Connection::open_in_memory().expect("db");
+        crate::persistence::schema::initialize_database(&connection).expect("schema");
+        let terminal = repo::TerminalReport {
+            task_id: "task-speech".into(),
+            task_revision: 1,
+            goal_id: "goal".into(),
+            notify: "speak".into(),
+            digest: "finished".into(),
+        };
+        repo::enqueue_task_report(
+            &connection,
+            crate::PRIMARY_CONVERSATION_ID,
+            &terminal,
+            None,
+            0,
+            true,
+        )
+        .expect("enqueue speech");
+        repo::mark_flushed(&connection, crate::PRIMARY_CONVERSATION_ID, 0, "message")
+            .expect("message committed");
+        let claimed =
+            repo::claim_pending_speech(&connection, crate::PRIMARY_CONVERSATION_ID, "speech-run")
+                .expect("claim");
+        assert_eq!(claimed.len(), 1);
+        super::super::schema::migrate(&connection).expect("restart migration");
+        let state: String = connection
+            .query_row("SELECT speech_state FROM steward_reports", [], |row| {
+                row.get(0)
+            })
+            .expect("state");
+        assert_eq!(state, "delivery_unknown");
+        assert!(repo::claim_pending_speech(
+            &connection,
+            crate::PRIMARY_CONVERSATION_ID,
+            "later-run",
+        )
+        .expect("no replay")
+        .is_empty());
     }
 }

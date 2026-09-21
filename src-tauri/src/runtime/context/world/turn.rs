@@ -35,7 +35,28 @@ pub(crate) fn compose_for_app(
     existing: Vec<Candidate>,
     allowed: BTreeSet<String>,
 ) -> Result<TurnCompose, String> {
-    if !crate::memory::control_plane::memory_enabled() {
+    compose_for_app_enabled(
+        state,
+        run_id,
+        scope,
+        base,
+        existing,
+        allowed,
+        crate::memory::control_plane::memory_enabled(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compose_for_app_enabled(
+    state: &AppState,
+    run_id: &str,
+    scope: &ScopeSnapshot,
+    base: ContextWindow,
+    existing: Vec<Candidate>,
+    allowed: BTreeSet<String>,
+    memory_enabled: bool,
+) -> Result<TurnCompose, String> {
+    if !memory_enabled {
         return compose_parts(
             false, None, "", 0, None, run_id, scope, base, existing, allowed,
         );

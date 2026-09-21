@@ -17,9 +17,9 @@
 | RR-18 | 起動時にin-flight rootをinterrupted evidenceとして永続化。queued receipt は provider 前で待機し、turn 終端で最古の開始可能 root を `IMMEDIATE` transaction で claim して実行を解放 | 再接続、restart 後 queued receipt の明示的再開 UX は未実装 |
 | RR-27 | 永続root cancel IPC、snapshotを読むchat表示・停止操作を追加。receipt commit後に実行中run/TTSへcancelを通知 | amend/reconsider、live event購読、child drain/restartは未実装 |
 | RR-28 | chatに永続snapshot由来のphase/revision/queue先頭を本文非表示で表示 | 実行履歴・選択理由UIは未実装 |
-| RR-19 | 固定SDK版のJSONL sidecarとRust JSONL frame validatorを追加。frame/累積/最終結果の上限とcancelを強制 | mock SDK wire試験、実認証SDK呼び出しは未実施 |
-| RR-20 | sidecarをBun compiled resourceとして同梱し、Tauri resource pathから起動する Rust ProcessGuard adapter を追加。空の一時cwd、read-only、approval/network/web/MCP無効化、限定環境で SDK を起動するよう固定 | 実 actor dispatcher への接続、live isolation fixture は未実施 |
-| RR-22 | root/step deadlineと未知費用・上限超過を拒否する純粋budget判定を追加 | 実dispatcherでの中断・usage集計接続は未実装 |
+| RR-19 | 固定SDK版のJSONL sidecarとRust JSONL frame validatorを追加。frame/累積/最終結果の上限とcancelを強制。`codex_sdk` actor はconversation経路からsidecarへdispatchし、結果をroot採用transactionへ保存。actor input上限を超えるcurrent requestはdispatch前に拒否 | mock SDK wire試験、実認証SDK呼び出しは未実施 |
+| RR-20 | sidecarをBun compiled resourceとして同梱し、Tauri resource pathから起動する Rust ProcessGuard adapter を追加。空の一時cwd、read-only、approval/network/web/MCP無効化、Codex loginに必要な最小環境だけを許可 | live isolation fixture は未実施 |
+| RR-22 | root deadlineをreceiptへ永続化し、role provider route の総timeout/attempt timeoutへ反映。queued 待機中の期限切れはfailedとして次rootを解放。未知費用・上限超過を拒否する純粋budget判定も追加 | active dispatchのusage集計、切替上限の実行接続は未実装 |
 | RR-30〜35 | learning schema、dirty queue、DB materialize、本文なしJSONL export、window判定、shadow artifact断片。60秒writer tickからrole-routing materializeを起動 | group split、job状態、foreground/shutdown pauseは未実装 |
 | RR-36 | hash・feature版・candidate fingerprintを検証するlinear-v1 artifact loaderと、観測labelだけを使うoffline評価を追加 | selectionへのshadow接続、昇格証跡は未実装 |
 | RR-37 | forget sourceからinput root/feedback receiptを逆引きし、example削除・dataset/artifact失効を同一writer transactionで実行。設定画面で本文なし件数表示と手動materialize | filesystem journalは未実装 |
@@ -34,6 +34,7 @@
 - `bun run typecheck`: pass（cancel update eventのchat subscriptionを含む）
 - 隔離test binary: `rr_27_cancel_is_durable_and_replayable`: 1 pass
 - 隔離test binary: `rr_04_queue_full_leaves_no_input_message`: 1 pass
+- 隔離test binary: `rr_04_receipt_rows_rollback_with_the_runtime_transaction`: 1 pass（queued root / planned step / root deadline のreceipt不変条件を含む）
 - 隔離test binary: `rr_17_tool_unknown_blocks_restart`、`rr_17_settled_tool_allows_next_revision`: 各1 pass
 - 隔離test binary: `rr_18_queue_order_and_restart_are_safe`: 1 pass
 - 隔離test binary: `rr_18_claims_fifo_only_after_the_prior_root_is_terminal`、`rr_18_claim_skips_a_conversation_with_active_work`: 各1 pass
@@ -46,8 +47,11 @@
 - 隔離test binary: `rr_37_learning_snapshot_contains_counts_only`: 1 pass
 - 隔離test binary: `role_routing::learning::`: 10 pass
 - 隔離test binary: `rr_19_frame_validation_rejects_unknown_ids_and_duplicate_terminals`、`rr_19_frame_validation_rejects_extra_fields_and_empty_results`、`rr_20_process_requires_a_terminal_frame`、`rr_20_process_accepts_only_valid_result_protocol`、`rr_20_cancel_sends_protocol_cancel_then_reaps_child`、`rr_20_config_isolation_clears_parent_environment_and_arguments`: 6 pass
+- 隔離test binary: `codex_actor_selects_the_isolated_dispatch_without_rewriting_provider_settings`、`rr_19_codex_prompt_keeps_current_request_and_bounds_history`、`rr_19_codex_prompt_rejects_an_unfit_current_request`: 各1 pass
 - `bun --check scripts/role-routing/codex-sidecar.ts`: pass。version不一致・非JSON frameがstdoutを出さず拒否されることを確認。
 - `printf '{not-json}\\n' | src-tauri/resources/bin/role-routing-codex`: pass（同梱 sidecar が外部認証・実モデル呼び出しなしで起動し、不正 frame を stdout に出さず終了）
 - 隔離test binary: `rr_22_unknown_cost_is_not_free_when_policy_has_a_budget`、`rr_22_deadline_rejects_new_dispatch`: 各1 pass
+- 隔離test binary: `enabled_direct_recipe_overrides_the_legacy_conversation_route`: 1 pass（role root/step timeout が provider route に反映されることを含む）
 - `bun run typecheck`: pass
 - `bun run desktop:smoke -- --report-dir spec/evidence/role-routing/desktop-smoke-20260921-role-routing`: pass（build / bundle / launch / IPC ready）
+- `bun run desktop:smoke -- --report-dir spec/evidence/role-routing/desktop-smoke-20260921-codex-actor`: pass（Codex actor dispatch 経路を含む build / bundle / launch / IPC ready）

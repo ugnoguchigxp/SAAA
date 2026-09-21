@@ -19,6 +19,34 @@ impl RuntimeEventSender for Sink {
     }
 }
 
+#[derive(Clone)]
+struct ScopeChangingSink {
+    writer: Arc<crate::persistence::SqliteWriter>,
+}
+
+impl RuntimeEventSender for ScopeChangingSink {
+    fn clone_box(&self) -> Box<dyn RuntimeEventSender> {
+        Box::new(self.clone())
+    }
+
+    fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {
+        if matches!(event, RuntimeEvent::Delta { .. }) {
+            self.writer
+                .write(|connection| {
+                    connection
+                        .execute(
+                            "UPDATE context_scope_epochs SET epoch=epoch+1 WHERE scope_key='scope'",
+                            [],
+                        )
+                        .map_err(crate::database_error)?;
+                    Ok(())
+                })
+                .expect("scope mutation succeeds");
+        }
+        Ok(())
+    }
+}
+
 fn chunk(delta: Value, finish: Value) -> String {
     format!(
         "data: {}\r\n\r\n",
@@ -221,6 +249,88 @@ async fn cancellation_drops_waiting_request_and_never_emits_late_output() {
     ));
     assert!(sink.0.lock().unwrap().is_empty());
     server.await.unwrap();
+}
+
+#[tokio::test]
+async fn scope_change_while_provider_finishes_rejects_the_late_result_with_a_context_code() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    crate::persistence::schema::initialize_database(&connection).unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversations(id,task_mode,created_at,updated_at)
+             VALUES('fixture','conversation','1','1')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_messages VALUES('http-source','fixture','user','hello','1')",
+            [],
+        )
+        .unwrap();
+    connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('http_fixture','fixture','conversation.respond','running','http-source','1')", []).unwrap();
+    connection.execute("INSERT INTO context_scopes(scope_key,kind,opaque_id,state,created_at) VALUES('scope','project','opaque','active','1')", []).unwrap();
+    connection
+        .execute(
+            "INSERT INTO context_scope_epochs(scope_key,epoch) VALUES('scope',0)",
+            [],
+        )
+        .unwrap();
+    connection.execute("INSERT INTO runtime_scope_resolutions(run_id,status,focus_scope_key,scope_digest,resolved_at) VALUES('http_fixture','resolved','scope',?1,'1')", [&"d".repeat(64)]).unwrap();
+    connection.execute("INSERT INTO runtime_run_scopes(run_id,scope_key,relation,source,epoch) VALUES('http_fixture','scope','current','runtime',0)", []).unwrap();
+    let state = crate::test_support::app_state(connection);
+    let session = crate::begin_provider_session(
+        &state,
+        "http_fixture",
+        "fixture",
+        "openai-compatible",
+        &"a".repeat(64),
+    )
+    .unwrap();
+    let body = chunk(json!({"content":"late"}), Value::Null)
+        + &chunk(json!({}), json!("stop"))
+        + "data: [DONE]\n\n";
+    let (endpoint, server) = fixture(vec![(200, body, 0)]).await;
+    let input = input();
+    let history = [ConversationMessage {
+        id: "http-source".into(),
+        conversation_id: "fixture".into(),
+        role: "user".into(),
+        content: "hello".into(),
+        created_at: "1".into(),
+        parts: None,
+    }];
+    let sink = ScopeChangingSink {
+        writer: state.sqlite_writer.clone(),
+    };
+    let result = run(
+        &endpoint,
+        None,
+        "fixture",
+        &history,
+        5_000,
+        ModelStreamContext {
+            reasoning_effort: "medium",
+            max_output_tokens: 64,
+            input: &input,
+            on_event: &sink,
+            cancellation: Arc::default(),
+            context_health: "green",
+            context_sources: &[],
+            context_omissions: &[],
+            output_persistence: Some(crate::ProviderOutputPersistence {
+                state: &state,
+                session_id: &session,
+                world: None,
+            }),
+        },
+    )
+    .await;
+    assert_eq!(
+        result,
+        Err(Error::failed(Failure::ContextScopeChanged, true))
+    );
+    assert_eq!(server.await.unwrap().len(), 1);
 }
 
 #[test]

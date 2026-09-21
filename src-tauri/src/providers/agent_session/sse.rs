@@ -20,15 +20,105 @@ use crate::providers::stream::{
 
 mod coding_bridge;
 mod generation;
+mod request;
+use request::{render_turn_input, start_turn};
 mod probe;
 mod ui_bridge;
 #[cfg(test)]
 mod workflow_tests;
+mod world_eval_tests;
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn capability_wrappers_have_a_measurable_wire_reservation() {
+        let base = render_turn_input(&[]).expect("empty conversation serializes");
+        let prepared = decorate_turn_input(
+            &base,
+            "<saaa-ui-00000000000000000000000000000000>",
+            true,
+            true,
+            Value::Null,
+        );
+        let base_bytes = serde_json::to_vec(&generation::turn_request_body(&base)).unwrap();
+        let prepared_bytes = serde_json::to_vec(&generation::turn_request_body(&prepared)).unwrap();
+        assert!(prepared_bytes.len() > base_bytes.len());
+        assert!(prepared.contains("codingTools"));
+        assert!(prepared.contains("delegatedWorkTools"));
+    }
+}
 
 const MAX_SSE_EVENT_BYTES: usize = 1_048_576;
 const MAX_RECONNECTS: usize = 3;
 
 pub(super) use probe::probe_event_stream;
+
+/// Calculates the bytes added to an AgentSession turn by its live capability wrappers. The base
+/// conversation is intentionally empty: the wrappers parse and reserialize it unchanged, so the
+/// serialized request-body delta is independent of history content while retaining the actual
+/// UI/coding definitions and coding context for this conversation.
+pub(super) fn initial_input_reserve(
+    state: &crate::AppState,
+    input: &crate::StartTurnInput,
+) -> Result<usize, String> {
+    let base = render_turn_input(&[]).map_err(|kind| kind.as_str().to_string())?;
+    let (enabled, coding_enabled) = live_capability_flags(state);
+    let coding_context = coding_enabled
+        .then(|| coding_context(state, input))
+        .unwrap_or(Value::Null);
+    let prepared = decorate_turn_input(
+        &base,
+        "<saaa-ui-00000000000000000000000000000000>",
+        enabled,
+        coding_enabled,
+        coding_context,
+    );
+    let base_bytes = serde_json::to_vec(&generation::turn_request_body(&base))
+        .map_err(|error| format!("could not serialize AgentSession base input: {error}"))?
+        .len();
+    let prepared_bytes = serde_json::to_vec(&generation::turn_request_body(&prepared))
+        .map_err(|error| format!("could not serialize AgentSession capability input: {error}"))?
+        .len();
+    Ok(prepared_bytes.saturating_sub(base_bytes))
+}
+
+fn live_capability_flags(state: &crate::AppState) -> (bool, bool) {
+    let enabled = state
+        .sqlite_readers
+        .read(crate::generative_ui::store::enabled)
+        .unwrap_or(false);
+    let coding_enabled = state
+        .sqlite_readers
+        .read(crate::coding::repository::enabled)
+        .unwrap_or(false);
+    (enabled, coding_enabled)
+}
+
+fn coding_context(state: &crate::AppState, input: &crate::StartTurnInput) -> Value {
+    crate::coding::tools::context(state, &input.conversation_id)
+}
+
+fn decorate_turn_input(
+    base: &str,
+    marker: &str,
+    enabled: bool,
+    coding_enabled: bool,
+    coding_context: Value,
+) -> String {
+    let mut result = base.to_string();
+    if !coding_enabled {
+        result = json!({"type":"saaa.conversation.capabilities.v1","conversation":serde_json::from_str::<Value>(&result).unwrap_or(Value::Null),"instructions":"SAAA coding tools are disabled on this route. You cannot start, resume, inspect or cancel a local coding job. Explain this limitation for coding requests and ask the user to enable pi coding in SAAA settings. Never claim to have performed an implementation or use your own remote tools as a substitute."}).to_string();
+    }
+    if enabled {
+        result = ui_bridge::initial_input(&result, marker);
+    }
+    if coding_enabled {
+        result = ui_bridge::coding_input(&result, marker, coding_context);
+    }
+    result
+}
 
 #[derive(Debug, Deserialize)]
 struct TurnResponse {
@@ -108,18 +198,10 @@ pub(super) async fn run_agent_session_sse(
         Ok(input) => input,
         Err(kind) => return failed(kind, false),
     };
-    let enabled = context.output_persistence.is_some_and(|p| {
-        p.state
-            .sqlite_readers
-            .read(crate::generative_ui::store::enabled)
-            .unwrap_or(false)
-    });
-    let coding_enabled = context.output_persistence.is_some_and(|p| {
-        p.state
-            .sqlite_readers
-            .read(crate::coding::repository::enabled)
-            .unwrap_or(false)
-    });
+    let (enabled, coding_enabled) = context
+        .output_persistence
+        .map(|persistence| live_capability_flags(persistence.state))
+        .unwrap_or((false, false));
     let mut offered_tools = Vec::new();
     if enabled {
         offered_tools.extend(crate::generative_ui::tools::definitions());
@@ -128,33 +210,29 @@ pub(super) async fn run_agent_session_sse(
         offered_tools.extend(crate::coding::tools::definitions());
         offered_tools.extend(crate::steward::tools::definitions());
     }
-    if !coding_enabled {
-        input=json!({"type":"saaa.conversation.capabilities.v1","conversation":serde_json::from_str::<Value>(&input).unwrap_or(Value::Null),"instructions":"SAAA coding tools are disabled on this route. You cannot start, resume, inspect or cancel a local coding job. Explain this limitation for coding requests and ask the user to enable pi coding in SAAA settings. Never claim to have performed an implementation or use your own remote tools as a substitute."}).to_string();
-        follow_up_base=json!({"type":"saaa.conversation.capabilities.v1","conversation":serde_json::from_str::<Value>(&follow_up_base).unwrap_or(Value::Null),"instructions":"SAAA coding tools are disabled on this route. You cannot start, resume, inspect or cancel a local coding job. Explain this limitation for coding requests and ask the user to enable pi coding in SAAA settings. Never claim to have performed an implementation or use your own remote tools as a substitute."}).to_string();
-    }
     let marker = format!("<saaa-ui-{}>", uuid::Uuid::new_v4().simple());
-    if enabled {
-        input = ui_bridge::initial_input(&input, &marker);
-        follow_up_base = ui_bridge::initial_input(&follow_up_base, &marker);
-    }
-    if coding_enabled {
-        input = ui_bridge::coding_input(
-            &input,
-            &marker,
+    let coding_context = coding_enabled
+        .then(|| {
             context
                 .output_persistence
-                .map(|p| crate::coding::tools::context(p.state, &context.input.conversation_id))
-                .unwrap_or(Value::Null),
-        );
-        follow_up_base = ui_bridge::coding_input(
-            &follow_up_base,
-            &marker,
-            context
-                .output_persistence
-                .map(|p| crate::coding::tools::context(p.state, &context.input.conversation_id))
-                .unwrap_or(Value::Null),
-        );
-    }
+                .map(|persistence| coding_context(persistence.state, context.input))
+                .unwrap_or(Value::Null)
+        })
+        .unwrap_or(Value::Null);
+    input = decorate_turn_input(
+        &input,
+        &marker,
+        enabled,
+        coding_enabled,
+        coding_context.clone(),
+    );
+    follow_up_base = decorate_turn_input(
+        &follow_up_base,
+        &marker,
+        enabled,
+        coding_enabled,
+        coding_context,
+    );
     if input.len() > 1_000_000 || follow_up_base.len() > 1_000_000 {
         return failed(ProviderFailureKind::RequestTooLarge, false);
     }
@@ -164,16 +242,34 @@ pub(super) async fn run_agent_session_sse(
     for round in 0..=12 {
         // The remote session receives the World only in its initial turn. Tool follow-ups are
         // explicitly recorded without it; they must not claim that an old frame was resent.
-        let include_world = initial_world && round == 0
-            && world.is_some_and(|world| world.revalidate_current());
+        let include_world =
+            initial_world && round == 0 && world.is_some_and(|world| world.revalidate_current());
         if round == 0 && !include_world {
             input = follow_up_base.clone();
         }
-        let generation =
-            match base_envelope.begin(&context, round, &input, &offered_tools, include_world) {
-                Ok(generation) => generation,
-                Err(_) => return failed(ProviderFailureKind::Internal, output_started),
-            };
+        let generation = {
+            let mut recompose_attempts = 0;
+            loop {
+                match base_envelope.begin(&context, round, &input, &offered_tools, include_world) {
+                    Ok(generation) => break generation,
+                    Err(ProviderFailureKind::RequiredContextOverflow)
+                        if round > 0 && recompose_attempts < 2 =>
+                    {
+                        recompose_attempts += 1;
+                        if !generation::trim_optional_history_from_follow_up(
+                            &mut input,
+                            context.context_sources,
+                        ) {
+                            return failed(
+                                ProviderFailureKind::RequiredContextOverflow,
+                                output_started,
+                            );
+                        }
+                    }
+                    Err(kind) => return failed(kind, output_started),
+                }
+            }
+        };
         let turn = tokio::select! {
             biased;
             _ = context.cancellation.cancelled() => {
@@ -247,6 +343,9 @@ pub(super) async fn run_agent_session_sse(
         let result = match decoded {
             Ok(mut call) => {
                 call.id = format!("sse-ui-{marker}-{round}");
+                if let Err(kind) = generation.revalidate_before_tool() {
+                    return failed(kind, output_started);
+                }
                 let result = if crate::coding::contracts::NAMES.contains(&call.name.as_str()) {
                     crate::coding::tools::execute(
                         context.output_persistence.map(|p| p.state),
@@ -367,55 +466,6 @@ async fn read_turn(
         let _ = cancel_turn(client, provider, &session.id, &turn.id, api_key).await;
     }
     attempt
-}
-
-async fn start_turn(
-    client: &Client,
-    provider: &AgentSessionProviderSettings,
-    session: &SessionResponse,
-    input: &str,
-    api_key: Option<&str>,
-) -> Result<TurnResponse, ProviderFailureKind> {
-    let request = authorized(
-        client.post(session_operation_url(provider, &session.id, "turns")?),
-        api_key,
-    )
-    .header("Idempotency-Key", idempotency_key())
-    .json(&generation::turn_request_body(input));
-    let turn: TurnResponse = super::read_json_response(send(request).await?).await?;
-    if !safe_remote_id(&turn.id)
-        || turn
-            .session_id
-            .as_deref()
-            .is_some_and(|session_id| session_id != session.id)
-    {
-        return Err(ProviderFailureKind::Protocol);
-    }
-    Ok(turn)
-}
-
-fn render_turn_input(history: &[ConversationMessage]) -> Result<String, ProviderFailureKind> {
-    let messages = history
-        .iter()
-        .filter_map(|message| {
-            let role = match message.role.as_str() {
-                "system" => "system",
-                "assistant" => "assistant",
-                "user" | "transcript" => "user",
-                _ => return None,
-            };
-            Some(json!({ "role": role, "content": message.content }))
-        })
-        .collect::<Vec<_>>();
-    let input = serde_json::to_string(&json!({
-        "type": "saaa.conversation.v1",
-        "messages": messages,
-    }))
-    .map_err(|_| ProviderFailureKind::Internal)?;
-    if input.is_empty() || input.len() > 1_000_000 {
-        return Err(ProviderFailureKind::RequestTooLarge);
-    }
-    Ok(input)
 }
 
 async fn cancel_turn(
@@ -764,6 +814,3 @@ mod tests {
         ));
     }
 }
-
-#[cfg(test)]
-mod world_eval_tests;

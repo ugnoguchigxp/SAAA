@@ -46,9 +46,9 @@ pub(crate) fn record_provider_turn_start(
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
     transaction.execute(
-        "INSERT OR IGNORE INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest)
-         VALUES(?1,?2,?3,?4,0,'responding','reasoning','text','visual',?5,'')",
-        params![run_id, conversation_id, run_id, policy_id, now_ms],
+        "INSERT OR IGNORE INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest)
+         VALUES(?1,?2,?3,?4,0,'responding','reasoning','text','visual',?5,?6,'')",
+        params![run_id, conversation_id, run_id, policy_id, now_ms, now_ms.saturating_add(policy.limits.root_timeout_ms.min(i64::MAX as u64) as i64)],
     ).map_err(|error| error.to_string())?;
     crate::adaptive_improvement::record_decision(
         &transaction,
@@ -140,7 +140,7 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     let decision_id = format!("rr-decision-{run_id}");
     let step_id = format!("rr-step-{run_id}-0");
     let candidates = candidate_receipt(&selection.eligible);
-    transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,'text','visual',?5,'')",params![run_id,conversation_id,run_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
+    transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,'text','visual',?5,?6,'')",params![run_id,conversation_id,run_id,policy_id,now_ms,now_ms.saturating_add(policy.limits.root_timeout_ms.min(i64::MAX as u64) as i64)]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,disposition,received_at_ms) VALUES(?1,?2,?3,?4,'','text','accepted',?5)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms) VALUES(?1,?2,0,?3,?4,?5,?6,'respond','[\"rules\"]','rules-v1',?7,?8)",params![decision_id,run_id,format!("rr-input-{run_id}"),feature_snapshot(&input_content,policy.limits.max_reasoning_steps).to_string(),candidates.to_string(),candidate.recipe_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES(?1,?2,?3,0,0,?4,'respond','planned','{}','{}',NULL)",params![step_id,run_id,decision_id,candidate.actor_ids.first().cloned().unwrap_or_default()]).map_err(|e|e.to_string())?;
@@ -487,6 +487,14 @@ mod tests {
             )
             .expect("run");
             record_provider_turn_start_in_transaction(&tx, "run", "c", 1).expect("receipt");
+            let receipt: (String, String, Option<i64>) = tx
+                .query_row(
+                    "SELECT r.phase,s.status,r.deadline_at_ms FROM rr_roots r JOIN rr_steps s ON s.root_id=r.root_id WHERE r.root_id='run'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("queued receipt");
+            assert_eq!(receipt, ("queued".into(), "planned".into(), Some(180_001)));
             // Dropping instead of committing is the failure path that must leave no half root.
         }
         assert_eq!(

@@ -1,5 +1,5 @@
 use crate::RunCancellation;
-use saaa_reasoning_contract::{Request, Response, PROTOCOL, TOOL, VERSION};
+use saaa_reasoning_contract::{Request, Response, PROTOCOL, TOOL};
 use serde_json::{json, Value};
 use std::{
     sync::{Arc, OnceLock},
@@ -91,7 +91,8 @@ impl Client {
             .and_then(|tools| tools.iter().find(|t| t["name"] == TOOL));
         if list["id"] != id
             || !tool.is_some_and(|t| {
-                t["outputSchema"]["properties"]["schemaVersion"]["const"] == VERSION
+                t["inputSchema"] == saaa_reasoning_contract::schema::input()
+                    && t["outputSchema"] == saaa_reasoning_contract::schema::output()
             })
         {
             return Err("Reasoning MCP contract unavailable".into());

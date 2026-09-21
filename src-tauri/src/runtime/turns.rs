@@ -249,33 +249,58 @@ async fn wait_for_role_routing_dispatch(
                 "Cancelled by user".into(),
             ));
         }
-        let phase = state.sqlite_readers.read(|connection| {
+        let root = state.sqlite_readers.read(|connection| {
             connection
                 .query_row(
-                    "SELECT phase FROM rr_roots WHERE root_id=?1",
+                    "SELECT phase,deadline_at_ms FROM rr_roots WHERE root_id=?1",
                     [&input.run_id],
-                    |row| row.get::<_, String>(0),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
                 )
                 .optional()
                 .map_err(|error| error.to_string())
         })?;
-        match phase.as_deref() {
-            None | Some("responding") | Some("draining") => return Ok(()),
-            Some("queued") => {
+        let Some((phase, deadline_at_ms)) = root else {
+            return Ok(());
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(i64::MAX);
+        if deadline_at_ms.is_some_and(|deadline| deadline <= now_ms)
+            && matches!(phase.as_str(), "queued" | "responding" | "draining")
+        {
+            state.sqlite_writer.write(|connection| {
+                crate::role_routing::coordinator::apply(
+                    connection,
+                    &input.run_id,
+                    crate::role_routing::reducer::Event::Fail,
+                    now_ms,
+                )?;
+                let _ = crate::role_routing::recovery::claim_next_queued(connection, now_ms)?;
+                Ok(())
+            })?;
+            return Err(TurnExecutionFailure::provider(
+                crate::ProviderFailureKind::Timeout,
+                "Role-routing root reached its deadline before provider dispatch".into(),
+            ));
+        }
+        match phase.as_str() {
+            "responding" | "draining" => return Ok(()),
+            "queued" => {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            Some("cancelled") => {
+            "cancelled" => {
                 return Err(TurnExecutionFailure::provider(
                     crate::ProviderFailureKind::Cancelled,
                     "Role-routing root was cancelled before dispatch".into(),
                 ));
             }
-            Some("failed") | Some("completed") => {
+            "failed" | "completed" => {
                 return Err(TurnExecutionFailure::configuration(
                     "Role-routing root became terminal before provider dispatch",
                 ));
             }
-            Some(_) => {
+            _ => {
                 return Err(TurnExecutionFailure::configuration(
                     "Role-routing root has an invalid dispatch phase",
                 ));
@@ -311,7 +336,9 @@ fn public_failure_code(error: &TurnExecutionFailure) -> RuntimeFailureCode {
         return RuntimeFailureCode::RequiredContextOverflow;
     }
     if error.message.contains("Context scope changed")
-        || error.message.contains("Context scope could not be resolved")
+        || error
+            .message
+            .contains("Context scope could not be resolved")
         || error
             .message
             .contains("context-scope-changed-after-connect")
@@ -383,9 +410,8 @@ mod required_context_failure_code_tests {
             public_failure_code(&scope),
             RuntimeFailureCode::ContextScopeChanged
         ));
-        let unresolved = TurnExecutionFailure::configuration(
-            "Context scope could not be resolved: unknown",
-        );
+        let unresolved =
+            TurnExecutionFailure::configuration("Context scope could not be resolved: unknown");
         assert!(matches!(
             public_failure_code(&unresolved),
             RuntimeFailureCode::ContextScopeChanged

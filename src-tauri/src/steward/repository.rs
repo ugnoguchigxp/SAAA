@@ -1,5 +1,5 @@
 use super::{
-    contracts::{GoalProposal, MAX_ACTIVE_GOALS},
+    contracts::{GoalProposal, PlanStep, TaskPlan, Verifier, MAX_ACTIVE_GOALS},
     CONTINUE_TRIGGER, DEDUPE_SUFFIX, START_REQUEST, START_TRIGGER,
 };
 use crate::{database_error, new_id, now_iso, AppState};
@@ -88,7 +88,73 @@ pub(crate) fn register_with_options(
             params![delegation_id, goal_id, conversation_id, workspace_id, ops, budget_runs, budget_ms.min(i64::MAX as u64) as i64, notify, now],
         )
         .map_err(database_error)?;
+    persist_default_goal_plan(connection, &goal_id, ops, verifier)?;
     Ok(json!({"goalId":goal_id,"delegationId":delegation_id,"status":"active"}))
+}
+
+fn persist_default_goal_plan(
+    connection: &Connection,
+    goal_id: &str,
+    ops: &str,
+    verifier: &str,
+) -> Result<(), String> {
+    let verifier = match verifier {
+        "test_report_obtained" => Verifier::TestReportObtained,
+        "tests_pass" => Verifier::TestsPass,
+        _ => Verifier::UserConfirmationRequired,
+    };
+    let steps = match ops {
+        "read" => vec![PlanStep {
+            id: "read".into(),
+            depends_on: vec![],
+            verifier,
+        }],
+        "test_run" => vec![PlanStep {
+            id: "test".into(),
+            depends_on: vec![],
+            verifier,
+        }],
+        "read_test" => vec![
+            PlanStep {
+                id: "read".into(),
+                depends_on: vec![],
+                verifier: verifier.clone(),
+            },
+            PlanStep {
+                id: "test".into(),
+                depends_on: vec!["read".into()],
+                verifier,
+            },
+        ],
+        _ => return Err("steward_plan_invalid".into()),
+    };
+    let plan = TaskPlan {
+        steps,
+        max_replans: 2,
+    };
+    plan.validate().map_err(str::to_string)?;
+    let id = new_id("goal_plan");
+    connection.execute(
+        "INSERT INTO steward_goal_plans(id,goal_id,revision,max_replans,created_at) VALUES(?1,?2,1,?3,?4)",
+        params![id, goal_id, i64::from(plan.max_replans), now_iso()],
+    ).map_err(database_error)?;
+    for (ordinal, step) in plan.steps.iter().enumerate() {
+        let recipe = if step.id == "read" {
+            "read"
+        } else {
+            "test_run"
+        };
+        let verifier = match &step.verifier {
+            Verifier::TestReportObtained => "test_report_obtained",
+            Verifier::TestsPass => "tests_pass",
+            Verifier::UserConfirmationRequired => "user_confirmation_required",
+        };
+        connection.execute(
+            "INSERT INTO steward_plan_steps(plan_id,step_id,ordinal,recipe,verifier,depends_on_json) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![id, step.id, ordinal as i64, recipe, verifier, serde_json::to_string(&step.depends_on).map_err(|_| "steward_plan_invalid")?],
+        ).map_err(database_error)?;
+    }
+    Ok(())
 }
 
 /// Accepts a model proposal only after the host has bound it to an existing
@@ -228,7 +294,9 @@ pub(crate) fn withdraw(connection: &Connection, conversation_id: &str) -> Result
 pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Value, String> {
     let mut stmt = connection
         .prepare(
-            "SELECT t.id,t.loop_state,t.dedupe_key,t.coding_job_id,g.status,g.id,g.summary,g.verifier,d.workspace_id,d.ops,d.budget_runs,d.budget_ms,d.notify
+            "SELECT t.id,t.loop_state,t.dedupe_key,t.coding_job_id,g.status,g.id,g.summary,g.verifier,d.workspace_id,d.ops,d.budget_runs,d.budget_ms,d.notify,
+                    (SELECT r.delivery_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1),
+                    (SELECT r.speech_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1)
              FROM steward_tasks t
              JOIN steward_delegations d ON d.id=t.delegation_id
              JOIN steward_goals g ON g.id=d.goal_id
@@ -252,6 +320,8 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
                 "budgetRuns": row.get::<_, i64>(10)?,
                 "budgetMs": row.get::<_, i64>(11)?,
                 "notify": row.get::<_, String>(12)?,
+                "deliveryState": row.get::<_, Option<String>>(13)?,
+                "speechState": row.get::<_, Option<String>>(14)?,
             }))
         })
         .map_err(database_error)?;
@@ -486,7 +556,7 @@ pub(crate) fn queue_task(
             ).map_err(database_error)?;
             connection.execute(
                 "INSERT INTO steward_dispatch_intents(id,task_id,state,idempotency_key,created_at,updated_at) VALUES(?1,?2,'pending',?3,?4,?4)",
-                params![new_id("intent"), id, format!("{}:{}", work.delegation_id, source_id), now],
+                params![new_id("intent"), id, format!("{}:{}:{}", work.delegation_id, source_id, id), now],
             ).map_err(database_error)?;
             Ok(Some(id))
         }
@@ -538,6 +608,12 @@ pub(crate) fn apply_terminal_event(
         _ => return Ok(()),
     };
     set_loop_state(connection, &task_id, state, None, None)?;
+    // A read+test delegation is a finite, durable two-step plan.  The
+    // successor is inserted in the same transaction as the terminal event;
+    // no in-memory callback is evidence that the dependency was satisfied.
+    if kind == "settled" {
+        let _ = queue_dependent_test_step(connection, &task_id)?;
+    }
     let plan_decision_id = format!("ai-plan-{task_id}");
     let adaptive_schema_ready: bool = connection
         .query_row(
@@ -576,6 +652,24 @@ pub(crate) fn apply_terminal_event(
     // `claim_terminals` owns the outbox insertion. It needs the delegation's notification
     // policy, so terminal consumption must not manufacture an immediate report here.
     Ok(())
+}
+
+fn queue_dependent_test_step(connection: &Connection, task_id: &str) -> Result<bool, String> {
+    let row: Option<(String, String, ActiveWork, String)> = connection.query_row(
+        "SELECT t.conversation_id,t.source_id,g.id,g.status,d.id,d.workspace_id,d.budget_runs,d.budget_ms,0,d.ops,g.verifier,
+                COALESCE((SELECT recipe FROM steward_task_plans p WHERE p.task_id=t.id ORDER BY p.revision DESC LIMIT 1),'')
+         FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id JOIN steward_goals g ON g.id=d.goal_id
+         WHERE t.id=?1 AND g.status='active' AND d.status='active' AND d.superseded_by IS NULL",
+        [task_id],
+        |r| Ok((r.get(0)?, r.get(1)?, ActiveWork { goal_id:r.get(2)?, goal_status:r.get(3)?, delegation_id:r.get(4)?, workspace_id:r.get(5)?, budget_runs:r.get(6)?, budget_ms:r.get(7)?, superseded:r.get::<_, i64>(8)? != 0, ops:r.get(9)?, verifier:r.get(10)? }, r.get(11)?)),
+    ).optional().map_err(database_error)?;
+    let Some((conversation_id, source_id, work, recipe)) = row else {
+        return Ok(false);
+    };
+    if work.ops != "read_test" || recipe != "read" {
+        return Ok(false);
+    }
+    Ok(queue_task(connection, &work, &conversation_id, &source_id, "continue")?.is_some())
 }
 
 pub(crate) fn set_loop_state(
@@ -617,6 +711,25 @@ pub(crate) fn persist_task_plan(
         params![new_id("plan"), task_id, recipe, request, selection_mode, policy_revision, now_iso()],
     ).map_err(database_error)?;
     Ok(())
+}
+
+pub(crate) fn completed_recipe(
+    connection: &Connection,
+    delegation_id: &str,
+    recipe: &str,
+) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM steward_tasks t
+                JOIN steward_task_plans p ON p.task_id=t.id
+                WHERE t.delegation_id=?1 AND p.recipe=?2
+                  AND t.loop_state IN ('done','awaiting_user')
+            )",
+            params![delegation_id, recipe],
+            |row| row.get(0),
+        )
+        .map_err(database_error)
 }
 
 pub(crate) fn queued_task(
@@ -897,12 +1010,13 @@ pub(crate) fn enqueue_task_report(
     terminal: &TerminalReport,
     held_reason: Option<&str>,
     available_at_ms: i64,
+    speak_requested: bool,
 ) -> Result<String, String> {
     let id = new_id("report");
     connection.execute(
-        "INSERT OR IGNORE INTO steward_reports(id,conversation_id,digest,held_reason,flushed,created_at,available_at_ms,task_id,task_revision,destination,delivery_state)
-         VALUES(?1,?2,?3,?4,0,?5,?6,?7,?8,'conversation','pending')",
-        params![id, conversation_id, terminal.digest, held_reason, now_iso(), available_at_ms, terminal.task_id, terminal.task_revision],
+        "INSERT OR IGNORE INTO steward_reports(id,conversation_id,digest,held_reason,flushed,created_at,available_at_ms,task_id,task_revision,destination,delivery_state,speak_requested,speech_state)
+         VALUES(?1,?2,?3,?4,0,?5,?6,?7,?8,'conversation','pending',?9,CASE WHEN ?9 THEN 'pending' ELSE 'not_requested' END)",
+        params![id, conversation_id, terminal.digest, held_reason, now_iso(), available_at_ms, terminal.task_id, terminal.task_revision, speak_requested],
     ).map_err(database_error)?;
     Ok(id)
 }
@@ -968,6 +1082,78 @@ pub(crate) fn mark_flushed(
         .execute(
             "UPDATE steward_reports SET flushed=1,delivery_state='delivered',message_id=?3 WHERE conversation_id=?1 AND flushed=0 AND available_at_ms<=?2",
             params![conversation_id, now_ms, message_id],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+pub(crate) struct PendingSpeech {
+    pub(crate) id: String,
+    pub(crate) digest: String,
+}
+
+/// Claim only conversation-delivered reports. The claim is durable before any
+/// TTS provider is asked to render or play, so a restart cannot replay sound.
+pub(crate) fn claim_pending_speech(
+    connection: &Connection,
+    conversation_id: &str,
+    run_id: &str,
+) -> Result<Vec<PendingSpeech>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id,digest FROM steward_reports
+             WHERE conversation_id=?1 AND flushed=1 AND speak_requested=1
+               AND speech_state='pending' ORDER BY rowid",
+        )
+        .map_err(database_error)?;
+    let reports = statement
+        .query_map([conversation_id], |row| {
+            Ok(PendingSpeech {
+                id: row.get(0)?,
+                digest: row.get(1)?,
+            })
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    drop(statement);
+    for report in &reports {
+        connection
+            .execute(
+                "UPDATE steward_reports SET speech_state='starting',speech_run_id=?2
+                 WHERE id=?1 AND speech_state='pending'",
+                params![report.id, run_id],
+            )
+            .map_err(database_error)?;
+    }
+    Ok(reports)
+}
+
+pub(crate) fn mark_speech_state(
+    connection: &Connection,
+    run_id: &str,
+    state: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE steward_reports SET speech_state=?2 WHERE speech_run_id=?1
+             AND speech_state IN ('starting','playback_started')",
+            params![run_id, state],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+pub(crate) fn suppress_pending_speech(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE steward_reports SET speech_state='suppressed'
+             WHERE conversation_id=?1 AND flushed=1 AND speak_requested=1
+               AND speech_state='pending'",
+            [conversation_id],
         )
         .map_err(database_error)?;
     Ok(())

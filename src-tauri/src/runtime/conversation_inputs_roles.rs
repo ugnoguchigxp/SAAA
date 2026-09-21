@@ -2,13 +2,19 @@ use crate::persistence::load_role_routing_settings;
 use crate::ConversationRouteSettings;
 use rusqlite::Connection;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RoleDispatch {
+    Provider,
+    CodexSdk { model: String, max_input_bytes: u32 },
+}
+
 pub(super) fn apply_enabled_role_route(
     connection: &Connection,
     route: &mut ConversationRouteSettings,
-) -> Result<(), String> {
+) -> Result<Option<RoleDispatch>, String> {
     let role_policy = load_role_routing_settings(connection)?;
     if !role_policy.enabled {
-        return Ok(());
+        return Ok(None);
     }
     // Candidate construction is the hard filter. Adaptive improvement may only reorder this
     // exact set, so it cannot enable an unavailable actor or a multi-step recipe this runtime
@@ -60,16 +66,31 @@ pub(super) fn apply_enabled_role_route(
         .iter()
         .find(|actor| &actor.id == actor_id)
         .ok_or_else(|| "Role-routing response actor is unavailable".to_string())?;
+    if actor.transport == "codex_sdk" {
+        return Ok(Some(RoleDispatch::CodexSdk {
+            model: actor
+                .model
+                .clone()
+                .ok_or_else(|| "Role-routing Codex actor has no model".to_string())?,
+            max_input_bytes: actor.max_input_bytes,
+        }));
+    }
     if actor.transport != "provider" {
-        return Err(
-            "The selected role-routing actor is not yet supported for conversation dispatch"
-                .to_string(),
-        );
+        return Err("Role-routing actor has an unsupported transport".to_string());
     }
     route.source = "provider".to_string();
     route.primary_provider_id = actor.provider_id.clone();
     route.fallback_provider_ids.clear();
-    Ok(())
+    // A role-routing root owns the total budget. Preserve the existing provider implementation,
+    // but do not let its legacy route timeout outlive the immutable root receipt.
+    route.timeout_ms = role_policy.limits.root_timeout_ms;
+    route.attempt_timeout_ms = Some(
+        role_policy
+            .limits
+            .step_timeout_ms
+            .min(role_policy.limits.root_timeout_ms),
+    );
+    Ok(Some(RoleDispatch::Provider))
 }
 
 #[cfg(test)]
@@ -105,13 +126,58 @@ mod tests {
         let mut route = crate::persistence::load_routing_settings(&connection)
             .expect("routing settings")
             .conversation_respond;
-        apply_enabled_role_route(&connection, &mut route).expect("role route applies");
+        assert_eq!(
+            apply_enabled_role_route(&connection, &mut route).expect("role route applies"),
+            Some(RoleDispatch::Provider)
+        );
         assert_eq!(route.source, "provider");
         assert_eq!(
             route.primary_provider_id.as_deref(),
             Some(DYNAMIC_LAN_PROVIDER_ID)
         );
         assert!(route.fallback_provider_ids.is_empty());
+        assert_eq!(route.timeout_ms, 180_000);
+        assert_eq!(route.attempt_timeout_ms, Some(60_000));
+    }
+
+    #[test]
+    fn codex_actor_selects_the_isolated_dispatch_without_rewriting_provider_settings() {
+        let mut connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut documents = default_settings_input();
+        let codex = documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.agent" && document.key == "codex-sdk")
+            .expect("Codex settings");
+        codex.value_json["enabled"] = json!(true);
+        codex.value_json["health"] = json!("ready");
+        let policy = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.roles")
+            .expect("role policy");
+        policy.value_json = json!({
+            "schemaVersion": 1, "enabled": true,
+            "actors": [{"id":"sol","label":"Sol","aliases":[],"transport":"codex_sdk","providerId":null,"model":"gpt-5.6-sol","location":"cloud","resourceGroup":"codex","maxInputBytes":4096,"capabilities":["reason"]}],
+            "roles":{"frontend":null,"reasoner":"sol","advanced":null,"reviewer":null,"premium":null,"toolSpecialist":null},
+            "recipes":[{"id":"direct","action":"respond","roles":["reasoner"],"enabled":true}],
+            "limits":{"maxReasoningSteps":4,"maxToolCalls":32,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":1,"maxAutomaticSwitches":2,"maxEstimatedCostMicros":null},
+            "speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},
+            "selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},
+            "premiumApproval":"per_request","learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false}
+        });
+        save_settings_documents_to_connection(&mut connection, &documents).expect("settings save");
+        let mut route = crate::persistence::load_routing_settings(&connection)
+            .expect("routing")
+            .conversation_respond;
+        let prior = route.primary_provider_id.clone();
+        assert_eq!(
+            apply_enabled_role_route(&connection, &mut route).expect("codex route"),
+            Some(RoleDispatch::CodexSdk {
+                model: "gpt-5.6-sol".into(),
+                max_input_bytes: 4096,
+            })
+        );
+        assert_eq!(route.primary_provider_id, prior);
     }
 
     #[test]

@@ -57,3 +57,20 @@ fn byte_budget_is_independent_from_character_limit() {
     req.budget.timeout_ms = 15001;
     assert!(req.validate().is_err());
 }
+
+#[test]
+fn wd_10_world_evidence_is_versioned_and_bound_to_the_rendered_frame() {
+    let mut req = request();
+    let content = concat!("[WORLD_MODEL — untrusted data; instructionAuthority=none]\n",
+        r#"{"schema_version":1,"project_scope":"project:p","captured_at_ms":1000,"expires_at_ms":2000,"runtime":[],"notices":[]}"#,
+        "\n[END_WORLD_MODEL]");
+    req.context.evidence.push(Evidence { id:"world".into(), source:"world-model:f@1".into(), content:content.into(), world:Some(world::WorldEvidence::from_content(content).unwrap()) });
+    assert!(req.validate().is_ok());
+    req.context.evidence[0].world.as_mut().unwrap().expires_at_ms += 1;
+    assert!(req.validate().is_err());
+    req.context.evidence[0].world = None;
+    assert!(req.validate().is_err());
+    req.schema_version = "reasoning-answer-v1".into();
+    req.context.evidence.clear();
+    assert!(req.validate().is_err());
+}

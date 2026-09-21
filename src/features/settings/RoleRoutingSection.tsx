@@ -240,15 +240,17 @@ export function RoleRoutingSection({
             <div className="settings-field-group" aria-label="検証済みの改善状況">
               <span>検証済みの改善状況</span>
               {learning.adaptiveArtifacts.map((artifact) => {
-                const domain = {
-                  provider_recipe: "応答レシピ",
-                  tool: "ツール候補",
-                  plan: "委任作業の手順",
-                  notification: "通知方法",
-                }[artifact.domain] ?? artifact.domain;
-                const score = artifact.bestObservedScore === null
-                  ? "記録なし"
-                  : `${Math.round(artifact.bestObservedScore * 100)}%`;
+                const domain =
+                  {
+                    provider_recipe: "応答レシピ",
+                    tool: "ツール候補",
+                    plan: "委任作業の手順",
+                    notification: "通知方法",
+                  }[artifact.domain] ?? artifact.domain;
+                const score =
+                  artifact.bestObservedScore === null
+                    ? "記録なし"
+                    : `${Math.round(artifact.bestObservedScore * 100)}%`;
                 return (
                   <div className="settings-help" key={artifact.id}>
                     <p>
@@ -274,7 +276,9 @@ export function RoleRoutingSection({
                             .finally(() => setRollbackId(null));
                         }}
                       >
-                        {rollbackId === artifact.id ? "ルールへ戻しています…" : "この改善をルールへ戻す"}
+                        {rollbackId === artifact.id
+                          ? "ルールへ戻しています…"
+                          : "この改善をルールへ戻す"}
                       </button>
                     )}
                   </div>

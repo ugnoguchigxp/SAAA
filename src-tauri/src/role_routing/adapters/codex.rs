@@ -7,6 +7,7 @@ use super::codex_protocol::{FrameValidator, SidecarEvent};
 use crate::{process_guard::ProcessGuard, RunCancellation};
 use serde_json::{json, Value};
 use std::{
+    env,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -72,8 +73,9 @@ pub(crate) fn run_at(
     }
 
     let mut command = Command::new(executable);
+    command.env_clear();
+    configure_sidecar_environment(&mut command);
     command
-        .env_clear()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -167,6 +169,26 @@ pub(crate) fn run_at(
     outcome
 }
 
+/// Preserve only the runtime prerequisites used by the fixed sidecar. `HOME` lets the bundled
+/// SDK read the user's existing Codex login, while the sidecar itself creates an empty cwd and
+/// supplies an explicit no-MCP/no-network configuration. Provider keys, proxies and all other
+/// parent process state are intentionally not inherited.
+fn configure_sidecar_environment(command: &mut Command) {
+    for key in [
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    ] {
+        if let Some(value) = env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+}
+
 fn write_frame(stdin: &mut impl Write, frame: &Value) -> Result<(), String> {
     serde_json::to_writer(&mut *stdin, frame)
         .map_err(|error| format!("Could not encode role-routing sidecar request: {error}"))?;
@@ -242,7 +264,7 @@ mod tests {
 
     #[test]
     fn rr_20_config_isolation_clears_parent_environment_and_arguments() {
-        let (_directory, executable) = fixture("test \"$#\" -eq 0 && test -z \"$HOME\" && test -z \"$OPENAI_API_KEY\" || exit 9; read line; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"isolated\"}'");
+        let (_directory, executable) = fixture("test \"$#\" -eq 0 && test -n \"$PATH\" && test -z \"$OPENAI_API_KEY\" && test -z \"$HTTP_PROXY\" && test -z \"$HTTPS_PROXY\" || exit 9; read line; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"isolated\"}'");
         assert_eq!(
             run_at(&executable, &request(), &RunCancellation::default())
                 .expect("isolated fixture result"),

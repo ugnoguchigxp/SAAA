@@ -24,6 +24,8 @@ Codingの現在状態が、許可された会話の送信本文へ届き、失�
 
 実装開始時に実際のmoduleと関数へ接続点表を更新する。削除されたMeetingをfixtureの都合で復活させない。Worldの対象はCodingJobに限定する。steward GoalとWorld Goalの自動対応付けも行わない。
 
+2026-09-21改訂: Provider対応範囲は後続WD計画を正本とする。AgentSession初回は再検証付きWorld、継続はWorld-free。DynamicLan/共有LARMは共通OpenAI互換adapterを使う。旧「対象外」条件をこの対応表へ置き換える。
+
 ## 3. G0 — 改修完了の独立ゲート
 
 本節は改修担当の成果を受け入れる条件であり、M4A内で送信機構を再設計する指示ではない。G0未通過でもfixture仕様とreport型は作れるが、機能接続・性能認定・完了判定へ進めない。
@@ -32,7 +34,7 @@ Codingの現在状態が、許可された会話の送信本文へ届き、失�
 | --- | --- | --- |
 | R1 | 初回送信直前のExpired/ChangedでWorldが除去される | World採用後に時刻/ownerを変更し、HTTP受信本文に当該Worldブロック・fixture識別子がないこと |
 | R2 | tool-followupで失効したWorldが再送されない | 一回目はWorldあり、二回目はなし。Tool結果と元のユーザー指示は保持 |
-| R3 | AgentSessionなど対象外ProviderへWorldを送らない | 当該Providerの実request encoder→HTTP受信本文を検査。manifestだけでは不可 |
+| R3 | 対応表に従い、AgentSessionは初回のみ、未対応経路は送信しない | 当該Providerの実request encoder→HTTP受信本文を検査。manifestだけでは不可 |
 | R4 | 本文とmanifestが一致する | 実送信bodyのdigestとrequest_digest、World有無とselected記録が一致 |
 | R5 | 誤除去がない | World以外のPersonal State、通常assistant履歴、ユーザー指示、Tool結果を保持 |
 | R6 | 既存制御を維持する | Memory OFF、shadow拒否、Scope/policy失効、Provider fallbackで回帰なし |
@@ -107,8 +109,8 @@ module登録と必要なtest-only可視性は許可。turns.rs、lib.rs、巨大
 | W08 | compose後Coding revision据置でcancel_requested | HTTP1、旧running Worldなし |
 | W09 | 一回目Worldあり、Tool後TTL超過 | HTTP2、World有→無、Tool結果保持 |
 | W10 | 一回目Worldあり、Tool後owner状態変更 | HTTP2、World有→無 |
-| W11 | AgentSessionを選択 | HTTP1、Worldなし、manifest非selected |
-| W12 | OpenAI互換失敗→AgentSession fallback | 各Provider HTTP1、対象外へのWorld転送なし |
+| W11 | AgentSession初回とTool継続 | HTTP2、World有→無、本文とmanifest一致 |
+| W12 | OpenAI互換失敗→AgentSession切替、途中で失効 | primary HTTP1、AgentSession初回と継続HTTP2、旧World転送なし |
 | W13 | World＋Personal State混在後に失効 | HTTP1、Worldだけ除去、Personal State保持 |
 | W14 | Worldブロックに似た通常assistant履歴 | HTTP1、通常履歴は不変 |
 | W15 | Worldが予算で不採用 | HTTP1、Worldなし、既存候補保持 |
@@ -120,7 +122,7 @@ module登録と必要なtest-only可視性は許可。turns.rs、lib.rs、巨大
 
 W17はfixtureを二分する。同じSourceを通常Personal State候補にも使うケースはHTTP0、Coding参照だけで使うケースはHTTP1かつWorldなし。曖昧な「0または1なら成功」というassertは禁止。report上はW17a/W17bとして出し、全21結果を必須にする。
 
-DynamicLanなど他の対象外ProviderにWorldの共通historyを渡す経路が残る場合はW11の枝番を追加し、黙って評価対象から外さない。
+DynamicLan/共有LARMは共通adapterで再検証する。allocation/leaseを含む実経路の受入はWDのmatrixで別途記録する。
 
 ## 6. 作業カード（16枚）
 
@@ -136,7 +138,7 @@ DynamicLanなど他の対象外ProviderにWorldの共通historyを渡す経路�
 | E05 | W01〜04、chat tests | 基本送信を評価 | Memory OFF取得0、有効時だけWorldあり |
 | E06 | W05〜08、chat tests | 初回の期限・状態変更を評価 | 送信bodyとmanifestが一致、通常本文保持 |
 | E07 | W09/10、chat tests | Tool followupを評価 | HTTP2、有→無、Tool結果と指示保持 |
-| E08 | W11/12、agent/fallback tests | 対象外とfallbackを評価 | 実HTTPにWorldなし。world=Noneの文字列検査は不可 |
+| E08 | W11/12、agent/fallback tests | 対象外とfallbackを評価 | 対応表どおりのWorld有無。world=Noneの文字列検査は不可 |
 | E09 | W13〜15、body tests | 混在・誤除去・予算を評価 | World以外の内容一致、既存候補を奪わない |
 | E10 | W16/17a/17b、scope tests | 失効による停止と省略を評価 | ケース別のrequest数を厳密assert |
 | E11 | W18〜20、boundary tests | 並行run、完了、shadow拒否を評価 | 混入0、既存complete規則維持、誤dispatch0 |
