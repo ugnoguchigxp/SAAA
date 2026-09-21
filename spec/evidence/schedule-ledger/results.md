@@ -18,7 +18,7 @@
 
 ## ゲート
 
-- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib schedule::`: 29 passed / 0 failed
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib schedule::`: 32 passed / 0 failed（隔離 target。2026-09-21）
 - due 1,000 件の p95 と tick p95 は試験内で確認
 - live Google 確認（SL-24）は未実施。予定名・メールは記録していない
 

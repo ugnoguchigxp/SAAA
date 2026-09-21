@@ -104,16 +104,33 @@ fn compose_after_connect(
         return Err(error);
     }
     let base = budget.apply(memory::context_window::compose(latest.loaded_context)?)?;
+    let role_candidates = if latest.role_dispatch.is_some() {
+        crate::runtime::context::role_projection::project(
+            crate::runtime::context::role_projection::RoleProjectionInput {
+                allowed_scope_keys: latest
+                    .scope
+                    .scopes
+                    .iter()
+                    .map(|scope| scope.key.clone())
+                    .collect(),
+                initial: latest.personal_candidates,
+                amendments: latest.continuation_candidates,
+                revoked_source_ids: std::collections::HashSet::new(),
+            },
+        )?
+    } else {
+        latest
+            .personal_candidates
+            .into_iter()
+            .chain(latest.continuation_candidates)
+            .collect()
+    };
     let composed = crate::runtime::context::world::turn::compose_for_app(
         state,
         &input.run_id,
         &latest.scope,
         base,
-        latest
-            .personal_candidates
-            .into_iter()
-            .chain(latest.continuation_candidates)
-            .collect(),
+        role_candidates,
         latest
             .scope
             .scopes
@@ -411,6 +428,19 @@ pub(crate) async fn execute_conversation_turn(
         };
 
         update_runtime_provider(state, &input.run_id, provider.id())?;
+        let activity_now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0);
+        state.sqlite_writer.write(|connection| {
+            crate::role_routing::repository::record_actor_activity(
+                connection,
+                &input.run_id,
+                "provider_started",
+                activity_now_ms,
+            )
+            .map(|_| ())
+        })?;
         let session_id = begin_provider_session(
             state,
             &input.run_id,

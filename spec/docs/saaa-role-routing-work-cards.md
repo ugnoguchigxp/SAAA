@@ -3,6 +3,22 @@
 状態: **監査済み・未完了**。以下の進捗表は 2026-09-21 の作業treeを確認して更新した。`部分`はコード断片または限定経路があるだけで、カードの合格条件を満たした意味ではない。`未着手`は実装がない。全カードを完了とする報告はまだしてはならない。
 [計画](saaa-role-routing-plan.md) / [実行契約](saaa-role-routing-execution-contract.md) / [学習契約](saaa-role-routing-learning-contract.md) / [受入](saaa-role-routing-acceptance.md)
 
+## 完了・未完了の要約（2026-09-21）
+
+カードの合格条件と指定試験を基準に判定する。**完了カードは0/40件**である。部分実装は完了ではなく、未実装の安全条件・縦通し経路・試験を残している。
+
+| 区分 | 件数 | カード |
+| --- | ---: | --- |
+| 完了 | 0 | なし |
+| 部分 | 31 | RR-00〜10、RR-12、RR-14〜20、RR-22〜23、RR-27〜28、RR-30〜37 |
+| 未着手 | 9 | RR-11、RR-13、RR-21、RR-24〜26、RR-29、RR-38〜39 |
+
+現時点で動作確認できたサブ機能は、receipt/ledgerの作成、queue上限拒否、FIFO queue解放、root deadline、snapshot/cancel IPC、Codex JSONL sidecarの同梱とfake protocol検証、`codex_sdk` actorの限定dispatch、学習データ処理の一部である。これらは各カードの一部を満たすだけで、R1〜R3の受入完了を意味しない。
+
+優先して残る実装は、role専用context projection（RR-07）、Provider/Sinkとtool ledger/speech ownerの実経路（RR-09/11/13）、Sol host tool loop（RR-21）、評価・revision・premium承諾（RR-24〜26）、R2競合試験（RR-29）、tool-specialist（RR-38）、全体受入・性能測定（RR-39）である。加えて、policy snapshotをqueued rootのdispatch時にも一貫して参照する保証、実認証SDKを使うlive isolation、ASR→tool→TTSのE2Eは未検証である。
+
+外部要因で停止しているカードはない。主な阻害要因は未実装の縦通し経路と試験不足である。live laneだけは認証済みSDK・許可モデル・隔離fixtureを用意した明示的な実行が必要であり、現状は実施していない。作業treeにはrole-routing外の変更も混在するため、V5全体試験の失敗は変更単位ごとに切り分ける。
+
 ## 実装監査（2026-09-21）
 
 | カード | 状態 | 現在の根拠 | 合格までに残ること |
@@ -10,13 +26,13 @@
 | RR-00 | 部分 | `baseline.md` と `progress.md` にdirty差分、schema、SDK、live gateを記録 | 実機接続能力を明示fixtureで検証 |
 | RR-01 | 部分 | `contracts.rs`、`reducer.rs`、`signals.rs` | event契約、Clock/ID注入、指定境界試験 |
 | RR-02 | 部分 | R1 ledger DDL、migration idempotency試験 | C6全FK/複合整合性、旧DB/FK試験 |
-| RR-03 | 部分 | `routing.roles` validationとpolicy snapshot | CAS、config fingerprint、指定試験 |
+| RR-03 | 部分 | `routing.roles` validationとpolicy snapshot。queued rootはreceiptのpolicyを優先してdispatchし、stepにはpolicy/recipe/actor由来のSHA-256 fingerprintを保存 | settings更新CAS、指定試験 |
 | RR-04 | 部分 | receiptを`prepare_runtime_run` transactionへ接続し、queue上限をcommit前に拒否。active root がある receipt は queued として provider 前で待機 | retry/conflict、receipt復元 |
 | RR-05 | 部分 | pure reducerのみ | coordinator、driver、mpsc、registry、IO試験 |
 | RR-06 | 部分 | recipe候補の決定的選択、shadow関数 | hard filter・予算・sticky選択・decision理由 |
-| RR-07 | 未着手 | 既存contextをそのまま使用 | role projection、scope/amendment試験 |
+| RR-07 | 部分 | role dispatch時にMust-only projectionを通し、許可scope外・revoked必須sourceを拒否。必須候補がない通常会話は空projectionを許可 | revoked sourceの実データ接続、root初回条件の永続化、旧context fixture回帰 |
 | RR-08 | 部分 | 保守的なfollow-up文字列分類のみ | 構造化分類、根拠/target検証、frontend prompt |
-| RR-09 | 未着手 | 既存provider経路を直接再利用 | ActorAdapter、Sink、partial/timeout試験 |
+| RR-09 | 部分 | Provider開始を本文なしのroot-local activityとして永続化し、terminal rootへの追記を拒否。最終結果だけを既存root採用transactionへ渡す | delta→activity Sink、partial/timeout/frontend failureの縦通し試験 |
 | RR-10 | 部分 | pure permit関数のみ | 実dispatcherでの二重permit |
 | RR-11 | 未着手 | tool ledgerなし | invocation/operation/resultの永続紐付け |
 | RR-12 | 部分 | message保存transaction内でroot採用を試行 | stale/cancel/duplicate/DB failureの縦通し試験 |

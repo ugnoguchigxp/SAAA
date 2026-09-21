@@ -6,8 +6,8 @@
 | DynamicLan text | Yes | Yes | After allocation, in shared HTTP adapter | Implemented |
 | Shared LARM voice | Yes | Yes | After LLM lease, in shared HTTP adapter | Implemented |
 | AgentSession | Yes, initial turn; no World in tool follow-ups | Yes | After session/transport acquisition | Implemented |
-| reasoning MCP | Yes, typed evidence | Yes | Before MCP request construction | Implemented |
-| Codex CLI/SDK | Scope and Task snapshot in developer context | No receipt yet | Before fresh thread start | Partial |
+| reasoning MCP | Yes, reasoning-answer-v2 typed evidence | Yes, actual RPC arguments digest | After initialization, before dispatch | Offline verified |
+| Codex CLI/SDK | Scope/Task/deadline metadata in developer context; no five-element graph | Yes, thread/start + turn/start hashes | Before fresh thread start, before dispatch and at result acceptance | Metadata route offline verified; full graph/live pending |
 
 Workspace-derived scope is activated only when `scopeRefs` is empty. Explicit scope references
 remain authoritative and are never merged with another project by name or text similarity.
@@ -22,5 +22,5 @@ full live-provider acceptance.
 AgentSession initial/follow-up/expired fallback, and reasoning MCP current/expired requests.
 The MCP adapter now removes the duplicate World history block and records only evidence actually
 adopted into the bounded request. This does not certify live DynamicLan allocation, shared voice,
-Codex receipts, or the full live-provider/UI matrix. The M4A/G1 legacy AgentSession exclusion has
+or the full live-provider/UI matrix. Codex receipt verification was added during resumed review; it uses an executable protocol fixture, not a live Codex model. The M4A/G1 legacy AgentSession exclusion has
 been replaced with this table's initial-only contract.

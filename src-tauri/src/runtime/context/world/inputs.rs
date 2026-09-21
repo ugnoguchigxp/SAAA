@@ -88,10 +88,9 @@ pub(crate) fn read(
         .collect::<Vec<_>>();
     let mut deadlines = Vec::new();
     for key in scope_keys {
-        if deadlines.len() == MAX_DEADLINES {
-            break;
-        }
-        let remaining = (MAX_DEADLINES - deadlines.len()) as i64;
+        // Keep the earliest candidates from every scope before applying the global bound.
+        // Filling the budget from the first scope can hide an earlier deadline in another scope.
+        let remaining = MAX_DEADLINES as i64;
         let mut statement = connection
             .prepare(
                 "SELECT id,revision,status,due_at FROM schedule_entries
@@ -168,5 +167,22 @@ mod tests {
         assert_eq!(snapshot.tasks[0].source_ref, "coding_jobs:job-1@3");
         assert_eq!(snapshot.deadlines[0].source_ref, "schedule_entries:due-1@2");
         assert_eq!(snapshot.situation, SourceAvailability::Unavailable);
+        for index in 0..8 {
+            connection
+                .execute(
+                    "INSERT INTO schedule_entries VALUES(?1,1,'scheduled',?2,'project:p-1')",
+                    params![format!("later-{index}"), 100 + index],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO schedule_entries VALUES('earliest',1,'scheduled',1,'task:job-1')",
+                [],
+            )
+            .unwrap();
+        let bounded = read(&connection, &scope).unwrap();
+        assert_eq!(bounded.deadlines.len(), MAX_DEADLINES);
+        assert_eq!(bounded.deadlines[0].id, "earliest");
     }
 }

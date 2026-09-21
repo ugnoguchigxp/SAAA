@@ -8,9 +8,9 @@
 | --- | --- | --- |
 | RR-01 | 契約・reducer・signalsの断片を追加 | 指定event/Clock/ID注入・境界試験は未実装 |
 | RR-02 | SQLiteへpolicy/root/input/decision/step/output/event/feedback/tool-link ledgerを追加 | migrationとcross-root tool-link FKの一部試験のみ。C6全制約は未検証 |
-| RR-03 | `routing.roles/default` を無効既定で追加。保存時にimmutable policy snapshotを採番 | `bun test tests/settings-regressions.test.ts tests/settings-review.test.ts`（11 pass） |
+| RR-03 | `routing.roles/default` を無効既定で追加。保存時にimmutable policy snapshotを採番。queued rootはreceipt policyを優先してdispatchし、stepにpolicy/recipe/actor由来fingerprintを保存 | `bun test tests/settings-regressions.test.ts tests/settings-review.test.ts`（11 pass）。隔離test binary: `rr_03_queued_root_uses_its_immutable_policy_receipt`: 1 pass |
 | RR-04〜06 | receipt transaction、queue上限拒否、provider route override、pure reducer/ranker断片。active root がある receipt は queued のまま provider 前で待機 | receipt retry/conflict、actor adapter/contextは未実装 |
-| RR-07/08/10/12/13 | context projection、follow-up分類、pure tool permit、message transactionでのroot採用、speech queue断片 | 実executor/dispatcher/speechへの接続なし |
+| RR-07/08/09/10/12/13 | role dispatch時のcontext projection、follow-up分類、Provider開始の本文なしactivity Sink、pure tool permit、message transactionでのroot採用、speech queue断片 | delta activity・executor/dispatcher/speechへの全接続なし |
 | RR-11 | tool operationのroot/step/revision linkを既存tool ownerの前後に記録 | tool-selectionとの縦通し・detach試験は未実施 |
 | RR-14 | `get_routing_snapshot` とroot-local `replay_routing_events` のIPC、生成TS binding、chat表示hookを追加。永続cancel後eventと3秒snapshot pollingで更新 | 全eventのlive store、ASR receipt、legacy/duplicate試験は未実装 |
 | RR-17 | tool receiptをtransaction内で確認し、`reserved`/`dispatched`/`unknown`の間はrevision再開を拒否 | input update/child drainの実行経路と全順序試験は未実装 |

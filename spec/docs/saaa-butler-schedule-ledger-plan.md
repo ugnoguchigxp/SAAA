@@ -1,10 +1,57 @@
 # Butler Schedule Ledger 実装計画 — 期限台帳、tick、Google Calendar 投影
 
-作成日: 2026-09-21。状態: **SL-A〜D 実装済み（offline）。SL-24 live 未実施**。
+作成日: 2026-09-21。状態: **SL-A〜D の offline 経路は実装。live Google（SL-24）と OAuth 実接続は未了。全体ゲートは未通過。** 進捗の正本は §0。
 
-見送り理由: 発火の権限は Goal / Delegation / Task に依存する。時刻の到来を権限にしない。会議中の保留は Situation TTS hold に依存する。いずれも執事循環の最小循環（Step 4）と TTS ゲート（Step 3）が先。揃い次第、§2 の SL-A（Calendar なしの期限台帳と tick）から着手する。
+前提: 発火の権限は Goal / Delegation / Task に依存する。時刻の到来を権限にしない。保留は Situation TTS hold（`speech_holds_tts`）に依存する。Meeting 製品セッションは削除済みであり、本計画の Hold は scene=`MEETING` かつ IGNORE/OBSERVE の Situation ゲートだけを使う。
 
 上位は[Personal AI Concept](saaa-personal-ai-concept.md) §4（循環の契機に「期限」「定期確認」を含む）と §9（委任）。前提となる並行作業は World Model M3A/M3B、Situation の TTS 抑止、最小Task循環（Goal / Delegation / Task Runtime の最初の実体）。実装担当は本書と[作業カード](saaa-butler-schedule-ledger-work-cards.md)をセットで使う。
+
+## 0. 現在の実装状況
+
+この節は計画本文と実装の差を明示する。試験名は `spec/evidence/schedule-ledger/progress.md`、A〜S は `results.md`、live の有無は `spec/evidence/schedule-ledger/live-20260921.md`。コードは `src-tauri/src/schedule/` と `src/features/settings/ScheduleSection.tsx`。DDL は `user_version` 30。
+
+### 段階
+
+| 状態 | 範囲 | 実装済み | 未実装・不足 |
+| --- | --- | --- | --- |
+| 完了（offline） | SL-A（SL-00〜10）、合格基準 A B D E F G R | `schedule_entries` が期限の正本。tick 45s と起動時 1 回。CAS は scheduled から firing、続けて fired または missed。`firing` 残留は `error:crashed`。`delegation_ref` 空は Ask。Situation hold（`speech_holds_tts`）は Hold。generation slot 中は Defer。`task_run` は `steward::dispatch_scheduled`。IPC `schedule_list` / `add` / `withdraw` / `status` / `set_enabled` / `set_calendar` / `forget`。Settings default OFF | スリープ復帰専用の即時 tick（`tokio` interval の Skip のみ）。`Drop` / `suppressed_*`。ShadowDecision を tick から直接呼ばない。`delegation_ref` の外部キー検査なし |
+| 完了（offline / fake HTTP） | SL-B/C（SL-12〜21 のコード）、合格基準 H I J K L M N O P Q S の試験 | outbox 投影、hash 一致で API 0、作成前は `privateExtendedProperty` 検索で回復、状態別タイトル、観測分類、reconcile、忘却、restricted は参照 ID のみ。1 tick 最大 8 呼出し | 実 Google。専用カレンダー削除後の全件再投影（Q）の live |
+| 完了（offline） | SL-D、合格基準 C | hold 中は実行せず `hold_until`。解除後に件数だけのダイジェスト 1 通。Meeting 製品セッションは使わない | ダイジェスト本文に件名列挙は出さない（件数のみ） |
+| 部分完了 | SL-11 認証 | PKCE S256、Keychain named secret、メモリ上の refresh。SQLite に token を書かない。非 macOS は unsupported | ブラウザ OAuth、loopback redirect、token 交換、refresh HTTP、設定 UI からの接続開始 |
+| 部分完了 | SL-22 設定 UI | 有効化、Calendar ID、接続状態、`lastError`、i18n ja/en。token を UI state に持たない | OAuth ボタンと実接続フロー |
+| 未完了 | SL-24 live | 未実施を `live-20260921.md` に記録 | 実 Google での作成・移動・削除・忘却・再接続。§9 の「live 未実施のまま SL-B/C を完了扱いしない」は維持 |
+| 未完了（本書の範囲外） | §10 | `origin=planner_candidate` の型だけ | Gmail センサー、Discord チャネル、Docs 一枚、Assist Planner の候補生成 |
+
+### カード
+
+| ID | 実装 | 未実装 |
+| --- | --- | --- |
+| SL-00〜10, 12〜21, 23, 25 | コードと offline 試験、evidence | SL-04 は `due()` が `handled='asked'` を除外する。2026-09-21 の `cargo test --lib sl_` では `sl_04_due_uses_index_order` が 1 件失敗したため再確認が必要 |
+| SL-11, 22 | PKCE / Keychain / Settings の骨格 | OAuth 実接続 |
+| SL-24 | 未実施記録 | live そのもの |
+
+### 検証ゲート（§9）
+
+| コマンド | 2026-09-21 の結果 |
+| --- | --- |
+| `bun run spec:check` / spec-html | 通過 |
+| `bun run ipc:check` | 通過（schedule 生成物を含む） |
+| TypeScript format | 通過 |
+| `tests/schedule-settings.test.ts` | 通過 |
+| `cargo fmt --check` | 通過 |
+| `cargo test --lib sl_` | 31 passed / 1 failed（`sl_04_due_uses_index_order`） |
+| `bun run size:check` | 未通過（`schedule/commands.rs` / `tick.rs` を含む ratchet 超過。並行変更も超過） |
+| `bun run check:local` | 未通過（lint / typecheck / size。音声・Steward など並行 dirty を含む） |
+| `bun run desktop:smoke` | 未実施（起動確認は別指示で見送り） |
+
+実装後の差分（計画本文との差）:
+
+- decide の Drop は使っていない。generation 中は Hold ではなく Defer。
+- `fire_result` の新記録は `started` / `deferred` / `no_delegation` / `error:*`。旧行の `suppressed_meeting` は読取時に `deferred` へ写す。
+- Calendar 有効化は macOS 以外で拒否するだけであり、接続そのものは未配線。
+- `delegation_ref` は steward の文字列参照のまま。外部キー検査は入れていない。
+- DDL は計画の 4 テーブルに加え `schedule_payloads` / `schedule_runtime` / `schedule_tombstones` / `schedule_notices` がある。
+- IPC は `src-tauri/src/ipc_contract.rs` と `src/lib/generated/schedule.ts`（計画の `ipc_contract/` ディレクトリではない）。
 
 ## 1. 次に完成させるもの
 
@@ -101,7 +148,7 @@ CREATE TABLE schedule_entries (
   supersedes     TEXT,
   created_at     INTEGER NOT NULL,
   fired_at       INTEGER,
-  fire_result    TEXT,               -- started | deferred | suppressed_meeting | no_delegation | error:<code>
+  fire_result    TEXT,               -- started | deferred | no_delegation | error:<code>（旧 suppressed_meeting は読取時 deferred）
   payload_id     TEXT
 );
 CREATE INDEX schedule_due ON schedule_entries(status, due_at);
@@ -211,6 +258,6 @@ tick の追加負荷は 1,000 entry・due 32 件で p95 <= 15 ms（DB 読み書�
 
 ## 11. 完了記録
 
-実装時に `spec/evidence/schedule-ledger/progress.md` と `results.md` を作成する。各カードの変更関数、試験名・件数、期待値、未実施、A〜S 対応、live 確認の有無を記録する。本文・予定名・メールアドレスをログへ残さず、合成 fixture の出力例だけを保存する。
+証拠は `spec/evidence/schedule-ledger/progress.md`、`results.md`、`live-20260921.md`。本文・予定名・メールアドレスをログへ残していない。
 
-完了条件は 26 カード（SL-00〜25）と A〜S、全体ゲート、live 確認 1 回、default OFF の維持。Gmail / Discord / Docs / Planner は未実装として引き渡す。
+計画上の完了条件は 26 カード（SL-00〜25）と A〜S、全体ゲート、live 確認 1 回、default OFF の維持。2026-09-21 時点では SL-00〜23 と SL-25 の offline 記録まで。SL-24 と実 OAuth は未了のため、Calendar 面は製品完了にしない。Gmail / Discord / Docs / Planner は未実装のまま引き渡す。

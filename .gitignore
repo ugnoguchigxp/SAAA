@@ -17,6 +17,7 @@ dist
 dist-ssr
 *.local
 coverage
+.saaa/delegated-sdk-state/
 
 # Editor directories and files
 .vscode/*

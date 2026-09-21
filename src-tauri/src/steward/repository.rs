@@ -296,7 +296,8 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
         .prepare(
             "SELECT t.id,t.loop_state,t.dedupe_key,t.coding_job_id,g.status,g.id,g.summary,g.verifier,d.workspace_id,d.ops,d.budget_runs,d.budget_ms,d.notify,
                     (SELECT r.delivery_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1),
-                    (SELECT r.speech_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1)
+                    (SELECT r.speech_state FROM steward_reports r WHERE r.task_id=t.id ORDER BY r.rowid DESC LIMIT 1),
+                    COALESCE((SELECT group_concat(a.reference, char(31)) FROM steward_task_artifacts a WHERE a.task_id=t.id), '')
              FROM steward_tasks t
              JOIN steward_delegations d ON d.id=t.delegation_id
              JOIN steward_goals g ON g.id=d.goal_id
@@ -306,6 +307,7 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
         .map_err(database_error)?;
     let rows = stmt
         .query_map([conversation_id], |row| {
+            let artifacts: String = row.get(15)?;
             Ok(json!({
                 "taskId": row.get::<_, String>(0)?,
                 "loopState": row.get::<_, String>(1)?,
@@ -322,6 +324,7 @@ pub(crate) fn list(connection: &Connection, conversation_id: &str) -> Result<Val
                 "notify": row.get::<_, String>(12)?,
                 "deliveryState": row.get::<_, Option<String>>(13)?,
                 "speechState": row.get::<_, Option<String>>(14)?,
+                "artifactRefs": artifacts.split('\u{1f}').filter(|value| !value.is_empty()).collect::<Vec<_>>(),
             }))
         })
         .map_err(database_error)?;
@@ -531,6 +534,9 @@ pub(crate) fn queue_task(
     if !exists {
         return Err("source_unavailable".into());
     }
+    let Some((goal_plan_id, plan_step_id)) = next_ready_plan_step(connection, work)? else {
+        return Ok(None);
+    };
     // A delegation has at most one outstanding task.  Different user turns
     // may repeat the same request, but must not reserve budget or create a
     // second effect while the first task is still open.
@@ -545,9 +551,9 @@ pub(crate) fn queue_task(
         return Ok(None);
     }
     match connection.execute(
-        "INSERT INTO steward_tasks(id,delegation_id,conversation_id,trigger_kind,source_id,dedupe_key,loop_state,created_at,updated_at)
-         VALUES(?1,?2,?3,?4,?5,?6,'queued',?7,?7)",
-        params![id, work.delegation_id, conversation_id, kind, source_id, key, now],
+        "INSERT INTO steward_tasks(id,delegation_id,conversation_id,trigger_kind,source_id,dedupe_key,loop_state,created_at,updated_at,goal_plan_id,plan_step_id)
+         VALUES(?1,?2,?3,?4,?5,?6,'queued',?7,?7,?8,?9)",
+        params![id, work.delegation_id, conversation_id, kind, source_id, key, now, goal_plan_id, plan_step_id],
     ) {
         Ok(_) => {
             connection.execute(
@@ -563,6 +569,59 @@ pub(crate) fn queue_task(
         Err(error) if error.to_string().contains("UNIQUE") => Ok(None),
         Err(error) => Err(database_error(error)),
     }
+}
+
+fn next_ready_plan_step(
+    connection: &Connection,
+    work: &ActiveWork,
+) -> Result<Option<(String, String)>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT p.id,s.step_id,s.depends_on_json FROM steward_goal_plans p
+             JOIN steward_plan_steps s ON s.plan_id=p.id
+             WHERE p.goal_id=?1 AND p.revision=(SELECT MAX(revision) FROM steward_goal_plans WHERE goal_id=?1)
+             ORDER BY s.ordinal",
+        )
+        .map_err(database_error)?;
+    let rows = statement
+        .query_map([&work.goal_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(database_error)?;
+    for row in rows {
+        let (plan_id, step_id, dependencies) = row.map_err(database_error)?;
+        let already_created: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM steward_tasks WHERE delegation_id=?1 AND goal_plan_id=?2 AND plan_step_id=?3)",
+                params![work.delegation_id, plan_id, step_id],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        if already_created {
+            continue;
+        }
+        let dependencies: Vec<String> =
+            serde_json::from_str(&dependencies).map_err(|_| "steward_plan_invalid")?;
+        let mut ready = true;
+        for dependency in dependencies {
+            let completed: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM steward_tasks WHERE delegation_id=?1 AND goal_plan_id=?2 AND plan_step_id=?3 AND loop_state IN ('done','awaiting_user'))",
+                    params![work.delegation_id, plan_id, dependency],
+                    |row| row.get(0),
+                )
+                .map_err(database_error)?;
+            ready &= completed;
+        }
+        if ready {
+            return Ok(Some((plan_id, step_id)));
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn claim_dispatch(connection: &Connection, task_id: &str) -> Result<bool, String> {
@@ -608,11 +667,17 @@ pub(crate) fn apply_terminal_event(
         _ => return Ok(()),
     };
     set_loop_state(connection, &task_id, state, None, None)?;
-    // A read+test delegation is a finite, durable two-step plan.  The
-    // successor is inserted in the same transaction as the terminal event;
-    // no in-memory callback is evidence that the dependency was satisfied.
+    connection.execute(
+        "INSERT OR IGNORE INTO steward_task_artifacts(id,task_id,kind,reference,terminal_kind,created_at)
+         VALUES(?1,?2,'coding_job',?3,?4,?5)",
+        params![new_id("artifact"), task_id, job_id, kind, now_iso()],
+    ).map_err(database_error)?;
+    // A dependency-satisfied successor is inserted in the same transaction
+    // as the terminal event; no in-memory callback is evidence of progress.
     if kind == "settled" {
-        let _ = queue_dependent_test_step(connection, &task_id)?;
+        let _ = queue_dependent_step(connection, &task_id)?;
+    } else if kind == "failed" {
+        let _ = replan_after_failure(connection, &task_id)?;
     }
     let plan_decision_id = format!("ai-plan-{task_id}");
     let adaptive_schema_ready: bool = connection
@@ -654,21 +719,46 @@ pub(crate) fn apply_terminal_event(
     Ok(())
 }
 
-fn queue_dependent_test_step(connection: &Connection, task_id: &str) -> Result<bool, String> {
-    let row: Option<(String, String, ActiveWork, String)> = connection.query_row(
+fn replan_after_failure(connection: &Connection, task_id: &str) -> Result<bool, String> {
+    let row: Option<(String, String, ActiveWork, String, i64, i64)> = connection.query_row(
         "SELECT t.conversation_id,t.source_id,g.id,g.status,d.id,d.workspace_id,d.budget_runs,d.budget_ms,0,d.ops,g.verifier,
-                COALESCE((SELECT recipe FROM steward_task_plans p WHERE p.task_id=t.id ORDER BY p.revision DESC LIMIT 1),'')
+                p.id,p.revision,p.max_replans
+         FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id
+         JOIN steward_goals g ON g.id=d.goal_id JOIN steward_goal_plans p ON p.id=t.goal_plan_id
+         WHERE t.id=?1 AND g.status='active' AND d.status='active' AND d.superseded_by IS NULL",
+        [task_id],
+        |r| Ok((r.get(0)?, r.get(1)?, ActiveWork { goal_id:r.get(2)?, goal_status:r.get(3)?, delegation_id:r.get(4)?, workspace_id:r.get(5)?, budget_runs:r.get(6)?, budget_ms:r.get(7)?, superseded:r.get::<_, i64>(8)? != 0, ops:r.get(9)?, verifier:r.get(10)? }, r.get(11)?, r.get(12)?, r.get(13)?)),
+    ).optional().map_err(database_error)?;
+    let Some((conversation_id, source_id, work, prior_plan, revision, max_replans)) = row else {
+        return Ok(false);
+    };
+    if revision > max_replans {
+        return Ok(false);
+    }
+    let new_plan = new_id("goal_plan");
+    connection.execute(
+        "INSERT INTO steward_goal_plans(id,goal_id,revision,max_replans,created_at) VALUES(?1,?2,?3,?4,?5)",
+        params![new_plan, work.goal_id, revision + 1, max_replans, now_iso()],
+    ).map_err(database_error)?;
+    connection.execute(
+        "INSERT INTO steward_plan_steps(plan_id,step_id,ordinal,recipe,verifier,depends_on_json)
+         SELECT ?1,step_id,ordinal,recipe,verifier,depends_on_json FROM steward_plan_steps WHERE plan_id=?2",
+        params![new_plan, prior_plan],
+    ).map_err(database_error)?;
+    Ok(queue_task(connection, &work, &conversation_id, &source_id, "continue")?.is_some())
+}
+
+fn queue_dependent_step(connection: &Connection, task_id: &str) -> Result<bool, String> {
+    let row: Option<(String, String, ActiveWork)> = connection.query_row(
+        "SELECT t.conversation_id,t.source_id,g.id,g.status,d.id,d.workspace_id,d.budget_runs,d.budget_ms,0,d.ops,g.verifier
          FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id JOIN steward_goals g ON g.id=d.goal_id
          WHERE t.id=?1 AND g.status='active' AND d.status='active' AND d.superseded_by IS NULL",
         [task_id],
-        |r| Ok((r.get(0)?, r.get(1)?, ActiveWork { goal_id:r.get(2)?, goal_status:r.get(3)?, delegation_id:r.get(4)?, workspace_id:r.get(5)?, budget_runs:r.get(6)?, budget_ms:r.get(7)?, superseded:r.get::<_, i64>(8)? != 0, ops:r.get(9)?, verifier:r.get(10)? }, r.get(11)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, ActiveWork { goal_id:r.get(2)?, goal_status:r.get(3)?, delegation_id:r.get(4)?, workspace_id:r.get(5)?, budget_runs:r.get(6)?, budget_ms:r.get(7)?, superseded:r.get::<_, i64>(8)? != 0, ops:r.get(9)?, verifier:r.get(10)? })),
     ).optional().map_err(database_error)?;
-    let Some((conversation_id, source_id, work, recipe)) = row else {
+    let Some((conversation_id, source_id, work)) = row else {
         return Ok(false);
     };
-    if work.ops != "read_test" || recipe != "read" {
-        return Ok(false);
-    }
     Ok(queue_task(connection, &work, &conversation_id, &source_id, "continue")?.is_some())
 }
 
@@ -729,6 +819,21 @@ pub(crate) fn completed_recipe(
             params![delegation_id, recipe],
             |row| row.get(0),
         )
+        .map_err(database_error)
+}
+
+pub(crate) fn task_step_recipe(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT s.recipe FROM steward_tasks t JOIN steward_plan_steps s
+             ON s.plan_id=t.goal_plan_id AND s.step_id=t.plan_step_id WHERE t.id=?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .optional()
         .map_err(database_error)
 }
 
@@ -1183,5 +1288,11 @@ pub(crate) fn delegated_profile_available(state: &AppState) -> Result<bool, Stri
     state
         .sqlite_readers
         .read(crate::coding::repository::settings)
-        .map(|settings| settings.enabled && settings.profile == "delegated-read-test-macos-v1")
+        .map(|settings| {
+            settings.enabled
+                && matches!(
+                    settings.profile.as_str(),
+                    "delegated-read-test-macos-v1" | "delegated-codex-sdk-macos-v1"
+                )
+        })
 }

@@ -1,3 +1,4 @@
+static ADAPTER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 use super::{contracts, database, repo, service};
 use rusqlite::params;
 use serde_json::json;
@@ -30,6 +31,9 @@ fn coding_service_codex_sdk_live() {
 #[cfg(unix)]
 #[test]
 fn coding_service_runs_through_a_delegated_event_origin() {
+    let _lock = ADAPTER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use std::{
         os::unix::fs::PermissionsExt,
         time::{Duration, Instant},
@@ -171,6 +175,9 @@ fn coding_service_runs_through_a_delegated_event_origin() {
 
 #[cfg(unix)]
 fn run_adapter(live: bool, forget_source: bool) {
+    let _lock = ADAPTER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use std::{
         os::unix::fs::PermissionsExt,
         time::{Duration, Instant},

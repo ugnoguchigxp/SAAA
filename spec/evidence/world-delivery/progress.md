@@ -31,8 +31,23 @@
   fallback attempt has one bounded fresh composition.
 - Regression tests cover current and stale provider-history rendering.
 
-## Deliberately not claimed complete
+## 2026-09-21 resumed review
 
-The reasoning contract is still on its existing generic `Evidence` schema rather than a separately
-versioned World-evidence protocol. There is also no live-provider/UI acceptance matrix yet. Those
-conditions remain unverified; this evidence does not claim WD-10 through WD-13 complete.
+- reasoning-answer-v2 requires World evidence metadata bound to the rendered frame. Client and
+  service validate the same input/output schemas; v1 fails the handshake before any context send.
+- MCP initialization now precedes request composition. The request budget is not mutated after
+  its digest is recorded. A slow-initialization fixture confirms expired World is omitted.
+- Codex records hashes of actual thread/start and turn/start bodies and a selected
+  world-source-snapshot receipt. Source, policy, scope and current instruction are checked before
+  dispatch; source changes also reject completion. Each check and receipt transition is atomic.
+- Source snapshot deadlines now select the earliest entries across all resolved scopes.
+- Tests sharing SAAA_CODEX_PATH and the single coding process slot are serialized.
+
+## Remaining work (not certified complete)
+
+WD-03/04 still require Situation/DW/schedule integration into the common FrameService and natural
+language World extraction. Codex currently carries bounded source metadata, not the five-element
+World graph. WD-11's complete model-claim validation and WD-12's capability presentation need
+further acceptance. WD-13 requires the live-provider/UI/voice matrix and performance targets.
+The configured local provider endpoints did not respond during this review. No live success is
+inferred from loopback fixtures. Deploy reasoning client and service together for v2.

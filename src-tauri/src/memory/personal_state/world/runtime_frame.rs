@@ -1,5 +1,5 @@
-//! Internal M2A WorldFrame service (R6). Not wired to turns, Context Broker or
-//! any IPC surface yet. It composes a persisted `WorldSliceV2` with a live
+//! WorldFrame service used by conversation Context Broker composition.
+//! It composes a persisted `WorldSliceV2` with a live
 //! current-state view of trusted runtimes, and can re-verify a prepared frame.
 #![allow(dead_code)]
 

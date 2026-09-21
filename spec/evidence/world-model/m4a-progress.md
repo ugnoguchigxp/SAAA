@@ -5,7 +5,7 @@
 | 範囲 | 実装・証拠 |
 | --- | --- |
 | E00 前提改修 | 元TTLの再検証、本文存在とreceipt一致、AgentSession最終境界、MCPのevidence採用記録 |
-| E01/E02 runner・report | `scripts/world-eval.ts`、欠落/失敗時complete=false、32ケース |
+| E01/E02 runner・report | `scripts/world-eval.ts`、欠落/失敗時complete=false、33ケース |
 | E03〜E07 | 本番Frame→Broker→OpenAI互換HTTP。TTL、owner、mixed block、予算 |
 | E08 | AgentSession初回/継続、失効、失敗したprimaryから切替。WD契約へ更新 |
 | E09〜E12 | Source/Scope、並行fixture、完了時TTL、shadow拒否 |

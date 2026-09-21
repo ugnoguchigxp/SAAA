@@ -9,6 +9,7 @@
 - `cargo test dw_06_restart_marks_unreceived_dispatch_unknown_without_reclaiming --lib`: pass.
 - `cargo test dw_10_settled_read_step_durably_enqueues_one_dependent_test_step --lib`: pass.
 - `cargo test dw_10_migration_backfills_a_plan_for_an_existing_goal --lib`: pass.
+- `cargo test dw_10_failure_creates_at_most_two_durable_replans --lib`: pass.
 - `cargo test schedule::tests --lib`: 18 passed, 0 failed.
 - Packaged desktop smoke: pass (build 27.95s, bundle, launch, IPC ready,
   cleanup; 31.21s total on the current worktree).
@@ -65,6 +66,10 @@
   provider: session resume, result collection, model-error handling, abort,
   and orderly shutdown all completed. No live model was used for that canary.
 - The macOS delegated-profile boundary test and profile-contract test pass.
+- The authenticated SDK startup probe passed under
+  `delegated-codex-sdk-macos-v1`: Pi loaded the SDK provider and completed
+  its RPC state handshake while `CODEX_HOME` pointed at isolated writable
+  state. No model prompt was sent by that probe.
 - The production Pi-adapter fixture cancellation test passed and observes the
   Coding job terminal state as `interrupted`, not merely `cancel_requested`.
 - The production Pi-adapter forget integration passed: deleting an accepted
@@ -99,3 +104,8 @@
 - New and migrated Goals persist a bounded Goal plan and dependency rows;
   the existing `TaskPlan` validator rejects invalid or cyclic plans before
   those rows are written.
+- The persistent plan executor selects only dependency-ready steps. A failed
+  step creates at most two new plan revisions; replaying the same terminal
+  event cannot create another revision.
+- A terminal task records its Coding job as a durable artifact reference. The
+  task-list IPC returns those references and the Steward panel displays them.

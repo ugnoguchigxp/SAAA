@@ -16,6 +16,29 @@ recipe selection, terminal outcome recording, and Goal-scoped notification aggre
 The outbox deadline invariant is separately covered by
 `aggregate_report_is_not_flushed_before_its_delivery_deadline`.
 
+2026-09-21 controlled Tool run:
+`ai_09_synthetic_approved_artifact_reorders_the_real_tool_search_path` passed. It creates its
+catalog, evaluation gate, and active artifact only in an in-memory database; normal Tool search
+then selects and invokes `minutes` ahead of the rule-ranked `web`, recording both the adaptive
+decision and its successful outcome. This verifies the selection/execution wiring, not
+real-user improvement.
+
+2026-09-21 mock-runtime run: the explicit model-free mock configuration parses only when
+requested, enables Tool discovery, and seeds exactly three development-fixture catalog entries.
+The real search/invoke integration test remains separate and uses the same isolated fixture
+backend. No mock configuration was applied to the running app or to the user database.
+The opt-in developer launcher is `bun run start:adaptive-fixture`; normal `bun run start` remains
+unchanged.
+
+2026-09-21 isolated desktop-runtime run: `bun run start:adaptive-fixture` launched a development
+app with its own temporary smoke data directory and reached its frontend-ready marker. Its
+isolated SQLite ledger contained exactly 3 `adaptive-development-fixture` catalog rows, 3
+corresponding user grants, an enabled fixture source, one active Tool artifact and activation,
+and Tool adaptation enabled in its fixture-only Settings document. The artifact is trained from
+three synthetic decision/outcome examples rather than from the normal database; the observed
+scores were `minutes=1.0`, `web=0.0`, and `archive=0.0`. The process was then stopped; the normal
+application database was not opened or changed.
+
 Repository checks: IPC contract tests and `bun run spec:check` passed. `bun run size:check`
 cannot pass in the shared dirty worktree because many unrelated modules are above their stored
 ratchets or have no baseline. `bun run check:local` stops at pre-existing formatting issues in

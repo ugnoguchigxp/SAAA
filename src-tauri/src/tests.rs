@@ -1754,6 +1754,9 @@ fn macos_system_tts_runtime_is_available() {
 #[cfg(unix)]
 #[test]
 fn codex_app_server_contract_covers_start_stream_resume_and_cancel() {
+    let _lock = crate::test_environment::codex_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use std::os::unix::fs::PermissionsExt;
 
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -1992,7 +1995,25 @@ for line in sys.stdin:
             runtime::contracts::RunFailureCode::ResponseTooLarge,
         ),
     ] {
-        let failure = run_scenario(scenario, policy, &RunCancellation::default())
+        // Protocol rejection tests must not accidentally assert Python startup latency.
+        // Keep the short deadlines only for scenarios explicitly testing timeout behavior.
+        let scenario_policy = if matches!(
+            expected,
+            runtime::contracts::RunFailureCode::RequestTimeout
+                | runtime::contracts::RunFailureCode::ProgressTimeout
+                | runtime::contracts::RunFailureCode::TerminalTimeout
+        ) {
+            policy
+        } else {
+            runtime::contracts::RunSupervisionPolicy {
+                request_timeout_ms: 5_000,
+                progress_idle_timeout_ms: 5_000,
+                terminal_gap_timeout_ms: 5_000,
+                hard_timeout_ms: 10_000,
+                ..policy
+            }
+        };
+        let failure = run_scenario(scenario, scenario_policy, &RunCancellation::default())
             .expect_err("scenario must fail");
         assert_eq!(failure.code, expected, "scenario: {scenario}");
         assert!(!failure.message.contains("SAAA_PRIVATE_"));

@@ -73,6 +73,7 @@ async fn execute_inner(
             provider_id: "reasoning-mcp".into(),
         })
         .map_err(|_| "Reasoning event consumer disconnected")?;
+    client.connect(&cancellation).await?;
     let (mut request, selected, omitted) = payload::prepare(state, input, history, &context)?;
     request.budget.timeout_ms = TIMEOUT_MS
         .saturating_sub(started.elapsed().as_millis() as u64)
@@ -148,6 +149,18 @@ async fn execute_inner(
     );
     let answer = with_ack(
         async {
+            // Receipt writes can wait on SQLite. Never send the already-digested body if its
+            // selected World expired or changed during that wait.
+            if selected.iter().any(|source| {
+                source.source_kind == crate::runtime::context::world::source::WORLD_KIND
+            }) && !context
+                .world
+                .is_some_and(|world| world.revalidate_current())
+            {
+                return Err(
+                    "Reasoning World changed before request; retry with current context".into(),
+                );
+            }
             let response = client.answer(&request, cancellation.clone()).await?;
             response.validate(&request).map_err(str::to_string)?;
             crate::providers::http_metrics::record(

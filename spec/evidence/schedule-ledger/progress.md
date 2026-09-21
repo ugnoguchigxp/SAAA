@@ -20,7 +20,7 @@
 | SL-11〜18 | fake HTTP + 純関数。live 未実施 |
 | SL-19〜21 | forget / 分類 / OFF |
 | SL-22 | Settings `ScheduleSection`。default OFF |
-| SL-23 | `schedule::` 29 passed |
+| SL-23 | `schedule::` 32 passed |
 | SL-24 | **未実施**（実 Google アカウント未接続） |
 | SL-25 | 本記録 |
 

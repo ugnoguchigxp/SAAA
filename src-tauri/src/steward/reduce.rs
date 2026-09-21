@@ -254,17 +254,25 @@ const READ_TEST_REQUEST: &str = "Inspect failing tests in this workspace. Read l
 fn select_plan_recipe(
     connection: &rusqlite::Connection,
     work: &repo::ActiveWork,
-    _task_id: &str,
+    task_id: &str,
     now: i64,
 ) -> Result<PlanRecipe, String> {
-    let (rules, eligible) = match (work.ops.as_str(), work.verifier.as_str()) {
-        ("read", _) => ("read", vec!["read".to_string()]),
-        ("test_run", _) => ("test_run", vec!["test_run".to_string()]),
-        ("read_test", _) if repo::completed_recipe(connection, &work.delegation_id, "read")? => {
-            ("test_run", vec!["test_run".to_string()])
-        }
-        ("read_test", _) => ("read", vec!["read".to_string()]),
-        _ => return Err("steward_plan_invalid".into()),
+    let explicit_recipe = repo::task_step_recipe(connection, task_id)?;
+    let (rules, eligible) = match explicit_recipe.as_deref() {
+        Some("read") => ("read", vec!["read".to_string()]),
+        Some("test_run") => ("test_run", vec!["test_run".to_string()]),
+        Some(_) => return Err("steward_plan_invalid".into()),
+        None => match (work.ops.as_str(), work.verifier.as_str()) {
+            ("read", _) => ("read", vec!["read".to_string()]),
+            ("test_run", _) => ("test_run", vec!["test_run".to_string()]),
+            ("read_test", _)
+                if repo::completed_recipe(connection, &work.delegation_id, "read")? =>
+            {
+                ("test_run", vec!["test_run".to_string()])
+            }
+            ("read_test", _) => ("read", vec!["read".to_string()]),
+            _ => return Err("steward_plan_invalid".into()),
+        },
     };
     let settings = crate::persistence::load_role_routing_settings(connection)?;
     let (selected, selection_mode, policy_revision) =

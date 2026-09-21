@@ -122,6 +122,15 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            PRIMARY KEY(plan_id,step_id),
            UNIQUE(plan_id,ordinal)
          );
+         CREATE TABLE IF NOT EXISTS steward_task_artifacts (
+           id TEXT PRIMARY KEY,
+           task_id TEXT NOT NULL REFERENCES steward_tasks(id),
+           kind TEXT NOT NULL,
+           reference TEXT NOT NULL,
+           terminal_kind TEXT NOT NULL,
+           created_at TEXT NOT NULL,
+           UNIQUE(task_id,kind,reference)
+         );
          DROP INDEX IF EXISTS steward_report_delivery_once;
          CREATE INDEX IF NOT EXISTS steward_report_delivery_lookup
            ON steward_reports(conversation_id,digest);",
@@ -173,6 +182,8 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         "steward_tasks",
         "revision INTEGER NOT NULL DEFAULT 1",
     )?;
+    add_column(connection, "steward_tasks", "goal_plan_id TEXT")?;
+    add_column(connection, "steward_tasks", "plan_step_id TEXT")?;
     add_column(
         connection,
         "steward_reports",

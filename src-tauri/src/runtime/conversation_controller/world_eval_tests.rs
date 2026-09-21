@@ -6,7 +6,8 @@ use crate::runtime::context::world::{g1_tests as graph, turn::compose_parts};
 #[tokio::test]
 async fn world_m4a_reasoning_wire() {
     let mut results = Vec::new();
-    for expired in [false, true] {
+    for mode in ["current", "expired", "slow-init"] {
+        let expired = mode != "current";
         let f = graph::g1_fixture();
         let scope = graph::load_scope(&f);
         let access = f.access();
@@ -47,17 +48,17 @@ async fn world_m4a_reasoning_wire() {
                 parts: None,
             })
             .collect::<Vec<_>>();
-        if expired {
+        if mode == "expired" {
             f.set_now(f.now() + 1000);
         }
-        let server = crate::providers::reasoning_mcp::tests::fixture("good").await;
+        let server = crate::providers::reasoning_mcp::tests::fixture(mode).await;
         let client = crate::providers::reasoning_mcp::Client::new(
             &server.url,
             "fixture-token-long-enough".into(),
         )
         .unwrap();
         let sink = tauri::ipc::Channel::<RuntimeEvent>::new(|_| Ok(()));
-        execute(
+        let response = execute(
             &state,
             &input,
             &history,
@@ -70,9 +71,16 @@ async fn world_m4a_reasoning_wire() {
                 health: "green",
                 world: composed.world.as_ref(),
             },
-        )
-        .await
-        .unwrap();
+        );
+        if mode == "slow-init" {
+            let (response, ()) = tokio::join!(response, async {
+                server.entered.notified().await;
+                f.set_now(f.now() + 1000);
+            });
+            response.unwrap();
+        } else {
+            response.await.unwrap();
+        }
         let requests = server.calls.lock().unwrap();
         let calls = requests
             .iter()
@@ -93,7 +101,26 @@ async fn world_m4a_reasoning_wire() {
             .any(|m| m["content"].as_str().unwrap().contains("[WORLD_MODEL")));
         let recorded: bool = f.writer.read_serialized(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM context_generation_inputs WHERE source_kind='world-model' AND selected=1)", [], |r| r.get(0)).map_err(crate::database_error)).unwrap();
         assert_eq!(recorded, sent);
-        results.push(serde_json::json!({"case_id":if expired {"WD-MCP-expired"}else{"WD-MCP-current"},"pass":true,"request_count":1,"world_sent_per_request":[sent],"manifest_match":true}));
+        let digest: String = f
+            .writer
+            .read_serialized(|c| {
+                c.query_row(
+                    "SELECT request_digest FROM context_generations ORDER BY ordinal DESC LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(crate::database_error)
+            })
+            .unwrap();
+        use sha2::Digest;
+        assert_eq!(
+            digest,
+            format!(
+                "{:x}",
+                sha2::Sha256::digest(serde_json::to_vec(body).unwrap())
+            )
+        );
+        results.push(serde_json::json!({"case_id":if mode == "slow-init" {"WD-MCP-connect-expired"} else if expired {"WD-MCP-expired"}else{"WD-MCP-current"},"pass":true,"request_count":1,"world_sent_per_request":[sent],"manifest_match":true}));
     }
     println!(
         "WORLD_EVAL_REPORT={}",

@@ -64,7 +64,7 @@ pub struct Process {
 impl Process {
     pub fn open(settings: &CodingSettings, cwd: &Path, session: &Path) -> Result<Self, String> {
         let slot = SLOT.try_lock().map_err(|_| "busy")?;
-        let mut command = if settings.profile == "delegated-read-test-macos-v1" {
+        let mut command = if delegated_profile(&settings.profile) {
             delegated_command(settings, cwd, session)?
         } else {
             launch_command(settings)
@@ -93,7 +93,7 @@ impl Process {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
-        if settings.profile == "codex-sdk-v1" {
+        if sdk_profile(&settings.profile) {
             if !crate::coding::contracts::valid_profile(settings) {
                 return Err("coding_configuration_invalid".into());
             }
@@ -296,16 +296,24 @@ impl Process {
 
 pub(crate) fn delegated_command(
     settings: &CodingSettings,
-    _workspace: &Path,
+    workspace: &Path,
     session: &Path,
 ) -> Result<Command, String> {
     #[cfg(target_os = "macos")]
     {
         let session_dir = session.parent().ok_or("delegated_profile_invalid")?;
+        // The authenticated SDK needs a writable state directory.  Keep it
+        // explicit and project-local instead of granting write access to the
+        // user's home directory or to the rest of the workspace.
+        let sdk_state_dir = workspace.join(".saaa").join("delegated-sdk-state");
+        std::fs::create_dir_all(&sdk_state_dir).map_err(|_| "delegated_state_unavailable")?;
         let home = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
             .filter(|path| path.is_absolute())
             .ok_or("delegated_profile_invalid")?;
+        if sdk_profile(&settings.profile) {
+            provision_sdk_auth_link(&home, &sdk_state_dir)?;
+        }
         let agent_dir = home.join(".pi").join("agent");
         let quote = |path: &Path| format!("\"{}\"", path.to_string_lossy().replace('"', "\\\""));
         // sandbox-exec applies to pi and every descendant process. Read access
@@ -316,14 +324,19 @@ pub(crate) fn delegated_command(
         // also creates lock directories while it reads its existing local
         // settings and credentials. Those named lock directories are the only
         // home-directory writes granted; they cannot modify either JSON file.
+        // Codex SDK writes are confined to `CODEX_HOME` below.
         let profile = format!(
-            "(version 1) (deny default) (allow process*) (allow sysctl-read) (allow file-read*) (allow file-write* (subpath {}) (subpath {}) (subpath {}) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
+            "(version 1) (deny default) (allow process*) (allow sysctl-read) (allow file-read*) (allow file-write* (subpath {}) (subpath {}) (subpath {}) (subpath {}) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
             quote(session_dir),
+            quote(&sdk_state_dir),
             quote(&agent_dir.join("settings.json.lock")),
             quote(&agent_dir.join("auth.json.lock")),
         );
         let mut command = Command::new("/usr/bin/sandbox-exec");
-        command.args(["-p", &profile]).arg(&settings.executable);
+        command
+            .args(["-p", &profile])
+            .arg(&settings.executable)
+            .env("CODEX_HOME", sdk_state_dir);
         Ok(command)
     }
     #[cfg(not(target_os = "macos"))]
@@ -331,6 +344,33 @@ pub(crate) fn delegated_command(
         let _ = (settings, workspace, session);
         Err("delegated_profile_unsupported".into())
     }
+}
+
+fn delegated_profile(profile: &str) -> bool {
+    matches!(
+        profile,
+        "delegated-read-test-macos-v1" | "delegated-codex-sdk-macos-v1"
+    )
+}
+
+fn sdk_profile(profile: &str) -> bool {
+    matches!(profile, "codex-sdk-v1" | "delegated-codex-sdk-macos-v1")
+}
+
+#[cfg(target_os = "macos")]
+fn provision_sdk_auth_link(home: &Path, sdk_state_dir: &Path) -> Result<(), String> {
+    let source = home.join(".codex").join("auth.json");
+    if !source.is_file() {
+        return Err("delegated_sdk_auth_unavailable".into());
+    }
+    let link = sdk_state_dir.join("auth.json");
+    match std::fs::symlink_metadata(&link) {
+        Ok(metadata) if metadata.file_type().is_symlink() => return Ok(()),
+        Ok(_) => return Err("delegated_sdk_state_conflict".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("delegated_sdk_state_unavailable".into()),
+    }
+    std::os::unix::fs::symlink(source, link).map_err(|_| "delegated_sdk_state_unavailable".into())
 }
 impl Drop for Process {
     fn drop(&mut self) {

@@ -24,6 +24,7 @@ fn developer_instructions(host_context: &str) -> String {
     format!("{CODEX_READ_ONLY_SYSTEM_CONTEXT}\n\n{host_context}")
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_codex_turn_process(
     run_id: &str,
@@ -56,42 +57,7 @@ pub(crate) fn run_codex_turn_process(
     )
 }
 
-/// Starts a Codex turn with a host-provided, data-only context block.  The block is passed in
-/// developer instructions, where its authority boundary is explicit, rather than concatenating
-/// it to the user's request text.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_codex_turn_process_with_context(
-    run_id: &str,
-    prompt: &str,
-    workspace: &std::path::Path,
-    model: &str,
-    existing_thread_id: Option<&str>,
-    host_context: &str,
-    timeout_ms: u64,
-    on_event: &dyn RuntimeEventSender,
-    cancellation: &RunCancellation,
-) -> Result<CodexTurnOutcome, CodexTurnFailure> {
-    let policy = crate::runtime::contracts::RunSupervisionPolicy::for_route(timeout_ms).map_err(
-        |message| CodexTurnFailure {
-            thread_id: existing_thread_id.map(str::to_string),
-            message,
-            code: crate::runtime::contracts::RunFailureCode::ConfigurationError,
-            last_progress_at: None,
-        },
-    )?;
-    run_codex_turn_process_with_policy_and_context(
-        run_id,
-        prompt,
-        workspace,
-        model,
-        existing_thread_id,
-        host_context,
-        policy,
-        on_event,
-        cancellation,
-    )
-}
-
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_codex_turn_process_with_policy(
     run_id: &str,
@@ -116,6 +82,7 @@ pub(crate) fn run_codex_turn_process_with_policy(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_codex_turn_process_with_policy_and_context(
     run_id: &str,
@@ -698,6 +665,9 @@ pub(crate) fn run_codex_turn_process_with_dispatch(
     drop(receiver);
     child.terminate();
     if stdout_reader.join().is_err() && result.is_ok() {
+        if let Some(dispatch) = dispatch.as_deref() {
+            let _ = dispatch.finish(false);
+        }
         return Err(CodexTurnFailure {
             thread_id,
             message: "Codex output reader stopped unexpectedly".to_string(),

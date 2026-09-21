@@ -7,7 +7,7 @@
 
 | コマンド / 対象 | 結果 |
 | --- | --- |
-| `bun run world:eval` | 32ケース成功、0失敗、0skip。3つのRust試験が各ケースを実行 |
+| `bun run world:eval` | 33ケース成功、0失敗、0skip。3つのRust試験が各ケースを実行 |
 | `cargo test --lib runtime::context::world` | 55成功、0失敗、性能等2件ignored |
 | `cargo test --lib memory::personal_state::world` | 111成功、0失敗、性能等2件ignored |
 | `cargo test --lib providers::chat_completions` | 19成功、0失敗 |
@@ -19,7 +19,7 @@
 | `bun run ipc:check` | 成功 |
 | `bun run spec:check` | 成功 |
 | `cargo clippy --lib --tests -- -D warnings` | 共有作業ツリーの他ファイルで失敗。World・追加payload・受入fixtureの指摘は修正済み |
-| `bun run check:local` | 他変更のTSX 3ファイルのformatで停止。後続ゲートを実行済みとはしない |
+| `bun run check:local` | 再開後format/lintを通過しsizeゲートで停止。後続ゲートを全て成功したとはしない |
 | `bun run size:check` | 共有作業ツリーの他モジュールで失敗。World担当の新規ファイルを登録し、既存閾値は引き上げていない |
 
 Rustコマンドは `--locked --manifest-path src-tauri/Cargo.toml --lib` を付けて実行した。
@@ -35,7 +35,7 @@ report正本は `m4a-report.json`。runnerは必須ID欠落・重複・試験失
 - W18a/b: 異なるowner revisionを持つ二つの独立DBで同時実行。
 - W19: 有効時にdispatch後、TTLを越えて完了しても成功。W20: shadow混入はHTTP0。
 - G1: 五要素、未知対象、Goal/Source/Relation失効、Tool後のgraph除去。
-- WD-MCP: Worldはevidence一回だけ。失効時は本文とselectedから除外。
+- WD-MCP: Worldはevidence一回だけ。失効時は本文とselectedから除外。接続待ち中の失効と実RPC引数digest一致も検査。
 
 W12は設定解決を含むルート全体E2Eではない。両実adapter、実HTTP、共通fallback可否判定、World失効を検証する。
 DynamicLan/共有LARMは共通OpenAI互換adapterの回帰であり、実allocation/音声サービスを動かした受入ではない。
@@ -56,4 +56,4 @@ p95は昇順29番目。Frameに実graphがあることと再検証Currentをasse
 
 ## 残る受入
 
-修正理由は `review-2026-09-21.md`。全体format/size/clippyとWDの実モデル・UI・音声matrixは別途残る。実モデル回答の正確性、Codex receipt、versioned World evidence protocol、Situation/DW/scheduleの共通Frame接続まで完了したとは報告しない。
+修正理由は `review-2026-09-21.md`。全体format/size/clippyとWDの実モデル・UI・音声matrixは別途残る。再開後Codex metadata receiptとreasoning-answer-v2を追加した。実モデル回答の正確性、Codexの五要素graph、Situation/DW/scheduleの共通Frame接続は未完了。詳細は ../world-delivery/progress.md。

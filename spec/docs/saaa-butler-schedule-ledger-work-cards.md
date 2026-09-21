@@ -1,6 +1,6 @@
 # Butler Schedule Ledger 作業カード
 
-作成日: 2026-09-21。全26枚、SL-00〜25。[全体計画](saaa-butler-schedule-ledger-plan.md)が正本。状態: **SL-A〜D 実装済み（offline）。SL-24 live 未実施**。
+作成日: 2026-09-21。全26枚、SL-00〜25。[全体計画](saaa-butler-schedule-ledger-plan.md)が正本。状態: **offline 実装済み。SL-24 live と OAuth ブラウザ接続は未了。カード別の差は計画 §0。**
 
 ## 実行方法
 

@@ -1,6 +1,6 @@
 use crate::persistence::load_role_routing_settings;
 use crate::ConversationRouteSettings;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RoleDispatch {
@@ -10,9 +10,10 @@ pub(crate) enum RoleDispatch {
 
 pub(super) fn apply_enabled_role_route(
     connection: &Connection,
+    root_id: Option<&str>,
     route: &mut ConversationRouteSettings,
 ) -> Result<Option<RoleDispatch>, String> {
-    let role_policy = load_role_routing_settings(connection)?;
+    let role_policy = load_role_policy_for_root(connection, root_id)?;
     if !role_policy.enabled {
         return Ok(None);
     }
@@ -93,6 +94,33 @@ pub(super) fn apply_enabled_role_route(
     Ok(Some(RoleDispatch::Provider))
 }
 
+/// A receipt owns its policy for its full lifetime. In particular, a queued root must not pick up
+/// a settings edit made after it was accepted but before it is claimed for dispatch.
+fn load_role_policy_for_root(
+    connection: &Connection,
+    root_id: Option<&str>,
+) -> Result<crate::role_routing::RoleRoutingSettings, String> {
+    let receipt_policy: Option<String> = match root_id {
+        Some(root_id) => connection
+            .query_row(
+                "SELECT p.config_json
+                 FROM rr_roots r
+                 JOIN rr_policy_versions p ON p.id = r.policy_id
+                 WHERE r.root_id = ?1",
+                [root_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?,
+        None => None,
+    };
+    match receipt_policy {
+        Some(policy_json) => serde_json::from_str(&policy_json)
+            .map_err(|error| format!("Role-routing receipt policy is invalid: {error}")),
+        None => load_role_routing_settings(connection),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,7 +155,7 @@ mod tests {
             .expect("routing settings")
             .conversation_respond;
         assert_eq!(
-            apply_enabled_role_route(&connection, &mut route).expect("role route applies"),
+            apply_enabled_role_route(&connection, None, &mut route).expect("role route applies"),
             Some(RoleDispatch::Provider)
         );
         assert_eq!(route.source, "provider");
@@ -171,13 +199,64 @@ mod tests {
             .conversation_respond;
         let prior = route.primary_provider_id.clone();
         assert_eq!(
-            apply_enabled_role_route(&connection, &mut route).expect("codex route"),
+            apply_enabled_role_route(&connection, None, &mut route).expect("codex route"),
             Some(RoleDispatch::CodexSdk {
                 model: "gpt-5.6-sol".into(),
                 max_input_bytes: 4096,
             })
         );
         assert_eq!(route.primary_provider_id, prior);
+    }
+
+    #[test]
+    fn rr_03_queued_root_uses_its_immutable_policy_receipt() {
+        let mut connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut documents = default_settings_input();
+        let policy = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.roles")
+            .expect("role policy");
+        policy.value_json = json!({
+            "schemaVersion": 1, "enabled": true,
+            "actors": [{"id":"qwen","label":"Qwen","aliases":[],"transport":"provider","providerId":DYNAMIC_LAN_PROVIDER_ID,"model":null,"location":"local","resourceGroup":"gpu","maxInputBytes":4096,"capabilities":["reason"]}],
+            "roles":{"frontend":null,"reasoner":"qwen","advanced":null,"reviewer":null,"premium":null,"toolSpecialist":null},
+            "recipes":[{"id":"direct","action":"respond","roles":["reasoner"],"enabled":true}],
+            "limits":{"maxReasoningSteps":4,"maxToolCalls":32,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":1,"maxAutomaticSwitches":2,"maxEstimatedCostMicros":null},
+            "speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},
+            "selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},
+            "premiumApproval":"per_request","learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false}
+        });
+        save_settings_documents_to_connection(&mut connection, &documents).expect("settings save");
+        connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('immutable-input','conversation_primary','user','hello','1')", []).expect("input");
+        connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('immutable-run','conversation_primary','conversation.respond','running','immutable-input','1')", []).expect("run");
+        assert!(crate::role_routing::repository::record_provider_turn_start(
+            &connection,
+            "immutable-run",
+            "conversation_primary",
+            1,
+        )
+        .expect("receipt"));
+
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.roles")
+            .expect("role policy")
+            .value_json = json!({"schemaVersion": 1, "enabled": false});
+        save_settings_documents_to_connection(&mut connection, &documents)
+            .expect("disable new roots");
+        let mut route = crate::persistence::load_routing_settings(&connection)
+            .expect("routing")
+            .conversation_respond;
+        assert_eq!(
+            apply_enabled_role_route(&connection, Some("immutable-run"), &mut route)
+                .expect("receipt route"),
+            Some(RoleDispatch::Provider)
+        );
+        assert_eq!(
+            route.primary_provider_id.as_deref(),
+            Some(DYNAMIC_LAN_PROVIDER_ID)
+        );
     }
 
     #[test]

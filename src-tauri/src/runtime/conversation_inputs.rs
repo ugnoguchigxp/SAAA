@@ -60,8 +60,11 @@ pub(super) fn load(state: &AppState, input: &StartTurnInput) -> Result<Inputs, S
         let regional = crate::persistence::settings::regional_preferences::load(connection)?;
         let providers = load_model_providers(connection)?;
         let mut route = load_routing_settings(connection)?.conversation_respond;
-        let role_dispatch =
-            conversation_inputs_roles::apply_enabled_role_route(connection, &mut route)?;
+        let role_dispatch = conversation_inputs_roles::apply_enabled_role_route(
+            connection,
+            Some(&input.run_id),
+            &mut route,
+        )?;
         let configuration_fingerprint =
             crate::persistence::effective_route::conversation_configuration_fingerprint(
                 &providers, &route,

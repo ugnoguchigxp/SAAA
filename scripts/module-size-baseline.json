@@ -1317,6 +1317,14 @@
       "total": 438,
       "production": 438
     },
+    "src-tauri/src/runtime/codex_context_tests.rs": {
+      "total": 98,
+      "production": 0
+    },
+    "src-tauri/src/runtime/codex_context.rs": {
+      "total": 148,
+      "production": 148
+    },
     "src-tauri/src/runtime/codex_output_reader.rs": {
       "total": 57,
       "production": 57

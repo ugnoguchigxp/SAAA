@@ -137,7 +137,7 @@ export default async function (pi: ExtensionAPI) {
           const configuration = {
             model: MODEL,
             workingDirectory: current.cwd,
-            sandboxMode: "workspace-write" as const,
+            sandboxMode: "read-only" as const,
             approvalPolicy: "never" as const,
             networkAccessEnabled: false,
             webSearchMode: "disabled" as const,

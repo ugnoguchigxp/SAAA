@@ -4,6 +4,9 @@ Recorded 2026-09-21.
 
 ## Automated verification
 
+- `japanese-fixed-cases.md`: **60 fixed cases, 0 malformed rows**. Every case records a
+  time-ordered input, expected state, and prohibited action. This validates the evaluation ledger
+  only; it is not a configured-model result.
 - `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib runtime::context::required --offline`:
   **2 passed**.
 - `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
@@ -75,6 +78,13 @@ Recorded 2026-09-21.
   settings migration tests are **9 passed**.
 - `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib providers::chat_completions::
   --offline`: **21 passed**. `providers::agent_session::sse::`: **16 passed, 1 live ignored**.
+- After the AgentSession completion-path correction, `CARGO_TARGET_DIR=/tmp/saaa-required-context-target
+  cargo test --locked --manifest-path src-tauri/Cargo.toml --lib providers::agent_session::sse::
+  --offline`: **18 passed, 1 live ignored**. A stale Context generation at SSE completion now
+  returns its typed `ContextScopeChanged`/`RequiredContextUnavailable` result instead of `Internal`.
+- `CARGO_TARGET_DIR=/tmp/saaa-required-context-target cargo test --locked --manifest-path
+  src-tauri/Cargo.toml --lib runtime::context --offline`: **93 passed, 2 ignored, 0 failed**
+  after that correction.
 - `cargo check --locked --manifest-path src-tauri/Cargo.toml --offline`: passed (warnings are in
   concurrently developed role-routing/adaptive modules).
 - A later `bun run typecheck` passed. `bun run check:local` still stops at formatting in the

@@ -100,6 +100,15 @@ impl Client {
         *cached = Some(session.clone());
         Ok(session)
     }
+    pub(crate) async fn connect(&self, cancellation: &RunCancellation) -> Result<(), String> {
+        tokio::select! {
+            _ = cancellation.cancelled() => Err("Cancelled by user".into()),
+            result = tokio::time::timeout(Duration::from_secs(3), self.initialize()) => {
+                result.map_err(|_| "Reasoning MCP initialization timed out")??;
+                Ok(())
+            }
+        }
+    }
     pub(crate) async fn answer(
         &self,
         request: &Request,
@@ -110,26 +119,17 @@ impl Client {
             .capacity
             .try_acquire()
             .map_err(|_| "Reasoning is busy")?;
-        let started = std::time::Instant::now();
         let mut call_session = None;
         let work = async {
             let session = tokio::time::timeout(Duration::from_secs(3), self.initialize())
                 .await
                 .map_err(|_| "Reasoning MCP initialization timed out")??;
             call_session = Some(session.clone());
-            let mut remaining = request.clone();
-            remaining.budget.timeout_ms = request
-                .budget
-                .timeout_ms
-                .saturating_sub(started.elapsed().as_millis() as u64);
-            if remaining.budget.timeout_ms == 0 {
-                return Err("Reasoning timed out".into());
-            }
             let (value, _) = self
                 .rpc(
                     session.as_deref(),
                     json!({"jsonrpc":"2.0","id":request.request_id,
-                "method":"tools/call","params":{"name":TOOL,"arguments":remaining}}),
+                "method":"tools/call","params":{"name":TOOL,"arguments":request}}),
                 )
                 .await?;
             if value["id"] != request.request_id
@@ -180,5 +180,9 @@ pub(crate) async fn for_turn(
     if cancellation.is_cancelled() {
         return Err("Cancelled by user".into());
     }
-    Ok(configured(&input.input_origin)?.map(|c| Arc::new(c.clone())))
+    let client = configured(&input.input_origin)?.map(|c| Arc::new(c.clone()));
+    if let Some(client) = &client {
+        client.connect(cancellation).await?;
+    }
+    Ok(client)
 }

@@ -53,6 +53,8 @@ pub enum SelectionMode {
     Disabled,
     Direct,
     Discovery,
+    /// Deterministic developer-only lane. It never loads or contacts a model/provider.
+    Mock,
 }
 
 impl SelectionMode {
@@ -61,6 +63,7 @@ impl SelectionMode {
             "disabled" => Some(Self::Disabled),
             "direct" => Some(Self::Direct),
             "discovery" => Some(Self::Discovery),
+            "mock" => Some(Self::Mock),
             _ => None,
         }
     }
@@ -166,6 +169,11 @@ impl ConfigDocument {
         let Some(mode) = SelectionMode::parse(&self.mode) else {
             return ToolSelectionConfig::disabled("tool-selection mode is unknown");
         };
+        if mode == SelectionMode::Mock && !cfg!(debug_assertions) {
+            return ToolSelectionConfig::disabled(
+                "tool-selection mock mode is available only in development builds",
+            );
+        }
         if let Some(extraction) = self.extraction.as_deref() {
             if extraction != "configured-conversation-provider" {
                 return ToolSelectionConfig::disabled("tool-selection extraction is unknown");
@@ -795,6 +803,18 @@ mod tests {
         .expect("write");
         let config = ToolSelectionConfig::from_path(Some(&path));
         assert_eq!(config.mode, SelectionMode::Disabled);
+    }
+
+    #[test]
+    fn mock_configuration_is_an_explicit_model_free_developer_lane() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("config.json");
+        std::fs::write(&path, br#"{"formatVersion":1,"mode":"mock"}"#).expect("write");
+        let config = ToolSelectionConfig::from_path(Some(&path));
+        assert_eq!(config.mode, SelectionMode::Mock);
+        assert!(!config.discovery_enabled());
+        assert!(config.python_path.is_none());
+        assert!(config.model_manifest_path.is_none());
     }
 
     #[test]

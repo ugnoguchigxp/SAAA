@@ -34,6 +34,17 @@ pub fn valid_profile(settings: &CodingSettings) -> bool {
                 && cfg!(target_os = "macos")
                 && std::path::Path::new("/usr/bin/sandbox-exec").is_file()
         }
+        "delegated-codex-sdk-macos-v1" => {
+            settings.provider == "saaa-codex-sdk"
+                && settings.model == "gpt-5.6-luna"
+                && cfg!(target_os = "macos")
+                && std::path::Path::new("/usr/bin/sandbox-exec").is_file()
+                && settings.sdk_extension_path.as_ref().is_some_and(|p| {
+                    p.len() <= 4096
+                        && std::path::Path::new(p).is_absolute()
+                        && std::path::Path::new(p).is_file()
+                })
+        }
         "codex-sdk-v1" => {
             settings.provider == "saaa-codex-sdk"
                 && settings.model == "gpt-5.6-luna"

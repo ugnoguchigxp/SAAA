@@ -88,6 +88,73 @@
       },
       {
         "key": "default",
+        "namespace": "routing.roles",
+        "schemaVersion": 15,
+        "updatedAt": "0",
+        "valueJson": {
+          "actors": [],
+          "adaptiveImprovement": {
+            "enabled": false,
+            "notification": false,
+            "plan": false,
+            "providerRecipe": false,
+            "tool": false
+          },
+          "enabled": false,
+          "learning": {
+            "allowLocalLabeler": false,
+            "batchSize": 100,
+            "enabled": false,
+            "idleSeconds": 300,
+            "localEnd": "05:00",
+            "localStart": "02:00",
+            "maxRunSeconds": 600
+          },
+          "limits": {
+            "classificationTimeoutMs": 1500,
+            "frontendTimeoutMs": 1200,
+            "maxAutomaticSwitches": 2,
+            "maxEstimatedCostMicros": null,
+            "maxQueuedInputs": 4,
+            "maxReasoningSteps": 4,
+            "maxReviewRounds": 1,
+            "maxToolCalls": 32,
+            "rootTimeoutMs": 180000,
+            "stepTimeoutMs": 60000
+          },
+          "premiumApproval": "per_request",
+          "recipes": [],
+          "roles": {
+            "advanced": null,
+            "frontend": null,
+            "premium": null,
+            "reasoner": null,
+            "reviewer": null,
+            "toolSpecialist": null
+          },
+          "schemaVersion": 1,
+          "selection": {
+            "classificationMinConfidence": 0.85,
+            "mode": "rules",
+            "shadowArtifactId": null,
+            "switchMargin": 0.15,
+            "weights": {
+              "cost": 0.15,
+              "latency": 0.25,
+              "quality": 0.6
+            }
+          },
+          "speech": {
+            "ackDelayMs": 250,
+            "maxAckChars": 80,
+            "maxProgressPerRoot": 2,
+            "mode": "author_verbatim",
+            "progressMinIntervalMs": 15000
+          }
+        }
+      },
+      {
+        "key": "default",
         "namespace": "routing.tasks",
         "schemaVersion": 15,
         "updatedAt": "0",

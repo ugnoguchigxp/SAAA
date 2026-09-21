@@ -1,6 +1,61 @@
 # 現在の理解を全Provider・音声経路へ届ける実装計画
 
-作成日: 2026-09-21。状態: 設計、実装未着手。担当想定: Terra。
+作成日: 2026-09-21。進捗更新: 2026-09-21。状態: 部分実装・未完了。担当想定: Terra。
+
+## 0. 現在の進捗と再開位置
+
+残作業の実行手順は [Terra向け実装残件専用計画](saaa-world-model-remaining-terra-plan.md) を参照する。本書は全体の合格条件と進捗を保持する。
+
+現在の作業ツリーと直前のレビュー証跡を照合した。以下はコミット済み部分だけでなく、未コミットの修正を含む。今回の更新は進捗の記録であり、実装や試験を追加実行した結果ではない。
+
+14カードの内訳は、**実装済み・ローカル検証済みが1件、部分実装が12件、未着手が1件**。実装済みはWD-10の契約改訂を指し、サービス配備とlive受入の完了を意味しない。カードごとの作業量が異なるため、この件数を完成率へ換算しない。全経路の完成判定は未達である。
+
+「部分実装」はコードが存在しても、そのカードの合格条件を全て満たしていない状態。「未着手」はそのカード固有の実装が未接続の状態とし、既存の基盤コードまで存在しないという意味ではない。
+
+### 0.1 カード別の実装済み範囲と残作業
+
+| ID | 状態 | 済んでいること | 完了までに残ること |
+| --- | --- | --- | --- |
+| WD-00 | 部分実装 | 送信経路・session・route matrixを整理。設定済み接続先の応答を確認 | 各経路のlive接続条件を確定し、30例の受入fixtureとmodel/contract版を固定。未応答の経路をreachable扱いにしない |
+| WD-01 | 部分実装 | Coding workspaceからProject/resource linkを登録。Chatから選択対象・TaskのscopeRefsを送信 | 対象表示・切替・曖昧候補確認を実UIで受入。A→B切替後のAの結果をBへ混ぜないことを確認 |
+| WD-02 | 部分実装 | typed WorldSourceSnapshotにCoding Task・期限・source revisionを実装。期限を全Scope横断で選択。不明を明示 | SituationはUnavailableのまま。DWを含むsource契約・観測sequence・共通Frameへの対応を完成 |
+| WD-03 | 部分実装 | Coding runtimeと既存World graphのFrame生成、Task/予定metadataの読取りが存在 | Situation・DW Task/Goal・scheduleを共通FrameServiceへ統合。Projectなしのuser Scopeを扱う。metadata読取りだけでは完了にしない |
+| WD-04 | 未着手 | 既存Worldの検証・訂正・forget基盤は存在 | 自然文からWorld候補を抽出する専用purpose、source/version・引用範囲付き候補、validator/reducer、訂正・forgetまでの実導線を実装 |
+| WD-05 | 部分実装 | 接続確保後にcompose。MCP接続待ち・receipt書込み後の失効を検査。送信内容のdigest不一致を修正 | 共通状態sourceを接続した後の再構成上限・state_unstable応答と全経路の順序を受入 |
+| WD-06 | 部分実装 | OpenAI互換の本文/manifest一致、元TTL・source変更、Tool後の旧World除去をHTTP fixtureで確認 | 現状のTool継続はWorld除去。新generationへ最新Frameを渡す§4の完成条件は未達。typed共通境界とlive受入を完成 |
+| WD-07 | 部分実装 | DynamicLan・共有LARMの履歴投入、共通HTTP adapterの鮮度検査へ接続 | 実allocation・LLM lease後の入力を実サービスで検証。text/voiceの同一事実集合とTTFAを測定 |
+| WD-08 | 部分実装 | session/transport確保後の初回再検査。初回receiptとWorld-free follow-upをoffline確認 | 初回限定の現行契約では最新Frameの再投入を保証しない。外部session内部の古い履歴が訂正/forget後に復活しないことを検証・必要ならsession新規化 |
+| WD-09 | 部分実装 | 新規Codex判断threadへScope/Task/期限metadataを投入。実thread/start・turn/start digestとreceipt、送信前・結果受理前の変更検知をfixture確認 | 五要素graphと共通Frameの投入、他の有効Codex経路の同等性、実Codexでの受入。metadata receiptの成功だけで全経路完了にしない |
+| WD-10 | 実装済み・ローカル検証済み | reasoning-answer-v2、WorldEvidence、client/serviceのschema一致、旧版拒否、実RPC引数digest、接続待ち失効を検証 | 同版のserviceを配備し、実接続で確認。全体live受入はWD-13に残る |
+| WD-11 | 部分実装 | 限定した現在Task/期限のhost StateAnswer、会議不明、音声ackの合成前・queue前hold検査 | モデルが生成したclaimと正本の照合、生成中更新時の結果拒否・再取得、通常回答を含むTTS直前holdの全経路受入 |
+| WD-12 | 部分実装 | world-context-omittedの理由を本文を含めずactivityに記録。StateAnswerに出典と観測時点を表示 | 設定UIのProvider能力・機能差・source参照の提示、切替時の表示を受入 |
+| WD-13 | 部分実装 | offline通信33ケース、Codex protocol fixture、関連回帰とM4A/G1性能測定 | 全経路の実モデル各30例、実UI/音声、WD固有の追加p95 30ms・TTFA悪化10%以内、全体品質ゲートを完了 |
+
+初回限定・Tool後World-freeは旧Frameを再送しないための現行実装である。§4・§6が求める「次generationへ最新状態を届ける」完成条件の代替ではない。以下の設計・合格条件は弱めずに保持する。
+
+### 0.2 確認済みの検証と未達条件
+
+| 対象 | 直前レビューで確認した結果 | この結果では保証しないこと |
+| --- | --- | --- |
+| World通信 | world:eval 33ケース成功、0失敗 | 実モデル回答・実UI・実音声の正しさ |
+| WD対象 | wd_ 12件成功。Codex実行形式fixtureとsource変更検知を含む | 実Codexモデル、共通Frameの全source統合 |
+| 回帰 | Frontend316件成功。Rust単体は4並列で1,247件成功・20件ignored。古い参照を直したSQLite構造検査とASR bindingも個別成功 | ignoredのlive試験、全ゲート一括成功 |
+| 契約・静的検査 | Rust packages、型検査、format、lint、仕様文書検査が成功 | 最新作業ツリー全体のsize/Clippy合格 |
+| 品質ゲート | size/Clippyは未達。既存閾値は緩和していない | 他機能の問題であることを理由に全体完了とはしない |
+| 性能 | G1のprepare＋revalidate＋render p95は56.08ms（debug、100投影/2,000ledger） | WDの別条件である追加処理p95 30ms・TTFA悪化10%以内 |
+
+証跡は `spec/evidence/world-delivery/{progress,route-matrix,results}.md` と `spec/evidence/world-model/{m4a-report.json,m4a-results.md}`。件数はその検証時点の値であり、その後の別変更を含むHEAD全体の合格保証ではない。
+
+### 0.3 Blockerの種類と次の作業順
+
+| 種類 | 内容 | 接続先の復旧前に進められること |
+| --- | --- | --- |
+| WorldModelの実装残 | 共通Frameの状態source統合、自然文抽出、五要素のCodex投入、結果claim検査、能力表示 | WD-02/03/04/09/11/12の実装とoffline試験。外部接続を待つ必要はない |
+| プロジェクト全体の品質 | size超過、Clippy違反。複数機能の変更にまたがる | 原因を修正してゲートを再実行。検査無効化や閾値引上げで済ませない |
+| 実行環境・配備 | 前回確認時、192.168.0.130:8080は接続不可、127.0.0.1:44449はタイムアウト。MCPはv2の同時配備が必要 | 接続設定・起動状態を調査し、live fixtureを準備。成功するまでWD-13は未検証扱い |
+
+再開順は、①RC/DWの正本契約を現在コードで確認してWD-02/03、②WD-04、③共通FrameをWD-05〜10の各adapterへ適用、④WD-11/12、⑤WD-13と品質ゲート。WD-10など確認済みの実装を最初から作り直さず、差分と受入残件から進める。
+
 
 ## 1. 解消する弱点と完成状態
 
@@ -18,7 +73,7 @@
 
 ## 3. 現状と全経路の棚卸し
 
-2026-09-21の作業ツリーを確認した。以下は固定された現在仕様ではなく、WD-00で再確認する開始基準。
+以下は計画作成時の開始基準であり、現在の実装状況ではない。改修後の状態は§0を正本とし、この表は変更対象を追跡するために残す。
 
 | 対象 | 現状と接続先 |
 | --- | --- |
@@ -145,4 +200,4 @@ wire一致はstub server、判断・提示は実Provider/実UIで別々に確認
 
 Terraへの開始指示例:
 
-> WD-00から順に実装してください。RCの送信契約とDWのTask正本を使い、ScopeのUI入口から各Providerの実際のwire body、音声応答まで接続してください。World除去の単純削除やTTL延長で済ませず、session内の古い理解と生成中の状態変化を扱い、route-matrixの全行を受入してください。
+> §0のカード別残件と再開順に沿って実装してください。WD-00の接続条件を再確認し、実装済み部分は回帰試験で保持してください。RCの送信契約とDWのTask正本を使い、ScopeのUI入口から各Providerの実際のwire body、音声応答まで接続してください。World除去の単純削除やTTL延長で済ませず、session内の古い理解と生成中の状態変化を扱い、route-matrixの全行を受入してください。

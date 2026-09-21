@@ -380,6 +380,13 @@ fn dw_10_settled_read_step_durably_enqueues_one_dependent_test_step() {
             .sqlite_writer
             .write(|connection| repo::apply_terminal_event(connection, "job", "settled"))
             .unwrap();
+        assert_eq!(
+            count(
+                &state,
+                "SELECT COUNT(*) FROM steward_task_artifacts WHERE reference='job'"
+            ),
+            1
+        );
         assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
         assert_eq!(
             count(
@@ -388,6 +395,19 @@ fn dw_10_settled_read_step_durably_enqueues_one_dependent_test_step() {
             ),
             1
         );
+        let successor_step: String = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT plan_step_id FROM steward_tasks WHERE id != ?1",
+                        [&first],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        assert_eq!(successor_step, "test");
         state
             .sqlite_writer
             .write(|connection| repo::apply_terminal_event(connection, "job", "settled"))
@@ -417,6 +437,105 @@ fn dw_10_migration_backfills_a_plan_for_an_existing_goal() {
         .unwrap();
     assert_eq!(plans, 1);
     assert_eq!(steps, 2);
+}
+
+#[test]
+fn dw_10_failure_creates_at_most_two_durable_replans() {
+    with_memory(true, || {
+        let state = app_state(db());
+        register_goal(&state);
+        prepare_runtime_run(&state, &turn("dw-10-replan", START_TRIGGER)).unwrap();
+        super::on_user_message(&state, &turn("dw-10-replan", START_TRIGGER));
+        let first = task_id(&state);
+        insert_job(&state, &first, "running", None);
+        state
+            .sqlite_writer
+            .write(|connection| repo::apply_terminal_event(connection, "job", "failed"))
+            .unwrap();
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 2);
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
+        let revision: i64 = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row("SELECT MAX(revision) FROM steward_goal_plans", [], |row| {
+                        row.get(0)
+                    })
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        assert_eq!(revision, 2);
+        let second: String = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT id FROM steward_tasks WHERE id != ?1",
+                        [&first],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute("DELETE FROM coding_runs", [])
+                    .map_err(crate::database_error)?;
+                connection
+                    .execute("DELETE FROM coding_jobs", [])
+                    .map_err(crate::database_error)?;
+                connection
+                    .execute(
+                        "UPDATE steward_tasks SET coding_job_id=NULL WHERE id=?1",
+                        [&first],
+                    )
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        insert_job(&state, &second, "running", None);
+        state
+            .sqlite_writer
+            .write(|connection| repo::apply_terminal_event(connection, "job", "failed"))
+            .unwrap();
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 3);
+        let third: String = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT id FROM steward_tasks WHERE id NOT IN (?1,?2)",
+                        params![first, second],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute("DELETE FROM coding_runs", [])
+                    .map_err(crate::database_error)?;
+                connection
+                    .execute("DELETE FROM coding_jobs", [])
+                    .map_err(crate::database_error)?;
+                connection
+                    .execute(
+                        "UPDATE steward_tasks SET coding_job_id=NULL WHERE id=?1",
+                        [&second],
+                    )
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        insert_job(&state, &third, "running", None);
+        state
+            .sqlite_writer
+            .write(|connection| repo::apply_terminal_event(connection, "job", "failed"))
+            .unwrap();
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goal_plans"), 3);
+    });
 }
 
 #[test]

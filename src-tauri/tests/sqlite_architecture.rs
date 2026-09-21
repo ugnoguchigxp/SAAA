@@ -115,7 +115,7 @@ fn main_database_open_and_connection_ownership_are_centralized() {
         "audio preprocessing must precede the Writer lock"
     );
 
-    let turns = fs::read_to_string(source_root.join("runtime/turns.rs"))
+    let turns = fs::read_to_string(source_root.join("runtime/conversation_turn.rs"))
         .expect("conversation runtime source reads");
     let execute_turn = turns
         .split_once("pub(crate) async fn execute_conversation_turn")
@@ -125,17 +125,28 @@ fn main_database_open_and_connection_ownership_are_centralized() {
         .expect("conversation input source reads");
     assert!(inputs.contains("state.sqlite_readers.read"));
     assert!(!inputs.contains("state.sqlite_writer.write"));
-    let reader = execute_turn
+    let compose_helper = turns
+        .split_once("fn compose_after_connect(")
+        .expect("dispatch context composer exists")
+        .1
+        .split_once("fn world_free_history(")
+        .expect("composer boundary exists")
+        .0;
+    assert!(!compose_helper.contains("state.sqlite_writer.write"));
+    let reader = compose_helper
         .find("conversation_inputs::load(state, input)")
         .expect("context source uses a persistent Reader");
-    let compose = execute_turn
+    let compose = compose_helper
         .find("context_window::compose")
         .expect("context composition is explicit");
     let writer = execute_turn
         .find("state.sqlite_writer.write")
         .expect("projection telemetry uses the Writer");
+    let dispatch_compose = execute_turn
+        .find("compose_after_connect(")
+        .expect("turn uses the dispatch context composer");
     assert!(
-        reader < compose && compose < writer,
+        reader < compose && dispatch_compose < writer,
         "context data must be read first, composed after the Reader transaction, then recorded"
     );
 }

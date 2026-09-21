@@ -232,9 +232,12 @@ mod tests {
     #[test]
     fn rr_20_process_requires_a_terminal_frame() {
         let (_directory, executable) = fixture("read line; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"started\"}'");
-        let error = run_at(&executable, &request(), &RunCancellation::default())
+        // This case tests EOF, not scheduler/process startup latency under the full suite.
+        let mut input = request();
+        input.timeout_ms = 10_000;
+        let error = run_at(&executable, &input, &RunCancellation::default())
             .expect_err("missing terminal must fail");
-        assert!(error.contains("without a terminal frame"));
+        assert!(error.contains("without a terminal frame"), "{error}");
     }
 
     #[test]

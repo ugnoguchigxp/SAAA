@@ -3,8 +3,8 @@
   "suite": "world-m4a",
   "contract": "WD: AgentSession initial-only; G1 graph enabled",
   "summary": {
-    "total": 32,
-    "passed": 32,
+    "total": 33,
+    "passed": 33,
     "failed": 0,
     "skipped": 0,
     "complete": true
@@ -15,7 +15,7 @@
   "cases": [
     {
       "case_id": "G1-five-elements",
-      "elapsed_ms": 10,
+      "elapsed_ms": 37,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -26,7 +26,7 @@
     },
     {
       "case_id": "G1-followup",
-      "elapsed_ms": 10,
+      "elapsed_ms": 26,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -38,7 +38,7 @@
     },
     {
       "case_id": "G1-goal-revoked",
-      "elapsed_ms": 3,
+      "elapsed_ms": 7,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -49,7 +49,7 @@
     },
     {
       "case_id": "G1-relation-changed",
-      "elapsed_ms": 3,
+      "elapsed_ms": 8,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -60,7 +60,7 @@
     },
     {
       "case_id": "G1-source-revoked",
-      "elapsed_ms": 5,
+      "elapsed_ms": 10,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -71,7 +71,7 @@
     },
     {
       "case_id": "G1-unknown",
-      "elapsed_ms": 5,
+      "elapsed_ms": 17,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -82,7 +82,7 @@
     },
     {
       "case_id": "policy-before-new-generation",
-      "elapsed_ms": 2,
+      "elapsed_ms": 6,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -93,7 +93,7 @@
     },
     {
       "case_id": "W01",
-      "elapsed_ms": 5,
+      "elapsed_ms": 17,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -104,7 +104,7 @@
     },
     {
       "case_id": "W02",
-      "elapsed_ms": 4,
+      "elapsed_ms": 30,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -115,7 +115,7 @@
     },
     {
       "case_id": "W03",
-      "elapsed_ms": 3,
+      "elapsed_ms": 10,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -126,7 +126,7 @@
     },
     {
       "case_id": "W04",
-      "elapsed_ms": 3,
+      "elapsed_ms": 12,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -137,7 +137,7 @@
     },
     {
       "case_id": "W05",
-      "elapsed_ms": 4,
+      "elapsed_ms": 94,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -148,7 +148,7 @@
     },
     {
       "case_id": "W06",
-      "elapsed_ms": 2,
+      "elapsed_ms": 9,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -159,7 +159,7 @@
     },
     {
       "case_id": "W07",
-      "elapsed_ms": 3,
+      "elapsed_ms": 6,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -170,7 +170,7 @@
     },
     {
       "case_id": "W08",
-      "elapsed_ms": 3,
+      "elapsed_ms": 15,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -181,7 +181,7 @@
     },
     {
       "case_id": "W09",
-      "elapsed_ms": 7,
+      "elapsed_ms": 30,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -193,7 +193,7 @@
     },
     {
       "case_id": "W10",
-      "elapsed_ms": 7,
+      "elapsed_ms": 23,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -236,7 +236,7 @@
     },
     {
       "case_id": "W13",
-      "elapsed_ms": 2,
+      "elapsed_ms": 7,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -247,7 +247,7 @@
     },
     {
       "case_id": "W14",
-      "elapsed_ms": 4,
+      "elapsed_ms": 22,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -258,7 +258,7 @@
     },
     {
       "case_id": "W15",
-      "elapsed_ms": 3,
+      "elapsed_ms": 8,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -269,7 +269,7 @@
     },
     {
       "case_id": "W16",
-      "elapsed_ms": 1,
+      "elapsed_ms": 5,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -278,7 +278,7 @@
     },
     {
       "case_id": "W17a",
-      "elapsed_ms": 0,
+      "elapsed_ms": 1,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -287,7 +287,7 @@
     },
     {
       "case_id": "W17b",
-      "elapsed_ms": 3,
+      "elapsed_ms": 7,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -298,7 +298,7 @@
     },
     {
       "case_id": "W18a",
-      "elapsed_ms": 42,
+      "elapsed_ms": 108,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -309,7 +309,7 @@
     },
     {
       "case_id": "W18b",
-      "elapsed_ms": 6,
+      "elapsed_ms": 14,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -320,7 +320,7 @@
     },
     {
       "case_id": "W19",
-      "elapsed_ms": 3,
+      "elapsed_ms": 7,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
@@ -331,12 +331,21 @@
     },
     {
       "case_id": "W20",
-      "elapsed_ms": 1,
+      "elapsed_ms": 4,
       "failure_code": null,
       "manifest_match": true,
       "pass": true,
       "request_count": 0,
       "world_sent_per_request": []
+    },
+    {
+      "case_id": "WD-MCP-connect-expired",
+      "manifest_match": true,
+      "pass": true,
+      "request_count": 1,
+      "world_sent_per_request": [
+        false
+      ]
     },
     {
       "case_id": "WD-MCP-current",

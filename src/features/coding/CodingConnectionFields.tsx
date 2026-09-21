@@ -17,19 +17,21 @@ export function CodingConnectionFields({
               ...settings,
               version: "0.86.1",
               profile: e.target.value,
-              provider: e.target.value === "codex-sdk-v1" ? "saaa-codex-sdk" : "openai-codex",
+              provider: e.target.value.includes("codex-sdk") ? "saaa-codex-sdk" : "openai-codex",
               model: "gpt-5.6-luna",
-              sdkExtensionPath:
-                e.target.value === "codex-sdk-v1" ? (settings.sdkExtensionPath ?? "") : null,
+              sdkExtensionPath: e.target.value.includes("codex-sdk")
+                ? (settings.sdkExtensionPath ?? "")
+                : null,
             })
           }
         >
           <option value="trusted-local-v1">pi標準</option>
           <option value="delegated-read-test-macos-v1">委譲調査・テスト（macOS制限）</option>
+          <option value="delegated-codex-sdk-macos-v1">委譲 Codex SDK（macOS制限）</option>
           <option value="codex-sdk-v1">Codex SDK</option>
         </select>
       </label>
-      {settings.profile === "codex-sdk-v1" && (
+      {settings.profile.includes("codex-sdk") && (
         <label>
           Codex SDK拡張の絶対パス
           <input

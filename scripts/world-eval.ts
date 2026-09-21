@@ -48,7 +48,7 @@ for (const line of output.split("\n")) {
 }
 const required = `
 W01 W02 W03 W04 W05 W06 W07 W08 W09 W10 W13 W14 W15 W16 W17a W17b W18a W18b W19 W20
-W11-agent-initial-followup W12-agent-expired W12-fallback-expired WD-MCP-current WD-MCP-expired
+W11-agent-initial-followup W12-agent-expired W12-fallback-expired WD-MCP-current WD-MCP-expired WD-MCP-connect-expired
 G1-five-elements G1-unknown G1-source-revoked G1-goal-revoked G1-relation-changed G1-followup
 `
   .trim()

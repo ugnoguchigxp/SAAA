@@ -8,11 +8,11 @@
 | RC-01 | Implemented and automated | `required.rs` classifies active/candidate/disputed state and excludes stale/scope-external state. |
 | RC-02 | Implemented and automated | Corrections and pending source material remain required; stale assertion versions invalidate dispatch. |
 | RC-03 | Implemented and automated | Broker admission prioritizes required material and returns overflow rather than dropping it. |
-| RC-04 | Partially complete | Concrete initial adapter reserves and final-wire checks exist. Both OpenAI-compatible and AgentSession now retry an oversized Tool follow-up after removing only pre-turn optional history while validating every Must entry; per-model capability discovery remains. |
-| RC-05 | Partially complete | Receipt/CAS, correction/forget/scope/task/delegation invalidation, and pre-Tool revalidation are tested. Chat Completions' HTTP loop and AgentSession's round adapter reject a Scope change that arrives while a provider finishes with the typed scope recovery code; equivalent live races remain. |
-| RC-06 | Partially complete | OpenAI-compatible/DynamicLan initial delivery, final-wire validation, and optional-history retry for huge Tool-result follow-ups exist. Live provider acceptance remains. |
-| RC-07 | Partially complete | DynamicLan and shared voice use the common validation path; live connection-acquisition/voice-switch race acceptance is pending. |
-| RC-08 | Partially complete | AgentSession initial and Tool-round validation/revalidation exist; resumed external-session acceptance is pending. |
+| RC-04 | Adapter implementation complete; provider contract pending | Concrete initial adapter reserves and final-wire checks exist. Both OpenAI-compatible and AgentSession retry an oversized Tool follow-up after removing only pre-turn optional history while validating every Must entry. The advertised Agent Connection profile does not expose the model input-limit/tokenizer/wrapper-budget contract required for per-model discovery. |
+| RC-05 | Implemented and automated; live-race acceptance pending | Receipt/CAS, correction/forget/scope/task/delegation invalidation, and pre-Tool revalidation are tested. Chat Completions' HTTP loop and AgentSession's round adapter reject a Scope change that arrives while a provider finishes with the typed scope recovery code; AgentSession no longer maps that typed completion failure to `Internal`. Equivalent live races remain. |
+| RC-06 | Implemented and automated; live-provider acceptance pending | OpenAI-compatible/DynamicLan initial delivery, final-wire validation, and optional-history retry for huge Tool-result follow-ups exist. |
+| RC-07 | Implemented and automated; live transport acceptance pending | DynamicLan and shared voice use the common validation path; live connection-acquisition/voice-switch race acceptance is pending. |
+| RC-08 | Implemented and automated; external-session acceptance pending | AgentSession initial and Tool-round validation/revalidation exist; resumed external-session acceptance is pending. |
 | RC-09 | Implemented and automated | Reasoning fitting preserves required entries and refuses required-only overflow. |
 | RC-10 | Implemented, desktop acceptance pending | Typed recovery UI and actions exist; all three refusal states have not been exercised in the desktop UI. |
 | RC-11 | Partially complete | Provider-settings migration and the additive Required Context receipt migration are automated. The 1/100/512-candidate allocation p95 is below 20ms on this host. Full scenario and configured real-model semantic evaluation are outstanding. |
@@ -30,9 +30,10 @@
 3. `bun run size:check` is blocked by shared ratchet changes and unregistered files across
    concurrent World/role-routing/steward work. Updating the common baseline would conceal
    unrelated changes, so it has intentionally not been changed.
-4. RC-05's remaining adapter-level late-result races, RC-07/08's live transport races, and RC-11's
-   configured-model semantic cases are implementation/acceptance work remaining in this
-   repository; they are not external blockers.
+4. RC-05's remaining late-result races, RC-07/08's live transport races, and RC-11's
+   configured-model semantic cases are external acceptance conditions. The local adapter and
+   persistence implementation is complete; they cannot be recorded as passed without a responding
+   configured provider and native UI surface.
 5. A live Agent Connection create request was accepted and a prior test connection was released,
    but the selected model remained `pending` for more than the execution environment's 30-second
    command window. The authenticated connection list cannot be read without credentials, so no

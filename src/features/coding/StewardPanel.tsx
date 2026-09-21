@@ -41,6 +41,7 @@ export function StewardPanel({
       notify: string;
       deliveryState: string | null;
       speechState: string | null;
+      artifactRefs: string[];
     }[]
   >([]);
   const refresh = useCallback(async () => {
@@ -185,6 +186,7 @@ export function StewardPanel({
           {task.goalStatus} / {task.loopState}
           {task.deliveryState && <> / 配信: {task.deliveryState}</>}
           {task.speechState && <> / 音声: {task.speechState}</>}
+          {task.artifactRefs.length > 0 && <> / 成果物: {task.artifactRefs.join(", ")}</>}
           {task.goalStatus === "active" && (
             <>
               <label>

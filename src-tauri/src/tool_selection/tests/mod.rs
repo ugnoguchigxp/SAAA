@@ -420,6 +420,117 @@ async fn g01_basic_order_is_reranker_order() {
     assert_eq!(response.status, DecisionStatus::Ok);
 }
 
+/// A controlled, synthetic evaluation may prove that the Tool Selection wiring obeys an
+/// already-approved artifact.  It is deliberately an in-memory fixture: its measurements never
+/// enter a user's local history and do not constitute evidence of production improvement.
+#[tokio::test]
+async fn ai_09_synthetic_approved_artifact_reorders_the_real_tool_search_path() {
+    let harness = Harness::new();
+    let (web, minutes, archive) = harness.register_pair();
+    harness
+        .writer
+        .write(|connection| {
+            let mut settings = crate::persistence::load_role_routing_settings(connection)?;
+            settings.adaptive_improvement.enabled = true;
+            settings.adaptive_improvement.tool = true;
+            connection
+                .execute(
+                    "UPDATE settings_documents SET value_json=?1 WHERE namespace='routing.roles' AND key='default'",
+                    [serde_json::to_string(&settings).map_err(|error| error.to_string())?],
+                )
+                .map_err(|error| error.to_string())?;
+
+            let candidates = vec![web, minutes.clone(), archive];
+            let artifact = crate::adaptive_improvement::create_artifact(
+                connection,
+                crate::adaptive_improvement::Domain::Tool,
+                "A",
+                &candidates,
+                &serde_json::json!({ minutes.clone(): 0.95, "web-rev1": 0.20, "archive-rev1": 0.10 })
+                    .to_string(),
+                200,
+                1,
+            )?;
+            assert_eq!(
+                crate::adaptive_improvement::apply_evaluation_gate(
+                    connection,
+                    &artifact,
+                    crate::adaptive_improvement::EvaluationGate {
+                        examples: 200,
+                        recipe_examples: 30,
+                        independent_groups: 20,
+                        protocol_errors: 0,
+                        invalid_sources: 0,
+                        scope_leaks: 0,
+                        unknown_candidates: 0,
+                        success_ci_lower: 0.01,
+                        resource_improvement_ci_lower: Some(0.05),
+                        other_resource_regression_upper: 0.0,
+                    },
+                )?,
+                "shadow"
+            );
+            crate::adaptive_improvement::approve_shadow(connection, &artifact)?;
+            crate::adaptive_improvement::activate(connection, &artifact, 1, 2)
+        })
+        .expect("activate synthetic artifact");
+
+    let message = harness.insert_message();
+    let context = harness.context(Some(message), Some("A"));
+    let service = harness.service(NO_FEEDBACK);
+    let response = service
+        .search(&context, USER_MESSAGE, 8)
+        .await
+        .expect("search with approved fixture artifact");
+
+    assert_eq!(order(&response), vec!["minutes", "web", "archive"]);
+    let selected_candidate = response.candidates.first().expect("selected Tool");
+    let execution_ref = service
+        .describe(&context, &selected_candidate.reference, "contract", None)
+        .expect("describe selected Tool")
+        .execution_ref
+        .expect("execution reference");
+    let invocation = service
+        .invoke(
+            &context,
+            &execution_ref,
+            &json!({"q": "fixture"}),
+            &crate::RunCancellation::default(),
+        )
+        .await
+        .expect("invoke selected Tool");
+    assert_eq!(
+        invocation.status,
+        super::backends::TechnicalStatus::Succeeded
+    );
+    let (selected, mode): (String, String) = harness
+        .writer
+        .read_serialized(|connection| {
+            connection
+                .query_row(
+                    "SELECT selected,selection_mode FROM ai_decisions ORDER BY created_at_ms DESC LIMIT 1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("adaptive decision");
+    assert_eq!((selected, mode), (minutes, "adaptive".into()));
+    let technical_success: i64 = harness
+        .writer
+        .read_serialized(|connection| {
+            connection
+                .query_row(
+                    "SELECT technical_success FROM ai_outcomes ORDER BY created_at_ms DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("selected Tool outcome");
+    assert_eq!(technical_success, 1);
+}
+
 #[tokio::test]
 async fn g02_project_correction_applies_to_the_next_search() {
     let harness = Harness::new();

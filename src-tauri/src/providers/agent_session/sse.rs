@@ -65,9 +65,11 @@ pub(super) fn initial_input_reserve(
 ) -> Result<usize, String> {
     let base = render_turn_input(&[]).map_err(|kind| kind.as_str().to_string())?;
     let (enabled, coding_enabled) = live_capability_flags(state);
-    let coding_context = coding_enabled
-        .then(|| coding_context(state, input))
-        .unwrap_or(Value::Null);
+    let coding_context = if coding_enabled {
+        coding_context(state, input)
+    } else {
+        Value::Null
+    };
     let prepared = decorate_turn_input(
         &base,
         "<saaa-ui-00000000000000000000000000000000>",
@@ -211,14 +213,14 @@ pub(super) async fn run_agent_session_sse(
         offered_tools.extend(crate::steward::tools::definitions());
     }
     let marker = format!("<saaa-ui-{}>", uuid::Uuid::new_v4().simple());
-    let coding_context = coding_enabled
-        .then(|| {
-            context
-                .output_persistence
-                .map(|persistence| coding_context(persistence.state, context.input))
-                .unwrap_or(Value::Null)
-        })
-        .unwrap_or(Value::Null);
+    let coding_context = if coding_enabled {
+        context
+            .output_persistence
+            .map(|persistence| coding_context(persistence.state, context.input))
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
     input = decorate_turn_input(
         &input,
         &marker,
@@ -314,8 +316,8 @@ pub(super) async fn run_agent_session_sse(
             generation.finish_outcome(&outcome);
             return outcome;
         };
-        if generation.complete().is_err() {
-            return failed(ProviderFailureKind::Internal, output_started);
+        if let Err(kind) = generation.complete() {
+            return failed(kind, output_started);
         }
         if !state.projection.is_control() {
             return ProviderAttemptOutcome::Completed { content, cleanup };

@@ -129,9 +129,12 @@ impl GenerationHandle {
         check: impl FnOnce(&Connection) -> Result<(), String>,
     ) -> Result<(), String> {
         self.writer.write(|connection| {
-            check(connection)?;
-            validate_dependencies(connection, &self.id)?;
-            let changed = connection
+            let transaction = connection
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(database_error)?;
+            check(&transaction)?;
+            validate_dependencies(&transaction, &self.id)?;
+            let changed = transaction
                 .execute(
                     "UPDATE context_generations
                      SET status='dispatched'
@@ -142,7 +145,7 @@ impl GenerationHandle {
             if changed != 1 {
                 return Err("Context generation could not be dispatched".into());
             }
-            Ok(())
+            transaction.commit().map_err(database_error)
         })
     }
 
@@ -158,6 +161,13 @@ impl GenerationHandle {
         self.finish("completed", None)
     }
 
+    pub(crate) fn complete_checked(
+        &self,
+        check: impl FnOnce(&Connection) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.finish_checked("completed", None, check)
+    }
+
     pub(crate) fn fail(&self, failure_kind: &str) -> Result<(), String> {
         self.finish("failed", Some(failure_kind))
     }
@@ -167,8 +177,24 @@ impl GenerationHandle {
     }
 
     fn finish(&self, status: &str, failure_kind: Option<&str>) -> Result<(), String> {
+        self.finish_checked(status, failure_kind, |_| Ok(()))
+    }
+
+    fn finish_checked(
+        &self,
+        status: &str,
+        failure_kind: Option<&str>,
+        check: impl FnOnce(&Connection) -> Result<(), String>,
+    ) -> Result<(), String> {
         self.writer.write(|connection| {
-            validate_dependencies(connection, &self.id)?;
+            let transaction = connection
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(database_error)?;
+            let connection = &transaction;
+            check(connection)?;
+            if status == "completed" {
+                validate_dependencies(connection, &self.id)?;
+            }
             let changed = connection
                 .execute(
                     "UPDATE context_generations
@@ -180,7 +206,7 @@ impl GenerationHandle {
             if changed != 1 {
                 return Err("Context generation was already finalized".into());
             }
-            Ok(())
+            transaction.commit().map_err(database_error)
         })?;
         self.observe_world();
         Ok(())

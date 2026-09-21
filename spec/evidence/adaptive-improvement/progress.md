@@ -50,7 +50,20 @@
   its domain, Scope, eligible-result count, best observed result, and policy revision. An active
   artifact can be returned to fixed rules from the same screen; this retires only that learned
   policy and leaves explicit user overrides intact.
+- AI-09: an isolated synthetic fixture now creates an authorized three-Tool catalog, passes a
+  controlled gate, activates the resulting Tool artifact, and verifies that the normal `search`
+  path selects the learned Tool, invokes it through the regular execution reference, and records
+  both `selection_mode=adaptive` and its successful outcome. The fixture is in-memory only and
+  cannot create user history or production evidence.
+- AI-09: an explicit `mode: "mock"` Tool Selection configuration now enables the same three
+  Tool definitions in a running development build without a local model, external MCP source,
+  or external invocation. It seeds only `adaptive-development-fixture` catalog rows and three
+  explicit synthetic outcomes (web/archive failure, minutes success), materializes them through
+  the normal dataset path, trains an active Tool artifact that prefers `minutes`, and uses the
+  deterministic fixture backend. Direct and real discovery modes never receive those rows.
+  `bun run start:adaptive-fixture` supplies that explicit configuration and an isolated temporary
+  DB for a development launch.
 
-Automatic dataset split, paired evaluation against a fixed rules baseline, artifact promotion,
-rollback UI, and end-to-end real-adapter evaluation remain required. They are intentionally not
-inferred from raw feedback.
+An automatic held-out split and paired evaluation against a fixed rules baseline, plus
+end-to-end real-adapter evaluation, remain required. They are intentionally not inferred from
+raw feedback or the controlled fixture.

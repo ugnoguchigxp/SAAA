@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "start": "tauri dev --no-watch",
+    "start:adaptive-fixture": "fixture_dir=$(mktemp -d \"${TMPDIR:-/tmp}/saaa-adaptive-fixture.XXXXXX\") && echo \"Adaptive fixture data: $fixture_dir\" && SAAA_SMOKE_MARKER_ID=adaptivefixture SAAA_SMOKE_DATA_DIR=\"$fixture_dir\" SAAA_TOOL_SELECTION_CONFIG=\"$PWD/scripts/adaptive-improvement/mock-tool-selection.json\" tauri dev --no-watch",
     "dev": "bun run s11tnext:check && vite",
     "build:frontend": "bun run s11tnext:check && tsc && vite build",
     "build": "bun run build:frontend && bun run ipc:check",

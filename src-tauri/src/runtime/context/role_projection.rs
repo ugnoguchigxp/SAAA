@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RoleProjectionInput {
-    pub(crate) root_scope: String,
+    pub(crate) allowed_scope_keys: HashSet<String>,
     pub(crate) initial: Vec<Candidate>,
     pub(crate) amendments: Vec<Candidate>,
     pub(crate) revoked_source_ids: HashSet<String>,
@@ -17,7 +17,9 @@ pub(crate) struct RoleProjectionInput {
 pub(crate) fn project(input: RoleProjectionInput) -> Result<Vec<Candidate>, String> {
     let mut seen = HashSet::new();
     let mut projected = Vec::new();
+    let mut had_required_context = false;
     for candidate in input.initial.into_iter().chain(input.amendments) {
+        had_required_context |= candidate.requirement == Requirement::Must;
         if input.revoked_source_ids.contains(&candidate.source_id) {
             continue;
         }
@@ -28,7 +30,7 @@ pub(crate) fn project(input: RoleProjectionInput) -> Result<Vec<Candidate>, Stri
             && !candidate
                 .scope_refs
                 .iter()
-                .any(|scope| scope == &input.root_scope)
+                .all(|scope| input.allowed_scope_keys.contains(scope))
         {
             return Err(format!(
                 "role_projection_scope_widening:{}",
@@ -39,7 +41,7 @@ pub(crate) fn project(input: RoleProjectionInput) -> Result<Vec<Candidate>, Stri
             projected.push(candidate);
         }
     }
-    if projected.is_empty() {
+    if had_required_context && projected.is_empty() {
         return Err("role_projection_missing_required_context".into());
     }
     Ok(projected)
@@ -66,7 +68,7 @@ mod tests {
     fn rr_07_amendment_present_once() {
         let amendment = must("amendment", "source-a", vec!["scope-a"]);
         let projected = project(RoleProjectionInput {
-            root_scope: "scope-a".into(),
+            allowed_scope_keys: HashSet::from(["scope-a".into()]),
             initial: vec![must("initial", "source-i", vec!["scope-a"])],
             amendments: vec![amendment.clone(), amendment],
             revoked_source_ids: HashSet::new(),
@@ -79,7 +81,7 @@ mod tests {
     #[test]
     fn rr_07_scope_no_widening_and_revocation_are_rejected() {
         let invalid = project(RoleProjectionInput {
-            root_scope: "scope-a".into(),
+            allowed_scope_keys: HashSet::from(["scope-a".into()]),
             initial: vec![must("foreign", "source-f", vec!["scope-b"])],
             amendments: vec![],
             revoked_source_ids: HashSet::new(),
@@ -88,7 +90,7 @@ mod tests {
             .expect_err("foreign scope")
             .contains("role_projection_scope_widening"));
         let revoked = project(RoleProjectionInput {
-            root_scope: "scope-a".into(),
+            allowed_scope_keys: HashSet::from(["scope-a".into()]),
             initial: vec![must("revoked", "source-r", vec!["scope-a"])],
             amendments: vec![],
             revoked_source_ids: HashSet::from(["source-r".into()]),
@@ -97,5 +99,17 @@ mod tests {
             revoked.expect_err("revoked source"),
             "role_projection_missing_required_context"
         );
+    }
+
+    #[test]
+    fn rr_07_no_required_context_is_a_valid_empty_projection() {
+        let projected = project(RoleProjectionInput {
+            allowed_scope_keys: HashSet::from(["scope-a".into()]),
+            initial: vec![],
+            amendments: vec![],
+            revoked_source_ids: HashSet::new(),
+        })
+        .expect("optional context is absent");
+        assert!(projected.is_empty());
     }
 }

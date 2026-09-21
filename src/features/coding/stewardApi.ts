@@ -17,6 +17,7 @@ const stewardTask = z.object({
   notify: z.string(),
   deliveryState: z.string().nullable(),
   speechState: z.string().nullable(),
+  artifactRefs: z.array(z.string()),
 });
 const stewardRegister = z.object({
   goalId: z.string(),
