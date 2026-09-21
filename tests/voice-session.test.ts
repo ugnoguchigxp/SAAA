@@ -23,10 +23,10 @@ describe("voice session state machine", () => {
 
   test("derives public busy state from the single snapshot", () => {
     const recording = transitionVoiceSession(initialVoiceSession, { type: "captureStarted" });
-    expect(voiceCaptureState(recording)).toBe("recording");
+    expect(voiceCaptureState(recording, true)).toBe("listening");
     expect(voiceSessionBusy(recording)).toBe(true);
     const suspended = transitionVoiceSession(recording, { type: "captureSuspended" });
-    expect(voiceCaptureState(suspended)).toBe("idle");
+    expect(voiceCaptureState(suspended, true)).toBe("preparing");
     expect(voiceSessionBusy(suspended)).toBe(true);
     const starting = transitionVoiceSession(initialVoiceSession, { type: "captureStarting" });
     expect(transitionVoiceSession(starting, { type: "captureSuspended" }).capture).toBe(
@@ -43,10 +43,17 @@ describe("voice session state machine", () => {
     });
     expect(voiceSessionProcessing(finalizing)).toBe(true);
     const detached = transitionVoiceSession(finalizing, { type: "captureDetached" });
-    expect(voiceCaptureState(detached)).toBe("transcribing");
+    expect(voiceCaptureState(detached, true)).toBe("preparing");
     expect(voiceSessionBusy(detached)).toBe(true);
+    expect(voiceCaptureState(finalizing, false)).toBe("preparing");
+    expect(
+      voiceCaptureState(
+        transitionVoiceSession(initialVoiceSession, { type: "actionStarted" }),
+        false,
+      ),
+    ).toBe("preparing");
     const completed = transitionVoiceSession(detached, { type: "finalizeCompleted" });
-    expect(voiceCaptureState(completed)).toBe("idle");
+    expect(voiceCaptureState(completed, false)).toBe("stopped");
     expect(voiceSessionBusy(completed)).toBe(false);
   });
 });

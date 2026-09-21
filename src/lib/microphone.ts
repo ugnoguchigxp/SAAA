@@ -34,7 +34,7 @@ export class MicrophoneCaptureError extends Error {
 export function microphoneCaptureConstraints(inputDeviceId = "default"): MediaTrackConstraints {
   return {
     autoGainControl: false,
-    echoCancellation: false,
+    echoCancellation: true,
     noiseSuppression: false,
     ...(inputDeviceId === "default" ? {} : { deviceId: { exact: inputDeviceId } }),
   };

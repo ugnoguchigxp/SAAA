@@ -2,7 +2,6 @@ import type { AmbientVoiceSessionOptions } from "./ambientVoiceTypes";
 import {
   effectiveCaptureSettings,
   voiceStartupMessage,
-  captureAvailability,
 } from "./voiceCaptureSettings";
 import { idleCaptureShouldStart } from "./idleVoiceCapture";
 export { effectiveCaptureSettings } from "./voiceCaptureSettings";
@@ -27,8 +26,10 @@ import {
   voiceCaptureState,
   voiceSessionBusy,
   voiceSessionProcessing,
+  type VoiceCaptureState,
   type VoiceSessionEvent,
 } from "../../lib/voiceSession";
+import { withTimeout } from "../../lib/promiseTimeout";
 import { attachAmbientVoiceCapture, resetVoiceActivityDetector } from "./ambientVoiceCapture";
 import { VoiceAsrPacketSender } from "./voiceAsrPacketSender";
 import type { CommitReason } from "../../lib/generated/voiceAsr";
@@ -50,13 +51,8 @@ import {
 } from "./voiceAudit";
 
 const ASR_SAMPLE_RATE = 16_000;
-export type VoiceCaptureState = "idle" | "recording" | "transcribing";
-export type AmbientVoiceAvailability =
-  | "disabled"
-  | "connecting"
-  | "listening"
-  | "suspended"
-  | "blocked";
+export type { VoiceCaptureState } from "../../lib/voiceSession";
+export type AmbientVoiceAvailability = VoiceCaptureState;
 type SuspensionReason = "speech";
 
 export function useAmbientVoiceSession({
@@ -93,6 +89,7 @@ export function useAmbientVoiceSession({
   const voiceActivityDetectedRef = useRef(false);
   const voiceActivityUpdatedAtRef = useRef(0);
   const voiceSessionRef = useRef(initialVoiceSession);
+  const voiceToggleGenerationRef = useRef(0);
   const suspensionReasonRef = useRef<SuspensionReason | null>(null);
   const speechResumeTokenRef = useRef<string | null>(null);
   const [resources] = useState(() => new VoiceCaptureResources());
@@ -136,12 +133,11 @@ export function useAmbientVoiceSession({
     return next;
   }
 
-  const voiceState: VoiceCaptureState = voiceCaptureState(voiceSession);
-  const voiceStarting = voiceSession.capture === "starting";
-  const voiceAvailability = captureAvailability(listeningEnabled, voiceSession.capture);
+  const voiceState = voiceCaptureState(voiceSession, listeningEnabled);
+  const voiceAvailability = voiceState;
 
   useEffect(() => {
-    if (voiceState === "recording") return;
+    if (voiceState === "listening") return;
     voiceActivityLevelRef.current = 0;
     voiceActivityDetectedRef.current = false;
     setVoiceActivityLevel(0);
@@ -252,44 +248,63 @@ export function useAmbientVoiceSession({
   }
 
   async function toggleAmbientListening(requestedEnabled?: boolean) {
+    const generation = ++voiceToggleGenerationRef.current;
+    const currentUiState = voiceCaptureState(
+      voiceSessionRef.current,
+      listeningEnabledRef.current,
+    );
+    const shouldEnable = requestedEnabled ?? currentUiState === "stopped";
+    if (!shouldEnable) {
+      // Stopping is always accepted. Keep the UI in preparing until owned
+      // microphone resources have actually been released.
+      updateListeningEnabled(false);
+      try {
+        await pauseAmbientCapture(true);
+      } catch (cause) {
+        if (generation === voiceToggleGenerationRef.current) setError(voiceStartupMessage(cause));
+      }
+      return;
+    }
     if (voiceSessionRef.current.actionInProgress) return;
+    updateListeningEnabled(true);
     applyVoiceEvent({ type: "actionStarted" });
+    let persistedEnabled = false;
     try {
       setError(null);
-      const capture = voiceSessionRef.current.capture;
-      if (requestedEnabled === false) {
-        if (listeningEnabledRef.current || capture !== "idle") await pauseAmbientCapture(true);
-        return;
-      }
-      if (capture === "starting" || capture === "recording" || capture === "suspended") {
-        await pauseAmbientCapture(true);
-        return;
-      }
-      if (listeningEnabledRef.current && voiceSessionProcessing(voiceSessionRef.current)) {
-        await pauseAmbientCapture(true);
-        return;
-      }
-      if (listeningEnabledRef.current) {
-        await attachVoiceCapture();
-        return;
-      }
       if (!selectedConversationIdRef.current || !voiceSettingsRef.current) {
         setError(uiMessage("chatVoiceSettingsUnavailable"));
+        updateListeningEnabled(false);
         return;
       }
+      if (voiceSessionRef.current.finalizing) return;
       if (conversationSessionRef.current.speechRunId) {
         await stopSpeech();
-        if (conversationSessionRef.current.speechRunId) return;
+        if (
+          generation !== voiceToggleGenerationRef.current ||
+          !listeningEnabledRef.current ||
+          conversationSessionRef.current.speechRunId
+        )
+          return;
       }
       const permissionStream = await requestMicrophoneStream(
         microphoneCaptureConstraints(voiceSettingsRef.current.inputDeviceId),
       );
       permissionStream.getTracks().forEach((track) => track.stop());
+      if (generation !== voiceToggleGenerationRef.current || !listeningEnabledRef.current) return;
       await persistListeningEnabled(true);
-      updateListeningEnabled(true);
+      persistedEnabled = true;
+      if (generation !== voiceToggleGenerationRef.current || !listeningEnabledRef.current) {
+        if (listeningEnabledRef.current) return;
+        await persistListeningEnabled(false).catch(() => undefined);
+        return;
+      }
       await attachVoiceCapture();
     } catch (cause) {
-      setError(voiceStartupMessage(cause));
+      if (generation === voiceToggleGenerationRef.current && listeningEnabledRef.current) {
+        updateListeningEnabled(false);
+        if (persistedEnabled) await persistListeningEnabled(false).catch(() => undefined);
+        setError(voiceStartupMessage(cause));
+      }
     } finally {
       applyVoiceEvent({ type: "actionFinished" });
     }
@@ -301,24 +316,23 @@ export function useAmbientVoiceSession({
     suspensionReasonRef.current = null;
     speechResumeTokenRef.current = null;
     let persistenceFailure: unknown = null;
-    if (persist) {
-      try {
-        await persistListeningEnabled(false);
-      } catch (cause) {
-        persistenceFailure = cause;
-      }
-    }
+    const persistence = persist
+      ? persistListeningEnabled(false).catch((cause) => {
+          persistenceFailure = cause;
+        })
+      : Promise.resolve();
     // Pausing ambient listening only prevents future capture. Audio that has
     // already been finalized must still be transcribed and delivered.
     const capture = voiceSessionRef.current.capture;
     if (capture === "starting") {
-      applyVoiceEvent({ type: "captureDetached" });
       await detachVoiceCapture(false);
+      applyVoiceEvent({ type: "captureDetached" });
     } else if (capture === "recording") {
       await finishVoiceCapture(false);
     } else if (capture === "suspended") {
       applyVoiceEvent({ type: "captureDetached" });
     }
+    await persistence;
     if (persistenceFailure) throw persistenceFailure;
   }
 
@@ -552,8 +566,9 @@ export function useAmbientVoiceSession({
       if (listeningEnabledRef.current && sessionId) {
         stoppedBeforeRestart = waitForVoiceAsrStopped(sessionId);
       }
-      await sender.enqueueStop(true);
+      applyVoiceEvent({ type: "captureDetached" });
       await detachVoiceCapture(false, false);
+      await withTimeout(sender.enqueueStop(true), 3_000, "ASR stop timed out");
       return;
     } catch (cause) {
       if (!disposedRef.current) setError((current) => current ?? toMessage(cause));
@@ -660,7 +675,6 @@ export function useAmbientVoiceSession({
   return {
     listeningEnabled,
     voiceActionInProgress: voiceSession.actionInProgress,
-    voiceStarting,
     voiceAvailability,
     voiceState,
     voiceBusy: voiceSessionBusy(voiceSession),

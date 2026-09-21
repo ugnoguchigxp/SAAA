@@ -173,7 +173,7 @@ function App() {
         return;
       }
       if (activeRunId) void turn.stopActiveRun();
-      if (voice.listeningEnabled || voiceState !== "idle") void voice.toggleAmbientListening();
+      if (voiceState !== "stopped") void voice.toggleAmbientListening(false);
       if (activeTtsRunId) void stopSpeech();
     }
   });
@@ -299,7 +299,6 @@ function App() {
                 onComposerChange={turn.setComposer}
                 onSubmit={(event) => void turn.handleSubmit(event)}
                 onToggleVoice={() => void voice.toggleAmbientListening()}
-                voiceStarting={voice.voiceStarting}
                 activeRunId={activeRunId}
                 modelProviderStatus={modelProviderStatus}
                 onOpenSettings={openSettings}

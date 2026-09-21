@@ -27,18 +27,3 @@ export function effectiveCaptureSettings(
   void policy;
   return { ...settings, silenceTimeoutMs: 1_500 };
 }
-
-export function captureAvailability(
-  listening: boolean,
-  capture: import("../../lib/voiceSession").VoiceSession["capture"],
-) {
-  if (!listening) return "disabled" as const;
-  return (
-    {
-      starting: "connecting",
-      recording: "listening",
-      suspended: "suspended",
-      idle: "blocked",
-    } as const
-  )[capture];
-}

@@ -20,15 +20,15 @@ function environment(overrides: Partial<MicrophoneEnvironment> = {}): Microphone
 }
 
 describe("microphone capture", () => {
-  test("captures unprocessed ambient audio without OS-level suppression", () => {
+  test("requests platform echo cancellation for microphone capture", () => {
     expect(microphoneCaptureConstraints()).toEqual({
       autoGainControl: false,
-      echoCancellation: false,
+      echoCancellation: true,
       noiseSuppression: false,
     });
     expect(microphoneCaptureConstraints("microphone-a")).toEqual({
       autoGainControl: false,
-      echoCancellation: false,
+      echoCancellation: true,
       noiseSuppression: false,
       deviceId: { exact: "microphone-a" },
     });

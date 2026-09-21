@@ -35,7 +35,6 @@ export function ChatPage({
   onComposerChange,
   onSubmit,
   onToggleVoice,
-  voiceStarting,
   activeRunId,
   modelProviderStatus,
   onOpenSettings,
@@ -232,24 +231,24 @@ export function ChatPage({
       <form className="composer" onSubmit={submitFromLatest}>
         <div className="composer-row">
           <button
-            className={voiceState === "recording" ? "voice-button recording" : "voice-button"}
+            className={voiceState === "listening" ? "voice-button recording" : "voice-button"}
             type="button"
             aria-pressed={listeningEnabled}
             aria-label={
-              voiceStarting
+              voiceState === "preparing"
                 ? t("chat.micCancel")
-                : !listeningEnabled
+                : voiceState === "stopped"
                   ? t("chat.micResume")
-                  : voiceState === "recording" || voiceState === "transcribing" || activeTtsRunId
+                  : voiceState === "listening" || activeTtsRunId
                     ? t("chat.micPause")
                     : t("chat.micRetry")
             }
             title={
-              voiceStarting
+              voiceState === "preparing"
                 ? t("chat.micCancel")
-                : !listeningEnabled
+                : voiceState === "stopped"
                   ? t("chat.micResume")
-                  : voiceState === "recording" || voiceState === "transcribing" || activeTtsRunId
+                  : voiceState === "listening" || activeTtsRunId
                     ? t("chat.micPause")
                     : t("chat.micRetry")
             }
@@ -257,11 +256,7 @@ export function ChatPage({
           >
             <AppIcon
               name={
-                listeningEnabled &&
-                (voiceStarting ||
-                  voiceState === "recording" ||
-                  voiceState === "transcribing" ||
-                  Boolean(activeTtsRunId))
+                voiceState !== "stopped" || Boolean(activeTtsRunId)
                   ? "stop"
                   : "mic"
               }
@@ -342,7 +337,7 @@ export function ChatPage({
                 : t("chat.processingNotSelected")}
             </button>
           )}
-          {voiceState === "recording" && (
+          {voiceState === "listening" && (
             <span className="composer-hint">
               {t("chat.listeningHint", {
                 seconds:

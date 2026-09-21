@@ -16,9 +16,9 @@ export function useOwnedSignalHeartbeat({
     const input = {
       conversationState: activeRunId ? "model-running" : composer.trim() ? "user-input" : "idle",
       microphoneState:
-        voiceState === "recording"
+        voiceState === "listening"
           ? "saaa-capturing"
-          : voiceState === "transcribing"
+          : voiceState === "preparing"
             ? "saaa-transcribing"
             : "inactive",
       audioState: activeTtsRunId ? "saaa-speaking" : "silent",

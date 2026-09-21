@@ -240,4 +240,94 @@ describe("ambient voice session", () => {
     });
     expect(apiRef.current!.listeningEnabled).toBe(false);
   });
+
+  test("keeps preparing until a pending microphone start is released", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    let resolvePermission!: (stream: MediaStream) => void;
+    const permission = new Promise<MediaStream>((resolve) => {
+      resolvePermission = resolve;
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: () => permission },
+    });
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(
+        createElement(Harness, {
+          apiRef,
+          sessionRef,
+          pendingRef,
+          settings: voiceSettings,
+        }),
+      ),
+    );
+
+    let startPromise!: Promise<void>;
+    await act(async () => {
+      startPromise = apiRef.current!.toggleAmbientListening(true);
+      await Promise.resolve();
+    });
+    expect(apiRef.current!.voiceState).toBe("preparing");
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(false);
+    });
+    expect(apiRef.current!.voiceState).toBe("preparing");
+
+    let lateTrackStopped = false;
+    resolvePermission({
+      getTracks: () => [{ stop: () => (lateTrackStopped = true) }],
+    } as unknown as MediaStream);
+    await act(async () => {
+      await startPromise;
+    });
+    expect(lateTrackStopped).toBe(true);
+    expect(apiRef.current!.voiceState).toBe("stopped");
+    expect(apiRef.current!.voiceActionInProgress).toBe(false);
+  });
+
+  test("releases capture and returns to stopped when ASR stop fails", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(
+        createElement(Harness, {
+          apiRef,
+          sessionRef,
+          pendingRef,
+          settings: voiceSettings,
+        }),
+      ),
+    );
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(true);
+    });
+    expect(apiRef.current!.voiceState).toBe("listening");
+
+    invokeImpl.handler = async (command) => {
+      if (command === "stop_voice_asr_session") throw new Error("stop failed");
+      return command;
+    };
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(false);
+    });
+    expect(apiRef.current!.voiceState).toBe("stopped");
+    expect(apiRef.current!.voiceBusy).toBe(false);
+  });
 });

@@ -58,7 +58,7 @@ describe("macOS microphone bundle configuration", () => {
     expect(
       containsSource(
         readFileSync(join(import.meta.dir, "../src/lib/microphone.ts"), "utf8"),
-        "echoCancellation: false",
+        "echoCancellation: true",
       ),
     ).toBe(true);
   });
@@ -73,6 +73,9 @@ describe("macOS microphone bundle configuration", () => {
   test("guards capture startup and finalization independently", () => {
     const app = chatVoiceSource();
     expect(containsSource(app, "if (voiceSessionRef.current.actionInProgress) return")).toBe(true);
+    expect(app.indexOf("if (!shouldEnable)")).toBeLessThan(
+      app.indexOf("if (voiceSessionRef.current.actionInProgress) return"),
+    );
     expect(containsSource(app, "if (voiceSessionRef.current.finalizing)")).toBe(true);
     expect(containsSource(app, 'applyVoiceEvent({ type: "finalizeRequested", mode })')).toBe(true);
     expect(containsSource(app, 'applyEvent({ type: "captureStarting" })')).toBe(true);
@@ -149,7 +152,7 @@ describe("macOS microphone bundle configuration", () => {
     expect(containsSource(app, "context.captureLease.current === release")).toBe(true);
     expect(containsSource(app, "if (context.node.current !== node) return")).toBe(true);
     expect(containsSource(app, "voiceNodeRef.current.port.onmessage = null")).toBe(true);
-    expect(containsSource(app, 'voiceStarting ? t("chat.micCancel")')).toBe(true);
+    expect(containsSource(app, 'voiceState === "preparing"')).toBe(true);
     expect(containsSource(app, "disabled={meetingActive}")).toBe(false);
     expect(containsSource(app, "aria-pressed={listeningEnabled}")).toBe(true);
     expect(containsSource(app, "disabled={!composer.trim() || !selectedConversation}")).toBe(true);

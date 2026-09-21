@@ -49,10 +49,19 @@ export function transitionVoiceSession(
   }
 }
 
-export function voiceCaptureState(state: VoiceSession): "idle" | "recording" | "transcribing" {
-  if (state.capture === "recording") return "recording";
-  if (state.finalizing) return "transcribing";
-  return "idle";
+export type VoiceCaptureState = "stopped" | "preparing" | "listening";
+
+export function voiceCaptureState(
+  state: VoiceSession,
+  listeningEnabled: boolean,
+): VoiceCaptureState {
+  if (!listeningEnabled) {
+    return state.actionInProgress || state.capture !== "idle" || state.finalizing
+      ? "preparing"
+      : "stopped";
+  }
+  if (state.capture === "recording" && !state.finalizing) return "listening";
+  return "preparing";
 }
 
 export function voiceSessionBusy(state: VoiceSession): boolean {

@@ -516,11 +516,9 @@ export const en = {
       "While recording, audio chunks are sent to ASR in order and the transcript updates continuously. Local VAD uses silence only to finalize the utterance and submit it to the LLM once.",
     listening: "Listening",
     status: {
-      disabled: "Off (enable to grant access)",
-      connecting: "Connecting to speech recognition",
+      stopped: "Stopped",
+      preparing: "Preparing",
       listening: "Listening",
-      suspended: "Temporarily paused",
-      blocked: "Could not start (retry available)",
     },
     detection: "Detection",
     cloudUpload: "Cloud upload",

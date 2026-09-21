@@ -34,7 +34,6 @@ export type ChatPageProps = {
   onComposerChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onToggleVoice: () => void;
-  voiceStarting: boolean;
   activeRunId: string | null;
   modelProviderStatus: {
     ready: boolean;
