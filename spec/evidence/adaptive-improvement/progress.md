@@ -62,7 +62,15 @@
   the normal dataset path, trains an active Tool artifact that prefers `minutes`, and uses the
   deterministic fixture backend. Direct and real discovery modes never receive those rows.
   `bun run start:adaptive-fixture` supplies that explicit configuration and an isolated temporary
-  DB for a development launch.
+  DB for a development launch. The runtime additionally requires
+  `SAAA_ADAPTIVE_FIXTURE=1`, a smoke marker, and an absolute smoke-data directory; a mock
+  configuration file alone is disabled before any fixture catalog, observation, outcome, or
+  artifact is seeded into the application ledger. Fixture-mode database resolution also accepts
+  only an existing private `saaa-adaptive-fixture.*` launcher directory that differs from normal
+  app data. The launcher removes that temporary directory at exit unless
+  `SAAA_ADAPTIVE_FIXTURE_KEEP_DATA=1` is explicitly set for investigation. The generic
+  Tool-selection service opener refuses the seeded mock configuration; the evaluator uses its
+  separate blank mock lane instead.
 
 An automatic held-out split and paired evaluation against a fixed rules baseline, plus
 end-to-end real-adapter evaluation, remain required. They are intentionally not inferred from

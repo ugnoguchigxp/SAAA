@@ -28,8 +28,8 @@ export type StewardNotify = "both" | "silent" | "speak";
 export const STEWARD_START_TRIGGER = "テストを確認して";
 export function stewardErrorMessage(error: unknown): string {
   const text = String(error);
-  if (text.includes("active_goal_exists"))
-    return "同じ会話に有効な Goal が既にあります。先に撤回してください。";
+  if (text.includes("active_goal_limit"))
+    return "この会話では有効な Goal は最大 8 件です。不要な Goal を撤回してから登録してください。";
   if (text.includes("workspace_required"))
     return "執事 Goal を登録するには実装先ワークスペースが必要です。";
   if (text.includes("steward_register_invalid")) return "成功条件を入力してください。";

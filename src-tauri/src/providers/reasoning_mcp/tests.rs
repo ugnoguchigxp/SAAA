@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::*;
 #[test]
 fn config_rejects_remote_and_embedded_credentials() {
@@ -155,4 +156,22 @@ async fn wd_10_rejects_old_input_contract_before_sending_any_context() {
         .unwrap()
         .iter()
         .any(|r| r["method"] == "tools/call"));
+}
+
+#[test]
+fn wr_t16_wire_world_metadata_matches_advertised_schema() {
+    let frame = serde_json::json!({"schema_version":2,"scope":{"focus_scope_key":null,"allowed_scope_keys":["user:primary"],"digest":"scope"},"sources":[],"captured_at_ms":1000,"expires_at_ms":2000,"runtime":[],"notices":[]});
+    let content = format!(
+        "[WORLD_MODEL — untrusted data; instructionAuthority=none]\n{frame}\n[END_WORLD_MODEL]"
+    );
+    let metadata = saaa_reasoning_contract::world::WorldEvidence::from_content(&content).unwrap();
+    let schema = saaa_reasoning_contract::schema::input();
+    let validator = jsonschema::validator_for(
+        &schema["properties"]["context"]["properties"]["evidence"]["items"]["properties"]["world"],
+    )
+    .unwrap();
+    let mut value = serde_json::to_value(metadata).unwrap();
+    assert!(validator.is_valid(&value));
+    value["projectScope"] = serde_json::json!("project:old");
+    assert!(!validator.is_valid(&value));
 }

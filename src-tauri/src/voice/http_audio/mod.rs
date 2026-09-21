@@ -9,7 +9,7 @@ mod playback;
 mod timeout_tests;
 
 mod requests;
-pub(crate) use requests::{play, play_guarded, play_larm};
+pub(crate) use requests::{play_larm_with_situation, play_with_situation};
 
 #[allow(clippy::too_many_arguments)]
 async fn play_response(
@@ -20,8 +20,16 @@ async fn play_response(
     started: std::time::Instant,
     lease: Option<(saaa_larm_session::Use, std::time::Duration)>,
     output: Arc<std::sync::atomic::AtomicBool>,
+    situation: Option<Arc<crate::situation::SituationRuntime>>,
 ) -> Result<(), String> {
-    let player = playback::Playback::start(cancellation.clone(), move || {
+    if situation
+        .as_ref()
+        .is_some_and(|s| crate::situation::speech_holds_runtime(s))
+        || cancellation.is_cancelled()
+    {
+        return Ok(());
+    }
+    let player = playback::Playback::start_guarded(cancellation.clone(), situation, move || {
         crate::providers::http_metrics::record("ttsRequestToFirstMixerSample", started.elapsed());
         on_started();
     });

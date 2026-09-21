@@ -4,25 +4,20 @@
 //! replacement for normal conversation: an unobservable meeting state, for example, stays
 //! `unknown` instead of being inferred from a model completion.
 
+#[cfg(test)]
 use super::scope::ScopeSnapshot;
+#[cfg(test)]
 use crate::{database_error, now_iso};
+#[cfg(test)]
 use rusqlite::{params, Connection, OptionalExtension};
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StateAnswer {
     pub(crate) claim: String,
     pub(crate) source_ref: String,
     pub(crate) as_of: String,
     pub(crate) status: String,
-}
-
-impl StateAnswer {
-    pub(crate) fn render(&self) -> String {
-        format!(
-            "{}\n\n状態: {}\n確認時刻: {}\n根拠: {}",
-            self.claim, self.status, self.as_of, self.source_ref
-        )
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +29,7 @@ enum Query {
 
 /// Returns `None` for ordinary conversation. State cards are intentionally opt-in to a narrow
 /// vocabulary so a request such as “作業を進めて” still reaches the selected provider.
+#[cfg(test)]
 pub(crate) fn answer(
     connection: &Connection,
     content: &str,
@@ -59,8 +55,36 @@ pub(crate) fn answer(
     Ok(Some(answer))
 }
 
+pub(crate) fn is_state_query(content: &str) -> bool {
+    classify(content).is_some()
+}
 fn classify(content: &str) -> Option<Query> {
     let value = content.trim().to_lowercase();
+    // Actions and compound requests must reach the normal tool-capable route.
+    if [
+        "実装",
+        "変更",
+        "修正",
+        "開始",
+        "キャンセル",
+        "中止",
+        "停止",
+        "削除",
+        "再開",
+        "続け",
+        "してから",
+        "した後",
+        "start ",
+        "cancel ",
+        "implement ",
+        " and ",
+    ]
+    .iter()
+    .any(|word| value.contains(word))
+        && !value.contains("何を進めて")
+    {
+        return None;
+    }
     if value.is_empty() {
         return None;
     }
@@ -92,6 +116,7 @@ fn classify(content: &str) -> Option<Query> {
     None
 }
 
+#[cfg(test)]
 fn current_task(connection: &Connection, scope: &ScopeSnapshot, as_of: String) -> StateAnswer {
     let task_id = scope
         .scopes
@@ -142,31 +167,35 @@ fn current_task(connection: &Connection, scope: &ScopeSnapshot, as_of: String) -
     }
 }
 
+#[cfg(test)]
 fn next_deadline(connection: &Connection, scope: &ScopeSnapshot, as_of: String) -> StateAnswer {
     let keys = scope
         .scopes
         .iter()
         .map(|scope| scope.key.as_str())
         .collect::<Vec<_>>();
-    let row = keys.into_iter().find_map(|scope_key| {
-        connection
-            .query_row(
-                "SELECT id,due_at,revision,status FROM schedule_entries
+    let row = keys
+        .into_iter()
+        .filter_map(|scope_key| {
+            connection
+                .query_row(
+                    "SELECT id,due_at,revision,status FROM schedule_entries
                  WHERE scope_ref=?1 AND status IN ('scheduled','firing') ORDER BY due_at LIMIT 1",
-                params![scope_key],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                },
-            )
-            .optional()
-            .ok()
-            .flatten()
-    });
+                    params![scope_key],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .optional()
+                .ok()
+                .flatten()
+        })
+        .min_by_key(|row| (row.1, row.0.clone()));
     match row {
         Some((id, due_at, revision, status)) => StateAnswer {
             claim: format!("次の期限は {id} で、予定時刻は {due_at} です。"),

@@ -237,3 +237,5 @@ mod tests {
         shutdown().await;
     }
 }
+
+mod world_tests;

@@ -8,32 +8,17 @@ pub async fn extract(
     input: Value,
     cancel: Arc<RunCancellation>,
 ) -> Result<String, String> {
+    let world = input["purpose"] == "world-extraction";
+    let instruction = if world {
+        super::world::extraction::INSTRUCTION
+    } else {
+        worker::EXTRACTION_INSTRUCTION
+    };
     let source: SourceRef = serde_json::from_value(input["source"]["ref"].clone())
         .map_err(|_| "personal-extraction-source")?;
     let ledger = a.writer.read_serialized(super::store::load)?;
-    let mut sources = vec![source.clone()];
-    if let Some(pending) = input["current"]["pending"].as_array() {
-        for entry in pending {
-            let s: SourceRef = serde_json::from_value(entry["source"].clone())
-                .map_err(|_| "personal-base-source")?;
-            if !sources.contains(&s) {
-                sources.push(s);
-            }
-        }
-    }
-    for assertion in ledger.assertions.values() {
-        if assertion.kind.is_world() {
-            continue;
-        }
-        for key in &assertion.input_dependencies {
-            if let Some(s) = ledger.sources.get(key) {
-                if !sources.contains(s) {
-                    sources.push(s.clone());
-                }
-            }
-        }
-    }
-    let request = json!({"model":a.certification.model,"messages":[{"role":"system","content":worker::EXTRACTION_INSTRUCTION},{"role":"user","content":super::encode(&json!({"current":input["current"],"source_ref":source.key,"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}],"max_tokens":2000,"temperature":0,"stream":false});
+    let sources = sources::select(&ledger, &source, &input, world)?;
+    let request = json!({"model":a.certification.model,"messages":[{"role":"system","content":instruction},{"role":"user","content":super::encode(&json!({"current":input["current"],"source_ref":source.key,"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}],"max_tokens":2000,"temperature":0,"stream":false});
     let id = crate::new_id("generation");
     let m = generation::Manifest {
         generation_id: id.clone(),
@@ -43,7 +28,12 @@ pub async fn extract(
         input_epoch: ledger.input_epoch,
         policy_revision: ledger.policy_revision,
         projection_revision: ledger.revision,
-        purpose: "personal_state_extract".into(),
+        purpose: if world {
+            "world-extraction"
+        } else {
+            "personal_state_extract"
+        }
+        .into(),
         request_digest: String::new(),
         sources,
         allocation: a.certification.allocation.clone(),
@@ -61,3 +51,6 @@ pub async fn extract(
         .map(str::to_string)
         .ok_or("personal-generation-output".into())
 }
+
+#[path = "product_extract_sources.rs"]
+mod sources;

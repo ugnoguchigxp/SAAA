@@ -19,6 +19,11 @@ use crate::providers::stream::{
 };
 
 mod coding_bridge;
+mod fresh_session;
+mod transport;
+#[cfg(test)]
+use transport::{accept_event, parse_event, take_event};
+use transport::{idempotency_key, is_event_stream, read_turn};
 mod generation;
 mod request;
 use request::{render_turn_input, start_turn};
@@ -184,6 +189,13 @@ pub(super) async fn run_agent_session_sse(
     let world = context
         .output_persistence
         .and_then(|persistence| persistence.world);
+    let mut current_history = history.to_vec();
+    if let Some(world) = world {
+        if world.refresh_history(&mut current_history).is_err() {
+            return failed(ProviderFailureKind::ContextScopeChanged, false);
+        }
+    }
+    let history = current_history.as_slice();
     let (provider_history, initial_world) = world
         .map(|world| world.provider_history(history))
         .unwrap_or_else(|| (history.to_vec(), false));
@@ -200,10 +212,14 @@ pub(super) async fn run_agent_session_sse(
         Ok(input) => input,
         Err(kind) => return failed(kind, false),
     };
-    let (enabled, coding_enabled) = context
+    let (mut enabled, mut coding_enabled) = context
         .output_persistence
         .map(|persistence| live_capability_flags(persistence.state))
         .unwrap_or((false, false));
+    if crate::runtime::context::state_answer::is_state_query(&context.input.content) {
+        enabled = false;
+        coding_enabled = false;
+    }
     let mut offered_tools = Vec::new();
     if enabled {
         offered_tools.extend(crate::generative_ui::tools::definitions());
@@ -213,7 +229,7 @@ pub(super) async fn run_agent_session_sse(
         offered_tools.extend(crate::steward::tools::definitions());
     }
     let marker = format!("<saaa-ui-{}>", uuid::Uuid::new_v4().simple());
-    let coding_context = if coding_enabled {
+    let initial_coding_context = if coding_enabled {
         context
             .output_persistence
             .map(|persistence| coding_context(persistence.state, context.input))
@@ -226,26 +242,86 @@ pub(super) async fn run_agent_session_sse(
         &marker,
         enabled,
         coding_enabled,
-        coding_context.clone(),
+        initial_coding_context.clone(),
     );
     follow_up_base = decorate_turn_input(
         &follow_up_base,
         &marker,
         enabled,
         coding_enabled,
-        coding_context,
+        initial_coding_context,
     );
     if input.len() > 1_000_000 || follow_up_base.len() > 1_000_000 {
         return failed(ProviderFailureKind::RequestTooLarge, false);
     }
     let base_envelope = generation::Envelope::new(&follow_up_base);
     let mut cursor = None;
+    let mut fresh = None;
+    let mut tool_history = Vec::<Value>::new();
     let mut output_started = false;
     for round in 0..=12 {
         // The remote session receives the World only in its initial turn. Tool follow-ups are
         // explicitly recorded without it; they must not claim that an old frame was resent.
-        let include_world =
+        let mut include_world =
             initial_world && round == 0 && world.is_some_and(|world| world.revalidate_current());
+        if round > 0 {
+            if let Some(world) = world {
+                match world.refresh_history(&mut current_history) {
+                    Ok(true) => {
+                        fresh = match fresh_session::FreshSession::create(
+                            client,
+                            provider,
+                            api_key,
+                            context.cancellation.clone(),
+                            deadline,
+                        )
+                        .await
+                        {
+                            Ok(session) => Some(session),
+                            Err(kind) => return failed(kind, output_started),
+                        };
+                        // Creation may have taken longer than the frame TTL.
+                        if world.refresh_history(&mut current_history).is_err() {
+                            return failed(
+                                ProviderFailureKind::ContextScopeChanged,
+                                output_started,
+                            );
+                        }
+                        let base = match render_turn_input(&current_history) {
+                            Ok(base) => base,
+                            Err(kind) => return failed(kind, output_started),
+                        };
+                        let base = decorate_turn_input(
+                            &base,
+                            &marker,
+                            enabled,
+                            coding_enabled,
+                            context
+                                .output_persistence
+                                .map(|p| coding_context(p.state, context.input))
+                                .unwrap_or(Value::Null),
+                        );
+                        input = generation::Envelope::new(&base).follow_up(
+                            &json!({"history":tool_history,"authority":"none"}).to_string(),
+                        );
+                        include_world = world.revalidate_current();
+                        if !include_world {
+                            return failed(
+                                ProviderFailureKind::ContextScopeChanged,
+                                output_started,
+                            );
+                        }
+                        cursor = None;
+                    }
+                    Ok(false) => {}
+                    Err(_) => {
+                        return failed(ProviderFailureKind::ContextScopeChanged, output_started)
+                    }
+                }
+            }
+        }
+        let session = fresh.as_ref().map(|f| &f.session).unwrap_or(session);
+        let current_events = fresh.as_ref().map(|f| &f.events).unwrap_or(&events_url);
         if round == 0 && !include_world {
             input = follow_up_base.clone();
         }
@@ -302,7 +378,7 @@ pub(super) async fn run_agent_session_sse(
             client,
             provider,
             session,
-            &events_url,
+            current_events,
             &turn,
             deadline,
             api_key,
@@ -312,6 +388,14 @@ pub(super) async fn run_agent_session_sse(
         .await;
         cursor = state.last_cursor;
         output_started = state.output_started;
+        if let Some(session) = fresh.take() {
+            if let Err(kind) = session.release().await {
+                generation.fail("followup-session-release-unconfirmed");
+                return failed(kind, true).with_cleanup(CleanupOutcome::ReleaseFailed {
+                    kind: kind.as_str(),
+                });
+            }
+        }
         let ProviderAttemptOutcome::Completed { content, cleanup } = outcome else {
             generation.finish_outcome(&outcome);
             return outcome;
@@ -396,10 +480,11 @@ pub(super) async fn run_agent_session_sse(
                         return failed(ProviderFailureKind::ClientDisconnected, true);
                     }
                 }
-                json!({"name":call.name,"result":value})
+                json!({"callId":call.id,"name":call.name,"arguments":call.arguments,"result":value})
             }
             Err(()) => return failed(ProviderFailureKind::Protocol, output_started),
         };
+        tool_history.push(result.clone());
         input = ui_bridge::result_input(result, &marker, 11 - round);
         if coding_enabled {
             input = ui_bridge::coding_input(&input, &marker, Value::Null);
@@ -410,297 +495,6 @@ pub(super) async fn run_agent_session_sse(
         }
     }
     failed(ProviderFailureKind::Protocol, output_started)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn read_turn(
-    client: &Client,
-    provider: &AgentSessionProviderSettings,
-    session: &SessionResponse,
-    events_url: &Url,
-    turn: &TurnResponse,
-    deadline: TokioInstant,
-    api_key: Option<&str>,
-    context: &ModelStreamContext<'_>,
-    state: &mut StreamState,
-) -> ProviderAttemptOutcome {
-    let mut reconnects = 0;
-    let result = loop {
-        let request = authorized(
-            client
-                .get(events_url.clone())
-                .header(header::ACCEPT, "text/event-stream"),
-            api_key,
-        );
-        let request = match state.last_cursor.as_deref() {
-            Some(cursor) => request.header("Last-Event-ID", cursor),
-            None => request,
-        };
-        let response = tokio::select! {
-            _ = context.cancellation.cancelled() => break ReadResult::Cancelled,
-            _ = tokio::time::sleep_until(deadline) => break ReadResult::Failed(ProviderFailureKind::Timeout),
-            response = send(request) => match response {
-                Ok(response) => response,
-                Err(kind) => break ReadResult::Failed(kind),
-            },
-        };
-        if !is_event_stream(&response) {
-            break ReadResult::Failed(ProviderFailureKind::Protocol);
-        }
-        match read_connection(response, session, &turn.id, deadline, context, state).await {
-            ReadResult::Reconnect if reconnects < MAX_RECONNECTS && state.last_cursor.is_some() => {
-                reconnects += 1;
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            result => break result,
-        }
-    };
-    let (attempt, terminal) = match result {
-        ReadResult::Terminal(outcome) => (outcome, true),
-        ReadResult::Cancelled => (super::cancelled(state.output_started), false),
-        ReadResult::Failed(kind) => (failed(kind, state.output_started), false),
-        ReadResult::Reconnect => (
-            failed(ProviderFailureKind::Network, state.output_started),
-            false,
-        ),
-    };
-    if !terminal {
-        let _ = cancel_turn(client, provider, &session.id, &turn.id, api_key).await;
-    }
-    attempt
-}
-
-async fn cancel_turn(
-    client: &Client,
-    provider: &AgentSessionProviderSettings,
-    session_id: &str,
-    turn_id: &str,
-    api_key: Option<&str>,
-) -> Result<(), ProviderFailureKind> {
-    if !safe_remote_id(turn_id) {
-        return Err(ProviderFailureKind::Protocol);
-    }
-    let mut url = session_operation_url(provider, session_id, "turns")?;
-    url.path_segments_mut()
-        .map_err(|_| ProviderFailureKind::Contract)?
-        .push(turn_id)
-        .push("cancel");
-    send(authorized(client.post(url), api_key).header("Idempotency-Key", idempotency_key()))
-        .await
-        .map(|_| ())
-}
-
-async fn read_connection(
-    response: Response,
-    session: &SessionResponse,
-    turn_id: &str,
-    deadline: TokioInstant,
-    context: &ModelStreamContext<'_>,
-    state: &mut StreamState,
-) -> ReadResult {
-    let mut chunks = response.bytes_stream();
-    let mut buffer = Vec::new();
-    loop {
-        let chunk = tokio::select! {
-            _ = context.cancellation.cancelled() => return ReadResult::Cancelled,
-            _ = tokio::time::sleep_until(deadline) => return ReadResult::Failed(ProviderFailureKind::Timeout),
-            chunk = chunks.next() => chunk,
-        };
-        let Some(chunk) = chunk else {
-            return ReadResult::Reconnect;
-        };
-        let chunk = match chunk {
-            Ok(chunk) => chunk,
-            Err(_) => return ReadResult::Reconnect,
-        };
-        if buffer.len().saturating_add(chunk.len()) > MAX_SSE_EVENT_BYTES {
-            return ReadResult::Failed(ProviderFailureKind::RequestTooLarge);
-        }
-        buffer.extend_from_slice(&chunk);
-        while let Some(block) = take_event(&mut buffer) {
-            let parsed = match parse_event(&block) {
-                Ok(Some(parsed)) => parsed,
-                Ok(None) => continue,
-                Err(kind) => return ReadResult::Failed(kind),
-            };
-            if let Some(outcome) = accept_event(parsed, session, turn_id, context, state) {
-                return outcome;
-            }
-        }
-    }
-}
-
-fn accept_event(
-    parsed: ParsedEvent,
-    session: &SessionResponse,
-    turn_id: &str,
-    context: &ModelStreamContext<'_>,
-    state: &mut StreamState,
-) -> Option<ReadResult> {
-    let event = parsed.payload;
-    if parsed
-        .event_name
-        .as_deref()
-        .is_some_and(|name| name != event.event_type)
-        || event.session_id != session.id
-        || event
-            .cursor
-            .as_deref()
-            .zip(parsed.id.as_deref())
-            .is_some_and(|(cursor, id)| cursor != id)
-    {
-        return Some(ReadResult::Failed(ProviderFailureKind::Protocol));
-    }
-    if let Some(cursor) = parsed.id.or(event.cursor) {
-        if cursor.is_empty() || cursor.len() > 4_096 || cursor.chars().any(char::is_control) {
-            return Some(ReadResult::Failed(ProviderFailureKind::Protocol));
-        }
-        if state.last_cursor.as_deref() == Some(cursor.as_str()) {
-            return None;
-        }
-        state.last_cursor = Some(cursor);
-    }
-    let event_turn_id = event.turn_id.as_deref()?;
-    if event_turn_id != turn_id {
-        return Some(ReadResult::Failed(ProviderFailureKind::Protocol));
-    }
-    match event.event_type.as_str() {
-        "message.delta" => append_text(event.data.get("text"), context, state),
-        "message.completed" if state.content.is_empty() => {
-            append_text(event.data.get("text"), context, state)
-        }
-        "turn.completed" if state.content.is_empty() => Some(ReadResult::Terminal(failed(
-            ProviderFailureKind::Protocol,
-            state.output_started,
-        ))),
-        "turn.completed" => Some(ReadResult::Terminal(ProviderAttemptOutcome::Completed {
-            content: std::mem::take(&mut state.content),
-            cleanup: CleanupOutcome::NotStarted,
-        })),
-        "turn.cancelled" => Some(ReadResult::Terminal(super::cancelled(state.output_started))),
-        "turn.failed" => Some(ReadResult::Terminal(failed(
-            ProviderFailureKind::Upstream,
-            state.output_started,
-        ))),
-        "turn.unqueued" => Some(ReadResult::Terminal(failed(
-            ProviderFailureKind::Capacity,
-            state.output_started,
-        ))),
-        "approval.requested" | "user_input.requested" => {
-            Some(ReadResult::Failed(ProviderFailureKind::Policy))
-        }
-        _ => None,
-    }
-}
-
-fn append_text(
-    value: Option<&Value>,
-    context: &ModelStreamContext<'_>,
-    state: &mut StreamState,
-) -> Option<ReadResult> {
-    let Some(text) = value.and_then(Value::as_str) else {
-        return Some(ReadResult::Failed(ProviderFailureKind::Protocol));
-    };
-    if text.is_empty() {
-        return None;
-    }
-    let chars = text.chars().count();
-    if state.content.len().saturating_add(text.len()) > MAX_CONTENT_BYTES
-        || state.content_chars.saturating_add(chars) > MAX_CONTENT_CHARS
-    {
-        return Some(ReadResult::Failed(ProviderFailureKind::RequestTooLarge));
-    }
-    state.content.push_str(text);
-    state.content_chars += chars;
-    let visible = match state.projection.push(text) {
-        Ok(text) => text,
-        Err(()) => return Some(ReadResult::Failed(ProviderFailureKind::RequestTooLarge)),
-    };
-    if visible.is_empty() {
-        return None;
-    }
-    if !state.output_started {
-        if context
-            .output_persistence
-            .is_some_and(|persistence| persistence.mark_started().is_err())
-        {
-            return Some(ReadResult::Failed(ProviderFailureKind::Internal));
-        }
-        state.output_started = true;
-    }
-    if context
-        .on_event
-        .send_received(
-            RuntimeEvent::Delta {
-                run_id: context.input.run_id.clone(),
-                text: visible,
-            },
-            Instant::now(),
-        )
-        .is_err()
-    {
-        return Some(ReadResult::Failed(ProviderFailureKind::ClientDisconnected));
-    }
-    None
-}
-
-fn is_event_stream(response: &Response) -> bool {
-    response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(';').next())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"))
-}
-
-fn take_event(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let (start, delimiter) = (0..buffer.len()).find_map(|index| {
-        if buffer.get(index..index + 2) == Some(b"\n\n") {
-            Some((index, 2))
-        } else if buffer.get(index..index + 4) == Some(b"\r\n\r\n") {
-            Some((index, 4))
-        } else {
-            None
-        }
-    })?;
-    let mut consumed = buffer.drain(..start + delimiter).collect::<Vec<_>>();
-    consumed.truncate(start);
-    Some(consumed)
-}
-
-fn parse_event(block: &[u8]) -> Result<Option<ParsedEvent>, ProviderFailureKind> {
-    let text = std::str::from_utf8(block).map_err(|_| ProviderFailureKind::Protocol)?;
-    let mut event_name = None;
-    let mut id = None;
-    let mut data = Vec::new();
-    for line in text.lines() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if line.starts_with(':') {
-            continue;
-        }
-        let (field, value) = line.split_once(':').unwrap_or((line, ""));
-        let value = value.strip_prefix(' ').unwrap_or(value);
-        match field {
-            "event" => event_name = Some(value.to_string()),
-            "id" => id = Some(value.to_string()),
-            "data" => data.push(value),
-            _ => {}
-        }
-    }
-    if data.is_empty() {
-        return Ok(None);
-    }
-    let payload =
-        serde_json::from_str(&data.join("\n")).map_err(|_| ProviderFailureKind::Protocol)?;
-    Ok(Some(ParsedEvent {
-        event_name,
-        id,
-        payload,
-    }))
-}
-
-fn idempotency_key() -> String {
-    format!("saaa_{}", uuid::Uuid::new_v4().simple())
 }
 
 #[cfg(test)]

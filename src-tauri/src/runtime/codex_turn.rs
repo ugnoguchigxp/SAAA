@@ -61,7 +61,8 @@ pub(crate) async fn execute_codex_turn(
     let run_id = input.run_id.clone();
     let prompt = input.content.clone();
     let mut dispatch =
-        super::codex_context::Dispatch::new(state.sqlite_writer.clone(), run_id.clone());
+        super::codex_context::Dispatch::new(state.sqlite_writer.clone(), run_id.clone())
+            .with_world(state)?;
     let model = settings.model.clone();
     let workspace_for_worker = workspace.clone();
     let on_event_for_worker = on_event.clone_box();

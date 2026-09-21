@@ -227,8 +227,37 @@ impl WorldFrame {
         if scope != self.scope {
             return Err(FrameError::InvalidInput);
         }
+        let mut kinds = std::collections::BTreeSet::new();
+        let mut source_ids = std::collections::BTreeSet::new();
+        let mut tasks = 0;
         for group in &self.sources {
             group.validate().map_err(|_| FrameError::InvalidInput)?;
+            if !kinds.insert(group.kind) {
+                return Err(FrameError::InvalidInput);
+            }
+            use super::frame_sources::WorldSourceKind;
+            match group.kind {
+                WorldSourceKind::Situation if group.entries.len() > 1 => {
+                    return Err(FrameError::Limit)
+                }
+                WorldSourceKind::Schedule if group.entries.len() > 8 => {
+                    return Err(FrameError::Limit)
+                }
+                WorldSourceKind::Coding | WorldSourceKind::Delegation => {
+                    tasks += group.entries.len()
+                }
+                _ => {}
+            }
+            for entry in &group.entries {
+                if !scope.allowed_scope_keys.contains(&entry.owner_scope_key)
+                    || !source_ids.insert((entry.kind, &entry.source_id))
+                {
+                    return Err(FrameError::ScopeDenied);
+                }
+            }
+        }
+        if tasks > 8 {
+            return Err(FrameError::Limit);
         }
         if self.encoded_len()? > MAX_FRAME_BYTES {
             return Err(FrameError::Limit);

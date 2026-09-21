@@ -44,6 +44,18 @@ pub(crate) fn frontend_ready(state: &AppState) -> Result<(), String> {
 pub(crate) fn application_database_path(
     app: &tauri::App,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if env::var_os("SAAA_ADAPTIVE_FIXTURE").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        if env::var_os("SAAA_SMOKE_MARKER_ID").is_none() {
+            return Err("SAAA_ADAPTIVE_FIXTURE requires SAAA_SMOKE_MARKER_ID".into());
+        }
+        let directory = env::var_os("SAAA_SMOKE_DATA_DIR")
+            .map(PathBuf::from)
+            .ok_or("SAAA_ADAPTIVE_FIXTURE requires SAAA_SMOKE_DATA_DIR")?;
+        let normal_directory = app.path().app_data_dir()?;
+        let directory = validate_adaptive_fixture_data_directory(&directory, &normal_directory)
+            .map_err(std::io::Error::other)?;
+        return Ok(directory.join("saaa.sqlite3"));
+    }
     if env::var_os("SAAA_SMOKE_MARKER_ID").is_some() {
         if let Some(directory) = env::var_os("SAAA_SMOKE_DATA_DIR").map(PathBuf::from) {
             if !directory.is_absolute() {
@@ -62,6 +74,27 @@ pub(crate) fn application_database_path(
     }
     fs::create_dir_all(&directory)?;
     Ok(directory.join("saaa.sqlite3"))
+}
+
+/// The adaptive Tool fixture is intentionally kept outside normal application state. Unlike the
+/// generic smoke-data override, this lane refuses to create a directory and accepts only a fresh,
+/// private `mktemp`-style fixture directory.
+pub(crate) fn validate_adaptive_fixture_data_directory(
+    directory: &Path,
+    normal_app_data: &Path,
+) -> Result<PathBuf, String> {
+    let name = directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "SAAA_ADAPTIVE_FIXTURE data directory name is invalid".to_string())?;
+    if !name.starts_with("saaa-adaptive-fixture.") {
+        return Err(
+            "SAAA_ADAPTIVE_FIXTURE data directory must be created by the fixture launcher"
+                .to_string(),
+        );
+    }
+    validate_readiness_data_directory(directory, normal_app_data)
+        .map_err(|error| format!("SAAA_ADAPTIVE_FIXTURE data directory is not isolated: {error}"))
 }
 
 pub(crate) fn validate_readiness_data_directory(
@@ -145,5 +178,40 @@ mod tests {
                 validate_readiness_data_directory(directory.path(), Path::new("/tmp")).is_err()
             );
         }
+    }
+
+    #[test]
+    fn adaptive_fixture_directory_must_be_private_launcher_data() {
+        let directory = tempfile::Builder::new()
+            .prefix("saaa-adaptive-fixture.")
+            .tempdir()
+            .expect("temporary fixture directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("private mode");
+        }
+        let canonical =
+            validate_adaptive_fixture_data_directory(directory.path(), Path::new("/tmp"))
+                .expect("fixture directory is accepted");
+        assert_eq!(
+            canonical,
+            fs::canonicalize(directory.path()).expect("canonical path")
+        );
+
+        let ordinary = tempfile::tempdir().expect("ordinary directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(ordinary.path(), fs::Permissions::from_mode(0o700))
+                .expect("private mode");
+        }
+        assert!(
+            validate_adaptive_fixture_data_directory(ordinary.path(), Path::new("/tmp")).is_err()
+        );
+        assert!(
+            validate_adaptive_fixture_data_directory(directory.path(), directory.path()).is_err()
+        );
     }
 }

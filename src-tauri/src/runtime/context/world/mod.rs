@@ -1,25 +1,23 @@
 #![allow(dead_code)]
-#[cfg(test)]
+pub(crate) mod app_frame;
+pub(crate) mod capabilities;
+pub(crate) mod dispatch;
+mod g1_perf_tests;
 pub(crate) mod g1_tests;
+pub(crate) mod host_answer;
 pub(crate) mod inputs;
 mod live;
 pub(crate) mod question;
 pub(crate) mod question_input;
 pub(crate) mod render;
-#[cfg(test)]
 mod render_tests;
 pub(crate) mod shadow;
-#[cfg(test)]
 mod shadow_boundary_tests;
-#[cfg(test)]
 mod shadow_perf_tests;
-#[cfg(test)]
 mod shadow_tests;
 pub(crate) mod source;
-#[cfg(test)]
 mod source_tests;
+pub(crate) mod state_claim;
 pub(crate) mod turn;
-#[cfg(test)]
 mod turn_tests;
-
-mod g1_perf_tests;
+pub(crate) mod wire_test_support;

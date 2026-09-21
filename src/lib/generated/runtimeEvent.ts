@@ -33,3 +33,7 @@ export type RoutingRootSnapshot = { rootId: string, runtimeRunId: string | null,
 export type RoutingSnapshot = { active: RoutingRootSnapshot | null, queued: Array<RoutingRootSnapshot>, };
 
 export type RoutingEventRecord = { rootId: string, seq: bigint, kind: string, dataJson: string, createdAtMs: bigint, };
+export type WorldCapabilities = { stateInput: boolean, graph: boolean, freshToolContinuation: boolean, verifiedStateAnswer: boolean, answerMode: string, };
+export type ScopeRef = { kind: string, id: string, relation: string, };
+export type ScopeChoice = { key: string, label: string, refs: Array<ScopeRef>, };
+export type WorldContextStatus = { choices: Array<ScopeChoice>, messageScopes: { [key in string]: Array<string> }, latestScopeKeys: Array<string>, latestProvider: string | null, delivery: string | null, omissionReason: string | null, };

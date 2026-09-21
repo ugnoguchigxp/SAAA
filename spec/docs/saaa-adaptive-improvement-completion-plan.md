@@ -1,6 +1,25 @@
 # 経験を次の選択・計画・通知へ反映する実装計画
 
-作成日: 2026-09-21。状態: 設計、実装未着手。担当想定: Terra。
+作成日: 2026-09-21。状態: 実装フェーズ完了（AI-01〜13）、フィールドテスト準備済み（AI-00評価プール／AI-14は未実施）。担当想定: Terra。
+
+## 実装状況（2026-09-21）
+
+### 実装済み
+
+- AI-01〜05: 判断・結果・override・dataset・artifact・activationを永続化し、固定event境界で増分materializeする経路、アプリ内worker、選択済み候補だけを学習する決定的trainerを実装した。沈黙はunknownのままとし、未選択候補を負例にしていない。
+- AI-06〜07: group単位の10,000回paired bootstrap、昇格gate、shadow承認、CAS activation、dispatch時の候補fingerprint再検査、rules rollbackを実装した。不足データや不整合はrulesへ戻る。
+- AI-08〜11: Provider/recipe、Tool、登録済みPlan recipe、通知の各経路に、hard filterと明示訂正の後でのみ適用されるadaptive選択を接続した。実際に選んだ対象の結果だけを判断台帳へ記録する。
+- AI-12〜13: source forget、候補版変更、rollbackでartifact/activationを失効させる経路と、Settingsで状態・理由・固定rulesへ戻す操作を実装した。明示訂正はrollback後も残る。
+- AI-09の開発fixture: `bun run start:adaptive-fixture` は、3個の読み取り専用Toolと合成結果から隔離DB内だけでartifactを学習・有効化する。通常DB、通常起動、汎用service openerには合成履歴をseedできない。終了時は一時DBを削除し、調査時だけ `SAAA_ADAPTIVE_FIXTURE_KEEP_DATA=1` で保持できる。
+
+実装の詳細な試験・証跡は `spec/evidence/adaptive-improvement/results.md` と
+`spec/evidence/adaptive-improvement/completion-audit.md` に記録する。
+
+### これから行うフィールドテスト
+
+- AI-00: 四領域ごとに、固定rulesと同条件で比較する未使用の評価pool、主指標、除外条件を事前登録する。
+- AI-14: 実Provider/Tool、同じGoalのPlan verifier、実通知を対象に前後比較する。paired差・信頼区間・性能を測定し、§6の受入条件を満たすまでproduction改善とは報告しない。
+- 現在の通常DBには判断、結果、dataset、artifact、activationがないため、合成fixtureの成功をフィールドテストの結果へ流用しない。
 
 ## 1. 解消する弱点と完成状態
 

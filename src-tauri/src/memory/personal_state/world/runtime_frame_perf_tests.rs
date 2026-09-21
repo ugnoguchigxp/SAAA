@@ -90,7 +90,7 @@ fn m2_27_frame_and_revalidation_gates() {
                 Some(fixture.graph_request("ent0")),
             );
             let frame = service.prepare_frame(request).expect("frame");
-            assert_eq!(frame.frame().schema_version, 1);
+            assert_eq!(frame.frame().schema_version, 2);
         }),
     );
     assert!(

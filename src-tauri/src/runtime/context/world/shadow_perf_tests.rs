@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::super::broker::{self, BrokerInput};
 use super::render::render_world_frame;
 use super::shadow::{run_shadow, ShadowInput};

@@ -57,8 +57,16 @@ pub(crate) async fn run_with_options(
         let mut voice_calls = 0;
         let mut spoken_tool_progress = 0;
         loop {
+            crate::runtime::context::world::dispatch::refresh_json(
+                &mut messages,
+                context.output_persistence.and_then(|p| p.world),
+            )
+            .map_err(|_| Failure::ContextScopeChanged)?;
             let streaming = mode == RequestMode::Stream && options.streaming;
-            let offer = if mode != RequestMode::JsonProbe && options.tools {
+            let offer = if mode != RequestMode::JsonProbe
+                && options.tools
+                && !crate::runtime::context::state_answer::is_state_query(&context.input.content)
+            {
                 available_agent_tools(
                     context.output_persistence,
                     context.input,
@@ -123,6 +131,20 @@ pub(crate) async fn run_with_options(
                 .json(&body);
             if let Some(value) = authorization {
                 request = request.header("Authorization", value);
+            }
+            if let Some(world) = context.output_persistence.and_then(|p| p.world) {
+                let sent = world.blocks().is_some_and(|blocks| {
+                    body["messages"].as_array().is_some_and(|messages| {
+                        messages.iter().any(|m| {
+                            m["role"] == "assistant"
+                                && m["content"].as_str() == Some(blocks.with_world.as_str())
+                        })
+                    })
+                });
+                if sent && !world.revalidate_current() {
+                    generation.fail("world-changed-before-send");
+                    return Err(Failure::ContextScopeChanged);
+                }
             }
             let response = match super::http::send(request, &context.cancellation, !started).await {
                 Ok(response) => response,
@@ -288,45 +310,7 @@ pub(crate) async fn run_with_options(
     })
 }
 
-fn mark_started(context: &ModelStreamContext<'_>, started: &mut bool) -> Result<(), Failure> {
-    if !*started {
-        if let Some(persistence) = context.output_persistence {
-            persistence.mark_started().map_err(|_| Failure::Internal)?;
-        }
-        *started = true;
-    }
-    Ok(())
-}
+mod response_helpers;
+use response_helpers::{json_events, mark_started};
 
-fn json_events(bytes: &[u8]) -> Result<Vec<String>, Failure> {
-    let mut value: Value = serde_json::from_slice(bytes).map_err(|_| Failure::Protocol)?;
-    if value.get("error").is_some() {
-        return Err(Failure::Upstream);
-    }
-    let choices = value
-        .get_mut("choices")
-        .and_then(Value::as_array_mut)
-        .ok_or(Failure::Protocol)?;
-    if choices.len() != 1 {
-        return Err(Failure::Protocol);
-    }
-    let choice = choices[0].as_object_mut().ok_or(Failure::Protocol)?;
-    let mut message = choice
-        .remove("message")
-        .filter(Value::is_object)
-        .ok_or(Failure::Protocol)?;
-    if let Some(calls) = message.get_mut("tool_calls").filter(|v| !v.is_null()) {
-        for (index, call) in calls
-            .as_array_mut()
-            .ok_or(Failure::Protocol)?
-            .iter_mut()
-            .enumerate()
-        {
-            call.as_object_mut()
-                .ok_or(Failure::Protocol)?
-                .insert("index".into(), json!(index));
-        }
-    }
-    choice.insert("delta".into(), message);
-    Ok(vec![value.to_string(), "[DONE]".to_string()])
-}
+mod world_claim_tests;

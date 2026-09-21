@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::super::broker::{self, BrokerInput};
 use super::super::generation::{begin, BeginGeneration};
 use super::super::generation_inputs::record;
@@ -60,8 +61,8 @@ fn existing(id: &str, bytes: usize, utility: u16) -> Candidate {
     )
 }
 
-fn shadow_input(_fixture: &Fixture, limit: usize, candidates: Vec<Candidate>) -> ShadowInput {
-    let mut allowed = BTreeSet::from([PROJECT.to_string()]);
+fn shadow_input(fixture: &Fixture, limit: usize, candidates: Vec<Candidate>) -> ShadowInput {
+    let mut allowed = BTreeSet::from([PROJECT.to_string(), format!("user:{}", fixture.principal)]);
     allowed.insert(format!("task:{CODING_ID}"));
     allowed.insert(format!("task:{CODING_ID}"));
     ShadowInput {

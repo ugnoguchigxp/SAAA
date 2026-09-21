@@ -32,6 +32,10 @@ pub(crate) fn render_world_frame_explicit(frame: &WorldFrame) -> Result<String, 
 }
 
 fn encode_world_frame(frame: &WorldFrame) -> Result<String, RenderOmission> {
+    frame.validate_v2().map_err(|error| match error {
+        saaa_personal_state_core::world::runtime_frame::FrameError::Limit => RenderOmission::Budget,
+        _ => RenderOmission::Encode,
+    })?;
     let json = serde_json::to_string(frame).map_err(|_| RenderOmission::Encode)?;
     if json.len() > MAX_FRAME_JSON_BYTES {
         return Err(RenderOmission::Budget);

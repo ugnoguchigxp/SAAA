@@ -22,7 +22,8 @@ pub fn read(path: &Path, cwd: &Path, boundary: Option<&str>) -> Result<Session, 
     }
     let mut reader = BufReader::new(file);
     let header = record(&mut reader)?.ok_or("session_empty")?;
-    if header["type"] != "session" || header["cwd"].as_str() != cwd.to_str() {
+    let session_cwd = header["cwd"].as_str().ok_or("session_header_mismatch")?;
+    if header["type"] != "session" || !same_workspace(session_cwd, cwd) {
         return Err("session_header_mismatch".into());
     }
     let id = header["id"]
@@ -114,4 +115,17 @@ pub fn read(path: &Path, cwd: &Path, boundary: Option<&str>) -> Result<Session, 
         return Err("session_boundary_missing".into());
     }
     Ok(result)
+}
+
+fn same_workspace(session_cwd: &str, cwd: &Path) -> bool {
+    if Path::new(session_cwd) == cwd {
+        return true;
+    }
+    match (
+        std::fs::canonicalize(session_cwd),
+        std::fs::canonicalize(cwd),
+    ) {
+        (Ok(session_cwd), Ok(cwd)) => session_cwd == cwd,
+        _ => false,
+    }
 }

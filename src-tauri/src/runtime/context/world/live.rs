@@ -7,10 +7,14 @@
 use super::super::generation::GenerationHandle;
 use super::super::source::Candidate;
 use super::source::WORLD_KIND;
+use super::{render, source, state_claim};
+#[path = "live_refresh.rs"]
+mod refresh;
 use crate::ipc_contract::ConversationMessage;
 use crate::memory::personal_state::world::runtime_frame::{PreparedWorldFrame, WorldFrameService};
 use std::sync::{Arc, Mutex};
 
+#[derive(Clone)]
 pub(crate) struct WorldReceipt {
     pub(crate) service: Arc<WorldFrameService>,
     pub(crate) prepared: PreparedWorldFrame,
@@ -33,6 +37,7 @@ enum WorldFrame {
     Live {
         service: Arc<WorldFrameService>,
         prepared: Mutex<Option<PreparedWorldFrame>>,
+        seed: Mutex<PreparedWorldFrame>,
     },
     /// Test-only fixed validity, so the send-body regression test does not need a live service.
     #[cfg(test)]
@@ -53,6 +58,7 @@ impl WorldLive {
         Self {
             frame: WorldFrame::Live {
                 service,
+                seed: Mutex::new(prepared.clone()),
                 prepared: Mutex::new(Some(prepared)),
             },
             blocks: Mutex::new(blocks),
@@ -63,7 +69,9 @@ impl WorldLive {
     /// every later call also reports invalid and the send body and the record cannot diverge.
     pub(crate) fn revalidate_current(&self) -> bool {
         match &self.frame {
-            WorldFrame::Live { service, prepared } => {
+            WorldFrame::Live {
+                service, prepared, ..
+            } => {
                 let frame = {
                     let guard = prepared
                         .lock()
@@ -146,7 +154,9 @@ impl WorldLive {
 
     pub(crate) fn bind(&self, generation: &GenerationHandle) {
         match &self.frame {
-            WorldFrame::Live { service, prepared } => {
+            WorldFrame::Live {
+                service, prepared, ..
+            } => {
                 let guard = prepared
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -182,31 +192,7 @@ pub(crate) fn observe_receipt(receipt: &WorldReceipt) -> &'static str {
     }
 }
 
-/// The candidates the record should contain for one request. The World candidate is only kept when
-/// the caller decided to include it in the sent body; a World-free history always drops it.
-pub(crate) fn for_record<'a>(
-    selected: &'a [Candidate],
-    omitted: &'a [Candidate],
-    include_world: bool,
-) -> (Vec<&'a Candidate>, Vec<&'a Candidate>) {
-    let mut kept: Vec<&Candidate> = selected
-        .iter()
-        .filter(|candidate| candidate.source_kind != WORLD_KIND)
-        .collect();
-    let omitted: Vec<&Candidate> = omitted
-        .iter()
-        .filter(|candidate| candidate.source_kind != WORLD_KIND)
-        .collect();
-    if include_world {
-        if let Some(candidate) = selected
-            .iter()
-            .find(|candidate| candidate.source_kind == WORLD_KIND)
-        {
-            kept.push(candidate);
-        }
-    }
-    (kept, omitted)
-}
+pub(crate) use super::dispatch::for_record;
 
 #[cfg(test)]
 mod tests {

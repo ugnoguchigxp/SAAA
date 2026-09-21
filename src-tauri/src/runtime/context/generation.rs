@@ -1,8 +1,11 @@
+#[path = "generation_validation.rs"]
+mod validation;
 use crate::persistence::SqliteWriter;
 use crate::{database_error, new_id, now_iso, AppState};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
+use validation::{digest, resolve_provider, validate_dependencies};
 
 pub(crate) const MAX_PROVIDER_REQUEST_BYTES: usize = 96_000;
 /// The conservative input portion of the 96 KiB provider envelope after reserving 20 KiB for
@@ -186,12 +189,36 @@ impl GenerationHandle {
         failure_kind: Option<&str>,
         check: impl FnOnce(&Connection) -> Result<(), String>,
     ) -> Result<(), String> {
+        let world_receipt = if status == "completed" {
+            self.world
+                .lock()
+                .map_err(|_| "World receipt unavailable")?
+                .as_ref()
+                .filter(|r| r.service.sources_enabled())
+                .cloned()
+        } else {
+            None
+        };
+        if let Some(receipt) = &world_receipt {
+            if receipt.service.validate_result(&receipt.prepared)
+                != Ok(saaa_personal_state_core::world::runtime_frame::FrameValidity::Current)
+            {
+                let _ = self.fail("world-source-changed");
+                return Err("Context generation World source changed".into());
+            }
+        }
         self.writer.write(|connection| {
             let transaction = connection
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(database_error)?;
             let connection = &transaction;
             check(connection)?;
+            if let Some(receipt) = &world_receipt {
+                receipt
+                    .service
+                    .validate_db_result(connection, &receipt.prepared)
+                    .map_err(|e| e.code().to_string())?;
+            }
             if status == "completed" {
                 validate_dependencies(connection, &self.id)?;
             }
@@ -425,130 +452,6 @@ pub(crate) fn begin_with_writer(
     })
 }
 
-fn validate_dependencies(connection: &Connection, generation_id: &str) -> Result<(), String> {
-    let scope_stale: bool = connection
-        .query_row(
-            "SELECT EXISTS(
-               SELECT 1 FROM context_generation_inputs i
-               LEFT JOIN context_scope_epochs e ON e.scope_key=i.source_id
-               WHERE i.generation_id=?1 AND i.source_kind='scope'
-                 AND (e.scope_key IS NULL OR i.source_version!=e.epoch+1)
-             )",
-            [generation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
-    if scope_stale {
-        return Err("Context generation scope dependency changed".into());
-    }
-    let policy_stale: bool = connection
-        .query_row(
-            "SELECT EXISTS(
-               SELECT 1 FROM context_generation_inputs i, personal_scope p
-               WHERE i.generation_id=?1 AND i.source_kind='policy'
-                 AND i.source_id='personal-state-policy' AND p.id='primary'
-                 AND i.source_version!=p.policy_revision
-             )",
-            [generation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
-    if policy_stale {
-        return Err("Context generation policy dependency changed".into());
-    }
-    let personal_state_stale: bool = connection
-        .query_row(
-            "SELECT EXISTS(
-               SELECT 1 FROM context_generation_inputs i
-               LEFT JOIN personal_assertions a ON a.id=i.source_id
-               WHERE i.generation_id=?1 AND i.source_kind='personal-state' AND i.selected=1
-                 AND (a.id IS NULL OR a.erased=1 OR i.source_version!=(
-                   SELECT COALESCE(MAX(t.sequence),0)+1 FROM personal_transitions t
-                   WHERE t.assertion_id=i.source_id
-                 ))
-             )",
-            [generation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
-    if personal_state_stale {
-        return Err("Context generation Personal State dependency changed".into());
-    }
-    let pending_source_stale: bool = connection
-        .query_row(
-            "SELECT EXISTS(
-               SELECT 1 FROM context_generation_inputs i
-               WHERE i.generation_id=?1 AND i.source_kind='personal-pending' AND i.selected=1
-                 AND NOT EXISTS(
-                   SELECT 1 FROM personal_sources p
-                   WHERE p.message_id=i.source_id AND p.version=i.source_version
-                     AND p.available=1
-                 )
-             )",
-            [generation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
-    if pending_source_stale {
-        return Err("Context generation pending source dependency changed".into());
-    }
-    let task_continuation_stale: bool = connection
-        .query_row(
-            "SELECT EXISTS(
-               SELECT 1 FROM context_generation_inputs i
-               LEFT JOIN coding_jobs j ON j.id=i.source_id
-               LEFT JOIN coding_runs r ON r.id=j.current_run_id
-               WHERE i.generation_id=?1 AND i.source_kind='task-continuation' AND i.selected=1
-                 AND (j.id IS NULL OR i.source_version!=j.revision
-                      OR r.state NOT IN ('starting','running','stopping','outcome_unknown'))
-             )",
-            [generation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
-    if task_continuation_stale {
-        return Err("Context generation task continuation changed".into());
-    }
-    let delegation_continuation_stale: bool = connection
-        .query_row(
-            "SELECT EXISTS(
-               SELECT 1 FROM context_generation_inputs i
-               LEFT JOIN steward_tasks t ON t.id=i.source_id
-               LEFT JOIN steward_delegations d ON d.id=t.delegation_id
-               LEFT JOIN steward_goals g ON g.id=d.goal_id
-               WHERE i.generation_id=?1 AND i.source_kind='delegation-continuation' AND i.selected=1
-                 AND (t.id IS NULL OR i.source_version!=t.revision
-                      OR t.loop_state NOT IN ('queued','running','awaiting_user')
-                      OR d.status!='active' OR d.superseded_by IS NOT NULL
-                      OR g.status!='active' OR g.superseded_by IS NOT NULL)
-             )",
-            [generation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
-    if delegation_continuation_stale {
-        return Err("Context generation delegation continuation changed".into());
-    }
-    let current: Option<(String, String)> = connection
-        .query_row(
-            "SELECT i.source_digest,m.content
-             FROM context_generation_inputs i
-             JOIN conversation_messages m ON m.id=i.source_id
-             WHERE i.generation_id=?1 AND i.source_kind='current-instruction'",
-            [generation_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(database_error)?;
-    let Some((expected, content)) = current else {
-        return Err("Context generation current instruction is unavailable".into());
-    };
-    if digest(content.as_bytes()) != expected {
-        return Err("Context generation current instruction changed".into());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 pub(crate) fn begin_direct_dispatched(
     state: &AppState,
@@ -603,70 +506,10 @@ pub(crate) fn finish_result<T>(
     }
 }
 
-fn resolve_provider(
-    connection: &Connection,
-    run_id: &str,
-    provider_session_id: Option<&str>,
-    provider_id: Option<&str>,
-) -> Result<String, String> {
-    match (provider_session_id, provider_id) {
-        (Some(session_id), None) => connection
-            .query_row(
-                "SELECT provider_id FROM provider_sessions
-                 WHERE id=?1 AND runtime_run_id=?2 AND status='running'",
-                params![session_id, run_id],
-                |row| row.get(0),
-            )
-            .map_err(database_error),
-        (None, Some(provider_id)) if !provider_id.trim().is_empty() => Ok(provider_id.to_string()),
-        _ => Err("Context generation provider binding is invalid".into()),
-    }
-}
-
-fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
+#[path = "generation_test_helpers.rs"]
+mod test_helpers;
 #[cfg(test)]
-pub(crate) fn assert_two_round_tool_manifest(state: &crate::AppState, run_id: &str) {
-    state
-        .sqlite_readers
-        .read(|connection| {
-            let manifest: (u64, u64, u64) = connection
-                .query_row(
-                    "SELECT COUNT(*),
-                       SUM(purpose='reasoning' AND status='completed'),
-                       SUM(purpose='tool-followup' AND status='completed')
-                     FROM context_generations WHERE run_id=?1",
-                    [run_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .map_err(database_error)?;
-            assert_eq!(manifest, (2, 1, 1));
-            let invalid: bool = connection
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM context_generations
-                     WHERE run_id=?1 AND current_instruction_count!=1)",
-                    [run_id],
-                    |row| row.get(0),
-                )
-                .map_err(database_error)?;
-            assert!(!invalid);
-            let tool_snapshots: u64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM context_generation_inputs i
-                     JOIN context_generations g ON g.id=i.generation_id
-                     WHERE g.run_id=?1 AND i.source_kind='static-tool-offer'
-                       AND i.selected=1 AND length(i.source_digest)=64",
-                    [run_id],
-                    |row| row.get(0),
-                )
-                .map_err(database_error)?;
-            assert!(tool_snapshots > 0);
-            Ok(())
-        })
-        .unwrap();
-}
+pub(crate) use test_helpers::assert_two_round_tool_manifest;
 
 #[cfg(test)]
 mod tests {

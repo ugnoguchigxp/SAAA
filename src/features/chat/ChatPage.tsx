@@ -1,3 +1,4 @@
+import { WorldScopeSelector } from "./WorldScopeSelector";
 import { CodingJobs } from "../coding/CodingJobs";
 import { SetupChecklist } from "./SetupChecklist";
 import { useEffect, useRef } from "react";
@@ -19,6 +20,7 @@ import { RoutingProposal } from "./RoutingProposal";
 import type { ChatPageProps } from "./chatPageTypes";
 export function ChatPage({
   setupSnapshot,
+  worldScope,
   messages,
   hasMoreMessages,
   loadingOlderMessages,
@@ -141,6 +143,13 @@ export function ChatPage({
           </button>
         </div>
       </header>
+      {worldScope && (
+        <WorldScopeSelector
+          status={worldScope.status}
+          value={worldScope.key}
+          onChange={worldScope.select}
+        />
+      )}
       <CodingJobs conversationId={selectedConversation?.id} />
       <RoutingProposal
         snapshot={routingSnapshot}
@@ -192,7 +201,11 @@ export function ChatPage({
             </div>
           </div>
         ) : (
-          <VirtualMessages messages={messages} scrollRef={messageAreaRef} />
+          <VirtualMessages
+            messages={messages}
+            scrollRef={messageAreaRef}
+            messageScopes={worldScope?.status?.messageScopes}
+          />
         )}
         {streamingText.length > 0 && (
           <article className={`message assistant ${!activeRunId ? "incomplete" : "streaming"}`}>

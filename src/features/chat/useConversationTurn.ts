@@ -1,3 +1,4 @@
+import { useWorldScope } from "./useWorldScope";
 import { usePersonalStateForget } from "./usePersonalStateForget";
 import {
   requiredContextFailureCode,
@@ -93,6 +94,7 @@ export function useConversationTurn({
   } = history;
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const worldScope = useWorldScope(selectedConversationId, activeRunId);
   const { streamingText, resetStreamingText, appendStreamingText, hasStreamingText } =
     useStreamingTextProjection();
   const [runtimeActivity, setRuntimeActivity] = useState<ConversationRuntimeActivity[]>([]);
@@ -283,37 +285,39 @@ export function useConversationTurn({
       // normal chat boundary instead of relying on prompt text (or a backend title match) to
       // decide which work is in scope. A missing/temporarily unavailable snapshot deliberately
       // falls back to user scope; it never invents a project or task reference.
-      const scopeRefs = await codingApi
-        .snapshot(conversationId)
-        .then((coding) => {
-          const workspaceId = coding.workspace?.workspaceId;
-          if (!workspaceId) return undefined;
-          const active = coding.jobs.find((job) =>
-            ["queued", "running", "cancel_requested"].includes(job.state),
-          );
-          return [
-            {
-              kind: "project" as const,
-              id: workspaceId,
-              relation: "focus" as const,
-            },
-            {
-              kind: "resource" as const,
-              id: workspaceId,
-              relation: "parent" as const,
-            },
-            ...(active
-              ? [
-                  {
-                    kind: "task" as const,
-                    id: active.jobId,
-                    relation: "current" as const,
-                  },
-                ]
-              : []),
-          ];
-        })
-        .catch(() => undefined);
+      const scopeRefs =
+        (await worldScope.resolve(conversationId)) ??
+        (await codingApi
+          .snapshot(conversationId)
+          .then((coding) => {
+            const workspaceId = coding.workspace?.workspaceId;
+            if (!workspaceId) return undefined;
+            const active = coding.jobs.find((job) =>
+              ["queued", "running", "cancel_requested"].includes(job.state),
+            );
+            return [
+              {
+                kind: "project" as const,
+                id: workspaceId,
+                relation: "focus" as const,
+              },
+              {
+                kind: "resource" as const,
+                id: workspaceId,
+                relation: "parent" as const,
+              },
+              ...(active
+                ? [
+                    {
+                      kind: "task" as const,
+                      id: active.jobId,
+                      relation: "current" as const,
+                    },
+                  ]
+                : []),
+            ];
+          })
+          .catch(() => undefined));
       await startTurn(
         {
           runId,
@@ -567,6 +571,7 @@ export function useConversationTurn({
     else setComposer("");
   }
   return {
+    worldScope,
     messages,
     hasMoreMessages,
     hasNewerMessages,

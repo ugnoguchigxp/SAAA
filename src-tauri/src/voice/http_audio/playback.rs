@@ -17,8 +17,9 @@ pub(super) struct Playback {
     stopped: Arc<AtomicBool>,
 }
 impl Playback {
-    pub(super) fn start(
+    pub(super) fn start_guarded(
         cancellation: Arc<RunCancellation>,
+        situation: Option<Arc<crate::situation::SituationRuntime>>,
         on_started: impl FnOnce() + Send + 'static,
     ) -> Self {
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<Packet>(4);
@@ -34,7 +35,12 @@ impl Playback {
                 let mut started = Some(Box::new(on_started) as Box<dyn FnOnce() + Send>);
                 let mut closed = false;
                 loop {
-                    if cancellation.is_cancelled() || stop.load(Ordering::Acquire) {
+                    if cancellation.is_cancelled()
+                        || stop.load(Ordering::Acquire)
+                        || situation
+                            .as_ref()
+                            .is_some_and(|s| crate::situation::speech_holds_runtime(s))
+                    {
                         sink.stop();
                         return Err("Speech cancelled".into());
                     }
@@ -116,6 +122,16 @@ impl Source for Started {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+    impl Playback {
+    #[cfg(test)]
+    pub(crate) fn start(
+        cancellation: Arc<RunCancellation>,
+        on_started: impl FnOnce() + Send + 'static,
+    ) -> Self {
+        Self::start_guarded(cancellation, None, on_started)
+    }
+
+    }
 
     #[test]
     fn started_source_forwards_samples_and_fires_the_callback_once() {

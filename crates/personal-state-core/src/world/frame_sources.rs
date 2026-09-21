@@ -35,7 +35,12 @@ pub enum WorldSourceAvailability {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum WorldSourcePayload {
     Situation {
         scene: Option<String>,
@@ -55,7 +60,9 @@ pub enum WorldSourcePayload {
     Delegation {
         task_id: String,
         delegation_id: Option<String>,
+        delegation_status: String,
         goal_id: Option<String>,
+        goal_status: String,
         status: String,
         loop_state: Option<String>,
         revision: Option<u64>,
@@ -185,6 +192,9 @@ impl WorldSourceGroup {
             || self.omission_reason.as_deref().unwrap_or("").is_empty()
         {
             return Err("unavailable group needs an omission reason");
+        }
+        for entry in &self.entries {
+            entry.validate()?;
         }
         Ok(())
     }

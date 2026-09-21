@@ -326,6 +326,18 @@ impl worker::Extractor for Adapter {
             self.execute(input, cancel).await
         }
     }
+    async fn extract_world(
+        &self,
+        input: Value,
+        cancel: Arc<RunCancellation>,
+    ) -> Result<Option<String>, String> {
+        if self.product.is_none() {
+            return Ok(None);
+        }
+        super::product_extract::extract(self, input, cancel)
+            .await
+            .map(Some)
+    }
     fn provenance(&self) -> Provenance {
         Provenance {
             model: self.certification.model.clone(),

@@ -71,6 +71,16 @@ pub(crate) fn register_with_options(
     if !workspace_registered(connection, conversation_id, workspace_id)? {
         return Err("workspace_required".into());
     }
+    let active: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM steward_goals WHERE conversation_id=?1 AND status='active' AND superseded_by IS NULL",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    if active as usize >= MAX_ACTIVE_GOALS {
+        return Err("active_goal_limit".into());
+    }
     let now = now_iso();
     let goal_id = new_id("goal");
     let delegation_id = new_id("delegation");
@@ -80,7 +90,7 @@ pub(crate) fn register_with_options(
              VALUES(?1,?2,'user_explicit',?3,'active',?4,NULL,?5,1,?6)",
             params![goal_id, conversation_id, success_condition.trim(), now, summary.trim(), verifier],
         )
-        .map_err(|_| "active_goal_exists".to_string())?;
+        .map_err(database_error)?;
     connection
         .execute(
             "INSERT INTO steward_delegations(id,goal_id,conversation_id,workspace_id,ops,budget_runs,budget_ms,notify,status,created_at,superseded_by)

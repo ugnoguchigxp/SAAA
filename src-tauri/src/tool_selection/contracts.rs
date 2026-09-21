@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 
 /// Environment variable that points at the tool-selection configuration file.
 pub const CONFIG_ENV: &str = "SAAA_TOOL_SELECTION_CONFIG";
+/// Deliberate opt-in required in addition to the mock configuration document. The launcher also
+/// supplies a smoke marker and a separate absolute data directory, so fixture observations
+/// cannot accidentally become part of the normal application ledger.
+pub const MOCK_FIXTURE_ENV: &str = "SAAA_ADAPTIVE_FIXTURE";
 pub const CONFIG_FORMAT_VERSION: u32 = 1;
 pub const CONFIG_MAX_BYTES: u64 = 64 * 1024;
 
@@ -114,7 +118,12 @@ impl ToolSelectionConfig {
 
     pub fn from_environment() -> Self {
         let path = std::env::var_os(CONFIG_ENV).map(PathBuf::from);
-        Self::from_path(path.as_deref())
+        restrict_mock_to_fixture_environment(
+            Self::from_path(path.as_deref()),
+            std::env::var_os(MOCK_FIXTURE_ENV).as_deref(),
+            std::env::var_os("SAAA_SMOKE_MARKER_ID").as_deref(),
+            std::env::var_os("SAAA_SMOKE_DATA_DIR").as_deref(),
+        )
     }
 
     pub fn from_path(path: Option<&Path>) -> Self {
@@ -144,6 +153,33 @@ impl ToolSelectionConfig {
     pub fn is_valid_discovery(&self) -> bool {
         self.mode != SelectionMode::Discovery
             || (self.python_path.is_some() && self.model_manifest_path.is_some())
+    }
+}
+
+fn mock_fixture_environment_is_isolated(
+    fixture_enabled: Option<&std::ffi::OsStr>,
+    smoke_marker: Option<&std::ffi::OsStr>,
+    smoke_data_dir: Option<&std::ffi::OsStr>,
+) -> bool {
+    fixture_enabled == Some(std::ffi::OsStr::new("1"))
+        && smoke_marker.is_some_and(|value| !value.is_empty())
+        && smoke_data_dir.is_some_and(|value| Path::new(value).is_absolute())
+}
+
+fn restrict_mock_to_fixture_environment(
+    config: ToolSelectionConfig,
+    fixture_enabled: Option<&std::ffi::OsStr>,
+    smoke_marker: Option<&std::ffi::OsStr>,
+    smoke_data_dir: Option<&std::ffi::OsStr>,
+) -> ToolSelectionConfig {
+    if config.mode == SelectionMode::Mock
+        && !mock_fixture_environment_is_isolated(fixture_enabled, smoke_marker, smoke_data_dir)
+    {
+        ToolSelectionConfig::disabled(
+            "tool-selection mock mode requires the isolated adaptive fixture launcher",
+        )
+    } else {
+        config
     }
 }
 
@@ -815,6 +851,34 @@ mod tests {
         assert!(!config.discovery_enabled());
         assert!(config.python_path.is_none());
         assert!(config.model_manifest_path.is_none());
+    }
+
+    #[test]
+    fn mock_fixture_runtime_requires_an_explicit_isolated_smoke_environment() {
+        use std::ffi::OsStr;
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("config.json");
+        std::fs::write(&path, br#"{"formatVersion":1,"mode":"mock"}"#).expect("write");
+        let mock = ToolSelectionConfig::from_path(Some(&path));
+
+        let disabled = restrict_mock_to_fixture_environment(mock.clone(), None, None, None);
+        assert_eq!(disabled.mode, SelectionMode::Disabled);
+        assert!(disabled.diagnostic.is_some());
+        let relative = restrict_mock_to_fixture_environment(
+            mock.clone(),
+            Some(OsStr::new("1")),
+            Some(OsStr::new("fixture")),
+            Some(OsStr::new("relative")),
+        );
+        assert_eq!(relative.mode, SelectionMode::Disabled);
+        let isolated = restrict_mock_to_fixture_environment(
+            mock,
+            Some(OsStr::new("1")),
+            Some(OsStr::new("fixture")),
+            Some(OsStr::new("/tmp/fixture")),
+        );
+        assert_eq!(isolated.mode, SelectionMode::Mock);
     }
 
     #[test]

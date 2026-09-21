@@ -9,6 +9,16 @@ await writeFile(
   `${JSON.stringify({ schema_version: 1, suite: "world-m4a", summary: { complete: false }, phase: "running" }, null, 2)}\n`,
 );
 
+await mkdir(resolve("spec/evidence/world-delivery"), { recursive: true });
+await writeFile(
+  resolve("spec/evidence/world-delivery/remaining-report.json"),
+  JSON.stringify({
+    suite: "world-remaining",
+    complete: false,
+    phase: "waiting-for-wire-regression",
+  }) + "\n",
+);
+
 // Offline only: the Rust suites bind loopback servers and use synthetic databases.
 const child = Bun.spawn(
   [
@@ -84,3 +94,6 @@ if (!ok) {
   process.exit(1);
 }
 console.log(`World evaluation: ${passed} cases passed`);
+
+// Card regression is independent of the historical wire corpus; both must pass.
+await (await import("./world-remaining-eval")).runRemaining();

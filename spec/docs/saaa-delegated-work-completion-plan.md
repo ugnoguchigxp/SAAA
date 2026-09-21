@@ -11,10 +11,10 @@
 | 状態 | カード | 実装済み／残作業 |
 | --- | --- | --- |
 | 完了 | DW-00〜06（DW-07除く）、DW-08、DW-09、DW-11、DW-13 | 台帳・自然文受付・UI確認・起点分離・intent/recovery・イベント cursor・schedule 連携・report outbox・撤回/forget を実装し、対象試験で確認済み。 |
-| 部分完了 | DW-07 | macOS deny-by-default profile、Pi 起動、workspace 内の隔離 SDK 状態領域、`CODEX_HOME` 固定、SDK の read-only 設定まで実装済み。実認証済み SDK をこの profile で起動し、read/test を完走する受入確認が残る。 |
+| 完了 | DW-07 | `delegated-codex-sdk-macos-v1` は Pi adapter の状態を workspace 内 `.saaa` に固定し、モデル生成 shell は Codex SDK の `read-only` sandbox に分離した。追加 filesystem permission を空にして workspace 外の読取りを拒否し、実認証 SDK で workspace read 成功、write/network/scope 拒否を確認した。 |
 | 完了 | DW-10 | Goal plan と step/dependency を新旧 Goal に永続化。queue は step graph の依存を解釈し、終端 transaction で準備済み後続を一度だけ enqueue する。失敗時は最大2回の durable replan を実装し、Task 成果物参照を永続化して panel に表示する。 |
 | 部分完了 | DW-12 | 配送・音声状態の永続化、再起動時の二重再生防止、UI 再接続表示を実装済み。実音声の開始/終了/失敗を含む受入確認が残る。 |
-| 未完了 | DW-14 | 実モデル・実 UI・制約 profile を使う複数 Goal、話題切替、競合、hold、撤回、sleep/restart の最終統合受入。DW-07 と DW-10 の残作業を前提とする。 |
+| 部分完了 | DW-14 | 制約 SDK profile、IPC contract、desktop build/bundle/launch/IPC-ready/cleanup は確認済み。複数 Goal・話題切替・競合・hold・撤回・sleep/restart を一続きに実 UI で操作する最終統合受入が残る。 |
 
 `bun run desktop:smoke` は build、bundle、launch、IPC ready、cleanup を通過している。`bun run check:local` は共有ワークツリーの今回対象外ファイルの整形差分で停止しており、今回触れた frontend は型検査・整形済みである。
 

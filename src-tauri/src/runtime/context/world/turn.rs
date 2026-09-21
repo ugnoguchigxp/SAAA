@@ -66,10 +66,13 @@ pub(super) fn compose_for_app_enabled(
             true, None, "", 0, None, run_id, scope, base, existing, allowed,
         );
     };
-    let service = Arc::new(WorldFrameService::new(
-        state.sqlite_readers.clone(),
-        Arc::new(crate::memory::personal_state::now),
-    ));
+    let service = Arc::new(
+        WorldFrameService::new(
+            state.sqlite_readers.clone(),
+            Arc::new(crate::memory::personal_state::now),
+        )
+        .with_sources(state.situation.clone()),
+    );
     // C2: the graph question is resolved from the saved current input for this run, never from a
     // caller-supplied or provider-supplied string.
     let graph_request = question_input::read(state, run_id).graph_request();
@@ -132,7 +135,22 @@ pub(crate) fn compose_parts(
     }
     let project = match explicit_project(scope) {
         Ok(project) => project,
+        Err(WorldOmission::NoExplicitProject)
+            if service.sources_enabled() && scope.is_user_only() =>
+        {
+            scope
+                .scopes
+                .iter()
+                .find(|item| item.kind == "user")
+                .map(|item| item.key.clone())
+                .ok_or("World user scope is unavailable")?
+        }
         Err(omission) => return Ok(done(baseline, None, 1, Some(omission))),
+    };
+    let graph_request = if project.starts_with("user:") {
+        None
+    } else {
+        graph_request
     };
     let refs = runtime_refs(scope);
     let access = AccessRequest {

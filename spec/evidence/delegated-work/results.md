@@ -4,12 +4,20 @@
 
 - `bun run typecheck`: pass.
 - `bun test tests/coding-steward.test.ts`: 2 passed, 0 failed.
+- `bun test tests/steward-panel.test.tsx`: 1 passed, 0 failed.
+- `cargo test dw_01_direct_registration_allows_eight_goals_then_enforces_the_limit --lib`: pass.
+- `cargo test dw_14_multiple_goals_keep_the_sibling_through_topic_switch_withdrawal_and_hold --lib`: pass.
 - `cargo test ml_08_acceptance_register_divert_complete_withdraw --lib`: pass.
 - `cargo test coding_service_runs_through_a_delegated_event_origin --lib`: pass.
 - `cargo test dw_06_restart_marks_unreceived_dispatch_unknown_without_reclaiming --lib`: pass.
 - `cargo test dw_10_settled_read_step_durably_enqueues_one_dependent_test_step --lib`: pass.
 - `cargo test dw_10_migration_backfills_a_plan_for_an_existing_goal --lib`: pass.
 - `cargo test dw_10_failure_creates_at_most_two_durable_replans --lib`: pass.
+- `delegated_sdk_profile_completes_a_read_only_prompt` (authenticated local
+  acceptance): pass.
+- `bun test ./tests/pi-codex-sdk.test.ts`: 3 passed, 0 failed.
+- `cargo test speech_callbacks_have_durable_terminal_mappings --lib`: pass.
+- `cargo test steward::tests --lib`: 30 passed, 0 failed.
 - `cargo test schedule::tests --lib`: 18 passed, 0 failed.
 - Packaged desktop smoke: pass (build 27.95s, bundle, launch, IPC ready,
   cleanup; 31.21s total on the current worktree).
@@ -81,6 +89,15 @@
   new confirmed registration, preserving the explicit authority boundary.
 - The frontend Steward API test confirms a notification amendment sends only
   the selected Goal id and route to `work_amend`.
+- Direct UI registration and model proposals now share the same eight-active-Goal
+  limit. The ninth direct registration is rejected as `active_goal_limit`; the
+  panel explains that limit without telling the user that a single active Goal
+  is required.
+- A browser-independent panel acceptance renders two active Goals together and
+  verifies that withdrawing B calls `work_withdraw` with B's Goal id only.
+- A combined steward acceptance keeps B queued after A is withdrawn, does not
+  start work for an unrelated topic, holds the resulting report during a
+  meeting, and flushes one report when the hold clears.
 - A steward restart-boundary test passes: an unreceived `dispatching` intent
   becomes `outcome_unknown` during startup migration, cannot be reclaimed,
   and creates no Coding job by replay.
@@ -95,6 +112,10 @@
   `delivery_unknown` on startup and cannot be replayed automatically. Speech
   starts only after the conversation report is committed and only when the
   existing Situation and global auto-speak policies permit it.
+- The current macOS host completed a system-speech invocation and an `afplay`
+  invocation against an existing system sound. This establishes that the OS
+  synthesis and player processes used by the selected System TTS route can run;
+  it does not replace an app-driven audible-delivery acceptance.
 - The task-list IPC now returns the latest durable report-delivery and speech
   state; the Steward panel renders those values after each refresh/reconnect.
   Its notification amendment button also sends the user-selected route.
@@ -109,3 +130,10 @@
   event cannot create another revision.
 - A terminal task records its Coding job as a durable artifact reference. The
   task-list IPC returns those references and the Steward panel displays them.
+- The live delegated SDK profile now separates the trusted Pi adapter from the
+  SDK's model-tool sandbox. An authenticated turn read an isolated Git workspace
+  README and recovered `read-only fixture` from the durable session. The same
+  profile rejected a model-generated workspace write and public-network request.
+  With `sandbox_permissions: []`, it also rejected a marker outside the workspace
+  before tool execution. Mutable SDK state remains below the Git-ignored `.saaa`
+  state area; authentication is linked rather than copied.

@@ -1,3 +1,4 @@
+import { WorldProviderCapabilities } from "./WorldProviderCapabilities";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -94,6 +95,7 @@ export function ProviderCard({
   if (provider.kind === "system-tts") {
     return (
       <section className="settings-card provider-card">
+        {persisted && <WorldProviderCapabilities providerId={provider.id} revision={fingerprint} />}
         <div className="card-title-row">
           <div>
             <h3>{localizeProviderLabel(t, provider.label)}</h3>
@@ -115,6 +117,7 @@ export function ProviderCard({
 
   return (
     <section className="settings-card provider-card">
+      {persisted && <WorldProviderCapabilities providerId={provider.id} revision={fingerprint} />}
       <ProviderHeader provider={provider} onChange={onChange} />
       {provider.kind === "openai-compatible" && (
         <>

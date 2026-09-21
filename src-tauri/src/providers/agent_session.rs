@@ -158,7 +158,19 @@ fn apply_release(
     release: Result<(), ProviderFailureKind>,
 ) -> ProviderAttemptOutcome {
     match release {
-        Ok(()) => attempt.with_cleanup(CleanupOutcome::Released),
+        Ok(()) => {
+            if matches!(
+                &attempt,
+                ProviderAttemptOutcome::Failed {
+                    cleanup: CleanupOutcome::ReleaseFailed { .. },
+                    ..
+                }
+            ) {
+                attempt
+            } else {
+                attempt.with_cleanup(CleanupOutcome::Released)
+            }
+        }
         Err(kind) => attempt.with_cleanup(CleanupOutcome::ReleaseFailed {
             kind: match kind {
                 ProviderFailureKind::Authentication => "authentication",

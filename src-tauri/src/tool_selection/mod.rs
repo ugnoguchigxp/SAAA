@@ -322,11 +322,16 @@ fn seed_mock_catalog_and_policy(
 }
 
 /// Opens (or creates) a tool-selection database at `database_path` and builds the live service.
-/// Used by the evaluation CLI and future management tooling.
+/// Used by the evaluation CLI and future management tooling. The seeded development fixture is
+/// intentionally unavailable here: evaluators use `open_mock_service`, which supplies a blank
+/// deterministic lane and records that it is mock rather than creating adaptive fixture history.
 pub fn open_service(
     database_path: &std::path::Path,
     config: &ToolSelectionConfig,
 ) -> ToolSelectionResult<ToolSelectionService> {
+    if config.mode == SelectionMode::Mock {
+        return Err(ToolSelectionError::invalid());
+    }
     let writer =
         crate::open_database_writer(database_path).map_err(|_| ToolSelectionError::storage())?;
     Ok(build_service(std::sync::Arc::new(writer), config, None))
@@ -465,6 +470,24 @@ mod mock_tests {
             })
             .expect("fixture catalog count");
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn generic_service_opener_refuses_the_seeded_mock_configuration() {
+        let directory = tempfile::tempdir().expect("temporary database directory");
+        let config = ToolSelectionConfig {
+            mode: SelectionMode::Mock,
+            python_path: None,
+            model_manifest_path: None,
+            mcp_sources_path: None,
+            extraction: contracts::ExtractionSetting::ConfiguredConversationProvider,
+            diagnostic: None,
+        };
+        let error = match open_service(&directory.path().join("evaluation.sqlite3"), &config) {
+            Ok(_) => panic!("generic service cannot seed the adaptive fixture"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, contracts::ToolSelectionErrorCode::InvalidInput);
     }
 
     #[tokio::test]

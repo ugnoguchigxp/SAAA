@@ -529,7 +529,20 @@ fn m2_26_small_budget_with_graph_omits_graph_not_frame() {
         vec![fixture.coding_ref(CODING_ID)],
         Some(fixture.graph_request("ent0")),
     );
+    // v2 carries explicit scope authorization; 320 bytes no longer fits its header.
     request.max_bytes = 320;
+    assert!(fixture.service().prepare_frame(request).is_err());
+    let mut request = fixture.request(
+        fixture.access(),
+        vec![fixture.coding_ref(CODING_ID)],
+        Some(fixture.graph_request("ent0")),
+    );
+    let header = fixture
+        .service()
+        .prepare_frame(fixture.request(fixture.access(), vec![], None))
+        .unwrap();
+    let budget = header.frame().encoded_len().unwrap() + 128;
+    request.max_bytes = budget;
     let frame = fixture
         .service()
         .prepare_frame(request)
@@ -537,7 +550,7 @@ fn m2_26_small_budget_with_graph_omits_graph_not_frame() {
         .frame()
         .clone();
     assert!(frame.graph.is_none());
-    assert!(frame.encoded_len().unwrap() <= 320);
+    assert!(frame.encoded_len().unwrap() <= budget);
 }
 
 #[test]

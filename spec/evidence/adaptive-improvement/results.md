@@ -28,7 +28,14 @@ requested, enables Tool discovery, and seeds exactly three development-fixture c
 The real search/invoke integration test remains separate and uses the same isolated fixture
 backend. No mock configuration was applied to the running app or to the user database.
 The opt-in developer launcher is `bun run start:adaptive-fixture`; normal `bun run start` remains
-unchanged.
+unchanged. A `mode: "mock"` file alone is rejected by the live configuration loader: the launcher
+must also provide the explicit fixture flag, a smoke marker, and an absolute isolated data
+directory before any fixture data can be seeded. The database-path layer additionally requires an
+existing private `saaa-adaptive-fixture.*` directory distinct from normal application data.
+The configuration-isolation test, the fixture-directory test, and all four mock Tool tests
+passed: the generic opener rejects seeded mock configuration; direct mode has no fixture rows;
+mock mode trains from exactly the three synthetic outcomes; and the normal search →
+execution-reference → invoke route selects `minutes` and records a successful outcome.
 
 2026-09-21 isolated desktop-runtime run: `bun run start:adaptive-fixture` launched a development
 app with its own temporary smoke data directory and reached its frontend-ready marker. Its
@@ -38,6 +45,16 @@ and Tool adaptation enabled in its fixture-only Settings document. The artifact 
 three synthetic decision/outcome examples rather than from the normal database; the observed
 scores were `minutes=1.0`, `web=0.0`, and `archive=0.0`. The process was then stopped; the normal
 application database was not opened or changed.
+
+2026-09-21 guarded fixture-runtime run: the launcher created
+`saaa-adaptive-fixture.fpqnUq` as its temporary data directory and the live process populated
+exactly 3 fixture catalog rows, 3 synthetic examples, one active Tool artifact, and one Tool
+activation with the same `minutes=1.0` score. The normal application database still had zero
+fixture catalog rows and zero fixture examples. The non-interactive verification stopped the
+development process after the database check; it does not claim a second frontend-marker result.
+The launcher now removes its temporary fixture data at exit by default; retaining it for
+investigation requires `SAAA_ADAPTIVE_FIXTURE_KEEP_DATA=1`. A subsequent SIGINT-stopped fixture
+run left no `saaa-adaptive-fixture.*` directory in its controlled `/tmp` data location.
 
 Repository checks: IPC contract tests and `bun run spec:check` passed. `bun run size:check`
 cannot pass in the shared dirty worktree because many unrelated modules are above their stored

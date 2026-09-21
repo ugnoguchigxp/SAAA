@@ -46,7 +46,10 @@ pub async fn infer(
     {
         return Err("personal-generation-binding".into());
     }
-    let purpose = if m.purpose == "personal_state_extract" {
+    let purpose = if matches!(
+        m.purpose.as_str(),
+        "personal_state_extract" | "world-extraction"
+    ) {
         saaa_personal_state_core::Purpose::StateExtract
     } else {
         saaa_personal_state_core::Purpose::Reasoning

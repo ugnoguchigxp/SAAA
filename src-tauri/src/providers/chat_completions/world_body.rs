@@ -4,6 +4,10 @@
 //! tool follow-up) the World is re-checked once; when it is no longer current the messages are
 //! rebuilt without it, so the sent body and the recorded inputs stay consistent.
 
+#[path = "world_trim.rs"]
+mod trim;
+pub(super) use trim::trim_optional_history_for_tool_follow_up;
+
 use super::*;
 use crate::runtime::context::world::turn::{WorldBlocks, WorldLive};
 use crate::runtime::context::{generation_inputs::verify_required_wire, source::Candidate};
@@ -42,62 +46,7 @@ fn strip(messages: &mut Vec<Value>, blocks: &WorldBlocks) {
     }
 }
 
-/// Removes only pre-turn, non-system history after a Tool result made the next request too
-/// large.  The current user input and the Tool protocol suffix are never candidates for removal;
-/// every tentative removal is checked against the exact required candidate contents.
-///
-/// This is deliberately a recompose operation, rather than byte truncation: a required source
-/// can be embedded in an old-looking history message and must therefore keep that whole message.
-pub(super) fn trim_optional_history_for_tool_follow_up(
-    messages: &mut Vec<Value>,
-    context_sources: &[Candidate],
-) -> bool {
-    let mut removed_any = false;
-    loop {
-        let Some(current_instruction) = messages
-            .iter()
-            .rposition(|message| message["role"] == "user")
-        else {
-            return removed_any;
-        };
-        let Some(index) = (0..current_instruction)
-            .find(|&index| matches!(messages[index]["role"].as_str(), Some("user" | "assistant")))
-        else {
-            return removed_any;
-        };
-        let mut recomposed = messages.clone();
-        recomposed.remove(index);
-        if verify_required_wire(&json!({"messages": recomposed}), context_sources).is_err() {
-            // Keep a required historical entry and inspect later optional entries instead.
-            let mut removed_this_pass = false;
-            for later_index in index + 1..current_instruction {
-                if !matches!(
-                    messages[later_index]["role"].as_str(),
-                    Some("user" | "assistant")
-                ) {
-                    continue;
-                }
-                let mut later = messages.clone();
-                later.remove(later_index);
-                if verify_required_wire(&json!({"messages": later}), context_sources).is_ok() {
-                    *messages = later;
-                    removed_any = true;
-                    removed_this_pass = true;
-                    break;
-                }
-            }
-            if !removed_this_pass {
-                return removed_any;
-            }
-        } else {
-            *messages = recomposed;
-            removed_any = true;
-        }
-    }
-}
-
-/// Builds the provider-facing messages from the composed history, including the host coding
-/// reference. Kept next to the World send-body handling so `run_with_options` stays small.
+/// Builds provider messages and appends host-owned tool capability declarations.
 pub(super) fn build_messages(
     history: &[ConversationMessage],
     context: &ModelStreamContext<'_>,

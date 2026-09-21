@@ -5,15 +5,22 @@ use crate::runtime::context::world::{g1_tests as graph, turn::compose_parts};
 
 #[tokio::test]
 async fn world_m4a_reasoning_wire() {
+    reasoning_wire(false).await;
+}
+#[tokio::test]
+async fn wr_t16_mcp_refreshes_after_initialization_and_records_exact_frame() {
+    reasoning_wire(true).await;
+}
+async fn reasoning_wire(fresh_sources: bool) {
     let mut results = Vec::new();
     for mode in ["current", "expired", "slow-init"] {
-        let expired = mode != "current";
+        let expired = mode != "current" && !fresh_sources;
         let f = graph::g1_fixture();
         let scope = graph::load_scope(&f);
         let access = f.access();
         let composed = compose_parts(
             true,
-            Some(Arc::new(f.service())),
+            Some(Arc::new(if fresh_sources { f.service().with_sources(Arc::new(crate::situation::SituationRuntime::new(Default::default(),None).unwrap())) } else { f.service() })),
             access.principal,
             access.policy_revision,
             Some(graph::graph_request("tech")),

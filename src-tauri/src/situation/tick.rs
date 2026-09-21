@@ -173,6 +173,7 @@ impl SituationRuntime {
             inner.quality_started_ms = quality_started_ms;
         }
         inner.last_failure = None;
+        super::world_snapshot::update_version(&mut inner)?;
         for event in pending_events {
             push_event(&mut inner, event);
         }

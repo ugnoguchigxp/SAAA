@@ -442,7 +442,9 @@ async fn render_session_inner(
             ready.len(),
             playback.is_some(),
         ));
-        if context.cancellation.is_cancelled() {
+        if context.cancellation.is_cancelled()
+            || crate::situation::speech_holds_runtime(&context.situation)
+        {
             break;
         }
         while rendering.len() < adaptive_concurrency
@@ -469,6 +471,9 @@ async fn render_session_inner(
             if let Some(chunk) = ready.remove(&next_playback) {
                 ready_bytes = ready_bytes.saturating_sub(chunk.bytes);
                 ready_audio_ms = ready_audio_ms.saturating_sub(chunk.audio_ms);
+                if crate::situation::speech_holds_runtime(&context.situation) {
+                    break;
+                }
                 let mut child = crate::voice::cloud_tts::spawn_audio_player(&chunk.path)?;
                 crate::runtime::event_hub::performance::record_tts_boundary_to_player_spawn(
                     chunk.boundary_at.elapsed(),
@@ -607,18 +612,20 @@ async fn render_http_session(
         };
         match &context.route {
             TtsRoute::Cloud(provider) => {
-                crate::voice::http_audio::play(
+                crate::voice::http_audio::play_with_situation(
                     provider,
                     &text,
                     context.timeout_ms,
                     context.cancellation.clone(),
+                    Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     on_started,
+                    Some(context.situation.clone()),
                 )
                 .await?
             }
             TtsRoute::Larm(conversation, settings) => {
                 let ready = crate::larm_voice::current_at(conversation, settings).await?;
-                crate::voice::http_audio::play_larm(
+                crate::voice::http_audio::play_larm_with_situation(
                     &ready.session,
                     settings.tts_voice.as_deref(),
                     Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -626,6 +633,7 @@ async fn render_http_session(
                     context.timeout_ms,
                     context.cancellation.clone(),
                     on_started,
+                    Some(context.situation.clone()),
                 )
                 .await?
             }

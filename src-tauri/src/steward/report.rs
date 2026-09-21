@@ -138,19 +138,7 @@ fn start_pending_speech(state: &AppState, conversation_id: &str) -> Result<(), S
     let writer = state.sqlite_writer.clone();
     let callback_run_id = run_id.clone();
     let channel = tauri::ipc::Channel::new(move |body| {
-        let state = if let tauri::ipc::InvokeResponseBody::Json(json) = body {
-            if json.contains("\"type\":\"speechStarted\"") {
-                Some("playback_started")
-            } else if json.contains("\"type\":\"speechEnded\"") {
-                Some("playback_finished")
-            } else if json.contains("\"type\":\"speechFailed\"") {
-                Some("delivery_unknown")
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let state = speech_event_state(&body);
         if let Some(state) = state {
             let _ = writer
                 .write(|connection| repo::mark_speech_state(connection, &callback_run_id, state));
@@ -184,6 +172,21 @@ fn start_pending_speech(state: &AppState, conversation_id: &str) -> Result<(), S
             .write(|connection| repo::mark_speech_state(connection, &run_id, "delivery_unknown"))?;
     }
     Ok(())
+}
+
+fn speech_event_state(body: &tauri::ipc::InvokeResponseBody) -> Option<&'static str> {
+    let tauri::ipc::InvokeResponseBody::Json(json) = body else {
+        return None;
+    };
+    if json.contains("\"type\":\"speechStarted\"") {
+        Some("playback_started")
+    } else if json.contains("\"type\":\"speechEnded\"") {
+        Some("playback_finished")
+    } else if json.contains("\"type\":\"speechFailed\"") {
+        Some("delivery_unknown")
+    } else {
+        None
+    }
 }
 
 fn flush_unflushed(
@@ -446,5 +449,19 @@ mod tests {
         )
         .expect("no replay")
         .is_empty());
+    }
+
+    #[test]
+    fn speech_callbacks_have_durable_terminal_mappings() {
+        use tauri::ipc::InvokeResponseBody;
+        for (event, state) in [
+            ("speechStarted", Some("playback_started")),
+            ("speechEnded", Some("playback_finished")),
+            ("speechFailed", Some("delivery_unknown")),
+            ("other", None),
+        ] {
+            let body = InvokeResponseBody::Json(format!(r#"{{"type":"{event}"}}"#));
+            assert_eq!(super::speech_event_state(&body), state);
+        }
     }
 }

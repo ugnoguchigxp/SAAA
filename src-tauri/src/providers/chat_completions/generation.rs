@@ -21,15 +21,8 @@ impl RequestGeneration {
                 candidate.requirement == crate::runtime::context::source::Requirement::Must
             }),
         );
-        let current_instruction_count = body["messages"]
-            .as_array()
-            .map(|messages| {
-                messages
-                    .iter()
-                    .filter(|message| message["role"] == "user")
-                    .count()
-            })
-            .unwrap_or_default();
+        // Earlier user messages are history. The final user message owns this instruction.
+        let current_instruction_count = usize::from(body["messages"].as_array().and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user")).is_some_and(|m| m["content"].as_str().is_some_and(|text| text.trim() == context.input.content.trim())));
         match wire_size {
             crate::runtime::context::generation::FinalWireSize::Fits => {}
             crate::runtime::context::generation::FinalWireSize::RequiredContextOverflow => {
@@ -65,10 +58,15 @@ impl RequestGeneration {
                     world.bind(generation);
                 }
             }
+            let selected = crate::runtime::context::world::dispatch::selected(
+                context.context_sources,
+                context.output_persistence.and_then(|p| p.world),
+                include_world,
+            );
             crate::runtime::context::generation_inputs::record(
                 generation,
                 context.context_health,
-                context.context_sources,
+                &selected,
                 context.context_omissions,
                 body["tools"].as_array().map(Vec::as_slice).unwrap_or(&[]),
                 include_world,

@@ -1,3 +1,4 @@
+#![cfg(test)]
 //! G1 integration tests: the fixed graph question reaches one authorized five-element slice and the
 //! C3/C5 boundaries stay explicit. Deterministic fixtures only; no model, network or production DB.
 

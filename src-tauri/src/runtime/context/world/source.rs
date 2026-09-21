@@ -131,6 +131,15 @@ fn inspect_project(project_scope: &str, scope: &ScopeSnapshot) -> Result<(), Wor
     if project_scope.contains(',') || project_scope.contains('\n') || project_scope.contains(';') {
         return Err(WorldOmission::AmbiguousProject);
     }
+    if project_scope.starts_with("user:")
+        && scope.is_user_only()
+        && scope
+            .scopes
+            .iter()
+            .any(|item| item.key == project_scope && item.kind == "user")
+    {
+        return Ok(());
+    }
     let projects: BTreeSet<&str> = scope
         .scopes
         .iter()
@@ -213,7 +222,9 @@ fn prepare_candidate_with(
     policy: SeedPolicy,
 ) -> WorldSourceOutcome {
     if let Err(omission) = inspect_request_with(&request, scope, policy) {
-        return WorldSourceOutcome::Omitted(omission);
+        if !(omission == WorldOmission::EmptyRequest && service.sources_enabled()) {
+            return WorldSourceOutcome::Omitted(omission);
+        }
     }
     let explicit_rendering = policy == SeedPolicy::ExplicitQuestionName;
     let mut request = request;
@@ -258,7 +269,7 @@ pub(crate) fn frame_candidate(
 ) -> Candidate {
     let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
     let run_id = frame.run_id.as_str();
-    let mut scope_refs = BTreeSet::from([frame.project_scope.clone()]);
+    let mut scope_refs: BTreeSet<String> = frame.scope.allowed_scope_keys.iter().cloned().collect();
     for view in &frame.runtime {
         scope_refs.insert(view.scope_key.clone());
     }

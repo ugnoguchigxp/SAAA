@@ -15,9 +15,16 @@ fn messages(value: &Value) -> &Vec<Value> {
 
 #[tokio::test]
 async fn world_m4a_agent_routes() {
+    agent_cases(0..3).await;
+}
+#[tokio::test]
+async fn wr_t14_fresh_session_gets_current_frame_and_host_tool_history() {
+    agent_cases(3..4).await;
+}
+async fn agent_cases(modes: std::ops::Range<u8>) {
     let mut report = Vec::new();
-    for mode in 0..3 {
-        let expired = mode != 0;
+    for mode in modes {
+        let expired = mode == 1 || mode == 2;
         let fixture = graph::g1_fixture();
         let scope = graph::load_scope(&fixture);
         let access = fixture.access();
@@ -25,7 +32,13 @@ async fn world_m4a_agent_routes() {
         base.messages.last_mut().unwrap().content = "hello".into();
         let composed = compose_parts(
             true,
-            Some(Arc::new(fixture.service())),
+            Some(Arc::new(if mode == 3 {
+                fixture.service().with_sources(Arc::new(
+                    crate::situation::SituationRuntime::new(Default::default(), None).unwrap(),
+                ))
+            } else {
+                fixture.service()
+            })),
             access.principal,
             access.policy_revision,
             Some(graph::graph_request("tech")),
@@ -62,6 +75,17 @@ async fn world_m4a_agent_routes() {
         let server = tokio::spawn(async move {
             let mut wire = Vec::new();
             for round in 0..2 {
+                let session_id = if mode == 3 && round == 1 {
+                    "ags_fresh"
+                } else {
+                    "ags_test"
+                };
+                if mode == 3 && round == 1 {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let (head, _) = request(&mut socket).await;
+                    assert!(head.starts_with("POST /v1/agents/sessions "));
+                    respond(&mut socket,"application/json",&json!({"id":"ags_fresh","events_url":"/v1/agents/sessions/ags_fresh/events"}).to_string()).await;
+                }
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let (head, body) = request(&mut socket).await;
                 assert!(head.starts_with("POST "));
@@ -74,7 +98,15 @@ async fn world_m4a_agent_routes() {
                         .as_str()
                         .is_some_and(|s| s.contains("[WORLD_MODEL"))
                 });
-                assert_eq!(has_world, !expired && round == 0);
+                assert_eq!(has_world, !expired && (round == 0 || mode == 3));
+                if mode == 3 && round == 1 {
+                    assert!(head.contains("/ags_fresh/"));
+                    let tools = &input["toolResult"]["history"];
+                    assert_eq!(tools.as_array().unwrap().len(), 1);
+                    assert!(tools[0]["callId"]
+                        .as_str()
+                        .is_some_and(|v| v.starts_with("sse-ui-")));
+                }
                 wire.push((body, has_world));
                 let output = if round == 0 {
                     let instructions = input["instructions"].as_str().unwrap();
@@ -88,7 +120,7 @@ async fn world_m4a_agent_routes() {
                 respond(
                     &mut socket,
                     "application/json",
-                    &json!({"id":format!("agt_{round}"),"session_id":"ags_test"}).to_string(),
+                    &json!({"id":format!("agt_{round}"),"session_id":session_id}).to_string(),
                 )
                 .await;
                 let (mut socket, _) = listener.accept().await.unwrap();
@@ -96,10 +128,16 @@ async fn world_m4a_agent_routes() {
                 assert!(head.starts_with("GET "));
                 let event = format!(
                     "data: {}\n\ndata: {}\n\n",
-                    json!({"type":"message.delta","session_id":"ags_test","turn_id":format!("agt_{round}"),"data":{"text":output}}),
-                    json!({"type":"turn.completed","session_id":"ags_test","turn_id":format!("agt_{round}"),"data":{}})
+                    json!({"type":"message.delta","session_id":session_id,"turn_id":format!("agt_{round}"),"data":{"text":output}}),
+                    json!({"type":"turn.completed","session_id":session_id,"turn_id":format!("agt_{round}"),"data":{}})
                 );
                 respond(&mut socket, "text/event-stream", &event).await;
+            }
+            if mode == 3 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let (head, _) = request(&mut socket).await;
+                assert!(head.contains("ags_fresh/release"));
+                respond(&mut socket, "application/json", "{}").await;
             }
             wire
         });
@@ -118,7 +156,7 @@ async fn world_m4a_agent_routes() {
             location: "local".into(),
             base_url: base_url.clone(),
             model: "fixture".into(),
-            models_path: "/v1/agents/models".into(),
+            models_path: "/v1/agents/models?runtime=fixture".into(),
             sessions_path: "/v1/agents/sessions".into(),
             authentication: "none".into(),
         };
@@ -253,7 +291,7 @@ async fn world_m4a_agent_routes() {
             let rows = s.query_map([], |r| r.get(0)).map_err(crate::database_error)?;
             rows.collect::<Result<Vec<_>,_>>().map_err(crate::database_error)
         }).unwrap();
-        assert_eq!(selected, vec![!expired, false]);
+        assert_eq!(selected, vec![!expired, mode == 3]);
         assert_eq!(bodies.len(), 2);
         let digests: Vec<String> = fixture.writer.read_serialized(|c| {
             let mut s = c.prepare("SELECT request_digest FROM context_generations WHERE status='completed' ORDER BY ordinal").map_err(crate::database_error)?;
@@ -271,7 +309,7 @@ async fn world_m4a_agent_routes() {
             );
         }
         assert_eq!(digests.len(), bodies.len());
-        report.push(json!({"case_id":if mode == 2 {"W12-fallback-expired"} else if expired {"W12-agent-expired"}else{"W11-agent-initial-followup"},"pass":true,"request_count":if mode == 2 {3}else{2},"world_sent_per_request":if mode == 2 {vec![true,false,false]}else{selected},"manifest_match":true}));
+        report.push(json!({"case_id":if mode == 3 {"WR-T14-fresh-session"} else if mode == 2 {"W12-fallback-expired"} else if expired {"W12-agent-expired"}else{"W11-agent-initial-followup"},"pass":true,"request_count":if mode == 2 {3}else{2},"world_sent_per_request":if mode == 2 {vec![true,false,false]}else{selected},"manifest_match":true}));
     }
     println!(
         "WORLD_EVAL_REPORT={}",

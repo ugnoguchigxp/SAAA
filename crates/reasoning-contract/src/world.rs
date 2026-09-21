@@ -27,10 +27,11 @@ impl WorldEvidence {
             .ok_or("invalid_world_evidence")?;
         let frame: Value = serde_json::from_str(json).map_err(|_| "invalid_world_evidence")?;
         let scope = frame["scope"].as_object().ok_or("invalid_world_evidence")?;
-        let focus_scope_key = scope
-            .get("focus_scope_key")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let focus_scope_key = match scope.get("focus_scope_key") {
+            Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.clone()),
+            _ => return Err("invalid_world_evidence"),
+        };
         let allowed_scope_keys: Vec<String> = scope
             .get("allowed_scope_keys")
             .and_then(Value::as_array)
@@ -45,6 +46,8 @@ impl WorldEvidence {
             .filter(|value| !value.is_empty() && value.len() <= 128)
             .ok_or("invalid_world_evidence")?;
         if allowed_scope_keys.is_empty()
+            || allowed_scope_keys.len() > 64
+            || allowed_scope_keys.windows(2).any(|pair| pair[0] >= pair[1])
             || allowed_scope_keys
                 .iter()
                 .any(|key| key.is_empty() || key.len() > 512)

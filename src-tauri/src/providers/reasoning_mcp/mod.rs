@@ -166,7 +166,6 @@ impl Client {
         result
     }
 }
-#[cfg(test)]
 pub(crate) mod tests;
 
 pub(crate) async fn for_turn(

@@ -68,6 +68,9 @@ async fn play_one(
     output: Arc<AtomicBool>,
     first: bool,
 ) -> Result<(), String> {
+    if crate::situation::speech_holds_runtime(&context.situation) {
+        return Ok(());
+    }
     let route = resolve_render_route(route, &context.cancellation).await?;
     let situation = context.situation.clone();
     let on_event = context.on_event.clone();
@@ -80,19 +83,20 @@ async fn play_one(
     };
     match route {
         TtsRoute::Cloud(provider) => {
-            crate::voice::http_audio::play_guarded(
+            crate::voice::http_audio::play_with_situation(
                 &provider,
                 text,
                 budget,
                 context.cancellation.clone(),
                 output,
                 on_started,
+                Some(context.situation.clone()),
             )
             .await
         }
         TtsRoute::Larm(conversation, settings) => {
             let ready = crate::larm_voice::current_at(&conversation, &settings).await?;
-            crate::voice::http_audio::play_larm(
+            crate::voice::http_audio::play_larm_with_situation(
                 &ready.session,
                 settings.tts_voice.as_deref(),
                 output,
@@ -100,6 +104,7 @@ async fn play_one(
                 budget,
                 context.cancellation.clone(),
                 on_started,
+                Some(context.situation.clone()),
             )
             .await
         }
@@ -114,7 +119,9 @@ async fn play_one(
                 context.cache_directory.clone(),
             )
             .await?;
-            if context.cancellation.is_cancelled() {
+            if context.cancellation.is_cancelled()
+                || crate::situation::speech_holds_runtime(&context.situation)
+            {
                 return Err("Speech cancelled".into());
             }
             // Mark before spawning: once playback can start it must never be retried.

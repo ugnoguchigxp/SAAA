@@ -285,6 +285,7 @@ pub(crate) struct WorldFrameService {
     readers: SqliteReaders,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     instance_id: String,
+    situation: Option<Arc<crate::situation::SituationRuntime>>,
 }
 
 impl WorldFrameService {
@@ -293,7 +294,19 @@ impl WorldFrameService {
             readers,
             clock,
             instance_id: crate::new_id("world_frame"),
+            situation: None,
         }
+    }
+
+    pub(crate) fn with_sources(
+        mut self,
+        situation: Arc<crate::situation::SituationRuntime>,
+    ) -> Self {
+        self.situation = Some(situation);
+        self
+    }
+    pub(crate) fn sources_enabled(&self) -> bool {
+        self.situation.is_some()
     }
 
     fn run<T>(
@@ -311,7 +324,20 @@ impl WorldFrameService {
         let now = (self.clock)();
         let expires = now.saturating_add(owned.ttl_ms as i64);
         let first = self.run(|c| authorize_frame_request(c, &request))?;
-        let outcome = self.run(|c| {
+        let user_scope = first
+            .scope
+            .allowed_scope_keys
+            .iter()
+            .find(|key| key.starts_with("user:"));
+        let before = match (&self.situation, user_scope) {
+            (Some(situation), Some(scope)) => Some(
+                situation
+                    .world_snapshot(scope, now)
+                    .map_err(|_| FrameError::Unavailable)?,
+            ),
+            _ => None,
+        };
+        let (outcome, mut sources) = self.run(|c| {
             let authorized = authorize_frame_request(c, &request)?;
             if authorized.scope_digest != first.scope_digest
                 || authorized.ledger_revision != first.ledger_revision
@@ -320,8 +346,30 @@ impl WorldFrameService {
             {
                 return Err(FrameError::Changed);
             }
-            read_db(c, &request, &authorized, now)
+            let sources = if self.sources_enabled() {
+                super::runtime_sources::read(c, &authorized, now)?
+            } else {
+                Vec::new()
+            };
+            Ok((read_db(c, &request, &authorized, now)?, sources))
         })?;
+        if let (Some(before), Some(situation), Some(user_scope)) =
+            (before, &self.situation, user_scope)
+        {
+            let after = situation
+                .world_snapshot(user_scope, (self.clock)())
+                .map_err(|_| FrameError::Unavailable)?;
+            if before.digest != after.digest || before.version != after.version {
+                return Err(FrameError::Changed);
+            }
+            use saaa_personal_state_core::world::frame_sources::*;
+            sources.push(WorldSourceGroup {
+                kind: WorldSourceKind::Situation,
+                availability: WorldSourceAvailability::Available,
+                entries: vec![after],
+                omission_reason: None,
+            });
+        }
 
         let runtime = outcome.runtime;
         let mut notices = outcome.runtime_notices;
@@ -332,16 +380,35 @@ impl WorldFrameService {
                 graph_capacity_omitted = true;
             }
         }
+        // Reserve the complete source/scope envelope before the bounded graph/runtime assembler.
+        let original = WorldFrame::empty(&owned.run_id, &owned.project_scope, now, expires);
+        let mut enriched = original.clone();
+        enriched.scope = first.scope.clone();
+        enriched.project_scope = first.scope.focus_scope_key.clone().unwrap_or_default();
+        enriched.sources = sources;
+        let overhead = enriched
+            .encoded_len()?
+            .saturating_sub(original.encoded_len()?);
+        let remaining = owned
+            .max_bytes
+            .checked_sub(overhead)
+            .ok_or(FrameError::BudgetTooSmall)?;
         let mut frame = assemble_frame(FrameAssembly {
             run_id: &owned.run_id,
             project_scope: &owned.project_scope,
             captured_at_ms: now,
             expires_at_ms: expires,
-            max_bytes: owned.max_bytes,
+            max_bytes: remaining,
             graph: outcome.graph,
             runtime,
             notices,
         })?;
+        frame.scope = enriched.scope;
+        frame.project_scope = enriched.project_scope;
+        frame.sources = enriched.sources;
+        if frame.encoded_len()? > owned.max_bytes {
+            return Err(FrameError::BudgetTooSmall);
+        }
         if graph_capacity_omitted {
             frame.truncated = true;
         }
@@ -367,6 +434,24 @@ impl WorldFrameService {
         })
     }
 
+    /// Result acceptance ignores elapsed TTL, but never ignores changed dependencies.
+    pub(crate) fn validate_result(
+        &self,
+        prior: &PreparedWorldFrame,
+    ) -> Result<FrameValidity, FrameError> {
+        let current = self.build(prior.request.clone())?;
+        Ok(compare_stamp(&prior.stamp, &current.stamp))
+    }
+
+    /// New generation only: creates a fresh stamp; never changes the old frame's TTL.
+    pub(crate) fn refresh(
+        &self,
+        prior: &PreparedWorldFrame,
+    ) -> Result<PreparedWorldFrame, FrameError> {
+        let access = prior.request.access.as_request();
+        self.prepare_frame(prior.request.as_borrowed(access))
+    }
+
     pub(crate) fn prepare_frame(
         &self,
         request: FrameRequest<'_>,
@@ -375,7 +460,10 @@ impl WorldFrameService {
         let max_bytes = effective_max_bytes(request.max_bytes);
         let runtime_refs = normalize_runtime_refs(&request.runtime_refs)?;
         let owned = OwnedFrameRequest::from_borrowed(&request, runtime_refs, max_bytes, ttl_ms);
-        let prepared = self.build(owned)?;
+        let prepared = match self.build(owned.clone()) {
+            Err(FrameError::Changed) => self.build(owned)?,
+            result => result?,
+        };
         if !is_within_validity(
             prepared.frame.captured_at_ms,
             prepared.frame.expires_at_ms,
@@ -440,3 +528,6 @@ impl WorldFrameService {
         Ok(compare_stamp(&prepared.stamp, &rebuilt.stamp))
     }
 }
+
+#[path = "runtime_frame_receipt.rs"]
+mod receipt;

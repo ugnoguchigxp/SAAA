@@ -128,7 +128,11 @@ async fn evaluate(c: Case) -> Value {
     let access = f.access();
     let mut composed = compose_parts(
         c.memory,
-        Some(Arc::new(f.service())),
+        Some(Arc::new(if c.id.starts_with("WR-") {
+            f.service().with_sources(app.situation.clone())
+        } else {
+            f.service()
+        })),
         access.principal,
         access.policy_revision,
         c.graph.then(|| graph::graph_request(c.topic)),
@@ -437,4 +441,39 @@ async fn world_m4a_suite() {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }
     println!("WORLD_EVAL_REPORT={report}");
+}
+
+#[tokio::test]
+async fn wr_t12_followup_and_fallback_rebuild_expired_frame() {
+    for c in [
+        Case {
+            follow: Some(Change::At(1001)),
+            expected: &[true, true],
+            ..case("WR-T12-followup")
+        },
+        Case {
+            before: Change::At(1001),
+            expected: &[true],
+            ..case("WR-T13-allocation-expired")
+        },
+        Case {
+            before: Change::Scope,
+            expected: &[],
+            ..case("WR-T12-scope-denied")
+        },
+    ] {
+        let result = evaluate(c).await;
+        assert_eq!(result["pass"], true);
+    }
+}
+
+#[tokio::test]
+async fn wr_t13_allocation_delay_uses_new_frame_on_shared_adapter() {
+    let result = evaluate(Case {
+        before: Change::At(1001),
+        expected: &[true],
+        ..case("WR-T13-allocation")
+    })
+    .await;
+    assert_eq!(result["manifest_match"], true);
 }

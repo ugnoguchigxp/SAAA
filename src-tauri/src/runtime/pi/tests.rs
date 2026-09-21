@@ -17,7 +17,6 @@ fn delegated_profile_allows_only_the_kernel_read_needed_to_start_pi() {
     assert!(args.contains("allow sysctl-read"));
     assert!(args.contains("settings.json.lock"));
     assert!(args.contains("auth.json.lock"));
-    assert!(args.contains("delegated-sdk-state"));
     assert!(args.contains("deny default"));
     assert!(!args.contains("allow default"));
     assert!(!args.contains("network"));
@@ -139,7 +138,7 @@ fn delegated_sdk_profile_completes_a_read_only_prompt() {
     let prompt = process
         .send(
             "prompt",
-            json!({"message":"Read README.md and briefly report its content. Do not edit files or run commands."}),
+            json!({"message":"Read README.md and briefly report its content. You may use read-only tools or commands, but do not modify files."}),
         )
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);

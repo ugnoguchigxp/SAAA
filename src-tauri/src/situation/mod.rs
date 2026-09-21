@@ -1,5 +1,6 @@
 pub mod calibration;
 mod monitor;
+mod world_snapshot;
 pub(crate) use monitor::spawn_situation_monitor;
 mod classifier;
 pub mod contracts;
@@ -50,6 +51,8 @@ pub(crate) struct SituationSample {
 }
 
 struct RuntimeInner {
+    world_sequence: u64,
+    world_digest: String,
     settings: SituationRuntimeSettings,
     calibration_parameters: CalibrationParameters,
     calibration_rule_version: String,
@@ -84,6 +87,8 @@ impl SituationRuntime {
             .unwrap_or_else(|| initial_decision(&now));
         Ok(Self {
             inner: Mutex::new(RuntimeInner {
+                world_sequence: 0,
+                world_digest: String::new(),
                 settings,
                 calibration_parameters: CalibrationParameters::default(),
                 calibration_rule_version: contracts::RULE_VERSION.to_string(),
@@ -120,6 +125,7 @@ impl SituationRuntime {
             .map_err(|_| "Situation runtime lock unavailable".to_string())?;
         let stopped = inner.settings.enabled && !settings.enabled;
         inner.settings = settings;
+        world_snapshot::update_version(&mut inner)?;
         if stopped {
             push_event(
                 &mut inner,
@@ -177,6 +183,7 @@ impl SituationRuntime {
             let settings = repository::save_enabled(database, enabled)?;
             let stopped = inner.settings.enabled && !settings.enabled;
             inner.settings = settings.clone();
+            world_snapshot::update_version(&mut inner)?;
             if stopped {
                 push_event(
                     &mut inner,
@@ -219,6 +226,7 @@ impl SituationRuntime {
             let result = persist(database)?;
             let stopped = inner.settings.enabled && !settings.enabled;
             inner.settings = settings;
+            world_snapshot::update_version(&mut inner)?;
             if stopped {
                 push_event(
                     &mut inner,
@@ -355,6 +363,7 @@ impl SituationRuntime {
                 recovery: "Pause and re-enable Situation monitoring. Other SAAA features remain available.".to_string(),
             };
             inner.last_failure = Some(failure.clone());
+            let _ = world_snapshot::update_version(&mut inner);
             push_event(
                 &mut inner,
                 SituationEvent::Failed {

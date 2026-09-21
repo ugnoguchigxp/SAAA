@@ -1,0 +1,157 @@
+{
+  "suite": "world-remaining",
+  "schemaVersion": 1,
+  "startedAt": "2026-09-21T04:02:42.502Z",
+  "completedAt": "2026-09-21T04:02:54.103Z",
+  "complete": true,
+  "liveVerified": false,
+  "scope": "T01-T21 card regression; separate route matrix, performance and product gates are required",
+  "cases": [
+    {
+      "name": "world::frame_sources::tests::wr_t01_available_requires_matching_typed_payload",
+      "result": "ok",
+      "manifest": "crates/personal-state-core/Cargo.toml"
+    },
+    {
+      "name": "world::frame_sources::tests::wr_t01_unavailable_is_not_an_empty_available_list",
+      "result": "ok",
+      "manifest": "crates/personal-state-core/Cargo.toml"
+    },
+    {
+      "name": "world::runtime_frame::tests::wr_t01_user_scope_serializes_without_a_project",
+      "result": "ok",
+      "manifest": "crates/personal-state-core/Cargo.toml"
+    },
+    {
+      "name": "world::runtime_frame::tests::wr_t01_v1_fixture_cannot_be_silently_read_as_v2",
+      "result": "ok",
+      "manifest": "crates/personal-state-core/Cargo.toml"
+    },
+    {
+      "name": "world::extraction::tests::wr_t08_rejects_fake_evidence_authority_and_unknown_fields",
+      "result": "ok",
+      "manifest": "crates/personal-state-core/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::remaining_perf_tests::wr_t23_source_frame_additional_p95",
+      "result": "ignored",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t04_delegation_uses_workspace_ownership_and_detects_withdrawal",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::extraction_tests::wr_t09_finalized_user_reaches_existing_world_ledger",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t02_user_only_frame_is_authorized_without_a_project",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::extraction_tests::wr_t10_correction_and_revoked_source_cannot_revive_old_fact",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t11_refresh_replaces_actual_block_and_receipt_candidate",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t07_result_acceptance_expires_only_on_changed_dependencies",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t05_deadlines_are_globally_sorted_and_cancelled_rows_disappear",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "memory::personal_state::world::runtime_sources_tests::wr_t06_sources_reach_frame_and_schedule_addition_invalidates_it",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "providers::reasoning_mcp::tests::wr_t16_wire_world_metadata_matches_advertised_schema",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "providers::agent_session::sse::world_eval_tests::wr_t14_fresh_session_gets_current_frame_and_host_tool_history",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "providers::chat_completions::world_eval_tests::wr_t13_allocation_delay_uses_new_frame_on_shared_adapter",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::context::world::capabilities::tests::wr_t21_capability_contract_does_not_infer_audio_as_world_reasoning",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::context::world::render_tests::wr_t01_rendered_frame_exposes_v2_scope_and_never_a_v1_shape",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::context::world::render_tests::wr_t02_user_only_source_frame_is_not_dropped_as_an_empty_project_frame",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::context::world::state_claim::tests::wr_t17_only_exact_authorized_source_can_render",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::context::world::state_claim::tests::wr_t18_unverified_deltas_do_not_reach_ui",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "situation::world_snapshot::tests::wr_t03_semantic_changes_and_staleness_are_explicit",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "voice::http_audio::requests::tests::wr_t19_hold_during_synthesis_prevents_playback",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::codex_context::frame_tests::wr_t15_codex_wire_contains_graph_and_source_frame_with_receipt",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "runtime::context::world::capabilities::tests::wr_t20_status_lists_registered_ids_without_source_text",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "providers::chat_completions::world_eval_tests::wr_t12_followup_and_fallback_rebuild_expired_frame",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    }
+  ],
+  "exits": [
+    {
+      "manifest": "crates/personal-state-core/Cargo.toml",
+      "exitCode": 0
+    },
+    {
+      "manifest": "src-tauri/Cargo.toml",
+      "exitCode": 0
+    }
+  ],
+  "errors": []
+}

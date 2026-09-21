@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::render::{
     is_empty_frame, parse_rendered_json, render_world_frame, MAX_FRAME_JSON_BYTES,
     MAX_WRAPPED_BYTES, WORLD_FOOTER, WORLD_HEADER,

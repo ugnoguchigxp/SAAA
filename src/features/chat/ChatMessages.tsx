@@ -41,8 +41,10 @@ const MarkdownMessage = memo(function MarkdownMessage({
 
 export const CompletedMessage = memo(function CompletedMessage({
   message,
+  scopeKeys,
 }: {
   message: ConversationMessage;
+  scopeKeys?: string[];
 }) {
   const { t } = useTranslation();
   return (
@@ -52,6 +54,7 @@ export const CompletedMessage = memo(function CompletedMessage({
       <span className="message-role">
         {message.role === "user" ? t("chat.you") : t("chat.assistant")}
       </span>
+      {scopeKeys?.length ? <p className="message-scope">対象: {scopeKeys.join("、")}</p> : null}
       {message.parts?.length ? (
         message.parts.map((part, index) =>
           part.type === "ui" ? (

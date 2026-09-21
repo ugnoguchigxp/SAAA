@@ -133,7 +133,12 @@ export default async function (pi: ExtensionAPI) {
                   .join("\n");
           if (!prompt.trim() || [...prompt].length > 32000)
             throw new Error("Invalid coding request");
-          const client = new Codex({ config: { mcp_servers: disabledServers } });
+          const client = new Codex({
+            config: {
+              mcp_servers: disabledServers,
+              sandbox_permissions: [],
+            },
+          });
           const configuration = {
             model: MODEL,
             workingDirectory: current.cwd,
@@ -203,7 +208,6 @@ export default async function (pi: ExtensionAPI) {
           output.errorMessage = error instanceof Error ? error.message : "Codex SDK failed";
           stream.push({ type: "error", reason: output.stopReason, error: output });
         } finally {
-          controller.abort();
           if (claimed) active = false;
           stream.end();
         }

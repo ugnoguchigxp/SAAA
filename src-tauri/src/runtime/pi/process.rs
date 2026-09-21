@@ -64,7 +64,9 @@ pub struct Process {
 impl Process {
     pub fn open(settings: &CodingSettings, cwd: &Path, session: &Path) -> Result<Self, String> {
         let slot = SLOT.try_lock().map_err(|_| "busy")?;
-        let mut command = if delegated_profile(&settings.profile) {
+        let mut command = if delegated_sdk_profile(&settings.profile) {
+            delegated_sdk_command(settings, cwd)?
+        } else if delegated_profile(&settings.profile) {
             delegated_command(settings, cwd, session)?
         } else {
             launch_command(settings)
@@ -296,67 +298,85 @@ impl Process {
 
 pub(crate) fn delegated_command(
     settings: &CodingSettings,
-    workspace: &Path,
+    _workspace: &Path,
     session: &Path,
 ) -> Result<Command, String> {
     #[cfg(target_os = "macos")]
     {
-        let session_dir = std::fs::canonicalize(
-            session.parent().ok_or("delegated_profile_invalid")?,
-        )
-        .map_err(|_| "delegated_profile_invalid")?;
-        // The authenticated SDK needs a writable state directory.  Keep it
-        // explicit and project-local instead of granting write access to the
-        // user's home directory or to the rest of the workspace.
-        let workspace = std::fs::canonicalize(workspace).map_err(|_| "delegated_profile_invalid")?;
-        let sdk_state_dir = workspace.join(".saaa").join("delegated-sdk-state");
-        std::fs::create_dir_all(&sdk_state_dir).map_err(|_| "delegated_state_unavailable")?;
-        let sdk_state_dir =
-            std::fs::canonicalize(&sdk_state_dir).map_err(|_| "delegated_state_unavailable")?;
+        let session_dir =
+            std::fs::canonicalize(session.parent().ok_or("delegated_profile_invalid")?)
+                .map_err(|_| "delegated_profile_invalid")?;
         let home = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
             .filter(|path| path.is_absolute())
             .ok_or("delegated_profile_invalid")?;
-        if sdk_profile(&settings.profile) {
-            provision_sdk_auth_link(&home, &sdk_state_dir)?;
-        }
         let agent_dir = home.join(".pi").join("agent");
         let quote = |path: &Path| format!("\"{}\"", path.to_string_lossy().replace('"', "\\\""));
         // sandbox-exec applies to pi and every descendant process. Read access
         // is broad enough for a compiler/test runner, while writes are limited
-        // to the session and temporary directories and network is absent.
+        // to the session and temporary directories. Network remains absent.
         // Node 24 queries kernel facts during allocator initialization.  That
         // operation is read-only, but is separately mediated by Seatbelt. Pi
         // also creates lock directories while it reads its existing local
         // settings and credentials. Those named lock directories are the only
         // home-directory writes granted; they cannot modify either JSON file.
-        // Codex SDK writes are confined to `CODEX_HOME` below.
         let profile = format!(
-            "(version 1) (deny default) (allow process*) (allow sysctl-read) (allow file-read*) (allow file-write* (subpath {}) (subpath {}) (subpath {}) (subpath {}) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
+            "(version 1) (deny default) (allow process*) (allow sysctl-read) (allow file-read*) (allow file-write* (subpath {}) (subpath {}) (subpath {}) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
             quote(&session_dir),
-            quote(&sdk_state_dir),
             quote(&agent_dir.join("settings.json.lock")),
             quote(&agent_dir.join("auth.json.lock")),
         );
         let mut command = Command::new("/usr/bin/sandbox-exec");
-        command
-            .args(["-p", &profile])
-            .arg(&settings.executable)
-            .env("CODEX_HOME", sdk_state_dir);
+        command.args(["-p", &profile]).arg(&settings.executable);
         Ok(command)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (settings, workspace, session);
+        let _ = (settings, session);
+        Err("delegated_profile_unsupported".into())
+    }
+}
+
+/// The Codex SDK applies its own read-only sandbox to model-generated tools.
+/// Wrapping its parent process in Seatbelt makes macOS reject that nested
+/// sandbox (`sandbox_apply: EPERM`), so this trusted adapter is kept outside
+/// the outer profile while its mutable state remains workspace-local.
+fn delegated_sdk_command(settings: &CodingSettings, workspace: &Path) -> Result<Command, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let workspace =
+            std::fs::canonicalize(workspace).map_err(|_| "delegated_profile_invalid")?;
+        let sdk_state_dir = workspace.join(".saaa").join("delegated-sdk-state");
+        std::fs::create_dir_all(&sdk_state_dir).map_err(|_| "delegated_state_unavailable")?;
+        let sdk_state_dir =
+            std::fs::canonicalize(&sdk_state_dir).map_err(|_| "delegated_state_unavailable")?;
+        let sdk_tmp_dir = sdk_state_dir.join("tmp");
+        std::fs::create_dir_all(&sdk_tmp_dir).map_err(|_| "delegated_state_unavailable")?;
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or("delegated_profile_invalid")?;
+        provision_sdk_auth_link(&home, &sdk_state_dir)?;
+        let mut command = Command::new(&settings.executable);
+        command
+            .env("CODEX_HOME", &sdk_state_dir)
+            .env("TMPDIR", sdk_tmp_dir)
+            .env("SSL_CERT_FILE", "/etc/ssl/cert.pem");
+        Ok(command)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (settings, workspace);
         Err("delegated_profile_unsupported".into())
     }
 }
 
 fn delegated_profile(profile: &str) -> bool {
-    matches!(
-        profile,
-        "delegated-read-test-macos-v1" | "delegated-codex-sdk-macos-v1"
-    )
+    profile == "delegated-read-test-macos-v1"
+}
+
+fn delegated_sdk_profile(profile: &str) -> bool {
+    profile == "delegated-codex-sdk-macos-v1"
 }
 
 fn sdk_profile(profile: &str) -> bool {

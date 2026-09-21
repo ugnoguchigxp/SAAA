@@ -9,6 +9,12 @@ pub(super) fn prepare(
     history: &[ConversationMessage],
     context: &ContextManifest<'_>,
 ) -> Result<(Request, Vec<Candidate>, Vec<Candidate>), String> {
+    // Initialization may outlive the old Frame. Refresh after connect, before evidence projection.
+    let mut refreshed_history = history.to_vec();
+    if let Some(world) = context.world {
+        world.refresh_history(&mut refreshed_history)?;
+    }
+    let history = refreshed_history.as_slice();
     // World is sent once as evidence, never retained a second time as assistant history.
     let world_free_history = context
         .world
@@ -20,7 +26,8 @@ pub(super) fn prepare(
     if request.constraints.language == "system" {
         request.constraints.language = "auto".into();
     }
-    let mut selected = context.selected.to_vec();
+    let mut selected =
+        crate::runtime::context::world::dispatch::selected(context.selected, context.world, true);
     if !context
         .world
         .is_some_and(|world| world.revalidate_current())

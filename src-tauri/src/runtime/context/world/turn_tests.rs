@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::super::generation::{begin, BeginGeneration};
 use super::super::generation_inputs::record;
 use super::super::source::{Candidate, Requirement};
@@ -206,7 +207,8 @@ fn m3b_06_coding_only_selects_world_without_other_project() {
     assert!(!json.to_string().contains("project:other"));
     assert!(world.scope_refs.iter().all(|key| key == PROJECT
         || key == &format!("task:{CODING_ID}")
-        || key.starts_with("task:")));
+        || key.starts_with("task:")
+        || key.starts_with("user:")));
 }
 
 #[test]

@@ -305,6 +305,25 @@ fn dw_01_multiple_active_goals_are_allowed_and_no_delete() {
 }
 
 #[test]
+fn dw_01_direct_registration_allows_eight_goals_then_enforces_the_limit() {
+    let connection = db();
+    workspace(&connection);
+    for index in 0..8 {
+        let registered = repo::register(
+            &connection,
+            PRIMARY_CONVERSATION_ID,
+            "ws",
+            &format!("goal {index}"),
+        );
+        assert!(registered.is_ok());
+    }
+    assert_eq!(
+        repo::register(&connection, PRIMARY_CONVERSATION_ID, "ws", "one too many"),
+        Err("active_goal_limit".into())
+    );
+}
+
+#[test]
 fn dw_01_proposal_rejects_ambiguous_or_unbounded_authority() {
     let valid = GoalProposal {
         source_message_id: "message".into(),
@@ -927,7 +946,24 @@ fn ml_04_duplicate_dedupe_keeps_one_task() {
 fn ml_05_hold_skips_insert_then_flush_one() {
     with_memory(true, || {
         let state = app_state(db());
-        register_goal(&state);
+        state
+            .sqlite_writer
+            .write(|connection| {
+                let _ = workspace(connection);
+                repo::register_with_options(
+                    connection,
+                    PRIMARY_CONVERSATION_ID,
+                    "ws",
+                    "tests pass",
+                    "",
+                    "test_report_obtained",
+                    "read_test",
+                    3,
+                    60_000,
+                    "silent",
+                )
+            })
+            .unwrap();
         prepare_runtime_run(&state, &turn("run-hold", START_TRIGGER)).unwrap();
         super::on_user_message(&state, &turn("run-hold", START_TRIGGER));
         let id = task_id(&state);
@@ -950,6 +986,19 @@ fn ml_05_hold_skips_insert_then_flush_one() {
         state
             .situation
             .set_scene_attention_for_test("FOCUS", "OBSERVE");
+        // Silent reports are normally aggregate-delayed. The report here was
+        // already available before the meeting hold, so advance only its
+        // durable availability to exercise hold release without TTS side
+        // effects in this unit test.
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute("UPDATE steward_reports SET available_at_ms=0", [])
+                    .map_err(crate::database_error)?;
+                Ok(())
+            })
+            .unwrap();
         super::flush_held_reports(&state, PRIMARY_CONVERSATION_ID).unwrap();
         assert_eq!(
             count(
@@ -971,6 +1020,163 @@ fn ml_05_hold_skips_insert_then_flush_one() {
             })
             .unwrap();
         assert!(!body.to_ascii_lowercase().contains("confidence"));
+    });
+}
+
+#[test]
+fn dw_14_multiple_goals_keep_the_sibling_through_topic_switch_withdrawal_and_hold() {
+    with_memory(true, || {
+        let state = app_state(db());
+        state
+            .sqlite_writer
+            .write(|connection| {
+                let _ = workspace(connection);
+                repo::register_with_options(
+                    connection,
+                    PRIMARY_CONVERSATION_ID,
+                    "ws",
+                    "A",
+                    "A",
+                    "test_report_obtained",
+                    "read_test",
+                    3,
+                    60_000,
+                    "silent",
+                )
+            })
+            .unwrap();
+        let second = state
+            .sqlite_writer
+            .write(|connection| {
+                repo::register_with_options(
+                    connection,
+                    PRIMARY_CONVERSATION_ID,
+                    "ws",
+                    "B",
+                    "B",
+                    "test_report_obtained",
+                    "read_test",
+                    3,
+                    60_000,
+                    "silent",
+                )
+            })
+            .unwrap();
+        let second_goal = second["goalId"].as_str().unwrap().to_string();
+
+        prepare_runtime_run(&state, &turn("dw-14-topic", "別の話題です")).unwrap();
+        super::on_user_message(&state, &turn("dw-14-topic", "別の話題です"));
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 0);
+
+        prepare_runtime_run(&state, &turn("dw-14-source", START_TRIGGER)).unwrap();
+        let source = state
+            .sqlite_readers
+            .read(|connection| repo::input_message_id(connection, "dw-14-source"))
+            .unwrap()
+            .unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                for work in repo::active_delegations(connection, PRIMARY_CONVERSATION_ID)? {
+                    repo::queue_task(connection, &work, PRIMARY_CONVERSATION_ID, &source, "start")?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_tasks"), 2);
+
+        let (first_goal, first_task, second_task): (String, String, String) = state
+            .sqlite_readers
+            .read(|connection| {
+                let (first_goal, first_task) = connection
+                    .query_row(
+                        "SELECT d.goal_id,t.id FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id ORDER BY t.rowid LIMIT 1",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(crate::database_error)?;
+                let second_task = connection
+                    .query_row(
+                        "SELECT t.id FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id WHERE d.goal_id=?1",
+                        [&second_goal],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)?;
+                Ok((first_goal, first_task, second_task))
+            })
+            .unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                repo::withdraw_goal(connection, PRIMARY_CONVERSATION_ID, &first_goal)
+            })
+            .unwrap();
+        let withdrawn_state: String = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT loop_state FROM steward_tasks WHERE id=?1",
+                        [&first_task],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        assert_eq!(withdrawn_state, "cancelled");
+        let sibling_state: String = state
+            .sqlite_readers
+            .read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT loop_state FROM steward_tasks WHERE id=?1",
+                        [&second_task],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+            })
+            .unwrap();
+        assert_eq!(sibling_state, "queued");
+
+        insert_job(&state, &second_task, "settled", None);
+        state
+            .situation
+            .set_scene_attention_for_test("MEETING", "OBSERVE");
+        state
+            .sqlite_writer
+            .write(|connection| super::report::publish(&state, connection, PRIMARY_CONVERSATION_ID))
+            .unwrap();
+        assert_eq!(
+            count(
+                &state,
+                "SELECT COUNT(*) FROM conversation_messages WHERE role='assistant'",
+            ),
+            0
+        );
+        state
+            .situation
+            .set_scene_attention_for_test("FOCUS", "OBSERVE");
+        // Silent reports use the normal aggregation delay. This scenario is
+        // specifically about a report that was already ready but held by the
+        // meeting, so make the durable outbox row available before releasing
+        // the hold without starting a real TTS session in the test process.
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute("UPDATE steward_reports SET available_at_ms=0", [])
+                    .map_err(crate::database_error)?;
+                Ok(())
+            })
+            .unwrap();
+        super::flush_held_reports(&state, PRIMARY_CONVERSATION_ID).unwrap();
+        assert_eq!(
+            count(
+                &state,
+                "SELECT COUNT(*) FROM conversation_messages WHERE role='assistant'",
+            ),
+            1
+        );
     });
 }
 

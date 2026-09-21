@@ -9,6 +9,8 @@ macro_rules! saaa_invoke_handler {
             memory::personal_state::commands::personal_source_page,
             memory::personal_state::commands::forget_personal_source,
             memory::personal_state::commands::personal_state_extract_once,
+            runtime::context::world::capabilities::world_context_status,
+            runtime::context::world::capabilities::world_provider_capabilities,
             get_app_snapshot,
             get_voice_profile_snapshot,
             stage_audio_upload,

@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::super::source::{Authority, Placement, Requirement};
 use super::source::{
     inspect_request, prepare_candidate, reset_prepare_calls, PreparedWorldCandidate, WorldOmission,

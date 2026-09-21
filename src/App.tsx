@@ -237,6 +237,7 @@ function App() {
           />
         ) : (
           <ChatPage
+            worldScope={turn.worldScope}
             setupSnapshot={snapshot}
             messages={turn.messages}
             hasMoreMessages={turn.hasMoreMessages}

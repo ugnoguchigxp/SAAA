@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::super::broker::{self, BrokerInput};
 use super::super::source::{Candidate, Requirement};
 use super::shadow::{run_shadow, ShadowInput};
@@ -90,11 +91,12 @@ fn m3_18_shadow_does_not_write_or_dispatch() {
     .unwrap();
     assert_eq!(baseline.selected[0].source_kind, "fixture");
     let turns = include_str!("../../conversation_turn.rs");
+    let prepare = include_str!("../../conversation_prepare.rs");
     let controller = include_str!("../../conversation_controller/mod.rs");
     let chat = include_str!("../../../providers/chat_completions/mod.rs");
     let agent = include_str!("../../../providers/agent_session.rs");
-    assert!(turns.contains("compose_for_app"));
-    for source in [turns, controller, chat, agent] {
+    assert!(prepare.contains("compose_for_app"));
+    for source in [turns, prepare, controller, chat, agent] {
         assert!(!source.contains("world-model-shadow"));
         assert!(!source.contains("run_shadow"));
         assert!(!source.contains("prepare_candidate"));

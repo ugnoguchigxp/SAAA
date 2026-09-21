@@ -30,3 +30,5 @@ pub use validation::{
     validate_world_patch, WorldError, WorldPatchInput, MAX_NEW_WORLD_ASSERTIONS,
     MAX_WORLD_ASSERTIONS, MAX_WORLD_SOURCES,
 };
+
+pub mod extraction;
