@@ -14,6 +14,7 @@
 - desktop smoke: build / bundle / launch / IPC ready の証跡あり
   - `desktop-smoke-20260921-role-routing`
   - `desktop-smoke-20260921-codex-actor`
+  - `desktop-smoke-20260921-role-routing-rq52wJ`（build 97,929ms、bundle / launch / ready 成功）
 
 ## 未実施・不合格扱い
 
