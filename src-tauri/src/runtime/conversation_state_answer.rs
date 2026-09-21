@@ -31,3 +31,9 @@ pub(super) fn accept(
     events.set_completion_speech(&input.run_id, text.clone());
     (text, verified)
 }
+
+pub(super) fn persist_card(state:&AppState,input:&StartTurnInput,events:&dyn RuntimeEventSender)->Result<ConversationMessage,TurnExecutionFailure> {
+    let card=crate::runtime::context::world::host_answer::card(state,&input.run_id,&input.content);
+    events.set_completion_speech(&input.run_id,card.clone());
+    persist_conversation_success_with_state(state,input,&card,|_,_|Ok(())).map_err(Into::into)
+}

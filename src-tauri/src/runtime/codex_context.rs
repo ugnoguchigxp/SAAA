@@ -11,8 +11,9 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 #[path = "codex_context_metadata.rs"]
 mod metadata;
+#[path = "codex_context_wire.rs"]
+mod wire;
 use metadata::{snapshot, unchanged};
-
 pub(crate) struct Dispatch {
     writer: Arc<SqliteWriter>,
     run_id: String,
@@ -66,14 +67,6 @@ impl Dispatch {
             .ok_or("Codex context was not prepared")?;
         let thread_bytes = serde_json::to_vec(thread_body).map_err(|e| e.to_string())?;
         let turn_bytes = serde_json::to_vec(turn_body).map_err(|e| e.to_string())?;
-        let body = thread_body["params"]["developerInstructions"]
-            .as_str()
-            .ok_or("Codex context missing on wire")?;
-        if !body.contains(&format!(
-            "<host-state-snapshot>{snapshot}</host-state-snapshot>"
-        )) {
-            return Err("Codex context differs from prepared snapshot".into());
-        }
         if thread_bytes.len() + turn_bytes.len() > generation::MAX_PROVIDER_CONTEXT_WIRE_BYTES {
             return Err("Codex context exceeds wire budget".into());
         }
@@ -82,6 +75,8 @@ impl Dispatch {
             .filter(|items| items.len() == 1 && items[0]["type"] == "text")
             .and_then(|items| items[0]["text"].as_str())
             .ok_or("Codex must send one current instruction")?;
+        let decoded = serde_json::from_str::<Value>(instruction).ok();
+        let instruction = wire::instruction(self.world.is_some(),snapshot,thread_body,instruction,&decoded)?;
         let generation = generation::begin_with_writer(
             self.writer.clone(),
             BeginGeneration {

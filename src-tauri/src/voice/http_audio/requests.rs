@@ -9,9 +9,7 @@ pub(crate) async fn play_with_situation(
     on_started: impl FnOnce() + Send + 'static,
     situation: Option<Arc<crate::situation::SituationRuntime>>,
 ) -> Result<(), String> {
-    if situation
-        .as_deref()
-        .is_some_and(crate::situation::speech_holds_runtime)
+    if held(&situation)
     {
         return Ok(());
     }
@@ -43,9 +41,7 @@ pub(crate) async fn play_larm_with_situation(
     on_started: impl FnOnce() + Send + 'static,
     situation: Option<Arc<crate::situation::SituationRuntime>>,
 ) -> Result<(), String> {
-    if situation
-        .as_deref()
-        .is_some_and(crate::situation::speech_holds_runtime)
+    if held(&situation)
     {
         return Ok(());
     }
@@ -65,9 +61,7 @@ pub(crate) async fn play_larm_with_situation(
         .as_millis() as u64;
     let receive_budget = std::time::Duration::from_millis(remaining);
     let headers_started = std::time::Instant::now();
-    if situation
-        .as_deref()
-        .is_some_and(crate::situation::speech_holds_runtime)
+    if held(&situation)
     {
         return Ok(());
     }
@@ -93,6 +87,10 @@ pub(crate) async fn play_larm_with_situation(
         situation,
     )
     .await
+}
+
+fn held(situation: &Option<Arc<crate::situation::SituationRuntime>>) -> bool {
+    situation.as_deref().is_some_and(crate::situation::speech_holds_runtime)
 }
 
 #[cfg(test)]

@@ -271,21 +271,40 @@ pub(crate) fn record_provider_turn_finish(
     message_id: Option<&str>,
     now_ms: i64,
 ) -> Result<(), String> {
-    let phase: Option<String> = connection
+    let root: Option<(String, i64)> = connection
         .query_row(
-            "SELECT phase FROM rr_roots WHERE root_id=?1",
+            "SELECT phase,cancel_requested FROM rr_roots WHERE root_id=?1",
             [run_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some(phase) = phase else {
+    let Some((phase, cancel_requested)) = root else {
         return Ok(());
     };
     // `accept_provider_turn` runs inside the assistant-message transaction first.  The outer
     // runtime finalizer still observes the provider terminal result afterwards, but must not
     // append a second terminal event or overwrite the already adopted root.
     if matches!(phase.as_str(), "completed" | "cancelled" | "failed") {
+        return Ok(());
+    }
+    // A cancelled or barrier-held root is owned by the cancel / barrier path. The outer
+    // finalizer must not turn a late provider result into the current answer.
+    if cancel_requested != 0 {
+        return Ok(());
+    }
+    if phase == "draining" {
+        let step_status = match status {
+            "completed" => "succeeded",
+            "cancelled" => "cancelled",
+            _ => "failed",
+        };
+        connection
+            .execute(
+                "UPDATE rr_steps SET status=?1, completed_at_ms=?2 WHERE root_id=?3 AND ordinal=0 AND status IN ('planned','running','draining')",
+                params![step_status, now_ms, run_id],
+            )
+            .map_err(|error| error.to_string())?;
         return Ok(());
     }
     let step_status = match status {
@@ -373,30 +392,55 @@ pub(crate) fn accept_provider_turn(
     message_id: &str,
     now_ms: i64,
 ) -> Result<(), String> {
-    let root: Option<(i64, i64)> = connection
+    let root: Option<(i64, i64, String)> = connection
         .query_row(
-            "SELECT revision,cancel_requested FROM rr_roots WHERE root_id=?1",
+            "SELECT revision,cancel_requested,phase FROM rr_roots WHERE root_id=?1",
             [run_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some((revision, cancelled)) = root else {
+    let Some((revision, cancelled, phase)) = root else {
         return Ok(());
     };
     if cancelled != 0 {
         return Err("Role-routing result was cancelled".into());
     }
+    // Only the active `responding` phase may adopt a final answer. `draining` means an input
+    // barrier or a stop request is up, and terminal phases are already settled; a result that
+    // arrives then is held or dropped by the caller, never recorded as the current answer.
+    if phase != "responding" {
+        return Err(format!(
+            "Role-routing result is not adoptable from phase {phase}"
+        ));
+    }
+    // The expected revision comes from the result side step row, not from the root's current
+    // revision. A late result produced for an older revision must not be adopted against the
+    // current one even if the root has since advanced.
+    let step: Option<(i64, String)> = connection
+        .query_row(
+            "SELECT revision,status FROM rr_steps WHERE root_id=?1 AND ordinal=0",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((step_revision, step_status)) = step else {
+        return Err("Role-routing result has no active step".into());
+    };
+    if step_status != "running" || step_revision != revision {
+        return Err("Role-routing result is stale for the active step".into());
+    }
     let changed = connection
         .execute(
-            "UPDATE rr_roots SET phase='completed',result_message_id=?1,active_slot=NULL WHERE root_id=?2 AND phase IN ('responding','draining')",
-            params![message_id,run_id],
+            "UPDATE rr_roots SET phase='completed',result_message_id=?1,active_slot=NULL WHERE root_id=?2 AND phase='responding' AND revision=?3 AND cancel_requested=0",
+            params![message_id, run_id, revision],
         )
         .map_err(|error| error.to_string())?;
     if changed != 1 {
         return Err("Role-routing result is stale or already accepted".into());
     }
-    connection.execute("UPDATE rr_steps SET status='succeeded',completed_at_ms=?1 WHERE root_id=?2 AND ordinal=0 AND status IN ('planned','running','draining')",params![now_ms,run_id]).map_err(|error|error.to_string())?;
+    connection.execute("UPDATE rr_steps SET status='succeeded',completed_at_ms=?1 WHERE root_id=?2 AND ordinal=0 AND revision=?3 AND status='running'",params![now_ms,run_id,revision]).map_err(|error|error.to_string())?;
     connection.execute("INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'answer',?4,1,?5)",params![format!("rr-output-{run_id}"),format!("rr-step-{run_id}-0"),revision,json!({"messageId":message_id}).to_string(),now_ms]).map_err(|error|error.to_string())?;
     append_event(connection, run_id, "answer_committed", now_ms)?;
     record_provider_outcome(connection, run_id, true, message_id, revision, now_ms)?;
@@ -786,6 +830,161 @@ mod tests {
             )
             .expect("event count");
         assert_eq!(event_count, 3);
+    }
+
+    #[test]
+    fn rr_12_old_revision_result_rejected() {
+        let mut c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');INSERT INTO runtime_runs VALUES('run');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+            [],
+        )
+        .expect("policy");
+        // The root has advanced to revision 1, but the running result belongs to revision 0.
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p',1,'responding','text','visual',1,'')",[]).expect("root");
+        c.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('rr-step-run-0','run',0,0,'qwen','respond','running','{}','{}')",[]).expect("step");
+        {
+            let tx = c.transaction().expect("tx");
+            tx.execute(
+                "INSERT INTO conversation_messages VALUES('a','c','assistant','answer','2')",
+                [],
+            )
+            .expect("message");
+            assert!(
+                accept_provider_turn(&tx, "run", "a", 2).is_err(),
+                "a revision-0 result must not be adopted against revision 1"
+            );
+            // The caller rolls the assistant message back with the rejected adoption.
+        }
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM conversation_messages", [], |r| r
+                .get::<_, i64>(0))
+                .expect("messages"),
+            0
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM rr_outputs", [], |r| r
+                .get::<_, i64>(0))
+                .expect("outputs"),
+            0
+        );
+        let root: (i64, String) = c
+            .query_row(
+                "SELECT revision,phase FROM rr_roots WHERE root_id='run'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("root");
+        assert_eq!(root, (1, "responding".into()));
+    }
+
+    #[test]
+    fn rr_16_pending_input_blocks_real_acceptance() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');INSERT INTO runtime_runs VALUES('run');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+            [],
+        )
+        .expect("policy");
+        // `draining` is the durable input-barrier phase. A provider result arriving here is held.
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p',0,'draining','text','visual',1,'')",[]).expect("root");
+        c.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('rr-step-run-0','run',0,0,'qwen','respond','draining','{}','{}')",[]).expect("step");
+        c.execute(
+            "INSERT INTO rr_events VALUES('run',1,'input_accepted','{}',1)",
+            [],
+        )
+        .expect("event");
+        c.execute(
+            "INSERT INTO rr_events VALUES('run',2,'input_barrier','{}',1)",
+            [],
+        )
+        .expect("barrier event");
+        assert!(
+            accept_provider_turn(&c, "run", "a", 2).is_err(),
+            "a held result must not be adopted while the barrier is up"
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM rr_outputs", [], |r| r
+                .get::<_, i64>(0))
+                .expect("outputs"),
+            0
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM rr_events WHERE root_id='run' AND kind='answer_committed'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("committed events"),
+            0
+        );
+        let phase: String = c
+            .query_row(
+                "SELECT phase FROM rr_roots WHERE root_id='run'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("root phase");
+        assert_eq!(phase, "draining");
+    }
+
+    #[test]
+    fn rr_12_db_failure_no_speech() {
+        let mut c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');INSERT INTO runtime_runs VALUES('run');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+            [],
+        )
+        .expect("policy");
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p',0,'responding','text','visual',1,'')",[]).expect("root");
+        c.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('rr-step-run-0','run',0,0,'qwen','respond','running','{}','{}')",[]).expect("step");
+        // Force the output insert to fail so the adoption transaction must roll back.
+        c.execute("INSERT INTO rr_outputs VALUES('rr-output-run','rr-step-run-0',0,'answer','{}',1,1)",[]).expect("collision output");
+        {
+            let tx = c.transaction().expect("tx");
+            tx.execute(
+                "INSERT INTO conversation_messages VALUES('a','c','assistant','answer','2')",
+                [],
+            )
+            .expect("message");
+            assert!(
+                accept_provider_turn(&tx, "run", "a", 2).is_err(),
+                "a DB failure must surface instead of silently succeeding"
+            );
+        }
+        // No committed answer means no accepted output and therefore no speech intent.
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM rr_events WHERE root_id='run' AND kind='answer_committed'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("committed events"),
+            0
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM conversation_messages", [], |r| r
+                .get::<_, i64>(0))
+                .expect("messages"),
+            0
+        );
+        let phase: String = c
+            .query_row(
+                "SELECT phase FROM rr_roots WHERE root_id='run'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("root phase");
+        assert_eq!(phase, "responding");
     }
 
     #[test]

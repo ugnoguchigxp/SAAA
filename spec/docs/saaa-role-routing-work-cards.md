@@ -3,6 +3,8 @@
 状態: **監査済み・未完了**。以下の進捗表は 2026-09-21 の作業treeを確認して更新した。`部分`はコード断片または限定経路があるだけで、カードの合格条件を満たした意味ではない。`未着手`は実装がない。全カードを完了とする報告はまだしてはならない。
 [計画](saaa-role-routing-plan.md) / [実行契約](saaa-role-routing-execution-contract.md) / [学習契約](saaa-role-routing-learning-contract.md) / [受入](saaa-role-routing-acceptance.md)
 
+残作業の実行順とTerra向け実装単位は、[完了ロードマップ](saaa-role-routing-completion-roadmap.md)を参照する。RR-00〜39の要求・完了条件は維持し、E00〜E37と独立したlive laneへ分解して進める。ロードマップの保存によって以下の実装状態は変更しない。
+
 ## 完了・未完了の要約（2026-09-21）
 
 カードの合格条件と指定試験を基準に判定する。**完了カードは0/40件**である。部分実装は完了ではなく、未実装の安全条件・縦通し経路・試験を残している。

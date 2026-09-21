@@ -35,6 +35,7 @@ async fn coding_http_request_includes_host_workspace_reference() {
     let (endpoint, server) = fixture(vec![(200, body, 0)]).await;
     let mut input = input();
     input.conversation_id = crate::PRIMARY_CONVERSATION_ID.into();
+    input.content = "Build a BBS".into();
     let history: Vec<ConversationMessage> =
         [("system", "Existing policy"), ("user", "Build a BBS")]
             .into_iter()

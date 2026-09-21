@@ -265,6 +265,9 @@ impl DynamicLanConnection {
         Self::resolve_at(control_base_url(host)?, cancellation).await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn resolve_world_fixture(base: Url, cancel: Arc<RunCancellation>) -> Result<Self,DynamicLanError> { Self::resolve_at(base,cancel).await }
+
     async fn resolve_at(
         control_base: Url,
         cancellation: Arc<RunCancellation>,

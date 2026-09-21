@@ -18,26 +18,6 @@ pub(super) fn context_recovery_message(error: &str) -> String {
     error.to_owned()
 }
 
-#[cfg(test)]
-mod required_context_recovery_tests {
-    use super::context_recovery_message;
-
-    #[test]
-    fn required_overflow_has_a_specific_non_destructive_recovery() {
-        let message =
-            context_recovery_message("required_context_overflow: required context exceeds");
-        assert!(message.contains("Narrow the task scope"));
-        assert!(!message.contains("delete"));
-    }
-
-    #[test]
-    fn unresolved_scope_has_the_same_specific_recovery() {
-        assert!(
-            context_recovery_message("Context scope could not be resolved: missing")
-                .contains("Choose the intended task or scope")
-        );
-    }
-}
 pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_started: bool) -> bool {
     !output_started
         && matches!(
@@ -59,3 +39,24 @@ pub(super) fn provider_route_fallback_allowed(
     provider_fallback_allowed(kind, output_started)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::context_recovery_message;
+
+    #[test]
+    fn required_overflow_has_a_specific_non_destructive_recovery() {
+        let message =
+            context_recovery_message("required_context_overflow: required context exceeds");
+        assert!(message.contains("Narrow the task scope"));
+        assert!(!message.contains("delete"));
+    }
+
+    #[test]
+    fn unresolved_scope_has_the_same_specific_recovery() {
+        assert!(
+            context_recovery_message("Context scope could not be resolved: missing")
+                .contains("Choose the intended task or scope")
+        );
+    }
+}

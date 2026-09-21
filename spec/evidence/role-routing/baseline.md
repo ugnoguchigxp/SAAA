@@ -22,6 +22,23 @@ any live provider, account, or credential is available.
   healthy enabled Codex setting as a `codex_sdk` actor. No provider ID, model ID, credential,
   tool capability, or residency claim is assumed by this record.
 
+## E00 re-baseline (2026-09-22, no secrets)
+
+- Base commit re-read at task start: `7471ecadc1d64a5b3c1d4e6a898669be80a2cb8a`.
+- Worktree dirty files preserved (31 entries): runtime conversation/context files, provider
+  dynamic-LAN/world tests, world query/query_v2, steward/report, coding integration tests,
+  voice http audio requests, schedule/module-size baseline, and role-routing docs. These are
+  not role-routing work and must not be overwritten, staged, or reverted.
+- SQLite `DATABASE_SCHEMA_VERSION`: 30 (`src-tauri/src/persistence/schema.rs`). The role-routing
+  ledger lives in `src-tauri/src/role_routing/schema.rs::migrate` as additive `rr_*` tables.
+- `@openai/codex-sdk` pinned to `0.144.4` in `package.json`; live login state not inspected.
+- Existing command surface (no new command invented): `cargo test --lib rr_*`,
+  `cargo fmt --check`, `bun run typecheck`, `bun run ipc:check`, `bun run s11tnext:check`,
+  `bun run size:check`, `bun test ./tests/role-routing-codex.test.ts`, `git diff --check`.
+- Current role-routing test baseline: `cargo test --locked --lib role_routing::` = 82 passed.
+- Acceptance mapping recorded in [acceptance-matrix.md](acceptance-matrix.md): RR 40 rows,
+  A42 rows, P5 rows, each with responsible E/L, lane, and current result.
+
 ## Verification baseline and gates
 
 - `cargo check --manifest-path src-tauri/Cargo.toml --lib` succeeds with existing dead-code and

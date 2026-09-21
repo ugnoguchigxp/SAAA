@@ -464,4 +464,146 @@ mod tests {
             assert_eq!(super::speech_event_state(&body), state);
         }
     }
+
+    /// This is deliberately opt-in: it uses the selected macOS System TTS and
+    /// real audio player. It proves the steward outbox path receives both
+    /// playback callbacks, rather than only unit-testing their JSON mapping.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a macOS audio output device"]
+    fn steward_speech_delivery_reaches_playback_finished() {
+        use std::time::{Duration, Instant};
+
+        let directory = tempfile::tempdir().expect("temporary TTS data directory");
+        let connection = rusqlite::Connection::open_in_memory().expect("db");
+        crate::persistence::schema::initialize_database(&connection).expect("schema");
+        let mut state = crate::test_support::app_state(connection);
+        state.data_directory = directory.path().to_owned();
+        let terminal = repo::TerminalReport {
+            task_id: "task-live-speech".into(),
+            task_revision: 1,
+            goal_id: "goal-live-speech".into(),
+            notify: "speak".into(),
+            digest: "音声報告の確認完了".into(),
+        };
+        state
+            .sqlite_writer
+            .write(|connection| {
+                repo::enqueue_task_report(
+                    connection,
+                    crate::PRIMARY_CONVERSATION_ID,
+                    &terminal,
+                    None,
+                    0,
+                    true,
+                )?;
+                repo::mark_flushed(
+                    connection,
+                    crate::PRIMARY_CONVERSATION_ID,
+                    0,
+                    "message-live-speech",
+                )
+            })
+            .expect("report is delivered before speech starts");
+        super::start_pending_speech(&state, crate::PRIMARY_CONVERSATION_ID)
+            .expect("speech session starts");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let speech_state: String = state
+                .sqlite_readers
+                .read(|connection| {
+                    connection
+                        .query_row("SELECT speech_state FROM steward_reports", [], |row| {
+                            row.get(0)
+                        })
+                        .map_err(crate::database_error)
+                })
+                .expect("speech state");
+            if speech_state == "playback_finished" {
+                break;
+            }
+            assert_ne!(speech_state, "delivery_unknown", "System TTS failed");
+            assert!(Instant::now() < deadline, "speech state: {speech_state}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Exercises the same durable outbox callback on a real System TTS route
+    /// failure. A nonexistent macOS voice is rejected before playback, and the
+    /// report must become unknown rather than remaining claimed forever.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires macOS system TTS"]
+    fn steward_speech_delivery_records_a_real_tts_failure() {
+        use std::time::{Duration, Instant};
+
+        let directory = tempfile::tempdir().expect("temporary TTS data directory");
+        let connection = rusqlite::Connection::open_in_memory().expect("db");
+        crate::persistence::schema::initialize_database(&connection).expect("schema");
+        let mut state = crate::test_support::app_state(connection);
+        state.data_directory = directory.path().to_owned();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                let text: String = connection
+                    .query_row(
+                        "SELECT value_json FROM settings_documents WHERE namespace='providers.model' AND key='default'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)?;
+                let mut settings: serde_json::Value =
+                    serde_json::from_str(&text).map_err(|_| "invalid provider fixture")?;
+                settings["providers"][1]["voice"] =
+                    serde_json::Value::String("SAAA voice that does not exist".into());
+                connection
+                    .execute(
+                        "UPDATE settings_documents SET value_json=?1 WHERE namespace='providers.model' AND key='default'",
+                        [settings.to_string()],
+                    )
+                    .map_err(crate::database_error)?;
+                let terminal = repo::TerminalReport {
+                    task_id: "task-live-speech-failure".into(),
+                    task_revision: 1,
+                    goal_id: "goal-live-speech-failure".into(),
+                    notify: "speak".into(),
+                    digest: "この音声は失敗する".into(),
+                };
+                repo::enqueue_task_report(
+                    connection,
+                    crate::PRIMARY_CONVERSATION_ID,
+                    &terminal,
+                    None,
+                    0,
+                    true,
+                )?;
+                repo::mark_flushed(
+                    connection,
+                    crate::PRIMARY_CONVERSATION_ID,
+                    0,
+                    "message-live-speech-failure",
+                )
+            })
+            .expect("report is delivered before speech starts");
+        super::start_pending_speech(&state, crate::PRIMARY_CONVERSATION_ID)
+            .expect("speech session starts before renderer failure");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let speech_state: String = state
+                .sqlite_readers
+                .read(|connection| {
+                    connection
+                        .query_row("SELECT speech_state FROM steward_reports", [], |row| {
+                            row.get(0)
+                        })
+                        .map_err(crate::database_error)
+                })
+                .expect("speech state");
+            if speech_state == "delivery_unknown" {
+                break;
+            }
+            assert!(Instant::now() < deadline, "speech state: {speech_state}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }

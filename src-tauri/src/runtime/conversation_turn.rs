@@ -82,17 +82,7 @@ pub(crate) async fn execute_conversation_turn(
         crate::runtime::context::world::state_claim::ClaimEvents(on_event.clone_box());
     let on_event: &dyn RuntimeEventSender = if state_query { &claim_events } else { on_event };
     if state_query && (route.source == "harness" || role_dispatch.is_some()) {
-        return persist_conversation_success_with_state(
-            state,
-            input,
-            &crate::runtime::context::world::host_answer::card(
-                state,
-                &input.run_id,
-                &input.content,
-            ),
-            |_, _| Ok(()),
-        )
-        .map_err(Into::into);
+        return state_answer::persist_card(state,input,verified_events);
     }
     // Compose only at a concrete provider dispatch boundary. A generic pre-compose would use
     // the wrong provider budget and could reject a request that fits its selected provider.
@@ -542,16 +532,7 @@ pub(crate) async fn execute_conversation_turn(
                         route_ids.push_front(provider_id.clone());
                         continue;
                     }
-                    let card = crate::runtime::context::world::host_answer::card(
-                        state,
-                        &input.run_id,
-                        &input.content,
-                    );
-                    verified_events.set_completion_speech(&input.run_id, card.clone());
-                    return persist_conversation_success_with_state(state, input, &card, |_, _| {
-                        Ok(())
-                    })
-                    .map_err(Into::into);
+                    return state_answer::persist_card(state,input,verified_events);
                 }
                 let _ = on_event.send(RuntimeEvent::ProviderFailed {
                     run_id: input.run_id.clone(),

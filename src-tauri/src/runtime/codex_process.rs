@@ -186,7 +186,7 @@ pub(crate) fn run_codex_turn_process_with_dispatch(
         })?;
         let fresh_context = dispatch
             .as_deref_mut()
-            .map(|d| d.prepare())
+            .map(|d| d.thread_context())
             .transpose()
             .map_err(|message| CodexTurnFailure {
                 thread_id: thread_id.clone(),
@@ -259,6 +259,8 @@ pub(crate) fn run_codex_turn_process_with_dispatch(
         }
         thread_id = Some(resolved_thread_id.clone());
         let thread_id = resolved_thread_id;
+        let fresh_input = dispatch.as_deref_mut().map(|d| d.turn_input(prompt)).transpose().map_err(|message| CodexTurnFailure {thread_id:Some(thread_id.clone()),message,code:RunFailureCode::ConfigurationError,last_progress_at:None})?;
+        let prompt = fresh_input.as_deref().unwrap_or(prompt);
         let turn_body = json!({
             "method": "turn/start",
             "id": 3,

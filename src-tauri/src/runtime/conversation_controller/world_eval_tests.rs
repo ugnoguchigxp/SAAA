@@ -2,6 +2,9 @@
 use super::*;
 use crate::memory::personal_state::world::runtime_test_support::RUN_ID;
 use crate::runtime::context::world::{g1_tests as graph, turn::compose_parts};
+use crate::runtime::context::world::wire_test_support::{Harness, TRANSITIONS};
+use sha2::{Digest, Sha256};
+use serde_json::Value;
 
 #[tokio::test]
 async fn world_m4a_reasoning_wire() {
@@ -191,4 +194,90 @@ fn world_g1_reasoning_receipt_excludes_world_when_required_evidence_fills_slots(
     assert!(!serde_json::to_string(&request)
         .unwrap()
         .contains("world-body"));
+}
+
+#[tokio::test]
+async fn wr_t22_reasoning_mcp_route_transition_matrix() {
+    for transition in TRANSITIONS {
+        reasoning_matrix_case(transition).await;
+    }
+}
+
+async fn reasoning_matrix_case(transition: &str) {
+    if transition == "tool-continuation" {
+        println!("WORLD_MATRIX_CASE={}", serde_json::json!({
+            "case_id":"reasoning-mcp:tool-continuation", "route":"reasoning-mcp",
+            "transition":transition, "source_kinds":[], "frame_digest":null,
+            "wire_digest":null, "expected":"n/a-no-host-tool-capability",
+            "actual":"n/a-no-host-tool-capability", "pass":true,
+            "verification_level":"offline-contract", "omission_reason":"unsupported-capability",
+            "request_count":0
+        }));
+        return;
+    }
+
+    let h = Harness::new();
+    if matches!(transition, "correction" | "forget" | "scope-switch") {
+        h.transition(transition);
+    }
+    if transition == "session-resume" {
+        h.fixture.set_now(h.fixture.now() + 3_000);
+    }
+    let mut history = h.history.clone();
+    let mut requests = Vec::new();
+    if transition == "fallback" {
+        let stale = crate::providers::reasoning_mcp::tests::fixture("stale").await;
+        assert!(run_reasoning_matrix(&h, &history, &stale).await.is_err());
+        requests.extend(tool_calls(&stale));
+        let sent=requests.last().unwrap()["params"]["arguments"]["context"]["evidence"].as_array().unwrap().iter().find(|item|item["source"].as_str().is_some_and(|v|v.starts_with("world-model:"))).unwrap()["content"].as_str().unwrap().to_string();
+        history.iter_mut().filter(|message| message.content.contains("[WORLD_MODEL")).for_each(|message| message.content=sent.clone());
+    }
+    let server = crate::providers::reasoning_mcp::tests::fixture("current").await;
+    let result = run_reasoning_matrix(&h, &history, &server).await;
+    let denied = transition == "scope-switch";
+    assert_eq!(result.is_err(), denied, "reasoning-mcp/{transition}: {result:?}");
+    requests.extend(tool_calls(&server));
+
+    let body = requests.last().map(|call| call["params"]["arguments"].clone());
+    let world = body.as_ref().and_then(|request| request["context"]["evidence"].as_array())
+        .and_then(|items| items.iter().find(|item| item["source"].as_str().is_some_and(|v| v.starts_with("world-model:"))));
+    if !denied {
+        let evidence = world.expect("current World evidence");
+        if matches!(transition, "correction" | "forget") {
+            assert!(!evidence["content"].as_str().unwrap().contains("Speculative Decoding"));
+        }
+        let digest: String = h.fixture.writer.read_serialized(|c| c.query_row("SELECT request_digest FROM context_generations ORDER BY ordinal DESC LIMIT 1", [], |r|r.get(0)).map_err(crate::database_error)).unwrap();
+        assert_eq!(digest, format!("{:x}", Sha256::digest(serde_json::to_vec(body.as_ref().unwrap()).unwrap())));
+    } else {
+        assert!(body.is_none());
+    }
+    let source_kinds = world.and_then(|e| e["world"]["sourceKinds"].as_array()).cloned().unwrap_or_default();
+    println!("WORLD_MATRIX_CASE={}", serde_json::json!({
+        "case_id":format!("reasoning-mcp:{transition}"), "route":"reasoning-mcp", "transition":transition,
+        "source_kinds":source_kinds,
+        "frame_digest":world.and_then(|e| e["content"].as_str()).map(|v|format!("{:x}",Sha256::digest(v.as_bytes()))),
+        "wire_digest":body.as_ref().map(|v|format!("{:x}",Sha256::digest(serde_json::to_vec(v).unwrap()))),
+        "expected":if denied{"denied-before-tools-call"}else{"current-frame-and-matching-receipt"},
+        "actual":if denied{"denied-before-tools-call"}else{"current-frame-and-matching-receipt"},
+        "pass":true,"verification_level":"offline-wire",
+        "omission_reason":if denied{Some("scope-changed")}else{None},"request_count":requests.len()
+    }));
+}
+
+async fn run_reasoning_matrix(
+    h: &Harness,
+    history: &[ConversationMessage],
+    server: &crate::providers::reasoning_mcp::tests::Fixture,
+) -> Result<ConversationMessage, String> {
+    let client = crate::providers::reasoning_mcp::Client::new(&server.url, "fixture-token-long-enough".into()).unwrap();
+    let input: StartTurnInput = serde_json::from_value(serde_json::json!({"runId":RUN_ID,"conversationId":crate::PRIMARY_CONVERSATION_ID,"content":"hello","inputOrigin":"voice","presentationMode":"visual"})).unwrap();
+    let sink = tauri::ipc::Channel::<RuntimeEvent>::new(|_| Ok(()));
+    execute(&h.state, &input, history, &sink, Arc::default(), &client, ContextManifest {
+        selected:&h.composed.envelope.selected, omitted:&h.composed.envelope.omitted,
+        health:"green", world:h.composed.world.as_ref(),
+    }).await
+}
+
+fn tool_calls(server: &crate::providers::reasoning_mcp::tests::Fixture) -> Vec<Value> {
+    server.calls.lock().unwrap().iter().filter(|call|call["method"]=="tools/call").cloned().collect()
 }

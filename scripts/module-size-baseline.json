@@ -145,6 +145,10 @@
       "total": 92,
       "production": 92
     },
+    "scripts/world-remaining-eval.ts": {
+      "total": 82,
+      "production": 82
+    },
     "src-tauri/src/app_paths.rs": {
       "total": 95,
       "production": 95
@@ -641,6 +645,10 @@
       "total": 113,
       "production": 113
     },
+    "src-tauri/src/memory/personal_state/product_extract_sources.rs": {
+      "total": 39,
+      "production": 39
+    },
     "src-tauri/src/memory/personal_state/product_extract.rs": {
       "total": 61,
       "production": 61
@@ -697,6 +705,10 @@
       "total": 387,
       "production": 387
     },
+    "src-tauri/src/memory/personal_state/worker_run.rs": {
+      "total": 277,
+      "production": 277
+    },
     "src-tauri/src/memory/personal_state/worker_scope.rs": {
       "total": 39,
       "production": 39
@@ -708,6 +720,14 @@
     "src-tauri/src/memory/personal_state/world/evidence_eligibility.rs": {
       "total": 132,
       "production": 72
+    },
+    "src-tauri/src/memory/personal_state/world/extraction_tests.rs": {
+      "total": 279,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/extraction.rs": {
+      "total": 307,
+      "production": 307
     },
     "src-tauri/src/memory/personal_state/world/mod.rs": {
       "total": 34,
@@ -737,6 +757,10 @@
       "total": 785,
       "production": 785
     },
+    "src-tauri/src/memory/personal_state/world/remaining_perf_tests.rs": {
+      "total": 71,
+      "production": 0
+    },
     "src-tauri/src/memory/personal_state/world/runtime_capacity.rs": {
       "total": 101,
       "production": 90
@@ -757,6 +781,10 @@
       "total": 133,
       "production": 0
     },
+    "src-tauri/src/memory/personal_state/world/runtime_frame_receipt.rs": {
+      "total": 44,
+      "production": 44
+    },
     "src-tauri/src/memory/personal_state/world/runtime_frame_snapshot_tests.rs": {
       "total": 144,
       "production": 0
@@ -773,6 +801,10 @@
       "total": 120,
       "production": 120
     },
+    "src-tauri/src/memory/personal_state/world/runtime_scope_authorize.rs": {
+      "total": 194,
+      "production": 168
+    },
     "src-tauri/src/memory/personal_state/world/runtime_scope_tests.rs": {
       "total": 233,
       "production": 0
@@ -780,6 +812,14 @@
     "src-tauri/src/memory/personal_state/world/runtime_scope.rs": {
       "total": 263,
       "production": 230
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_sources_tests.rs": {
+      "total": 241,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/world/runtime_sources.rs": {
+      "total": 224,
+      "production": 224
     },
     "src-tauri/src/memory/personal_state/world/runtime_test_support.rs": {
       "total": 542,
@@ -941,9 +981,21 @@
       "total": 179,
       "production": 179
     },
+    "src-tauri/src/providers/agent_session/sse/fresh_session.rs": {
+      "total": 99,
+      "production": 99
+    },
     "src-tauri/src/providers/agent_session/sse/generation.rs": {
       "total": 104,
       "production": 104
+    },
+    "src-tauri/src/providers/agent_session/sse/generation/round.rs": {
+      "total": 301,
+      "production": 53
+    },
+    "src-tauri/src/providers/agent_session/sse/generation/trim.rs": {
+      "total": 93,
+      "production": 93
     },
     "src-tauri/src/providers/agent_session/sse/probe.rs": {
       "total": 25,
@@ -952,6 +1004,10 @@
     "src-tauri/src/providers/agent_session/sse/request.rs": {
       "total": 54,
       "production": 54
+    },
+    "src-tauri/src/providers/agent_session/sse/transport.rs": {
+      "total": 295,
+      "production": 295
     },
     "src-tauri/src/providers/agent_session/sse/ui_bridge.rs": {
       "total": 121,
@@ -993,6 +1049,10 @@
       "total": 304,
       "production": 304
     },
+    "src-tauri/src/providers/chat_completions/response_helpers.rs": {
+      "total": 48,
+      "production": 48
+    },
     "src-tauri/src/providers/chat_completions/sse.rs": {
       "total": 72,
       "production": 56
@@ -1020,6 +1080,10 @@
     "src-tauri/src/providers/chat_completions/world_eval_tests.rs": {
       "total": 430,
       "production": 0
+    },
+    "src-tauri/src/providers/chat_completions/world_trim.rs": {
+      "total": 49,
+      "production": 49
     },
     "src-tauri/src/providers/completion.rs": {
       "total": 161,
@@ -1317,9 +1381,21 @@
       "total": 438,
       "production": 438
     },
+    "src-tauri/src/runtime/codex_context_frame_tests.rs": {
+      "total": 39,
+      "production": 0
+    },
+    "src-tauri/src/runtime/codex_context_metadata.rs": {
+      "total": 30,
+      "production": 30
+    },
     "src-tauri/src/runtime/codex_context_tests.rs": {
       "total": 98,
       "production": 0
+    },
+    "src-tauri/src/runtime/codex_context_wire.rs": {
+      "total": 26,
+      "production": 26
     },
     "src-tauri/src/runtime/codex_context.rs": {
       "total": 148,
@@ -1361,6 +1437,14 @@
       "total": 51,
       "production": 51
     },
+    "src-tauri/src/runtime/context/generation_test_helpers.rs": {
+      "total": 42,
+      "production": 0
+    },
+    "src-tauri/src/runtime/context/generation_validation.rs": {
+      "total": 153,
+      "production": 153
+    },
     "src-tauri/src/runtime/context/generation.rs": {
       "total": 746,
       "production": 481
@@ -1385,6 +1469,22 @@
       "total": 93,
       "production": 93
     },
+    "src-tauri/src/runtime/context/state_answer.rs": {
+      "total": 263,
+      "production": 214
+    },
+    "src-tauri/src/runtime/context/world/app_frame.rs": {
+      "total": 62,
+      "production": 62
+    },
+    "src-tauri/src/runtime/context/world/capabilities.rs": {
+      "total": 225,
+      "production": 201
+    },
+    "src-tauri/src/runtime/context/world/dispatch.rs": {
+      "total": 67,
+      "production": 67
+    },
     "src-tauri/src/runtime/context/world/g1_perf_tests.rs": {
       "total": 104,
       "production": 0
@@ -1393,9 +1493,17 @@
       "total": 666,
       "production": 666
     },
+    "src-tauri/src/runtime/context/world/host_answer.rs": {
+      "total": 57,
+      "production": 57
+    },
     "src-tauri/src/runtime/context/world/inputs.rs": {
       "total": 173,
       "production": 133
+    },
+    "src-tauri/src/runtime/context/world/live_refresh.rs": {
+      "total": 122,
+      "production": 122
     },
     "src-tauri/src/runtime/context/world/live.rs": {
       "total": 192,
@@ -1445,6 +1553,10 @@
       "total": 323,
       "production": 323
     },
+    "src-tauri/src/runtime/context/world/state_claim.rs": {
+      "total": 206,
+      "production": 129
+    },
     "src-tauri/src/runtime/context/world/turn_tests.rs": {
       "total": 447,
       "production": 447
@@ -1488,6 +1600,22 @@
     "src-tauri/src/runtime/conversation_inputs.rs": {
       "total": 74,
       "production": 74
+    },
+    "src-tauri/src/runtime/conversation_prepare.rs": {
+      "total": 163,
+      "production": 163
+    },
+    "src-tauri/src/runtime/conversation_role_codex.rs": {
+      "total": 202,
+      "production": 202
+    },
+    "src-tauri/src/runtime/conversation_state_answer.rs": {
+      "total": 40,
+      "production": 40
+    },
+    "src-tauri/src/runtime/conversation_stream.rs": {
+      "total": 41,
+      "production": 41
     },
     "src-tauri/src/runtime/conversation_turn.rs": {
       "total": 702,
@@ -1585,13 +1713,13 @@
       "total": 13,
       "production": 13
     },
-    "src-tauri/src/schedule/calendar/observe.rs": {
-      "total": 288,
-      "production": 224
-    },
     "src-tauri/src/schedule/calendar/oauth.rs": {
       "total": 427,
       "production": 309
+    },
+    "src-tauri/src/schedule/calendar/observe.rs": {
+      "total": 288,
+      "production": 224
     },
     "src-tauri/src/schedule/calendar/projection.rs": {
       "total": 288,
@@ -1700,6 +1828,10 @@
     "src-tauri/src/situation/tick.rs": {
       "total": 272,
       "production": 272
+    },
+    "src-tauri/src/situation/world_snapshot.rs": {
+      "total": 128,
+      "production": 90
     },
     "src-tauri/src/steward/commands.rs": {
       "total": 57,
@@ -2381,9 +2513,17 @@
       "total": 49,
       "production": 49
     },
+    "src/features/chat/useWorldScope.ts": {
+      "total": 57,
+      "production": 57
+    },
     "src/features/chat/VirtualMessages.tsx": {
       "total": 89,
       "production": 89
+    },
+    "src/features/chat/WorldScopeSelector.tsx": {
+      "total": 39,
+      "production": 39
     },
     "src/features/coding/api.ts": {
       "total": 38,
@@ -2516,6 +2656,10 @@
     "src/features/settings/VoiceTranscriptionScope.tsx": {
       "total": 46,
       "production": 46
+    },
+    "src/features/settings/WorldProviderCapabilities.tsx": {
+      "total": 47,
+      "production": 47
     },
     "src/features/voice/ambientVoiceCapture.ts": {
       "total": 157,
@@ -3156,6 +3300,18 @@
     "tests/webfetch-sidecar.test.ts": {
       "total": 67,
       "production": 67
+    },
+    "tests/world-remaining-eval.test.ts": {
+      "total": 13,
+      "production": 13
+    },
+    "tests/world-scope-component.test.tsx": {
+      "total": 64,
+      "production": 64
+    },
+    "tests/world-scope.test.ts": {
+      "total": 26,
+      "production": 26
     }
   }
 }

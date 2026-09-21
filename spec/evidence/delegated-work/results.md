@@ -5,8 +5,13 @@
 - `bun run typecheck`: pass.
 - `bun test tests/coding-steward.test.ts`: 2 passed, 0 failed.
 - `bun test tests/steward-panel.test.tsx`: 2 passed, 0 failed.
+- `bun test tests/delegated-work-cases.test.ts`: 1 passed, 0 failed.
 - `cargo test dw_01_direct_registration_allows_eight_goals_then_enforces_the_limit --lib`: pass.
 - `cargo test dw_14_multiple_goals_keep_the_sibling_through_topic_switch_withdrawal_and_hold --lib`: pass.
+- `cargo test delegated_tasks_compete_for_one_production_coding_slot --lib`: pass.
+- `cargo test coding_restart_never_resends_and_blocks_live_or_ambiguous_process --lib`: pass.
+- `cargo test steward_speech_delivery_reaches_playback_finished --lib -- --ignored --nocapture`: pass.
+- `cargo test steward_speech_delivery_records_a_real_tts_failure --lib -- --ignored --nocapture`: pass.
 - `cargo test ml_08_acceptance_register_divert_complete_withdraw --lib`: pass.
 - `cargo test coding_service_runs_through_a_delegated_event_origin --lib`: pass.
 - `cargo test dw_06_restart_marks_unreceived_dispatch_unknown_without_reclaiming --lib`: pass.
@@ -19,8 +24,8 @@
 - `cargo test speech_callbacks_have_durable_terminal_mappings --lib`: pass.
 - `cargo test steward::tests --lib`: 30 passed, 0 failed.
 - `cargo test schedule::tests --lib`: 18 passed, 0 failed.
-- Packaged desktop smoke: pass (build 27.95s, bundle, launch, IPC ready,
-  cleanup; 31.21s total on the current worktree).
+- Packaged desktop smoke: pass (build 44.08s, bundle, launch, IPC ready,
+  cleanup; 48.08s total on the current worktree).
 - Rust formatting check for changed steward and runner sources: pass.
 - Targeted steward test binary: 27 passed, 0 failed; the agent-session
   delegated-work bridge regression test also passes. It initially exposed
@@ -98,9 +103,24 @@
 - The panel's explicit-confirmation path sends the selected bounded scope to
   `register_steward_goal` only after confirmation; the UI does not fabricate
   broader operations or budget values.
+- The fixed acceptance corpus keeps 20 explicit delegated-work requests and
+  10 non-adoption/confirmation cases. It distinguishes proposal, selected-Goal
+  withdrawal, and status routes so a control request is never counted as a
+  new authority grant.
 - A combined steward acceptance keeps B queued after A is withdrawn, does not
   start work for an unrelated topic, holds the resulting report during a
   meeting, and flushes one report when the hold clears.
+- A production Pi-adapter fixture starts delegated A, rejects delegated B as
+  `busy` without creating B's Coding origin while A is running, then starts and
+  settles B after A is stopped. This verifies the single shared Coding slot at
+  the service boundary rather than only in the steward queue.
+- Coding recovery also rechecked on the current HEAD: a restart never resends a
+  live or ambiguous process and instead blocks it as `outcome_unknown` for
+  inspection.
+- The steward outbox's real macOS System TTS acceptance completed playback and
+  recorded `playback_finished`. A second real renderer route with a nonexistent
+  system voice emitted the failure callback and durably recorded
+  `delivery_unknown`; neither result relies on a synthetic callback body.
 - A steward restart-boundary test passes: an unreceived `dispatching` intent
   becomes `outcome_unknown` during startup migration, cannot be reclaimed,
   and creates no Coding job by replay.

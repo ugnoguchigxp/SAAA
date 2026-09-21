@@ -39,6 +39,16 @@ pub(crate) async fn stream_dynamic_lan_provider(
             };
         }
     };
+    stream_allocated_dynamic_lan(provider, history, timeout_ms.saturating_sub(started.elapsed().as_millis() as u64).max(1), connection, prior_cleanup, context).await
+}
+pub(crate) async fn stream_allocated_dynamic_lan(
+    provider: &DynamicLanProviderSettings,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    connection: crate::providers::dynamic_lan::DynamicLanConnection,
+    prior_cleanup: CleanupOutcome,
+    context: ModelStreamContext<'_>,
+) -> ProviderAttemptOutcome {
     let resolved = OpenAiCompatibleProviderSettings {
         request_options: provider.request_options.clone(),
         id: provider.id.clone(),
@@ -57,9 +67,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
     let outcome = stream_model_provider_with_api_key(
         &resolved,
         history,
-        timeout_ms
-            .saturating_sub(started.elapsed().as_millis() as u64)
-            .max(1),
+        timeout_ms,
         connection.api_key(),
         Some(connection.allocation_id()),
         context,

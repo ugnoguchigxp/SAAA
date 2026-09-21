@@ -380,6 +380,24 @@ fn valid_id(v: &str) -> bool {
 fn valid_model(v: &str) -> bool {
     !v.is_empty() && v.len() <= 160 && !v.chars().any(char::is_control)
 }
+
+/// A payload limit is always measured in UTF-8 bytes, never characters. Callers use this for
+/// user content, tool arguments, and sidecar frames so a multi-byte string cannot slip past a
+/// byte-oriented sidecar or SQLite bound.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_payload_bytes(value: &str, limit: usize, label: &str) -> Result<(), String> {
+    if value.len() > limit {
+        return Err(format!("Role-routing {label} exceeds {limit} UTF-8 bytes"));
+    }
+    Ok(())
+}
+
+/// Role-routing identifiers reuse the application identifier contract (ASCII, 160 bytes max)
+/// so ledger IDs cannot smuggle separators or multi-byte content into SQLite keys.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_routing_id(value: &str, label: &str) -> Result<(), String> {
+    crate::validate_identifier(value, label)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +420,40 @@ mod tests {
     #[test]
     fn disabled_default_is_valid() {
         assert!(validate_settings(&RoleRoutingSettings::default()).is_ok());
+    }
+
+    #[test]
+    fn rr_01_unknown_field() {
+        let baseline = serde_json::to_value(RoleRoutingSettings::default()).expect("serialize");
+        let mut object = baseline.as_object().cloned().expect("object");
+        object.insert("unexpectedField".into(), serde_json::json!(true));
+        let encoded = serde_json::Value::Object(object).to_string();
+        assert!(serde_json::from_str::<RoleRoutingSettings>(&encoded).is_err());
+        // A nested unknown field is rejected the same way.
+        let mut nested = serde_json::to_value(RoleRoutingSettings::default()).expect("serialize");
+        nested["limits"]["ghost"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<RoleRoutingSettings>(nested).is_err());
+    }
+
+    #[test]
+    fn rr_01_utf8_limit() {
+        // "あ" is 3 UTF-8 bytes / 1 char: a char-based check would wrongly accept the second.
+        assert!(validate_payload_bytes("あ", 3, "content").is_ok());
+        assert!(validate_payload_bytes("ああ", 3, "content").is_err());
+        assert!(validate_payload_bytes("abc", 3, "content").is_ok());
+    }
+
+    #[test]
+    fn rr_01_invalid_id() {
+        assert!(validate_routing_id("root-1_ok", "root id").is_ok());
+        for invalid in ["", "has space", "slash/sep", "日本語", "dot.dot"] {
+            assert!(
+                validate_routing_id(invalid, "root id").is_err(),
+                "expected {invalid:?} to be rejected"
+            );
+        }
+        let too_long = "a".repeat(161);
+        assert!(validate_routing_id(&too_long, "root id").is_err());
     }
 
     #[test]

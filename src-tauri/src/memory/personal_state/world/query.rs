@@ -63,6 +63,12 @@ const PERMITTED_ASSERTION: &str = "
   AND (json_extract(a.metadata,'$.access.task_request') IS NULL
        OR json_extract(a.metadata,'$.access.task_request')=:task_request)
   AND json_extract(a.metadata,'$.access.policy_revision')=:policy
+  AND NOT EXISTS(
+        SELECT 1 FROM personal_dependencies d
+        WHERE d.assertion_id=a.id AND d.dependency_kind='source'
+          AND NOT EXISTS(
+                SELECT 1 FROM personal_sources ps
+                WHERE ps.message_id=d.dependency_id AND ps.available=1))
   AND CASE json_extract(a.metadata,'$.access.classification')
         WHEN 'public' THEN 0 WHEN 'internal' THEN 1
         WHEN 'confidential' THEN 2 WHEN 'restricted' THEN 3 ELSE 4 END <= :classification
