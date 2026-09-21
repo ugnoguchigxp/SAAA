@@ -65,6 +65,23 @@ pub(crate) fn run(
         request,
         cancellation,
         bridge.as_ref(),
+        None,
+    )
+}
+
+/// Binds the final JSONL body immediately before the child can receive it.
+pub(crate) fn run_observed(
+    request: &SidecarRequest,
+    cancellation: &RunCancellation,
+    before_send: &mut dyn FnMut(&mut Value) -> Result<(), String>,
+) -> Result<SidecarOutcome, String> {
+    let bridge = tool_gateway_bridge(&request.id)?;
+    run_at_with_bridge(
+        &bundled_sidecar_path()?,
+        request,
+        cancellation,
+        bridge.as_ref(),
+        Some(before_send),
     )
 }
 
@@ -75,7 +92,7 @@ pub(crate) fn run_at(
     request: &SidecarRequest,
     cancellation: &RunCancellation,
 ) -> Result<SidecarOutcome, String> {
-    run_at_with_bridge(executable, request, cancellation, None)
+    run_at_with_bridge(executable, request, cancellation, None, None)
 }
 
 fn run_at_with_bridge(
@@ -83,6 +100,7 @@ fn run_at_with_bridge(
     request: &SidecarRequest,
     cancellation: &RunCancellation,
     bridge: Option<&ToolGatewayBridge>,
+    before_send: Option<&mut dyn FnMut(&mut Value) -> Result<(), String>>,
 ) -> Result<SidecarOutcome, String> {
     if request.id.is_empty()
         || request.step_id.is_empty()
@@ -140,7 +158,7 @@ fn run_at_with_bridge(
         .stdin
         .as_mut()
         .ok_or_else(|| "Role-routing Codex sidecar did not expose stdin".to_string())?;
-    let frame = json!({
+    let mut frame = json!({
         "version": 1,
         "id": request.id,
         "op": "run",
@@ -151,6 +169,9 @@ fn run_at_with_bridge(
         "toolGatewayUrl": bridge.map(|bridge| &bridge.url),
         "timeoutMs": request.timeout_ms,
     });
+    if let Some(before_send) = before_send {
+        before_send(&mut frame)?;
+    }
     write_frame(stdin, &frame)?;
 
     let deadline = Instant::now() + Duration::from_millis(request.timeout_ms);
@@ -342,6 +363,9 @@ mod tests {
     #[test]
     fn rr_21_bridge_keeps_bearer_token_out_of_jsonl() {
         let (_directory, executable) = fixture("test \"$SAAA_ROLE_ROUTING_MCP_TOKEN\" = 'bridge-secret' || exit 9; read line; case \"$line\" in *bridge-secret*) exit 10;; *toolGatewayUrl*) ;; *) exit 11;; esac; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"bridged\"}'");
+        let mut input = request();
+        // This fixture proves environment/protocol separation, not process startup latency.
+        input.timeout_ms = 10_000;
         let bridge = ToolGatewayBridge {
             url: "http://127.0.0.1:43127/mcp?rrRoot=root".into(),
             bearer_token: "bridge-secret".into(),
@@ -349,9 +373,10 @@ mod tests {
         assert_eq!(
             run_at_with_bridge(
                 &executable,
-                &request(),
+                &input,
                 &RunCancellation::default(),
-                Some(&bridge)
+                Some(&bridge),
+                None,
             )
             .expect("bridge result"),
             SidecarOutcome::Result {

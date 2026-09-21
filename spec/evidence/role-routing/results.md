@@ -6,7 +6,7 @@
 
 ## 実施済み
 
-- 隔離test binaryで `rr_` 67件: pass
+- 隔離test binaryで `rr_` 80件: pass
 - `cargo fmt --check`: role-routing変更範囲でpass
 - `git diff --check`: pass
 - desktop smoke: build / bundle / launch / IPC ready の証跡あり

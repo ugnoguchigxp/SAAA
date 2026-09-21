@@ -52,7 +52,7 @@
 | RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate。premium proposalをroot/policy/revision/candidate/見積費用へ束縛して永続化し、候補名を指定した承諾時に再検証 | Astra提案・承諾のIPC/UIと実dispatch接続、dispatch直前のprovider capability再検証 |
 | RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
 | RR-28 | 部分 | chatで永続snapshotのphase/revision/queue先頭を表示 | 実行履歴・選択理由UI |
-| RR-29 | 部分 | 隔離role-routing suite 67件がpass。queue/cancel/tool/sidecarの単体・限定統合を確認 | Provider/TTS/tool完了順のBarrier競合fixture、live lane、A13〜A30受入 |
+| RR-29 | 部分 | 隔離role-routing suite 80件がpass。queue/cancel/tool/sidecar/review/proposalの単体・限定統合を確認。sidecar bridge fixtureを起動負荷と無関係な10秒timeoutで安定化 | Provider/TTS/tool完了順のBarrier競合fixture、live lane、A13〜A30受入 |
 | RR-30 | 部分 | R3 tables、限定feature snapshot | immutable全feature snapshot・C6確認 |
 | RR-31 | 部分 | dirty queueとdataset materialize | event上限/checkpoint/page再開 |
 | RR-32 | 部分 | explicit feedbackの限定ラベル | L2全label/conflict/revision |
@@ -62,7 +62,7 @@
 | RR-36 | 部分 | hash・feature/candidate検証済みlinear-v1 loader、観測label限定のoffline評価 | selection接続、昇格証跡 |
 | RR-37 | 部分 | forget sourceからdataset/artifactを同一transactionで失効。設定画面で本文なし学習状況/手動materialize | filesystem journal |
 | RR-38 | 部分 | specialistは型付きhost tool requestのみ返し、無効時や不正requestを拒否。最終回答権限を持たない | specialist差替え、既存tool gatewayへの実接続 |
-| RR-39 | 部分 | offline suite 67件・desktop smokeの証跡と未完一覧を`results.md`へ記録 | V1〜V6、A01〜A42、性能・live報告 |
+| RR-39 | 部分 | offline suite 80件・desktop smokeの証跡と未完一覧を`results.md`へ記録 | V1〜V6、A01〜A42、性能・live報告 |
 
 ## 共通規則
 
@@ -320,6 +320,8 @@
 - Sol/Astra利用可否は別live lane。Astraの課金を伴う試験は設定上の許可・予算内だけで実施する。
 - 試験: 全A13〜A30、V5/V6。
 - 合格: 統合経路の二重実行・古い発話0。live未完は未検証と残す。
+
+実装状況（2026-09-21）: `cargo test --locked --manifest-path src-tauri/Cargo.toml --target-dir /tmp/saaa-rr-policy --lib rr_` は80件pass。Codex bridge fixtureはtokenのJSONL非露出を検証するもので起動性能を測るものではないため、full suiteの負荷で生じる偶発timeoutを避けてtimeoutを10秒へ固定した。Provider/TTS/toolの実完了順を扱うBarrier競合fixture、A13〜A30の網羅、live laneは未実施である。
 
 ## R3: 学習データと運用
 
