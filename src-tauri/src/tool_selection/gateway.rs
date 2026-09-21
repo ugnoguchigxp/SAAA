@@ -957,6 +957,50 @@ mod tests {
     }
 
     #[test]
+    fn rr_29_tool_permit_update_before_invoke() {
+        let writer = role_writer();
+        let binding = RoleStepBinding {
+            root_id: "r",
+            step_id: "s0",
+            revision: 0,
+            attempt_started_at_ms: 10,
+            config_fingerprint: "f0",
+        };
+        authorize_routing_tool(
+            &writer,
+            "r",
+            crate::role_routing::tools::ToolEffect::ReadOnly,
+            Some(&binding),
+        )
+        .expect("initial permit");
+        writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "UPDATE rr_roots SET cancel_requested=1,phase='cancelled' WHERE root_id='r'",
+                        [],
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .expect("condition update commits");
+        assert!(
+            reserve_routing_operation(&writer, "r", "must-not-reach-owner", Some(&binding))
+                .is_err()
+        );
+        assert_eq!(
+            writer
+                .read_serialized(|connection| connection
+                    .query_row("SELECT count(*) FROM rr_tool_links", [], |row| row
+                        .get::<_, i64>(0))
+                    .map_err(|error| error.to_string()))
+                .expect("links"),
+            0,
+            "the second gateway check must stop invocation before owner reservation"
+        );
+    }
+
+    #[test]
     fn rr_10_reviewer_resolved_mutation_denied_at_gateway() {
         let writer = role_writer();
         writer

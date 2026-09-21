@@ -86,8 +86,10 @@ pub(crate) fn save_settings_documents(
                 if let Some(cancellation) = active.get(run_id) {
                     cancellation.cancel();
                 }
-                state.streaming_tts.cancel(run_id);
             }
+        }
+        for run_id in &run_ids {
+            state.streaming_tts.cancel(run_id);
         }
     }
     if enabled {

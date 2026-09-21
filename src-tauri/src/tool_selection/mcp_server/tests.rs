@@ -1033,6 +1033,85 @@ async fn rr_11_detached_owner_settles() {
 }
 
 #[tokio::test]
+async fn rr_29_tool_dispatch_update_then_settle() {
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let (writer, service) = ledger_with_backend(
+        4,
+        Arc::new(BlockingBackend {
+            entered: entered.clone(),
+            release: release.clone(),
+        }),
+    );
+    writer
+        .write(|connection| {
+            let policy_id: String = connection
+                .query_row("SELECT id FROM rr_policy_versions ORDER BY version DESC LIMIT 1", [], |row| row.get(0))
+                .map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('role-update','conversation_primary',?1,0,'responding','text','visual',1,'')", [&policy_id]).map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('role-update-step','role-update',0,0,'actor','respond','running','fingerprint','{}',1)", []).map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("role root");
+    let harness = serve_with(writer.clone(), service).await;
+    let session = harness.ready_role_session("role-update").await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    let client = harness.client.clone();
+    let url = harness.base.clone();
+    let token = harness.token.clone();
+    let request = tokio::spawn(async move {
+        client
+            .post(url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", ACCEPT_BOTH)
+            .header("Mcp-Session-Id", session)
+            .json(&json!({
+                "jsonrpc":"2.0","id":3,"method":"tools/call",
+                "params":{"name":"tools_invoke","arguments":{"executionRef":execution_ref,"arguments":{"q":"v"}}}
+            }))
+            .send()
+            .await
+    });
+    let _entry = tokio::time::timeout(Duration::from_secs(5), entered.acquire())
+        .await
+        .expect("backend entered")
+        .expect("permit");
+    writer
+        .write(|connection| {
+            crate::role_routing::coordinator::apply(
+                connection,
+                "role-update",
+                crate::role_routing::reducer::Event::InputBarrier,
+                2,
+            )?;
+            Ok(())
+        })
+        .expect("condition update commits while owner runs");
+    release.add_permits(1);
+    let response = request
+        .await
+        .expect("request task")
+        .expect("gateway response");
+    assert!(response.status().is_success());
+    assert_eq!(wait_for_invocation_status(&writer).await, "succeeded");
+    let state = writer
+        .read_serialized(|connection| {
+            connection
+                .query_row(
+                    "SELECT r.phase||':'||l.dispatch_state||':'||
+                       (SELECT count(*) FROM tool_selection_invocations)
+                     FROM rr_roots r JOIN rr_tool_links l ON l.root_id=r.root_id
+                     WHERE r.root_id='role-update'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("routing state");
+    assert_eq!(state, "draining:settled:1");
+}
+
+#[tokio::test]
 async fn rr_21_sol_tool_roundtrip() {
     let (writer, service) = ledger(4);
     writer

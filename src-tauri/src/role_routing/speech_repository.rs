@@ -173,4 +173,35 @@ mod tests {
             0
         );
     }
+
+    #[test]
+    fn rr_29_answer_commit_input_then_tts() {
+        let connection = Connection::open_in_memory().expect("db");
+        connection.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY);INSERT INTO conversations VALUES('c');INSERT INTO runtime_runs VALUES('r1');INSERT INTO conversation_messages VALUES('answer');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("schema");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest,result_message_id) VALUES('r1','c','r1','p',0,'completed','text','voice',1,'','answer'); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('step-r1','r1',0,0,'author','respond','succeeded','f','{}'); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('output-r1','step-r1',0,'answer','{}',1,1);").expect("committed answer");
+        assert!(enqueue_final(&connection, "r1", "answer").expect("speech intent"));
+        assert_eq!(
+            cancel_conversation(&connection, "c").expect("new input fence"),
+            vec!["r1"]
+        );
+        assert!(!mark_started(&connection, "r1").expect("late synthesis"));
+        assert!(!mark_terminal(&connection, "r1", "completed").expect("late end"));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT status||':'||epoch FROM rr_speech WHERE root_id='r1'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("speech state"),
+            "cancelled:1"
+        );
+    }
 }

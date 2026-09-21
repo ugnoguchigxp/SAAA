@@ -54,7 +54,7 @@
 | RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate。premium proposalをroot/policy/revision/candidate/見積費用へ束縛して永続化し、候補名を指定した承諾時に再検証 | Astra提案・承諾のIPC/UIと実dispatch接続、dispatch直前のprovider capability再検証 |
 | RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
 | RR-28 | 部分 | chatで永続snapshotのphase/revision/queue先頭を表示 | 実行履歴・選択理由UI |
-| RR-29 | 部分 | 隔離role-routing suite 81件がpass。queue/cancel/tool/sidecar/review/proposalの単体・限定統合と、manual Barrierによるupdate後late completion保留を確認。sidecar bridge fixtureを起動負荷と無関係な10秒timeoutで安定化 | Provider/TTS/tool完了順のBarrier競合fixture、live lane、A13〜A30受入 |
+| RR-29 | 部分（offline pass / live待ち） | 実writer/通常入力/MCP owner/speech ledgerでProvider→classifier、permit→update→invoke、dispatch→update→settle、answer→input→TTS、cancel/completion両順序を固定。`rr_29_` 7件pass | live lane L01〜L03 |
 | RR-30 | 部分 | R3 tables、限定feature snapshot | immutable全feature snapshot・C6確認 |
 | RR-31 | 部分 | dirty queueとdataset materialize | event上限/checkpoint/page再開 |
 | RR-32 | 部分 | explicit feedbackの限定ラベル | L2全label/conflict/revision |
@@ -323,7 +323,7 @@
 - 試験: 全A13〜A30、V5/V6。
 - 合格: 統合経路の二重実行・古い発話0。live未完は未検証と残す。
 
-実装状況（2026-09-21）: `cargo test --locked --manifest-path src-tauri/Cargo.toml --target-dir /tmp/saaa-rr-policy --lib rr_` は80件pass。Codex bridge fixtureはtokenのJSONL非露出を検証するもので起動性能を測るものではないため、full suiteの負荷で生じる偶発timeoutを避けてtimeoutを10秒へ固定した。Provider/TTS/toolの実完了順を扱うBarrier競合fixture、A13〜A30の網羅、live laneは未実施である。
+実装状況（2026-09-22）: `rr_29_` 7件でProvider/TTS/toolとcancel/completionの実順序を固定し、`cargo test --lib rr_ -- --test-threads=1` は192件pass。認証済みmodel・実音声を使うlive laneは未実施である。
 
 ## R3: 学習データと運用
 

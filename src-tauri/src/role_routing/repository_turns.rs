@@ -978,9 +978,9 @@ pub(crate) fn cancel_all_for_disable(connection: &Connection, now_ms: i64) -> Re
         .map_err(|error| error.to_string())?;
     connection
         .execute(
-            "UPDATE rr_premium_proposals SET status='expired',updated_at_ms=?1
-             WHERE status IN ('proposed','approved') AND consumed=0",
-            [now_ms],
+            "UPDATE rr_premium_proposals SET status='expired'
+             WHERE status IN ('proposed','approved') AND consumed_at_ms IS NULL",
+            [],
         )
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -1238,6 +1238,80 @@ mod tests {
         .expect("policy row");
         c.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p',0,'responding','reasoning','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms,completed_at_ms) VALUES('draft','run',0,0,'author','respond','succeeded','a','{}',1,2),('review','run',0,1,'reviewer','review','running','b','{}',2,NULL),('revise','run',0,2,'author','revise','planned','c','{}',NULL,NULL); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('rr-output-draft','draft',0,'intermediate','{\"sha256\":\"d\",\"bytes\":5,\"hostVerification\":\"verified\",\"verifierVersion\":\"fixture-v1\"}',0,2); INSERT INTO rr_events VALUES('run',1,'input_accepted','{}',1);").expect("review plan");
         c
+    }
+
+    fn final_flow_fixture() -> Connection {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT); INSERT INTO conversations VALUES('c'); INSERT INTO runtime_runs VALUES('run');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning");
+        c.execute_batch("INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1); INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p',0,'responding','reasoning','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('step','run',0,0,'author','respond','running','f','{}',1);").expect("routing fixture");
+        c
+    }
+
+    #[test]
+    fn rr_29_cancel_completion_both_orders() {
+        let mut cancel_first = final_flow_fixture();
+        crate::role_routing::coordinator::apply(
+            &mut cancel_first,
+            "run",
+            crate::role_routing::reducer::Event::Cancel,
+            2,
+        )
+        .expect("cancel commits first");
+        {
+            let transaction = cancel_first.transaction().expect("transaction");
+            transaction
+                .execute(
+                    "INSERT INTO conversation_messages VALUES('late','c','assistant','late answer','3')",
+                    [],
+                )
+                .expect("tentative answer");
+            assert!(accept_provider_turn(&transaction, "run", "late", 3).is_err());
+        }
+        assert_eq!(
+            cancel_first
+                .query_row(
+                    "SELECT phase||':'||(SELECT count(*) FROM conversation_messages)
+                     FROM rr_roots WHERE root_id='run'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("cancel-first state"),
+            "cancelled:0"
+        );
+
+        let mut completion_first = final_flow_fixture();
+        {
+            let transaction = completion_first.transaction().expect("transaction");
+            transaction
+                .execute(
+                    "INSERT INTO conversation_messages VALUES('answer','c','assistant','accepted answer','2')",
+                    [],
+                )
+                .expect("answer");
+            accept_provider_turn(&transaction, "run", "answer", 2).expect("completion wins");
+            transaction.commit().expect("completion commits");
+        }
+        crate::role_routing::coordinator::apply(
+            &mut completion_first,
+            "run",
+            crate::role_routing::reducer::Event::Cancel,
+            3,
+        )
+        .expect("late cancel is idempotent");
+        assert_eq!(
+            completion_first
+                .query_row(
+                    "SELECT phase||':'||result_message_id||':'||
+                       (SELECT count(*) FROM rr_outputs WHERE accepted=1)
+                     FROM rr_roots WHERE root_id='run'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("completion-first state"),
+            "completed:answer:1"
+        );
     }
 
     fn review_issue(verdict: &str) -> crate::role_routing::review::ReviewIssue {

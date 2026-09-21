@@ -23,7 +23,7 @@
 - A01〜A42の受入を網羅するV5は未実施。
 - live SDK isolation、live provider、TTS体感、夜間負荷測定は未実施。
 - Sol host tool loop（RR-21）は部分実装。sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続し、gateway はactive rootの会話を検証して `rr_tool_links` のreserve/settleへ帰属する。tokenはchild環境だけで渡し、JSONLへ含めない。`rr_21_bridge_keeps_bearer_token_out_of_jsonl` と `rr_21_role_root_query_is_strict_and_decoded_once` はpass。実認証SDKによるtool roundtrip・revision/model変更時のnew thread・tool budget・live isolationは未実施。
-- Provider/TTS/toolの完了順を固定するBarrier競合fixtureは不足。
+- Provider/TTS/toolの完了順を固定するE26 fixtureは2026-09-22追補で7件pass。live競合は未実施。
 - RR-22: `rr_22_` 4件（deadline/cost gate、typed usage、step永続化）はpass。provider別費用換算・切替上限の実dispatch接続は未実施。
 - RR-23: `rr_23_` 2件（evidence span/dirty mark、最新routing回答だけへの束縛）はpass。positive/negativeとchallenge新rootは未実施。
 - RR-24: `rr_24_` 5件（独立actor、evidence scope、model/actor名を含めないreview packet、review output保存、mutating tool拒否）はpass。review executor、read-only MCP gateway接続、通常turnのreview step組込みは未実施。

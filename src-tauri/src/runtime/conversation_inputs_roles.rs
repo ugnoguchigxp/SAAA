@@ -469,9 +469,9 @@ mod tests {
             .iter_mut()
             .find(|document| document.namespace == "routing.roles")
             .expect("role policy")
-            .value_json = json!({"schemaVersion": 1, "enabled": false});
+            .value_json["limits"]["maxReasoningSteps"] = json!(3);
         save_settings_documents_to_connection(&mut connection, &documents)
-            .expect("disable new roots");
+            .expect("save a newer enabled policy");
         let mut route = crate::persistence::load_routing_settings(&connection)
             .expect("routing")
             .conversation_respond;

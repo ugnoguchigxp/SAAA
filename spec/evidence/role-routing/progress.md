@@ -402,5 +402,27 @@ reasonCode/reason/candidateId/phaseだけで、draftなど任意payloadは表示
   `wasm_host_poc::tests::real_kit_inspect_verify_and_vectors_run_without_credentials`（installed Bun 1.4.2 / expected 1.3.14）で、
   role-routing integration testの失敗は0件。
 
-offlineの計画項目とA01〜A42は完了した。残件は明示許可が必要なlive lane L01〜L04と、repo全体gateに元から残る
-role-routing外の失敗だけである。live未実施のためR1/R2/R3の「実機完了」は主張しない。
+## 完了監査の訂正・E26/disable drain（2026-09-22、offline）
+
+前段の「offlineの計画項目は完了」は、completion roadmapのE26/E35/E36条件との突合が不足していたため撤回する。
+E26は以下の実経路順序を追加し、sleepや乱数に依存せず順序を固定した。
+
+- `rr_29_provider_before_classifier_raises_durable_barrier_and_queues_follow_up`
+- `rr_29_tool_permit_update_before_invoke`
+- `rr_29_tool_dispatch_update_then_settle`
+- `rr_29_answer_commit_input_then_tts`
+- `rr_29_cancel_completion_both_orders`
+
+設定でrole routingを無効化するtransactionはqueued/active root、未完step、speech、未消費proposalを取消す。
+command層は対応するprocess-local cancellation/TTS停止を通知する。取消済みruntime childまたはtool ownerが実行中の間は
+新しいlegacy turnをmessage保存前に拒否し、全side effectがterminalになった後だけ旧経路を再開する。
+`rr_39_disable_drains_before_legacy_resume`が、新規routing root 0、drain中input message 0、child cancel、tool settle後の
+legacy受付を検証する。
+
+- E26 `rr_29_`: 7 pass / 0 fail（上記5順序と既存epoch/reducer回帰）。
+- role-routing全抽出 `cargo test --lib rr_ -- --test-threads=1`: 192 pass / 0 fail。
+- `cargo check --tests`: pass（Rustの全test targetにcompile error 0）。
+- `bun run typecheck`、`bun run lint`、`cargo fmt --check`、`git diff --check`: pass。
+
+E26はoffline完了。E36のdisable/drain/rollback観点は完了したが、E35の42行最終台帳とE36の全gateは未完了。
+live lane L01〜L04も引き続き明示許可待ちであり、全体完了はまだ主張しない。

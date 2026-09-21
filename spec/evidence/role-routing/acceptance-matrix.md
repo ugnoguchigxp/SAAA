@@ -43,7 +43,7 @@ RR-00〜39、A01〜A42、P1〜P5 の各要求を、担当 E/L 単位・試験名
 | RR-26 | Astra 提案と承諾 | E20/E21/L02 | E18 | 部分 |
 | RR-27 | 会話 UI の継続操作 | E21/E25 | E20 | 部分 |
 | RR-28 | 実行履歴・理由の表示 | E21/E34 | E25 | offline pass |
-| RR-29 | R2 競合・実機 gate | E26/L01/L02/L03 | E25 | 部分 |
+| RR-29 | R2 競合・実機 gate | E26/L01/L02/L03 | E25 | offline pass / live待ち |
 | RR-30 | 学習 schema・特徴 snapshot | E28 | E26 | 部分 |
 | RR-31 | 増分抽出と checkpoint | E29 | E28 | 部分 |
 | RR-32 | ラベル生成 | E30 | E29 | 部分 |
