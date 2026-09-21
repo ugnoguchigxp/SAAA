@@ -8,7 +8,7 @@ import type { ConversationRuntimeActivity } from "../../lib/conversationActivity
 import type { VoiceCaptureState } from "../voice/useAmbientVoiceSession";
 import type { VoiceAsrProjection } from "../voice/voiceAsrProjection";
 import type { StreamingTextProjection } from "./streamingTextBuffer";
-import type { RoutingSnapshot } from "../../lib/generated/runtimeEvent";
+import type { RoutingEventRecord, RoutingSnapshot } from "../../lib/generated/runtimeEvent";
 import type {
   RequiredContextFailureCode,
   RequiredContextRecoveryAction,
@@ -59,6 +59,10 @@ export type ChatPageProps = {
   onSetConversationListeningPace: (value: "inherit" | "quick" | "balanced" | "patient") => void;
   onResetConversationVoiceOverrides: () => void;
   routingSnapshot: RoutingSnapshot;
+  routingEvents: RoutingEventRecord[];
   routingCancellingRootId: string | null;
+  routingDecidingProposalId: string | null;
+  routingProposalError: string | null;
   onCancelRouting: (rootId: string) => void;
+  onDecideRoutingProposal: (proposalId: string, candidateId: string, approve: boolean) => void;
 };

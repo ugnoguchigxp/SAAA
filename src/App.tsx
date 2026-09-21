@@ -294,8 +294,14 @@ function App() {
               }
               onResetConversationVoiceOverrides={() => void turn.resetConversationVoiceOverrides()}
               routingSnapshot={routing.snapshot}
+              routingEvents={routing.events}
               routingCancellingRootId={routing.cancellingRootId}
+              routingDecidingProposalId={routing.decidingProposalId}
+              routingProposalError={routing.proposalError}
               onCancelRouting={(rootId) => void routing.cancel(rootId)}
+              onDecideRoutingProposal={(proposalId, candidateId, approve) =>
+                void routing.decideProposal(proposalId, candidateId, approve)
+              }
             />
           </ArtifactWorkspaceProvider>
         )}

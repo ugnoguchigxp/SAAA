@@ -11,6 +11,16 @@ export function getRoutingSnapshot(conversationId: string): Promise<RoutingSnaps
   });
 }
 
+export function decideRoutingProposal(
+  proposalId: string,
+  candidateId: string,
+  approve: boolean,
+): Promise<import("./generated/runtimeEvent").RoutingProposalSnapshot> {
+  return invoke("decide_routing_proposal", {
+    input: { proposalId, candidateId, approve },
+  });
+}
+
 export function replayRoutingEvents(
   rootId: string,
   afterSeq: bigint,

@@ -16,9 +16,11 @@ use crate::tool_selection::backends::{
 use crate::tool_selection::catalog::{self, CatalogEntry, UsagePage};
 use crate::tool_selection::contracts::now_ms;
 use crate::tool_selection::extraction::UnconfiguredExtractor;
+use crate::tool_selection::gateway;
 use crate::tool_selection::inference::{EmbeddingProvider, HashEmbedding, HashReranker};
 use crate::tool_selection::repository;
 use crate::tool_selection::service::{self, ToolSelectionService};
+use crate::RunCancellation;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
@@ -1028,6 +1030,170 @@ async fn rr_11_detached_owner_settles() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("detached role owner did not settle its routing link");
+}
+
+#[tokio::test]
+async fn rr_21_sol_tool_roundtrip() {
+    let (writer, service) = ledger(4);
+    writer
+        .write(|connection| {
+            let policy_id: String = connection
+                .query_row("SELECT id FROM rr_policy_versions ORDER BY version DESC LIMIT 1", [], |row| row.get(0))
+                .map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,started_at) VALUES('sol-run','conversation_primary','conversation.respond','running','1')", []).map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('sol-run','conversation_primary','sol-run',?1,0,'responding','text','visual',1,'')", [&policy_id]).map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('sol-step','sol-run',0,0,'sol','respond','running','sol-fingerprint','{}',1)", []).map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("Sol step binding");
+    let harness = serve_with(writer.clone(), service).await;
+    // This role-scoped MCP session stands in for the injected SDK thread. It exercises the real
+    // authenticated loopback gateway, catalog resolution, permit, owner, and routing ledger.
+    let session = harness.ready_role_session("sol-run").await;
+    let execution_ref = prepare_execution_ref(&harness, &session).await;
+    let tool_result = harness
+        .envelope(
+            3,
+            "tools_invoke",
+            json!({"executionRef":execution_ref,"arguments":{"q":"decision"}}),
+            &session,
+        )
+        .await;
+    assert_eq!(tool_result.pointer("/ok"), Some(&json!(true)));
+    writer
+        .write(|connection| {
+            let transaction = connection.transaction().map_err(|error| error.to_string())?;
+            transaction.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('sol-answer','conversation_primary','assistant','answer from tool result','2')", []).map_err(|error| error.to_string())?;
+            crate::role_routing::repository::accept_provider_turn(&transaction, "sol-run", "sol-answer", 2)?;
+            transaction.commit().map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .expect("host adopts SDK candidate");
+    let receipt = writer
+        .read_serialized(|connection| {
+            connection.query_row(
+                "SELECT r.phase||':'||m.content||':'||(SELECT count(*) FROM rr_tool_links l WHERE l.root_id=r.root_id AND l.dispatch_state<>'settled') FROM rr_roots r JOIN conversation_messages m ON m.id=r.result_message_id WHERE r.root_id='sol-run'",
+                [],
+                |row| row.get::<_,String>(0),
+            ).map_err(|error| error.to_string())
+        })
+        .expect("roundtrip receipt");
+    assert_eq!(receipt, "completed:answer from tool result:0");
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn rr_38_normal_turn_specialist_returns_to_parent() {
+    let (writer, service) = ledger(4);
+    writer
+        .write(|connection| {
+            let policy_id: String = connection
+                .query_row(
+                    "SELECT id FROM rr_policy_versions ORDER BY version DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,started_at) VALUES('specialist-run','conversation_primary','conversation.respond','running','1')", []).map_err(|error| error.to_string())?;
+            connection.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('specialist-run','conversation_primary','specialist-run',?1,0,'responding','text','visual',1,'')", [&policy_id]).map_err(|error| error.to_string())?;
+            connection.execute_batch(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES
+                 ('specialist-parent-draft','specialist-run',0,0,'parent','respond','running','parent-fingerprint','{}',1),
+                 ('specialist-step','specialist-run',0,1,'specialist','tool_specialist','planned','specialist-fingerprint','{}',NULL),
+                 ('specialist-parent-final','specialist-run',0,2,'parent','respond','planned','parent-fingerprint','{}',NULL);",
+            ).map_err(|error| error.to_string())?;
+            crate::role_routing::repository::advance_provider_step(
+                connection,
+                "specialist-run",
+                "private parent draft",
+                2,
+            )?;
+            Ok(())
+        })
+        .expect("specialist plan");
+
+    let request = crate::role_routing::tool_specialist::SpecialistRequest {
+        tool_name: "tools_search".into(),
+        arguments: json!({"intent":"find a note for the parent","limit":1}),
+    };
+    let cancellation = RunCancellation::default();
+    let envelope = crate::role_routing::tool_specialist::execute_for_root(
+        &service,
+        &writer,
+        "conversation_primary",
+        &gateway::RoleStepBinding {
+            root_id: "specialist-run",
+            step_id: "specialist-step",
+            revision: 0,
+            attempt_started_at_ms: 2,
+            config_fingerprint: "specialist-fingerprint",
+        },
+        None,
+        &request,
+        true,
+        &[
+            "tools_search".into(),
+            "tools_describe".into(),
+            "tools_invoke".into(),
+        ],
+        &cancellation,
+    )
+    .await
+    .expect("specialist request reaches host gateway");
+    assert_eq!(envelope.get("ok"), Some(&json!(true)));
+    let duplicate = crate::role_routing::tool_specialist::execute_for_root(
+        &service,
+        &writer,
+        "conversation_primary",
+        &gateway::RoleStepBinding {
+            root_id: "specialist-run",
+            step_id: "specialist-step",
+            revision: 0,
+            attempt_started_at_ms: 2,
+            config_fingerprint: "specialist-fingerprint",
+        },
+        None,
+        &request,
+        true,
+        &[
+            "tools_search".into(),
+            "tools_describe".into(),
+            "tools_invoke".into(),
+        ],
+        &cancellation,
+    )
+    .await
+    .expect("duplicate returns a host envelope");
+    assert_eq!(
+        duplicate.pointer("/error/code"),
+        Some(&json!("operation-not-retryable")),
+        "a settled or unknown operation remains single-owner and the parent cannot retry it"
+    );
+
+    let envelope_text = serde_json::to_string(&envelope).expect("tool envelope");
+    writer
+        .write(|connection| {
+            assert!(crate::role_routing::repository::advance_provider_step(
+                connection,
+                "specialist-run",
+                &envelope_text,
+                3,
+            )?);
+            let state: String = connection
+                .query_row(
+                    "SELECT
+                     (SELECT status FROM rr_steps WHERE id='specialist-step')||':'||
+                     (SELECT status FROM rr_steps WHERE id='specialist-parent-final')||':'||
+                     (SELECT count(*) FROM rr_tool_links WHERE root_id='specialist-run' AND dispatch_state='settled')||':'||
+                     COALESCE((SELECT result_message_id FROM rr_roots WHERE root_id='specialist-run'),'none')",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            assert_eq!(state, "succeeded:running:1:none");
+            Ok(())
+        })
+        .expect("tool result returns only to parent");
 }
 
 #[tokio::test]

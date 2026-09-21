@@ -151,6 +151,62 @@ pub(crate) fn may_dispatch(
         && approved_candidate == Some(proposal.candidate_id.as_str())
 }
 
+/// Rechecks mutable host capability for the exact cloud actor named by a persisted proposal.
+/// Policy identity is immutable, but provider enablement, Codex health, model, and location are
+/// deliberately live facts and may be revoked after the proposal was created.
+pub(crate) fn candidate_available(
+    connection: &Connection,
+    policy_id: &str,
+    candidate_id: &str,
+) -> Result<bool, String> {
+    let settings_json: String = connection
+        .query_row(
+            "SELECT config_json FROM rr_policy_versions WHERE id=?1",
+            [policy_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Role-routing premium proposal policy is unavailable".to_string())?;
+    let settings: crate::role_routing::RoleRoutingSettings =
+        serde_json::from_str(&settings_json)
+            .map_err(|_| "Role-routing premium proposal policy is invalid".to_string())?;
+    let Some(actor) = settings
+        .actors
+        .iter()
+        .find(|actor| actor.id == candidate_id)
+    else {
+        return Ok(false);
+    };
+    if actor.location != "cloud" {
+        return Ok(false);
+    }
+    match actor.transport.as_str() {
+        "codex_sdk" => {
+            let codex = crate::persistence::load_codex_settings(connection)?;
+            Ok(codex.enabled
+                && codex.health == "ready"
+                && actor.model.as_deref() == Some(codex.model.as_str()))
+        }
+        "provider" => {
+            let Some(provider_id) = actor.provider_id.as_deref() else {
+                return Ok(false);
+            };
+            let providers = crate::persistence::load_model_providers(connection)?;
+            Ok(providers.providers.iter().any(|provider| {
+                provider.id() == provider_id
+                    && provider.enabled()
+                    && provider.location() == actor.location
+                    && matches!(
+                        provider,
+                        crate::ModelProviderSettings::OpenAiCompatible(_)
+                            | crate::ModelProviderSettings::AgentSession(_)
+                            | crate::ModelProviderSettings::DynamicLan(_)
+                    )
+            }))
+        }
+        _ => Ok(false),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConsumedApproval {
     pub(crate) proposal_id: String,

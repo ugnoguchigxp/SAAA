@@ -3,7 +3,7 @@
 //! This is deliberately a *re-ordering* layer: callers provide candidates that have already
 //! passed their domain's permission and capability checks.  An adaptive policy can therefore
 //! never introduce a tool, recipe, plan step, or notification channel.
-use chrono::Timelike;
+use chrono::{Datelike, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -231,11 +231,20 @@ CREATE TABLE IF NOT EXISTS ai_evaluation_receipts (id TEXT PRIMARY KEY, artifact
 /// The adaptive materializer shares the role-routing local window and idle gate. It does only
 /// SQLite work; inference/evaluation stays off the conversation path and any failure is ignored
 /// so a background learning fault cannot interrupt normal conversation.
-pub(crate) fn start_worker(writer: Arc<crate::persistence::SqliteWriter>) {
+pub(crate) fn start_worker(
+    writer: Arc<crate::persistence::SqliteWriter>,
+    data_directory: std::path::PathBuf,
+) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
+            let cleanup_now = now_ms();
+            let _ = crate::role_routing::learning::invalidation::cleanup_invalidated_exports_with_writer(
+                &writer,
+                &data_directory.join("role-routing-learning"),
+                cleanup_now,
+            );
             let _ = writer.write(|connection| {
                 let settings = crate::persistence::load_role_routing_settings(connection)?;
                 let adaptive_domains_enabled = settings.adaptive_improvement.provider_recipe
@@ -254,19 +263,60 @@ pub(crate) fn start_worker(writer: Arc<crate::persistence::SqliteWriter>) {
                     / 1_000;
                 let local = chrono::Local::now();
                 let minutes = local.hour() as u16 * 60 + local.minute() as u16;
-                if crate::role_routing::learning::scheduler::should_start(
+                let day_key = format!("{:04}-{:02}-{:02}", local.year(), local.month(), local.day());
+                let already_running: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM rr_learning_runs WHERE status='running')",
+                    [],
+                    |row| row.get(0),
+                ).unwrap_or(false);
+                let foreground_active: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_runs WHERE status='running')",
+                    [],
+                    |row| row.get(0),
+                ).unwrap_or(true);
+                let last_completed_day: Option<String> = connection.query_row(
+                    "SELECT MAX(day_key) FROM rr_learning_runs WHERE status='completed'",
+                    [],
+                    |row| row.get(0),
+                ).unwrap_or(None);
+                if let Some(reason) = crate::role_routing::learning::scheduler::should_start_daily(
                     &settings.learning,
                     minutes,
                     idle,
-                    false,
+                    already_running,
+                    foreground_active,
+                    &day_key,
+                    last_completed_day.as_deref(),
                 ) {
+                    let reason = match reason {
+                        crate::role_routing::learning::scheduler::StartReason::Window => "window",
+                        crate::role_routing::learning::scheduler::StartReason::MissedWindow => "missed_window",
+                    };
+                    let resumed = connection.execute(
+                        "UPDATE rr_learning_runs SET status='running',error_code=NULL WHERE day_key=?1 AND status='paused'",
+                        [&day_key],
+                    ).map_err(|error| error.to_string())? == 1;
+                    let claimed = resumed || connection.execute(
+                        "INSERT OR IGNORE INTO rr_learning_runs(day_key,status,reason,started_at_ms) VALUES(?1,'running',?2,?3)",
+                        params![day_key,reason,now],
+                    ).map_err(|error| error.to_string())? == 1;
+                    if !claimed {
+                        return Ok(());
+                    }
                     // Role-routing data has its own privacy-preserving ledger. It must not be
                     // coupled to the legacy adaptive domains being enabled.
-                    let _ = crate::role_routing::learning::repository::materialize_dirty_roots(
+                    let materialized = crate::role_routing::learning::repository::materialize_dirty_roots(
                         connection,
                         now,
                         settings.learning.batch_size,
                     );
+                    let materialized = match materialized {
+                        Ok(dataset) => dataset,
+                        Err(_) => {
+                            connection.execute("UPDATE rr_learning_runs SET status='failed',error_code='materialize_failed',completed_at_ms=?1 WHERE day_key=?2 AND status='running'", params![now,day_key]).map_err(|error| error.to_string())?;
+                            return Ok(());
+                        }
+                    };
                     if settings.adaptive_improvement.enabled && adaptive_domains_enabled {
                         if let Some(dataset_id) = materialize_dirty(
                             connection,
@@ -276,6 +326,9 @@ pub(crate) fn start_worker(writer: Arc<crate::persistence::SqliteWriter>) {
                             let _ = train_candidate_artifacts(connection, &dataset_id, now);
                         }
                     }
+                    let more_pages: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM rr_learning_dirty)", [], |row| row.get(0)).map_err(|error| error.to_string())?;
+                    let next_status = if materialized.is_some() && more_pages { "paused" } else { "completed" };
+                    connection.execute("UPDATE rr_learning_runs SET status=?1,completed_at_ms=CASE WHEN ?1='completed' THEN ?2 ELSE NULL END,error_code=NULL WHERE day_key=?3 AND status='running'", params![next_status,now,day_key]).map_err(|error| error.to_string())?;
                 }
                 Ok(())
             });

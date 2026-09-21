@@ -36,6 +36,30 @@ pub(crate) async fn execute_turn(
             ));
         }
     };
+    if task_mode == "conversation" {
+        let cancelled_runs = state.sqlite_readers.read(|connection| {
+            connection
+                .prepare(
+                    "SELECT runtime_run_id FROM rr_roots
+                     WHERE conversation_id=?1 AND cancel_requested=1 AND runtime_run_id IS NOT NULL",
+                )
+                .map_err(|error| error.to_string())?
+                .query_map([&input.conversation_id], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())
+        })?;
+        if let Ok(active) = state.active_runs.lock() {
+            for run_id in &cancelled_runs {
+                if let Some(cancellation) = active.get(run_id) {
+                    cancellation.cancel();
+                }
+            }
+        }
+        for run_id in cancelled_runs {
+            state.streaming_tts.cancel(&run_id);
+        }
+    }
     crate::steward::on_user_message(state, input);
     state
         .situation
@@ -289,7 +313,21 @@ async fn wait_for_role_routing_dispatch(
             // `draining` is a durable input/cancel barrier. A task that has not dispatched yet
             // must wait for Release/Resume instead of starting provider I/O that cannot be
             // adopted. An already-running provider never passes through this pre-dispatch wait.
-            "queued" | "draining" => {
+            "queued" => {
+                let cancelled_run = state.sqlite_writer.write(|connection| {
+                    expire_stale_input_barrier(connection, &input.conversation_id, now_ms)
+                })?;
+                if let Some(run_id) = cancelled_run {
+                    if let Ok(active) = state.active_runs.lock() {
+                        if let Some(cancellation) = active.get(&run_id) {
+                            cancellation.cancel();
+                        }
+                    }
+                    state.streaming_tts.cancel(&run_id);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            "draining" => {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
             "cancelled" => {
@@ -310,6 +348,39 @@ async fn wait_for_role_routing_dispatch(
             }
         }
     }
+}
+
+/// Fails a barrier that outlived its immutable classification budget, then promotes one FIFO
+/// receipt. This prevents a crashed or unavailable classifier from deadlocking the conversation.
+pub(crate) fn expire_stale_input_barrier(
+    connection: &mut rusqlite::Connection,
+    conversation_id: &str,
+    now_ms: i64,
+) -> Result<Option<String>, String> {
+    let stale: Option<(String, Option<String>)> = connection
+        .query_row(
+            "SELECT r.root_id,r.runtime_run_id
+             FROM rr_roots r JOIN rr_policy_versions p ON p.id=r.policy_id
+             WHERE r.conversation_id=?1 AND r.phase='draining'
+               AND COALESCE((SELECT MAX(e.created_at_ms) FROM rr_events e WHERE e.root_id=r.root_id AND e.kind='input_barrier'),r.started_at_ms)
+                   + COALESCE(json_extract(p.config_json,'$.limits.classificationTimeoutMs'),1500) <= ?2
+             ORDER BY r.started_at_ms,r.root_id LIMIT 1",
+            rusqlite::params![conversation_id, now_ms],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((root_id, runtime_run_id)) = stale else {
+        return Ok(None);
+    };
+    crate::role_routing::coordinator::apply(
+        connection,
+        &root_id,
+        crate::role_routing::reducer::Event::Fail,
+        now_ms,
+    )?;
+    let _ = crate::role_routing::recovery::claim_next_queued(connection, now_ms)?;
+    Ok(runtime_run_id)
 }
 
 pub(crate) fn send_runtime_terminal_event(
@@ -500,20 +571,28 @@ pub(crate) fn prepare_runtime_run(
     };
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
+        let role_routing_enabled = task_mode == "conversation"
+            && crate::persistence::load_role_routing_settings(&transaction)?.enabled;
         if task_mode == "conversation"
-            && crate::persistence::load_role_routing_settings(&transaction)?.enabled
+            && !role_routing_enabled
+            && crate::role_routing::repository::disable_drain_in_progress(&transaction)?
         {
-            let active_root: bool = transaction
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM rr_roots WHERE conversation_id=?1 AND phase IN ('queued','responding','draining'))",
-                    params![input.conversation_id],
-                    |row| row.get(0),
-                )
-                .map_err(database_error)?;
-            if active_root {
-                return Err("Role-routing conversation is busy; wait for the current response or cancel it".to_string());
-            }
+            return Err(
+                "Role routing is disabled and is still draining previous side effects".into(),
+            );
         }
+        let active_routing_root = if role_routing_enabled {
+            transaction
+                .query_row(
+                    "SELECT root_id FROM rr_roots WHERE conversation_id=?1 AND phase IN ('responding','draining') ORDER BY started_at_ms LIMIT 1",
+                    params![input.conversation_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(database_error)?
+        } else {
+            None
+        };
         let now = now_iso();
         let new_message = input.retry_input_message_id.is_none();
         let input_message_id = if let Some(message_id) = input.retry_input_message_id.as_deref() {
@@ -549,9 +628,18 @@ pub(crate) fn prepare_runtime_run(
             message_id
         };
         if task_mode == "conversation" && new_message {
-            let feedback_kind = match crate::role_routing::signals::classify_follow_up(
-                input.content.trim(),
-            ) {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0);
+            let follow_up = match active_routing_root.as_deref() {
+                Some(root_id) => crate::role_routing::signals::classify_active_follow_up(
+                    input.content.trim(),
+                    root_id,
+                ),
+                None => crate::role_routing::signals::classify_follow_up(input.content.trim()),
+            };
+            let feedback_kind = match follow_up {
                 crate::role_routing::signals::SignalKind::AnswerChallenge => {
                     Some("answer_challenge")
                 }
@@ -564,10 +652,6 @@ pub(crate) fn prepare_runtime_run(
                 _ => None,
             };
             if let Some(feedback_kind) = feedback_kind {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_millis() as i64)
-                    .unwrap_or(0);
                 crate::role_routing::repository::record_feedback_for_latest_answer(
                     &transaction,
                     &input.conversation_id,
@@ -577,6 +661,25 @@ pub(crate) fn prepare_runtime_run(
                     input.content.trim().len(),
                     now_ms,
                 )?;
+            }
+            if let Some(active_root_id) = active_routing_root.as_deref() {
+                let event = match follow_up {
+                    crate::role_routing::signals::SignalKind::Status
+                    | crate::role_routing::signals::SignalKind::ExplicitPositive
+                    | crate::role_routing::signals::SignalKind::ExplicitNegative => None,
+                    crate::role_routing::signals::SignalKind::Cancel => {
+                        Some(crate::role_routing::reducer::Event::Cancel)
+                    }
+                    _ => Some(crate::role_routing::reducer::Event::InputBarrier),
+                };
+                if let Some(event) = event {
+                    crate::role_routing::coordinator::apply_in_transaction(
+                        &transaction,
+                        active_root_id,
+                        event,
+                        now_ms,
+                    )?;
+                }
             }
         }
         transaction
@@ -613,6 +716,9 @@ pub(crate) fn prepare_runtime_run(
                 &transaction,
                 &input.run_id,
                 &input.conversation_id,
+                &input.input_origin,
+                input.source_id.as_deref(),
+                &input.presentation_mode,
                 now_ms,
             )?;
             if routing_started {

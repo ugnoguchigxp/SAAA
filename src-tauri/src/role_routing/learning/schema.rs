@@ -39,6 +39,22 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            feature_version TEXT NOT NULL, candidate_fingerprint TEXT NOT NULL, weights_json TEXT NOT NULL CHECK(json_valid(weights_json)),
            metrics_json TEXT NOT NULL CHECK(json_valid(metrics_json)), digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('candidate','shadow','invalidated','retired')),
            created_at_ms INTEGER NOT NULL, FOREIGN KEY(dataset_id) REFERENCES rr_datasets(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS rr_cleanup_journal (
+           dataset_id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('pending','completed')),
+           attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0), last_error_code TEXT,
+           updated_at_ms INTEGER NOT NULL, FOREIGN KEY(dataset_id) REFERENCES rr_datasets(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS rr_learning_runs (
+           day_key TEXT PRIMARY KEY, status TEXT NOT NULL CHECK(status IN ('running','paused','completed','failed')),
+           reason TEXT NOT NULL CHECK(reason IN ('window','missed_window','manual')),
+           started_at_ms INTEGER NOT NULL, completed_at_ms INTEGER, error_code TEXT
+         );
+         CREATE TABLE IF NOT EXISTS rr_shadow_observations (
+           decision_id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL, scores_json TEXT NOT NULL CHECK(json_valid(scores_json)),
+           rules_id TEXT NOT NULL, recommended_id TEXT NOT NULL, created_at_ms INTEGER NOT NULL,
+           FOREIGN KEY(decision_id) REFERENCES rr_decisions(id) ON DELETE CASCADE,
+           FOREIGN KEY(artifact_id) REFERENCES rr_ranker_artifacts(id)
          );",
     )
 }

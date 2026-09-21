@@ -170,7 +170,9 @@ export function RoleRoutingSection({
           <p className="settings-help">
             保留 {learning.dirtyRoots.toString()}件 / 利用可能dataset{" "}
             {learning.readyDatasets.toString()}件 / shadow artifact{" "}
-            {learning.activeArtifacts.toString()}件
+            {learning.activeArtifacts.toString()}件 / 失効dataset{" "}
+            {learning.invalidatedDatasets.toString()}件 / cleanup待ち{" "}
+            {learning.pendingCleanups.toString()}件
           </p>
         ) : (
           <p className="settings-help">読み込み中…</p>

@@ -81,6 +81,7 @@ pub(crate) struct TurnEventHub {
     pub(super) speech: StreamingSpeechRuntime,
     pub(super) streaming_speech: bool,
     pub(super) voice_response: super::voice_response::HubState,
+    routing_writer: Option<Arc<crate::persistence::SqliteWriter>>,
     ui_queue: Arc<UiQueue>,
 }
 
@@ -101,8 +102,17 @@ impl TurnEventHub {
             speech,
             streaming_speech,
             voice_response: super::voice_response::HubState::default(),
+            routing_writer: None,
             ui_queue,
         }
+    }
+
+    pub(crate) fn with_routing_speech(
+        mut self,
+        writer: Arc<crate::persistence::SqliteWriter>,
+    ) -> Self {
+        self.routing_writer = Some(writer);
+        self
     }
 
     pub(crate) fn with_voice_response(mut self, enabled: bool) -> Self {
@@ -206,6 +216,25 @@ impl TurnEventHub {
         });
     }
 
+    fn routing_speech_intent(&self, run_id: &str) -> Result<bool, String> {
+        let Some(writer) = &self.routing_writer else {
+            return Ok(false);
+        };
+        writer.read_serialized(|connection| {
+            crate::role_routing::speech_repository::has_intent(connection, run_id)
+        })
+    }
+
+    fn mark_routing_speech_terminal(&self, run_id: &str, status: &str) {
+        let Some(writer) = &self.routing_writer else {
+            return;
+        };
+        let _ = writer.write(|connection| {
+            crate::role_routing::speech_repository::mark_terminal(connection, run_id, status)
+                .map(|_| ())
+        });
+    }
+
     pub(super) fn dispatch(
         &self,
         event: RuntimeEvent,
@@ -239,6 +268,39 @@ impl TurnEventHub {
                     presentation,
                     ..
                 } if presentation.decision == "speak" => {
+                    if let Some(writer) = &self.routing_writer {
+                        match writer.write(|connection| {
+                            crate::role_routing::speech_repository::enqueue_final(
+                                connection,
+                                run_id,
+                                &message.id,
+                            )
+                        }) {
+                            Ok(false) => match self.routing_speech_intent(run_id) {
+                                Ok(true) => {
+                                    // A duplicated completion must remain visible but must not
+                                    // enqueue or replay the already-owned final speech.
+                                    self.voice_response.clear(run_id);
+                                    self.enqueue_ui(event);
+                                    return Ok(());
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    self.stop_speech_with_error(run_id, error);
+                                    self.voice_response.clear(run_id);
+                                    self.enqueue_ui(event);
+                                    return Ok(());
+                                }
+                            },
+                            Ok(_) => {}
+                            Err(error) => {
+                                self.stop_speech_with_error(run_id, error);
+                                self.voice_response.clear(run_id);
+                                self.enqueue_ui(event);
+                                return Ok(());
+                            }
+                        }
+                    }
                     let rendered = self.voice_response.take_completion(run_id);
                     let final_content = rendered.as_deref().unwrap_or(&message.content);
                     let result = self.speech.finish(run_id, final_content);
@@ -250,8 +312,39 @@ impl TurnEventHub {
                 RuntimeEvent::MessageCompleted { run_id, .. }
                 | RuntimeEvent::Cancelled { run_id }
                 | RuntimeEvent::Failed { run_id, .. } => {
+                    self.mark_routing_speech_terminal(run_id, "cancelled");
                     self.voice_response.clear(run_id);
                     self.speech.cancel(run_id);
+                }
+                RuntimeEvent::SpeechStarted { run_id } => {
+                    match self.routing_speech_intent(run_id) {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            let started = self
+                                .routing_writer
+                                .as_ref()
+                                .expect("routing writer exists when an intent exists")
+                                .write(|connection| {
+                                    crate::role_routing::speech_repository::mark_started(
+                                        connection, run_id,
+                                    )
+                                });
+                            if !matches!(started, Ok(true)) {
+                                self.speech.cancel(run_id);
+                                return Ok(());
+                            }
+                        }
+                        Err(error) => {
+                            self.stop_speech_with_error(run_id, error);
+                            return Ok(());
+                        }
+                    }
+                }
+                RuntimeEvent::SpeechEnded { run_id } => {
+                    self.mark_routing_speech_terminal(run_id, "completed");
+                }
+                RuntimeEvent::SpeechFailed { run_id, .. } => {
+                    self.mark_routing_speech_terminal(run_id, "failed");
                 }
                 _ => {}
             }

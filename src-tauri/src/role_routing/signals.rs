@@ -106,6 +106,37 @@ pub(crate) fn classify_follow_up(input: &str) -> SignalKind {
     SignalKind::Unclear
 }
 
+/// Runs the conservative host classifier through the same strict structured contract used by a
+/// model-backed classifier. This keeps the normal turn path fail-closed today while allowing the
+/// classifier implementation to be replaced without changing coordinator authority.
+pub(crate) fn classify_active_follow_up(input: &str, active_root_id: &str) -> SignalKind {
+    let fallback = classify_follow_up(input);
+    if matches!(
+        fallback,
+        SignalKind::ExplicitPositive | SignalKind::ExplicitNegative | SignalKind::Unclear
+    ) {
+        return fallback;
+    }
+    let kind = match fallback {
+        SignalKind::Status => "status",
+        SignalKind::ConstraintUpdate => "constraint_update",
+        SignalKind::Cancel => "cancel",
+        SignalKind::AnswerChallenge => "answer_challenge",
+        SignalKind::PremiumApproval => "premium_approval",
+        SignalKind::ExplicitPositive | SignalKind::ExplicitNegative | SignalKind::Unclear => {
+            unreachable!()
+        }
+    };
+    let structured = serde_json::json!({
+        "kind": kind,
+        "evidence": input.trim(),
+        "targetRootId": active_root_id,
+        "confidence": 1.0,
+    })
+    .to_string();
+    classify_structured_follow_up(&structured, active_root_id, &[active_root_id.to_string()])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +173,19 @@ mod tests {
         assert_eq!(
             classify_follow_up("「この回答は間違い」という例文を説明して"),
             SignalKind::Unclear
+        );
+    }
+
+    #[test]
+    fn rr_08_normal_active_input_uses_the_strict_structured_contract() {
+        assert_eq!(
+            classify_active_follow_up("条件を追加してください", "root-1"),
+            SignalKind::ConstraintUpdate
+        );
+        assert_eq!(
+            classify_active_follow_up("こんにちは、条件を追加してください", "root-1"),
+            SignalKind::Unclear,
+            "mixed social text must fail closed on the real classification path"
         );
     }
     #[test]

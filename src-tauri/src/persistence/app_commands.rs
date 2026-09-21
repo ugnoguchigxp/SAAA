@@ -59,6 +59,13 @@ pub(crate) fn save_settings_documents(
             .map_err(|error| format!("Invalid Situation settings: {error}"))
         })?;
     let enabled = situation_settings.enabled;
+    let role_routing_disabled = input
+        .documents
+        .iter()
+        .find(|document| document.namespace == "routing.roles" && document.key == "default")
+        .and_then(|document| document.value_json.get("enabled"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(false);
     let saved = state.situation.configure_and_persist(
         &state.sqlite_writer,
         situation_settings,
@@ -70,6 +77,19 @@ pub(crate) fn save_settings_documents(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clear();
     crate::providers::service_harness::clear_cache();
+    if role_routing_disabled {
+        let run_ids = state
+            .sqlite_readers
+            .read(crate::role_routing::repository::disabled_runtime_run_ids)?;
+        if let Ok(active) = state.active_runs.lock() {
+            for run_id in &run_ids {
+                if let Some(cancellation) = active.get(run_id) {
+                    cancellation.cancel();
+                }
+                state.streaming_tts.cancel(run_id);
+            }
+        }
+    }
     if enabled {
         spawn_situation_monitor(state.sqlite_writer.clone(), state.situation.clone());
     }

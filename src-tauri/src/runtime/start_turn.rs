@@ -17,6 +17,15 @@ pub(crate) async fn start_turn(
         input.source_id.as_deref().unwrap_or("none"),
         "turn source id",
     )?;
+    let interrupted_speech = state.sqlite_writer.write(|connection| {
+        crate::role_routing::speech_repository::cancel_conversation(
+            connection,
+            &input.conversation_id,
+        )
+    })?;
+    for run_id in interrupted_speech {
+        state.streaming_tts.cancel(&run_id);
+    }
     let _ = crate::steward::flush_held_reports(&state, &input.conversation_id);
     let _ = persistence::audit::record_turn_request(&state, &input);
     let (mut streaming_speech, speech_enabled) =
@@ -53,6 +62,7 @@ pub(crate) async fn start_turn(
         state.streaming_tts.clone(),
         streaming_speech,
     )
+    .with_routing_speech(state.sqlite_writer.clone())
     .with_voice_response(input.input_origin == "voice" && crate::larm_voice::enabled());
     let result = execute_turn(&state, &input, &event_hub, cancellation.clone(), None).await;
     if result.is_err() && streaming_speech {

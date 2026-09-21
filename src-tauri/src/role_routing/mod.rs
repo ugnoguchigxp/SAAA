@@ -22,6 +22,7 @@ pub(crate) mod schema;
 pub(crate) mod selection;
 pub(crate) mod signals;
 pub(crate) mod speech_queue;
+pub(crate) mod speech_repository;
 pub(crate) mod steps;
 pub(crate) mod tool_ledger;
 pub(crate) mod tool_specialist;

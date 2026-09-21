@@ -56,8 +56,12 @@ export function ChatPage({
   onSetConversationListeningPace,
   onResetConversationVoiceOverrides,
   routingSnapshot,
+  routingEvents,
   routingCancellingRootId,
+  routingDecidingProposalId,
+  routingProposalError,
   onCancelRouting,
+  onDecideRoutingProposal,
 }: ChatPageProps) {
   const { t } = useTranslation();
   const messageAreaRef = useRef<HTMLDivElement>(null);
@@ -153,8 +157,12 @@ export function ChatPage({
       <CodingJobs conversationId={selectedConversation?.id} />
       <RoutingProposal
         snapshot={routingSnapshot}
+        events={routingEvents}
         cancellingRootId={routingCancellingRootId}
+        decidingProposalId={routingDecidingProposalId}
+        proposalError={routingProposalError}
         onCancel={onCancelRouting}
+        onDecideProposal={onDecideRoutingProposal}
       />
       {voicePolicy && (
         <ConversationVoiceBehaviorBar

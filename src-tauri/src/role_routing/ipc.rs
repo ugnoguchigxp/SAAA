@@ -26,6 +26,14 @@ pub(crate) struct RoutingCancelInput {
 
 #[derive(Debug, Clone, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingProposalDecisionInput {
+    pub(crate) proposal_id: String,
+    pub(crate) candidate_id: String,
+    pub(crate) approve: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AdaptiveRollbackInput {
     pub(crate) artifact_id: String,
 }
@@ -49,6 +57,8 @@ pub(crate) struct RoutingLearningSnapshot {
     pub(crate) dirty_roots: i64,
     pub(crate) ready_datasets: i64,
     pub(crate) active_artifacts: i64,
+    pub(crate) invalidated_datasets: i64,
+    pub(crate) pending_cleanups: i64,
     pub(crate) adaptive_artifacts: Vec<AdaptiveArtifactSnapshot>,
 }
 
@@ -69,6 +79,20 @@ pub(crate) struct RoutingRootSnapshot {
 pub(crate) struct RoutingSnapshot {
     pub(crate) active: Option<RoutingRootSnapshot>,
     pub(crate) queued: Vec<RoutingRootSnapshot>,
+    pub(crate) recent_root_ids: Vec<String>,
+    pub(crate) proposals: Vec<RoutingProposalSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingProposalSnapshot {
+    pub(crate) id: String,
+    pub(crate) root_id: String,
+    pub(crate) candidate_id: String,
+    pub(crate) estimated_cost_micros: Option<i64>,
+    pub(crate) expires_at_ms: i64,
+    pub(crate) status: String,
+    pub(crate) consumed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -150,6 +174,61 @@ pub(crate) fn cancel_routing_root(
     Ok(root)
 }
 
+#[tauri::command]
+pub(crate) fn decide_routing_proposal(
+    state: tauri::State<'_, crate::AppState>,
+    app: tauri::AppHandle,
+    input: RoutingProposalDecisionInput,
+) -> Result<RoutingProposalSnapshot, String> {
+    crate::validate_identifier(&input.proposal_id, "routing proposal id")?;
+    crate::validate_identifier(&input.candidate_id, "routing proposal candidate id")?;
+    let proposal = state.sqlite_writer.write(|connection| {
+        let stored_candidate: String = connection
+            .query_row(
+                "SELECT candidate_id FROM rr_premium_proposals WHERE id=?1",
+                [&input.proposal_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Role-routing premium proposal is unavailable".to_string())?;
+        if stored_candidate != input.candidate_id {
+            return Err("Role-routing premium proposal candidate does not match".into());
+        }
+        if input.approve {
+            let policy_id: String = connection
+                .query_row(
+                    "SELECT policy_id FROM rr_premium_proposals WHERE id=?1",
+                    [&input.proposal_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            let cloud_allowed = crate::role_routing::proposals::candidate_available(
+                connection,
+                &policy_id,
+                &input.candidate_id,
+            )?;
+            crate::role_routing::proposals::approve(
+                connection,
+                &crate::role_routing::proposals::Approval {
+                    proposal_id: input.proposal_id.clone(),
+                    candidate_id: input.candidate_id.clone(),
+                },
+                now_ms(),
+                cloud_allowed,
+            )?;
+        } else {
+            crate::role_routing::proposals::decline(connection, &input.proposal_id, now_ms())?;
+        }
+        proposal_snapshot(connection, &input.proposal_id)
+    })?;
+    let _ = app.emit(
+        "role-routing-updated",
+        serde_json::json!({"rootId":proposal.root_id}),
+    );
+    Ok(proposal)
+}
+
 /// Runs one locally authorized materialization batch. It is intentionally a database-only
 /// operation: no provider, labeler, or artifact activation is performed on the UI thread.
 #[tauri::command]
@@ -218,16 +297,27 @@ pub(crate) fn rollback_adaptive_artifact(
 }
 
 fn learning_snapshot(connection: &Connection) -> Result<RoutingLearningSnapshot, String> {
-    let (dirty_roots, ready_datasets, active_artifacts) = connection
-        .query_row(
-            "SELECT
+    let (dirty_roots, ready_datasets, active_artifacts, invalidated_datasets, pending_cleanups) =
+        connection
+            .query_row(
+                "SELECT
                 (SELECT count(*) FROM rr_learning_dirty),
                 (SELECT count(*) FROM rr_datasets WHERE state='ready'),
-                (SELECT count(*) FROM rr_ranker_artifacts WHERE state IN ('candidate','shadow'))",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(|error| error.to_string())?;
+                (SELECT count(*) FROM rr_ranker_artifacts WHERE state IN ('candidate','shadow')),
+                (SELECT count(*) FROM rr_datasets WHERE state='invalidated'),
+                (SELECT count(*) FROM rr_cleanup_journal WHERE state='pending')",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .map_err(|error| error.to_string())?;
     let adaptive_schema_present: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_artifacts')",
@@ -244,6 +334,8 @@ fn learning_snapshot(connection: &Connection) -> Result<RoutingLearningSnapshot,
         dirty_roots,
         ready_datasets,
         active_artifacts,
+        invalidated_datasets,
+        pending_cleanups,
         adaptive_artifacts,
     })
 }
@@ -360,7 +452,59 @@ pub(crate) fn snapshot(
             active = Some(root);
         }
     }
-    Ok(RoutingSnapshot { active, queued })
+    let proposals = connection
+        .prepare(
+            "SELECT p.id,p.root_id,p.candidate_id,p.estimated_cost_micros,p.expires_at_ms,p.status,p.consumed_at_ms IS NOT NULL
+             FROM rr_premium_proposals p JOIN rr_roots r ON r.root_id=p.root_id
+             WHERE r.conversation_id=?1 ORDER BY p.created_at_ms DESC,p.id LIMIT 16",
+        )
+        .map_err(|error| error.to_string())?
+        .query_map([conversation_id], proposal_snapshot_row)
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let recent_root_ids = connection
+        .prepare(
+            "SELECT root_id FROM rr_roots WHERE conversation_id=?1 ORDER BY started_at_ms DESC,root_id DESC LIMIT 8",
+        )
+        .map_err(|error| error.to_string())?
+        .query_map([conversation_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(RoutingSnapshot {
+        active,
+        queued,
+        recent_root_ids,
+        proposals,
+    })
+}
+
+fn proposal_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutingProposalSnapshot> {
+    Ok(RoutingProposalSnapshot {
+        id: row.get(0)?,
+        root_id: row.get(1)?,
+        candidate_id: row.get(2)?,
+        estimated_cost_micros: row.get(3)?,
+        expires_at_ms: row.get(4)?,
+        status: row.get(5)?,
+        consumed: row.get::<_, bool>(6)?,
+    })
+}
+
+fn proposal_snapshot(
+    connection: &Connection,
+    proposal_id: &str,
+) -> Result<RoutingProposalSnapshot, String> {
+    connection
+        .query_row(
+            "SELECT id,root_id,candidate_id,estimated_cost_micros,expires_at_ms,status,consumed_at_ms IS NOT NULL FROM rr_premium_proposals WHERE id=?1",
+            [proposal_id],
+            proposal_snapshot_row,
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Role-routing premium proposal is unavailable".into())
 }
 
 fn root_snapshot(connection: &Connection, root_id: &str) -> Result<RoutingRootSnapshot, String> {
@@ -409,11 +553,13 @@ pub(crate) fn typescript_bindings() -> String {
         declaration::<RoutingSnapshotInput>(),
         declaration::<RoutingEventReplayInput>(),
         declaration::<RoutingCancelInput>(),
+        declaration::<RoutingProposalDecisionInput>(),
         declaration::<AdaptiveRollbackInput>(),
         declaration::<AdaptiveArtifactSnapshot>(),
         declaration::<RoutingLearningSnapshot>(),
         declaration::<RoutingRootSnapshot>(),
         declaration::<RoutingSnapshot>(),
+        declaration::<RoutingProposalSnapshot>(),
         declaration::<RoutingEventRecord>(),
     ]
     .join("\n\n")
@@ -434,9 +580,12 @@ mod tests {
                 [],
             )
             .expect("policy");
-        connection.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('active','c','p','responding','text','visual',1,''); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('later','c','p','queued','text','visual',3,''); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('first','c','p','queued','text','visual',2,''); INSERT INTO rr_events VALUES('active',1,'root_started','{}',1); INSERT INTO rr_events VALUES('active',2,'activity','{}',2);").expect("rows");
+        connection.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('active','c','p','responding','text','visual',1,''); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('later','c','p','queued','text','visual',3,''); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('first','c','p','queued','text','visual',2,''); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('completed','c','p','completed','text','visual',4,''); INSERT INTO rr_events VALUES('active',1,'root_started','{}',1); INSERT INTO rr_events VALUES('active',2,'activity','{}',2); INSERT INTO rr_events VALUES('completed',1,'answer_committed','{}',4);").expect("rows");
         let projection = snapshot(&connection, "c").expect("snapshot");
-        assert_eq!(projection.active.expect("active").root_id, "active");
+        assert_eq!(
+            projection.active.as_ref().expect("active").root_id,
+            "active"
+        );
         assert_eq!(
             projection
                 .queued
@@ -448,6 +597,11 @@ mod tests {
         assert_eq!(
             replay(&connection, "active", 1).expect("replay")[0].kind,
             "activity"
+        );
+        assert_eq!(projection.recent_root_ids[0], "completed");
+        assert_eq!(
+            replay(&connection, "completed", 0).expect("terminal replay")[0].kind,
+            "answer_committed"
         );
     }
 
@@ -478,6 +632,28 @@ mod tests {
             replay(&connection, "r", 1).expect("events")[0].kind,
             "root_cancelled"
         );
+    }
+
+    #[test]
+    fn rr_26_proposal_snapshot_survives_reload_without_losing_consumption() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY); INSERT INTO conversations VALUES('c');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("schema");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,policy_id,revision,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p',0,'responding','text','visual',1,''); INSERT INTO rr_premium_proposals(id,root_id,candidate_id,policy_id,revision,estimated_cost_micros,expires_at_ms,status,created_at_ms,approved_at_ms,consumed_at_ms) VALUES('offer','r','astra','p',0,NULL,999,'approved',2,3,4);").expect("proposal");
+
+        for _reload in 0..2 {
+            let projection = snapshot(&connection, "c").expect("snapshot");
+            assert_eq!(projection.proposals.len(), 1);
+            assert_eq!(projection.proposals[0].status, "approved");
+            assert!(projection.proposals[0].consumed);
+            assert_eq!(projection.proposals[0].estimated_cost_micros, None);
+        }
     }
 
     #[test]

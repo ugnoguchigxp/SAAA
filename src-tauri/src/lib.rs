@@ -623,7 +623,10 @@ pub fn run() {
                         .map(|_| ())
                 })
                 .map_err(|error| format!("role-routing startup recovery: {error}"))?;
-            adaptive_improvement::start_worker(app.state::<AppState>().sqlite_writer.clone());
+            adaptive_improvement::start_worker(
+                app.state::<AppState>().sqlite_writer.clone(),
+                app.state::<AppState>().data_directory.clone(),
+            );
             schedule::hydrate(&app.state::<AppState>());
             schedule::start_loop(app.handle().clone());
             Ok(())

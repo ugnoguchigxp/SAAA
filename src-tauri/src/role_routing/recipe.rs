@@ -34,6 +34,13 @@ fn step_purposes(action: &RoutingAction, roles: &[String]) -> Result<Vec<&'stati
         RoutingAction::Respond | RoutingAction::Explain => match roles {
             [_] => vec!["respond"],
             [frontend, _] if frontend == "frontend" => vec!["frontend", "respond"],
+            [author, specialist, finisher]
+                if specialist == "tool_specialist"
+                    && author == finisher
+                    && author != specialist =>
+            {
+                vec!["respond", "tool_specialist", "respond"]
+            }
             [author, reviewer, reviser]
                 if reviewer == "reviewer" && author == reviser && author != reviewer =>
             {
@@ -57,8 +64,14 @@ fn step_purposes(action: &RoutingAction, roles: &[String]) -> Result<Vec<&'stati
 }
 
 fn purpose_depends_on(purposes: &[&'static str], ordinal: usize) -> Vec<u32> {
-    // Only the revise step consumes another step's output; every other template is linear.
-    if ordinal > 0 && purposes.get(ordinal) == Some(&"revise") {
+    // Review/revision and specialist templates pass a private result to the following step.
+    if ordinal > 0
+        && matches!(
+            purposes.get(ordinal),
+            Some(&"revise") | Some(&"tool_specialist") | Some(&"respond")
+        )
+        && purposes.len() > 1
+    {
         vec![(ordinal - 1) as u32]
     } else {
         Vec::new()
@@ -317,6 +330,38 @@ mod tests {
             vec!["respond", "review", "revise"]
         );
         assert_eq!(compiled.steps[2].depends_on, vec![1]);
+    }
+
+    #[test]
+    fn rr_38_tool_specialist_returns_to_the_same_parent_in_a_finite_plan() {
+        let mut settings = review_settings();
+        settings.roles.advanced = Some("sol".into());
+        settings.roles.tool_specialist = Some("qwen".into());
+        settings.recipes = vec![RoutingRecipe {
+            id: "specialist-response".into(),
+            action: RoutingAction::Respond,
+            roles: vec![
+                "advanced".into(),
+                "tool_specialist".into(),
+                "advanced".into(),
+            ],
+            enabled: true,
+        }];
+        settings.limits.max_reasoning_steps = 3;
+        let compiled = compile_recipe_by_id(&settings, "specialist-response").expect("compile");
+        assert_eq!(
+            compiled
+                .steps
+                .iter()
+                .map(|step| step.purpose)
+                .collect::<Vec<_>>(),
+            vec!["respond", "tool_specialist", "respond"]
+        );
+        assert_eq!(compiled.steps[1].depends_on, vec![0]);
+        assert_eq!(compiled.steps[2].depends_on, vec![1]);
+
+        settings.recipes[0].roles[2] = "reasoner".into();
+        assert!(compile_recipe_by_id(&settings, "specialist-response").is_err());
     }
 
     #[test]

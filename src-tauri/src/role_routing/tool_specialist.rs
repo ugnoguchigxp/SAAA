@@ -107,4 +107,31 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn rr_38_swap_actor_preserves_permissions() {
+        let offered = vec!["tools_invoke".to_string()];
+        for _actor_id in ["specialist-a", "specialist-b"] {
+            assert_eq!(
+                super::super::tools::permits(
+                    "tool_specialist",
+                    "tools_invoke",
+                    &offered,
+                    true,
+                    super::super::tools::ToolEffect::Mutating,
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                super::super::tools::permits(
+                    "tool_specialist",
+                    "not-offered",
+                    &offered,
+                    true,
+                    super::super::tools::ToolEffect::ReadOnly,
+                ),
+                Err("unoffered_tool")
+            );
+        }
+    }
 }

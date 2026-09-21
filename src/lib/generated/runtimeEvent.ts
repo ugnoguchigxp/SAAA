@@ -22,15 +22,19 @@ export type RoutingEventReplayInput = { rootId: string, afterSeq: bigint, };
 
 export type RoutingCancelInput = { rootId: string, };
 
+export type RoutingProposalDecisionInput = { proposalId: string, candidateId: string, approve: boolean, };
+
 export type AdaptiveRollbackInput = { artifactId: string, };
 
 export type AdaptiveArtifactSnapshot = { id: string, domain: string, scopeKey: string, state: string, eligibleExamples: bigint, bestObservedScore: number | null, policyRevision: bigint | null, reason: string, };
 
-export type RoutingLearningSnapshot = { dirtyRoots: bigint, readyDatasets: bigint, activeArtifacts: bigint, adaptiveArtifacts: Array<AdaptiveArtifactSnapshot>, };
+export type RoutingLearningSnapshot = { dirtyRoots: bigint, readyDatasets: bigint, activeArtifacts: bigint, invalidatedDatasets: bigint, pendingCleanups: bigint, adaptiveArtifacts: Array<AdaptiveArtifactSnapshot>, };
 
 export type RoutingRootSnapshot = { rootId: string, runtimeRunId: string | null, phase: string, revision: number, activeSlot: string | null, cancelRequested: boolean, lastEventSeq: bigint, };
 
-export type RoutingSnapshot = { active: RoutingRootSnapshot | null, queued: Array<RoutingRootSnapshot>, };
+export type RoutingSnapshot = { active: RoutingRootSnapshot | null, queued: Array<RoutingRootSnapshot>, recentRootIds: Array<string>, proposals: Array<RoutingProposalSnapshot>, };
+
+export type RoutingProposalSnapshot = { id: string, rootId: string, candidateId: string, estimatedCostMicros: bigint | null, expiresAtMs: bigint, status: string, consumed: boolean, };
 
 export type RoutingEventRecord = { rootId: string, seq: bigint, kind: string, dataJson: string, createdAtMs: bigint, };
 export type EvaluationPair = { groupKey: string, split: string, candidateSuccess: number, rulesSuccess: number, candidateResource: number | null, rulesResource: number | null, candidateOtherResource: number | null, rulesOtherResource: number | null, evidenceDigest: string, };

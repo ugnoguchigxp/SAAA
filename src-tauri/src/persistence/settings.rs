@@ -118,6 +118,16 @@ pub(crate) fn save_settings_documents_to_connection(
         validate_settings_document(document)?;
     }
     validate_settings_batch(documents)?;
+    let role_routing_was_enabled = load_role_routing_settings(connection)
+        .map(|settings| settings.enabled)
+        .unwrap_or(false);
+    let role_routing_will_be_enabled = documents
+        .iter()
+        .find(|document| document.namespace == "routing.roles" && document.key == "default")
+        .and_then(|document| document.value_json.get("enabled"))
+        .and_then(serde_json::Value::as_bool);
+    let disable_role_routing =
+        role_routing_was_enabled && role_routing_will_be_enabled == Some(false);
     let transaction = connection.transaction().map_err(database_error)?;
     for document in documents {
         let value_text = serde_json::to_string(&document.value_json)
@@ -145,6 +155,15 @@ pub(crate) fn save_settings_documents_to_connection(
         .any(|document| document.namespace == "routing.roles" && document.key == "default")
     {
         crate::role_routing::repository::capture_current_policy(
+            &transaction,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0),
+        )?;
+    }
+    if disable_role_routing {
+        crate::role_routing::repository::cancel_all_for_disable(
             &transaction,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

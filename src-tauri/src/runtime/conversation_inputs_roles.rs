@@ -106,9 +106,22 @@ pub(super) fn apply_enabled_role_route(
         let planned = compiled
             .steps
             .iter()
-            .find(|step| step.ordinal == permit.ordinal)
-            .ok_or_else(|| "Role-routing permit references an unknown plan step".to_string())?;
-        if planned.actor_id != permit.actor_id {
+            .find(|step| step.ordinal == permit.ordinal);
+        let approved_premium = if planned.is_none() && permit.purpose == "reconsider" {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM rr_premium_proposals WHERE root_id=?1 AND candidate_id=?2 AND revision=?3 AND status='approved' AND consumed_at_ms IS NOT NULL)",
+                    rusqlite::params![root_id, permit.actor_id, permit.revision],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|error| error.to_string())?
+        } else {
+            false
+        };
+        if !approved_premium && planned.is_none() {
+            return Err("Role-routing permit references an unknown plan step".into());
+        }
+        if planned.is_some_and(|planned| planned.actor_id != permit.actor_id) {
             return Err("Role-routing receipt actor does not match the claimed step".into());
         }
         (
@@ -350,6 +363,75 @@ mod tests {
         assert_eq!(binding.revision, 0);
         assert!(!binding.config_fingerprint.is_empty());
         assert_eq!(binding.purpose, "respond");
+    }
+
+    #[test]
+    fn rr_26_consumed_premium_step_reaches_the_bound_executor() {
+        let mut connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut documents = default_settings_input();
+        let codex = documents
+            .iter_mut()
+            .find(|document| document.namespace == "providers.agent" && document.key == "codex-sdk")
+            .expect("Codex settings");
+        codex.value_json["enabled"] = json!(true);
+        codex.value_json["health"] = json!("ready");
+        codex.value_json["model"] = json!("gpt-6-astra");
+        let policy = documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.roles")
+            .expect("role policy");
+        policy.value_json = json!({
+            "schemaVersion": 1, "enabled": true,
+            "actors": [
+                {"id":"qwen","label":"Qwen","aliases":[],"transport":"provider","providerId":DYNAMIC_LAN_PROVIDER_ID,"model":null,"location":"local","resourceGroup":"gpu","maxInputBytes":4096,"capabilities":["reason"]},
+                {"id":"astra","label":"Astra","aliases":[],"transport":"codex_sdk","providerId":null,"model":"gpt-6-astra","location":"cloud","resourceGroup":"cloud","maxInputBytes":8192,"capabilities":["reason"]}
+            ],
+            "roles":{"frontend":null,"reasoner":"qwen","advanced":null,"reviewer":null,"premium":"astra","toolSpecialist":null},
+            "recipes":[{"id":"direct","action":"respond","roles":["reasoner"],"enabled":true}],
+            "limits":{"maxReasoningSteps":4,"maxToolCalls":32,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":1,"maxAutomaticSwitches":2,"maxEstimatedCostMicros":null},
+            "speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},
+            "selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},
+            "premiumApproval":"per_request",
+            "learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false}
+        });
+        save_settings_documents_to_connection(&mut connection, &documents).expect("settings save");
+        connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('premium-input','conversation_primary','user','check','1')", []).expect("input");
+        connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('premium-run','conversation_primary','conversation.respond','running','premium-input','1')", []).expect("run");
+        let now = test_now_ms();
+        assert!(crate::role_routing::repository::record_provider_turn_start(
+            &connection,
+            "premium-run",
+            "conversation_primary",
+            now,
+        )
+        .expect("receipt"));
+        let policy_id: String = connection
+            .query_row(
+                "SELECT policy_id FROM rr_roots WHERE root_id='premium-run'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("policy id");
+        connection.execute("UPDATE rr_steps SET status='succeeded',completed_at_ms=?1 WHERE root_id='premium-run' AND status='running'", [now]).expect("finish base step");
+        connection.execute(
+            "INSERT INTO rr_premium_proposals(id,root_id,candidate_id,policy_id,revision,expires_at_ms,status,created_at_ms,approved_at_ms,consumed_at_ms) VALUES('premium-proposal','premium-run','astra',?1,0,?2,'approved',?3,?3,?3)",
+            rusqlite::params![policy_id, now + 60_000, now],
+        ).expect("consumed approval");
+        connection.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES('premium-step','premium-run',0,1,'astra','reconsider','running','premium-fp','{}',?1)", [now]).expect("premium step");
+        let mut route = crate::persistence::load_routing_settings(&connection)
+            .expect("routing")
+            .conversation_respond;
+        let dispatch = apply_enabled_role_route(&connection, Some("premium-run"), &mut route)
+            .expect("premium route")
+            .expect("dispatch");
+        let RoleDispatch::CodexSdk { model, binding, .. } = dispatch else {
+            panic!("expected premium Codex dispatch");
+        };
+        assert_eq!(model, "gpt-6-astra");
+        let binding = binding.expect("binding");
+        assert_eq!(binding.step_id, "premium-step");
+        assert_eq!(binding.purpose, "reconsider");
     }
 
     #[test]

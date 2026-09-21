@@ -93,6 +93,20 @@ pub(crate) fn reconcile_startup_in_transaction(
     transaction: &Transaction<'_>,
     now_ms: i64,
 ) -> Result<usize, String> {
+    // Delivery and consent are process-bound effects. Preserve their receipts, but never resume
+    // playback or consume an approval implicitly after a process restart.
+    transaction
+        .execute(
+            "UPDATE rr_speech SET status='cancelled',updated_at_ms=?1 WHERE status IN ('queued','playing')",
+            [now_ms],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction
+        .execute(
+            "UPDATE rr_premium_proposals SET status='expired' WHERE status IN ('proposed','approved') AND consumed_at_ms IS NULL",
+            [],
+        )
+        .map_err(|error| error.to_string())?;
     let mut statement = transaction
         .prepare("SELECT root_id FROM rr_roots WHERE phase IN ('responding','draining') ORDER BY started_at_ms,root_id")
         .map_err(|error| error.to_string())?;
@@ -165,6 +179,18 @@ mod tests {
     #[test]
     fn rr_18_queue_order_and_restart_are_safe() {
         let mut connection = fixture();
+        connection
+            .execute(
+                "INSERT INTO rr_premium_proposals(id,root_id,candidate_id,policy_id,revision,expires_at_ms,status,created_at_ms) VALUES('proposal','running','premium','p',0,100,'approved',2)",
+                [],
+            )
+            .expect("proposal");
+        connection
+            .execute(
+                "INSERT INTO rr_speech(id,root_id,revision,epoch,kind,status,speaker_actor_id,created_at_ms,updated_at_ms) VALUES('speech','running',0,1,'final','playing','actor',2,2)",
+                [],
+            )
+            .expect("speech");
         assert_eq!(
             queued_root_ids(&connection, 8).expect("queue"),
             vec!["queued-a", "queued-b"]
@@ -184,6 +210,34 @@ mod tests {
         assert_eq!(
             queued_root_ids(&connection, 8).expect("queue after restart"),
             vec!["queued-a", "queued-b"]
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT status FROM rr_premium_proposals WHERE id='proposal'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .expect("proposal status"),
+            "expired"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT status FROM rr_speech WHERE id='speech'",
+                    [],
+                    |row| { row.get::<_, String>(0) }
+                )
+                .expect("speech status"),
+            "cancelled"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM rr_steps", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("step count"),
+            0,
+            "startup recovery must not dispatch or synthesize a new step"
         );
     }
 

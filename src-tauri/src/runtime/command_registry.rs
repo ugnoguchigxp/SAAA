@@ -96,6 +96,7 @@ macro_rules! saaa_invoke_handler {
             role_routing::ipc::get_routing_snapshot,
             role_routing::ipc::replay_routing_events,
             role_routing::ipc::cancel_routing_root,
+            role_routing::ipc::decide_routing_proposal,
             role_routing::ipc::run_routing_learning_once,
             role_routing::ipc::get_routing_learning_snapshot,
             role_routing::ipc::rollback_adaptive_artifact,

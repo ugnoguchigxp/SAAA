@@ -1,5 +1,6 @@
 //! Forgetting a source fences every learning artifact derived from it before its message is gone.
 use rusqlite::{params, Connection};
+use std::{fs, path::Path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ForgetOutcome {
@@ -23,6 +24,13 @@ pub(crate) fn forget_source(
                (SELECT id FROM rr_feedback WHERE source_message_id=?1))";
     let matching_datasets =
         format!("SELECT DISTINCT dataset_id FROM rr_examples WHERE id IN ({matching_examples})");
+    let dataset_ids = connection
+        .prepare(&matching_datasets)
+        .map_err(|error| error.to_string())?
+        .query_map([source_message_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
     let artifacts = connection
         .execute(
             &format!(
@@ -47,10 +55,115 @@ pub(crate) fn forget_source(
             params![source_message_id],
         )
         .map_err(|error| error.to_string())?;
+    for dataset_id in dataset_ids {
+        connection.execute(
+            "INSERT INTO rr_cleanup_journal(dataset_id,state,attempts,updated_at_ms) VALUES(?1,'pending',0,0)
+             ON CONFLICT(dataset_id) DO UPDATE SET state='pending',last_error_code=NULL",
+            [dataset_id],
+        ).map_err(|error| error.to_string())?;
+    }
     Ok(ForgetOutcome {
         datasets,
         artifacts,
         examples,
+    })
+}
+
+/// Retries deletion of the fixed export filenames for invalidated datasets. The journal stores
+/// dataset ids and closed error codes only; local paths and file contents never enter SQLite.
+pub(crate) fn cleanup_invalidated_exports(
+    connection: &Connection,
+    directory: &Path,
+    now_ms: i64,
+) -> Result<usize, String> {
+    let pending = connection
+        .prepare(
+            "SELECT dataset_id FROM rr_cleanup_journal WHERE state='pending' ORDER BY dataset_id",
+        )
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let mut completed = 0;
+    for dataset_id in pending {
+        if crate::validate_identifier(&dataset_id, "routing dataset id").is_err() {
+            connection.execute("UPDATE rr_cleanup_journal SET attempts=attempts+1,last_error_code='invalid_dataset_id',updated_at_ms=?1 WHERE dataset_id=?2", params![now_ms,dataset_id]).map_err(|error| error.to_string())?;
+            continue;
+        }
+        let paths = [
+            directory.join(format!("{dataset_id}.jsonl")),
+            directory.join(format!("{dataset_id}.manifest.json")),
+            directory.join(format!("{dataset_id}.jsonl.tmp")),
+            directory.join(format!("{dataset_id}.manifest.json.tmp")),
+        ];
+        let failed = paths.iter().any(|path| match fs::remove_file(path) {
+            Ok(()) => false,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(_) => true,
+        });
+        if failed {
+            connection.execute("UPDATE rr_cleanup_journal SET attempts=attempts+1,last_error_code='filesystem_cleanup_failed',updated_at_ms=?1 WHERE dataset_id=?2", params![now_ms,dataset_id]).map_err(|error| error.to_string())?;
+        } else {
+            connection.execute("UPDATE rr_cleanup_journal SET state='completed',attempts=attempts+1,last_error_code=NULL,updated_at_ms=?1 WHERE dataset_id=?2", params![now_ms,dataset_id]).map_err(|error| error.to_string())?;
+            completed += 1;
+        }
+    }
+    Ok(completed)
+}
+
+/// Production cleanup keeps filesystem I/O outside the process-wide SQLite writer lock. The
+/// pending list and completion receipts are short database operations on either side of deletion.
+pub(crate) fn cleanup_invalidated_exports_with_writer(
+    writer: &crate::persistence::SqliteWriter,
+    directory: &Path,
+    now_ms: i64,
+) -> Result<usize, String> {
+    let pending = writer.read_serialized(|connection| {
+        connection
+            .prepare(
+                "SELECT dataset_id FROM rr_cleanup_journal WHERE state='pending' ORDER BY dataset_id",
+            )
+            .map_err(|error| error.to_string())?
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
+    })?;
+    let outcomes = pending
+        .into_iter()
+        .map(|dataset_id| {
+            let error_code =
+                if crate::validate_identifier(&dataset_id, "routing dataset id").is_err() {
+                    Some("invalid_dataset_id")
+                } else {
+                    let failed = [
+                        directory.join(format!("{dataset_id}.jsonl")),
+                        directory.join(format!("{dataset_id}.manifest.json")),
+                        directory.join(format!("{dataset_id}.jsonl.tmp")),
+                        directory.join(format!("{dataset_id}.manifest.json.tmp")),
+                    ]
+                    .iter()
+                    .any(|path| match fs::remove_file(path) {
+                        Ok(()) => false,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(_) => true,
+                    });
+                    failed.then_some("filesystem_cleanup_failed")
+                };
+            (dataset_id, error_code)
+        })
+        .collect::<Vec<_>>();
+    writer.write(|connection| {
+        let mut completed = 0;
+        for (dataset_id, error_code) in &outcomes {
+            if let Some(error_code) = error_code {
+                connection.execute("UPDATE rr_cleanup_journal SET attempts=attempts+1,last_error_code=?1,updated_at_ms=?2 WHERE dataset_id=?3 AND state='pending'", params![error_code,now_ms,dataset_id]).map_err(|error| error.to_string())?;
+            } else {
+                completed += connection.execute("UPDATE rr_cleanup_journal SET state='completed',attempts=attempts+1,last_error_code=NULL,updated_at_ms=?1 WHERE dataset_id=?2 AND state='pending'", params![now_ms,dataset_id]).map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(completed)
     })
 }
 
@@ -167,6 +280,43 @@ mod tests {
                     |row| row.get::<_, String>(0)
                 )
                 .expect("artifact state"),
+            "invalidated"
+        );
+    }
+
+    #[test]
+    fn rr_37_cleanup_retry_keeps_artifact_invalidated() {
+        let connection = Connection::open_in_memory().expect("database");
+        connection.execute_batch("CREATE TABLE rr_roots(root_id TEXT PRIMARY KEY); CREATE TABLE rr_decisions(id TEXT PRIMARY KEY); INSERT INTO rr_roots VALUES('r'); INSERT INTO rr_decisions VALUES('d');").expect("base");
+        super::super::schema::migrate(&connection).expect("learning schema");
+        connection.execute("INSERT INTO rr_datasets(id,upper_seq,feature_version,labeler_version,manifest_json,state,created_at_ms) VALUES('dataset',1,'f','l','{}','invalidated',1)", []).expect("dataset");
+        connection.execute("INSERT INTO rr_cleanup_journal(dataset_id,state,updated_at_ms) VALUES('dataset','pending',1)", []).expect("journal");
+        let temporary = tempfile::tempdir().expect("temporary");
+        let blocked = temporary.path().join("blocked");
+        fs::write(&blocked, b"not a directory").expect("blocker");
+        assert_eq!(
+            cleanup_invalidated_exports(&connection, &blocked, 2).expect("retry"),
+            0
+        );
+        assert_eq!(connection.query_row("SELECT state||':'||attempts||':'||last_error_code FROM rr_cleanup_journal WHERE dataset_id='dataset'", [], |row| row.get::<_,String>(0)).expect("pending"), "pending:1:filesystem_cleanup_failed");
+        fs::remove_file(&blocked).expect("remove blocker");
+        fs::create_dir(&blocked).expect("directory");
+        fs::write(blocked.join("dataset.jsonl"), b"fixture").expect("export");
+        fs::write(blocked.join("dataset.manifest.json"), b"fixture").expect("manifest");
+        assert_eq!(
+            cleanup_invalidated_exports(&connection, &blocked, 3).expect("cleanup"),
+            1
+        );
+        assert_eq!(connection.query_row("SELECT state||':'||attempts FROM rr_cleanup_journal WHERE dataset_id='dataset'", [], |row| row.get::<_,String>(0)).expect("completed"), "completed:2");
+        assert!(!blocked.join("dataset.jsonl").exists());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT state FROM rr_datasets WHERE id='dataset'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .expect("dataset state"),
             "invalidated"
         );
     }

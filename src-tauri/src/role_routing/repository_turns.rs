@@ -80,6 +80,16 @@ pub(crate) fn record_provider_turn_start(
          VALUES(?1,?2,0,?3,'{}',?4,?5,'respond','[\"rules\"]','rules-v1',?6,?7)",
         params![decision_id, run_id, format!("rr-input-{run_id}"), candidates.to_string(), candidate.recipe_id, policy_id, now_ms],
     ).map_err(|error| error.to_string())?;
+    if let Some(rules) = selection.eligible.first() {
+        crate::role_routing::ranker::record_shadow_observation(
+            &transaction,
+            &decision_id,
+            &policy,
+            &selection.eligible,
+            rules,
+            now_ms,
+        )?;
+    }
     for (index, step) in planned_steps.iter().enumerate() {
         let step_id = format!("rr-step-{run_id}-{}", step.ordinal);
         let status = if index == 0 { "running" } else { "planned" };
@@ -106,6 +116,9 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     transaction: &Transaction<'_>,
     run_id: &str,
     conversation_id: &str,
+    origin: &str,
+    source_id: Option<&str>,
+    presentation_mode: &str,
     now_ms: i64,
 ) -> Result<bool, String> {
     let policy: Option<(String, String)> = transaction
@@ -147,9 +160,20 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     let decision_id = format!("rr-decision-{run_id}");
     let planned_steps = compile_selected_plan(&policy, candidate)?;
     let candidates = candidate_receipt(&selection.eligible);
-    transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,'text','visual',?5,NULL,'')",params![run_id,conversation_id,run_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
-    transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,disposition,received_at_ms) VALUES(?1,?2,?3,?4,'','text','accepted',?5)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,now_ms]).map_err(|e|e.to_string())?;
+    transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,?5,?6,?7,NULL,'')",params![run_id,conversation_id,run_id,policy_id,origin,presentation_mode,now_ms]).map_err(|e|e.to_string())?;
+    let payload_digest = format!("{:x}", Sha256::digest(input_content.as_bytes()));
+    transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,source_id,disposition,received_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,'accepted',?8)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,payload_digest,origin,source_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms) VALUES(?1,?2,0,?3,?4,?5,?6,'respond','[\"rules\"]','rules-v1',?7,?8)",params![decision_id,run_id,format!("rr-input-{run_id}"),feature_snapshot(&input_content,policy.limits.max_reasoning_steps).to_string(),candidates.to_string(),candidate.recipe_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
+    if let Some(rules) = selection.eligible.first() {
+        crate::role_routing::ranker::record_shadow_observation(
+            transaction,
+            &decision_id,
+            &policy,
+            &selection.eligible,
+            rules,
+            now_ms,
+        )?;
+    }
     for step in planned_steps.iter() {
         let step_id = format!("rr-step-{run_id}-{}", step.ordinal);
         let config_fingerprint = step_config_fingerprint(&policy_json, candidate, step)?;
@@ -395,6 +419,7 @@ pub(crate) fn advance_provider_step_with_usage(
 #[derive(Debug)]
 pub(crate) enum ReviewStepOutcome {
     Revise(crate::role_routing::revision::ReviewRevisionDecision),
+    AwaitPremium(crate::role_routing::proposals::ProposalReceipt),
     KeepDraft,
 }
 
@@ -409,11 +434,27 @@ pub(crate) fn advance_review_step(
     let transaction = connection
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
-    let (revision, cancel_requested, phase, policy_json): (i64, i64, String, String) = transaction
+    let (revision, cancel_requested, phase, policy_id, policy_json, root_deadline): (
+        i64,
+        i64,
+        String,
+        String,
+        String,
+        Option<i64>,
+    ) = transaction
         .query_row(
-            "SELECT r.revision,r.cancel_requested,r.phase,p.config_json FROM rr_roots r JOIN rr_policy_versions p ON p.id=r.policy_id WHERE r.root_id=?1",
+            "SELECT r.revision,r.cancel_requested,r.phase,r.policy_id,p.config_json,r.deadline_at_ms FROM rr_roots r JOIN rr_policy_versions p ON p.id=r.policy_id WHERE r.root_id=?1",
             [run_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
         )
         .map_err(|_| "Role-routing review root is unavailable".to_string())?;
     if phase != "responding" || cancel_requested != 0 {
@@ -485,7 +526,41 @@ pub(crate) fn advance_review_step(
             "cancelled",
             now_ms,
         )?;
-        ReviewStepOutcome::KeepDraft
+        let premium = policy
+            .roles
+            .premium
+            .as_deref()
+            .filter(|_| policy.premium_approval == "per_request")
+            .filter(|_| !decision.unresolved_issues.is_empty())
+            // A metered cloud step with no trusted quote must not be proposed under a cost cap.
+            .filter(|_| policy.limits.max_estimated_cost_micros.is_none());
+        if let Some(candidate_id) = premium {
+            let expires_at_ms = root_deadline
+                .unwrap_or_else(|| now_ms.saturating_add(60_000))
+                .min(now_ms.saturating_add(60_000));
+            if expires_at_ms > now_ms {
+                let receipt = crate::role_routing::proposals::record(
+                    &transaction,
+                    &crate::role_routing::proposals::Proposal {
+                        id: format!("rr-proposal-{run_id}-{revision}"),
+                        root_id: run_id.to_string(),
+                        candidate_id: candidate_id.to_string(),
+                        policy_id,
+                        revision: u32::try_from(revision)
+                            .map_err(|_| "Role-routing revision is invalid".to_string())?,
+                        expires_at_ms,
+                    },
+                    None,
+                    now_ms,
+                )?;
+                append_event(&transaction, run_id, "premium_proposed", now_ms)?;
+                ReviewStepOutcome::AwaitPremium(receipt)
+            } else {
+                ReviewStepOutcome::KeepDraft
+            }
+        } else {
+            ReviewStepOutcome::KeepDraft
+        }
     };
     append_event(&transaction, run_id, "review_completed", now_ms)?;
     transaction.commit().map_err(|error| error.to_string())?;
@@ -864,6 +939,91 @@ pub(crate) fn pending_input_count(connection: &Connection, root_id: &str) -> Res
         .map_err(|error| error.to_string())
 }
 
+/// Cancels every queued or active routing root when the feature is disabled. The database fence
+/// commits with the settings change; process-local cancellation is signalled by the command layer
+/// after this transaction returns.
+pub(crate) fn cancel_all_for_disable(connection: &Connection, now_ms: i64) -> Result<(), String> {
+    let root_ids = connection
+        .prepare(
+            "SELECT root_id FROM rr_roots
+             WHERE phase IN ('queued','responding','draining')
+             ORDER BY started_at_ms,root_id",
+        )
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    for root_id in root_ids {
+        crate::role_routing::coordinator::apply_in_transaction(
+            connection,
+            &root_id,
+            crate::role_routing::reducer::Event::Cancel,
+            now_ms,
+        )?;
+        connection
+            .execute(
+                "UPDATE rr_steps SET status='cancelled',cancel_requested=1,completed_at_ms=?1,error_code='routing-disabled'
+                 WHERE root_id=?2 AND status IN ('planned','running','draining')",
+                params![now_ms, root_id],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    connection
+        .execute(
+            "UPDATE rr_speech SET status='cancelled',updated_at_ms=?1
+             WHERE status IN ('queued','playing')",
+            [now_ms],
+        )
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "UPDATE rr_premium_proposals SET status='expired',updated_at_ms=?1
+             WHERE status IN ('proposed','approved') AND consumed=0",
+            [now_ms],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// While routing is disabled, legacy execution stays fenced until every cancelled runtime child
+/// and role-owned tool operation is terminal. This avoids overlapping old side effects with a new
+/// legacy answer.
+pub(crate) fn disable_drain_in_progress(connection: &Connection) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM rr_roots r
+               JOIN runtime_runs run ON run.id=r.runtime_run_id
+               WHERE r.cancel_requested=1 AND run.status IN ('running','queued')
+               UNION ALL
+               SELECT 1 FROM rr_tool_links l
+               JOIN rr_roots r ON r.root_id=l.root_id
+               WHERE r.cancel_requested=1 AND l.dispatch_state IN ('reserved','dispatched')
+               UNION ALL
+               SELECT 1 FROM rr_speech s
+               JOIN rr_roots r ON r.root_id=s.root_id
+               WHERE r.cancel_requested=1 AND s.status IN ('queued','playing')
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn disabled_runtime_run_ids(connection: &Connection) -> Result<Vec<String>, String> {
+    connection
+        .prepare(
+            "SELECT DISTINCT runtime_run_id FROM rr_roots
+             WHERE cancel_requested=1 AND runtime_run_id IS NOT NULL",
+        )
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
 /// Stores coarse actor progress without retaining any partial provider text.
 pub(crate) fn record_actor_activity(
     connection: &Connection,
@@ -1156,6 +1316,96 @@ mod tests {
     }
 
     #[test]
+    fn rr_26_unresolved_review_proposes_and_consumes_premium_once() {
+        let c = review_flow_fixture();
+        let mut policy: RoleRoutingSettings = serde_json::from_str(
+            &c.query_row(
+                "SELECT config_json FROM rr_policy_versions WHERE id='p'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("policy"),
+        )
+        .expect("valid policy");
+        policy.actors.push(RoutingActor {
+            id: "astra".into(),
+            label: "Astra".into(),
+            aliases: vec![],
+            transport: "codex_sdk".into(),
+            provider_id: None,
+            model: Some("gpt-6-astra".into()),
+            location: "cloud".into(),
+            resource_group: "cloud".into(),
+            max_input_bytes: 4096,
+            capabilities: vec!["reason".into()],
+        });
+        policy.roles.premium = Some("astra".into());
+        c.execute(
+            "UPDATE rr_policy_versions SET config_json=?1 WHERE id='p'",
+            [serde_json::to_string(&policy).expect("policy json")],
+        )
+        .expect("update policy");
+        let response = crate::role_routing::review::ReviewResponse {
+            issues: vec![review_issue("unresolved")],
+        };
+        let receipt = match advance_review_step(&c, "run", &response, None, 3).expect("review") {
+            ReviewStepOutcome::AwaitPremium(receipt) => receipt,
+            _ => panic!("unresolved review should await explicit premium approval"),
+        };
+        assert_eq!(receipt.candidate_id, "astra");
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM rr_steps WHERE actor_id='astra'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .expect("premium starts"),
+            0,
+            "a proposal alone must never create or start a premium step"
+        );
+        crate::role_routing::proposals::approve(
+            &c,
+            &crate::role_routing::proposals::Approval {
+                proposal_id: receipt.id.clone(),
+                candidate_id: receipt.candidate_id.clone(),
+            },
+            4,
+            true,
+        )
+        .expect("approve");
+        let consumed = crate::role_routing::proposals::consume_approval(
+            &c,
+            &crate::role_routing::proposals::Approval {
+                proposal_id: receipt.id.clone(),
+                candidate_id: receipt.candidate_id.clone(),
+            },
+            "p",
+            0,
+            true,
+            5,
+        )
+        .expect("consume");
+        assert_eq!(
+            crate::role_routing::steps::claim_next_planned_step(&c, "run", 0, 5)
+                .expect("claim")
+                .as_deref(),
+            Some(consumed.step_id.as_str())
+        );
+        assert!(crate::role_routing::proposals::consume_approval(
+            &c,
+            &crate::role_routing::proposals::Approval {
+                proposal_id: receipt.id,
+                candidate_id: receipt.candidate_id,
+            },
+            "p",
+            0,
+            true,
+            6,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn rr_05_normal_turn_advances_two_steps_without_persisting_the_draft_body() {
         let c = Connection::open_in_memory().expect("db");
         c.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY); INSERT INTO conversations VALUES('c');")
@@ -1182,6 +1432,77 @@ mod tests {
             .expect("digest output");
         assert!(!payload.contains("private acknowledgement"));
         assert!(!advance_provider_step(&c, "run", "final answer", 3).expect("final remains"));
+    }
+
+    #[test]
+    fn rr_39_host_receipt_p95_is_under_fifty_milliseconds() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY,conversation_id TEXT,route_kind TEXT,input_message_id TEXT); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT); INSERT INTO conversations VALUES('c');")
+            .expect("base");
+        crate::role_routing::schema::migrate(&c).expect("routing schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
+        crate::adaptive_improvement::migrate(&c).expect("adaptive schema");
+        let mut policy = RoleRoutingSettings::default();
+        policy.enabled = true;
+        policy.actors.push(RoutingActor {
+            id: "local".into(),
+            label: "Local".into(),
+            aliases: vec![],
+            transport: "provider".into(),
+            provider_id: Some("local".into()),
+            model: None,
+            location: "local".into(),
+            resource_group: "gpu".into(),
+            max_input_bytes: 4096,
+            capabilities: vec!["reason".into()],
+        });
+        policy.roles.reasoner = Some("local".into());
+        policy.recipes.push(RoutingRecipe {
+            id: "direct".into(),
+            action: crate::role_routing::contracts::RoutingAction::Respond,
+            roles: vec!["reasoner".into()],
+            enabled: true,
+        });
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,?1,'d',1)",
+            [serde_json::to_string(&policy).expect("policy")],
+        )
+        .expect("policy row");
+        let mut samples = Vec::new();
+        for index in 0..105 {
+            let run_id = format!("perf-{index}");
+            let message_id = format!("message-{index}");
+            c.execute(
+                "INSERT INTO conversation_messages VALUES(?1,'c','user','hello','1')",
+                [&message_id],
+            )
+            .expect("message");
+            c.execute(
+                "INSERT INTO runtime_runs VALUES(?1,'c','conversation.respond',?2)",
+                rusqlite::params![run_id, message_id],
+            )
+            .expect("runtime run");
+            let started = std::time::Instant::now();
+            assert!(record_provider_turn_start(&c, &run_id, "c", index).expect("receipt"));
+            let elapsed = started.elapsed().as_micros();
+            if index >= 5 {
+                samples.push(elapsed);
+            }
+            c.execute(
+                "UPDATE rr_steps SET status='succeeded',completed_at_ms=?1 WHERE root_id=?2 AND status='running'",
+                rusqlite::params![index, run_id],
+            )
+            .expect("settle step");
+            c.execute(
+                "UPDATE rr_roots SET phase='completed',active_slot=NULL WHERE root_id=?1",
+                [&run_id],
+            )
+            .expect("settle root");
+        }
+        samples.sort_unstable();
+        let p95 = samples[((samples.len() as f64 * 0.95).ceil() as usize) - 1];
+        eprintln!("rr_39_host_receipt_p95_us={p95}");
+        assert!(p95 <= 50_000, "routing receipt p95 was {p95}µs");
     }
 
     #[test]
@@ -1307,7 +1628,8 @@ mod tests {
                 [],
             )
             .expect("run");
-            record_provider_turn_start_in_transaction(&tx, "run", "c", 1).expect("receipt");
+            record_provider_turn_start_in_transaction(&tx, "run", "c", "text", None, "visual", 1)
+                .expect("receipt");
             let receipt: (String, String, Option<i64>, String) = tx
                 .query_row(
                     "SELECT r.phase,s.status,r.deadline_at_ms,s.config_fingerprint FROM rr_roots r JOIN rr_steps s ON s.root_id=r.root_id WHERE r.root_id='run'",
@@ -1382,7 +1704,9 @@ mod tests {
             )
             .expect("run");
             assert_eq!(
-                record_provider_turn_start_in_transaction(&tx, "run", "c", 2),
+                record_provider_turn_start_in_transaction(
+                    &tx, "run", "c", "text", None, "visual", 2,
+                ),
                 Err("Role-routing input queue is full".into())
             );
         }

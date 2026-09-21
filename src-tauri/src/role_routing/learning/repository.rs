@@ -210,6 +210,16 @@ pub(crate) fn publish_shadow_artifact(
     if !ready {
         return Err("Learning dataset is not ready".into());
     }
+    let eligible_examples: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM rr_examples WHERE dataset_id=?1 AND eligible=1",
+            [dataset_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if eligible_examples < 20 {
+        return Err("Learning dataset has insufficient eligible examples".into());
+    }
     let weights: Value = serde_json::from_str(weights_json)
         .map_err(|_| "Ranker weights are invalid JSON".to_string())?;
     let metrics: Value = serde_json::from_str(metrics_json)
@@ -432,12 +442,80 @@ mod tests {
     }
 
     #[test]
+    fn rr_30_feature_snapshot_immutable_and_rr_31_explicit_feedback_next_day() {
+        let mut connection = Connection::open_in_memory().expect("db");
+        connection.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');INSERT INTO conversation_messages VALUES('answer','c','assistant','answer','1');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("routing");
+        super::super::schema::migrate(&connection).expect("learning");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest,result_message_id) VALUES('r','c','p','completed','text','visual',1,'','answer')", []).expect("root");
+        connection.execute("INSERT INTO rr_decisions VALUES('d','r',0,NULL,'{\"quality\":null,\"complexity\":2}','[]','qwen','respond','[]','rules-v1','p',1)", []).expect("decision");
+        connection
+            .execute(
+                "INSERT INTO rr_events VALUES('r',1,'answer_committed','{}',1)",
+                [],
+            )
+            .expect("event");
+
+        let mut datasets = Vec::new();
+        for revision in 0..3 {
+            if revision > 0 {
+                let source = format!("source-{revision}");
+                let kind = if revision == 1 {
+                    "explicit_positive"
+                } else {
+                    "explicit_negative"
+                };
+                connection
+                    .execute(
+                        "INSERT INTO conversation_messages VALUES(?1,'c','user','feedback',?2)",
+                        params![source, (revision + 1).to_string()],
+                    )
+                    .expect("source");
+                connection.execute("INSERT INTO rr_feedback(id,target_answer_id,target_root_id,source_message_id,kind,evidence_json,label_source,confidence,extractor_version,status,created_at_ms) VALUES(?1,'answer','r',?2,?3,'{}','host',1.0,'host-v1','recorded',?4)", params![format!("feedback-{revision}"), source, kind, revision + 1]).expect("feedback");
+            }
+            mark_root_dirty(&connection, "r").expect("dirty");
+            datasets.push(
+                materialize_dirty_roots(&mut connection, 10 + revision, 10)
+                    .expect("run")
+                    .expect("dataset"),
+            );
+        }
+        let rows = datasets
+            .iter()
+            .map(|dataset| connection.query_row("SELECT features_json,json_extract(labels_json,'$.outcome'),label_revision,eligible FROM rr_examples WHERE dataset_id=?1", [dataset], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?,row.get::<_,i64>(3)?))).expect("example"))
+            .collect::<Vec<_>>();
+        assert!(rows
+            .iter()
+            .all(|row| row.0 == "{\"complexity\":2,\"quality\":null}"));
+        assert_eq!(rows[0].1, "unknown");
+        assert_eq!(rows[1].1, "positive");
+        assert_eq!(
+            (rows[2].1.as_str(), rows[2].2, rows[2].3),
+            ("unknown", 2, 0)
+        );
+    }
+
+    #[test]
     fn rr_35_artifact_is_shadow_only_and_requires_a_ready_dataset() {
         let c = Connection::open_in_memory().expect("db");
         c.execute_batch("CREATE TABLE rr_roots(root_id TEXT PRIMARY KEY);CREATE TABLE rr_decisions(id TEXT PRIMARY KEY);").expect("base");
         super::super::schema::migrate(&c).expect("schema");
         assert!(publish_shadow_artifact(&c, "missing", "candidates", "{}", "{}", 1).is_err());
         c.execute("INSERT INTO rr_datasets(id,upper_seq,feature_version,labeler_version,manifest_json,state,created_at_ms) VALUES('d',0,'f','l','{}','ready',1)",[]).expect("dataset");
+        assert!(publish_shadow_artifact(&c, "d", "candidates", "{}", "{}", 2).is_err());
+        for index in 0..20 {
+            let decision_id = format!("decision-{index}");
+            let example_id = format!("example-{index}");
+            c.execute("INSERT INTO rr_decisions VALUES(?1)", [&decision_id])
+                .expect("decision");
+            c.execute("INSERT INTO rr_examples(id,dataset_id,decision_id,label_revision,feature_version,labeler_version,features_json,labels_json,eligible,created_at_ms) VALUES(?1,'d',?2,1,'f','l','{}','{}',1,1)", params![example_id,decision_id]).expect("example");
+        }
         let id = publish_shadow_artifact(&c, "d", "candidates", "{}", "{}", 2).expect("artifact");
         assert_eq!(
             c.query_row(
@@ -447,6 +525,26 @@ mod tests {
             )
             .expect("state"),
             "shadow"
+        );
+    }
+
+    #[test]
+    fn rr_35_small_sample_rules() {
+        let connection = Connection::open_in_memory().expect("db");
+        connection.execute_batch("CREATE TABLE rr_roots(root_id TEXT PRIMARY KEY);CREATE TABLE rr_decisions(id TEXT PRIMARY KEY);INSERT INTO rr_decisions VALUES('d');").expect("base");
+        super::super::schema::migrate(&connection).expect("schema");
+        connection.execute("INSERT INTO rr_datasets(id,upper_seq,feature_version,labeler_version,manifest_json,state,created_at_ms) VALUES('dataset',0,'f','l','{}','ready',1)", []).expect("dataset");
+        connection.execute("INSERT INTO rr_examples(id,dataset_id,decision_id,label_revision,feature_version,labeler_version,features_json,labels_json,eligible,created_at_ms) VALUES('e','dataset','d',1,'f','l','{}','{}',1,1)", []).expect("example");
+        assert_eq!(
+            publish_shadow_artifact(&connection, "dataset", "recipes", "{}", "{}", 1).unwrap_err(),
+            "Learning dataset has insufficient eligible examples"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM rr_ranker_artifacts", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("artifacts"),
+            0
         );
     }
 }

@@ -265,3 +265,142 @@ completion・speech は公開しない。
 - `rr_25_review_round_limit_requires_verified_issue`: pass。
 
 以上により E17/E18 の offline 完了条件は満たした。live model の品質確認は L01/L03 に残す。
+
+## E19・E28〜E34 追補（2026-09-21、offline）
+
+E19 は回答への反応を同会話の最新 role-routing assistant message にだけ束縛した。challenge は旧rootを
+再開せず新rootとして処理し、feedback receipt の `target_root_id` だけが旧回答を参照する。別conversationの
+answer ID、引用内の否定、曖昧な対象はfeedbackにしない。明示positive/negativeとchallengeは別kindで保存する。
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib rr_23_ -- --test-threads=1`: **6 pass / 0 fail**。
+- `rr_23_challenge_starts_new_root_without_reopening_completed_root`: pass。
+- `rr_23_wrong_conversation_target_is_rejected`: pass（不正receipt 0件）。
+
+E28〜E31 では、decision時点のfeaturesをimmutable datasetへコピーし、後日のfeedbackは新datasetのlabelだけへ
+反映するようにした。明示positive/negativeだけを二値labelとし、沈黙、challenge、cancel、矛盾feedbackは
+unknown/excludedとして理由を残す。dirty page、dataset、job、cursorは同一transactionで確定し、途中失敗時は
+すべてrollbackする。exportはconversation lineage由来の決定的group splitを含み、本文fieldを拒否し、JSONL後に
+manifestをatomic publishする。
+
+- `rr_30_feature_snapshot_immutable_and_rr_31_explicit_feedback_next_day`: pass。
+- `rr_31_crash_before_checkpoint_keeps_the_page_retryable`: pass。
+- `rr_32_silence_and_challenge_are_not_success_or_failure`: pass。
+- `rr_32_cancel_not_failure_and_conflict_is_excluded`: pass。
+- `rr_33_group_split_keeps_one_conversation_in_one_partition`: pass。
+- `rr_33_partial_file_not_ready_and_export_is_deterministic`: pass。
+
+E32 は local day単位の一意なrun receiptを追加し、通常window、missed window、clock rollback、foreground中断を
+判定する。複数pageは各page transaction後に`paused`へ戻し、次tickでforeground/idle gateを再検査してから
+再開する。E33 はeligible 20件未満のartifact生成を拒否し、hash/feature/candidate fingerprint不一致をrulesへ
+fail closedする。shadowは通常turnのreceipt transactionで観測だけを保存し、dispatch候補を変更せず、追加の
+adapter呼出しも行わない。E34 はsource失効と同時にdataset/artifactを利用不可にし、
+本文・pathを持たないcleanup journalを作成、workerで固定export名の削除を再試行する。設定UIは失効datasetと
+cleanup待ち件数を表示する。詳細な実行理由UIは未完了のためE34は部分。
+
+- `rr_34_missed_night_runs_once_and_clock_rollback_does_not_repeat`: pass。
+- `rr_34_foreground_preempts_before_the_next_page`: pass。
+- `rr_35_small_sample_rules`: pass。
+- `rr_35_shadow_no_second_call_on_the_real_turn_path`: pass（Provider 1回、shadow receipt 1件）。
+- `rr_37_cleanup_retry_keeps_artifact_invalidated`: pass。
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml --lib`: pass（既存未接続warningのみ）。
+
+## E16・E21・E24・E34 追加追補（2026-09-21、offline）
+
+E16/A30 のoffline側は、認証付きloopback gatewayへrole-scoped sessionを張り、catalog解決、permit、
+tool owner、routing link settle、SDK候補を模したhost採用までを一つのfixtureで通した。認証済みSol本体は
+外部呼出しとなるためL01に残す。
+
+E21 はproposalをrouting snapshotへ追加し、生成binding経由のIPCとchatの明示的な候補承認/辞退UIを接続した。
+proposal IDとcandidate IDを必須にし、単独の肯定入力は承認にしない。reload後もapproved/consumed/費用不明を
+DBから復元する。proposal生成と承認後executor wakeは未接続のため、E20/E21は引き続き部分。
+
+E24 はaccepted final output、speaker、root revisionへ束縛した永続speech intent/epochを既存TurnEventHubへ接続した。
+新しいfinal intentは同会話の旧queued/playing intentを取消し、再生直前に最新epochと全体の単一playing制約を
+再検査する。重複completionは画面イベントを保持する一方、final音声を再投入しない。SpeechStarted/Ended/
+Failed/CancelをDB lifecycleへ反映し、音声ledger失敗時も画面回答は保持する。
+
+E34 のcleanupは本文やpathをDBに保存せず固定名だけを削除する。コードレビューでSQLite writer lock中に
+filesystem I/Oをしていた点を検出し、本番workerはpending取得→lock外削除→結果receiptの二相へ修正した。
+
+- `cargo test --lib role_routing:: -- --test-threads=1`: **157 pass / 0 fail**。
+- `rr_21_sol_tool_roundtrip`: pass（未settle link 0）。
+- `rr_29_old_speech_end_new_owner`: pass（旧SpeechEnded後も新epochだけがplaying）。
+- `rr_26_proposal_snapshot_survives_reload_without_losing_consumption`: pass。
+- `bun run ipc:generate`、`bun run typecheck`: pass。
+
+E23/E26 の実入力経路では、従来のactive root存在時の一律`busy`拒否を廃止した。status/明示feedback以外の
+追加入力は、旧rootの`input_barrier`と新rootのFIFO receiptを同一transactionで確定する。旧provider候補は
+barrier後に採用できず、新rootのtaskは旧root終端後のdurable claimを待ってからdispatchする。明示cancelは
+DB cancelを先にcommitし、該当するprocess-local run/TTSも停止する。新しい入力は同会話の旧speech intentを
+取消してからTTS runtimeを停止するため、completed rootの遅い音声もbarge-in後に再生されない。
+
+- `rr_29_provider_before_classifier_raises_durable_barrier_and_queues_follow_up`: pass。
+- `cargo test --lib`（この時点）: **1476 pass / 6 fail / 27 ignored**。6 failはrole-routing外
+  （`runtime::agent_tools` 1、並行変更中の`steward` 4、固定Bun版不一致`wasm_host_poc` 1）。最新結果は後続追補を参照。
+- `bun run size:check`: fail。role-routing着手前からの未登録/ratchet超過が多数あり、baselineは緩和していない。
+
+## E20・E21・E25・E36 追加追補（2026-09-22、offline）
+
+E20/E21 は、独立reviewの未解決issueが残り、premium actorが設定され、費用上限下で価格不明にならない場合に限り、
+通常review transactionからproposalを生成するよう接続した。通常turnはproposalの明示承認/辞退/期限切れを待ち、
+承認時にpolicy/revision/candidate/期限と現在のCodexまたはprovider availabilityを再検査する。承認の消費、premium
+step作成、claimは一つのtransactionで行い、元response recipe外のstepは消費済みproposalと一致する場合だけ
+bound executorへ渡す。辞退、期限切れ、能力失効、二重承認ではpremium起動0でreview済みdraftを維持する。
+
+E25 はlive購読を初回snapshotより先に確立し、active/queued rootとlive eventのroot hintをroot-local replayへ
+渡す。同期処理を直列化し、`(rootId,eventSeq)`で重複排除するため、snapshotから直前に消えたterminal rootと
+replay/liveの重複を両方扱える。startup reconcileはin-flight stepだけでなく、未消費proposalと未完了speechも
+expired/cancelledへ移し、provider/tool/speechを自動再実行しない。またclassifierが応答しない場合はimmutableな
+classification timeout後に旧barrierをfailし、FIFOの次rootをclaimして旧provider/TTSを停止するため、会話が
+永久に`draining + queued`で停止しない。
+
+E36/P1 はwarm-up 5回後のin-memory SQLite routing receipt 100回を測定し、p95 403µs（閾値50,000µs）だった。
+
+- `rr_26_unresolved_review_proposes_and_consumes_premium_once`: pass。
+- `rr_26_consumed_premium_step_reaches_the_bound_executor`: pass。
+- `tests/role-routing-proposal.test.tsx`: 2 pass。
+- `tests/role-routing-replay.test.ts`: 2 pass。
+- `rr_18_queue_order_and_restart_are_safe`: pass（proposal/speech restart reconcileを含む）。
+- `rr_29_provider_before_classifier_raises_durable_barrier_and_queues_follow_up`: pass（timeout後の旧failed、新respondingまで確認）。
+- `rr_39_host_receipt_p95_is_under_fifty_milliseconds`: pass、p95 403µs。
+- `bun run typecheck`、`bun run lint`、`git diff --check`: pass。
+
+この追補で、以前記載した「proposal生成と承認後executor wakeは未接続」は解消した。E22/E27/実行理由UIは
+次の追補で接続した。live lane L01〜L04は引き続き明示許可待ち。
+
+## E22・E27・E34 追加追補（2026-09-22、offline）
+
+E22 は `author → tool_specialist → author` を有限recipeとしてcompileし、通常provider/Codex stepのspecialist出力を
+厳密な `{toolName,arguments}` としてだけ受理する。hostは同じrole-root binding、permit、tool budget、operation ledgerで
+実行し、そのenvelopeだけを親へ返す。specialist出力はassistant回答へ採用されず、actor差替えでもACLは変わらない。
+同一operationの再実行はsettled/unknownを問わずledgerで拒否する。
+
+E27 は通常 `execute_turn` 境界で voice source receipt、specialist host tool、親の最終回答、永続speech intent、UI terminal
+event、DB replayを一つのoffline fixtureで通した。この過程で初回receiptが`origin='text'`を固定しASR `sourceId`を
+捨てていた不具合を修正し、origin/sourceId/presentationMode/payload digestを受付transactionへ保存した。mock TTS failure
+を注入してもrootと画面回答はcompletedのまま、speechだけfailedへ遷移する。
+
+E23 の通常active入力は保守的なhost分類結果をstrict JSON契約へ通し、target/evidence/confidenceを検証してから
+coordinator eventへ変換する。挨拶と実質依頼が混在するなど契約不成立時は`unclear`としてbarrierを維持し、immutable
+classification timeout後のfailoverで永久停止を避ける。classifierにはcancel/premium/toolの実行権限を与えない。
+
+E34 はsnapshotが直近8 root IDを返し、reload後もterminal rootをDB replayできる。replay済みeventの直近12件を
+会話UIの「Routing 実行履歴」に表示する。表示する詳細はhost生成のkindとallowlist済み
+reasonCode/reason/candidateId/phaseだけで、draftなど任意payloadは表示しない。frontend保持量は8 root/256 eventに
+制限し、allowlist値も制御文字を除去して160文字までに制限する。
+
+- `cargo test --lib 'tests::rr_' -- --test-threads=1`: 186 pass / 0 fail。
+- `cargo test --lib role_routing:: -- --test-threads=1`: 162 pass / 0 fail。
+- `rr_38_`: 8 pass / 0 fail。
+- `rr_15_asr_tool_tts_reconnect_e2e_and_rr_38_normal_provider_turn_specialist_returns_to_parent`: pass。
+- `rr_08_normal_active_input_uses_the_strict_structured_contract`: pass。
+- frontend replay/proposal/history: 6 pass / 0 fail。
+- `bun run typecheck`、`bun run lint`、`cargo fmt --check`、`git diff --check`: pass。
+- repo全体 `cargo test --lib -- --test-threads=1`: 1486 pass / 6 fail / 27 ignored。6件は
+  `runtime::agent_tools::tests::typed_memory_tool_calls_are_projected_without_generic_fallback`、
+  `steward::tests::{ml_01_schema_version_and_empty_goals,ml_05_hold_skips_insert_then_flush_one,ml_06_withdraw_does_not_rewrite_done,ml_08_acceptance_register_divert_complete_withdraw}`、
+  `wasm_host_poc::tests::real_kit_inspect_verify_and_vectors_run_without_credentials`（installed Bun 1.4.2 / expected 1.3.14）で、
+  role-routing integration testの失敗は0件。
+
+offlineの計画項目とA01〜A42は完了した。残件は明示許可が必要なlive lane L01〜L04と、repo全体gateに元から残る
+role-routing外の失敗だけである。live未実施のためR1/R2/R3の「実機完了」は主張しない。
