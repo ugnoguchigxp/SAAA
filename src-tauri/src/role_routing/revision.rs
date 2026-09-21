@@ -1,5 +1,49 @@
 //! Transactional boundary for restarting a root after a condition amendment.
 use rusqlite::{Connection, Transaction};
+use serde::Serialize;
+
+/// The host-derived input for a future author revision.  Only verified issues can request a
+/// revision; unverified and unresolved findings are preserved for visibility but are never an
+/// automatic instruction to reverse an answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewRevisionDecision {
+    pub(crate) revision_allowed: bool,
+    pub(crate) verified_issues: Vec<super::review::ReviewIssue>,
+    pub(crate) unresolved_issues: Vec<super::review::ReviewIssue>,
+    pub(crate) completed_rounds: u8,
+    pub(crate) max_rounds: u8,
+}
+
+pub(crate) fn decide_from_review(
+    review: &super::review::ReviewResponse,
+    completed_rounds: u8,
+    max_rounds: u8,
+) -> ReviewRevisionDecision {
+    let verified_issues = review
+        .issues
+        .iter()
+        .filter(|issue| issue.verdict == "verified")
+        .cloned()
+        .collect::<Vec<_>>();
+    let unresolved_issues = review
+        .issues
+        .iter()
+        .filter(|issue| issue.verdict != "verified")
+        .cloned()
+        .collect::<Vec<_>>();
+    ReviewRevisionDecision {
+        revision_allowed: super::review::revision_allowed(
+            verified_issues.len(),
+            completed_rounds,
+            max_rounds,
+        ),
+        verified_issues,
+        unresolved_issues,
+        completed_rounds,
+        max_rounds,
+    }
+}
 
 /// Moves a draining root to its next revision only after every old-revision tool has a known
 /// terminal receipt. The coordinator transition and this check share one transaction.
@@ -83,5 +127,20 @@ mod tests {
             transition.state.phase,
             super::super::reducer::Phase::Responding
         );
+    }
+
+    #[test]
+    fn rr_25_unsupported_critique_is_preserved_but_cannot_revise() {
+        let review = super::super::review::ReviewResponse {
+            issues: vec![super::super::review::ReviewIssue {
+                code: "assertion".into(),
+                evidence_ref: "answer-1".into(),
+                verdict: "unverified".into(),
+            }],
+        };
+        let decision = decide_from_review(&review, 0, 1);
+        assert!(!decision.revision_allowed);
+        assert!(decision.verified_issues.is_empty());
+        assert_eq!(decision.unresolved_issues, review.issues);
     }
 }

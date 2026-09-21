@@ -152,11 +152,52 @@ pub(crate) fn record_review_response(
     )?;
     let encoded = serde_json::to_string(response)
         .map_err(|error| format!("Could not encode role-routing review: {error}"))?;
-    let digest = format!("{:x}", Sha256::digest(encoded.as_bytes()));
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(format!("{review_step_id}:{encoded}").as_bytes())
+    );
     connection.execute(
         "INSERT OR IGNORE INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'review',?4,1,?5)",
         params![format!("rr-review-{}", &digest[..24]), review_step_id, revision, encoded, now_ms],
     ).map_err(|error| error.to_string()).map(|changed| changed == 1)
+}
+
+/// Stores a deterministic revision decision for an accepted review output.  It deliberately does
+/// not change the root revision or dispatch an author: only a future executor may consume an
+/// allowed decision after re-checking the current root state.
+pub(crate) fn record_review_revision_decision(
+    connection: &Connection,
+    review_output_id: &str,
+    max_rounds: u8,
+    now_ms: i64,
+) -> Result<crate::role_routing::revision::ReviewRevisionDecision, String> {
+    let (root_id, revision, review_step_id, payload): (String, i64, String, String) = connection
+        .query_row(
+            "SELECT s.root_id,o.revision,o.step_id,o.payload_json FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE o.id=?1 AND o.kind='review' AND o.accepted=1 AND s.purpose='review'",
+            [review_output_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| "Role-routing accepted review output is unavailable".to_string())?;
+    let review = serde_json::from_str::<crate::role_routing::review::ReviewResponse>(&payload)
+        .map_err(|_| "Role-routing review output is invalid".to_string())?;
+    let completed_rounds: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=?1 AND o.kind='revision-decision' AND json_extract(o.payload_json,'$.revisionAllowed')=1",
+            [&root_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let completed_rounds = u8::try_from(completed_rounds)
+        .map_err(|_| "Role-routing revision round count is invalid".to_string())?;
+    let decision =
+        crate::role_routing::revision::decide_from_review(&review, completed_rounds, max_rounds);
+    let payload = serde_json::to_string(&decision)
+        .map_err(|error| format!("Could not encode role-routing revision decision: {error}"))?;
+    connection.execute(
+        "INSERT OR IGNORE INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'revision-decision',?4,1,?5)",
+        params![format!("rr-revision-decision-{review_output_id}"), review_step_id, revision, payload, now_ms],
+    ).map_err(|error| error.to_string())?;
+    Ok(decision)
 }
 
 #[cfg(test)]
@@ -299,6 +340,51 @@ mod tests {
                 )
                 .expect("output"),
             "review"
+        );
+    }
+
+    #[test]
+    fn rr_25_review_then_revise_records_only_verified_issues() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY); INSERT INTO conversations VALUES('c');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("routing");
+        connection.execute_batch("INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p','completed','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('author','r',0,0,'sol','respond','succeeded','{}','{}'),('reviewer','r',0,1,'qwen','review','succeeded','{}','{}'); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('answer-1','author',0,'answer','{}',1,1);").expect("fixture");
+        let review = crate::role_routing::review::ReviewResponse {
+            issues: vec![
+                crate::role_routing::review::ReviewIssue {
+                    code: "citation".into(),
+                    evidence_ref: "answer-1".into(),
+                    verdict: "verified".into(),
+                },
+                crate::role_routing::review::ReviewIssue {
+                    code: "style".into(),
+                    evidence_ref: "answer-1".into(),
+                    verdict: "unresolved".into(),
+                },
+            ],
+        };
+        record_review_response(&connection, "reviewer", &review, 2).expect("review");
+        let output_id: String = connection
+            .query_row(
+                "SELECT id FROM rr_outputs WHERE step_id='reviewer' AND kind='review'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("review id");
+        let decision =
+            record_review_revision_decision(&connection, &output_id, 1, 3).expect("decision");
+        assert!(decision.revision_allowed);
+        assert_eq!(decision.verified_issues.len(), 1);
+        assert_eq!(decision.unresolved_issues.len(), 1);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM rr_outputs WHERE kind='revision-decision'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("stored"),
+            1
         );
     }
 }

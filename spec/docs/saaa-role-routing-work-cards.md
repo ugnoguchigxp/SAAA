@@ -48,7 +48,7 @@
 | RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定。Codex SDKの確定usageを型検証し、最終回答採用transaction内でstepへ保存 | provider別費用換算、active dispatchの集計、切替上限 |
 | RR-23 | 部分 | host feedback保存とdirty mark。新規user inputの明示challengeは、会話の最新assistantがcompleted role rootの回答である場合だけ同一transactionで保存 | explicit positive/negativeの実入力接続、challengeを新rootとして起動する経路 |
 | RR-24 | 部分 | model/actor名を含めないreview packet、issueの型付きvalidator、author/reviewer独立性、同一root・revision内のaccepted evidence scope検証、review outputの台帳保存、reviewerのmutating tool拒否 | 独立評価executor、read-only toolの実gateway接続、通常turnへのreview step組込み |
-| RR-25 | 部分 | verified issueとreview round上限を照合するrevision gate | 評価後revision executor、unresolved永続record |
+| RR-25 | 部分 | verified issueとreview round上限を照合するrevision gate。accepted reviewからverified/unresolvedを分離し、root revisionを変更せずrevision decisionとして永続化 | 評価後revision executor、decision消費時のroot状態再検証、authorへの修正prompt組込み |
 | RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate | Astra提案・承諾のIPC/UIと実dispatch接続 |
 | RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
 | RR-28 | 部分 | chatで永続snapshotのphase/revision/queue先頭を表示 | 実行履歴・選択理由UI |
@@ -284,6 +284,8 @@
 - supportedなら再検討結果を簡潔に説明し、根拠なしの結論反転をしないfixtureを作る。
 - 試験: `rr_25_review_then_revise`、`rr_25_unsupported_critique`、`rr_25_review_round_limit`。V1。
 - 合格: Sol→Qwen評価→Sol修正が一つの新rootで完了する。
+
+実装状況（2026-09-21）: accepted review outputからhostが`ReviewRevisionDecision`を作成する。verified issueだけが`revisionAllowed`の根拠になり、unverified / unresolved issueは同じdecisionに保存されるが自動revisionを許可しない。decisionの保存はroot revisionやdispatchを変更しないため、将来のexecutorはroot状態・上限を再検証してから消費しなければならない。`rr_25_` 3件はpass。Sol→Qwen→Solを実行するexecutorとauthor promptへの組込みは未実装である。
 
 ### RR-26 Astra提案と承諾
 
