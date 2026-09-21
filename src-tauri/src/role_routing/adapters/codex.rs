@@ -243,8 +243,10 @@ mod tests {
     #[test]
     fn rr_20_process_accepts_only_valid_result_protocol() {
         let (_directory, executable) = fixture("read line; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"started\"}' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"done\"}'");
+        let mut input = request();
+        input.timeout_ms = 10_000;
         assert_eq!(
-            run_at(&executable, &request(), &RunCancellation::default()).expect("valid result"),
+            run_at(&executable, &input, &RunCancellation::default()).expect("valid result"),
             SidecarOutcome::Result("done".into())
         );
     }

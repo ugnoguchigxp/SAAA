@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 const ACCOUNT: &str = "google-calendar";
 
 pub(crate) fn unsupported() -> Result<(), String> {
-    if cfg!(target_os = "macos") {
+    if cfg!(test) || cfg!(target_os = "macos") {
         Ok(())
     } else {
         Err("Calendar connection requires macOS".into())

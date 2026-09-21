@@ -40,6 +40,7 @@
 - 隔離test binary: `rr_18_claims_fifo_only_after_the_prior_root_is_terminal`、`rr_18_claim_skips_a_conversation_with_active_work`: 各1 pass
 - 隔離test binary: `rr_05_commit_before_dispatch`、`rr_16_barrier_is_durable_before_resume`: 2 pass（queued step の `planned → running` 遷移を含む）
 - 隔離test binary: `role_routing::`: 53 pass
+- 隔離test binary: `rr_`: 67 pass（2026-09-21、RR-20 fake sidecarのtimeoutを10秒へ安定化後）
 - 隔離test binary: `rr_33_partial_file_not_ready_and_export_is_deterministic`: 1 pass
 - 隔離test binary: `rr_36_invalid_hash_falls_back_to_rules`、`rr_36_new_model_cold_start_and_score_are_safe`: 各1 pass
 - 隔離test binary: `rr_36_no_counterfactual_labels`: 1 pass

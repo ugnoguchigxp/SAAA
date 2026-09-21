@@ -249,6 +249,12 @@ export const ja = {
       calendarId: "カレンダーID",
       connected: "カレンダー接続済み",
       disconnected: "カレンダー未接続",
+      clientId: "Google OAuth クライアントID",
+      oauthHelp:
+        "PKCE のデスクトップ OAuth です。refresh token は Keychain に保存し、SQLite には書きません。SAAA_GOOGLE_CALENDAR_CLIENT_ID か、公開クライアントIDを入力します。",
+      connect: "Google Calendarに接続",
+      connecting: "Googleのサインインを待っています…",
+      disconnect: "切断",
       lastError: "直前のカレンダーエラー: {{code}}",
     },
     security: {

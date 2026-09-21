@@ -1,6 +1,7 @@
 //! Pure World value types, normalization, keys, validation, traversal, relevance.
 
 pub mod conditions_v2;
+pub mod frame_sources;
 pub mod identity;
 pub mod identity_v2;
 pub mod model;

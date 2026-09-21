@@ -301,12 +301,18 @@ pub(crate) fn delegated_command(
 ) -> Result<Command, String> {
     #[cfg(target_os = "macos")]
     {
-        let session_dir = session.parent().ok_or("delegated_profile_invalid")?;
+        let session_dir = std::fs::canonicalize(
+            session.parent().ok_or("delegated_profile_invalid")?,
+        )
+        .map_err(|_| "delegated_profile_invalid")?;
         // The authenticated SDK needs a writable state directory.  Keep it
         // explicit and project-local instead of granting write access to the
         // user's home directory or to the rest of the workspace.
+        let workspace = std::fs::canonicalize(workspace).map_err(|_| "delegated_profile_invalid")?;
         let sdk_state_dir = workspace.join(".saaa").join("delegated-sdk-state");
         std::fs::create_dir_all(&sdk_state_dir).map_err(|_| "delegated_state_unavailable")?;
+        let sdk_state_dir =
+            std::fs::canonicalize(&sdk_state_dir).map_err(|_| "delegated_state_unavailable")?;
         let home = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
             .filter(|path| path.is_absolute())
@@ -327,7 +333,7 @@ pub(crate) fn delegated_command(
         // Codex SDK writes are confined to `CODEX_HOME` below.
         let profile = format!(
             "(version 1) (deny default) (allow process*) (allow sysctl-read) (allow file-read*) (allow file-write* (subpath {}) (subpath {}) (subpath {}) (subpath {}) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
-            quote(session_dir),
+            quote(&session_dir),
             quote(&sdk_state_dir),
             quote(&agent_dir.join("settings.json.lock")),
             quote(&agent_dir.join("auth.json.lock")),

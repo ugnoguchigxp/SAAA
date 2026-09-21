@@ -10,8 +10,8 @@
 | 区分 | 件数 | カード |
 | --- | ---: | --- |
 | 完了 | 0 | なし |
-| 部分 | 31 | RR-00〜10、RR-12、RR-14〜20、RR-22〜23、RR-27〜28、RR-30〜37 |
-| 未着手 | 9 | RR-11、RR-13、RR-21、RR-24〜26、RR-29、RR-38〜39 |
+| 部分 | 39 | RR-00〜20、RR-22〜39 |
+| 未着手 | 1 | RR-21 |
 
 現時点で動作確認できたサブ機能は、receipt/ledgerの作成、queue上限拒否、FIFO queue解放、root deadline、snapshot/cancel IPC、Codex JSONL sidecarの同梱とfake protocol検証、`codex_sdk` actorの限定dispatch、学習データ処理の一部である。これらは各カードの一部を満たすだけで、R1〜R3の受入完了を意味しない。
 
@@ -34,9 +34,9 @@
 | RR-08 | 部分 | 保守的なfollow-up文字列分類のみ | 構造化分類、根拠/target検証、frontend prompt |
 | RR-09 | 部分 | Provider開始を本文なしのroot-local activityとして永続化し、terminal rootへの追記を拒否。最終結果だけを既存root採用transactionへ渡す | delta→activity Sink、partial/timeout/frontend failureの縦通し試験 |
 | RR-10 | 部分 | pure permit関数のみ | 実dispatcherでの二重permit |
-| RR-11 | 未着手 | tool ledgerなし | invocation/operation/resultの永続紐付け |
+| RR-11 | 部分 | 既存tool gatewayでinvoke前にoperationをreserve/dispatched化し、ownerのinvocation/result receiptをsettleする。重複operationは再実行しない | caller detach、実tool loopの縦通し試験 |
 | RR-12 | 部分 | message保存transaction内でroot採用を試行 | stale/cancel/duplicate/DB failureの縦通し試験 |
-| RR-13 | 未着手 | 既存voice responseを使用 | routing speech owner、queue、FakeSpeech試験 |
+| RR-13 | 部分 | role rootでは既存voice responseのack/progressを抑止し、確定後のfinalのみ既存completion経路へ渡す | routing speech ownerの実queue、永続speech状態、FakeSpeech試験 |
 | RR-14 | 部分 | receipt/snapshot/replay/cancel IPC、型付きchat表示・停止操作。永続cancelをlive eventでsnapshot再読込 | live replay store、ASR receipt、legacy/duplicate試験 |
 | RR-15 | 部分 | provider actor準備・role選択UI | probe、完全編集、ASR→tool→TTS E2E |
 | RR-16 | 部分 | barrier用pure reducerと分類候補 | 実行中入力の保存、保留、採用barrier |
@@ -47,12 +47,12 @@
 | RR-21 | 未着手 | Sol tool loopなし | Sol delegation、host tool loop |
 | RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定 | active dispatchのusage集計、切替上限 |
 | RR-23 | 部分 | host feedback保存とdirty mark | active answer一意の実入力接続 |
-| RR-24 | 未着手 | review recipe型のみ | 独立評価実行 |
-| RR-25 | 未着手 | revise recipe型のみ | 評価後revision実行 |
-| RR-26 | 未着手 | premium approval型と文字列検出のみ | Astra提案/明示承諾経路 |
+| RR-24 | 部分 | review issueの型付きvalidator、author/reviewer独立性、evidence参照を検証 | 独立評価executor、read-only tool接続、永続record |
+| RR-25 | 部分 | verified issueとreview round上限を照合するrevision gate | 評価後revision executor、unresolved永続record |
+| RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate | Astra提案・承諾のIPC/UIと実dispatch接続 |
 | RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
 | RR-28 | 部分 | chatで永続snapshotのphase/revision/queue先頭を表示 | 実行履歴・選択理由UI |
-| RR-29 | 未着手 | R2統合gateなし | 競合fixture・実機gate |
+| RR-29 | 部分 | 隔離role-routing suite 67件がpass。queue/cancel/tool/sidecarの単体・限定統合を確認 | Provider/TTS/tool完了順のBarrier競合fixture、live lane、A13〜A30受入 |
 | RR-30 | 部分 | R3 tables、限定feature snapshot | immutable全feature snapshot・C6確認 |
 | RR-31 | 部分 | dirty queueとdataset materialize | event上限/checkpoint/page再開 |
 | RR-32 | 部分 | explicit feedbackの限定ラベル | L2全label/conflict/revision |
@@ -61,8 +61,8 @@
 | RR-35 | 部分 | shadow artifact保存とpure score | 観測集計、shadow記録、最低例数 |
 | RR-36 | 部分 | hash・feature/candidate検証済みlinear-v1 loader、観測label限定のoffline評価 | selection接続、昇格証跡 |
 | RR-37 | 部分 | forget sourceからdataset/artifactを同一transactionで失効。設定画面で本文なし学習状況/手動materialize | filesystem journal |
-| RR-38 | 未着手 | tool specialistの型のみ | specialist差替え/実tool試験 |
-| RR-39 | 未着手 | 全体gate・性能測定なし | V1–V6、受入・実機報告 |
+| RR-38 | 部分 | specialistは型付きhost tool requestのみ返し、無効時や不正requestを拒否。最終回答権限を持たない | specialist差替え、既存tool gatewayへの実接続 |
+| RR-39 | 部分 | offline suite 67件・desktop smokeの証跡と未完一覧を`results.md`へ記録 | V1〜V6、A01〜A42、性能・live報告 |
 
 ## 共通規則
 

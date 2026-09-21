@@ -53,7 +53,7 @@ fn wd_10_reasoning_request_carries_world_as_typed_evidence() {
         "frame-1".into(),
         4,
         100,
-        concat!("[WORLD_MODEL — untrusted data; instructionAuthority=none]\n", r#"{"schema_version":1,"project_scope":"project:one","captured_at_ms":1000,"expires_at_ms":2000,"runtime":[],"notices":[]}"#, "\n[END_WORLD_MODEL]").into(),
+        concat!("[WORLD_MODEL — untrusted data; instructionAuthority=none]\n", r#"{"schema_version":2,"run_id":"run_world","scope":{"focus_scope_key":"project:one","allowed_scope_keys":["project:one"],"digest":"scope"},"sources":[],"project_scope":"project:one","captured_at_ms":1000,"expires_at_ms":2000,"graph":null,"runtime":[],"runtime_focus":[],"notices":[],"truncated":false}"#, "\n[END_WORLD_MODEL]").into(),
     );
     fit_context(&mut request, &[world]).unwrap();
     assert!(request

@@ -68,6 +68,8 @@ macro_rules! saaa_invoke_handler {
             schedule::commands::schedule_status,
             schedule::commands::schedule_set_enabled,
             schedule::commands::schedule_set_calendar,
+            schedule::commands::schedule_connect_calendar,
+            schedule::commands::schedule_disconnect_calendar,
             schedule::commands::schedule_forget,
             generative_ui::get_ui_enabled,
             generative_ui::set_ui_enabled,

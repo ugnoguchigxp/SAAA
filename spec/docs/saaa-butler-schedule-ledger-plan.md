@@ -1,6 +1,6 @@
 # Butler Schedule Ledger 実装計画 — 期限台帳、tick、Google Calendar 投影
 
-作成日: 2026-09-21。状態: **SL-A〜D の offline 経路は実装。live Google（SL-24）と OAuth 実接続は未了。全体ゲートは未通過。** 進捗の正本は §0。
+作成日: 2026-09-21。状態: **SL-A〜D と SL-11/22 の OAuth 経路は offline 実装。live Google（SL-24）は未了。全体ゲートは未通過。** 進捗の正本は §0。
 
 前提: 発火の権限は Goal / Delegation / Task に依存する。時刻の到来を権限にしない。保留は Situation TTS hold（`speech_holds_tts`）に依存する。Meeting 製品セッションは削除済みであり、本計画の Hold は scene=`MEETING` かつ IGNORE/OBSERVE の Situation ゲートだけを使う。
 
@@ -17,8 +17,8 @@
 | 完了（offline） | SL-A（SL-00〜10）、合格基準 A B D E F G R | `schedule_entries` が期限の正本。tick 45s と起動時 1 回。CAS は scheduled から firing、続けて fired または missed。`firing` 残留は `error:crashed`。`delegation_ref` 空は Ask。Situation hold（`speech_holds_tts`）は Hold。generation slot 中は Defer。`task_run` は `steward::dispatch_scheduled`。IPC `schedule_list` / `add` / `withdraw` / `status` / `set_enabled` / `set_calendar` / `forget`。Settings default OFF | スリープ復帰専用の即時 tick（`tokio` interval の Skip のみ）。`Drop` / `suppressed_*`。ShadowDecision を tick から直接呼ばない。`delegation_ref` の外部キー検査なし |
 | 完了（offline / fake HTTP） | SL-B/C（SL-12〜21 のコード）、合格基準 H I J K L M N O P Q S の試験 | outbox 投影、hash 一致で API 0、作成前は `privateExtendedProperty` 検索で回復、状態別タイトル、観測分類、reconcile、忘却、restricted は参照 ID のみ。1 tick 最大 8 呼出し | 実 Google。専用カレンダー削除後の全件再投影（Q）の live |
 | 完了（offline） | SL-D、合格基準 C | hold 中は実行せず `hold_until`。解除後に件数だけのダイジェスト 1 通。Meeting 製品セッションは使わない | ダイジェスト本文に件名列挙は出さない（件数のみ） |
-| 部分完了 | SL-11 認証 | PKCE S256、Keychain named secret、メモリ上の refresh。SQLite に token を書かない。非 macOS は unsupported | ブラウザ OAuth、loopback redirect、token 交換、refresh HTTP、設定 UI からの接続開始 |
-| 部分完了 | SL-22 設定 UI | 有効化、Calendar ID、接続状態、`lastError`、i18n ja/en。token を UI state に持たない | OAuth ボタンと実接続フロー |
+| 完了（offline） | SL-11 認証 | PKCE S256、127.0.0.1 loopback、token 交換、refresh HTTP、Keychain。SQLite に token を書かない。非 macOS は unsupported。公開 client id は `schedule_runtime.oauth_client_id` または `SAAA_GOOGLE_CALENDAR_CLIENT_ID` | 実 Google アカウントでの接続（SL-24）。Google Cloud 側の Desktop クライアント登録は運用作業 |
+| 完了（offline） | SL-22 設定 UI | 有効化、Calendar ID、OAuth client id、接続／切断、接続状態、`lastError`、i18n ja/en。token を UI state に持たない | 実ブラウザ同意の live |
 | 未完了 | SL-24 live | 未実施を `live-20260921.md` に記録 | 実 Google での作成・移動・削除・忘却・再接続。§9 の「live 未実施のまま SL-B/C を完了扱いしない」は維持 |
 | 未完了（本書の範囲外） | §10 | `origin=planner_candidate` の型だけ | Gmail センサー、Discord チャネル、Docs 一枚、Assist Planner の候補生成 |
 
@@ -26,8 +26,7 @@
 
 | ID | 実装 | 未実装 |
 | --- | --- | --- |
-| SL-00〜10, 12〜21, 23, 25 | コードと offline 試験、evidence | SL-04 は `due()` が `handled='asked'` を除外する。2026-09-21 の `cargo test --lib sl_` では `sl_04_due_uses_index_order` が 1 件失敗したため再確認が必要 |
-| SL-11, 22 | PKCE / Keychain / Settings の骨格 | OAuth 実接続 |
+| SL-00〜23, 25 | コードと offline 試験、evidence | SL-24 live は未実施 |
 | SL-24 | 未実施記録 | live そのもの |
 
 ### 検証ゲート（§9）
@@ -48,7 +47,7 @@
 
 - decide の Drop は使っていない。generation 中は Hold ではなく Defer。
 - `fire_result` の新記録は `started` / `deferred` / `no_delegation` / `error:*`。旧行の `suppressed_meeting` は読取時に `deferred` へ写す。
-- Calendar 有効化は macOS 以外で拒否するだけであり、接続そのものは未配線。
+- Calendar 接続は PKCE + loopback。refresh token は Keychain。公開 client id だけ SQLite に残す。
 - `delegation_ref` は steward の文字列参照のまま。外部キー検査は入れていない。
 - DDL は計画の 4 テーブルに加え `schedule_payloads` / `schedule_runtime` / `schedule_tombstones` / `schedule_notices` がある。
 - IPC は `src-tauri/src/ipc_contract.rs` と `src/lib/generated/schedule.ts`（計画の `ipc_contract/` ディレクトリではない）。
@@ -260,4 +259,4 @@ tick の追加負荷は 1,000 entry・due 32 件で p95 <= 15 ms（DB 読み書�
 
 証拠は `spec/evidence/schedule-ledger/progress.md`、`results.md`、`live-20260921.md`。本文・予定名・メールアドレスをログへ残していない。
 
-計画上の完了条件は 26 カード（SL-00〜25）と A〜S、全体ゲート、live 確認 1 回、default OFF の維持。2026-09-21 時点では SL-00〜23 と SL-25 の offline 記録まで。SL-24 と実 OAuth は未了のため、Calendar 面は製品完了にしない。Gmail / Discord / Docs / Planner は未実装のまま引き渡す。
+計画上の完了条件は 26 カード（SL-00〜25）と A〜S、全体ゲート、live 確認 1 回、default OFF の維持。2026-09-21 時点では SL-00〜23 と SL-25 の offline 記録まで（SL-11/22 の OAuth 配線を含む）。SL-24 live は未了のため、Calendar 面は製品完了にしない。Gmail / Discord / Docs / Planner は未実装のまま引き渡す。

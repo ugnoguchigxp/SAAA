@@ -7,12 +7,13 @@ pub(crate) struct RuntimeSettings {
     pub(crate) calendar_enabled: bool,
     pub(crate) calendar_id: Option<String>,
     pub(crate) last_error: Option<String>,
+    pub(crate) oauth_client_id: Option<String>,
 }
 
 pub(crate) fn load(connection: &Connection) -> Result<RuntimeSettings, String> {
     connection
         .query_row(
-            "SELECT enabled, calendar_enabled, calendar_id, last_error FROM schedule_runtime WHERE id=1",
+            "SELECT enabled, calendar_enabled, calendar_id, last_error, oauth_client_id FROM schedule_runtime WHERE id=1",
             [],
             |row| {
                 Ok(RuntimeSettings {
@@ -20,6 +21,7 @@ pub(crate) fn load(connection: &Connection) -> Result<RuntimeSettings, String> {
                     calendar_enabled: row.get::<_, i64>(1)? == 1,
                     calendar_id: row.get(2)?,
                     last_error: row.get(3)?,
+                    oauth_client_id: row.get(4)?,
                 })
             },
         )
@@ -45,6 +47,16 @@ pub(crate) fn set_calendar(
         .execute(
             "UPDATE schedule_runtime SET calendar_enabled=?1, calendar_id=?2 WHERE id=1",
             params![i64::from(enabled), calendar_id],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+pub(crate) fn set_oauth_client(connection: &Connection, id: Option<&str>) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE schedule_runtime SET oauth_client_id=?1 WHERE id=1",
+            [id],
         )
         .map_err(database_error)?;
     Ok(())

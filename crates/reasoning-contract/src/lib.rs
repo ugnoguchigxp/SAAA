@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod world;
 
-pub const VERSION: &str = "reasoning-answer-v2";
+pub const VERSION: &str = "reasoning-answer-v3";
 pub const PROTOCOL: &str = "2025-06-18";
 pub const TOOL: &str = "reasoning.answer";
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;

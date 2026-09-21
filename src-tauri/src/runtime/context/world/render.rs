@@ -70,7 +70,7 @@ pub(crate) fn is_empty_frame(frame: &WorldFrame) -> bool {
         .as_ref()
         .map(|graph| graph.nodes.is_empty())
         .unwrap_or(true);
-    graph_empty && frame.runtime.is_empty()
+    graph_empty && frame.runtime.is_empty() && frame.sources.is_empty()
 }
 
 #[cfg(test)]

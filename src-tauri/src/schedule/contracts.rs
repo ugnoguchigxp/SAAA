@@ -27,6 +27,7 @@ pub struct ScheduleStatus {
     pub calendar_connected: bool,
     pub last_error: Option<String>,
     pub platform_supported: bool,
+    pub oauth_client_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]

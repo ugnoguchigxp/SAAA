@@ -43,7 +43,7 @@ pub(crate) fn flush(state: &AppState, now: i64) -> Result<usize, String> {
     if !settings.calendar_enabled {
         return Ok(0);
     }
-    let Some(token) = state.schedule.access() else {
+    let Some(token) = super::oauth::ensure_access(state) else {
         return Ok(0);
     };
     let base = state.schedule.http_base();

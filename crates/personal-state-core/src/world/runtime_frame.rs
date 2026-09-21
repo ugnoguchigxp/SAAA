@@ -6,11 +6,12 @@
 //! persistence format and its runtime views are never written to the World
 //! ledger. Current state is re-read by the adapter on every request (R6/R7).
 
+use super::frame_sources::{canonicalize_scope, WorldScope, WorldSourceGroup};
 use super::slice_v2::WorldSliceV2;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const WORLD_FRAME_SCHEMA_VERSION: i64 = 1;
+pub const WORLD_FRAME_SCHEMA_VERSION: i64 = 2;
 pub const MAX_RUNTIME_REFS: usize = 8;
 pub const MAX_INPUT_RUNTIME_REFS: usize = 1_000;
 pub const MAX_FRAME_BYTES: usize = 8_192;
@@ -150,6 +151,11 @@ impl FrameNotice {
 pub struct WorldFrame {
     pub schema_version: i64,
     pub run_id: String,
+    /// v2 source authorization. `project_scope` remains only as a migration
+    /// aid for existing renderers; consumers must use this field.
+    pub scope: WorldScope,
+    #[serde(default)]
+    pub sources: Vec<WorldSourceGroup>,
     pub project_scope: String,
     pub captured_at_ms: i64,
     pub expires_at_ms: i64,
@@ -161,16 +167,24 @@ pub struct WorldFrame {
 }
 
 impl WorldFrame {
-    pub fn empty(
+    /// Build a v2 frame for either a Project-backed or a user-only turn.  The
+    /// legacy `project_scope` mirror is deliberately empty for a user-only
+    /// turn, so old project-only adapters cannot accidentally treat it as an
+    /// authorized Project.
+    pub fn for_scope(
         run_id: &str,
-        project_scope: &str,
+        mut scope: WorldScope,
         captured_at_ms: i64,
         expires_at_ms: i64,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, FrameError> {
+        canonicalize_scope(&mut scope).map_err(|_| FrameError::InvalidInput)?;
+        let project_scope = scope.focus_scope_key.clone().unwrap_or_default();
+        Ok(Self {
             schema_version: WORLD_FRAME_SCHEMA_VERSION,
             run_id: run_id.to_string(),
-            project_scope: project_scope.to_string(),
+            scope,
+            sources: Vec::new(),
+            project_scope,
             captured_at_ms,
             expires_at_ms,
             graph: None,
@@ -178,13 +192,48 @@ impl WorldFrame {
             runtime_focus: Vec::new(),
             notices: Vec::new(),
             truncated: false,
-        }
+        })
+    }
+
+    pub fn empty(
+        run_id: &str,
+        project_scope: &str,
+        captured_at_ms: i64,
+        expires_at_ms: i64,
+    ) -> Self {
+        let mut scope = WorldScope {
+            focus_scope_key: Some(project_scope.to_string()),
+            allowed_scope_keys: vec![project_scope.to_string()],
+            digest: hex_sha256(project_scope.as_bytes()),
+        };
+        // A locally supplied constant is valid by construction.
+        canonicalize_scope(&mut scope).expect("non-empty project scope");
+        Self::for_scope(run_id, scope, captured_at_ms, expires_at_ms)
+            .expect("non-empty project scope")
     }
 
     pub fn encoded_len(&self) -> Result<usize, FrameError> {
         serde_json::to_vec(self)
             .map(|bytes| bytes.len())
             .map_err(|_| FrameError::InvalidInput)
+    }
+
+    pub fn validate_v2(&self) -> Result<(), FrameError> {
+        if self.schema_version != WORLD_FRAME_SCHEMA_VERSION {
+            return Err(FrameError::InvalidInput);
+        }
+        let mut scope = self.scope.clone();
+        canonicalize_scope(&mut scope).map_err(|_| FrameError::InvalidInput)?;
+        if scope != self.scope {
+            return Err(FrameError::InvalidInput);
+        }
+        for group in &self.sources {
+            group.validate().map_err(|_| FrameError::InvalidInput)?;
+        }
+        if self.encoded_len()? > MAX_FRAME_BYTES {
+            return Err(FrameError::Limit);
+        }
+        Ok(())
     }
 }
 
@@ -305,11 +354,18 @@ pub fn effective_max_bytes(max_bytes: usize) -> usize {
 /// Digest of everything the frame means except observation time and the
 /// graph's own `as_of_ms`. Field order is fixed by the struct definitions.
 pub fn content_digest(frame: &WorldFrame) -> Result<String, FrameError> {
+    frame.validate_v2()?;
     let mut canonical = frame.clone();
     canonical.captured_at_ms = 0;
     canonical.expires_at_ms = 0;
     if let Some(graph) = canonical.graph.as_mut() {
         graph.as_of_ms = 0;
+    }
+    for group in &mut canonical.sources {
+        for source in &mut group.entries {
+            source.observed_at_ms = 0;
+            source.as_of_ms = 0;
+        }
     }
     let bytes = serde_json::to_vec(&canonical).map_err(|_| FrameError::InvalidInput)?;
     Ok(hex_sha256(&bytes))
@@ -656,6 +712,41 @@ mod tests {
         let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         value["unexpected"] = serde_json::json!(true);
         assert!(serde_json::from_value::<WorldFrame>(value).is_err());
+    }
+
+    #[test]
+    fn wr_t01_v1_fixture_cannot_be_silently_read_as_v2() {
+        let v1 = serde_json::json!({
+            "schema_version": 1,
+            "run_id": "run1",
+            "project_scope": "project:p",
+            "captured_at_ms": 1,
+            "expires_at_ms": 2,
+            "graph": null,
+            "runtime": [],
+            "runtime_focus": [],
+            "notices": [],
+            "truncated": false
+        });
+        assert!(serde_json::from_value::<WorldFrame>(v1).is_err());
+    }
+
+    #[test]
+    fn wr_t01_user_scope_serializes_without_a_project() {
+        let frame = WorldFrame::for_scope(
+            "run1",
+            WorldScope {
+                focus_scope_key: None,
+                allowed_scope_keys: vec!["user:primary".into()],
+                digest: "scope-digest".into(),
+            },
+            1,
+            2,
+        )
+        .unwrap();
+        assert_eq!(frame.project_scope, "");
+        assert_eq!(frame.scope.focus_scope_key, None);
+        assert!(frame.validate_v2().is_ok());
     }
 
     #[test]

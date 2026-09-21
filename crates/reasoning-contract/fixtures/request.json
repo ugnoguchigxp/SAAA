@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "reasoning-answer-v2",
+  "schemaVersion": "reasoning-answer-v3",
   "conversationId": "conversation_fixture",
   "turnId": "run_fixture",
   "requestId": "request_fixture",

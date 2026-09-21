@@ -1,6 +1,7 @@
 pub(crate) mod auth;
 pub(crate) mod client;
 pub(crate) mod encode;
+pub(crate) mod oauth;
 pub(crate) mod observe;
 pub(crate) mod projection;
 pub(crate) mod reconcile;

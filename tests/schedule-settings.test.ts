@@ -11,9 +11,13 @@ describe("schedule settings", () => {
     const ui = source("src/features/settings/ScheduleSection.tsx");
     expect(ui).toContain("enabled: false");
     expect(ui).toContain("lastError");
+    expect(ui).toContain("connectScheduleCalendar");
+    expect(ui).toContain("disconnectScheduleCalendar");
     expect(ui).not.toContain("refresh_token");
     expect(ui).not.toContain("access_token");
     const api = source("src/lib/scheduleApi.ts");
     expect(api).toContain("schedule_status");
+    expect(api).toContain("schedule_connect_calendar");
+    expect(api).toContain("schedule_disconnect_calendar");
   });
 });

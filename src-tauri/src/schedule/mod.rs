@@ -20,6 +20,9 @@ pub(crate) fn hydrate(state: &crate::AppState) {
             .schedule
             .set_calendar_ready(s.calendar_enabled && s.calendar_id.is_some());
     }
+    if let Ok(Some(token)) = calendar::auth::load_refresh(&state.schedule) {
+        state.schedule.set_refresh(&token);
+    }
 }
 #[cfg(test)]
 mod tests;

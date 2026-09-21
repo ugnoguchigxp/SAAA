@@ -9,6 +9,7 @@ const statusSchema = z
     calendarConnected: z.boolean(),
     lastError: z.string().nullable(),
     platformSupported: z.boolean(),
+    oauthClientId: z.string().nullable(),
   })
   .strict();
 
@@ -27,4 +28,14 @@ export async function setScheduleCalendar(
   calendarId: string | null,
 ): Promise<ScheduleStatus> {
   return statusSchema.parse(await invoke("schedule_set_calendar", { enabled, calendarId }));
+}
+
+export async function connectScheduleCalendar(clientId?: string | null): Promise<ScheduleStatus> {
+  return statusSchema.parse(
+    await invoke("schedule_connect_calendar", { clientId: clientId?.trim() || null }),
+  );
+}
+
+export async function disconnectScheduleCalendar(): Promise<ScheduleStatus> {
+  return statusSchema.parse(await invoke("schedule_disconnect_calendar"));
 }

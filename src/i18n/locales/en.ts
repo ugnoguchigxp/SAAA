@@ -252,6 +252,12 @@ export const en = {
       calendarId: "Calendar id",
       connected: "Calendar connected",
       disconnected: "Calendar not connected",
+      clientId: "Google OAuth client id",
+      oauthHelp:
+        "Desktop OAuth with PKCE. The refresh token is stored in Keychain, not SQLite. Set SAAA_GOOGLE_CALENDAR_CLIENT_ID or paste the public client id here.",
+      connect: "Connect Google Calendar",
+      connecting: "Waiting for Google sign-in…",
+      disconnect: "Disconnect",
       lastError: "Last calendar error: {{code}}",
     },
     security: {

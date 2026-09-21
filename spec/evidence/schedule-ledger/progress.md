@@ -17,9 +17,9 @@
 | SL-01〜04 | offline合格（型・DDL・CAS・due） |
 | SL-05〜09 | offline合格（A/B/C/D/E/F/G と slot 繰り越し） |
 | SL-10 | IPC 追加。zod は frontend API schema |
-| SL-11〜18 | fake HTTP + 純関数。live 未実施 |
+| SL-11〜18 | fake HTTP + 純関数。SL-11 は loopback と token 交換まで。live 未実施 |
 | SL-19〜21 | forget / 分類 / OFF |
-| SL-22 | Settings `ScheduleSection`。default OFF |
+| SL-22 | Settings `ScheduleSection`。default OFF。接続・切断 |
 | SL-23 | `schedule::` 32 passed |
 | SL-24 | **未実施**（実 Google アカウント未接続） |
 | SL-25 | 本記録 |

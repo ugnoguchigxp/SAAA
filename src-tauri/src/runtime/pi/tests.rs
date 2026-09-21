@@ -132,7 +132,8 @@ fn delegated_sdk_profile_completes_a_read_only_prompt() {
         ),
         ..Default::default()
     };
-    let session = workspace.path().join("session.jsonl");
+    let session_directory = tempfile::tempdir().unwrap();
+    let session = session_directory.path().join("session.jsonl");
     let mut process = process::Process::open(&settings, workspace.path(), &session).unwrap();
     process::ready(&mut process, &settings, &session).unwrap();
     let prompt = process
@@ -144,12 +145,22 @@ fn delegated_sdk_profile_completes_a_read_only_prompt() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
     let mut accepted = false;
     let mut settled = false;
+    let mut terminal = serde_json::Value::Null;
+    let mut events = Vec::new();
     while std::time::Instant::now() < deadline && !settled {
         if let Some(event) = process.next(std::time::Duration::from_millis(100)).unwrap() {
+            events.push(event.clone());
             accepted |=
                 event["type"] == "response" && event["id"] == prompt && event["success"] == true;
-            settled |= event["type"] == "agent_settled";
+            if event["type"] == "agent_settled" {
+                settled = true;
+                terminal = event;
+            }
         }
+    }
+    let session_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !session.is_file() && std::time::Instant::now() < session_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let closed = process.close();
     assert!(
@@ -157,6 +168,16 @@ fn delegated_sdk_profile_completes_a_read_only_prompt() {
         "SDK prompt was not accepted and settled"
     );
     assert!(closed.is_ok(), "{closed:?}");
+    assert!(
+        session.is_file(),
+        "terminal event: {terminal}; events: {events:?}"
+    );
+    let result = session_reader::read(&session, workspace.path(), None).unwrap();
+    assert!(
+        result.summary.contains("read-only fixture"),
+        "{}",
+        result.summary
+    );
     assert_eq!(
         std::fs::read_to_string(workspace.path().join("README.md")).unwrap(),
         "read-only fixture\n"

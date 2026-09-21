@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS schedule_runtime (
   calendar_id TEXT,
   last_error TEXT,
   last_tick_at INTEGER,
-  notify_codes TEXT NOT NULL DEFAULT '{}'
+  notify_codes TEXT NOT NULL DEFAULT '{}',
+  oauth_client_id TEXT
 );
 INSERT OR IGNORE INTO schedule_runtime(id, enabled, calendar_enabled) VALUES(1, 0, 0);
 CREATE TABLE IF NOT EXISTS schedule_tombstones (

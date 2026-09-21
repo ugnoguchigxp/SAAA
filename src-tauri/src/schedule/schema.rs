@@ -1,7 +1,12 @@
 use rusqlite::Connection;
 
 pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(include_str!("schema.sql"))
+    connection.execute_batch(include_str!("schema.sql"))?;
+    let _ = connection.execute(
+        "ALTER TABLE schedule_runtime ADD COLUMN oauth_client_id TEXT",
+        [],
+    );
+    Ok(())
 }
 
 #[cfg(test)]

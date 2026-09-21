@@ -115,6 +115,7 @@ pub(crate) fn schedule_status(state: tauri::State<'_, AppState>) -> Result<Sched
             || state.schedule.access().is_some(),
         last_error: settings.last_error,
         platform_supported: cfg!(target_os = "macos"),
+        oauth_client_id: settings.oauth_client_id,
     })
 }
 
@@ -156,6 +157,35 @@ pub(crate) fn schedule_set_calendar(
     if !enabled {
         calendar::auth::clear(&state.schedule)?;
     }
+    schedule_status(state)
+}
+
+#[tauri::command]
+pub(crate) async fn schedule_connect_calendar(
+    state: tauri::State<'_, AppState>,
+    client_id: Option<String>,
+) -> Result<ScheduleStatus, String> {
+    match calendar::oauth::connect(&state, client_id).await {
+        Ok(()) => {
+            let _ = state
+                .sqlite_writer
+                .write(|connection| runtime::set_error(connection, None));
+        }
+        Err(error) => {
+            let _ = state
+                .sqlite_writer
+                .write(|connection| runtime::set_error(connection, Some("oauth")));
+            return Err(error);
+        }
+    }
+    schedule_status(state)
+}
+
+#[tauri::command]
+pub(crate) fn schedule_disconnect_calendar(
+    state: tauri::State<'_, AppState>,
+) -> Result<ScheduleStatus, String> {
+    calendar::auth::clear(&state.schedule)?;
     schedule_status(state)
 }
 

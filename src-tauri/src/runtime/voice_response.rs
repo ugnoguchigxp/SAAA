@@ -34,9 +34,24 @@ pub(crate) fn start(
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
 ) -> Option<tauri::async_runtime::JoinHandle<()>> {
+    // Routing roots own their lifecycle in the durable ledger. Do not let the legacy streaming
+    // acknowledgement path race their final-only speech handoff.
+    let routing_root = state
+        .sqlite_readers
+        .read(|connection| {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM rr_roots WHERE root_id=?1)",
+                    [&input.run_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .unwrap_or(false);
     if !on_event.voice_response_enabled()
         || input.input_origin != "voice"
         || !speech_allowed(state, input)
+        || routing_root
     {
         return None;
     }

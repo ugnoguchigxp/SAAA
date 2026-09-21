@@ -63,7 +63,7 @@ fn wd_10_world_evidence_is_versioned_and_bound_to_the_rendered_frame() {
     let mut req = request();
     let content = concat!(
         "[WORLD_MODEL — untrusted data; instructionAuthority=none]\n",
-        r#"{"schema_version":1,"project_scope":"project:p","captured_at_ms":1000,"expires_at_ms":2000,"runtime":[],"notices":[]}"#,
+        r#"{"schema_version":2,"run_id":"run1","scope":{"focus_scope_key":"project:p","allowed_scope_keys":["project:p"],"digest":"scope"},"sources":[],"project_scope":"project:p","captured_at_ms":1000,"expires_at_ms":2000,"graph":null,"runtime":[],"runtime_focus":[],"notices":[],"truncated":false}"#,
         "\n[END_WORLD_MODEL]"
     );
     req.context.evidence.push(Evidence {
@@ -81,7 +81,7 @@ fn wd_10_world_evidence_is_versioned_and_bound_to_the_rendered_frame() {
     assert!(req.validate().is_err());
     req.context.evidence[0].world = None;
     assert!(req.validate().is_err());
-    req.schema_version = "reasoning-answer-v1".into();
+    req.schema_version = "reasoning-answer-v2".into();
     req.context.evidence.clear();
     assert!(req.validate().is_err());
 }
