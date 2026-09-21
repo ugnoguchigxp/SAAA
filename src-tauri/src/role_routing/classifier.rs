@@ -84,6 +84,23 @@ pub(crate) fn timeout() -> Classification {
     }
 }
 
+/// A classifier runs against a specific input generation and root revision. Its reply may only be
+/// applied while both still match, so a late result cannot act on a newer turn or revision.
+pub(crate) fn bind_generation(
+    result_generation: u32,
+    current_generation: u32,
+    result_revision: u32,
+    current_revision: u32,
+) -> Result<(), String> {
+    if result_generation != current_generation {
+        return Err("Role classification is from a superseded input generation".into());
+    }
+    if result_revision != current_revision {
+        return Err("Role classification is from a superseded revision".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +131,12 @@ mod tests {
     fn rr_08_timeout_unclear() {
         assert_eq!(timeout().kind, ClassificationKind::Unclear);
         assert!(timeout().target_root_id.is_none());
+    }
+
+    #[test]
+    fn rr_08_late_classification_is_dropped() {
+        assert!(bind_generation(4, 4, 2, 2).is_ok());
+        assert!(bind_generation(3, 4, 2, 2).is_err());
+        assert!(bind_generation(4, 4, 1, 2).is_err());
     }
 }

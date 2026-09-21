@@ -1,12 +1,12 @@
-use super::{
-    admission, authority, contracts::*, intake, repository as repo, verifier, views,
-};
+use super::{admission, authority, contracts::*, intake, repository as repo, verifier, views};
 use crate::persistence::schema::initialize_database;
 use crate::runtime::turns::prepare_runtime_run;
 use crate::test_support::app_state;
 use crate::{AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
 use rusqlite::Connection;
 use std::path::Path;
+use std::sync::mpsc;
+use std::time::Duration;
 
 fn db() -> Connection {
     let connection = Connection::open_in_memory().expect("db");
@@ -96,11 +96,15 @@ fn dw_r02_migration_preserves_all_lineage_and_constraints() {
     {
         let connection = Connection::open(&path).expect("open");
         initialize_database(&connection).expect("init");
-        connection.execute_batch("PRAGMA foreign_key_check;").unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_key_check;")
+            .unwrap();
     }
     let connection = Connection::open(&path).expect("reopen");
     initialize_database(&connection).expect("again");
-    connection.execute_batch("PRAGMA foreign_key_check;").unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_key_check;")
+        .unwrap();
     let tables: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('steward_goal_progress','steward_recipes','steward_proposals')",
@@ -146,7 +150,14 @@ fn dw_r03_existing_grant_needs_no_repeat_confirmation() {
     let source = source_of(&state, "grant");
     let result = state
         .sqlite_writer
-        .transact(|c| intake::classify(c, PRIMARY_CONVERSATION_ID, &source, &proposal(&source, "続き")))
+        .transact(|c| {
+            intake::classify(
+                c,
+                PRIMARY_CONVERSATION_ID,
+                &source,
+                &proposal(&source, "続き"),
+            )
+        })
         .unwrap();
     assert_eq!(result.reason, "existing_grant");
     assert_eq!(
@@ -174,9 +185,7 @@ fn dw_r03_stale_confirmation_is_rejected() {
     let proposal_id = staged["proposalId"].as_str().unwrap().to_string();
     let err = state
         .sqlite_writer
-        .transact(|c| {
-            intake::confirm(c, PRIMARY_CONVERSATION_ID, &proposal_id, 99, "nope", true)
-        })
+        .transact(|c| intake::confirm(c, PRIMARY_CONVERSATION_ID, &proposal_id, 99, "nope", true))
         .unwrap_err();
     assert_eq!(err, "stale_confirmation");
 }
@@ -190,7 +199,12 @@ fn dw_r04_proposal_creates_plan_task_reservation_and_intent_atomically() {
     state
         .sqlite_writer
         .transact(|c| {
-            intake::classify(c, PRIMARY_CONVERSATION_ID, &source, &proposal(&source, "実行"))?;
+            intake::classify(
+                c,
+                PRIMARY_CONVERSATION_ID,
+                &source,
+                &proposal(&source, "実行"),
+            )?;
             Ok(())
         })
         .unwrap();
@@ -255,9 +269,9 @@ fn dw_r04_admission_fault_rolls_back_every_row() {
     prepare_runtime_run(&state, &turn("fault", "任せる")).unwrap();
     let source = source_of(&state, "fault");
     crate::steward::faults::set(Some("admission_after_proposal"));
-    let error = state.sqlite_writer.transact(|c| {
-        repo::propose(c, PRIMARY_CONVERSATION_ID, &proposal(&source, "故障"))
-    });
+    let error = state
+        .sqlite_writer
+        .transact(|c| repo::propose(c, PRIMARY_CONVERSATION_ID, &proposal(&source, "故障")));
     crate::steward::faults::set(None);
     assert!(error.unwrap_err().contains("injected_fault"));
     assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_proposals"), 0);
@@ -278,8 +292,12 @@ fn dw_r05_withdraw_either_goal_preserves_the_other() {
         .read(|c| views::list_goals(c, PRIMARY_CONVERSATION_ID))
         .unwrap();
     let goals = listed["goals"].as_array().unwrap();
-    assert!(goals.iter().any(|goal| goal["goalId"] == b && goal["authorityStatus"] == "active"));
-    assert!(goals.iter().any(|goal| goal["goalId"] == a && goal["authorityStatus"] == "withdrawn"));
+    assert!(goals
+        .iter()
+        .any(|goal| goal["goalId"] == b && goal["authorityStatus"] == "active"));
+    assert!(goals
+        .iter()
+        .any(|goal| goal["goalId"] == a && goal["authorityStatus"] == "withdrawn"));
 }
 
 #[test]
@@ -305,6 +323,37 @@ fn dw_r05_late_result_and_status_refresh_cannot_revive_work() {
 }
 
 #[test]
+fn dw_r06_profile_gate_reads_writer_snapshot_without_reentering_readers() {
+    let state = app_state(db());
+    state
+        .sqlite_writer
+        .write(|connection| {
+            let mut settings = crate::coding::repository::settings(connection)?;
+            settings.enabled = true;
+            settings.profile = "delegated-read-test-macos-v1".into();
+            connection
+                .execute(
+                    "UPDATE coding_settings SET value_json=?1 WHERE id=1",
+                    [serde_json::to_string(&settings).expect("settings")],
+                )
+                .map_err(crate::database_error)?;
+            Ok(())
+        })
+        .unwrap();
+    let writer = state.sqlite_writer.clone();
+    let (done, received) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = writer.transact(repo::delegated_profile_available);
+        let _ = done.send(result);
+    });
+    let available = received
+        .recv_timeout(Duration::from_secs(2))
+        .expect("profile check inside write tx must not wait on the writer mutex")
+        .unwrap();
+    assert!(available);
+}
+
+#[test]
 fn dw_r06_revoke_before_dispatch_creates_no_job() {
     let state = app_state(db());
     let goal = register_named(&state, "rev");
@@ -316,7 +365,8 @@ fn dw_r06_revoke_before_dispatch_creates_no_job() {
         .write(|c| repo::withdraw_goal(c, PRIMARY_CONVERSATION_ID, &goal))
         .unwrap();
     crate::steward::faults::set(None);
-    let _ = crate::steward::dispatch::start_queued_for_conversation(&state, PRIMARY_CONVERSATION_ID);
+    let _ =
+        crate::steward::dispatch::start_queued_for_conversation(&state, PRIMARY_CONVERSATION_ID);
     assert_eq!(count(&state, "SELECT COUNT(*) FROM coding_jobs"), 0);
 }
 
@@ -342,11 +392,9 @@ fn dw_r07_unknown_never_resends() {
 fn dw_r09_read_boundary_rejects_write_network_shell_and_escape() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("ok.txt"), "ok").unwrap();
-    let inside = crate::runtime::pi::delegated_profile::assert_read_path(
-        root.path(),
-        Path::new("ok.txt"),
-    )
-    .unwrap();
+    let inside =
+        crate::runtime::pi::delegated_profile::assert_read_path(root.path(), Path::new("ok.txt"))
+            .unwrap();
     assert!(inside.ends_with("ok.txt"));
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("secret"), "x").unwrap();
@@ -373,8 +421,8 @@ fn dw_r10_registered_recipe_produces_pass_and_fail_evidence() {
     let registered = crate::steward::recipes::register(&connection, &pass).unwrap();
     let recipe_id = registered["recipeId"].as_str().unwrap();
     let root = tempfile::tempdir().unwrap();
-    let result = crate::runtime::pi::recipe_runner::run(&connection, recipe_id, None, root.path())
-        .unwrap();
+    let result =
+        crate::runtime::pi::recipe_runner::run(&connection, recipe_id, None, root.path()).unwrap();
     assert_eq!(result["exitCode"], 0);
     let fail = crate::steward::recipes::RecipeInput {
         name: "false".into(),
@@ -403,7 +451,11 @@ fn dw_r10_model_cannot_change_recipe_argv_or_output_scope() {
         name: "bad".into(),
         target: "unit".into(),
         cwd: ".".into(),
-        argv: vec!["/bin/sh".into(), "-c".into(), "curl http://example.com".into()],
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "curl http://example.com".into(),
+        ],
         env_allow: vec![],
         output_dir: "/tmp".into(),
         timeout_ms: 1_000,
@@ -555,6 +607,33 @@ fn dw_r22_full_flow_without_ui_or_new_turn() {
     assert_eq!(count(&state, "SELECT COUNT(*) FROM steward_goals"), 1);
 }
 
+#[test]
+fn dw_r06_schedule_dispatch_shares_commit_path_and_gates() {
+    let state = app_state(db());
+    register(&state);
+    let error = crate::steward::dispatch_scheduled(&state, "missing", "missing").unwrap_err();
+    assert_eq!(error, "dispatch_gated");
+    assert_eq!(count(&state, "SELECT COUNT(*) FROM coding_jobs"), 0);
+}
+
+#[test]
+fn dw_r12_tests_pass_cannot_be_approved_without_evidence() {
+    assert_eq!(
+        crate::steward::commands::next_resolve_state("approve", "awaiting_user", "tests_pass")
+            .unwrap_err(),
+        "evidence_required"
+    );
+    assert_eq!(
+        crate::steward::commands::next_resolve_state(
+            "approve",
+            "awaiting_user",
+            "user_confirmation_required"
+        )
+        .unwrap(),
+        "done"
+    );
+}
+
 fn register(state: &AppState) {
     register_named(state, "goal");
 }
@@ -589,7 +668,10 @@ fn register_named(state: &AppState, summary: &str) -> String {
 fn count(state: &AppState, sql: &str) -> i64 {
     state
         .sqlite_readers
-        .read(|c| c.query_row(sql, [], |row| row.get(0)).map_err(crate::database_error))
+        .read(|c| {
+            c.query_row(sql, [], |row| row.get(0))
+                .map_err(crate::database_error)
+        })
         .unwrap()
 }
 

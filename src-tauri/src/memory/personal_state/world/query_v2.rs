@@ -15,16 +15,15 @@ use crate::database_error;
 use crate::memory::personal_state::store;
 use rusqlite::{named_params, Connection};
 use saaa_personal_state_core::world::conditions_v2::{evaluate_availability, evaluate_conditions};
-use saaa_personal_state_core::world::model_v2::{EntityKindV2, RelationTypeV2};
+use saaa_personal_state_core::world::model_v2::{EffectDirection, EntityKindV2, RelationTypeV2};
 use saaa_personal_state_core::world::relevance_v2::{
-    build_gap_candidates, correlation_ids, dependencies, focus_rank_v2, order_focus,
-    temporary_attention_focus, FocusCandidate, GapInputV2, GapRelationV2, OutcomeConflictV2,
-    UnknownAvailabilityV2,
+    build_gap_candidates, dependencies, focus_rank_v2, order_focus, temporary_attention_focus,
+    FocusCandidate, GapInputV2, GapRelationV2, OutcomeConflictV2, UnknownAvailabilityV2,
 };
 use saaa_personal_state_core::world::slice_v2::*;
 use saaa_personal_state_core::world::traversal_v2::{
-    effect_summary, evaluate_path, maximal_only_v2, traverse_v2, CausalDirection, LimitsV2,
-    TraversalModeV2, WorldEdgeV2, WorldPathV2,
+    evaluate_path, maximal_only_v2, traverse_v2, CausalDirection, LimitsV2, TraversalModeV2,
+    WorldEdgeV2, WorldPathV2,
 };
 use saaa_personal_state_core::world::versioned::{decode_versioned, WorldView};
 use saaa_personal_state_core::{AccessRequest, Classification, Ledger, Purpose};
@@ -458,20 +457,25 @@ fn load_focus(
     permitted: &BTreeSet<String>,
     limit: usize,
 ) -> Result<Vec<FocusRowV2>, String> {
-    let fetch = limit.max(1) + 1;
+    let permitted_json =
+        serde_json::to_string(permitted).map_err(|_| "world-projection-corrupt")?;
     let mut statement = c
         .prepare(
             "SELECT f.assertion_id,f.entity_id,f.reason,f.objective_assertion_id
                FROM personal_world_focus f
               WHERE f.project_scope=:project AND f.status='active'
                 AND f.valid_from<=:now AND (f.valid_until IS NULL OR :now<f.valid_until)
-              ORDER BY CASE f.reason WHEN 'current_work' THEN 0 ELSE 1 END, f.entity_id
-              LIMIT :limit",
+                AND f.assertion_id IN (SELECT value FROM json_each(:permitted))
+              ORDER BY CASE f.reason WHEN 'current_work' THEN 0 ELSE 1 END, f.entity_id",
         )
         .map_err(database_error)?;
     let rows = statement
         .query_map(
-            named_params! { ":project": project_scope, ":now": now, ":limit": fetch as i64 },
+            named_params! {
+                ":project": project_scope,
+                ":now": now,
+                ":permitted": permitted_json,
+            },
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -485,12 +489,7 @@ fn load_focus(
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
     let mut focus = Vec::new();
-    for (assertion_id, entity_id, reason, objective_assertion_id) in
-        rows.into_iter().take(limit.max(1))
-    {
-        if !permitted.contains(&assertion_id) {
-            continue;
-        }
+    for (assertion_id, entity_id, reason, objective_assertion_id) in rows {
         if reason == "current_work" {
             match objective_assertion_id.as_deref() {
                 Some(id)
@@ -507,6 +506,9 @@ fn load_focus(
             reason,
             objective_assertion_id,
         });
+        if focus.len() == limit.max(1) {
+            break;
+        }
     }
     Ok(focus)
 }
@@ -632,6 +634,27 @@ fn flags_allow(flags: IncludeFlags, relation_type: RelationTypeV2) -> bool {
     true
 }
 
+fn allowed_relation_types(flags: IncludeFlags) -> Vec<&'static str> {
+    [
+        RelationTypeV2::RelatedTo,
+        RelationTypeV2::PartOf,
+        RelationTypeV2::DependsOn,
+        RelationTypeV2::ImportantFor,
+        RelationTypeV2::Increases,
+        RelationTypeV2::Decreases,
+        RelationTypeV2::Causes,
+        RelationTypeV2::Enables,
+        RelationTypeV2::Inhibits,
+        RelationTypeV2::HasGoal,
+        RelationTypeV2::ServesGoal,
+        RelationTypeV2::CorrelatesWith,
+    ]
+    .into_iter()
+    .filter(|relation_type| flags_allow(flags, *relation_type))
+    .map(|relation_type| relation_type.as_str())
+    .collect()
+}
+
 /// D31: breadth-first fetch. Each depth reads the relations touching the
 /// frontier, with the SQL LIMIT set to the remaining fetch budget. Both fetch
 /// and expansion costs are counted; `LIMIT + 1` is never used.
@@ -676,6 +699,14 @@ fn load_edges_bfs(
         }
         let frontier_json =
             serde_json::to_string(&active).map_err(|_| "world-projection-corrupt")?;
+        let permitted_json =
+            serde_json::to_string(&context.permitted).map_err(|_| "world-projection-corrupt")?;
+        let entity_ids: Vec<&String> = context.entities.keys().collect();
+        let entity_ids_json =
+            serde_json::to_string(&entity_ids).map_err(|_| "world-projection-corrupt")?;
+        let allowed_types_json = serde_json::to_string(&allowed_relation_types(input.flags))
+            .map_err(|_| "world-projection-corrupt")?;
+        let seen_json = serde_json::to_string(&seen).map_err(|_| "world-projection-corrupt")?;
         let mut statement = c
             .prepare(
                 "SELECT r.assertion_id,r.from_entity_id,r.to_entity_id,r.relation_type,r.status,
@@ -685,6 +716,11 @@ fn load_edges_bfs(
                    JOIN personal_payloads p ON p.id=a.payload_id
                   WHERE r.project_scope=:project AND r.valid_from<=:now
                     AND (r.valid_until IS NULL OR :now<r.valid_until)
+                    AND r.assertion_id IN (SELECT value FROM json_each(:permitted))
+                    AND r.assertion_id NOT IN (SELECT value FROM json_each(:seen))
+                    AND r.from_entity_id IN (SELECT value FROM json_each(:entities))
+                    AND r.to_entity_id IN (SELECT value FROM json_each(:entities))
+                    AND r.relation_type IN (SELECT value FROM json_each(:allowed_types))
                     AND (r.from_entity_id IN (SELECT value FROM json_each(:frontier))
                          OR r.to_entity_id IN (SELECT value FROM json_each(:frontier)))
                   ORDER BY r.assertion_id
@@ -697,6 +733,10 @@ fn load_edges_bfs(
                     ":project": input.project_scope,
                     ":now": input.now,
                     ":frontier": frontier_json,
+                    ":permitted": permitted_json,
+                    ":seen": seen_json,
+                    ":entities": entity_ids_json,
+                    ":allowed_types": allowed_types_json,
                     ":limit": remaining as i64,
                 },
                 |r| {
@@ -723,15 +763,10 @@ fn load_edges_bfs(
         }
         let mut next_frontier: Vec<String> = Vec::new();
         for (assertion_id, from, to, _relation_type, status, semantic_key, raw) in rows {
-            if !context.permitted.contains(&assertion_id)
-                || !context.entities.contains_key(&from)
-                || !context.entities.contains_key(&to)
-            {
-                continue;
-            }
-            if seen.contains(&assertion_id) {
-                continue;
-            }
+            debug_assert!(context.permitted.contains(&assertion_id));
+            debug_assert!(context.entities.contains_key(&from));
+            debug_assert!(context.entities.contains_key(&to));
+            debug_assert!(!seen.contains(&assertion_id));
             let value: serde_json::Value =
                 serde_json::from_str(&raw).map_err(|_| "world-projection-corrupt")?;
             let payload = decode_versioned("world_relation", &value)
@@ -741,9 +776,7 @@ fn load_edges_bfs(
                 return Err("world-projection-corrupt".into());
             };
             let relation = view.payload;
-            if !flags_allow(input.flags, relation.relation_type) {
-                continue;
-            }
+            debug_assert!(flags_allow(input.flags, relation.relation_type));
             seen.insert(assertion_id.clone());
             let evaluation = evaluate_conditions(
                 &assertion_id,
@@ -948,7 +981,18 @@ pub fn activate_v2_with_stats(
     c: &Connection,
     input: &ActivateInputV2<'_>,
 ) -> Result<(WorldSliceV2, QueryStatsV2), String> {
-    let ledger = store::load(c)?;
+    let observation_sources: BTreeSet<_> = input
+        .condition_observations
+        .iter()
+        .map(|observation| observation.source.clone())
+        .chain(
+            input
+                .availability_observations
+                .iter()
+                .map(|observation| observation.source.clone()),
+        )
+        .collect();
+    let ledger = store::load_world_query(c, input.project_scope, &observation_sources)?;
     let context = load_query_context_v2(c, input, &ledger)?;
     let limits = input.limits.capped();
     let max_bytes = input.max_bytes.min(WorldSliceV2::MAX_BYTES);
@@ -1310,25 +1354,10 @@ pub fn activate_v2_with_stats(
         }
     }
 
-    // Correlations / effect summaries attached to path units.
-    let correlation_ids = correlation_ids(edges, &path_edge_indices);
-    if let Some(unit) = units.first_mut() {
-        unit.correlation_ids.extend(correlation_ids.clone());
-    }
-    let summaries: Vec<EffectSummaryV2> = effect_summary(&causal_paths, edges, load.truncated)
-        .into_iter()
-        .map(|summary| EffectSummaryV2 {
-            from_entity_id: summary.from_entity_id,
-            to_entity_id: summary.to_entity_id,
-            comparison_id: summary.comparison_id,
-            direction: summary.direction,
-            path_indices: summary.path_indices,
-            complete: summary.complete,
-        })
-        .collect();
-    if let Some(unit) = units.first_mut() {
-        unit.effect_summaries = summaries;
-    }
+    // Derived correlation IDs and effect summaries are added after the byte
+    // budget has selected the final paths. Building them from candidate paths
+    // here would leave dangling indices or prune them before their path unit is
+    // adopted.
     // Focus is part of the envelope budget: one unit per reachable Focus so a
     // Focus whose entity exists but is not on a retained path is still shown
     // (and trimmed as a whole unit if it does not fit).
@@ -1355,9 +1384,82 @@ pub fn activate_v2_with_stats(
         push_reason(&mut slice, &format!("truncated:{reason}"));
     }
 
-    assemble_slice(slice, &units, max_bytes)
+    // Keep room for a truncation marker if metadata derived from the selected
+    // paths does not fit. The empty sentinel otherwise changes no slice data.
+    units.push(SliceUnitV2::default());
+    let assembled = assemble_slice(slice, &units, max_bytes).map_err(|e| e.code().to_string())?;
+    let metadata = derived_metadata_unit(&assembled, !load.truncated);
+    assemble_slice(assembled, &[metadata], max_bytes)
         .map(|slice| (slice, stats))
         .map_err(|e| e.code().to_string())
+}
+
+fn derived_metadata_unit(slice: &WorldSliceV2, source_complete: bool) -> SliceUnitV2 {
+    type SummaryKey = (String, String, Option<String>);
+    let relation_by_id: BTreeMap<&str, &SliceRelationV2> = slice
+        .relations
+        .iter()
+        .map(|relation| (relation.assertion_id.as_str(), relation))
+        .collect();
+    let correlation_ids = slice
+        .relations
+        .iter()
+        .filter(|relation| relation.relation_type == RelationTypeV2::CorrelatesWith)
+        .map(|relation| relation.assertion_id.clone())
+        .collect();
+    let mut groups: BTreeMap<SummaryKey, Vec<(usize, EffectDirection)>> = BTreeMap::new();
+    for (index, path) in slice.causal_paths.iter().enumerate() {
+        let (Some(from), Some(to), Some(first), Some(last)) = (
+            path.node_ids.first(),
+            path.node_ids.last(),
+            path.steps.first(),
+            path.steps.last(),
+        ) else {
+            continue;
+        };
+        let comparison = relation_by_id
+            .get(first.assertion_id.as_str())
+            .and_then(|relation| relation.comparison_id.clone())
+            .or_else(|| {
+                relation_by_id
+                    .get(last.assertion_id.as_str())
+                    .and_then(|relation| relation.comparison_id.clone())
+            });
+        groups
+            .entry((from.clone(), to.clone(), comparison))
+            .or_default()
+            .push((index, path.direction));
+    }
+    let complete = source_complete && slice.truncated.is_empty();
+    let effect_summaries = groups
+        .into_iter()
+        .map(|((from_entity_id, to_entity_id, comparison_id), entries)| {
+            let directions: BTreeSet<_> = entries
+                .iter()
+                .map(|(_, direction)| direction.as_str())
+                .collect();
+            EffectSummaryV2 {
+                from_entity_id,
+                to_entity_id,
+                comparison_id,
+                direction: if directions.len() > 1 {
+                    EffectDirection::Mixed
+                } else {
+                    entries
+                        .first()
+                        .map(|(_, direction)| *direction)
+                        .unwrap_or(EffectDirection::Unknown)
+                },
+                path_indices: entries.into_iter().map(|(index, _)| index).collect(),
+                complete,
+            }
+        })
+        .collect();
+    SliceUnitV2 {
+        correlation_ids,
+        effect_summaries,
+        ..Default::default()
+    }
 }
 
 impl EdgeLoad {

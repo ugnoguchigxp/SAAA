@@ -105,16 +105,39 @@ pub(crate) fn idempotent_accepted(
     }
 }
 
+pub(crate) fn recipe_for_task(
+    connection: &Connection,
+    work: &ActiveWork,
+    task_id: &str,
+) -> Result<&'static str, String> {
+    Ok(
+        match super::repository::task_step_recipe(connection, task_id)?.as_deref() {
+            Some("read") => "read",
+            Some("test_run") => "test_run",
+            _ => match work.ops.as_str() {
+                "read" => "read",
+                "test_run" => "test_run",
+                _ => "read_test",
+            },
+        },
+    )
+}
+
 pub(crate) fn request_for_task(
     connection: &Connection,
     work: &ActiveWork,
     task_id: &str,
 ) -> Result<&'static str, String> {
-    let _ = (connection, task_id);
-    Ok(match work.ops.as_str() {
-        "read" => "Inspect the existing failure evidence in this workspace and report causes. Do not run tests or change files.",
-        "test_run" => "Run the relevant existing tests in this workspace and report their result. Do not change files.",
-        _ => "Inspect failing tests in this workspace. Read logs, run the relevant existing tests, and report causes. Do not change files.",
+    Ok(match recipe_for_task(connection, work, task_id)? {
+        "read" => {
+            "Inspect the existing failure evidence in this workspace and report causes. Do not run tests or change files."
+        }
+        "test_run" => {
+            "Run the relevant existing tests in this workspace and report their result. Do not change files."
+        }
+        _ => {
+            "Inspect failing tests in this workspace. Read logs, run the relevant existing tests, and report causes. Do not change files."
+        }
     })
 }
 

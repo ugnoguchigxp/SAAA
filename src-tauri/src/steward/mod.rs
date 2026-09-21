@@ -24,8 +24,8 @@ pub(crate) mod tools;
 pub(crate) mod verifier;
 pub(crate) mod views;
 
+pub(crate) use dispatch::dispatch_scheduled;
 pub(crate) use invalidation::forget_source;
-pub(crate) use reduce::dispatch_scheduled;
 #[cfg(test)]
 pub(crate) use reduce::inspect_coding_transition;
 pub(crate) use reduce::on_user_message;

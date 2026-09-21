@@ -106,6 +106,7 @@ bun run check:local
 bun run test:rust-packages
 bun run spec:check
 bun run desktop:smoke
+bun run desktop:e2e --report-dir /absolute/path/to/new-report-directory
 bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
 ```
 
@@ -116,6 +117,7 @@ bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
 - `bun run test:coverage`: ローカル用の HTML/LCOV レポートを `coverage/` に出力します。`bun run check` には含まれません。
 - `bun run build`: TypeScript を検査し、フロントエンドの production build を作成します。
 - `bun run desktop:smoke`: debug 版デスクトップアプリを一時データディレクトリで起動し、IPC の準備完了を確認します。macOS では同梱した話者照合ランタイムも確認します。
+- `bun run desktop:e2e`: debug 版デスクトップアプリをビルド・起動し、主要画面、IPC、初期スナップショット、主会話、SQLite、Situation 採取を一時データ上で検証します。macOS では話者照合ランタイムも対象です。結果は `summary.json` とログへ保存します。
 - `bun run readiness:verify`: 3つの自動検証laneを実行し、本文を含まず上書きできないJSON証跡を出力します。実行ごとに新しい絶対pathを指定します。dirtyなworking treeの結果はrelease根拠にできません。
 - `bun run tauri build`: 対象 OS の配布用デスクトップアプリを作成します。
 

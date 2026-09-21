@@ -41,9 +41,13 @@ Real SDK/TTS remain opt-in ignored tests; they are not counted as pass.
 
 `tauri-plugin-wdio-webdriver` is not a production dependency. Adding it would instrument the app. XCUIAutomation is available (Xcode 26.3) but Accessibility permission was not granted in this session.
 
+The intended harness drives the **already running app** (click → IPC → the process that holds `SqliteWriter`). It must not open `saaa.sqlite3` for write from Webdriver, bun, or `sqlite3`. A batch of UI steps is a batch of IPC requests to that writer.
+
 ## DWR-24
 
 External: live model auth, GUI session, audio output, sleep/wake. Not claimed as demonstrated.
+
+Same writer rule: natural-language cases, OFF/ON, forget, and restart are requests into the live process (`work_propose`, settings commands, then Chat/list reads). Sleep/wake is OS-level; after wake the same process reconciles from SQLite. A helper script that writes rows to prove the scenario would not count.
 
 ## DWR-25
 

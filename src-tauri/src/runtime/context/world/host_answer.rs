@@ -24,8 +24,27 @@ fn prepare_current_card(
     content: &str,
 ) -> Result<PreparedCard, String> {
     let (service, frame) = super::app_frame::prepare(state, run_id)?;
-    let claims: Vec<_> = frame
-        .frame()
+    let claims = claims_for_query(frame.frame(), content);
+    let raw = serde_json::json!({"claims":claims}).to_string();
+    if service
+        .validate_result(&frame)
+        .map_err(|e| e.code().to_string())?
+        != saaa_personal_state_core::world::runtime_frame::FrameValidity::Current
+    {
+        return Err("source-changed".into());
+    }
+    let text = super::state_claim::render_for_query(&raw, frame.frame(), content)?;
+    Ok(PreparedCard {
+        text,
+        world: Some((service, frame)),
+    })
+}
+
+fn claims_for_query(
+    frame: &saaa_personal_state_core::world::runtime_frame::WorldFrame,
+    content: &str,
+) -> Vec<StateClaim> {
+    let mut candidates: Vec<_> = frame
         .sources
         .iter()
         .filter(|g| g.availability == WorldSourceAvailability::Available)
@@ -42,21 +61,39 @@ fn prepare_current_card(
                 as_of_ms: s.as_of_ms,
             })
         })
-        .take(1)
         .collect();
-    let raw = serde_json::json!({"claims":claims}).to_string();
-    if service
-        .validate_result(&frame)
-        .map_err(|e| e.code().to_string())?
-        != saaa_personal_state_core::world::runtime_frame::FrameValidity::Current
-    {
-        return Err("source-changed".into());
+    candidates.sort_by(|a, b| a.source_ref.cmp(&b.source_ref));
+    let lower = content.to_lowercase();
+    let explicit: Vec<_> = candidates
+        .iter()
+        .filter(|claim| {
+            claim.source_ref.len() >= 3 && lower.contains(&claim.source_ref.to_lowercase())
+        })
+        .cloned()
+        .collect();
+    if explicit.len() == 1 {
+        return explicit;
     }
-    let text = super::state_claim::render_for_query(&raw, frame.frame(), content)?;
-    Ok(PreparedCard {
-        text,
-        world: Some((service, frame)),
-    })
+    if candidates.len() == 1 {
+        return candidates;
+    }
+    if candidates
+        .first()
+        .is_some_and(|claim| claim.kind == WorldSourceKind::Schedule)
+    {
+        candidates.sort_by(|a, b| {
+            let due = |claim: &StateClaim| match &claim.value {
+                WorldSourcePayload::Schedule { due_at_ms, .. } => due_at_ms.unwrap_or(i64::MAX),
+                _ => i64::MAX,
+            };
+            due(a).cmp(&due(b)).then(a.source_ref.cmp(&b.source_ref))
+        });
+        return candidates.into_iter().take(1).collect();
+    }
+    // Multiple current/focus tasks cannot be ranked from the source payload
+    // alone. Returning no claim produces the verified "unknown" fallback
+    // instead of answering for an arbitrary task.
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -125,5 +162,54 @@ mod tests {
                 .validate_db_result(connection, &frame)
                 .map_err(|error| error.code().to_string()))
             .is_err());
+    }
+
+    #[test]
+    fn host_fallback_never_picks_an_arbitrary_task() {
+        use saaa_personal_state_core::world::frame_sources::{
+            WorldScope, WorldSourceEntry, WorldSourceGroup,
+        };
+        let mut frame = saaa_personal_state_core::world::runtime_frame::WorldFrame::for_scope(
+            "run",
+            WorldScope {
+                focus_scope_key: Some("project:p".into()),
+                allowed_scope_keys: vec![
+                    "project:p".into(),
+                    "task:job-a".into(),
+                    "task:job-b".into(),
+                ],
+                digest: "scope".into(),
+            },
+            1,
+            2,
+        )
+        .unwrap();
+        let entry = |id: &str| WorldSourceEntry {
+            kind: WorldSourceKind::Coding,
+            source_id: id.into(),
+            owner_scope_key: format!("task:{id}"),
+            availability: WorldSourceAvailability::Available,
+            observed_at_ms: 1,
+            as_of_ms: 1,
+            version: Some("1".into()),
+            digest: format!("digest-{id}"),
+            payload: Some(WorldSourcePayload::Coding {
+                job_id: id.into(),
+                owner_state: "running".into(),
+                phase: "running".into(),
+                revision: Some(1),
+            }),
+            reason_code: None,
+        };
+        frame.sources.push(WorldSourceGroup {
+            kind: WorldSourceKind::Coding,
+            availability: WorldSourceAvailability::Available,
+            entries: vec![entry("job-a"), entry("job-b")],
+            omission_reason: None,
+        });
+        assert!(claims_for_query(&frame, "現在のコーディングタスクは？").is_empty());
+        let selected = claims_for_query(&frame, "job-b の現在のコーディング状態は？");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].source_ref, "job-b");
     }
 }

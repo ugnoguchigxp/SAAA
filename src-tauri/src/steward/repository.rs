@@ -529,11 +529,16 @@ pub(crate) fn queue_task(
                 "INSERT INTO steward_dispatch_intents(id,task_id,state,idempotency_key,created_at,updated_at) VALUES(?1,?2,'pending',?3,?4,?4)",
                 params![new_id("intent"), id, format!("{}:{}:{}", work.delegation_id, source_id, id), now],
             ).map_err(database_error)?;
+            let recipe = match plan_step_id.as_str() {
+                "read" => "read",
+                "test" | "test_run" => "test_run",
+                _ => work.ops.as_str(),
+            };
             persist_task_plan(
                 connection,
                 &id,
-                &work.ops,
-                match work.ops.as_str() {
+                recipe,
+                match recipe {
                     "read" => "Inspect the existing failure evidence in this workspace and report causes. Do not run tests or change files.",
                     "test_run" => "Run the relevant existing tests in this workspace and report their result. Do not change files.",
                     _ => START_REQUEST,
@@ -628,19 +633,23 @@ pub(crate) fn apply_terminal_event(
     job_id: &str,
     kind: &str,
 ) -> Result<(), String> {
-    let Some((task_id, _conversation_id, verifier, goal_status, task_state)): Option<(String, String, String, String, String)> = connection.query_row(
-        "SELECT t.id,t.conversation_id,g.verifier,g.status,t.loop_state FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id JOIN steward_goals g ON g.id=d.goal_id WHERE t.coding_job_id=?1",
+    let Some((task_id, _conversation_id, goal_id, goal_status, task_state)): Option<(String, String, String, String, String)> = connection.query_row(
+        "SELECT t.id,t.conversation_id,g.id,g.status,t.loop_state FROM steward_tasks t JOIN steward_delegations d ON d.id=t.delegation_id JOIN steward_goals g ON g.id=d.goal_id WHERE t.coding_job_id=?1",
         [job_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
     ).optional().map_err(database_error)? else { return Ok(()); };
     if goal_status != "active"
-        || !matches!(task_state.as_str(), "queued" | "running" | "awaiting_user")
+        || !matches!(
+            task_state.as_str(),
+            "queued" | "dispatching" | "running" | "awaiting_user" | "verifying"
+        )
     {
         return Ok(());
     }
     let state = match kind {
         "failed" | "interrupted" => "failed",
-        "settled" if verifier == "test_report_obtained" => "done",
-        "settled" => "awaiting_user",
+        "settled" => super::verifier::map_to_task_state(&super::verifier::evaluate_task(
+            connection, &task_id,
+        )?),
         _ => return Ok(()),
     };
     set_loop_state(connection, &task_id, state, None, None)?;
@@ -651,8 +660,9 @@ pub(crate) fn apply_terminal_event(
     ).map_err(database_error)?;
     // A dependency-satisfied successor is inserted in the same transaction
     // as the terminal event; no in-memory callback is evidence of progress.
-    if kind == "settled" {
+    if state == "done" {
         let _ = queue_dependent_step(connection, &task_id)?;
+        super::plans::finish_goal_if_complete(connection, &goal_id)?;
     } else if kind == "failed" {
         let _ = replan_after_failure(connection, &task_id)?;
     }
@@ -1283,15 +1293,11 @@ pub(crate) fn coding_enabled(state: &AppState) -> Result<bool, String> {
         .map(|settings| settings.enabled)
 }
 
-pub(crate) fn delegated_profile_available(state: &AppState) -> Result<bool, String> {
-    state
-        .sqlite_readers
-        .read(crate::coding::repository::settings)
-        .map(|settings| {
-            settings.enabled
-                && matches!(
-                    settings.profile.as_str(),
-                    "delegated-read-test-macos-v1" | "delegated-codex-sdk-macos-v1"
-                )
-        })
+pub(crate) fn delegated_profile_available(connection: &Connection) -> Result<bool, String> {
+    let settings = crate::coding::repository::settings(connection)?;
+    Ok(settings.enabled
+        && matches!(
+            settings.profile.as_str(),
+            "delegated-read-test-macos-v1" | "delegated-codex-sdk-macos-v1"
+        ))
 }

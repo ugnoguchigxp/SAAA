@@ -7,6 +7,17 @@ use rusqlite::{Transaction, TransactionBehavior};
 use std::sync::{LockResult, MutexGuard};
 use std::{error::Error, fmt, path::Path, sync::Mutex};
 
+/// Exclusive writer for the app database.
+///
+/// Production writes go through this process only: UI and tools use IPC
+/// commands, Schedule/Steward/Coding use `write`/`transact`, and a batch of
+/// work is N such requests rather than a second SQLite writer. Ownership is
+/// the `saaa.sqlite3.writer.lock` file. A second app instance that would
+/// open another writer is rejected; that is intended.
+///
+/// Read-only work does not take this lock. Lists, status, and other queries
+/// use `SqliteReaders`. A write transaction may read its own snapshot on this
+/// connection; it must not call `sqlite_readers.read` while the mutex is held.
 pub(crate) struct SqliteWriter {
     connection: Mutex<Connection>,
     _owner: Option<DatabaseOwnerGuard>,

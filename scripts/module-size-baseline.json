@@ -37,6 +37,14 @@
       "total": 40,
       "production": 40
     },
+    "scripts/desktop-e2e-report.ts": {
+      "total": 28,
+      "production": 28
+    },
+    "scripts/desktop-e2e.ts": {
+      "total": 51,
+      "production": 51
+    },
     "scripts/desktop-smoke-process.ts": {
       "total": 224,
       "production": 224
@@ -2521,6 +2529,14 @@
       "total": 27,
       "production": 27
     },
+    "src/features/chat/artifacts/artifact.css": {
+      "total": 39,
+      "production": 39
+    },
+    "src/features/chat/artifacts/ArtifactPanel.tsx": {
+      "total": 180,
+      "production": 180
+    },
     "src/features/chat/ChatMessages.tsx": {
       "total": 105,
       "production": 105
@@ -3204,6 +3220,10 @@
     "tests/desktop-smoke-descendants.test.ts": {
       "total": 47,
       "production": 47
+    },
+    "tests/desktop-e2e-report.test.ts": {
+      "total": 41,
+      "production": 41
     },
     "tests/desktop-smoke.test.ts": {
       "total": 137,

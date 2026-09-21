@@ -20,7 +20,7 @@ pub(crate) fn register_steward_goal(
     validate_identifier(&conversation_id, "conversation id")?;
     validate_identifier(&workspace_id, "workspace id")?;
     let start = start_mode.as_deref() == Some("start");
-    state.sqlite_writer.transact(|connection| {
+    let value = state.sqlite_writer.transact(|connection| {
         let value = repo::register_with_options(
             connection,
             &conversation_id,
@@ -58,7 +58,11 @@ pub(crate) fn register_steward_goal(
             }
         }
         Ok(value)
-    })
+    })?;
+    if start {
+        super::dispatch::wake(&state);
+    }
+    Ok(value)
 }
 
 #[tauri::command]
@@ -83,7 +87,7 @@ pub(crate) fn work_confirm(
 ) -> Result<Value, String> {
     validate_identifier(&conversation_id, "conversation id")?;
     validate_identifier(&proposal_id, "proposal id")?;
-    state.sqlite_writer.transact(|connection| {
+    let result = state.sqlite_writer.transact(|connection| {
         let result = super::intake::confirm(
             connection,
             &conversation_id,
@@ -93,7 +97,11 @@ pub(crate) fn work_confirm(
             start,
         )?;
         Ok(super::admission::json_result(result))
-    })
+    })?;
+    if start {
+        super::dispatch::wake(&state);
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -130,12 +138,16 @@ pub(crate) fn work_resolve(
         if state_now == "outcome_unknown" && decision != "reinspect" {
             return Err("unknown_requires_inspect".into());
         }
-        let next = match decision.as_str() {
-            "approve" if state_now == "awaiting_user" => "done",
-            "reject" => "cancelled",
-            "reinspect" => "queued",
-            _ => return Err("work_resolve_invalid".into()),
-        };
+        let verifier: String = connection
+            .query_row(
+                "SELECT g.verifier FROM steward_tasks t
+                 JOIN steward_delegations d ON d.id=t.delegation_id
+                 JOIN steward_goals g ON g.id=d.goal_id WHERE t.id=?1",
+                [&task_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "task_unavailable".to_string())?;
+        let next = next_resolve_state(&decision, &state_now, &verifier)?;
         repo::set_loop_state(connection, &task_id, next, None, None)?;
         Ok(serde_json::json!({"taskId": task_id, "loopState": next}))
     })
@@ -200,7 +212,7 @@ pub(crate) fn work_propose(
         serde_json::from_value(proposal).map_err(|_| "work_proposal_invalid")?;
     state
         .sqlite_writer
-        .write(|connection| repo::propose(connection, &conversation_id, &proposal))
+        .transact(|connection| repo::propose(connection, &conversation_id, &proposal))
 }
 
 #[tauri::command]
@@ -283,4 +295,20 @@ pub(crate) fn work_amend(
         )?;
         Ok(serde_json::json!({"goalId": goal_id, "status":"active", "revisioned":true}))
     })
+}
+
+pub(crate) fn next_resolve_state(
+    decision: &str,
+    loop_state: &str,
+    verifier: &str,
+) -> Result<&'static str, String> {
+    match decision {
+        "approve" if loop_state == "awaiting_user" && verifier == "user_confirmation_required" => {
+            Ok("done")
+        }
+        "approve" if loop_state == "awaiting_user" => Err("evidence_required".into()),
+        "reject" => Ok("cancelled"),
+        "reinspect" => Ok("queued"),
+        _ => Err("work_resolve_invalid".into()),
+    }
 }

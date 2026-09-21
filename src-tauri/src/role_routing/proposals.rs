@@ -1,6 +1,7 @@
 //! Explicit approval gate for premium reasoning proposals.
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Proposal {
@@ -147,6 +148,136 @@ pub(crate) fn may_dispatch(
         && approved_candidate == Some(proposal.candidate_id.as_str())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConsumedApproval {
+    pub(crate) proposal_id: String,
+    pub(crate) root_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) step_id: String,
+}
+
+/// Declines a proposal. A declined proposal can never be approved afterwards.
+pub(crate) fn decline(
+    connection: &Connection,
+    proposal_id: &str,
+    now_ms: i64,
+) -> Result<(), String> {
+    let changed = connection
+        .execute(
+            "UPDATE rr_premium_proposals SET status='declined' WHERE id=?1 AND status='proposed'",
+            params![proposal_id],
+        )
+        .map_err(|error| error.to_string())?;
+    let _ = now_ms;
+    if changed != 1 {
+        return Err("Role-routing premium proposal is not declinable".into());
+    }
+    Ok(())
+}
+
+/// Consumes an approved proposal exactly once and creates the premium step in the same ambient
+/// transaction, so a crash cannot leave a consumed approval without its step (or vice versa).
+/// The current policy, revision, expiry, cloud permission, and named candidate are rechecked at
+/// this dispatch boundary.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn consume_approval(
+    connection: &Connection,
+    approval: &Approval,
+    expected_policy_id: &str,
+    expected_revision: u32,
+    cloud_allowed: bool,
+    now_ms: i64,
+) -> Result<ConsumedApproval, String> {
+    let proposal: Proposal = connection
+        .query_row(
+            "SELECT id,root_id,candidate_id,policy_id,revision,expires_at_ms FROM rr_premium_proposals WHERE id=?1 AND status='approved' AND consumed_at_ms IS NULL",
+            [&approval.proposal_id],
+            |row| {
+                Ok(Proposal {
+                    id: row.get(0)?,
+                    root_id: row.get(1)?,
+                    candidate_id: row.get(2)?,
+                    policy_id: row.get(3)?,
+                    revision: row.get(4)?,
+                    expires_at_ms: row.get(5)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Role-routing premium approval is unavailable or already consumed".to_string())?;
+    if now_ms > proposal.expires_at_ms {
+        connection
+            .execute(
+                "UPDATE rr_premium_proposals SET status='expired' WHERE id=?1 AND status='approved' AND consumed_at_ms IS NULL",
+                [&proposal.id],
+            )
+            .map_err(|error| error.to_string())?;
+        return Err("Role-routing premium approval has expired".into());
+    }
+    if proposal.policy_id != expected_policy_id
+        || proposal.revision != expected_revision
+        || !may_dispatch(
+            &proposal,
+            Some(&approval.candidate_id),
+            expected_policy_id,
+            expected_revision,
+            now_ms,
+            cloud_allowed,
+        )
+    {
+        return Err("Role-routing premium approval failed revalidation".into());
+    }
+    let settings_json: String = connection
+        .query_row(
+            "SELECT config_json FROM rr_policy_versions WHERE id=?1",
+            [&proposal.policy_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Role-routing premium approval policy is unavailable".to_string())?;
+    let settings: crate::role_routing::RoleRoutingSettings =
+        serde_json::from_str(&settings_json)
+            .map_err(|_| "Role-routing premium approval policy is invalid".to_string())?;
+    if settings.roles.premium.as_deref() != Some(proposal.candidate_id.as_str()) {
+        return Err("Role-routing premium candidate changed; propose again".into());
+    }
+    let ordinal: i64 = connection
+        .query_row(
+            "SELECT COALESCE(MAX(ordinal),-1)+1 FROM rr_steps WHERE root_id=?1",
+            [&proposal.root_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let step_id = format!("rr-step-{}-{}", proposal.root_id, ordinal);
+    let fingerprint = format!(
+        "{:x}",
+        Sha256::digest(
+            format!("{}:{}:premium", proposal.policy_id, proposal.candidate_id).as_bytes()
+        )
+    );
+    connection
+        .execute(
+            "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES(?1,?2,?3,?4,?5,'reconsider','planned',?6,'{}')",
+            params![step_id, proposal.root_id, i64::from(proposal.revision), ordinal, proposal.candidate_id, fingerprint],
+        )
+        .map_err(|error| error.to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE rr_premium_proposals SET consumed_at_ms=?1 WHERE id=?2 AND status='approved' AND consumed_at_ms IS NULL",
+            params![now_ms, proposal.id],
+        )
+        .map_err(|error| error.to_string())?;
+    if changed != 1 {
+        return Err("Role-routing premium approval was consumed concurrently".into());
+    }
+    Ok(ConsumedApproval {
+        proposal_id: proposal.id,
+        root_id: proposal.root_id,
+        actor_id: proposal.candidate_id,
+        step_id,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +373,52 @@ mod tests {
             .expect("approval")
             .status,
             "approved"
+        );
+        let consumed = consume_approval(
+            &connection,
+            &Approval {
+                proposal_id: "proposal-1".into(),
+                candidate_id: "astra".into(),
+            },
+            "p",
+            2,
+            true,
+            12,
+        )
+        .expect("consume");
+        assert_eq!(consumed.actor_id, "astra");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT actor_id FROM rr_steps WHERE id=?1",
+                    [&consumed.step_id],
+                    |row| row.get::<_, String>(0)
+                )
+                .expect("step"),
+            "astra"
+        );
+        // A second consumption of the same approval must not create a second step.
+        assert!(consume_approval(
+            &connection,
+            &Approval {
+                proposal_id: "proposal-1".into(),
+                candidate_id: "astra".into(),
+            },
+            "p",
+            2,
+            true,
+            13,
+        )
+        .is_err());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM rr_steps WHERE purpose='reconsider'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("count"),
+            1
         );
     }
 }

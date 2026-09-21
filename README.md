@@ -106,6 +106,7 @@ bun run check:local
 bun run test:rust-packages
 bun run spec:check
 bun run desktop:smoke
+bun run desktop:e2e --report-dir /absolute/path/to/new-report-directory
 bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
 ```
 
@@ -116,6 +117,7 @@ bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
 - `bun run test:coverage` writes local HTML/LCOV reports under `coverage/`. It is optional and is not part of `bun run check`.
 - `bun run build` type-checks TypeScript and creates a production frontend build.
 - `bun run desktop:smoke` launches a debug desktop build with an isolated data directory and waits for IPC readiness. On macOS it also checks the bundled speaker-verification runtime.
+- `bun run desktop:e2e` builds and launches the debug desktop app, then verifies the main UI, IPC, initial snapshot, primary conversation, SQLite, and situation sampling against isolated data. On macOS it also checks the speaker-verification runtime. Results are saved as `summary.json` and logs.
 - `bun run readiness:verify` runs the three automated readiness lanes and writes a content-free, non-overwriting JSON report. Use a new absolute report directory for every run. A dirty working tree is always blocked from release use.
 - `bun run tauri build` creates the distributable desktop application for the target OS.
 

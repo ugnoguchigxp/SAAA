@@ -82,6 +82,7 @@ function App() {
   const setRuntimeActivityRef = useRef<Dispatch<SetStateAction<ConversationRuntimeActivity[]>>>(
     () => {},
   );
+  const readinessReportedRef = useRef(false);
   const selectedConversation = snapshot.conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
@@ -137,9 +138,21 @@ function App() {
 
   const initializeCommitted = useCommittedCallback(initialize);
   useEffect(() => {
-    void reportFrontendReady();
     void initializeCommitted();
   }, [initializeCommitted]);
+  useEffect(() => {
+    if (loading || !selectedConversation || readinessReportedRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      const rendered =
+        document.querySelector(".app-shell .chat-panel") &&
+        document.querySelector(".chat-panel .message-area") &&
+        document.querySelector(".chat-panel form.composer textarea");
+      if (!rendered) return;
+      readinessReportedRef.current = true;
+      void reportFrontendReady().catch((cause) => setAppError(toMessage(cause)));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loading, selectedConversation, setAppError]);
   useWindowShortcut((event) => {
     const command = event.metaKey || event.ctrlKey;
     if (command && event.key === ",") {

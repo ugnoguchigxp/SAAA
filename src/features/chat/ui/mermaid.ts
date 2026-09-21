@@ -88,6 +88,10 @@ function safeAttribute(name: string, value: string): boolean {
   return !/javascript:/i.test(value);
 }
 
+function safeStyle(css: string): boolean {
+  return !/(?:url\s*\(|@|:host\b|::slotted\b|expression\s*\(|javascript:|behavior\s*:)/i.test(css);
+}
+
 /** Rebuild Mermaid output from a strict SVG allowlist instead of trusting generated markup. */
 export function sanitizeMermaidSvg(svg: string): SVGSVGElement | null {
   const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -104,7 +108,7 @@ export function sanitizeMermaidSvg(svg: string): SVGSVGElement | null {
     }
     if (source.localName === "style") {
       const css = source.textContent ?? "";
-      if (!/url\s*\(/i.test(css)) target.textContent = css;
+      if (safeStyle(css)) target.textContent = css;
       return target;
     }
     for (const child of Array.from(source.childNodes)) {
@@ -146,6 +150,17 @@ export async function renderMermaidDiagrams(root: HTMLElement, failureMessage: s
     sources.map(async (sourceElement) => {
       const block = sourceElement.closest<HTMLElement>(".mermaid-block");
       const fallback = block?.querySelector("pre");
+      if (!block) return;
+      if (!fallback) {
+        if (block.querySelector(".mermaid-diagram")) {
+          block.dataset.mermaidState = "rendered";
+          sourceElement.remove();
+        }
+        return;
+      }
+      if (["rendering", "rendered"].includes(block.dataset.mermaidState ?? "")) return;
+      block.dataset.mermaidState = "rendering";
+      block.querySelector(".mermaid-error")?.remove();
       const source = sourceElement.textContent ?? "";
       try {
         if (new TextEncoder().encode(source).byteLength > SOURCE_LIMIT_BYTES) {
@@ -156,14 +171,19 @@ export async function renderMermaidDiagrams(root: HTMLElement, failureMessage: s
           mermaid.default.render(`saaa-mermaid-${nextDiagramId++}`, source),
         );
         const svg = sanitizeMermaidSvg(result.svg);
-        if (!svg || !block || !fallback) throw new Error("Unsafe Mermaid SVG");
+        if (!svg) throw new Error("Unsafe Mermaid SVG");
         svg.setAttribute("role", "img");
         const host = document.createElement("div");
         host.className = "mermaid-diagram";
-        host.append(svg);
+        svg.style.display = "block";
+        svg.style.width = "100%";
+        svg.style.height = "auto";
+        host.attachShadow({ mode: "open" }).append(svg);
         fallback.replaceWith(host);
+        block.dataset.mermaidState = "rendered";
+        sourceElement.remove();
       } catch {
-        if (!block || block.querySelector(".mermaid-error")) return;
+        block.dataset.mermaidState = "error";
         const message = document.createElement("span");
         message.className = "mermaid-error";
         message.setAttribute("role", "status");

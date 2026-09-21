@@ -16,13 +16,29 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     CREATE UNIQUE INDEX idx_rr_steps_one_active_reasoning ON rr_steps(root_id) WHERE status='running' AND purpose IN ('respond','reconsider','review','revise','tool_specialist');
     CREATE UNIQUE INDEX IF NOT EXISTS idx_rr_steps_id_root ON rr_steps(id, root_id);
     CREATE TABLE IF NOT EXISTS rr_outputs (id TEXT PRIMARY KEY, step_id TEXT NOT NULL, revision INTEGER NOT NULL, kind TEXT NOT NULL, payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN (0,1)), created_at_ms INTEGER NOT NULL, FOREIGN KEY(step_id) REFERENCES rr_steps(id) ON DELETE CASCADE);
-    CREATE TABLE IF NOT EXISTS rr_premium_proposals (id TEXT PRIMARY KEY, root_id TEXT NOT NULL, candidate_id TEXT NOT NULL, policy_id TEXT NOT NULL, revision INTEGER NOT NULL, estimated_cost_micros INTEGER, expires_at_ms INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('proposed','approved','declined','expired')), created_at_ms INTEGER NOT NULL, approved_at_ms INTEGER, FOREIGN KEY(root_id) REFERENCES rr_roots(root_id) ON DELETE CASCADE, FOREIGN KEY(policy_id) REFERENCES rr_policy_versions(id));
+    CREATE TABLE IF NOT EXISTS rr_premium_proposals (id TEXT PRIMARY KEY, root_id TEXT NOT NULL, candidate_id TEXT NOT NULL, policy_id TEXT NOT NULL, revision INTEGER NOT NULL, estimated_cost_micros INTEGER, expires_at_ms INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('proposed','approved','declined','expired')), created_at_ms INTEGER NOT NULL, approved_at_ms INTEGER, consumed_at_ms INTEGER, FOREIGN KEY(root_id) REFERENCES rr_roots(root_id) ON DELETE CASCADE, FOREIGN KEY(policy_id) REFERENCES rr_policy_versions(id));
     CREATE UNIQUE INDEX IF NOT EXISTS idx_rr_premium_proposals_active_root ON rr_premium_proposals(root_id) WHERE status='proposed';
     CREATE TABLE IF NOT EXISTS rr_events (root_id TEXT NOT NULL, seq INTEGER NOT NULL CHECK(seq > 0), kind TEXT NOT NULL, data_json TEXT NOT NULL CHECK(json_valid(data_json)), created_at_ms INTEGER NOT NULL, PRIMARY KEY(root_id, seq), FOREIGN KEY(root_id) REFERENCES rr_roots(root_id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS rr_tool_links (id TEXT PRIMARY KEY, root_id TEXT NOT NULL, step_id TEXT NOT NULL, revision INTEGER NOT NULL, operation_key TEXT NOT NULL, invocation_id TEXT, dispatch_state TEXT NOT NULL CHECK(dispatch_state IN ('reserved','dispatched','settled','unknown')), result_ref TEXT, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, UNIQUE(root_id, operation_key), FOREIGN KEY(root_id) REFERENCES rr_roots(root_id) ON DELETE CASCADE, FOREIGN KEY(step_id, root_id) REFERENCES rr_steps(id, root_id) ON DELETE CASCADE);
     CREATE INDEX IF NOT EXISTS idx_rr_tool_links_invocation ON rr_tool_links(invocation_id);
     CREATE TABLE IF NOT EXISTS rr_feedback (id TEXT PRIMARY KEY, target_answer_id TEXT NOT NULL, target_root_id TEXT, source_message_id TEXT NOT NULL, kind TEXT NOT NULL, evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)), label_source TEXT NOT NULL, confidence REAL, extractor_version TEXT NOT NULL, status TEXT NOT NULL, created_at_ms INTEGER NOT NULL, UNIQUE(target_answer_id, source_message_id, kind, extractor_version), FOREIGN KEY(target_answer_id) REFERENCES conversation_messages(id) ON DELETE CASCADE, FOREIGN KEY(target_root_id) REFERENCES rr_roots(root_id) ON DELETE CASCADE, FOREIGN KEY(source_message_id) REFERENCES conversation_messages(id) ON DELETE CASCADE);")?;
     ensure_rr_input_generation(connection)?;
+    ensure_rr_proposal_consumed(connection)?;
+    Ok(())
+}
+
+/// Adds the approval-consumption column to databases created before it existed. Consumption is
+/// tracked with a timestamp rather than a new status so the shipped status CHECK is not rewritten.
+fn ensure_rr_proposal_consumed(connection: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('rr_premium_proposals') WHERE name='consumed_at_ms')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        connection
+            .execute_batch("ALTER TABLE rr_premium_proposals ADD COLUMN consumed_at_ms INTEGER")?;
+    }
     Ok(())
 }
 

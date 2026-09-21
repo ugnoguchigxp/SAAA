@@ -3,29 +3,16 @@ import type {
   UiData,
   UiInstance,
   SavedView,
-  UiViewRevision,
 } from "../../../lib/generated/generativeUi";
-export type { UiData, UiInstance, SavedView, UiViewRevision };
+import { uiMutationApi } from "./mutationsApi";
+export { notifyUiHistoryChanged } from "./mutationsApi";
+export type { UiData, UiInstance, SavedView };
 export const uiApi = {
   enabled: () => invoke<boolean>("get_ui_enabled"),
-  setEnabled: (enabled: boolean) => invoke<void>("set_ui_enabled", { enabled }),
   load: (instanceId: string, revision?: number) =>
     invoke<UiInstance>("get_ui_instance", { instanceId, revision }),
-  revisions: (viewId: string) => invoke<UiViewRevision[]>("list_ui_view_revisions", { viewId }),
   query: (instanceId: string, source: string) =>
     invoke<UiData>("query_ui_source", { instanceId, source }),
-  state: (instanceId: string, expectedVersion: number, value: UiInstance["state"]) =>
-    invoke<number>("save_ui_instance_state", { instanceId, expectedVersion, value }),
-  save: (instanceId: string, name: string, description: string) =>
-    invoke("publish_ui_view", { input: { instanceId, name, description, tags: [] } }),
-  archive: (viewId: string) => invoke<void>("archive_ui_view", { viewId }),
   search: (query: string) => invoke<SavedView[]>("search_ui_views", { query }),
-  open: (conversationId: string, viewId: string) =>
-    invoke("open_ui_view", { conversationId, viewId }),
-  snapshot: (instanceId: string) => invoke("snapshot_ui_view", { instanceId }),
-  cancel: (instanceId: string, targetId: string, requestId: string) =>
-    invoke("cancel_ui_run", { instanceId, targetId, requestId }),
+  ...uiMutationApi,
 };
-export function notifyUiHistoryChanged(conversationId: string) {
-  window.dispatchEvent(new CustomEvent("saaa:ui-history", { detail: conversationId }));
-}

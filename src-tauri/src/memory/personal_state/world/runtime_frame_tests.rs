@@ -175,7 +175,7 @@ fn m2_24_pending_projection_omits_graph_but_keeps_runtime() {
 }
 
 #[test]
-fn m2_24_projection_capacity_omits_graph_but_keeps_runtime() {
+fn world_review_projection_above_the_old_limit_keeps_graph_and_runtime() {
     let fixture = Fixture::with_entities(&[("task", CODING_ID)], 101);
     fixture.add_coding_job(1, "running", "running", "accepted");
     let access = fixture.access();
@@ -190,10 +190,9 @@ fn m2_24_projection_capacity_omits_graph_but_keeps_runtime() {
         .unwrap()
         .frame()
         .clone();
-    assert!(frame.graph.is_none());
-    assert!(frame.truncated);
+    assert!(frame.graph.is_some());
     assert_eq!(frame.runtime.len(), 1);
-    assert!(frame
+    assert!(!frame
         .notices
         .iter()
         .any(|n| n.code == FrameNoticeCode::WorldCapacityOmitted));
@@ -347,7 +346,7 @@ fn m2_19_source_forget_invalidates_the_old_frame() {
 }
 
 #[test]
-fn m2_13_projection_100_is_allowed_and_101_is_omitted() {
+fn world_review_projection_100_and_101_are_both_allowed() {
     let allowed = Fixture::with_entities(&[("task", CODING_ID)], 100);
     allowed.add_coding_job(1, "running", "running", "accepted");
     let access = allowed.access();
@@ -366,7 +365,6 @@ fn m2_13_projection_100_is_allowed_and_101_is_omitted() {
 
     let omitted = Fixture::with_entities(&[("task", CODING_ID)], 101);
     omitted.add_coding_job(1, "running", "running", "accepted");
-    let assertions_before = omitted.table_count("personal_assertions");
     let access = omitted.access();
     let request = omitted.request(
         access,
@@ -379,16 +377,14 @@ fn m2_13_projection_100_is_allowed_and_101_is_omitted() {
         .unwrap()
         .frame()
         .clone();
-    assert!(frame.graph.is_none());
-    assert!(frame.truncated);
-    assert_eq!(
-        omitted.table_count("personal_assertions"),
-        assertions_before
+    assert!(
+        frame.graph.is_some(),
+        "101 projected entities remain queryable"
     );
 }
 
 #[test]
-fn m2_13_ledger_2000_is_allowed_and_2001_is_omitted() {
+fn world_review_unrelated_ledger_rows_do_not_disable_graph() {
     let fixture = Fixture::with_entities(&[("task", CODING_ID)], 2);
     fixture.add_coding_job(1, "running", "running", "accepted");
     let current = fixture.ledger_count() as usize;
@@ -410,7 +406,6 @@ fn m2_13_ledger_2000_is_allowed_and_2001_is_omitted() {
 
     fixture.fill_coverage(1);
     assert_eq!(fixture.ledger_count(), 2_001);
-    let assertions_before = fixture.table_count("personal_assertions");
     let access = fixture.access();
     let request = fixture.request(
         access,
@@ -423,11 +418,9 @@ fn m2_13_ledger_2000_is_allowed_and_2001_is_omitted() {
         .unwrap()
         .frame()
         .clone();
-    assert!(frame.graph.is_none());
-    assert!(frame.truncated);
-    assert_eq!(
-        fixture.table_count("personal_assertions"),
-        assertions_before
+    assert!(
+        frame.graph.is_some(),
+        "unrelated global ledger growth must not suppress this project"
     );
 }
 

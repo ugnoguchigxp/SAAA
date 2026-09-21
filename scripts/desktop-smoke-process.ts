@@ -1,4 +1,5 @@
 import { signalSmokeProcess } from "./desktop-smoke-signals";
+import { readDesktopE2EChecks } from "./desktop-e2e-report";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -12,6 +13,7 @@ export type SmokeOptions = {
   verifyBundle?: () => Promise<void>;
   readyTimeoutMs?: number;
   buildTimeoutMs?: number;
+  requiredChecks?: string[];
 };
 
 type Stage = "build" | "bundle" | "launch" | "ready" | "cleanup";
@@ -95,6 +97,7 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
   let output: Promise<void> | undefined;
   let scratch: string | undefined;
   let failure: string | undefined;
+  let checks: Record<string, boolean> | undefined;
   const advance = (next: Stage, exitCode?: number) => {
     stages.push({
       stage,
@@ -187,6 +190,9 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
           throw new Error("Desktop did not report IPC ready before the deadline");
         await Bun.sleep(25);
       }
+      if (options.requiredChecks?.length) {
+        checks = readDesktopE2EChecks(marker, options.requiredChecks);
+      }
       if (interrupted) throw new Error("Desktop smoke interrupted");
       if (application.child.exitCode !== null || application.child.signalCode !== null)
         throw new Error("Desktop exited after reporting ready");
@@ -224,6 +230,7 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
           stage,
           durationMs: Date.now() - started,
           stages,
+          ...(checks ? { checks } : {}),
           ...(failure ? { error: failure } : {}),
         },
         null,

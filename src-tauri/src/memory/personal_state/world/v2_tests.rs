@@ -794,6 +794,180 @@ fn d38_focus_is_present_in_the_slice() {
 }
 
 #[test]
+fn world_review_final_slice_keeps_derived_path_metadata() {
+    let f = fixture_v2();
+    let mut committer = Committer {
+        writer: &f.writer,
+        project: PROJECT,
+    };
+    committer
+        .commit(
+            "correlation-entity",
+            vec![v2_entity_assertion(
+                "ent_m2",
+                "m2",
+                EntityKindV2::Metric,
+                "Throughput",
+                &[],
+                None,
+                &f.source,
+                PROJECT,
+                f.now_ms,
+            )],
+        )
+        .unwrap();
+    committer
+        .commit(
+            "correlation-metadata",
+            vec![v2_relation_assertion(
+                "rel_corr",
+                v2_relation_value(
+                    "m1",
+                    "m2",
+                    "correlates_with",
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some("positive"),
+                    None,
+                    std::slice::from_ref(&f.source.key),
+                    None,
+                    None,
+                ),
+                &f.source,
+                PROJECT,
+                BTreeSet::from(["ent_m1".into(), "ent_m2".into()]),
+                f.now_ms,
+            )],
+        )
+        .unwrap();
+    let slice = run_v2(
+        &f.writer,
+        &[WorldSeed::EntityId("c1".into())],
+        IncludeFlags::default(),
+        8_192,
+        f.now_ms,
+    )
+    .unwrap();
+    assert!(!slice.causal_paths.is_empty());
+    assert!(!slice.effect_summaries.is_empty());
+    assert!(slice
+        .effect_summaries
+        .iter()
+        .flat_map(|summary| &summary.path_indices)
+        .all(|index| *index < slice.causal_paths.len()));
+    assert!(slice.correlation_ids.iter().any(|id| id == "rel_corr"));
+}
+
+#[test]
+fn world_review_limits_apply_after_access_and_flag_filters() {
+    let f = fixture_v2();
+    let mut committer = Committer {
+        writer: &f.writer,
+        project: PROJECT,
+    };
+    committer
+        .commit(
+            "denied-before-limit",
+            vec![
+                v2_relation_assertion(
+                    "aaa_denied_relation",
+                    v2_relation_value(
+                        "c1",
+                        "p1",
+                        "related_to",
+                        None,
+                        &[],
+                        None,
+                        None,
+                        None,
+                        None,
+                        std::slice::from_ref(&f.source.key),
+                        None,
+                        None,
+                    ),
+                    &f.source,
+                    PROJECT,
+                    BTreeSet::from(["ent_c1".into(), "ent_p1".into()]),
+                    f.now_ms,
+                ),
+                v2_focus_assertion(
+                    "aaa_denied_focus_c1",
+                    "c1",
+                    "current_work",
+                    Some("obj1"),
+                    &f.source,
+                    PROJECT,
+                    BTreeSet::from(["ent_c1".into(), "obj1".into()]),
+                    f.now_ms,
+                ),
+                v2_focus_assertion(
+                    "aaa_denied_focus_m1",
+                    "m1",
+                    "current_work",
+                    Some("obj1"),
+                    &f.source,
+                    PROJECT,
+                    BTreeSet::from(["ent_m1".into(), "obj1".into()]),
+                    f.now_ms,
+                ),
+            ],
+        )
+        .unwrap();
+    f.writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "UPDATE personal_assertions
+                        SET metadata=json_set(metadata,'$.access.purposes',json('[\"diagnostics\"]'))
+                      WHERE id IN ('aaa_denied_relation','aaa_denied_focus_c1','aaa_denied_focus_m1')",
+                    [],
+                )
+                .map_err(crate::database_error)?;
+            Ok(())
+        })
+        .unwrap();
+    let slice = f
+        .writer
+        .read_serialized(|connection| {
+            let ledger = store::load(connection)?;
+            let request = access(&ledger, PROJECT);
+            let mut limits = LimitsV2::m1();
+            limits.fetch_rows = 1;
+            limits.nodes = 2;
+            activate_v2(
+                connection,
+                &ActivateInputV2 {
+                    project_scope: PROJECT,
+                    access: &request,
+                    now: now(),
+                    seeds: &[WorldSeed::EntityId("c1".into())],
+                    causal_direction: CausalDirection::Forward,
+                    limits,
+                    max_bytes: 8_192,
+                    request_id: "review-filter-limit",
+                    explicit_question: false,
+                    flags: IncludeFlags::default(),
+                    condition_observations: &[],
+                    availability_observations: &[],
+                    temporary_attention_entity_ids: &[],
+                },
+            )
+        })
+        .unwrap();
+    assert!(slice
+        .relations
+        .iter()
+        .any(|relation| relation.assertion_id == "rel_inc"));
+    assert!(slice.focus.iter().any(|focus| focus.entity_id == "g1"));
+    assert!(!slice
+        .relations
+        .iter()
+        .any(|relation| relation.assertion_id == "aaa_denied_relation"));
+}
+
+#[test]
 fn d28_unknown_explicit_seed_yields_missing_knowledge_gap() {
     use super::query_v2::IncludeFlags as Flags;
     let f = fixture_v2();

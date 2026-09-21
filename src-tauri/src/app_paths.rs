@@ -15,7 +15,8 @@ pub(crate) fn frontend_ready(state: &AppState) -> Result<(), String> {
         return Ok(());
     };
     validate_identifier(&marker_id, "smoke marker id")?;
-    if env::var_os("SAAA_SMOKE_REQUIRE_SPEAKER").is_some() {
+    let speaker_checked = env::var_os("SAAA_SMOKE_REQUIRE_SPEAKER").is_some();
+    if speaker_checked {
         let voice_profile = state
             .voice_profile
             .read_with_snapshot(&state.sqlite_readers, |_connection, snapshot| Ok(snapshot))?;
@@ -26,7 +27,8 @@ pub(crate) fn frontend_ready(state: &AppState) -> Result<(), String> {
             ));
         }
     }
-    if env::var_os("SAAA_SMOKE_EXERCISE_SITUATION").is_some() {
+    let situation_checked = env::var_os("SAAA_SMOKE_EXERCISE_SITUATION").is_some();
+    if situation_checked {
         state.situation.set_monitoring(&state.sqlite_writer, true)?;
         let sample = state.situation.sample_platform()?;
         state.situation.tick_sampled(&state.sqlite_writer, sample)?;
@@ -34,9 +36,22 @@ pub(crate) fn frontend_ready(state: &AppState) -> Result<(), String> {
             .situation
             .set_monitoring(&state.sqlite_writer, false)?;
     }
+    let report = serde_json::json!({
+        "status": "passed",
+        "checks": {
+            "frontendRendered": true,
+            "ipcReady": true,
+            "snapshotLoaded": true,
+            "primaryConversationLoaded": true,
+            "databaseInitialized": true,
+            "situationSampled": situation_checked,
+            "speakerRuntimeAvailable": speaker_checked,
+        }
+    });
     fs::write(
         env::temp_dir().join(format!("saaa-frontend-{marker_id}.ready")),
-        "ready",
+        serde_json::to_vec_pretty(&report)
+            .map_err(|error| format!("Could not encode the frontend smoke report: {error}"))?,
     )
     .map_err(|error| format!("Could not write the frontend smoke marker: {error}"))
 }

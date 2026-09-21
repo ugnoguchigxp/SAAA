@@ -9,6 +9,13 @@ use std::sync::{
 
 const READER_LANES: usize = 2;
 
+/// Concurrent read-only access to the app database.
+///
+/// Production opens two `SQLITE_OPEN_READ_ONLY` + `query_only` lanes against
+/// WAL in the single owning process. The writer lock exists to reject a
+/// second writer (a second app instance); it does not serialize these lanes.
+/// In-memory tests use `Serialized` through the writer mutex because a memory
+/// DB cannot be shared — never nest `read` inside `write`/`transact` there.
 #[derive(Clone)]
 pub(crate) struct SqliteReaders {
     source: ReaderSource,
