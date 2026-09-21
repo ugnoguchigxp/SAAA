@@ -294,4 +294,57 @@ mod tests {
         let resumed = apply(&mut connection, "r", Event::Resume, 4).expect("resume");
         assert_eq!(resumed.state.revision, 1);
     }
+
+    #[test]
+    fn rr_16_release_keeps_revision_and_step() {
+        let mut connection = fixture();
+        apply(&mut connection, "r", Event::Start, 2).expect("start");
+        apply(&mut connection, "r", Event::InputBarrier, 3).expect("barrier");
+        let released = apply(&mut connection, "r", Event::Release, 4).expect("release");
+        assert_eq!(released.state.revision, 0);
+        assert_eq!(released.state.phase, Phase::Responding);
+        assert_eq!(
+            released.effects,
+            vec![super::super::reducer::Effect::FinalizeHeld { revision: 0 }]
+        );
+        let step_status: String = connection
+            .query_row("SELECT status FROM rr_steps WHERE id='s'", [], |row| {
+                row.get(0)
+            })
+            .expect("step status");
+        // A status/social release keeps the in-flight step alive.
+        assert_eq!(step_status, "running");
+    }
+
+    #[test]
+    fn rr_05_resume_supersedes_the_old_step() {
+        let mut connection = fixture();
+        apply(&mut connection, "r", Event::Start, 2).expect("start");
+        apply(&mut connection, "r", Event::InputBarrier, 3).expect("barrier");
+        connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('s2','r',1,0,'actor','respond','planned','{}','{}')",
+                [],
+            )
+            .expect("revision 1 planned step");
+        let resumed = apply(&mut connection, "r", Event::Resume, 4).expect("resume");
+        assert_eq!(resumed.state.revision, 1);
+        let statuses: Vec<(String, String)> = {
+            let mut statement = connection
+                .prepare("SELECT id,status FROM rr_steps WHERE root_id='r' ORDER BY id")
+                .expect("prepare");
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .expect("query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("rows")
+        };
+        assert_eq!(
+            statuses,
+            vec![
+                ("s".to_string(), "cancelled".to_string()),
+                ("s2".to_string(), "running".to_string())
+            ]
+        );
+    }
 }
