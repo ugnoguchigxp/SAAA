@@ -22,7 +22,16 @@ impl RequestGeneration {
             }),
         );
         // Earlier user messages are history. The final user message owns this instruction.
-        let current_instruction_count = usize::from(body["messages"].as_array().and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user")).is_some_and(|m| m["content"].as_str().is_some_and(|text| text.trim() == context.input.content.trim())));
+        let current_instruction_count = usize::from(
+            body["messages"]
+                .as_array()
+                .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
+                .is_some_and(|m| {
+                    m["content"]
+                        .as_str()
+                        .is_some_and(|text| text.trim() == context.input.content.trim())
+                }),
+        );
         match wire_size {
             crate::runtime::context::generation::FinalWireSize::Fits => {}
             crate::runtime::context::generation::FinalWireSize::RequiredContextOverflow => {

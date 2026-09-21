@@ -84,3 +84,64 @@ test("multiple Goals remain separately visible and one can be withdrawn", async 
     env.restore();
   }
 });
+
+test("confirmed registration sends only the selected bounded Goal scope", async () => {
+  const env = installJsdom();
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(document.getElementById("root")!);
+  invokeImpl.handler = async (command) => {
+    if (command === "list_steward_tasks") return [];
+    if (command === "register_steward_goal") {
+      return { goalId: "goal-c", delegationId: "delegation-c", status: "active" };
+    }
+    throw new Error(`unexpected command: ${command}`);
+  };
+  try {
+    await act(async () => {
+      root.render(
+        <StewardPanel
+          conversationId="conversation-c"
+          workspaceId="workspace-c"
+          onError={() => {}}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const inputs = document.querySelectorAll<HTMLInputElement>("input");
+    const summary = inputs[0]!;
+    const confirmation = document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
+        summary,
+        "対象テストを読む",
+      );
+      summary.dispatchEvent(new Event("input", { bubbles: true }));
+      confirmation.click();
+    });
+    const register = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Goal を登録",
+    )!;
+    expect(register.disabled).toBeFalse();
+    await act(async () => register.click());
+    expect(invokeCalls).toContainEqual({
+      command: "register_steward_goal",
+      args: {
+        conversationId: "conversation-c",
+        workspaceId: "workspace-c",
+        successCondition: "tests pass",
+        summary: "対象テストを読む",
+        verifier: "test_report_obtained",
+        operations: "read_test",
+        budgetRuns: 3,
+        budgetMs: 60_000,
+        notify: "both",
+      },
+      options: undefined,
+    });
+  } finally {
+    await act(async () => root.unmount());
+    env.restore();
+  }
+});

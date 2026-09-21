@@ -33,7 +33,9 @@ impl Extraction {
             return Err("world-extraction-budget".into());
         }
         let value: Self = serde_json::from_str(raw).map_err(|_| "world-extraction-schema")?;
-        if value.candidates.len() > super::validation::MAX_NEW_WORLD_ASSERTIONS || value.no_change != value.candidates.is_empty() {
+        if value.candidates.len() > super::validation::MAX_NEW_WORLD_ASSERTIONS
+            || value.no_change != value.candidates.is_empty()
+        {
             return Err("world-extraction-count".into());
         }
         for c in &value.candidates {

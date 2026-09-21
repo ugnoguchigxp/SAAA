@@ -10,6 +10,8 @@ mod prepare;
 use prepare::{
     compose_after_connect, provider_input_budget, world_free_history, FreshProviderContext,
 };
+#[path = "conversation_state_answer.rs"]
+mod state_answer;
 #[path = "conversation_stream.rs"]
 mod streaming;
 
@@ -432,34 +434,16 @@ pub(crate) async fn execute_conversation_turn(
         .await;
         match outcome {
             ProviderAttemptOutcome::Completed { content, cleanup } => {
-                let content = if state_query {
-                    let rendered = world_live
-                        .as_ref()
-                        .ok_or("state-claim-unavailable")
-                        .and_then(|world| {
-                            world
-                                .accept_claims(&content, &input.content)
-                                .map_err(|_| "state-claim-rejected")
-                        });
-                    let accepted = match rendered {
-                        Ok(text) => text,
-                        Err(reason) => {
-                            let _ = verified_events.send(RuntimeEvent::Activity {
-                                run_id: input.run_id.clone(),
-                                kind: "state-answer-fallback".into(),
-                                summary: reason.into(),
-                            });
-                            crate::runtime::context::world::host_answer::card(
-                                state,
-                                &input.run_id,
-                                &input.content,
-                            )
-                        }
-                    };
-                    verified_events.set_completion_speech(&input.run_id, accepted.clone());
-                    accepted
+                let (content, verified_claim) = if state_query {
+                    state_answer::accept(
+                        state,
+                        input,
+                        world_live.as_ref(),
+                        &content,
+                        verified_events,
+                    )
                 } else {
-                    content
+                    (content, false)
                 };
                 if matches!(
                     &provider,
@@ -484,6 +468,12 @@ pub(crate) async fn execute_conversation_turn(
                     input,
                     &content,
                     |connection, message| {
+                        if verified_claim {
+                            world_live
+                                .as_ref()
+                                .ok_or("state-claim-unavailable")?
+                                .validate_claim_commit(connection)?;
+                        }
                         crate::role_routing::repository::accept_provider_turn(
                             connection,
                             &input.run_id,
@@ -600,8 +590,8 @@ pub(crate) async fn execute_conversation_turn(
 
 #[path = "conversation_recovery.rs"]
 mod recovery;
-use recovery::{context_recovery_message,provider_route_fallback_allowed};
 pub(crate) use recovery::provider_fallback_allowed;
+use recovery::{context_recovery_message, provider_route_fallback_allowed};
 
 #[cfg(test)]
 mod tests {

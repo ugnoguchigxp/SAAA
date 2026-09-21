@@ -133,7 +133,13 @@ pub(crate) fn commit(
     let mut sequence = ledger.transitions.last().map_or(1, |t| t.sequence + 1);
     // Activate endpoints before dependent relations/focus, regardless of model output order.
     let mut ordered: Vec<_> = extraction.candidates.iter().zip(decoded).zip(ids).collect();
-    ordered.sort_by_key(|((_, payload), _)| if matches!(payload, WorldPayloadV2::Entity(_)) { 0 } else { 1 });
+    ordered.sort_by_key(|((_, payload), _)| {
+        if matches!(payload, WorldPayloadV2::Entity(_)) {
+            0
+        } else {
+            1
+        }
+    });
     for ((candidate, p), id) in ordered {
         let mut depends_on = BTreeSet::new();
         let valid_from = match candidate.replaces.as_ref() {
@@ -262,8 +268,12 @@ pub(crate) fn commit(
         });
     }
     // The reducer requires each operation to inherit the full generation dependency set.
-    for assertion in &mut patch.assertions { assertion.input_dependencies = dependencies.clone(); }
-    for transition in &mut patch.transitions { transition.input_dependencies = dependencies.clone(); }
+    for assertion in &mut patch.assertions {
+        assertion.input_dependencies = dependencies.clone();
+    }
+    for transition in &mut patch.transitions {
+        transition.input_dependencies = dependencies.clone();
+    }
     let context = CommitContext {
         access: AccessRequest {
             principal: &ledger.principal,

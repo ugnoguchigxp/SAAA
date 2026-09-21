@@ -84,6 +84,28 @@ impl WorldLive {
         }
     }
 
+    /// Database-owned claims are rechecked in the same transaction that saves the answer.
+    pub(crate) fn validate_claim_commit(
+        &self,
+        connection: &rusqlite::Connection,
+    ) -> Result<(), String> {
+        match &self.frame {
+            WorldFrame::Live {
+                service, prepared, ..
+            } => {
+                let frame = prepared
+                    .lock()
+                    .map_err(|_| "World frame unavailable")?
+                    .clone()
+                    .ok_or("World frame invalidated")?;
+                service
+                    .validate_db_result(connection, &frame)
+                    .map_err(|e| e.code().to_string())
+            }
+            #[cfg(test)]
+            WorldFrame::Fixed(_) => Err("state-claim-unavailable".into()),
+        }
+    }
     pub(crate) fn current_candidate(&self) -> Option<Candidate> {
         match &self.frame {
             WorldFrame::Live { prepared, .. } => {

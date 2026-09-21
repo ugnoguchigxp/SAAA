@@ -4,7 +4,7 @@
 
 - `bun run typecheck`: pass.
 - `bun test tests/coding-steward.test.ts`: 2 passed, 0 failed.
-- `bun test tests/steward-panel.test.tsx`: 1 passed, 0 failed.
+- `bun test tests/steward-panel.test.tsx`: 2 passed, 0 failed.
 - `cargo test dw_01_direct_registration_allows_eight_goals_then_enforces_the_limit --lib`: pass.
 - `cargo test dw_14_multiple_goals_keep_the_sibling_through_topic_switch_withdrawal_and_hold --lib`: pass.
 - `cargo test ml_08_acceptance_register_divert_complete_withdraw --lib`: pass.
@@ -95,6 +95,9 @@
   is required.
 - A browser-independent panel acceptance renders two active Goals together and
   verifies that withdrawing B calls `work_withdraw` with B's Goal id only.
+- The panel's explicit-confirmation path sends the selected bounded scope to
+  `register_steward_goal` only after confirmation; the UI does not fabricate
+  broader operations or budget values.
 - A combined steward acceptance keeps B queued after A is withdrawn, does not
   start work for an unrelated topic, holds the resulting report during a
   meeting, and flushes one report when the hold clears.

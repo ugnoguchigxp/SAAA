@@ -142,12 +142,21 @@ fn wr_t09_five_elements_commit_with_host_evidence_and_remain_hypotheses() {
     use saaa_personal_state_core::world::model_v2::EntityKindV2;
     let f = crate::runtime::context::world::g1_tests::g1_fixture();
     let text = "改善は速度に依存し、速度との相関も仮説です。応答改善が目標です。";
-    let source = f.writer.write(|c| Ok(insert_source(c, PROJECT, "five-natural", text))).unwrap();
-    f.set_now(crate::memory::personal_state::now()+1);
+    let source = f
+        .writer
+        .write(|c| Ok(insert_source(c, PROJECT, "five-natural", text)))
+        .unwrap();
+    f.set_now(crate::memory::personal_state::now() + 1);
     let mut payloads = vec![
         v2_entity_payload("natural-tech", EntityKindV2::Concept, "改善", &[], None),
         v2_entity_payload("natural-metric", EntityKindV2::Metric, "速度", &[], None),
-        v2_entity_payload("natural-goal", EntityKindV2::Goal, "応答改善", &[], Some("g1-obj")),
+        v2_entity_payload(
+            "natural-goal",
+            EntityKindV2::Goal,
+            "応答改善",
+            &[],
+            Some("g1-obj"),
+        ),
         v2_focus_value("natural-tech", "current_work", Some("g1-obj")),
     ];
     for (kind, effect, sign, target) in [
@@ -156,29 +165,114 @@ fn wr_t09_five_elements_commit_with_host_evidence_and_remain_hypotheses() {
         ("decreases", Some("intervention"), None, "natural-metric"),
         ("serves_goal", None, None, "natural-goal"),
     ] {
-        payloads.push(v2_relation_value(if kind == "correlates_with" { "decode" } else { "natural-tech" }, target, kind, effect, &[], None, None, sign, None, &[], None, None));
+        payloads.push(v2_relation_value(
+            if kind == "correlates_with" {
+                "decode"
+            } else {
+                "natural-tech"
+            },
+            target,
+            kind,
+            effect,
+            &[],
+            None,
+            None,
+            sign,
+            None,
+            &[],
+            None,
+            None,
+        ));
     }
     let candidates: Vec<_> = payloads.into_iter().map(|payload| {
         let kind = format!("world_{}", payload["type"].as_str().unwrap());
         json!({"kind":kind,"payload":payload,"quote":text,"quote_start":0,"quote_end":text.len(),"epistemic":"inferred","replaces":null})
     }).collect();
     let raw = json!({"candidates":candidates,"no_change":false}).to_string();
-    let parsed = saaa_personal_state_core::world::extraction::Extraction::parse(&raw,text).unwrap();
-    f.writer.write(|c| extraction::commit(c,&parsed,&source,PROJECT,"five-natural",worker::Extractor::provenance(&Extract),f.now())).unwrap();
+    let parsed =
+        saaa_personal_state_core::world::extraction::Extraction::parse(&raw, text).unwrap();
+    f.writer
+        .write(|c| {
+            extraction::commit(
+                c,
+                &parsed,
+                &source,
+                PROJECT,
+                "five-natural",
+                worker::Extractor::provenance(&Extract),
+                f.now(),
+            )
+        })
+        .unwrap();
     let ledger = f.writer.read_serialized(store::load).unwrap();
-    let assertions: Vec<_> = ledger.assertions.values().filter(|a| a.evidence.contains(&source.key)).collect();
-    assert_eq!(assertions.len(),8);
-    assert!(assertions.iter().all(|a| ledger.status(&a.id,f.now())==Status::Active));
-    for a in assertions.iter().filter(|a| a.kind==Kind::WorldRelation) {
-        let p = f.writer.read_serialized(|c| super::validation::load_payload_json(c,&a.payload_ref)).unwrap();
-        assert_eq!(p["epistemic"],"hypothesis");
-        assert_eq!(p["basis"],"model_hypothesis");
-        assert_eq!(p["evidence_stances"][0]["source"]["id"],source.key.id);
+    let assertions: Vec<_> = ledger
+        .assertions
+        .values()
+        .filter(|a| a.evidence.contains(&source.key))
+        .collect();
+    assert_eq!(assertions.len(), 8);
+    assert!(assertions
+        .iter()
+        .all(|a| ledger.status(&a.id, f.now()) == Status::Active));
+    for a in assertions.iter().filter(|a| a.kind == Kind::WorldRelation) {
+        let p = f
+            .writer
+            .read_serialized(|c| super::validation::load_payload_json(c, &a.payload_ref))
+            .unwrap();
+        assert_eq!(p["epistemic"], "hypothesis");
+        assert_eq!(p["basis"], "model_hypothesis");
+        assert_eq!(p["evidence_stances"][0]["source"]["id"], source.key.id);
     }
-    let frame = f.service().prepare_frame(f.request(f.access(),vec![],Some(crate::runtime::context::world::g1_tests::graph_request("natural-tech")))).unwrap();
-    let encoded=serde_json::to_string(frame.frame()).unwrap();
-    for element in ["natural-tech","depends_on","correlates_with","decreases","serves_goal"] { assert!(encoded.contains(element),"{element}: {encoded}"); }
-    let before=ledger.assertions.len();
-    f.writer.write(|c| extraction::commit(c,&parsed,&source,PROJECT,"five-natural",worker::Extractor::provenance(&Extract),f.now())).unwrap();
-    assert_eq!(f.writer.read_serialized(store::load).unwrap().assertions.len(),before);
+    let frame = f
+        .service()
+        .prepare_frame(f.request(
+            f.access(),
+            vec![],
+            Some(crate::runtime::context::world::g1_tests::graph_request(
+                "改善",
+            )),
+        ))
+        .unwrap();
+    let encoded = serde_json::to_string(frame.frame()).unwrap();
+    for element in ["natural-tech", "decreases"] {
+        assert!(encoded.contains(element), "{element}: {encoded}");
+    }
+    // Graph projection is bounded; omitted relationships remain in the canonical ledger.
+    let relations: Vec<_> = assertions
+        .iter()
+        .filter(|a| a.kind == Kind::WorldRelation)
+        .map(|a| {
+            f.writer
+                .read_serialized(|c| super::validation::load_payload_json(c, &a.payload_ref))
+                .unwrap()["relation_type"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    for kind in ["depends_on", "correlates_with", "decreases", "serves_goal"] {
+        assert!(relations.iter().any(|r| r == kind));
+    }
+    let before = ledger.assertions.len();
+    f.writer
+        .write(|c| {
+            extraction::commit(
+                c,
+                &parsed,
+                &source,
+                PROJECT,
+                "five-natural",
+                worker::Extractor::provenance(&Extract),
+                f.now(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        f.writer
+            .read_serialized(store::load)
+            .unwrap()
+            .assertions
+            .len(),
+        before
+    );
 }

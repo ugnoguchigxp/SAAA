@@ -29,36 +29,42 @@ fn wr_t23_source_frame_additional_p95() {
         crate::situation::SituationRuntime::new(Default::default(), None).unwrap(),
     ));
     let measure = |service: &super::runtime_frame::WorldFrameService| {
-        let mut samples = Vec::new();
-        for i in 0..35 {
-            let start = Instant::now();
-            let frame = service
-                .prepare_frame(f.request(
-                    f.access(),
-                    ids.iter().map(|id| f.coding_ref(id)).collect(),
-                    Some(f.graph_request("ent0")),
-                ))
-                .unwrap();
-            assert!(serde_json::to_vec(frame.frame()).unwrap().len() <= 8192);
-            assert_eq!(
-                service.revalidate_frame(&frame).unwrap(),
-                saaa_personal_state_core::world::runtime_frame::FrameValidity::Current
-            );
-            if i >= 5 {
-                samples.push(start.elapsed().as_secs_f64() * 1000.0);
-            }
-        }
-        samples
+        let start = Instant::now();
+        let frame = service
+            .prepare_frame(f.request(
+                f.access(),
+                ids.iter().map(|id| f.coding_ref(id)).collect(),
+                Some(f.graph_request("ent0")),
+            ))
+            .unwrap();
+        assert!(serde_json::to_vec(frame.frame()).unwrap().len() <= 8192);
+        assert_eq!(
+            service.revalidate_frame(&frame).unwrap(),
+            saaa_personal_state_core::world::runtime_frame::FrameValidity::Current
+        );
+        start.elapsed().as_secs_f64() * 1000.0
     };
-    let old = measure(&baseline);
-    let new = measure(&current);
+    let (mut old, mut new) = (Vec::new(), Vec::new());
+    // Alternate order so machine load cannot systematically favor one implementation.
+    for i in 0..35 {
+        let (a, b) = if i % 2 == 0 {
+            (measure(&baseline), measure(&current))
+        } else {
+            let b = measure(&current);
+            (measure(&baseline), b)
+        };
+        if i >= 5 {
+            old.push(a);
+            new.push(b);
+        }
+    }
     let p95 = |values: &[f64]| {
         let mut values = values.to_vec();
         values.sort_by(f64::total_cmp);
         values[28]
     };
     let delta = p95(&new) - p95(&old);
-    let report = serde_json::json!({"profile":"debug","warmup":5,"samples":30,"ledger":f.ledger_count(),"projected_entities":100,"coding_sources":8,"schedule_sources":8,"baseline_ms":old,"source_frame_ms":new,"additional_p95_ms":delta,"includes":"prepare+serialize+revalidate","pass":delta<=30.0});
+    let report = serde_json::json!({"profile":"debug","order":"paired-alternating","warmup":5,"samples":30,"ledger":f.ledger_count(),"projected_entities":100,"coding_sources":8,"schedule_sources":8,"baseline_ms":old,"source_frame_ms":new,"additional_p95_ms":delta,"includes":"prepare+serialize+revalidate","pass":delta<=30.0});
     println!("WORLD_REMAINING_PERF={report}");
     assert!(delta <= 30.0, "additional p95: {delta}ms");
 }

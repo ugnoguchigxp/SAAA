@@ -123,14 +123,13 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
     impl Playback {
-    #[cfg(test)]
-    pub(crate) fn start(
-        cancellation: Arc<RunCancellation>,
-        on_started: impl FnOnce() + Send + 'static,
-    ) -> Self {
-        Self::start_guarded(cancellation, None, on_started)
-    }
-
+        #[cfg(test)]
+        pub(crate) fn start(
+            cancellation: Arc<RunCancellation>,
+            on_started: impl FnOnce() + Send + 'static,
+        ) -> Self {
+            Self::start_guarded(cancellation, None, on_started)
+        }
     }
 
     #[test]

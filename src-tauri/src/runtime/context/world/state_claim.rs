@@ -16,20 +16,52 @@ struct Answer {
     claims: Vec<StateClaim>,
 }
 pub(crate) const INSTRUCTION: &str = r#"This turn asks only for current state. Return JSON only: {"claims":[{"kind":"situation/coding/delegation/schedule","source_ref":"source_id from the current World Frame","source_version_or_digest":"digest from that entry","value":the exact payload object from that entry,"as_of_ms":that entry's as_of_ms}]}. Select only entries relevant to the user's question, with availability:available and an authorized owner scope. Do not invoke tools or add prose. Do not interpret settled as success, correlation as causation, or an inferred meeting as confirmed fact. If no entry supports an answer return {"claims":[]}. Never invent values or source references."#;
-pub(crate) fn render_for_query(raw: &str, frame: &WorldFrame, question: &str) -> Result<String, String> {
-    if raw.len() > 16384 { return Err("state-claim-budget".into()); }
+pub(crate) fn render_for_query(
+    raw: &str,
+    frame: &WorldFrame,
+    question: &str,
+) -> Result<String, String> {
+    if raw.len() > 16384 {
+        return Err("state-claim-budget".into());
+    }
     let answer: Answer = serde_json::from_str(raw).map_err(|_| "state-claim-schema")?;
     for claim in &answer.claims {
-        if !super::host_answer::matches_query(question, claim.kind) { return Err("state-claim-wrong-subject".into()); }
+        if !super::host_answer::matches_query(question, claim.kind) {
+            return Err("state-claim-wrong-subject".into());
+        }
         if claim.kind == WorldSourceKind::Schedule {
-            let earliest=frame.sources.iter().filter(|g|g.kind==WorldSourceKind::Schedule && g.availability==WorldSourceAvailability::Available).flat_map(|g| &g.entries).filter(|e|e.availability==WorldSourceAvailability::Available).filter_map(|e| match &e.payload {Some(WorldSourcePayload::Schedule {due_at_ms:Some(due),..})=>Some((*due,e.source_id.as_str())),_=>None}).min();
-            if earliest.map(|(_,id)|id)!=Some(claim.source_ref.as_str()) { return Err("state-claim-not-next-deadline".into()); }
+            let earliest = frame
+                .sources
+                .iter()
+                .filter(|g| {
+                    g.kind == WorldSourceKind::Schedule
+                        && g.availability == WorldSourceAvailability::Available
+                })
+                .flat_map(|g| &g.entries)
+                .filter(|e| e.availability == WorldSourceAvailability::Available)
+                .filter_map(|e| match &e.payload {
+                    Some(WorldSourcePayload::Schedule {
+                        due_at_ms: Some(due),
+                        ..
+                    }) => Some((*due, e.source_id.as_str())),
+                    _ => None,
+                })
+                .min();
+            if earliest.map(|(_, id)| id) != Some(claim.source_ref.as_str()) {
+                return Err("state-claim-not-next-deadline".into());
+            }
         }
     }
-    render(raw,frame)
+    render(raw, frame)
 }
-fn display_time(ms:i64)->String {
-    chrono::DateTime::from_timestamp_millis(ms).map(|date|date.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %:z").to_string()).unwrap_or_else(||"不明".into())
+fn display_time(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|date| {
+            date.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S %:z")
+                .to_string()
+        })
+        .unwrap_or_else(|| "不明".into())
 }
 pub(crate) fn render(raw: &str, frame: &WorldFrame) -> Result<String, String> {
     if raw.len() > 16384 {

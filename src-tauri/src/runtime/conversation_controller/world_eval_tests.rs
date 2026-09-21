@@ -20,7 +20,13 @@ async fn reasoning_wire(fresh_sources: bool) {
         let access = f.access();
         let composed = compose_parts(
             true,
-            Some(Arc::new(if fresh_sources { f.service().with_sources(Arc::new(crate::situation::SituationRuntime::new(Default::default(),None).unwrap())) } else { f.service() })),
+            Some(Arc::new(if fresh_sources {
+                f.service().with_sources(Arc::new(
+                    crate::situation::SituationRuntime::new(Default::default(), None).unwrap(),
+                ))
+            } else {
+                f.service()
+            })),
             access.principal,
             access.policy_revision,
             Some(graph::graph_request("tech")),

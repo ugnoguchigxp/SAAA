@@ -10,10 +10,7 @@ use std::sync::Arc;
 
 pub(crate) type Prepared = (Arc<WorldFrameService>, PreparedWorldFrame);
 
-pub(crate) fn prepare(
-    state: &AppState,
-    run_id: &str,
-) -> Result<Prepared, String> {
+pub(crate) fn prepare(state: &AppState, run_id: &str) -> Result<Prepared, String> {
     let (scope, principal, policy) = state.sqlite_readers.read(|c| {
         let scope = crate::runtime::context::scope::load(c, run_id)?;
         let (principal, policy): (String, u64) = c

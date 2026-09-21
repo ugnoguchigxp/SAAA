@@ -1348,9 +1348,9 @@ mod tests {
         let previous_token = env::var(API_TOKEN_ENV).ok();
         env::set_var(API_TOKEN_ENV, "test-control-token");
 
-        let harness=crate::runtime::context::world::wire_test_support::Harness::new();
-        let clock=harness.fixture.clock.clone();
-        let before=harness.fixture.now();
+        let harness = crate::runtime::context::world::wire_test_support::Harness::new();
+        let clock = harness.fixture.clock.clone();
+        let before = harness.fixture.now();
         let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
         let address = listener.local_addr().expect("listener address");
         let (created_at, expires_at) = test_timestamps();
@@ -1360,7 +1360,10 @@ mod tests {
                 let (mut stream, _) = listener.accept().expect("request accepted");
                 let request = read_request(&mut stream);
                 captured_tx.send(request.clone()).expect("request captured");
-                if index==1 { std::thread::sleep(std::time::Duration::from_secs(3)); clock.store(before+3000,std::sync::atomic::Ordering::SeqCst); }
+                if index == 1 {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    clock.store(before + 3000, std::sync::atomic::Ordering::SeqCst);
+                }
                 let body = match index {
                     0 => json!({
                         "contractVersion": "agent-connection.v1",
@@ -1450,7 +1453,11 @@ mod tests {
                 context_health: "green",
                 context_sources: &harness.composed.envelope.selected,
                 context_omissions: &harness.composed.envelope.omitted,
-                output_persistence: Some(crate::ProviderOutputPersistence {state:&harness.state,session_id:&harness.session,world:harness.composed.world.as_ref()}),
+                output_persistence: Some(crate::ProviderOutputPersistence {
+                    state: &harness.state,
+                    session_id: &harness.session,
+                    world: harness.composed.world.as_ref(),
+                }),
             },
         )
         .await
@@ -1461,7 +1468,8 @@ mod tests {
 
         let requests = captured_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 6);
-        let body:Value=serde_json::from_str(requests[4].split_once("\r\n\r\n").unwrap().1).unwrap();
+        let body: Value =
+            serde_json::from_str(requests[4].split_once("\r\n\r\n").unwrap().1).unwrap();
         harness.assert_wire(&body);
         assert!(requests[0].starts_with("GET /v1/agent-profiles HTTP/1.1"));
         assert!(requests[1].starts_with("POST /v1/agent-connections HTTP/1.1"));
