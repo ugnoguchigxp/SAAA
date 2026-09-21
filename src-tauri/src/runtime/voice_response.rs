@@ -28,7 +28,6 @@ fn speech_allowed(state: &AppState, input: &StartTurnInput) -> bool {
         == "speak"
 }
 
-
 pub(crate) async fn complete(
     state: &AppState,
     input: &StartTurnInput,

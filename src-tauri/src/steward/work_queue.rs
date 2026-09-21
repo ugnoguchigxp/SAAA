@@ -17,4 +17,3 @@ pub(crate) fn reorder_steward_queue(
         Ok(serde_json::json!({"status":"reordered","taskIds":task_ids}))
     })
 }
-

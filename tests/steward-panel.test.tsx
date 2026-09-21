@@ -16,6 +16,10 @@ test("multiple Goals remain separately visible and one can be withdrawn", async 
         {
           taskId: "task-a",
           loopState: "queued",
+          revision: 1,
+          queueRank: 0,
+          createdAt: "2026-09-22T00:00:00Z",
+          updatedAt: "2026-09-22T00:00:00Z",
           dedupeKey: "a",
           codingJobId: null,
           goalStatus: "active",
@@ -34,6 +38,10 @@ test("multiple Goals remain separately visible and one can be withdrawn", async 
         {
           taskId: "task-b",
           loopState: "awaiting_dependency",
+          revision: 1,
+          queueRank: 1,
+          createdAt: "2026-09-22T00:00:00Z",
+          updatedAt: "2026-09-22T00:00:00Z",
           dedupeKey: "b",
           codingJobId: null,
           goalStatus: "active",
@@ -65,7 +73,7 @@ test("multiple Goals remain separately visible and one can be withdrawn", async 
       );
     });
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(document.body.textContent).toContain("A の調査");
     expect(document.body.textContent).toContain("B の調査");

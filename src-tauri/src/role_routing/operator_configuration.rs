@@ -70,7 +70,29 @@ pub fn enable(database: &str) -> Result<String, String> {
         }
         value["roles"]["frontend"] = serde_json::json!(frontend_id);
     }
-    value["limits"]["frontendTimeoutMs"] = serde_json::json!(3_000);
+    for (role, capability) in [("frontend", "social_reply"), ("reasoner", "reason")] {
+        let actor_id = value["roles"][role]
+            .as_str()
+            .ok_or_else(|| format!("Role-routing {role} is not configured"))?;
+        let actor = value["actors"]
+            .as_array()
+            .and_then(|actors| actors.iter().find(|actor| actor["id"] == actor_id))
+            .ok_or_else(|| format!("Role-routing {role} actor is missing"))?;
+        let has_capability = actor["capabilities"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item == capability));
+        if actor["transport"] != "provider"
+            || actor["providerId"] != provider.id()
+            || !has_capability
+        {
+            return Err(format!(
+                "Role-routing {role} actor has an incompatible LAN provider binding"
+            ));
+        }
+    }
+    // The live LAN path is normally ~2.5 s. Eight seconds avoids turning ordinary jitter into a
+    // false configuration failure while preserving a finite, operator-visible deadline.
+    value["limits"]["frontendTimeoutMs"] = serde_json::json!(8_000);
     value["enabled"] = serde_json::json!(true);
     crate::persistence::save_settings_documents_to_connection(&mut connection, &documents)?;
     let policy = crate::persistence::load_role_routing_settings(&connection)?;

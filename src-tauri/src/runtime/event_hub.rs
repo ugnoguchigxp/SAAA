@@ -247,9 +247,19 @@ impl TurnEventHub {
             )));
         }
         let hub_accepted_at = Instant::now();
-        if let RuntimeEvent::MessageCompleted {run_id,message,presentation,..} = &event {
-            crate::larm_voice::speech_priority::final_ready(&self.speech,&message.conversation_id,run_id,
-                self.streaming_speech && presentation.decision == "speak");
+        if let RuntimeEvent::MessageCompleted {
+            run_id,
+            message,
+            presentation,
+            ..
+        } = &event
+        {
+            crate::larm_voice::speech_priority::final_ready(
+                &self.speech,
+                &message.conversation_id,
+                run_id,
+                self.streaming_speech && presentation.decision == "speak",
+            );
         }
         if let Some(received_at) = received_at {
             performance::record_socket_to_hub(

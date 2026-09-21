@@ -7,10 +7,10 @@ use std::sync::{
 use tokio::sync::{watch, Mutex, OnceCell};
 pub(crate) mod audio;
 mod decision;
-mod response;
 pub(crate) mod frontdesk;
 pub(crate) mod frontdesk_decision;
 pub(crate) mod frontdesk_repository;
+mod response;
 pub(crate) mod speech_priority;
 pub(crate) use response::{render as render_response, ResponseKind};
 
@@ -74,7 +74,10 @@ pub(crate) async fn begin_larm_voice_session(
     });
     drop(current);
     // Microphone readiness includes LFM readiness; don't discover a missing LFM after ASR.
-    self::current(&conversation_id).await.map(|_|()).map_err(|error|format!("lfm-session-prepare-failed: {error}"))
+    self::current(&conversation_id)
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("lfm-session-prepare-failed: {error}"))
 }
 async fn close_owner(owner: &Owner) -> Result<(), String> {
     if owner.started.load(Ordering::Acquire) {
@@ -142,8 +145,8 @@ pub(crate) async fn end_larm_voice_session(
     owner_id: String,
     drain: Option<bool>,
 ) -> Result<(), String> {
-    if let Some(owner) = OWNER.lock().await.as_ref().filter(|o|o.id == owner_id) {
-        speech_priority::stop_conversation(&state.streaming_tts,&owner.conversation);
+    if let Some(owner) = OWNER.lock().await.as_ref().filter(|o| o.id == owner_id) {
+        speech_priority::stop_conversation(&state.streaming_tts, &owner.conversation);
     }
     if drain.unwrap_or(false) {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -250,6 +253,6 @@ mod tests {
     }
 }
 
-mod world_tests;
 #[cfg(test)]
 mod frontdesk_repository_tests;
+mod world_tests;

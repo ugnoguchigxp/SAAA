@@ -318,7 +318,7 @@ fn valid_limits(v: &RoutingLimits) -> Result<(), String> {
         || v.max_tool_calls > 32
         || !(1_000..=600_000).contains(&v.root_timeout_ms)
         || !(1_000..=v.root_timeout_ms).contains(&v.step_timeout_ms)
-        || !(100..=3_000).contains(&v.frontend_timeout_ms)
+        || !(100..=10_000).contains(&v.frontend_timeout_ms)
         || !(100..=3_000).contains(&v.classification_timeout_ms)
         || !(1..=8).contains(&v.max_queued_inputs)
         || v.max_review_rounds > 2
@@ -461,6 +461,15 @@ mod tests {
             roles: vec!["reviewer".to_string(), "reasoner".to_string()],
             enabled: true,
         }];
+        assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn frontend_timeout_allows_the_measured_lan_voice_budget_but_remains_bounded() {
+        let mut settings = RoleRoutingSettings::default();
+        settings.limits.frontend_timeout_ms = 8_000;
+        assert!(validate_settings(&settings).is_ok());
+        settings.limits.frontend_timeout_ms = 10_001;
         assert!(validate_settings(&settings).is_err());
     }
 }

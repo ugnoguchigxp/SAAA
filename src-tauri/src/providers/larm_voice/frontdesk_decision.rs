@@ -52,14 +52,14 @@ fn apply_reasoning_need(
     qwen: Result<bool, &'static str>,
     pending_reasoning: bool,
 ) -> ConversationDecision {
-    // LFM owns the reasoning-request decision whenever it returned the two-field contract. Qwen's
-    // parallel classification is used only when the LFM endpoint had to fall back to plain text.
-    // A pending request is fenced in the host so no model can launch it twice.
+    // LFM can always request reasoning. Qwen's parallel classification is a promotion-only safety
+    // net: it can recover a missed request (or plain-text fallback), but can never cancel LFM's
+    // request. A pending request is fenced in the host so no model can launch it twice.
     if pending_reasoning {
         decision.think = false;
-    } else if decision.plain_text_fallback {
+    } else {
         match qwen {
-            Ok(reasoning) => decision.think = reasoning,
+            Ok(reasoning) => decision.think |= reasoning,
             Err(code) => decision.classifier_failure = Some(code),
         }
     }
@@ -334,21 +334,21 @@ mod tests {
     }
 
     #[test]
-    fn lfm_owns_the_reasoning_decision_unless_plain_text_fallback_was_needed() {
-        let structured = ConversationDecision {
+    fn qwen_can_promote_but_never_cancel_an_lfm_reasoning_request() {
+        let missed_by_lfm = ConversationDecision {
             say: "続きをどうぞ。".into(),
             think: false,
             classifier_failure: None,
             plain_text_fallback: false,
         };
-        assert!(!apply_reasoning_need(structured, Ok(true), false).think);
+        assert!(apply_reasoning_need(missed_by_lfm, Ok(true), false).think);
 
-        let plain = ConversationDecision {
-            say: "承知しました。".into(),
-            think: false,
+        let requested_by_lfm = ConversationDecision {
+            say: "考えます。".into(),
+            think: true,
             classifier_failure: None,
-            plain_text_fallback: true,
+            plain_text_fallback: false,
         };
-        assert!(apply_reasoning_need(plain, Ok(true), false).think);
+        assert!(apply_reasoning_need(requested_by_lfm, Ok(false), false).think);
     }
 }

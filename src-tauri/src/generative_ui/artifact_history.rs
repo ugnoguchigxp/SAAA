@@ -33,4 +33,3 @@ pub(crate) fn list_artifact_instances(
         rows.collect::<Result<Vec<_>, _>>().map_err(database_error)
     })
 }
-

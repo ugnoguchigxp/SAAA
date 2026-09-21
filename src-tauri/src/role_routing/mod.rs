@@ -1,8 +1,6 @@
 //! Durable policy and ledger foundations for role-based model routing.
 
 pub(crate) mod adapters;
-#[cfg(feature = "provider-diagnostics")]
-pub mod operator_configuration;
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod classifier;
 pub(crate) mod context;
@@ -13,6 +11,8 @@ pub(crate) mod executor;
 pub(crate) mod ipc;
 pub(crate) mod learning;
 pub(crate) mod limits;
+#[cfg(feature = "provider-diagnostics")]
+pub mod operator_configuration;
 pub(crate) mod proposals;
 pub(crate) mod ranker;
 pub(crate) mod recipe;

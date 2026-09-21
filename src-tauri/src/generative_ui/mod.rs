@@ -1,5 +1,5 @@
-mod commands;
 pub(crate) mod artifact_history;
+mod commands;
 pub(crate) mod contracts;
 pub(crate) mod data;
 pub(crate) mod parser;

@@ -161,7 +161,7 @@ fn ml_01_schema_version_and_empty_goals() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
     assert_eq!(version, DATABASE_SCHEMA_VERSION);
-    assert_eq!(DATABASE_SCHEMA_VERSION, 32);
+    assert_eq!(DATABASE_SCHEMA_VERSION, 33);
     let goals: i64 = connection
         .query_row("SELECT COUNT(*) FROM steward_goals", [], |row| row.get(0))
         .expect("goals");
@@ -545,6 +545,9 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
             .sqlite_writer
             .write(|connection| {
                 connection
+                    .execute("DELETE FROM coding_events", [])
+                    .map_err(crate::database_error)?;
+                connection
                     .execute("DELETE FROM coding_runs", [])
                     .map_err(crate::database_error)?;
                 connection
@@ -581,6 +584,9 @@ fn dw_10_failure_creates_at_most_two_durable_replans() {
         state
             .sqlite_writer
             .write(|connection| {
+                connection
+                    .execute("DELETE FROM coding_events", [])
+                    .map_err(crate::database_error)?;
                 connection
                     .execute("DELETE FROM coding_runs", [])
                     .map_err(crate::database_error)?;

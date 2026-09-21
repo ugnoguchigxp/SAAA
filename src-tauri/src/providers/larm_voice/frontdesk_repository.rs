@@ -51,6 +51,16 @@ pub(crate) enum AcceptOutcome {
     },
 }
 
+struct ExistingUtterance {
+    conversation_id: String,
+    input_text: String,
+    status: String,
+    reply_message_id: Option<String>,
+    reasoning_request_id: Option<String>,
+    request_content: Option<String>,
+    claimed_run_id: Option<String>,
+}
+
 fn validate_frontend_binding(c: &Connection) -> Result<(), String> {
     let routing = crate::persistence::load_role_routing_settings(c)?;
     if !routing.enabled {
@@ -86,15 +96,7 @@ pub(crate) fn accept(
 ) -> Result<AcceptOutcome, String> {
     let tx = c.unchecked_transaction().map_err(database_error)?;
     validate_frontend_binding(&tx)?;
-    let existing: Option<(
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> = tx
+    let existing: Option<ExistingUtterance> = tx
         .query_row(
             "SELECT u.conversation_id,input.content,u.status,u.reply_message_id,
                     u.reasoning_request_id,request.content,u.claimed_run_id
@@ -104,40 +106,33 @@ pub(crate) fn accept(
              WHERE u.utterance_id=?1",
             [utterance],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
+                Ok(ExistingUtterance {
+                    conversation_id: row.get(0)?,
+                    input_text: row.get(1)?,
+                    status: row.get(2)?,
+                    reply_message_id: row.get(3)?,
+                    reasoning_request_id: row.get(4)?,
+                    request_content: row.get(5)?,
+                    claimed_run_id: row.get(6)?,
+                })
             },
         )
         .optional()
         .map_err(database_error)?;
-    if let Some((
-        stored_conversation,
-        stored_text,
-        status,
-        reply_message_id,
-        reasoning_request_id,
-        request_content,
-        claimed_run_id,
-    )) = existing
-    {
-        if stored_conversation != conversation || stored_text != text {
+    if let Some(existing) = existing {
+        if existing.conversation_id != conversation || existing.input_text != text {
             return Err("lfm-utterance-conflicts-with-original".into());
         }
-        if matches!(status.as_str(), "respond" | "delegate") {
-            if reply_message_id.is_none() || (status == "delegate" && request_content.is_none()) {
+        if matches!(existing.status.as_str(), "respond" | "delegate") {
+            if existing.reply_message_id.is_none()
+                || (existing.status == "delegate" && existing.request_content.is_none())
+            {
                 return Err("lfm-utterance-completed-state-invalid".into());
             }
-            let (reasoning_request_id, request_content) = if claimed_run_id.is_some() {
+            let (reasoning_request_id, request_content) = if existing.claimed_run_id.is_some() {
                 (None, None)
             } else {
-                (reasoning_request_id, request_content)
+                (existing.reasoning_request_id, existing.request_content)
             };
             return Ok(AcceptOutcome::Completed {
                 reasoning_request_id,
