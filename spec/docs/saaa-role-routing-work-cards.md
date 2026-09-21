@@ -10,14 +10,14 @@
 | 区分 | 件数 | カード |
 | --- | ---: | --- |
 | 完了 | 0 | なし |
-| 部分 | 39 | RR-00〜20、RR-22〜39 |
-| 未着手 | 1 | RR-21 |
+| 部分 | 40 | RR-00〜39 |
+| 未着手 | 0 | なし |
 
 現時点で動作確認できたサブ機能は、receipt/ledgerの作成、queue上限拒否、FIFO queue解放、root deadline、snapshot/cancel IPC、Codex JSONL sidecarの同梱とfake protocol検証、`codex_sdk` actorの限定dispatch、学習データ処理の一部である。これらは各カードの一部を満たすだけで、R1〜R3の受入完了を意味しない。
 
 優先して残る実装は、role専用context projection（RR-07）、Provider/Sinkとtool ledger/speech ownerの実経路（RR-09/11/13）、Sol host tool loop（RR-21）、評価・revision・premium承諾（RR-24〜26）、R2競合試験（RR-29）、tool-specialist（RR-38）、全体受入・性能測定（RR-39）である。加えて、policy snapshotをqueued rootのdispatch時にも一貫して参照する保証、実認証SDKを使うlive isolation、ASR→tool→TTSのE2Eは未検証である。
 
-外部要因で停止しているカードはない。主な阻害要因は未実装の縦通し経路と試験不足である。live laneだけは認証済みSDK・許可モデル・隔離fixtureを用意した明示的な実行が必要であり、現状は実施していない。作業treeにはrole-routing外の変更も混在するため、V5全体試験の失敗は変更単位ごとに切り分ける。
+外部要因で停止しているカードはない。RR-21 は未接続の実装である。固定版 `@openai/codex-sdk` の `runStreamed` は MCP 呼び出しを観測するだけでhost callbackを提供しないが、既存の認証付きloopback MCP gatewayをsidecarが唯一接続する host-controlled bridge として構成できる。C8.3を維持するため、そのbridge以外のMCP・ネットワーク・native toolは明示的に遮断し、tokenをJSONLやDBへ出してはならない。それ以外の主な阻害要因は未実装の縦通し経路と試験不足である。live laneだけは認証済みSDK・許可モデル・隔離fixtureを用意した明示的な実行が必要であり、現状は実施していない。作業treeにはrole-routing外の変更も混在するため、V5全体試験の失敗は変更単位ごとに切り分ける。
 
 ## 実装監査（2026-09-21）
 
@@ -44,7 +44,7 @@
 | RR-18 | 部分 | queue順序・in-flight restart復旧を起動writerへ接続。queued turn は provider 前で待機し、終端後に最古 queued root を `IMMEDIATE` transaction で claim | 再接続、restart 後 queued receipt の明示的再開 UX |
 | RR-19 | 部分 | SDK固定版のJSONL sidecar、Rust JSONL protocol validator。`codex_sdk` actor をconversationからsidecarへdispatchし、root採用transactionへ保存 | mock SDK wire試験、実認証SDK呼び出し |
 | RR-20 | 部分 | sidecarをBun compiled resourceとして同梱し、ProcessGuardで起動・cancel回収。fake executableでEOF/cancel/config隔離を検証 | live isolation gate |
-| RR-21 | 未着手 | Sol tool loopなし | Sol delegation、host tool loop |
+| RR-21 | 部分 | sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続する。MCP sessionはactive rootの会話へ解決され、tool呼び出しは `rr_tool_links` のreserve/settleを通る。tokenはchild環境だけに渡しJSONLへ出さない | 実認証SDKによるSol tool roundtrip、revision/model変更時のnew thread、tool budget、live isolation試験 |
 | RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定 | active dispatchのusage集計、切替上限 |
 | RR-23 | 部分 | host feedback保存とdirty mark | active answer一意の実入力接続 |
 | RR-24 | 部分 | review issueの型付きvalidator、author/reviewer独立性、evidence参照を検証 | 独立評価executor、read-only tool接続、永続record |

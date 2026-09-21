@@ -44,6 +44,27 @@ pub fn project_exists(writer: &SqliteWriter, project_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Resolves the conversation owned by a currently active role-routing root. The bridge never
+/// creates a synthetic conversation for this case: doing so would detach tool receipts from the
+/// root that owns the answer.
+pub fn active_role_root_conversation(writer: &SqliteWriter, root_id: &str) -> Option<String> {
+    if root_id.is_empty() || root_id.len() > 160 || root_id.chars().any(char::is_control) {
+        return None;
+    }
+    let root_id = root_id.to_string();
+    writer
+        .read_serialized(move |connection| {
+            connection
+                .query_row(
+                    "SELECT conversation_id FROM rr_roots WHERE root_id=?1 AND phase IN ('preparing','queued','responding','draining')",
+                    [root_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .ok()
+}
+
 /// Builds the fixed request context for one session call.
 pub fn session_context(session: &Session) -> RequestContext {
     RequestContext::new(session.principal_id(), session.conversation_id())

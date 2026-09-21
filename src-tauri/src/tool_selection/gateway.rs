@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 use super::contracts::*;
 use super::service::{self, ToolSelectionService};
+use crate::persistence::SqliteWriter;
 use crate::runtime::agent_tools::AgentToolCall;
 use crate::{AppState, RunCancellation};
 
@@ -426,57 +427,98 @@ pub async fn execute_for_turn(
             "Tool selection is temporarily unavailable.",
         );
     };
-    let Ok(principal) = service::ensure_principal(&state.sqlite_writer) else {
-        return crate::runtime::agent_tools::tool_error_content(
-            "unavailable",
-            "Tool selection is temporarily unavailable.",
-        );
-    };
-    let context = RequestContext::new(&principal, conversation_id)
-        .with_run(Some(run_id.to_string()))
-        .with_message(input_message_id);
-    let operation_key = format!(
-        "{:x}",
-        Sha256::digest(format!("{}:{}", call.name, call.arguments).as_bytes())
-    );
-    match reserve_routing_operation(state, run_id, &operation_key) {
-        Ok(true) => {}
-        Ok(false) => {
-            return crate::runtime::agent_tools::tool_error_content(
-                "operation-not-retryable",
-                "This routing tool operation is already owned by an earlier invocation.",
-            );
-        }
-        Err(_) => {
-            return crate::runtime::agent_tools::tool_error_content(
-                "unavailable",
-                "Tool routing persistence is temporarily unavailable.",
-            );
-        }
-    }
-    let output = dispatch(
+    execute_for_root(
         &state.tool_selection,
-        &context,
+        &state.sqlite_writer,
+        conversation_id,
+        run_id,
+        input_message_id,
         &call.name,
         &call.arguments,
         cancellation,
+        false,
     )
-    .await;
-    settle_routing_operation(state, run_id, &operation_key, &output);
-    output.to_string()
+    .await
+    .to_string()
+}
+
+/// Executes a role-routed tool call through the existing gateway while keeping the operation
+/// receipt owned by the role root. This is also used by the restricted MCP bridge; the bridge
+/// never obtains a second, session-local routing id.
+pub async fn execute_for_role_root(
+    service: &ToolSelectionService,
+    writer: &SqliteWriter,
+    conversation_id: &str,
+    root_id: &str,
+    input_message_id: Option<String>,
+    name: &str,
+    arguments: &str,
+    cancellation: &RunCancellation,
+) -> Value {
+    execute_for_root(
+        service,
+        writer,
+        conversation_id,
+        root_id,
+        input_message_id,
+        name,
+        arguments,
+        cancellation,
+        true,
+    )
+    .await
+}
+
+async fn execute_for_root(
+    service: &ToolSelectionService,
+    writer: &SqliteWriter,
+    conversation_id: &str,
+    root_id: &str,
+    input_message_id: Option<String>,
+    name: &str,
+    arguments: &str,
+    cancellation: &RunCancellation,
+    external: bool,
+) -> Value {
+    let Ok(principal) = service::ensure_principal(writer) else {
+        return json!({"error":{"code":"unavailable","message":"Tool selection is temporarily unavailable."}});
+    };
+    let context = RequestContext::new(&principal, conversation_id)
+        .with_run(Some(root_id.to_string()))
+        .with_message(input_message_id);
+    let operation_key = format!(
+        "{:x}",
+        Sha256::digest(format!("{name}:{arguments}").as_bytes())
+    );
+    match reserve_routing_operation(writer, root_id, &operation_key) {
+        Ok(true) => {}
+        Ok(false) => {
+            return json!({"error":{"code":"operation-not-retryable","message":"This routing tool operation is already owned by an earlier invocation."}});
+        }
+        Err(_) => {
+            return json!({"error":{"code":"unavailable","message":"Tool routing persistence is temporarily unavailable."}});
+        }
+    }
+    let output = if external {
+        dispatch_external(service, &context, name, arguments, cancellation).await
+    } else {
+        dispatch(service, &context, name, arguments, cancellation).await
+    };
+    settle_routing_operation(writer, root_id, &operation_key, &output);
+    output
 }
 
 /// The existing tool-selection service remains the invocation owner.  Role routing only reserves
 /// its operation key before dispatch and records the owner's receipt afterwards.  A process that
 /// dies after `dispatched` therefore cannot silently replay a potentially mutating operation.
 fn reserve_routing_operation(
-    state: &AppState,
+    writer: &SqliteWriter,
     root_id: &str,
     operation_key: &str,
 ) -> Result<bool, String> {
     let root_id = root_id.to_string();
     let operation_key = operation_key.to_string();
-    state.sqlite_writer.write(move |connection| {
+    writer.write(move |connection| {
         let transaction = connection.transaction().map_err(|error| error.to_string())?;
         let step: Option<(String, u32)> = transaction
             .query_row(
@@ -520,7 +562,12 @@ fn reserve_routing_operation(
     })
 }
 
-fn settle_routing_operation(state: &AppState, root_id: &str, operation_key: &str, output: &Value) {
+fn settle_routing_operation(
+    writer: &SqliteWriter,
+    root_id: &str,
+    operation_key: &str,
+    output: &Value,
+) {
     let invocation_id = output
         .pointer("/data/invocationId")
         .and_then(Value::as_str)
@@ -531,7 +578,7 @@ fn settle_routing_operation(state: &AppState, root_id: &str, operation_key: &str
         .map(str::to_owned);
     let root_id = root_id.to_string();
     let operation_key = operation_key.to_string();
-    let _ = state.sqlite_writer.write(move |connection| {
+    let _ = writer.write(move |connection| {
         crate::role_routing::tool_ledger::settle(
             connection,
             &root_id,

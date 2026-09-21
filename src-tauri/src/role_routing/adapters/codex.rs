@@ -31,6 +31,12 @@ pub(crate) struct SidecarRequest {
     pub(crate) timeout_ms: u64,
 }
 
+#[derive(Clone)]
+struct ToolGatewayBridge {
+    url: String,
+    bearer_token: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidecarOutcome {
     Result(String),
@@ -50,7 +56,13 @@ pub(crate) fn run(
     request: &SidecarRequest,
     cancellation: &RunCancellation,
 ) -> Result<SidecarOutcome, String> {
-    run_at(&bundled_sidecar_path()?, request, cancellation)
+    let bridge = tool_gateway_bridge(&request.id)?;
+    run_at_with_bridge(
+        &bundled_sidecar_path()?,
+        request,
+        cancellation,
+        bridge.as_ref(),
+    )
 }
 
 /// Runs one request over a fresh JSONL sidecar process. `executable` is explicit so test
@@ -59,6 +71,15 @@ pub(crate) fn run_at(
     executable: &Path,
     request: &SidecarRequest,
     cancellation: &RunCancellation,
+) -> Result<SidecarOutcome, String> {
+    run_at_with_bridge(executable, request, cancellation, None)
+}
+
+fn run_at_with_bridge(
+    executable: &Path,
+    request: &SidecarRequest,
+    cancellation: &RunCancellation,
+    bridge: Option<&ToolGatewayBridge>,
 ) -> Result<SidecarOutcome, String> {
     if request.id.is_empty()
         || request.step_id.is_empty()
@@ -75,6 +96,9 @@ pub(crate) fn run_at(
     let mut command = Command::new(executable);
     command.env_clear();
     configure_sidecar_environment(&mut command);
+    if let Some(bridge) = bridge {
+        command.env("SAAA_ROLE_ROUTING_MCP_TOKEN", &bridge.bearer_token);
+    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -121,6 +145,7 @@ pub(crate) fn run_at(
         "model": request.model,
         "prompt": request.prompt,
         "outputSchema": request.output_schema,
+        "toolGatewayUrl": bridge.map(|bridge| &bridge.url),
         "timeoutMs": request.timeout_ms,
     });
     write_frame(stdin, &frame)?;
@@ -167,6 +192,32 @@ pub(crate) fn run_at(
     child.terminate();
     let _ = reader.join();
     outcome
+}
+
+/// The role sidecar may connect only to the application's authenticated loopback gateway. The
+/// bearer token is injected directly into the child environment and deliberately never appears in
+/// its JSONL protocol, database records, or diagnostics.
+fn tool_gateway_bridge(root_id: &str) -> Result<Option<ToolGatewayBridge>, String> {
+    use crate::tool_selection::mcp_server::{config, MCP_SERVER_BIND_ADDRESS, MCP_SERVER_ENDPOINT};
+
+    let Some(config) = config::from_environment()
+        .map_err(|code| format!("Role-routing tool gateway configuration is invalid: {code}"))?
+    else {
+        return Ok(None);
+    };
+    if root_id.is_empty() || root_id.len() > 160 || root_id.chars().any(char::is_control) {
+        return Err("Role-routing tool gateway root is invalid".into());
+    }
+    let bearer_token = config::load_token(&config)
+        .map_err(|code| format!("Role-routing tool gateway credential is unavailable: {code}"))?;
+    let encoded_root: String = url::form_urlencoded::byte_serialize(root_id.as_bytes()).collect();
+    Ok(Some(ToolGatewayBridge {
+        url: format!(
+            "http://{}:{}{}?rrRoot={encoded_root}",
+            MCP_SERVER_BIND_ADDRESS, config.port, MCP_SERVER_ENDPOINT
+        ),
+        bearer_token,
+    }))
 }
 
 /// Preserve only the runtime prerequisites used by the fixed sidecar. `HOME` lets the bundled
@@ -274,6 +325,25 @@ mod tests {
             run_at(&executable, &request(), &RunCancellation::default())
                 .expect("isolated fixture result"),
             SidecarOutcome::Result("isolated".into())
+        );
+    }
+
+    #[test]
+    fn rr_21_bridge_keeps_bearer_token_out_of_jsonl() {
+        let (_directory, executable) = fixture("test \"$SAAA_ROLE_ROUTING_MCP_TOKEN\" = 'bridge-secret' || exit 9; read line; case \"$line\" in *bridge-secret*) exit 10;; *toolGatewayUrl*) ;; *) exit 11;; esac; printf '%s\\n' '{\"version\":1,\"id\":\"root\",\"stepId\":\"step\",\"op\":\"result\",\"text\":\"bridged\"}'");
+        let bridge = ToolGatewayBridge {
+            url: "http://127.0.0.1:43127/mcp?rrRoot=root".into(),
+            bearer_token: "bridge-secret".into(),
+        };
+        assert_eq!(
+            run_at_with_bridge(
+                &executable,
+                &request(),
+                &RunCancellation::default(),
+                Some(&bridge)
+            )
+            .expect("bridge result"),
+            SidecarOutcome::Result("bridged".into())
         );
     }
 }

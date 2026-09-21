@@ -12,11 +12,19 @@ function environment(): Record<string, string> {
   return result;
 }
 
-export function isolatedCodex(): Codex {
+export function isolatedCodex(toolGatewayUrl?: string): Codex {
+  const mcpServers = toolGatewayUrl
+    ? {
+        "saaa-role-routing": {
+          url: toolGatewayUrl,
+          bearer_token_env_var: "SAAA_ROLE_ROUTING_MCP_TOKEN",
+        },
+      }
+    : {};
   return new Codex({
     env: environment(),
     config: {
-      mcp_servers: {},
+      mcp_servers: mcpServers,
       web_search: "disabled",
       sandbox_workspace_write: { network_access: false },
     },

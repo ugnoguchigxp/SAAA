@@ -17,7 +17,7 @@
 
 - A01〜A42の受入を網羅するV5は未実施。
 - live SDK isolation、live provider、TTS体感、夜間負荷測定は未実施。
-- Sol host tool loop（RR-21）は未実装。
+- Sol host tool loop（RR-21）は部分実装。sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続し、gateway はactive rootの会話を検証して `rr_tool_links` のreserve/settleへ帰属する。tokenはchild環境だけで渡し、JSONLへ含めない。`rr_21_bridge_keeps_bearer_token_out_of_jsonl` と `rr_21_role_root_query_is_strict_and_decoded_once` はpass。実認証SDKによるtool roundtrip・revision/model変更時のnew thread・tool budget・live isolationは未実施。
 - Provider/TTS/toolの完了順を固定するBarrier競合fixtureは不足。
 - 全体 `cargo check` はrole-routing外のcalendar変更にあるmodule/command重複とOAuth API不整合で停止する。
 

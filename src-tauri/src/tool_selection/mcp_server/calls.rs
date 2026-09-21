@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use super::protocol::{JsonRpcError, TypedRequestId, INVALID_PARAMS};
 use super::sessions::Session;
 use super::ServerInner;
+use crate::persistence::SqliteWriter;
 use crate::tool_selection::gateway;
 use crate::tool_selection::RequestContext;
 use crate::RunCancellation;
@@ -60,7 +61,9 @@ pub fn tools_list() -> Value {
 /// with `isError: true`.
 pub async fn execute_tool_call(
     service: &crate::tool_selection::ToolSelectionService,
+    writer: &SqliteWriter,
     context: &RequestContext,
+    role_root_id: Option<&str>,
     name: &str,
     arguments: &Value,
     cancellation: &RunCancellation,
@@ -73,8 +76,24 @@ pub async fn execute_tool_call(
     }
     let argument_text = serde_json::to_string(arguments)
         .map_err(|_| JsonRpcError::new(INVALID_PARAMS, "Invalid params"))?;
-    let envelope =
-        gateway::dispatch_external(service, context, name, &argument_text, cancellation).await;
+    let envelope = match role_root_id {
+        Some(root_id) => {
+            gateway::execute_for_role_root(
+                service,
+                writer,
+                &context.conversation_id,
+                root_id,
+                None,
+                name,
+                &argument_text,
+                cancellation,
+            )
+            .await
+        }
+        None => {
+            gateway::dispatch_external(service, context, name, &argument_text, cancellation).await
+        }
+    };
     let is_error = envelope_is_error(&envelope);
     let text = serde_json::to_string(&envelope).unwrap_or_else(|_| "{}".to_string());
     Ok(json!({

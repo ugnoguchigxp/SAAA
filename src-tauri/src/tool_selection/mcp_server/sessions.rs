@@ -51,6 +51,7 @@ pub struct Session {
     client_info: Option<Value>,
     conversation_id: String,
     run_id: String,
+    role_root_id: Option<String>,
     principal_id: String,
     project_id: Option<String>,
     created_at_ms: i64,
@@ -67,6 +68,7 @@ impl Session {
         client_info: Option<Value>,
         conversation_id: String,
         run_id: String,
+        role_root_id: Option<String>,
         principal_id: String,
         project_id: Option<String>,
     ) -> Self {
@@ -77,6 +79,7 @@ impl Session {
             client_info,
             conversation_id,
             run_id,
+            role_root_id,
             principal_id,
             project_id,
             created_at_ms: now,
@@ -105,6 +108,9 @@ impl Session {
     }
     pub fn run_id(&self) -> &str {
         &self.run_id
+    }
+    pub fn role_root_id(&self) -> Option<&str> {
+        self.role_root_id.as_deref()
     }
     pub fn principal_id(&self) -> &str {
         &self.principal_id
@@ -419,6 +425,7 @@ mod tests {
             None,
             format!("conv-{id}"),
             format!("run-{id}"),
+            None,
             "P1".to_string(),
             None,
         )

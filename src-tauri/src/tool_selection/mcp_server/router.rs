@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::post;
 use axum::Router;
@@ -58,6 +58,10 @@ async fn handle_post(State(inner): State<Arc<ServerInner>>, request: Request) ->
         return empty(StatusCode::SERVICE_UNAVAILABLE);
     }
     let (parts, body) = request.into_parts();
+    let role_root_id = match role_root_from_uri(&parts.uri) {
+        Some(value) => value,
+        None => return empty(StatusCode::BAD_REQUEST),
+    };
     if let Err(response) = authenticate(&inner, &parts.headers) {
         return response;
     }
@@ -88,6 +92,7 @@ async fn handle_post(State(inner): State<Arc<ServerInner>>, request: Request) ->
                 &request.id,
                 &request.method,
                 &request.params,
+                role_root_id.as_deref(),
             )
             .await
             {
@@ -114,9 +119,10 @@ async fn handle_request(
     id: &TypedRequestId,
     method: &str,
     params: &Value,
+    role_root_id: Option<&str>,
 ) -> Result<RpcReply, Response> {
     match method {
-        "initialize" => initialize(inner, headers, id, params).await,
+        "initialize" => initialize(inner, headers, id, params, role_root_id).await,
         "ping" => {
             let _session = require_session(inner, headers)?;
             Ok(RpcReply::value(protocol::success_response(id, json!({}))))
@@ -172,6 +178,7 @@ async fn initialize(
     headers: &HeaderMap,
     id: &TypedRequestId,
     params: &Value,
+    role_root_id: Option<&str>,
 ) -> Result<RpcReply, Response> {
     if headers.contains_key(SESSION_HEADER) {
         return Err(empty(StatusCode::BAD_REQUEST));
@@ -200,14 +207,28 @@ async fn initialize(
     if inner.sessions.len() >= SESSION_MAX {
         return Ok(RpcReply::value(server_busy(id)));
     }
-    let conversation_id = crate::new_id("mcpconv");
-    let run_id = format!("mcp-session:{}", uuid::Uuid::new_v4());
+    let (conversation_id, run_id, role_root_id) = match role_root_id {
+        Some(root_id) => match context::active_role_root_conversation(&inner.writer, root_id) {
+            Some(conversation_id) => (
+                conversation_id,
+                root_id.to_string(),
+                Some(root_id.to_string()),
+            ),
+            None => return Ok(RpcReply::value(invalid_params(id))),
+        },
+        None => (
+            crate::new_id("mcpconv"),
+            format!("mcp-session:{}", uuid::Uuid::new_v4()),
+            None,
+        ),
+    };
     let session = super::sessions::Session::new(
         uuid::Uuid::new_v4().to_string(),
         MCP_SERVER_PROTOCOL_VERSION.to_string(),
         client_info,
         conversation_id.clone(),
         run_id,
+        role_root_id,
         inner.principal.clone(),
         inner.project_id.clone(),
     );
@@ -217,7 +238,9 @@ async fn initialize(
         Ok(session) => session,
         Err(_) => return Ok(RpcReply::value(server_busy(id))),
     };
-    if context::create_conversation(&inner.writer, &conversation_id).is_err() {
+    if session.role_root_id().is_none()
+        && context::create_conversation(&inner.writer, &conversation_id).is_err()
+    {
         // Roll the reservation back so a storage failure does not hold a session slot.
         inner.sessions.remove(session.id());
         return Ok(RpcReply::value(protocol::error_response(
@@ -289,6 +312,8 @@ async fn tools_call(
     }
     let context = context::session_context(&session);
     let service = inner.service.clone();
+    let writer = inner.writer.clone();
+    let role_root_id = session.role_root_id().map(str::to_string);
     let name = name.to_string();
     let task_cancellation = cancellation.clone();
     let deadline = std::time::Duration::from_millis(
@@ -302,7 +327,16 @@ async fn tools_call(
     let permit = CallPermit::new(inner.clone(), session.clone(), id.clone());
     let task = tokio::spawn(async move {
         let _permit = permit;
-        calls::execute_tool_call(&service, &context, &name, &arguments, &task_cancellation).await
+        calls::execute_tool_call(
+            &service,
+            &writer,
+            &context,
+            role_root_id.as_deref(),
+            &name,
+            &arguments,
+            &task_cancellation,
+        )
+        .await
     });
     let reply = match tokio::time::timeout(deadline, task).await {
         Ok(Ok(Ok(result))) => protocol::success_response(id, result),
@@ -321,6 +355,22 @@ async fn tools_call(
     };
     session.touch();
     Ok(RpcReply::value(reply))
+}
+
+/// A role root can only be selected at initialization and is bound to the authenticated MCP
+/// session. Query parsing is strict so an arbitrary URL cannot smuggle a second authority value.
+fn role_root_from_uri(uri: &Uri) -> Option<Option<String>> {
+    let Some(query) = uri.query() else {
+        return Some(None);
+    };
+    let mut values = url::form_urlencoded::parse(query.as_bytes());
+    let Some((key, root_id)) = values.next() else {
+        return None;
+    };
+    if key != "rrRoot" || values.next().is_some() || root_id.is_empty() || root_id.len() > 160 {
+        return None;
+    }
+    Some(Some(root_id.into_owned()))
 }
 
 async fn handle_get(State(inner): State<Arc<ServerInner>>, headers: HeaderMap) -> Response {
@@ -417,4 +467,27 @@ fn not_initialized(id: &TypedRequestId) -> Value {
         Some(id),
         &JsonRpcError::new(NOT_INITIALIZED, "Server not initialized"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::role_root_from_uri;
+    use axum::http::Uri;
+
+    #[test]
+    fn rr_21_role_root_query_is_strict_and_decoded_once() {
+        let uri: Uri = "http://127.0.0.1:43127/mcp?rrRoot=root%2Fone"
+            .parse()
+            .expect("uri");
+        assert_eq!(role_root_from_uri(&uri), Some(Some("root/one".into())));
+        let absent: Uri = "http://127.0.0.1:43127/mcp".parse().expect("uri");
+        assert_eq!(role_root_from_uri(&absent), Some(None));
+        for invalid in [
+            "http://127.0.0.1/mcp?rrRoot=",
+            "http://127.0.0.1/mcp?rrRoot=one&rrRoot=two",
+            "http://127.0.0.1/mcp?root=one",
+        ] {
+            assert_eq!(role_root_from_uri(&invalid.parse().expect("uri")), None);
+        }
+    }
 }

@@ -19,6 +19,7 @@ type RunFrame = {
   model: string;
   prompt: string;
   outputSchema?: Record<string, unknown>;
+  toolGatewayUrl?: string;
   timeoutMs: number;
 };
 type CancelFrame = { version: number; id: string; op: "cancel"; stepId: string };
@@ -51,8 +52,28 @@ function valid(frame: unknown): frame is Frame {
     typeof value.prompt === "string" &&
     typeof value.timeoutMs === "number" &&
     Number.isInteger(value.timeoutMs) &&
-    value.timeoutMs >= 1
+    value.timeoutMs >= 1 &&
+    (value.toolGatewayUrl === undefined || validToolGatewayUrl(value.toolGatewayUrl))
   );
+}
+
+function validToolGatewayUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 512) return false;
+  try {
+    const url = new URL(value);
+    const roots = url.searchParams.getAll("rrRoot");
+    return (
+      url.protocol === "http:" &&
+      url.hostname === "127.0.0.1" &&
+      url.pathname === "/mcp" &&
+      roots.length === 1 &&
+      roots[0].length > 0 &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function run(frame: RunFrame) {
@@ -67,7 +88,7 @@ async function run(frame: RunFrame) {
   try {
     workingDirectory = isolatedWorkingDirectory();
     emit({ id: frame.id, stepId: frame.stepId, op: "started" });
-    const thread = isolatedCodex().startThread({
+    const thread = isolatedCodex(frame.toolGatewayUrl).startThread({
       model: frame.model,
       sandboxMode: "read-only",
       approvalPolicy: "never",
