@@ -8,6 +8,7 @@
 
 - 隔離test binaryで `rr_` 80件: pass
 - V2 regression: `runtime::context` 100件pass（性能gate 2件ignored）、`providers::chat_completions` 24件pass、`tool_selection` 191件pass
+- V3: `bun run typecheck` pass、`bun test ./tests/role-routing-codex.test.ts` 2件pass（explicit loopback gatewayのみ、gatewayなしではMCPなし）
 - `cargo fmt --check`: role-routing変更範囲でpass
 - `git diff --check`: pass
 - desktop smoke: build / bundle / launch / IPC ready の証跡あり

@@ -42,7 +42,7 @@
 | RR-16 | 部分 | barrier用pure reducerと分類候補 | 実行中入力の保存、保留、採用barrier |
 | RR-17 | 部分 | reducerのcancel/revision状態と、tool未確定中のtransactional restart拒否 | input更新/child drain実行、全順序試験 |
 | RR-18 | 部分 | queue順序・in-flight restart復旧を起動writerへ接続。queued turn は provider 前で待機し、終端後に最古 queued root を `IMMEDIATE` transaction で claim | 再接続、restart 後 queued receipt の明示的再開 UX |
-| RR-19 | 部分 | SDK固定版のJSONL sidecar、Rust JSONL protocol validator。`codex_sdk` actor をconversationからsidecarへdispatchし、root採用transactionへ保存 | mock SDK wire試験、実認証SDK呼び出し |
+| RR-19 | 部分 | SDK固定版のJSONL sidecar、Rust JSONL protocol validator。`codex_sdk` actor をconversationからsidecarへdispatchし、root採用transactionへ保存。SDK mockでexplicit loopback MCP以外を渡さないことを確認 | 実認証SDK呼び出し |
 | RR-20 | 部分 | sidecarをBun compiled resourceとして同梱し、ProcessGuardで起動・cancel回収。fake executableでEOF/cancel/config隔離を検証 | live isolation gate |
 | RR-21 | 部分 | sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続する。MCP sessionはactive rootの会話へ解決され、tool呼び出しは `rr_tool_links` のreserve/settleを通る。tokenはchild環境だけに渡しJSONLへ出さない | 実認証SDKによるSol tool roundtrip、revision/model変更時のnew thread、tool budget、live isolation試験 |
 | RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定。Codex SDKの確定usageを型検証し、最終回答採用transaction内でstepへ保存 | provider別費用換算、active dispatchの集計、切替上限 |
