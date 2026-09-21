@@ -865,7 +865,13 @@ mod tests {
             config_fingerprint: "f0",
         };
         assert!(reserve_routing_operation(&writer, "r", "missing-step", Some(&missing)).is_err());
-        assert!(authorize_routing_tool(&writer, "r", "tools.search", Some(&missing)).is_err());
+        assert!(authorize_routing_tool(
+            &writer,
+            "r",
+            crate::role_routing::tools::ToolEffect::ReadOnly,
+            Some(&missing)
+        )
+        .is_err());
     }
 
     #[test]
@@ -939,5 +945,39 @@ mod tests {
             config_fingerprint: "f0",
         };
         assert!(reserve_routing_operation(&writer, "r", "cancelled", Some(&binding)).is_err());
+    }
+
+    #[test]
+    fn rr_10_reviewer_resolved_mutation_denied_at_gateway() {
+        let writer = role_writer();
+        writer
+            .write(|connection| {
+                connection
+                    .execute("UPDATE rr_steps SET purpose='review' WHERE id='s0'", [])
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .expect("review step");
+        let binding = RoleStepBinding {
+            root_id: "r",
+            step_id: "s0",
+            revision: 0,
+            attempt_started_at_ms: 10,
+            config_fingerprint: "f0",
+        };
+        assert!(authorize_routing_tool(
+            &writer,
+            "r",
+            crate::role_routing::tools::ToolEffect::Mutating,
+            Some(&binding),
+        )
+        .is_err());
+        assert!(authorize_routing_tool(
+            &writer,
+            "r",
+            crate::role_routing::tools::ToolEffect::ReadOnly,
+            Some(&binding),
+        )
+        .is_ok());
     }
 }
