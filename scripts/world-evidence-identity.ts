@@ -19,11 +19,6 @@ function git(repoPath: string, args: string[]): Uint8Array {
   return result.stdout;
 }
 
-export function worldEvidenceIdentity(): {
-  code_revision: string;
-  dirty_diff_digest: string;
-  generated_at: string;
-};
 export function worldEvidenceIdentity(repoPath = process.cwd()): {
   code_revision: string;
   dirty_diff_digest: string;
@@ -54,5 +49,9 @@ export function worldEvidenceIdentity(repoPath = process.cwd()): {
     else if (stat.isFile()) hasher.update(readFileSync(absolute));
     else throw new Error(`unsupported untracked evidence path: ${path}`);
   }
-  return { code_revision, dirty_diff_digest: hasher.digest("hex"), generated_at: new Date().toISOString() };
+  return {
+    code_revision,
+    dirty_diff_digest: hasher.digest("hex"),
+    generated_at: new Date().toISOString(),
+  };
 }
