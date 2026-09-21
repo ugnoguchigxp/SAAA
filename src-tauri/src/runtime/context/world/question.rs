@@ -73,7 +73,10 @@ pub(crate) fn parse_graph_question(text: &str) -> QuestionParse {
         return QuestionParse::NotRequested;
     }
     let trimmed = text.trim();
-    let body = match trimmed.strip_suffix('？').or_else(|| trimmed.strip_suffix('?')) {
+    let body = match trimmed
+        .strip_suffix('？')
+        .or_else(|| trimmed.strip_suffix('?'))
+    {
         Some(body) => body,
         None => return QuestionParse::NotRequested,
     };
@@ -168,12 +171,18 @@ mod tests {
             parse_graph_question("「x」って何？"),
             QuestionParse::NotRequested
         );
-        assert_eq!(parse_graph_question("普通の質問です"), QuestionParse::NotRequested);
+        assert_eq!(
+            parse_graph_question("普通の質問です"),
+            QuestionParse::NotRequested
+        );
     }
 
     #[test]
     fn world_g1_01_invalid_content_is_distinct_from_not_requested() {
-        assert_eq!(parse_graph_question("「」は何に影響しますか？"), QuestionParse::Invalid);
+        assert_eq!(
+            parse_graph_question("「」は何に影響しますか？"),
+            QuestionParse::Invalid
+        );
         assert_eq!(
             parse_graph_question("「   」は何に影響しますか？"),
             QuestionParse::Invalid

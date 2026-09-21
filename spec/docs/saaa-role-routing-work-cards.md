@@ -11,7 +11,7 @@
 | RR-01 | 部分 | `contracts.rs`、`reducer.rs`、`signals.rs` | event契約、Clock/ID注入、指定境界試験 |
 | RR-02 | 部分 | R1 ledger DDL、migration idempotency試験 | C6全FK/複合整合性、旧DB/FK試験 |
 | RR-03 | 部分 | `routing.roles` validationとpolicy snapshot | CAS、config fingerprint、指定試験 |
-| RR-04 | 部分 | receiptを`prepare_runtime_run` transactionへ接続し、queue上限をcommit前に拒否 | retry/conflict、FIFO queue実行、receipt復元 |
+| RR-04 | 部分 | receiptを`prepare_runtime_run` transactionへ接続し、queue上限をcommit前に拒否。active root がある receipt は queued として provider 前で待機 | retry/conflict、receipt復元 |
 | RR-05 | 部分 | pure reducerのみ | coordinator、driver、mpsc、registry、IO試験 |
 | RR-06 | 部分 | recipe候補の決定的選択、shadow関数 | hard filter・予算・sticky選択・decision理由 |
 | RR-07 | 未着手 | 既存contextをそのまま使用 | role projection、scope/amendment試験 |
@@ -25,9 +25,9 @@
 | RR-15 | 部分 | provider actor準備・role選択UI | probe、完全編集、ASR→tool→TTS E2E |
 | RR-16 | 部分 | barrier用pure reducerと分類候補 | 実行中入力の保存、保留、採用barrier |
 | RR-17 | 部分 | reducerのcancel/revision状態と、tool未確定中のtransactional restart拒否 | input更新/child drain実行、全順序試験 |
-| RR-18 | 部分 | queue順序・in-flight restart復旧を起動writerへ接続 | queue実行、再接続 |
-| RR-19 | 部分 | SDK固定版のJSONL sidecar | mock SDK wire試験、Rust protocol adapter |
-| RR-20 | 部分 | sidecarのSDK起動を空cwd/read-only/approval・network・web・MCP無効化で固定 | bundle、process guard、fake executable、live isolation gate |
+| RR-18 | 部分 | queue順序・in-flight restart復旧を起動writerへ接続。queued turn は provider 前で待機し、終端後に最古 queued root を `IMMEDIATE` transaction で claim | 再接続、restart 後 queued receipt の明示的再開 UX |
+| RR-19 | 部分 | SDK固定版のJSONL sidecar、Rust JSONL protocol validator | mock SDK wire試験、実認証SDK呼び出し |
+| RR-20 | 部分 | sidecarをBun compiled resourceとして同梱し、ProcessGuardで起動・cancel回収。fake executableでEOF/cancel/config隔離を検証 | actor dispatcher接続、live isolation gate |
 | RR-21 | 未着手 | Sol tool loopなし | Sol delegation、host tool loop |
 | RR-22 | 部分 | root/step deadlineと未知費用を拒否するpure判定 | 実dispatcher中断、usage集計 |
 | RR-23 | 部分 | host feedback保存とdirty mark | active answer一意の実入力接続 |

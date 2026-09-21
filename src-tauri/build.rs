@@ -3,6 +3,7 @@ use std::{env, fs, path::PathBuf, process::Command};
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(coverage)");
     stage_codex_runtime();
+    stage_role_routing_codex_sidecar();
     stage_web_fetch_runtime();
     tauri_build::build()
 }
@@ -101,6 +102,61 @@ fn stage_web_fetch_runtime() {
             .join("llm-fetch")
             .join("dist")
             .join("index.js"),
+    ] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+fn stage_role_routing_codex_sidecar() {
+    let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
+    let project = manifest.parent().expect("project directory");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("target OS");
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").expect("target architecture");
+    let (target, executable) = match (target_os.as_str(), target_arch.as_str()) {
+        ("macos", "aarch64") => ("bun-darwin-arm64", "role-routing-codex"),
+        ("macos", "x86_64") => ("bun-darwin-x64", "role-routing-codex"),
+        ("linux", "aarch64") => ("bun-linux-arm64", "role-routing-codex"),
+        ("linux", "x86_64") => ("bun-linux-x64", "role-routing-codex"),
+        ("windows", "aarch64") => ("bun-windows-arm64", "role-routing-codex.exe"),
+        ("windows", "x86_64") => ("bun-windows-x64", "role-routing-codex.exe"),
+        _ => panic!("unsupported role-routing sidecar target: {target_os}-{target_arch}"),
+    };
+    let source = project
+        .join("scripts")
+        .join("role-routing")
+        .join("codex-sidecar.ts");
+    let isolation = project
+        .join("scripts")
+        .join("role-routing")
+        .join("codex-isolation.ts");
+    let directory = manifest.join("resources").join("bin");
+    fs::create_dir_all(&directory).expect("create generated resource directory");
+    let destination = directory.join(executable);
+    let status = Command::new("bun")
+        .current_dir(project)
+        .args([
+            "build",
+            "--compile",
+            &format!("--target={target}"),
+            &format!("--outfile={}", destination.display()),
+            "--no-compile-autoload-dotenv",
+            "--no-compile-autoload-bunfig",
+            "--no-compile-autoload-package-json",
+            "--reject-unresolved",
+        ])
+        .arg(&source)
+        .status()
+        .expect("start Bun role-routing sidecar compiler");
+    if !status.success() || !destination.is_file() {
+        panic!(
+            "Could not compile the role-routing Codex sidecar for {target_os}-{target_arch}. Run bun install and retry."
+        );
+    }
+    for path in [
+        source,
+        isolation,
+        project.join("package.json"),
+        project.join("bun.lock"),
     ] {
         println!("cargo:rerun-if-changed={}", path.display());
     }

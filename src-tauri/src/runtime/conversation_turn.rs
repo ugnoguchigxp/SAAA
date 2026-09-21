@@ -33,6 +33,7 @@ fn compose_after_connect(
     input: &StartTurnInput,
     identity: &crate::CodexAgentRuntimeSettings,
     regional: &crate::persistence::settings::regional_preferences::RegionalPreferences,
+    budget: crate::runtime::context::broker::ProviderInputBudget,
 ) -> Result<FreshProviderContext, String> {
     let latest = conversation_inputs::load(state, input)?;
     if latest.scope.status != "resolved" {
@@ -41,7 +42,7 @@ fn compose_after_connect(
     if let Some(error) = latest.personal_source_error {
         return Err(error);
     }
-    let base = memory::context_window::compose(latest.loaded_context)?;
+    let base = budget.apply(memory::context_window::compose(latest.loaded_context)?)?;
     let composed = crate::runtime::context::world::turn::compose_for_app(
         state,
         &input.run_id,
@@ -111,11 +112,10 @@ pub(crate) async fn execute_conversation_turn(
         security,
         identity,
         regional,
-        loaded_context,
         scope,
-        personal_candidates,
         personal_source_error,
         configuration_fingerprint,
+        ..
     } = conversation_inputs::load(state, input)?;
     crate::providers::http_metrics::record("contextInputsLoad", context_started.elapsed());
     if scope.status != "resolved" {
@@ -149,74 +149,8 @@ pub(crate) async fn execute_conversation_turn(
         })
         .map_err(Into::into);
     }
-    let base_context = memory::context_window::compose(loaded_context)?;
-    let broker_started = std::time::Instant::now();
-    let composed = match crate::runtime::context::world::turn::compose_for_app(
-        state,
-        &input.run_id,
-        &scope,
-        base_context,
-        personal_candidates,
-        scope.scopes.iter().map(|scope| scope.key.clone()).collect(),
-    ) {
-        Ok(composed) => composed,
-        Err(error) => {
-            crate::runtime::context::generation::record_red(
-                state,
-                &input.run_id,
-                "context-broker-red",
-            );
-            return Err(TurnExecutionFailure::configuration(
-                context_recovery_message(&error),
-            ));
-        }
-    };
-    let envelope = composed.envelope;
-    let world_live = composed.world;
-    crate::providers::http_metrics::record("contextBrokerCompose", broker_started.elapsed());
-    if envelope.health.status == crate::runtime::context::health::Status::Yellow {
-        let _ = on_event.send(RuntimeEvent::Activity {
-            run_id: input.run_id.clone(),
-            kind: "context-degraded".into(),
-            summary: format!(
-                "Context was safely reduced ({} source item(s) omitted).",
-                envelope.health.omitted_sources
-            ),
-        });
-    }
-    if let Some(omission) = composed.omission {
-        let _ = on_event.send(RuntimeEvent::Activity {
-            run_id: input.run_id.clone(),
-            kind: "world-context-omitted".into(),
-            // Deliberately a stable reason code: diagnostics must not contain the World body.
-            summary: format!("World context omitted: {}", omission.as_str()),
-        });
-    }
-    let context_health = envelope.context_health.clone();
-    if memory::control_plane::memory_enabled() {
-        let _ = state.sqlite_writer.write(|connection| {
-            memory::control_plane::record_projection_event(
-                connection,
-                context_health.status,
-                context_health.projected_bytes,
-                context_health.hard_limit_bytes,
-                context_health.output_reserve_bytes,
-                context_health.repair_count,
-                &now_iso(),
-            )
-        });
-    }
-    let history = compose_provider_history(
-        &input.conversation_id,
-        &identity.agent_name,
-        &identity.user_name,
-        &regional,
-        &input.input_origin,
-        &input.presentation_mode,
-        envelope.messages,
-    )?;
-    // Providers without World support receive the World-free rendering of the same history. The
-    // World block is only present when a World was composed, so no clone happens otherwise.
+    // Compose only at a concrete provider dispatch boundary. A generic pre-compose would use
+    // the wrong provider budget and could reject a request that fits its selected provider.
     crate::providers::http_metrics::record("contextAssemblyTotal", context_started.elapsed());
     let shared_larm_voice =
         route.source == "harness" && input.input_origin == "voice" && crate::larm_voice::enabled();
@@ -229,9 +163,14 @@ pub(crate) async fn execute_conversation_turn(
             envelope,
             world: world_live,
             history,
-        } = compose_after_connect(state, input, &identity, &regional).map_err(|error| {
-            TurnExecutionFailure::configuration(context_recovery_message(&error))
-        })?;
+        } = compose_after_connect(
+            state,
+            input,
+            &identity,
+            &regional,
+            crate::runtime::context::broker::ProviderInputBudget::openai_compatible(),
+        )
+        .map_err(|error| TurnExecutionFailure::configuration(context_recovery_message(&error)))?;
         let reasoning_world_free_history = world_free_history(&history, world_live.as_ref());
         let reasoning_world_free_history =
             reasoning_world_free_history.as_deref().unwrap_or(&history);
@@ -291,6 +230,7 @@ pub(crate) async fn execute_conversation_turn(
     }
     let mut failures: Vec<TurnExecutionFailure> = Vec::new();
     let mut context_health_emitted = false;
+    let mut context_health_recorded = false;
 
     for provider_id in route_ids {
         if cancellation.is_cancelled() {
@@ -409,17 +349,24 @@ pub(crate) async fn execute_conversation_turn(
                     .to_string(),
             ));
         }
-        crate::runtime::turn_activity::send_context_window_once(
-            &mut context_health_emitted,
-            on_event,
-            &input.run_id,
-            &context_health,
-        );
+        let budget = match &provider {
+            ModelProviderSettings::AgentSession(_) => {
+                crate::runtime::context::broker::ProviderInputBudget::agent_session()
+            }
+            ModelProviderSettings::OpenAiCompatible(_) | ModelProviderSettings::DynamicLan(_) => {
+                crate::runtime::context::broker::ProviderInputBudget::openai_compatible()
+            }
+            ModelProviderSettings::CloudAsr(_)
+            | ModelProviderSettings::CloudTts(_)
+            | ModelProviderSettings::SystemTts(_) => {
+                crate::runtime::context::broker::ProviderInputBudget::openai_compatible()
+            }
+        };
         let FreshProviderContext {
             envelope,
             world: world_live,
             history,
-        } = match compose_after_connect(state, input, &identity, &regional) {
+        } = match compose_after_connect(state, input, &identity, &regional, budget) {
             Ok(context) => context,
             Err(error) => {
                 finish_provider_session(
@@ -433,6 +380,27 @@ pub(crate) async fn execute_conversation_turn(
                 ));
             }
         };
+        crate::runtime::turn_activity::send_context_window_once(
+            &mut context_health_emitted,
+            on_event,
+            &input.run_id,
+            &envelope.context_health,
+        );
+        if !context_health_recorded && memory::control_plane::memory_enabled() {
+            let health = &envelope.context_health;
+            let _ = state.sqlite_writer.write(|connection| {
+                memory::control_plane::record_projection_event(
+                    connection,
+                    health.status,
+                    health.projected_bytes,
+                    health.hard_limit_bytes,
+                    health.output_reserve_bytes,
+                    health.repair_count,
+                    &now_iso(),
+                )
+            });
+            context_health_recorded = true;
+        }
         let outcome = match &provider {
             ModelProviderSettings::OpenAiCompatible(provider) => {
                 stream_model_provider(

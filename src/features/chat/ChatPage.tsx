@@ -46,6 +46,8 @@ export function ChatPage({
   activeTtsRunId,
   error,
   retryKind,
+  requiredContextFailure,
+  onPrepareRequiredContextRecovery,
   voicePolicy,
   voicePolicyUpdating,
   onSetConversationSpeechOutput,
@@ -318,6 +320,36 @@ export function ChatPage({
             <button className="text-button" type="button" onClick={onRetry}>
               {retryKind === "speech" ? t("chat.retrySpeech") : t("chat.retryResponse")}
             </button>
+          )}
+          {requiredContextFailure && !activeRunId && (
+            <div
+              className="context-recovery"
+              role="group"
+              aria-label={t("chat.contextRecovery.label")}
+            >
+              <span className="composer-hint">
+                {t(`chat.contextRecovery.${requiredContextFailure}`)}
+              </span>
+              {requiredContextFailure !== "required-context-unavailable" && (
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => onPrepareRequiredContextRecovery("narrow")}
+                >
+                  {t("chat.contextRecovery.narrow")}
+                </button>
+              )}
+              <button className="text-button" type="button" onClick={onOpenSettings}>
+                {t("chat.contextRecovery.review")}
+              </button>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => onPrepareRequiredContextRecovery("correct")}
+              >
+                {t("chat.contextRecovery.correct")}
+              </button>
+            </div>
           )}
         </div>
       </form>

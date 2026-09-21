@@ -136,7 +136,73 @@ fn flush_unflushed(
             params![now_iso(), conversation_id],
         )
         .map_err(database_error)?;
+    record_delivered_notification_outcomes(connection, conversation_id, now_ms, &message_id)?;
     repo::mark_flushed(connection, conversation_id, now_ms, &message_id)
+}
+
+/// A notification becomes observable only after its outbox row is turned into a conversation
+/// message.  Held and aggregate-delayed reports therefore intentionally have no outcome until
+/// this point.  The durable source reference is the terminal digest, not the rendered aggregate.
+fn record_delivered_notification_outcomes(
+    connection: &Connection,
+    conversation_id: &str,
+    now_ms: i64,
+    message_id: &str,
+) -> Result<(), String> {
+    let adaptive_schema_present: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_decisions')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    if !adaptive_schema_present {
+        return Ok(());
+    }
+    let mut reports = connection
+        .prepare(
+            "SELECT digest FROM steward_reports WHERE conversation_id=?1 AND flushed=0 AND available_at_ms<=?2",
+        )
+        .map_err(database_error)?;
+    let digests = reports
+        .query_map(params![conversation_id, now_ms], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    for digest in digests {
+        let decision_ids = {
+            let mut decisions = connection
+                .prepare(
+                    "SELECT id FROM ai_decisions WHERE domain='notification' AND json_extract(source_refs_json,'$.digest')=?1",
+                )
+                .map_err(database_error)?;
+            let ids = decisions
+                .query_map([&digest], |row| row.get::<_, String>(0))
+                .map_err(database_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error)?;
+            ids
+        };
+        for decision_id in decision_ids {
+            crate::adaptive_improvement::record_outcome(
+                connection,
+                &decision_id,
+                Some(true),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                message_id,
+                0,
+                now_ms,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn notification_selection(

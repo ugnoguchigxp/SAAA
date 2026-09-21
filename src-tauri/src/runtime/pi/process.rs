@@ -294,7 +294,7 @@ impl Process {
     }
 }
 
-fn delegated_command(
+pub(crate) fn delegated_command(
     settings: &CodingSettings,
     _workspace: &Path,
     session: &Path,
@@ -302,13 +302,25 @@ fn delegated_command(
     #[cfg(target_os = "macos")]
     {
         let session_dir = session.parent().ok_or("delegated_profile_invalid")?;
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or("delegated_profile_invalid")?;
+        let agent_dir = home.join(".pi").join("agent");
         let quote = |path: &Path| format!("\"{}\"", path.to_string_lossy().replace('"', "\\\""));
         // sandbox-exec applies to pi and every descendant process. Read access
         // is broad enough for a compiler/test runner, while writes are limited
         // to the session and temporary directories and network is absent.
+        // Node 24 queries kernel facts during allocator initialization.  That
+        // operation is read-only, but is separately mediated by Seatbelt. Pi
+        // also creates lock directories while it reads its existing local
+        // settings and credentials. Those named lock directories are the only
+        // home-directory writes granted; they cannot modify either JSON file.
         let profile = format!(
-            "(version 1) (deny default) (allow process*) (allow file-read*) (allow file-write* (subpath {} ) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
+            "(version 1) (deny default) (allow process*) (allow sysctl-read) (allow file-read*) (allow file-write* (subpath {}) (subpath {}) (subpath {}) (subpath \"/private/tmp\") (subpath \"/tmp\") (subpath \"/dev\"))",
             quote(session_dir),
+            quote(&agent_dir.join("settings.json.lock")),
+            quote(&agent_dir.join("auth.json.lock")),
         );
         let mut command = Command::new("/usr/bin/sandbox-exec");
         command.args(["-p", &profile]).arg(&settings.executable);
@@ -330,7 +342,7 @@ impl Drop for Process {
 
 pub fn check_settings(settings: &CodingSettings) -> Result<(), String> {
     let _slot = SLOT.try_lock().map_err(|_| "busy")?;
-    if settings.version != "0.85.1"
+    if settings.version != "0.86.1"
         || !crate::coding::contracts::valid_profile(settings)
         || !Path::new(&settings.executable).is_absolute()
         || settings.provider.is_empty()

@@ -14,6 +14,10 @@ mod sse;
 mod tests;
 mod voice_progress;
 mod world_body;
+#[cfg(test)]
+mod world_eval_fixture;
+#[cfg(test)]
+mod world_eval_tests;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RequestMode {

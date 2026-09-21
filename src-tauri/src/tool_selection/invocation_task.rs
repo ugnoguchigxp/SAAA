@@ -5,6 +5,7 @@
 #![allow(private_interfaces)]
 
 use futures_util::FutureExt;
+use rusqlite::OptionalExtension;
 
 use super::backends::{BackendOutcome, TechnicalStatus};
 use super::contracts::{now_ms, ToolSelectionError, ToolSelectionErrorCode, ToolSelectionResult};
@@ -55,18 +56,61 @@ pub async fn run(invocation: ManagedInvocation) -> ToolSelectionResult<InvokeRes
     let finished = now_ms();
     {
         let invocation_id = invocation_id.clone();
+        let revision_id = revision.id.clone();
         let status = finalized.status;
         let error_code = finalized.error_code;
         writer
             .write(move |connection| {
+                let transaction = connection
+                    .unchecked_transaction()
+                    .map_err(|_| "storage".to_string())?;
                 repository::finish_invocation(
-                    connection,
+                    &transaction,
                     &invocation_id,
                     status.as_str(),
                     error_code,
                     finished,
                 )
-                .map_err(|_| "storage".to_string())
+                .map_err(|_| "storage".to_string())?;
+                // Only the policy-selected candidate receives this label. A user can invoke a
+                // lower ranked candidate from the same search result, which is not evidence that
+                // the ranker's top choice succeeded or failed.
+                let adaptive_schema_present: bool = transaction
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_decisions')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| "storage".to_string())?;
+                if adaptive_schema_present {
+                    let decision: Option<(String, String)> = transaction
+                        .query_row(
+                            "SELECT d.id,d.selected FROM tool_selection_invocations i JOIN ai_decisions d ON d.id=('ai-tool-' || i.decision_id) WHERE i.id=?1",
+                            [&invocation_id],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional()
+                        .map_err(|_| "storage".to_string())?;
+                    if let Some((decision_id, selected_revision_id)) = decision {
+                        if selected_revision_id == revision_id {
+                            crate::adaptive_improvement::record_outcome_in_transaction(
+                                &transaction,
+                                &decision_id,
+                                Some(status == TechnicalStatus::Succeeded),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                &invocation_id,
+                                0,
+                                finished,
+                            )?;
+                        }
+                    }
+                }
+                transaction.commit().map_err(|_| "storage".to_string())
             })
             .map_err(|_| ToolSelectionError::storage())?;
     }

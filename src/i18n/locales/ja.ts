@@ -95,6 +95,18 @@ export const ja = {
     stopSpeech: "読み上げを停止",
     retrySpeech: "読み上げを再試行",
     retryResponse: "応答を再試行",
+    contextRecovery: {
+      label: "必要な会話条件の回復",
+      "required-context-overflow":
+        "必要な条件を残したままでは、この処理先に収まりません。対象を絞ってから送信してください。",
+      "context-scope-changed":
+        "送信前に対象の範囲が変わりました。意図した対象を指定してから送信してください。",
+      "required-context-unavailable":
+        "必要な原文を現在確認できません。原文を確認するか、訂正内容を入力してください。",
+      narrow: "対象を絞って編集",
+      review: "原文を確認",
+      correct: "訂正内容を入力",
+    },
     voiceOn: "発声オン",
     voiceQuiet: "静音",
     voiceGlobalQuiet: "全体設定で静音",

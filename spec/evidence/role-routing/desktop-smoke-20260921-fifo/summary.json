@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "stage": "build",
+  "durationMs": 9308,
+  "stages": [
+    {
+      "stage": "build",
+      "durationMs": 9308,
+      "exitCode": 1
+    }
+  ],
+  "error": "Desktop build exited with code 1"
+}

@@ -11,6 +11,14 @@ export function StewardPanel({
   onError: (message: string) => void;
 }) {
   const [condition, setCondition] = useState("tests pass");
+  const [summary, setSummary] = useState("失敗テストを調査する");
+  const [verifier, setVerifier] = useState<
+    "test_report_obtained" | "tests_pass" | "user_confirmation_required"
+  >("test_report_obtained");
+  const [operations, setOperations] = useState<"read" | "test_run" | "read_test">("read_test");
+  const [budgetRuns, setBudgetRuns] = useState(3);
+  const [budgetMs, setBudgetMs] = useState(60_000);
+  const [notify, setNotify] = useState<"both" | "silent" | "speak">("both");
   const [confirmed, setConfirmed] = useState(false);
   const [tasks, setTasks] = useState<
     {
@@ -44,7 +52,15 @@ export function StewardPanel({
   async function registerGoal() {
     if (!workspaceId || !confirmed) return;
     try {
-      await stewardApi.registerGoal(conversationId, workspaceId, condition);
+      await stewardApi.registerGoal(conversationId, workspaceId, {
+        successCondition: condition,
+        summary,
+        verifier,
+        operations,
+        budgetRuns,
+        budgetMs,
+        notify,
+      });
       await refresh();
       onError("");
     } catch (error) {
@@ -69,8 +85,44 @@ export function StewardPanel({
         があっても動きません。
       </p>
       <label>
+        仕事の要約
+        <input value={summary} onChange={(event) => setSummary(event.target.value)} />
+      </label>
+      <label>
         成功条件
         <input value={condition} onChange={(event) => setCondition(event.target.value)} />
+      </label>
+      <label>
+        検証
+        <select value={verifier} onChange={(event) => setVerifier(event.target.value as typeof verifier)}>
+          <option value="test_report_obtained">テスト結果を取得</option>
+          <option value="tests_pass">テスト成功を確認</option>
+          <option value="user_confirmation_required">ユーザー確認が必要</option>
+        </select>
+      </label>
+      <label>
+        許可する操作
+        <select value={operations} onChange={(event) => setOperations(event.target.value as typeof operations)}>
+          <option value="read">読み取りだけ</option>
+          <option value="test_run">既存テストだけ</option>
+          <option value="read_test">読み取りと既存テスト</option>
+        </select>
+      </label>
+      <label>
+        最大実行回数
+        <input type="number" min={1} max={16} value={budgetRuns} onChange={(event) => setBudgetRuns(Number(event.target.value))} />
+      </label>
+      <label>
+        最大時間（ms）
+        <input type="number" min={1} max={3600000} value={budgetMs} onChange={(event) => setBudgetMs(Number(event.target.value))} />
+      </label>
+      <label>
+        通知
+        <select value={notify} onChange={(event) => setNotify(event.target.value as typeof notify)}>
+          <option value="both">表示と読み上げ</option>
+          <option value="silent">表示のみ</option>
+          <option value="speak">読み上げ優先</option>
+        </select>
       </label>
       <label>
         <input
@@ -78,7 +130,7 @@ export function StewardPanel({
           checked={confirmed}
           onChange={(event) => setConfirmed(event.target.checked)}
         />
-        対象ワークスペースで、読み取りと既存テスト実行だけを最大3回・60秒まで許可します。修正・ネットワーク・任意シェルは許可しません。
+        上記の対象・操作・予算・検証・通知条件でのみ実行を許可します。修正・ネットワーク・任意シェルは許可しません。
       </label>
       <button onClick={() => void registerGoal()} disabled={!workspaceId || !confirmed}>
         Goal を登録

@@ -1,6 +1,25 @@
 use super::{process, session_reader};
 use serde_json::json;
 use std::io::{BufReader, Cursor};
+
+#[cfg(target_os = "macos")]
+#[test]
+fn delegated_profile_allows_only_the_kernel_read_needed_to_start_pi() {
+    let settings = crate::coding::contracts::CodingSettings {
+        profile: "delegated-read-test-macos-v1".into(),
+        ..Default::default()
+    };
+    let session = tempfile::tempdir().unwrap().path().join("session.jsonl");
+    let command =
+        process::delegated_command(&settings, std::path::Path::new("/"), &session).unwrap();
+    let args = format!("{command:?}");
+    assert!(args.contains("allow sysctl-read"));
+    assert!(args.contains("settings.json.lock"));
+    assert!(args.contains("auth.json.lock"));
+    assert!(args.contains("deny default"));
+    assert!(!args.contains("allow default"));
+    assert!(!args.contains("network"));
+}
 #[test]
 fn pi_records_preserve_utf8_and_unicode_newlines_and_reject_truncation() {
     let bytes = b"{\"text\":\"\xe6\x97\xa5\xe2\x80\xa8x\"}\n";

@@ -1,7 +1,11 @@
 import type { RoleRoutingSettings } from "../../lib/roleRoutingTypes";
 import type { CodexAgentSettings, ModelProvidersSettings } from "../../lib/contracts";
 import type { RoutingLearningSnapshot } from "../../lib/generated/runtimeEvent";
-import { getRoutingLearningSnapshot, runRoutingLearningOnce } from "../../lib/roleRoutingApi";
+import {
+  getRoutingLearningSnapshot,
+  rollbackAdaptiveArtifact,
+  runRoutingLearningOnce,
+} from "../../lib/roleRoutingApi";
 import { useEffect, useState } from "react";
 
 export function RoleRoutingSection({
@@ -18,6 +22,7 @@ export function RoleRoutingSection({
   const [learning, setLearning] = useState<RoutingLearningSnapshot | null>(null);
   const [learningBusy, setLearningBusy] = useState(false);
   const [learningUnavailable, setLearningUnavailable] = useState(false);
+  const [rollbackId, setRollbackId] = useState<string | null>(null);
   useEffect(() => {
     void getRoutingLearningSnapshot()
       .then(setLearning)
@@ -231,6 +236,56 @@ export function RoleRoutingSection({
           <p className="settings-help">
             明示した訂正はこの設定にかかわらず優先されます。改善は、同じ条件で確認済みの候補だけに適用され、いつでもオフに戻せます。
           </p>
+          {learning?.adaptiveArtifacts.length ? (
+            <div className="settings-field-group" aria-label="検証済みの改善状況">
+              <span>検証済みの改善状況</span>
+              {learning.adaptiveArtifacts.map((artifact) => {
+                const domain = {
+                  provider_recipe: "応答レシピ",
+                  tool: "ツール候補",
+                  plan: "委任作業の手順",
+                  notification: "通知方法",
+                }[artifact.domain] ?? artifact.domain;
+                const score = artifact.bestObservedScore === null
+                  ? "記録なし"
+                  : `${Math.round(artifact.bestObservedScore * 100)}%`;
+                return (
+                  <div className="settings-help" key={artifact.id}>
+                    <p>
+                      {domain} / {artifact.scopeKey}: {artifact.reason}
+                    </p>
+                    <p>
+                      使える結果 {artifact.eligibleExamples.toString()}件 / 最良の観測結果 {score}
+                      {artifact.policyRevision === null
+                        ? ""
+                        : ` / 適用版 ${artifact.policyRevision.toString()}`}
+                    </p>
+                    {artifact.state === "active" && (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={rollbackId !== null}
+                        onClick={() => {
+                          setRollbackId(artifact.id);
+                          setLearningUnavailable(false);
+                          void rollbackAdaptiveArtifact(artifact.id)
+                            .then(setLearning)
+                            .catch(() => setLearningUnavailable(true))
+                            .finally(() => setRollbackId(null));
+                        }}
+                      >
+                        {rollbackId === artifact.id ? "ルールへ戻しています…" : "この改善をルールへ戻す"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="settings-help">
+              まだ検証中または有効な改善はありません。十分な比較結果がそろうまで、これまでのルールを使います。
+            </p>
+          )}
         </div>
       )}
     </section>

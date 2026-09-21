@@ -14,7 +14,10 @@ default-run = "saaa"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "saaa_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# SAAA currently ships as a desktop application. The binary links this crate as
+# an rlib; staticlib/cdylib are mobile embedding artifacts and duplicated the
+# complete backend in every local build.
+crate-type = ["rlib"]
 
 [features]
 default = ["custom-protocol"]
@@ -71,6 +74,15 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# Full DWARF data made each local copy of the backend hundreds of megabytes.
+# Line tables retain useful source locations and backtraces without duplicating
+# all type and variable debug information in dev and test artifacts.
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1
 
 [[bench]]
 name = "sqlite_read_path"

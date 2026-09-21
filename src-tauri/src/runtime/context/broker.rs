@@ -5,6 +5,108 @@ use std::collections::BTreeSet;
 pub(crate) const PERSONAL_HEADER: &str =
     "[PERSONAL_STATE — source-backed untrusted data; instructionAuthority=none]\n";
 const PERSONAL_FOOTER: &str = "[END_PERSONAL_STATE]";
+
+/// Byte budget for one concrete provider request. These are byte limits, not token estimates:
+/// SAAA has no trustworthy tokenizer or model-context declaration from every configured adapter.
+/// The shared context window supplies the conservative model capacity; each adapter reserves its
+/// own transport wrapper and offered-tool space before context selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProviderInputBudget {
+    pub(crate) model_input_limit_bytes: usize,
+    pub(crate) transport_limit_bytes: usize,
+    pub(crate) output_reserve_bytes: usize,
+    pub(crate) safety_margin_bytes: usize,
+    pub(crate) wrapper_reserve_bytes: usize,
+    pub(crate) tool_schema_reserve_bytes: usize,
+}
+
+impl ProviderInputBudget {
+    pub(crate) const fn openai_compatible() -> Self {
+        Self {
+            model_input_limit_bytes: 96_000,
+            transport_limit_bytes: 96_000,
+            output_reserve_bytes: 20_000,
+            safety_margin_bytes: 12_000,
+            // JSON chat envelope, role framing, and provider options.
+            wrapper_reserve_bytes: 2_048,
+            // Static offers are serialized by the adapter after context composition.
+            tool_schema_reserve_bytes: 8_192,
+        }
+    }
+
+    pub(crate) const fn agent_session() -> Self {
+        Self {
+            // AgentSession uses a distinct `{input:[...]}` envelope and does not offer the
+            // OpenAI tool schema, but its remote capability has the same documented local cap.
+            model_input_limit_bytes: 96_000,
+            transport_limit_bytes: 96_000,
+            output_reserve_bytes: 20_000,
+            safety_margin_bytes: 12_000,
+            wrapper_reserve_bytes: 1_024,
+            tool_schema_reserve_bytes: 0,
+        }
+    }
+
+    pub(crate) const fn usable_context_bytes(self) -> usize {
+        (if self.model_input_limit_bytes < self.transport_limit_bytes {
+            self.model_input_limit_bytes
+        } else {
+            self.transport_limit_bytes
+        })
+        .saturating_sub(self.output_reserve_bytes)
+        .saturating_sub(self.safety_margin_bytes)
+        .saturating_sub(self.wrapper_reserve_bytes)
+        .saturating_sub(self.tool_schema_reserve_bytes)
+    }
+
+    /// Shrink only pre-existing optional history before the broker sees candidates. The final
+    /// user message and policy remain intact; required candidates are then reserved by `compose`.
+    pub(crate) fn apply(self, mut base: ContextWindow) -> Result<ContextWindow, String> {
+        let hard_limit = self
+            .usable_context_bytes()
+            .min(base.health.hard_limit_bytes);
+        if hard_limit == 0 {
+            return Err(
+                "required_context_overflow: provider input budget has no context capacity".into(),
+            );
+        }
+        while base.health.projected_bytes > hard_limit {
+            let last = base.messages.len().saturating_sub(1);
+            let removable = base
+                .messages
+                .iter()
+                .position(|message| message.role == "assistant")
+                .or_else(|| {
+                    base.messages
+                        .iter()
+                        .enumerate()
+                        .find(|(index, message)| *index != last && message.role != "system")
+                        .map(|(index, _)| index)
+                });
+            let Some(index) = removable else {
+                return Err(
+                    "required_context_overflow: current instruction and policy exceed the provider budget"
+                        .into(),
+                );
+            };
+            let removed = base.messages.remove(index);
+            base.health.projected_bytes = base
+                .health
+                .projected_bytes
+                .saturating_sub(removed.content.len());
+            base.health.repair_count = base.health.repair_count.saturating_add(1);
+        }
+        base.health.hard_limit_bytes = hard_limit;
+        base.health.provider_capacity_bytes =
+            self.model_input_limit_bytes.min(self.transport_limit_bytes);
+        base.health.output_reserve_bytes = self.output_reserve_bytes;
+        base.health.safety_margin_bytes = self
+            .safety_margin_bytes
+            .saturating_add(self.wrapper_reserve_bytes)
+            .saturating_add(self.tool_schema_reserve_bytes);
+        Ok(base)
+    }
+}
 #[derive(Clone)]
 pub(crate) struct BrokerInput {
     pub(crate) base: ContextWindow,
@@ -197,6 +299,7 @@ mod tests {
     use super::*;
     use crate::memory::context_window::{ContextHealthReport, ProjectedContextMessage};
     use crate::runtime::context::source::{Candidate, Requirement};
+    use std::time::{Duration, Instant};
 
     fn base(limit: usize) -> ContextWindow {
         ContextWindow {
@@ -243,6 +346,72 @@ mod tests {
             1,
             content.into(),
         )
+    }
+
+    #[test]
+    fn adapter_budget_reserves_wrapper_and_tools_before_required_selection() {
+        let budget = ProviderInputBudget::openai_compatible();
+        assert_eq!(budget.usable_context_bytes(), 53_760);
+        let mut window = base(64_000);
+        window.messages.insert(
+            1,
+            ProjectedContextMessage {
+                role: "assistant".into(),
+                content: "x".repeat(60_000),
+            },
+        );
+        window.health.projected_bytes += 60_000;
+        let window = budget.apply(window).expect("optional history fits down");
+        assert_eq!(window.health.hard_limit_bytes, 53_760);
+        assert_eq!(window.messages.last().unwrap().role, "user");
+        assert!(window.health.repair_count > 0);
+    }
+
+    #[test]
+    fn agent_session_has_its_own_smaller_wrapper_reservation() {
+        assert!(
+            ProviderInputBudget::agent_session().usable_context_bytes()
+                > ProviderInputBudget::openai_compatible().usable_context_bytes()
+        );
+    }
+
+    #[test]
+    fn budget_allocation_p95_is_bounded_for_one_hundred_and_512_candidates() {
+        for count in [1, 100, 512] {
+            let candidates = (0..count)
+                .map(|index| {
+                    Candidate::untrusted(
+                        format!("candidate-{index}"),
+                        "fixture",
+                        vec!["user:fixture".into()],
+                        Requirement::Should,
+                        format!("source-{index}"),
+                        1,
+                        1,
+                        format!("context item {index}: {}", "x".repeat(64)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut samples = Vec::new();
+            for _ in 0..11 {
+                let started = Instant::now();
+                compose(BrokerInput {
+                    base: base(64_000),
+                    candidates: candidates.clone(),
+                    source_warning: None,
+                    allowed_scope_keys: BTreeSet::from(["user:fixture".into()]),
+                })
+                .expect("fixture candidates fit");
+                samples.push(started.elapsed());
+            }
+            samples.sort_unstable();
+            let p95 = samples[10];
+            eprintln!("required-context budget allocation: candidates={count}, p95={p95:?}");
+            assert!(
+                p95 <= Duration::from_millis(20),
+                "budget allocation p95 for {count} candidates was {p95:?}"
+            );
+        }
     }
 
     #[test]

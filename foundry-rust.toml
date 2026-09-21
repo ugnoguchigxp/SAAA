@@ -1,0 +1,23 @@
+schema_version = 1
+project_id = "saaa"
+toolchain = "1.92.0"
+
+[[build_units]]
+id = "desktop"
+manifest_path = "src-tauri/Cargo.toml"
+
+[[build_units]]
+id = "larm-session"
+manifest_path = "crates/larm-session/Cargo.toml"
+
+[[build_units]]
+id = "personal-state"
+manifest_path = "crates/personal-state-core/Cargo.toml"
+
+[[build_units]]
+id = "reasoning-contract"
+manifest_path = "crates/reasoning-contract/Cargo.toml"
+
+[[build_units]]
+id = "reasoning-mcp"
+manifest_path = "services/reasoning-mcp/Cargo.toml"

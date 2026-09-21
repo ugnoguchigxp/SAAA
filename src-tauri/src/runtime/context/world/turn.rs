@@ -36,10 +36,14 @@ pub(crate) fn compose_for_app(
     allowed: BTreeSet<String>,
 ) -> Result<TurnCompose, String> {
     if !crate::memory::control_plane::memory_enabled() {
-        return compose_parts(false, None, "", 0, None, run_id, scope, base, existing, allowed);
+        return compose_parts(
+            false, None, "", 0, None, run_id, scope, base, existing, allowed,
+        );
     }
     let Some((principal, policy_revision)) = personal_access(&state.sqlite_readers) else {
-        return compose_parts(true, None, "", 0, None, run_id, scope, base, existing, allowed);
+        return compose_parts(
+            true, None, "", 0, None, run_id, scope, base, existing, allowed,
+        );
     };
     let service = Arc::new(WorldFrameService::new(
         state.sqlite_readers.clone(),

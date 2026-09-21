@@ -1,0 +1,5 @@
+[build]
+# Keep every workspace-local Cargo invocation in one cache. Without this,
+# running a package manifest directly creates another full dependency graph
+# under that package's own target directory.
+target-dir = "src-tauri/target"

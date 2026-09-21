@@ -15,6 +15,33 @@ pub(crate) struct GenerationHandle {
 }
 
 impl GenerationHandle {
+    /// Completes the immutable, digest-only receipt before the dispatch CAS. The
+    /// request digest was captured from the final serialized provider body in
+    /// `begin`; this call binds that body to the exact required candidate set.
+    pub(crate) fn set_required_receipt(&self, required_set_digest: &str) -> Result<(), String> {
+        if required_set_digest.len() != 64
+            || !required_set_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("Required context receipt digest is invalid".into());
+        }
+        self.writer.write(|connection| {
+            let changed = connection
+                .execute(
+                    "UPDATE context_generations
+                     SET required_set_digest=?2
+                     WHERE id=?1 AND status='planned' AND required_set_digest IS NULL",
+                    params![self.id, required_set_digest],
+                )
+                .map_err(database_error)?;
+            if changed != 1 {
+                return Err("Context generation receipt could not be recorded".into());
+            }
+            Ok(())
+        })
+    }
+
     pub(crate) fn set_health(&self, status: &str) -> Result<(), String> {
         if !matches!(status, "green" | "yellow" | "red") {
             return Err("Context health status is invalid".into());
@@ -216,6 +243,14 @@ pub(crate) fn begin(
                 |row| row.get(0),
             )
             .map_err(database_error)?;
+        let scope_digest: Option<String> = transaction
+            .query_row(
+                "SELECT scope_digest FROM runtime_scope_resolutions WHERE run_id=?1",
+                [input.run_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(database_error)?;
         let instruction_valid = input.current_instruction_count == 1;
         let budget_valid = input.request_payload.len() <= MAX_PROVIDER_REQUEST_BYTES;
         let valid = instruction_valid && budget_valid;
@@ -225,8 +260,8 @@ pub(crate) fn begin(
                 "INSERT INTO context_generations(
                    id,run_id,provider_session_id,provider_id,ordinal,purpose,
                    envelope_digest,request_digest,projected_bytes,current_instruction_count,
-                   health_status,status,failure_kind,started_at,completed_at
-                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                   health_status,status,failure_kind,started_at,completed_at,scope_digest
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
                 params![
                     id,
                     input.run_id,
@@ -253,6 +288,7 @@ pub(crate) fn begin(
                     } else {
                         Some(now_iso())
                     },
+                    scope_digest,
                 ],
             )
             .map_err(database_error)?;
@@ -548,6 +584,69 @@ mod tests {
         connection
     }
 
+    fn bind_scope(connection: &Connection) {
+        connection
+            .execute(
+                "INSERT INTO context_scopes(scope_key,kind,opaque_id,state,created_at)
+                 VALUES('scope','project','opaque','active','1')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO context_scope_epochs(scope_key,epoch) VALUES('scope',0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO runtime_scope_resolutions(
+                   run_id,status,focus_scope_key,scope_digest,resolved_at
+                 ) VALUES('run','resolved','scope',?1,'1')",
+                [digest(b"scope")],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO runtime_run_scopes(run_id,scope_key,relation,source,epoch)
+                 VALUES('run','scope','current','runtime',0)",
+                [],
+            )
+            .unwrap();
+    }
+
+    fn bind_personal_assertion(connection: &Connection) {
+        connection
+            .execute(
+                "INSERT INTO personal_payloads(id,value_json,bytes)
+                 VALUES('payload','{}',2)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO personal_assertions(id,metadata,payload_id,erased)
+                 VALUES('assertion','{}','payload',0)",
+                [],
+            )
+            .unwrap();
+    }
+
+    fn bind_selected_assertion(generation: &GenerationHandle) {
+        generation
+            .add_input(
+                "personal-state",
+                "assertion",
+                1,
+                &digest(b"assertion"),
+                "must",
+                "base",
+                true,
+                None,
+            )
+            .unwrap();
+    }
+
     #[test]
     fn schema_records_only_digests_and_one_current_source() {
         let mut connection = database();
@@ -581,6 +680,45 @@ mod tests {
             .unwrap();
         assert!(!stored.contains("secret current request"));
         assert_eq!(stored.len(), 128);
+    }
+
+    #[test]
+    fn required_receipt_is_written_before_dispatch_without_context_text() {
+        let state = crate::test_support::app_state(database());
+        let generation = begin(
+            &state,
+            BeginGeneration {
+                run_id: "run",
+                provider_session_id: None,
+                provider_id: Some("provider"),
+                purpose: "reasoning",
+                request_payload: b"serialized final provider body",
+                envelope_payload: b"envelope",
+                current_instruction_count: 1,
+            },
+        )
+        .unwrap();
+        let required = digest(b"ordered required candidate identities");
+        generation.set_required_receipt(&required).unwrap();
+        generation.dispatch().unwrap();
+        state
+            .sqlite_readers
+            .read(|connection| {
+                let receipt: (String, String) = connection
+                    .query_row(
+                        "SELECT required_set_digest,request_digest
+                         FROM context_generations WHERE run_id='run'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(database_error)?;
+                assert_eq!(
+                    receipt,
+                    (required, digest(b"serialized final provider body"))
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -812,6 +950,142 @@ mod tests {
                     .execute(
                         "UPDATE personal_scope SET policy_revision=policy_revision+1
                          WHERE id='primary'",
+                        [],
+                    )
+                    .map_err(database_error)?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(generation.complete().is_err());
+    }
+
+    #[test]
+    fn scope_change_before_dispatch_rejects_the_generation_cas() {
+        let connection = database();
+        bind_scope(&connection);
+        let state = crate::test_support::app_state(connection);
+        let generation = begin(
+            &state,
+            BeginGeneration {
+                run_id: "run",
+                provider_session_id: None,
+                provider_id: Some("provider"),
+                purpose: "reasoning",
+                request_payload: b"request",
+                envelope_payload: b"envelope",
+                current_instruction_count: 1,
+            },
+        )
+        .unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "UPDATE context_scope_epochs SET epoch=epoch+1 WHERE scope_key='scope'",
+                        [],
+                    )
+                    .map_err(database_error)?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(generation.dispatch().is_err());
+    }
+
+    #[test]
+    fn scope_change_after_dispatch_rejects_late_completion() {
+        let connection = database();
+        bind_scope(&connection);
+        let state = crate::test_support::app_state(connection);
+        let generation = begin(
+            &state,
+            BeginGeneration {
+                run_id: "run",
+                provider_session_id: None,
+                provider_id: Some("provider"),
+                purpose: "reasoning",
+                request_payload: b"request",
+                envelope_payload: b"envelope",
+                current_instruction_count: 1,
+            },
+        )
+        .unwrap();
+        generation.dispatch().unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "UPDATE context_scope_epochs SET epoch=epoch+1 WHERE scope_key='scope'",
+                        [],
+                    )
+                    .map_err(database_error)?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(generation.complete().is_err());
+    }
+
+    #[test]
+    fn forgotten_assertion_before_dispatch_rejects_the_generation_cas() {
+        let connection = database();
+        bind_personal_assertion(&connection);
+        let state = crate::test_support::app_state(connection);
+        let generation = begin(
+            &state,
+            BeginGeneration {
+                run_id: "run",
+                provider_session_id: None,
+                provider_id: Some("provider"),
+                purpose: "reasoning",
+                request_payload: b"request",
+                envelope_payload: b"envelope",
+                current_instruction_count: 1,
+            },
+        )
+        .unwrap();
+        bind_selected_assertion(&generation);
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "UPDATE personal_assertions SET erased=1 WHERE id='assertion'",
+                        [],
+                    )
+                    .map_err(database_error)?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(generation.dispatch().is_err());
+    }
+
+    #[test]
+    fn forgotten_assertion_after_dispatch_rejects_late_completion() {
+        let connection = database();
+        bind_personal_assertion(&connection);
+        let state = crate::test_support::app_state(connection);
+        let generation = begin(
+            &state,
+            BeginGeneration {
+                run_id: "run",
+                provider_session_id: None,
+                provider_id: Some("provider"),
+                purpose: "reasoning",
+                request_payload: b"request",
+                envelope_payload: b"envelope",
+                current_instruction_count: 1,
+            },
+        )
+        .unwrap();
+        bind_selected_assertion(&generation);
+        generation.dispatch().unwrap();
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "UPDATE personal_assertions SET erased=1 WHERE id='assertion'",
                         [],
                     )
                     .map_err(database_error)?;

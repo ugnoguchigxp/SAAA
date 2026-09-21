@@ -2,7 +2,7 @@
 # Deterministic test-only pi protocol peer. Never used by the production defaults.
 import json, os, sys
 if '--version' in sys.argv:
-    print('0.85.1')
+    print('0.86.1')
     sys.exit(0)
 path = sys.argv[sys.argv.index('--session') + 1]
 provider = sys.argv[sys.argv.index('--provider') + 1]

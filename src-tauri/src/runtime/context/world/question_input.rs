@@ -60,7 +60,14 @@ mod tests {
         connection
     }
 
-    fn seed(connection: &Connection, run: &str, status: &str, message: &str, role: &str, content: &str) {
+    fn seed(
+        connection: &Connection,
+        run: &str,
+        status: &str,
+        message: &str,
+        role: &str,
+        content: &str,
+    ) {
         connection
             .execute(
                 "INSERT INTO runtime_runs(id, conversation_id, status, input_message_id) VALUES(?1, 'c-1', ?2, ?3)",
@@ -95,15 +102,36 @@ mod tests {
     #[test]
     fn world_g1_02_rejects_other_run_role_and_missing_run() {
         let connection = empty_connection();
-        seed(&connection, "run", "completed", "input", "user", "「tech」は何に影響しますか？");
+        seed(
+            &connection,
+            "run",
+            "completed",
+            "input",
+            "user",
+            "「tech」は何に影響しますか？",
+        );
         assert_eq!(read_text(&connection, "run").unwrap(), None);
 
         let connection = empty_connection();
-        seed(&connection, "run", "running", "input", "assistant", "「tech」は何に影響しますか？");
+        seed(
+            &connection,
+            "run",
+            "running",
+            "input",
+            "assistant",
+            "「tech」は何に影響しますか？",
+        );
         assert_eq!(read_text(&connection, "run").unwrap(), None);
 
         let connection = empty_connection();
-        seed(&connection, "run", "running", "input", "user", "「tech」は何に影響しますか？");
+        seed(
+            &connection,
+            "run",
+            "running",
+            "input",
+            "user",
+            "「tech」は何に影響しますか？",
+        );
         assert_eq!(read_text(&connection, "missing").unwrap(), None);
     }
 

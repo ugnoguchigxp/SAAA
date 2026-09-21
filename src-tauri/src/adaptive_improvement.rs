@@ -186,6 +186,16 @@ impl Domain {
             Self::Notification => "notification",
         }
     }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "provider_recipe" => Some(Self::ProviderRecipe),
+            "tool" => Some(Self::Tool),
+            "plan" => Some(Self::Plan),
+            "notification" => Some(Self::Notification),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,17 +266,132 @@ pub(crate) fn start_worker(writer: Arc<crate::persistence::SqliteWriter>) {
                         settings.learning.batch_size,
                     );
                     if settings.adaptive_improvement.enabled && adaptive_domains_enabled {
-                        let _ = materialize_dirty(
+                        if let Some(dataset_id) = materialize_dirty(
                             connection,
                             settings.learning.batch_size as usize,
                             now,
-                        );
+                        )? {
+                            let _ = train_candidate_artifacts(connection, &dataset_id, now);
+                        }
                     }
                 }
                 Ok(())
             });
         }
     });
+}
+
+/// Fits a deliberately simple, domain/scope-local aggregate ranker from observed selections.
+/// It never assigns a label to an unselected candidate: scores are emitted only for candidates
+/// that have an explicit acceptance or verified technical/verifier outcome. The resulting
+/// artifacts remain `candidate` until the separate paired evaluation gate promotes them.
+pub(crate) fn train_candidate_artifacts(
+    c: &Connection,
+    dataset_id: &str,
+    now: i64,
+) -> Result<Vec<String>, String> {
+    use std::collections::BTreeMap;
+    type CandidateScores = BTreeMap<String, (f64, u32)>;
+    let source_event_seq: i64 = c
+        .query_row(
+            "SELECT upper_event_seq FROM ai_datasets WHERE id=?1 AND state='ready'",
+            [dataset_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Adaptive dataset is not ready".to_string())?;
+    let mut groups = BTreeMap::<(String, String, String), (Vec<String>, CandidateScores)>::new();
+    let mut statement = c
+        .prepare(
+            "SELECT features_json,labels_json FROM ai_examples WHERE dataset_id=?1 AND eligible=1",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([dataset_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    for (features, labels) in rows {
+        let features: serde_json::Value =
+            serde_json::from_str(&features).map_err(|_| "Invalid dataset features".to_string())?;
+        let labels: serde_json::Value =
+            serde_json::from_str(&labels).map_err(|_| "Invalid dataset labels".to_string())?;
+        let Some(domain) = features.get("domain").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(scope) = features.get("scope").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(selected) = features.get("selected").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let candidates = features
+            .get("eligibleCandidates")
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if candidates.is_empty() || !candidates.iter().any(|candidate| candidate == selected) {
+            continue;
+        }
+        let outcome = ["userAcceptance", "verifierSuccess", "technicalSuccess"]
+            .into_iter()
+            .find_map(|key| labels.get(key).and_then(json_bool));
+        let Some(outcome) = outcome else { continue };
+        let fingerprint = fingerprint_for(&candidates);
+        let (_, scores) = groups
+            .entry((domain.to_owned(), scope.to_owned(), fingerprint))
+            .or_insert_with(|| (candidates, BTreeMap::new()));
+        let entry = scores.entry(selected.to_owned()).or_insert((0.0, 0));
+        entry.0 += if outcome { 1.0 } else { 0.0 };
+        entry.1 += 1;
+    }
+    let mut artifacts = Vec::new();
+    for ((domain, scope, fingerprint), (candidates, scores)) in groups {
+        let Some(domain) = Domain::parse(&domain) else {
+            continue;
+        };
+        if candidates.len() < 2 || scores.is_empty() {
+            continue;
+        }
+        let scores = scores
+            .into_iter()
+            .map(|(candidate, (sum, count))| (candidate, sum / count as f64))
+            .collect::<BTreeMap<_, _>>();
+        let score_json = serde_json::to_string(&scores).map_err(|error| error.to_string())?;
+        // Recompute the fingerprint from the candidates and reject corrupt examples rather than
+        // training an artifact whose dispatch set does not match its evidence.
+        if fingerprint != fingerprint_for(&candidates) {
+            continue;
+        }
+        artifacts.push(create_artifact(
+            c,
+            domain,
+            &scope,
+            &candidates,
+            &score_json,
+            source_event_seq,
+            now,
+        )?);
+    }
+    Ok(artifacts)
+}
+
+fn json_bool(value: &serde_json::Value) -> Option<bool> {
+    value.as_bool().or_else(|| {
+        value.as_i64().and_then(|value| match value {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        })
+    })
 }
 
 fn now_ms() -> i64 {
@@ -315,11 +440,46 @@ pub(crate) fn record_outcome(
         return Err("Outcome resources cannot be negative".into());
     }
     let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
-    tx.execute("INSERT INTO ai_events(kind,source_id,payload_json,created_at_ms) VALUES('outcome',?1,'{}',?2)",params![source_id,now]).map_err(|e|e.to_string())?;
-    let event_seq = tx.last_insert_rowid();
-    tx.execute("INSERT INTO ai_outcomes(decision_id,technical_success,verifier_success,user_acceptance,correction,latency_ms,cost_micros,usefulness,source_id,revision,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(decision_id) DO UPDATE SET technical_success=excluded.technical_success,verifier_success=excluded.verifier_success,user_acceptance=excluded.user_acceptance,correction=excluded.correction,latency_ms=excluded.latency_ms,cost_micros=excluded.cost_micros,usefulness=excluded.usefulness,source_id=excluded.source_id,revision=excluded.revision,created_at_ms=excluded.created_at_ms",params![decision_id,technical_success.map(i64::from),verifier_success.map(i64::from),user_acceptance.map(i64::from),correction.map(i64::from),latency_ms,cost_micros,usefulness.map(i64::from),source_id,revision,now]).map_err(|e|e.to_string())?;
-    tx.execute("INSERT INTO ai_dirty(decision_id,cause_event_seq) VALUES(?1,?2) ON CONFLICT(decision_id) DO UPDATE SET cause_event_seq=MAX(cause_event_seq,excluded.cause_event_seq)",params![decision_id,event_seq]).map_err(|e|e.to_string())?;
+    record_outcome_in_transaction(
+        &tx,
+        decision_id,
+        technical_success,
+        verifier_success,
+        user_acceptance,
+        correction,
+        latency_ms,
+        cost_micros,
+        usefulness,
+        source_id,
+        revision,
+        now,
+    )?;
     tx.commit().map_err(|e| e.to_string())
+}
+
+pub(crate) fn record_outcome_in_transaction(
+    c: &Connection,
+    decision_id: &str,
+    technical_success: Option<bool>,
+    verifier_success: Option<bool>,
+    user_acceptance: Option<bool>,
+    correction: Option<bool>,
+    latency_ms: Option<i64>,
+    cost_micros: Option<i64>,
+    usefulness: Option<bool>,
+    source_id: &str,
+    revision: i64,
+    now: i64,
+) -> Result<(), String> {
+    if latency_ms.is_some_and(|value| value < 0) || cost_micros.is_some_and(|value| value < 0) {
+        return Err("Outcome resources cannot be negative".into());
+    }
+    c.execute("INSERT INTO ai_events(kind,source_id,payload_json,created_at_ms) VALUES('outcome',?1,'{}',?2)",params![source_id,now]).map_err(|e|e.to_string())?;
+    let event_seq = c.last_insert_rowid();
+    c.execute("INSERT INTO ai_outcomes(decision_id,technical_success,verifier_success,user_acceptance,correction,latency_ms,cost_micros,usefulness,source_id,revision,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(decision_id) DO UPDATE SET technical_success=excluded.technical_success,verifier_success=excluded.verifier_success,user_acceptance=excluded.user_acceptance,correction=excluded.correction,latency_ms=excluded.latency_ms,cost_micros=excluded.cost_micros,usefulness=excluded.usefulness,source_id=excluded.source_id,revision=excluded.revision,created_at_ms=excluded.created_at_ms",params![decision_id,technical_success.map(i64::from),verifier_success.map(i64::from),user_acceptance.map(i64::from),correction.map(i64::from),latency_ms,cost_micros,usefulness.map(i64::from),source_id,revision,now]).map_err(|e|e.to_string())?;
+    c.execute("INSERT INTO ai_dirty(decision_id,cause_event_seq) VALUES(?1,?2) ON CONFLICT(decision_id) DO UPDATE SET cause_event_seq=MAX(cause_event_seq,excluded.cause_event_seq)",params![decision_id,event_seq])
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Materialize one stable prefix. New feedback stays dirty because the upper event sequence is
@@ -642,6 +802,53 @@ pub(crate) fn activate(
     tx.execute("INSERT INTO ai_activations(domain,scope_key,artifact_id,policy_revision,active,activated_at_ms) VALUES(?1,?2,?3,?4,1,?5)",params![domain,scope,artifact_id,revision,now]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
+
+/// Removes an active learned policy without touching a user's explicit override.  The next
+/// matching dispatch therefore follows the normal override-or-rules path immediately; retired
+/// evidence remains available for audit but can no longer be selected.
+pub(crate) fn rollback_active_to_rules(
+    c: &Connection,
+    artifact_id: &str,
+    now: i64,
+) -> Result<(), String> {
+    let tx = c
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    let artifact: Option<(String, String, String)> = tx
+        .query_row(
+            "SELECT domain,scope_key,state FROM ai_artifacts WHERE id=?1",
+            [artifact_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((domain, scope, state)) = artifact else {
+        return Err("Unknown adaptive artifact".into());
+    };
+    if state != "active" {
+        return Err("Only an active adaptive artifact can be returned to rules".into());
+    }
+    let deactivated = tx
+        .execute(
+            "UPDATE ai_activations SET active=0 WHERE artifact_id=?1 AND active=1",
+            [artifact_id],
+        )
+        .map_err(|error| error.to_string())?;
+    if deactivated != 1 {
+        return Err("Active adaptive artifact has no current activation".into());
+    }
+    tx.execute(
+        "UPDATE ai_artifacts SET state='retired' WHERE id=?1 AND domain=?2 AND scope_key=?3 AND state='active'",
+        params![artifact_id, domain, scope],
+    )
+    .map_err(|error| error.to_string())?;
+    tx.execute(
+        "INSERT INTO ai_events(kind,source_id,payload_json,created_at_ms) VALUES('artifact_rolled_back',?1,'{}',?2)",
+        params![artifact_id, now],
+    )
+    .map_err(|error| error.to_string())?;
+    tx.commit().map_err(|error| error.to_string())
+}
 pub(crate) fn invalidate_source(c: &Connection, source_id: &str) -> Result<usize, String> {
     // Source references are immutable JSON at decision time. A source can be represented by
     // several domain ledgers, so an unresolved dependency is invalidated conservatively rather
@@ -774,6 +981,45 @@ mod tests {
     }
 
     #[test]
+    fn ai_13_rollback_active_artifact_returns_matching_scope_to_rules() {
+        let c = Connection::open_in_memory().unwrap();
+        migrate(&c).unwrap();
+        let candidates = vec!["a".into(), "b".into()];
+        let artifact = create_artifact(
+            &c,
+            Domain::Tool,
+            "project-a",
+            &candidates,
+            r#"{"a":0.1,"b":0.9}"#,
+            0,
+            1,
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE ai_artifacts SET state='shadow' WHERE id=?1",
+            [&artifact],
+        )
+        .unwrap();
+        approve_shadow(&c, &artifact).unwrap();
+        activate(&c, &artifact, 1, 2).unwrap();
+        rollback_active_to_rules(&c, &artifact, 3).unwrap();
+        assert_eq!(
+            choose(&c, Domain::Tool, "project-a", &candidates, "a", 4)
+                .unwrap()
+                .0,
+            "a"
+        );
+        let state: String = c
+            .query_row(
+                "SELECT state FROM ai_artifacts WHERE id=?1",
+                [&artifact],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "retired");
+    }
+
+    #[test]
     fn ai_06_insufficient_data_cannot_be_promoted() {
         let c = Connection::open_in_memory().unwrap();
         migrate(&c).unwrap();
@@ -846,6 +1092,45 @@ mod tests {
                 .0,
             "a"
         );
+    }
+
+    #[test]
+    fn ai_12_candidate_version_change_falls_back_without_retiring_the_artifact() {
+        let c = Connection::open_in_memory().unwrap();
+        migrate(&c).unwrap();
+        let original_candidates = vec!["a".into(), "b".into()];
+        let artifact = create_artifact(
+            &c,
+            Domain::Tool,
+            "project-a",
+            &original_candidates,
+            r#"{"a":0.1,"b":0.9}"#,
+            0,
+            1,
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE ai_artifacts SET state='shadow' WHERE id=?1",
+            [&artifact],
+        )
+        .unwrap();
+        approve_shadow(&c, &artifact).unwrap();
+        activate(&c, &artifact, 1, 2).unwrap();
+        let updated_candidates = vec!["a".into(), "c".into()];
+        assert_eq!(
+            choose(&c, Domain::Tool, "project-a", &updated_candidates, "a", 3)
+                .unwrap()
+                .0,
+            "a"
+        );
+        let state: String = c
+            .query_row(
+                "SELECT state FROM ai_artifacts WHERE id=?1",
+                [&artifact],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "active");
     }
 
     #[test]
@@ -933,5 +1218,44 @@ mod tests {
             .unwrap();
         assert_eq!(row, (0, "no_explicit_or_verified_outcome".into()));
         assert!(materialize_dirty(&c, 10, 4).unwrap().is_none());
+    }
+
+    #[test]
+    fn ai_05_trainer_scores_only_observed_selected_candidates() {
+        let c = Connection::open_in_memory().unwrap();
+        migrate(&c).unwrap();
+        let mut first = decision("observed-a");
+        first.domain = Domain::Tool;
+        first.scope_key = "project-a".into();
+        first.eligible_candidates = vec!["a".into(), "b".into()];
+        first.selected = "a".into();
+        first.candidate_fingerprint = fingerprint_for(&first.eligible_candidates);
+        record_decision(&c, &first, 1).unwrap();
+        record_outcome(
+            &c,
+            "observed-a",
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "source",
+            1,
+            2,
+        )
+        .unwrap();
+        let dataset = materialize_dirty(&c, 10, 3).unwrap().unwrap();
+        let artifacts = train_candidate_artifacts(&c, &dataset, 4).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        let scores: String = c
+            .query_row(
+                "SELECT scores_json FROM ai_artifacts WHERE id=?1",
+                [&artifacts[0]],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(scores, r#"{"a":1.0}"#);
     }
 }

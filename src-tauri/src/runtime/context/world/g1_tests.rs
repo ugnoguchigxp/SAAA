@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! G1 integration tests: the fixed graph question reaches one authorized five-element slice and the
 //! C3/C5 boundaries stay explicit. Deterministic fixtures only; no model, network or production DB.
 
@@ -26,7 +24,7 @@ use std::sync::Arc;
 
 const TECH_QUESTION: &str = "「Speculative Decoding」は今の目標にどう関係しますか？";
 
-fn window() -> ContextWindow {
+pub(crate) fn window() -> ContextWindow {
     ContextWindow {
         messages: vec![
             ProjectedContextMessage {
@@ -60,18 +58,18 @@ fn window() -> ContextWindow {
     }
 }
 
-fn load_scope(fixture: &Fixture) -> ScopeSnapshot {
+pub(crate) fn load_scope(fixture: &Fixture) -> ScopeSnapshot {
     fixture
         .writer
         .read_serialized(|connection| crate::runtime::context::scope::load(connection, RUN_ID))
         .expect("scope")
 }
 
-fn allowed(scope: &ScopeSnapshot) -> BTreeSet<String> {
+pub(crate) fn allowed(scope: &ScopeSnapshot) -> BTreeSet<String> {
     scope.scopes.iter().map(|item| item.key.clone()).collect()
 }
 
-fn graph_request(topic: &str) -> GraphRequest {
+pub(crate) fn graph_request(topic: &str) -> GraphRequest {
     let parse = parse_graph_question(&format!("「{topic}」は今の目標にどう関係しますか？"));
     parse.graph_request().expect("requested")
 }
@@ -135,8 +133,20 @@ fn commit_entities(fixture: &Fixture, source: &SourceRef, now_ms: i64) {
             EntityKindV2::Concept,
             "Speculative Decoding",
         ),
-        ("g1-ent-decode", "ent_decode", "decode", EntityKindV2::Metric, "Decode Latency"),
-        ("g1-ent-voice", "ent_voice", "voice", EntityKindV2::Metric, "Voice Latency"),
+        (
+            "g1-ent-decode",
+            "ent_decode",
+            "decode",
+            EntityKindV2::Metric,
+            "Decode Latency",
+        ),
+        (
+            "g1-ent-voice",
+            "ent_voice",
+            "voice",
+            EntityKindV2::Metric,
+            "Voice Latency",
+        ),
         (
             "g1-ent-goal",
             "ent_goal",
@@ -144,7 +154,13 @@ fn commit_entities(fixture: &Fixture, source: &SourceRef, now_ms: i64) {
             EntityKindV2::Goal,
             "Natural Conversation",
         ),
-        ("g1-ent-user", "ent_user", "user", EntityKindV2::Actor, "User"),
+        (
+            "g1-ent-user",
+            "ent_user",
+            "user",
+            EntityKindV2::Actor,
+            "User",
+        ),
     ];
     for (fence, id, entity_id, kind, name) in entities {
         let objective = (entity_id == "goal").then_some("g1-obj");
@@ -163,6 +179,7 @@ fn commit_entities(fixture: &Fixture, source: &SourceRef, now_ms: i64) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn relation_payload(
     from: &str,
     to: &str,
@@ -202,19 +219,46 @@ fn commit_relations(fixture: &Fixture, source: &SourceRef, now_ms: i64) {
         (
             "g1-rel-tech-decode",
             "rel_tech_decode",
-            relation_payload("tech", "decode", "increases", Some("intervention"), None, None, true, &key),
+            relation_payload(
+                "tech",
+                "decode",
+                "increases",
+                Some("intervention"),
+                None,
+                None,
+                true,
+                &key,
+            ),
             &["ent_tech", "ent_decode"][..],
         ),
         (
             "g1-rel-decode-voice",
             "rel_decode_voice",
-            relation_payload("decode", "voice", "increases", Some("quantity_increase"), None, None, true, &key),
+            relation_payload(
+                "decode",
+                "voice",
+                "increases",
+                Some("quantity_increase"),
+                None,
+                None,
+                true,
+                &key,
+            ),
             &["ent_decode", "ent_voice"][..],
         ),
         (
             "g1-rel-voice-goal",
             "rel_voice_goal",
-            relation_payload("voice", "goal", "serves_goal", None, Some("lower_is_better"), None, false, &key),
+            relation_payload(
+                "voice",
+                "goal",
+                "serves_goal",
+                None,
+                Some("lower_is_better"),
+                None,
+                false,
+                &key,
+            ),
             &["ent_voice", "ent_goal"][..],
         ),
         (
@@ -226,13 +270,31 @@ fn commit_relations(fixture: &Fixture, source: &SourceRef, now_ms: i64) {
         (
             "g1-rel-voice-decode",
             "rel_voice_decode",
-            relation_payload("voice", "decode", "correlates_with", None, None, Some("positive"), false, &key),
+            relation_payload(
+                "voice",
+                "decode",
+                "correlates_with",
+                None,
+                None,
+                Some("positive"),
+                false,
+                &key,
+            ),
             &["ent_voice", "ent_decode"][..],
         ),
         (
             "g1-rel-decode-tech",
             "rel_decode_tech",
-            relation_payload("decode", "tech", "depends_on", None, None, None, false, &key),
+            relation_payload(
+                "decode",
+                "tech",
+                "depends_on",
+                None,
+                None,
+                None,
+                false,
+                &key,
+            ),
             &["ent_decode", "ent_tech"][..],
         ),
     ];
@@ -269,7 +331,7 @@ fn commit_relations(fixture: &Fixture, source: &SourceRef, now_ms: i64) {
 /// The five-element fixture from the plan: project:p, concept:tech, metric:decode, metric:voice,
 /// goal:natural and the tech→decode→voice, voice→goal and project→goal edges plus one correlation
 /// and one depends_on.
-fn g1_fixture() -> Fixture {
+pub(crate) fn g1_fixture() -> Fixture {
     let fixture = Fixture::new(&[]);
     let now_ms = crate::memory::personal_state::now();
     let source = fixture
@@ -279,7 +341,9 @@ fn g1_fixture() -> Fixture {
     commit_one(
         &fixture,
         "g1-objective",
-        vec![objective_assertion("g1-obj", "g1-obj-p", &source, PROJECT, now_ms)],
+        vec![objective_assertion(
+            "g1-obj", "g1-obj-p", &source, PROJECT, now_ms,
+        )],
     );
     commit_entities(&fixture, &source, now_ms);
     commit_relations(&fixture, &source, now_ms);
@@ -295,21 +359,10 @@ fn g1_fixture() -> Fixture {
             Ok(())
         })
         .expect("complete job");
+    // The frame service uses the fixture clock; align it with the commit time so the fresh
+    // projection is within the entity validity window.
+    fixture.set_now(now_ms);
     fixture
-}
-
-fn debug_counts(fixture: &Fixture) {
-    let (entities, permitted, meta, sample): (i64, i64, i64, String) = fixture
-        .writer
-        .read_serialized(|c| {
-            let e = c.query_row("SELECT count(*) FROM personal_world_entities", [], |r| r.get(0)).map_err(crate::database_error)?;
-            let p = c.query_row("SELECT count(*) FROM personal_assertions a WHERE a.erased=0 AND json_extract(a.metadata,'$.kind') IN ('world_entity','world_relation','world_focus')", [], |r| r.get(0)).map_err(crate::database_error)?;
-            let m = c.query_row("SELECT count(*) FROM personal_world_projection_meta", [], |r| r.get(0)).map_err(crate::database_error)?;
-            let sample: String = c.query_row("SELECT group_concat(assertion_id||':'||entity_id||':'||status, ',') FROM personal_world_entities", [], |r| r.get(0)).map_err(crate::database_error)?;
-            Ok((e, p, m, sample))
-        })
-        .unwrap();
-    eprintln!("DEBUG entities={entities} world_assertions={permitted} meta={meta} sample={sample}");
 }
 
 fn world_candidate(composed: &TurnCompose) -> Option<&crate::runtime::context::source::Candidate> {
@@ -397,6 +450,7 @@ fn world_g1_05_ambiguous_seed_is_not_auto_selected() {
             now_ms,
         )],
     );
+    fixture.set_now(now_ms);
     let outcome = prepare_outcome(&fixture, graph_request("Duplicate"), true);
     let ready = match outcome {
         WorldSourceOutcome::Ready(ready) => ready,
@@ -451,16 +505,17 @@ fn world_g1_05_projection_stale_is_rendered_but_shadow_stays_empty() {
 }
 
 #[test]
-fn world_g1_04_graph_only_question_fetches_a_frame_without_runtime_refs() {
-    let fixture = g1_fixture();
-    debug_counts(&fixture);
+fn world_g1_09_notice_only_frame_reaches_the_envelope_block() {
+    // A stale projection is not a successful empty knowledge; the fixed notice must be visible to
+    // the provider through the same broker block.
+    let fixture = Fixture::new(&[]);
     let scope = load_scope(&fixture);
     let composed = compose_parts(
         true,
         Some(Arc::new(fixture.service())),
         fixture.access().principal,
         fixture.access().policy_revision,
-        Some(entity_graph_request("tech")),
+        Some(graph_request("tech")),
         RUN_ID,
         &scope,
         window(),
@@ -469,6 +524,43 @@ fn world_g1_04_graph_only_question_fetches_a_frame_without_runtime_refs() {
     )
     .expect("compose");
     let candidate = world_candidate(&composed).expect("world candidate");
+    let combined = composed
+        .envelope
+        .combined_block
+        .as_deref()
+        .expect("combined block");
+    assert!(combined.contains(&candidate.content));
+    assert!(combined.contains("world_projection_stale"), "{combined}");
+}
+
+#[test]
+fn world_g1_04_graph_only_question_fetches_a_frame_without_runtime_refs() {
+    let fixture = g1_fixture();
+    let scope = load_scope(&fixture);
+    let composed = compose_parts(
+        true,
+        Some(Arc::new(fixture.service())),
+        fixture.access().principal,
+        fixture.access().policy_revision,
+        Some(graph_request("Speculative Decoding")),
+        RUN_ID,
+        &scope,
+        window(),
+        Vec::new(),
+        allowed(&scope),
+    )
+    .expect("compose");
+    let candidate = world_candidate(&composed).expect("world candidate");
+    // The combined block is exactly what the broker inserts before the current instruction and the
+    // provider history/body is rendered from; the graph JSON must survive verbatim.
+    let combined = composed
+        .envelope
+        .combined_block
+        .as_deref()
+        .expect("combined block");
+    assert!(combined.contains(&candidate.content));
+    assert!(combined.contains("\"nodes\""));
+    assert!(combined.contains("\"notices\""));
     let json = parse_rendered_json(&candidate.content);
     assert!(json["runtime"].as_array().unwrap().is_empty());
     let names = json["graph"]["nodes"]
@@ -477,16 +569,28 @@ fn world_g1_04_graph_only_question_fetches_a_frame_without_runtime_refs() {
         .iter()
         .filter_map(|node| node["name"].as_str())
         .collect::<Vec<_>>();
-    assert!(names.contains(&"Speculative Decoding"), "names={names:?} json={json}");
-    assert!(names.contains(&"Decode Latency"), "names={names:?} json={json}");
-    assert!(names.contains(&"Voice Latency"), "names={names:?} json={json}");
+    assert!(
+        names.contains(&"Speculative Decoding"),
+        "names={names:?} json={json}"
+    );
+    assert!(
+        names.contains(&"Decode Latency"),
+        "names={names:?} json={json}"
+    );
+    assert!(
+        names.contains(&"Voice Latency"),
+        "names={names:?} json={json}"
+    );
     let relation_types = json["graph"]["relations"]
         .as_array()
         .unwrap()
         .iter()
         .filter_map(|relation| relation["relation_type"].as_str())
         .collect::<Vec<_>>();
-    assert!(relation_types.contains(&"correlates_with"), "{relation_types:?}");
+    assert!(
+        relation_types.contains(&"correlates_with"),
+        "{relation_types:?}"
+    );
     assert!(relation_types.contains(&"depends_on"), "{relation_types:?}");
 }
 
@@ -535,15 +639,27 @@ fn world_g1_07_plain_chat_keeps_the_runtime_only_path() {
 #[test]
 fn world_g1_01_not_requested_never_builds_a_graph_request() {
     assert!(parse_graph_question(TECH_QUESTION).is_requested());
-    assert_eq!(parse_graph_question("普通の雑談です"), QuestionParse::NotRequested);
     assert_eq!(
-        parse_graph_question(TECH_QUESTION).graph_request().unwrap().seeds,
-        vec![WorldSeed::ExactName("tech".into())]
+        parse_graph_question("普通の雑談です"),
+        QuestionParse::NotRequested
     );
-    assert_eq!(graph_request("Speculative Decoding").limits, LimitsV2::m1().capped());
+    assert_eq!(
+        parse_graph_question(TECH_QUESTION)
+            .graph_request()
+            .unwrap()
+            .seeds,
+        vec![WorldSeed::ExactName("Speculative Decoding".into())]
+    );
+    assert_eq!(
+        graph_request("Speculative Decoding").limits,
+        LimitsV2::m1().capped()
+    );
     assert_eq!(
         graph_request("Speculative Decoding").causal_direction,
         CausalDirection::Forward
     );
-    assert_eq!(graph_request("Speculative Decoding").flags, IncludeFlags::default());
+    assert_eq!(
+        graph_request("Speculative Decoding").flags,
+        IncludeFlags::default()
+    );
 }

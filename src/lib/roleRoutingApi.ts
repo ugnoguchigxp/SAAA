@@ -27,3 +27,9 @@ export function getRoutingLearningSnapshot(): Promise<RoutingLearningSnapshot> {
 export function runRoutingLearningOnce(): Promise<RoutingLearningSnapshot> {
   return invoke<RoutingLearningSnapshot>("run_routing_learning_once");
 }
+
+export function rollbackAdaptiveArtifact(artifactId: string): Promise<RoutingLearningSnapshot> {
+  return invoke<RoutingLearningSnapshot>("rollback_adaptive_artifact", {
+    input: { artifactId },
+  });
+}

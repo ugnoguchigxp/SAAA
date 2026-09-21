@@ -5,7 +5,7 @@ import type { ContentPart } from "./generativeUi";
 
 export type ConversationMessage = { id: string, conversationId: string, role: "user" | "assistant" | "system" | "transcript", content: string, parts?: Array<ContentPart>, createdAt: string, };
 
-export const runtimeFailureCodes = ["runtime_error", "configuration-error", "child-start-failed", "request-timeout", "progress-timeout", "terminal-timeout", "hard-timeout", "child-exited", "protocol-error", "policy-violation", "provider-error", "response-too-large", "internal-error"] as const;
+export const runtimeFailureCodes = ["runtime_error", "configuration-error", "child-start-failed", "request-timeout", "progress-timeout", "terminal-timeout", "hard-timeout", "child-exited", "protocol-error", "policy-violation", "provider-error", "response-too-large", "required-context-overflow", "context-scope-changed", "required-context-unavailable", "internal-error"] as const;
 export type RuntimeFailureCode = (typeof runtimeFailureCodes)[number];
 
 export type VoicePresentationDecision = { decision: "speak" | "silent", reasonCode: "global_opt_out" | "turn_override" | "conversation_override" | "global_default" | "route_blocked" | "situation_hold", };
@@ -22,7 +22,11 @@ export type RoutingEventReplayInput = { rootId: string, afterSeq: bigint, };
 
 export type RoutingCancelInput = { rootId: string, };
 
-export type RoutingLearningSnapshot = { dirtyRoots: bigint, readyDatasets: bigint, activeArtifacts: bigint, };
+export type AdaptiveRollbackInput = { artifactId: string, };
+
+export type AdaptiveArtifactSnapshot = { id: string, domain: string, scopeKey: string, state: string, eligibleExamples: bigint, bestObservedScore: number | null, policyRevision: bigint | null, reason: string, };
+
+export type RoutingLearningSnapshot = { dirtyRoots: bigint, readyDatasets: bigint, activeArtifacts: bigint, adaptiveArtifacts: Array<AdaptiveArtifactSnapshot>, };
 
 export type RoutingRootSnapshot = { rootId: string, runtimeRunId: string | null, phase: string, revision: number, activeSlot: string | null, cancelRequested: boolean, lastEventSeq: bigint, };
 

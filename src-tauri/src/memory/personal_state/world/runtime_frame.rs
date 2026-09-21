@@ -376,7 +376,11 @@ impl WorldFrameService {
         let runtime_refs = normalize_runtime_refs(&request.runtime_refs)?;
         let owned = OwnedFrameRequest::from_borrowed(&request, runtime_refs, max_bytes, ttl_ms);
         let prepared = self.build(owned)?;
-        if (self.clock)() >= prepared.frame.expires_at_ms {
+        if !is_within_validity(
+            prepared.frame.captured_at_ms,
+            prepared.frame.expires_at_ms,
+            (self.clock)(),
+        ) {
             return Err(FrameError::Expired);
         }
         Ok(prepared)
@@ -425,6 +429,14 @@ impl WorldFrameService {
             Err(FrameError::Expired) => return Ok(FrameValidity::Expired),
             Err(error) => return Err(error),
         };
+        // Rebuilding may cross the original deadline; its fresh timestamps must not renew it.
+        if !is_within_validity(
+            prepared.frame.captured_at_ms,
+            prepared.frame.expires_at_ms,
+            (self.clock)(),
+        ) {
+            return Ok(FrameValidity::Expired);
+        }
         Ok(compare_stamp(&prepared.stamp, &rebuilt.stamp))
     }
 }

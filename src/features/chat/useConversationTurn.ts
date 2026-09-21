@@ -1,4 +1,9 @@
 import { usePersonalStateForget } from "./usePersonalStateForget";
+import {
+  requiredContextFailureCode,
+  type RequiredContextFailureCode,
+  type RequiredContextRecoveryAction,
+} from "./requiredContextRecovery";
 import { useCommittedCallback } from "../../useCommittedCallback";
 import { cancelReasoningRun } from "../../lib/reasoningRunControl";
 import {
@@ -21,10 +26,7 @@ import {
 } from "react";
 import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
-import {
-  updateConversationTimestamp,
-  updateEffectiveRoute,
-} from "../../lib/conversationRouting";
+import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
 import {
   appendConversationActivity,
   type ConversationRuntimeActivity,
@@ -91,22 +93,19 @@ export function useConversationTurn({
   } = history;
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const {
-    streamingText,
-    resetStreamingText,
-    appendStreamingText,
-    hasStreamingText,
-  } = useStreamingTextProjection();
-  const [runtimeActivity, setRuntimeActivity] = useState<
-    ConversationRuntimeActivity[]
-  >([]);
+  const { streamingText, resetStreamingText, appendStreamingText, hasStreamingText } =
+    useStreamingTextProjection();
+  const [runtimeActivity, setRuntimeActivity] = useState<ConversationRuntimeActivity[]>([]);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
+  const [requiredContextFailure, setRequiredContextFailure] =
+    useState<RequiredContextFailureCode | null>(null);
   const [activeTtsRunId, setActiveTtsRunId] = useState<string | null>(null);
   const voice = useConversationVoicePolicy(selectedConversationId, setError);
   const selectedConversationIdRef = useRef<string | null>(null);
   const messagesRequestRef = useRef(0);
   const failedRunIdsRef = useRef(new Set<string>());
+  const nonRetryableRunIdsRef = useRef(new Set<string>());
   const incompleteRunIdsRef = useRef(new Set<string>());
   const speechStopRequestsRef = useRef(new Set<string>());
   const issueCoordinatorRef = useRef(new ConversationIssueCoordinator());
@@ -131,36 +130,20 @@ export function useConversationTurn({
     incompleteRunIdsRef.current.clear();
     resetStreamingText();
     setRuntimeActivity([]);
+    setRequiredContextFailure(null);
     if (selectedConversationId) {
-      void loadMessagesCommitted(
-        selectedConversationId,
-        issueCoordinatorRef.current.begin(),
-      );
+      void loadMessagesCommitted(selectedConversationId, issueCoordinatorRef.current.begin());
     }
-  }, [
-    selectedConversationId,
-    resetHistory,
-    resetStreamingText,
-    loadMessagesCommitted,
-  ]);
+  }, [selectedConversationId, resetHistory, resetStreamingText, loadMessagesCommitted]);
   const forgottenRuns = usePersonalStateForget(() => {
     const conversation = selectedConversationIdRef.current;
     resetHistory(conversation);
     resetStreamingText();
     setRuntimeActivity([]);
-    if (conversation)
-      void loadMessagesCommitted(
-        conversation,
-        issueCoordinatorRef.current.begin(),
-      );
+    if (conversation) void loadMessagesCommitted(conversation, issueCoordinatorRef.current.begin());
   });
-  function publishIssue(
-    scope: number,
-    message: string,
-    retry: RetryAction | null = null,
-  ) {
-    if (disposedRef.current || !issueCoordinatorRef.current.isCurrent(scope))
-      return;
+  function publishIssue(scope: number, message: string, retry: RetryAction | null = null) {
+    if (disposedRef.current || !issueCoordinatorRef.current.isCurrent(scope)) return;
     setError(message);
     setRetryAction(retry);
   }
@@ -202,8 +185,7 @@ export function useConversationTurn({
   useEffect(() => {
     const changed = (event: Event) => {
       if (
-        (event as CustomEvent<string>).detail ===
-          selectedConversationIdRef.current &&
+        (event as CustomEvent<string>).detail === selectedConversationIdRef.current &&
         selectedConversationIdRef.current
       ) {
         void loadMessagesCommitted(
@@ -219,10 +201,7 @@ export function useConversationTurn({
     event.preventDefault();
     await submitPrompt(composer);
   }
-  async function submitPrompt(
-    prompt: string,
-    options: SubmitPromptOptions = {},
-  ) {
+  async function submitPrompt(prompt: string, options: SubmitPromptOptions = {}) {
     const {
       retryInputMessageId = null,
       inputOrigin = "text",
@@ -242,9 +221,8 @@ export function useConversationTurn({
     if (replacement) {
       if (replacement === "queued") {
         setComposer("");
-        await cancelReasoningRun(conversationSessionRef.current.runId).catch(
-          (cause) =>
-            publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause)),
+        await cancelReasoningRun(conversationSessionRef.current.runId).catch((cause) =>
+          publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause)),
         );
       }
       return;
@@ -262,9 +240,7 @@ export function useConversationTurn({
     beginRunPerformance(runId);
     const issueScope = issueCoordinatorRef.current.begin();
     const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak);
-    const presentationMode = shouldStreamSpeech
-      ? "visual-and-spoken"
-      : "visual";
+    const presentationMode = shouldStreamSpeech ? "visual-and-spoken" : "visual";
     let delivered = false;
     let deliverySettled = false;
     let handedToRetry = false;
@@ -276,6 +252,7 @@ export function useConversationTurn({
     try {
       setError(null);
       setRetryAction(null);
+      setRequiredContextFailure(null);
       setLastPrompt(content);
       conversationSessionRef.current = transitionConversationSession(
         conversationSessionRef.current,
@@ -298,9 +275,7 @@ export function useConversationTurn({
         ]);
       }
       setComposer("");
-      setSnapshot((current) =>
-        updateConversationTimestamp(current, conversationId, content),
-      );
+      setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
       if (shouldStreamSpeech) {
         await stopSpeech(issueScope);
       }
@@ -371,23 +346,17 @@ export function useConversationTurn({
         );
         if (!disposedRef.current) setActiveRunId(null);
       }
-      if (
-        !disposedRef.current &&
-        selectedConversationIdRef.current === conversationId
-      ) {
+      if (!disposedRef.current && selectedConversationIdRef.current === conversationId) {
         const terminalIncomplete = incompleteRunIdsRef.current.delete(runId);
         const failed = failedRunIdsRef.current.delete(runId);
-        const preserveIncomplete =
-          hasStreamingText() && (terminalIncomplete || failed);
+        const preserveIncomplete = hasStreamingText() && (terminalIncomplete || failed);
         if (!preserveIncomplete) resetStreamingText();
         const nextMessages = await loadMessages(conversationId, issueScope);
-        if (failed) {
+        const dispatchRefused = nonRetryableRunIdsRef.current.delete(runId);
+        if (failed && !dispatchRefused) {
           const input = [...nextMessages]
             .reverse()
-            .find(
-              (message) =>
-                message.role === "user" && message.content === content,
-            );
+            .find((message) => message.role === "user" && message.content === content);
           if (input && issueCoordinatorRef.current.isCurrent(issueScope)) {
             setRetryAction({
               kind: "response",
@@ -403,12 +372,8 @@ export function useConversationTurn({
       const nextVoicePrompt = disposedRef.current
         ? undefined
         : pendingVoicePromptsRef.current.shift();
-      if (
-        nextVoicePrompt &&
-        selectedConversationIdRef.current === conversationId
-      ) {
-        if (conversationSessionRef.current.speechRunId)
-          await stopSpeech(issueScope);
+      if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
+        if (conversationSessionRef.current.speechRunId) await stopSpeech(issueScope);
         await submitPrompt(nextVoicePrompt.content, {
           inputOrigin: nextVoicePrompt.inputOrigin,
           sourceId: nextVoicePrompt.sourceId,
@@ -417,11 +382,7 @@ export function useConversationTurn({
       }
     }
   }
-  function handleRuntimeEvent(
-    event: RuntimeEvent,
-    conversationId: string,
-    issueScope: number,
-  ) {
+  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, issueScope: number) {
     if (forgottenRuns.current.has(event.runId)) return;
     const isSpeechLifecycle =
       event.type === "speechStarted" ||
@@ -429,21 +390,14 @@ export function useConversationTurn({
       event.type === "speechFailed";
     const ownsEvent =
       conversationSessionRef.current.runId === event.runId ||
-      (isSpeechLifecycle &&
-        conversationSessionRef.current.speechRunId === event.runId);
-    if (
-      disposedRef.current ||
-      selectedConversationIdRef.current !== conversationId ||
-      !ownsEvent
-    )
+      (isSpeechLifecycle && conversationSessionRef.current.speechRunId === event.runId);
+    if (disposedRef.current || selectedConversationIdRef.current !== conversationId || !ownsEvent)
       return;
-    if (event.type !== "delta")
-      recordRuntimeLifecycleAudit(event, conversationId);
+    if (event.type !== "delta") recordRuntimeLifecycleAudit(event, conversationId);
     if (!isSpeechLifecycle) recordSocketReceive(event.runId);
     switch (event.type) {
       case "started":
-        if (event.route === "conversation.reasoning")
-          markReasoningRun(event.runId, conversationId);
+        if (event.route === "conversation.reasoning") markReasoningRun(event.runId, conversationId);
         setSnapshot((current) =>
           updateEffectiveRoute(current, event.providerId, "active", {
             reasonCode: "turn-active",
@@ -489,31 +443,22 @@ export function useConversationTurn({
             : [
                 ...current.filter(
                   (message) =>
-                    !message.id.startsWith("streaming_") &&
-                    message.id !== event.message.id,
+                    !message.id.startsWith("streaming_") && message.id !== event.message.id,
                 ),
                 event.message,
               ],
         );
         setSnapshot((current) =>
           current.effectiveRoute.providerId
-            ? updateEffectiveRoute(
-                current,
-                current.effectiveRoute.providerId,
-                "ready",
-                {
-                  fallbackUsed: current.effectiveRoute.fallbackUsed,
-                  reasonCode: "last-turn-completed",
-                },
-              )
+            ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", {
+                fallbackUsed: current.effectiveRoute.fallbackUsed,
+                reasonCode: "last-turn-completed",
+              })
             : current,
         );
         resetStreamingText();
         if (selectedConversationIdRef.current)
-          void loadMessagesCommitted(
-            selectedConversationIdRef.current,
-            issueScope,
-          );
+          void loadMessagesCommitted(selectedConversationIdRef.current, issueScope);
         if (event.voicePolicy) voice.setVoicePolicy(event.voicePolicy);
         else voice.clearVoicePolicy();
         break;
@@ -558,6 +503,11 @@ export function useConversationTurn({
         recordRunWithoutMarkdown(event.runId, "failed");
         failedRunIdsRef.current.add(event.runId);
         incompleteRunIdsRef.current.add(event.runId);
+        const contextFailure = requiredContextFailureCode(event.code);
+        if (contextFailure) {
+          nonRetryableRunIdsRef.current.add(event.runId);
+          setRequiredContextFailure(contextFailure);
+        }
         publishIssue(issueScope, `${event.message} ${event.recovery}`);
         break;
     }
@@ -577,8 +527,7 @@ export function useConversationTurn({
   async function stopSpeech(existingIssueScope?: number) {
     const runId = conversationSessionRef.current.speechRunId;
     if (!runId) return;
-    const issueScope =
-      existingIssueScope ?? issueCoordinatorRef.current.begin();
+    const issueScope = existingIssueScope ?? issueCoordinatorRef.current.begin();
     speechStopRequestsRef.current.add(runId);
     let stopped = false;
     try {
@@ -611,6 +560,12 @@ export function useConversationTurn({
       inputOrigin: action.inputOrigin,
     });
   }
+  function prepareRequiredContextRecovery(action: RequiredContextRecoveryAction) {
+    setRequiredContextFailure(null);
+    setRetryAction(null);
+    if (action === "narrow") setComposer(lastPrompt ?? "");
+    else setComposer("");
+  }
   return {
     messages,
     hasMoreMessages,
@@ -628,6 +583,8 @@ export function useConversationTurn({
     lastPrompt,
     retryKind: retryAction?.kind ?? null,
     retryFailedAction,
+    requiredContextFailure,
+    prepareRequiredContextRecovery,
     activeTtsRunId,
     handleSubmit,
     submitPrompt,

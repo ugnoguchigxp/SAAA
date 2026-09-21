@@ -9,15 +9,27 @@ pub(crate) fn register_steward_goal(
     conversation_id: String,
     workspace_id: String,
     success_condition: String,
+    summary: String,
+    verifier: String,
+    operations: String,
+    budget_runs: u8,
+    budget_ms: u64,
+    notify: String,
 ) -> Result<Value, String> {
     validate_identifier(&conversation_id, "conversation id")?;
     validate_identifier(&workspace_id, "workspace id")?;
     state.sqlite_writer.write(|connection| {
-        repo::register(
+        repo::register_with_options(
             connection,
             &conversation_id,
             &workspace_id,
             &success_condition,
+            &summary,
+            &verifier,
+            &operations,
+            budget_runs,
+            budget_ms,
+            &notify,
         )
     })
 }

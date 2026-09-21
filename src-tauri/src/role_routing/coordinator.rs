@@ -48,6 +48,14 @@ pub(crate) fn apply_in_transaction(
     if changed != 1 {
         return Err("Role-routing root disappeared during transition".into());
     }
+    if matches!(event, Event::Start) && transition.state.phase == Phase::Responding {
+        transaction
+            .execute(
+                "UPDATE rr_steps SET status='running',started_at_ms=COALESCE(started_at_ms,?1) WHERE root_id=?2 AND revision=?3 AND status='planned'",
+                params![now_ms, root_id, transition.state.revision],
+            )
+            .map_err(|error| error.to_string())?;
+    }
     let seq: i64 = transaction
         .query_row(
             "SELECT COALESCE(MAX(seq),0)+1 FROM rr_events WHERE root_id=?1",
@@ -168,6 +176,12 @@ mod tests {
             )
             .expect("root");
         connection
+            .execute(
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('s','r',0,0,'actor','respond','planned','{}','{}')",
+                [],
+            )
+            .expect("planned step");
+        connection
     }
 
     #[test]
@@ -184,6 +198,14 @@ mod tests {
             })
             .expect("phase");
         assert_eq!(phase, "responding");
+        let step: (String, Option<i64>) = connection
+            .query_row(
+                "SELECT status,started_at_ms FROM rr_steps WHERE id='s'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("step");
+        assert_eq!(step, ("running".into(), Some(2)));
     }
 
     #[test]

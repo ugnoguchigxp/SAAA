@@ -760,3 +760,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod world_eval_tests;

@@ -37,6 +37,9 @@ runtime_failure_codes! {
     PolicyViolation => "policy-violation",
     ProviderError => "provider-error",
     ResponseTooLarge => "response-too-large",
+    RequiredContextOverflow => "required-context-overflow",
+    ContextScopeChanged => "context-scope-changed",
+    RequiredContextUnavailable => "required-context-unavailable",
     InternalError => "internal-error",
 }
 

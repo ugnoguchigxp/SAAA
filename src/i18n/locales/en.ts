@@ -97,6 +97,18 @@ export const en = {
     stopSpeech: "Stop speaking",
     retrySpeech: "Retry speaking",
     retryResponse: "Retry response",
+    contextRecovery: {
+      label: "Required conversation context recovery",
+      "required-context-overflow":
+        "The required conditions do not fit this provider. Narrow the target before sending.",
+      "context-scope-changed":
+        "The target scope changed before dispatch. Specify the intended target before sending.",
+      "required-context-unavailable":
+        "A required original message is not currently available. Review it or enter a correction.",
+      narrow: "Narrow and edit",
+      review: "Review original",
+      correct: "Enter correction",
+    },
     voiceOn: "Voice on",
     voiceQuiet: "Quiet",
     voiceGlobalQuiet: "Global quiet",

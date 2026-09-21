@@ -3,7 +3,7 @@ use crate::runtime::event_hub::RuntimeEventSender;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[derive(Clone, Default)]
-struct Sink(Arc<Mutex<Vec<RuntimeEvent>>>);
+pub(super) struct Sink(Arc<Mutex<Vec<RuntimeEvent>>>);
 impl RuntimeEventSender for Sink {
     fn clone_box(&self) -> Box<dyn RuntimeEventSender> {
         Box::new(self.clone())
@@ -14,7 +14,7 @@ impl RuntimeEventSender for Sink {
     }
 }
 
-async fn request(socket: &mut tokio::net::TcpStream) -> (String, Value) {
+pub(super) async fn request(socket: &mut tokio::net::TcpStream) -> (String, Value) {
     let mut bytes = Vec::new();
     loop {
         let mut b = [0; 4096];
@@ -42,7 +42,7 @@ async fn request(socket: &mut tokio::net::TcpStream) -> (String, Value) {
         }
     }
 }
-async fn respond(socket: &mut tokio::net::TcpStream, mime: &str, body: &str) {
+pub(super) async fn respond(socket: &mut tokio::net::TcpStream, mime: &str, body: &str) {
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
 }
 

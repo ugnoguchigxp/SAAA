@@ -41,6 +41,7 @@ pub(crate) fn record(
     let required_set =
         super::required::RequiredContextSet::from_references(selected.iter().copied());
     generation.set_health(health)?;
+    generation.set_required_receipt(&required_set.digest)?;
     // This source-backed receipt links the generation's request digest with the exact required
     // candidate identities without persisting their text a second time.
     generation.add_input(

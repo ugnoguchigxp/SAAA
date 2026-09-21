@@ -203,6 +203,67 @@ fn ml_01_invalid_ops_rejected() {
 }
 
 #[test]
+fn dw_04_direct_registration_persists_only_the_confirmed_bounded_scope() {
+    let connection = db();
+    workspace(&connection);
+    let registered = repo::register_with_options(
+        &connection,
+        PRIMARY_CONVERSATION_ID,
+        "ws",
+        "指定テストの結果を取得する",
+        "失敗テストを調査する",
+        "test_report_obtained",
+        "test_run",
+        2,
+        30_000,
+        "silent",
+    )
+    .expect("register bounded scope");
+    let goal = registered["goalId"].as_str().expect("goal id");
+    let saved: (String, String, i64, i64, String, String) = connection
+        .query_row(
+            "SELECT g.summary,d.ops,d.budget_runs,d.budget_ms,d.notify,g.verifier
+             FROM steward_goals g JOIN steward_delegations d ON d.goal_id=g.id WHERE g.id=?1",
+            [goal],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("saved scope");
+    assert_eq!(
+        saved,
+        (
+            "失敗テストを調査する".into(),
+            "test_run".into(),
+            2,
+            30_000,
+            "silent".into(),
+            "test_report_obtained".into()
+        )
+    );
+    assert!(repo::register_with_options(
+        &connection,
+        PRIMARY_CONVERSATION_ID,
+        "ws",
+        "x",
+        "",
+        "tests_pass",
+        "write",
+        1,
+        1,
+        "both"
+    )
+    .is_err());
+}
+
+#[test]
 fn ml_02_register_requires_workspace() {
     let state = app_state(db());
     let error = state.sqlite_writer.write(|connection| {

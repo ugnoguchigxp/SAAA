@@ -539,3 +539,17 @@ fn m2_26_small_budget_with_graph_omits_graph_not_frame() {
     assert!(frame.graph.is_none());
     assert!(frame.encoded_len().unwrap() <= 320);
 }
+
+#[test]
+fn world_g1_revalidation_cannot_renew_a_deadline_during_rebuild() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let fixture = Fixture::new(&[]);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let service = super::runtime_frame::WorldFrameService::new(fixture.readers(), Arc::new(move || {
+        // prepare: start/end; revalidate: start/rebuild/end. The deadline crosses at end.
+        if counter.fetch_add(1, Ordering::SeqCst) >= 4 { 2_000 } else { 1_000 }
+    }));
+    let prepared = service.prepare_frame(fixture.request(fixture.access(), Vec::new(), None)).unwrap();
+    assert_eq!(service.revalidate_frame(&prepared).unwrap(), FrameValidity::Expired);
+}

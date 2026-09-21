@@ -15,10 +15,17 @@ export function CodingConnectionFields({
           onChange={(e) =>
             setSettings({
               ...settings,
+              version: "0.86.1",
               profile: e.target.value,
-              provider: e.target.value === "codex-sdk-v1" ? "saaa-codex-sdk" : "openai-codex",
+              provider:
+                e.target.value === "codex-sdk-v1"
+                  ? "saaa-codex-sdk"
+                  : "openai-codex",
               model: "gpt-5.6-luna",
-              sdkExtensionPath: e.target.value === "codex-sdk-v1" ? "" : null,
+              sdkExtensionPath:
+                e.target.value === "codex-sdk-v1"
+                  ? settings.sdkExtensionPath ?? ""
+                  : null,
             })
           }
         >

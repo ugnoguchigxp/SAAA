@@ -97,5 +97,40 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            UPDATE context_scope_epochs SET epoch=epoch+1
            WHERE scope_key IN (SELECT scope_key FROM conversation_message_scopes WHERE message_id=OLD.id);
          END;",
-    )
+    )?;
+    // `CREATE TABLE IF NOT EXISTS` does not evolve installations created by earlier
+    // releases. These receipt fields deliberately contain only hashes, never the
+    // provider body or context text.
+    add_column(
+        connection,
+        "context_generations",
+        "required_set_digest",
+        "TEXT CHECK(required_set_digest IS NULL OR length(required_set_digest)=64)",
+    )?;
+    add_column(
+        connection,
+        "context_generations",
+        "scope_digest",
+        "TEXT CHECK(scope_digest IS NULL OR length(scope_digest)=64)",
+    )?;
+    Ok(())
+}
+
+fn add_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    declaration: &str,
+) -> rusqlite::Result<()> {
+    let exists: bool = connection.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+        [column],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        connection.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+        ))?;
+    }
+    Ok(())
 }

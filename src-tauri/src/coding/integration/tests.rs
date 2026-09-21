@@ -5,18 +5,27 @@ use serde_json::json;
 #[cfg(unix)]
 #[test]
 fn coding_service_runs_and_resumes_through_production_adapter_with_protocol_fixture() {
-    run_adapter(false);
+    run_adapter(false, false);
+}
+
+/// A source forget removes the originating conversation message.  The runner
+/// must notice that durable authorization has disappeared, abort its live Pi
+/// process, and expose the terminal outcome as an interruption.
+#[cfg(unix)]
+#[test]
+fn coding_service_source_forget_interrupts_fixture_process() {
+    run_adapter(false, true);
 }
 
 #[cfg(unix)]
 #[test]
 #[ignore = "requires live pi and authenticated Codex SDK"]
 fn coding_service_codex_sdk_live() {
-    run_adapter(true);
+    run_adapter(true, false);
 }
 
 #[cfg(unix)]
-fn run_adapter(live: bool) {
+fn run_adapter(live: bool, forget_source: bool) {
     use std::{
         os::unix::fs::PermissionsExt,
         time::{Duration, Instant},
@@ -217,19 +226,33 @@ fn run_adapter(live: bool) {
                     .read(|c| repo::inspect(c, crate::PRIMARY_CONVERSATION_ID, job, 0, 1))
                     .unwrap();
                 if current["delivery"] == "accepted" {
-                    let receipt = state
-                        .sqlite_writer
-                        .write(|c| {
-                            service::cancel(
-                                c,
-                                crate::PRIMARY_CONVERSATION_ID,
-                                job,
-                                current["revision"].as_u64().unwrap(),
-                                "stop",
-                            )
-                        })
-                        .unwrap();
-                    assert_eq!(receipt["state"], "cancel_requested");
+                    if forget_source {
+                        state
+                            .sqlite_writer
+                            .write(|c| {
+                                c.execute(
+                                    "DELETE FROM conversation_messages WHERE id=?1",
+                                    [source],
+                                )
+                                .map_err(crate::database_error)?;
+                                Ok(())
+                            })
+                            .unwrap();
+                    } else {
+                        let receipt = state
+                            .sqlite_writer
+                            .write(|c| {
+                                service::cancel(
+                                    c,
+                                    crate::PRIMARY_CONVERSATION_ID,
+                                    job,
+                                    current["revision"].as_u64().unwrap(),
+                                    "stop",
+                                )
+                            })
+                            .unwrap();
+                        assert_eq!(receipt["state"], "cancel_requested");
+                    }
                     break;
                 }
                 assert!(Instant::now() < deadline, "{current}");
@@ -238,6 +261,23 @@ fn run_adapter(live: bool) {
         }
         last = wait(job);
         assert_eq!(last["state"], expected_state, "{last}");
+        if prompt == "wait" && forget_source {
+            let state: String = state
+                .sqlite_readers
+                .read(|c| {
+                    c.query_row(
+                        "SELECT state FROM coding_runs WHERE id=?1",
+                        [last["runId"].as_str().unwrap()],
+                        |row| row.get(0),
+                    )
+                    .map_err(crate::database_error)
+                })
+                .unwrap();
+            assert_eq!(state, "interrupted");
+            // A forgotten source invalidates the whole job lineage, so a
+            // follow-up run is intentionally not authorized.
+            break;
+        }
         if prompt == "model error" {
             assert_eq!(last["result"]["modelErrors"], 1);
         }
@@ -271,5 +311,5 @@ fn configure_local_pi_codex_sdk() {
         assert_eq!(repository::settings(c)?.profile,"codex-sdk-v1");
         Ok(())
     }).unwrap();
-    println!("Saved enabled pi 0.85.1 / Codex SDK / gpt-5.6-luna configuration");
+    println!("Saved enabled pi 0.86.1 / Codex SDK / gpt-5.6-luna configuration");
 }

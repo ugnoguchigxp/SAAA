@@ -168,7 +168,8 @@ fn inspect_graph_and_refs(
                         if policy != SeedPolicy::ExplicitQuestionName {
                             return Err(WorldOmission::InvalidInput);
                         }
-                        if name.is_empty() || name.len() > 160 || name.chars().any(char::is_control) {
+                        if name.is_empty() || name.len() > 160 || name.chars().any(char::is_control)
+                        {
                             return Err(WorldOmission::InvalidInput);
                         }
                         ids.insert(name.as_str());

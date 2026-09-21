@@ -32,9 +32,21 @@ export function stewardErrorMessage(error: unknown): string {
   return text;
 }
 export const stewardApi = {
-  registerGoal: async (conversationId: string, workspaceId: string, successCondition: string) =>
+  registerGoal: async (
+    conversationId: string,
+    workspaceId: string,
+    input: {
+      successCondition: string;
+      summary: string;
+      verifier: "test_report_obtained" | "tests_pass" | "user_confirmation_required";
+      operations: "read" | "test_run" | "read_test";
+      budgetRuns: number;
+      budgetMs: number;
+      notify: "both" | "silent" | "speak";
+    },
+  ) =>
     stewardRegister.parse(
-      await invoke("register_steward_goal", { conversationId, workspaceId, successCondition }),
+      await invoke("register_steward_goal", { conversationId, workspaceId, ...input }),
     ),
   withdraw: (conversationId: string, goalId?: string) =>
     goalId

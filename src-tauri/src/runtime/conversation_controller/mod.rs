@@ -109,6 +109,7 @@ async fn execute_inner(
     generation.set_health(context.health)?;
     let required_set =
         crate::runtime::context::required::RequiredContextSet::from_selected(context.selected);
+    generation.set_required_receipt(&required_set.digest)?;
     generation.add_input(
         "required-context-set",
         &required_set.digest,

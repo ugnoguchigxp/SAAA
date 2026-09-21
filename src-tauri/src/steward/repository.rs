@@ -24,7 +24,48 @@ pub(crate) fn register(
     workspace_id: &str,
     success_condition: &str,
 ) -> Result<Value, String> {
+    register_with_options(
+        connection,
+        conversation_id,
+        workspace_id,
+        success_condition,
+        "",
+        "test_report_obtained",
+        "read_test",
+        3,
+        60_000,
+        "both",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn register_with_options(
+    connection: &Connection,
+    conversation_id: &str,
+    workspace_id: &str,
+    success_condition: &str,
+    summary: &str,
+    verifier: &str,
+    ops: &str,
+    budget_runs: u8,
+    budget_ms: u64,
+    notify: &str,
+) -> Result<Value, String> {
     if workspace_id.is_empty() || success_condition.trim().is_empty() {
+        return Err("steward_register_invalid".into());
+    }
+    if summary.chars().count() > 2_000
+        || !matches!(
+            verifier,
+            "test_report_obtained" | "tests_pass" | "user_confirmation_required"
+        )
+        || !matches!(ops, "read" | "test_run" | "read_test")
+        || budget_runs == 0
+        || budget_runs > 16
+        || budget_ms == 0
+        || budget_ms > 3_600_000
+        || !matches!(notify, "both" | "silent" | "speak")
+    {
         return Err("steward_register_invalid".into());
     }
     if !workspace_registered(connection, conversation_id, workspace_id)? {
@@ -36,15 +77,15 @@ pub(crate) fn register(
     connection
         .execute(
             "INSERT INTO steward_goals(id,conversation_id,origin,success_condition,status,created_at,superseded_by,summary,revision,verifier)
-             VALUES(?1,?2,'user_explicit',?3,'active',?4,NULL,'',1,'test_report_obtained')",
-            params![goal_id, conversation_id, success_condition.trim(), now],
+             VALUES(?1,?2,'user_explicit',?3,'active',?4,NULL,?5,1,?6)",
+            params![goal_id, conversation_id, success_condition.trim(), now, summary.trim(), verifier],
         )
         .map_err(|_| "active_goal_exists".to_string())?;
     connection
         .execute(
             "INSERT INTO steward_delegations(id,goal_id,conversation_id,workspace_id,ops,budget_runs,budget_ms,notify,status,created_at,superseded_by)
-             VALUES(?1,?2,?3,?4,'read_test',3,60000,'both','active',?5,NULL)",
-            params![delegation_id, goal_id, conversation_id, workspace_id, now],
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'active',?9,NULL)",
+            params![delegation_id, goal_id, conversation_id, workspace_id, ops, budget_runs, budget_ms.min(i64::MAX as u64) as i64, notify, now],
         )
         .map_err(database_error)?;
     Ok(json!({"goalId":goal_id,"delegationId":delegation_id,"status":"active"}))

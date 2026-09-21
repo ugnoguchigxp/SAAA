@@ -421,16 +421,18 @@ fn m3b_04_expired_after_dispatch_does_not_fail_complete() {
 }
 
 #[test]
-fn m3b_05_agent_session_does_not_record_world_kind() {
+fn m3b_05_agent_session_records_world_only_for_a_revalidated_initial_turn() {
     let agent = include_str!("../../../providers/agent_session/sse/generation.rs");
     assert!(agent.contains("generation_inputs::record"));
     let call = agent
         .split("generation_inputs::record")
         .nth(1)
         .expect("record call");
-    assert!(call.contains("false"));
-    assert!(!call.contains("persistence.world"));
-    assert!(!call.contains("WorldLive"));
+    assert!(call.contains("include_world"));
+    let session = include_str!("../../../providers/agent_session/sse.rs");
+    assert!(session.contains("world.provider_history(history)"));
+    assert!(session.contains("world.without_world_history(history)"));
+    assert!(session.contains("initial_world && round == 0"));
     assert!(!agent.contains("world-model"));
     let chat = include_str!("../../../providers/chat_completions/generation.rs");
     assert!(chat.contains("persistence.world"));

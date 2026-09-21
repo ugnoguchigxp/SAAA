@@ -7,6 +7,14 @@
   post-boundary feedback remains queued for the next run.
 - AI-04: the existing local learning window and idle gate now start the bounded SQLite
   materializer from app setup; background faults are ignored so they cannot interrupt a turn.
+- AI-05: each ready immutable dataset is grouped by domain, scope, and exact eligible-candidate
+  fingerprint to create deterministic aggregate candidate artifacts. Only the candidate that was
+  actually selected receives an explicit technical, verifier, or user-acceptance label; an
+  unselected candidate is never made a negative example. Artifacts retain the dataset event
+  boundary and remain `candidate` pending evaluation.
+- AI-04/05: the existing Settings action for a local learning pass now materializes and trains
+  the adaptive ledger too when its user-approved domains are enabled. It remains database-only:
+  it neither activates a policy nor contacts a provider.
 - AI-06/07: candidate → evaluated → shadow → eligible → active transitions require recorded
   gate inputs and a monotonic CAS policy revision. Candidate checks and invalidation fall back to
   rules.
@@ -29,9 +37,20 @@
 - AI-08: role-routing receipt creation now resolves the same enabled adaptive Provider/recipe
   choice as dispatch and records its full eligible candidate set, selected recipe, mode, and
   policy revision in the shared DecisionObservation ledger within the receipt transaction.
+- AI-08/09/11: Provider completion, the actually policy-selected Tool invocation, and a
+  notification that is actually written to the conversation now record their technical outcomes
+  in the same relevant persistence path. A manually invoked lower-ranked Tool is deliberately
+  not attributed to the ranker's top choice; delayed or held reports receive no outcome before
+  delivery.
 - AI-12: personal-source forgetting invalidates adaptive datasets/artifacts/activations in the
   same writer transaction and returns dispatch to rules. This is conservative until every domain
-  supplies complete source references.
+  supplies complete source references. A candidate-set fingerprint change also returns only that
+  dispatch to rules without mutating the still-auditable artifact.
+- AI-13: Settings now lists each active or pending adaptive artifact in plain language, including
+  its domain, Scope, eligible-result count, best observed result, and policy revision. An active
+  artifact can be returned to fixed rules from the same screen; this retires only that learned
+  policy and leaves explicit user overrides intact.
 
-A complete paired-evaluation runner and end-to-end real-adapter evaluation remain required.
-They are intentionally not inferred from raw feedback.
+Automatic dataset split, paired evaluation against a fixed rules baseline, artifact promotion,
+rollback UI, and end-to-end real-adapter evaluation remain required. They are intentionally not
+inferred from raw feedback.

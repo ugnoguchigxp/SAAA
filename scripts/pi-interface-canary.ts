@@ -7,8 +7,8 @@ import { startFixtureProvider } from "./pi-interface/fixture-provider";
 
 export async function runPiCanary(binary: string) {
   const version = Bun.spawnSync([binary, "--version"]);
-  if (version.exitCode !== 0 || version.stdout.toString().trim() !== "0.85.1")
-    throw new Error("unsupported-pi-version: expected 0.85.1");
+  if (version.exitCode !== 0 || version.stdout.toString().trim() !== "0.86.1")
+    throw new Error("unsupported-pi-version: expected 0.86.1");
   const root = mkdtempSync(join(tmpdir(), "saaa-pi-canary-"));
   const workspace = join(root, "workspace");
   const agentDir = join(root, "agent");
@@ -139,7 +139,7 @@ export async function runPiCanary(binary: string) {
       status: "passed",
       profile: "real-pi-scripted-provider",
       root,
-      piVersion: "0.85.1",
+      piVersion: "0.86.1",
       binary: realpathSync(binary),
       binarySha256: createHash("sha256")
         .update(readFileSync(realpathSync(binary)))

@@ -266,6 +266,8 @@ function App() {
             error={error}
             lastPrompt={turn.lastPrompt}
             retryKind={turn.retryKind}
+            requiredContextFailure={turn.requiredContextFailure}
+            onPrepareRequiredContextRecovery={turn.prepareRequiredContextRecovery}
             voicePolicy={turn.voicePolicy}
             voicePolicyUpdating={turn.voicePolicyUpdating}
             onSetConversationSpeechOutput={(value) => void turn.setConversationSpeechOutput(value)}

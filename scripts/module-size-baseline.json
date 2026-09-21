@@ -109,14 +109,6 @@
       "total": 130,
       "production": 130
     },
-    "scripts/role-routing/codex-sidecar.ts": {
-      "total": 126,
-      "production": 126
-    },
-    "scripts/role-routing/codex-isolation.ts": {
-      "total": 32,
-      "production": 32
-    },
     "scripts/portable-frontend-tests.ts": {
       "total": 24,
       "production": 24
@@ -132,6 +124,14 @@
     "scripts/render-system-contexts.ts": {
       "total": 36,
       "production": 36
+    },
+    "scripts/role-routing/codex-isolation.ts": {
+      "total": 32,
+      "production": 32
+    },
+    "scripts/role-routing/codex-sidecar.ts": {
+      "total": 126,
+      "production": 126
     },
     "scripts/test-coverage.ts": {
       "total": 47,
@@ -1173,25 +1173,17 @@
       "total": 20,
       "production": 20
     },
-    "src-tauri/src/role_routing/contracts.rs": {
-      "total": 357,
-      "production": 348
+    "src-tauri/src/role_routing/adapters/codex_protocol.rs": {
+      "total": 191,
+      "production": 191
     },
     "src-tauri/src/role_routing/adapters/mod.rs": {
       "total": 1,
       "production": 1
     },
-    "src-tauri/src/role_routing/adapters/codex_protocol.rs": {
-      "total": 191,
-      "production": 191
-    },
-    "src-tauri/src/role_routing/learning/mod.rs": {
-      "total": 2,
-      "production": 2
-    },
-    "src-tauri/src/role_routing/learning/export.rs": {
-      "total": 157,
-      "production": 157
+    "src-tauri/src/role_routing/contracts.rs": {
+      "total": 357,
+      "production": 348
     },
     "src-tauri/src/role_routing/learning/artifact.rs": {
       "total": 122,
@@ -1201,9 +1193,17 @@
       "total": 102,
       "production": 52
     },
+    "src-tauri/src/role_routing/learning/export.rs": {
+      "total": 157,
+      "production": 157
+    },
     "src-tauri/src/role_routing/learning/invalidation.rs": {
       "total": 174,
       "production": 56
+    },
+    "src-tauri/src/role_routing/learning/mod.rs": {
+      "total": 2,
+      "production": 2
     },
     "src-tauri/src/role_routing/learning/repository.rs": {
       "total": 232,
@@ -1229,10 +1229,6 @@
       "total": 118,
       "production": 83
     },
-    "src-tauri/src/role_routing/revision.rs": {
-      "total": 87,
-      "production": 87
-    },
     "src-tauri/src/role_routing/repository_policy.rs": {
       "total": 45,
       "production": 45
@@ -1244,6 +1240,10 @@
     "src-tauri/src/role_routing/repository.rs": {
       "total": 65,
       "production": 46
+    },
+    "src-tauri/src/role_routing/revision.rs": {
+      "total": 87,
+      "production": 87
     },
     "src-tauri/src/role_routing/schema.rs": {
       "total": 36,
@@ -1357,21 +1357,33 @@
       "total": 93,
       "production": 93
     },
+    "src-tauri/src/runtime/context/world/g1_tests.rs": {
+      "total": 666,
+      "production": 666
+    },
     "src-tauri/src/runtime/context/world/live.rs": {
       "total": 192,
       "production": 192
     },
     "src-tauri/src/runtime/context/world/mod.rs": {
-      "total": 17,
-      "production": 17
+      "total": 24,
+      "production": 24
+    },
+    "src-tauri/src/runtime/context/world/question_input.rs": {
+      "total": 150,
+      "production": 46
+    },
+    "src-tauri/src/runtime/context/world/question.rs": {
+      "total": 237,
+      "production": 122
     },
     "src-tauri/src/runtime/context/world/render_tests.rs": {
       "total": 67,
       "production": 67
     },
     "src-tauri/src/runtime/context/world/render.rs": {
-      "total": 48,
-      "production": 48
+      "total": 85,
+      "production": 85
     },
     "src-tauri/src/runtime/context/world/shadow_boundary_tests.rs": {
       "total": 98,
@@ -1394,12 +1406,12 @@
       "production": 301
     },
     "src-tauri/src/runtime/context/world/source.rs": {
-      "total": 249,
-      "production": 249
+      "total": 323,
+      "production": 323
     },
     "src-tauri/src/runtime/context/world/turn_tests.rs": {
-      "total": 404,
-      "production": 404
+      "total": 447,
+      "production": 447
     },
     "src-tauri/src/runtime/context/world/turn.rs": {
       "total": 358,
@@ -2221,6 +2233,10 @@
       "total": 15,
       "production": 15
     },
+    "src/features/chat/RoutingProposal.tsx": {
+      "total": 30,
+      "production": 30
+    },
     "src/features/chat/SetupChecklist.tsx": {
       "total": 59,
       "production": 59
@@ -2297,14 +2313,6 @@
       "total": 516,
       "production": 516
     },
-    "src/features/chat/useRoleRouting.ts": {
-      "total": 32,
-      "production": 32
-    },
-    "src/features/chat/RoutingProposal.tsx": {
-      "total": 30,
-      "production": 30
-    },
     "src/features/chat/useConversationVoicePolicy.ts": {
       "total": 163,
       "production": 163
@@ -2316,6 +2324,10 @@
     "src/features/chat/usePersonalStateForget.ts": {
       "total": 29,
       "production": 29
+    },
+    "src/features/chat/useRoleRouting.ts": {
+      "total": 32,
+      "production": 32
     },
     "src/features/chat/useStreamingTextProjection.ts": {
       "total": 49,

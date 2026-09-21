@@ -10,7 +10,7 @@ pub fn save_coding_settings(
     state: tauri::State<'_, AppState>,
     settings: CodingSettings,
 ) -> Result<(), String> {
-    if settings.version != "0.85.1"
+    if settings.version != "0.86.1"
         || !super::contracts::valid_profile(&settings)
         || settings.executable.len() > 4096
         || settings.provider.len() > 160

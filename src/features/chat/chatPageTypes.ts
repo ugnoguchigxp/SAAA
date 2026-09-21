@@ -9,6 +9,10 @@ import type { VoiceCaptureState } from "../voice/useAmbientVoiceSession";
 import type { VoiceAsrProjection } from "../voice/voiceAsrProjection";
 import type { StreamingTextProjection } from "./streamingTextBuffer";
 import type { RoutingSnapshot } from "../../lib/generated/runtimeEvent";
+import type {
+  RequiredContextFailureCode,
+  RequiredContextRecoveryAction,
+} from "./requiredContextRecovery";
 
 export type ChatPageProps = {
   setupSnapshot?: import("../../lib/contracts").AppSnapshot;
@@ -46,6 +50,8 @@ export type ChatPageProps = {
   error: string | null;
   lastPrompt: string | null;
   retryKind: "response" | "speech" | null;
+  requiredContextFailure: RequiredContextFailureCode | null;
+  onPrepareRequiredContextRecovery: (action: RequiredContextRecoveryAction) => void;
   voicePolicy: ConversationVoicePolicySnapshot | null;
   voicePolicyUpdating: boolean;
   onSetConversationSpeechOutput: (value: "inherit" | "muted") => void;

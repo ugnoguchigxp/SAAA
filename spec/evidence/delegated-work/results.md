@@ -38,6 +38,18 @@
 - The fixed-trigger path persists exactly one bounded task-plan recipe.
 - Forgetting a source requests `stopping` for its running Coding job before the
   source is deleted, while late terminal events remain unable to revive work.
-- The installed Pi runtime was invoked beneath the macOS deny-by-default
-  profile for a real canary. It failed before work execution with a Node
-  `LowLevelAlloc arithmetic overflow`; no broader sandbox exception was kept.
+- The installed Pi 0.86.1 runtime was invoked beneath the macOS
+  deny-by-default profile for a real canary. Node 24 requires only
+  `sysctl-read` during allocator initialization; with that read-only rule,
+  Pi starts and answers `get_state`. Workspace write and network permissions
+  remain absent. A real Codex SDK turn additionally requires home state-DB and
+  app-server writes, so that combination is rejected rather than weakening the
+  profile; an authenticated restricted read/test turn has not completed.
+- The pinned Pi 0.86.1 interface canary passed against its isolated scripted
+  provider: session resume, result collection, model-error handling, abort,
+  and orderly shutdown all completed. No live model was used for that canary.
+- The macOS delegated-profile boundary test and profile-contract test pass;
+  the current IPC contract suite also passes (4 general bindings and 1 voice
+  ASR binding).
+- The production Pi-adapter fixture cancellation test passed and observes the
+  Coding job terminal state as `interrupted`, not merely `cancel_requested`.

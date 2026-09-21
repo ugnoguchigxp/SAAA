@@ -438,6 +438,18 @@ pub fn run() {
             if bundled_codex.is_file() {
                 let _ = BUNDLED_CODEX_PATH.set(bundled_codex);
             }
+            let bundled_role_routing_codex = app.path().resolve(
+                if cfg!(windows) {
+                    "bin/role-routing-codex.exe"
+                } else {
+                    "bin/role-routing-codex"
+                },
+                tauri::path::BaseDirectory::Resource,
+            )?;
+            if bundled_role_routing_codex.is_file() {
+                let _ = role_routing::adapters::codex::BUNDLED_ROLE_ROUTING_CODEX_PATH
+                    .set(bundled_role_routing_codex);
+            }
             let bundled_web_fetch = app.path().resolve(
                 if cfg!(windows) {
                     "bin/webfetch.exe"

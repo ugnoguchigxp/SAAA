@@ -143,7 +143,7 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,'text','visual',?5,'')",params![run_id,conversation_id,run_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,disposition,received_at_ms) VALUES(?1,?2,?3,?4,'','text','accepted',?5)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms) VALUES(?1,?2,0,?3,?4,?5,?6,'respond','[\"rules\"]','rules-v1',?7,?8)",params![decision_id,run_id,format!("rr-input-{run_id}"),feature_snapshot(&input_content,policy.limits.max_reasoning_steps).to_string(),candidates.to_string(),candidate.recipe_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
-    transaction.execute("INSERT INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES(?1,?2,?3,0,0,?4,'respond','running','{}','{}',?5)",params![step_id,run_id,decision_id,candidate.actor_ids.first().cloned().unwrap_or_default(),now_ms]).map_err(|e|e.to_string())?;
+    transaction.execute("INSERT INTO rr_steps(id,root_id,decision_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json,started_at_ms) VALUES(?1,?2,?3,0,0,?4,'respond','planned','{}','{}',NULL)",params![step_id,run_id,decision_id,candidate.actor_ids.first().cloned().unwrap_or_default()]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_events(root_id,seq,kind,data_json,created_at_ms) VALUES(?1,1,'input_accepted','{}',?2)",params![run_id,now_ms]).map_err(|e|e.to_string())?;
     crate::adaptive_improvement::record_decision(
         transaction,
@@ -311,6 +311,14 @@ pub(crate) fn record_provider_turn_finish(
         },
         now_ms,
     )?;
+    record_provider_outcome(
+        &transaction,
+        run_id,
+        status == "completed",
+        message_id.unwrap_or(run_id),
+        0,
+        now_ms,
+    )?;
     crate::role_routing::learning::repository::mark_root_dirty(&transaction, run_id)?;
     transaction.commit().map_err(|error| error.to_string())
 }
@@ -349,7 +357,58 @@ pub(crate) fn accept_provider_turn(
     connection.execute("UPDATE rr_steps SET status='succeeded',completed_at_ms=?1 WHERE root_id=?2 AND ordinal=0 AND status IN ('planned','running','draining')",params![now_ms,run_id]).map_err(|error|error.to_string())?;
     connection.execute("INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'answer',?4,1,?5)",params![format!("rr-output-{run_id}"),format!("rr-step-{run_id}-0"),revision,json!({"messageId":message_id}).to_string(),now_ms]).map_err(|error|error.to_string())?;
     append_event(connection, run_id, "answer_committed", now_ms)?;
+    record_provider_outcome(connection, run_id, true, message_id, revision, now_ms)?;
     crate::role_routing::learning::repository::mark_root_dirty(connection, run_id)?;
+    Ok(())
+}
+
+/// The adaptive ledger is optional for legacy databases.  When a receipt did create an adaptive
+/// decision, write its terminal technical result in the same database transaction as the routing
+/// root so training never sees a completed dispatch without its result.
+fn record_provider_outcome(
+    connection: &Connection,
+    run_id: &str,
+    technical_success: bool,
+    source_id: &str,
+    revision: i64,
+    now_ms: i64,
+) -> Result<(), String> {
+    let decision_id = format!("ai-provider-{run_id}");
+    let adaptive_schema_present: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_decisions')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !adaptive_schema_present {
+        return Ok(());
+    }
+    let present: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM ai_decisions WHERE id=?1)",
+            [&decision_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .unwrap_or(false);
+    if present {
+        crate::adaptive_improvement::record_outcome_in_transaction(
+            connection,
+            &decision_id,
+            Some(technical_success),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            source_id,
+            revision,
+            now_ms,
+        )?;
+    }
     Ok(())
 }
 
@@ -387,6 +446,7 @@ mod tests {
         let mut c = Connection::open_in_memory().expect("db");
         c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY,conversation_id TEXT,route_kind TEXT,input_message_id TEXT);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');").expect("base");
         crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
         crate::adaptive_improvement::migrate(&c).expect("adaptive schema");
         let mut policy = RoleRoutingSettings::default();
         policy.enabled = true;
@@ -504,6 +564,58 @@ mod tests {
                 .expect("roots"),
             1
         );
+    }
+
+    #[test]
+    fn ai_08_provider_terminal_result_is_recorded_for_the_dispatch_decision() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY,conversation_id TEXT,route_kind TEXT,input_message_id TEXT);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');INSERT INTO conversation_messages VALUES('u','c','user','hello','1');INSERT INTO runtime_runs VALUES('run','c','conversation.respond','u');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
+        crate::adaptive_improvement::migrate(&c).expect("adaptive schema");
+        let mut policy = RoleRoutingSettings::default();
+        policy.enabled = true;
+        policy.adaptive_improvement.enabled = true;
+        policy.adaptive_improvement.provider_recipe = true;
+        policy.actors.push(RoutingActor {
+            id: "qwen".into(),
+            label: "Qwen".into(),
+            aliases: vec![],
+            transport: "provider".into(),
+            provider_id: Some("qwen".into()),
+            model: None,
+            location: "local".into(),
+            resource_group: "gpu".into(),
+            max_input_bytes: 1024,
+            capabilities: vec!["reason".into()],
+        });
+        policy.roles.reasoner = Some("qwen".into());
+        policy.recipes.push(RoutingRecipe {
+            id: "respond".into(),
+            action: crate::role_routing::contracts::RoutingAction::Respond,
+            roles: vec!["reasoner".into()],
+            enabled: true,
+        });
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,?1,'d',1)",
+            [serde_json::to_string(&policy).expect("policy")],
+        )
+        .expect("policy row");
+        assert!(record_provider_turn_start(&c, "run", "c", 1).expect("start"));
+        c.execute(
+            "INSERT INTO conversation_messages VALUES('a','c','assistant','answer','2')",
+            [],
+        )
+        .expect("answer");
+        record_provider_turn_finish(&c, "run", "completed", Some("a"), 2).expect("finish");
+        let outcome: i64 = c
+            .query_row(
+                "SELECT technical_success FROM ai_outcomes WHERE decision_id='ai-provider-run'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("adaptive outcome");
+        assert_eq!(outcome, 1);
     }
 
     #[test]

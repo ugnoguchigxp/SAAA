@@ -18,7 +18,7 @@ impl Default for CodingSettings {
         Self {
             enabled: false,
             executable: String::new(),
-            version: "0.85.1".into(),
+            version: "0.86.1".into(),
             provider: "openai-codex".into(),
             model: "gpt-5.6-luna".into(),
             profile: "trusted-local-v1".into(),

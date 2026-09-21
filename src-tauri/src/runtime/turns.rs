@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::fs;
 use std::sync::Arc;
 
@@ -99,6 +99,8 @@ pub(crate) async fn execute_turn(
         return Ok(());
     }
 
+    wait_for_role_routing_dispatch(state, input, cancellation.clone()).await?;
+
     // Tool-selection extraction runs once the input message has a persistent ID and before the
     // first provider request. It only runs in discovery mode; the legacy path is unchanged.
     if state.tool_selection.discovery_configured() {
@@ -186,7 +188,7 @@ pub(crate) async fn execute_turn(
             if finalization.is_ok() {
                 let _ = on_event.send(RuntimeEvent::Failed {
                     run_id: input.run_id.clone(),
-                    code: public_failure_code(error.code),
+                    code: public_failure_code(error),
                     message: redact_runtime_text(&error.message),
                     recovery: "Review the selected provider and runtime settings, then retry."
                         .to_string(),
@@ -225,9 +227,61 @@ pub(crate) async fn execute_turn(
             status,
             message_id,
             now_ms,
-        )
+        )?;
+        // A terminal root releases exactly one oldest queued root. The claimed root's own task
+        // is already waiting in `wait_for_role_routing_dispatch`; it observes the committed
+        // phase before any provider I/O starts.
+        let _ = crate::role_routing::recovery::claim_next_queued(connection, now_ms)?;
+        Ok(())
     })?;
     result.map(|_| ())
+}
+
+async fn wait_for_role_routing_dispatch(
+    state: &AppState,
+    input: &StartTurnInput,
+    cancellation: Arc<RunCancellation>,
+) -> Result<(), TurnExecutionFailure> {
+    loop {
+        if cancellation.is_cancelled() {
+            return Err(TurnExecutionFailure::provider(
+                crate::ProviderFailureKind::Cancelled,
+                "Cancelled by user".into(),
+            ));
+        }
+        let phase = state.sqlite_readers.read(|connection| {
+            connection
+                .query_row(
+                    "SELECT phase FROM rr_roots WHERE root_id=?1",
+                    [&input.run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())
+        })?;
+        match phase.as_deref() {
+            None | Some("responding") | Some("draining") => return Ok(()),
+            Some("queued") => {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Some("cancelled") => {
+                return Err(TurnExecutionFailure::provider(
+                    crate::ProviderFailureKind::Cancelled,
+                    "Role-routing root was cancelled before dispatch".into(),
+                ));
+            }
+            Some("failed") | Some("completed") => {
+                return Err(TurnExecutionFailure::configuration(
+                    "Role-routing root became terminal before provider dispatch",
+                ));
+            }
+            Some(_) => {
+                return Err(TurnExecutionFailure::configuration(
+                    "Role-routing root has an invalid dispatch phase",
+                ));
+            }
+        }
+    }
 }
 
 pub(crate) fn send_runtime_terminal_event(
@@ -243,15 +297,32 @@ pub(crate) fn send_runtime_terminal_event(
     } else {
         let _ = on_event.send(RuntimeEvent::Failed {
             run_id: run_id.to_string(),
-            code: public_failure_code(error.code),
+            code: public_failure_code(error),
             message: redact_runtime_text(&error.message),
             recovery: error.code.recovery().to_string(),
         });
     }
 }
 
-fn public_failure_code(code: crate::runtime::contracts::RunFailureCode) -> RuntimeFailureCode {
-    match code {
+fn public_failure_code(error: &TurnExecutionFailure) -> RuntimeFailureCode {
+    if error.message.contains("Required context does not fit")
+        || error.message.starts_with("required_context_overflow:")
+    {
+        return RuntimeFailureCode::RequiredContextOverflow;
+    }
+    if error.message.contains("Context scope changed")
+        || error
+            .message
+            .contains("context-scope-changed-after-connect")
+    {
+        return RuntimeFailureCode::ContextScopeChanged;
+    }
+    if error.message.contains("A required source is not available")
+        || error.message.contains("source-unavailable")
+    {
+        return RuntimeFailureCode::RequiredContextUnavailable;
+    }
+    match error.code {
         crate::runtime::contracts::RunFailureCode::ConfigurationError => {
             RuntimeFailureCode::ConfigurationError
         }
@@ -288,6 +359,29 @@ fn public_failure_code(code: crate::runtime::contracts::RunFailureCode) -> Runti
         crate::runtime::contracts::RunFailureCode::UserCancelled => {
             RuntimeFailureCode::RuntimeError
         }
+    }
+}
+
+#[cfg(test)]
+mod required_context_failure_code_tests {
+    use super::*;
+
+    #[test]
+    fn required_context_recovery_messages_keep_distinct_public_codes() {
+        let overflow = TurnExecutionFailure::configuration(
+            "Required context does not fit this provider. Narrow the task scope.",
+        );
+        assert!(matches!(
+            public_failure_code(&overflow),
+            RuntimeFailureCode::RequiredContextOverflow
+        ));
+        let scope = TurnExecutionFailure::configuration(
+            "Context scope changed before dispatch. Choose the intended task.",
+        );
+        assert!(matches!(
+            public_failure_code(&scope),
+            RuntimeFailureCode::ContextScopeChanged
+        ));
     }
 }
 
@@ -454,12 +548,21 @@ pub(crate) fn prepare_runtime_run(
                 now_ms,
             )?;
             if routing_started {
-                crate::role_routing::coordinator::apply_in_transaction(
-                    &transaction,
-                    &input.run_id,
-                    crate::role_routing::reducer::Event::Start,
-                    now_ms,
-                )?;
+                let another_active: bool = transaction
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM rr_roots WHERE conversation_id=?1 AND root_id<>?2 AND phase IN ('responding','draining'))",
+                        params![input.conversation_id, input.run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(database_error)?;
+                if !another_active {
+                    crate::role_routing::coordinator::apply_in_transaction(
+                        &transaction,
+                        &input.run_id,
+                        crate::role_routing::reducer::Event::Start,
+                        now_ms,
+                    )?;
+                }
             }
         }
         transaction

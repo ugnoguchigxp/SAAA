@@ -24,12 +24,32 @@ pub(crate) struct RoutingCancelInput {
     pub(crate) root_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AdaptiveRollbackInput {
+    pub(crate) artifact_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AdaptiveArtifactSnapshot {
+    pub(crate) id: String,
+    pub(crate) domain: String,
+    pub(crate) scope_key: String,
+    pub(crate) state: String,
+    pub(crate) eligible_examples: i64,
+    pub(crate) best_observed_score: Option<f64>,
+    pub(crate) policy_revision: Option<i64>,
+    pub(crate) reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RoutingLearningSnapshot {
     pub(crate) dirty_roots: i64,
     pub(crate) ready_datasets: i64,
     pub(crate) active_artifacts: i64,
+    pub(crate) adaptive_artifacts: Vec<AdaptiveArtifactSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -146,6 +166,26 @@ pub(crate) fn run_routing_learning_once(
             now_ms(),
             settings.learning.batch_size,
         )?;
+        let adaptive_domains_enabled = settings.adaptive_improvement.provider_recipe
+            || settings.adaptive_improvement.tool
+            || settings.adaptive_improvement.plan
+            || settings.adaptive_improvement.notification;
+        if settings.adaptive_improvement.enabled && adaptive_domains_enabled {
+            let now = now_ms();
+            if let Some(dataset_id) = crate::adaptive_improvement::materialize_dirty(
+                connection,
+                settings.learning.batch_size as usize,
+                now,
+            )? {
+                // Training only writes an immutable candidate artifact. It cannot activate a
+                // policy or contact a provider from this foreground settings action.
+                let _ = crate::adaptive_improvement::train_candidate_artifacts(
+                    connection,
+                    &dataset_id,
+                    now,
+                )?;
+            }
+        }
         learning_snapshot(connection)
     })
 }
@@ -155,6 +195,26 @@ pub(crate) fn get_routing_learning_snapshot(
     state: tauri::State<'_, AppState>,
 ) -> Result<RoutingLearningSnapshot, String> {
     state.sqlite_readers.read(learning_snapshot)
+}
+
+/// Stops use of exactly one active learned policy. Explicit user corrections are separate and
+/// remain effective; this operation only returns the learned choice to the fixed rules fallback.
+#[tauri::command]
+pub(crate) fn rollback_adaptive_artifact(
+    state: tauri::State<'_, AppState>,
+    input: AdaptiveRollbackInput,
+) -> Result<RoutingLearningSnapshot, String> {
+    if input.artifact_id.is_empty() || input.artifact_id.len() > 256 {
+        return Err("Adaptive artifact id is invalid".into());
+    }
+    state.sqlite_writer.write(|connection| {
+        crate::adaptive_improvement::rollback_active_to_rules(
+            connection,
+            &input.artifact_id,
+            now_ms(),
+        )?;
+        learning_snapshot(connection)
+    })
 }
 
 fn learning_snapshot(connection: &Connection) -> Result<RoutingLearningSnapshot, String> {
@@ -168,11 +228,100 @@ fn learning_snapshot(connection: &Connection) -> Result<RoutingLearningSnapshot,
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(|error| error.to_string())?;
+    let adaptive_schema_present: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_artifacts')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let adaptive_artifacts = if adaptive_schema_present {
+        adaptive_artifact_snapshots(connection)?
+    } else {
+        Vec::new()
+    };
     Ok(RoutingLearningSnapshot {
         dirty_roots,
         ready_datasets,
         active_artifacts,
+        adaptive_artifacts,
     })
+}
+
+fn adaptive_artifact_snapshots(
+    connection: &Connection,
+) -> Result<Vec<AdaptiveArtifactSnapshot>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT a.id,a.domain,a.scope_key,a.state,a.scores_json,a.source_event_upper_seq,
+                    (SELECT x.policy_revision FROM ai_activations x WHERE x.artifact_id=a.id AND x.active=1)
+             FROM ai_artifacts a
+             WHERE a.state IN ('candidate','evaluated','shadow','eligible','active')
+             ORDER BY CASE a.state WHEN 'active' THEN 0 WHEN 'eligible' THEN 1 WHEN 'shadow' THEN 2 WHEN 'evaluated' THEN 3 ELSE 4 END,
+                      a.created_at_ms DESC, a.id
+             LIMIT 24",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+            ))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    rows.into_iter()
+        .map(
+            |(id, domain, scope_key, state, scores_json, upper_event_seq, policy_revision)| {
+                let eligible_examples: i64 = connection
+                    .query_row(
+                        "SELECT count(*) FROM ai_examples e JOIN ai_datasets d ON d.id=e.dataset_id
+                     WHERE e.eligible=1 AND d.state='ready' AND d.upper_event_seq<=?1
+                       AND json_extract(e.features_json,'$.domain')=?2
+                       AND json_extract(e.features_json,'$.scope')=?3",
+                        params![upper_event_seq, &domain, &scope_key],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let best_observed_score = serde_json::from_str::<serde_json::Value>(&scores_json)
+                    .ok()
+                    .and_then(|value| {
+                        value.as_object().and_then(|scores| {
+                            scores
+                                .values()
+                                .filter_map(serde_json::Value::as_f64)
+                                .reduce(f64::max)
+                        })
+                    });
+                let reason = match state.as_str() {
+                    "candidate" => "比較評価前の候補です。次の選択にはまだ使われません。",
+                    "evaluated" => "比較評価の確認中です。次の選択にはまだ使われません。",
+                    "shadow" => "安全性を確認中です。次の選択にはまだ使われません。",
+                    "eligible" => "評価済みですが、まだ有効化されていません。",
+                    "active" => "検証済みの改善として、次の一致する選択に使われます。",
+                    _ => "状態を確認できません。",
+                }
+                .to_string();
+                Ok(AdaptiveArtifactSnapshot {
+                    id,
+                    domain,
+                    scope_key,
+                    state,
+                    eligible_examples,
+                    best_observed_score,
+                    policy_revision,
+                    reason,
+                })
+            },
+        )
+        .collect()
 }
 
 pub(crate) fn snapshot(
@@ -260,6 +409,8 @@ pub(crate) fn typescript_bindings() -> String {
         declaration::<RoutingSnapshotInput>(),
         declaration::<RoutingEventReplayInput>(),
         declaration::<RoutingCancelInput>(),
+        declaration::<AdaptiveRollbackInput>(),
+        declaration::<AdaptiveArtifactSnapshot>(),
         declaration::<RoutingLearningSnapshot>(),
         declaration::<RoutingRootSnapshot>(),
         declaration::<RoutingSnapshot>(),
@@ -349,6 +500,39 @@ mod tests {
         assert_eq!(snapshot.dirty_roots, 0);
         assert_eq!(snapshot.ready_datasets, 1);
         assert_eq!(snapshot.active_artifacts, 1);
+        assert!(snapshot.adaptive_artifacts.is_empty());
+    }
+
+    #[test]
+    fn ai_13_learning_snapshot_explains_pending_adaptive_artifact() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                "CREATE TABLE rr_roots(root_id TEXT PRIMARY KEY);
+                 CREATE TABLE rr_decisions(id TEXT PRIMARY KEY);",
+            )
+            .expect("base");
+        crate::role_routing::learning::schema::migrate(&connection).expect("learning schema");
+        crate::adaptive_improvement::migrate(&connection).expect("adaptive schema");
+        let candidates = vec!["a".to_string(), "b".to_string()];
+        let artifact = crate::adaptive_improvement::create_artifact(
+            &connection,
+            crate::adaptive_improvement::Domain::Tool,
+            "project-a",
+            &candidates,
+            r#"{"a":0.75,"b":0.25}"#,
+            0,
+            1,
+        )
+        .expect("artifact");
+        let snapshot = learning_snapshot(&connection).expect("snapshot");
+        assert_eq!(snapshot.adaptive_artifacts.len(), 1);
+        let row = &snapshot.adaptive_artifacts[0];
+        assert_eq!(row.id, artifact);
+        assert_eq!(row.domain, "tool");
+        assert_eq!(row.eligible_examples, 0);
+        assert_eq!(row.best_observed_score, Some(0.75));
+        assert!(row.reason.contains("次の選択にはまだ使われません"));
     }
 }
 
