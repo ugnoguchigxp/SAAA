@@ -884,7 +884,8 @@ async fn execute_conversation_turn_with_candidates(
                                     .ok_or("state-claim-unavailable")?
                                     .validate_claim_commit(connection)?;
                             }
-                            state_answer::Validation::Host((service, frame)) => {
+                            state_answer::Validation::Host(prepared) => {
+                                let (service, frame) = prepared.as_ref();
                                 service
                                     .validate_db_result(connection, frame)
                                     .map_err(|error| error.code().to_string())?;

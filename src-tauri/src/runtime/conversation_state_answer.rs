@@ -6,7 +6,7 @@ pub(super) use card::persist_card;
 pub(super) enum Validation {
     None,
     Model,
-    Host(crate::runtime::context::world::app_frame::Prepared),
+    Host(Box<crate::runtime::context::world::app_frame::Prepared>),
 }
 pub(super) fn accept(
     state: &AppState,
@@ -31,7 +31,11 @@ pub(super) fn accept(
                 &input.run_id,
                 &input.content,
             );
-            let validation = card.world.map(Validation::Host).unwrap_or(Validation::None);
+            let validation = card
+                .world
+                .map(Box::new)
+                .map(Validation::Host)
+                .unwrap_or(Validation::None);
             (card.text, validation)
         }
     };

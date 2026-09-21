@@ -198,8 +198,10 @@ mod tests {
     }
 
     fn enable_role_routing(connection: &mut rusqlite::Connection) {
-        let mut settings = crate::role_routing::RoleRoutingSettings::default();
-        settings.enabled = true;
+        let mut settings = crate::role_routing::RoleRoutingSettings {
+            enabled: true,
+            ..Default::default()
+        };
         settings
             .actors
             .push(crate::role_routing::contracts::RoutingActor {

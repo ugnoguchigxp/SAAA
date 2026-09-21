@@ -1,6 +1,7 @@
 use crate::schedule::Handle;
 use sha2::{Digest, Sha256};
 
+#[allow(dead_code)] // Native credential backends are cfg-dependent.
 const ACCOUNT: &str = "google-calendar";
 
 pub(crate) fn unsupported() -> Result<(), String> {
@@ -38,8 +39,7 @@ pub(crate) fn load_refresh(handle: &Handle) -> Result<Option<String>, String> {
     }
     #[cfg(all(target_os = "macos", not(test)))]
     {
-        return crate::credentials::load_api_key(ACCOUNT)
-            .map(|value| value.map(|token| (*token).clone()));
+        crate::credentials::load_api_key(ACCOUNT).map(|value| value.map(|token| (*token).clone()))
     }
     #[cfg(not(all(target_os = "macos", not(test))))]
     {

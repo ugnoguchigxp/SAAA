@@ -1,4 +1,4 @@
-use super::{admission, authority, contracts::*, intake, repository as repo, verifier, views};
+use super::{authority, contracts::*, intake, repository as repo, verifier, views};
 use crate::persistence::schema::initialize_database;
 use crate::runtime::turns::prepare_runtime_run;
 use crate::test_support::app_state;

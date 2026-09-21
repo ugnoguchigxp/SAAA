@@ -183,6 +183,7 @@ fn materialize_root(
     Ok(())
 }
 
+#[allow(dead_code)] // Retained for the offline invalidation gate.
 pub(crate) fn invalidate_artifacts_for_dataset(
     connection: &Connection,
     dataset_id: &str,

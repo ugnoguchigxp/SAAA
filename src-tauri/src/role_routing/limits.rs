@@ -152,8 +152,10 @@ mod tests {
 
     #[test]
     fn rr_22_unknown_cost_is_not_free_when_policy_has_a_budget() {
-        let mut limits = RoutingLimits::default();
-        limits.max_estimated_cost_micros = Some(10);
+        let limits = RoutingLimits {
+            max_estimated_cost_micros: Some(10),
+            ..Default::default()
+        };
         assert_eq!(
             permit_dispatch(&limits, 0, None, 1, 0, None),
             Err(LimitViolation::CostUnknown)
@@ -219,9 +221,11 @@ mod tests {
 
     #[test]
     fn rr_22_deadline_rejects_new_dispatch() {
-        let mut limits = RoutingLimits::default();
-        limits.root_timeout_ms = 10;
-        limits.step_timeout_ms = 5;
+        let limits = RoutingLimits {
+            root_timeout_ms: 10,
+            step_timeout_ms: 5,
+            ..Default::default()
+        };
         assert_eq!(
             permit_dispatch(&limits, 0, None, 11, 0, Some(0)),
             Err(LimitViolation::RootTimeout)

@@ -1,4 +1,5 @@
 pub(crate) mod auth;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod client;
 pub(crate) mod encode;
 pub(crate) mod oauth;

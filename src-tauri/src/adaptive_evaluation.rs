@@ -309,9 +309,7 @@ pub(crate) struct AdaptiveArtifactAction {
 pub(crate) fn list_adaptive_evaluations(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<EvaluationView>, String> {
-    state
-        .sqlite_readers
-        .read(|connection| list_views(connection))
+    state.sqlite_readers.read(list_views)
 }
 
 #[tauri::command]

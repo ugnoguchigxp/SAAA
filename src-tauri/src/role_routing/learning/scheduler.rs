@@ -74,11 +74,13 @@ mod tests {
     use super::*;
     #[test]
     fn rr_32_scheduler_handles_overnight_window_and_idle_gate() {
-        let mut learning = RoutingLearning::default();
-        learning.enabled = true;
-        learning.local_start = "23:00".into();
-        learning.local_end = "02:00".into();
-        learning.idle_seconds = 10;
+        let learning = RoutingLearning {
+            enabled: true,
+            local_start: "23:00".into(),
+            local_end: "02:00".into(),
+            idle_seconds: 10,
+            ..Default::default()
+        };
         assert!(should_start(&learning, 30, 10, false));
         assert!(!should_start(&learning, 180, 10, false));
         assert!(!should_start(&learning, 30, 9, false));
@@ -87,11 +89,13 @@ mod tests {
 
     #[test]
     fn rr_34_missed_night_runs_once_and_clock_rollback_does_not_repeat() {
-        let mut learning = RoutingLearning::default();
-        learning.enabled = true;
-        learning.local_start = "02:00".into();
-        learning.local_end = "05:00".into();
-        learning.idle_seconds = 10;
+        let learning = RoutingLearning {
+            enabled: true,
+            local_start: "02:00".into(),
+            local_end: "05:00".into(),
+            idle_seconds: 10,
+            ..Default::default()
+        };
         assert_eq!(
             should_start_daily(&learning, 6 * 60, 10, false, false, "2026-09-21", None),
             Some(StartReason::MissedWindow)
@@ -124,11 +128,13 @@ mod tests {
 
     #[test]
     fn rr_34_foreground_preempts_before_the_next_page() {
-        let mut learning = RoutingLearning::default();
-        learning.enabled = true;
-        learning.local_start = "00:00".into();
-        learning.local_end = "23:59".into();
-        learning.idle_seconds = 0;
+        let learning = RoutingLearning {
+            enabled: true,
+            local_start: "00:00".into(),
+            local_end: "23:59".into(),
+            idle_seconds: 0,
+            ..Default::default()
+        };
         assert_eq!(
             should_start_daily(&learning, 60, 100, false, true, "2026-09-21", None),
             None

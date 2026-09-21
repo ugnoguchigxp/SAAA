@@ -2,9 +2,12 @@ pub(crate) mod calendar;
 pub(crate) mod commands;
 pub mod contracts;
 pub(crate) mod decide;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod forget;
+#[cfg_attr(not(test), allow(dead_code))]
 mod handle;
 pub(crate) mod hold;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod ledger;
 pub(crate) mod notify;
 pub(crate) mod runtime;

@@ -12,9 +12,7 @@ use rusqlite::Connection;
 pub(crate) fn schedule_list(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ScheduleEntryView>, String> {
-    state
-        .sqlite_readers
-        .read(|connection| Ok(list_views(connection)?))
+    state.sqlite_readers.read(list_views)
 }
 
 #[tauri::command]

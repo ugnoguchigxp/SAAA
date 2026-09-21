@@ -33,8 +33,7 @@ type ArtifactWorkspaceAction =
 type ArtifactWorkspaceContextValue = {
   open: (instance: UiInstance, conversationId: string) => void;
 };
-const ArtifactWorkspaceContext =
-  createContext<ArtifactWorkspaceContextValue | null>(null);
+const ArtifactWorkspaceContext = createContext<ArtifactWorkspaceContextValue | null>(null);
 
 function reduceWorkspace(
   state: ArtifactWorkspaceState,
@@ -46,9 +45,7 @@ function reduceWorkspace(
     );
     const tabs =
       existing >= 0
-        ? state.tabs.map((tab, index) =>
-            index === existing ? action.tab : tab,
-          )
+        ? state.tabs.map((tab, index) => (index === existing ? action.tab : tab))
         : [...state.tabs, action.tab].slice(-8);
     return { tabs, activeViewId: action.tab.instance.viewId };
   }
@@ -57,9 +54,7 @@ function reduceWorkspace(
       ? { ...state, activeViewId: action.viewId }
       : state;
   }
-  const tabs = state.tabs.filter(
-    (tab) => tab.instance.viewId !== action.viewId,
-  );
+  const tabs = state.tabs.filter((tab) => tab.instance.viewId !== action.viewId);
   return {
     tabs,
     activeViewId:
@@ -75,11 +70,7 @@ export function useArtifactWorkspace() {
   return useContext(ArtifactWorkspaceContext);
 }
 
-export function ArtifactWorkspaceProvider({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export function ArtifactWorkspaceProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const [{ tabs, activeViewId }, dispatch] = useReducer(reduceWorkspace, {
     tabs: [],
@@ -93,12 +84,8 @@ export function ArtifactWorkspaceProvider({
     dispatch({ type: "open", tab: { instance, conversationId } });
   }, []);
   const contextValue = useMemo(() => ({ open }), [open]);
-  const close = useCallback(
-    (viewId: string) => dispatch({ type: "close", viewId }),
-    [],
-  );
-  const active =
-    tabs.find((tab) => tab.instance.viewId === activeViewId) ?? null;
+  const close = useCallback((viewId: string) => dispatch({ type: "close", viewId }), []);
+  const active = tabs.find((tab) => tab.instance.viewId === activeViewId) ?? null;
   const width = active ? artifactWidthFor(active.instance.node) : 50;
   useEffect(() => {
     const isOpen = Boolean(active);
@@ -161,8 +148,7 @@ export function ArtifactWorkspaceProvider({
                           let nextIndex: number | null = null;
                           if (event.key === "ArrowLeft")
                             nextIndex = (index - 1 + tabs.length) % tabs.length;
-                          if (event.key === "ArrowRight")
-                            nextIndex = (index + 1) % tabs.length;
+                          if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
                           if (event.key === "Home") nextIndex = 0;
                           if (event.key === "End") nextIndex = tabs.length - 1;
                           if (nextIndex === null) return;
@@ -172,9 +158,7 @@ export function ArtifactWorkspaceProvider({
                             type: "select",
                             viewId: next.instance.viewId,
                           });
-                          document
-                            .getElementById(`artifact-tab-${nextIndex}`)
-                            ?.focus();
+                          document.getElementById(`artifact-tab-${nextIndex}`)?.focus();
                         }}
                       >
                         {title}
@@ -205,13 +189,8 @@ export function ArtifactWorkspaceProvider({
               role="tabpanel"
               aria-labelledby={`artifact-tab-${tabs.findIndex((tab) => tab.instance.viewId === activeViewId)}`}
             >
-              <h2 id="artifact-panel-title">
-                {active.instance.name ?? active.instance.summary}
-              </h2>
-              <UiBoundary
-                key={active.instance.viewId}
-                fallback={<p>{t("genui.unavailable")}</p>}
-              >
+              <h2 id="artifact-panel-title">{active.instance.name ?? active.instance.summary}</h2>
+              <UiBoundary key={active.instance.viewId} fallback={<p>{t("genui.unavailable")}</p>}>
                 <Suspense fallback={<p>{t("genui.loading")}</p>}>
                   <ArtifactPanel
                     key={active.instance.viewId}

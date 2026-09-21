@@ -85,25 +85,6 @@ pub(crate) fn start_queued_for_conversation(
     super::dispatch::start_queued_for_conversation(state, conversation_id)
 }
 
-#[cfg(test)]
-mod adaptive_plan_tests {
-    #[test]
-    fn registered_plan_recipes_are_strict_subsets_of_delegated_ops() {
-        let candidates = |ops: &str, read_completed: bool| match (ops, read_completed) {
-            ("read", _) => vec!["read"],
-            ("test_run", _) => vec!["test_run"],
-            ("read_test", true) => vec!["test_run"],
-            ("read_test", false) => vec!["read"],
-            _ => vec![],
-        };
-        assert_eq!(candidates("read", false), ["read"]);
-        assert_eq!(candidates("test_run", false), ["test_run"]);
-        assert_eq!(candidates("read_test", false), ["read"]);
-        assert_eq!(candidates("read_test", true), ["test_run"]);
-        assert!(candidates("write", false).is_empty());
-    }
-}
-
 pub(crate) fn inspect_coding_transition(
     state: &AppState,
     conversation_id: &str,
@@ -150,4 +131,23 @@ fn inspect_jobs(state: &AppState, conversation_id: &str) -> Result<(), String> {
     state
         .sqlite_writer
         .write(|connection| super::report::publish(state, connection, conversation_id))
+}
+
+#[cfg(test)]
+mod adaptive_plan_tests {
+    #[test]
+    fn registered_plan_recipes_are_strict_subsets_of_delegated_ops() {
+        let candidates = |ops: &str, read_completed: bool| match (ops, read_completed) {
+            ("read", _) => vec!["read"],
+            ("test_run", _) => vec!["test_run"],
+            ("read_test", true) => vec!["test_run"],
+            ("read_test", false) => vec!["read"],
+            _ => vec![],
+        };
+        assert_eq!(candidates("read", false), ["read"]);
+        assert_eq!(candidates("test_run", false), ["test_run"]);
+        assert_eq!(candidates("read_test", false), ["read"]);
+        assert_eq!(candidates("read_test", true), ["test_run"]);
+        assert!(candidates("write", false).is_empty());
+    }
 }

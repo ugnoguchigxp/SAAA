@@ -105,11 +105,7 @@ describe("artifact workspace", () => {
         createElement(
           ArtifactWorkspaceProvider,
           null,
-          createElement(
-            "section",
-            { className: "chat-panel" },
-            createElement(OpenArtifact),
-          ),
+          createElement("section", { className: "chat-panel" }, createElement(OpenArtifact)),
         ),
       ),
     );
@@ -119,18 +115,12 @@ describe("artifact workspace", () => {
       opener.dispatchEvent(new Event("click", { bubbles: true }));
       await Promise.resolve();
     });
-    const workspace = document.querySelector<HTMLElement>(
-      ".artifact-workspace",
-    )!;
+    const workspace = document.querySelector<HTMLElement>(".artifact-workspace")!;
     expect(workspace.classList.contains("artifact-workspace-open")).toBe(true);
     expect(workspace.style.getPropertyValue("--artifact-width")).toBe("50%");
-    expect(
-      workspace.querySelector(".artifact-chat-region .chat-panel"),
-    ).not.toBeNull();
+    expect(workspace.querySelector(".artifact-chat-region .chat-panel")).not.toBeNull();
     expect(workspace.querySelector(".artifact-panel")).not.toBeNull();
-    expect(document.activeElement).toBe(
-      workspace.querySelector(".artifact-panel"),
-    );
+    expect(document.activeElement).toBe(workspace.querySelector(".artifact-panel"));
 
     await act(async () => {
       window.dispatchEvent(
@@ -148,10 +138,7 @@ describe("artifact workspace", () => {
   test("keeps the current artifact visible when revision IPC fails", async () => {
     invokeImpl.handler = async (command) => {
       if (command === "get_ui_enabled") return true;
-      if (
-        command === "get_ui_instance" ||
-        command === "list_ui_view_revisions"
-      ) {
+      if (command === "get_ui_instance" || command === "list_ui_view_revisions") {
         throw new Error("offline");
       }
       return undefined;
@@ -164,24 +151,16 @@ describe("artifact workspace", () => {
         createElement(
           ArtifactWorkspaceProvider,
           null,
-          createElement(
-            "section",
-            { className: "chat-panel" },
-            createElement(OpenArtifact),
-          ),
+          createElement("section", { className: "chat-panel" }, createElement(OpenArtifact)),
         ),
       ),
     );
     await act(async () => {
-      document
-        .querySelector("button")!
-        .dispatchEvent(new Event("click", { bubbles: true }));
+      document.querySelector("button")!.dispatchEvent(new Event("click", { bubbles: true }));
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(document.querySelector(".artifact-panel")?.textContent).toContain(
-      "artifact",
-    );
+    expect(document.querySelector(".artifact-panel")?.textContent).toContain("artifact");
     expect(document.querySelector(".artifact-load-error")).not.toBeNull();
   });
 
@@ -192,33 +171,19 @@ describe("artifact workspace", () => {
     root = createRoot(document.getElementById("root")!);
     await act(async () =>
       root!.render(
-        createElement(
-          ArtifactWorkspaceProvider,
-          null,
-          createElement(OpenManyArtifacts),
-        ),
+        createElement(ArtifactWorkspaceProvider, null, createElement(OpenManyArtifacts)),
       ),
     );
-    const openers = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".open-many"),
-    );
+    const openers = Array.from(document.querySelectorAll<HTMLButtonElement>(".open-many"));
     for (const opener of openers) {
-      await act(async () =>
-        opener.dispatchEvent(new Event("click", { bubbles: true })),
-      );
+      await act(async () => opener.dispatchEvent(new Event("click", { bubbles: true })));
     }
     expect(document.querySelectorAll(".artifact-tab")).toHaveLength(8);
-    expect(document.querySelector(".artifact-tabs")?.textContent).not.toContain(
-      "Article 1",
-    );
-    await act(async () =>
-      openers[8].dispatchEvent(new Event("click", { bubbles: true })),
-    );
+    expect(document.querySelector(".artifact-tabs")?.textContent).not.toContain("Article 1");
+    await act(async () => openers[8].dispatchEvent(new Event("click", { bubbles: true })));
     expect(document.querySelectorAll(".artifact-tab")).toHaveLength(8);
 
-    const tabButtons = Array.from(
-      document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
-    );
+    const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
     expect(tabButtons[7].getAttribute("aria-selected")).toBe("true");
     expect(tabButtons[7].tabIndex).toBe(0);
     tabButtons[7].focus();
@@ -232,13 +197,9 @@ describe("artifact workspace", () => {
     });
     expect(tabButtons[6].getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(tabButtons[6]);
-    expect(tabButtons[6].getAttribute("aria-controls")).toBe(
-      "artifact-panel-content",
+    expect(tabButtons[6].getAttribute("aria-controls")).toBe("artifact-panel-content");
+    expect(document.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby")).toBe(
+      tabButtons[6].id,
     );
-    expect(
-      document
-        .querySelector('[role="tabpanel"]')
-        ?.getAttribute("aria-labelledby"),
-    ).toBe(tabButtons[6].id);
   });
 });

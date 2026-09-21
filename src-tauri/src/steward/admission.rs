@@ -17,7 +17,7 @@ pub(crate) fn stage_confirmation(
 ) -> Result<WorkProposeResult, String> {
     crate::steward::faults::maybe("admission_before_rows")?;
     let digest = super::intake::proposal_digest(proposal);
-    if let Some((id, revision)) = connection
+    if let Some((id, _revision)) = connection
         .query_row(
             "SELECT id,revision FROM steward_proposals WHERE source_message_id=?1 AND digest=?2",
             params![proposal.source_message_id, digest],

@@ -2901,71 +2901,72 @@ async fn rr_15_asr_tool_tts_reconnect_e2e_and_rr_38_normal_provider_turn_special
     assert!(specialist_requests.lock().expect("specialist request")[0]
         .contains("You cannot answer the user"));
     assert!(author_requests.lock().expect("author request")[1].contains("host-tool-result"));
-    let database = state.sqlite_writer.lock().expect("database lock");
-    let statuses = database
-        .prepare("SELECT purpose||':'||status FROM rr_steps WHERE root_id=?1 ORDER BY ordinal")
-        .expect("steps")
-        .query_map([&input.run_id], |row| row.get::<_, String>(0))
-        .expect("rows")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("statuses");
-    assert_eq!(
-        statuses,
-        vec![
-            "respond:succeeded",
-            "tool_specialist:succeeded",
-            "respond:succeeded"
-        ]
-    );
-    assert_eq!(
-        database
+    {
+        let database = state.sqlite_writer.lock().expect("database lock");
+        let statuses = database
+            .prepare("SELECT purpose||':'||status FROM rr_steps WHERE root_id=?1 ORDER BY ordinal")
+            .expect("steps")
+            .query_map([&input.run_id], |row| row.get::<_, String>(0))
+            .expect("rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("statuses");
+        assert_eq!(
+            statuses,
+            vec![
+                "respond:succeeded",
+                "tool_specialist:succeeded",
+                "respond:succeeded"
+            ]
+        );
+        assert_eq!(
+            database
             .query_row(
                 "SELECT content FROM conversation_messages WHERE role='assistant' ORDER BY created_at DESC LIMIT 1",
                 [],
                 |row| row.get::<_, String>(0),
             )
             .expect("final message"),
-        "final answer after host result"
-    );
-    assert_eq!(
-        database
+            "final answer after host result"
+        );
+        assert_eq!(
+            database
             .query_row(
                 "SELECT count(*) FROM rr_tool_links WHERE root_id=?1 AND dispatch_state='settled'",
                 [&input.run_id],
                 |row| row.get::<_, i64>(0),
             )
             .expect("tool ledger"),
-        1
-    );
-    assert_eq!(
-        database
+            1
+        );
+        assert_eq!(
+            database
             .query_row(
                 "SELECT origin||':'||source_id||':'||disposition FROM rr_inputs WHERE root_id=?1",
                 [&input.run_id],
                 |row| row.get::<_, String>(0),
             )
             .expect("ASR receipt"),
-        "voice:asr-final-1:accepted"
-    );
-    assert_eq!(
-        database
-            .query_row(
-                "SELECT kind||':'||status FROM rr_speech WHERE root_id=?1",
-                [&input.run_id],
-                |row| row.get::<_, String>(0),
-            )
-            .expect("TTS intent"),
-        "final:queued"
-    );
-    let replay = crate::role_routing::ipc::replay(&database, &input.run_id, 0)
-        .expect("reconnect event replay");
-    assert!(replay.iter().any(|event| event.kind == "answer_committed"));
-    assert!(ui_events
-        .lock()
-        .expect("UI events")
-        .iter()
-        .any(|event| event.contains("\"type\":\"messageCompleted\"")));
-    drop(database);
+            "voice:asr-final-1:accepted"
+        );
+        assert_eq!(
+            database
+                .query_row(
+                    "SELECT kind||':'||status FROM rr_speech WHERE root_id=?1",
+                    [&input.run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("TTS intent"),
+            "final:queued"
+        );
+        let replay = crate::role_routing::ipc::replay(&database, &input.run_id, 0)
+            .expect("reconnect event replay");
+        assert!(replay.iter().any(|event| event.kind == "answer_committed"));
+        assert!(ui_events
+            .lock()
+            .expect("UI events")
+            .iter()
+            .any(|event| event.contains("\"type\":\"messageCompleted\"")));
+    }
 
     crate::runtime::event_hub::RuntimeEventSender::send(
         &event_hub,

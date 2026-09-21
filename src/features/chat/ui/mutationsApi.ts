@@ -3,11 +3,7 @@ import type { UiInstance } from "../../../lib/generated/generativeUi";
 
 export const uiMutationApi = {
   setEnabled: (enabled: boolean) => invoke<void>("set_ui_enabled", { enabled }),
-  state: (
-    instanceId: string,
-    expectedVersion: number,
-    value: UiInstance["state"],
-  ) =>
+  state: (instanceId: string, expectedVersion: number, value: UiInstance["state"]) =>
     invoke<number>("save_ui_instance_state", {
       instanceId,
       expectedVersion,
@@ -26,7 +22,5 @@ export const uiMutationApi = {
 };
 
 export function notifyUiHistoryChanged(conversationId: string) {
-  window.dispatchEvent(
-    new CustomEvent("saaa:ui-history", { detail: conversationId }),
-  );
+  window.dispatchEvent(new CustomEvent("saaa:ui-history", { detail: conversationId }));
 }

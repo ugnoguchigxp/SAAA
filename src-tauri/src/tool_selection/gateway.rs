@@ -454,6 +454,7 @@ pub struct RoleStepBinding<'a> {
     pub config_fingerprint: &'a str,
 }
 
+#[allow(clippy::too_many_arguments)] // Role-root authority and cancellation inputs remain explicit.
 pub async fn execute_for_role_root(
     service: &ToolSelectionService,
     writer: &SqliteWriter,
@@ -479,6 +480,7 @@ pub async fn execute_for_role_root(
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // Shared gateway boundary carries audited execution context.
 async fn execute_for_root(
     service: &ToolSelectionService,
     writer: &SqliteWriter,

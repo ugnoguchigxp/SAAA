@@ -1,9 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  UiData,
-  UiInstance,
-  SavedView,
-} from "../../../lib/generated/generativeUi";
+import type { UiData, UiInstance, SavedView } from "../../../lib/generated/generativeUi";
 import { uiMutationApi } from "./mutationsApi";
 export { notifyUiHistoryChanged } from "./mutationsApi";
 export type { UiData, UiInstance, SavedView };

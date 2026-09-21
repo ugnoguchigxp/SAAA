@@ -23,6 +23,7 @@ pub(crate) fn validate(request: &SpecialistRequest, enabled: bool) -> Result<(),
 /// Executes a specialist request through the same host-owned gateway used by the restricted
 /// role MCP bridge. The specialist returns the gateway envelope to its parent; it has no route
 /// to publish a conversation answer or bypass the role-root tool ledger.
+#[allow(clippy::too_many_arguments)] // Execution context is deliberately explicit at this boundary.
 pub(crate) async fn execute_for_root(
     service: &ToolSelectionService,
     writer: &SqliteWriter,
@@ -93,7 +94,7 @@ mod tests {
         assert!(super::super::tools::permits(
             "tool_specialist",
             &request.tool_name,
-            &[request.tool_name.clone()],
+            std::slice::from_ref(&request.tool_name),
             true,
             super::super::tools::ToolEffect::Mutating,
         )
@@ -101,7 +102,7 @@ mod tests {
         assert!(super::super::tools::permits(
             "tool_specialist",
             &request.tool_name,
-            &[request.tool_name.clone()],
+            std::slice::from_ref(&request.tool_name),
             false,
             super::super::tools::ToolEffect::ReadOnly,
         )

@@ -126,6 +126,13 @@ fn insert_job(state: &AppState, task_id: &str, job_state: &str, identity: Option
                     super::evidence::PRODUCER_HOST_RECIPE,
                 ),
             )?;
+            crate::coding::repository::event(
+                connection,
+                "job",
+                "run",
+                job_state,
+                serde_json::json!({}),
+            )?;
             Ok(())
         })
         .expect("job");
@@ -154,7 +161,7 @@ fn ml_01_schema_version_and_empty_goals() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
     assert_eq!(version, DATABASE_SCHEMA_VERSION);
-    assert_eq!(DATABASE_SCHEMA_VERSION, 31);
+    assert_eq!(DATABASE_SCHEMA_VERSION, 32);
     let goals: i64 = connection
         .query_row("SELECT COUNT(*) FROM steward_goals", [], |row| row.get(0))
         .expect("goals");

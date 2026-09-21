@@ -565,6 +565,13 @@ pub(crate) fn typescript_bindings() -> String {
     .join("\n\n")
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,11 +717,4 @@ mod tests {
         assert_eq!(row.best_observed_score, Some(0.75));
         assert!(row.reason.contains("次の選択にはまだ使われません"));
     }
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
 }

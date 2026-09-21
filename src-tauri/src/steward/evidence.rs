@@ -159,6 +159,7 @@ pub(crate) fn load_for_run(
         .transpose()
 }
 
+#[allow(clippy::too_many_arguments)] // Evidence fields stay explicit at the host-session boundary.
 pub(crate) fn from_host_session(
     task_id: &str,
     job_id: &str,

@@ -228,12 +228,14 @@ mod tests {
     }
 
     fn review_settings() -> RoleRoutingSettings {
-        let mut settings = RoleRoutingSettings::default();
-        settings.enabled = true;
-        settings.actors = vec![
-            actor("qwen", "qwen-model", "local"),
-            actor("sol", "sol-model", "cloud"),
-        ];
+        let mut settings = RoleRoutingSettings {
+            enabled: true,
+            actors: vec![
+                actor("qwen", "qwen-model", "local"),
+                actor("sol", "sol-model", "cloud"),
+            ],
+            ..Default::default()
+        };
         settings.roles.reasoner = Some("qwen".into());
         settings.roles.advanced = Some("sol".into());
         settings.roles.reviewer = Some("qwen".into());

@@ -23,18 +23,14 @@ const value = '<tag>';
   });
 
   test("allows only explicit safe link protocols", () => {
-    const html = renderSafeMarkdown(
-      "[safe](https://example.com) [unsafe](javascript:alert(1))",
-    );
+    const html = renderSafeMarkdown("[safe](https://example.com) [unsafe](javascript:alert(1))");
     expect(html).toContain('href="https://example.com"');
     expect(html).not.toContain('href="javascript:');
   });
 
   test("treats an unfinished code fence as escaped code at completion", () => {
     const html = renderSafeMarkdown("```html\n<img src=x onerror=alert(1)>");
-    expect(html).toContain(
-      '<pre data-lang="html"><code class="language-html">',
-    );
+    expect(html).toContain('<pre data-lang="html"><code class="language-html">');
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
   });
 });

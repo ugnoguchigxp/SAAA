@@ -362,9 +362,7 @@ fn role_root_from_uri(uri: &Uri) -> Option<Option<String>> {
         return Some(None);
     };
     let mut values = url::form_urlencoded::parse(query.as_bytes());
-    let Some((key, root_id)) = values.next() else {
-        return None;
-    };
+    let (key, root_id) = values.next()?;
     if key != "rrRoot" || values.next().is_some() || root_id.is_empty() || root_id.len() > 160 {
         return None;
     }

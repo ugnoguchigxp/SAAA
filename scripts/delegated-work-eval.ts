@@ -8,7 +8,9 @@ const corpus = JSON.parse(
 };
 
 const live = process.env.SAAA_DELEGATED_LIVE === "1";
-const selected = corpus.cases.filter((entry) => (live ? entry.lane === "live" : entry.lane === "scripted"));
+const selected = corpus.cases.filter((entry) =>
+  live ? entry.lane === "live" : entry.lane === "scripted",
+);
 if (selected.length < 20 && !live) {
   throw new Error("scripted corpus must include 20+ explicit work cases");
 }

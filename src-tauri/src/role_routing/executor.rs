@@ -148,7 +148,8 @@ pub(crate) fn permit_next_step(
     if deadline_at_ms.is_some_and(|deadline| now_ms >= deadline) {
         return Err("Role-routing root deadline reached".into());
     }
-    let step: Option<(String, i64, u32, String, String, String, Option<i64>)> = connection
+    type RunningStep = (String, i64, u32, String, String, String, Option<i64>);
+    let step: Option<RunningStep> = connection
         .query_row(
             "SELECT id,revision,ordinal,actor_id,purpose,config_fingerprint,started_at_ms FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
             [root_id],
@@ -253,20 +254,22 @@ mod tests {
                 [],
             )
             .expect("policy");
-        let mut settings = RoleRoutingSettings::default();
-        settings.enabled = true;
-        settings.actors = vec![RoutingActor {
-            id: "qwen".into(),
-            label: "Qwen".into(),
-            aliases: vec![],
-            transport: "provider".into(),
-            provider_id: Some("qwen".into()),
-            model: None,
-            location: "local".into(),
-            resource_group: "gpu".into(),
-            max_input_bytes: 1024,
-            capabilities: vec!["reason".into()],
-        }];
+        let mut settings = RoleRoutingSettings {
+            enabled: true,
+            actors: vec![RoutingActor {
+                id: "qwen".into(),
+                label: "Qwen".into(),
+                aliases: vec![],
+                transport: "provider".into(),
+                provider_id: Some("qwen".into()),
+                model: None,
+                location: "local".into(),
+                resource_group: "gpu".into(),
+                max_input_bytes: 1024,
+                capabilities: vec!["reason".into()],
+            }],
+            ..Default::default()
+        };
         settings.roles.reasoner = Some("qwen".into());
         settings.recipes = vec![RoutingRecipe {
             id: "direct".into(),

@@ -555,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_memory_tool_calls_are_projected_without_generic_fallback() {
+    fn typed_memory_tool_calls_are_projected_and_unknown_names_are_rejected() {
         let call = parse_non_stream_tool_call(&json!({
             "choices": [{"message": {"tool_calls": [{
                 "id": "call_memory_1",
@@ -572,7 +572,7 @@ mod tests {
                 "choices": [{"message": {"tool_calls": [{
                     "id": "call_generic",
                     "type": "function",
-                    "function": {"name": "search_knowledge", "arguments": "{\"query\":\"release\"}"}
+                    "function": {"name": "search_memory", "arguments": "{\"query\":\"release\"}"}
                 }]}}]
             })),
             Err(ToolProtocolError::Protocol)

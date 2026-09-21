@@ -146,6 +146,7 @@ pub(crate) fn active_reasoning_step(
 /// touch the root terminal state; only a final adoption records `accepted = true`. The output ID
 /// is derived from the step so a duplicate terminal result collides instead of silently
 /// overwriting history.
+#[allow(clippy::too_many_arguments)] // Step output and its provenance must be recorded together.
 pub(crate) fn record_step_output(
     connection: &Connection,
     root_id: &str,

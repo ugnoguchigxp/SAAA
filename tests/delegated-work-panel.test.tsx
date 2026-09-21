@@ -37,7 +37,9 @@ test("confirmation and recipe forms send host contracts", async () => {
     await act(async () => start?.click());
     expect(invokeCalls.some((call) => call.command === "work_confirm")).toBeTrue();
     await act(async () => {
-      document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      document
+        .querySelector("form")
+        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
   } finally {
     await act(async () => root.unmount());

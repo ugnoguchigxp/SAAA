@@ -4,6 +4,7 @@ use crate::{validate_identifier, AppState};
 use serde_json::Value;
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command parameters are part of the frontend IPC ABI.
 pub(crate) fn register_steward_goal(
     state: tauri::State<'_, AppState>,
     conversation_id: String,

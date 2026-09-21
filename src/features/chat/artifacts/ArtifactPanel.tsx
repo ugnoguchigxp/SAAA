@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type {
-  UiInstance,
-  UiViewRevision,
-} from "../../../lib/generated/generativeUi";
+import type { UiInstance, UiViewRevision } from "../../../lib/generated/generativeUi";
 import { uiApi } from "../ui/api";
 import { UiContext } from "../ui/context";
 import { uiStates } from "../ui/instanceState";
@@ -36,9 +33,7 @@ export default function ArtifactPanel({
     }),
     [initialInstance.revision, initialInstance.summary],
   );
-  const [revisions, setRevisions] = useState<UiViewRevision[]>([
-    currentRevision,
-  ]);
+  const [revisions, setRevisions] = useState<UiViewRevision[]>([currentRevision]);
   const [revision, setRevision] = useState(initialInstance.revision);
   const [instance, setInstance] = useState(initialInstance);
   const loadedRevisionRef = useRef(initialInstance.revision);
@@ -59,10 +54,7 @@ export default function ArtifactPanel({
     setRevisionLoadFailed(false);
     setInstanceLoadFailed(false);
     void listUiViewRevisions(initialInstance.viewId)
-      .then(
-        (value) =>
-          active && setRevisions(value.length ? value : [currentRevision]),
-      )
+      .then((value) => active && setRevisions(value.length ? value : [currentRevision]))
       .catch(() => active && setRevisionLoadFailed(true));
     return () => {
       active = false;
@@ -128,15 +120,12 @@ export default function ArtifactPanel({
   }, [initialInstance.id, revision, revisions, showDiff]);
 
   const diff = useMemo(
-    () =>
-      previous ? lineDiff(revisionText(previous), revisionText(instance)) : [],
+    () => (previous ? lineDiff(revisionText(previous), revisionText(instance)) : []),
     [instance, previous],
   );
 
   return (
-    <UiContext.Provider
-      value={{ instance, conversationId, active: true, enabled }}
-    >
+    <UiContext.Provider value={{ instance, conversationId, active: true, enabled }}>
       <div className="artifact-toolbar">
         <label>
           {t("genui.revision")}
@@ -173,15 +162,8 @@ export default function ArtifactPanel({
       {showDiff && previous ? (
         <pre className="artifact-diff" aria-label={t("genui.diff")}>
           {diff.map((line, index) => (
-            <span
-              key={`${index}:${line.kind}`}
-              className={`artifact-diff-${line.kind}`}
-            >
-              {line.kind === "added"
-                ? "+ "
-                : line.kind === "removed"
-                  ? "- "
-                  : "  "}
+            <span key={`${index}:${line.kind}`} className={`artifact-diff-${line.kind}`}>
+              {line.kind === "added" ? "+ " : line.kind === "removed" ? "- " : "  "}
               {line.text || " "}
               {"\n"}
             </span>

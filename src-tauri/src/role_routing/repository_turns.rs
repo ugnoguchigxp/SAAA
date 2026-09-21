@@ -1516,8 +1516,10 @@ mod tests {
         crate::role_routing::schema::migrate(&c).expect("routing schema");
         crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
         crate::adaptive_improvement::migrate(&c).expect("adaptive schema");
-        let mut policy = RoleRoutingSettings::default();
-        policy.enabled = true;
+        let mut policy = RoleRoutingSettings {
+            enabled: true,
+            ..Default::default()
+        };
         policy.actors.push(RoutingActor {
             id: "local".into(),
             label: "Local".into(),
@@ -1664,8 +1666,10 @@ mod tests {
         crate::role_routing::schema::migrate(&c).expect("schema");
         crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
         crate::adaptive_improvement::migrate(&c).expect("adaptive schema");
-        let mut policy = RoleRoutingSettings::default();
-        policy.enabled = true;
+        let mut policy = RoleRoutingSettings {
+            enabled: true,
+            ..Default::default()
+        };
         policy.actors.push(RoutingActor {
             id: "qwen".into(),
             label: "Qwen".into(),
@@ -1737,8 +1741,10 @@ mod tests {
         c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY,conversation_id TEXT,route_kind TEXT,input_message_id TEXT);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');").expect("base");
         crate::role_routing::schema::migrate(&c).expect("schema");
         crate::adaptive_improvement::migrate(&c).expect("adaptive schema");
-        let mut policy = RoleRoutingSettings::default();
-        policy.enabled = true;
+        let mut policy = RoleRoutingSettings {
+            enabled: true,
+            ..Default::default()
+        };
         policy.limits.max_queued_inputs = 1;
         policy.actors.push(RoutingActor {
             id: "qwen".into(),
@@ -1804,8 +1810,10 @@ mod tests {
         crate::role_routing::schema::migrate(&c).expect("schema");
         crate::role_routing::learning::schema::migrate(&c).expect("learning schema");
         crate::adaptive_improvement::migrate(&c).expect("adaptive schema");
-        let mut policy = RoleRoutingSettings::default();
-        policy.enabled = true;
+        let mut policy = RoleRoutingSettings {
+            enabled: true,
+            ..Default::default()
+        };
         policy.adaptive_improvement.enabled = true;
         policy.adaptive_improvement.provider_recipe = true;
         policy.actors.push(RoutingActor {

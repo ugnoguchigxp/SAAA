@@ -43,17 +43,17 @@ impl StepOutcome {
 /// them. An unbounded channel keeps the driver from awaiting on a slow observer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DriverEvent {
-    StepSucceeded(u32),
-    StepFailed(u32),
-    StepCancelled(u32),
+    Succeeded(u32),
+    Failed(u32),
+    Cancelled(u32),
 }
 
 impl DriverEvent {
     fn for_outcome(outcome: &StepOutcome) -> Self {
         match outcome.status {
-            "succeeded" => DriverEvent::StepSucceeded(outcome.ordinal),
-            "failed" => DriverEvent::StepFailed(outcome.ordinal),
-            _ => DriverEvent::StepCancelled(outcome.ordinal),
+            "succeeded" => DriverEvent::Succeeded(outcome.ordinal),
+            "failed" => DriverEvent::Failed(outcome.ordinal),
+            _ => DriverEvent::Cancelled(outcome.ordinal),
         }
     }
 }
@@ -222,7 +222,7 @@ mod tests {
         }
         assert_eq!(
             events,
-            vec![DriverEvent::StepSucceeded(0), DriverEvent::StepCancelled(1)]
+            vec![DriverEvent::Succeeded(0), DriverEvent::Cancelled(1)]
         );
     }
 
@@ -249,7 +249,7 @@ mod tests {
         }
         assert_eq!(
             events,
-            vec![DriverEvent::StepSucceeded(0), DriverEvent::StepSucceeded(1)]
+            vec![DriverEvent::Succeeded(0), DriverEvent::Succeeded(1)]
         );
     }
 }

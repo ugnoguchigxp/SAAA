@@ -464,35 +464,6 @@ fn public_failure_code(error: &TurnExecutionFailure) -> RuntimeFailureCode {
     }
 }
 
-#[cfg(test)]
-mod required_context_failure_code_tests {
-    use super::*;
-
-    #[test]
-    fn required_context_recovery_messages_keep_distinct_public_codes() {
-        let overflow = TurnExecutionFailure::configuration(
-            "Required context does not fit this provider. Narrow the task scope.",
-        );
-        assert!(matches!(
-            public_failure_code(&overflow),
-            RuntimeFailureCode::RequiredContextOverflow
-        ));
-        let scope = TurnExecutionFailure::configuration(
-            "Context scope changed before dispatch. Choose the intended task.",
-        );
-        assert!(matches!(
-            public_failure_code(&scope),
-            RuntimeFailureCode::ContextScopeChanged
-        ));
-        let unresolved =
-            TurnExecutionFailure::configuration("Context scope could not be resolved: unknown");
-        assert!(matches!(
-            public_failure_code(&unresolved),
-            RuntimeFailureCode::ContextScopeChanged
-        ));
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn finish_supervised_runtime_run(
     state: &AppState,
@@ -776,4 +747,33 @@ pub(crate) fn finish_runtime_run(
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod required_context_failure_code_tests {
+    use super::*;
+
+    #[test]
+    fn required_context_recovery_messages_keep_distinct_public_codes() {
+        let overflow = TurnExecutionFailure::configuration(
+            "Required context does not fit this provider. Narrow the task scope.",
+        );
+        assert!(matches!(
+            public_failure_code(&overflow),
+            RuntimeFailureCode::RequiredContextOverflow
+        ));
+        let scope = TurnExecutionFailure::configuration(
+            "Context scope changed before dispatch. Choose the intended task.",
+        );
+        assert!(matches!(
+            public_failure_code(&scope),
+            RuntimeFailureCode::ContextScopeChanged
+        ));
+        let unresolved =
+            TurnExecutionFailure::configuration("Context scope could not be resolved: unknown");
+        assert!(matches!(
+            public_failure_code(&unresolved),
+            RuntimeFailureCode::ContextScopeChanged
+        ));
+    }
 }

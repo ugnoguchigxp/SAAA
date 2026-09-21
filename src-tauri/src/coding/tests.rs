@@ -190,8 +190,10 @@ fn coding_sdk_settings_preserve_legacy_config_and_require_an_explicit_extension(
 
 #[test]
 fn delegated_read_test_profile_is_explicit_and_platform_bound() {
-    let mut settings = contracts::CodingSettings::default();
-    settings.profile = "delegated-read-test-macos-v1".into();
+    let settings = contracts::CodingSettings {
+        profile: "delegated-read-test-macos-v1".into(),
+        ..Default::default()
+    };
     assert_eq!(
         contracts::valid_profile(&settings),
         cfg!(target_os = "macos") && std::path::Path::new("/usr/bin/sandbox-exec").is_file()

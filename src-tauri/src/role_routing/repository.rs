@@ -3,17 +3,20 @@
 #[path = "repository_policy.rs"]
 mod repository_policy;
 #[path = "repository_turns.rs"]
+#[cfg_attr(not(test), allow(dead_code))]
 mod repository_turns;
 
 pub(crate) use repository_policy::capture_current_policy;
 #[allow(unused_imports)]
 pub(crate) use repository_policy::capture_policy_version;
+#[cfg(test)]
+pub(crate) use repository_turns::record_provider_turn_start;
 pub(crate) use repository_turns::{
     accept_provider_turn, accept_reviewed_draft, advance_provider_step,
     advance_provider_step_with_usage, advance_review_step, cancel_all_for_disable,
     disable_drain_in_progress, disabled_runtime_run_ids, record_actor_activity,
-    record_provider_turn_finish, record_provider_turn_start,
-    record_provider_turn_start_in_transaction, record_step_usage, ReviewStepOutcome,
+    record_provider_turn_finish, record_provider_turn_start_in_transaction, record_step_usage,
+    ReviewStepOutcome,
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -22,6 +25,7 @@ use sha2::{Digest, Sha256};
 
 /// Records host-validated feedback. The caller must identify both message ids; text matching is
 /// intentionally not used because a quoted old answer is not evidence about the current one.
+#[allow(clippy::too_many_arguments)] // Feedback evidence is committed as one immutable record.
 pub(crate) fn record_feedback(
     connection: &Connection,
     conversation_id: &str,

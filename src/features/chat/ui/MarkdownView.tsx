@@ -14,8 +14,7 @@ export function MarkdownView({
   const host = useRef<HTMLDivElement>(null);
   const html = useMemo(() => renderSafeMarkdown(text), [text]);
   useEffect(() => {
-    if (host.current)
-      void renderMermaidDiagrams(host.current, t("genui.diagramFailed"));
+    if (host.current) void renderMermaidDiagrams(host.current, t("genui.diagramFailed"));
   }, [html, t]);
   return (
     <div

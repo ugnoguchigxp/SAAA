@@ -16,7 +16,11 @@ test("role-routing Codex isolation permits only the explicit loopback gateway", 
   isolatedCodex("http://127.0.0.1:43127/mcp?rrRoot=root");
   const value = captured as {
     env: Record<string, string>;
-    config: { mcp_servers: Record<string, { url: string; bearer_token_env_var: string }>; web_search: string; sandbox_workspace_write: { network_access: boolean } };
+    config: {
+      mcp_servers: Record<string, { url: string; bearer_token_env_var: string }>;
+      web_search: string;
+      sandbox_workspace_write: { network_access: boolean };
+    };
   };
   expect(value.env.OPENAI_API_KEY).toBeUndefined();
   expect(value.env.SAAA_ROLE_ROUTING_MCP_TOKEN).toBe("bridge-secret-not-for-protocol");
@@ -35,7 +39,10 @@ test("role-routing Codex isolation permits only the explicit loopback gateway", 
 test("role-routing Codex has no inherited MCP server without a gateway", () => {
   process.env.SAAA_ROLE_ROUTING_MCP_TOKEN = "must-not-propagate-without-gateway";
   isolatedCodex();
-  const value = captured as { env: Record<string, string>; config: { mcp_servers: Record<string, unknown> } };
+  const value = captured as {
+    env: Record<string, string>;
+    config: { mcp_servers: Record<string, unknown> };
+  };
   expect(value.config.mcp_servers).toEqual({});
   expect(value.env.SAAA_ROLE_ROUTING_MCP_TOKEN).toBeUndefined();
   delete process.env.SAAA_ROLE_ROUTING_MCP_TOKEN;

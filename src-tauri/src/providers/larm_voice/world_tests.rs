@@ -86,19 +86,20 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         panic!("expected completion: {outcome:?}");
     };
     assert_eq!(content, "ContextStillの検索結果を確認しました。");
-    let bodies = f.bodies.lock().unwrap();
-    assert_eq!(bodies.len(), 2);
-    let tool_content = bodies[1]["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|message| message["role"] == "tool")
-        .unwrap()["content"]
-        .as_str()
-        .unwrap();
-    let tool_content: Value = serde_json::from_str(tool_content).unwrap();
+    let tool_content: Value = {
+        let bodies = f.bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 2);
+        let content = bodies[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "tool")
+            .unwrap()["content"]
+            .as_str()
+            .unwrap();
+        serde_json::from_str(content).unwrap()
+    };
     assert_eq!(tool_content["source"], "context_still");
-    drop(bodies);
     end("context-still-owner").await.unwrap();
     assert!(f.released.load(Ordering::SeqCst));
     let projected = crate::larm_voice::render_response(

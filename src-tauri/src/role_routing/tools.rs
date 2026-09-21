@@ -46,6 +46,7 @@ pub(crate) fn permits_effect(role: &str, effect: ToolEffect) -> Result<(), &'sta
     allowed.then_some(()).ok_or("role_tool_denied")
 }
 
+#[allow(dead_code)] // Contract helper retained for offline recipe validation.
 pub(crate) fn unique_operation_keys(keys: &[String]) -> bool {
     keys.iter().collect::<HashSet<_>>().len() == keys.len()
 }

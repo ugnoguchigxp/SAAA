@@ -83,7 +83,9 @@ function valid(frame: unknown): frame is Frame {
     value.timeoutMs >= 1_000 &&
     value.timeoutMs <= 300_000 &&
     (value.outputSchema === undefined ||
-      (typeof value.outputSchema === "object" && value.outputSchema !== null && !Array.isArray(value.outputSchema))) &&
+      (typeof value.outputSchema === "object" &&
+        value.outputSchema !== null &&
+        !Array.isArray(value.outputSchema))) &&
     (value.toolGatewayUrl === undefined || validToolGatewayUrl(value.toolGatewayUrl))
   );
 }

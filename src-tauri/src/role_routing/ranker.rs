@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn rr_35_invalid_ranker_falls_back_to_rules() {
         let rule = candidate("rule");
-        let scores = shadow_scores(&[rule.clone()], &[("rule".into(), f64::NAN)]);
+        let scores = shadow_scores(std::slice::from_ref(&rule), &[("rule".into(), f64::NAN)]);
         assert_eq!(choose_shadow_or_rules(&rule, &scores, 0.1), "rule");
     }
     #[test]

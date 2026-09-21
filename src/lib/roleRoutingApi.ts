@@ -44,7 +44,9 @@ export function rollbackAdaptiveArtifact(artifactId: string): Promise<RoutingLea
   });
 }
 
-export function listAdaptiveEvaluations(): Promise<import("./generated/runtimeEvent").EvaluationView[]> {
+export function listAdaptiveEvaluations(): Promise<
+  import("./generated/runtimeEvent").EvaluationView[]
+> {
   return invoke("list_adaptive_evaluations");
 }
 
@@ -57,7 +59,10 @@ export function approveAdaptiveArtifact(
   });
 }
 
-export function activateAdaptiveArtifact(artifactId: string, expectedRevision: number): Promise<void> {
+export function activateAdaptiveArtifact(
+  artifactId: string,
+  expectedRevision: number,
+): Promise<void> {
   return invoke("activate_adaptive_artifact", {
     input: { artifactId, expectedRevision },
   });

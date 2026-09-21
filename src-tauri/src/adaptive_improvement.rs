@@ -477,6 +477,7 @@ pub(crate) fn record_decision(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the persisted outcome columns atomically.
 pub(crate) fn record_outcome(
     c: &Connection,
     decision_id: &str,
@@ -512,6 +513,7 @@ pub(crate) fn record_outcome(
     tx.commit().map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)] // Transactional twin of `record_outcome`.
 pub(crate) fn record_outcome_in_transaction(
     c: &Connection,
     decision_id: &str,
@@ -655,6 +657,7 @@ pub(crate) fn materialize_dirty(
 
 /// An explicit correction is immediate, scope-bound, and supersedes (rather than mutates) its
 /// predecessor. Call `revoke_override` to undo it with another auditable revision.
+#[allow(clippy::too_many_arguments)] // Boundary keeps the full audited override record explicit.
 pub(crate) fn set_override(
     c: &Connection,
     domain: Domain,
@@ -670,6 +673,7 @@ pub(crate) fn set_override(
     tx.execute("INSERT INTO ai_overrides(id,domain,scope_key,candidate_id,active,revision,source_id,expires_at_ms,created_at_ms) VALUES(?1,?2,?3,?4,1,?5,?6,?7,?8)",params![format!("aio-{}", digest(format!("{}:{scope}:{candidate}:{revision}",domain.as_str()).as_bytes())[..24].to_string()),domain.as_str(),scope,candidate,revision,source,expires,now]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn revoke_override(
     c: &Connection,
     domain: Domain,

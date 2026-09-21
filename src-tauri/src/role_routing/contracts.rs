@@ -126,6 +126,7 @@ pub(crate) struct RoutingLearning {
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Default)]
 pub(crate) struct AdaptiveImprovementSettings {
     pub(crate) enabled: bool,
     pub(crate) provider_recipe: bool,
@@ -202,17 +203,6 @@ impl Default for RoutingLearning {
             max_run_seconds: 600,
             batch_size: 100,
             allow_local_labeler: false,
-        }
-    }
-}
-impl Default for AdaptiveImprovementSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            provider_recipe: false,
-            tool: false,
-            plan: false,
-            notification: false,
         }
     }
 }
@@ -458,9 +448,11 @@ mod tests {
 
     #[test]
     fn cross_review_requires_distinct_actors() {
-        let mut settings = RoleRoutingSettings::default();
-        settings.enabled = true;
-        settings.actors = vec![provider_actor("qwen")];
+        let mut settings = RoleRoutingSettings {
+            enabled: true,
+            actors: vec![provider_actor("qwen")],
+            ..Default::default()
+        };
         settings.roles.reasoner = Some("qwen".to_string());
         settings.roles.reviewer = Some("qwen".to_string());
         settings.recipes = vec![RoutingRecipe {

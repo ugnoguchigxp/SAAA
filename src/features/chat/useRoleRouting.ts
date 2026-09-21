@@ -54,9 +54,7 @@ export function useRoleRouting(conversationId: string | null) {
         ).flat();
         if (conversationRef.current !== conversationId) return;
         const advanced = advanceRoutingEventCursors(cursorsRef.current, replayed);
-        cursorsRef.current = new Map(
-          [...advanced].filter(([rootId]) => roots.has(rootId)),
-        );
+        cursorsRef.current = new Map([...advanced].filter(([rootId]) => roots.has(rootId)));
         eventsRef.current = mergeRoutingEventRecords(eventsRef.current, replayed)
           .filter((event) => roots.has(event.rootId))
           .slice(-256);

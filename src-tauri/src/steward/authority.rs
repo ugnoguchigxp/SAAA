@@ -218,6 +218,7 @@ pub(crate) fn operations_cover(operations: &[Operation], requested: &[Operation]
     })
 }
 
+#[allow(clippy::too_many_arguments)] // Authority bindings are persisted as a single audited unit.
 pub(crate) fn persist_binding(
     connection: &Connection,
     subject_kind: &str,

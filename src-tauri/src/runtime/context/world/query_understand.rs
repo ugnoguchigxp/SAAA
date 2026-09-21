@@ -168,15 +168,13 @@ fn english_paraphrase(text: &str) -> Option<QueryUnderstanding> {
             return None;
         }
         Some(rest.replace(" related", "").trim().to_string())
-    } else if let Some(rest) = lower.strip_prefix("what does ") {
-        Some(
+    } else {
+        lower.strip_prefix("what does ").map(|rest| {
             rest.replace(" depend on", "")
                 .replace(" depend", "")
                 .trim()
-                .to_string(),
-        )
-    } else {
-        None
+                .to_string()
+        })
     }?;
     let topic = topic.trim_end_matches('?').trim().to_string();
     if topic.is_empty() {

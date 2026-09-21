@@ -20,6 +20,7 @@ pub(crate) struct RemoteEvent {
     pub(crate) end: Option<i64>,
     pub(crate) entry_id: Option<String>,
     pub(crate) rev: Option<i64>,
+    #[allow(dead_code)] // Reserved for remote-change reconciliation.
     pub(crate) hash: Option<String>,
 }
 

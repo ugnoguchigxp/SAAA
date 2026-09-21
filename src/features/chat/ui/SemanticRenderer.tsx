@@ -27,14 +27,7 @@ export function SemanticRenderer({
       return <MarkdownView text={source} displayMode={displayMode} />;
     case "Metric":
     case "Status":
-      return (
-        <MetricView
-          source={source}
-          field={field}
-          label={label}
-          kind={node.kind}
-        />
-      );
+      return <MetricView source={source} field={field} label={label} kind={node.kind} />;
     case "Table":
       return <TableView source={source} columns={field} stateId={node.id} />;
     case "ModelStatus":
