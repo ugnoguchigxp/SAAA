@@ -16,6 +16,7 @@ import {
   reasoningCancellationRequested,
 } from "../../lib/reasoningRun";
 import { useMessageHistory } from "./useMessageHistory";
+import { useDelegatedReports } from "./useDelegatedReports";
 import {
   type Dispatch,
   type FormEvent,
@@ -92,6 +93,9 @@ export function useConversationTurn({
     loadingOlderMessages,
     loadingNewerMessages,
   } = history;
+  useDelegatedReports(selectedConversationId, (id) => {
+    if (!history.isBrowsingOlder()) void history.latest(id);
+  });
   const [composer, setComposer] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const worldScope = useWorldScope(selectedConversationId, activeRunId);

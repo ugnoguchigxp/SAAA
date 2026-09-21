@@ -46,15 +46,39 @@ pub(crate) fn settle(
     if !matches!(state, "dispatched" | "settled" | "unknown") {
         return Err("Invalid role-routing tool dispatch state".into());
     }
+    let existing = find_by_operation(connection, root_id, operation_key)?
+        .ok_or_else(|| "Role-routing tool reservation is unavailable".to_string())?;
+    // A settled link is idempotent only for the same terminal request. Everything else is a
+    // conflict that the caller must see: a silent no-op would hide a lost or duplicated mutation.
+    if existing.dispatch_state == "settled" {
+        return if state == "settled" {
+            Ok(existing)
+        } else {
+            Err("Role-routing tool link is already settled".into())
+        };
+    }
+    let allowed = match existing.dispatch_state.as_str() {
+        "reserved" => matches!(state, "dispatched" | "settled" | "unknown"),
+        "dispatched" => matches!(state, "settled" | "unknown"),
+        // An unknown outcome may be corrected only by a concrete terminal result. It must never be
+        // turned back into `dispatched`, which would invite a retry.
+        "unknown" => state == "settled" && result_ref.is_some(),
+        _ => false,
+    };
+    if !allowed {
+        return Err(format!(
+            "Role-routing tool link cannot transition {} -> {state}",
+            existing.dispatch_state
+        ));
+    }
     let changed = connection
         .execute(
-            "UPDATE rr_tool_links SET invocation_id=COALESCE(?1,invocation_id),result_ref=COALESCE(?2,result_ref),dispatch_state=?3,updated_at_ms=?4 WHERE root_id=?5 AND operation_key=?6 AND dispatch_state IN ('reserved','dispatched')",
-            params![invocation_id, result_ref, state, now_ms, root_id, operation_key],
+            "UPDATE rr_tool_links SET invocation_id=COALESCE(?1,invocation_id),result_ref=COALESCE(?2,result_ref),dispatch_state=?3,updated_at_ms=?4 WHERE root_id=?5 AND operation_key=?6 AND dispatch_state=?7",
+            params![invocation_id, result_ref, state, now_ms, root_id, operation_key, existing.dispatch_state],
         )
         .map_err(|error| error.to_string())?;
-    if changed == 0 {
-        return find_by_operation(connection, root_id, operation_key)?
-            .ok_or_else(|| "Role-routing tool reservation is unavailable".into());
+    if changed != 1 {
+        return Err("Role-routing tool settlement lost a concurrent update".into());
     }
     find_by_operation(connection, root_id, operation_key)?
         .ok_or_else(|| "Role-routing tool settlement was not persisted".into())
@@ -174,5 +198,74 @@ mod tests {
                 .dispatch_state,
             "unknown"
         );
+    }
+
+    #[test]
+    fn rr_11_late_owner_settles_unknown() {
+        let connection = fixture();
+        reserve(&connection, &proposed(), 1).expect("reserve");
+        settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation"),
+            None,
+            "unknown",
+            2,
+        )
+        .expect("unknown");
+        // A detached owner's later concrete result may settle the unknown link.
+        let settled = settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation"),
+            Some("result"),
+            "settled",
+            3,
+        )
+        .expect("late settle");
+        assert_eq!(settled.dispatch_state, "settled");
+        // Re-settling to the same terminal state is idempotent; conflicting transitions surface.
+        assert!(settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation"),
+            Some("result"),
+            "settled",
+            4,
+        )
+        .is_ok());
+        assert!(settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation"),
+            Some("result"),
+            "dispatched",
+            5,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rr_11_settle_failure_blocks_continuation() {
+        let connection = fixture();
+        reserve(&connection, &proposed(), 1).expect("reserve");
+        // An unknown outcome cannot be downgraded back to dispatched, so a continuation that tries
+        // to re-run the operation gets a hard error instead of a silent success.
+        settle(&connection, "root", "operation", None, None, "unknown", 2).expect("unknown");
+        assert!(settle(
+            &connection,
+            "root",
+            "operation",
+            Some("invocation"),
+            None,
+            "dispatched",
+            3,
+        )
+        .is_err());
+        assert!(has_unsettled_for_revision(&connection, "root", 0).expect("unsettled"));
     }
 }

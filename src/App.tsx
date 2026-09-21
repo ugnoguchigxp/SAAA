@@ -34,6 +34,7 @@ import { useOwnedSignalHeartbeat } from "./useOwnedSignalHeartbeat";
 import { SettingsPage } from "./appPages";
 import { DesignSystemProvider } from "./design-system";
 import "./design-system/styles.css";
+import { ArtifactWorkspaceProvider } from "./features/chat/artifacts/ArtifactDrawer";
 
 type Surface = "chat" | "settings";
 const initialSnapshot: AppSnapshot = {
@@ -236,50 +237,54 @@ function App() {
             }
           />
         ) : (
-          <ChatPage
-            worldScope={turn.worldScope}
-            setupSnapshot={snapshot}
-            messages={turn.messages}
-            hasMoreMessages={turn.hasMoreMessages}
-            loadingOlderMessages={turn.loadingOlderMessages}
-            onLoadOlderMessages={turn.loadOlderMessages}
-            hasNewerMessages={turn.hasNewerMessages}
-            loadingNewerMessages={turn.loadingNewerMessages}
-            onLoadNewerMessages={turn.loadNewerMessages}
-            streamingText={turn.streamingText}
-            interimTranscript={voice.interimTranscript}
-            voiceState={voiceState}
-            listeningEnabled={voice.listeningEnabled}
-            runtimeActivity={turn.runtimeActivity}
-            composer={composer}
-            onComposerChange={turn.setComposer}
-            onSubmit={(event) => void turn.handleSubmit(event)}
-            onToggleVoice={() => void voice.toggleAmbientListening()}
-            voiceStarting={voice.voiceStarting}
-            activeRunId={activeRunId}
-            modelProviderStatus={modelProviderStatus}
-            onOpenSettings={openSettings}
-            onStopRun={() => void turn.stopActiveRun()}
-            onStopSpeech={() => void stopSpeech()}
-            onRetry={() => void turn.retryFailedAction()}
-            selectedConversation={selectedConversation}
-            activeTtsRunId={activeTtsRunId}
-            error={error}
-            lastPrompt={turn.lastPrompt}
-            retryKind={turn.retryKind}
-            requiredContextFailure={turn.requiredContextFailure}
-            onPrepareRequiredContextRecovery={turn.prepareRequiredContextRecovery}
-            voicePolicy={turn.voicePolicy}
-            voicePolicyUpdating={turn.voicePolicyUpdating}
-            onSetConversationSpeechOutput={(value) => void turn.setConversationSpeechOutput(value)}
-            onSetConversationListeningPace={(value) =>
-              void turn.setConversationListeningPace(value)
-            }
-            onResetConversationVoiceOverrides={() => void turn.resetConversationVoiceOverrides()}
-            routingSnapshot={routing.snapshot}
-            routingCancellingRootId={routing.cancellingRootId}
-            onCancelRouting={(rootId) => void routing.cancel(rootId)}
-          />
+          <ArtifactWorkspaceProvider>
+            <ChatPage
+              worldScope={turn.worldScope}
+              setupSnapshot={snapshot}
+              messages={turn.messages}
+              hasMoreMessages={turn.hasMoreMessages}
+              loadingOlderMessages={turn.loadingOlderMessages}
+              onLoadOlderMessages={turn.loadOlderMessages}
+              hasNewerMessages={turn.hasNewerMessages}
+              loadingNewerMessages={turn.loadingNewerMessages}
+              onLoadNewerMessages={turn.loadNewerMessages}
+              streamingText={turn.streamingText}
+              interimTranscript={voice.interimTranscript}
+              voiceState={voiceState}
+              listeningEnabled={voice.listeningEnabled}
+              runtimeActivity={turn.runtimeActivity}
+              composer={composer}
+              onComposerChange={turn.setComposer}
+              onSubmit={(event) => void turn.handleSubmit(event)}
+              onToggleVoice={() => void voice.toggleAmbientListening()}
+              voiceStarting={voice.voiceStarting}
+              activeRunId={activeRunId}
+              modelProviderStatus={modelProviderStatus}
+              onOpenSettings={openSettings}
+              onStopRun={() => void turn.stopActiveRun()}
+              onStopSpeech={() => void stopSpeech()}
+              onRetry={() => void turn.retryFailedAction()}
+              selectedConversation={selectedConversation}
+              activeTtsRunId={activeTtsRunId}
+              error={error}
+              lastPrompt={turn.lastPrompt}
+              retryKind={turn.retryKind}
+              requiredContextFailure={turn.requiredContextFailure}
+              onPrepareRequiredContextRecovery={turn.prepareRequiredContextRecovery}
+              voicePolicy={turn.voicePolicy}
+              voicePolicyUpdating={turn.voicePolicyUpdating}
+              onSetConversationSpeechOutput={(value) =>
+                void turn.setConversationSpeechOutput(value)
+              }
+              onSetConversationListeningPace={(value) =>
+                void turn.setConversationListeningPace(value)
+              }
+              onResetConversationVoiceOverrides={() => void turn.resetConversationVoiceOverrides()}
+              routingSnapshot={routing.snapshot}
+              routingCancellingRootId={routing.cancellingRootId}
+              onCancelRouting={(rootId) => void routing.cancel(rootId)}
+            />
+          </ArtifactWorkspaceProvider>
         )}
       </Suspense>
     </main>

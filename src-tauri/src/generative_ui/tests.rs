@@ -27,6 +27,24 @@ fn generative_ui_parser_rejects_executable_or_unbounded_definitions() {
         assert!(parser::parse(invalid).is_err(), "{invalid}");
     }
 }
+
+#[test]
+fn generative_ui_markdown_is_bounded_and_has_no_children() {
+    let markdown = parser::parse(
+        &json!({"kind":"Markdown","args":["# Article\n\n```mermaid\ngraph TD; A-->B\n```"]})
+            .to_string(),
+    )
+    .unwrap();
+    assert_eq!(markdown.kind, "Markdown");
+    assert!(
+        parser::parse(&json!({"kind":"Markdown","args":["x".repeat(49_153)]}).to_string()).is_err()
+    );
+    assert!(parser::parse(
+        &json!({"kind":"Markdown","args":["ok"],"children":[{"kind":"Text","args":["no"]}]})
+            .to_string()
+    )
+    .is_err());
+}
 #[test]
 fn generative_ui_revisions_and_snapshots_are_immutable_and_instances_independent() {
     let mut c = database();
@@ -41,6 +59,20 @@ fn generative_ui_revisions_and_snapshots_are_immutable_and_instances_independent
     let second = store::create(&tx, conversation, input(Some(id.into()), "live")).unwrap();
     tx.commit().unwrap();
     assert_eq!(second["revision"], 2);
+    let revisions = store::list_revisions(&c, first["viewId"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        revisions
+            .iter()
+            .map(|item| item.revision)
+            .collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    assert_eq!(
+        store::load_revision(&c, second["instanceId"].as_str().unwrap(), Some(1))
+            .unwrap()
+            .revision,
+        1
+    );
     assert_eq!(store::load(&c, id).unwrap().revision, 1);
     let tx = c.transaction().unwrap();
     assert!(store::create(&tx, conversation, input(Some(id.into()), "live")).is_err());

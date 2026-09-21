@@ -55,6 +55,7 @@ mod voice_commands;
 mod voice_text;
 #[cfg(test)]
 mod wasm_host_poc;
+mod window_size;
 
 pub(crate) use models::*;
 #[cfg(test)]
@@ -421,6 +422,9 @@ pub fn run() {
                 .parent()
                 .ok_or_else(|| std::io::Error::other("Database path has no parent directory"))?
                 .to_path_buf();
+            if let Some(window) = app.get_webview_window("main") {
+                window_size::restore(&window, &voice_data_directory);
+            }
             voice::cloud_tts::cleanup_cache(&voice_data_directory.join("tts-cache"))
                 .map_err(std::io::Error::other)?;
             let voice_profile = Arc::new(voice::profile::VoiceProfileRuntime::initialize(
@@ -603,6 +607,7 @@ pub fn run() {
                 tool_selection,
                 mcp_server: Mutex::new(mcp_server),
                 schedule: Arc::new(schedule::Handle::default()),
+                steward_wake: steward::pump::Wake::default(),
             });
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -625,6 +630,7 @@ pub fn run() {
                 return;
             };
             let state = window.state::<AppState>();
+            window_size::save(window, &state.data_directory);
             if state.shutdown_started.swap(true, Ordering::SeqCst) {
                 return;
             }

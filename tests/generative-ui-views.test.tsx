@@ -94,6 +94,7 @@ describe("generative UI views", () => {
           [],
           [
             node("Cell", [], [node("Text", ["hello"])]),
+            node("Markdown", ["# Article\n\nSafe **Markdown**"]),
             node("Metric", ["runtime.summary", "running", "Running"]),
             node("Status", ["runtime.summary", "failed", "Failed"]),
             node("Table", ["runtime.runs", "provider,status,startedAt"], [], "table"),
@@ -108,6 +109,7 @@ describe("generative UI views", () => {
     root = createRoot(document.getElementById("root")!);
     await act(async () => root!.render(tree));
     expect(document.body.textContent).toContain("hello");
+    expect(document.querySelector(".ui-markdown h1")?.textContent).toBe("Article");
     expect(document.querySelector('[data-semantic-component="Metric"]')).not.toBeNull();
     expect(document.querySelector('[data-semantic-component="Status"]')).not.toBeNull();
     expect(document.querySelector('[data-semantic-component="ModelStatus"]')).not.toBeNull();

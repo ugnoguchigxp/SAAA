@@ -64,11 +64,20 @@ const PERMITTED_ASSERTION: &str = "
        OR json_extract(a.metadata,'$.access.task_request')=:task_request)
   AND json_extract(a.metadata,'$.access.policy_revision')=:policy
   AND NOT EXISTS(
-        SELECT 1 FROM personal_dependencies d
-        WHERE d.assertion_id=a.id AND d.dependency_kind='source'
+        SELECT 1 FROM json_each(a.metadata,'$.input_dependencies') dependency
+        WHERE NOT EXISTS(
+              SELECT 1 FROM personal_sources ps
+              WHERE ps.message_id=json_extract(dependency.value,'$.id')
+                AND ps.version=json_extract(dependency.value,'$.version')
+                AND ps.available=1
+                AND NOT EXISTS(SELECT 1 FROM personal_tombstones tombstone
+                               WHERE tombstone.source_id=ps.message_id)))
+  AND NOT EXISTS(
+        SELECT 1 FROM personal_dependencies normalized
+        WHERE normalized.assertion_id=a.id AND normalized.dependency_kind='source'
           AND NOT EXISTS(
-                SELECT 1 FROM personal_sources ps
-                WHERE ps.message_id=d.dependency_id AND ps.available=1))
+                SELECT 1 FROM json_each(a.metadata,'$.input_dependencies') dependency
+                WHERE json_extract(dependency.value,'$.id')=normalized.dependency_id))
   AND CASE json_extract(a.metadata,'$.access.classification')
         WHEN 'public' THEN 0 WHEN 'internal' THEN 1
         WHEN 'confidential' THEN 2 WHEN 'restricted' THEN 3 ELSE 4 END <= :classification

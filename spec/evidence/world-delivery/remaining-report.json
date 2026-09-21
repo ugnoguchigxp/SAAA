@@ -1,14 +1,14 @@
 {
   "suite": "world-remaining",
   "schemaVersion": 1,
-  "code_revision": "e8c79608b138324e51839ef15bff5914f4146771",
-  "dirty_diff_digest": "b3349f1a17a291ef5a3aaf28cf934c46eed3be743d2644f4a5b78ed5fb7dc596",
-  "generated_at": "2026-09-21T05:11:44.892Z",
-  "startedAt": "2026-09-21T05:11:44.785Z",
-  "completedAt": "2026-09-21T05:12:09.800Z",
+  "code_revision": "f4ad46ddc36042fc419b175186ca7f5572741c24",
+  "dirty_diff_digest": "33585ddae4a1efcb2718ad2a1cc79bbe268dc195d36d42f49f9c25fc86662a4a",
+  "generated_at": "2026-09-21T07:09:36.116Z",
+  "startedAt": "2026-09-21T07:09:35.871Z",
+  "completedAt": "2026-09-21T07:10:15.791Z",
   "complete": true,
   "liveVerified": false,
-  "scope": "T01-T21 card regression; separate route matrix, performance and product gates are required",
+  "scope": "T01-T21 regression plus route matrix; performance and product gates are separate",
   "cases": [
     {
       "name": "world::frame_sources::tests::wr_t01_available_requires_matching_typed_payload",
@@ -161,12 +161,12 @@
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "runtime::conversation_turn::conversation_controller::world_eval_tests::wr_t16_mcp_refreshes_after_initialization_and_records_exact_frame",
+      "name": "larm_voice::world_tests::wr_t13_shared_voice_lease_wait_refreshes_actual_http_frame",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "larm_voice::world_tests::wr_t13_shared_voice_lease_wait_refreshes_actual_http_frame",
+      "name": "runtime::conversation_turn::conversation_controller::world_eval_tests::wr_t16_mcp_refreshes_after_initialization_and_records_exact_frame",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
@@ -176,12 +176,142 @@
       "manifest": "src-tauri/Cargo.toml"
     },
     {
-      "name": "voice::http_audio::requests::tests::wr_t19_hold_during_synthesis_prevents_playback",
+      "name": "steward::dwr_tests::dw_r02_contract_rejects_stale_or_ambiguous_bindings",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r02_migration_preserves_all_lineage_and_constraints",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r02_plan_rejects_duplicate_step_ids",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r03_existing_grant_needs_no_repeat_confirmation",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r03_quoted_negative_and_tool_sources_never_grant_authority",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r03_stale_confirmation_is_rejected",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r04_admission_fault_rolls_back_every_row",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r04_duplicate_at_goal_limit_returns_original_receipt",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r04_proposal_creates_plan_task_reservation_and_intent_atomically",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r05_late_result_and_status_refresh_cannot_revive_work",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r05_withdraw_either_goal_preserves_the_other",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r06_revoke_before_dispatch_creates_no_job",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r07_unknown_never_resends",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r09_read_boundary_rejects_write_network_shell_and_escape",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r10_model_cannot_change_recipe_argv_or_output_scope",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r10_registered_recipe_produces_pass_and_fail_evidence",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r11_restart_and_busy_do_not_reset_or_double_charge_budget",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r12_verifier_distinguishes_report_pass_failure_and_missing_evidence",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r13_failed_unknown_and_awaiting_user_do_not_unlock_success_dependencies",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r14_forget_during_hold_or_pending_speech_prevents_redisplay",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
     {
       "name": "runtime::conversation_turn::conversation_controller::world_eval_tests::wr_t22_reasoning_mcp_route_transition_matrix",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r15_claim_failure_never_loses_report",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r16_lost_wakeup_is_recovered_from_database",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r18_reports_show_evidence_and_actionable_unknown",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r19_queries_never_dispatch_or_mutate_delivery",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r19_registered_goal_without_tasks_is_visible_and_withdrawable",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "voice::http_audio::requests::tests::wr_t19_hold_during_synthesis_prevents_playback",
+      "result": "ok",
+      "manifest": "src-tauri/Cargo.toml"
+    },
+    {
+      "name": "steward::dwr_tests::dw_r22_full_flow_without_ui_or_new_turn",
       "result": "ok",
       "manifest": "src-tauri/Cargo.toml"
     },
@@ -201,7 +331,7 @@
       "actual": "current-frame-and-matching-receipt",
       "case_id": "agent-session:initial",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "2325e1e8bfdf2bac374ea6f90425c207e0f184a5cf5397b3215c9c0a4d602780",
+      "frame_digest": "c569fbedbac4a873ee10cca983bbf780f7cd82cb15ec1425fa90b06f03e644e2",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -214,13 +344,13 @@
       ],
       "transition": "initial",
       "verification_level": "offline-wire",
-      "wire_digest": "8a6e4d4282cd73d315018f6834be08949fa1eaf83e35be83ab023e52783e2e29"
+      "wire_digest": "997a027103c9ca5dfbd57cc0c45acbec8c4378e20aed88740a32b8fc31180de6"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "agent-session:tool-continuation",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "8b225c71597bd4e113eb697775545f7aee87ea6464f23232f87ca92180d8ce69",
+      "frame_digest": "1282fa950edba65ee12224489e7e34213581f8949efd65b0c3f40b6a6f2b40b1",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -233,13 +363,13 @@
       ],
       "transition": "tool-continuation",
       "verification_level": "offline-wire",
-      "wire_digest": "8284ff12e8216ff2c1e9bcefd6f5b0d234d40216d08f8d02c0e03e1020095fa2"
+      "wire_digest": "09b262bd94ffaa6ec2eb8c35b0c20cc3ca6037a7d1dd479fd0ed37ca0d9792cf"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "agent-session:fallback",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "d47e7df2dd2b9a8c5f2210d825e9d4b7cba1ff2ff05322fdfd48e7ff7e21d593",
+      "frame_digest": "cdd6f2f9308fe88a8b8b8fd5b4b7ad67f2a9bca12e3ed415cbc1ebed29078603",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -252,7 +382,7 @@
       ],
       "transition": "fallback",
       "verification_level": "offline-wire",
-      "wire_digest": "7607e319dff2c884147de54b36362b417fd1701c86dc74e7e899a7ef273ba83c"
+      "wire_digest": "8c4056cd867920c0beaa617ac4a850f22a92630311ca39b38bba57aa9cffbf58"
     },
     {
       "actual": "denied-before-agent-turn",
@@ -272,7 +402,7 @@
       "actual": "current-frame-and-matching-receipt",
       "case_id": "agent-session:correction",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "40ce149ab168353a79e73d744795a5feb833a6ca8f16c3ba87a626987ec04376",
+      "frame_digest": "38c34e6140a5eba4af20a502701f6a1f8e98ae2592fb2d2d500d21ecbe7aebe1",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -285,13 +415,13 @@
       ],
       "transition": "correction",
       "verification_level": "offline-wire",
-      "wire_digest": "e44dd8aa0841a313b175fb36c98a0527edc736ab3ac8098442dbee41ead22b1f"
+      "wire_digest": "c5e56c4efcdbfcd90f44da99c1ce0d487241f941a4185f680dcd21b8ec9a4135"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "agent-session:forget",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "99e7f589e0c96c57724f4491bbf53ce5905526f30948b3b92e71be02a9788540",
+      "frame_digest": "06f084161f2b730c12c28d623e8876e114eb597eafac6a5223354f8566412d0f",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -304,16 +434,16 @@
       ],
       "transition": "forget",
       "verification_level": "offline-wire",
-      "wire_digest": "ae23bd09005cd02494d78073c57fd430f9fc606c2c995bee549a4e4eccf0cfd6"
+      "wire_digest": "985c24e77ee9ff130c3decb7777c97aacd00a91c78097c2df50e70a51385e2e6"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "agent-session:session-resume",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "f15879a1f0e85a062516bff66ac8875b5f64fd5de3b72859a7f529534b5469db",
+      "frame_digest": "775290363b7bb8708be64d84ca2f4200b4dce9d8968e4c986024b6054de84a8c",
       "omission_reason": null,
       "pass": true,
-      "request_count": 1,
+      "request_count": 2,
       "route": "agent-session",
       "source_kinds": [
         "coding",
@@ -323,13 +453,13 @@
       ],
       "transition": "session-resume",
       "verification_level": "offline-wire",
-      "wire_digest": "722ff2222f73c31b6d13e4e82cc0811b434d479e2fbffb1667130d6397902dcd"
+      "wire_digest": "e2d57a6fb3fa7420c5fd137a1fbf35a12f64e43cd3169f488f57b9b431453e53"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "codex:initial",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "c545fe685faaa79b75da3dff05ceb78a8abe3aa37e44abbd01b418b377bd2c6e",
+      "frame_digest": "732057d6b8c40fbd9d0aac65fcfbf0127f07bf10138f928db6741deb2af5e8a5",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -342,13 +472,13 @@
       ],
       "transition": "initial",
       "verification_level": "offline-wire",
-      "wire_digest": "38d267e11d49b63afd61a043ff0dfea09e0829c6f0c8a77b7ef03050c33cf76d"
+      "wire_digest": "a505e33e85d06e79142209198786b0a46086b7e10a5d024817b163851b58c13b"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "codex:tool-continuation",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "455561f954184e9079ebf7604d353a318dc0acea0cff812e30e17d7f25a2972a",
+      "frame_digest": "a962a532f90dec7e8090e596b47a1aeab98c80a2c54ec43a35678417397c2e13",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -361,13 +491,13 @@
       ],
       "transition": "tool-continuation",
       "verification_level": "offline-wire",
-      "wire_digest": "a90506094236b7dbf65c7235b9eed3242b430480a1a79864461ac830a09f309e"
+      "wire_digest": "5ed41491f917c3d7d236b52043399e69f48778a7ab726544e0283b2e187dac08"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "codex:fallback",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "9832bcdd8784756816ddc037fa4c157e30dd28c3e467b51358b254e3a49a4c60",
+      "frame_digest": "eabd572761e6828fe40af59b57a2bf4a456390ac93b7f4e28fb81980ca708103",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -380,7 +510,7 @@
       ],
       "transition": "fallback",
       "verification_level": "offline-wire",
-      "wire_digest": "78267edfa4a4d12f148ad25574537e025adeb2e3910e7c7f0a47566f5fce5e3c"
+      "wire_digest": "94f77c909e434fab23e09d8ff87458e6cb696330f4da6bf6195964504b544df0"
     },
     {
       "actual": "denied-before-turn-start",
@@ -400,7 +530,7 @@
       "actual": "current-frame-and-matching-receipt",
       "case_id": "codex:correction",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "e2b3bb60b2caa19b0ed42c2a16e8937a192bcd423af0088ea4f036f6d6efb3fe",
+      "frame_digest": "35b409816282793b7db186b769e7390d3ef7831b1fd8a776469bb5b7cc38821c",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -413,13 +543,13 @@
       ],
       "transition": "correction",
       "verification_level": "offline-wire",
-      "wire_digest": "654327a732beb5f8319d66766805d3bc96f434848c3d05d075298d6edcf16cf6"
+      "wire_digest": "dabdd203eae7ff4d3470d71e528f91e74261fc3acbc1ed95541acbcc545bfcc6"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "codex:forget",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "f2f24ec910b093f1c5de176e9ad7b7e372739a151c6ce8fed076dfb14fd4d337",
+      "frame_digest": "9ed621469a67fda0aad97391612e8e918c8ae9430a229dd29e4364692e245f6f",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -432,13 +562,13 @@
       ],
       "transition": "forget",
       "verification_level": "offline-wire",
-      "wire_digest": "2668d523eac491e27fbfc392b8c965eb449a86e424f6247b9491fa35cf848469"
+      "wire_digest": "9effb3c8f118dec6b866944660d4b67d789a4763e8d387c405259088092b9df7"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "codex:session-resume",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "3868e0cf9695ecb8b3ef656089095f986d274cb6b11d1050391bf869c6b91614",
+      "frame_digest": "4c8a14a320d898df116610f9c6452583faf3b06dea54b498d82a98b467afc146",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -451,13 +581,32 @@
       ],
       "transition": "session-resume",
       "verification_level": "offline-wire",
-      "wire_digest": "125971142545262f57ff3b2846cc1e16e653687e0961c51920da4f60ba65b711"
+      "wire_digest": "413d02f0c2fc36f0a50d2b147754ad8d54309a8420735e8a878684fb1a322ae5"
+    },
+    {
+      "actual": "current-frame-and-matching-receipt",
+      "case_id": "openai-compatible:initial",
+      "expected": "current-frame-and-matching-receipt",
+      "frame_digest": "21ce09f18022c0282b0c68de32be681280023b77496052a0a0c45b0ca30efdc4",
+      "omission_reason": null,
+      "pass": true,
+      "request_count": 1,
+      "route": "openai-compatible",
+      "source_kinds": [
+        "coding",
+        "delegation",
+        "schedule",
+        "situation"
+      ],
+      "transition": "initial",
+      "verification_level": "offline-wire",
+      "wire_digest": "3d1754fb8087c69a4895867b4ac3cb56af5bcfffbec3da5161ef135502f152a6"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "reasoning-mcp:initial",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "f848dcbe5def311a7731cfbc505416cf333ca4c934cc4c7f2574d2d7d59e589e",
+      "frame_digest": "666962f51b222076f2fa7d9c1ab66805b5800b6dd8af3087158a5f4ca3debf16",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -470,7 +619,7 @@
       ],
       "transition": "initial",
       "verification_level": "offline-wire",
-      "wire_digest": "0eb58f4e564c8a2493703c88071c9a9a5dc2d7a48a5bf20a706057770c6b51ae"
+      "wire_digest": "92cef0e75bbb3d211d48d09ea39eb53b1a633d67e63aedfbe4a476e8ec9e692a"
     },
     {
       "actual": "n/a-no-host-tool-capability",
@@ -490,7 +639,7 @@
       "actual": "current-frame-and-matching-receipt",
       "case_id": "reasoning-mcp:fallback",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "89f67ad3ed68b4abc9b51211d9db8edd41d3a15e0b3efde86ed08c018ef503f7",
+      "frame_digest": "702905e5caec83a49519447ceae7de1b4bcf3f627e4bab139ad2dffdefa548a6",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -503,7 +652,7 @@
       ],
       "transition": "fallback",
       "verification_level": "offline-wire",
-      "wire_digest": "23a410b7e3787284353aacc7566c8ee350f429179fa806847f6960d85b2e22b6"
+      "wire_digest": "4c94eebca3028eaeaaa3819d8d0ef5486d32782dfea5ecf1e739b4ed7146907b"
     },
     {
       "actual": "denied-before-tools-call",
@@ -521,28 +670,9 @@
     },
     {
       "actual": "current-frame-and-matching-receipt",
-      "case_id": "openai-compatible:initial",
-      "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "ee425f070405b61def7a27a7f71efb293a849be4b6d6ab498bb2cece31b0e851",
-      "omission_reason": null,
-      "pass": true,
-      "request_count": 1,
-      "route": "openai-compatible",
-      "source_kinds": [
-        "coding",
-        "delegation",
-        "schedule",
-        "situation"
-      ],
-      "transition": "initial",
-      "verification_level": "offline-wire",
-      "wire_digest": "297fec585eb472ee0fe57766e8fe682d27b877a22b8fe00e2e3c9f6197234ffd"
-    },
-    {
-      "actual": "current-frame-and-matching-receipt",
       "case_id": "reasoning-mcp:correction",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "12061e301b976cedf57e51d3ae8513925a9d1fbb232823557b98049778fe67b6",
+      "frame_digest": "827f6d2862bc2ae30ddc60e27f09f9cb6891015bee9bbeef9d8ac9f7b2320ae5",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -555,13 +685,13 @@
       ],
       "transition": "correction",
       "verification_level": "offline-wire",
-      "wire_digest": "1e63fc7f6db23724699573ac6ddb42bf176167cfcccca5c39d38fbec4c72e366"
+      "wire_digest": "30f6d028994e75f2c0f718e5e48f3ed108f40adc4a3ca7b07300bb98d32e02cd"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "reasoning-mcp:forget",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "b9e5561e70e5d93f83e045b143b6f60d11c4d3f1c686ce5a710cd00a2f1c3995",
+      "frame_digest": "72b1e21e668e3a4534b124af9dad7e20f5d6ce3176364abb15c7a66982986883",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -574,16 +704,16 @@
       ],
       "transition": "forget",
       "verification_level": "offline-wire",
-      "wire_digest": "39c9980bbc5e64cf43abe0f31f841d76de5ff9ecc3eab0975c2d3643df1603f1"
+      "wire_digest": "aad13c53482be571ca6d4d32e3a6ee8440c31ab2326ec3161e7b68698e548673"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "reasoning-mcp:session-resume",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "7129981bfd098e6cd9ee3ae6ef36d6719005a16d16742051d3288676c24caf2d",
+      "frame_digest": "0379278f2d7ea5385cbf15d862239fc61b91b09720c375bf49e05d15fe81b418",
       "omission_reason": null,
       "pass": true,
-      "request_count": 1,
+      "request_count": 2,
       "route": "reasoning-mcp",
       "source_kinds": [
         "coding",
@@ -593,13 +723,13 @@
       ],
       "transition": "session-resume",
       "verification_level": "offline-wire",
-      "wire_digest": "8ee14f8af71a18f960e1b56aece1dac6fe05d65d72d954c23249b1131b9ff560"
+      "wire_digest": "825f67e6fd1feed1be8647e36c091c8e3095c1cd467295a74d300450f45329a4"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "openai-compatible:tool-continuation",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "27b02b71af63b15de75ff7cdd691a816811a2577bc4c123a10e7304d29df5c64",
+      "frame_digest": "016a50d692e43461697ceb77cd8f30994f3f48a9bf16f12bc1e332643aaacee3",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -612,13 +742,13 @@
       ],
       "transition": "tool-continuation",
       "verification_level": "offline-wire",
-      "wire_digest": "9a1ec49a4c8def7c3aa8eb84c00498d9fa8da0a5e49a458e7d43b7146d73ec63"
+      "wire_digest": "d2fd877d7b515e4fca7a3c45989501fdfb6c801368f0d9357c062d1866d170c9"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "openai-compatible:fallback",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "35ee8f574c8c6b31d8d91adac19b8a4aa25986c00bda226dd7c0b765f513c493",
+      "frame_digest": "f2692e4fb519eaf7352ca2e37084c5258028ce5d850ed83582ede4db12204223",
       "omission_reason": null,
       "pass": true,
       "request_count": 4,
@@ -631,7 +761,7 @@
       ],
       "transition": "fallback",
       "verification_level": "offline-wire",
-      "wire_digest": "899cd12b0ee092e46b58abdd5095a1a190595ba7c36b65787753a0690b9a90b0"
+      "wire_digest": "fb6eff3442c1cdc8886af2df1b199f2126035c56746980d081f79194c733074e"
     },
     {
       "actual": "denied-before-model-wire",
@@ -651,7 +781,7 @@
       "actual": "current-frame-and-matching-receipt",
       "case_id": "openai-compatible:correction",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "b22e91e3c1208ad65c8a3784d7e0a6c8e416c62bf2f72d0cf089421f75bece5b",
+      "frame_digest": "6cfb6ee188e23a8cca2ac548b11178d3f72a8bb064e3accdda5eb3d1ecf677b4",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -664,13 +794,13 @@
       ],
       "transition": "correction",
       "verification_level": "offline-wire",
-      "wire_digest": "9d40267e8e014cd7ff54b36f048f8e329a728efe75cf0449ce8677868e3e3a4e"
+      "wire_digest": "941324c49b81feb24dcac3897be89340da1bf3d26dc591207d74af03aa1f0fd3"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "openai-compatible:forget",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "be360b58bb0117ad91b63c5664dbd19b4c33aeffdcac81427c9c30f3a6e82962",
+      "frame_digest": "6cc5655f39ed471c0b6747dc6542df12d41b11714ca70a7c3a97d1de8f92a9a6",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -683,13 +813,13 @@
       ],
       "transition": "forget",
       "verification_level": "offline-wire",
-      "wire_digest": "2cbf7b45e6e304000a9583f13dbe0224b042a96c0a7463b229a499cc77cafd42"
+      "wire_digest": "52f7857fcc77cf854d319e7ca116efdfd9e0e446cb5f0e769c20bc342a8b25ec"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "openai-compatible:session-resume",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "78c4a85f903f23d99008155aee9f66624b840e41c45d7c2f3f61e1bf030a4be2",
+      "frame_digest": "79b7cd501200be3908f5f96eb18b83ca684ac0dcd32db84be2e13b5f31775002",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -702,13 +832,13 @@
       ],
       "transition": "session-resume",
       "verification_level": "offline-wire",
-      "wire_digest": "675cd0e174e9d65d929a2daee166fdb17f73a9d9773ea02a85a3967d483edf9a"
+      "wire_digest": "aaf7901b1f817a22c31535cc0a4a673e3c441eaf1983c88c4c17b24d8f8a55a2"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "dynamic-lan:initial",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "40b3c00c6deacd9f036f9d66ca6387c623518e641ca6d8749a08e82e47334570",
+      "frame_digest": "eba74f5f5f146ffff9e898b177ff4a51a58b4ab178add29f17e1f5b5486b28b4",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -721,13 +851,13 @@
       ],
       "transition": "initial",
       "verification_level": "offline-wire",
-      "wire_digest": "2969eed0e8d8047466b0b6e45801bdb88fc646647275d15e8786b69d3f8d4997"
+      "wire_digest": "5844281c4244861023d3ebea81cb54a1f3f877220cf285d29a02ef3e4f3f4280"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "dynamic-lan:tool-continuation",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "47502632608df67ff1f4a42d4939fa3b8918df41e626273081ef7c71df84f3bf",
+      "frame_digest": "b730e100103a90142801675bfe47af65226d405b95dc6eac6ec30001c4a9b66a",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -740,13 +870,13 @@
       ],
       "transition": "tool-continuation",
       "verification_level": "offline-wire",
-      "wire_digest": "3dd85b738ac4e97b7669732ca824c271a8e3b78f6cc10af4a3fcc59629cc4f22"
+      "wire_digest": "f5f292e4b27fca6865724efb965c342c28f853212e6e00aa58c015c3faf3c94e"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "dynamic-lan:fallback",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "3f7c0d5a63388d62e2bf8b143d4db2620f374bd6565ca4abe0ca2ca8f709f44c",
+      "frame_digest": "ad7f0361981449cc461db7fe8674fa8113c163cb54bd47c667c5481c0f18eac2",
       "omission_reason": null,
       "pass": true,
       "request_count": 4,
@@ -759,7 +889,7 @@
       ],
       "transition": "fallback",
       "verification_level": "offline-wire",
-      "wire_digest": "0bc56ff810d2b699b913cd4bbaf7b88da56c221aec081d2dbffdf873e2b6f59d"
+      "wire_digest": "e348d96213195b419740252a21cff651ab7ae23cf88f6cb1b0fcdaf5e9cec989"
     },
     {
       "actual": "denied-before-model-wire",
@@ -779,7 +909,7 @@
       "actual": "current-frame-and-matching-receipt",
       "case_id": "dynamic-lan:correction",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "7dbdc3a3e891fbc9d32f8e4f32c430d31f4793a36f0d88b5feffca5f566c27dc",
+      "frame_digest": "fbdeea739d3ce506699d6f0d690ae9eb8407d5c3693faf1f33f0b5df4b61f7f8",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -792,13 +922,13 @@
       ],
       "transition": "correction",
       "verification_level": "offline-wire",
-      "wire_digest": "1626dc2dccd1152378a703942d3f7924a2340f4ab61d21f1617f3dc91a321290"
+      "wire_digest": "7eeb726fc0964cb51516271ea804dad2707e5ed38a34081f1b9121de11b00417"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "dynamic-lan:forget",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "36450810917abb21f49b8bfacc9682ccd0a7a56b582d100fa92769be5ba4cea5",
+      "frame_digest": "16a189fb3685f7ff1b1db3d01e997eecfc0405aa516a9587928864772e31d9da",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -811,13 +941,13 @@
       ],
       "transition": "forget",
       "verification_level": "offline-wire",
-      "wire_digest": "e699c40f62025d50871c2d751011c4c62ac7567d2a2f5c673225fc58765cb87f"
+      "wire_digest": "7c6e7e71587847b3a3a77d784da1efb121bf540990a9a9bd686198e635c7c6f7"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "dynamic-lan:session-resume",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "bb7929de2eaf12899c453bdebcfdfe1c0094c160337916186e21c2b9b77192f9",
+      "frame_digest": "069ce69ed945c82b079f47ed9633ecbb28fa24f90a6e217302de51b072e1c94f",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -830,13 +960,13 @@
       ],
       "transition": "session-resume",
       "verification_level": "offline-wire",
-      "wire_digest": "1155f196ff4036b57fbe0b256dc8e9f1e4caee11d73adcdb0f8807d7114b92ee"
+      "wire_digest": "acdb111d9ca519c199e95409ce3ecdd6130424546afb558f28b89fb7479b422d"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "shared-larm:initial",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "a1401ec3b0efcfb06d041e2cccf9055aa27900024d1095c01be8e538c103722b",
+      "frame_digest": "b40eac5ff87d47a4eeae4352d9cf4ccdaf2b938ea9852bc8762aa540055b6d9d",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -849,13 +979,13 @@
       ],
       "transition": "initial",
       "verification_level": "offline-wire",
-      "wire_digest": "97143df5193d8e2eca0692672ee10d2dfe65194fe4b491adf94ee2a729495e38"
+      "wire_digest": "f2a000003d731266d250d6694d491047fb6ff3ee9f083494578c6ce947152e87"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "shared-larm:tool-continuation",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "09e118b3e874d41fdc52ed80a7e11b02a4268f52fb3f2215c64f887e35cbdd78",
+      "frame_digest": "bfc3648983eb6cce9b1d8de0bad0973d364435449ec475d9fd1ef0fa4dd29161",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -868,13 +998,13 @@
       ],
       "transition": "tool-continuation",
       "verification_level": "offline-wire",
-      "wire_digest": "1e546b00efb78d9753e0f4c7a70dce4c36fc7e18fbe9e076845dfc2a157c9baf"
+      "wire_digest": "9d357b2c4163174625b03df94bf34e6608cf3015e8f82e94363f1d1f385afdaf"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "shared-larm:fallback",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "3737255d79dca1c984132d38044ffe7791e45801ace8e6d2ecc3867211f6713b",
+      "frame_digest": "be93ba91e4fb480552e20c627c2cfed180072b982b52d46768f74bb9acd702bc",
       "omission_reason": null,
       "pass": true,
       "request_count": 4,
@@ -887,7 +1017,7 @@
       ],
       "transition": "fallback",
       "verification_level": "offline-wire",
-      "wire_digest": "c89f79099d8aa0e4674bddca451f0c8cfa423773ae66e3e39dd0a877edf05438"
+      "wire_digest": "5dc2c41fcd38a7e64e43f63e9f0538e779e253e365562340f02dc11ed83a97aa"
     },
     {
       "actual": "denied-before-model-wire",
@@ -907,7 +1037,7 @@
       "actual": "current-frame-and-matching-receipt",
       "case_id": "shared-larm:correction",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "9ee071981e36430b26ff2b51f1d3d6a042892fab6b38293711fcf8e07d9144a0",
+      "frame_digest": "cc316a26ed8fa0ee2f3a64913a1e34cbf9feac1e2380d511dc86fe2e56d07dba",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -920,13 +1050,13 @@
       ],
       "transition": "correction",
       "verification_level": "offline-wire",
-      "wire_digest": "4188172e13843d6912dc226cdd1bcd29ca2b71ddcb458ab13c48019dba080331"
+      "wire_digest": "9616d489325ea2170348b5d90634b659e7de3b2334fb58333f55ffbe71ebe6db"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "shared-larm:forget",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "7edadaf9eb702aeecaab0397ac1dd5386d6c58b2486966d263b1756594a99b5d",
+      "frame_digest": "05574c41abfd22e9e75fcc2adccbdb0bfbd94cc1a8b138cd4b1f61ce297c044c",
       "omission_reason": null,
       "pass": true,
       "request_count": 1,
@@ -939,13 +1069,13 @@
       ],
       "transition": "forget",
       "verification_level": "offline-wire",
-      "wire_digest": "133d197c68405d433e60b1877e5927ee8484e596a34ffbbe8c702774ddb01c18"
+      "wire_digest": "a9c3e930c8910b44336d17218a68b985a688dda0cf9dc24b352bd213a86cd92b"
     },
     {
       "actual": "current-frame-and-matching-receipt",
       "case_id": "shared-larm:session-resume",
       "expected": "current-frame-and-matching-receipt",
-      "frame_digest": "9ad4b425dc5b74374d1a379db7b1d5f5bd07b3c44082cd719ef8b057a3185491",
+      "frame_digest": "573e4279857f3b3d376dca69c01b3652519d58da84c3cc3356a2cf8d69ffa8fa",
       "omission_reason": null,
       "pass": true,
       "request_count": 2,
@@ -958,7 +1088,7 @@
       ],
       "transition": "session-resume",
       "verification_level": "offline-wire",
-      "wire_digest": "9163cca4c5d60562a65c0dc43b00c71e363362e6186af9d08818234149a54bf4"
+      "wire_digest": "463298665bc6faa6fa843a247a1547d37ad40ce7833a10d822529f77db19b619"
     }
   ],
   "exits": [

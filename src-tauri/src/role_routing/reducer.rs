@@ -11,7 +11,9 @@ pub(crate) enum Phase {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Event {
     Start,
-    CandidateReady { revision: u32 },
+    CandidateReady {
+        revision: u32,
+    },
     InputBarrier,
     /// Resolves an input barrier as status/social: resume the same revision and adopt the held
     /// result without discarding the in-flight step.
@@ -24,9 +26,13 @@ pub(crate) enum Event {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Effect {
-    DispatchActor { revision: u32 },
+    DispatchActor {
+        revision: u32,
+    },
     /// Adopt the result that was held while the barrier was up, at the current revision.
-    FinalizeHeld { revision: u32 },
+    FinalizeHeld {
+        revision: u32,
+    },
     CancelChildren,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]

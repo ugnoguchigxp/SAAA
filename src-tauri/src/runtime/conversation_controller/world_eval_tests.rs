@@ -223,9 +223,6 @@ async fn reasoning_matrix_case(transition: &str) {
     if matches!(transition, "correction" | "forget" | "scope-switch") {
         h.transition(transition);
     }
-    if transition == "session-resume" {
-        h.fixture.set_now(h.fixture.now() + 3_000);
-    }
     let history = h.history.clone();
     let mut requests = Vec::new();
     if transition == "fallback" {
@@ -235,6 +232,17 @@ async fn reasoning_matrix_case(transition: &str) {
             .await
             .is_err());
         requests.extend(tool_calls(&stale));
+    }
+    if transition == "session-resume" {
+        let initial_h = Harness::new();
+        let initial = crate::providers::reasoning_mcp::tests::fixture("current").await;
+        assert!(
+            run_reasoning_matrix(&initial_h, &initial_h.history, &initial)
+                .await
+                .is_ok()
+        );
+        requests.extend(tool_calls(&initial));
+        h.fixture.set_now(h.fixture.now() + 3_000);
     }
     let server = crate::providers::reasoning_mcp::tests::fixture("current").await;
     let result = run_reasoning_matrix(&h, &history, &server).await;

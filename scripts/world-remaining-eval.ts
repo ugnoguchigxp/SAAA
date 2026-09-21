@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { sameWorldEvidenceIdentity } from "./world-evidence-compare";
 import { worldEvidenceIdentity } from "./world-evidence-identity";
 import { parseMatrixOutput, validateMatrix, type MatrixCase } from "./world-route-matrix";
 export type TestCase = { name: string; result: "ok" | "FAILED" | "ignored"; manifest: string };
@@ -16,24 +17,22 @@ export function validateTests(cases: TestCase[], required: string[]): string[] {
   if (new Set(identities).size !== identities.length) errors.push("duplicate test identity");
   if (!cases.length) errors.push("zero tests");
   for (const prefix of required)
-    if (!cases.some((c) => c.name.includes(prefix) && c.result === "ok"))
+    if (!cases.some((c) => c.name.split("::").at(-1)?.startsWith(prefix) && c.result === "ok"))
       errors.push(`missing passing card ${prefix}`);
   for (const c of cases) if (c.result === "FAILED") errors.push(`failed ${c.name}`);
   return errors;
 }
 export async function runRemaining() {
-  const directory = resolve("spec/evidence/world-delivery");
-  await mkdir(directory, { recursive: true });
-  const path = resolve(directory, "remaining-report.json");
+  await mkdir(resolve("spec/evidence/world-delivery"), { recursive: true });
+  const path = resolve("spec/evidence/world-delivery/remaining-report.json");
   const startedAt = new Date().toISOString();
   const identity = worldEvidenceIdentity();
-  await writeFile(
-    path,
-    JSON.stringify(
+  const save = (value: unknown) => writeFile(path, JSON.stringify(value, null, 2) + "\n");
+  await save(
+    Object.assign(
       { suite: "world-remaining", startedAt, complete: false, phase: "running" },
-      null,
-      2,
-    ) + "\n",
+      identity,
+    ),
   );
   const cases: TestCase[] = [];
   const matrix: MatrixCase[] = [];
@@ -66,10 +65,11 @@ export async function runRemaining() {
   }
   const required = Array.from({ length: 21 }, (_, i) => `wr_t${String(i + 1).padStart(2, "0")}_`);
   const errors = validateTests(cases, required);
-  errors.push(...matrixParseErrors);
-  errors.push(...validateMatrix(matrix));
+  errors.push(...matrixParseErrors, ...validateMatrix(matrix));
   for (const result of exits)
     if (result.exitCode !== 0) errors.push(`child failed: ${result.manifest}`);
+  if (!sameWorldEvidenceIdentity(identity, worldEvidenceIdentity()))
+    errors.push("worktree changed while running World remaining regression");
   const report = {
     suite: "world-remaining",
     schemaVersion: 1,
@@ -78,17 +78,13 @@ export async function runRemaining() {
     completedAt: new Date().toISOString(),
     complete: errors.length === 0,
     liveVerified: false,
-    scope:
-      "T01-T21 card regression; separate route matrix, performance and product gates are required",
+    scope: "T01-T21 regression plus route matrix; performance and product gates are separate",
     cases,
     matrix,
     exits,
     errors,
   };
-  await writeFile(path, JSON.stringify(report, null, 2) + "\n");
+  await save(report);
   if (errors.length) throw new Error(errors.join("\n"));
-  console.log(
-    `World remaining regression: ${cases.filter((c) => c.result === "ok").length} passed`,
-  );
 }
 if (import.meta.main) await runRemaining();

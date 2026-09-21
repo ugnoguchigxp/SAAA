@@ -2,7 +2,6 @@ use super::repository as repo;
 use crate::situation::contracts::ForegroundCategory;
 use crate::{AppState, StartTurnInput};
 use rusqlite::OptionalExtension;
-use serde_json::json;
 
 pub(crate) fn on_user_message(state: &AppState, input: &StartTurnInput) {
     if !crate::memory::control_plane::memory_enabled() {
@@ -29,14 +28,13 @@ fn reduce_message(state: &AppState, input: &StartTurnInput) -> Result<(), String
 }
 
 fn queue(state: &AppState, input: &StartTurnInput, kind: &str) -> Result<(), String> {
-    state.sqlite_writer.write(|connection| {
+    state.sqlite_writer.transact(|connection| {
         let Some(source_id) = repo::input_message_id(connection, &input.run_id)? else {
             return Ok(());
         };
         for work in repo::active_delegations(connection, &input.conversation_id)? {
             if repo::workspace_registered(connection, &input.conversation_id, &work.workspace_id)? {
-                let _ =
-                    repo::queue_task(connection, &work, &input.conversation_id, &source_id, kind)?;
+                repo::queue_task(connection, &work, &input.conversation_id, &source_id, kind)?;
             }
         }
         Ok(())
@@ -85,95 +83,7 @@ pub(crate) fn start_queued_for_conversation(
     state: &AppState,
     conversation_id: &str,
 ) -> Result<(), String> {
-    let prepared = state.sqlite_writer.write(|connection| {
-        let transaction = connection.unchecked_transaction().map_err(crate::database_error)?;
-        let Some((work, task_id)) = repo::next_queued_work(&transaction, conversation_id)?
-        else {
-            transaction.commit().map_err(crate::database_error)?;
-            return Ok(None);
-        };
-        if repo::budget_exceeded(&transaction, &work)? {
-            repo::set_loop_state(&transaction, &task_id, "awaiting_user", None, Some("budget"))?;
-            transaction.commit().map_err(crate::database_error)?;
-            return Ok(None);
-        }
-        if !repo::workspace_registered(&transaction, conversation_id, &work.workspace_id)? {
-            transaction.commit().map_err(crate::database_error)?;
-            return Ok(None);
-        }
-        if !repo::claim_dispatch(&transaction, &task_id)? {
-            transaction.commit().map_err(crate::database_error)?;
-            return Ok(None);
-        }
-        let plan = select_plan_recipe(&transaction, &work, &task_id, now_ms())?;
-        if repo::request_forbidden(plan.request) {
-            return Err("steward_plan_forbidden".into());
-        }
-        repo::persist_task_plan(
-            &transaction,
-            &task_id,
-            plan.id,
-            plan.request,
-            plan.selection_mode,
-            plan.policy_revision,
-        )?;
-        crate::adaptive_improvement::record_decision(
-            &transaction,
-            &crate::adaptive_improvement::DecisionObservation {
-                id: format!("ai-plan-{task_id}"),
-                domain: crate::adaptive_improvement::Domain::Plan,
-                scope_key: work.goal_id.clone(),
-                event_seq: 0,
-                policy_revision: plan.policy_revision,
-                candidate_fingerprint: crate::adaptive_improvement::fingerprint_for(&plan.eligible),
-                eligible_candidates: plan.eligible,
-                selected: plan.id.into(),
-                selection_mode: plan.selection_mode.into(),
-                source_refs_json: json!({"goalId": work.goal_id, "taskId": task_id, "delegationId": work.delegation_id}).to_string(),
-            },
-            now_ms(),
-        )?;
-        transaction.commit().map_err(crate::database_error)?;
-        Ok(Some((work.workspace_id, task_id, plan.request)))
-    })?;
-    let Some((workspace_id, task_id, request)) = prepared else {
-        return Ok(());
-    };
-    if !repo::coding_enabled(state)? {
-        return Ok(());
-    }
-    if !repo::delegated_profile_available(state)? {
-        return state.sqlite_writer.write(|connection| {
-            repo::set_loop_state(
-                connection,
-                &task_id,
-                "awaiting_user",
-                None,
-                Some("delegated_profile_required"),
-            )
-        });
-    }
-    let result = crate::coding::service::execute_delegated(
-        state,
-        conversation_id,
-        &task_id,
-        &workspace_id,
-        request,
-    );
-    state.sqlite_writer.write(|connection| {
-        match result {
-            Ok(value) => {
-                let job = value["jobId"].as_str();
-                repo::set_loop_state(connection, &task_id, "running", job, None)?;
-                repo::settle_dispatch(connection, &task_id, Some(&value), false)?;
-            }
-            Err(error) => {
-                repo::set_loop_state(connection, &task_id, "queued", None, Some(&error))?;
-                repo::settle_dispatch(connection, &task_id, None, true)?;
-            }
-        }
-        Ok(())
-    })
+    super::dispatch::start_queued_for_conversation(state, conversation_id)
 }
 
 /// Schedule is an independent event source: it dispatches one already queued

@@ -58,10 +58,26 @@ pub(super) fn apply_enabled_role_route(
         .into_iter()
         .find(|candidate| candidate.recipe_id == selected_id)
         .unwrap_or(rules_candidate);
+    // Compile the selected recipe before dispatch. An unbounded or invalid plan returns an error
+    // here, so no provider is started for a recipe the executor cannot run.
+    let compiled =
+        crate::role_routing::recipe::compile_recipe_by_id(&role_policy, &candidate.recipe_id)?;
     let actor_id = candidate
         .actor_ids
         .first()
         .ok_or_else(|| "Role-routing response recipe has no actor".to_string())?;
+    if compiled
+        .steps
+        .first()
+        .is_none_or(|step| &step.actor_id != actor_id)
+    {
+        return Err("Role-routing plan does not match the selected actor".into());
+    }
+    // Enforce the cumulative step/cost budget when the root is already active. The wall-clock
+    // deadline is enforced at the real dispatch point; a queued root is checked after claim.
+    if let Some(root_id) = root_id {
+        crate::role_routing::executor::ensure_step_budget(connection, &role_policy, root_id)?;
+    }
     let actor = role_policy
         .actors
         .iter()
@@ -309,5 +325,37 @@ mod tests {
             )
             .expect("outputs");
         assert_eq!(outputs, 1);
+    }
+
+    #[test]
+    fn rr_22_role_route_enforces_the_step_budget() {
+        let mut connection = Connection::open_in_memory().expect("database opens");
+        initialize_database(&connection).expect("database initializes");
+        let mut documents = default_settings_input();
+        documents
+            .iter_mut()
+            .find(|document| document.namespace == "routing.roles")
+            .expect("policy")
+            .value_json = json!({
+            "schemaVersion":1,"enabled":true,
+            "actors":[{"id":"qwen","label":"Qwen","aliases":[],"transport":"provider","providerId":DYNAMIC_LAN_PROVIDER_ID,"model":null,"location":"local","resourceGroup":"gpu","maxInputBytes":4096,"capabilities":["reason"]}],
+            "roles":{"frontend":null,"reasoner":"qwen","advanced":null,"reviewer":null,"premium":null,"toolSpecialist":null},"recipes":[{"id":"direct","action":"respond","roles":["reasoner"],"enabled":true}],
+            "limits":{"maxReasoningSteps":1,"maxToolCalls":32,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":1,"maxAutomaticSwitches":2,"maxEstimatedCostMicros":null},"speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},"selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},"premiumApproval":"per_request","learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false}
+        });
+        save_settings_documents_to_connection(&mut connection, &documents).expect("save policy");
+        connection.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('budget-input','conversation_primary','user','hello','1')", []).expect("input");
+        connection.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('budget-run','conversation_primary','conversation.respond','running','budget-input','1')", []).expect("run");
+        assert!(crate::role_routing::repository::record_provider_turn_start(
+            &connection,
+            "budget-run",
+            "conversation_primary",
+            1
+        )
+        .expect("receipt"));
+        let mut route = crate::persistence::load_routing_settings(&connection)
+            .expect("routing")
+            .conversation_respond;
+        // The single permitted step is already running, so a second dispatch budget check fails.
+        assert!(apply_enabled_role_route(&connection, Some("budget-run"), &mut route).is_err());
     }
 }

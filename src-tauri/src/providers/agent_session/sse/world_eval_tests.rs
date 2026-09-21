@@ -333,9 +333,6 @@ fn agent_matrix_case(transition: &str) {
     if matches!(transition, "correction" | "forget" | "scope-switch") {
         h.transition(transition);
     }
-    if transition == "session-resume" {
-        h.fixture.set_now(h.fixture.now() + 3_000);
-    }
     let refresh = world.refresh_history(&mut history);
     let denied = transition == "scope-switch";
     assert_eq!(refresh.is_err(), denied, "agent-session/{transition}");
@@ -388,21 +385,51 @@ fn agent_matrix_case(transition: &str) {
         } else {
             first.complete().unwrap();
         }
-        if matches!(transition, "tool-continuation" | "fallback") {
+        if transition == "tool-continuation" {
             let base = request::render_turn_input(&history).unwrap();
-            let next = if transition == "tool-continuation" {
-                generation::Envelope::new(&base).follow_up(
-                    &json!({"callId":"world-tool","name":"present_ui","result":{"ok":true}})
-                        .to_string(),
-                )
-            } else {
-                base
-            };
+            let next = generation::Envelope::new(&base).follow_up(
+                &json!({"callId":"world-tool","name":"present_ui","result":{"ok":true}})
+                    .to_string(),
+            );
             let body = generation::turn_request_body(&next);
             let generation = generation::Envelope::new(&next)
                 .begin(&context, 1, &next, &[], true)
                 .unwrap();
             generation.complete().unwrap();
+            bodies.push(body);
+        }
+        if matches!(transition, "fallback" | "session-resume") {
+            if transition == "session-resume" {
+                h.fixture.set_now(h.fixture.now() + 3_000);
+                world.refresh_history(&mut history).unwrap();
+            }
+            let next_session = crate::begin_provider_session(
+                &h.state,
+                RUN_ID,
+                if transition == "fallback" {
+                    "fixture-fallback"
+                } else {
+                    "fixture-resumed"
+                },
+                "openai-compatible",
+                &"b".repeat(64),
+            )
+            .unwrap();
+            let next_context = ModelStreamContext {
+                output_persistence: Some(crate::ProviderOutputPersistence {
+                    state: &h.state,
+                    session_id: &next_session,
+                    world: Some(world),
+                }),
+                ..context
+            };
+            let next = request::render_turn_input(&history).unwrap();
+            let body = generation::turn_request_body(&next);
+            generation::Envelope::new(&next)
+                .begin(&next_context, 0, &next, &[], true)
+                .unwrap()
+                .complete()
+                .unwrap();
             bodies.push(body);
         }
     }

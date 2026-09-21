@@ -1,44 +1,40 @@
 //! Verifies model claims before selecting text for persistence and speech.
+#[path = "conversation_state_card.rs"]
+mod card;
 use super::*;
+pub(super) use card::persist_card;
+pub(super) enum Validation {
+    None,
+    Model,
+    Host(crate::runtime::context::world::app_frame::Prepared),
+}
 pub(super) fn accept(
     state: &AppState,
     input: &StartTurnInput,
     world: Option<&crate::runtime::context::world::turn::WorldLive>,
     raw: &str,
     events: &dyn RuntimeEventSender,
-) -> (String, bool) {
+) -> (String, Validation) {
     let rendered = world
         .ok_or_else(|| "state-claim-unavailable".to_string())
         .and_then(|world| world.accept_claims(raw, &input.content));
-    let (text, verified) = match rendered {
-        Ok(text) => (text, true),
+    let (text, validation) = match rendered {
+        Ok(text) => (text, Validation::Model),
         Err(reason) => {
             let _ = events.send(RuntimeEvent::Activity {
                 run_id: input.run_id.clone(),
                 kind: "state-answer-fallback".into(),
                 summary: reason,
             });
-            (
-                crate::runtime::context::world::host_answer::card(
-                    state,
-                    &input.run_id,
-                    &input.content,
-                ),
-                false,
-            )
+            let card = crate::runtime::context::world::host_answer::prepare_card(
+                state,
+                &input.run_id,
+                &input.content,
+            );
+            let validation = card.world.map(Validation::Host).unwrap_or(Validation::None);
+            (card.text, validation)
         }
     };
     events.set_completion_speech(&input.run_id, text.clone());
-    (text, verified)
-}
-
-pub(super) fn persist_card(
-    state: &AppState,
-    input: &StartTurnInput,
-    events: &dyn RuntimeEventSender,
-) -> Result<ConversationMessage, TurnExecutionFailure> {
-    let card =
-        crate::runtime::context::world::host_answer::card(state, &input.run_id, &input.content);
-    events.set_completion_speech(&input.run_id, card.clone());
-    persist_conversation_success_with_state(state, input, &card, |_, _| Ok(())).map_err(Into::into)
+    (text, validation)
 }

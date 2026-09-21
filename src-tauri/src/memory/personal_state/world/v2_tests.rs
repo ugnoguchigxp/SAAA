@@ -231,6 +231,38 @@ fn d21_unknown_seed_is_a_notice_not_a_fabricated_node() {
 }
 
 #[test]
+fn v2_forgotten_source_version_is_not_revived_by_a_new_version_with_the_same_id() {
+    let f = fixture_v2();
+    f.writer
+        .write(|c| {
+            c.execute(
+                "UPDATE personal_sources SET available=0 WHERE message_id=?1 AND version=?2",
+                rusqlite::params![f.source.key.id, f.source.key.version],
+            )
+            .map_err(crate::database_error)?;
+            c.execute(
+                "INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at,available)
+                 VALUES(?1,?2,'user',0,?3,1)",
+                rusqlite::params![f.source.key.id, f.source.key.version + 1, now()],
+            )
+            .map_err(crate::database_error)?;
+            Ok(())
+        })
+        .unwrap();
+
+    let slice = run_v2(
+        &f.writer,
+        &[WorldSeed::EntityId("c1".into())],
+        IncludeFlags::default(),
+        8_192,
+        f.now_ms,
+    )
+    .unwrap();
+    assert!(slice.nodes.is_empty());
+    assert!(slice.relations.is_empty());
+}
+
+#[test]
 fn d21_stale_projection_is_an_omission_not_an_error() {
     let writer = writer_db();
     writer

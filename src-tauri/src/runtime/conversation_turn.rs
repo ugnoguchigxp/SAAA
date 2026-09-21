@@ -424,7 +424,7 @@ pub(crate) async fn execute_conversation_turn(
         .await;
         match outcome {
             ProviderAttemptOutcome::Completed { content, cleanup } => {
-                let (content, verified_claim) = if state_query {
+                let (content, state_validation) = if state_query {
                     state_answer::accept(
                         state,
                         input,
@@ -433,7 +433,7 @@ pub(crate) async fn execute_conversation_turn(
                         verified_events,
                     )
                 } else {
-                    (content, false)
+                    (content, state_answer::Validation::None)
                 };
                 if matches!(
                     &provider,
@@ -458,11 +458,19 @@ pub(crate) async fn execute_conversation_turn(
                     input,
                     &content,
                     |connection, message| {
-                        if verified_claim {
-                            world_live
-                                .as_ref()
-                                .ok_or("state-claim-unavailable")?
-                                .validate_claim_commit(connection)?;
+                        match &state_validation {
+                            state_answer::Validation::Model => {
+                                world_live
+                                    .as_ref()
+                                    .ok_or("state-claim-unavailable")?
+                                    .validate_claim_commit(connection)?;
+                            }
+                            state_answer::Validation::Host((service, frame)) => {
+                                service
+                                    .validate_db_result(connection, frame)
+                                    .map_err(|error| error.code().to_string())?;
+                            }
+                            state_answer::Validation::None => {}
                         }
                         crate::role_routing::repository::accept_provider_turn(
                             connection,

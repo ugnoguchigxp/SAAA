@@ -1,6 +1,6 @@
 use super::repository as repo;
 use crate::situation::speech_holds_tts;
-use crate::{database_error, new_id, now_iso, AppState};
+use crate::{database_error, new_id, AppState};
 use rusqlite::{params, Connection};
 
 pub(crate) fn publish(
@@ -77,7 +77,7 @@ pub(crate) fn queue_terminals(
         }
     }
     if !speech_holds_tts(state) {
-        flush_unflushed(connection, conversation_id, now)?;
+        super::outbox::flush_unflushed(connection, conversation_id, now)?;
     }
     Ok(())
 }
@@ -86,10 +86,15 @@ pub(crate) fn flush_held_reports(state: &AppState, conversation_id: &str) -> Res
     if speech_holds_tts(state) {
         return Ok(());
     }
-    state.sqlite_writer.write(|connection| {
+    let message_id = state.sqlite_writer.write(|connection| {
         publish(state, connection, conversation_id)?;
-        flush_unflushed(connection, conversation_id, now_ms())
+        super::outbox::flush_unflushed(connection, conversation_id, now_ms())
     })?;
+    if let Some(message_id) = message_id {
+        state
+            .steward_wake
+            .emit_report(conversation_id, &message_id, 1, 0);
+    }
     // The worker is woken by durable report/event processing, not by a new
     // user turn. This also starts a dependency-satisfied successor.
     super::reduce::start_queued_for_conversation(state, conversation_id)?;
@@ -194,25 +199,11 @@ fn flush_unflushed(
     conversation_id: &str,
     now_ms: i64,
 ) -> Result<(), String> {
-    let Some(digest) = repo::unflushed_digest(connection, conversation_id, now_ms)? else {
+    let Some(message_id) = super::outbox::flush_unflushed(connection, conversation_id, now_ms)?
+    else {
         return Ok(());
     };
-    let message_id = new_id("message");
-    connection
-        .execute(
-            "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
-             VALUES(?1,?2,'assistant',?3,?4)",
-            params![message_id, conversation_id, digest, now_iso()],
-        )
-        .map_err(database_error)?;
-    connection
-        .execute(
-            "UPDATE conversations SET updated_at=?1 WHERE id=?2",
-            params![now_iso(), conversation_id],
-        )
-        .map_err(database_error)?;
-    record_delivered_notification_outcomes(connection, conversation_id, now_ms, &message_id)?;
-    repo::mark_flushed(connection, conversation_id, now_ms, &message_id)
+    record_delivered_notification_outcomes(connection, conversation_id, now_ms, &message_id)
 }
 
 /// A notification becomes observable only after its outbox row is turned into a conversation

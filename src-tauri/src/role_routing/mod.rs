@@ -6,6 +6,7 @@ pub(crate) mod context;
 pub(crate) mod contracts;
 pub(crate) mod coordinator;
 pub(crate) mod driver;
+pub(crate) mod executor;
 pub(crate) mod ipc;
 pub(crate) mod learning;
 pub(crate) mod limits;

@@ -71,13 +71,7 @@ pub(crate) fn register_with_options(
     if !workspace_registered(connection, conversation_id, workspace_id)? {
         return Err("workspace_required".into());
     }
-    let active: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM steward_goals WHERE conversation_id=?1 AND status='active' AND superseded_by IS NULL",
-            [conversation_id],
-            |row| row.get(0),
-        )
-        .map_err(database_error)?;
+    let active = super::admission::incomplete_goal_count(connection, conversation_id)?;
     if active as usize >= MAX_ACTIVE_GOALS {
         return Err("active_goal_limit".into());
     }
@@ -99,6 +93,13 @@ pub(crate) fn register_with_options(
         )
         .map_err(database_error)?;
     persist_default_goal_plan(connection, &goal_id, ops, verifier)?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO steward_goal_progress(goal_id,work_status,revision,updated_at)
+             VALUES(?1,'queued',1,?2)",
+            params![goal_id, now],
+        )
+        .map_err(database_error)?;
     Ok(json!({"goalId":goal_id,"delegationId":delegation_id,"status":"active"}))
 }
 
@@ -118,22 +119,34 @@ fn persist_default_goal_plan(
             id: "read".into(),
             depends_on: vec![],
             verifier,
+            recipe: Some("read".into()),
+            capability: None,
+            verifier_input: None,
         }],
         "test_run" => vec![PlanStep {
             id: "test".into(),
             depends_on: vec![],
             verifier,
+            recipe: Some("test_run".into()),
+            capability: None,
+            verifier_input: None,
         }],
         "read_test" => vec![
             PlanStep {
                 id: "read".into(),
                 depends_on: vec![],
                 verifier: verifier.clone(),
+                recipe: Some("read".into()),
+                capability: None,
+                verifier_input: None,
             },
             PlanStep {
                 id: "test".into(),
                 depends_on: vec!["read".into()],
                 verifier,
+                recipe: Some("test_run".into()),
+                capability: None,
+                verifier_input: None,
             },
         ],
         _ => return Err("steward_plan_invalid".into()),
@@ -175,72 +188,13 @@ pub(crate) fn propose(
     conversation_id: &str,
     proposal: &GoalProposal,
 ) -> Result<Value, String> {
-    proposal.validate()?;
-    let ops = proposal.operations_key();
-    if ops == "invalid" {
-        return Err("work_proposal_invalid".into());
-    }
-    let source_ok: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE id=?1 AND conversation_id=?2 AND role IN ('user','transcript'))",
-        params![proposal.source_message_id, conversation_id], |r| r.get(0),
-    ).map_err(database_error)?;
-    if !source_ok {
-        return Err("source_unavailable".into());
-    }
-    if !workspace_registered(connection, conversation_id, &proposal.workspace_id)? {
-        return Err("workspace_required".into());
-    }
-    let active: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM steward_goals WHERE conversation_id=?1 AND status='active' AND superseded_by IS NULL",
-        [conversation_id], |r| r.get(0),
-    ).map_err(database_error)?;
-    if active as usize >= MAX_ACTIVE_GOALS {
-        return Err("active_goal_limit".into());
-    }
-    let digest = format!(
-        "{}:{}:{}",
-        proposal.workspace_id,
-        ops,
-        proposal.verifier_key()
-    );
-    if let Some(existing_goal) = connection
-        .query_row(
-            "SELECT goal_id FROM steward_origin_bindings WHERE origin_kind='user_turn' AND origin_id=?1 AND operation_digest=?2",
-            params![proposal.source_message_id, digest],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(database_error)?
-    {
-        let delegation_id: String = connection
-            .query_row(
-                "SELECT id FROM steward_delegations WHERE goal_id=?1 ORDER BY rowid DESC LIMIT 1",
-                [&existing_goal],
-                |row| row.get(0),
-            )
-            .map_err(database_error)?;
-        return Ok(json!({"goalId":existing_goal,"delegationId":delegation_id,"status":"active","duplicate":true}));
-    }
-    let now = now_iso();
-    let goal_id = new_id("goal");
-    let delegation_id = new_id("delegation");
-    connection.execute(
-        "INSERT INTO steward_goals(id,conversation_id,origin,success_condition,status,created_at,superseded_by,summary,revision,verifier)
-         VALUES(?1,?2,'user_explicit',?3,'active',?4,NULL,?5,1,?6)",
-        params![goal_id, conversation_id, proposal.verifier_key(), now, proposal.summary.trim(), proposal.verifier_key()],
-    ).map_err(database_error)?;
-    connection.execute(
-        "INSERT INTO steward_delegations(id,goal_id,conversation_id,workspace_id,ops,budget_runs,budget_ms,notify,status,created_at,superseded_by,revision,source_message_id)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'active',?9,NULL,1,?10)",
-        params![delegation_id, goal_id, conversation_id, proposal.workspace_id, ops, proposal.budget_runs, proposal.budget_ms.min(i64::MAX as u64) as i64, proposal.notify_key(), now, proposal.source_message_id],
-    ).map_err(database_error)?;
-    connection.execute(
-        "INSERT INTO steward_origin_bindings(id,goal_id,origin_kind,origin_id,operation_digest,created_at) VALUES(?1,?2,'user_turn',?3,?4,?5)",
-        params![new_id("origin"), goal_id, proposal.source_message_id, digest, now],
-    ).map_err(database_error)?;
-    Ok(
-        json!({"goalId":goal_id,"delegationId":delegation_id,"status":"active","requiresConfirmation":false}),
-    )
+    let result = super::intake::classify(
+        connection,
+        conversation_id,
+        &proposal.source_message_id,
+        proposal,
+    )?;
+    Ok(super::admission::json_result(result))
 }
 
 pub(crate) fn withdraw(connection: &Connection, conversation_id: &str) -> Result<Value, String> {
@@ -536,7 +490,8 @@ pub(crate) fn queue_task(
 ) -> Result<Option<String>, String> {
     let exists: bool = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE id=?1 AND conversation_id=?2 AND role IN ('user','transcript'))",
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE id=?1 AND conversation_id=?2 AND role IN ('user','transcript'))
+             OR EXISTS(SELECT 1 FROM steward_source_bindings WHERE source_id=?1 AND source_kind='ui_receipt')",
             params![source_id, conversation_id],
             |row| row.get(0),
         )
@@ -574,6 +529,18 @@ pub(crate) fn queue_task(
                 "INSERT INTO steward_dispatch_intents(id,task_id,state,idempotency_key,created_at,updated_at) VALUES(?1,?2,'pending',?3,?4,?4)",
                 params![new_id("intent"), id, format!("{}:{}:{}", work.delegation_id, source_id, id), now],
             ).map_err(database_error)?;
+            persist_task_plan(
+                connection,
+                &id,
+                &work.ops,
+                match work.ops.as_str() {
+                    "read" => "Inspect the existing failure evidence in this workspace and report causes. Do not run tests or change files.",
+                    "test_run" => "Run the relevant existing tests in this workspace and report their result. Do not change files.",
+                    _ => START_REQUEST,
+                },
+                "host_selected",
+                1,
+            )?;
             Ok(Some(id))
         }
         Err(error) if error.to_string().contains("UNIQUE") => Ok(None),
@@ -620,7 +587,7 @@ fn next_ready_plan_step(
         for dependency in dependencies {
             let completed: bool = connection
                 .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM steward_tasks WHERE delegation_id=?1 AND goal_plan_id=?2 AND plan_step_id=?3 AND loop_state IN ('done','awaiting_user'))",
+                    "SELECT EXISTS(SELECT 1 FROM steward_tasks WHERE delegation_id=?1 AND goal_plan_id=?2 AND plan_step_id=?3 AND loop_state='done')",
                     params![work.delegation_id, plan_id, dependency],
                     |row| row.get(0),
                 )
@@ -729,7 +696,7 @@ pub(crate) fn apply_terminal_event(
     Ok(())
 }
 
-fn replan_after_failure(connection: &Connection, task_id: &str) -> Result<bool, String> {
+pub(crate) fn replan_after_failure(connection: &Connection, task_id: &str) -> Result<bool, String> {
     let row: Option<(String, String, ActiveWork, String, i64, i64)> = connection.query_row(
         "SELECT t.conversation_id,t.source_id,g.id,g.status,d.id,d.workspace_id,d.budget_runs,d.budget_ms,0,d.ops,g.verifier,
                 p.id,p.revision,p.max_replans
@@ -779,6 +746,18 @@ pub(crate) fn set_loop_state(
     job_id: Option<&str>,
     error: Option<&str>,
 ) -> Result<(), String> {
+    let previous: (String, String) = connection
+        .query_row(
+            "SELECT t.loop_state,g.status FROM steward_tasks t
+             JOIN steward_delegations d ON d.id=t.delegation_id
+             JOIN steward_goals g ON g.id=d.goal_id WHERE t.id=?1",
+            [task_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(database_error)?;
+    if matches!(previous.0.as_str(), "cancelled" | "outcome_unknown") || previous.1 == "withdrawn" {
+        return Ok(());
+    }
     connection
         .execute(
             "UPDATE steward_tasks SET loop_state=?2,coding_job_id=COALESCE(?3,coding_job_id),last_error=?4,updated_at=?5,revision=revision+1 WHERE id=?1 AND loop_state!=?2",
@@ -1023,11 +1002,9 @@ pub(crate) fn sync_from_coding(
     connection: &Connection,
     conversation_id: &str,
 ) -> Result<(), String> {
-    let withdrawn = latest_work(connection, conversation_id)?
-        .is_some_and(|work| work.goal_status == "withdrawn" || work.superseded);
     let mut stmt = connection
         .prepare(
-            "SELECT t.id,t.loop_state,j.state,g.verifier FROM steward_tasks t
+            "SELECT t.id,t.loop_state,j.state,g.verifier,g.status FROM steward_tasks t
              LEFT JOIN coding_jobs j ON j.id=t.coding_job_id
              JOIN steward_delegations d ON d.id=t.delegation_id
              JOIN steward_goals g ON g.id=d.goal_id
@@ -1041,16 +1018,26 @@ pub(crate) fn sync_from_coding(
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
             ))
         })
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
-    for (task_id, previous, job_state, verifier) in rows {
-        let open = matches!(previous.as_str(), "queued" | "running" | "awaiting_user");
+    for (task_id, previous, job_state, verifier, goal_status) in rows {
+        let withdrawn = goal_status == "withdrawn";
+        let open = matches!(
+            previous.as_str(),
+            "queued"
+                | "dispatching"
+                | "running"
+                | "awaiting_user"
+                | "verifying"
+                | "awaiting_dependency"
+        );
         let next = if withdrawn && open {
             "cancelled"
-        } else if withdrawn {
+        } else if withdrawn || matches!(previous.as_str(), "cancelled" | "outcome_unknown") {
             previous.as_str()
         } else {
             match job_state.as_deref() {
@@ -1084,7 +1071,7 @@ pub(crate) fn claim_terminals(
              JOIN steward_delegations d ON d.id=t.delegation_id
              JOIN steward_goals g ON g.id=d.goal_id
              WHERE t.conversation_id=?1 AND t.report_json IS NULL
-               AND t.loop_state IN ('done','failed','cancelled')",
+               AND t.loop_state IN ('done','failed','cancelled','awaiting_user','outcome_unknown')",
         )
         .map_err(database_error)?;
     let rows = stmt
@@ -1108,13 +1095,15 @@ pub(crate) fn claim_terminals(
                 params![task_id, json!({"loopState":state}).to_string(), now_iso()],
             )
             .map_err(database_error)?;
-        terminal.push(TerminalReport {
+        let mut report = TerminalReport {
             task_id: task_id.clone(),
             task_revision,
             goal_id,
             notify,
-            digest: format!("task {task_id}: {state}"),
-        });
+            digest: String::new(),
+        };
+        report.digest = super::report_content::compose(connection, &report, &state);
+        terminal.push(report);
     }
     Ok(terminal)
 }

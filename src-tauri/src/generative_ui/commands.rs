@@ -22,8 +22,20 @@ pub(crate) fn set_ui_enabled(
 pub(crate) fn get_ui_instance(
     state: tauri::State<'_, AppState>,
     instance_id: String,
+    revision: Option<u32>,
 ) -> Result<UiInstance, String> {
-    state.sqlite_readers.read(|c| store::load(c, &instance_id))
+    state
+        .sqlite_readers
+        .read(|c| store::load_revision(c, &instance_id, revision))
+}
+#[tauri::command]
+pub(crate) fn list_ui_view_revisions(
+    state: tauri::State<'_, AppState>,
+    view_id: String,
+) -> Result<Vec<UiViewRevision>, String> {
+    state
+        .sqlite_readers
+        .read(|c| store::list_revisions(c, &view_id))
 }
 #[tauri::command]
 pub(crate) fn query_ui_source(

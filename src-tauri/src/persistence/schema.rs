@@ -14,7 +14,8 @@ use rusqlite::{params, Connection};
 /// Current schema. 26 added steward tables and generated-capability generation/inspection
 /// tables. 27 dropped Meeting session tables. 28 adds the role-routing ledger; 29 adds its
 /// local learning ledger. 30 adds the schedule ledger (CREATE IF NOT EXISTS only).
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 30;
+/// 31 adds steward execution progress, expanded task states, recipes, and source bindings.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 31;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -137,6 +138,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     // D4 widens tool_selection_sources.kind to mcp_http. This rebuild touches a parent table, so
     // it must run with foreign keys disabled before the main schema transaction opens.
     crate::tool_selection::schema::migrate_sources_kind(connection)?;
+    crate::steward::schema_execution::migrate_task_loop_states(connection)?;
     let transaction = connection.unchecked_transaction()?;
     migrate_legacy_settings_documents(&transaction)?;
     migrate_v4_to_v5(&transaction)?;

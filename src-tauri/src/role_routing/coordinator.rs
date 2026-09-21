@@ -323,7 +323,7 @@ mod tests {
         apply(&mut connection, "r", Event::InputBarrier, 3).expect("barrier");
         connection
             .execute(
-                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('s2','r',1,0,'actor','respond','planned','{}','{}')",
+                "INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('s2','r',1,1,'actor','respond','planned','{}','{}')",
                 [],
             )
             .expect("revision 1 planned step");

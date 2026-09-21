@@ -6,6 +6,23 @@ use serde_json::Value;
 
 use super::contracts::*;
 
+/// Returns the trusted side-effect classification of the currently-published revision of a tool,
+/// looked up by its backend key. `None` means the tool is not published, which callers must treat
+/// as mutating (fail closed).
+pub(crate) fn effect_for_backend_key(
+    connection: &Connection,
+    backend_key: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT r.effect FROM tool_selection_catalog c JOIN tool_selection_revisions r ON r.tool_id=c.id AND r.id=c.current_revision_id WHERE c.backend_key=?1 AND c.enabled=1 LIMIT 1",
+            [backend_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Epochs {
     pub catalog: i64,

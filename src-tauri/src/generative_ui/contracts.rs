@@ -75,6 +75,14 @@ pub(crate) struct SavedView {
     pub revision: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UiViewRevision {
+    pub revision: u32,
+    pub summary: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PresentInput {

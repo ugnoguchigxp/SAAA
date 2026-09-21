@@ -490,6 +490,11 @@ async fn execute_for_root(
         "{:x}",
         Sha256::digest(format!("{name}:{arguments}").as_bytes())
     );
+    // Enforce the role permit from the trusted tool effect before anything reaches the owner. A
+    // reviewer can never reach a mutating tool, and an unpublished/unknown tool is fail-closed.
+    if let Err(reason) = authorize_routing_tool(writer, root_id, name) {
+        return json!({"error":{"code":"role-tool-denied","message":format!("Role-routing tool permit denied: {reason}")}});
+    }
     match reserve_routing_operation(writer, root_id, &operation_key) {
         Ok(true) => {}
         Ok(false) => {
@@ -508,6 +513,40 @@ async fn execute_for_root(
     output
 }
 
+/// Maps the active routing step purpose to its role and checks the trusted tool effect. Steps that
+/// do not belong to a routing root (or a conversation without a running step) keep the legacy
+/// unrestricted meaning because this gateway only routes role-root calls.
+fn authorize_routing_tool(writer: &SqliteWriter, root_id: &str, name: &str) -> Result<(), String> {
+    let root_id = root_id.to_string();
+    let name = name.to_string();
+    writer.read_serialized(move |connection| {
+        let purpose: Option<String> = connection
+            .query_row(
+                "SELECT purpose FROM rr_steps WHERE root_id=?1 AND status IN ('running','draining') ORDER BY ordinal LIMIT 1",
+                [&root_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        let Some(purpose) = purpose else {
+            return Ok(());
+        };
+        let role = match purpose.as_str() {
+            "review" => "reviewer",
+            "respond" | "reconsider" | "revise" => "reasoner",
+            "tool_specialist" => "tool_specialist",
+            "frontend" => "frontend",
+            other => return Err(format!("Role-routing step purpose {other} has no tool role")),
+        };
+        let effect = crate::tool_selection::repository::effect_for_backend_key(connection, &name)?;
+        crate::role_routing::tools::permits_effect(
+            role,
+            crate::role_routing::tools::classify_effect(effect.as_deref()),
+        )
+        .map_err(str::to_string)
+    })
+}
+
 /// The existing tool-selection service remains the invocation owner.  Role routing only reserves
 /// its operation key before dispatch and records the owner's receipt afterwards.  A process that
 /// dies after `dispatched` therefore cannot silently replay a potentially mutating operation.
@@ -522,12 +561,25 @@ fn reserve_routing_operation(
         let transaction = connection.transaction().map_err(|error| error.to_string())?;
         let step: Option<(String, u32)> = transaction
             .query_row(
-                "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status IN ('planned','running','draining') ORDER BY ordinal DESC LIMIT 1",
+                "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status='running' ORDER BY ordinal LIMIT 1",
                 [&root_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(|error| error.to_string())?;
+        let step = match step {
+            Some(step) => Some(step),
+            // Before the coordinator claims a step, fall back to the lowest planned step so the
+            // reservation still binds to the step the result will belong to.
+            None => transaction
+                .query_row(
+                    "SELECT id,revision FROM rr_steps WHERE root_id=?1 AND status IN ('planned','draining') ORDER BY ordinal LIMIT 1",
+                    [&root_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?,
+        };
         let Some((step_id, revision)) = step else {
             transaction.commit().map_err(|error| error.to_string())?;
             return Ok(true);
@@ -536,8 +588,14 @@ fn reserve_routing_operation(
             transaction.commit().map_err(|error| error.to_string())?;
             return Ok(false);
         }
+        // The link id must include the root so the same name+arguments used by two different roots
+        // cannot collide on the primary key.
+        let link_id = format!(
+            "rr-tool-{:x}",
+            Sha256::digest(format!("{root_id}:{operation_key}").as_bytes())
+        );
         let link = crate::role_routing::tool_ledger::ToolLink {
-            id: format!("rr-tool-{}", &operation_key[..24]),
+            id: link_id.chars().take(32).collect(),
             root_id: root_id.clone(),
             step_id,
             revision,
@@ -576,6 +634,12 @@ fn settle_routing_operation(
         .pointer("/data/resultRef")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    // A transport/unavailable failure leaves the remote outcome unknown; it must not be recorded
+    // as a settled success, because that would license a later retry of a possibly applied
+    // mutation. Local validation failures are terminal and safe to settle.
+    let error_code = output.pointer("/error/code").and_then(Value::as_str);
+    let unknown = matches!(error_code, Some("unavailable" | "timeout" | "transport"));
+    let state = if unknown { "unknown" } else { "settled" };
     let root_id = root_id.to_string();
     let operation_key = operation_key.to_string();
     let _ = writer.write(move |connection| {
@@ -585,7 +649,7 @@ fn settle_routing_operation(
             &operation_key,
             invocation_id.as_deref(),
             result_ref.as_deref(),
-            "settled",
+            state,
             now_ms(),
         )
         .map(|_| ())

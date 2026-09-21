@@ -83,6 +83,26 @@ impl SqliteWriter {
         result
     }
 
+    /// Commits `operation` as one SQLite transaction. Callers must not perform
+    /// network or process I/O inside the closure, and must not re-enter the writer.
+    pub(crate) fn transact<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.write(|connection| {
+            let transaction = connection
+                .unchecked_transaction()
+                .map_err(crate::database_error)?;
+            match operation(&transaction) {
+                Ok(value) => {
+                    transaction.commit().map_err(crate::database_error)?;
+                    Ok(value)
+                }
+                Err(error) => Err(error),
+            }
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn write_transaction<T>(
         &self,

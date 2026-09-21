@@ -199,8 +199,7 @@ fn compile_selected_plan(
     policy: &crate::role_routing::RoleRoutingSettings,
     candidate: &crate::role_routing::selection::Candidate,
 ) -> Result<Vec<crate::role_routing::recipe::PlannedStep>, String> {
-    let compiled =
-        crate::role_routing::recipe::compile_recipe_by_id(policy, &candidate.recipe_id)?;
+    let compiled = crate::role_routing::recipe::compile_recipe_by_id(policy, &candidate.recipe_id)?;
     let planned_actors = compiled
         .steps
         .iter()

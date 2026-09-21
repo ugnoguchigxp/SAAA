@@ -5,7 +5,9 @@ mod repository_policy;
 #[path = "repository_turns.rs"]
 mod repository_turns;
 
-pub(crate) use repository_policy::{capture_current_policy, capture_policy_version};
+pub(crate) use repository_policy::capture_current_policy;
+#[allow(unused_imports)]
+pub(crate) use repository_policy::capture_policy_version;
 pub(crate) use repository_turns::{
     accept_provider_turn, record_actor_activity, record_provider_turn_finish,
     record_provider_turn_start, record_provider_turn_start_in_transaction, record_step_usage,
@@ -134,16 +136,7 @@ pub(crate) fn record_review_response(
             |row| row.get(0),
         )
         .map_err(|_| "Role-routing review author step is unavailable".to_string())?;
-    let mut statement = connection
-        .prepare(
-            "SELECT o.id FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=?1 AND o.accepted=1 AND o.revision<=?2",
-        )
-        .map_err(|error| error.to_string())?;
-    let allowed_evidence_refs = statement
-        .query_map(params![root_id, revision], |row| row.get::<_, String>(0))
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+    let allowed_evidence_refs = accepted_evidence_refs(connection, &root_id, revision)?;
     crate::role_routing::review::validate(
         &author_actor,
         &reviewer_actor,
@@ -160,6 +153,28 @@ pub(crate) fn record_review_response(
         "INSERT OR IGNORE INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'review',?4,1,?5)",
         params![format!("rr-review-{}", &digest[..24]), review_step_id, revision, encoded, now_ms],
     ).map_err(|error| error.to_string()).map(|changed| changed == 1)
+}
+
+/// Returns the accepted output ids that a review may cite as evidence: same root, not newer than
+/// the review revision. A model cannot invent a reference outside this set.
+fn accepted_evidence_refs(
+    connection: &Connection,
+    root_id: &str,
+    revision: i64,
+) -> Result<Vec<String>, String> {
+    let refs = {
+        let mut statement = connection
+            .prepare(
+                "SELECT o.id FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=?1 AND o.accepted=1 AND o.revision<=?2",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params![root_id, revision], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    Ok(refs)
 }
 
 /// Stores a deterministic revision decision for an accepted review output.  It deliberately does
@@ -189,8 +204,14 @@ pub(crate) fn record_review_revision_decision(
         .map_err(|error| error.to_string())?;
     let completed_rounds = u8::try_from(completed_rounds)
         .map_err(|_| "Role-routing revision round count is invalid".to_string())?;
-    let decision =
-        crate::role_routing::revision::decide_from_review(&review, completed_rounds, max_rounds);
+    let allowed_evidence_refs = accepted_evidence_refs(connection, &root_id, revision)?;
+    let decision = crate::role_routing::revision::decide_from_review(
+        &review,
+        &allowed_evidence_refs,
+        &[],
+        completed_rounds,
+        max_rounds,
+    );
     let payload = serde_json::to_string(&decision)
         .map_err(|error| format!("Could not encode role-routing revision decision: {error}"))?;
     connection.execute(
@@ -325,6 +346,9 @@ mod tests {
         connection.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p','completed','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('author','r',0,0,'sol','respond','succeeded','{}','{}'),('reviewer','r',0,1,'qwen','review','succeeded','{}','{}'); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('answer-1','author',0,'answer','{}',1,1);").expect("review fixture");
         let response = crate::role_routing::review::ReviewResponse {
             issues: vec![crate::role_routing::review::ReviewIssue {
+                kind: "evidence".into(),
+                claim: "missing citation".into(),
+                severity: "major".into(),
                 code: "missing-citation".into(),
                 evidence_ref: "answer-1".into(),
                 verdict: "verified".into(),
@@ -352,11 +376,17 @@ mod tests {
         let review = crate::role_routing::review::ReviewResponse {
             issues: vec![
                 crate::role_routing::review::ReviewIssue {
+                    kind: "evidence".into(),
+                    claim: "citation missing".into(),
+                    severity: "major".into(),
                     code: "citation".into(),
                     evidence_ref: "answer-1".into(),
                     verdict: "verified".into(),
                 },
                 crate::role_routing::review::ReviewIssue {
+                    kind: "logic".into(),
+                    claim: "style is terse".into(),
+                    severity: "minor".into(),
                     code: "style".into(),
                     evidence_ref: "answer-1".into(),
                     verdict: "unresolved".into(),

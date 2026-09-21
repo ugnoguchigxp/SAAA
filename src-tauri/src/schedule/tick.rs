@@ -302,6 +302,10 @@ pub(crate) fn enable(state: &AppState, now: i64) -> Result<(), String> {
 }
 
 pub(crate) fn start_loop(app: tauri::AppHandle) {
+    {
+        let state = app.state::<crate::AppState>();
+        state.steward_wake.bind(app.clone());
+    }
     tauri::async_runtime::spawn(async move {
         {
             let state = app.state::<crate::AppState>();
@@ -313,7 +317,6 @@ pub(crate) fn start_loop(app: tauri::AppHandle) {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
         loop {
-            interval.tick().await;
             let state = app.state::<crate::AppState>();
             if state
                 .shutdown_started
@@ -321,8 +324,16 @@ pub(crate) fn start_loop(app: tauri::AppHandle) {
             {
                 break;
             }
-            if state.schedule.enabled() {
-                let _ = tick(&state, now_ms());
+            tokio::select! {
+                _ = interval.tick() => {
+                    if state.schedule.enabled() {
+                        let _ = tick(&state, now_ms());
+                    }
+                    let _ = crate::steward::pump::drain(&state);
+                }
+                _ = state.steward_wake.notified() => {
+                    let _ = crate::steward::pump::drain(&state);
+                }
             }
         }
     });

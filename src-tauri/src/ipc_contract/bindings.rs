@@ -43,6 +43,7 @@ pub fn ui_typescript_bindings() -> String {
         export_declaration::<crate::generative_ui::contracts::UiData>(),
         export_declaration::<crate::generative_ui::contracts::UiInstance>(),
         export_declaration::<crate::generative_ui::contracts::SavedView>(),
+        export_declaration::<crate::generative_ui::contracts::UiViewRevision>(),
     ]
     .join("\n\n");
     format!("// Generated from Rust generative_ui/contracts.rs. Do not edit.\n{types}\n")

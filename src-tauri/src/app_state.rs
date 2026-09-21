@@ -22,6 +22,7 @@ pub(super) struct AppState {
     pub(super) tool_selection: Arc<tool_selection::ToolSelectionService>,
     pub(super) mcp_server: Mutex<Option<tool_selection::mcp_server::ServerHandle>>,
     pub(super) schedule: std::sync::Arc<crate::schedule::Handle>,
+    pub(super) steward_wake: crate::steward::pump::Wake,
 }
 
 #[derive(Clone)]

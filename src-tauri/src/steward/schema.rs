@@ -28,10 +28,10 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            id TEXT PRIMARY KEY,
            delegation_id TEXT NOT NULL REFERENCES steward_delegations(id),
            conversation_id TEXT NOT NULL,
-           trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('start','continue')),
+           trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('start','continue','admission')),
            source_id TEXT NOT NULL,
            dedupe_key TEXT NOT NULL,
-           loop_state TEXT NOT NULL CHECK(loop_state IN ('queued','running','awaiting_user','done','failed','cancelled')),
+           loop_state TEXT NOT NULL CHECK(loop_state IN ('queued','dispatching','running','awaiting_dependency','awaiting_user','verifying','done','failed','cancelled','outcome_unknown')),
            coding_job_id TEXT,
            report_json TEXT,
            last_error TEXT,
@@ -50,12 +50,9 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            flushed INTEGER NOT NULL CHECK(flushed IN (0,1)),
            created_at TEXT NOT NULL
          );
-         CREATE UNIQUE INDEX IF NOT EXISTS steward_one_active_goal
-           ON steward_goals(conversation_id)
-           WHERE status = 'active' AND superseded_by IS NULL;
          CREATE UNIQUE INDEX IF NOT EXISTS steward_active_task_dedupe
            ON steward_tasks(dedupe_key)
-           WHERE loop_state IN ('queued','running','awaiting_user');",
+           WHERE loop_state IN ('queued','dispatching','running','awaiting_dependency','awaiting_user','verifying');",
     )?;
     // v2 is additive: old rows retain their user-turn source and remain
     // inspectable.  Do not use a unique conversation index for active goals:
@@ -230,7 +227,7 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
          ON steward_reports(task_id,task_revision,destination)
          WHERE task_id IS NOT NULL;",
     )?;
-    Ok(())
+    crate::steward::schema_execution::migrate(connection)
 }
 
 fn add_column(connection: &Connection, table: &str, definition: &str) -> rusqlite::Result<()> {

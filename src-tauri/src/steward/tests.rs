@@ -16,7 +16,9 @@ fn env_lock() -> &'static Mutex<()> {
 }
 
 fn with_memory(on: bool, run: impl FnOnce()) {
-    let _guard = env_lock().lock().expect("memory env lock");
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let previous = std::env::var("SAAA_MEMORY_ENABLED").ok();
     if on {
         std::env::set_var("SAAA_MEMORY_ENABLED", "1");
@@ -135,7 +137,7 @@ fn ml_01_schema_version_and_empty_goals() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
     assert_eq!(version, DATABASE_SCHEMA_VERSION);
-    assert_eq!(DATABASE_SCHEMA_VERSION, 30);
+    assert_eq!(DATABASE_SCHEMA_VERSION, 31);
     let goals: i64 = connection
         .query_row("SELECT COUNT(*) FROM steward_goals", [], |row| row.get(0))
         .expect("goals");
@@ -156,7 +158,7 @@ fn ml_01_schema_version_and_empty_goals() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 30);
+    assert_eq!(version, DATABASE_SCHEMA_VERSION);
 }
 
 #[test]
@@ -334,6 +336,10 @@ fn dw_01_proposal_rejects_ambiguous_or_unbounded_authority() {
         budget_runs: 1,
         budget_ms: 1_000,
         notify: Notify::Both,
+        quote_start: None,
+        quote_end: None,
+        target: None,
+        recipe_id: None,
     };
     assert!(valid.validate().is_ok());
     let mut invalid = valid.clone();
@@ -351,6 +357,9 @@ fn dw_01_plan_rejects_cycles_and_replan_limit() {
             id: "inspect".into(),
             depends_on: Vec::new(),
             verifier: Verifier::TestReportObtained,
+            recipe: None,
+            capability: None,
+            verifier_input: None,
         }],
         max_replans: 2,
     };
@@ -361,11 +370,17 @@ fn dw_01_plan_rejects_cycles_and_replan_limit() {
                 id: "a".into(),
                 depends_on: vec!["b".into()],
                 verifier: Verifier::TestReportObtained,
+                recipe: None,
+                capability: None,
+                verifier_input: None,
             },
             PlanStep {
                 id: "b".into(),
                 depends_on: vec!["a".into()],
                 verifier: Verifier::TestReportObtained,
+                recipe: None,
+                capability: None,
+                verifier_input: None,
             },
         ],
         max_replans: 0,
@@ -588,6 +603,10 @@ fn dw_03_proposal_binds_only_a_persisted_user_source_and_allows_multiple_goals()
         budget_runs: 1,
         budget_ms: 1_000,
         notify: Notify::Both,
+        quote_start: None,
+        quote_end: None,
+        target: None,
+        recipe_id: None,
     };
     state
         .sqlite_writer
@@ -604,17 +623,17 @@ fn dw_03_proposal_binds_only_a_persisted_user_source_and_allows_multiple_goals()
         })
         .unwrap();
     assert_eq!(duplicate["duplicate"], true);
+    assert!(
+        duplicate["requiresConfirmation"] == true
+            || duplicate["decision"] == "requires_confirmation"
+            || duplicate["decision"] == "accepted"
+    );
     state
         .sqlite_writer
         .write(|c| repo::propose(c, PRIMARY_CONVERSATION_ID, &proposal("B", source_b)))
         .unwrap();
-    assert_eq!(
-        count(
-            &state,
-            "SELECT COUNT(*) FROM steward_goals WHERE status='active'"
-        ),
-        2
-    );
+    let proposals: i64 = count(&state, "SELECT COUNT(*) FROM steward_proposals");
+    assert_eq!(proposals, 2);
     let mut forged = proposal("forged", source);
     forged.source_message_id = "missing".into();
     let error = state

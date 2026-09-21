@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useEffect, useState } from "react";
+import { lazy, Suspense, memo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ConversationMessage } from "../../lib/contracts";
 import { renderFinalMarkdown } from "./finalMarkdown";
@@ -6,6 +6,7 @@ import type { StreamingTextProjection } from "./streamingTextBuffer";
 import { recordMarkdownPaint } from "./streamingPerformance";
 
 import { UiBoundary } from "./ui/UiBoundary";
+import { renderMermaidDiagrams } from "./ui/mermaid";
 
 const InlineUi = lazy(() => import("./ui/InlineUi"));
 
@@ -16,7 +17,9 @@ const MarkdownMessage = memo(function MarkdownMessage({
   messageId: string;
   content: string;
 }) {
+  const { t } = useTranslation();
   const [html, setHtml] = useState<string | null>(null);
+  const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let active = true;
     setHtml(null);
@@ -32,10 +35,15 @@ const MarkdownMessage = memo(function MarkdownMessage({
       active = false;
     };
   }, [messageId, content]);
+  useEffect(() => {
+    if (html !== null && host.current) {
+      void renderMermaidDiagrams(host.current, t("genui.diagramFailed"));
+    }
+  }, [html, t]);
   return html === null ? (
     <p className="markdown-pending">{content}</p>
   ) : (
-    <div className="markdown-content" dangerouslySetInnerHTML={{ __html: html }} />
+    <div ref={host} className="markdown-content" dangerouslySetInnerHTML={{ __html: html }} />
   );
 });
 

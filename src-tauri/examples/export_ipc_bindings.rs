@@ -22,5 +22,10 @@ fn main() {
         saaa_lib::ipc_contract::schedule_typescript_bindings(),
     )
     .expect("schedule bindings are written");
+    fs::write(
+        output_path.with_file_name("steward.ts"),
+        saaa_lib::ipc_contract::steward_typescript_bindings(),
+    )
+    .expect("steward bindings are written");
     println!("generated {}", output_path.display());
 }

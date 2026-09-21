@@ -52,19 +52,29 @@ pub(crate) fn execute(
             let proposal: Propose = serde_json::from_str(&call.arguments).map_err(|_| "work_proposal_invalid")?;
             let source_message_id = state.sqlite_readers.read(|c| repo::input_message_id(c, &input.run_id))?
                 .ok_or("source_unavailable")?;
-            let proposal = GoalProposal { source_message_id, workspace_id: proposal.workspace_id, summary: proposal.summary, success_condition: proposal.success_condition, operations: proposal.operations, budget_runs: proposal.budget_runs, budget_ms: proposal.budget_ms, notify: proposal.notify.unwrap_or(Notify::Both) };
-            let value = state.sqlite_writer.write(|c| {
-                let value = repo::propose(c, &input.conversation_id, &proposal)?;
-                let goal_id = value["goalId"].as_str().ok_or("work_proposal_invalid")?;
-                let work = repo::active_goal_work(c, &input.conversation_id, goal_id)?
-                    .ok_or("goal_unavailable")?;
-                let _ = repo::queue_task(c, &work, &input.conversation_id, &proposal.source_message_id, "start")?;
-                Ok(value)
+            let proposal = GoalProposal {
+                source_message_id,
+                workspace_id: proposal.workspace_id,
+                summary: proposal.summary,
+                success_condition: proposal.success_condition,
+                operations: proposal.operations,
+                budget_runs: proposal.budget_runs,
+                budget_ms: proposal.budget_ms,
+                notify: proposal.notify.unwrap_or(Notify::Both),
+                quote_start: None,
+                quote_end: None,
+                target: None,
+                recipe_id: None,
+            };
+            let value = state.sqlite_writer.transact(|c| {
+                repo::propose(c, &input.conversation_id, &proposal)
             })?;
-            super::reduce::start_queued(state, input)?;
+            if value["decision"] == "accepted" {
+                let _ = super::reduce::start_queued(state, input);
+            }
             Ok(value)
         }
-        "work_status" => state.sqlite_writer.write(|c| { repo::sync_from_coding(c, &input.conversation_id)?; repo::list(c, &input.conversation_id) }),
+        "work_status" => state.sqlite_readers.read(|c| repo::list(c, &input.conversation_id)),
         "work_withdraw" => {
             let goal: GoalRef = serde_json::from_str(&call.arguments).map_err(|_| "work_withdraw_invalid")?;
             state.sqlite_writer.write(|c| {

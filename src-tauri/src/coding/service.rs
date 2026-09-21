@@ -207,6 +207,110 @@ pub fn execute_delegated(
     }
     Ok(value)
 }
+
+pub fn commit_delegated_job(
+    state: &AppState,
+    connection: &rusqlite::Connection,
+    conversation_id: &str,
+    task_id: &str,
+    workspace_id: &str,
+    request: &str,
+) -> Result<(Value, Option<String>), String> {
+    if state
+        .shutdown_started
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("app_stopping".into());
+    }
+    let settings = repo::settings(connection)?;
+    if !settings.enabled {
+        return Err("coding_disabled".into());
+    }
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(format!("delegated:{task_id}:{request}"))
+    );
+    let source = format!("delegated-{task_id}");
+    let valid: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM steward_tasks t
+              JOIN steward_delegations d ON d.id=t.delegation_id
+              JOIN steward_goals g ON g.id=d.goal_id
+              WHERE t.id=?1 AND t.conversation_id=?2 AND d.workspace_id=?3
+                AND t.loop_state IN ('queued','dispatching') AND d.status='active' AND d.superseded_by IS NULL
+                AND g.status='active' AND g.superseded_by IS NULL)",
+            params![task_id, conversation_id, workspace_id],
+            |r| r.get(0),
+        )
+        .map_err(database_error)?;
+    if !valid {
+        return Err("delegated_task_unavailable".into());
+    }
+    if queries::active_run_exists(connection)? {
+        return Err("busy".into());
+    }
+    if let Some(job) = connection
+        .query_row(
+            "SELECT job_id FROM coding_origin_bindings WHERE origin_kind='delegated_event' AND origin_id=?1",
+            [task_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(database_error)?
+    {
+        let mut value = repo::inspect(connection, conversation_id, &job, 0, 1)?;
+        value["accepted"] = json!(true);
+        return Ok((value, None));
+    }
+    crate::steward::faults::maybe("coding_commit_before")?;
+    let path = queries::workspace_path(connection, workspace_id, conversation_id)?;
+    let actual = std::fs::canonicalize(&path).map_err(|_| "workspace_missing")?;
+    if actual.to_str() != Some(path.as_str()) || !actual.join(".git").exists() {
+        return Err("workspace_invalid".into());
+    }
+    let job = new_id("coding");
+    let run = new_id("coding_run");
+    let directory = state.data_directory.join("coding-sessions");
+    std::fs::create_dir_all(&directory).map_err(|_| "session_storage_unavailable")?;
+    let session = directory.join(format!("{job}.jsonl"));
+    let settings_json = serde_json::to_string(&settings).map_err(|_| "coding_settings_invalid")?;
+    queries::insert_job(
+        connection,
+        queries::NewJob {
+            id: &job,
+            conversation: conversation_id,
+            source: &source,
+            workspace: workspace_id,
+            workspace_path: &path,
+            settings_json: &settings_json,
+            session_path: &session.to_string_lossy(),
+            run: &run,
+        },
+    )?;
+    connection
+        .execute(
+            "INSERT INTO coding_origin_bindings(id,job_id,origin_kind,origin_id,operation_digest,created_at)
+             VALUES(?1,?2,'delegated_event',?3,?4,?5)",
+            params![new_id("origin"), job, task_id, digest, now_iso()],
+        )
+        .map_err(database_error)?;
+    let workspace_scope =
+        crate::runtime::context::scope::register(connection, "resource", workspace_id)?;
+    let job_scope = crate::runtime::context::scope::register(connection, "task", &job)?;
+    crate::runtime::context::scope::link(connection, &workspace_scope, &job_scope)?;
+    queries::insert_run(connection, &job, &run, &source, task_id, request, &digest)?;
+    crate::steward::faults::maybe("local_receipt_before_spawn")?;
+    Ok((
+        json!({"jobId":job,"runId":run,"revision":1,"state":"queued","accepted":true}),
+        Some(run),
+    ))
+}
+
+pub fn spawn_run(state: &AppState, run: String) {
+    let writer = Arc::clone(&state.sqlite_writer);
+    std::thread::spawn(move || crate::runtime::pi::runner::run(writer, run));
+}
+
 pub fn cancel(
     c: &rusqlite::Connection,
     conversation: &str,

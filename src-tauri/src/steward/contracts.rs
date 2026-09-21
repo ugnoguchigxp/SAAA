@@ -23,6 +23,12 @@ pub(crate) struct PlanStep {
     #[serde(default)]
     pub depends_on: Vec<String>,
     pub verifier: Verifier,
+    #[serde(default)]
+    pub recipe: Option<String>,
+    #[serde(default)]
+    pub capability: Option<String>,
+    #[serde(default)]
+    pub verifier_input: Option<String>,
 }
 
 impl TaskPlan {
@@ -33,16 +39,18 @@ impl TaskPlan {
         {
             return Err("work_plan_invalid");
         }
+        let mut seen = std::collections::BTreeSet::new();
         for step in &self.steps {
-            if step.id.is_empty()
-                || step.depends_on.iter().any(|dependency| {
-                    dependency == &step.id
-                        || !self
-                            .steps
-                            .iter()
-                            .any(|candidate| candidate.id == *dependency)
-                })
-            {
+            if step.id.is_empty() || !seen.insert(step.id.as_str()) {
+                return Err("work_plan_duplicate_step");
+            }
+            if step.depends_on.iter().any(|dependency| {
+                dependency == &step.id
+                    || !self
+                        .steps
+                        .iter()
+                        .any(|candidate| candidate.id == *dependency)
+            }) {
                 return Err("work_plan_invalid");
             }
         }
@@ -95,6 +103,14 @@ pub(crate) struct GoalProposal {
     pub budget_ms: u64,
     #[serde(default = "default_notify")]
     pub notify: Notify,
+    #[serde(default)]
+    pub quote_start: Option<u32>,
+    #[serde(default)]
+    pub quote_end: Option<u32>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub recipe_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

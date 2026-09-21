@@ -60,4 +60,50 @@ export const stewardApi = {
     invoke("work_amend", { conversationId, goalId, notify }),
   listTasks: async (conversationId: string) =>
     z.array(stewardTask).parse(await invoke("list_steward_tasks", { conversationId })),
+  listGoals: async (conversationId: string) =>
+    z
+      .object({
+        goals: z.array(
+          z.object({
+            goalId: z.string(),
+            summary: z.string(),
+            authorityStatus: z.string(),
+            progress: z.string(),
+            workspaceId: z.string(),
+            operations: z.string(),
+            verifier: z.string(),
+            budgetRuns: z.number(),
+            budgetMs: z.number(),
+            notify: z.string(),
+            awaitingReason: z.string().nullable(),
+            reportRevision: z.number(),
+            unsupportedProfile: z.boolean(),
+          }),
+        ),
+        revision: z.number(),
+      })
+      .parse(await invoke("list_steward_goals", { conversationId })),
+  confirmProposal: (
+    conversationId: string,
+    proposalId: string,
+    expectedRevision: number,
+    displayDigest: string,
+    start: boolean,
+  ) =>
+    invoke("work_confirm", {
+      conversationId,
+      proposalId,
+      expectedRevision,
+      displayDigest,
+      start,
+    }),
+  registerRecipe: (recipe: {
+    name: string;
+    target: string;
+    cwd: string;
+    argv: string[];
+    envAllow: string[];
+    outputDir: string;
+    timeoutMs: number;
+  }) => invoke("register_steward_recipe", { recipe }),
 };

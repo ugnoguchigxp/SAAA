@@ -43,6 +43,11 @@ export const uiEnglish = {
   history: "Runs started per minute · last 60 active minutes",
   editHint: "To edit this view, ask in the conversation.",
   conflict: "This view has changed. Reopen it before editing.",
+  openInArtifact: "Open in viewer",
+  artifactViewer: "Artifact viewer",
+  revision: "Revision",
+  diff: "Changes",
+  diagramFailed: "Could not render diagram",
 };
 export const uiJapanese: typeof uiEnglish = {
   compatibility:
@@ -89,4 +94,9 @@ export const uiJapanese: typeof uiEnglish = {
   history: "毎分の実行開始数・記録がある直近60分",
   editHint: "この画面の変更は会話で依頼できます。",
   conflict: "画面が更新されています。開き直してから編集してください。",
+  openInArtifact: "ビューアーで開く",
+  artifactViewer: "アーティファクトビューアー",
+  revision: "改訂",
+  diff: "差分",
+  diagramFailed: "図として描けませんでした",
 };

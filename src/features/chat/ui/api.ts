@@ -1,10 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { UiData, UiInstance, SavedView } from "../../../lib/generated/generativeUi";
-export type { UiData, UiInstance, SavedView };
+import type {
+  UiData,
+  UiInstance,
+  SavedView,
+  UiViewRevision,
+} from "../../../lib/generated/generativeUi";
+export type { UiData, UiInstance, SavedView, UiViewRevision };
 export const uiApi = {
   enabled: () => invoke<boolean>("get_ui_enabled"),
   setEnabled: (enabled: boolean) => invoke<void>("set_ui_enabled", { enabled }),
-  load: (instanceId: string) => invoke<UiInstance>("get_ui_instance", { instanceId }),
+  load: (instanceId: string, revision?: number) =>
+    invoke<UiInstance>("get_ui_instance", { instanceId, revision }),
+  revisions: (viewId: string) => invoke<UiViewRevision[]>("list_ui_view_revisions", { viewId }),
   query: (instanceId: string, source: string) =>
     invoke<UiData>("query_ui_source", { instanceId, source }),
   state: (instanceId: string, expectedVersion: number, value: UiInstance["state"]) =>

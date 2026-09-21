@@ -34,8 +34,16 @@ describe("final Markdown projection", () => {
 
   test("treats an unfinished code fence as escaped code at completion", () => {
     const html = renderSafeMarkdown("```html\n<img src=x onerror=alert(1)>");
-    expect(html).toContain('<pre><code class="language-html">');
+    expect(html).toContain('<pre data-lang="html"><code class="language-html">');
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  test("keeps Mermaid source as escaped text for main-thread rendering", () => {
+    const html = renderSafeMarkdown("```mermaid\ngraph TD\nA[<script>] --> B\n```");
+    expect(html).toContain('<pre data-lang="mermaid">');
+    expect(html).toContain('<div class="mermaid-source" hidden>');
+    expect(html).toContain("A[&lt;script&gt;] --&gt; B");
+    expect(html).not.toContain("<script>");
   });
 
   test("renders long plain and marker-heavy text without changing content", () => {

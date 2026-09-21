@@ -132,7 +132,16 @@ pub(crate) fn parse(definition: &str) -> Result<UiNode, String> {
             serde_json::from_str(definition).map_err(|_| "Invalid semantic UI JSON")?;
         fn bounds(node: &UiNode, depth: usize, count: &mut usize) -> Result<(), String> {
             *count += 1;
-            if depth > 12 || *count > 100 || node.args.iter().any(|s| s.chars().count() > 1000) {
+            if depth > 12
+                || *count > 100
+                || node.args.iter().any(|value| {
+                    if node.kind == "Markdown" {
+                        value.len() > 49_152
+                    } else {
+                        value.chars().count() > 1000
+                    }
+                })
+            {
                 return Err("UI exceeds limits".into());
             }
             if (node.kind == "Cell" && node.children.len() != 1)
@@ -284,7 +293,8 @@ fn resolve(
                 count,
             )?);
         }
-        "Text" | "ModelStatus" | "Actions" | "Metric" | "Status" | "Table" | "Chart" => {
+        "Text" | "Markdown" | "ModelStatus" | "Actions" | "Metric" | "Status" | "Table"
+        | "Chart" => {
             let expected = match kind.as_str() {
                 "Metric" | "Status" | "Chart" => 3,
                 "Table" => 2,
@@ -299,7 +309,13 @@ fn resolve(
                 };
                 node.args.push(value.clone());
             }
+            if kind == "Markdown" && node.args[0].len() > 49_152 {
+                return Err("UI exceeds limits".into());
+            }
             if !matches!(kind.as_str(), "Text" | "Actions") {
+                if kind == "Markdown" {
+                    return Ok(node);
+                }
                 super::data::validate_source(&node.args[0])?;
                 if matches!(kind.as_str(), "Metric" | "Status") {
                     super::data::validate_field(&node.args[0], &node.args[1])?;

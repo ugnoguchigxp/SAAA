@@ -74,8 +74,15 @@ export function renderSafeMarkdown(content: string): string {
         index += 1;
       }
       if (index < lines.length) index += 1;
-      const language = fence[1] ? ` class="language-${escapeHtml(fence[1])}"` : "";
-      blocks.push(`<pre><code${language}>${escapeHtml(code.join("\n"))}</code></pre>`);
+      const languageName = fence[1].toLowerCase();
+      const language = languageName ? ` class="language-${escapeHtml(languageName)}"` : "";
+      const source = escapeHtml(code.join("\n"));
+      const renderedFence = `<pre data-lang="${escapeHtml(languageName)}"><code${language}>${source}</code></pre>`;
+      blocks.push(
+        languageName === "mermaid"
+          ? `<div class="mermaid-block">${renderedFence}<div class="mermaid-source" hidden>${source}</div></div>`
+          : renderedFence,
+      );
       continue;
     }
     if (index + 1 < lines.length && line.includes("|") && isTableDivider(lines[index + 1])) {

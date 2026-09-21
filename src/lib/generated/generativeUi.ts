@@ -8,3 +8,5 @@ export type UiData = { capturedAt: string, rows: Array<Record<string, string | n
 export type UiInstance = { id: string, viewId: string, revision: number, summary: string, definition: string, libraryVersion: number, mode: string, node: UiNode, state: Record<string, string | number | boolean>, snapshots: Record<string, UiData>, stateVersion: number, name: string | null, publishedRevision: number | null, };
 
 export type SavedView = { id: string, name: string, description: string, tags: Array<string>, revision: number, };
+
+export type UiViewRevision = { revision: number, summary: string, createdAt: string, };

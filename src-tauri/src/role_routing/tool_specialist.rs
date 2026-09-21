@@ -36,11 +36,15 @@ pub(crate) async fn execute_for_root(
     cancellation: &RunCancellation,
 ) -> Result<serde_json::Value, String> {
     validate(request, enabled)?;
+    let effect = writer.read_serialized(|connection| {
+        crate::tool_selection::repository::effect_for_backend_key(connection, &request.tool_name)
+    })?;
     super::tools::permits(
         "tool_specialist",
         &request.tool_name,
         offered_tools,
         revision_matches,
+        super::tools::classify_effect(effect.as_deref()),
     )
     .map_err(str::to_string)?;
     let arguments = serde_json::to_string(&request.arguments)
@@ -92,6 +96,7 @@ mod tests {
             &request.tool_name,
             &[request.tool_name.clone()],
             true,
+            super::super::tools::ToolEffect::Mutating,
         )
         .is_ok());
         assert!(super::super::tools::permits(
@@ -99,6 +104,7 @@ mod tests {
             &request.tool_name,
             &[request.tool_name.clone()],
             false,
+            super::super::tools::ToolEffect::ReadOnly,
         )
         .is_err());
     }

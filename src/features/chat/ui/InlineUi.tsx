@@ -8,7 +8,8 @@ import { useUiVisibility } from "./visibility";
 import { useGenUiEnabled } from "./settings";
 import "./ui.css";
 import { UiBoundary } from "./UiBoundary";
-function LoadedUi({
+import { useArtifactWorkspace } from "../artifacts/ArtifactDrawer";
+export function LoadedUi({
   instance,
   conversationId,
   active,
@@ -20,6 +21,7 @@ function LoadedUi({
   enabled: boolean;
 }) {
   const { t } = useTranslation();
+  const artifacts = useArtifactWorkspace();
   const draft = useSyncExternalStore(
     useCallback((listener) => uiStates.subscribe(instance.id, listener), [instance.id]),
     () => uiStates.get(instance.id).value,
@@ -61,6 +63,13 @@ function LoadedUi({
         <span>
           {t(instance.mode === "snapshot" ? "genui.snapshot" : "genui.live")} · v{instance.revision}
         </span>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => artifacts?.open(instance, conversationId)}
+        >
+          {t("genui.openInArtifact")}
+        </button>
       </header>
       {!enabled && instance.mode === "live" && <p>{t("genui.disabled")}</p>}
       <SemanticRenderer node={instance.node} />

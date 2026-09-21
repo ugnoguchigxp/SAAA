@@ -507,6 +507,31 @@ fn t13_source_edit_uses_only_the_current_version() {
 }
 
 #[test]
+fn forgotten_source_version_is_not_revived_by_a_new_version_with_the_same_id() {
+    let f = fixture();
+    f.writer
+        .write(|c| {
+            c.execute(
+                "UPDATE personal_sources SET available=0 WHERE message_id=?1 AND version=?2",
+                rusqlite::params![f.source.key.id, f.source.key.version],
+            )
+            .map_err(crate::database_error)?;
+            c.execute(
+                "INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at,available)
+                 VALUES(?1,?2,'user',0,?3,1)",
+                rusqlite::params![f.source.key.id, f.source.key.version + 1, now()],
+            )
+            .map_err(crate::database_error)?;
+            Ok(())
+        })
+        .unwrap();
+
+    let slice = query(&f, &[WorldSeed::EntityId("e1".into())]).unwrap();
+    assert!(slice.nodes.is_empty());
+    assert!(slice.relations.is_empty());
+}
+
+#[test]
 fn t14_scope_isolation_and_authorization() {
     let f = fixture();
     // Same display name in a different project must not resolve here.
