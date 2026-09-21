@@ -20,6 +20,7 @@
 - Sol host tool loop（RR-21）は部分実装。sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続し、gateway はactive rootの会話を検証して `rr_tool_links` のreserve/settleへ帰属する。tokenはchild環境だけで渡し、JSONLへ含めない。`rr_21_bridge_keeps_bearer_token_out_of_jsonl` と `rr_21_role_root_query_is_strict_and_decoded_once` はpass。実認証SDKによるtool roundtrip・revision/model変更時のnew thread・tool budget・live isolationは未実施。
 - Provider/TTS/toolの完了順を固定するBarrier競合fixtureは不足。
 - RR-22: `rr_22_` 4件（deadline/cost gate、typed usage、step永続化）はpass。provider別費用換算・切替上限の実dispatch接続は未実施。
+- RR-23: `rr_23_` 2件（evidence span/dirty mark、最新routing回答だけへの束縛）はpass。positive/negativeとchallenge新rootは未実施。
 - 全体 `cargo check` はrole-routing外のcalendar変更にあるmodule/command重複とOAuth API不整合で停止する。
 
 したがってRR-39、および計画全体を完了とは判定しない。

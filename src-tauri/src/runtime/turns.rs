@@ -545,6 +545,26 @@ pub(crate) fn prepare_runtime_run(
                 .map_err(database_error)?;
             message_id
         };
+        if task_mode == "conversation" && new_message {
+            if matches!(
+                crate::role_routing::signals::classify_follow_up(input.content.trim()),
+                crate::role_routing::signals::SignalKind::AnswerChallenge
+            ) {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_millis() as i64)
+                    .unwrap_or(0);
+                crate::role_routing::repository::record_feedback_for_latest_answer(
+                    &transaction,
+                    &input.conversation_id,
+                    &input_message_id,
+                    "answer_challenge",
+                    0,
+                    input.content.trim().len(),
+                    now_ms,
+                )?;
+            }
+        }
         transaction
             .execute(
                 "INSERT INTO runtime_runs(

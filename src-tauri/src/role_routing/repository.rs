@@ -64,6 +64,51 @@ pub(crate) fn record_feedback(
     Ok(inserted)
 }
 
+/// Resolves only the currently visible assistant answer. A feedback-looking follow-up must not
+/// attach to an older routing answer when a later legacy answer is on screen, and a legacy answer
+/// is never retroactively made into role-routing training data.
+pub(crate) fn record_feedback_for_latest_answer(
+    connection: &Connection,
+    conversation_id: &str,
+    source_message_id: &str,
+    kind: &str,
+    evidence_start: usize,
+    evidence_end: usize,
+    now_ms: i64,
+) -> Result<bool, String> {
+    let target_answer_id: Option<String> = connection
+        .query_row(
+            "SELECT id FROM conversation_messages WHERE conversation_id=?1 AND role='assistant' ORDER BY created_at DESC, id DESC LIMIT 1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some(target_answer_id) = target_answer_id else {
+        return Ok(false);
+    };
+    let is_routing_answer: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM rr_roots WHERE result_message_id=?1 AND conversation_id=?2 AND phase='completed')",
+            params![target_answer_id, conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !is_routing_answer {
+        return Ok(false);
+    }
+    record_feedback(
+        connection,
+        conversation_id,
+        source_message_id,
+        &target_answer_id,
+        kind,
+        evidence_start,
+        evidence_end,
+        now_ms,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +180,43 @@ mod tests {
             "r"
         );
         assert!(record_feedback(&connection, "c", "u", "a", "answer_challenge", 8, 8, 2).is_err());
+    }
+
+    #[test]
+    fn rr_23_feedback_targets_only_the_visible_routing_answer() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT); INSERT INTO conversations VALUES('c');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("routing");
+        crate::role_routing::learning::schema::migrate(&connection).expect("learning");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute_batch("INSERT INTO conversation_messages VALUES('routed','c','assistant','routed answer','1'); INSERT INTO conversation_messages VALUES('legacy','c','assistant','later legacy answer','2'); INSERT INTO conversation_messages VALUES('u','c','user','違う','3'); INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest,result_message_id) VALUES('r','c','p','completed','text','visual',1,'','routed'); INSERT INTO rr_events VALUES('r',1,'answer_committed','{}',1);").expect("rows");
+        assert!(!record_feedback_for_latest_answer(
+            &connection,
+            "c",
+            "u",
+            "answer_challenge",
+            0,
+            6,
+            3
+        )
+        .expect("legacy ignored"));
+        connection
+            .execute("DELETE FROM conversation_messages WHERE id='legacy'", [])
+            .expect("remove legacy");
+        assert!(record_feedback_for_latest_answer(
+            &connection,
+            "c",
+            "u",
+            "answer_challenge",
+            0,
+            6,
+            3
+        )
+        .expect("routed feedback"));
     }
 }

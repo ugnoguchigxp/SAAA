@@ -46,7 +46,7 @@
 | RR-20 | 部分 | sidecarをBun compiled resourceとして同梱し、ProcessGuardで起動・cancel回収。fake executableでEOF/cancel/config隔離を検証 | live isolation gate |
 | RR-21 | 部分 | sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続する。MCP sessionはactive rootの会話へ解決され、tool呼び出しは `rr_tool_links` のreserve/settleを通る。tokenはchild環境だけに渡しJSONLへ出さない | 実認証SDKによるSol tool roundtrip、revision/model変更時のnew thread、tool budget、live isolation試験 |
 | RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定。Codex SDKの確定usageを型検証し、最終回答採用transaction内でstepへ保存 | provider別費用換算、active dispatchの集計、切替上限 |
-| RR-23 | 部分 | host feedback保存とdirty mark | active answer一意の実入力接続 |
+| RR-23 | 部分 | host feedback保存とdirty mark。新規user inputの明示challengeは、会話の最新assistantがcompleted role rootの回答である場合だけ同一transactionで保存 | explicit positive/negativeの実入力接続、challengeを新rootとして起動する経路 |
 | RR-24 | 部分 | review issueの型付きvalidator、author/reviewer独立性、evidence参照を検証 | 独立評価executor、read-only tool接続、永続record |
 | RR-25 | 部分 | verified issueとreview round上限を照合するrevision gate | 評価後revision executor、unresolved永続record |
 | RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate | Astra提案・承諾のIPC/UIと実dispatch接続 |
