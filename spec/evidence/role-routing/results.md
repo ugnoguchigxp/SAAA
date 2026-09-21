@@ -21,6 +21,7 @@
 - Provider/TTS/toolの完了順を固定するBarrier競合fixtureは不足。
 - RR-22: `rr_22_` 4件（deadline/cost gate、typed usage、step永続化）はpass。provider別費用換算・切替上限の実dispatch接続は未実施。
 - RR-23: `rr_23_` 2件（evidence span/dirty mark、最新routing回答だけへの束縛）はpass。positive/negativeとchallenge新rootは未実施。
+- RR-24: `rr_24_` 5件（独立actor、evidence scope、model/actor名を含めないreview packet、review output保存、mutating tool拒否）はpass。review executor、read-only MCP gateway接続、通常turnのreview step組込みは未実施。
 - 全体 `cargo check` はrole-routing外のcalendar変更にあるmodule/command重複とOAuth API不整合で停止する。
 
 したがってRR-39、および計画全体を完了とは判定しない。

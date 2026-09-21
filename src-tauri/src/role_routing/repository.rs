@@ -109,6 +109,56 @@ pub(crate) fn record_feedback_for_latest_answer(
     )
 }
 
+/// Persists a host-validated independent review.  The author and reviewer are resolved from
+/// their steps so callers cannot forge independence by naming another actor in JSON.
+pub(crate) fn record_review_response(
+    connection: &Connection,
+    review_step_id: &str,
+    response: &crate::role_routing::review::ReviewResponse,
+    now_ms: i64,
+) -> Result<bool, String> {
+    let (root_id, revision, reviewer_actor, purpose): (String, i64, String, String) = connection
+        .query_row(
+            "SELECT root_id,revision,actor_id,purpose FROM rr_steps WHERE id=?1",
+            [review_step_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| "Role-routing review step is unavailable".to_string())?;
+    if purpose != "review" {
+        return Err("Role-routing review output requires a review step".into());
+    }
+    let author_actor: String = connection
+        .query_row(
+            "SELECT actor_id FROM rr_steps WHERE root_id=?1 AND purpose='respond' ORDER BY ordinal ASC LIMIT 1",
+            [&root_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Role-routing review author step is unavailable".to_string())?;
+    let mut statement = connection
+        .prepare(
+            "SELECT o.id FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=?1 AND o.accepted=1 AND o.revision<=?2",
+        )
+        .map_err(|error| error.to_string())?;
+    let allowed_evidence_refs = statement
+        .query_map(params![root_id, revision], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    crate::role_routing::review::validate(
+        &author_actor,
+        &reviewer_actor,
+        &response.issues,
+        &allowed_evidence_refs,
+    )?;
+    let encoded = serde_json::to_string(response)
+        .map_err(|error| format!("Could not encode role-routing review: {error}"))?;
+    let digest = format!("{:x}", Sha256::digest(encoded.as_bytes()));
+    connection.execute(
+        "INSERT OR IGNORE INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES(?1,?2,?3,'review',?4,1,?5)",
+        params![format!("rr-review-{}", &digest[..24]), review_step_id, revision, encoded, now_ms],
+    ).map_err(|error| error.to_string()).map(|changed| changed == 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +268,37 @@ mod tests {
             3
         )
         .expect("routed feedback"));
+    }
+
+    #[test]
+    fn rr_24_sol_reviewed_by_qwen_and_saved_against_scoped_evidence() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE conversations(id TEXT PRIMARY KEY); CREATE TABLE runtime_runs(id TEXT PRIMARY KEY); CREATE TABLE conversation_messages(id TEXT PRIMARY KEY); INSERT INTO conversations VALUES('c');").expect("base");
+        crate::role_routing::schema::migrate(&connection).expect("routing");
+        connection
+            .execute(
+                "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+                [],
+            )
+            .expect("policy");
+        connection.execute_batch("INSERT INTO rr_roots(root_id,conversation_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('r','c','p','completed','text','visual',1,''); INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('author','r',0,0,'sol','respond','succeeded','{}','{}'),('reviewer','r',0,1,'qwen','review','succeeded','{}','{}'); INSERT INTO rr_outputs(id,step_id,revision,kind,payload_json,accepted,created_at_ms) VALUES('answer-1','author',0,'answer','{}',1,1);").expect("review fixture");
+        let response = crate::role_routing::review::ReviewResponse {
+            issues: vec![crate::role_routing::review::ReviewIssue {
+                code: "missing-citation".into(),
+                evidence_ref: "answer-1".into(),
+                verdict: "verified".into(),
+            }],
+        };
+        assert!(record_review_response(&connection, "reviewer", &response, 2).expect("saved"));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT kind FROM rr_outputs WHERE step_id='reviewer'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .expect("output"),
+            "review"
+        );
     }
 }

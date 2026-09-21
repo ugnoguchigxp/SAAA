@@ -1,13 +1,53 @@
 //! Host-side validation for independent review results.
-use serde::Deserialize;
+//!
+//! Review prompts deliberately carry answer material and evidence references, but never an
+//! author model/actor identifier.  Independence is established from the durable step ledger,
+//! not from a model-supplied claim in the review payload.
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewRequest {
+    pub(crate) answer: String,
+    pub(crate) evidence_refs: Vec<String>,
+}
+
+impl ReviewRequest {
+    pub(crate) fn new(answer: String, evidence_refs: Vec<String>) -> Result<Self, String> {
+        if answer.trim().is_empty()
+            || evidence_refs.is_empty()
+            || evidence_refs.iter().any(|reference| reference.is_empty())
+        {
+            return Err("Role-routing review request is incomplete".into());
+        }
+        if evidence_refs.len()
+            != evidence_refs
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        {
+            return Err("Role-routing review request repeats evidence".into());
+        }
+        Ok(Self {
+            answer,
+            evidence_refs,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ReviewIssue {
     pub(crate) code: String,
     #[serde(rename = "evidenceRef")]
     pub(crate) evidence_ref: String,
     pub(crate) verdict: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReviewResponse {
+    pub(crate) issues: Vec<ReviewIssue>,
 }
 
 pub(crate) fn validate(
@@ -62,6 +102,15 @@ mod tests {
             verdict: "verified".into(),
         };
         assert!(validate("sol", "qwen", &[issue], &["answer-1".into()]).is_err());
+    }
+
+    #[test]
+    fn rr_24_review_packet_exposes_no_actor_or_model_name() {
+        let packet = ReviewRequest::new("answer".into(), vec!["answer-1".into()]).expect("packet");
+        assert_eq!(
+            serde_json::to_value(packet).expect("json"),
+            serde_json::json!({"answer":"answer","evidenceRefs":["answer-1"]})
+        );
     }
 
     #[test]

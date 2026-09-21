@@ -56,4 +56,12 @@ mod tests {
             Err("stale_revision")
         );
     }
+
+    #[test]
+    fn rr_24_reviewer_cannot_call_a_mutating_tool() {
+        assert_eq!(
+            permits("reviewer", "delete_file", &["delete_file".into()], true),
+            Err("role_tool_denied")
+        );
+    }
 }

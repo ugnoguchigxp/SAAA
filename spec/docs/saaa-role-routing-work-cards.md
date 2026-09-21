@@ -47,7 +47,7 @@
 | RR-21 | 部分 | sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続する。MCP sessionはactive rootの会話へ解決され、tool呼び出しは `rr_tool_links` のreserve/settleを通る。tokenはchild環境だけに渡しJSONLへ出さない | 実認証SDKによるSol tool roundtrip、revision/model変更時のnew thread、tool budget、live isolation試験 |
 | RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定。Codex SDKの確定usageを型検証し、最終回答採用transaction内でstepへ保存 | provider別費用換算、active dispatchの集計、切替上限 |
 | RR-23 | 部分 | host feedback保存とdirty mark。新規user inputの明示challengeは、会話の最新assistantがcompleted role rootの回答である場合だけ同一transactionで保存 | explicit positive/negativeの実入力接続、challengeを新rootとして起動する経路 |
-| RR-24 | 部分 | review issueの型付きvalidator、author/reviewer独立性、evidence参照を検証 | 独立評価executor、read-only tool接続、永続record |
+| RR-24 | 部分 | model/actor名を含めないreview packet、issueの型付きvalidator、author/reviewer独立性、同一root・revision内のaccepted evidence scope検証、review outputの台帳保存、reviewerのmutating tool拒否 | 独立評価executor、read-only toolの実gateway接続、通常turnへのreview step組込み |
 | RR-25 | 部分 | verified issueとreview round上限を照合するrevision gate | 評価後revision executor、unresolved永続record |
 | RR-26 | 部分 | candidate/policy/revision/期限/cloud制約を照合する明示承諾gate | Astra提案・承諾のIPC/UIと実dispatch接続 |
 | RR-27 | 部分 | snapshot由来のchat表示とroot cancel操作 | amend/reconsider、live event、child drain |
@@ -274,6 +274,8 @@
 - issue schema、evidenceRefの存在・scope、verdictを検査。根拠不明はunverified。
 - 試験: `rr_24_sol_reviewed_by_qwen`、`rr_24_self_review_not_independent`、`rr_24_false_evidence`。V1。
 - 合格: reviewerの主張だけでverifiedTaskSuccessを更新しない。
+
+実装状況（2026-09-21）: `ReviewRequest` は回答本文とevidence refだけをserialiseし、author/reviewerのactor/model名を含めない。`record_review_response` はreview stepとrespond stepからactorを復元して独立性を確認し、同一rootかつreview revision以前のaccepted outputだけをevidenceとして受理して`rr_outputs(kind=review)`へ記録する。`rr_24_` 5件はpass。reviewerを実際にproviderへdispatchするexecutor、read-only permitを実MCP gatewayへ結線する処理、通常の応答rootへreview stepを追加する処理は未実装であり、このカードは部分完了のままである。
 
 ### RR-25 評価後の修正
 
