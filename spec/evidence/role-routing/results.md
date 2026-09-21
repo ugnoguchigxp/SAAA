@@ -7,6 +7,7 @@
 ## 実施済み
 
 - 隔離test binaryで `rr_` 80件: pass
+- V2 regression: `runtime::context` 100件pass（性能gate 2件ignored）、`providers::chat_completions` 24件pass、`tool_selection` 191件pass
 - `cargo fmt --check`: role-routing変更範囲でpass
 - `git diff --check`: pass
 - desktop smoke: build / bundle / launch / IPC ready の証跡あり
