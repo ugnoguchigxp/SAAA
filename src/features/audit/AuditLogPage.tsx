@@ -12,6 +12,7 @@ import type { AuditEvent, AuditEventSortField } from "../../lib/contracts";
 import { listAuditEvents } from "../../lib/runtime";
 import "./AuditLogPage.css";
 import { useDialogFocus } from "../../components/useDialogFocus";
+import { AppIcon } from "../../components/AppIcon";
 import { auditTimestampIso, formatAuditTimestamp } from "./auditTimestamp";
 import { projectLatestResponsePipeline } from "./voicePipelineMonitor";
 import { VoicePipelineMonitor } from "./VoicePipelineMonitorPanel";
@@ -218,19 +219,20 @@ export function AuditLogPage() {
       ref={fallbackRef}
       tabIndex={-1}
       className="audit-log-page"
-      aria-labelledby="audit-log-title"
+      aria-label={t("navigation.audit")}
     >
-      <header className="audit-log-header">
-        <h2 id="audit-log-title">{t("audit.title")}</h2>
+      <div className="audit-log-header" role="toolbar" aria-label={t("navigation.audit")}>
         <button
           type="button"
           className="audit-refresh-button"
+          aria-label={t("audit.refresh")}
+          title={t("audit.refresh")}
           onClick={() => void auditQuery.refetch()}
           disabled={auditQuery.isFetching}
         >
-          {t("audit.refresh")}
+          <AppIcon name="refresh" />
         </button>
-      </header>
+      </div>
 
       <div className="audit-log-content">
         <VoicePipelineMonitor snapshot={voicePipeline} locale={locale} />
@@ -343,9 +345,10 @@ export function AuditLogPage() {
                 type="button"
                 className="audit-drawer-close"
                 aria-label={t("audit.drawer.close")}
+                title={t("audit.drawer.close")}
                 onClick={() => setSelectedEventId(null)}
               >
-                ×
+                <AppIcon name="close" />
               </button>
             </header>
 

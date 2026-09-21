@@ -93,6 +93,32 @@ export class MessageHistoryStore {
     }
     return page.messages;
   };
+  returnLatest = async () => {
+    const conversation = this.conversation;
+    if (!conversation || this.value.loadingOlderMessages || this.value.loadingNewerMessages) return;
+    const generation = this.generation;
+    const ticket = ++this.refresh;
+    this.update({ loadingNewerMessages: true });
+    try {
+      const page = await this.fetch(conversation, null, "before");
+      if (
+        this.conversation !== conversation ||
+        generation !== this.generation ||
+        ticket !== this.refresh
+      )
+        return;
+      const ephemeral = this.value.messages.filter((message) => !persisted(message));
+      this.deferred = undefined;
+      this.update({
+        messages: [...page.messages, ...ephemeral].slice(-HISTORY_LIMIT),
+        hasMoreMessages: page.hasMore,
+        hasNewerMessages: false,
+      });
+    } finally {
+      if (this.conversation === conversation && generation === this.generation)
+        this.update({ loadingNewerMessages: false });
+    }
+  };
   load = async (direction: Direction) => {
     const conversation = this.conversation;
     if (!conversation || this.value.loadingOlderMessages || this.value.loadingNewerMessages) return;

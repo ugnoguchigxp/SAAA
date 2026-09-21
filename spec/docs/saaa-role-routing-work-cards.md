@@ -5,6 +5,12 @@
 
 残作業の実行順とTerra向け実装単位は、[完了ロードマップ](saaa-role-routing-completion-roadmap.md)を参照する。RR-00〜39の要求・完了条件は維持し、E00〜E37と独立したlive laneへ分解して進める。ロードマップの保存によって以下の実装状態は変更しない。
 
+## 音声会話の優先実装（VC改訂）
+
+最新ユーザー要件は[音声会話統合計画](saaa-role-routing-voice-integration.md)のVC00〜VC08とVT01〜VT11へ具体化した。LFMは会話担当を継続し、say/thinkだけを生成する。Qwenには思考だけを依頼し、出力不安定時は平文LFM＋Qwen並走にする。既存rr台帳・coordinator・speech ownerへ統合し、今回作られた独立LFM経路を並立させない。
+
+直近はVCカードを依存順に実装し、必要な既存RR/E安全条件を補完する。音声経路の受入をreview/premium/学習の全完成待ちにはしない。VC各カードの状態は未完了。以下の過去監査件数は今回の成功件数ではない。
+
 ## 完了・未完了の要約（2026-09-21）
 
 カードの合格条件と指定試験を基準に判定する。**完了カードは0/40件**である。部分実装は完了ではなく、未実装の安全条件・縦通し経路・試験を残している。
@@ -142,8 +148,8 @@
 ### RR-08 role別promptと構造化分類
 
 - 契約: C3.1/C4/C9。N `rr/classifier.rs`、contexts配下のrole定義。M 生成設定は既存形式に従う。
-- kind/evidence/target/confidenceをparseし、hostがtargetと根拠範囲を検証。timeoutはunclear。
-- frontend replyKey allowlistと混合依頼拒否を実装。引用や否定だけのchallengeを拒否するfixtureを作る。
+- LFM生成はsay/thinkのみ。kind/evidence/target/confidenceの詳細分類はhost/Qwen補助分類へ分離し、hostがtargetと根拠範囲を検証する。
+- VC03〜04の平文並走への切替を実装する。LFM会話を止めず、混合依頼・引用・否定・話の途中の誤判定をfixtureとliveで検証する。
 - 試験: `rr_08_quote_not_feedback`、`rr_08_mixed_greeting`、`rr_08_bad_target`、`rr_08_timeout_unclear`。V1とs11tnext:build/check。
 - 合格: classifierが直接tool dispatch、承諾、完了を発行できない。
 

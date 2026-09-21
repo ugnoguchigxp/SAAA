@@ -81,11 +81,15 @@ export function useAmbientVoiceSession({
       voiceSessionProcessing(voiceSessionRef.current) ||
       acceptedVoiceAsrSessionsRef.current.size > 0 ||
       !!conversationSessionRef.current.runId ||
-      pendingVoicePromptsRef.current.length > 0 || pendingLfmInputsRef.current > 0,
+      pendingVoicePromptsRef.current.length > 0 ||
+      pendingLfmInputsRef.current > 0,
     (message) => setError((current) => current ?? message),
   );
   const [interimTranscript, setInterimTranscript] = useState("");
   const [asrProjection, setAsrProjection] = useState(initialVoiceAsrProjection);
+  const [voiceActivityLevel, setVoiceActivityLevel] = useState(0);
+  const voiceActivityLevelRef = useRef(0);
+  const voiceActivityUpdatedAtRef = useRef(0);
   const voiceSessionRef = useRef(initialVoiceSession);
   const suspensionReasonRef = useRef<SuspensionReason | null>(null);
   const speechResumeTokenRef = useRef<string | null>(null);
@@ -133,6 +137,12 @@ export function useAmbientVoiceSession({
   const voiceState: VoiceCaptureState = voiceCaptureState(voiceSession);
   const voiceStarting = voiceSession.capture === "starting";
   const voiceAvailability = captureAvailability(listeningEnabled, voiceSession.capture);
+
+  useEffect(() => {
+    if (voiceState === "recording") return;
+    voiceActivityLevelRef.current = 0;
+    setVoiceActivityLevel(0);
+  }, [voiceState]);
 
   const updateListeningEnabledCommitted = useCommittedCallback(updateListeningEnabled);
   const pauseAmbientCaptureCommitted = useCommittedCallback(pauseAmbientCapture);
@@ -417,6 +427,19 @@ export function useAmbientVoiceSession({
         packetFrame: packetVoiceFrame,
         packetCount: () => voiceAsrPacketCountRef.current,
         clearTranscript: () => setInterimTranscript(""),
+        onActivity: ({ rms }) => {
+          if (disposedRef.current) return;
+          const level = Math.max(0, Math.min(1, (rms - 0.003) / 0.027));
+          const now = performance.now();
+          if (
+            now - voiceActivityUpdatedAtRef.current < 60 &&
+            Math.abs(level - voiceActivityLevelRef.current) < 0.12
+          )
+            return;
+          voiceActivityUpdatedAtRef.current = now;
+          voiceActivityLevelRef.current = level;
+          setVoiceActivityLevel(level);
+        },
       });
       auditCaptureStarted(
         sessionId,
@@ -603,10 +626,14 @@ export function useAmbientVoiceSession({
         const decision = await receiveLfmUtterance(conversationId, queued.utteranceId, queued.text);
         onSettled(true);
         if (disposedRef.current || selectedConversationIdRef.current !== conversationId) return;
-        void speakLfmReply(conversationId, queued.utteranceId, decision.speechEpoch,
-          (message) => setError(message)).catch((cause) => setError(`LFM 音声: ${toMessage(cause)}`));
-        if (decision.handoffId && decision.requestContent) {
-          void submitPrompt(decision.requestContent, { inputOrigin: "voice", sourceId: decision.handoffId });
+        void speakLfmReply(conversationId, queued.utteranceId, decision.speechEpoch, (message) =>
+          setError(message),
+        ).catch((cause) => setError(`LFM 音声: ${toMessage(cause)}`));
+        if (decision.reasoningRequestId && decision.requestContent) {
+          void submitPrompt(decision.requestContent, {
+            inputOrigin: "voice",
+            sourceId: decision.reasoningRequestId,
+          });
         }
       } catch (cause) {
         onSettled(false);
@@ -630,6 +657,7 @@ export function useAmbientVoiceSession({
     voiceState,
     voiceBusy: voiceSessionBusy(voiceSession),
     voiceProcessing: voiceSessionProcessing(voiceSession),
+    voiceActivityLevel,
     interimTranscript: { text: interimTranscript, projection: asrProjection },
     toggleAmbientListening,
     suspendVoiceForSpeech,

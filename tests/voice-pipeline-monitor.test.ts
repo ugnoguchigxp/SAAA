@@ -64,7 +64,7 @@ describe("voice pipeline monitor", () => {
     expect(snapshot.stages[1].failureCode).toBe("harness-llm-context-window-missing");
     expect(snapshot.stages[1].state).toBe("failure");
   });
-  test("shows the handoff gap after ASR recognition", () => {
+  test("shows the delivery gap after ASR recognition", () => {
     const snapshot = projectLatestResponsePipeline([recognized]);
 
     expect(snapshot.diagnosis).toBe("delivery-waiting");

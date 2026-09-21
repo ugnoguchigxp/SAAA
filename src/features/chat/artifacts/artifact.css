@@ -73,8 +73,32 @@
   background: #26313d;
 }
 .artifact-tab .artifact-tab-close {
+  width: 30px;
+  display: grid;
+  place-items: center;
   padding: 4px 8px;
   border-left: 1px solid #34404f;
+}
+.artifact-tab-close svg,
+.artifact-panel-close svg {
+  width: 16px;
+  height: 16px;
+}
+.artifact-panel-close {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #34404f;
+  border-radius: 8px;
+  color: #d8e1eb;
+  background: #171d26;
+}
+.artifact-panel-close:hover {
+  border-color: #587087;
+  background: #202936;
 }
 .artifact-panel-body {
   min-height: 0;

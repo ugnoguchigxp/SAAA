@@ -1,13 +1,17 @@
 //! Runs the ordinary library build, not a cfg(test) canary.
 #[tokio::main]
 async fn main() {
-    let Some(host) = std::env::args().nth(1) else {
-        eprintln!("Usage: harness_llm_diagnostic <private-host-without-port>");
+    let Some(target) = std::env::args().nth(1) else {
+        eprintln!("Usage: harness_llm_diagnostic <control-base-url|database> [--frontdesk|--enable-role-routing]");
         std::process::exit(2);
     };
-    let result = if std::env::args().nth(2).as_deref() == Some("--frontdesk") {
-        saaa_lib::harness_llm_diagnostic::check_frontdesk(&host).await
-    } else { saaa_lib::harness_llm_diagnostic::check_response(&host).await };
+    let result = if std::env::args().nth(2).as_deref() == Some("--enable-role-routing") {
+        saaa_lib::harness_llm_diagnostic::enable_role_routing(&target)
+    } else if std::env::args().nth(2).as_deref() == Some("--frontdesk") {
+        saaa_lib::harness_llm_diagnostic::check_frontdesk(&target).await
+    } else {
+        saaa_lib::harness_llm_diagnostic::check_response(&target).await
+    };
     match result {
         Ok(report) => println!("{report}"),
         Err(error) => {

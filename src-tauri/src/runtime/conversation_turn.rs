@@ -336,9 +336,13 @@ async fn execute_conversation_turn_with_candidates(
         )
         .map_err(Into::into);
     }
-    let shared_larm_voice =
-        route.source == "harness" && input.input_origin == "voice"
-            && (crate::larm_voice::enabled() || input.source_id.as_deref().is_some_and(|s|s.starts_with("lfm_handoff_")));
+    let shared_larm_voice = route.source == "harness"
+        && input.input_origin == "voice"
+        && (crate::larm_voice::enabled()
+            || input
+                .source_id
+                .as_deref()
+                .is_some_and(crate::larm_voice::frontdesk_repository::is_reasoning_request_id));
     let harness = providers.harness.clone();
     if let Some(client) =
         crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)

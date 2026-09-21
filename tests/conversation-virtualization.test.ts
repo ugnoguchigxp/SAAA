@@ -146,3 +146,21 @@ test("older eviction sets a real newer edge and refresh preserves the browsing w
   expect(store.isBrowsingOlder()).toBe(false);
   expect(store.snapshot().hasMoreMessages).toBe(true);
 });
+
+test("returning to latest replaces an older browsing window in one request", async () => {
+  const { store, pending } = queuedHistory();
+  store.setMessages(rows(100, 150));
+  const older = store.load("before");
+  pending.shift()!.resolve(page(70, 30, true, true));
+  await older;
+  expect(store.isBrowsingOlder()).toBe(true);
+
+  const latest = store.returnLatest();
+  expect(pending[0]?.cursor).toBeNull();
+  pending.shift()!.resolve(page(230, 30, true, false));
+  await latest;
+
+  expect(store.snapshot().messages).toEqual(rows(230, 30));
+  expect(store.snapshot().hasNewerMessages).toBe(false);
+  expect(store.snapshot().loadingNewerMessages).toBe(false);
+});

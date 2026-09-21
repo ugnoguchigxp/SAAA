@@ -1,6 +1,7 @@
 import "./ui.css";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AppIcon } from "../../../components/AppIcon";
 import { uiApi, notifyUiHistoryChanged, type SavedView } from "./api";
 import { useGenUiEnabled, setGenUiEnabled } from "./settings";
 export function UiControls({ conversationId }: { conversationId?: string }) {
@@ -109,7 +110,15 @@ export function UiControls({ conversationId }: { conversationId?: string }) {
             </div>
           ))}
           {!views.length && <p>{t("genui.empty")}</p>}
-          <button onClick={() => setOpen(false)}>{t("genui.close")}</button>
+          <button
+            type="button"
+            className="ui-symbol-button"
+            aria-label={t("genui.close")}
+            title={t("genui.close")}
+            onClick={() => setOpen(false)}
+          >
+            <AppIcon name="close" />
+          </button>
         </section>
       )}
       {error && <span role="alert">{t("genui.operationFailed")}</span>}

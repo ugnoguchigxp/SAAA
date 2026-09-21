@@ -149,13 +149,17 @@ describe("ambient voice session", () => {
     expect(effectiveCaptureSettings(voiceSettings, voicePolicy)?.silenceTimeoutMs).toBe(1_500);
   });
 
-  test("ASR goes only to LFM; LFM responds while Qwen runs and delegates only an explicit request", async () => {
+  test("ASR goes only to LFM; LFM responds while Qwen runs and requests reasoning once", async () => {
     invokeImpl.handler = async (command, args) => {
       if (command === "receive_lfm_utterance") {
-        const input = args as {text:string};
+        const input = args as { text: string };
         return input.text === "hello there"
-          ? {handoffId:null,requestContent:null,speechEpoch:0}
-          : {handoffId:"lfm_handoff_1",requestContent:"hello there\nplease reason",speechEpoch:0};
+          ? { reasoningRequestId: null, requestContent: null, speechEpoch: 0 }
+          : {
+              reasoningRequestId: "lfm_reasoning_1",
+              requestContent: "hello there\nplease reason",
+              speechEpoch: 0,
+            };
       }
       return command;
     };
@@ -165,7 +169,7 @@ describe("ambient voice session", () => {
     const { createElement } = await import("react");
     const apiRef: MutableRefObject<SessionApi | null> = { current: null };
     const sessionRef: MutableRefObject<ConversationSession> = {
-      current: { ...initialConversationSession,runId:"qwen-already-running" },
+      current: { ...initialConversationSession, runId: "qwen-already-running" },
     };
     const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
     root = createRoot(document.getElementById("root")!);
@@ -208,14 +212,23 @@ describe("ambient voice session", () => {
         language: "ja",
       });
     });
-    expect(invokeCalls.some((c)=>c.command === "receive_lfm_utterance")).toBe(true);
+    expect(invokeCalls.some((c) => c.command === "receive_lfm_utterance")).toBe(true);
     expect(submitted).toEqual([]);
-    expect(invokeCalls.some((c)=>c.command === "cancel_run")).toBe(false);
+    expect(invokeCalls.some((c) => c.command === "cancel_run")).toBe(false);
     await act(async () => {
-      channel?.onmessage?.({type:"final",sessionId,utteranceId:"u2",revision:1,startMs:21,endMs:40,text:"please reason",language:"ja"});
+      channel?.onmessage?.({
+        type: "final",
+        sessionId,
+        utteranceId: "u2",
+        revision: 1,
+        startMs: 21,
+        endMs: 40,
+        text: "please reason",
+        language: "ja",
+      });
     });
     expect(submitted).toEqual(["hello there\nplease reason"]);
-    expect(invokeCalls.some((c)=>c.command === "cancel_run")).toBe(false);
+    expect(invokeCalls.some((c) => c.command === "cancel_run")).toBe(false);
     await act(async () => {
       await apiRef.current!.suspendVoiceForSpeech("speech-1");
     });

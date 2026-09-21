@@ -1,6 +1,6 @@
 # Role Routing 受入仕様・検証マトリクス
 
-状態: **設計段階。以下の試験は未実装・未実行**。
+状態: **受入未完了。実行証跡のないケースを合格扱いしない**。最新音声要件は[VC改訂のVT01〜VT11](saaa-role-routing-voice-integration.md)を必須追加とする。以下のA試験と競合する音声動作はVC改訂に従う。
 [全体計画](saaa-role-routing-plan.md) / [実行契約](saaa-role-routing-execution-contract.md) / [学習契約](saaa-role-routing-learning-contract.md) / [作業カード](saaa-role-routing-work-cards.md)
 
 ## 1. 検証環境
@@ -20,15 +20,19 @@
 | A01 | enabled=falseで通常のテキスト/音声入力 | 旧経路だけを1回呼ぶ。rr_root、rr_step作成0。既存fixture結果不変 | RR-03/14 |
 | A02 | policy保存。未知role、未知action、cycle、location矛盾、変更前versionを指定 | 保存拒否、policyVersion不変、既存設定不変。正しい別actorへの割当は保存可能 | RR-03/15 |
 | A03 | inputIdを同payloadで再送、別payloadで再送、同sourceIdのASR再送 | 同payloadは元receipt、message/root各1。同ID別payloadはconflict、副作用0 | RR-04 |
-| A04 | 実質質問を送信しQを保留、Fの受付を完了させる | Fは短い受付のみ、Qは推論を継続。rootは1つ、受付を最終回答として保存しない | RR-05/09/13 |
+| A04 | 完成した依頼をFへ送信してthink=true、Qを保留、追加の同意を送る | Q task1、F会話session維持、追加発言にF応答、Q cancel0。受付をQ最終回答にしない | RR-05/09/13・VT02/03 |
 | A05 | 「こんにちは」と「ありがとう、でも条件が違います」を入力 | 前者は許可された簡易応答で完了、後者を挨拶として完了させない | RR-08 |
-| A06 | Fがtimeoutまたは不正JSON。Qは成功 | host定型受付で継続、Q回答1件。F失敗をroot失敗にしない | RR-08/09 |
-| A07 | 同resourceGroupと別resourceGroupでF/Qを開始 | 同groupで同時推論0、Q優先、受付は定型へ。別groupでは並行可 | RR-09/13 |
+| A06 | Fがtimeout/不正JSON、またはJSON Schema非対応。Qは成功 | 平文LFM＋Qwen補助判断へ降格、不正JSON発話0、同inputのtask/tool重複0。F失敗を既存Qの失敗にしない | RR-08/09・VT04/05 |
+| A07 | 同resourceGroupと別resourceGroup、広告容量1/複数でF/Qを開始 | 実容量超過0。対応配置ではQ思考中もF応答。非対応配置はdegradedで音声gate不合格、定型文で成功を偽装しない | RR-09/13・VT03/05/10 |
 | A08 | Fがtool要求、Qが未提示tool、reviewがmutationを要求 | 各要求を拒否し外部実行0。許可されたQのtoolは既存gateを通る | RR-10/11 |
 | A09 | Qのtool成功後に通信切断。同じstepのretryを要求 | invocationは1件、mutation実行1回。通信失敗を理由に自動再実行しない | RR-11 |
 | A10 | Qの結果を二重配送。さらにDB確定時に失敗を注入 | 通常はanswer/root完了各1。DB失敗時はanswer採用0、TTS開始0 | RR-12 |
 | A11 | ack予約前/再生中/停止失敗の各時点でQ結果を配送 | 不要ack取消、同時speech<=1。停止未確認なら最終音声失敗、画面回答は保持 | RR-13 |
 | A12 | mock音声入力→F→Q→tool→回答→TTS→UI再接続 | receipt時にASR queue解放、DBから確定回答復元、TTS failureでも回答完了を維持 | RR-14/15 |
+
+### 音声稼働の追加ゲート
+
+VT01〜VT11を通常の受付IPC・実writer・coordinator・speech ownerで検証する。特に「1.5秒無音≠依頼完了」「LFMは会話担当のまま」「Qwen回答で現在/待機/遅着LFM音声を破棄」を必須assertとする。liveは固定20ケース各3回と実マイク10往復以上、通常ビルド・policy・actor fingerprint・レイテンシを記録する。数値目標と失敗時の扱いはVC改訂§6を参照する。JSON構文だけ成功、単体Providerだけ成功、0 tests、未実行は合格ではない。
 
 ## 3. R2: 追加条件・再検討・委任（A13〜A30）
 
@@ -112,7 +116,7 @@ live分類評価は最低100件、上記の言い換え・引用・否定・対�
 | ID | 指標 | 方法 | 目標と失敗時の処置 |
 | --- | --- | --- | --- |
 | P1 | host routing/DB受付の追加処理 | warm5+100件、LLM/TTS待ちを除外、mock adapter | p95<=50ms。超過ならquery/index/pageを修正し先に進まない |
-| P2 | 受付発話開始TTFA | 音声依頼30件以上、ASR finalから実音声再生開始 | p95<=1500ms。coldも別報告。同GPUで未達ならhost定型受付へfallback |
+| P2 | LFM応答準備・受付発話開始TTFA | 音声依頼30件以上、ASR finalから応答準備と実音声再生開始を別計測 | VC初期目標: 温間応答準備p95<=2000ms、可聴開始p95<=3000ms。cold別報告。旧定型受付の1500ms目標を置換した設計値であり実測結果ではない。定型文で並走不能を隠さず未達として報告 |
 | P3 | 最終回答開始までの遅延 | 通常依頼30件以上、baselineと交互に実行 | 同actor経路の追加p95<=max(1000ms,baseline p95の10%)。bufferingの影響も含める。未達なら体験gate未合格 |
 | P4 | 回答品質と継続性 | 固定日本語タスク100件、blind rubric、条件一致/根拠/課題達成 | 明示条件の欠落・二重tool実行・禁止送信0。baselineとの成功率差と区間を報告し、差の下限<-2ptなら導入保留 |
 | P5 | 夜間負荷 | page100件、foregroundを途中開始、実機30件 | DB write p95<=50ms、cancel要求<=100ms（仮想時計）、TTFA p95悪化<=10%。超過時はnightly pause |

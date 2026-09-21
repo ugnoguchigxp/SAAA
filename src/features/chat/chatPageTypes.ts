@@ -6,7 +6,6 @@ import type {
 } from "../../lib/contracts";
 import type { ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type { VoiceCaptureState } from "../voice/useAmbientVoiceSession";
-import type { VoiceAsrProjection } from "../voice/voiceAsrProjection";
 import type { StreamingTextProjection } from "./streamingTextBuffer";
 import type { RoutingEventRecord, RoutingSnapshot } from "../../lib/generated/runtimeEvent";
 import type {
@@ -23,10 +22,11 @@ export type ChatPageProps = {
   hasNewerMessages?: boolean;
   loadingNewerMessages?: boolean;
   onLoadNewerMessages?: () => Promise<void>;
+  onReturnToLatest: () => Promise<void>;
   onLoadOlderMessages: () => Promise<void>;
   streamingText: StreamingTextProjection;
-  interimTranscript: { text: string; projection: VoiceAsrProjection };
   voiceState: VoiceCaptureState;
+  voiceActivityLevel: number;
   listeningEnabled: boolean;
   runtimeActivity: ConversationRuntimeActivity[];
   composer: string;

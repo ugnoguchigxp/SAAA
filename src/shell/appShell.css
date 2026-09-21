@@ -1,23 +1,26 @@
 .app-primary-region {
+  position: relative;
   min-width: 0;
   min-height: 0;
   height: 100%;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   background: #0d1118;
 }
 
 .top-navigation {
+  position: absolute;
+  z-index: 20;
+  top: 8px;
+  left: clamp(8px, 1.4vw, 18px);
+  max-width: calc(100% - clamp(16px, 2.8vw, 36px));
   min-width: 0;
-  min-height: 54px;
   display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 0 clamp(16px, 2.4vw, 34px);
+  align-items: center;
+  gap: 5px;
+  padding: 0;
   overflow-x: auto;
-  border-bottom: 1px solid #252d38;
-  background: #0d1118;
+  background: transparent;
+  pointer-events: none;
   scrollbar-width: none;
 }
 
@@ -26,46 +29,46 @@
 }
 
 .top-navigation-item {
-  position: relative;
   flex: 0 0 auto;
-  padding: 0 14px;
-  border: 0;
-  color: #8694a6;
-  background: transparent;
-  font-size: 0.8rem;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #8d9bac;
+  background: rgb(19 25 34 / 0.78);
+  backdrop-filter: blur(12px);
+  font-size: 0.74rem;
   font-weight: 650;
+  pointer-events: auto;
 }
 
 .top-navigation-item:hover {
+  border-color: #354252;
   color: #dbe4ee;
+  background: rgb(29 38 49 / 0.92);
 }
 .top-navigation-item.active {
-  color: #f1f5f9;
-}
-.top-navigation-item.active::after {
-  position: absolute;
-  right: 12px;
-  bottom: 0;
-  left: 12px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: #67d5c5;
-  content: "";
+  border-color: #47736d;
+  color: #effbf9;
+  background: rgb(32 53 55 / 0.94);
 }
 
 .app-page-region {
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
 .workspace-page {
+  position: relative;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   background: #0d1118;
 }
@@ -78,6 +81,19 @@
   gap: 16px;
   padding: 10px clamp(20px, 3vw, 44px);
   border-bottom: 1px solid #202833;
+}
+
+.workspace-page-toolbar {
+  position: absolute;
+  z-index: 19;
+  top: 8px;
+  right: clamp(8px, 1.4vw, 18px);
+  width: auto;
+  min-height: 34px;
+  justify-content: flex-end;
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
 }
 
 .workspace-page-header h1 {
@@ -107,13 +123,19 @@
 
 @media (max-width: 720px) {
   .top-navigation {
-    padding-inline: 8px;
+    right: 8px;
+    left: 8px;
+    max-width: none;
   }
   .top-navigation-item {
-    padding-inline: 11px;
+    padding-inline: 9px;
   }
   .workspace-page-header,
   .workspace-page-content {
     padding-inline: 16px;
+  }
+  .workspace-page-toolbar {
+    right: 8px;
+    padding: 0;
   }
 }

@@ -559,11 +559,11 @@ pub(crate) fn prepare_runtime_run(
             None
         };
         let now = now_iso();
-        let handoff_message = if input.retry_input_message_id.is_none() {
-            crate::larm_voice::frontdesk_repository::claim_handoff(&transaction, input)?
+        let reasoning_request_message = if input.retry_input_message_id.is_none() {
+            crate::larm_voice::frontdesk_repository::claim_reasoning_request(&transaction, input)?
         } else { None };
-        let new_message = input.retry_input_message_id.is_none() && handoff_message.is_none();
-        let input_message_id = if let Some(message_id) = handoff_message {
+        let new_message = input.retry_input_message_id.is_none() && reasoning_request_message.is_none();
+        let input_message_id = if let Some(message_id) = reasoning_request_message {
             message_id
         } else if let Some(message_id) = input.retry_input_message_id.as_deref() {
             crate::validate_identifier(message_id, "retry input message id")?;

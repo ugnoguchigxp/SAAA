@@ -161,6 +161,27 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     let planned_steps = compile_selected_plan(&policy, candidate)?;
     let candidates = candidate_receipt(&selection.eligible);
     transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,?5,?6,?7,NULL,'')",params![run_id,conversation_id,run_id,policy_id,origin,presentation_mode,now_ms]).map_err(|e|e.to_string())?;
+    if let Some(reasoning_request_id) =
+        source_id.filter(|id| crate::larm_voice::frontdesk_repository::is_reasoning_request_id(id))
+    {
+        // Adopt every ASR segment that formed this verbatim reasoning request. The LFM receipt is
+        // written before inference; attaching it here makes the same Role Routing root own the
+        // complete voice history without asking LFM to rewrite user authority.
+        transaction.execute(
+            "UPDATE rr_inputs SET root_id=?1,disposition='adopted'
+             WHERE root_id IS NULL AND conversation_id=?2 AND message_id IN (
+               SELECT u.user_message_id FROM lfm_voice_utterances u
+               WHERE u.conversation_id=?2
+                 AND u.rowid <= (SELECT rowid FROM lfm_voice_utterances WHERE reasoning_request_id=?3)
+                 AND u.rowid > COALESCE((
+                   SELECT MAX(previous.rowid) FROM lfm_voice_utterances previous
+                   WHERE previous.conversation_id=?2 AND previous.status='delegate'
+                     AND previous.rowid < (SELECT rowid FROM lfm_voice_utterances WHERE reasoning_request_id=?3)
+                 ),0)
+             )",
+            params![run_id, conversation_id, reasoning_request_id],
+        ).map_err(|e|e.to_string())?;
+    }
     let payload_digest = format!("{:x}", Sha256::digest(input_content.as_bytes()));
     transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,source_id,disposition,received_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,'accepted',?8)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,payload_digest,origin,source_id,now_ms]).map_err(|e|e.to_string())?;
     transaction.execute("INSERT INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms) VALUES(?1,?2,0,?3,?4,?5,?6,'respond','[\"rules\"]','rules-v1',?7,?8)",params![decision_id,run_id,format!("rr-input-{run_id}"),feature_snapshot(&input_content,policy.limits.max_reasoning_steps).to_string(),candidates.to_string(),candidate.recipe_id,policy_id,now_ms]).map_err(|e|e.to_string())?;

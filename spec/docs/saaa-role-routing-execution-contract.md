@@ -1,6 +1,6 @@
 # Role Routing 実行契約
 
-状態: 設計。本文中の新規型・table・IPCは未実装。
+状態: 部分実装・受入未完了。音声会話は[VC改訂](saaa-role-routing-voice-integration.md)を正本とする。ここでの契約変更は実装完了を示さない。
 [全体計画](saaa-role-routing-plan.md) / [作業カード](saaa-role-routing-work-cards.md) / [受入試験](saaa-role-routing-acceptance.md)
 
 ## C0. 所有権と不変条件
@@ -16,7 +16,7 @@
 
 ## C1. 語彙・識別子・型
 
-全JSONはcamelCase、`schemaVersion:1`、未知field拒否。列挙はsnake_case。IDは既存`validate_identifier`の上限・文字集合を使う。JSON内のfloatはfiniteのみ。本文サイズはUTF-8 bytesで検査する。
+host IPCのJSONはcamelCase、version付き、未知field拒否（設定拡張時はversionとmigrationを更新）。LFMの生成本文だけは例外として`{"say":"短い応答","think":false}`の2項目に限定し、versionやIDを生成させない。列挙はsnake_case。IDは既存`validate_identifier`の上限・文字集合を使う。JSON内のfloatはfiniteのみ。本文サイズはUTF-8 bytesで検査する。
 
 | 型 | 必須field / 意味 |
 | --- | --- |
@@ -41,6 +41,8 @@ Step purposeは`respond/reconsider/review/revise/frontend/classify/tool_speciali
 ## C2. 設定契約
 
 新しいsettings documentを`namespace=routing.roles,key=default,schema_version=1`として追加。既存`routing.tasks`は維持する。全設定はvalidation後に同一transactionでrevisionを増やし、`rr_policy_versions`へimmutable snapshotを作る。認証キーは既存Keychainから参照し、設定・snapshotに保存しない。
+
+以下は初期版の設定例。VC音声統合ではversion付きmigrationを行い、`ackDelayMs`と定期progress設定による自発発話は使用しない。`frontendTimeoutMs=1200`を新経路の固定値として流用せず、VCの応答時間目標と実測に基づいて検証する。新outputModeとHarness bindingはVC01/02で型・保存・UIを同時に更新する。
 
 ```json
 {
@@ -72,8 +74,8 @@ Step purposeは`respond/reconsider/review/revise/frontend/classify/tool_speciali
 Validation規則:
 
 - actor最大16、recipe最大32、ID重複不可。labelは80文字以下、aliasesは最大8件・各40文字以下、正規化後の別actor間重複不可。ユーザーの明示担当指定はaliasesからhostがactor IDへ解決する。role参照・recipe参照は全て解決可能。recipeの順序は最大3step、既知テンプレートのみ。
-- provider transportのmodelはnullで、既存Providerのmodelを使う。locationの矛盾は拒否。Harnessが動的に違うモデルを返す構成はR1で受理せず、役割が固定できるOpenAI互換Providerを登録する。
-- `reasoner`必須。frontend不在なら定型文で継続。advanced/premium不在なら該当recipeを除外し、理由を表示する。
+- provider transportのmodelはnullで、既存Providerのmodelを使う。locationの矛盾は拒否。HarnessはVC改訂の明示的role binding adapterを実装し、profile内のbackchannel/llmと実model fingerprintを検証する。期限付きURL/tokenを固定Providerへコピーしない。未検証のdynamic defaultをfrontendと推定しない。
+- `reasoner`必須。音声会話readyにはfrontendも必須。frontend未設定をhost定型文で代用して稼働済みとしない。enabled=trueとreadyを分離して未設定を表示する。advanced/premium不在なら該当recipeを除外する。
 - capabilitiesは自己申告だけで有効にしない。adapterが実装する能力との積集合を使う。read-only reviewはhost_toolsを持っていてもmutationを許可しない。
 - maxReasoningStepsは1〜8、maxToolCallsは0〜32、root timeoutは1000〜600000ms、step timeoutは1000〜root timeout、frontend/classificationは100〜3000ms、queueは1〜8、review roundsは0〜2、switchesは0〜4。
 - classificationMinConfidenceは0〜1、初期0.85。weightsは0以上、合計1。cost不明は0円にしない。金額上限を指定したactorで単価不明なら自動実行候補から除外。
@@ -90,9 +92,9 @@ cloudAllowedは、root開始時とdispatch時の両方で既存security.local_on
 
 ### C3.1 入力の分類
 
-frontendには直近のユーザー入力、直近確定回答のIDと短い抜粋、active rootの目的・phaseだけを渡す。tool結果やworkspace全体は渡さない。最大16KB。schemaはkind、targetAnswerId、evidenceStart/End、confidence、replyKey?のみ。kindはnew_task/add_constraint/status_query/social/answer_challenge/explanation_request/explicit_actor_request/unclear。
+frontendには受理済み発言と短い会話履歴、hostが確認したactive rootの目的・phaseを渡す。tool結果やworkspace全体は渡さない。入力はProvider予算と上限で検査し、現在の発言・必須条件を黙って切り捨てない。LFM出力はsay/thinkのみ。対象ID・根拠範囲・権限・状態はhostが管理する。詳細なnew_task/add_constraint/status_query/social等の分類は既存host処理またはQwenの補助分類へ分離する。JSON不安定時はVC改訂のplain_text_parallelへ切り替える。
 
-confidence>=policy.classificationMinConfidence（初期0.85）、evidenceの範囲が入力本文内、targetがhostから渡したIDのいずれか、の3条件が揃っても権限判断には使わない。閾値はpolicy版に保存する。失敗・timeout・引用/否定の曖昧性はunclear。閾値を下げてlive gateを通さない。
+Qwen補助分類がconfidenceを返す場合はconfidence>=policy.classificationMinConfidence（初期0.85）、evidenceの範囲が入力本文内、targetがhostから渡したIDのいずれか、の3条件が揃っても権限判断には使わない。閾値はpolicy版に保存する。失敗・timeout・引用/否定の曖昧性はunclear。閾値を下げてlive gateを通さない。
 
 即時host操作はUIの明示intent、または正規化後の単独「中止して」「キャンセル」で対象rootが一意の場合だけ。引用を含む長文からkeywordだけでcancelしない。承諾も提案ID付きUI操作、または唯一の未失効提案に対する単独「はい、Astraでお願いします」等のallowlist。単独「はい」は自動承諾しない。
 
@@ -129,7 +131,7 @@ confidence>=policy.classificationMinConfidence（初期0.85）、evidenceの範�
 
 promptは`contexts/`配下にfrontend/classifier/reasoner/reviewer/reviserの定義を追加し、既存s11tnext生成手順で管理する。必須指示は次のとおり。
 
-- frontend: allowlistの短い会話のみ直接応答。完了・調査・実行の断定はhostが渡したstateに限定。
+- frontend: 発言に反応した短い自然な会話・確認を返す。多項目分類JSONやreplyKeyは要求しない。完了・調査・実行の断定はhostが渡した実stateに限定。
 - reasoner: 条件を保持し、ツール結果と推測を区別。能力不足なら構造化したEscalationを返す。
 - reviewer: author名や性能tierを見せず、回答・依頼・根拠からissueを抽出。レビュー自体に最終回答の権威を与えない。
 - reviser: issueごとの採否と根拠を内部結果に残し、正当な根拠がない結論反転をしない。
@@ -225,7 +227,7 @@ R1段階ではpending分類barrierの型と保存を先に用意し、実行中�
 | respond_routing_proposal | proposalId、expectedRevision、accept、inputId | receipt |
 | get_routing_capabilities | なし | configured/probed/unsupportedと理由、policyVersion |
 
-イベントは`{seq,conversationId,rootId,revision,kind,data}`。kind=input_accepted/phase_changed/actor_changed/interim_reply/answer_committed/proposal_created/speech_changed/root_finished。answer_committedだけに確定messageを含む。interim_replyはreplyKeyと表示文を含むが、最終assistant messageとして保存しない。
+イベントは`{seq,conversationId,rootId,revision,kind,data}`を基本とする。kind=input_accepted/phase_changed/actor_changed/interim_reply/answer_committed/proposal_created/speech_changed/root_finished。answer_committedだけに確定messageを含む。VCのタスク成立前イベントはrootId/revisionをnullableとし、inputIdと会話session世代を必須にする契約をVC01で追加する。interim_replyはLFMのsayまたは既存発話への参照を含み、replyKeyを要求せず、最終assistant messageとして保存しない。
 
 subscribeは同actor上で購読を登録してreplay上限Hを取得する。登録後のliveイベントを一時bufferに溜め、afterSeq<seq<=Hをpage送信後、seq>Hのbufferを順に送る。UIはseqで重複排除する。buffer上限256を超えた場合はresync_requiredを返し、snapshotから再購読させる。権限失効・削除済み本文は再送せず、content_unavailableとしてIDだけを返す。
 
@@ -241,7 +243,7 @@ mode切替時にactive rootがある場合はC0のdrainを待つ。legacyと新h
 
 `ActorAdapter::run(StepRequest, ContextEnvelope, StepSink, childCancel) -> StepResult`。Sinkは内部の進捗だけを受け、rootのMessageCompletedを直接発行しない。stepはcontext_generationを開始/dispatch/完了する。Transport retryは内容送信前の接続失敗で1回まで。ツール実行後の自動再試行は0。
 
-`resourceGroup`ごとに推論permit一つ。異なるgroupのfrontendとreasonerは並行。同groupならreasonerを優先し、frontendは待たずhost定型文へ。夜間推論は全foregroundに劣後する。既存Personal State slotとの接続はbackground中断の共有だけにし、新Qwen呼び出しで同じ非再入slotを二重取得しない。
+推論permitは広告された実capacityとresourceGroupに基づく。LFM受付をQwenの長時間推論と同じ排他slotへ押し込まない。同groupで並走不可ならdegradedとして示し、LFM常時応対のlive gateを不合格にする。group名の変更で容量を捏造しない。夜間推論は全foregroundに劣後する。既存Personal State slotとの接続はbackground中断の共有だけにし、新Qwen呼び出しで同じ非再入slotを二重取得しない。
 
 ### C8.2 Qwenと1.2B
 
@@ -279,15 +281,15 @@ coding_startのような既存の非gateway toolも同じpermit wrapperを通し
 
 ## C9. 発話と軽量モデル
 
-発話ownerはconversation単位。priorityはユーザー割り込み > cancel > current final > clarification > ack/progress。最終回答が来たら未開始のackを取消し、再生中のackはstopを要求して終了確認後にfinalへ。2秒で停止確認できなければそのrootの音声をfailedにして画面回答を残す。二つの音声を同時に始めない。
+発話ownerはconversation単位。priorityはユーザー割り込み > cancel > current final > clarification > ack/progress。最終回答が来たら未開始のackを取消し、再生中のackはstopを要求して終了確認後にfinalへ。VC改訂の初期設計値500msで停止確認できなければそのrootの音声をfailedにして画面回答を残す。二つの音声を同時に始めない。
 
-開始時に1.2BへreplyKey選択を依頼し、250msでまだ推論中ならackを一度予約。1200msのdeadlineは入力受付時から数え、1.2Bが間に合わなければhostの「確認します。」。実際にtool待ちでないのに「調べています」と言わない。progressは実際のphase変化時のみ、15秒以上の間隔、最大2回。音声が不要な設定ならUIのみ。
+LFMは1.5秒無音で確定した発言に応対し、必要時にQwenへ思考を依頼する。会話sessionは継続する。250ms timer ackや定期progressは生成しない。実際に受理・開始していない処理の待機文を出さない。音声不要設定ならUIのみ。応答deadlineは入力受付時間と接続準備時間を分離し、VC改訂の実測gateで検証する。
 
-1.2Bの初期出力はreplyKeyを選ぶ方式で、greeting/acknowledge/thinking/checking_evidence/reviewing/waiting_confirmationのallowlist。自由文を発話に使わない。greeting/acknowledgeの直接完了は入力が挨拶等に限定されることをhost検証する。複合依頼「ありがとう、ただ条件が違う」は対象外。
+LFMの初期出力はsay/thinkの2項目。短いsayを検証後に発話する。不正JSONをそのまま読まない。構文・意味判定が不安定なら平文LFMとQwen補助判断を並走させる。複合依頼「ありがとう、ただ条件が違う」を挨拶のみで完了させない。
 
-音声の新しい発言を受け付けた時点で既存speechをbarge-in停止し、未開始の古いfinalを取消す。元の採用済みmessageは削除しない。rootがcompletedでもspeech ownerの停止処理は有効にする。
+自声echoを除外して本当のユーザー割り込みを確認した場合は既存speechをbarge-in停止し、未開始の古いfinalを取消す。ASRイベント到着だけ、またはLFM応答到着だけではQwen最終回答を停止しない。元の採用済みmessageは削除しない。rootがcompletedでもspeech ownerの停止処理は有効にする。
 
-replyKeyの実際の文はversion付きのhost辞書に置き、rr_speechにreply_catalog_versionを保存する。再購読時に別の文へ変わらないよう、過去版の辞書を参照する。
+hostが必要に応じて出す障害案内・待機文のみversion付き辞書で管理する。LFM会話文へreplyKeyを強制しない。speechは既存の本文正本参照、speaker、epochへ束縛し、再購読で自動再生しない。
 
 最終回答はauthor_verbatim: 思考担当の確定textを共通TTSへ送る。全文が長い場合も1.2Bへ再要約しない。初期は画面・音声同文。structured speechSummaryの導入は別policy/schema拡張。
 
@@ -305,7 +307,7 @@ premium proposalは未解決点、提案actor、想定の送信先、費用が�
 
 | 障害 | 動作 |
 | --- | --- |
-| frontend失敗 | 定型受付を使い、reasonerを継続 |
+| frontend出力失敗 | VC改訂の平文並走へ降格し、既存reasonerを巻き添え停止しない。frontend接続障害は別途degraded表示 |
 | classify不明 | activeならclarify、新規依頼ならQwen通常応答 |
 | reasoner利用不可 | 明示失敗。frontの知識回答で代替しない |
 | Sol容量/認証/能力エラー | 許可されたQwenで継続可能なら新decision、なければ説明。黙示モデル変更なし |

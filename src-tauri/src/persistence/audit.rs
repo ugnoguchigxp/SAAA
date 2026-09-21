@@ -641,6 +641,7 @@ fn is_allowed_attribute(key: &str) -> bool {
             | "nextState"
             | "reasonCode"
             | "handoffId"
+            | "reasoningRequestId"
             | "providerId"
             | "providerKind"
             | "routeKind"

@@ -14,6 +14,7 @@ export function useMessageHistory() {
     setMessages: store.setMessages,
     reset: store.reset,
     latest: store.latest,
+    returnLatest: store.returnLatest,
     load: store.load,
     isBrowsingOlder: store.isBrowsingOlder,
   };

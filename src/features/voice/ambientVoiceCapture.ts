@@ -8,7 +8,7 @@ import {
   MicrophoneCaptureError,
   requestMicrophoneStream,
 } from "../../lib/microphone";
-import { VoiceActivityDetector } from "../../lib/voiceActivity";
+import { VoiceActivityDetector, type VoiceActivityObservation } from "../../lib/voiceActivity";
 import type { VoiceSessionEvent } from "../../lib/voiceSession";
 import type { CommitReason } from "../../lib/generated/voiceAsr";
 import { voiceSegmentCommitReason } from "./voiceSegmentBoundary";
@@ -40,6 +40,7 @@ export async function attachAmbientVoiceCapture(context: {
   packetFrame: (frame: Float32Array) => void;
   packetCount: () => number;
   clearTranscript: () => void;
+  onActivity?: (observation: VoiceActivityObservation) => void;
 }): Promise<void> {
   if (context.disposed.current || context.stream.current || context.captureLease.current) return;
   if (!context.listeningEnabled.current) return;
@@ -118,6 +119,7 @@ export async function attachAmbientVoiceCapture(context: {
         // ASR receives every frame before VAD; VAD only decides commit boundaries.
         context.packetFrame(event.data);
         const observation = context.activityDetector.current?.observe(event.data);
+        if (observation) context.onActivity?.(observation);
         const reason = voiceSegmentCommitReason(observation, context.packetCount());
         if (reason) context.finishSegment(reason);
       } finally {

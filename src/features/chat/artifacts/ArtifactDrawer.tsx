@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { AppIcon } from "../../../components/AppIcon";
 import type { UiInstance } from "../../../lib/generated/generativeUi";
 import { UiBoundary } from "../ui/UiBoundary";
 import { artifactWidthFor } from "./artifactWidth";
@@ -167,9 +168,10 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                         type="button"
                         className="artifact-tab-close"
                         aria-label={`${t("genui.close")}: ${title}`}
+                        title={`${t("genui.close")}: ${title}`}
                         onClick={() => close(tab.instance.viewId)}
                       >
-                        ×
+                        <AppIcon name="close" />
                       </button>
                     </div>
                   );
@@ -177,10 +179,12 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
               </div>
               <button
                 type="button"
-                className="secondary-button"
+                className="artifact-panel-close"
+                aria-label={t("genui.close")}
+                title={t("genui.close")}
                 onClick={() => close(activeViewId!)}
               >
-                {t("genui.close")}
+                <AppIcon name="close" />
               </button>
             </header>
             <div

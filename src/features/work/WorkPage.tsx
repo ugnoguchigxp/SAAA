@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AppIcon } from "../../components/AppIcon";
 import { useArtifactWorkspace } from "../chat/artifacts/ArtifactDrawer";
 import { uiApi } from "../chat/ui/api";
 import { codingApi, type CodingSettings, type CodingSnapshot } from "../coding/api";
@@ -138,13 +139,22 @@ export function WorkPage({
   }
 
   return (
-    <section className="workspace-page work-page" aria-labelledby="work-page-title">
-      <header className="workspace-page-header">
-        <h1 id="work-page-title">{t("navigation.work")}</h1>
-        <button type="button" className="workspace-secondary-button" onClick={() => void refresh()}>
-          {t("common.refresh")}
+    <section className="workspace-page work-page" aria-label={t("navigation.work")}>
+      <div
+        className="workspace-page-header workspace-page-toolbar"
+        role="toolbar"
+        aria-label={t("navigation.work")}
+      >
+        <button
+          type="button"
+          className="workspace-secondary-button workspace-symbol-button"
+          aria-label={t("common.refresh")}
+          title={t("common.refresh")}
+          onClick={() => void refresh()}
+        >
+          <AppIcon name="refresh" />
         </button>
-      </header>
+      </div>
       <div className="workspace-page-content work-page-content">
         <div className="work-toolbar">
           <div className="workspace-tabs" role="tablist" aria-label={t("workPage.tabsLabel")}>

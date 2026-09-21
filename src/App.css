@@ -162,7 +162,7 @@ h3 {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 24px clamp(36px, 7vw, 112px);
+  padding: 58px clamp(36px, 7vw, 112px) 24px;
 }
 .message-area > .message {
   content-visibility: auto;
@@ -317,6 +317,43 @@ h3 {
 .message.incomplete {
   border: 1px solid #8a6a31;
 }
+.llm-thinking-indicator {
+  width: 38px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 2px 0 16px;
+  border-radius: 9px;
+  color: #78cfc3;
+  background: #171f28;
+}
+.llm-thinking-indicator span {
+  width: 3px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: center;
+  animation: llm-thinking-pulse 900ms ease-in-out infinite;
+}
+.llm-thinking-indicator span:nth-child(2) {
+  animation-delay: 120ms;
+}
+.llm-thinking-indicator span:nth-child(3) {
+  animation-delay: 240ms;
+}
+@keyframes llm-thinking-pulse {
+  0%,
+  100% {
+    transform: scaleY(0.65);
+    opacity: 0.48;
+  }
+  50% {
+    transform: scaleY(2.25);
+    opacity: 1;
+  }
+}
 .transcript-unstable {
   color: #8c9cb0;
 }
@@ -348,6 +385,35 @@ h3 {
   margin: 7px 0 0;
   overflow-wrap: anywhere;
 }
+.latest-message-button {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: clamp(92px, 12vh, 116px);
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #42505f;
+  border-radius: 50%;
+  color: #dce6ee;
+  background: #202936;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.34);
+  transform: translateX(-50%);
+}
+.latest-message-button:hover:not(:disabled) {
+  border-color: #68a99f;
+  color: #effffc;
+  background: #293843;
+}
+.latest-message-button:disabled {
+  opacity: 0.58;
+}
+.latest-message-button svg {
+  width: 17px;
+  height: 17px;
+}
 .composer {
   position: relative;
   margin: 0 clamp(24px, 3.5vw, 58px) clamp(20px, 3vh, 34px);
@@ -364,6 +430,62 @@ h3 {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.voice-activity-indicator {
+  --voice-level: 0;
+  width: 32px;
+  height: 34px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+  color: #607080;
+  transition:
+    width 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
+}
+.voice-activity-indicator.detecting {
+  width: 78px;
+  color: #75d4c7;
+}
+.voice-activity-indicator.paused {
+  opacity: 0.38;
+}
+.voice-activity-indicator span {
+  width: 2px;
+  height: 4px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: currentColor;
+  transform: scaleY(0.75);
+  transform-origin: center;
+  transition: transform 140ms ease;
+}
+.voice-activity-indicator span:nth-child(3n + 1) {
+  height: 7px;
+}
+.voice-activity-indicator span:nth-child(4n + 2) {
+  height: 11px;
+}
+.voice-activity-indicator.detecting span {
+  animation: voice-level-pulse 560ms ease-in-out infinite alternate;
+}
+.voice-activity-indicator.detecting span:nth-child(2n) {
+  animation-delay: -180ms;
+}
+.voice-activity-indicator.detecting span:nth-child(3n) {
+  animation-delay: -360ms;
+}
+@keyframes voice-level-pulse {
+  from {
+    transform: scaleY(0.7);
+  }
+  to {
+    transform: scaleY(calc(1.25 + var(--voice-level)));
+  }
 }
 .composer textarea {
   min-width: 0;
@@ -658,7 +780,7 @@ h3 {
   justify-content: space-between;
   gap: 24px;
   align-items: center;
-  padding: 10px clamp(20px, 3vw, 44px);
+  padding: 10px clamp(20px, 3vw, 44px) 10px 360px;
   border-bottom: 1px solid #242b37;
 }
 .settings-page-header h1 {
@@ -1103,13 +1225,26 @@ h3 {
     padding-right: 18px;
   }
   .message-area {
-    padding: 20px;
+    padding: 58px 20px 20px;
   }
   .composer {
     margin: 0 14px 14px;
   }
+  .composer-row {
+    gap: 8px;
+  }
+  .voice-activity-indicator {
+    width: 24px;
+  }
+  .voice-activity-indicator.detecting {
+    width: 52px;
+  }
   .settings-page-header {
-    padding: 20px;
+    justify-content: flex-end;
+    padding: 4px 16px;
+  }
+  .settings-page-header h1 {
+    display: none;
   }
   .settings-screen-layout {
     grid-template-columns: 1fr;
@@ -1138,6 +1273,16 @@ h3 {
   }
   .settings-save-bar p {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .llm-thinking-indicator span,
+  .voice-activity-indicator.detecting span {
+    animation: none;
+  }
+  .llm-thinking-indicator span:nth-child(2) {
+    transform: scaleY(1.5);
   }
 }
 .world-scope-selector {

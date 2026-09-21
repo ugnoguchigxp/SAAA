@@ -1,29 +1,37 @@
 //! Operator diagnostic using production discovery, credentials, budgets and inference.
 //! Does not mutate conversation history or print credentials/provider response bodies.
 use crate::providers::stream::{CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome};
+pub use crate::role_routing::operator_configuration::enable as enable_role_routing;
 use std::sync::Arc;
 
 /// Uses the production LFM parser and session lease; no conversation data or settings are written.
-pub async fn check_frontdesk(base: &str) -> Result<String,String> {
-    let credential = crate::providers::dynamic_lan::credential::load().map_err(|e|e.code().to_string())?;
+pub async fn check_frontdesk(base: &str) -> Result<String, String> {
+    let credential =
+        crate::providers::dynamic_lan::credential::load().map_err(|e| e.code().to_string())?;
     let (_cancel, receiver) = tokio::sync::watch::channel(false);
     eprintln!("stage=voice-session-prepare; status=started");
-    let session = saaa_larm_session::Session::connect_with_profile_and_credential(base,"saaa-qwen38",credential.token().into(),receiver)
-        .await.map_err(|e|e.to_string())?;
+    let session = saaa_larm_session::Session::connect_with_profile_and_credential(
+        base,
+        "saaa-qwen38",
+        credential.token().into(),
+        receiver,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let result = async {
         let ready = crate::larm_voice::Ready {session:session.clone()};
         let mut history = Vec::new();
-        for (text, expected) in [
-            ("こんにちは。", crate::larm_voice::frontdesk_decision::ConversationAction::Respond),
-            ("旅行の予定を考えているんだけど。", crate::larm_voice::frontdesk_decision::ConversationAction::Respond),
-            ("東京から京都へ2泊3日で行きます。移動時間も考えて、お寺を巡る具体的な旅行計画を比較して作ってください。", crate::larm_voice::frontdesk_decision::ConversationAction::Delegate),
+        for (text, expected_think) in [
+            ("こんにちは。", false),
+            ("旅行の予定を考えているんだけど。", false),
+            ("東京から京都へ2泊3日で行きます。移動時間も考えて、お寺を巡る具体的な旅行計画を比較して作ってください。", true),
         ] {
             history.push(serde_json::json!({"role":"user","content":text}));
             let started = std::time::Instant::now();
             let decision = crate::larm_voice::frontdesk_decision::decide(&ready,history.clone(),false).await.map_err(str::to_string)?;
-            eprintln!("stage=lfm-decision; action={:?}; elapsed_ms={}; reply={}",decision.action,started.elapsed().as_millis(),decision.reply);
-            if decision.action != expected {return Err("lfm-live-routing-mismatch".into());}
-            history.push(serde_json::json!({"role":"assistant","content":decision.reply}));
+            eprintln!("stage=lfm-response; think={}; elapsed_ms={}; say={}",decision.think,started.elapsed().as_millis(),decision.say);
+            if decision.think != expected_think {return Err("lfm-live-reasoning-request-mismatch".into());}
+            history.push(serde_json::json!({"role":"assistant","content":decision.say}));
         }
         let qwen = async {
             let lease = session.acquire("llm").await.map_err(str::to_string)?;
@@ -57,13 +65,13 @@ pub async fn check_frontdesk(base: &str) -> Result<String,String> {
             history.push(serde_json::json!({"role":"user","content":"はい、お願いします。"}));
             let started=std::time::Instant::now();
             let decision=crate::larm_voice::frontdesk_decision::decide(&ready,history,true).await.map_err(str::to_string)?;
-            eprintln!("stage=lfm-while-qwen-pending; action={:?}; elapsed_ms={}",decision.action,started.elapsed().as_millis());
-            if decision.action != crate::larm_voice::frontdesk_decision::ConversationAction::Respond {return Err("lfm-duplicated-pending-request".into());}
+            eprintln!("stage=lfm-while-qwen-pending; think={}; elapsed_ms={}",decision.think,started.elapsed().as_millis());
+            if decision.think {return Err("lfm-duplicated-pending-request".into());}
             Ok::<_,String>(())
         };
         let (answer,follow_up)=tokio::join!(qwen,follow_up);
         answer?;follow_up?;
-        Ok("LFM: greeting=respond; incomplete-request=respond; coherent-request=delegate; pending-follow-up=respond; Qwen=final-received".into())
+        Ok("LFM: greeting=reply; incomplete-request=reply; coherent-request=reasoning-requested; pending-follow-up=reply; Qwen=final-received".into())
     }.await;
     let released = session.close().await.map_err(str::to_string);
     released?;

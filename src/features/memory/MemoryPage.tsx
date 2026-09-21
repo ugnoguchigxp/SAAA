@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-table";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AppIcon } from "../../components/AppIcon";
 import {
   personalStateApi,
   type PersonalSourcePage,
@@ -143,13 +144,22 @@ export function MemoryPage({
   }
 
   return (
-    <section className="workspace-page memory-page" aria-labelledby="memory-page-title">
-      <header className="workspace-page-header">
-        <h1 id="memory-page-title">{t("navigation.memory")}</h1>
-        <button type="button" className="workspace-secondary-button" onClick={() => void refresh()}>
-          {t("common.refresh")}
+    <section className="workspace-page memory-page" aria-label={t("navigation.memory")}>
+      <div
+        className="workspace-page-header workspace-page-toolbar"
+        role="toolbar"
+        aria-label={t("navigation.memory")}
+      >
+        <button
+          type="button"
+          className="workspace-secondary-button workspace-symbol-button"
+          aria-label={t("common.refresh")}
+          title={t("common.refresh")}
+          onClick={() => void refresh()}
+        >
+          <AppIcon name="refresh" />
         </button>
-      </header>
+      </div>
       <div className="memory-layout">
         <div className="memory-main">
           {snapshot &&

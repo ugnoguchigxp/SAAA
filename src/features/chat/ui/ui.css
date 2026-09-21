@@ -1,6 +1,8 @@
 .inline-ui { container-type: inline-size; width: 100%; min-width: 0; padding: var(--ds-space-6); border: var(--ds-border-width) solid var(--ds-color-border); border-radius: var(--ds-radius-container); background: var(--ds-color-surface); color: var(--ds-color-text); }
 .inline-ui button:disabled, .ui-controls button:disabled { opacity: .45; cursor: default; }
 .inline-ui :focus-visible, .ui-controls :focus-visible { outline: var(--ds-focus-width) solid var(--ds-color-focus); outline-offset: 3px; }
+.ui-symbol-button { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; }
+.ui-symbol-button svg { width: 16px; height: 16px; }
 .ui-header { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 16px; }
 .ui-header span, .ui-data-status, .ui-footer small { font-size: var(--ds-font-size-sm); color: var(--ds-color-text-muted); }
 .ui-metric { display: flex; flex-direction: column; gap: var(--ds-space-2); }.ui-metric strong { font-size: var(--ds-font-size-metric); }

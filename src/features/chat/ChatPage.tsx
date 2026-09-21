@@ -1,19 +1,18 @@
-import { WorldScopeSelector } from "./WorldScopeSelector";
 import { SetupChecklist } from "./SetupChecklist";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
-import {
-  localizeRuntimeActivity,
-  localizeStatus,
-  localizeUiMessage,
-} from "../../i18n/presentation";
+import { localizeRuntimeActivity, localizeUiMessage } from "../../i18n/presentation";
 import { DEFAULT_VOICE_SILENCE_TIMEOUT_MS } from "../../lib/voiceActivity";
 import { ConversationBehaviorMenu } from "./ConversationBehaviorMenu";
 import { VirtualMessages } from "./VirtualMessages";
 import { StreamingPlainText } from "./ChatMessages";
 import { RoutingProposal } from "./RoutingProposal";
 import type { ChatPageProps } from "./chatPageTypes";
+
+const LATEST_THRESHOLD_PX = 24;
+const scrollMemory = new Map<string, { scrollTop: number; followLatest: boolean }>();
+
 export function ChatPage({
   setupSnapshot,
   worldScope,
@@ -24,9 +23,10 @@ export function ChatPage({
   hasNewerMessages = false,
   loadingNewerMessages = false,
   onLoadNewerMessages,
+  onReturnToLatest,
   streamingText,
-  interimTranscript,
   voiceState,
+  voiceActivityLevel,
   listeningEnabled,
   runtimeActivity,
   composer,
@@ -62,47 +62,85 @@ export function ChatPage({
   const { t } = useTranslation();
   const messageAreaRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
-  const asrProjection = interimTranscript.projection;
+  const [showLatestButton, setShowLatestButton] = useState(false);
+
+  useEffect(() => {
+    const conversationId = selectedConversation?.id;
+    const memory = conversationId ? scrollMemory.get(conversationId) : undefined;
+    const shouldFollow = memory?.followLatest ?? true;
+    followLatestRef.current = shouldFollow;
+    setShowLatestButton(!shouldFollow);
+    const frame = requestAnimationFrame(() => {
+      const messageArea = messageAreaRef.current;
+      if (!messageArea) return;
+      messageArea.scrollTop = shouldFollow ? messageArea.scrollHeight : (memory?.scrollTop ?? 0);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedConversation?.id]);
+
   useEffect(() => {
     const messageArea = messageAreaRef.current;
     if (!messageArea || !followLatestRef.current || hasNewerMessages) return;
     const frame = requestAnimationFrame(() => {
       messageArea.scrollTop = messageArea.scrollHeight;
+      setShowLatestButton(false);
+      rememberScroll(messageArea, true);
     });
     return () => cancelAnimationFrame(frame);
-  }, [
-    messages,
-    streamingText,
-    interimTranscript,
-    asrProjection,
-    runtimeActivity,
-    hasNewerMessages,
-  ]);
+  }, [messages, streamingText, runtimeActivity, activeRunId, hasNewerMessages]);
+
+  function rememberScroll(messageArea: HTMLDivElement, followLatest: boolean) {
+    const conversationId = selectedConversation?.id;
+    if (!conversationId) return;
+    scrollMemory.set(conversationId, { scrollTop: messageArea.scrollTop, followLatest });
+    if (scrollMemory.size > 8) scrollMemory.delete(scrollMemory.keys().next().value!);
+  }
+
   async function handleMessageAreaScroll() {
     const messageArea = messageAreaRef.current;
     if (!messageArea) return;
-    followLatestRef.current =
-      messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight < 24;
-    if (
-      messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight < 100 &&
-      hasNewerMessages &&
-      !loadingNewerMessages
-    ) {
+    const distanceFromBottom =
+      messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight;
+    const atLatest = distanceFromBottom < LATEST_THRESHOLD_PX && !hasNewerMessages;
+    followLatestRef.current = atLatest;
+    setShowLatestButton(!atLatest);
+    rememberScroll(messageArea, atLatest);
+    if (distanceFromBottom < 100 && hasNewerMessages && !loadingNewerMessages) {
       await onLoadNewerMessages?.();
       return;
     }
-    if (messageArea.scrollTop < 100 && hasMoreMessages && !loadingOlderMessages)
+    if (messageArea.scrollTop < 100 && hasMoreMessages && !loadingOlderMessages) {
+      const previousHeight = messageArea.scrollHeight;
+      const previousTop = messageArea.scrollTop;
       await onLoadOlderMessages();
+      requestAnimationFrame(() => {
+        const current = messageAreaRef.current;
+        if (!current || followLatestRef.current) return;
+        current.scrollTop = previousTop + current.scrollHeight - previousHeight;
+        rememberScroll(current, false);
+      });
+    }
+  }
+
+  async function returnToLatest() {
+    followLatestRef.current = true;
+    setShowLatestButton(false);
+    await onReturnToLatest();
+    requestAnimationFrame(() => {
+      const messageArea = messageAreaRef.current;
+      if (!messageArea) return;
+      messageArea.scrollTop = messageArea.scrollHeight;
+      rememberScroll(messageArea, true);
+    });
+  }
+
+  function submitFromLatest(event: FormEvent<HTMLFormElement>) {
+    followLatestRef.current = true;
+    setShowLatestButton(false);
+    onSubmit(event);
   }
   return (
     <section className="chat-panel">
-      {worldScope && (
-        <WorldScopeSelector
-          status={worldScope.status}
-          value={worldScope.key}
-          onChange={worldScope.select}
-        />
-      )}
       <RoutingProposal
         snapshot={routingSnapshot}
         events={routingEvents}
@@ -161,24 +199,13 @@ export function ChatPage({
             <StreamingPlainText projection={streamingText} />
           </article>
         )}
-        {interimTranscript && voiceState !== "idle" && (
-          <article className={`message transcript streaming ${asrProjection.status}`}>
-            <span className="message-role">
-              {t("chat.transcript")} · {localizeStatus(t, voiceState)}
-            </span>
-            <p>
-              <span className="transcript-stable">
-                {asrProjection.stableText || asrProjection.finalText}
-              </span>
-              <span className="transcript-unstable">{asrProjection.unstableText}</span>
-            </p>
-            {asrProjection.protocol && (
-              <small className="transcript-route">
-                {asrProjection.protocol} · {asrProjection.scope}
-              </small>
-            )}
-          </article>
-        )}
+        {activeRunId ? (
+          <div className="llm-thinking-indicator" role="status" aria-label={t("chat.thinking")}>
+            <span />
+            <span />
+            <span />
+          </div>
+        ) : null}
         {runtimeActivity.length > 0 && (
           <details className="activity-panel">
             <summary>{t("chat.runtimeActivity")}</summary>
@@ -188,7 +215,19 @@ export function ChatPage({
           </details>
         )}
       </div>
-      <form className="composer" onSubmit={onSubmit}>
+      {(showLatestButton || hasNewerMessages) && messages.length > 0 ? (
+        <button
+          type="button"
+          className="latest-message-button"
+          aria-label={t("chat.returnToLatest")}
+          title={t("chat.returnToLatest")}
+          disabled={loadingNewerMessages}
+          onClick={() => void returnToLatest()}
+        >
+          <AppIcon name="down" />
+        </button>
+      ) : null}
+      <form className="composer" onSubmit={submitFromLatest}>
         <div className="composer-row">
           <button
             className={voiceState === "recording" ? "voice-button recording" : "voice-button"}
@@ -226,6 +265,22 @@ export function ChatPage({
               }
             />
           </button>
+          <div
+            className={`voice-activity-indicator${listeningEnabled ? " listening" : " paused"}${voiceActivityLevel >= 0.12 ? " detecting" : ""}`}
+            style={{ "--voice-level": voiceActivityLevel } as CSSProperties}
+            role="img"
+            aria-label={t(
+              !listeningEnabled
+                ? "chat.voiceIndicatorPaused"
+                : voiceActivityLevel >= 0.12
+                  ? "chat.voiceIndicatorActive"
+                  : "chat.voiceIndicatorIdle",
+            )}
+          >
+            {Array.from({ length: 11 }, (_, index) => (
+              <span key={index} />
+            ))}
+          </div>
           <textarea
             rows={1}
             aria-label={t("chat.messageLabel")}

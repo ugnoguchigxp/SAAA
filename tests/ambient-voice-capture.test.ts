@@ -122,8 +122,10 @@ describe("ambient voice capture", () => {
   test("attaches a 16 kHz worklet and forwards PCM frames", async () => {
     restore = installCaptureGlobals();
     const frames: number[] = [];
+    const activity: number[] = [];
     const target = context({
       packetFrame: (frame: Float32Array) => frames.push(frame.length),
+      onActivity: ({ rms }: { rms: number }) => activity.push(rms),
     });
     await attachAmbientVoiceCapture(target as never);
     lease = target.captureLease.current;
@@ -131,6 +133,8 @@ describe("ambient voice capture", () => {
     node.port.onmessage?.({ data: new Float32Array([0.1, 0.2]) } as MessageEvent);
     node.port.onmessage?.({ data: { type: "flushed" } } as MessageEvent);
     expect(frames).toEqual([2]);
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toBeGreaterThan(0);
     resetVoiceActivityDetector(
       target.activityDetector,
       { ...settings, vadSensitivity: "low" },

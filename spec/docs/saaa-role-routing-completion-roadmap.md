@@ -4,6 +4,10 @@
 
 [作業カード](saaa-role-routing-work-cards.md) / [全体計画](saaa-role-routing-plan.md) / [実行契約](saaa-role-routing-execution-contract.md) / [受入仕様](saaa-role-routing-acceptance.md) / [学習契約](saaa-role-routing-learning-contract.md) / 検証証跡 `spec/evidence/role-routing/results.md`
 
+## 0. 最新音声要件への改訂
+
+直近の音声修正は[音声会話統合計画](saaa-role-routing-voice-integration.md)のVC00〜VC08を実装順とする。LFMの会話担当は継続し、Qwenへは思考だけ依頼する。2項目JSONと平文並走、Qwen最終音声優先を必須にする。音声領域で競合する旧E23〜E27の手順はVC改訂に従う。E00〜E11等の必要な台帳・採用・permit安全条件は省略しないが、基本音声E2EをSol/Astra・review/specialist・学習全体の完成待ちにしない。既存の全機能ゲートとVC音声ゲートを分け、どちらも未検証を完了扱いにしない。
+
 ## 1. 目的と使い方
 
 通常の会話 turn から、有限 recipe に従って author、reviewer、reviser、premium、tool specialist を実行し、更新・取消・遅延完了・ツール副作用・音声の競合まで安全に処理する。型、保存関数、単体テストだけでは完了としない。
@@ -65,7 +69,7 @@ offline 単位は offline で完了可能。live を含む親 RR カードは、
 
 ### 3.2 recipe と実行所有者
 
-- 会話ごとに coordinator は1つ。推論 slot は root ごとに最大1、frontend/classifier は別枠最大1、tool は逐次。resourceGroup が同じ場合は競合を避け reasoner を優先する。
+- 会話ごとに coordinator は1つ。推論 slot は root ごとに最大1、frontend/classifier は別枠最大1、tool は逐次。resourceGroupの実容量を守る。VC音声経路でLFM継続応対とQwen思考を並走できない配置はdegradedとして示し、合格にしない。
 - recipe は既知テンプレートを有限計画へ compile。任意 graph、再帰、script、URL 実行を認めない。roles 配列を単純な for-loop で実行しない。
 - compile 時に役割、用途別 capability、独立 reviewer、input/output 依存、到達可能な final、最大 steps を検査。全分岐は前進し、review/retry/escalation/specialist も残予算を消費する。
 - candidateId、recipeId、actorId を区別。保存済み decision を dispatch の選択元にする。直前再検証は適格性を検査し、暗黙に別候補を選び直さない。
@@ -222,7 +226,7 @@ P1 の barrier は P6 まで先送りしない。P2 は fake adapter と既存�
 
 - 状態: 部分。依存: E10。
 - 対象: selection、limits、新規 budget、driver。
-- 実装: 実 host facts で capability/location/cloud/cost を検査。費用予約+実 usage、switch/review/step/root 上限を累積。resourceGroup 競合では reasoner 優先。
+- 実装: 実 host facts で capability/location/cloud/cost を検査。費用予約+実 usage、switch/review/step/root 上限を累積。resourceGroupの実容量を超過しない。VCのLFM継続応対を保証できない配置はdegradedとして診断する。
 - 失敗時: 費用不明を0にしない。設定上限があり価格不明なら起動拒否。利用不可時は新 decision を記録し許可済み fallback のみ。
 - 最小試験: `rr_22_cloud_revoked_before_dispatch`、`rr_22_loop_budget`、`rr_09_shared_resource_group`、A07/A25/A28。
 - 完了: dispatch 前撤回と全予算超過の開始0、理由を DB から説明可能。
@@ -338,7 +342,7 @@ P1 の barrier は P6 まで先送りしない。P2 は fake adapter と既存�
 
 - 状態: 部分。依存: E05/E09/E11/E19。
 - 対象: classifier、role prompt、frontend adapter、reaction fixtures。
-- 実装: kind/evidence span/target/confidence/replyKey を検証。status/social で現 revision を保ち、amendment は条件追加、unclear は barrier 維持。共有 resourceGroup では定型受付へ。
+- 実装: VC03〜04。LFMはsay/thinkのみ、詳細分類はhost/Qwen補助判断。出力不安定なら平文LFM＋Qwen並走。status/socialで現revisionを保ち、amendmentは条件追加、unclearはbarrier維持。LFMとQwenの実容量を検証し、並走不可を定型受付だけで稼働成功としない。
 - 失敗時: frontend failure は reasoner を落とさない。挨拶混じりの実質依頼を簡易完了しない。classifier に承諾/認可権限を与えない。
 - 最小試験: `rr_08_mixed_greeting`、`rr_08_bad_target`、`rr_08_timeout_unclear`、A04〜A07/A14/A15。
 - 完了: 通常入力→分類→barrier 解決が DB 状態と一致し、旧結果の保留/採用を説明可能。
@@ -347,7 +351,7 @@ P1 の barrier は P6 まで先送りしない。P2 は fake adapter と既存�
 
 - 状態: 部分。依存: E04/E05/E23。
 - 対象: speech_queue、新規 speech repository/driver、既存 voice response 接続。
-- 実装: speech intent/lifecycle、speechId/epoch、ack/progress/final 優先順位、author_verbatim を接続。barge-in、合成完了、再生直前、停止完了を検査。
+- 実装: VC05。speech intent/lifecycle、speechId/epoch、反応型LFM発話とQwen finalの優先順位、author_verbatimを接続。timer ack/progressを生成しない。barge-in、合成完了、再生直前、停止完了を検査。
 - 失敗時: 停止未確認なら次再生0、音声失敗でも画面回答保持。completed root の旧音声も次入力で停止できる。
 - 最小試験: `rr_13_late_synthesis_not_played`、`rr_29_old_speech_end_new_owner`、A11/A12。
 - 完了: 同時再生<=1、古い epoch 再生0、開始/終了/取消を DB から追跡可能。

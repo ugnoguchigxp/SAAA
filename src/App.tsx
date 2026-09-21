@@ -288,9 +288,10 @@ function App() {
                 hasNewerMessages={turn.hasNewerMessages}
                 loadingNewerMessages={turn.loadingNewerMessages}
                 onLoadNewerMessages={turn.loadNewerMessages}
+                onReturnToLatest={turn.returnToLatestMessages}
                 streamingText={turn.streamingText}
-                interimTranscript={voice.interimTranscript}
                 voiceState={voiceState}
+                voiceActivityLevel={voice.voiceActivityLevel}
                 listeningEnabled={voice.listeningEnabled}
                 runtimeActivity={turn.runtimeActivity}
                 composer={composer}

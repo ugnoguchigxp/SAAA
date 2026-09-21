@@ -1,18 +1,29 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { RuntimeEvent } from "./contracts";
 
-export type LfmUtteranceResult = { handoffId: string | null; requestContent: string | null; speechEpoch: number };
+export type LfmUtteranceResult = {
+  reasoningRequestId: string | null;
+  requestContent: string | null;
+  speechEpoch: number;
+};
 
 export function receiveLfmUtterance(conversationId: string, utteranceId: string, text: string) {
   const onReceived = new Channel<null>();
   onReceived.onmessage = () => refreshConversation(conversationId);
   return invoke<LfmUtteranceResult>("receive_lfm_utterance", {
-    conversationId, utteranceId, text, onReceived,
+    conversationId,
+    utteranceId,
+    text,
+    onReceived,
   }).finally(() => refreshConversation(conversationId));
 }
 
-export function speakLfmReply(conversationId: string, utteranceId: string, speechEpoch: number,
-  onFailure: (message: string) => void) {
+export function speakLfmReply(
+  conversationId: string,
+  utteranceId: string,
+  speechEpoch: number,
+  onFailure: (message: string) => void,
+) {
   const onEvent = new Channel<RuntimeEvent>();
   // LFM speech must not suspend ASR or acquire the Qwen turn's frontend speech ownership.
   onEvent.onmessage = (event) => {
@@ -25,6 +36,6 @@ function refreshConversation(conversationId: string) {
   window.dispatchEvent(new window.CustomEvent("saaa:ui-history", { detail: conversationId }));
 }
 
-export function isLfmHandoff(sourceId: string | null | undefined): boolean {
-  return sourceId?.startsWith("lfm_handoff_") ?? false;
+export function isLfmReasoningRequest(sourceId: string | null | undefined): boolean {
+  return sourceId?.startsWith("lfm_reasoning_") || sourceId?.startsWith("lfm_handoff_") || false;
 }

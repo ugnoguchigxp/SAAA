@@ -188,6 +188,13 @@ export function useConversationTurn({
       publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause));
     }
   }
+  async function returnToLatestMessages(): Promise<void> {
+    try {
+      await history.returnLatest();
+    } catch (cause) {
+      publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause));
+    }
+  }
   useEffect(() => {
     const changed = (event: Event) => {
       if (
@@ -214,10 +221,16 @@ export function useConversationTurn({
       sourceId = null,
       onSettled,
     } = options;
-    const lfmHandoff = sourceId?.startsWith("lfm_handoff_") ?? false;
-    if (lfmHandoff && conversationSessionRef.current.runId) {
+    const lfmReasoningRequest =
+      sourceId?.startsWith("lfm_reasoning_") || sourceId?.startsWith("lfm_handoff_") || false;
+    if (lfmReasoningRequest && conversationSessionRef.current.runId) {
       // A separate reasoning request is queued, without interrupting the existing answer.
-      pendingVoicePromptsRef.current.push({content: prompt,inputOrigin,sourceId: sourceId!,onSettled});
+      pendingVoicePromptsRef.current.push({
+        content: prompt,
+        inputOrigin,
+        sourceId: sourceId!,
+        onSettled,
+      });
       return;
     }
     const replacement =
@@ -274,7 +287,7 @@ export function useConversationTurn({
       incompleteRunIdsRef.current.clear();
       resetStreamingText();
       setRuntimeActivity([]);
-      if (!lfmHandoff && !retryInputMessageId && !history.isBrowsingOlder()) {
+      if (!lfmReasoningRequest && !retryInputMessageId && !history.isBrowsingOlder()) {
         setMessages((current) => [
           ...current,
           {
@@ -288,7 +301,7 @@ export function useConversationTurn({
       }
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
-      if (shouldStreamSpeech && !lfmHandoff) {
+      if (shouldStreamSpeech && !lfmReasoningRequest) {
         await stopSpeech(issueScope);
       }
       // A registered coding workspace is a user-selected Project. Carry that selection over the
@@ -387,7 +400,14 @@ export function useConversationTurn({
         ? undefined
         : pendingVoicePromptsRef.current.shift();
       if (nextVoicePrompt && selectedConversationIdRef.current === conversationId) {
-        if (conversationSessionRef.current.speechRunId && !nextVoicePrompt.sourceId?.startsWith("lfm_handoff_")) await stopSpeech(issueScope);
+        if (
+          conversationSessionRef.current.speechRunId &&
+          !(
+            nextVoicePrompt.sourceId?.startsWith("lfm_reasoning_") ||
+            nextVoicePrompt.sourceId?.startsWith("lfm_handoff_")
+          )
+        )
+          await stopSpeech(issueScope);
         await submitPrompt(nextVoicePrompt.content, {
           inputOrigin: nextVoicePrompt.inputOrigin,
           sourceId: nextVoicePrompt.sourceId,
@@ -587,6 +607,7 @@ export function useConversationTurn({
     hasNewerMessages,
     loadingNewerMessages,
     loadNewerMessages,
+    returnToLatestMessages,
     loadingOlderMessages,
     loadOlderMessages,
     composer,
