@@ -10,6 +10,7 @@
 - RR-29 manual Barrier fixture: update後に届く旧revision completionをdrainingのまま保持することを確認
 - V2 regression: `runtime::context` 100件pass（性能gate 2件ignored）、`providers::chat_completions` 24件pass、`tool_selection` 191件pass
 - V3: `bun run typecheck` pass、`bun test ./tests/role-routing-codex.test.ts` 2件pass（explicit loopback gatewayのみ、gatewayなしではMCPなし）
+- V4: `bun run ipc:check`（binding 5件pass）と`bun run s11tnext:check`はpass。`bun run size:check`はrole-routingを含む多数の未登録/ratchet超過ファイルでfail。並行変更をまとめて登録しないため未解消として残す。
 - `cargo fmt --check`: role-routing変更範囲でpass
 - `git diff --check`: pass
 - desktop smoke: build / bundle / launch / IPC ready の証跡あり
