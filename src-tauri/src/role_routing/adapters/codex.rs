@@ -3,7 +3,7 @@
 //! This module deliberately owns the child process rather than reusing the application's
 //! app-server process. Role routing must never inherit the user's workspace, MCP servers, or
 //! native tool permissions.
-use super::codex_protocol::{FrameValidator, SidecarEvent};
+use super::codex_protocol::{FrameValidator, SidecarEvent, SidecarUsage};
 use crate::{process_guard::ProcessGuard, RunCancellation};
 use serde_json::{json, Value};
 use std::{
@@ -39,7 +39,10 @@ struct ToolGatewayBridge {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SidecarOutcome {
-    Result(String),
+    Result {
+        text: String,
+        usage: Option<SidecarUsage>,
+    },
     Failed(String),
     Cancelled,
 }
@@ -174,7 +177,9 @@ fn run_at_with_bridge(
         match receiver.recv_timeout(POLL_INTERVAL) {
             Ok(Ok(line)) => match validator.validate(line.trim_ascii_end())? {
                 SidecarEvent::Started | SidecarEvent::Activity => continue,
-                SidecarEvent::Result { text } => break Ok(SidecarOutcome::Result(text)),
+                SidecarEvent::Result { text, usage } => {
+                    break Ok(SidecarOutcome::Result { text, usage })
+                }
                 SidecarEvent::Failed { code } => break Ok(SidecarOutcome::Failed(code)),
                 SidecarEvent::Cancelled => break Ok(SidecarOutcome::Cancelled),
             },
@@ -298,7 +303,10 @@ mod tests {
         input.timeout_ms = 10_000;
         assert_eq!(
             run_at(&executable, &input, &RunCancellation::default()).expect("valid result"),
-            SidecarOutcome::Result("done".into())
+            SidecarOutcome::Result {
+                text: "done".into(),
+                usage: None
+            }
         );
     }
 
@@ -324,7 +332,10 @@ mod tests {
         assert_eq!(
             run_at(&executable, &request(), &RunCancellation::default())
                 .expect("isolated fixture result"),
-            SidecarOutcome::Result("isolated".into())
+            SidecarOutcome::Result {
+                text: "isolated".into(),
+                usage: None
+            }
         );
     }
 
@@ -343,7 +354,10 @@ mod tests {
                 Some(&bridge)
             )
             .expect("bridge result"),
-            SidecarOutcome::Result("bridged".into())
+            SidecarOutcome::Result {
+                text: "bridged".into(),
+                usage: None
+            }
         );
     }
 }

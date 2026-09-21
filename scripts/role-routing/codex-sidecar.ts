@@ -104,6 +104,7 @@ async function run(frame: RunFrame) {
     let totalBytes = 0;
     let finalText = "";
     let completed = false;
+    let usage: Record<string, number> | undefined;
     for await (const event of events) {
       totalBytes += Buffer.byteLength(JSON.stringify(event));
       if (totalBytes > MAX_STREAM_BYTES) throw new Error("stream_limit");
@@ -111,6 +112,12 @@ async function run(frame: RunFrame) {
         finalText = event.item.text;
       } else if (event.type === "turn.completed") {
         completed = true;
+        usage = {
+          inputTokens: event.usage.input_tokens,
+          cachedInputTokens: event.usage.cached_input_tokens,
+          outputTokens: event.usage.output_tokens,
+          reasoningOutputTokens: event.usage.reasoning_output_tokens,
+        };
       } else if (event.type === "turn.failed" || event.type === "error") {
         throw new Error("sdk_error");
       } else if (event.type === "item.started") {
@@ -131,7 +138,7 @@ async function run(frame: RunFrame) {
         throw new Error("invalid_output_schema");
       }
     }
-    emit({ id: frame.id, stepId: frame.stepId, op: "result", text: finalText });
+    emit({ id: frame.id, stepId: frame.stepId, op: "result", text: finalText, usage });
   } catch (error) {
     emit({
       id: frame.id,

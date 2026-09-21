@@ -12,9 +12,43 @@ const MAX_FINAL_BYTES: usize = 64 * 1_024;
 pub(crate) enum SidecarEvent {
     Started,
     Activity,
-    Result { text: String },
-    Failed { code: String },
+    Result {
+        text: String,
+        usage: Option<SidecarUsage>,
+    },
+    Failed {
+        code: String,
+    },
     Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SidecarUsage {
+    pub(crate) input_tokens: u64,
+    pub(crate) cached_input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) reasoning_output_tokens: u64,
+}
+
+impl SidecarUsage {
+    pub(crate) fn as_json(&self) -> String {
+        serde_json::json!({
+            "inputTokens": self.input_tokens,
+            "cachedInputTokens": self.cached_input_tokens,
+            "outputTokens": self.output_tokens,
+            "reasoningOutputTokens": self.reasoning_output_tokens,
+        })
+        .to_string()
+    }
+
+    fn valid(&self) -> bool {
+        const MAX_TOKENS: u64 = 100_000_000;
+        self.input_tokens <= MAX_TOKENS
+            && self.cached_input_tokens <= self.input_tokens
+            && self.output_tokens <= MAX_TOKENS
+            && self.reasoning_output_tokens <= self.output_tokens
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +72,8 @@ enum Frame {
         #[serde(rename = "stepId")]
         step_id: String,
         text: String,
+        #[serde(default)]
+        usage: Option<SidecarUsage>,
     },
     Failed {
         version: u8,
@@ -91,7 +127,7 @@ impl Frame {
         match self {
             Self::Started { .. } => SidecarEvent::Started,
             Self::Activity { .. } => SidecarEvent::Activity,
-            Self::Result { text, .. } => SidecarEvent::Result { text },
+            Self::Result { text, usage, .. } => SidecarEvent::Result { text, usage },
             Self::Failed { code, .. } => SidecarEvent::Failed { code },
             Self::Cancelled { .. } => SidecarEvent::Cancelled,
         }
@@ -125,8 +161,11 @@ impl FrameValidator {
             return Err("Codex sidecar frame does not belong to this step".into());
         }
         let event = frame.event();
-        if let SidecarEvent::Result { text } = &event {
-            if text.is_empty() || text.len() > MAX_FINAL_BYTES {
+        if let SidecarEvent::Result { text, usage } = &event {
+            if text.is_empty()
+                || text.len() > MAX_FINAL_BYTES
+                || usage.as_ref().is_some_and(|usage| !usage.valid())
+            {
                 return Err("Codex sidecar result is invalid".into());
             }
         }
@@ -168,7 +207,8 @@ mod tests {
                 )
                 .expect("result"),
             SidecarEvent::Result {
-                text: "done".into()
+                text: "done".into(),
+                usage: None
             }
         );
         assert!(validator.terminal());
@@ -187,6 +227,30 @@ mod tests {
             .is_err());
         assert!(validator
             .validate(br#"{"version":1,"id":"request","stepId":"step","op":"result","text":""}"#)
+            .is_err());
+    }
+
+    #[test]
+    fn rr_22_usage_is_typed_bounded_and_serialized_without_payload() {
+        let mut validator = FrameValidator::new("request", "step");
+        let event = validator
+            .validate(br#"{"version":1,"id":"request","stepId":"step","op":"result","text":"done","usage":{"inputTokens":8,"cachedInputTokens":3,"outputTokens":5,"reasoningOutputTokens":2}}"#)
+            .expect("usage result");
+        assert_eq!(
+            event,
+            SidecarEvent::Result {
+                text: "done".into(),
+                usage: Some(SidecarUsage {
+                    input_tokens: 8,
+                    cached_input_tokens: 3,
+                    output_tokens: 5,
+                    reasoning_output_tokens: 2,
+                }),
+            }
+        );
+        let mut invalid = FrameValidator::new("request", "step");
+        assert!(invalid
+            .validate(br#"{"version":1,"id":"request","stepId":"step","op":"result","text":"done","usage":{"inputTokens":3,"cachedInputTokens":4,"outputTokens":5,"reasoningOutputTokens":2}}"#)
             .is_err());
     }
 }

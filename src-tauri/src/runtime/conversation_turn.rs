@@ -762,7 +762,10 @@ async fn execute_role_codex_actor(
         TurnExecutionFailure::configuration(format!("Role-routing Codex task failed: {error}"))
     })?;
     match outcome {
-        Ok(crate::role_routing::adapters::codex::SidecarOutcome::Result(content)) => {
+        Ok(crate::role_routing::adapters::codex::SidecarOutcome::Result {
+            text: content,
+            usage,
+        }) => {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as i64)
@@ -772,6 +775,13 @@ async fn execute_role_codex_actor(
                 input,
                 &content,
                 |connection, message| {
+                    if let Some(usage) = usage.as_ref() {
+                        crate::role_routing::repository::record_step_usage(
+                            connection,
+                            &input.run_id,
+                            &usage.as_json(),
+                        )?;
+                    }
                     crate::role_routing::repository::accept_provider_turn(
                         connection,
                         &input.run_id,

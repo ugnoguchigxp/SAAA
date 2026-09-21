@@ -404,6 +404,25 @@ pub(crate) fn accept_provider_turn(
     Ok(())
 }
 
+/// Stores SDK-reported usage in the same transaction that adopts the final answer. The value is
+/// produced by the typed sidecar protocol and checked again by SQLite's JSON constraint.
+pub(crate) fn record_step_usage(
+    connection: &Connection,
+    run_id: &str,
+    usage_json: &str,
+) -> Result<(), String> {
+    let changed = connection
+        .execute(
+            "UPDATE rr_steps SET usage_json=?1 WHERE root_id=?2 AND ordinal=0 AND status IN ('planned','running','draining')",
+            params![usage_json, run_id],
+        )
+        .map_err(|error| error.to_string())?;
+    if changed != 1 {
+        return Err("Role-routing usage is stale or has no active step".into());
+    }
+    Ok(())
+}
+
 /// The adaptive ledger is optional for legacy databases.  When a receipt did create an adaptive
 /// decision, write its terminal technical result in the same database transaction as the routing
 /// root so training never sees a completed dispatch without its result.
@@ -767,5 +786,36 @@ mod tests {
             )
             .expect("event count");
         assert_eq!(event_count, 3);
+    }
+
+    #[test]
+    fn rr_22_usage_is_saved_with_the_active_step() {
+        let c = Connection::open_in_memory().expect("db");
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE conversations(id TEXT PRIMARY KEY);CREATE TABLE runtime_runs(id TEXT PRIMARY KEY);CREATE TABLE conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);INSERT INTO conversations VALUES('c');INSERT INTO runtime_runs VALUES('run');").expect("base");
+        crate::role_routing::schema::migrate(&c).expect("schema");
+        c.execute(
+            "INSERT INTO rr_policy_versions VALUES('p',1,'{}','d',1)",
+            [],
+        )
+        .expect("policy");
+        c.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,phase,origin,presentation_mode,started_at_ms,scope_digest) VALUES('run','c','run','p','responding','text','visual',1,'')", [])
+            .expect("root");
+        c.execute("INSERT INTO rr_steps(id,root_id,revision,ordinal,actor_id,purpose,status,config_fingerprint,adapter_state_json) VALUES('rr-step-run-0','run',0,0,'sol','respond','running','{}','{}')", [])
+            .expect("step");
+        record_step_usage(
+            &c,
+            "run",
+            r#"{"inputTokens":8,"cachedInputTokens":3,"outputTokens":5,"reasoningOutputTokens":2}"#,
+        )
+        .expect("usage");
+        assert_eq!(
+            c.query_row(
+                "SELECT usage_json FROM rr_steps WHERE id='rr-step-run-0'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("usage row"),
+            r#"{"inputTokens":8,"cachedInputTokens":3,"outputTokens":5,"reasoningOutputTokens":2}"#
+        );
     }
 }

@@ -83,6 +83,15 @@ pub enum FocusReason {
     ExplicitInterest,
 }
 
+impl FocusReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CurrentWork => "current_work",
+            Self::ExplicitInterest => "explicit_interest",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Condition {

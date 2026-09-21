@@ -45,7 +45,7 @@
 | RR-19 | 部分 | SDK固定版のJSONL sidecar、Rust JSONL protocol validator。`codex_sdk` actor をconversationからsidecarへdispatchし、root採用transactionへ保存 | mock SDK wire試験、実認証SDK呼び出し |
 | RR-20 | 部分 | sidecarをBun compiled resourceとして同梱し、ProcessGuardで起動・cancel回収。fake executableでEOF/cancel/config隔離を検証 | live isolation gate |
 | RR-21 | 部分 | sidecarは既存の認証付きloopback MCP gatewayだけを `rrRoot` に束縛して接続する。MCP sessionはactive rootの会話へ解決され、tool呼び出しは `rr_tool_links` のreserve/settleを通る。tokenはchild環境だけに渡しJSONLへ出さない | 実認証SDKによるSol tool roundtrip、revision/model変更時のnew thread、tool budget、live isolation試験 |
-| RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定 | active dispatchのusage集計、切替上限 |
+| RR-22 | 部分 | root deadlineをreceipt・provider route・queued待機へ接続。未知費用を拒否するpure判定。Codex SDKの確定usageを型検証し、最終回答採用transaction内でstepへ保存 | provider別費用換算、active dispatchの集計、切替上限 |
 | RR-23 | 部分 | host feedback保存とdirty mark | active answer一意の実入力接続 |
 | RR-24 | 部分 | review issueの型付きvalidator、author/reviewer独立性、evidence参照を検証 | 独立評価executor、read-only tool接続、永続record |
 | RR-25 | 部分 | verified issueとreview round上限を照合するrevision gate | 評価後revision executor、unresolved永続record |
