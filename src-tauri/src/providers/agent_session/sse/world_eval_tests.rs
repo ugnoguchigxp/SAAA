@@ -55,7 +55,7 @@ async fn world_m4a_agent_routes() {
             }
             wire
         });
-        let persistence_id = crate::begin_provider_session(&state, RUN_ID, "fixture", "agent-session", &"a".repeat(64)).unwrap();
+        let persistence_id = crate::begin_provider_session(&state, RUN_ID, "fixture", "openai-compatible", &"a".repeat(64)).unwrap();
         let provider = AgentSessionProviderSettings { id:"fixture".into(), enabled:true, label:"fixture".into(), location:"local".into(), base_url:base_url.clone(), model:"fixture".into(), models_path:"/v1/agents/models".into(), sessions_path:"/v1/agents/sessions".into(), authentication:"none".into() };
         let input = crate::StartTurnInput { run_id:RUN_ID.into(), conversation_id:crate::PRIMARY_CONVERSATION_ID.into(), content:"hello".into(), workspace_path:None, retry_input_message_id:None, source_id:None, scope_refs:vec![], input_origin:"text".into(), presentation_mode:"visual".into() };
         let history: Vec<_> = composed.envelope.messages.iter().enumerate().map(|(i,m)| ConversationMessage { id:format!("p{i}"), conversation_id:input.conversation_id.clone(), role:m.role.clone(), content:m.content.clone(), created_at:"1".into(), parts:None }).collect();

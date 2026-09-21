@@ -10,9 +10,11 @@ use crate::runtime::context::world::turn::{WorldBlocks, WorldLive};
 /// Returns whether the World should be sent, rewriting `messages` to the World-free rendering when
 /// it should not. A missing World never rewrites the body.
 pub(super) fn apply(messages: &mut Vec<Value>, world: Option<&WorldLive>) -> bool {
-    let include_world = world
-        .map(|world| world.revalidate_current())
-        .unwrap_or(false);
+    let include_world = world.is_some_and(|world| {
+        world.blocks().is_some_and(|blocks| messages.iter().any(|message| {
+            message["role"] == "assistant" && message["content"].as_str() == Some(blocks.with_world.as_str())
+        })) && world.revalidate_current()
+    });
     if !include_world {
         if let Some(blocks) = world.and_then(|world| world.blocks()) {
             strip(messages, &blocks);

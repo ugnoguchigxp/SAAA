@@ -164,7 +164,11 @@ pub(super) async fn run_agent_session_sse(
     for round in 0..=12 {
         // The remote session receives the World only in its initial turn. Tool follow-ups are
         // explicitly recorded without it; they must not claim that an old frame was resent.
-        let include_world = initial_world && round == 0;
+        let include_world = initial_world && round == 0
+            && world.is_some_and(|world| world.revalidate_current());
+        if round == 0 && !include_world {
+            input = follow_up_base.clone();
+        }
         let generation =
             match base_envelope.begin(&context, round, &input, &offered_tools, include_world) {
                 Ok(generation) => generation,

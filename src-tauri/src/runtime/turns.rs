@@ -311,6 +311,7 @@ fn public_failure_code(error: &TurnExecutionFailure) -> RuntimeFailureCode {
         return RuntimeFailureCode::RequiredContextOverflow;
     }
     if error.message.contains("Context scope changed")
+        || error.message.contains("Context scope could not be resolved")
         || error
             .message
             .contains("context-scope-changed-after-connect")
@@ -380,6 +381,13 @@ mod required_context_failure_code_tests {
         );
         assert!(matches!(
             public_failure_code(&scope),
+            RuntimeFailureCode::ContextScopeChanged
+        ));
+        let unresolved = TurnExecutionFailure::configuration(
+            "Context scope could not be resolved: unknown",
+        );
+        assert!(matches!(
+            public_failure_code(&unresolved),
             RuntimeFailureCode::ContextScopeChanged
         ));
     }

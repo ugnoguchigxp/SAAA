@@ -185,7 +185,7 @@ pub(crate) fn compose(mut input: BrokerInput) -> Result<Envelope, String> {
             match candidate.requirement {
                 Requirement::Must => {
                     return Err(format!(
-                        "Required context source does not fit the provider budget: {}",
+                        "required_context_overflow: required context source does not fit the provider budget: {}",
                         candidate.source_kind
                     ));
                 }
@@ -422,7 +422,10 @@ mod tests {
             source_warning: None,
             allowed_scope_keys: BTreeSet::from(["user:fixture".into()]),
         });
-        assert!(result.is_err());
+        assert!(result
+            .err()
+            .expect("required candidates must fail closed")
+            .starts_with("required_context_overflow:"));
     }
 
     #[test]

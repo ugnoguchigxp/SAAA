@@ -55,7 +55,8 @@
     "check:local": "bun run format:check && bun run lint && bun run check",
     "ipc:fixtures": "SAAA_UPDATE_IPC_FIXTURES=1 cargo test --manifest-path src-tauri/Cargo.toml --lib ipc_receiver_fixture",
     "personal-state:live": "bun scripts/personal-state-live.ts",
-    "readiness:verify": "bun scripts/product-readiness.ts"
+    "readiness:verify": "bun scripts/product-readiness.ts",
+    "world:eval": "bun scripts/world-eval.ts"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.144.4",

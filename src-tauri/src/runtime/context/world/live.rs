@@ -106,7 +106,9 @@ impl WorldLive {
         &self,
         history: &[ConversationMessage],
     ) -> (Vec<ConversationMessage>, bool) {
-        let include_world = self.revalidate_current();
+        let include_world = self.blocks().is_some_and(|blocks| history.iter().any(|message| {
+            message.role == "assistant" && message.content == blocks.with_world
+        })) && self.revalidate_current();
         if include_world {
             return (history.to_vec(), true);
         }

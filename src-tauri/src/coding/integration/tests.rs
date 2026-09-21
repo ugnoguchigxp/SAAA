@@ -259,25 +259,35 @@ fn run_adapter(live: bool, forget_source: bool) {
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
-        last = wait(job);
-        assert_eq!(last["state"], expected_state, "{last}");
         if prompt == "wait" && forget_source {
-            let state: String = state
-                .sqlite_readers
-                .read(|c| {
-                    c.query_row(
-                        "SELECT state FROM coding_runs WHERE id=?1",
-                        [last["runId"].as_str().unwrap()],
-                        |row| row.get(0),
-                    )
-                    .map_err(crate::database_error)
-                })
-                .unwrap();
-            assert_eq!(state, "interrupted");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let (job_state, run_state): (String, String) = state
+                    .sqlite_readers
+                    .read(|c| {
+                        c.query_row(
+                            "SELECT j.state,r.state FROM coding_jobs j
+                             JOIN coding_runs r ON r.id=j.current_run_id
+                             WHERE j.id=?1",
+                            [job],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .map_err(crate::database_error)
+                    })
+                    .unwrap();
+                if job_state == "interrupted" {
+                    assert_eq!(run_state, "interrupted");
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{job_state}/{run_state}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
             // A forgotten source invalidates the whole job lineage, so a
             // follow-up run is intentionally not authorized.
             break;
         }
+        last = wait(job);
+        assert_eq!(last["state"], expected_state, "{last}");
         if prompt == "model error" {
             assert_eq!(last["result"]["modelErrors"], 1);
         }

@@ -6,6 +6,20 @@ use std::time::{Duration, Instant};
 #[ignore = "performance gate: run explicitly on a quiet development host"]
 fn world_g1_performance() {
     let f = g1_fixture();
+    use crate::memory::personal_state::world::test_support::{insert_source, v2_entity_assertion, Committer, PROJECT};
+    use saaa_personal_state_core::world::model_v2::EntityKindV2;
+    let source = f.writer.write(|c| Ok(insert_source(c, PROJECT, "perf-extra", "synthetic performance"))).unwrap();
+    let initial: usize = f.writer.read_serialized(|c| c.query_row("SELECT (SELECT COUNT(*) FROM personal_world_entities)+(SELECT COUNT(*) FROM personal_world_relations)+(SELECT COUNT(*) FROM personal_world_focus)", [], |r| r.get(0)).map_err(crate::database_error)).unwrap();
+    let mut committer = Committer { writer: f.writer.as_ref(), project: PROJECT };
+    for i in initial..100 {
+        let id = format!("perf-{i}");
+        committer.commit(&id, vec![v2_entity_assertion(&id, &id, EntityKindV2::Concept, &id, &[], None, &source, PROJECT, f.now())]).unwrap();
+    }
+    f.writer.write(|c| c.execute("UPDATE personal_jobs SET status='completed'", []).map(|_| ()).map_err(crate::database_error)).unwrap();
+    let ledger = f.ledger_count();
+    assert!(ledger <= 2000);
+    f.fill_coverage((2000 - ledger) as usize);
+    assert_eq!(f.ledger_count(), 2000);
     let service = crate::memory::personal_state::world::runtime_frame::WorldFrameService::new(
         f.readers(), std::sync::Arc::new(crate::memory::personal_state::now));
     let mut prepare = Vec::new();

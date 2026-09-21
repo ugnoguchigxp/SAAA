@@ -1,0 +1,14 @@
+[
+  {
+    "event": "spawn",
+    "elapsedMs": 1
+  },
+  {
+    "event": "exit",
+    "elapsedMs": 118124
+  },
+  {
+    "event": "close",
+    "elapsedMs": 118124
+  }
+]

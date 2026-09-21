@@ -380,6 +380,16 @@ pub(crate) async fn execute_conversation_turn(
                 ));
             }
         };
+        if envelope.health.status == crate::runtime::context::health::Status::Yellow {
+            let _ = on_event.send(RuntimeEvent::Activity {
+                run_id: input.run_id.clone(),
+                kind: "context-degraded".into(),
+                summary: format!(
+                    "Context was safely reduced ({} source item(s) omitted).",
+                    envelope.health.omitted_sources
+                ),
+            });
+        }
         crate::runtime::turn_activity::send_context_window_once(
             &mut context_health_emitted,
             on_event,
