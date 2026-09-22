@@ -45,6 +45,16 @@ pub fn forget_personal_source(
         if !exists{return Err("personal-source-unavailable".into());}
         crate::steward::forget_source(&tx, &source_id)?;
         crate::role_routing::learning::invalidation::forget_source(&tx, &source_id)?;
+        let epoch = crate::schedule::tick::now_ms();
+        let conversation_id: String = tx
+            .query_row(
+                "SELECT conversation_id FROM conversation_messages WHERE id=?1",
+                [&source_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| String::new());
+        crate::records::forget::forget_by_conversation_messages(&tx, &[source_id.clone()], epoch)?;
+        crate::runtime::context::segment::manifest::invalidate_for_conversation(&tx, &conversation_id, epoch)?;
         tx.execute("DELETE FROM conversation_messages WHERE id=?1",[&source_id]).map_err(database_error)?;
         let mut stmt=tx.prepare("SELECT DISTINCT run_id FROM personal_generations WHERE output_allowed=0 AND cancellation='requested'").map_err(database_error)?;
         let runs=stmt.query_map([],|r|r.get::<_,String>(0)).map_err(database_error)?.collect::<Result<Vec<_>,_>>().map_err(database_error)?;

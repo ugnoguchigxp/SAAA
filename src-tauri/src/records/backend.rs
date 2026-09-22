@@ -67,7 +67,7 @@ mod tests {
     #[async_trait]
     impl ToolBackend for Echo {
         async fn invoke(&self, request: BackendRequest, _: &RunCancellation) -> BackendOutcome {
-            BackendOutcome::succeeded(request.backend_key)
+            BackendOutcome::succeeded(serde_json::json!(request.backend_key))
         }
     }
 

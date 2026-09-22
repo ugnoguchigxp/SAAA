@@ -11,14 +11,15 @@ pub(crate) fn attach(
     auth: &Authorization,
     tool_name: &str,
     raw: &str,
+    run_id: Option<&str>,
 ) -> Result<String, String> {
     let value: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
     let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
     if kind == "web_search_result" {
-        return attach_search(connection, auth, &value, raw);
+        return attach_search(connection, auth, &value, raw, run_id);
     }
     if kind == "fetch_content_result" || tool_name == "fetch_content" {
-        return attach_fetch(connection, auth, &value, raw);
+        return attach_fetch(connection, auth, &value, raw, run_id);
     }
     Ok(raw.to_string())
 }
@@ -28,6 +29,7 @@ fn attach_search(
     auth: &Authorization,
     value: &Value,
     raw: &str,
+    run_id: Option<&str>,
 ) -> Result<String, String> {
     let scopes = Vec::new();
     let search = commit(
@@ -37,7 +39,7 @@ fn attach_search(
             origin: Origin::ExternalObservation,
             principal_id: &auth.principal_id,
             conversation_id: &auth.conversation_id,
-            run_id: None,
+            run_id,
             turn_id: None,
             parent_execution_id: None,
             rank: None,
@@ -60,7 +62,7 @@ fn attach_search(
                     origin: Origin::ExternalObservation,
                     principal_id: &auth.principal_id,
                     conversation_id: &auth.conversation_id,
-                    run_id: None,
+                    run_id,
                     turn_id: None,
                     parent_execution_id: Some(&search.id),
                     rank: Some((index + 1) as u32),
@@ -83,6 +85,7 @@ fn attach_fetch(
     auth: &Authorization,
     value: &Value,
     raw: &str,
+    run_id: Option<&str>,
 ) -> Result<String, String> {
     let text = value
         .pointer("/document/text")
@@ -97,7 +100,7 @@ fn attach_fetch(
             origin: Origin::ExternalObservation,
             principal_id: &auth.principal_id,
             conversation_id: &auth.conversation_id,
-            run_id: None,
+            run_id,
             turn_id: None,
             parent_execution_id: None,
             rank: None,
@@ -153,7 +156,7 @@ mod tests {
             "hits": [{"rank": 1, "title": "a", "url": "https://a.test"}, {"rank": 2, "title": "b", "url": "https://b.test"}]
         })
         .to_string();
-        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "web_search", &raw).unwrap()).unwrap();
+        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "web_search", &raw, None).unwrap()).unwrap();
         assert!(output["searchRecordId"].is_string());
         assert!(output["hits"][1]["recordId"].is_string());
         let ranks: i64 = connection
@@ -171,7 +174,7 @@ mod tests {
         let connection = db();
         connection.execute_batch("PRAGMA query_only=ON").unwrap();
         let raw = r#"{"type":"web_search_result","hits":[]}"#;
-        let error = attach(&connection, &auth(), "web_search", raw).unwrap_err();
+        let error = attach(&connection, &auth(), "web_search", raw, None).unwrap_err();
         assert!(!error.is_empty());
     }
 
@@ -180,7 +183,7 @@ mod tests {
         let connection = db();
         let text = "a".repeat(9_000);
         let raw = json!({"type":"fetch_content_result","document":{"text": text}}).to_string();
-        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "fetch_content", &raw).unwrap()).unwrap();
+        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "fetch_content", &raw, None).unwrap()).unwrap();
         assert_eq!(output["readHint"], "read_record");
         assert!(output.get("document").is_none());
     }
@@ -189,7 +192,7 @@ mod tests {
     fn cw_31_fetch_under_8kib_returns_body_with_record_id() {
         let connection = db();
         let raw = json!({"type":"fetch_content_result","document":{"text":"short"}}).to_string();
-        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "fetch_content", &raw).unwrap()).unwrap();
+        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "fetch_content", &raw, None).unwrap()).unwrap();
         assert_eq!(output["document"]["text"], "short");
         assert!(output["recordId"].is_string());
     }

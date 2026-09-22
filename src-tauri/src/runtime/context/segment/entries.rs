@@ -48,14 +48,26 @@ fn append(
         .map_err(|error| error.to_string())?;
     let next = sequence + 1;
     let digest = crate::generated_capabilities::contracts::sha256_hex(text.as_bytes());
-    let blob_id = crate::util::new_id("blob");
-    connection
-        .execute(
-            "INSERT INTO blobs(id, dedup_domain, sha256, codec, raw_bytes, stored_bytes, data, ref_count)
-             VALUES(?1,'segment',?2,'identity',?3,?3,?4,1)",
-            params![blob_id, digest, text.len() as i64, text.as_bytes()],
-        )
-        .map_err(|error| error.to_string())?;
+    let blob_id: String = if let Ok(existing) = connection.query_row(
+        "SELECT id FROM blobs WHERE dedup_domain='segment' AND sha256=?1",
+        [&digest],
+        |row| row.get(0),
+    ) {
+        connection
+            .execute("UPDATE blobs SET ref_count = ref_count + 1 WHERE id=?1", [&existing])
+            .map_err(|error| error.to_string())?;
+        existing
+    } else {
+        let blob_id = crate::util::new_id("blob");
+        connection
+            .execute(
+                "INSERT INTO blobs(id, dedup_domain, sha256, codec, raw_bytes, stored_bytes, data, ref_count)
+                 VALUES(?1,'segment',?2,'identity',?3,?3,?4,1)",
+                params![blob_id, digest, text.len() as i64, text.as_bytes()],
+            )
+            .map_err(|error| error.to_string())?;
+        blob_id
+    };
     let inserted = connection
         .execute(
             "INSERT INTO context_entries(segment_id, sequence, role, record_id, rendered_blob_id, serializer_version, content_digest, dependency_refs_json, created_at)

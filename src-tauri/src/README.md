@@ -15,7 +15,7 @@ Read only the affected domain. Paths in domain READMEs are relative to that dire
 - [situation](situation/README.md): sampled signals, stable scene, delivery policy.
 - [memory](memory/README.md): history/context/recall/state/forget boundaries.
 - records: planned (P2). Immutable tool/web captures, authorization before LIMIT, manual FTS sync.
-- runtime/context/segment: planned (P4). Fixed prefix plus append-only entries for chat completions.
+- runtime/context/segment: F/L/D types and tables. Prompt assembly stays on the legacy path until `SegmentBuilder` owns the history. Flag `SAAA_CONTEXT_SEGMENTS=1`.
 - [persistence](persistence/README.md): writer/readers, transactions, migrations/settings/audit.
 - [diagnosis](diagnosis/README.md): startup self-diagnosis report, single-flight rerun, redacted items.
 

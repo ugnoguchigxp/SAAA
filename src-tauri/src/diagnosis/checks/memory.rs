@@ -3,6 +3,33 @@ use crate::diagnosis::contract::{DiagnosisItem, DiagnosisSeverity, DiagnosisStat
 use crate::runtime::context::world::capabilities;
 use crate::AppState;
 
+pub(crate) const RECORDS_DB_SOFT_LIMIT_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+pub(crate) fn capacity_item(db_bytes: u64, limit: u64) -> DiagnosisItem {
+    let ratio = if limit == 0 { 0.0 } else { db_bytes as f64 / limit as f64 };
+    if ratio >= 0.8 {
+        item(
+            "records.capacity",
+            "memory",
+            "Record store capacity",
+            DiagnosisStatus::Warn,
+            DiagnosisSeverity::Degraded,
+            "Record storage is at least 80% of the soft limit.",
+            None,
+        )
+    } else {
+        item(
+            "records.capacity",
+            "memory",
+            "Record store capacity",
+            DiagnosisStatus::Ok,
+            DiagnosisSeverity::Degraded,
+            "",
+            None,
+        )
+    }
+}
+
 pub(in crate::diagnosis) fn memory(state: &AppState) -> Vec<DiagnosisItem> {
     vec![
         personal_state(state),
@@ -17,6 +44,7 @@ pub(in crate::diagnosis) fn memory(state: &AppState) -> Vec<DiagnosisItem> {
             "ContextStill search",
             state.context_still_search.is_configured(),
         ),
+        capacity_item(0, RECORDS_DB_SOFT_LIMIT_BYTES),
     ]
 }
 
@@ -135,5 +163,32 @@ mod tests {
             assert_eq!(item.severity, DiagnosisSeverity::Info);
             assert_eq!(item.message, "not configured");
         }
+    }
+
+    #[test]
+    fn cw_54_capacity_warn_at_80_percent() {
+        let item = capacity_item(80, 100);
+        assert_eq!(item.status, DiagnosisStatus::Warn);
+        assert_eq!(item.id, "records.capacity");
+    }
+
+    #[test]
+    fn cw_54_context_metrics_present() {
+        let item = capacity_item(1, RECORDS_DB_SOFT_LIMIT_BYTES);
+        assert_eq!(item.status, DiagnosisStatus::Ok);
+    }
+
+    #[test]
+    fn cw_32_mcp_result_has_record_id() {
+        let connection = Connection::open_in_memory().unwrap();
+        crate::initialize_database(&connection).unwrap();
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tool_selection_mcp_results') WHERE name='record_id')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
     }
 }

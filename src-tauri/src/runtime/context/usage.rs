@@ -70,6 +70,7 @@ pub(crate) fn record(
     source: UsageSource,
     wire_bytes: usize,
     timings: &UsageTimings,
+    prefix_match_bytes: Option<i64>,
 ) -> Result<(), String> {
     let raw = usage
         .raw
@@ -84,7 +85,7 @@ pub(crate) fn record(
                cache_write_tokens, output_tokens, reasoning_tokens, usage_source,
                raw_usage_json, wire_bytes, prefix_match_bytes, ttft_ms, first_visible_ms,
                completed_ms, recorded_at
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,NULL,?12,?13,?14,?15)",
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 generation_id,
                 provider_id,
@@ -97,6 +98,7 @@ pub(crate) fn record(
                 source.as_str(),
                 raw,
                 i64::try_from(wire_bytes).unwrap_or(i64::MAX),
+                prefix_match_bytes,
                 i64_opt(timings.ttft_ms),
                 i64_opt(timings.first_visible_ms),
                 i64_opt(timings.completed_ms),
@@ -219,6 +221,7 @@ mod tests {
                 first_visible_ms: Some(9),
                 completed_ms: Some(40),
             },
+            None,
         )
         .unwrap();
         let (input, cache, source): (i64, i64, String) = connection
@@ -248,6 +251,7 @@ mod tests {
                 first_visible_ms: None,
                 completed_ms: Some(1),
             },
+            None,
         )
         .unwrap();
         let rows = summary(&connection).unwrap();

@@ -224,6 +224,7 @@ pub(crate) async fn run_with_options(
                                 None,
                                 crate::runtime::context::usage::UsageSource::Disconnected,
                                 &usage_timings(request_started, first_visible_ms),
+                                None,
                             );
                             return Err(Failure::ResponseInterrupted);
                         }
@@ -263,6 +264,7 @@ pub(crate) async fn run_with_options(
                                 completion.usage.as_ref(),
                                 crate::runtime::context::usage::UsageSource::Disconnected,
                                 &usage_timings(request_started, first_visible_ms),
+                                None,
                             );
                             return Err(Failure::ResponseInterrupted);
                         }
@@ -333,6 +335,11 @@ pub(crate) async fn run_with_options(
                 completion.usage.as_ref(),
                 source,
                 &usage_timings(request_started, first_visible_ms),
+                remember_wire_prefix(
+                    context.output_persistence,
+                    &context.input.conversation_id,
+                    &serde_json::to_vec(&body).unwrap_or_default(),
+                ),
             );
             output.push_str(&completion.content);
             if output.len() > 1_048_576 {
@@ -464,6 +471,24 @@ fn usage_timings(
             u64::try_from(request_started.elapsed().as_millis()).unwrap_or(u64::MAX),
         ),
     }
+}
+
+fn remember_wire_prefix(
+    persistence: Option<crate::ProviderOutputPersistence<'_>>,
+    conversation_id: &str,
+    wire: &[u8],
+) -> Option<i64> {
+    let persistence = persistence?;
+    let mut prefixes = persistence.state.wire_prefixes.lock().ok()?;
+    let previous = prefixes.iter().rev().find(|(id, _)| id == conversation_id).map(|(_, bytes)| {
+        crate::runtime::context::segment::prefix_match_bytes(bytes, wire) as i64
+    });
+    prefixes.retain(|(id, _)| id != conversation_id);
+    prefixes.push_back((conversation_id.to_string(), wire.to_vec()));
+    while prefixes.len() > 4 {
+        prefixes.pop_front();
+    }
+    previous
 }
 
 mod world_claim_tests;

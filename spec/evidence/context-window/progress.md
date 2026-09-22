@@ -52,3 +52,28 @@ evidence を作成。
 - 未実施・保留: CW-01 の実機 10 ターン。clippy と size:check の既存失敗。
 - 手動確認: なし（CW-36 / CW-46 まで）
 - 提案: なし
+
+## CW-21..CW-35, CW-41..CW-45, CW-50, CW-53, CW-54 (2026-09-22 23:34 JST)
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib cw_` → 63 passed, 0 failed
+- records の commit / stream / FTS / 認可 / outline / capture / tools / catalog / forget と、Segment の create・append・carry・trigger・prefix 計測を追加。schema version は 40。
+- `BackendRouter::new` は 3 backend。`SAAA_CONTEXT_SEGMENTS=1` のとき `AppState.context_segments_enabled` が true。既定は OFF のまま。CW-46 の実機比較前に既定 ON へ反転していない。
+- `compose_after_connect` はまだ Segment 経路へ切り替えていない。builder は初期 Segment の作成と予算超過の判定まで。
+
+## 未実施（停止条件ではない）
+
+- CW-01 / CW-36 / CW-46 の `bun run tauri dev` 対話。実 Provider セッションがこの環境にない。数値は作っていない。
+- CW-51 の journal recover テスト、CW-52 の `secure_delete` テスト（pragma は `SqliteWriter::open` に追加済み）。
+- `cargo clippy -D warnings` と `bun run size:check` は着手前からの既存失敗が残る。
+- `forget_personal_source` は records の失効と Segment の invalidate を呼ぶ。CW-51 の journal recover テストは未追加。
+
+## レビュー後 (2026-09-23)
+
+- 読み取りツールは principal の解決に失敗したら tool error を返す。読み取りは writer ではなく reader を使う。
+- blob は id で結び、同じ hash でも domain が違えば別物として読む。
+- Segment の既定は OFF。`SAAA_CONTEXT_SEGMENTS=1` のときだけフラグが立つ。compose は常に `budget.apply` を通す。プロンプトと違う active Segment は作らない。
+- カタログ登録は `register_revision` の結果をそのまま返す。
+- 同じ本文の Segment entry は既存 blob の ref_count を増やす。
+- 会話メッセージの forget は呼び出し元の epoch を tombstone に書く。
+- web capture は run_id を残す。
+- CW-01 / CW-36 / CW-46 の実 Provider 対話は未実施。数値は空。

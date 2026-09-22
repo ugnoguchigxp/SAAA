@@ -149,22 +149,24 @@ fn finish_owned(
     readable_text: Option<&str>,
 ) -> Result<RecordRef, String> {
     insert_record(connection, &new, state, reason)?;
-    let sha = store_blob(connection, &new.principal_id, received_body)?;
+    let (blob_id, sha) = store_blob(connection, &new.principal_id, received_body)?;
     bind_representation(
         connection,
         &new.id,
         "received_body",
+        &blob_id,
         &sha,
         received_body.len(),
         "identity",
     )?;
     let mut outline_value = None;
     if let Some(text) = readable_text {
-        let text_sha = store_blob(connection, &new.principal_id, text.as_bytes())?;
+        let (text_blob, text_sha) = store_blob(connection, &new.principal_id, text.as_bytes())?;
         bind_representation(
             connection,
             &new.id,
             "readable_text",
+            &text_blob,
             &text_sha,
             text.len(),
             "same-as-received",
@@ -223,7 +225,7 @@ fn insert_record(
     Ok(())
 }
 
-fn store_blob(connection: &Connection, domain: &str, bytes: &[u8]) -> Result<String, String> {
+fn store_blob(connection: &Connection, domain: &str, bytes: &[u8]) -> Result<(String, String), String> {
     let sha = crate::generated_capabilities::contracts::sha256_hex(bytes);
     if let Some(id) = connection
         .query_row(
@@ -239,7 +241,7 @@ fn store_blob(connection: &Connection, domain: &str, bytes: &[u8]) -> Result<Str
                 [&id],
             )
             .map_err(|error| error.to_string())?;
-        return Ok(sha);
+        return Ok((id, sha));
     }
     let id = crate::util::new_id("blob");
     if bytes.len() <= INLINE_LIMIT {
@@ -275,25 +277,18 @@ fn store_blob(connection: &Connection, domain: &str, bytes: &[u8]) -> Result<Str
             sequence += 1;
         }
     }
-    let _ = id;
-    Ok(sha)
+    Ok((id, sha))
 }
 
 fn bind_representation(
     connection: &Connection,
     record_id: &str,
     name: &str,
+    blob_id: &str,
     sha: &str,
     len: usize,
     parser: &str,
 ) -> Result<(), String> {
-    let blob_id: String = connection
-        .query_row(
-            "SELECT id FROM blobs WHERE sha256=?1",
-            [sha],
-            |row| row.get(0),
-        )
-        .map_err(|error| error.to_string())?;
     connection
         .execute(
             "INSERT INTO record_representations(record_id, name, blob_id, sha256, byte_length, parser_version)
@@ -304,12 +299,12 @@ fn bind_representation(
     Ok(())
 }
 
-pub(crate) fn load_blob(connection: &Connection, sha: &str) -> Result<Vec<u8>, String> {
-    let (id, inline): (String, Option<Vec<u8>>) = connection
+pub(crate) fn load_blob(connection: &Connection, blob_id: &str) -> Result<Vec<u8>, String> {
+    let inline: Option<Vec<u8>> = connection
         .query_row(
-            "SELECT id, data FROM blobs WHERE sha256=?1",
-            [sha],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            "SELECT data FROM blobs WHERE id=?1",
+            [blob_id],
+            |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
     if let Some(data) = inline {
@@ -319,7 +314,7 @@ pub(crate) fn load_blob(connection: &Connection, sha: &str) -> Result<Vec<u8>, S
         .prepare("SELECT data FROM blob_chunks WHERE blob_id=?1 ORDER BY sequence")
         .map_err(|error| error.to_string())?;
     let chunks = statement
-        .query_map([id], |row| row.get::<_, Vec<u8>>(0))
+        .query_map([blob_id], |row| row.get::<_, Vec<u8>>(0))
         .map_err(|error| error.to_string())?;
     let mut body = Vec::new();
     for chunk in chunks {

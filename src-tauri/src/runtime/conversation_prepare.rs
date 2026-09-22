@@ -84,7 +84,8 @@ pub(super) fn compose_after_connect(
     if let Some(error) = latest.personal_source_error {
         return Err(error);
     }
-    let base = budget.apply(memory::context_window::compose(latest.loaded_context)?)?;
+    let window = memory::context_window::compose(latest.loaded_context)?;
+    let base = budget.apply(window)?;
     let role_candidates = if latest.role_dispatch.is_some() {
         crate::runtime::context::role_projection::project(
             crate::runtime::context::role_projection::RoleProjectionInput {

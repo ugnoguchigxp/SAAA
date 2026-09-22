@@ -168,6 +168,17 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn cw_34_records_tools_offered_regardless_of_discovery() {
+        let names = definitions()
+            .into_iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"read_record".to_string()));
+        assert!(names.contains(&"recall_activity".to_string()));
+    }
+
+    #[test]
     fn cw_33_read_record_range_and_query_exclusive() {
         let (connection, auth) = db();
         let body = execute(&connection, &auth, "read_record", &json!({"id": "x", "range": {"start": 0}, "query": "abc"}));

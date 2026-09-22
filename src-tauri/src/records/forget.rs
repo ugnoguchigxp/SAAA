@@ -3,7 +3,10 @@ use rusqlite::{params, Connection};
 use super::fts;
 
 pub(crate) fn forget_record(connection: &Connection, record_id: &str, reason: &str) -> Result<(), String> {
-    let epoch = crate::schedule::tick::now_ms();
+    forget_at(connection, record_id, reason, crate::schedule::tick::now_ms())
+}
+
+fn forget_at(connection: &Connection, record_id: &str, reason: &str, epoch: i64) -> Result<(), String> {
     connection
         .execute(
             "INSERT OR IGNORE INTO record_tombstones(record_id, forgotten_at, forget_epoch, reason_code) VALUES(?1,?2,?2,?3)",
@@ -53,16 +56,17 @@ pub(crate) fn forget_by_conversation_messages(
         let mut statement = connection
             .prepare("SELECT id FROM records WHERE existing_source_locator=?1 AND forget_epoch IS NULL")
             .map_err(|error| error.to_string())?;
-        let ids = statement
-            .query_map(params![id], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
+        let ids = {
+            let mapped = statement
+                .query_map(params![id], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?;
+            let ids = mapped.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+            ids
+        };
         drop(statement);
         for record_id in ids {
-            forget_record(connection, &record_id, "conversation_message")?;
+            forget_at(connection, &record_id, "conversation_message", epoch)?;
         }
-        let _ = epoch;
     }
     Ok(())
 }
@@ -71,11 +75,14 @@ fn blob_ids(connection: &Connection, record_id: &str) -> Result<Vec<String>, Str
     let mut statement = connection
         .prepare("SELECT blob_id FROM record_representations WHERE record_id=?1")
         .map_err(|error| error.to_string())?;
-    statement
-        .query_map([record_id], |row| row.get(0))
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+    let mut rows = statement
+        .query([record_id])
+        .map_err(|error| error.to_string())?;
+    let mut ids = Vec::new();
+    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+        ids.push(row.get(0).map_err(|error| error.to_string())?);
+    }
+    Ok(ids)
 }
 
 fn invalidate_segments(connection: &Connection, record_id: &str) -> Result<(), String> {

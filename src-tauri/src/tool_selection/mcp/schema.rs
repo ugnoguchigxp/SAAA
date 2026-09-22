@@ -57,7 +57,16 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS idx_tool_selection_rule_source_bindings_tool
            ON tool_selection_rule_source_bindings(tool_id);",
-    )
+    )?;
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tool_selection_mcp_results') WHERE name='record_id')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        connection.execute_batch("ALTER TABLE tool_selection_mcp_results ADD COLUMN record_id TEXT")?;
+    }
+    Ok(())
 }
 
 /// Version-25 migration. A correction rule that names a remote MCP tool is only applicable to the

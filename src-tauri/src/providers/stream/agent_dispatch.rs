@@ -171,12 +171,19 @@ pub(crate) async fn execute_agent_tool(
             );
         };
         let args = serde_json::from_str(&call.arguments).unwrap_or(serde_json::json!({}));
-        let principal = crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
-            .unwrap_or_else(|_| "principal".into());
+        let principal = match crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer) {
+            Ok(principal) => principal,
+            Err(_) => {
+                return crate::runtime::agent_tools::tool_error_content(
+                    "record_store_failed",
+                    "Record tools need a principal.",
+                );
+            }
+        };
         return persistence
             .state
-            .sqlite_writer
-            .write(|connection| {
+            .sqlite_readers
+            .read(|connection| {
                 let auth = crate::records::auth::Authorization {
                     principal_id: principal,
                     conversation_id: input.conversation_id.clone(),
@@ -211,7 +218,7 @@ pub(crate) async fn execute_agent_tool(
                     conversation_id: input.conversation_id.clone(),
                     allowed_scope_keys: Vec::new(),
                 };
-                crate::records::capture::attach(connection, &auth, &call.name, &raw)
+                crate::records::capture::attach(connection, &auth, &call.name, &raw, Some(&input.run_id))
             })
             .unwrap_or_else(|_| {
                 crate::runtime::agent_tools::tool_error_content(

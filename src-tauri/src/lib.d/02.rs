@@ -252,6 +252,8 @@ pub fn run() {
                 reachability: std::sync::Arc::new(providers::reachability::ReachabilityState::default()),
                 reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
                 diagnosis: std::sync::Arc::new(diagnosis::store::DiagnosisStore::new()),
+                context_segments_enabled: app_state::context_segments_from_env(),
+                wire_prefixes: Mutex::new(std::collections::VecDeque::new()),
             });
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

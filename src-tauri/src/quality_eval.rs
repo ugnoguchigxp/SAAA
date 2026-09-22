@@ -234,6 +234,8 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         ),
         reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
         diagnosis: std::sync::Arc::new(crate::diagnosis::store::DiagnosisStore::new()),
+        context_segments_enabled: std::env::var("SAAA_CONTEXT_SEGMENTS").ok().as_deref() == Some("1"),
+        wire_prefixes: std::sync::Mutex::new(std::collections::VecDeque::new()),
     })
 }
 

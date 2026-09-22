@@ -31,9 +31,11 @@ mod tests {
 
     #[test]
     fn cw_45_prefix_match_bytes_grows_when_prefix_stable() {
-        let fixed = b"FIXED-POLICY";
-        let first = [fixed, b"|L1"].concat();
-        let second = [fixed, b"|L1|L2"].concat();
+        let fixed = b"FIXED-POLICY".to_vec();
+        let mut first = fixed.clone();
+        first.extend_from_slice(b"|L1");
+        let mut second = fixed.clone();
+        second.extend_from_slice(b"|L1|L2");
         assert!(prefix_match_bytes(&first, &second) >= fixed.len());
     }
 }

@@ -57,19 +57,19 @@ pub(crate) fn read_range(
         return Ok(None);
     }
     let max_bytes = range.max_bytes.min(8_192) as usize;
-    let (sha, capture): (String, String) = match connection.query_row(
-        "SELECT rr.sha256, r.capture_state
+    let (blob_id, sha, capture): (String, String, String) = match connection.query_row(
+        "SELECT rr.blob_id, rr.sha256, r.capture_state
          FROM record_representations rr
          JOIN records r ON r.id = rr.record_id
          WHERE rr.record_id=?1 AND rr.name=?2",
         params![record_id, representation],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ) {
         Ok(row) => row,
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(error) => return Err(error.to_string()),
     };
-    let body = write::load_blob(connection, &sha)?;
+    let body = write::load_blob(connection, &blob_id)?;
     let text = String::from_utf8_lossy(&body);
     let mut start = (range.start as usize).min(text.len());
     while start > 0 && !text.is_char_boundary(start) {

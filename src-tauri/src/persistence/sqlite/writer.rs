@@ -144,3 +144,23 @@ impl SqliteWriter {
         operation(&connection)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cw_52_secure_delete_is_on() {
+        let directory = tempfile::tempdir().unwrap();
+        let writer = SqliteWriter::open(&directory.path().join("saaa.sqlite")).unwrap();
+        writer
+            .read_serialized(|connection| {
+                let value: i64 = connection
+                    .pragma_query_value(None, "secure_delete", |row| row.get(0))
+                    .map_err(|error| error.to_string())?;
+                assert_eq!(value, 1);
+                Ok(())
+            })
+            .unwrap();
+    }
+}

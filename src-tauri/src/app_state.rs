@@ -1,5 +1,9 @@
 use super::*;
 
+pub(crate) fn context_segments_from_env() -> bool {
+    std::env::var("SAAA_CONTEXT_SEGMENTS").ok().as_deref() == Some("1")
+}
+
 pub(super) struct AppState {
     pub(super) sqlite_writer: Arc<SqliteWriter>,
     pub(super) sqlite_readers: SqliteReaders,
@@ -28,6 +32,8 @@ pub(super) struct AppState {
     pub(super) reachability: std::sync::Arc<crate::providers::reachability::ReachabilityState>,
     pub(super) reachability_kick: std::sync::Arc<tokio::sync::Notify>,
     pub(super) diagnosis: std::sync::Arc<crate::diagnosis::store::DiagnosisStore>,
+    /// Set when `SAAA_CONTEXT_SEGMENTS=1`. Prompt assembly does not read this until SegmentBuilder owns history.
+    #[allow(dead_code)]
     pub(crate) context_segments_enabled: bool,
     pub(crate) wire_prefixes: Mutex<std::collections::VecDeque<(String, Vec<u8>)>>,
 }

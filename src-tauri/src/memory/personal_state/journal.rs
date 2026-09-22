@@ -145,3 +145,39 @@ pub(crate) fn open_database(
 ) -> Result<Journal, String> {
     Journal::open(c, path(database), previous_version < 17)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cw_51_journal_recover_restores_record_tombstones() {
+        let connection = Connection::open_in_memory().unwrap();
+        crate::persistence::schema::initialize_database(&connection).unwrap();
+        let principal: String = connection
+            .query_row("SELECT principal FROM personal_scope", [], |row| row.get(0))
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.forget.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "version": 1,
+                "principal": principal,
+                "tombstones": {},
+                "records": {"record-forgotten": 42}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        Journal::open(&connection, path, false).unwrap();
+        let forgotten_at: i64 = connection
+            .query_row(
+                "SELECT forgotten_at FROM record_tombstones WHERE record_id='record-forgotten'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(forgotten_at, 42);
+    }
+}

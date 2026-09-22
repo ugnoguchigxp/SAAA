@@ -52,7 +52,10 @@ mod tests {
     #[test]
     fn cw_43_carry_fails_when_active_operations_exceed() {
         let ops = (0..400).map(|index| format!("operation-{index}-{}", "y".repeat(40))).collect::<Vec<_>>();
-        let error = build_carry(&[], &ops).unwrap_err();
+        let error = match build_carry(&[], &ops) {
+            Err(error) => error,
+            Ok(_) => panic!("carry should fail"),
+        };
         assert!(error.contains("active_operations"));
     }
 }

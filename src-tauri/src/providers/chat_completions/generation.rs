@@ -97,12 +97,13 @@ impl RequestGeneration {
         usage: Option<&crate::runtime::context::usage::ProviderUsage>,
         source: crate::runtime::context::usage::UsageSource,
         timings: &crate::runtime::context::usage::UsageTimings,
+        prefix_match_bytes: Option<i64>,
     ) {
         let Some(handle) = &self.handle else {
             return;
         };
         let usage = usage.cloned().unwrap_or_default();
-        let _ = handle.writer_record(model, &usage, source, self.wire_bytes, timings);
+        let _ = handle.writer_record(model, &usage, source, self.wire_bytes, timings, prefix_match_bytes);
     }
 
     pub(super) fn complete(&self) -> Result<(), Failure> {

@@ -122,6 +122,7 @@ impl GenerationHandle {
         source: super::usage::UsageSource,
         wire_bytes: usize,
         timings: &super::usage::UsageTimings,
+        prefix_match_bytes: Option<i64>,
     ) -> Result<(), String> {
         self.writer.write(|connection| {
             let provider_id: String = connection
@@ -140,6 +141,7 @@ impl GenerationHandle {
                 source,
                 wire_bytes,
                 timings,
+                prefix_match_bytes,
             )
         })
     }

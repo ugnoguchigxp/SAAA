@@ -25,17 +25,18 @@ pub fn assemble(
     embedding: Arc<dyn EmbeddingProvider>,
 ) -> (Arc<dyn ToolBackend>, Option<Arc<McpManager>>) {
     let llang: Arc<dyn ToolBackend> = Arc::new(LlangBackend::new(capabilities));
+    let records = Arc::new(crate::records::backend::RecordsBackend::new(writer.clone()));
     let manager = build_manager(writer, config, embedding);
     let backend: Arc<dyn ToolBackend> = match &manager {
         Some(manager) => Arc::new(BackendRouter::new(
             llang,
             Arc::new(McpBackend::new(manager.clone())),
-            Arc::new(crate::records::backend::RecordsBackend::new(writer.clone())),
+            records.clone(),
         )),
         None => Arc::new(BackendRouter::new(
             llang,
             Arc::new(crate::records::backend::UnavailableBackend),
-            Arc::new(crate::records::backend::RecordsBackend::new(writer.clone())),
+            records,
         )),
     };
     (backend, manager)
