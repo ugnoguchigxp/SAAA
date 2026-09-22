@@ -93,6 +93,22 @@ impl Session {
         token: String,
         cancellation: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
+        Self::connect_with_profile_credential_and_key(
+            base,
+            profile,
+            token,
+            format!("saaa-session-{}", uuid::Uuid::new_v4()),
+            cancellation,
+        )
+        .await
+    }
+    pub async fn connect_with_profile_credential_and_key(
+        base: &str,
+        profile: &str,
+        token: String,
+        idempotency_key: String,
+        cancellation: watch::Receiver<bool>,
+    ) -> Result<Arc<Self>, ConnectError> {
         if token.is_empty()
             || token.trim().is_empty()
             || token.len() > 4096
@@ -108,12 +124,28 @@ impl Session {
         {
             return Err("larm_invalid_profile".into());
         }
+        if idempotency_key.is_empty()
+            || idempotency_key.len() > 160
+            || !idempotency_key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err("larm_invalid_idempotency_key".into());
+        }
         let profile = profile.to_string();
         let base = base.to_string();
         let (alive, abandoned) = watch::channel(false);
         let (send, receive) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let result = Self::connect_inner(&base, &profile, token, cancellation, abandoned).await;
+            let result = Self::connect_inner(
+                &base,
+                &profile,
+                token,
+                idempotency_key,
+                cancellation,
+                abandoned,
+            )
+            .await;
             if let Err(result) = send.send(result) {
                 let cleanup = match result {
                     Ok(session) => Some(session),
@@ -134,6 +166,7 @@ impl Session {
         base: &str,
         profile: &str,
         token: String,
+        idempotency_key: String,
         mut cancellation: watch::Receiver<bool>,
         mut abandoned: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
@@ -158,10 +191,7 @@ impl Session {
             authorize(
                 client
                     .post(base.clone())
-                    .header(
-                        "Idempotency-Key",
-                        format!("saaa-session-{}", uuid::Uuid::new_v4()),
-                    )
+                    .header("Idempotency-Key", &idempotency_key)
                     .json(&json!({"agentProfile":profile,"explicitAgentProfile":true,
                 "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
                 "allowFallback":false,"deploymentPolicy":"existing-only"})),

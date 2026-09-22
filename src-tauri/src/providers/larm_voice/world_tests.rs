@@ -36,6 +36,8 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         cancel,
         ready: OnceCell::new(),
         started: AtomicBool::new(false),
+        lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
+        sqlite_writer: h.state.sqlite_writer.clone(),
     }));
     let input: crate::StartTurnInput = serde_json::from_value(json!({
         "runId": crate::memory::personal_state::world::runtime_test_support::RUN_ID,
@@ -134,6 +136,8 @@ async fn matrix_case(route: &'static str, transition: &'static str, emit: bool) 
             cancel,
             ready: OnceCell::new(),
             started: AtomicBool::new(false),
+            lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
+            sqlite_writer: h.state.sqlite_writer.clone(),
         }));
     }
     let input:crate::StartTurnInput=serde_json::from_value(json!({"runId":crate::memory::personal_state::world::runtime_test_support::RUN_ID,"conversationId":crate::PRIMARY_CONVERSATION_ID,"content":"hello","inputOrigin":if route=="shared-larm" {"voice"}else{"text"},"presentationMode":"visual"})).unwrap();

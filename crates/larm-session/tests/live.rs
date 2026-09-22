@@ -32,6 +32,7 @@ async fn live_four_provider_session() {
             .send().await.map_err(|_|"embedding transport")?.error_for_status().map_err(|_|"embedding status")?
             .json().await.map_err(|_|"embedding JSON")?;
         if value["dimension"].as_u64()!=p.embedding_space.map(|space|space.dimension as u64) { return Err("invalid embedding dimension"); }
+        drop(lease);
         eprintln!("embedding: vector received");
         let lease=session.acquire("tts").await?; let p=lease.provider();
         let audio=client.post(p.endpoint("audio/speech")?).bearer_auth(p.token())
@@ -69,4 +70,49 @@ async fn live_four_provider_session() {
     let status=client.post(invalidated.0).bearer_auth(invalidated.1).json(&json!({"model":invalidated.2,"messages":[{"role":"user","content":"OK"}],"stream":false}))
         .send().await.unwrap().status();
     assert_eq!(status.as_u16(), 401, "token must be invalid after release");
+}
+
+#[tokio::test]
+#[ignore = "reclaims an unreleased desktop connection after a simulated restart"]
+async fn live_restart_reclaims_connection() {
+    let base = std::env::var("SAAA_LARM_CONTROL_URL")
+        .unwrap_or_else(|_| "http://gnosis.local:9810".into());
+    let token = std::env::var("LARM_API_TOKEN").expect("LARM_API_TOKEN");
+    let key = format!("saaa-voice-live-{}", uuid::Uuid::new_v4().simple());
+    let (_first_stop, first_receiver) = tokio::sync::watch::channel(false);
+    let first = Session::connect_with_profile_credential_and_key(
+        &base,
+        saaa_larm_session::DEFAULT_PROFILE,
+        token.clone(),
+        key.clone(),
+        first_receiver,
+    )
+    .await
+    .expect("first desktop process connects");
+    let first_allocation = first
+        .acquire("llm")
+        .await
+        .expect("first lease")
+        .allocation_id()
+        .to_string();
+    std::mem::forget(first); // Simulate termination before the release handler runs.
+
+    let (_second_stop, second_receiver) = tokio::sync::watch::channel(false);
+    let second = Session::connect_with_profile_credential_and_key(
+        &base,
+        saaa_larm_session::DEFAULT_PROFILE,
+        token,
+        key,
+        second_receiver,
+    )
+    .await
+    .expect("restarted desktop reclaims the connection");
+    let second_allocation = second
+        .acquire("llm")
+        .await
+        .expect("reclaimed lease")
+        .allocation_id()
+        .to_string();
+    assert_eq!(second_allocation, first_allocation);
+    second.close().await.expect("reclaimed connection releases");
 }

@@ -1,4 +1,5 @@
 //! Desktop-only owner: ephemeral credentials stay in Rust, shared with the embedded MCP service.
+use rusqlite::{params, OptionalExtension};
 use saaa_larm_session::Session;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -26,6 +27,8 @@ struct Owner {
     cancel: watch::Sender<bool>,
     ready: OnceCell<Result<Arc<Ready>, StartupError>>,
     started: AtomicBool,
+    lease_key: String,
+    sqlite_writer: Arc<crate::persistence::SqliteWriter>,
 }
 static OWNER: Mutex<Option<Arc<Owner>>> = Mutex::const_new(None);
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
@@ -52,6 +55,7 @@ pub(crate) async fn begin_larm_voice_session(
         .unwrap_or_else(|| saaa_larm_session::DEFAULT_PROFILE.into());
     crate::validate_identifier(&owner_id, "voice owner")?;
     crate::validate_identifier(&conversation_id, "conversation id")?;
+    let lease_key = current_lease_key(&state.sqlite_writer)?;
     let mut current = OWNER.lock().await;
     if SHUTTING_DOWN.load(Ordering::Acquire) {
         return Err("LARM voice runtime is shutting down".into());
@@ -77,6 +81,8 @@ pub(crate) async fn begin_larm_voice_session(
             cancel,
             ready: OnceCell::new(),
             started: AtomicBool::new(false),
+            lease_key,
+            sqlite_writer: state.sqlite_writer.clone(),
         })
     });
     drop(current);
@@ -88,12 +94,15 @@ pub(crate) async fn begin_larm_voice_session(
 }
 async fn close_owner(owner: &Owner) -> Result<(), String> {
     if owner.started.load(Ordering::Acquire) {
-        match owner.ready.get_or_init(|| initialize(owner)).await {
+        let released = match owner.ready.get_or_init(|| initialize(owner)).await {
             Ok(ready) => ready.close().await?,
             Err(error) => error.release().await?,
-        }
+        };
+        rotate_lease_key(&owner.sqlite_writer, &owner.lease_key)?;
+        Ok(released)
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 async fn initialize(owner: &Owner) -> Result<Arc<Ready>, StartupError> {
@@ -107,10 +116,11 @@ async fn initialize(owner: &Owner) -> Result<Arc<Ready>, StartupError> {
     let control_token = credential.token().to_string();
     #[cfg(test)]
     let control_token = "test-control-token".to_string();
-    let session = Session::connect_with_profile_and_credential(
+    let session = Session::connect_with_profile_credential_and_key(
         &owner.base,
         &owner.profile,
         control_token,
+        owner.lease_key.clone(),
         owner.cancel.subscribe(),
     )
     .await
@@ -196,6 +206,7 @@ pub(crate) async fn current_at(
         {
             owner.cancel.send_replace(true);
             close_owner(owner).await?;
+            let lease_key = current_lease_key(&owner.sqlite_writer)?;
             let (cancel, _) = watch::channel(false);
             *slot = Some(Arc::new(Owner {
                 id: owner.id.clone(),
@@ -205,6 +216,8 @@ pub(crate) async fn current_at(
                 cancel,
                 ready: OnceCell::new(),
                 started: AtomicBool::new(false),
+                lease_key,
+                sqlite_writer: owner.sqlite_writer.clone(),
             }));
         }
     }
@@ -242,12 +255,67 @@ pub(crate) async fn shutdown() {
         }
     }
 }
+
+fn current_lease_key(writer: &crate::persistence::SqliteWriter) -> Result<String, String> {
+    writer.write(|connection| {
+        let existing = connection
+            .query_row(
+                "SELECT idempotency_key FROM larm_voice_lease_slot WHERE id=1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(crate::database_error)?;
+        if let Some(key) = existing {
+            return Ok(key);
+        }
+        let key = format!("saaa-voice-{}", uuid::Uuid::new_v4().simple());
+        connection
+            .execute(
+                "INSERT INTO larm_voice_lease_slot(id,idempotency_key,updated_at) VALUES(1,?1,?2)",
+                params![key, crate::now_iso()],
+            )
+            .map_err(crate::database_error)?;
+        Ok(key)
+    })
+}
+
+fn rotate_lease_key(
+    writer: &crate::persistence::SqliteWriter,
+    expected: &str,
+) -> Result<(), String> {
+    let next = format!("saaa-voice-{}", uuid::Uuid::new_v4().simple());
+    writer.write(|connection| {
+        connection
+            .execute(
+                "UPDATE larm_voice_lease_slot SET idempotency_key=?1,updated_at=?2 WHERE id=1 AND idempotency_key=?3",
+                params![next, crate::now_iso(), expected],
+            )
+            .map_err(crate::database_error)?;
+        Ok(())
+    })
+}
 pub(crate) use decision::classify_shadow;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
     use std::sync::Arc;
+
+    #[test]
+    fn lease_slot_survives_restart_and_rotates_only_after_release() {
+        let connection = Connection::open_in_memory().expect("database opens");
+        crate::persistence::schema::initialize_database(&connection).expect("schema initializes");
+        let writer = crate::persistence::SqliteWriter::from_connection(connection);
+        let first = current_lease_key(&writer).expect("lease slot is created");
+        assert_eq!(current_lease_key(&writer).unwrap(), first);
+        rotate_lease_key(&writer, &first).expect("confirmed release rotates the slot");
+        let second = current_lease_key(&writer).unwrap();
+        assert_ne!(second, first);
+        rotate_lease_key(&writer, &first).expect("stale release is harmless");
+        assert_eq!(current_lease_key(&writer).unwrap(), second);
+    }
 
     #[tokio::test]
     async fn missing_owner_skips_session_lifecycle() {

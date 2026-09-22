@@ -19,7 +19,8 @@ use rusqlite::{params, Connection};
 /// 35 adds transport/speech correlation and expands tool-capable reasoning step timeouts.
 /// 36 moves the shipped Role Routing policy onto the shared Gemma 4 LARM session.
 /// 37 is retained after removing an endpoint migration that incorrectly overwrote saved settings.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 37;
+/// 38 adds the recoverable LARM voice lease slot used across desktop restarts.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 38;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -35,6 +36,13 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
            value_json TEXT NOT NULL,
            updated_at TEXT NOT NULL,
            PRIMARY KEY(namespace, key)
+         );
+         CREATE TABLE IF NOT EXISTS larm_voice_lease_slot (
+           id INTEGER PRIMARY KEY CHECK(id = 1),
+           idempotency_key TEXT NOT NULL
+             CHECK(length(idempotency_key) BETWEEN 1 AND 160
+               AND idempotency_key NOT GLOB '*[^A-Za-z0-9_-]*'),
+           updated_at TEXT NOT NULL
          );
          CREATE TABLE IF NOT EXISTS conversations (
            id TEXT PRIMARY KEY,
