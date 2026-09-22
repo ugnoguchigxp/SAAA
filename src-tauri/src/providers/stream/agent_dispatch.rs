@@ -37,6 +37,7 @@ pub(crate) fn available_agent_tools(
             .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
     let mut definitions =
         agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false);
+    definitions.extend(crate::records::tools::definitions());
     if context_still_within_budget
         && output_persistence
             .is_some_and(|persistence| persistence.state.context_still_search.is_configured())
@@ -162,11 +163,62 @@ pub(crate) async fn execute_agent_tool(
             call,
         );
     }
+    if call.name == "read_record" || call.name == "recall_activity" {
+        let Some(persistence) = output_persistence else {
+            return crate::runtime::agent_tools::tool_error_content(
+                "record_store_failed",
+                "Record tools need a persisted conversation.",
+            );
+        };
+        let args = serde_json::from_str(&call.arguments).unwrap_or(serde_json::json!({}));
+        let principal = crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
+            .unwrap_or_else(|_| "principal".into());
+        return persistence
+            .state
+            .sqlite_writer
+            .write(|connection| {
+                let auth = crate::records::auth::Authorization {
+                    principal_id: principal,
+                    conversation_id: input.conversation_id.clone(),
+                    allowed_scope_keys: Vec::new(),
+                };
+                Ok(crate::records::tools::execute(connection, &auth, &call.name, &args).to_string())
+            })
+            .unwrap_or_else(|_| {
+                crate::runtime::agent_tools::tool_error_content("record_store_failed", "Record read failed.")
+            });
+    }
     if crate::runtime::web_fetch::is_web_fetch_tool(&call.name) {
         let cancellation =
             crate::runtime::web_fetch::contracts::WebFetchCancel::from_run(run_cancellation);
         cancellation.bridge_run_cancellation(run_cancellation);
-        return crate::runtime::web_fetch::execute_with_cancel(call, timeout, cancellation).await;
+        let raw = crate::runtime::web_fetch::execute_with_cancel(call, timeout, cancellation).await;
+        let Some(persistence) = output_persistence else {
+            return raw;
+        };
+        let Ok(principal) = crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer) else {
+            return crate::runtime::agent_tools::tool_error_content(
+                "record_store_failed",
+                "The tool result was not stored.",
+            );
+        };
+        return persistence
+            .state
+            .sqlite_writer
+            .write(|connection| {
+                let auth = crate::records::auth::Authorization {
+                    principal_id: principal,
+                    conversation_id: input.conversation_id.clone(),
+                    allowed_scope_keys: Vec::new(),
+                };
+                crate::records::capture::attach(connection, &auth, &call.name, &raw)
+            })
+            .unwrap_or_else(|_| {
+                crate::runtime::agent_tools::tool_error_content(
+                    "record_store_failed",
+                    "The tool result was not stored.",
+                )
+            });
     }
     if crate::runtime::agent_tools::is_typed_memory_tool(&call.name) {
         let Some(persistence) = output_persistence else {

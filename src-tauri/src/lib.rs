@@ -36,6 +36,7 @@ mod process_guard;
 mod providers;
 #[cfg(feature = "quality-eval-harness")]
 pub mod quality_eval;
+mod records;
 mod redact;
 mod role_routing;
 pub mod runtime;

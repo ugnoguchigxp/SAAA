@@ -139,7 +139,7 @@ fn ml_01_schema_version_and_empty_goals() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
     assert_eq!(version, DATABASE_SCHEMA_VERSION);
-    assert_eq!(DATABASE_SCHEMA_VERSION, 38);
+    assert_eq!(DATABASE_SCHEMA_VERSION, 40);
     let goals: i64 = connection
         .query_row("SELECT COUNT(*) FROM steward_goals", [], |row| row.get(0))
         .expect("goals");

@@ -1789,6 +1789,14 @@
       "total": 20,
       "production": 20
     },
+    "src-tauri/src/records/mod.rs": {
+      "total": 51,
+      "production": 2
+    },
+    "src-tauri/src/records/schema.rs": {
+      "total": 100,
+      "production": 100
+    },
     "src-tauri/src/role_routing/adapters/codex_protocol.rs": {
       "total": 191,
       "production": 191
@@ -2152,6 +2160,10 @@
     "src-tauri/src/runtime/context/schema.rs": {
       "total": 102,
       "production": 102
+    },
+    "src-tauri/src/runtime/context/usage.rs": {
+      "total": 260,
+      "production": 150
     },
     "src-tauri/src/runtime/context/scope.d/01.rs": {
       "total": 476,

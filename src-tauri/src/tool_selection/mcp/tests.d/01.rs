@@ -465,6 +465,7 @@ impl Harness {
         let router = Arc::new(BackendRouter::new(
             Arc::new(FixtureBackend::new()),
             Arc::new(McpBackend::new(manager.clone())),
+            Arc::new(crate::records::backend::RecordsBackend::new(writer.clone())),
         ));
         let embedding: Arc<dyn EmbeddingProvider> = if with_embedder {
             hash_embedding()

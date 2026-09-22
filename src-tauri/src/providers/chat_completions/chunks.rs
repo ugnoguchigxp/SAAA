@@ -16,6 +16,7 @@ pub(super) struct Completion {
     pub(super) finish: Option<String>,
     pub(super) done: bool,
     tools: BTreeMap<u64, Tool>,
+    pub(super) usage: Option<crate::runtime::context::usage::ProviderUsage>,
     response_model: Option<String>,
     reasoning_started: bool,
     tool_started: bool,
@@ -59,6 +60,7 @@ impl Completion {
             .and_then(Value::as_array)
             .ok_or(Failure::Protocol)?;
         if choices.is_empty() && value.get("usage").is_some_and(Value::is_object) {
+            self.usage = Some(crate::runtime::context::usage::parse_openai_usage(&value));
             return Ok(String::new());
         }
         if choices.len() != 1 || self.finish.is_some() {
@@ -211,5 +213,21 @@ mod progress_tests {
             .unwrap();
         assert!(empty.provider_progressed());
         assert!(empty.content.is_empty());
+    }
+
+    #[test]
+    fn cw_12_chunk_with_usage_only_is_retained() {
+        let mut completion = Completion::default();
+        assert_eq!(
+            completion.absorb(
+                r#"{"choices":[],"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens":2}}"#,
+                "model"
+            ),
+            Ok(String::new())
+        );
+        let usage = completion.usage.expect("usage retained");
+        assert_eq!(usage.input_tokens, Some(10));
+        assert_eq!(usage.cache_read_tokens, Some(4));
+        assert_eq!(usage.output_tokens, Some(2));
     }
 }

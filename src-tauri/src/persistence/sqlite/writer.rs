@@ -52,6 +52,9 @@ impl SqliteWriter {
             OwnershipError::Unavailable(_error) => DatabaseOpenError::OwnershipUnavailable,
         })?;
         let connection = Connection::open(database_path).map_err(DatabaseOpenError::Sqlite)?;
+        connection
+            .pragma_update(None, "secure_delete", "ON")
+            .map_err(DatabaseOpenError::Sqlite)?;
         let previous_version =
             journal::database_version(&connection).map_err(DatabaseOpenError::Sqlite)?;
         crate::persistence::migrate::backup_before_migration(&connection, database_path)

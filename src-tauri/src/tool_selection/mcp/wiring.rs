@@ -30,8 +30,13 @@ pub fn assemble(
         Some(manager) => Arc::new(BackendRouter::new(
             llang,
             Arc::new(McpBackend::new(manager.clone())),
+            Arc::new(crate::records::backend::RecordsBackend::new(writer.clone())),
         )),
-        None => llang,
+        None => Arc::new(BackendRouter::new(
+            llang,
+            Arc::new(crate::records::backend::UnavailableBackend),
+            Arc::new(crate::records::backend::RecordsBackend::new(writer.clone())),
+        )),
     };
     (backend, manager)
 }

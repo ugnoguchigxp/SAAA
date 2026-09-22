@@ -28,6 +28,8 @@ pub(super) struct AppState {
     pub(super) reachability: std::sync::Arc<crate::providers::reachability::ReachabilityState>,
     pub(super) reachability_kick: std::sync::Arc<tokio::sync::Notify>,
     pub(super) diagnosis: std::sync::Arc<crate::diagnosis::store::DiagnosisStore>,
+    pub(crate) context_segments_enabled: bool,
+    pub(crate) wire_prefixes: Mutex<std::collections::VecDeque<(String, Vec<u8>)>>,
 }
 
 #[derive(Clone)]

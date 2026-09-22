@@ -20,7 +20,9 @@ use rusqlite::{params, Connection};
 /// 36 moves the shipped Role Routing policy onto the shared Gemma 4 LARM session.
 /// 37 is retained after removing an endpoint migration that incorrectly overwrote saved settings.
 /// 38 adds the recoverable LARM voice lease slot used across desktop restarts.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 38;
+/// 39 adds generation_usage and the records store.
+/// 40 adds context segments and generation wire columns.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 40;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -210,6 +212,8 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::coding::recovery::reconcile(&transaction)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;
+    crate::records::schema::migrate(&transaction)?;
+    crate::runtime::context::segment::schema::migrate(&transaction)?;
     crate::generated_capabilities::schema::migrate(&transaction)?;
     crate::generated_capabilities::generation::repository::interrupt_running(
         &transaction,

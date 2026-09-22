@@ -180,6 +180,7 @@ async fn p04_natural_correction_via_conversation_provider_reaches_mcp_search() {
     let router = Arc::new(BackendRouter::new(
         Arc::new(FixtureBackend::new()),
         Arc::new(McpBackend::new(manager.clone())),
+        Arc::new(crate::records::backend::RecordsBackend::new(writer.clone())),
     ));
     let mut service = ToolSelectionService::new(
         writer.clone(),

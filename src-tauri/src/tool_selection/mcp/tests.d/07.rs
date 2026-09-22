@@ -357,6 +357,7 @@ async fn p03_same_name_routes_across_llang_and_two_mcp_sources() {
     let router = Arc::new(BackendRouter::new(
         Arc::new(FixtureBackend::new()),
         Arc::new(McpBackend::new(manager.clone())),
+        Arc::new(crate::records::backend::RecordsBackend::new(writer.clone())),
     ));
     let mut service = ToolSelectionService::new(
         writer.clone(),

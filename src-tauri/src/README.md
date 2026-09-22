@@ -14,6 +14,8 @@ Read only the affected domain. Paths in domain READMEs are relative to that dire
 - [schedule](schedule/README.md): due entries, holds, calendar sync, delegated dispatch.
 - [situation](situation/README.md): sampled signals, stable scene, delivery policy.
 - [memory](memory/README.md): history/context/recall/state/forget boundaries.
+- records: planned (P2). Immutable tool/web captures, authorization before LIMIT, manual FTS sync.
+- runtime/context/segment: planned (P4). Fixed prefix plus append-only entries for chat completions.
 - [persistence](persistence/README.md): writer/readers, transactions, migrations/settings/audit.
 - [diagnosis](diagnosis/README.md): startup self-diagnosis report, single-flight rerun, redacted items.
 

@@ -110,6 +110,40 @@ impl GenerationHandle {
         })
     }
 
+    #[allow(dead_code)] // CW-45 reads the generation id from the handle.
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(crate) fn writer_record(
+        &self,
+        model: Option<&str>,
+        usage: &super::usage::ProviderUsage,
+        source: super::usage::UsageSource,
+        wire_bytes: usize,
+        timings: &super::usage::UsageTimings,
+    ) -> Result<(), String> {
+        self.writer.write(|connection| {
+            let provider_id: String = connection
+                .query_row(
+                    "SELECT provider_id FROM context_generations WHERE id=?1",
+                    [&self.id],
+                    |row| row.get(0),
+                )
+                .map_err(database_error)?;
+            super::usage::record(
+                connection,
+                &self.id,
+                &provider_id,
+                model,
+                usage,
+                source,
+                wire_bytes,
+                timings,
+            )
+        })
+    }
+
     pub(crate) fn dispatch(&self) -> Result<(), String> {
         self.dispatch_checked(|_| Ok(()))
     }

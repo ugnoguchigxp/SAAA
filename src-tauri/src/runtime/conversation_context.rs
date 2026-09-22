@@ -118,15 +118,13 @@ mod tests {
         )
         .expect("history composes");
         assert_eq!(history[0].role, "system");
-        assert!(history[0]
-            .content
-            .contains("configured agent name is \"こはく\""));
-        assert!(history[0].content.contains("configured user name is \"\""));
+        assert!(history[0].content.contains("agent=\"こはく\""));
+        assert!(history[0].content.contains("user=\"\""));
         assert!(history[0].content.contains(r#""currency":"JPY""#));
-        assert!(history[0].content.contains("input origin is \"voice\""));
+        assert!(history[0].content.contains("inputOrigin=\"voice\""));
         assert!(history[0]
             .content
-            .contains("presentation mode is \"visual-and-spoken\""));
+            .contains("presentationMode=\"visual-and-spoken\""));
         assert!(history[0].content.contains("Memory projection policy"));
         assert!(!history[0].content.contains("{{"));
         assert_eq!(
@@ -156,10 +154,10 @@ mod tests {
             "visual",
         )
         .expect("system context renders");
-        assert!(rendered.contains(r#"configured agent name is "A \"quoted\" name""#));
-        assert!(rendered.contains(r#"configured user name is "野口""#));
+        assert!(rendered.contains(r#"agent="A \"quoted\" name""#));
+        assert!(rendered.contains(r#"user="野口""#));
         assert!(rendered.contains(
-            r#"regional preferences are {"language":"ja","timeZone":"Asia/Tokyo","lengthUnit":"metric","weightUnit":"kilogram","currency":"JPY"}"#
+            r#"regional={"language":"ja","timeZone":"Asia/Tokyo","lengthUnit":"metric","weightUnit":"kilogram","currency":"JPY"}"#
         ));
         assert!(!rendered.contains("{{"));
     }

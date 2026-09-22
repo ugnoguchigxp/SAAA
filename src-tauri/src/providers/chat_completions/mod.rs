@@ -41,7 +41,7 @@ pub(crate) async fn run_with_options(
     options: &saaa_larm_session::http_api::LlmOptions,
 ) -> Result<String, Error> {
     let request_started = Instant::now();
-    let mut first_content = true;
+    let mut first_visible_ms: Option<u64> = None;
     let mut started = false;
     let mut provider_progressed = false;
     let mut messages = world_body::build_messages(history, &context);
@@ -219,6 +219,12 @@ pub(crate) async fn run_with_options(
                         Ok(chunk) => chunk,
                         Err(_) => {
                             record_transport("failed", Some("response-interrupted"));
+                            generation.record_usage(
+                                None,
+                                None,
+                                crate::runtime::context::usage::UsageSource::Disconnected,
+                                &usage_timings(request_started, first_visible_ms),
+                            );
                             return Err(Failure::ResponseInterrupted);
                         }
                     };
@@ -252,6 +258,12 @@ pub(crate) async fn run_with_options(
                         Some(Ok(chunk)) => chunk,
                         Some(Err(_)) | None => {
                             record_transport("failed", Some("response-interrupted"));
+                            generation.record_usage(
+                                None,
+                                completion.usage.as_ref(),
+                                crate::runtime::context::usage::UsageSource::Disconnected,
+                                &usage_timings(request_started, first_visible_ms),
+                            );
                             return Err(Failure::ResponseInterrupted);
                         }
                     };
@@ -282,12 +294,15 @@ pub(crate) async fn run_with_options(
                         return Err(Failure::Cancelled);
                     }
                     if !text.is_empty() {
-                        if first_content {
+                        if first_visible_ms.is_none() {
                             super::http_metrics::record(
                                 "llmRequestToFirstContent",
                                 request_started.elapsed(),
                             );
-                            first_content = false;
+                            first_visible_ms = Some(
+                                u64::try_from(request_started.elapsed().as_millis())
+                                    .unwrap_or(u64::MAX),
+                            );
                         }
                         mark_started(&context, &mut started)?;
                         context
@@ -308,6 +323,17 @@ pub(crate) async fn run_with_options(
             }
             record_transport("completed", None);
             let tool_calls = completion.complete()?;
+            let source = if completion.usage.is_some() {
+                crate::runtime::context::usage::UsageSource::Provider
+            } else {
+                crate::runtime::context::usage::UsageSource::Missing
+            };
+            generation.record_usage(
+                None,
+                completion.usage.as_ref(),
+                source,
+                &usage_timings(request_started, first_visible_ms),
+            );
             output.push_str(&completion.content);
             if output.len() > 1_048_576 {
                 return Err(Failure::RequestTooLarge);
@@ -426,5 +452,18 @@ pub(crate) async fn run_with_options(
 
 mod response_helpers;
 use response_helpers::{json_events, mark_started};
+
+fn usage_timings(
+    request_started: Instant,
+    first_visible_ms: Option<u64>,
+) -> crate::runtime::context::usage::UsageTimings {
+    crate::runtime::context::usage::UsageTimings {
+        ttft_ms: first_visible_ms,
+        first_visible_ms,
+        completed_ms: Some(
+            u64::try_from(request_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        ),
+    }
+}
 
 mod world_claim_tests;

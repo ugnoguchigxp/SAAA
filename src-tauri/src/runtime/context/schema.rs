@@ -144,7 +144,25 @@ fn backfill_legacy_coding_scopes(connection: &Connection) -> rusqlite::Result<()
            parent_scope_key,child_scope_key,relation,created_at
          )
          SELECT 'project:' || id,'resource:' || id,'parent',strftime('%s','now') || '000'
-         FROM coding_workspaces;",
+         FROM coding_workspaces;
+         CREATE TABLE IF NOT EXISTS generation_usage (
+           generation_id TEXT PRIMARY KEY REFERENCES context_generations(id) ON DELETE CASCADE,
+           provider_id TEXT NOT NULL,
+           model TEXT,
+           input_tokens INTEGER,
+           cache_read_tokens INTEGER,
+           cache_write_tokens INTEGER,
+           output_tokens INTEGER,
+           reasoning_tokens INTEGER,
+           usage_source TEXT NOT NULL CHECK(usage_source IN ('provider','missing','disconnected')),
+           raw_usage_json TEXT CHECK(raw_usage_json IS NULL OR json_valid(raw_usage_json)),
+           wire_bytes INTEGER NOT NULL CHECK(wire_bytes >= 0),
+           prefix_match_bytes INTEGER,
+           ttft_ms INTEGER,
+           first_visible_ms INTEGER,
+           completed_ms INTEGER,
+           recorded_at INTEGER NOT NULL
+         );",
     )?;
 
     let has_jobs: bool = connection.query_row(
@@ -311,5 +329,30 @@ mod tests {
             )
             .unwrap();
         assert!(linked);
+    }
+
+    #[test]
+    fn cw_10_generation_usage_table_exists() {
+        let connection = Connection::open_in_memory().unwrap();
+        crate::persistence::schema::initialize_database(&connection).unwrap();
+        let columns: Vec<String> = connection
+            .prepare("PRAGMA table_info(generation_usage)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        for name in [
+            "generation_id",
+            "provider_id",
+            "input_tokens",
+            "cache_read_tokens",
+            "usage_source",
+            "wire_bytes",
+            "prefix_match_bytes",
+            "recorded_at",
+        ] {
+            assert!(columns.iter().any(|column| column == name), "{name}");
+        }
     }
 }

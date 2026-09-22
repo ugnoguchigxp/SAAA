@@ -1,6 +1,6 @@
 # ContextWindow・入力記録・メモリー統合 実装計画
 
-作成日: 2026-09-22。状態: **計画（未実装）**。設計の正本は `spec/docs/context-window-records-memory-design.md`（以下「設計書」）。本書は設計書を現行コードに落とすための作業手順で、設計書と矛盾する場合は本書の §0-3「確定した判断」を優先し、設計書側を追記で修正する。作業カード CW-00〜CW-46。
+作成日: 2026-09-22。状態: **計画（未実装）**。設計の正本は [設計書](context-window-records-memory-design.md)。本書は設計書を現行コードに落とすための作業手順で、設計書と矛盾する場合は本書の §0-2/§0-3 を優先する（設計書には同内容を追記済み）。作業カード CW-00〜CW-55。**初めて作業する担当 AI は先に [引き継ぎ文書](context-window-records-memory-handoff.md) を読む。**
 
 ## 0. 目的・範囲・確定した判断
 
@@ -448,7 +448,7 @@ CREATE TABLE IF NOT EXISTS context_generation_records (
 
 ## 5. 作業カード
 
-標準: 実装 1〜3 ファイル + 試験。試験名 `cw_NN_条件`。各カードで `cargo test --manifest-path src-tauri/Cargo.toml <filter>` と `cargo clippy --all-targets -- -D warnings` を通す。schema を触るカードは `bun run size:check` も通す。P2 以降で `DATABASE_SCHEMA_VERSION` を **38 → 39 に 1 回だけ** 上げる（CW-20）。P1 の表も v39 に含めるため、P1 を先に着手する場合は CW-10 で 39 に上げ、CW-20 では上げない。
+標準: 実装 1〜3 ファイル + 試験。試験名 `cw_NN_条件`。各カードで `cargo test --manifest-path src-tauri/Cargo.toml <filter>` と `cargo clippy --all-targets -- -D warnings` を通す。schema を触るカードは `bun run size:check` も通す。`DATABASE_SCHEMA_VERSION` は全計画で **2 回だけ** 上げる。1 回目は P1/P2 のどちらか先に着手したカード（CW-10 または CW-20）で 38 → 39、2 回目は CW-41 で 39 → 40。後から着手した側のカードでは上げない。
 
 ### P0
 

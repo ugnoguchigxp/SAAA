@@ -14,6 +14,8 @@ struct Document {
     version: u32,
     principal: String,
     tombstones: BTreeMap<String, i64>,
+    #[serde(default)]
+    records: BTreeMap<String, i64>,
 }
 pub(crate) struct Journal {
     path: PathBuf,
@@ -29,15 +31,16 @@ impl Journal {
             Ok(bytes) => {
                 let d: Document = serde_json::from_slice(&bytes)
                     .map_err(|_| "personal-forget-journal-corrupt")?;
-                if d.version != 1 || d.principal != principal {
+                if (d.version != 1 && d.version != 2) || d.principal != principal {
                     return Err("personal-forget-journal-identity".into());
                 }
                 d
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && allow_create => Document {
-                version: 1,
+                version: 2,
                 principal,
                 tombstones: BTreeMap::new(),
+                records: BTreeMap::new(),
             },
             Err(_) => return Err("personal-forget-journal-required".into()),
         };
@@ -55,6 +58,13 @@ impl Journal {
             .collect::<Vec<_>>();
         super::store::recover(&tx, Some(&known))?;
         crate::schedule::forget::recover(&tx, &known)?;
+        for (id, at) in &journal.document.records {
+            tx.execute(
+                "INSERT OR IGNORE INTO record_tombstones(record_id, forgotten_at, forget_epoch, reason_code) VALUES(?1,?2,?2,'journal')",
+                rusqlite::params![id, at],
+            )
+            .map_err(database_error)?;
+        }
         tx.commit().map_err(database_error)?;
         journal.sync(c)?;
         if !journal.path.exists() {

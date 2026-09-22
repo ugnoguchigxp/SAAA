@@ -4,10 +4,7 @@ use crate::persistence::load_model_providers;
 use crate::AppState;
 
 pub(in crate::diagnosis) fn settings(state: &AppState) -> DiagnosisItem {
-    match state
-        .sqlite_readers
-        .read(load_model_providers)
-    {
+    match state.sqlite_readers.read(load_model_providers) {
         Ok(settings) if settings.providers.is_empty() => item(
             "settings.providers",
             "settings",

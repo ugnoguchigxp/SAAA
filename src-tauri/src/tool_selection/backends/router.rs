@@ -15,17 +15,23 @@ use crate::RunCancellation;
 pub struct BackendRouter {
     llang: Arc<dyn ToolBackend>,
     mcp: Arc<dyn ToolBackend>,
+    records: Arc<dyn ToolBackend>,
 }
 
 impl BackendRouter {
-    pub fn new(llang: Arc<dyn ToolBackend>, mcp: Arc<dyn ToolBackend>) -> Self {
-        Self { llang, mcp }
+    pub fn new(
+        llang: Arc<dyn ToolBackend>,
+        mcp: Arc<dyn ToolBackend>,
+        records: Arc<dyn ToolBackend>,
+    ) -> Self {
+        Self { llang, mcp, records }
     }
 
     pub fn kind(binding: &Value) -> &'static str {
         match binding.get("kind").and_then(Value::as_str) {
             Some("mcp_http") => "mcp_http",
             Some("llang") => "llang",
+            Some("records") => "records",
             Some(_) => "unknown",
             None => {
                 if LlangBinding::parse(binding).is_some() {
@@ -48,6 +54,7 @@ impl ToolBackend for BackendRouter {
         match Self::kind(&request.binding) {
             "llang" => self.llang.invoke(request, cancellation).await,
             "mcp_http" => self.mcp.invoke(request, cancellation).await,
+            "records" => self.records.invoke(request, cancellation).await,
             // Unknown kinds and non-L-Lang bindings without a kind are refused before any send.
             _ => BackendOutcome::failed("integrity"),
         }

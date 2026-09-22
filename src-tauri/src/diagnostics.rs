@@ -22,7 +22,20 @@ pub(crate) fn export_diagnostics(state: &AppState) -> Result<LocalArtifactResult
         "streamingPerformance": crate::runtime::event_hub::performance::snapshot(),
         "auditTrail": database.audit_trail,
         "personalState": state.sqlite_writer.read_serialized(crate::memory::personal_state::commands::summary)?,
-        "selfDiagnosis": state.diagnosis.snapshot()
+        "selfDiagnosis": state.diagnosis.snapshot(),
+        "contextMetrics": {
+            "usage": state.sqlite_readers.read(crate::runtime::context::usage::summary)?
+                .into_iter()
+                .map(|row| json!({
+                    "providerId": row.provider_id,
+                    "generations": row.generations,
+                    "inputTokens": row.input_tokens,
+                    "cacheReadTokens": row.cache_read_tokens,
+                    "cacheReadRatio": row.cache_read_ratio,
+                    "usageMissing": row.usage_missing,
+                }))
+                .collect::<Vec<_>>()
+        }
     });
     let directory = state.data_directory.join("diagnostics");
     fs::create_dir_all(&directory)

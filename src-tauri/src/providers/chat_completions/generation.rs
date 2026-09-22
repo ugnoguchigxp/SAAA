@@ -1,6 +1,9 @@
 use super::*;
 
-pub(super) struct RequestGeneration(Option<crate::runtime::context::generation::GenerationHandle>);
+pub(super) struct RequestGeneration {
+    handle: Option<crate::runtime::context::generation::GenerationHandle>,
+    wire_bytes: usize,
+}
 
 impl RequestGeneration {
     pub(super) fn begin(
@@ -82,11 +85,28 @@ impl RequestGeneration {
             )
             .map_err(|_| Failure::Internal)?;
         }
-        Ok(Self(generation))
+        Ok(Self {
+            handle: generation,
+            wire_bytes: request_payload.len(),
+        })
+    }
+
+    pub(super) fn record_usage(
+        &self,
+        model: Option<&str>,
+        usage: Option<&crate::runtime::context::usage::ProviderUsage>,
+        source: crate::runtime::context::usage::UsageSource,
+        timings: &crate::runtime::context::usage::UsageTimings,
+    ) {
+        let Some(handle) = &self.handle else {
+            return;
+        };
+        let usage = usage.cloned().unwrap_or_default();
+        let _ = handle.writer_record(model, &usage, source, self.wire_bytes, timings);
     }
 
     pub(super) fn complete(&self) -> Result<(), Failure> {
-        self.0
+        self.handle
             .as_ref()
             .map(|generation| generation.complete())
             .transpose()
@@ -95,7 +115,7 @@ impl RequestGeneration {
     }
 
     pub(super) fn revalidate_before_tool(&self) -> Result<(), Failure> {
-        self.0
+        self.handle
             .as_ref()
             .map(|generation| generation.revalidate_dependencies())
             .transpose()
@@ -104,14 +124,14 @@ impl RequestGeneration {
     }
 
     pub(super) fn fail(&self, reason: &str) {
-        if let Some(generation) = &self.0 {
+        if let Some(generation) = &self.handle {
             let _ = generation.fail(reason);
         }
     }
 
     pub(super) fn finish_error(&self, error: Failure) {
         if error == Failure::Cancelled {
-            if let Some(generation) = &self.0 {
+            if let Some(generation) = &self.handle {
                 let _ = generation.cancel();
             }
         } else {
