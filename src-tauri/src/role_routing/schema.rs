@@ -133,6 +133,110 @@ fn ensure_rr_input_generation(connection: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn schema_34_moves_only_the_shipped_reasoner_to_direct_qwen() {
+        let c = Connection::open_in_memory().expect("connection");
+        c.execute_batch(
+            "CREATE TABLE settings_documents (
+               namespace TEXT NOT NULL, key TEXT NOT NULL, schema_version INTEGER NOT NULL,
+               value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+               PRIMARY KEY(namespace,key)
+             );",
+        )
+        .expect("settings");
+        let providers = json!({"providers":[
+            {"id":crate::DYNAMIC_LAN_PROVIDER_ID,"kind":"dynamic-lan","enabled":true},
+            {"id":crate::QWEN_DIRECT_PROVIDER_ID,"kind":"openai-compatible","enabled":true,
+             "model":"Qwen3.8-27B-ROCmFP4-FAST.gguf"}
+        ]});
+        let roles = json!({
+            "roles":{"reasoner":"local-reasoner","frontend":"local-conversation-frontend"},
+            "actors":[
+                {"id":"local-reasoner","transport":"provider",
+                 "providerId":crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"label":"LAN reasoning provider"},
+                {"id":"local-conversation-frontend","transport":"provider",
+                 "providerId":crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"label":"LFM"}
+            ]
+        });
+        c.execute(
+            "INSERT INTO settings_documents VALUES('providers.model','default',15,?1,'before')",
+            [providers.to_string()],
+        )
+        .expect("providers");
+        c.execute(
+            "INSERT INTO settings_documents VALUES('routing.roles','default',15,?1,'before')",
+            [roles.to_string()],
+        )
+        .expect("roles");
+
+        migrate_v33_to_v34_direct_qwen_reasoner(&c, 33).expect("migration");
+
+        let stored: String = c
+            .query_row(
+                "SELECT value_json FROM settings_documents WHERE namespace='routing.roles'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("stored roles");
+        let stored: Value = serde_json::from_str(&stored).expect("json");
+        assert_eq!(
+            stored["actors"][0]["providerId"],
+            crate::QWEN_DIRECT_PROVIDER_ID
+        );
+        assert_eq!(
+            stored["actors"][0]["model"],
+            "Qwen3.8-27B-ROCmFP4-FAST.gguf"
+        );
+        assert_eq!(
+            stored["actors"][1]["providerId"],
+            crate::DYNAMIC_LAN_PROVIDER_ID
+        );
+    }
+
+    #[test]
+    fn schema_34_preserves_custom_reasoner_bindings() {
+        let c = Connection::open_in_memory().expect("connection");
+        c.execute_batch(
+            "CREATE TABLE settings_documents (
+               namespace TEXT NOT NULL, key TEXT NOT NULL, schema_version INTEGER NOT NULL,
+               value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+               PRIMARY KEY(namespace,key)
+             );",
+        )
+        .expect("settings");
+        let providers = json!({"providers":[
+            {"id":crate::QWEN_DIRECT_PROVIDER_ID,"kind":"openai-compatible","enabled":true,
+             "model":"Qwen3.8-27B-ROCmFP4-FAST.gguf"}
+        ]});
+        let roles = json!({
+            "roles":{"reasoner":"custom"},
+            "actors":[{"id":"custom","transport":"provider","providerId":"another-provider"}]
+        });
+        c.execute(
+            "INSERT INTO settings_documents VALUES('providers.model','default',15,?1,'before')",
+            [providers.to_string()],
+        )
+        .expect("providers");
+        c.execute(
+            "INSERT INTO settings_documents VALUES('routing.roles','default',15,?1,'before')",
+            [roles.to_string()],
+        )
+        .expect("roles");
+
+        migrate_v33_to_v34_direct_qwen_reasoner(&c, 33).expect("migration");
+
+        let stored: String = c
+            .query_row(
+                "SELECT value_json FROM settings_documents WHERE namespace='routing.roles'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("stored roles");
+        assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), roles);
+    }
+
     #[test]
     fn migration_is_idempotent() {
         let c = Connection::open_in_memory().expect("connection");

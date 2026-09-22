@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { artifactPreviewApi } from "./artifactPreviewApi";
-import { attachPreviewWebview, closePreviewWebview, type PreviewWebviewHandle } from "./artifactWebviewHost";
+import {
+  attachPreviewWebview,
+  closePreviewWebview,
+  type PreviewWebviewHandle,
+} from "./artifactWebviewHost";
 import {
   isStaleGeometry,
   logicalRectFromDom,
@@ -108,8 +112,7 @@ export function useArtifactWebview(options: {
     const scheduleFrame =
       typeof requestAnimationFrame === "function"
         ? (callback: FrameRequestCallback) => requestAnimationFrame(callback)
-        : (callback: FrameRequestCallback) =>
-            setTimeout(() => callback(0), 0) as unknown as number;
+        : (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0) as unknown as number;
     const cancelFrame =
       typeof cancelAnimationFrame === "function"
         ? (id: number) => cancelAnimationFrame(id)
@@ -207,7 +210,8 @@ export function useArtifactWebview(options: {
     window.addEventListener("resize", onResize);
     window.addEventListener("scroll", onResize, true);
     document.addEventListener("visibilitychange", onVisibility);
-    const observer = host && typeof ResizeObserver !== "undefined" ? new ResizeObserver(onResize) : null;
+    const observer =
+      host && typeof ResizeObserver !== "undefined" ? new ResizeObserver(onResize) : null;
     if (host && observer) observer.observe(host);
 
     return () => {

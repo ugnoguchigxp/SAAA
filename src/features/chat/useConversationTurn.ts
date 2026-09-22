@@ -227,6 +227,11 @@ export function useConversationTurn({
     if (queuedVoiceRequest && conversationSessionRef.current.runId) {
       // Each finalized voice utterance is an independent Qwen request. Preserve its order without
       // cancelling the answer that is already running.
+      if (pendingVoicePromptsRef.current.length >= 4) {
+        onSettled?.(false);
+        setError(uiMessage("chatVoicePendingLimit"));
+        return;
+      }
       pendingVoicePromptsRef.current.push({
         content: prompt,
         inputOrigin,

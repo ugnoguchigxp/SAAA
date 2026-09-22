@@ -168,45 +168,6 @@ fn response_schema_failure_code(path: &str) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod response_diagnostic_tests {
-    use super::*;
-    use std::io::{Read, Write};
-
-    #[tokio::test]
-    async fn malformed_catalog_preserves_stage_without_exposing_response_text() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut request = [0; 4096];
-            socket.read(&mut request).unwrap();
-            let body = r#"{"private":"DO_NOT_PERSIST_PROVIDER_TEXT"}"#;
-            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
-        });
-        let result = send_json_response::<crate::providers::dynamic_lan::AgentProfileCatalog>(
-            &reqwest::Client::new(),
-            Method::GET,
-            Url::parse(&format!("http://{address}/v3/agent-profiles")).unwrap(),
-            None,
-            None,
-            None,
-            &RunCancellation::default(),
-        )
-        .await;
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => panic!("malformed catalog accepted"),
-        };
-        assert_eq!(error.public_message(), "harness-catalog-schema-invalid");
-        assert!(!format!("{error:?}").contains("DO_NOT_PERSIST"));
-        server.join().unwrap();
-    }
-}
-
 pub(crate) fn is_json_content_type(value: &str) -> bool {
     value
         .split(';')
@@ -411,5 +372,45 @@ pub(crate) fn classify_api_error(code: &str) -> DynamicLanError {
             "The dynamic LAN provider connection is no longer active.",
         ),
         _ => contract_error(()),
+    }
+}
+
+#[cfg(test)]
+mod response_diagnostic_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    #[tokio::test]
+    async fn malformed_catalog_preserves_stage_without_exposing_response_text() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0; 4096];
+            let read = socket.read(&mut request).unwrap();
+            assert!(read > 0);
+            let body = r#"{"private":"DO_NOT_PERSIST_PROVIDER_TEXT"}"#;
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let result = send_json_response::<crate::providers::dynamic_lan::AgentProfileCatalog>(
+            &reqwest::Client::new(),
+            Method::GET,
+            Url::parse(&format!("http://{address}/v3/agent-profiles")).unwrap(),
+            None,
+            None,
+            None,
+            &RunCancellation::default(),
+        )
+        .await;
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("malformed catalog accepted"),
+        };
+        assert_eq!(error.public_message(), "harness-catalog-schema-invalid");
+        assert!(!format!("{error:?}").contains("DO_NOT_PERSIST"));
+        server.join().unwrap();
     }
 }
