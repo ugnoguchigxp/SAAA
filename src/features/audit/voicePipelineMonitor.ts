@@ -31,6 +31,8 @@ export type VoicePipelineSnapshot = {
     | "lfm-responded"
     | "lfm-reasoning-requested"
     | "no-voice-events"
+    | "asr-listening"
+    | "asr-stopped"
     | "asr-failed"
     | "delivery-waiting"
     | "delivery-failed"
@@ -75,10 +77,40 @@ function terminalLlmEvent(events: AuditEvent[]) {
 }
 
 export function projectLatestResponsePipeline(events: AuditEvent[]): VoicePipelineSnapshot {
-  return (
+  const response =
     projectLfmConversation(events, projectStandardResponsePipeline) ??
-    projectStandardResponsePipeline(events)
+    projectStandardResponsePipeline(events);
+  return projectNewerCaptureSession(events, response) ?? response;
+}
+
+function projectNewerCaptureSession(
+  events: AuditEvent[],
+  response: VoicePipelineSnapshot,
+): VoicePipelineSnapshot | null {
+  const started = latest(events, (event) => event.eventName === "asr-session-start-requested");
+  if (!started || started.sequence <= (response.anchor?.sequence ?? -1)) return null;
+  const sessionId = started.sessionId ?? started.correlationId;
+  const relatedEvents = events.filter(
+    (event) =>
+      event.id === started.id ||
+      (sessionId !== null && (event.sessionId === sessionId || event.correlationId === sessionId)),
   );
+  const current = latest(relatedEvents, () => true) ?? started;
+  const stopped = ["asr-stop-finished", "capture-start-cancelled"].includes(current.eventName);
+  const failed = current.outcome === "failure" || current.eventName === "capture-start-failed";
+  return {
+    stages: [
+      stage("asr", failed ? "failure" : stopped ? "success" : "running", current),
+      stage("llm", "idle"),
+      stage("tts", "idle"),
+    ],
+    anchor: started,
+    sessionId,
+    utteranceId: null,
+    runId: null,
+    diagnosis: failed ? "asr-failed" : stopped ? "asr-stopped" : "asr-listening",
+    relatedEvents,
+  };
 }
 
 function projectStandardResponsePipeline(events: AuditEvent[]): VoicePipelineSnapshot {

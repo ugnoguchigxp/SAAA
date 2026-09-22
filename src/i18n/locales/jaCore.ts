@@ -246,6 +246,9 @@ export const jaCore = {
       diagnosis: {
         "no-voice-events":
           "まだ診断できる音声イベントがありません。話しかけると、ここに処理経路が表示されます。",
+        "asr-listening":
+          "ASRセッションは稼働中です。確定した発話が届くまでLLM・TTSは開始されません。",
+        "asr-stopped": "ASRセッションは正常に終了しました。",
         "asr-failed": "ASR段階で停止しました。表示された失敗コードを確認してください。",
         "delivery-waiting": "ASRは認識済みですが、会話ランタイムへの引き渡しを確認できません。",
         "delivery-failed": "認識結果を会話ランタイムへ引き渡せませんでした。",

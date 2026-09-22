@@ -249,6 +249,9 @@ export const enCore = {
       diagnosis: {
         "no-voice-events":
           "There are no voice events to diagnose yet. Speak to see the processing path here.",
+        "asr-listening":
+          "The ASR session is active. LLM and TTS will start after a final utterance arrives.",
+        "asr-stopped": "The ASR session ended normally.",
         "asr-failed": "The pipeline stopped at ASR. Check the failure code shown below.",
         "delivery-waiting":
           "ASR completed, but delivery to the conversation runtime has not been observed.",
