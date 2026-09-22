@@ -236,7 +236,10 @@ async fn embedding_uses_claimed_endpoint_model_space_and_bearer() {
     let (fake, server) = fixture().await;
     let (_stop, receiver) = watch::channel(false);
     let session = Session::connect(&fake.base, receiver).await.unwrap();
-    let vectors = session.embed_query(&["埋め込みテスト".into()]).await.unwrap();
+    let vectors = session
+        .embed_query(&["埋め込みテスト".into()])
+        .await
+        .unwrap();
     assert_eq!(vectors.len(), 1);
     assert_eq!(vectors[0].len(), 384);
     assert_eq!(count(&fake, "/embedding/v1/embed"), 1);
@@ -257,7 +260,9 @@ async fn released_provider_tokens_are_rejected() {
     let status = reqwest::Client::new()
         .post(endpoint)
         .bearer_auth(token)
-        .json(&json!({"texts":["after release"],"type":"query","normalize":true,"priority":"normal"}))
+        .json(
+            &json!({"texts":["after release"],"type":"query","normalize":true,"priority":"normal"}),
+        )
         .send()
         .await
         .unwrap()
@@ -390,8 +395,9 @@ async fn health_failure_is_confined_to_the_requested_capability() {
         *provider.checked_at.lock().await = Some(Instant::now() - Duration::from_secs(11));
     }
     fake.stale_health.store(true, Ordering::SeqCst);
+    let initial_health_checks = count(&fake, "/llm/health");
     assert!(session.acquire("llm").await.is_err());
-    assert_eq!(count(&fake, "/llm/health"), 1);
+    assert_eq!(count(&fake, "/llm/health"), initial_health_checks + 1);
     fake.stale_health.store(false, Ordering::SeqCst);
     assert!(session.acquire("asr").await.is_ok());
     assert!(!session.closed.load(Ordering::Acquire));
@@ -405,7 +411,7 @@ async fn rejects_duplicate_missing_and_nonlocal_provider_contracts() {
     value["providers"][1] = value["providers"][0].clone();
     assert!(contract::parse(value, "session-1").is_err());
     let mut value = fake.claim();
-    value["providers"][0]["configuration"]["fields"]["baseURL"] = json!("https://example.com/v1");
+    value["providers"][0]["baseUrl"] = json!("https://example.com/v1");
     assert!(contract::parse(value, "session-1").is_err());
     assert!(local_url(
         &url::Url::parse("http://gnosis.local:9810").unwrap()
@@ -516,7 +522,12 @@ async fn claim_requires_the_complete_saaa_provider_set() {
 async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_require_it() {
     let (fake, server) = fixture().await;
     let mut missing = fake.claim();
-    missing["providers"].as_array_mut().unwrap()[0]
+    missing["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|provider| provider["name"] == "llm")
+        .unwrap()
         .as_object_mut()
         .unwrap()
         .remove("contextWindow");

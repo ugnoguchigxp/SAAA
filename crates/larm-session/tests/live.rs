@@ -26,6 +26,13 @@ async fn live_four_provider_session() {
             if value["choices"][0]["message"]["content"].as_str().is_none_or(|s|s.is_empty()) { return Err("empty chat content"); }
             eprintln!("{name}: completion received");
         }
+        let lease=session.acquire("embedding").await?; let p=lease.provider();
+        let value:serde_json::Value=client.post(p.endpoint("embed")?).bearer_auth(p.token())
+            .json(&json!({"texts":["接続確認"],"type":"query","normalize":true,"priority":"normal"}))
+            .send().await.map_err(|_|"embedding transport")?.error_for_status().map_err(|_|"embedding status")?
+            .json().await.map_err(|_|"embedding JSON")?;
+        if value["dimension"].as_u64()!=p.embedding_space.map(|space|space.dimension as u64) { return Err("invalid embedding dimension"); }
+        eprintln!("embedding: vector received");
         let lease=session.acquire("tts").await?; let p=lease.provider();
         let audio=client.post(p.endpoint("audio/speech")?).bearer_auth(p.token())
             .json(&json!({"model":p.model,"input":"接続を確認しました。","voice":"Kasukabe_Tsumugi","response_format":"wav"}))

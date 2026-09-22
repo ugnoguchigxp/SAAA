@@ -18,7 +18,7 @@ WebSocketの実装、専用状態管理、UI、依存ライブラリ、旧alloca
 
 ### 2. P1：四つのProviderが必須で、単一機能の障害を切り離せない
 
-LARMセッションは `tts`、`asr`、`decision-default`、`llm` をすべて要求し、一つでも欠ければclaim全体を拒否する。作成時のagentProfileは `saaa-qwen38-kv-mem`、allowFallbackはfalse、TTLは600秒に固定されている。使いたいLLMが正常でも、ASRの欠落などでセッションを開始できない。
+LARMセッションの既定profileは `saaa-conversation-gemma4` で、`tts`、`asr`、`embedding`、`llm`をclaimする。allowFallbackはfalse、TTLは600秒に固定される。Chat Completions Providerはclaimの`contextWindow`、Embedding Providerは`embeddingSpace`とcapacityを検証する。個別用途では、claimに含まれた単一Providerだけでも有効な契約として扱える。
 
 根拠：固定Provider集合と必須検証（`/Users/y.noguchi/Code/SAAA/crates/larm-session/src/contract.rs:6`）、固定profileと作成条件（`/Users/y.noguchi/Code/SAAA/crates/larm-session/src/lib.rs:104`）。
 
@@ -163,7 +163,7 @@ LARM音声セッションの接続先には保存済みHarness addressを使用�
 
 音声要求の通信時間は、取得したcredentialの残存有効時間から5秒の余裕を引いた範囲に制限する。設定上のタイムアウトが長くても、leaseの有効期限を越える予算では要求しない。
 
-共有音声turnでは`llm`が会話本文とtool callを生成し、toolの検証・MCP利用・実行・結果返却はSAAAが担当する。`decision-default`は相槌、思考中、tool進捗、最終回答の音声用レンダリングだけを行い、tool権限を持たない。27Bのdeltaは画面へ送り続けるがTTSには直接渡さず、軽量応答を一つの再生queueへ直列化する。表示・履歴の正本は27B本文であり、軽量応答失敗時は最終発話もその本文へ戻す。
+共有音声turnでは`llm`が会話本文とtool callを生成し、toolの検証・MCP利用・実行・結果返却はSAAAが担当する。27Bのdeltaは画面へ送り続け、確定した最終本文をそのまま既存TTSへ渡す。表示・履歴・最終発話の正本はLLM本文である。
 
 Agent Sessionでは回答生成と解放の結果を別々に保存する。releaseは最大2秒の独立した予算内で再試行し、失敗しても生成成功を取り消さない。キャンセル後も遅れたcreate応答のIDを受け取って解放する。非同期解放の記録は最終観測状態であり、pendingやdeferred-to-ttlを解放成功と扱わない。
 
