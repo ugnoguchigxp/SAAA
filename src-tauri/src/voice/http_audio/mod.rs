@@ -178,6 +178,10 @@ mod tests {
             voice: "voice".into(),
             authentication: "none".into(),
             response_format: format.into(),
+            style: None,
+            speed: None,
+            pitch_scale: None,
+            intonation_scale: None,
         }
     }
 

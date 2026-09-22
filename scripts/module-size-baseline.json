@@ -4900,6 +4900,18 @@
     "tests/world-scope.test.ts": {
       "total": 26,
       "production": 26
+    },
+    "src-tauri/src/voice/speech_directive.rs": {
+      "total": 400,
+      "production": 270
+    },
+    "src-tauri/src/voice/speech_request.rs": {
+      "total": 144,
+      "production": 43
+    },
+    "src-tauri/src/voice/tts_catalog.rs": {
+      "total": 246,
+      "production": 201
     }
   }
 }

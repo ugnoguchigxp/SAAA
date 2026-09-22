@@ -212,6 +212,10 @@ mod tests {
             harness: crate::HarnessSettings {
                 larm_profile: None,
                 tts_voice: None,
+                tts_style: None,
+                tts_speed: None,
+                tts_pitch_scale: None,
+                tts_intonation_scale: None,
                 address: String::new(),
             },
             providers: vec![crate::test_support::provider("cloud", "cloud")],

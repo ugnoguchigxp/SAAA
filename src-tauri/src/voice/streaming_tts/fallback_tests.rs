@@ -37,6 +37,10 @@ async fn tts_retries_transient_requests_but_stops_on_authentication() {
                 voice: "fixture".into(),
                 response_format: "wav".into(),
                 authentication: "none".into(),
+                style: None,
+                speed: None,
+                pitch_scale: None,
+                intonation_scale: None,
             })
         };
         let connection = rusqlite::Connection::open_in_memory().unwrap();

@@ -54,6 +54,10 @@ mod tests {
             harness: crate::HarnessSettings {
                 larm_profile: None,
                 tts_voice: None,
+                tts_style: None,
+                tts_speed: None,
+                tts_pitch_scale: None,
+                tts_intonation_scale: None,
                 address: "http://localhost:9810".to_string(),
             },
         };
@@ -86,6 +90,10 @@ mod tests {
             harness: crate::HarnessSettings {
                 larm_profile: None,
                 tts_voice: None,
+                tts_style: None,
+                tts_speed: None,
+                tts_pitch_scale: None,
+                tts_intonation_scale: None,
                 address: "http://localhost:9810".to_string(),
             },
         };

@@ -58,6 +58,14 @@ pub(crate) struct CloudTtsProviderSettings {
     #[serde(default = "default_tts_format")]
     pub(crate) response_format: String,
     pub(crate) authentication: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) speed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pitch_scale: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) intonation_scale: Option<f64>,
 }
 
 pub(crate) fn default_tts_format() -> String {
@@ -184,6 +192,14 @@ pub(crate) struct HarnessSettings {
     pub(crate) larm_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tts_voice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tts_style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tts_speed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tts_pitch_scale: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tts_intonation_scale: Option<f64>,
     pub(crate) address: String,
 }
 

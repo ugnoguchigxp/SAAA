@@ -6,7 +6,7 @@ use crate::{validate_identifier, AppState};
 pub(crate) enum TtsRoute {
     Larm(String, crate::HarnessSettings),
     Fallback(Vec<TtsRoute>, u64),
-    Harness(String, Option<String>),
+    Harness(crate::HarnessSettings),
     Cloud(crate::CloudTtsProviderSettings),
     System(crate::SystemTtsProviderSettings),
 }
@@ -22,10 +22,7 @@ pub(crate) fn selected_tts_route(state: &AppState) -> Result<(TtsRoute, String, 
     let wrap = |primary| policy::wrap(primary, &providers, &route, &security);
     if route.source == "harness" {
         return Ok((
-            wrap(TtsRoute::Harness(
-                providers.harness.address.clone(),
-                providers.harness.tts_voice.clone(),
-            )),
+            wrap(TtsRoute::Harness(providers.harness.clone())),
             "provider-harness-tts".to_string(),
             route.timeout_ms,
         ));

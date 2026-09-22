@@ -8,6 +8,7 @@ const MAX_READY_AUDIO_MS: u64 = 30_000;
 #[derive(Clone, Default)]
 pub(crate) struct StreamingSpeechRuntime {
     sessions: Arc<Mutex<HashMap<String, SpeechSession>>>,
+    directives: Arc<Mutex<HashMap<String, crate::voice::cloud_tts::speech_directive::SpeechDirectiveProjection>>>,
 }
 struct SpeechSession {
     accumulator: SentenceAccumulator,
@@ -19,16 +20,28 @@ struct SpeechSession {
     idle_timer: Option<tauri::async_runtime::JoinHandle<()>>,
     idle_reset: watch::Sender<Option<u64>>,
     writer: Option<Arc<crate::persistence::SqliteWriter>>,
+    expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
+    expression_locked: bool,
 }
 enum SpeechWork {
-    Chunk { text: String, boundary_at: Instant },
+    Chunk {
+        text: String,
+        expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
+        boundary_at: Instant,
+    },
     Finish,
 }
-fn queue_chunk(session: &SpeechSession, text: String) -> Result<(), String> {
+fn queue_chunk(session: &mut SpeechSession, text: String) -> Result<(), String> {
     let boundary_at = Instant::now();
+    let expression = session.expression;
+    session.expression_locked = true;
     session
         .work
-        .try_send(SpeechWork::Chunk { text, boundary_at })
+        .try_send(SpeechWork::Chunk {
+            text,
+            expression,
+            boundary_at,
+        })
         .map_err(|_| "Speech playback cannot keep up with the response stream".to_string())?;
     crate::runtime::event_hub::performance::record_tts_boundary_to_dispatch(boundary_at.elapsed());
     Ok(())
@@ -126,6 +139,8 @@ impl StreamingSpeechRuntime {
                 idle_timer: Some(idle_timer),
                 idle_reset,
                 writer: Some(state.sqlite_writer.clone()),
+                expression: self.expression_for(run_id),
+                expression_locked: false,
             },
         );
         drop(sessions);
@@ -158,6 +173,52 @@ impl StreamingSpeechRuntime {
             crate::larm_voice::speech_priority::finished(&run_id);
             let _ = on_event.send(RuntimeEvent::SpeechEnded { run_id });
         });
+        Ok(())
+    }
+
+    pub(crate) fn project_delta(&self, run_id: &str, delta: &str) -> String {
+        let mut directives = self
+            .directives
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let parser = directives.entry(run_id.to_string()).or_default();
+        let output = parser.push(delta);
+        let decided = output.decided;
+        drop(directives);
+        if let Some(expression) = decided {
+            let _ = self.set_expression(run_id, expression);
+        }
+        output.visible
+    }
+
+    pub(crate) fn expression_for(
+        &self,
+        run_id: &str,
+    ) -> crate::voice::cloud_tts::speech_directive::SpeechExpression {
+        self.directives
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(run_id)
+            .and_then(|parser| parser.expression())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_expression(
+        &self,
+        run_id: &str,
+        expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
+    ) -> Result<(), String> {
+        let mut sessions = match self.sessions.lock() {
+            Ok(sessions) => sessions,
+            Err(_) => return Ok(()),
+        };
+        let Some(session) = sessions.get_mut(run_id) else {
+            return Ok(());
+        };
+        if session.expression_locked && session.expression != expression {
+            return Err("Speech expression changed after synthesis started".into());
+        }
+        session.expression = expression;
         Ok(())
     }
 
@@ -314,11 +375,17 @@ impl StreamingSpeechRuntime {
             final_chunks.push((chunk.spoken, Instant::now()));
         }
         session.closed = true;
+        session.expression_locked = true;
+        let session_expression = session.expression;
         let work = session.work.clone();
         tauri::async_runtime::spawn(async move {
             for (text, boundary_at) in final_chunks {
                 if work
-                    .send(SpeechWork::Chunk { text, boundary_at })
+                    .send(SpeechWork::Chunk {
+                        text,
+                        expression: session_expression,
+                        boundary_at,
+                    })
                     .await
                     .is_err()
                 {

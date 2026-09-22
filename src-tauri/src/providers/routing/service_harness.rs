@@ -106,6 +106,10 @@ mod tests {
             harness: crate::HarnessSettings {
                 larm_profile: None,
                 tts_voice: None,
+                tts_style: None,
+                tts_speed: None,
+                tts_pitch_scale: None,
+                tts_intonation_scale: None,
                 address: "http://192.168.0.130:9810".to_string(),
             },
             providers: vec![dynamic_lan_provider(crate::DYNAMIC_LAN_PROVIDER_ID)],
@@ -142,6 +146,10 @@ mod tests {
             harness: crate::HarnessSettings {
                 larm_profile: None,
                 tts_voice: None,
+                tts_style: None,
+                tts_speed: None,
+                tts_pitch_scale: None,
+                tts_intonation_scale: None,
                 address: "http://localhost:9810".to_string(),
             },
             providers: vec![dynamic_lan_provider(crate::DYNAMIC_LAN_PROVIDER_ID)],

@@ -251,6 +251,8 @@ pub(crate) fn persist_conversation_success_with_state(
     } else {
         String::new()
     };
+    let (content, _) =
+        crate::voice::cloud_tts::speech_directive::project_complete_assistant_content(content);
     let content = bounded_text(
         if content.trim().is_empty() {
             &fallback

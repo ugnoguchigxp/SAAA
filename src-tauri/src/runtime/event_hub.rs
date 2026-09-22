@@ -246,6 +246,24 @@ impl TurnEventHub {
                 "runtime event consumer disconnected",
             )));
         }
+        let mut event = event;
+        if let RuntimeEvent::Delta { run_id, text } = &event {
+            let visible = self.speech.project_delta(run_id, text);
+            let run_id = run_id.clone();
+            if visible.is_empty() {
+                return Ok(());
+            }
+            event = RuntimeEvent::Delta {
+                run_id,
+                text: visible,
+            };
+        }
+        if let RuntimeEvent::MessageCompleted { message, .. } = &mut event {
+            let (visible, _) = crate::voice::cloud_tts::speech_directive::project_complete_assistant_content(
+                &message.content,
+            );
+            message.content = visible;
+        }
         let hub_accepted_at = Instant::now();
         if let RuntimeEvent::MessageCompleted {
             run_id,

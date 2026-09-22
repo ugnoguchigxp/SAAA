@@ -39,13 +39,14 @@ async fn render_session_inner(
             && ready_bytes < MAX_READY_AUDIO_BYTES
             && ready_audio_ms < MAX_READY_AUDIO_MS
         {
-            let Some((sequence, text, boundary_at)) = queued.pop_front() else {
+            let Some((sequence, text, expression, boundary_at)) = queued.pop_front() else {
                 break;
             };
             rendering.push(render_future(
                 context.route.clone(),
                 sequence,
                 text,
+                expression,
                 boundary_at,
                 context.timeout_ms,
                 context.cancellation.clone(),
@@ -111,8 +112,12 @@ async fn render_session_inner(
             _ = context.cancellation.cancelled() => break,
             work = receiver.recv(), if !input_closed && queued.len() < MAX_QUEUED_CHUNKS => {
                 match work {
-                    Some(SpeechWork::Chunk { text, boundary_at }) => {
-                        queued.push_back((next_sequence, text, boundary_at));
+                    Some(SpeechWork::Chunk {
+                        text,
+                        expression,
+                        boundary_at,
+                    }) => {
+                        queued.push_back((next_sequence, text, expression, boundary_at));
                         next_sequence += 1;
                     }
                     Some(SpeechWork::Finish) | None => input_closed = true,
@@ -174,7 +179,12 @@ async fn render_http_session(
             _ = context.cancellation.cancelled() => return Ok(()),
             work = receiver.recv() => work,
         };
-        let Some(SpeechWork::Chunk { text, boundary_at }) = work else {
+        let Some(SpeechWork::Chunk {
+            text,
+            expression,
+            boundary_at,
+        }) = work
+        else {
             return Ok(());
         };
         let situation = context.situation.clone();
@@ -197,8 +207,12 @@ async fn render_http_session(
         };
         match &context.route {
             TtsRoute::Cloud(provider) => {
-                crate::voice::http_audio::play_with_situation(
+                let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
                     provider,
+                    expression,
+                );
+                crate::voice::http_audio::play_with_situation(
+                    &provider,
                     &text,
                     context.timeout_ms,
                     context.cancellation.clone(),
@@ -213,6 +227,7 @@ async fn render_http_session(
                 crate::voice::http_audio::play_larm_with_situation(
                     &ready.session,
                     settings.tts_voice.as_deref(),
+                    Some(settings),
                     Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     &text,
                     context.timeout_ms,
@@ -232,14 +247,14 @@ async fn resolve_render_route(
     cancellation: &RunCancellation,
 ) -> Result<TtsRoute, String> {
     match route {
-        TtsRoute::Harness(address, voice) => {
+        TtsRoute::Harness(settings) => {
             let service = crate::providers::service_harness::resolve_service_cancellable(
-                address,
+                &settings.address,
                 "tts",
                 cancellation,
             )
             .await?;
-            Ok(TtsRoute::Cloud(crate::CloudTtsProviderSettings {
+            let mut provider = crate::CloudTtsProviderSettings {
                 response_format: "wav".to_string(),
                 id: "provider-harness-tts".to_string(),
                 enabled: true,
@@ -247,11 +262,21 @@ async fn resolve_render_route(
                 location: "local".to_string(),
                 endpoint: service.base_url,
                 model: service.model,
-                voice: voice.clone().or(service.voice).ok_or_else(|| {
-                    "Provider Harness TTS descriptor does not include a voice".to_string()
-                })?,
+                voice: settings
+                    .tts_voice
+                    .clone()
+                    .or(service.voice)
+                    .ok_or_else(|| {
+                        "Provider Harness TTS descriptor does not include a voice".to_string()
+                    })?,
                 authentication: "none".to_string(),
-            }))
+                style: None,
+                speed: None,
+                pitch_scale: None,
+                intonation_scale: None,
+            };
+            crate::voice::cloud_tts::speech_request::apply_harness_prosody(&mut provider, settings);
+            Ok(TtsRoute::Cloud(provider))
         }
         route => Ok(route.clone()),
     }
@@ -260,6 +285,7 @@ fn render_future(
     route: TtsRoute,
     sequence: u64,
     text: String,
+    expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
     boundary_at: Instant,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
@@ -278,6 +304,10 @@ fn render_future(
                 .await?
             }
             TtsRoute::Cloud(provider) => {
+                let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
+                    &provider,
+                    expression,
+                );
                 crate::voice::cloud_tts::render_to_artifact(
                     &provider,
                     &text,

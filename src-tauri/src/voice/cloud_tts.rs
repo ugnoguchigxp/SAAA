@@ -1,5 +1,4 @@
 use futures_util::StreamExt;
-use serde_json::json;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -10,6 +9,13 @@ use std::{
 };
 
 use crate::{CloudTtsProviderSettings, RunCancellation};
+
+#[path = "speech_directive.rs"]
+pub(crate) mod speech_directive;
+#[path = "speech_request.rs"]
+pub(crate) mod speech_request;
+#[path = "tts_catalog.rs"]
+pub(crate) mod tts_catalog;
 use zeroize::Zeroizing;
 
 #[cfg(unix)]
@@ -159,14 +165,9 @@ pub(crate) async fn request_audio_with_api_key(
         None
     };
     let api_key = claim_key.or(configured_key.as_deref().map(String::as_str));
-    let mut request = client
-        .post(operation_url(&provider.endpoint)?)
-        .json(&json!({
-            "model": provider.model,
-            "input": text,
-            "voice": provider.voice,
-            "response_format": provider.response_format
-        }));
+    let mut request = client.post(operation_url(&provider.endpoint)?).json(
+        &speech_request::speech_request_value(provider, text),
+    );
     if let Some(api_key) = api_key {
         request = request.bearer_auth(api_key);
     }

@@ -16,6 +16,10 @@ pub(crate) async fn test_model_provider(state: &AppState, input: TestProviderInp
         harness: crate::HarnessSettings {
             larm_profile: None,
             tts_voice: None,
+            tts_style: None,
+            tts_speed: None,
+            tts_pitch_scale: None,
+            tts_intonation_scale: None,
             address: String::new(),
         },
         providers: vec![provider.clone()],
@@ -143,6 +147,10 @@ mod tests {
                     voice: "alloy".into(),
                     response_format: "wav".into(),
                     authentication: "api-key".into(),
+                    style: None,
+                    speed: None,
+                    pitch_scale: None,
+                    intonation_scale: None,
                 }),
             },
         )

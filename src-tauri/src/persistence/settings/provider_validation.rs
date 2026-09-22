@@ -19,6 +19,20 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
     }) {
         return Err("Invalid Harness TTS voice".into());
     }
+    validate_optional_style(settings.harness.tts_style.as_deref(), "Harness TTS style")?;
+    validate_optional_range(settings.harness.tts_speed, 0.5, 2.0, "Harness TTS speed")?;
+    validate_optional_range(
+        settings.harness.tts_pitch_scale,
+        -0.15,
+        0.15,
+        "Harness TTS pitch",
+    )?;
+    validate_optional_range(
+        settings.harness.tts_intonation_scale,
+        0.0,
+        2.0,
+        "Harness TTS intonation",
+    )?;
 
     if settings.providers.len() > 20 {
         return Err("At most 20 model providers are allowed".to_string());
@@ -191,6 +205,10 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                 {
                     return Err(format!("Invalid TTS voice: {provider_id}"));
                 }
+                validate_optional_style(provider.style.as_deref(), "TTS style")?;
+                validate_optional_range(provider.speed, 0.5, 2.0, "TTS speed")?;
+                validate_optional_range(provider.pitch_scale, -0.15, 0.15, "TTS pitch")?;
+                validate_optional_range(provider.intonation_scale, 0.0, 2.0, "TTS intonation")?;
             }
             ModelProviderSettings::SystemTts(provider) => {
                 if provider.location != "local"
@@ -247,6 +265,35 @@ fn validate_agent_session_path(
         return Err(format!("Unsafe Agent Session path: {provider_id}"));
     }
     Ok(resolved)
+}
+
+fn validate_optional_style(value: Option<&str>, label: &str) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.is_empty()
+        || value.chars().count() > 160
+        || value.trim() != value
+        || value.chars().any(char::is_control)
+    {
+        return Err(format!("Invalid {label}"));
+    }
+    Ok(())
+}
+
+fn validate_optional_range(
+    value: Option<f64>,
+    min: f64,
+    max: f64,
+    label: &str,
+) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if !value.is_finite() || value < min || value > max {
+        return Err(format!("Invalid {label}"));
+    }
+    Ok(())
 }
 
 fn validate_harness_address(address: &str) -> Result<(), String> {
@@ -326,6 +373,10 @@ mod tests {
             harness: crate::HarnessSettings {
                 larm_profile: None,
                 tts_voice: None,
+                tts_style: None,
+                tts_speed: None,
+                tts_pitch_scale: None,
+                tts_intonation_scale: None,
                 address: "http://localhost:9810".to_string(),
             },
             providers: vec![provider],
@@ -383,5 +434,92 @@ mod tests {
                 fixture.name
             );
         }
+    }
+
+    fn cloud_tts(model: &str) -> ModelProvidersSettings {
+        settings(ModelProviderSettings::CloudTts(
+            crate::CloudTtsProviderSettings {
+                id: "tts".into(),
+                enabled: true,
+                label: "TTS".into(),
+                location: "local".into(),
+                endpoint: "http://127.0.0.1:50021/v1".into(),
+                model: model.into(),
+                voice: "Kasukabe_Tsumugi".into(),
+                response_format: "wav".into(),
+                authentication: "none".into(),
+                style: None,
+                speed: None,
+                pitch_scale: None,
+                intonation_scale: None,
+            },
+        ))
+    }
+
+    #[test]
+    fn ve_01_old_settings_round_trip_without_new_fields() {
+        let raw = r#"{"id":"tts","enabled":true,"label":"TTS","location":"local","endpoint":"http://127.0.0.1:50021/v1","model":"voicevox-core","voice":"Kasukabe_Tsumugi","authentication":"none"}"#;
+        let parsed: crate::CloudTtsProviderSettings = serde_json::from_str(raw).unwrap();
+        let saved = serde_json::to_value(&parsed).unwrap();
+        assert!(saved.get("style").is_none());
+        assert!(saved.get("speed").is_none());
+        assert!(saved.get("pitchScale").is_none());
+        assert!(saved.get("intonationScale").is_none());
+        let harness: crate::HarnessSettings =
+            serde_json::from_str(r#"{"address":"http://127.0.0.1:9810"}"#).unwrap();
+        let saved = serde_json::to_value(&harness).unwrap();
+        assert_eq!(
+            saved,
+            serde_json::json!({"address":"http://127.0.0.1:9810"})
+        );
+    }
+
+    #[test]
+    fn ve_01_tts_bounds_accept_edges_and_reject_non_finite() {
+        let mut settings = cloud_tts("voicevox-core");
+        {
+            let ModelProviderSettings::CloudTts(provider) = &mut settings.providers[0] else {
+                unreachable!();
+            };
+            provider.speed = Some(0.5);
+            provider.pitch_scale = Some(-0.15);
+            provider.intonation_scale = Some(2.0);
+            provider.style = Some("normal".into());
+        }
+        assert!(validate_model_providers(&settings).is_ok());
+        {
+            let ModelProviderSettings::CloudTts(provider) = &mut settings.providers[0] else {
+                unreachable!();
+            };
+            provider.speed = Some(f64::NAN);
+        }
+        assert!(validate_model_providers(&settings).is_err());
+        {
+            let ModelProviderSettings::CloudTts(provider) = &mut settings.providers[0] else {
+                unreachable!();
+            };
+            provider.speed = Some(2.1);
+        }
+        assert!(validate_model_providers(&settings).is_err());
+        {
+            let ModelProviderSettings::CloudTts(provider) = &mut settings.providers[0] else {
+                unreachable!();
+            };
+            provider.speed = Some(1.0);
+            provider.style = Some(" spaced".into());
+        }
+        assert!(validate_model_providers(&settings).is_err());
+    }
+
+    #[test]
+    fn ve_01_harness_and_cloud_validation_match() {
+        let mut settings = cloud_tts("other");
+        settings.harness.tts_speed = Some(0.5);
+        settings.harness.tts_pitch_scale = Some(0.15);
+        settings.harness.tts_intonation_scale = Some(0.0);
+        settings.harness.tts_style = Some("normal".into());
+        assert!(validate_model_providers(&settings).is_ok());
+        settings.harness.tts_speed = Some(f64::INFINITY);
+        assert!(validate_model_providers(&settings).is_err());
     }
 }

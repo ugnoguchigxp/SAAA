@@ -1,6 +1,20 @@
 import { z } from "zod";
 import { isDynamicLanHost, isLocalProviderHost } from "./localProviderAddress";
 
+const optionalVoiceId = z
+  .string()
+  .min(1)
+  .max(160)
+  .refine((value) => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value))
+  .optional();
+
+function optionalFinite(min: number, max: number) {
+  return z
+    .number()
+    .refine((value) => Number.isFinite(value) && value >= min && value <= max)
+    .optional();
+}
+
 export const providerIdSchema = z
   .string()
   .min(1)
@@ -118,6 +132,10 @@ const cloudTtsProviderSchema = providerCommonSchema
         "Voice names must not have surrounding whitespace or control characters",
       ),
     authentication: z.enum(["none", "api-key"]),
+    style: optionalVoiceId,
+    speed: optionalFinite(0.5, 2.0),
+    pitchScale: optionalFinite(-0.15, 0.15),
+    intonationScale: optionalFinite(0.0, 2.0),
   })
   .strict();
 
@@ -227,6 +245,10 @@ export const modelProvidersSettingsSchema = z
           .max(160)
           .refine((v) => v.trim() === v && !/[\u0000-\u001f\u007f]/.test(v))
           .optional(),
+        ttsStyle: optionalVoiceId,
+        ttsSpeed: optionalFinite(0.5, 2.0),
+        ttsPitchScale: optionalFinite(-0.15, 0.15),
+        ttsIntonationScale: optionalFinite(0.0, 2.0),
       })
       .strict(),
     providers: z

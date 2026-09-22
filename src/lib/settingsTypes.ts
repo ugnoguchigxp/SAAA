@@ -54,6 +54,10 @@ export type CloudTtsProviderSettings = {
   model: string;
   voice: string;
   authentication: "none" | "api-key";
+  style?: string;
+  speed?: number;
+  pitchScale?: number;
+  intonationScale?: number;
 };
 
 export type SystemTtsProviderSettings = {
@@ -86,7 +90,10 @@ export type ModelProviderSettings =
 export type ReasoningEffort = "provider-default" | "low" | "medium" | "xhigh";
 
 export type ModelProvidersSettings = {
-  harness: { address: string; larmProfile?: string; ttsVoice?: string };
+  harness: {
+    address: string; larmProfile?: string; ttsVoice?: string; ttsStyle?: string;
+    ttsSpeed?: number; ttsPitchScale?: number; ttsIntonationScale?: number;
+  };
   providers: ModelProviderSettings[];
   reasoningEffort: ReasoningEffort;
 };

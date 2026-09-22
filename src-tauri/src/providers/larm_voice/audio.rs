@@ -14,8 +14,9 @@ pub(crate) fn asr_settings(provider: &saaa_larm_session::Provider) -> CloudAsrPr
 pub(crate) fn tts_settings(
     provider: &saaa_larm_session::Provider,
     voice: Option<&str>,
+    harness: Option<&crate::HarnessSettings>,
 ) -> Result<CloudTtsProviderSettings, String> {
-    Ok(CloudTtsProviderSettings {
+    let mut settings = CloudTtsProviderSettings {
         id: "larm-session-tts".into(),
         enabled: true,
         label: "LARM TTS".into(),
@@ -28,5 +29,13 @@ pub(crate) fn tts_settings(
             .to_string(),
         response_format: "wav".into(),
         authentication: "api-key".into(),
-    })
+        style: None,
+        speed: None,
+        pitch_scale: None,
+        intonation_scale: None,
+    };
+    if let Some(harness) = harness {
+        crate::voice::cloud_tts::speech_request::apply_harness_prosody(&mut settings, harness);
+    }
+    Ok(settings)
 }

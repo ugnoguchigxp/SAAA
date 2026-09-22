@@ -21,6 +21,7 @@ async fn live_tts_playback_and_asr() {
         voice: "Kasukabe_Tsumugi".into(),
         authentication: "api-key".into(),
         response_format: "wav".into(),
+        style: None, speed: None, pitch_scale: None, intonation_scale: None,
     };
     let cancellation = Arc::new(RunCancellation::default());
     let started = Instant::now();

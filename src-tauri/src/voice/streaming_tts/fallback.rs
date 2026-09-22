@@ -13,7 +13,12 @@ pub(super) async fn render(
     let mut first_phrase = true;
     loop {
         let work = tokio::select! {biased; _=context.cancellation.cancelled()=>return Ok(()), work=receiver.recv()=>work};
-        let Some(SpeechWork::Chunk { text, boundary_at }) = work else {
+        let Some(SpeechWork::Chunk {
+            text,
+            expression,
+            boundary_at,
+        }) = work
+        else {
             return Ok(());
         };
         let deadline = tokio::time::Instant::now() + Duration::from_millis(context.timeout_ms);
@@ -99,6 +104,7 @@ async fn play_one(
             crate::voice::http_audio::play_larm_with_situation(
                 &ready.session,
                 settings.tts_voice.as_deref(),
+                Some(&settings),
                 output,
                 text,
                 budget,
