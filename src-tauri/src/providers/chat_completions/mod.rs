@@ -59,7 +59,7 @@ pub(crate) async fn run_with_options(
         let mut context_still_calls = 0;
         let mut context_still_call_keys = std::collections::HashSet::new();
         let mut spoken_tool_progress = 0;
-        let mut weather_search_completed = false;
+        let mut weather_search_attempted = false;
         loop {
             crate::runtime::context::world::dispatch::refresh_json(
                 &mut messages,
@@ -81,8 +81,8 @@ pub(crate) async fn run_with_options(
             } else {
                 AgentToolOffer::empty()
             };
-            if simple_weather_lookup && weather_search_completed {
-                suppress_web_fetch_tools(&mut offer.definitions);
+            if simple_weather_lookup {
+                restrict_weather_tools(&mut offer.definitions, weather_search_attempted);
             }
             let tools = &offer.definitions;
             let (body, generation) = {
@@ -380,9 +380,8 @@ pub(crate) async fn run_with_options(
                 };
                 if simple_weather_lookup
                     && call.name == crate::runtime::web_fetch::WEB_SEARCH_TOOL_NAME
-                    && is_successful_web_search(&result)
                 {
-                    weather_search_completed = true;
+                    weather_search_attempted = true;
                 }
                 if progress_spoken {
                     spoken_tool_progress += 1;
@@ -442,18 +441,11 @@ fn is_simple_weather_lookup(input: &str) -> bool {
         .any(|term| input.contains(term))
 }
 
-fn is_successful_web_search(result: &str) -> bool {
-    serde_json::from_str::<Value>(result)
-        .ok()
-        .is_some_and(|value| value["type"] == "web_search_result")
-}
-
-fn suppress_web_fetch_tools(definitions: &mut Vec<Value>) {
+fn restrict_weather_tools(definitions: &mut Vec<Value>, search_attempted: bool) {
     definitions.retain(|definition| {
-        !definition
-            .pointer("/function/name")
-            .and_then(Value::as_str)
-            .is_some_and(crate::runtime::web_fetch::is_web_fetch_tool)
+        !search_attempted
+            && definition.pointer("/function/name").and_then(Value::as_str)
+                == Some(crate::runtime::web_fetch::WEB_SEARCH_TOOL_NAME)
     });
 }
 
@@ -466,18 +458,16 @@ mod weather_lookup_tests {
         assert!(is_simple_weather_lookup("神奈川県の天気教えて。"));
         assert!(is_simple_weather_lookup("Weather in Yokohama"));
         assert!(!is_simple_weather_lookup("神奈川県について教えて"));
-        assert!(is_successful_web_search(
-            r#"{"type":"web_search_result","hits":[]}"#
-        ));
-        assert!(!is_successful_web_search(r#"{"type":"tool_error"}"#));
         let mut tools = vec![
             json!({"type":"function","function":{"name":"web_search"}}),
             json!({"type":"function","function":{"name":"fetch_content"}}),
             json!({"type":"function","function":{"name":"recall_conversation"}}),
         ];
-        suppress_web_fetch_tools(&mut tools);
+        restrict_weather_tools(&mut tools, false);
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["function"]["name"], "recall_conversation");
+        assert_eq!(tools[0]["function"]["name"], "web_search");
+        restrict_weather_tools(&mut tools, true);
+        assert!(tools.is_empty());
     }
 }
 

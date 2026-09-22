@@ -17,7 +17,9 @@ use rusqlite::{params, Connection};
 /// 31 adds steward execution progress, expanded task states, recipes, and source bindings.
 /// 34 moves the default local reasoner from the harness allocator to the configured direct Qwen.
 /// 35 adds transport/speech correlation and expands tool-capable reasoning step timeouts.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 35;
+/// 36 moves the shipped Role Routing policy onto the shared Gemma 4 LARM session.
+/// 37 aligns the shipped dynamic provider host with the LAN name required by LARM audiences.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 37;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -219,6 +221,11 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
         &transaction,
         previous_version,
     )?;
+    crate::role_routing::schema::migrate_v35_to_v36_larm_conversation_profile(
+        &transaction,
+        previous_version,
+    )?;
+    crate::role_routing::schema::migrate_v36_to_v37_larm_lan_host(&transaction, previous_version)?;
     crate::role_routing::learning::schema::migrate(&transaction)?;
     crate::role_routing::recovery::reconcile_startup_in_transaction(
         &transaction,

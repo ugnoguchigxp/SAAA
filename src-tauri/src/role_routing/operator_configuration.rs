@@ -22,10 +22,7 @@ pub fn enable(database: &str) -> Result<String, String> {
         .iter()
         .find(|provider| provider.id() == crate::DYNAMIC_LAN_PROVIDER_ID && provider.enabled())
         .ok_or("No enabled LAN reasoning provider is registered")?;
-    let reasoner_provider = providers
-        .iter()
-        .find(|provider| provider.id() == crate::QWEN_DIRECT_PROVIDER_ID && provider.enabled())
-        .unwrap_or(frontend_provider);
+    let reasoner_provider = frontend_provider;
     let document = documents
         .iter_mut()
         .find(|d| d.namespace == "routing.roles" && d.key == "default")
@@ -42,54 +39,7 @@ pub fn enable(database: &str) -> Result<String, String> {
         value["roles"]["reasoner"] = serde_json::json!("local-reasoner");
         value["recipes"] = serde_json::json!([{"id":"reasoner-response","action":"respond","roles":["reasoner"],"enabled":true}]);
     }
-    if reasoner_provider.id() != frontend_provider.id() {
-        let reasoner_id = value["roles"]["reasoner"].as_str().map(str::to_string);
-        if let (Some(reasoner_id), Some(actors)) = (reasoner_id, value["actors"].as_array_mut()) {
-            if let Some(actor) = actors.iter_mut().find(|actor| {
-                actor["id"] == reasoner_id
-                    && actor["transport"] == "provider"
-                    && actor["providerId"] == frontend_provider.id()
-            }) {
-                actor["providerId"] = serde_json::json!(reasoner_provider.id());
-            }
-        }
-    }
-    if value["roles"]["frontend"].is_null() {
-        let actors = value["actors"]
-            .as_array_mut()
-            .ok_or("Role-routing actors are invalid")?;
-        let frontend_id = "local-conversation-frontend";
-        if let Some(actor) = actors.iter().find(|actor| actor["id"] == frontend_id) {
-            let capabilities = actor["capabilities"].as_array();
-            if actor["transport"] != "provider"
-                || actor["providerId"] != frontend_provider.id()
-                || !capabilities
-                    .is_some_and(|items| items.iter().any(|item| item == "social_reply"))
-            {
-                return Err(
-                    "Existing conversation frontend actor has an incompatible binding".into(),
-                );
-            }
-        } else {
-            actors.push(serde_json::json!({
-                "id":frontend_id,
-                "label":"Harness conversation frontend",
-                "transport":"provider",
-                "providerId":frontend_provider.id(),
-                "model":null,
-                "aliases":["LFM"],
-                "location":"local",
-                "resourceGroup":"harness-backchannel",
-                "maxInputBytes":16000,
-                "capabilities":["social_reply","classify"]
-            }));
-        }
-        value["roles"]["frontend"] = serde_json::json!(frontend_id);
-    }
-    for (role, capability, provider_id) in [
-        ("frontend", "social_reply", frontend_provider.id()),
-        ("reasoner", "reason", reasoner_provider.id()),
-    ] {
+    for (role, capability, provider_id) in [("reasoner", "reason", reasoner_provider.id())] {
         let actor_id = value["roles"][role]
             .as_str()
             .ok_or_else(|| format!("Role-routing {role} is not configured"))?;

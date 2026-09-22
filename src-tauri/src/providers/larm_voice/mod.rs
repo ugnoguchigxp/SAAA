@@ -31,7 +31,11 @@ static OWNER: Mutex<Option<Arc<Owner>>> = Mutex::const_new(None);
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 static MODE: OnceLock<bool> = OnceLock::new();
 pub(crate) fn enabled() -> bool {
-    *MODE.get_or_init(|| std::env::var("SAAA_CONVERSATION_REASONING_MODE").as_deref() == Ok("larm"))
+    *MODE.get_or_init(|| {
+        std::env::var("SAAA_CONVERSATION_REASONING_MODE")
+            .map(|mode| mode != "off")
+            .unwrap_or(true)
+    })
 }
 #[tauri::command]
 pub(crate) async fn begin_larm_voice_session(
@@ -246,8 +250,7 @@ mod tests {
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn disabled_mode_skips_session_lifecycle() {
-        assert!(!enabled());
+    async fn missing_owner_skips_session_lifecycle() {
         assert!(current("conversation_primary").await.is_err());
         classify_shadow(
             "conversation_primary",
