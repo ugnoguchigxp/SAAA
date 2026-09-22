@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { defaultSettingsDraft } from "../src/features/settings/settingsDefaults";
-import { documentsFromDraft, reconcileSavedDraft } from "../src/features/settings/settingsDraft";
+import {
+  documentsFromDraft,
+  reconcileSavedDraft,
+  settingsPageHasChanges,
+} from "../src/features/settings/settingsDraft";
 import { modelProvidersSettingsSchema } from "../src/lib/providerSchemas";
 import { validateSettingsDocuments } from "../src/lib/schemas";
 import providerCases from "./fixtures/provider-validation.json";
@@ -92,6 +96,15 @@ describe("settings regressions", () => {
     editedWhileSaving.codex.agentName = "New edit";
     expect(reconcileSavedDraft(editedWhileSaving, fingerprint, saved).codex.agentName).toBe(
       "New edit",
+    );
+  });
+
+  test("treats a staged target-speaker filter change as an unsaved settings change", () => {
+    expect(settingsPageHasChanges(defaultSettingsDraft, defaultSettingsDraft, false, false)).toBe(
+      false,
+    );
+    expect(settingsPageHasChanges(defaultSettingsDraft, defaultSettingsDraft, true, false)).toBe(
+      true,
     );
   });
 });

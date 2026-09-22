@@ -6,7 +6,6 @@ import {
   deleteVoiceProfile,
   getVoiceProfileSnapshot,
   saveVoiceEnrollmentSample,
-  setTargetSpeakerFilterEnabled,
 } from "../../lib/runtime";
 import {
   ensureMicrophoneAudioContextRunning,
@@ -48,13 +47,17 @@ type ProfileNotice =
 export function VoiceProfileCard({
   voice,
   profile,
+  filterEnabled,
   blocked,
   onChanged,
+  onFilterChange,
 }: {
   voice: VoiceSettings;
   profile: VoiceProfileSnapshot;
+  filterEnabled: boolean;
   blocked: boolean;
   onChanged: (profile: VoiceProfileSnapshot) => void;
+  onFilterChange: (enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
   const captureRef = useRef<Capture | null>(null);
@@ -231,17 +234,6 @@ export function VoiceProfileCard({
     if (pendingCaptureRef.current === pending) pendingCaptureRef.current = null;
     await disposePendingVoiceCapture(pending);
   }
-  async function toggleFilter(enabled: boolean) {
-    try {
-      setMessage(null);
-      onChanged(await setTargetSpeakerFilterEnabled(enabled));
-    } catch (cause) {
-      setMessage({
-        kind: "error",
-        message: cause instanceof Error ? cause.message : String(cause),
-      });
-    }
-  }
   async function removeSample(sampleId: string) {
     if (!window.confirm(t("voice.profile.confirmDeleteSample"))) return;
     try {
@@ -387,10 +379,10 @@ export function VoiceProfileCard({
         ))}
       </div>
       <VoiceTranscriptionScope
-        filterEnabled={profile.filterEnabled}
+        filterEnabled={filterEnabled}
         disabled={blocked || playback.playingId !== null || captureState !== "idle"}
         canEnableFilter={ready && profile.runtimeAvailable}
-        onChange={(enabled) => void toggleFilter(enabled)}
+        onChange={onFilterChange}
       />
       <div className="locked-policy">{t("voice.profile.storage")}</div>
       <p className="settings-help">{t("voice.profile.limitation")}</p>

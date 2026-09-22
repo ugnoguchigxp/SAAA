@@ -5,6 +5,7 @@ export type LfmUtteranceResult = {
   reasoningRequestId: string | null;
   requestContent: string | null;
   speechEpoch: number;
+  ignoredAsSelfSpeech: boolean;
 };
 
 export function receiveLfmUtterance(conversationId: string, utteranceId: string, text: string) {
@@ -22,13 +23,12 @@ export function speakLfmReply(
   conversationId: string,
   utteranceId: string,
   speechEpoch: number,
-  onFailure: (message: string) => void,
+  onEventMessage: (event: RuntimeEvent) => void,
 ) {
   const onEvent = new Channel<RuntimeEvent>();
-  // LFM speech must not suspend ASR or acquire the Qwen turn's frontend speech ownership.
-  onEvent.onmessage = (event) => {
-    if (event.type === "speechFailed") onFailure(`LFM 音声: ${event.message}`);
-  };
+  // Playback is native audio, outside the WebView, so browser echoCancellation has no reference.
+  // The session pauses capture for this playback without taking the Qwen speech-run slot.
+  onEvent.onmessage = onEventMessage;
   return invoke<void>("speak_lfm_reply", { conversationId, utteranceId, speechEpoch, onEvent });
 }
 

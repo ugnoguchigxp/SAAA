@@ -508,12 +508,12 @@ pub fn run() {
                 let content = std::sync::Arc::new(
                     runtime::web_fetch::content::TauriWebViewContentFetcher::new(manager),
                 );
-                if let Ok(search) = runtime::web_fetch::search::RustSearchProvider::new() {
-                    runtime::web_fetch::install_runtime(runtime::web_fetch::WebFetchRuntime {
-                        content,
-                        search: std::sync::Arc::new(search),
-                    });
-                }
+                let search = runtime::web_fetch::search::RustSearchProvider::new()
+                    .map_err(|failure| std::io::Error::other(failure.safe_message))?;
+                runtime::web_fetch::install_runtime(runtime::web_fetch::WebFetchRuntime {
+                    content,
+                    search: std::sync::Arc::new(search),
+                });
             }
             let sqlite_writer = Arc::new(SqliteWriter::open(&database_path)?);
             let sqlite_readers =

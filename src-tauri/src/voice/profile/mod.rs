@@ -399,6 +399,17 @@ fn enrollment_uses_input_device(
     connection: &Connection,
     input_device_id: &str,
 ) -> Result<bool, String> {
+    if input_device_id == "default" {
+        let (total, distinct_devices): (i64, i64) = connection
+            .query_row(
+                "SELECT COUNT(*),COUNT(DISTINCT input_device_id)
+                 FROM voice_profile_samples WHERE profile_id=?1",
+                [PROFILE_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(database_error)?;
+        return Ok(total as usize >= MIN_READY_SAMPLES && distinct_devices == 1);
+    }
     let (total, matching): (i64, i64) = connection
         .query_row(
             "SELECT COUNT(*),
@@ -741,8 +752,19 @@ mod tests {
         }
         assert!(enrollment_uses_input_device(&connection, "enrollment-mic")
             .expect("matching device checks"));
+        assert!(enrollment_uses_input_device(&connection, "default")
+            .expect("system default accepts one consistent effective device"));
         assert!(!enrollment_uses_input_device(&connection, "current-mic")
             .expect("mismatched device checks"));
+        connection
+            .execute(
+                "UPDATE voice_profile_samples SET input_device_id='other-mic'
+                 WHERE profile_id='default' AND ordinal=?1",
+                [TARGET_SAMPLE_COUNT as i64],
+            )
+            .expect("sample device changes");
+        assert!(!enrollment_uses_input_device(&connection, "default")
+            .expect("system default rejects mixed enrollment devices"));
     }
 
     #[test]

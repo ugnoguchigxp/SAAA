@@ -16,6 +16,7 @@ pub(crate) struct LfmUtteranceResult {
     reasoning_request_id: Option<String>,
     request_content: Option<String>,
     speech_epoch: u64,
+    ignored_as_self_speech: bool,
 }
 
 fn record(
@@ -102,8 +103,29 @@ pub(crate) async fn receive_lfm_utterance(
             return Err(safe);
         }
     };
-    let _ = on_received.send(());
     let speech_epoch = speech_priority::epoch(&conversation_id);
+    let previous_assistant = state
+        .sqlite_readers
+        .read(|connection| repository::latest_assistant(connection, &conversation_id))?;
+    if previous_assistant
+        .as_deref()
+        .is_some_and(|spoken| super::frontdesk_echo::is_self_speech_echo(text.trim(), spoken))
+    {
+        record(
+            &state,
+            &conversation_id,
+            &utterance_id,
+            "lfm-self-speech-ignored",
+            None,
+        );
+        return Ok(LfmUtteranceResult {
+            reasoning_request_id: None,
+            request_content: None,
+            speech_epoch,
+            ignored_as_self_speech: true,
+        });
+    }
+    let _ = on_received.send(());
     if let repository::AcceptOutcome::Completed {
         reasoning_request_id,
         request_content,
@@ -120,6 +142,7 @@ pub(crate) async fn receive_lfm_utterance(
             reasoning_request_id,
             request_content,
             speech_epoch,
+            ignored_as_self_speech: false,
         });
     }
     record(
@@ -198,6 +221,7 @@ pub(crate) async fn receive_lfm_utterance(
             reasoning_request_id,
             request_content,
             speech_epoch,
+            ignored_as_self_speech: false,
         })
     }
     .await;

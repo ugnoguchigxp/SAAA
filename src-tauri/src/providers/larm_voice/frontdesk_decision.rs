@@ -1,18 +1,38 @@
-//! LFM owns conversational replies and the decision to request deeper reasoning.
-//! It never invents a replacement user request or grants tool authority.
+//! LFM classifies the latest utterance. User-visible text is always host-owned.
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct ConversationDecision {
-    pub say: String,
+    pub say: Option<String>,
     pub think: bool,
+    pub reply_key: Option<&'static str>,
     #[serde(skip, default)]
     pub classifier_failure: Option<&'static str>,
     #[serde(skip, default)]
-    pub plain_text_fallback: bool,
+    pub structured_output_fallback: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FrontdeskClassification {
+    route: Route,
+    reply_key: Option<ReplyKey>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum Route {
+    Delegate,
+    SimpleReply,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum ReplyKey {
+    Greeting,
+    Acknowledgement,
 }
 
 #[derive(Debug, Deserialize)]
@@ -21,12 +41,13 @@ struct ReasoningNeed {
     think: bool,
 }
 
-const INSTRUCTION: &str = "あなたはSAAAで常に会話を担当するLFMです。ユーザーの音声は1.5秒の無音ごとに届きますが、無音は依頼完了を意味しません。発言に反応した短い自然な日本語の相槌、簡単な受け答え、必要な確認をsayに書きます。自発的に話し続けません。話の途中、挨拶、曖昧な発言ではthink=falseです。具体的にまとまった依頼で、調査・推論・計算・ツール実行が必要な場合だけthink=trueにし、sayは『少々お待ちください、考えます。』のような短い応答にします。think=trueでも会話担当をQwenへ委譲するのではなく、LFMは次の発言にも応対し続けます。pendingReasoning=trueなら同じ依頼について再度think=trueにしてはいけません。進捗や完了を捏造しません。返答はJSON {\"say\":\"短い応答\",\"think\":trueまたはfalse} の2項目だけです。JSON以外の説明や思考タグは禁止です。";
+const INSTRUCTION: &str = "あなたは音声受付の分類器です。ユーザー音声は1.5秒の無音ごとに届き、無音は依頼完了を意味しません。最新発言が完全な挨拶だけならroute=simple_reply, replyKey=greeting、完全なお礼だけならroute=simple_reply, replyKey=acknowledgementにします。話の途中、相槌、曖昧な発言はroute=simple_replyにしますが、定型応答が不要ならreplyKey=nullです。具体的でまとまった依頼として調査・推論・計算・ツール実行を開始できる場合だけroute=delegate, replyKey=nullにします。pendingReasoning=trueならdelegateにしません。自由文、回答、質問、説明、思考タグは禁止です。JSON {\"route\":\"delegate\"または\"simple_reply\",\"replyKey\":\"greeting\"または\"acknowledgement\"またはnull} だけを返してください。";
 
 pub(crate) async fn decide(
     ready: &super::Ready,
     history: Vec<Value>,
     pending_reasoning: bool,
+    already_greeted: bool,
 ) -> Result<ConversationDecision, &'static str> {
     let (lfm, qwen) = tokio::join!(
         respond_with_lfm(ready, history.clone(), pending_reasoning),
@@ -39,41 +60,101 @@ pub(crate) async fn decide(
             .map_err(|_| "qwen-classifier-timeout")?
         },
     );
-    let decision = lfm?;
+    let (classification, structured_output_fallback) = lfm?;
+    let current_input = history
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "user")
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or_default();
     Ok(apply_reasoning_need(
-        decision,
+        classification,
         qwen.map(|need| need.think),
         pending_reasoning,
+        already_greeted,
+        current_input,
+        structured_output_fallback,
     ))
 }
 
+fn state_note(pending_reasoning: bool, already_greeted: bool) -> String {
+    json!({
+        "pendingReasoning": pending_reasoning,
+        "alreadyGreeted": already_greeted,
+    })
+    .to_string()
+}
+
 fn apply_reasoning_need(
-    mut decision: ConversationDecision,
+    classification: FrontdeskClassification,
     qwen: Result<bool, &'static str>,
     pending_reasoning: bool,
+    already_greeted: bool,
+    current_input: &str,
+    structured_output_fallback: bool,
 ) -> ConversationDecision {
     // LFM can always request reasoning. Qwen's parallel classification is a promotion-only safety
     // net: it can recover a missed request (or plain-text fallback), but can never cancel LFM's
     // request. A pending request is fenced in the host so no model can launch it twice.
-    if pending_reasoning {
-        decision.think = false;
+    let mut classifier_failure = None;
+    let think = if pending_reasoning {
+        false
     } else {
         match qwen {
-            Ok(reasoning) => decision.think |= reasoning,
-            Err(code) => decision.classifier_failure = Some(code),
+            Ok(reasoning) => classification.route == Route::Delegate || reasoning,
+            Err(code) => {
+                classifier_failure = Some(code);
+                classification.route == Route::Delegate
+            }
         }
+    };
+    if think {
+        return ConversationDecision {
+            say: Some("少々お待ちください、考えます。".into()),
+            think: true,
+            reply_key: Some("thinking"),
+            classifier_failure,
+            structured_output_fallback,
+        };
     }
-    if decision.think {
-        decision.say = "少々お待ちください、考えます。".into();
+    let (say, reply_key) = allowed_host_reply(&classification, current_input, already_greeted)
+        .map_or((None, None), |(key, text)| (Some(text.into()), Some(key)));
+    ConversationDecision {
+        say,
+        think: false,
+        reply_key,
+        classifier_failure,
+        structured_output_fallback,
     }
-    decision
+}
+
+fn allowed_host_reply(
+    classification: &FrontdeskClassification,
+    input: &str,
+    already_greeted: bool,
+) -> Option<(&'static str, &'static str)> {
+    if classification.route != Route::SimpleReply {
+        return None;
+    }
+    match (classification.reply_key.as_ref(), input.trim()) {
+        (
+            Some(ReplyKey::Greeting),
+            "こんにちは" | "こんにちは。" | "おはよう" | "おはよう。" | "こんばんは"
+            | "こんばんは。",
+        ) if !already_greeted => Some(("greeting", "こんにちは。")),
+        (
+            Some(ReplyKey::Acknowledgement),
+            "ありがとう" | "ありがとう。" | "ありがとうございます" | "ありがとうございます。",
+        ) => Some(("acknowledgement", "どういたしまして。")),
+        _ => None,
+    }
 }
 
 async fn respond_with_lfm(
     ready: &super::Ready,
     history: Vec<Value>,
     pending_reasoning: bool,
-) -> Result<ConversationDecision, &'static str> {
+) -> Result<(FrontdeskClassification, bool), &'static str> {
     let lease = ready
         .session
         .acquire("backchannel")
@@ -98,7 +179,7 @@ async fn respond_with_lfm(
         .map_err(|_| "lfm-client-creation-failed")?;
     let mut messages = vec![
         json!({"role":"system","content":INSTRUCTION}),
-        json!({"role":"system","content":format!("pendingReasoning={pending_reasoning}")}),
+        json!({"role":"system","content":state_note(pending_reasoning, false)}),
     ];
     messages.extend(history);
     // UTF-8 bytes conservatively bound token use. Never silently truncate the current request.
@@ -121,18 +202,21 @@ async fn respond_with_lfm(
     let response = client.post(endpoint.clone()).bearer_auth(provider.token())
         .json(&json!({"model":provider.model,"messages":messages,"stream":false,
             "max_tokens":256,"temperature":0.1,
-            "response_format":{"type":"json_schema","json_schema":{"name":"lfm_conversation_response","strict":true,"schema":{
-                "type":"object","properties":{"say":{"type":"string","maxLength":80},"think":{"type":"boolean"}},
-                "required":["say","think"],"additionalProperties":false
+            "response_format":{"type":"json_schema","json_schema":{"name":"lfm_frontdesk_classification","strict":true,"schema":{
+                "type":"object","properties":{
+                    "route":{"type":"string","enum":["delegate","simple_reply"]},
+                    "replyKey":{"type":["string","null"],"enum":["greeting","acknowledgement",null]}
+                },
+                "required":["route","replyKey"],"additionalProperties":false
             }}}})).send().await
         .map_err(|_| "lfm-request-failed")?;
     let response = if response.status().is_success() {
         response
     } else if matches!(response.status().as_u16(), 400 | 422) {
-        // Some OpenAI-compatible LFM servers reject response_format. Keep LFM as the speaker and
-        // let the already parallel Qwen classifier supply only the `think` decision.
+        // Some OpenAI-compatible LFM servers reject response_format. The fallback still requires
+        // the exact JSON classifier contract and never accepts model-authored user-visible text.
         messages[0] = json!({"role":"system","content":
-            "あなたはSAAAの会話担当LFMです。最新のユーザー発言への短い自然な日本語応答だけを80文字以内で返してください。JSON、説明、思考タグは禁止です。自発的に話し続けたり、未開始の処理を約束したりしません。"});
+            INSTRUCTION});
         let fallback = client
             .post(endpoint)
             .bearer_auth(provider.token())
@@ -159,7 +243,7 @@ async fn respond_with_lfm(
         }
         bytes.extend_from_slice(&chunk);
     }
-    parse(&bytes)
+    parse(&bytes).map(|classification| (classification, response.status().as_u16() != 200))
 }
 
 async fn classify_with_qwen(

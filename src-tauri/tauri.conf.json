@@ -33,7 +33,8 @@
     "targets": "all",
     "macOS": {
       "infoPlist": "Info.plist",
-      "entitlements": "Entitlements.plist"
+      "entitlements": "Entitlements.plist",
+      "minimumSystemVersion": "14.0"
     },
     "resources": {
       "resources/bin/": "bin/",
@@ -56,7 +57,10 @@
       "sessionIdleTimeoutMs": 300000,
       "maxCharacters": 20000,
       "requireReliableBackground": true,
-      "allowHttp": false
+      "allowHttp": false,
+      "network": {
+        "dnsTimeoutMs": 10000
+      }
     }
   }
 }

@@ -134,12 +134,16 @@ pub async fn execute_with_cancel(
         return tool_error_content("CANCELLED", "WebFetch was cancelled.");
     }
     match WebFetchBackend::from_env().resolve() {
-        ResolvedBackend::Sidecar => execute_via_sidecar(call, timeout).await,
+        ResolvedBackend::Sidecar => execute_via_sidecar(call, timeout, cancellation).await,
         ResolvedBackend::Webview => execute_via_rust(call, timeout, cancellation).await,
     }
 }
 
-async fn execute_via_sidecar(call: &AgentToolCall, timeout: Duration) -> String {
+async fn execute_via_sidecar(
+    call: &AgentToolCall,
+    timeout: Duration,
+    cancellation: WebFetchCancel,
+) -> String {
     let request = match sidecar::envelope_for_call(call) {
         Ok(request) => request,
         Err(message) => {
@@ -149,7 +153,7 @@ async fn execute_via_sidecar(call: &AgentToolCall, timeout: Duration) -> String 
             return tool_error_content("web-fetch-unavailable", &message);
         }
     };
-    sidecar::execute_envelope(&request, timeout).await
+    sidecar::execute_envelope(&request, timeout, cancellation).await
 }
 
 async fn execute_via_rust(
@@ -283,6 +287,7 @@ mod tests {
                 hits: Vec::new(),
                 blocked_result_count: 0,
                 warning_categories: Vec::new(),
+                decision: "allow",
             })
         }
     }
@@ -299,6 +304,7 @@ mod tests {
                 arguments: r#"{"url":"http://127.0.0.1/private","maxCharacters":500}"#.to_string(),
             },
             Duration::from_secs(5),
+            WebFetchCancel::never(),
         )
         .await;
 

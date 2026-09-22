@@ -33,6 +33,18 @@ export type SettingsDraft = {
   roleRouting: RoleRoutingSettings;
 };
 
+export function settingsPageHasChanges(
+  draft: SettingsDraft,
+  source: SettingsDraft,
+  profileFilterDraft: boolean,
+  persistedProfileFilter: boolean,
+): boolean {
+  return (
+    JSON.stringify(draft) !== JSON.stringify(source) ||
+    profileFilterDraft !== persistedProfileFilter
+  );
+}
+
 export function draftFromDocuments(
   documents: SettingsDocument[],
   fallback: SettingsDraft,

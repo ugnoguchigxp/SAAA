@@ -12,7 +12,11 @@ import { receiveLfmUtterance, speakLfmReply } from "../../lib/lfmConversationRun
 import { useEffect, useRef, useState } from "react";
 import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
-import type { ConversationVoicePolicySnapshot, VoiceSettings } from "../../lib/contracts";
+import type {
+  ConversationVoicePolicySnapshot,
+  RuntimeEvent,
+  VoiceSettings,
+} from "../../lib/contracts";
 
 import {
   appendVoiceAsrAudio,
@@ -51,9 +55,10 @@ import {
 } from "./voiceAudit";
 
 const ASR_SAMPLE_RATE = 16_000;
+const LFM_PLAYBACK_TAIL_MS = 1_000;
 export type { VoiceCaptureState } from "../../lib/voiceSession";
 export type AmbientVoiceAvailability = VoiceCaptureState;
-type SuspensionReason = "speech";
+type SuspensionReason = "speech" | "lfm-playback";
 
 export function useAmbientVoiceSession({
   selectedConversationId,
@@ -92,6 +97,9 @@ export function useAmbientVoiceSession({
   const voiceToggleGenerationRef = useRef(0);
   const suspensionReasonRef = useRef<SuspensionReason | null>(null);
   const speechResumeTokenRef = useRef<string | null>(null);
+  const lfmPlaybackGenerationRef = useRef(0);
+  const lfmPlaybackActiveRef = useRef(false);
+  const lfmPlaybackTimerRef = useRef<number | null>(null);
   const [resources] = useState(() => new VoiceCaptureResources());
   const {
     voiceStreamRef,
@@ -189,6 +197,7 @@ export function useAmbientVoiceSession({
 
     return () => {
       disposedRef.current = true;
+      if (lfmPlaybackTimerRef.current !== null) window.clearTimeout(lfmPlaybackTimerRef.current);
       resources.dispose();
       pendingVoicePromptsRef.current = [];
     };
@@ -376,7 +385,8 @@ export function useAmbientVoiceSession({
       disposedRef.current ||
       !settings ||
       !selectedConversationIdRef.current ||
-      voiceStreamRef.current
+      voiceStreamRef.current ||
+      suspensionReasonRef.current
     )
       return;
     if (
@@ -493,6 +503,43 @@ export function useAmbientVoiceSession({
     applyVoiceEvent({ type: "captureSuspended" });
     await detachVoiceCapture(false);
     return true;
+  }
+
+  function handleLfmSpeechEvent(event: RuntimeEvent) {
+    if (event.type === "speechFailed") setError(`LFM 音声: ${event.message}`);
+    if (event.type === "speechStarted") {
+      beginLfmPlaybackHold();
+      return;
+    }
+    if (event.type === "speechEnded" || event.type === "speechFailed") endLfmPlaybackHold();
+  }
+
+  function beginLfmPlaybackHold() {
+    lfmPlaybackGenerationRef.current += 1;
+    lfmPlaybackActiveRef.current = true;
+    if (lfmPlaybackTimerRef.current !== null) {
+      window.clearTimeout(lfmPlaybackTimerRef.current);
+      lfmPlaybackTimerRef.current = null;
+    }
+    void (async () => {
+      if (suspensionReasonRef.current === "speech") return;
+      await suspendVoice("lfm-playback");
+      if (!lfmPlaybackActiveRef.current && suspensionReasonRef.current === "lfm-playback") {
+        await resumeVoice("lfm-playback");
+      }
+    })();
+  }
+
+  function endLfmPlaybackHold() {
+    const generation = lfmPlaybackGenerationRef.current;
+    if (lfmPlaybackTimerRef.current !== null) window.clearTimeout(lfmPlaybackTimerRef.current);
+    lfmPlaybackTimerRef.current = window.setTimeout(() => {
+      lfmPlaybackTimerRef.current = null;
+      if (generation !== lfmPlaybackGenerationRef.current) return;
+      lfmPlaybackActiveRef.current = false;
+      if (suspensionReasonRef.current !== "lfm-playback") return;
+      void resumeVoice("lfm-playback");
+    }, LFM_PLAYBACK_TAIL_MS);
   }
 
   async function suspendVoiceForSpeech(speechRunId: string): Promise<boolean> {
@@ -648,9 +695,13 @@ export function useAmbientVoiceSession({
       try {
         const decision = await receiveLfmUtterance(conversationId, queued.utteranceId, queued.text);
         onSettled(true);
+        if (decision.ignoredAsSelfSpeech) {
+          setInterimTranscript("");
+          return;
+        }
         if (disposedRef.current || selectedConversationIdRef.current !== conversationId) return;
-        void speakLfmReply(conversationId, queued.utteranceId, decision.speechEpoch, (message) =>
-          setError(message),
+        void speakLfmReply(conversationId, queued.utteranceId, decision.speechEpoch, (event) =>
+          handleLfmSpeechEvent(event),
         ).catch((cause) => setError(`LFM 音声: ${toMessage(cause)}`));
         if (decision.reasoningRequestId && decision.requestContent) {
           void submitPrompt(decision.requestContent, {

@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import type { SettingsDocument, VoiceProfileSnapshot } from "../../lib/contracts";
 import { setDisplayLanguagePreference } from "../../i18n";
 import { localizeUiMessage } from "../../i18n/presentation";
-import { saveSettingsDocuments } from "../../lib/runtime";
+import { saveSettingsDocuments, setTargetSpeakerFilterEnabled } from "../../lib/runtime";
 import { deleteProviderApiKey } from "../../lib/providerRuntime";
 import { IndividualProvidersSection } from "./IndividualProvidersSection";
 import { ServiceConnectionsSection } from "./ServiceConnectionsSection";
@@ -15,6 +15,7 @@ import {
   documentsFromDraft,
   draftFromDocuments,
   reconcileSavedDraft,
+  settingsPageHasChanges,
   type SettingsDraft,
 } from "./settingsDraft";
 import { defaultSettingsDraft } from "./settingsDefaults";
@@ -91,9 +92,11 @@ export function SettingsPage({
   ];
   const source = useMemo(() => draftFromDocuments(documents, defaultSettingsDraft), [documents]);
   const [draft, setDraft] = useState<SettingsDraft>(source);
+  const [profileFilterDraft, setProfileFilterDraft] = useState(voiceProfile.filterEnabled);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const previousSourceRef = useRef(source);
+  const previousProfileFilterRef = useRef(voiceProfile.filterEnabled);
   const saveGeneration = useRef(0);
   const draftEditGeneration = useRef(0);
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
@@ -112,7 +115,18 @@ export function SettingsPage({
     previousSourceRef.current = source;
     void setDisplayLanguagePreference(source.regional.language);
   }, [source]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(source);
+  useEffect(() => {
+    setProfileFilterDraft((current) =>
+      current === previousProfileFilterRef.current ? voiceProfile.filterEnabled : current,
+    );
+    previousProfileFilterRef.current = voiceProfile.filterEnabled;
+  }, [voiceProfile.filterEnabled]);
+  const dirty = settingsPageHasChanges(
+    draft,
+    source,
+    profileFilterDraft,
+    voiceProfile.filterEnabled,
+  );
   const persistedProviderIds = useMemo(
     () => new Set(source.providers.providers.map((provider) => provider.id)),
     [source],
@@ -126,27 +140,46 @@ export function SettingsPage({
     setSaveState((current) => (current === "saving" ? current : "idle"));
   }
 
+  function changeProfileFilter(enabled: boolean) {
+    draftEditGeneration.current += 1;
+    setProfileFilterDraft(enabled);
+    setSaveMessage(null);
+    setSaveState((current) => (current === "saving" ? current : "idle"));
+  }
+
   async function save() {
     const generation = ++saveGeneration.current;
     const submitted = draftRef.current;
     const submittedFingerprint = JSON.stringify(submitted);
+    const submittedSettingsDirty = submittedFingerprint !== JSON.stringify(source);
+    const submittedProfileFilter = profileFilterDraft;
+    const submittedProfileFilterDirty = submittedProfileFilter !== voiceProfile.filterEnabled;
     const submittedEditGeneration = draftEditGeneration.current;
     setSaveState("saving");
     setSaveMessage(null);
     try {
-      const credentialCleanup = credentialCleanupProviderIds(source, submitted);
-      const saved = await saveSettingsDocuments(documentsFromDraft(submitted));
-      if (generation !== saveGeneration.current) return;
-      setDraft((current) => reconcileSavedDraft(current, submittedFingerprint, saved));
-      onSaved(saved);
-      const cleanupResults = await Promise.allSettled(
-        credentialCleanup.map((providerId) => deleteProviderApiKey(providerId)),
-      );
-      const cleanupFailures = cleanupResults.filter(
-        (result) => result.status === "rejected",
-      ).length;
+      let cleanupFailures = 0;
+      if (submittedSettingsDirty) {
+        const credentialCleanup = credentialCleanupProviderIds(source, submitted);
+        const saved = await saveSettingsDocuments(documentsFromDraft(submitted));
+        if (generation !== saveGeneration.current) return;
+        setDraft((current) => reconcileSavedDraft(current, submittedFingerprint, saved));
+        onSaved(saved);
+        const cleanupResults = await Promise.allSettled(
+          credentialCleanup.map((providerId) => deleteProviderApiKey(providerId)),
+        );
+        cleanupFailures = cleanupResults.filter((result) => result.status === "rejected").length;
+      }
+      let savedProfileFilter = voiceProfile.filterEnabled;
+      if (submittedProfileFilterDirty) {
+        const savedProfile = await setTargetSpeakerFilterEnabled(submittedProfileFilter);
+        if (generation !== saveGeneration.current) return;
+        savedProfileFilter = savedProfile.filterEnabled;
+        onVoiceProfileChanged(savedProfile);
+      }
       if (generation !== saveGeneration.current) return;
       const unchanged = draftEditGeneration.current === submittedEditGeneration;
+      if (unchanged) setProfileFilterDraft(savedProfileFilter);
       setSaveState(unchanged ? "saved" : "idle");
       setSaveMessage(unchanged ? { kind: "saved", cleanupFailures, savedAt: Date.now() } : null);
     } catch (cause) {
@@ -161,6 +194,7 @@ export function SettingsPage({
 
   function discard() {
     setDraft(source);
+    setProfileFilterDraft(voiceProfile.filterEnabled);
     setSaveState("idle");
     setSaveMessage(null);
     void setDisplayLanguagePreference(source.regional.language);
@@ -244,12 +278,14 @@ export function SettingsPage({
             <VoiceSettingsSection
               voice={{ ...draft.voice, listeningEnabled: voiceListeningEnabled }}
               profile={voiceProfile}
+              profileFilterEnabled={profileFilterDraft}
               enrollmentBlocked={voiceEnrollmentBlocked}
               listeningBusy={voiceListeningBusy}
               availability={voiceAvailability}
               listeningError={voiceError}
               onToggleListening={onToggleVoiceListening}
               onProfileChanged={onVoiceProfileChanged}
+              onProfileFilterChange={changeProfileFilter}
               onChange={(voice) =>
                 changeDraft((current) => ({
                   ...current,

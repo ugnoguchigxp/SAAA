@@ -330,4 +330,80 @@ describe("ambient voice session", () => {
     expect(apiRef.current!.voiceState).toBe("stopped");
     expect(apiRef.current!.voiceBusy).toBe(false);
   });
+
+  test("pauses capture while LFM playback is audible and drops self-speech", async () => {
+    invokeImpl.handler = async (command, args) => {
+      if (command === "receive_lfm_utterance") {
+        const input = args as { text?: string };
+        if (input.text?.includes("お手伝い")) {
+          return {
+            reasoningRequestId: null,
+            requestContent: null,
+            speechEpoch: 1,
+            ignoredAsSelfSpeech: true,
+          };
+        }
+        return { reasoningRequestId: null, requestContent: null, speechEpoch: 1, ignoredAsSelfSpeech: false };
+      }
+      return command;
+    };
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () => root!.render(createElement(Harness, { apiRef, sessionRef, pendingRef })));
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(true);
+    });
+    const start = invokeCalls.find((call) => call.command === "start_voice_asr_session");
+    const sessionId =
+      (start?.args as { input?: { sessionId?: string } } | undefined)?.input?.sessionId ?? "";
+    const channel = channels.at(-1);
+    await act(async () => {
+      channel?.onmessage?.({
+        type: "ready",
+        sessionId,
+        currentUtteranceId: "u-hello",
+        protocol: "batch-agreement",
+        scope: "all-speakers",
+      });
+      channel?.onmessage?.({
+        type: "final",
+        sessionId,
+        utteranceId: "u-hello",
+        revision: 1,
+        startMs: 0,
+        endMs: 20,
+        text: "おはよう。",
+        language: "ja",
+      });
+    });
+    const speech = invokeCalls.find((call) => call.command === "speak_lfm_reply");
+    const onEvent = (speech?.args as { onEvent?: { onmessage: ((event: unknown) => void) | null } })
+      .onEvent;
+    await act(async () => {
+      onEvent?.onmessage?.({ type: "speechStarted", runId: "lfm-speech-1" });
+    });
+    expect(invokeCalls.some((call) => call.command === "stop_voice_asr_session")).toBe(true);
+    const spoken = invokeCalls.filter((call) => call.command === "speak_lfm_reply").length;
+    await act(async () => {
+      channel?.onmessage?.({
+        type: "final",
+        sessionId,
+        utteranceId: "u-echo",
+        revision: 1,
+        startMs: 30,
+        endMs: 80,
+        text: "よう、ミュージさん、今日は何かお手伝いできることはありますか？",
+        language: "ja",
+      });
+    });
+    expect(invokeCalls.filter((call) => call.command === "speak_lfm_reply").length).toBe(spoken);
+  });
 });

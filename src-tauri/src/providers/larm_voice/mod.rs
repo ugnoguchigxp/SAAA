@@ -9,6 +9,7 @@ pub(crate) mod audio;
 mod decision;
 pub(crate) mod frontdesk;
 pub(crate) mod frontdesk_decision;
+pub(crate) mod frontdesk_echo;
 pub(crate) mod frontdesk_repository;
 mod response;
 pub(crate) mod speech_priority;

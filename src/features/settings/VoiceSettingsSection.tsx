@@ -11,6 +11,7 @@ import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 export function VoiceSettingsSection({
   voice,
   profile,
+  profileFilterEnabled,
   enrollmentBlocked,
   listeningBusy,
   availability,
@@ -18,9 +19,11 @@ export function VoiceSettingsSection({
   onToggleListening,
   onChange,
   onProfileChanged,
+  onProfileFilterChange,
 }: {
   voice: VoiceSettings;
   profile: VoiceProfileSnapshot;
+  profileFilterEnabled: boolean;
   enrollmentBlocked: boolean;
   listeningBusy: boolean;
   availability: AmbientVoiceAvailability;
@@ -28,6 +31,7 @@ export function VoiceSettingsSection({
   onToggleListening: (enabled: boolean) => void;
   onChange: (value: VoiceSettings) => void;
   onProfileChanged: (profile: VoiceProfileSnapshot) => void;
+  onProfileFilterChange: (enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -192,8 +196,10 @@ export function VoiceSettingsSection({
       <VoiceProfileCard
         voice={voice}
         profile={profile}
+        filterEnabled={profileFilterEnabled}
         blocked={enrollmentBlocked}
         onChanged={onProfileChanged}
+        onFilterChange={onProfileFilterChange}
       />
     </div>
   );

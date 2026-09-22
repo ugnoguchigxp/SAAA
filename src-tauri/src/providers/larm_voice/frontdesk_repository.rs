@@ -172,6 +172,19 @@ pub(crate) fn accept(
     Ok(AcceptOutcome::Process)
 }
 
+pub(crate) fn latest_assistant(
+    c: &Connection,
+    conversation: &str,
+) -> Result<Option<String>, String> {
+    c.query_row(
+        "SELECT content FROM conversation_messages WHERE conversation_id=?1 AND role='assistant' ORDER BY rowid DESC LIMIT 1",
+        [conversation],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(database_error)
+}
+
 pub(crate) fn context(c: &Connection, conversation: &str) -> Result<(Vec<Value>, bool), String> {
     let mut stmt = c.prepare("SELECT role,content FROM (SELECT rowid AS ordinal,role,content FROM conversation_messages WHERE conversation_id=?1 AND role IN ('user','assistant') ORDER BY rowid DESC LIMIT 24) ORDER BY ordinal").map_err(database_error)?;
     let rows = stmt

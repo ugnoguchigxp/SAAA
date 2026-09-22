@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 fn armed_deadlines() -> &'static Mutex<HashMap<String, i64>> {
-    static ARMED: LazyLock<Mutex<HashMap<String, i64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    static ARMED: LazyLock<Mutex<HashMap<String, i64>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
     &ARMED
 }
 

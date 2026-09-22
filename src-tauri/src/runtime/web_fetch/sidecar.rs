@@ -8,6 +8,7 @@ use std::{env, path::PathBuf, process::Stdio, sync::OnceLock, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
 
 use super::super::agent_tools::{tool_error_content, AgentToolCall};
+use super::contracts::WebFetchCancel;
 
 const MAX_SIDECAR_OUTPUT_BYTES: usize = 256 * 1024;
 
@@ -15,7 +16,14 @@ pub static BUNDLED_WEB_FETCH_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Execute one tool call through the sidecar process. Arguments must already
 /// be the validated `{ "name", "arguments" }` envelope bytes.
-pub async fn execute_envelope(request: &[u8], timeout: Duration) -> String {
+pub async fn execute_envelope(
+    request: &[u8],
+    timeout: Duration,
+    cancellation: WebFetchCancel,
+) -> String {
+    if cancellation.is_cancelled() {
+        return tool_error_content("CANCELLED", "WebFetch was cancelled.");
+    }
     let Some(mut command) = sidecar_command() else {
         return tool_error_content(
             "web-fetch-unavailable",
@@ -50,13 +58,23 @@ pub async fn execute_envelope(request: &[u8], timeout: Duration) -> String {
         );
     }
     drop(stdin);
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    let wait = child.wait_with_output();
+    tokio::pin!(wait);
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            // `kill_on_drop(true)` terminates the process when this branch
+            // drops the wait future and its owned Child.
+            tool_error_content("CANCELLED", "WebFetch was cancelled.")
+        }
+        result = tokio::time::timeout(timeout, &mut wait) => match result {
         Ok(Ok(output)) => project_sidecar_output(output.status.success(), &output.stdout),
         Ok(Err(_)) => tool_error_content(
             "web-fetch-unavailable",
             "The bundled WebFetch runtime stopped unexpectedly.",
         ),
         Err(_) => tool_error_content("TIMEOUT", "WebFetch exceeded the provider deadline."),
+        }
     }
 }
 
@@ -172,5 +190,13 @@ mod tests {
             r#"{"error":{"code":"UNSAFE_URL","message":"blocked","retryable":false}}"#
         );
         assert!(project_sidecar_output(true, b"not-json").contains("web-fetch-unavailable"));
+    }
+
+    #[tokio::test]
+    async fn already_cancelled_sidecar_request_never_starts_a_process() {
+        let cancellation = WebFetchCancel::never();
+        cancellation.cancel();
+        let result = execute_envelope(b"{}", Duration::from_secs(1), cancellation).await;
+        assert!(result.contains("CANCELLED"));
     }
 }

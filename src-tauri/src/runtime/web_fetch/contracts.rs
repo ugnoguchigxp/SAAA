@@ -18,7 +18,8 @@ pub enum WebFetchBackend {
     Sidecar,
     /// Rust search + WebView content fetch.
     Webview,
-    /// macOS 14+ uses webview, everything else uses the sidecar.
+    /// The supported macOS build (deployment target 14+) uses webview;
+    /// everything else uses the sidecar.
     #[default]
     Auto,
 }
@@ -92,10 +93,12 @@ impl WebFetchCancel {
     }
 
     pub async fn cancelled(&self) {
-        if self.is_cancelled() {
-            return;
+        let notified = self.inner.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !self.is_cancelled() {
+            notified.await;
         }
-        self.inner.notify.notified().await;
     }
 
     pub(crate) fn from_run(run: &crate::RunCancellation) -> Self {
@@ -192,7 +195,7 @@ impl SearchInput {
             .filter(|query| !query.is_empty() && query.len() <= 400)
             .ok_or_else(|| "Tool arguments do not match the WebFetch schema.".to_string())?;
         let limit = match object.get("limit") {
-            None | Some(serde_json::Value::Null) => 10,
+            None | Some(serde_json::Value::Null) => 5,
             Some(serde_json::Value::Number(number)) => {
                 let value = number.as_u64().ok_or_else(|| {
                     "Tool arguments do not match the WebFetch schema.".to_string()
@@ -304,6 +307,26 @@ mod tests {
         assert!(SearchInput::parse(&json!({"query": "", "limit": 5})).is_err());
         assert!(SearchInput::parse(&json!({"query": "rust", "limit": 21})).is_err());
         assert!(SearchInput::parse(&json!({"query": "rust"})).is_ok());
+        assert_eq!(
+            SearchInput::parse(&json!({"query": "rust"})).unwrap().limit,
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_does_not_lose_a_notification_between_check_and_wait() {
+        for _ in 0..1_000 {
+            let cancellation = WebFetchCancel::never();
+            let waiter = tokio::spawn({
+                let cancellation = cancellation.clone();
+                async move { cancellation.cancelled().await }
+            });
+            cancellation.cancel();
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+                .await
+                .expect("cancellation waiter must always wake")
+                .expect("waiter task must finish");
+        }
     }
 
     #[test]
