@@ -496,7 +496,7 @@ pub(crate) fn run_codex_turn_process_with_dispatch(
             }
             let projected = match projector.project(&message) {
                 Ok(projected) => projected,
-                Err(()) => {
+                Err(_) => {
                     failure_detail =
                         Some("Codex app-server violated the event contract".to_string());
                     ProjectedCodexEvent::ProviderError

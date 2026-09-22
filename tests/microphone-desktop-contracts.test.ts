@@ -201,14 +201,12 @@ describe("macOS microphone bundle configuration", () => {
     ).toBeLessThan(handler.indexOf("acceptedVoiceAsrSessionsRef.current.has(event.sessionId)"));
   });
 
-  test("keeps automatic voice turns connected to LLM submission and response speech", () => {
+  test("keeps automatic voice turns connected directly to LLM submission and response speech", () => {
     const app = chatVoiceSource();
-    expect(containsSource(app, "receiveLfmUtterance(conversationId")).toBe(true);
-    expect(containsSource(app, "speakLfmReply(conversationId")).toBe(true);
-    expect(containsSource(app, "decision.reasoningRequestId && decision.requestContent")).toBe(
-      true,
-    );
-    expect(containsSource(app, "sourceId: decision.reasoningRequestId")).toBe(true);
+    expect(containsSource(app, "receiveLfmUtterance(conversationId")).toBe(false);
+    expect(containsSource(app, "speakLfmReply(conversationId")).toBe(false);
+    expect(containsSource(app, "void submitPrompt(queued.text")).toBe(true);
+    expect(containsSource(app, "sourceId: queued.utteranceId")).toBe(true);
     expect(containsSource(app, "voiceSettings?.autoSpeak")).toBe(true);
     expect(containsSource(app, 'case "speechStarted":')).toBe(true);
     expect(containsSource(app, 'case "speechEnded":')).toBe(true);
@@ -227,10 +225,8 @@ describe("macOS microphone bundle configuration", () => {
     expect(containsSource(pause, "await finishVoiceCapture(false)")).toBe(true);
     expect(containsSource(pause, "cancelRun")).toBe(false);
     expect(containsSource(pause, "voiceSegmentQueueRef.current.clear()")).toBe(false);
-    expect(containsSource(app, "receiveLfmUtterance(conversationId")).toBe(true);
-    expect(containsSource(app, "lfmInputQueueRef.current = lfmInputQueueRef.current.then")).toBe(
-      true,
-    );
+    expect(containsSource(app, "void submitPrompt(queued.text")).toBe(true);
+    expect(containsSource(app, "receiveLfmUtterance(conversationId")).toBe(false);
   });
 
   test("sends chat PCM through the bounded raw ASR sender", () => {

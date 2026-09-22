@@ -81,6 +81,16 @@ describe("voice pipeline monitor", () => {
     expect(snapshot.stages.find((stage) => stage.key === "lfm")?.state).toBe("success");
   });
 
+  test("treats an intentional LFM silence as a completed reception", () => {
+    const snapshot = projectLatestResponsePipeline([
+      recognized,
+      audit(2, "lfm-utterance-received", { subjectId: "utterance_1" }),
+      audit(3, "lfm-silent-without-reasoning-request", { subjectId: "utterance_1" }),
+    ]);
+    expect(snapshot.diagnosis).toBe("lfm-responded");
+    expect(snapshot.stages.find((stage) => stage.key === "lfm")?.state).toBe("success");
+  });
+
   test("surfaces a Role Routing frontend rejection at the LFM stage", () => {
     const snapshot = projectLatestResponsePipeline([
       recognized,

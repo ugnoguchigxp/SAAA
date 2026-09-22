@@ -17,11 +17,15 @@ pub fn enable(database: &str) -> Result<String, String> {
             value_json: d.value_json,
         })
         .collect::<Vec<_>>();
-    let provider = crate::persistence::load_model_providers(&connection)?
-        .providers
-        .into_iter()
-        .find(|p| p.id() == crate::DYNAMIC_LAN_PROVIDER_ID && p.enabled())
+    let providers = crate::persistence::load_model_providers(&connection)?.providers;
+    let frontend_provider = providers
+        .iter()
+        .find(|provider| provider.id() == crate::DYNAMIC_LAN_PROVIDER_ID && provider.enabled())
         .ok_or("No enabled LAN reasoning provider is registered")?;
+    let reasoner_provider = providers
+        .iter()
+        .find(|provider| provider.id() == crate::QWEN_DIRECT_PROVIDER_ID && provider.enabled())
+        .unwrap_or(frontend_provider);
     let document = documents
         .iter_mut()
         .find(|d| d.namespace == "routing.roles" && d.key == "default")
@@ -32,11 +36,23 @@ pub fn enable(database: &str) -> Result<String, String> {
         && value["recipes"].as_array().is_some_and(Vec::is_empty)
     {
         value["actors"] = serde_json::json!([{"id":"local-reasoner","label":"LAN reasoning provider",
-            "transport":"provider","providerId":provider.id(),"model":null,"aliases":[],
+            "transport":"provider","providerId":reasoner_provider.id(),"model":null,"aliases":[],
             "location":"local","resourceGroup":"local-inference","maxInputBytes":65536,
             "capabilities":["reason","tools"]}]);
         value["roles"]["reasoner"] = serde_json::json!("local-reasoner");
         value["recipes"] = serde_json::json!([{"id":"reasoner-response","action":"respond","roles":["reasoner"],"enabled":true}]);
+    }
+    if reasoner_provider.id() != frontend_provider.id() {
+        let reasoner_id = value["roles"]["reasoner"].as_str().map(str::to_string);
+        if let (Some(reasoner_id), Some(actors)) = (reasoner_id, value["actors"].as_array_mut()) {
+            if let Some(actor) = actors.iter_mut().find(|actor| {
+                actor["id"] == reasoner_id
+                    && actor["transport"] == "provider"
+                    && actor["providerId"] == frontend_provider.id()
+            }) {
+                actor["providerId"] = serde_json::json!(reasoner_provider.id());
+            }
+        }
     }
     if value["roles"]["frontend"].is_null() {
         let actors = value["actors"]
@@ -46,7 +62,7 @@ pub fn enable(database: &str) -> Result<String, String> {
         if let Some(actor) = actors.iter().find(|actor| actor["id"] == frontend_id) {
             let capabilities = actor["capabilities"].as_array();
             if actor["transport"] != "provider"
-                || actor["providerId"] != provider.id()
+                || actor["providerId"] != frontend_provider.id()
                 || !capabilities
                     .is_some_and(|items| items.iter().any(|item| item == "social_reply"))
             {
@@ -59,7 +75,7 @@ pub fn enable(database: &str) -> Result<String, String> {
                 "id":frontend_id,
                 "label":"Harness conversation frontend",
                 "transport":"provider",
-                "providerId":provider.id(),
+                "providerId":frontend_provider.id(),
                 "model":null,
                 "aliases":["LFM"],
                 "location":"local",
@@ -70,7 +86,10 @@ pub fn enable(database: &str) -> Result<String, String> {
         }
         value["roles"]["frontend"] = serde_json::json!(frontend_id);
     }
-    for (role, capability) in [("frontend", "social_reply"), ("reasoner", "reason")] {
+    for (role, capability, provider_id) in [
+        ("frontend", "social_reply", frontend_provider.id()),
+        ("reasoner", "reason", reasoner_provider.id()),
+    ] {
         let actor_id = value["roles"][role]
             .as_str()
             .ok_or_else(|| format!("Role-routing {role} is not configured"))?;
@@ -81,9 +100,7 @@ pub fn enable(database: &str) -> Result<String, String> {
         let has_capability = actor["capabilities"]
             .as_array()
             .is_some_and(|items| items.iter().any(|item| item == capability));
-        if actor["transport"] != "provider"
-            || actor["providerId"] != provider.id()
-            || !has_capability
+        if actor["transport"] != "provider" || actor["providerId"] != provider_id || !has_capability
         {
             return Err(format!(
                 "Role-routing {role} actor has an incompatible LAN provider binding"

@@ -6,6 +6,7 @@ export type LfmUtteranceResult = {
   requestContent: string | null;
   speechEpoch: number;
   ignoredAsSelfSpeech: boolean;
+  hasReply: boolean;
 };
 
 export function receiveLfmUtterance(conversationId: string, utteranceId: string, text: string) {

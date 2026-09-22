@@ -153,8 +153,10 @@ pub fn parse_non_stream_tool_call(
     }))
 }
 
-pub fn parse_recall_arguments(arguments: &str) -> Result<RecallConversationInput, ()> {
-    serde_json::from_str(arguments).map_err(|_| ())
+pub fn parse_recall_arguments(
+    arguments: &str,
+) -> Result<RecallConversationInput, serde_json::Error> {
+    serde_json::from_str(arguments)
 }
 
 pub fn recall_tool_definition() -> Value {

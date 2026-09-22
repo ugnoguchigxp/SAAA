@@ -2,10 +2,38 @@ use super::{frontdesk_decision::ConversationDecision, frontdesk_repository as re
 use crate::PRIMARY_CONVERSATION_ID as CONVERSATION;
 fn decision(think: bool) -> ConversationDecision {
     ConversationDecision {
-        say: "はい。".into(),
+        say: Some(
+            if think {
+                "少々お待ちください、考えます。"
+            } else {
+                "はい。"
+            }
+            .into(),
+        ),
         think,
+        reply_key: Some(if think { "thinking" } else { "acknowledgement" }),
         classifier_failure: None,
-        plain_text_fallback: false,
+        structured_output_fallback: false,
+    }
+}
+
+fn silent_decision() -> ConversationDecision {
+    ConversationDecision {
+        say: None,
+        think: false,
+        reply_key: None,
+        classifier_failure: None,
+        structured_output_fallback: false,
+    }
+}
+
+fn greeting_decision() -> ConversationDecision {
+    ConversationDecision {
+        say: Some("こんにちは。".into()),
+        think: false,
+        reply_key: Some("greeting"),
+        classifier_failure: None,
+        structured_output_fallback: false,
     }
 }
 
@@ -46,20 +74,25 @@ fn reasoning_request_keeps_all_segments_and_claims_one_qwen_run_without_duplicat
     assert!(repo::accept(&c, CONVERSATION, "u1", "duplicate").is_err());
     assert!(repo::complete(&c, "u1", &decision(false))
         .unwrap()
+        .0
         .is_none());
     repo::accept(&c, CONVERSATION, "u2", "2泊3日の計画を作って。").unwrap();
-    let (reasoning_request, content) = repo::complete(&c, "u2", &decision(true)).unwrap().unwrap();
+    let (reasoning, has_reply) = repo::complete(&c, "u2", &decision(true)).unwrap();
+    assert!(has_reply);
+    let (reasoning_request, content) = reasoning.unwrap();
     assert_eq!(content, "京都へ行きたい。\n2泊3日の計画を作って。");
     match repo::accept(&c, CONVERSATION, "u2", "2泊3日の計画を作って。").unwrap() {
         repo::AcceptOutcome::Completed {
             reasoning_request_id,
             request_content,
+            has_reply,
         } => {
             assert_eq!(
                 reasoning_request_id.as_deref(),
                 Some(reasoning_request.as_str())
             );
             assert_eq!(request_content.as_deref(), Some(content.as_str()));
+            assert!(has_reply);
         }
         repo::AcceptOutcome::Process => panic!("completed utterance must be restored"),
     }
@@ -120,9 +153,11 @@ fn reasoning_request_keeps_all_segments_and_claims_one_qwen_run_without_duplicat
                 repo::AcceptOutcome::Completed {
                     reasoning_request_id,
                     request_content,
+                    has_reply,
                 } => {
                     assert!(reasoning_request_id.is_none());
                     assert!(request_content.is_none());
+                    assert!(has_reply);
                 }
                 repo::AcceptOutcome::Process => {
                     panic!("a claimed reasoning request must remain completed")
@@ -145,7 +180,8 @@ fn reasoning_request_keeps_all_segments_and_claims_one_qwen_run_without_duplicat
             .unwrap();
             repo::accept(c, CONVERSATION, "u3", "ありがとう。")?;
             assert!(!repo::context(c, CONVERSATION)?.1);
-            let (_, text) = repo::complete(c, "u3", &decision(true))?.unwrap();
+            let (reasoning, _) = repo::complete(c, "u3", &decision(true))?;
+            let (_, text) = reasoning.unwrap();
             assert_eq!(text, "ありがとう。"); // Already delegated segments cannot silently re-enter a request.
             Ok(())
         })
@@ -158,7 +194,8 @@ fn altered_or_cross_conversation_reasoning_request_is_rejected() {
     crate::persistence::schema::initialize_database(&c).unwrap();
     enable_role_routing(&mut c);
     repo::accept(&c, CONVERSATION, "u1", "計算して。").unwrap();
-    let (reasoning_request, _) = repo::complete(&c, "u1", &decision(true)).unwrap().unwrap();
+    let (reasoning, _) = repo::complete(&c, "u1", &decision(true)).unwrap();
+    let (reasoning_request, _) = reasoning.unwrap();
     let input: crate::StartTurnInput = serde_json::from_value(serde_json::json!({
         "runId":"run_test","conversationId":CONVERSATION,"content":"違う指示",
         "sourceId":reasoning_request,"inputOrigin":"voice","presentationMode":"visual"
@@ -183,6 +220,37 @@ fn disabled_role_routing_rejects_voice_before_persisting_it() {
         )
         .unwrap(),
         0
+    );
+}
+
+#[test]
+fn silent_reception_has_no_assistant_message_and_greeting_state_is_durable() {
+    let mut c = rusqlite::Connection::open_in_memory().unwrap();
+    crate::persistence::schema::initialize_database(&c).unwrap();
+    enable_role_routing(&mut c);
+
+    repo::accept(&c, CONVERSATION, "u-silent", "ええと").unwrap();
+    let (reasoning, has_reply) = repo::complete(&c, "u-silent", &silent_decision()).unwrap();
+    assert!(reasoning.is_none());
+    assert!(!has_reply);
+    match repo::accept(&c, CONVERSATION, "u-silent", "ええと").unwrap() {
+        repo::AcceptOutcome::Completed { has_reply, .. } => assert!(!has_reply),
+        repo::AcceptOutcome::Process => panic!("silent reception must remain completed"),
+    }
+    assert!(!repo::context(&c, CONVERSATION).unwrap().2);
+
+    repo::accept(&c, CONVERSATION, "u-greeting", "こんにちは。").unwrap();
+    let (_, has_reply) = repo::complete(&c, "u-greeting", &greeting_decision()).unwrap();
+    assert!(has_reply);
+    assert!(repo::context(&c, CONVERSATION).unwrap().2);
+    assert_eq!(
+        c.query_row(
+            "SELECT COUNT(*) FROM conversation_messages WHERE role='assistant'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        1
     );
 }
 

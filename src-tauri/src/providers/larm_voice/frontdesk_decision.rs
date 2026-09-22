@@ -18,7 +18,7 @@ pub(crate) struct ConversationDecision {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct FrontdeskClassification {
     route: Route,
-    reply_key: Option<ReplyKey>,
+    reply_key: ReplyKey,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -31,6 +31,7 @@ enum Route {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ReplyKey {
+    None,
     Greeting,
     Acknowledgement,
 }
@@ -41,7 +42,7 @@ struct ReasoningNeed {
     think: bool,
 }
 
-const INSTRUCTION: &str = "あなたは音声受付の分類器です。ユーザー音声は1.5秒の無音ごとに届き、無音は依頼完了を意味しません。最新発言が完全な挨拶だけならroute=simple_reply, replyKey=greeting、完全なお礼だけならroute=simple_reply, replyKey=acknowledgementにします。話の途中、相槌、曖昧な発言はroute=simple_replyにしますが、定型応答が不要ならreplyKey=nullです。具体的でまとまった依頼として調査・推論・計算・ツール実行を開始できる場合だけroute=delegate, replyKey=nullにします。pendingReasoning=trueならdelegateにしません。自由文、回答、質問、説明、思考タグは禁止です。JSON {\"route\":\"delegate\"または\"simple_reply\",\"replyKey\":\"greeting\"または\"acknowledgement\"またはnull} だけを返してください。";
+const INSTRUCTION: &str = "あなたは音声受付の分類器です。ユーザー音声は1.5秒の無音ごとに届き、無音は依頼完了を意味しません。最新発言が完全な挨拶だけならroute=simple_reply, replyKey=greeting、完全なお礼だけならroute=simple_reply, replyKey=acknowledgementにします。話の途中、相槌、曖昧な発言はroute=simple_reply, replyKey=noneにします。具体的でまとまった依頼として調査・推論・計算・ツール実行を開始できる場合だけroute=delegate, replyKey=noneにします。pendingReasoning=trueならdelegateにしません。自由文、回答、質問、説明、思考タグは禁止です。JSON {\"route\":\"delegate\"または\"simple_reply\",\"replyKey\":\"none\"または\"greeting\"または\"acknowledgement\"} だけを返してください。";
 
 pub(crate) async fn decide(
     ready: &super::Ready,
@@ -50,11 +51,11 @@ pub(crate) async fn decide(
     already_greeted: bool,
 ) -> Result<ConversationDecision, &'static str> {
     let (lfm, qwen) = tokio::join!(
-        respond_with_lfm(ready, history.clone(), pending_reasoning),
+        respond_with_lfm(ready, history.clone(), pending_reasoning, already_greeted),
         async {
             tokio::time::timeout(
                 std::time::Duration::from_millis(2_500),
-                classify_with_qwen(ready, history, pending_reasoning),
+                classify_with_qwen(ready, history.clone(), pending_reasoning),
             )
             .await
             .map_err(|_| "qwen-classifier-timeout")?
@@ -94,9 +95,12 @@ fn apply_reasoning_need(
     structured_output_fallback: bool,
 ) -> ConversationDecision {
     // LFM can always request reasoning. Qwen's parallel classification is a promotion-only safety
-    // net: it can recover a missed request (or plain-text fallback), but can never cancel LFM's
-    // request. A pending request is fenced in the host so no model can launch it twice.
+    // net: it can recover a missed request, but can never cancel LFM's request. If that safety net
+    // is unavailable, only an exact host-owned greeting or acknowledgement may complete locally;
+    // every other utterance is delegated rather than silently lost. A pending request is fenced in
+    // the host so no model can launch it twice.
     let mut classifier_failure = None;
+    let host_reply = allowed_host_reply(&classification, current_input, already_greeted);
     let think = if pending_reasoning {
         false
     } else {
@@ -104,7 +108,7 @@ fn apply_reasoning_need(
             Ok(reasoning) => classification.route == Route::Delegate || reasoning,
             Err(code) => {
                 classifier_failure = Some(code);
-                classification.route == Route::Delegate
+                classification.route == Route::Delegate || host_reply.is_none()
             }
         }
     };
@@ -117,8 +121,8 @@ fn apply_reasoning_need(
             structured_output_fallback,
         };
     }
-    let (say, reply_key) = allowed_host_reply(&classification, current_input, already_greeted)
-        .map_or((None, None), |(key, text)| (Some(text.into()), Some(key)));
+    let (say, reply_key) =
+        host_reply.map_or((None, None), |(key, text)| (Some(text.into()), Some(key)));
     ConversationDecision {
         say,
         think: false,
@@ -136,14 +140,14 @@ fn allowed_host_reply(
     if classification.route != Route::SimpleReply {
         return None;
     }
-    match (classification.reply_key.as_ref(), input.trim()) {
+    match (&classification.reply_key, input.trim()) {
         (
-            Some(ReplyKey::Greeting),
+            ReplyKey::Greeting,
             "こんにちは" | "こんにちは。" | "おはよう" | "おはよう。" | "こんばんは"
             | "こんばんは。",
         ) if !already_greeted => Some(("greeting", "こんにちは。")),
         (
-            Some(ReplyKey::Acknowledgement),
+            ReplyKey::Acknowledgement,
             "ありがとう" | "ありがとう。" | "ありがとうございます" | "ありがとうございます。",
         ) => Some(("acknowledgement", "どういたしまして。")),
         _ => None,
@@ -154,6 +158,7 @@ async fn respond_with_lfm(
     ready: &super::Ready,
     history: Vec<Value>,
     pending_reasoning: bool,
+    already_greeted: bool,
 ) -> Result<(FrontdeskClassification, bool), &'static str> {
     let lease = ready
         .session
@@ -179,7 +184,7 @@ async fn respond_with_lfm(
         .map_err(|_| "lfm-client-creation-failed")?;
     let mut messages = vec![
         json!({"role":"system","content":INSTRUCTION}),
-        json!({"role":"system","content":state_note(pending_reasoning, false)}),
+        json!({"role":"system","content":state_note(pending_reasoning, already_greeted)}),
     ];
     messages.extend(history);
     // UTF-8 bytes conservatively bound token use. Never silently truncate the current request.
@@ -205,13 +210,13 @@ async fn respond_with_lfm(
             "response_format":{"type":"json_schema","json_schema":{"name":"lfm_frontdesk_classification","strict":true,"schema":{
                 "type":"object","properties":{
                     "route":{"type":"string","enum":["delegate","simple_reply"]},
-                    "replyKey":{"type":["string","null"],"enum":["greeting","acknowledgement",null]}
+                    "replyKey":{"type":"string","enum":["none","greeting","acknowledgement"]}
                 },
                 "required":["route","replyKey"],"additionalProperties":false
             }}}})).send().await
         .map_err(|_| "lfm-request-failed")?;
-    let response = if response.status().is_success() {
-        response
+    let (response, structured_output_fallback) = if response.status().is_success() {
+        (response, false)
     } else if matches!(response.status().as_u16(), 400 | 422) {
         // Some OpenAI-compatible LFM servers reject response_format. The fallback still requires
         // the exact JSON classifier contract and never accepts model-authored user-visible text.
@@ -230,7 +235,7 @@ async fn respond_with_lfm(
         if !fallback.status().is_success() {
             return Err("lfm-plain-fallback-rejected");
         }
-        fallback
+        (fallback, true)
     } else {
         return Err("lfm-http-request-rejected");
     };
@@ -243,7 +248,7 @@ async fn respond_with_lfm(
         }
         bytes.extend_from_slice(&chunk);
     }
-    parse(&bytes).map(|classification| (classification, response.status().as_u16() != 200))
+    parse(&bytes).map(|classification| (classification, structured_output_fallback))
 }
 
 async fn classify_with_qwen(
@@ -332,7 +337,7 @@ async fn classify_with_qwen(
     .map_err(|_| "qwen-classifier-contract-invalid")
 }
 
-fn parse(bytes: &[u8]) -> Result<ConversationDecision, &'static str> {
+fn parse(bytes: &[u8]) -> Result<FrontdeskClassification, &'static str> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| "lfm-response-json-invalid")?;
     let choices = value["choices"]
         .as_array()
@@ -352,33 +357,20 @@ fn parse(bytes: &[u8]) -> Result<ConversationDecision, &'static str> {
         .as_str()
         .ok_or("lfm-reply-missing")?
         .trim();
-    let mut decision: ConversationDecision = match serde_json::from_str(content) {
-        Ok(decision) => decision,
-        Err(_) if plain_say_is_safe(content) => ConversationDecision {
-            say: content.into(),
-            think: false,
-            classifier_failure: None,
-            plain_text_fallback: true,
-        },
-        Err(_) => return Err("lfm-decision-contract-invalid"),
-    };
-    if decision.say.trim().is_empty() || decision.say.chars().count() > 80 {
-        return Err("lfm-say-length-invalid");
+    let classification: FrontdeskClassification =
+        serde_json::from_str(content).map_err(|_| "lfm-decision-contract-invalid")?;
+    let valid = matches!(
+        (&classification.route, &classification.reply_key),
+        (Route::Delegate, ReplyKey::None)
+            | (
+                Route::SimpleReply,
+                ReplyKey::None | ReplyKey::Greeting | ReplyKey::Acknowledgement
+            )
+    );
+    if !valid {
+        return Err("lfm-decision-combination-invalid");
     }
-    // A reasoning request must not contain an unverified answer or promise completed work.
-    if decision.think {
-        decision.say = "少々お待ちください、考えます。".into();
-    }
-    Ok(decision)
-}
-
-fn plain_say_is_safe(content: &str) -> bool {
-    !content.is_empty()
-        && content.chars().count() <= 80
-        && !content.starts_with('{')
-        && !content.starts_with('[')
-        && !content.starts_with("```")
-        && !content.to_ascii_lowercase().contains("<think")
+    Ok(classification)
 }
 
 #[cfg(test)]
@@ -391,48 +383,109 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn only_the_two_field_contract_is_accepted() {
-        assert!(
-            !parse(&response(r#"{"say":"はい。","think":false}"#, "stop"))
-                .unwrap()
-                .think
+    fn only_the_classifier_contract_is_accepted() {
+        assert_eq!(
+            parse(&response(
+                r#"{"route":"simple_reply","replyKey":"greeting"}"#,
+                "stop"
+            ))
+            .unwrap()
+            .reply_key,
+            ReplyKey::Greeting
         );
-        assert!(
-            parse(&response(r#"{"say":"考えます。","think":true}"#, "stop"))
-                .unwrap()
-                .think
+        assert_eq!(
+            parse(&response(
+                r#"{"route":"delegate","replyKey":"none"}"#,
+                "stop"
+            ))
+            .unwrap()
+            .route,
+            Route::Delegate
         );
         for invalid in [
-            r#"{"say":"はい。"}"#,
-            r#"{"say":"はい。","think":"yes"}"#,
-            r#"{"say":"はい。","think":true,"request":"invented"}"#,
-            r#"{"say":"","think":true}"#,
+            r#"{"route":"simple_reply"}"#,
+            r#"{"route":"answer","replyKey":"none"}"#,
+            r#"{"route":"delegate","replyKey":"greeting"}"#,
+            r#"{"route":"simple_reply","replyKey":"greeting","text":"勝手な回答"}"#,
+            "はい、続きをどうぞ。",
         ] {
             assert!(parse(&response(invalid, "stop")).is_err());
         }
-        assert!(parse(&response(r#"{"say":"考えます。","think":true}"#, "length")).is_err());
-        let plain = parse(&response("はい、続きをどうぞ。", "stop")).unwrap();
-        assert!(plain.plain_text_fallback);
-        assert_eq!(plain.say, "はい、続きをどうぞ。");
-        assert!(parse(&response(r#"{"say":"途中"#, "stop")).is_err());
+        assert!(parse(&response(
+            r#"{"route":"delegate","replyKey":"none"}"#,
+            "length"
+        ))
+        .is_err());
     }
 
     #[test]
     fn qwen_can_promote_but_never_cancel_an_lfm_reasoning_request() {
-        let missed_by_lfm = ConversationDecision {
-            say: "続きをどうぞ。".into(),
-            think: false,
-            classifier_failure: None,
-            plain_text_fallback: false,
+        let missed_by_lfm = FrontdeskClassification {
+            route: Route::SimpleReply,
+            reply_key: ReplyKey::None,
         };
-        assert!(apply_reasoning_need(missed_by_lfm, Ok(true), false).think);
+        assert!(apply_reasoning_need(missed_by_lfm, Ok(true), false, true, "続き", false).think);
 
-        let requested_by_lfm = ConversationDecision {
-            say: "考えます。".into(),
-            think: true,
-            classifier_failure: None,
-            plain_text_fallback: false,
+        let requested_by_lfm = FrontdeskClassification {
+            route: Route::Delegate,
+            reply_key: ReplyKey::None,
         };
-        assert!(apply_reasoning_need(requested_by_lfm, Ok(false), false).think);
+        assert!(
+            apply_reasoning_need(requested_by_lfm, Ok(false), false, true, "依頼", false).think
+        );
+    }
+
+    #[test]
+    fn qwen_classifier_failure_delegates_unhandled_input_instead_of_silencing_it() {
+        let unhandled = FrontdeskClassification {
+            route: Route::SimpleReply,
+            reply_key: ReplyKey::None,
+        };
+        let decision = apply_reasoning_need(
+            unhandled,
+            Err("qwen-classifier-timeout"),
+            false,
+            true,
+            "京都の旅行計画を作って",
+            false,
+        );
+        assert!(decision.think);
+        assert_eq!(decision.reply_key, Some("thinking"));
+        assert_eq!(decision.classifier_failure, Some("qwen-classifier-timeout"));
+    }
+
+    #[test]
+    fn qwen_classifier_failure_keeps_an_exact_host_reply_local() {
+        let greeting = FrontdeskClassification {
+            route: Route::SimpleReply,
+            reply_key: ReplyKey::Greeting,
+        };
+        let decision = apply_reasoning_need(
+            greeting,
+            Err("qwen-classifier-timeout"),
+            false,
+            false,
+            "こんにちは。",
+            false,
+        );
+        assert!(!decision.think);
+        assert_eq!(decision.say.as_deref(), Some("こんにちは。"));
+    }
+
+    #[test]
+    fn host_owns_every_visible_reply_and_repeated_greetings_become_silent() {
+        let greeting = FrontdeskClassification {
+            route: Route::SimpleReply,
+            reply_key: ReplyKey::Greeting,
+        };
+        assert_eq!(
+            allowed_host_reply(&greeting, "こんにちは。", false),
+            Some(("greeting", "こんにちは。"))
+        );
+        assert_eq!(allowed_host_reply(&greeting, "こんにちは。", true), None);
+        assert_eq!(
+            allowed_host_reply(&greeting, "こんにちは、調べて", false),
+            None
+        );
     }
 }

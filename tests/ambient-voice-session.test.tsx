@@ -149,20 +149,7 @@ describe("ambient voice session", () => {
     expect(effectiveCaptureSettings(voiceSettings, voicePolicy)?.silenceTimeoutMs).toBe(1_500);
   });
 
-  test("ASR goes only to LFM; LFM responds while Qwen runs and requests reasoning once", async () => {
-    invokeImpl.handler = async (command, args) => {
-      if (command === "receive_lfm_utterance") {
-        const input = args as { text: string };
-        return input.text === "hello there"
-          ? { reasoningRequestId: null, requestContent: null, speechEpoch: 0 }
-          : {
-              reasoningRequestId: "lfm_reasoning_1",
-              requestContent: "hello there\nplease reason",
-              speechEpoch: 0,
-            };
-      }
-      return command;
-    };
+  test("each finalized ASR utterance goes directly to the Qwen turn path", async () => {
     restoreDom = installJsdom().restore;
     restoreAudio = installAudioGlobals();
     const { createRoot } = await import("react-dom/client");
@@ -212,8 +199,9 @@ describe("ambient voice session", () => {
         language: "ja",
       });
     });
-    expect(invokeCalls.some((c) => c.command === "receive_lfm_utterance")).toBe(true);
-    expect(submitted).toEqual([]);
+    expect(invokeCalls.some((c) => c.command === "receive_lfm_utterance")).toBe(false);
+    expect(invokeCalls.some((c) => c.command === "speak_lfm_reply")).toBe(false);
+    expect(submitted).toEqual(["hello there"]);
     expect(invokeCalls.some((c) => c.command === "cancel_run")).toBe(false);
     await act(async () => {
       channel?.onmessage?.({
@@ -227,7 +215,7 @@ describe("ambient voice session", () => {
         language: "ja",
       });
     });
-    expect(submitted).toEqual(["hello there\nplease reason"]);
+    expect(submitted).toEqual(["hello there", "please reason"]);
     expect(invokeCalls.some((c) => c.command === "cancel_run")).toBe(false);
     await act(async () => {
       await apiRef.current!.suspendVoiceForSpeech("speech-1");
@@ -331,22 +319,7 @@ describe("ambient voice session", () => {
     expect(apiRef.current!.voiceBusy).toBe(false);
   });
 
-  test("pauses capture while LFM playback is audible and drops self-speech", async () => {
-    invokeImpl.handler = async (command, args) => {
-      if (command === "receive_lfm_utterance") {
-        const input = args as { text?: string };
-        if (input.text?.includes("お手伝い")) {
-          return {
-            reasoningRequestId: null,
-            requestContent: null,
-            speechEpoch: 1,
-            ignoredAsSelfSpeech: true,
-          };
-        }
-        return { reasoningRequestId: null, requestContent: null, speechEpoch: 1, ignoredAsSelfSpeech: false };
-      }
-      return command;
-    };
+  test("does not invoke the dormant LFM frontend for voice utterances", async () => {
     restoreDom = installJsdom().restore;
     restoreAudio = installAudioGlobals();
     const { createRoot } = await import("react-dom/client");
@@ -384,14 +357,6 @@ describe("ambient voice session", () => {
         language: "ja",
       });
     });
-    const speech = invokeCalls.find((call) => call.command === "speak_lfm_reply");
-    const onEvent = (speech?.args as { onEvent?: { onmessage: ((event: unknown) => void) | null } })
-      .onEvent;
-    await act(async () => {
-      onEvent?.onmessage?.({ type: "speechStarted", runId: "lfm-speech-1" });
-    });
-    expect(invokeCalls.some((call) => call.command === "stop_voice_asr_session")).toBe(true);
-    const spoken = invokeCalls.filter((call) => call.command === "speak_lfm_reply").length;
     await act(async () => {
       channel?.onmessage?.({
         type: "final",
@@ -404,6 +369,11 @@ describe("ambient voice session", () => {
         language: "ja",
       });
     });
-    expect(invokeCalls.filter((call) => call.command === "speak_lfm_reply").length).toBe(spoken);
+    expect(submitted).toEqual([
+      "おはよう。",
+      "よう、ミュージさん、今日は何かお手伝いできることはありますか？",
+    ]);
+    expect(invokeCalls.some((call) => call.command === "receive_lfm_utterance")).toBe(false);
+    expect(invokeCalls.some((call) => call.command === "speak_lfm_reply")).toBe(false);
   });
 });

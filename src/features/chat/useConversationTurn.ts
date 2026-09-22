@@ -221,14 +221,16 @@ export function useConversationTurn({
       sourceId = null,
       onSettled,
     } = options;
-    const lfmReasoningRequest =
+    const legacyLfmReasoningRequest =
       sourceId?.startsWith("lfm_reasoning_") || sourceId?.startsWith("lfm_handoff_") || false;
-    if (lfmReasoningRequest && conversationSessionRef.current.runId) {
-      // A separate reasoning request is queued, without interrupting the existing answer.
+    const queuedVoiceRequest = inputOrigin === "voice" && Boolean(sourceId);
+    if (queuedVoiceRequest && conversationSessionRef.current.runId) {
+      // Each finalized voice utterance is an independent Qwen request. Preserve its order without
+      // cancelling the answer that is already running.
       pendingVoicePromptsRef.current.push({
         content: prompt,
         inputOrigin,
-        sourceId: sourceId!,
+        sourceId: sourceId ?? undefined,
         onSettled,
       });
       return;
@@ -287,7 +289,7 @@ export function useConversationTurn({
       incompleteRunIdsRef.current.clear();
       resetStreamingText();
       setRuntimeActivity([]);
-      if (!lfmReasoningRequest && !retryInputMessageId && !history.isBrowsingOlder()) {
+      if (!legacyLfmReasoningRequest && !retryInputMessageId && !history.isBrowsingOlder()) {
         setMessages((current) => [
           ...current,
           {
@@ -301,7 +303,7 @@ export function useConversationTurn({
       }
       setComposer("");
       setSnapshot((current) => updateConversationTimestamp(current, conversationId, content));
-      if (shouldStreamSpeech && !lfmReasoningRequest) {
+      if (shouldStreamSpeech && !legacyLfmReasoningRequest) {
         await stopSpeech(issueScope);
       }
       // A registered coding workspace is a user-selected Project. Carry that selection over the

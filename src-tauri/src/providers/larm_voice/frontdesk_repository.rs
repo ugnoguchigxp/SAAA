@@ -22,7 +22,8 @@ pub(crate) fn migrate(c: &Connection) -> rusqlite::Result<()> {
         reasoning_request_id TEXT UNIQUE,
         request_message_id TEXT REFERENCES conversation_messages(id) ON DELETE CASCADE,
         claimed_run_id TEXT,
-        failure_code TEXT
+        failure_code TEXT,
+        reply_key TEXT CHECK(reply_key IN ('greeting','acknowledgement','thinking'))
     );",
     )?;
     let has_reasoning_request: bool = c.query_row(
@@ -39,6 +40,14 @@ pub(crate) fn migrate(c: &Connection) -> rusqlite::Result<()> {
     if has_legacy_handoff {
         c.execute_batch("UPDATE lfm_voice_utterances SET reasoning_request_id=handoff_id WHERE reasoning_request_id IS NULL AND handoff_id IS NOT NULL")?;
     }
+    let has_reply_key: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('lfm_voice_utterances') WHERE name='reply_key')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_reply_key {
+        c.execute_batch("ALTER TABLE lfm_voice_utterances ADD COLUMN reply_key TEXT CHECK(reply_key IN ('greeting','acknowledgement','thinking'))")?;
+    }
     c.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_lfm_voice_reasoning_request ON lfm_voice_utterances(reasoning_request_id)")
 }
 
@@ -48,6 +57,7 @@ pub(crate) enum AcceptOutcome {
     Completed {
         reasoning_request_id: Option<String>,
         request_content: Option<String>,
+        has_reply: bool,
     },
 }
 
@@ -124,11 +134,10 @@ pub(crate) fn accept(
             return Err("lfm-utterance-conflicts-with-original".into());
         }
         if matches!(existing.status.as_str(), "respond" | "delegate") {
-            if existing.reply_message_id.is_none()
-                || (existing.status == "delegate" && existing.request_content.is_none())
-            {
+            if existing.status == "delegate" && existing.request_content.is_none() {
                 return Err("lfm-utterance-completed-state-invalid".into());
             }
+            let has_reply = existing.reply_message_id.is_some();
             let (reasoning_request_id, request_content) = if existing.claimed_run_id.is_some() {
                 (None, None)
             } else {
@@ -137,6 +146,7 @@ pub(crate) fn accept(
             return Ok(AcceptOutcome::Completed {
                 reasoning_request_id,
                 request_content,
+                has_reply,
             });
         }
         tx.execute(
@@ -185,8 +195,11 @@ pub(crate) fn latest_assistant(
     .map_err(database_error)
 }
 
-pub(crate) fn context(c: &Connection, conversation: &str) -> Result<(Vec<Value>, bool), String> {
-    let mut stmt = c.prepare("SELECT role,content FROM (SELECT rowid AS ordinal,role,content FROM conversation_messages WHERE conversation_id=?1 AND role IN ('user','assistant') ORDER BY rowid DESC LIMIT 24) ORDER BY ordinal").map_err(database_error)?;
+pub(crate) fn context(
+    c: &Connection,
+    conversation: &str,
+) -> Result<(Vec<Value>, bool, bool), String> {
+    let mut stmt = c.prepare("SELECT role,content FROM (SELECT rowid AS ordinal,role,content FROM conversation_messages WHERE conversation_id=?1 AND role IN ('user','assistant') ORDER BY rowid DESC LIMIT 6) ORDER BY ordinal").map_err(database_error)?;
     let rows = stmt
         .query_map([conversation], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -198,17 +211,22 @@ pub(crate) fn context(c: &Connection, conversation: &str) -> Result<(Vec<Value>,
         history.push(json!({"role":role,"content":content}));
     }
     let pending = c.query_row("SELECT EXISTS(SELECT 1 FROM lfm_voice_utterances u LEFT JOIN runtime_runs r ON r.id=u.claimed_run_id WHERE u.conversation_id=?1 AND u.status='delegate' AND (u.claimed_run_id IS NULL OR r.status='running'))",[conversation],|r|r.get(0)).map_err(database_error)?;
-    Ok((history, pending))
+    let greeted = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM lfm_voice_utterances WHERE conversation_id=?1 AND reply_key='greeting')",
+        [conversation],
+        |row| row.get(0),
+    ).map_err(database_error)?;
+    Ok((history, pending, greeted))
 }
 
 pub(crate) fn complete(
     c: &Connection,
     utterance: &str,
     decision: &super::frontdesk_decision::ConversationDecision,
-) -> Result<Option<(String, String)>, String> {
+) -> Result<(Option<(String, String)>, bool), String> {
     let tx = c.unchecked_transaction().map_err(database_error)?;
     let conversation: String = tx.query_row("SELECT conversation_id FROM lfm_voice_utterances WHERE utterance_id=?1 AND status='pending'",[utterance],|r|r.get(0)).map_err(database_error)?;
-    let reply_id = new_id("lfm_reply");
+    let reply_id = decision.say.as_ref().map(|_| new_id("lfm_reply"));
     let request_reasoning = decision.think;
     let reasoning_request = request_reasoning.then(|| new_id("lfm_reasoning"));
     let request = if request_reasoning {
@@ -229,14 +247,19 @@ pub(crate) fn complete(
     } else {
         None
     };
-    tx.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES(?1,?2,'assistant',?3,?4)",params![reply_id,conversation,decision.say,now_iso()]).map_err(database_error)?;
-    tx.execute("UPDATE lfm_voice_utterances SET reply_message_id=?2,status=?3,reasoning_request_id=?4,request_message_id=?5 WHERE utterance_id=?1",params![utterance,reply_id,if request_reasoning {"delegate"} else {"respond"},reasoning_request,request.as_ref().map(|r|&r.0)]).map_err(database_error)?;
+    if let (Some(reply_id), Some(say)) = (&reply_id, &decision.say) {
+        tx.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES(?1,?2,'assistant',?3,?4)",params![reply_id,conversation,say,now_iso()]).map_err(database_error)?;
+    }
+    tx.execute("UPDATE lfm_voice_utterances SET reply_message_id=?2,status=?3,reasoning_request_id=?4,request_message_id=?5,reply_key=?6 WHERE utterance_id=?1",params![utterance,reply_id,if request_reasoning {"delegate"} else {"respond"},reasoning_request,request.as_ref().map(|r|&r.0),decision.reply_key]).map_err(database_error)?;
     tx.execute(
         "UPDATE rr_inputs SET disposition=?2 WHERE message_id=(SELECT user_message_id FROM lfm_voice_utterances WHERE utterance_id=?1) AND root_id IS NULL",
         params![utterance, if request_reasoning {"reasoning_requested"} else {"frontend_completed"}],
     ).map_err(database_error)?;
     tx.commit().map_err(database_error)?;
-    Ok(reasoning_request.zip(request.map(|r| r.1)))
+    Ok((
+        reasoning_request.zip(request.map(|r| r.1)),
+        reply_id.is_some(),
+    ))
 }
 
 /// Called inside prepare_runtime_run's transaction. A duplicate cannot launch a second Qwen run.

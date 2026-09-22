@@ -5,6 +5,7 @@ use crate::{
     persistence::audit::{self, FrontendAuditEventInput},
     AppState,
 };
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 // Serialize conversational context, not Qwen reasoning or TTS playback.
@@ -17,6 +18,7 @@ pub(crate) struct LfmUtteranceResult {
     request_content: Option<String>,
     speech_epoch: u64,
     ignored_as_self_speech: bool,
+    has_reply: bool,
 }
 
 fn record(
@@ -82,6 +84,29 @@ pub(crate) async fn receive_lfm_utterance(
     let ready = super::current(&conversation_id)
         .await
         .map_err(|_| "lfm-session-not-ready")?;
+    let speech_epoch = speech_priority::epoch(&conversation_id);
+    let previous_assistant = state
+        .sqlite_readers
+        .read(|connection| repository::latest_assistant(connection, &conversation_id))?;
+    if previous_assistant
+        .as_deref()
+        .is_some_and(|spoken| super::frontdesk_echo::is_self_speech_echo(text.trim(), spoken))
+    {
+        record(
+            &state,
+            &conversation_id,
+            &utterance_id,
+            "lfm-self-speech-ignored",
+            None,
+        );
+        return Ok(LfmUtteranceResult {
+            reasoning_request_id: None,
+            request_content: None,
+            speech_epoch,
+            ignored_as_self_speech: true,
+            has_reply: false,
+        });
+    }
     let accepted = match state
         .sqlite_writer
         .write(|c| repository::accept(c, &conversation_id, &utterance_id, text.trim()))
@@ -103,32 +128,11 @@ pub(crate) async fn receive_lfm_utterance(
             return Err(safe);
         }
     };
-    let speech_epoch = speech_priority::epoch(&conversation_id);
-    let previous_assistant = state
-        .sqlite_readers
-        .read(|connection| repository::latest_assistant(connection, &conversation_id))?;
-    if previous_assistant
-        .as_deref()
-        .is_some_and(|spoken| super::frontdesk_echo::is_self_speech_echo(text.trim(), spoken))
-    {
-        record(
-            &state,
-            &conversation_id,
-            &utterance_id,
-            "lfm-self-speech-ignored",
-            None,
-        );
-        return Ok(LfmUtteranceResult {
-            reasoning_request_id: None,
-            request_content: None,
-            speech_epoch,
-            ignored_as_self_speech: true,
-        });
-    }
     let _ = on_received.send(());
     if let repository::AcceptOutcome::Completed {
         reasoning_request_id,
         request_content,
+        has_reply,
     } = accepted
     {
         record(
@@ -143,6 +147,7 @@ pub(crate) async fn receive_lfm_utterance(
             request_content,
             speech_epoch,
             ignored_as_self_speech: false,
+            has_reply,
         });
     }
     record(
@@ -158,7 +163,7 @@ pub(crate) async fn receive_lfm_utterance(
             .frontend_timeout_ms)
     })?;
     let result = async {
-        let (history, pending) = state
+        let (history, pending, already_greeted) = state
             .sqlite_readers
             .read(|c| repository::context(c, &conversation_id))?;
         record(
@@ -170,7 +175,7 @@ pub(crate) async fn receive_lfm_utterance(
         );
         let decision = tokio::time::timeout(
             std::time::Duration::from_millis(frontend_timeout_ms),
-            frontdesk_decision::decide(&ready, history, pending),
+            frontdesk_decision::decide(&ready, history, pending, already_greeted),
         )
         .await
         .map_err(|_| "lfm-response-timeout")?
@@ -184,7 +189,7 @@ pub(crate) async fn receive_lfm_utterance(
                 Some(code),
             );
         }
-        if decision.plain_text_fallback {
+        if decision.structured_output_fallback {
             record(
                 &state,
                 &conversation_id,
@@ -200,7 +205,7 @@ pub(crate) async fn receive_lfm_utterance(
         if !std::sync::Arc::ptr_eq(&ready, &current) {
             return Err("lfm-session-changed".into());
         }
-        let reasoning_request = state
+        let (reasoning_request, has_reply) = state
             .sqlite_writer
             .write(|c| repository::complete(c, &utterance_id, &decision))?;
         record(
@@ -209,8 +214,10 @@ pub(crate) async fn receive_lfm_utterance(
             &utterance_id,
             if reasoning_request.is_some() {
                 "lfm-requested-qwen-reasoning"
-            } else {
+            } else if has_reply {
                 "lfm-replied-without-reasoning-request"
+            } else {
+                "lfm-silent-without-reasoning-request"
             },
             None,
         );
@@ -222,6 +229,7 @@ pub(crate) async fn receive_lfm_utterance(
             request_content,
             speech_epoch,
             ignored_as_self_speech: false,
+            has_reply,
         })
     }
     .await;
@@ -261,7 +269,10 @@ pub(crate) async fn speak_lfm_reply(
     super::current(&conversation_id)
         .await
         .map_err(|_| "lfm-session-not-ready")?;
-    let text: String = state.sqlite_readers.read(|c|c.query_row("SELECT m.content FROM lfm_voice_utterances u JOIN conversation_messages m ON m.id=u.reply_message_id WHERE u.utterance_id=?1 AND u.conversation_id=?2",rusqlite::params![utterance_id,conversation_id],|r|r.get(0)).map_err(crate::database_error))?;
+    let text: Option<String> = state.sqlite_readers.read(|c|c.query_row("SELECT m.content FROM lfm_voice_utterances u JOIN conversation_messages m ON m.id=u.reply_message_id WHERE u.utterance_id=?1 AND u.conversation_id=?2",rusqlite::params![utterance_id,conversation_id],|r|r.get(0)).optional().map_err(crate::database_error))?;
+    let Some(text) = text else {
+        return Ok(());
+    };
     let run = crate::new_id("lfm_speech");
     state
         .streaming_tts

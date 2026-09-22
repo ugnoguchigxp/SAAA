@@ -21,6 +21,7 @@ pub async fn check_frontdesk(base: &str) -> Result<String, String> {
     let result = async {
         let ready = crate::larm_voice::Ready {session:session.clone()};
         let mut history = Vec::new();
+        let mut already_greeted = false;
         for (text, expected_think) in [
             ("こんにちは。", false),
             ("旅行の予定を考えているんだけど。", false),
@@ -28,10 +29,11 @@ pub async fn check_frontdesk(base: &str) -> Result<String, String> {
         ] {
             history.push(serde_json::json!({"role":"user","content":text}));
             let started = std::time::Instant::now();
-            let decision = crate::larm_voice::frontdesk_decision::decide(&ready,history.clone(),false).await.map_err(str::to_string)?;
-            eprintln!("stage=lfm-response; think={}; elapsed_ms={}; say={}",decision.think,started.elapsed().as_millis(),decision.say);
+            let decision = crate::larm_voice::frontdesk_decision::decide(&ready,history.clone(),false,already_greeted).await.map_err(str::to_string)?;
+            eprintln!("stage=lfm-response; think={}; elapsed_ms={}; say={:?}",decision.think,started.elapsed().as_millis(),decision.say);
             if decision.think != expected_think {return Err("lfm-live-reasoning-request-mismatch".into());}
-            history.push(serde_json::json!({"role":"assistant","content":decision.say}));
+            if decision.reply_key == Some("greeting") { already_greeted = true; }
+            if let Some(say) = decision.say { history.push(serde_json::json!({"role":"assistant","content":say})); }
         }
         let qwen = async {
             let lease = session.acquire("llm").await.map_err(str::to_string)?;
@@ -64,7 +66,7 @@ pub async fn check_frontdesk(base: &str) -> Result<String, String> {
         let follow_up = async {
             history.push(serde_json::json!({"role":"user","content":"はい、お願いします。"}));
             let started=std::time::Instant::now();
-            let decision=crate::larm_voice::frontdesk_decision::decide(&ready,history,true).await.map_err(str::to_string)?;
+            let decision=crate::larm_voice::frontdesk_decision::decide(&ready,history,true,already_greeted).await.map_err(str::to_string)?;
             eprintln!("stage=lfm-while-qwen-pending; think={}; elapsed_ms={}",decision.think,started.elapsed().as_millis());
             if decision.think {return Err("lfm-duplicated-pending-request".into());}
             Ok::<_,String>(())

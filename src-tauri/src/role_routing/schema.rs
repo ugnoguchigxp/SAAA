@@ -1,5 +1,6 @@
 //! Additive SQLite ledger for role-routing. It contains no execution side effects.
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::Value;
 
 pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS rr_policy_versions (id TEXT PRIMARY KEY, version INTEGER NOT NULL UNIQUE, config_json TEXT NOT NULL CHECK(json_valid(config_json)), digest TEXT NOT NULL, created_at_ms INTEGER NOT NULL);
@@ -26,6 +27,76 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_rr_speech_one_playing ON rr_speech((1)) WHERE status='playing';")?;
     ensure_rr_input_generation(connection)?;
     ensure_rr_proposal_consumed(connection)?;
+    Ok(())
+}
+
+/// Existing installations used the dynamic harness for both the conversational frontend and the
+/// reasoner. LFM is now bypassed, so move only that shipped reasoner binding to an explicitly
+/// configured direct Qwen provider. Custom actor assignments and databases without the direct
+/// provider are left untouched.
+pub(crate) fn migrate_v33_to_v34_direct_qwen_reasoner(
+    connection: &Connection,
+    previous_version: i64,
+) -> rusqlite::Result<()> {
+    if previous_version >= 34 {
+        return Ok(());
+    }
+    let documents: Option<(String, String)> = connection
+        .query_row(
+            "SELECT providers.value_json, roles.value_json
+             FROM settings_documents providers
+             JOIN settings_documents roles
+               ON roles.namespace='routing.roles' AND roles.key='default'
+             WHERE providers.namespace='providers.model' AND providers.key='default'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((providers_json, roles_json)) = documents else {
+        return Ok(());
+    };
+    let providers: Value = match serde_json::from_str(&providers_json) {
+        Ok(value) => value,
+        Err(_) => return Ok(()),
+    };
+    let direct_model = providers["providers"]
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|provider| {
+                provider["id"] == crate::QWEN_DIRECT_PROVIDER_ID
+                    && provider["kind"] == "openai-compatible"
+                    && provider["enabled"] == true
+            })
+        })
+        .and_then(|provider| provider["model"].as_str());
+    let Some(direct_model) = direct_model else {
+        return Ok(());
+    };
+    let mut roles: Value = match serde_json::from_str(&roles_json) {
+        Ok(value) => value,
+        Err(_) => return Ok(()),
+    };
+    let Some(reasoner_id) = roles["roles"]["reasoner"].as_str().map(str::to_string) else {
+        return Ok(());
+    };
+    let Some(reasoner) = roles["actors"].as_array_mut().and_then(|actors| {
+        actors.iter_mut().find(|actor| {
+            actor["id"] == reasoner_id
+                && actor["transport"] == "provider"
+                && actor["providerId"] == crate::DYNAMIC_LAN_PROVIDER_ID
+        })
+    }) else {
+        return Ok(());
+    };
+    reasoner["providerId"] = Value::String(crate::QWEN_DIRECT_PROVIDER_ID.into());
+    reasoner["model"] = Value::String(direct_model.into());
+    reasoner["label"] = Value::String("Qwen3.8 27B (direct)".into());
+    connection.execute(
+        "UPDATE settings_documents
+         SET value_json=?1, updated_at=?2
+         WHERE namespace='routing.roles' AND key='default'",
+        params![roles.to_string(), crate::now_iso()],
+    )?;
     Ok(())
 }
 

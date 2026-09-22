@@ -81,9 +81,9 @@ describe("target-speaker voice profile", () => {
     expect(app).toContain("await commit");
     expect(app).toContain("new VoiceAsrPacketSender");
     expect(app).toContain("voiceFinalDeliveryRef.current.push");
-    expect(app).toContain("lfmInputQueueRef.current = lfmInputQueueRef.current.then");
-    expect(app).toContain("pendingLfmInputsRef.current > 0");
-    expect(app).toContain("receiveLfmUtterance");
+    expect(app).toContain("void submitPrompt(queued.text");
+    expect(app).toContain("pendingVoiceDeliveriesRef.current > 0");
+    expect(app).not.toContain("receiveLfmUtterance");
     expect(app).toContain("suspendVoiceForSpeech");
     expect(app).toContain("voiceAsrPacketizerRef.current.flushPadded()");
   });

@@ -39,6 +39,7 @@ export function projectLfmConversation(
   const decision = lfmEvents.find((e) =>
     [
       "lfm-replied-without-reasoning-request",
+      "lfm-silent-without-reasoning-request",
       "lfm-requested-qwen-reasoning",
       "lfm-replied-without-delegation",
       "lfm-delegated-to-qwen",

@@ -17,8 +17,8 @@ const failureHintKeys: Partial<Record<string, string>> = {
 
 const lfmDiagnosis: Record<string, string> = {
   "lfm-failed": "LFMの会話応対が失敗しました。LFMカードの具体的な失敗コードを確認してください。",
-  "lfm-running": "LFMが発言を受け取り、応対と思考依頼の要否を判断しています。",
-  "lfm-responded": "LFMが応対しました。この発言はQwenへの思考依頼を必要としません。",
+  "lfm-running": "LFMが発言を受け取り、定型応答と思考依頼の要否を判断しています。",
+  "lfm-responded": "LFMが受付を完了しました。この発言はQwenへの思考依頼を必要としません。",
   "lfm-reasoning-requested":
     "LFMがQwenへ思考を依頼しました。追加の発言は引き続きLFMが受け取ります。",
 };

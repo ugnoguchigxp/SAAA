@@ -1,22 +1,14 @@
 import type { AmbientVoiceSessionOptions } from "./ambientVoiceTypes";
-import {
-  effectiveCaptureSettings,
-  voiceStartupMessage,
-} from "./voiceCaptureSettings";
+import { effectiveCaptureSettings, voiceStartupMessage } from "./voiceCaptureSettings";
 import { idleCaptureShouldStart } from "./idleVoiceCapture";
 export { effectiveCaptureSettings } from "./voiceCaptureSettings";
 import { VoiceCaptureResources } from "./VoiceCaptureResources";
 import { useCommittedCallback } from "../../useCommittedCallback";
 import { useLarmVoiceLifetime } from "./useLarmVoiceLifetime";
-import { receiveLfmUtterance, speakLfmReply } from "../../lib/lfmConversationRuntime";
 import { useEffect, useRef, useState } from "react";
 import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
-import type {
-  ConversationVoicePolicySnapshot,
-  RuntimeEvent,
-  VoiceSettings,
-} from "../../lib/contracts";
+import type { ConversationVoicePolicySnapshot, VoiceSettings } from "../../lib/contracts";
 
 import {
   appendVoiceAsrAudio,
@@ -55,10 +47,9 @@ import {
 } from "./voiceAudit";
 
 const ASR_SAMPLE_RATE = 16_000;
-const LFM_PLAYBACK_TAIL_MS = 1_000;
 export type { VoiceCaptureState } from "../../lib/voiceSession";
 export type AmbientVoiceAvailability = VoiceCaptureState;
-type SuspensionReason = "speech" | "lfm-playback";
+type SuspensionReason = "speech";
 
 export function useAmbientVoiceSession({
   selectedConversationId,
@@ -72,8 +63,7 @@ export function useAmbientVoiceSession({
   persistListeningEnabled,
 }: AmbientVoiceSessionOptions) {
   const [voiceSession, setVoiceSession] = useState(initialVoiceSession);
-  const lfmInputQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const pendingLfmInputsRef = useRef(0);
+  const pendingVoiceDeliveriesRef = useRef(0);
   const [listeningEnabled, setListeningEnabled] = useState(false);
   const updateLarmLifetime = useLarmVoiceLifetime(
     listeningEnabled,
@@ -83,7 +73,7 @@ export function useAmbientVoiceSession({
       acceptedVoiceAsrSessionsRef.current.size > 0 ||
       !!conversationSessionRef.current.runId ||
       pendingVoicePromptsRef.current.length > 0 ||
-      pendingLfmInputsRef.current > 0,
+      pendingVoiceDeliveriesRef.current > 0,
     (message) => setError((current) => current ?? message),
   );
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -97,9 +87,6 @@ export function useAmbientVoiceSession({
   const voiceToggleGenerationRef = useRef(0);
   const suspensionReasonRef = useRef<SuspensionReason | null>(null);
   const speechResumeTokenRef = useRef<string | null>(null);
-  const lfmPlaybackGenerationRef = useRef(0);
-  const lfmPlaybackActiveRef = useRef(false);
-  const lfmPlaybackTimerRef = useRef<number | null>(null);
   const [resources] = useState(() => new VoiceCaptureResources());
   const {
     voiceStreamRef,
@@ -197,7 +184,6 @@ export function useAmbientVoiceSession({
 
     return () => {
       disposedRef.current = true;
-      if (lfmPlaybackTimerRef.current !== null) window.clearTimeout(lfmPlaybackTimerRef.current);
       resources.dispose();
       pendingVoicePromptsRef.current = [];
     };
@@ -258,10 +244,7 @@ export function useAmbientVoiceSession({
 
   async function toggleAmbientListening(requestedEnabled?: boolean) {
     const generation = ++voiceToggleGenerationRef.current;
-    const currentUiState = voiceCaptureState(
-      voiceSessionRef.current,
-      listeningEnabledRef.current,
-    );
+    const currentUiState = voiceCaptureState(voiceSessionRef.current, listeningEnabledRef.current);
     const shouldEnable = requestedEnabled ?? currentUiState === "stopped";
     if (!shouldEnable) {
       // Stopping is always accepted. Keep the UI in preparing until owned
@@ -505,43 +488,6 @@ export function useAmbientVoiceSession({
     return true;
   }
 
-  function handleLfmSpeechEvent(event: RuntimeEvent) {
-    if (event.type === "speechFailed") setError(`LFM 音声: ${event.message}`);
-    if (event.type === "speechStarted") {
-      beginLfmPlaybackHold();
-      return;
-    }
-    if (event.type === "speechEnded" || event.type === "speechFailed") endLfmPlaybackHold();
-  }
-
-  function beginLfmPlaybackHold() {
-    lfmPlaybackGenerationRef.current += 1;
-    lfmPlaybackActiveRef.current = true;
-    if (lfmPlaybackTimerRef.current !== null) {
-      window.clearTimeout(lfmPlaybackTimerRef.current);
-      lfmPlaybackTimerRef.current = null;
-    }
-    void (async () => {
-      if (suspensionReasonRef.current === "speech") return;
-      await suspendVoice("lfm-playback");
-      if (!lfmPlaybackActiveRef.current && suspensionReasonRef.current === "lfm-playback") {
-        await resumeVoice("lfm-playback");
-      }
-    })();
-  }
-
-  function endLfmPlaybackHold() {
-    const generation = lfmPlaybackGenerationRef.current;
-    if (lfmPlaybackTimerRef.current !== null) window.clearTimeout(lfmPlaybackTimerRef.current);
-    lfmPlaybackTimerRef.current = window.setTimeout(() => {
-      lfmPlaybackTimerRef.current = null;
-      if (generation !== lfmPlaybackGenerationRef.current) return;
-      lfmPlaybackActiveRef.current = false;
-      if (suspensionReasonRef.current !== "lfm-playback") return;
-      void resumeVoice("lfm-playback");
-    }, LFM_PLAYBACK_TAIL_MS);
-  }
-
   async function suspendVoiceForSpeech(speechRunId: string): Promise<boolean> {
     speechResumeTokenRef.current = speechRunId;
     return suspendVoice("speech");
@@ -684,38 +630,21 @@ export function useAmbientVoiceSession({
       voiceFinalDeliveryRef.current.settle(queued.utteranceId, delivered),
     );
     auditVoiceDeliveryDecision(queued, "immediate");
-    pendingLfmInputsRef.current += 1;
-    // Serialize LFM inputs only. Never wait for or cancel Qwen to accept the next utterance.
-    lfmInputQueueRef.current = lfmInputQueueRef.current.then(async () => {
-      if (disposedRef.current || selectedConversationIdRef.current !== conversationId) {
+    pendingVoiceDeliveriesRef.current += 1;
+    // LFM is intentionally bypassed: every finalized utterance enters the same Qwen turn path
+    // as typed input. The conversation turn owner queues voice inputs while another run is active.
+    void submitPrompt(queued.text, {
+      inputOrigin: "voice",
+      sourceId: queued.utteranceId,
+      onSettled,
+    })
+      .catch((cause) => {
         onSettled(false);
-        pendingLfmInputsRef.current -= 1;
-        return;
-      }
-      try {
-        const decision = await receiveLfmUtterance(conversationId, queued.utteranceId, queued.text);
-        onSettled(true);
-        if (decision.ignoredAsSelfSpeech) {
-          setInterimTranscript("");
-          return;
-        }
-        if (disposedRef.current || selectedConversationIdRef.current !== conversationId) return;
-        void speakLfmReply(conversationId, queued.utteranceId, decision.speechEpoch, (event) =>
-          handleLfmSpeechEvent(event),
-        ).catch((cause) => setError(`LFM 音声: ${toMessage(cause)}`));
-        if (decision.reasoningRequestId && decision.requestContent) {
-          void submitPrompt(decision.requestContent, {
-            inputOrigin: "voice",
-            sourceId: decision.reasoningRequestId,
-          });
-        }
-      } catch (cause) {
-        onSettled(false);
-        setError(`LFM 応対失敗: ${toMessage(cause)}`);
-      } finally {
-        pendingLfmInputsRef.current -= 1;
-      }
-    });
+        setError(`音声入力送信失敗: ${toMessage(cause)}`);
+      })
+      .finally(() => {
+        pendingVoiceDeliveriesRef.current -= 1;
+      });
   }
 
   async function terminateFailedVoiceCapture() {
