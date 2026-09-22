@@ -7,11 +7,11 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub(crate) fn spawn(state: &AppState) -> tokio::task::JoinHandle<()> {
+pub(crate) fn spawn(state: &AppState) -> tauri::async_runtime::JoinHandle<()> {
     let reachability = Arc::clone(&state.reachability);
     let kick = Arc::clone(&state.reachability_kick);
     let readers = state.sqlite_readers.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut interfaces = interface_fingerprint();
         let mut probe_interval = tokio::time::interval(Duration::from_secs(PROBE_INTERVAL_SECS));
         let mut interface_interval = tokio::time::interval(Duration::from_secs(3));
