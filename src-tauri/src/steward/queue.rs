@@ -19,7 +19,7 @@ pub(crate) fn next_eligible(
            AND g.status='active' AND g.superseded_by IS NULL
            AND d.status='active' AND d.superseded_by IS NULL
            AND (i.next_eligible_at IS NULL OR i.next_eligible_at<=?2)
-         ORDER BY t.rowid LIMIT 1"
+         ORDER BY t.queue_rank, t.rowid LIMIT 1"
     } else {
         "SELECT g.id,g.status,d.id,d.workspace_id,d.budget_runs,d.budget_ms,0,d.ops,g.verifier,t.id,t.conversation_id
          FROM steward_tasks t
@@ -30,7 +30,7 @@ pub(crate) fn next_eligible(
            AND g.status='active' AND g.superseded_by IS NULL
            AND d.status='active' AND d.superseded_by IS NULL
            AND (i.next_eligible_at IS NULL OR i.next_eligible_at<=?1)
-         ORDER BY t.rowid LIMIT 1"
+         ORDER BY t.queue_rank, t.rowid LIMIT 1"
     };
     let row = if let Some(conversation_id) = conversation_id {
         connection
@@ -127,8 +127,18 @@ pub(crate) fn request_for_task(
     connection: &Connection,
     work: &ActiveWork,
     task_id: &str,
-) -> Result<&'static str, String> {
-    Ok(match recipe_for_task(connection, work, task_id)? {
+) -> Result<String, String> {
+    let recipe = recipe_for_task(connection, work, task_id)?;
+    let summary: String = connection
+        .query_row(
+            "SELECT summary FROM steward_goals WHERE id=?1",
+            [&work.goal_id],
+            |row| row.get(0),
+        )
+        .map_err(database_error)?;
+    let step = super::repository::task_step_recipe(connection, task_id)?
+        .unwrap_or_else(|| recipe.to_string());
+    let constraint = match recipe {
         "read" => {
             "Inspect the existing failure evidence in this workspace and report causes. Do not run tests or change files."
         }
@@ -138,7 +148,8 @@ pub(crate) fn request_for_task(
         _ => {
             "Inspect failing tests in this workspace. Read logs, run the relevant existing tests, and report causes. Do not change files."
         }
-    })
+    };
+    Ok(format!("Goal: {summary}\nRecipe: {step}\n{constraint}"))
 }
 
 fn now_ms() -> i64 {

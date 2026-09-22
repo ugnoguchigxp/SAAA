@@ -48,6 +48,14 @@ export const uiEnglish = {
   revision: "Revision",
   diff: "Changes",
   diagramFailed: "Could not render diagram",
+  previewRegion: "Interactive preview: {{title}}",
+  previewLoading: "Preparing the interactive preview…",
+  previewUnavailable: "This preview is not available.",
+  previewFailed: "The preview could not be shown.",
+  previewFocusHint: "Press Escape to close the artifact panel. The preview is isolated from the app.",
+  previewReady: "Interactive preview of {{title}} is visible.",
+  previewSafeError: "The preview could not be opened. Retry without exposing file contents.",
+  openInteractivePreview: "Open interactive HTML preview",
 };
 export const uiJapanese: typeof uiEnglish = {
   compatibility:
@@ -99,4 +107,12 @@ export const uiJapanese: typeof uiEnglish = {
   revision: "改訂",
   diff: "差分",
   diagramFailed: "図として描けませんでした",
+  previewRegion: "対話プレビュー: {{title}}",
+  previewLoading: "対話プレビューを準備しています…",
+  previewUnavailable: "このプレビューは利用できません。",
+  previewFailed: "プレビューを表示できませんでした。",
+  previewFocusHint: "Escape でパネルを閉じます。プレビューはアプリ本体から隔離されています。",
+  previewReady: "{{title}} の対話プレビューを表示しています。",
+  previewSafeError: "プレビューを開けませんでした。本文は表示せず再試行できます。",
+  openInteractivePreview: "対話HTMLプレビューを開く",
 };

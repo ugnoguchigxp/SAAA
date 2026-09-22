@@ -156,7 +156,9 @@ fn credential(
         return Ok(None);
     }
     crate::credentials::load_api_key(&provider.id)?
-        .ok_or_else(|| "API key is not configured in macOS Keychain".to_string())
+        .ok_or_else(|| {
+            "API key is not configured in the operating system credential store".to_string()
+        })
         .map(Some)
 }
 

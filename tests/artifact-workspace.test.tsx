@@ -1,9 +1,23 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 import type { UiInstance } from "../src/lib/generated/generativeUi";
+import { INTERACTIVE_HTML_FIXTURE } from "../src/features/chat/artifacts/artifactPreviewApi";
 import { installJsdom } from "./jsdomGlobals";
 import { invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
+
+await import("./tauriCoreMock");
+mock.module("../src/features/chat/artifacts/artifactWebviewHost.ts", () => ({
+  attachPreviewWebview: async (label: string) => ({
+    label,
+    setPosition: async () => undefined,
+    setSize: async () => undefined,
+    show: async () => undefined,
+    hide: async () => undefined,
+    close: async () => undefined,
+  }),
+  closePreviewWebview: async () => undefined,
+}));
 
 await import("../src/i18n");
 await import("../src/features/chat/artifacts/ArtifactPanel");
@@ -31,6 +45,20 @@ const instance: UiInstance = {
   name: null,
   publishedRevision: null,
 };
+
+function OpenPreview() {
+  const workspace = useArtifactWorkspace();
+  return createElement("button", {
+    type: "button",
+    className: "open-preview",
+    onClick: () =>
+      workspace?.openInteractivePreview({
+        artifactId: INTERACTIVE_HTML_FIXTURE.artifactId,
+        revisionId: INTERACTIVE_HTML_FIXTURE.revisionId,
+        title: "Interactive HTML",
+      }),
+  }, "open preview");
+}
 
 function OpenArtifact() {
   const workspace = useArtifactWorkspace();
@@ -82,6 +110,19 @@ describe("artifact workspace", () => {
       if (command === "get_ui_instance") return instance;
       if (command === "list_ui_view_revisions") {
         return [{ revision: 1, summary: "Article", createdAt: "1" }];
+      }
+      if (command === "prepare_artifact_preview") {
+        return {
+          artifactId: INTERACTIVE_HTML_FIXTURE.artifactId,
+          revisionId: INTERACTIVE_HTML_FIXTURE.revisionId,
+          title: "Interactive HTML",
+          mediaType: "text/html",
+          digest: "abc",
+          previewToken: "a".repeat(64),
+          expiresAt: "2026-01-01T00:00:00.000Z",
+          webviewLabel: "artifact-preview-test",
+          policy: { network: "none", navigation: "preview-only", popup: "deny", download: "deny", tauriIpc: "deny" },
+        };
       }
       return undefined;
     };
@@ -201,5 +242,28 @@ describe("artifact workspace", () => {
     expect(document.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby")).toBe(
       tabButtons[6].id,
     );
+  });
+
+  test("switches between a semantic tab and an interactive preview tab", async () => {
+    restore = installJsdom().restore;
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(
+        createElement(ArtifactWorkspaceProvider, null, createElement("div", null, createElement(OpenArtifact), createElement(OpenPreview))),
+      ),
+    );
+    const click = (selector: string) =>
+      document.querySelector<HTMLButtonElement>(selector)!.dispatchEvent(new Event("click", { bubbles: true }));
+    await act(async () => click("button"));
+    expect(document.querySelector(".artifact-tabs")?.textContent).toContain("Article");
+    await act(async () => click(".open-preview"));
+    for (let step = 0; step < 8; step += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs).toHaveLength(2);
+    expect(tabs[1].getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector(".artifact-webview-host")).not.toBeNull();
+    await act(async () => tabs[0].dispatchEvent(new Event("click", { bubbles: true })));
+    expect(document.querySelector(".artifact-webview-host")).toBeNull();
   });
 });

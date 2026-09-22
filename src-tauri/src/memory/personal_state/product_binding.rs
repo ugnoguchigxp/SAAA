@@ -1,4 +1,4 @@
-//! The local owner is never sent to LARM. Its authenticated subject pin lives in Keychain.
+//! The local owner is never sent to LARM. Its authenticated subject pin lives in the OS credential store.
 use super::{contract::Certification, managed::Adapter};
 use crate::{database_error, persistence::sqlite::SqliteWriter};
 use saaa_larm_session::{contexts::Client, personal_state::Capability, Session};

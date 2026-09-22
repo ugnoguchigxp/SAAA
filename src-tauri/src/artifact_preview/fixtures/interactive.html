@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Interactive HTML fixture</title>
+  </head>
+  <body>
+    <p id="status">fixture-ready</p>
+    <button id="count" type="button">0</button>
+    <script>
+      const button = document.getElementById("count");
+      button.addEventListener("click", function () {
+        button.textContent = String(Number(button.textContent) + 1);
+      });
+    </script>
+  </body>
+</html>

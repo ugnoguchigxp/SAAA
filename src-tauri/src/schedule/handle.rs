@@ -2,6 +2,13 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
 };
+use std::time::{Duration, Instant};
+use zeroize::Zeroizing;
+
+struct AccessToken {
+    value: Zeroizing<String>,
+    expires_at: Instant,
+}
 
 #[derive(Default)]
 pub(crate) struct Handle {
@@ -10,8 +17,8 @@ pub(crate) struct Handle {
     actions: Mutex<Vec<String>>,
     api_calls: Mutex<Vec<String>>,
     http_base: Mutex<Option<String>>,
-    access: Mutex<Option<String>>,
-    refresh: Mutex<Option<String>>,
+    access: Mutex<Option<AccessToken>>,
+    refresh: Mutex<Option<Zeroizing<String>>>,
 }
 
 impl Handle {
@@ -62,19 +69,44 @@ impl Handle {
             .unwrap_or_else(|| "https://www.googleapis.com/calendar/v3".into())
     }
     pub(crate) fn set_access(&self, token: &str) {
+        self.set_access_with_ttl(token, Duration::from_secs(3_600));
+    }
+    pub(crate) fn set_access_with_ttl(&self, token: &str, ttl: Duration) {
         if let Ok(mut slot) = self.access.lock() {
-            *slot = (!token.is_empty()).then(|| token.to_string());
+            *slot = (!token.is_empty()).then(|| AccessToken {
+                value: Zeroizing::new(token.to_string()),
+                expires_at: Instant::now() + ttl,
+            });
         }
     }
     pub(crate) fn access(&self) -> Option<String> {
-        self.access.lock().ok().and_then(|value| value.clone())
+        let mut slot = self.access.lock().ok()?;
+        if slot
+            .as_ref()
+            .is_some_and(|access| access.expires_at <= Instant::now())
+        {
+            *slot = None;
+        }
+        slot.as_ref().map(|access| (*access.value).clone())
     }
     pub(crate) fn set_refresh(&self, token: &str) {
         if let Ok(mut slot) = self.refresh.lock() {
-            *slot = (!token.is_empty()).then(|| token.to_string());
+            *slot = (!token.is_empty()).then(|| Zeroizing::new(token.to_string()));
         }
     }
-    pub(crate) fn refresh(&self) -> Option<String> {
+    pub(crate) fn refresh(&self) -> Option<Zeroizing<String>> {
         self.refresh.lock().ok().and_then(|value| value.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expired_access_tokens_are_removed_before_use() {
+        let handle = Handle::default();
+        handle.set_access_with_ttl("expired", Duration::ZERO);
+        assert!(handle.access().is_none());
     }
 }

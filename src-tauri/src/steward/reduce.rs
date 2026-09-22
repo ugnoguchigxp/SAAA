@@ -13,7 +13,7 @@ pub(crate) fn on_user_message(state: &AppState, input: &StartTurnInput) {
 fn reduce_message(state: &AppState, input: &StartTurnInput) -> Result<(), String> {
     state
         .sqlite_writer
-        .write(|connection| super::report::publish(state, connection, &input.conversation_id))?;
+        .transact(|connection| super::report::publish(state, connection, &input.conversation_id))?;
     let text = input.content.trim();
     let (start, cont) = repo::triggers();
     if text == start {
@@ -41,7 +41,7 @@ fn queue(state: &AppState, input: &StartTurnInput, kind: &str) -> Result<(), Str
 }
 
 fn continue_task(state: &AppState, input: &StartTurnInput) -> Result<(), String> {
-    let withdrawn = state.sqlite_writer.write(|connection| {
+    let withdrawn = state.sqlite_writer.transact(|connection| {
         let Some(work) = repo::latest_work(connection, &input.conversation_id)? else {
             return Ok(false);
         };
@@ -130,7 +130,7 @@ fn inspect_jobs(state: &AppState, conversation_id: &str) -> Result<(), String> {
     }
     state
         .sqlite_writer
-        .write(|connection| super::report::publish(state, connection, conversation_id))
+        .transact(|connection| super::report::publish(state, connection, conversation_id))
 }
 
 #[cfg(test)]

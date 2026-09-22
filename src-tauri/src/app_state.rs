@@ -24,6 +24,7 @@ pub(super) struct AppState {
     pub(super) mcp_server: Mutex<Option<tool_selection::mcp_server::ServerHandle>>,
     pub(super) schedule: std::sync::Arc<crate::schedule::Handle>,
     pub(super) steward_wake: crate::steward::pump::Wake,
+    pub(super) artifact_preview: crate::artifact_preview::PreviewRuntime,
 }
 
 #[derive(Clone)]
@@ -80,7 +81,7 @@ impl RunCancellation {
         action()
     }
 
-    pub(super) async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         let notified = self.inner.notify.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();

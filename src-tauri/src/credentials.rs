@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use zeroize::{Zeroize, Zeroizing};
 
-const KEYCHAIN_SERVICE: &str = "com.saaa.provider-api-key";
-const KEYCHAIN_NOT_FOUND: i32 = -25_300;
+pub(crate) const PROVIDER_CREDENTIAL_SERVICE: &str = "com.saaa.provider-api-key";
+const MAX_CREDENTIAL_BYTES: usize = 2_560;
+static CREDENTIAL_STORE: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -32,14 +34,14 @@ fn validate_provider_id(provider_id: &str) -> Result<(), String> {
 
 fn validate_api_key(api_key: &str) -> Result<(), String> {
     if api_key.is_empty()
-        || api_key.len() > 4_096
+        || api_key.len() > MAX_CREDENTIAL_BYTES
         || api_key.trim() != api_key
         || !api_key
             .bytes()
             .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'\r' | b'\n'))
     {
         return Err(
-            "API key must contain 1–4096 visible ASCII characters without surrounding whitespace"
+            "API key must contain 1–2560 visible ASCII characters without surrounding whitespace"
                 .to_string(),
         );
     }
@@ -61,7 +63,11 @@ pub(crate) fn set_api_key(
     if !provider_accepts_api_key(&providers, &provider_id) {
         return Err("API keys can be stored only for a saved API-key provider".to_string());
     }
-    set_keychain_value(&provider_id, api_key.as_bytes())?;
+    store_named_secret(
+        PROVIDER_CREDENTIAL_SERVICE,
+        &provider_id,
+        api_key.as_bytes(),
+    )?;
     Ok(ProviderCredentialState {
         provider_id,
         state: "configured",
@@ -88,7 +94,7 @@ fn provider_accepts_api_key(providers: &crate::ModelProvidersSettings, provider_
 
 pub(crate) fn delete_api_key(provider_id: String) -> Result<ProviderCredentialState, String> {
     validate_provider_id(&provider_id)?;
-    delete_keychain_value(&provider_id)?;
+    delete_named_secret(PROVIDER_CREDENTIAL_SERVICE, &provider_id)?;
     Ok(ProviderCredentialState {
         provider_id,
         state: "missing",
@@ -106,59 +112,73 @@ pub(crate) fn credential_state(provider_id: String) -> Result<ProviderCredential
 }
 
 #[allow(dead_code)] // Platform credential write API is not exercised on every test target.
-pub(crate) fn store_named_secret(account: &str, value: &[u8]) -> Result<(), String> {
-    validate_provider_id(account)?;
-    set_keychain_value(account, value)
+pub(crate) fn store_named_secret(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+    validate_named_secret(service, account, value)?;
+    with_entry(service, account, |entry| {
+        entry.set_secret(value).map_err(|_| {
+            "Could not store the credential in the operating system credential store".into()
+        })
+    })
 }
 
-#[cfg(target_os = "macos")]
-fn set_keychain_value(provider_id: &str, value: &[u8]) -> Result<(), String> {
-    security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, provider_id, value)
-        .map_err(|_| "Could not store the API key in macOS Keychain".to_string())
+fn validate_named_secret(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+    if service.is_empty() || account.is_empty() {
+        return Err("Credential service and account must not be empty".into());
+    }
+    if value.is_empty() || value.len() > MAX_CREDENTIAL_BYTES {
+        return Err("Credential must contain 1–2560 bytes".into());
+    }
+    Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn set_keychain_value(_provider_id: &str, _value: &[u8]) -> Result<(), String> {
-    Err("API key storage requires macOS Keychain".to_string())
-}
-
-#[cfg(target_os = "macos")]
 pub(crate) fn load_api_key(provider_id: &str) -> Result<Option<Zeroizing<String>>, String> {
-    use security_framework::passwords::{generic_password, PasswordOptions};
-    match generic_password(PasswordOptions::new_generic_password(
-        KEYCHAIN_SERVICE,
-        provider_id,
-    )) {
+    load_named_secret(PROVIDER_CREDENTIAL_SERVICE, provider_id)
+}
+
+pub(crate) fn load_named_secret(
+    service: &str,
+    account: &str,
+) -> Result<Option<Zeroizing<String>>, String> {
+    with_entry(service, account, |entry| match entry.get_secret() {
         Ok(value) => match String::from_utf8(value) {
-            Ok(key) => Ok(Some(Zeroizing::new(key))),
+            Ok(value) => Ok(Some(Zeroizing::new(value))),
             Err(error) => {
                 let mut value = error.into_bytes();
                 value.zeroize();
-                Err("The provider API key stored in Keychain is invalid".to_string())
+                Err(
+                    "The credential stored in the operating system credential store is invalid"
+                        .into(),
+                )
             }
         },
-        Err(error) if error.code() == KEYCHAIN_NOT_FOUND => Ok(None),
-        Err(_) => Err("Could not read the provider API key from macOS Keychain".to_string()),
-    }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => {
+            Err("Could not read the credential from the operating system credential store".into())
+        }
+    })
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn load_api_key(_provider_id: &str) -> Result<Option<Zeroizing<String>>, String> {
-    Err("API key storage requires macOS Keychain".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn delete_keychain_value(provider_id: &str) -> Result<(), String> {
-    match security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, provider_id) {
+pub(crate) fn delete_named_secret(service: &str, account: &str) -> Result<(), String> {
+    with_entry(service, account, |entry| match entry.delete_credential() {
         Ok(()) => Ok(()),
-        Err(error) if error.code() == KEYCHAIN_NOT_FOUND => Ok(()),
-        Err(_) => Err("Could not delete the provider API key from macOS Keychain".to_string()),
-    }
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => {
+            Err("Could not delete the credential from the operating system credential store".into())
+        }
+    })
 }
 
-#[cfg(not(target_os = "macos"))]
-fn delete_keychain_value(_provider_id: &str) -> Result<(), String> {
-    Err("API key storage requires macOS Keychain".to_string())
+fn with_entry<T>(
+    service: &str,
+    account: &str,
+    operation: impl FnOnce(&keyring::Entry) -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = CREDENTIAL_STORE
+        .lock()
+        .map_err(|_| "Operating system credential store lock unavailable".to_string())?;
+    let entry = keyring::Entry::new(service, account)
+        .map_err(|_| "Operating system credential store unavailable".to_string())?;
+    operation(&entry)
 }
 
 #[cfg(test)]
@@ -170,8 +190,20 @@ mod tests {
         assert!(validate_api_key("").is_err());
         assert!(validate_api_key(" secret").is_err());
         assert!(validate_api_key("secret\nheader").is_err());
-        assert!(validate_api_key(&"x".repeat(4_097)).is_err());
+        assert!(validate_api_key(&"x".repeat(MAX_CREDENTIAL_BYTES + 1)).is_err());
         assert!(validate_api_key("sk-valid_123").is_ok());
+    }
+
+    #[test]
+    fn named_secret_validation_matches_the_windows_credential_limit() {
+        assert!(validate_named_secret("service", "account", b"secret").is_ok());
+        assert!(validate_named_secret("", "account", b"secret").is_err());
+        assert!(validate_named_secret("service", "", b"secret").is_err());
+        assert!(validate_named_secret("service", "account", b"").is_err());
+        assert!(
+            validate_named_secret("service", "account", &vec![b'x'; MAX_CREDENTIAL_BYTES + 1])
+                .is_err()
+        );
     }
 
     #[test]

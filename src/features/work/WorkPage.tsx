@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
+import { INTERACTIVE_HTML_FIXTURE } from "../chat/artifacts/artifactPreviewApi";
 import { useArtifactWorkspace } from "../chat/artifacts/ArtifactDrawer";
 import { uiApi } from "../chat/ui/api";
 import { codingApi, type CodingSettings, type CodingSnapshot } from "../coding/api";
@@ -176,6 +177,19 @@ export function WorkPage({
               <span>{completed.length + completedStandaloneJobs.length + artifacts.length}</span>
             </button>
           </div>
+          <button
+            type="button"
+            className="workspace-text-button"
+            onClick={() =>
+              artifactWorkspace?.openInteractivePreview({
+                artifactId: INTERACTIVE_HTML_FIXTURE.artifactId,
+                revisionId: INTERACTIVE_HTML_FIXTURE.revisionId,
+                title: t("genui.openInteractivePreview"),
+              })
+            }
+          >
+            {t("genui.openInteractivePreview")}
+          </button>
           {coding ? (
             <label className="work-permission-toggle">
               <input

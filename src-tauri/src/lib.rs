@@ -20,6 +20,7 @@ use tauri::Manager;
 mod adaptive_evaluation;
 mod adaptive_improvement;
 mod app_paths;
+mod artifact_preview;
 mod backup;
 mod coding;
 #[path = "runtime/command_registry.rs"]
@@ -41,7 +42,7 @@ mod providers;
 pub mod quality_eval;
 mod redact;
 mod role_routing;
-mod runtime;
+pub mod runtime;
 mod schedule;
 mod situation;
 mod steward;
@@ -414,9 +415,38 @@ pub fn run() {
     // Snapshot the opt-in configuration once; failures are reported on use.
     let _ = providers::reasoning_mcp::configured("voice");
     let _ = larm_voice::enabled();
+    // WF-01: debug-only worker presentation. Release builds ignore the env
+    // switch entirely; the plugin config validation rejects visible workers
+    // outside `cfg(debug_assertions)`.
+    let llm_fetch_plugin = match std::env::var("SAAA_LLM_FETCH_DEBUG_WINDOW") {
+        Ok(value) if value == "1" && cfg!(debug_assertions) => {
+            tauri_plugin_llm_fetch::Builder::default()
+                .config(tauri_plugin_llm_fetch::Config {
+                    debug_worker_visible: true,
+                    debug_worker_devtools: true,
+                    max_characters: 20_000,
+                    allow_http: false,
+                    require_reliable_background: true,
+                    ..Default::default()
+                })
+                .build()
+        }
+        _ => tauri_plugin_llm_fetch::init(),
+    };
+    let artifact_preview = artifact_preview::PreviewRuntime::default();
+    let protocol_runtime = artifact_preview.clone();
     tauri::Builder::default()
-        .plugin(tauri_plugin_llm_fetch::init())
-        .setup(|app| {
+        .plugin(llm_fetch_plugin)
+        .register_asynchronous_uri_scheme_protocol(
+            "saaa-artifact-preview",
+            move |_ctx, request, responder| {
+                responder.respond(artifact_preview::protocol_respond(
+                    &protocol_runtime,
+                    request,
+                ));
+            },
+        )
+        .setup(move |app| {
             let database_path = app_paths::application_database_path(app)?;
             let voice_resource_directory = app
                 .path()
@@ -467,6 +497,23 @@ pub fn run() {
             )?;
             if bundled_web_fetch.is_file() {
                 let _ = runtime::web_fetch::BUNDLED_WEB_FETCH_PATH.set(bundled_web_fetch);
+            }
+            // WF-04/WF-10: hand the registered plugin manager to the WebFetch
+            // runtime once. Debug window presentation is opt-in via
+            // `SAAA_LLM_FETCH_DEBUG_WINDOW=1` on debug builds only; the
+            // plugin config itself stays hidden-by-default (WF-01).
+            {
+                use tauri_plugin_llm_fetch::LlmFetchExt;
+                let manager = app.llm_fetch().0.clone();
+                let content = std::sync::Arc::new(
+                    runtime::web_fetch::content::TauriWebViewContentFetcher::new(manager),
+                );
+                if let Ok(search) = runtime::web_fetch::search::RustSearchProvider::new() {
+                    runtime::web_fetch::install_runtime(runtime::web_fetch::WebFetchRuntime {
+                        content,
+                        search: std::sync::Arc::new(search),
+                    });
+                }
             }
             let sqlite_writer = Arc::new(SqliteWriter::open(&database_path)?);
             let sqlite_readers =
@@ -613,6 +660,7 @@ pub fn run() {
                 mcp_server: Mutex::new(mcp_server),
                 schedule: Arc::new(schedule::Handle::default()),
                 steward_wake: steward::pump::Wake::default(),
+                artifact_preview,
             });
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

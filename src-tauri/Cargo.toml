@@ -41,8 +41,11 @@ axum = "0.8"
 saaa-reasoning-contract = { path = "../crates/reasoning-contract" }
 async-trait = "0.1"
 base64 = "0.22"
-tauri = { version = "2", features = [] }
-tauri-plugin-llm-fetch = { git = "https://github.com/ugnoguchigxp/LLM-fetch.git", rev = "76b0fcff8ed7db3a306212aca8c5759b6f814fa6" }
+tauri = { version = "2", features = ["unstable"] }
+# WF-01..WF-08 development: path dependency on the adjacent llm-fetch checkout.
+# At acceptance this returns to a reproducible git rev pin containing the
+# debug-window config and plain-text guard wrapper.
+tauri-plugin-llm-fetch = { path = "../../llm-fetch/crates/tauri-plugin-llm-fetch" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ts-rs = "12.0.1"
@@ -53,8 +56,10 @@ futures-util = "0.3"
 fs2 = "0.4"
 iana-time-zone = "0.1"
 jsonschema = { version = "0.56", default-features = false }
+keyring = "4.2.0"
 libloading = "0.8"
 libc = "0.2"
+open = "5.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 rodio = { version = "0.20.1", default-features = false }
 regex = "1"
@@ -70,7 +75,6 @@ zeroize = "1"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSRunningApplication", "NSWorkspace"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEventSource", "CGEventTypes"] }
-security-framework = "3.7"
 
 [dev-dependencies]
 time = { version = "0.3.55", features = ["formatting"] }

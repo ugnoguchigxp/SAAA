@@ -46,5 +46,17 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "llm-fetch": {
+      "allowedHosts": ["*"],
+      "maxSessions": 2,
+      "maxQueueDepth": 32,
+      "requestTimeoutMs": 30000,
+      "sessionIdleTimeoutMs": 300000,
+      "maxCharacters": 20000,
+      "requireReliableBackground": true,
+      "allowHttp": false
+    }
   }
 }

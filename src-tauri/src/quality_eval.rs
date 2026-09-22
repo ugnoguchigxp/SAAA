@@ -228,6 +228,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         mcp_server: std::sync::Mutex::new(None),
         schedule: Arc::new(crate::schedule::Handle::default()),
         steward_wake: crate::steward::pump::Wake::default(),
+        artifact_preview: crate::artifact_preview::PreviewRuntime::default(),
     })
 }
 

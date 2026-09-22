@@ -7,10 +7,7 @@ pub(crate) fn forget_source(connection: &Connection, source_id: &str) -> Result<
     connection
         .execute(
             "UPDATE steward_reports SET invalidated=1,digest='',content_json=NULL,held_reason='forgotten'
-             WHERE flushed=0 AND (
-               task_id IN (SELECT id FROM steward_tasks WHERE source_id=?1)
-               OR conversation_id IN (SELECT conversation_id FROM conversation_messages WHERE id=?1)
-             )",
+             WHERE flushed=0 AND task_id IN (SELECT id FROM steward_tasks WHERE source_id=?1)",
             [source_id],
         )
         .map_err(database_error)?;

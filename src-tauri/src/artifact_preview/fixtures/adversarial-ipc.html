@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>adversarial ipc</title>
+  </head>
+  <body>
+    <p>adversarial-ipc</p>
+    <script>
+      function attempt(name, run) {
+        try {
+          run();
+        } catch (_error) {}
+      }
+      attempt("tauri-internals", function () {
+        window.__TAURI_INTERNALS__.invoke("get_app_snapshot");
+      });
+      attempt("tauri-invoke", function () {
+        window.__TAURI__.invoke("get_app_snapshot");
+      });
+      attempt("llm-fetch", function () {
+        window.__TAURI_INTERNALS__.invoke("plugin:llm-fetch|fetch", {});
+      });
+      attempt("write-command", function () {
+        window.__TAURI_INTERNALS__.invoke("save_settings_documents", {});
+      });
+    </script>
+  </body>
+</html>

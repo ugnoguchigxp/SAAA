@@ -13,7 +13,7 @@ pub async fn run_json(raw: &str) -> Result<String, String> {
     }
     let c = rusqlite::Connection::open_in_memory().map_err(database_error)?;
     crate::persistence::schema::initialize_database(&c).map_err(database_error)?;
-    // A stable synthetic owner avoids creating one Keychain record per scenario.
+    // A stable synthetic owner avoids creating one OS credential-store record per scenario.
     c.execute(
         "UPDATE personal_scope SET principal='personal-state-synthetic-eval'",
         [],

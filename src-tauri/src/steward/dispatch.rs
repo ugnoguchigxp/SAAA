@@ -229,16 +229,20 @@ fn prepare_candidate(
     }
     let request = super::queue::request_for_task(connection, &work, &task_id)?;
     let recipe = super::queue::recipe_for_task(connection, &work, &task_id)?;
-    repo::persist_task_plan(connection, &task_id, recipe, request, "host_selected", 1)?;
+    repo::persist_task_plan(connection, &task_id, recipe, &request, "host_selected", 1)?;
     match crate::coding::service::commit_delegated_job(
         state,
         connection,
         &conversation_id,
         &task_id,
         &work.workspace_id,
-        request,
+        &request,
     ) {
         Ok((value, launch)) => {
+            if let Some(run_id) = launch.as_deref() {
+                let remaining = super::budget::remaining_deadline_ms(connection, &work)?;
+                super::budget::arm(run_id, remaining);
+            }
             let job = value["jobId"].as_str();
             repo::set_loop_state(connection, &task_id, "running", job, None)?;
             repo::settle_dispatch(connection, &task_id, Some(&value), false)?;

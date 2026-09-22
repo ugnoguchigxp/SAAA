@@ -86,7 +86,7 @@ pub(crate) fn flush_held_reports(state: &AppState, conversation_id: &str) -> Res
     if speech_holds_tts(state) {
         return Ok(());
     }
-    let message_id = state.sqlite_writer.write(|connection| {
+    let message_id = state.sqlite_writer.transact(|connection| {
         publish(state, connection, conversation_id)?;
         super::outbox::flush_unflushed(connection, conversation_id, now_ms())
     })?;

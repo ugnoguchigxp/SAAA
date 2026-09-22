@@ -102,17 +102,22 @@ pub(crate) fn schedule_withdraw(
 #[tauri::command]
 pub(crate) fn schedule_status(state: tauri::State<'_, AppState>) -> Result<ScheduleStatus, String> {
     let settings = state.sqlite_writer.read_serialized(runtime::load)?;
+    let allow_legacy = calendar::auth::legacy_entry_is_unambiguous(&state);
     Ok(ScheduleStatus {
         enabled: settings.enabled,
         calendar_enabled: settings.calendar_enabled,
         calendar_id: settings.calendar_id,
-        calendar_connected: calendar::auth::load_refresh(&state.schedule)
+        calendar_connected: calendar::auth::load_refresh(&state.schedule, allow_legacy)
             .ok()
             .flatten()
             .is_some()
             || state.schedule.access().is_some(),
         last_error: settings.last_error,
-        platform_supported: cfg!(target_os = "macos"),
+        platform_supported: cfg!(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        )),
         oauth_client_id: settings.oauth_client_id,
     })
 }
@@ -153,7 +158,8 @@ pub(crate) fn schedule_set_calendar(
         .schedule
         .set_calendar_ready(enabled && calendar_id.is_some());
     if !enabled {
-        calendar::auth::clear(&state.schedule)?;
+        let delete_legacy = calendar::auth::legacy_entry_is_unambiguous(&state);
+        calendar::auth::clear(&state.schedule, delete_legacy)?;
     }
     schedule_status(state)
 }
@@ -183,7 +189,8 @@ pub(crate) async fn schedule_connect_calendar(
 pub(crate) fn schedule_disconnect_calendar(
     state: tauri::State<'_, AppState>,
 ) -> Result<ScheduleStatus, String> {
-    calendar::auth::clear(&state.schedule)?;
+    let delete_legacy = calendar::auth::legacy_entry_is_unambiguous(&state);
+    calendar::auth::clear(&state.schedule, delete_legacy)?;
     schedule_status(state)
 }
 

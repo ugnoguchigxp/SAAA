@@ -317,7 +317,7 @@ export const ja = {
     sectionsLabel: "設定セクション",
     unsaved: "未保存の変更",
     savedWithCleanupFailure:
-      "設定を保存しましたが、未使用のAPIキー{{count}}件をKeychainから削除できませんでした。",
+      "設定を保存しましたが、未使用のAPIキー{{count}}件をOSの資格情報ストアから削除できませんでした。",
     savedAt: "SQLiteへ保存しました · {{time}}",
     pendingRuntime: "変更はまだランタイムへ反映されていません。",
     showingSaved: "保存済みのランタイム設定を表示しています。",
@@ -373,7 +373,7 @@ export const ja = {
       disconnected: "カレンダー未接続",
       clientId: "Google OAuth クライアントID",
       oauthHelp:
-        "PKCE のデスクトップ OAuth です。refresh token は Keychain に保存し、SQLite には書きません。SAAA_GOOGLE_CALENDAR_CLIENT_ID か、公開クライアントIDを入力します。",
+        "PKCE のデスクトップ OAuth です。refresh token はOSの資格情報ストアに保存し、SQLiteには書きません。SAAA_GOOGLE_CALENDAR_CLIENT_ID か、公開クライアントIDを入力します。",
       connect: "Google Calendarに接続",
       connecting: "Googleのサインインを待っています…",
       disconnect: "切断",
@@ -382,12 +382,13 @@ export const ja = {
     security: {
       credentials: "認証情報",
       credentialsDescription:
-        "APIキーはmacOS Keychainへ保存します。値を再表示せず、SQLite・バックアップ・診断情報には含めません。",
+        "個別ProviderのAPIキーはOSの資格情報ストアへ保存します。LARM_API_TOKENはこの保存機能の対象外です。値を再表示せず、SQLite・バックアップ・診断情報には含めません。",
       runtimePolicy: "ランタイムポリシー",
       noCloudFallback: "ローカルのプライマリーからクラウドのフォールバックを暗黙選択しない",
       diagnosticsRedaction: "診断情報をマスキング（常に有効）",
       dataOperations: "データ操作",
-      storagePolicy: "保存先：macOS Keychain · サービス：com.saaa.provider-api-key",
+      storagePolicy:
+        "保存先：OS資格情報ストア · Provider：com.saaa.provider-api-key · OAuth：com.saaa.oauth-refresh-token",
       noApiKeysInExports: "APIキーはどちらの出力にも含まれません。",
       exportDiagnostics: "診断情報を出力",
       backupDatabase: "データベースをバックアップ",
@@ -437,7 +438,7 @@ export const ja = {
       eyebrow: "個別サービス",
       title: "個別プロバイダー一覧",
       description:
-        "Harnessを使わないサービスを個別に登録します。APIキーはmacOS Keychainへ保存し、設定・SQLite・診断情報には含めません。",
+        "Harnessを使わないサービスを個別に登録します。APIキーはOSの資格情報ストアへ保存し、設定・SQLite・診断情報には含めません。",
       stableId: "プロバイダーIDは作成後に変更できません。",
       defaultName: "HTTP {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "システム音声" },

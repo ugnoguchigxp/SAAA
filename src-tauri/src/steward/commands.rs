@@ -1,6 +1,7 @@
 use super::contracts::GoalProposal;
 use super::repository as repo;
 use crate::{validate_identifier, AppState};
+use rusqlite::Connection;
 use serde_json::Value;
 
 #[tauri::command]
@@ -166,26 +167,36 @@ pub(crate) fn register_steward_recipe(
         .transact(|connection| super::recipes::register(connection, &input))
 }
 
+pub(crate) fn unspecified_goal_withdraw() -> Result<Value, String> {
+    Err("goal_required".into())
+}
+
+/// Cancels coding jobs that belong to `goal_id` and withdraws that goal only.
+pub(crate) fn withdraw_specified(
+    connection: &Connection,
+    conversation_id: &str,
+    goal_id: &str,
+) -> Result<Value, String> {
+    let jobs = repo::active_goal_job_ids(connection, conversation_id, goal_id)?;
+    for (job_id, revision) in jobs {
+        let _ = crate::coding::service::cancel(
+            connection,
+            conversation_id,
+            &job_id,
+            revision,
+            "steward withdrawn",
+        );
+    }
+    repo::withdraw_goal(connection, conversation_id, goal_id)
+}
+
 #[tauri::command]
 pub(crate) fn withdraw_steward_delegation(
     state: tauri::State<'_, AppState>,
     conversation_id: String,
 ) -> Result<Value, String> {
-    validate_identifier(&conversation_id, "conversation id")?;
-    state.sqlite_writer.write(|connection| {
-        let jobs = repo::active_job_ids(connection, &conversation_id)?;
-        let value = repo::withdraw(connection, &conversation_id)?;
-        for (job_id, revision) in jobs {
-            let _ = crate::coding::service::cancel(
-                connection,
-                &conversation_id,
-                &job_id,
-                revision,
-                "steward withdrawn",
-            );
-        }
-        Ok(value)
-    })
+    let _ = (state, conversation_id);
+    unspecified_goal_withdraw()
 }
 
 #[tauri::command]
@@ -231,26 +242,13 @@ pub(crate) fn work_withdraw(
     goal_id: Option<String>,
 ) -> Result<Value, String> {
     validate_identifier(&conversation_id, "conversation id")?;
-    match goal_id {
-        Some(goal_id) => {
-            validate_identifier(&goal_id, "goal id")?;
-            state.sqlite_writer.write(|connection| {
-                let jobs = repo::active_goal_job_ids(connection, &conversation_id, &goal_id)?;
-                let value = repo::withdraw_goal(connection, &conversation_id, &goal_id)?;
-                for (job_id, revision) in jobs {
-                    let _ = crate::coding::service::cancel(
-                        connection,
-                        &conversation_id,
-                        &job_id,
-                        revision,
-                        "steward withdrawn",
-                    );
-                }
-                Ok(value)
-            })
-        }
-        None => withdraw_steward_delegation(state, conversation_id),
-    }
+    let Some(goal_id) = goal_id else {
+        return unspecified_goal_withdraw();
+    };
+    validate_identifier(&goal_id, "goal id")?;
+    state
+        .sqlite_writer
+        .write(|connection| withdraw_specified(connection, &conversation_id, &goal_id))
 }
 
 /// A deliberately narrow amendment.  Broadening operations or budgets needs a

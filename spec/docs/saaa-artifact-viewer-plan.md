@@ -126,6 +126,7 @@ Mermaid SVG はキャッシュしない。定義文字列から毎回描く。
 
 ## 8. 範囲外（次の計画）
 
+- Interactive HTML の隔離 WebView プレビュー（[Artifact WebView 実装計画](saaa-artifact-webview-implementation-plan.md)）
 - 画像同梱（`attachments/`、asset protocol のスコープ、`convertFileSrc`、capability 追加）
 - coding workspace へのエクスポート（MD と画像のコピー）
 - Steward 成果物との接続（`steward_task_artifacts.kind='ui_view'`、`reference=view_id`）。テーブル変更は不要で 1 行の追加になる

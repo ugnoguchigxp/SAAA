@@ -58,10 +58,8 @@ export const stewardApi = {
     stewardRegister.parse(
       await invoke("register_steward_goal", { conversationId, workspaceId, ...input }),
     ),
-  withdraw: (conversationId: string, goalId?: string) =>
-    goalId
-      ? invoke("work_withdraw", { conversationId, goalId })
-      : invoke("withdraw_steward_delegation", { conversationId }),
+  withdraw: (conversationId: string, goalId: string) =>
+    invoke("work_withdraw", { conversationId, goalId }),
   amendNotification: (conversationId: string, goalId: string, notify: StewardNotify) =>
     invoke("work_amend", { conversationId, goalId, notify }),
   listTasks: async (conversationId: string) =>

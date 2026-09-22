@@ -27,5 +27,10 @@ fn main() {
         saaa_lib::ipc_contract::steward_typescript_bindings(),
     )
     .expect("steward bindings are written");
+    fs::write(
+        output_path.with_file_name("artifactPreview.ts"),
+        saaa_lib::ipc_contract::artifact_preview_typescript_bindings(),
+    )
+    .expect("artifact preview bindings are written");
     println!("generated {}", output_path.display());
 }

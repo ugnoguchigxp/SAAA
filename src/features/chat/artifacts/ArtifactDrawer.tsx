@@ -14,58 +14,23 @@ import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../../components/AppIcon";
 import type { UiInstance } from "../../../lib/generated/generativeUi";
 import { UiBoundary } from "../ui/UiBoundary";
+import {
+  artifactTabId,
+  artifactTabTitle,
+  reduceArtifactWorkspace,
+  type InteractivePreviewTab,
+} from "./artifactTab";
 import { artifactWidthFor } from "./artifactWidth";
 import "./artifact.css";
 
 const ArtifactPanel = lazy(() => import("./ArtifactPanel"));
+const InteractivePreview = lazy(() => import("./InteractivePreview"));
 
-type ArtifactTab = {
-  conversationId: string;
-  instance: UiInstance;
-};
-type ArtifactWorkspaceState = {
-  tabs: ArtifactTab[];
-  activeViewId: string | null;
-};
-type ArtifactWorkspaceAction =
-  | { type: "open"; tab: ArtifactTab }
-  | { type: "close"; viewId: string }
-  | { type: "select"; viewId: string };
 type ArtifactWorkspaceContextValue = {
   open: (instance: UiInstance, conversationId: string) => void;
+  openInteractivePreview: (tab: Omit<InteractivePreviewTab, "kind">) => void;
 };
 const ArtifactWorkspaceContext = createContext<ArtifactWorkspaceContextValue | null>(null);
-
-function reduceWorkspace(
-  state: ArtifactWorkspaceState,
-  action: ArtifactWorkspaceAction,
-): ArtifactWorkspaceState {
-  if (action.type === "open") {
-    const existing = state.tabs.findIndex(
-      (tab) => tab.instance.viewId === action.tab.instance.viewId,
-    );
-    const tabs =
-      existing >= 0
-        ? state.tabs.map((tab, index) => (index === existing ? action.tab : tab))
-        : [...state.tabs, action.tab].slice(-8);
-    return { tabs, activeViewId: action.tab.instance.viewId };
-  }
-  if (action.type === "select") {
-    return state.tabs.some((tab) => tab.instance.viewId === action.viewId)
-      ? { ...state, activeViewId: action.viewId }
-      : state;
-  }
-  const tabs = state.tabs.filter((tab) => tab.instance.viewId !== action.viewId);
-  return {
-    tabs,
-    activeViewId:
-      state.activeViewId === action.viewId
-        ? tabs.length
-          ? tabs[tabs.length - 1].instance.viewId
-          : null
-        : state.activeViewId,
-  };
-}
 
 export function useArtifactWorkspace() {
   return useContext(ArtifactWorkspaceContext);
@@ -73,21 +38,29 @@ export function useArtifactWorkspace() {
 
 export function ArtifactWorkspaceProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
-  const [{ tabs, activeViewId }, dispatch] = useReducer(reduceWorkspace, {
+  const [{ tabs, activeTabId }, dispatch] = useReducer(reduceArtifactWorkspace, {
     tabs: [],
-    activeViewId: null,
+    activeTabId: null,
   });
   const panelRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
   const open = useCallback((instance: UiInstance, conversationId: string) => {
     openerRef.current = document.activeElement as HTMLElement | null;
-    dispatch({ type: "open", tab: { instance, conversationId } });
+    dispatch({ type: "open", tab: { kind: "semantic-ui", instance, conversationId } });
   }, []);
-  const contextValue = useMemo(() => ({ open }), [open]);
-  const close = useCallback((viewId: string) => dispatch({ type: "close", viewId }), []);
-  const active = tabs.find((tab) => tab.instance.viewId === activeViewId) ?? null;
-  const width = active ? artifactWidthFor(active.instance.node) : 50;
+  const openInteractivePreview = useCallback((tab: Omit<InteractivePreviewTab, "kind">) => {
+    openerRef.current = document.activeElement as HTMLElement | null;
+    dispatch({ type: "open", tab: { kind: "interactive-preview", ...tab } });
+  }, []);
+  const contextValue = useMemo(
+    () => ({ open, openInteractivePreview }),
+    [open, openInteractivePreview],
+  );
+  const close = useCallback((tabId: string) => dispatch({ type: "close", tabId }), []);
+  const active = tabs.find((tab) => artifactTabId(tab) === activeTabId) ?? null;
+  const width =
+    active?.kind === "semantic-ui" ? artifactWidthFor(active.instance.node) : 50;
   useEffect(() => {
     const isOpen = Boolean(active);
     if (isOpen && !wasOpenRef.current) panelRef.current?.focus();
@@ -100,7 +73,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      close(active.instance.viewId);
+      close(artifactTabId(active));
     };
     window.addEventListener("keydown", closeOnEscape, true);
     return () => window.removeEventListener("keydown", closeOnEscape, true);
@@ -128,10 +101,11 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
             <header className="artifact-panel-header">
               <div className="artifact-tabs" role="tablist">
                 {tabs.map((tab, index) => {
-                  const title = tab.instance.name ?? tab.instance.summary;
-                  const selected = tab.instance.viewId === activeViewId;
+                  const title = artifactTabTitle(tab);
+                  const tabId = artifactTabId(tab);
+                  const selected = tabId === activeTabId;
                   return (
-                    <div className="artifact-tab" key={tab.instance.viewId}>
+                    <div className="artifact-tab" key={tabId}>
                       <button
                         type="button"
                         role="tab"
@@ -139,12 +113,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                         aria-controls="artifact-panel-content"
                         aria-selected={selected}
                         tabIndex={selected ? 0 : -1}
-                        onClick={() =>
-                          dispatch({
-                            type: "select",
-                            viewId: tab.instance.viewId,
-                          })
-                        }
+                        onClick={() => dispatch({ type: "select", tabId })}
                         onKeyDown={(event) => {
                           let nextIndex: number | null = null;
                           if (event.key === "ArrowLeft")
@@ -155,10 +124,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                           if (nextIndex === null) return;
                           event.preventDefault();
                           const next = tabs[nextIndex];
-                          dispatch({
-                            type: "select",
-                            viewId: next.instance.viewId,
-                          });
+                          dispatch({ type: "select", tabId: artifactTabId(next) });
                           document.getElementById(`artifact-tab-${nextIndex}`)?.focus();
                         }}
                       >
@@ -169,7 +135,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                         className="artifact-tab-close"
                         aria-label={`${t("genui.close")}: ${title}`}
                         title={`${t("genui.close")}: ${title}`}
-                        onClick={() => close(tab.instance.viewId)}
+                        onClick={() => close(tabId)}
                       >
                         <AppIcon name="close" />
                       </button>
@@ -182,7 +148,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                 className="artifact-panel-close"
                 aria-label={t("genui.close")}
                 title={t("genui.close")}
-                onClick={() => close(activeViewId!)}
+                onClick={() => close(activeTabId!)}
               >
                 <AppIcon name="close" />
               </button>
@@ -191,18 +157,30 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
               id="artifact-panel-content"
               className="artifact-panel-body"
               role="tabpanel"
-              aria-labelledby={`artifact-tab-${tabs.findIndex((tab) => tab.instance.viewId === activeViewId)}`}
+              aria-labelledby={`artifact-tab-${tabs.findIndex((tab) => artifactTabId(tab) === activeTabId)}`}
             >
-              <h2 id="artifact-panel-title">{active.instance.name ?? active.instance.summary}</h2>
-              <UiBoundary key={active.instance.viewId} fallback={<p>{t("genui.unavailable")}</p>}>
-                <Suspense fallback={<p>{t("genui.loading")}</p>}>
-                  <ArtifactPanel
-                    key={active.instance.viewId}
-                    instance={active.instance}
-                    conversationId={active.conversationId}
-                  />
-                </Suspense>
-              </UiBoundary>
+              <h2 id="artifact-panel-title">{artifactTabTitle(active)}</h2>
+              {active.kind === "semantic-ui" ? (
+                <UiBoundary key={artifactTabId(active)} fallback={<p>{t("genui.unavailable")}</p>}>
+                  <Suspense fallback={<p>{t("genui.loading")}</p>}>
+                    <ArtifactPanel
+                      key={active.instance.viewId}
+                      instance={active.instance}
+                      conversationId={active.conversationId}
+                    />
+                  </Suspense>
+                </UiBoundary>
+              ) : (
+                <UiBoundary key={artifactTabId(active)} fallback={<p>{t("genui.previewUnavailable")}</p>}>
+                  <Suspense fallback={<p>{t("genui.previewLoading")}</p>}>
+                    <InteractivePreview
+                      artifactId={active.artifactId}
+                      revisionId={active.revisionId}
+                      title={active.title}
+                    />
+                  </Suspense>
+                </UiBoundary>
+              )}
             </div>
           </aside>
         )}

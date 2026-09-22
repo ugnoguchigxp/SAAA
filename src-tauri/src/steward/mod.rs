@@ -72,3 +72,8 @@ mod latency_tests {
 mod rf5_tests {
     include!("tests/rf5.rs");
 }
+
+#[cfg(test)]
+mod sc_tests {
+    include!("tests/sc.rs");
+}

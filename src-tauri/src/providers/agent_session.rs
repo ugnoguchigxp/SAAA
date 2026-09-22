@@ -236,7 +236,9 @@ fn provider_api_key(
     }
     let api_key = crate::credentials::load_api_key(&provider.id)?;
     if api_key.is_none() {
-        return Err("API key is not configured in macOS Keychain".to_string());
+        return Err(
+            "API key is not configured in the operating system credential store".to_string(),
+        );
     }
     Ok(api_key)
 }

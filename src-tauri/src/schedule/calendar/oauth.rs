@@ -3,6 +3,7 @@ use crate::schedule::runtime;
 use crate::AppState;
 use serde_json::Value;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const SCOPE: &str = "https://www.googleapis.com/auth/calendar";
@@ -94,7 +95,9 @@ pub(crate) async fn connect(state: &AppState, client_id: Option<String>) -> Resu
     )
     .await?;
     store_refresh(&state.schedule, &refresh)?;
-    state.schedule.set_access(&access);
+    state
+        .schedule
+        .set_access_with_ttl(&access.token, access.ttl());
     Ok(())
 }
 
@@ -102,7 +105,10 @@ pub(crate) fn ensure_access(state: &AppState) -> Option<String> {
     if let Some(token) = state.schedule.access() {
         return Some(token);
     }
-    let refresh = super::auth::load_refresh(&state.schedule).ok().flatten()?;
+    let allow_legacy = super::auth::legacy_entry_is_unambiguous(state);
+    let refresh = super::auth::load_refresh(&state.schedule, allow_legacy)
+        .ok()
+        .flatten()?;
     let client_id = resolve_client_id(state, None).ok()?;
     let endpoint = token_endpoint(&state.schedule.http_base());
     std::thread::spawn(move || {
@@ -116,7 +122,12 @@ pub(crate) fn ensure_access(state: &AppState) -> Option<String> {
     .join()
     .ok()
     .flatten()
-    .inspect(|access| state.schedule.set_access(access))
+    .map(|access| {
+        state
+            .schedule
+            .set_access_with_ttl(&access.token, access.ttl());
+        access.token
+    })
 }
 
 fn resolve_client_id(state: &AppState, passed: Option<String>) -> Result<String, String> {
@@ -174,19 +185,7 @@ fn open_browser(url: &str) -> Result<(), String> {
     if !url.starts_with(AUTH) {
         return Err("oauth-url".into());
     }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(url)
-            .status()
-            .map_err(|_| "oauth-open".to_string())?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = url;
-        Err("Calendar connection requires macOS".into())
-    }
+    open::that(url).map_err(|_| "oauth-open".to_string())
 }
 
 async fn wait_code(
@@ -247,7 +246,7 @@ async fn exchange(
     redirect: &str,
     verifier: &str,
     code: &str,
-) -> Result<(String, String), String> {
+) -> Result<(String, AccessGrant), String> {
     let body = format!(
         "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
         urlencoding(code),
@@ -262,7 +261,11 @@ async fn exchange(
     Ok((refresh, access))
 }
 
-async fn refresh_token(endpoint: &str, client_id: &str, refresh: &str) -> Result<String, String> {
+async fn refresh_token(
+    endpoint: &str,
+    client_id: &str,
+    refresh: &str,
+) -> Result<AccessGrant, String> {
     let body = format!(
         "grant_type=refresh_token&refresh_token={}&client_id={}",
         urlencoding(refresh),
@@ -271,7 +274,18 @@ async fn refresh_token(endpoint: &str, client_id: &str, refresh: &str) -> Result
     token_pair(endpoint, &body).await.map(|pair| pair.1)
 }
 
-async fn token_pair(endpoint: &str, body: &str) -> Result<(String, String), String> {
+struct AccessGrant {
+    token: String,
+    expires_in: u64,
+}
+
+impl AccessGrant {
+    fn ttl(&self) -> Duration {
+        Duration::from_secs(self.expires_in.saturating_sub(30).max(1))
+    }
+}
+
+async fn token_pair(endpoint: &str, body: &str) -> Result<(String, AccessGrant), String> {
     let response = reqwest::Client::new()
         .post(endpoint)
         .header("content-type", "application/x-www-form-urlencoded")
@@ -295,7 +309,18 @@ async fn token_pair(endpoint: &str, body: &str) -> Result<(String, String), Stri
         .get("refresh_token")
         .and_then(Value::as_str)
         .unwrap_or("");
-    Ok((refresh.to_string(), access.to_string()))
+    let expires_in = value
+        .get("expires_in")
+        .and_then(Value::as_u64)
+        .filter(|value| (1..=86_400).contains(value))
+        .ok_or_else(|| "oauth-token".to_string())?;
+    Ok((
+        refresh.to_string(),
+        AccessGrant {
+            token: access.to_string(),
+            expires_in,
+        },
+    ))
 }
 
 fn urlencoding(value: &str) -> String {
@@ -351,11 +376,16 @@ mod tests {
                 let count = socket.read(&mut bytes).await.unwrap_or(0);
                 let header = String::from_utf8_lossy(&bytes[..count]);
                 let body = if header.contains("grant_type=refresh_token") {
-                    serde_json::json!({ "access_token": "access-2", "token_type": "Bearer" })
-                        .to_string()
+                    serde_json::json!({
+                        "access_token": "access-2",
+                        "expires_in": 3600,
+                        "token_type": "Bearer"
+                    })
+                    .to_string()
                 } else {
                     serde_json::json!({
                         "access_token": "access-1",
+                        "expires_in": 3600,
                         "refresh_token": "refresh-1",
                         "token_type": "Bearer"
                     })
@@ -405,7 +435,10 @@ mod tests {
         };
         let (result, _) = tokio::join!(connected, redirected);
         result.unwrap();
-        assert_eq!(state.schedule.refresh().as_deref(), Some("refresh-1"));
+        assert_eq!(
+            state.schedule.refresh().as_deref().map(String::as_str),
+            Some("refresh-1")
+        );
         assert_eq!(state.schedule.access().as_deref(), Some("access-1"));
         let stored = state
             .sqlite_writer

@@ -163,7 +163,10 @@ pub(crate) async fn execute_agent_tool(
         );
     }
     if crate::runtime::web_fetch::is_web_fetch_tool(&call.name) {
-        return crate::runtime::web_fetch::execute(call, timeout).await;
+        let cancellation =
+            crate::runtime::web_fetch::contracts::WebFetchCancel::from_run(run_cancellation);
+        cancellation.bridge_run_cancellation(run_cancellation);
+        return crate::runtime::web_fetch::execute_with_cancel(call, timeout, cancellation).await;
     }
     if crate::runtime::agent_tools::is_typed_memory_tool(&call.name) {
         let Some(persistence) = output_persistence else {

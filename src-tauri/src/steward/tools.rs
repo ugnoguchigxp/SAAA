@@ -78,18 +78,7 @@ pub(crate) fn execute(
         "work_withdraw" => {
             let goal: GoalRef = serde_json::from_str(&call.arguments).map_err(|_| "work_withdraw_invalid")?;
             state.sqlite_writer.write(|c| {
-                let jobs = repo::active_goal_job_ids(c, &input.conversation_id, &goal.goal_id)?;
-                let value = repo::withdraw_goal(c, &input.conversation_id, &goal.goal_id)?;
-                for (job_id, revision) in jobs {
-                    let _ = crate::coding::service::cancel(
-                        c,
-                        &input.conversation_id,
-                        &job_id,
-                        revision,
-                        "steward withdrawn",
-                    );
-                }
-                Ok(value)
+                super::commands::withdraw_specified(c, &input.conversation_id, &goal.goal_id)
             })
         }
         "work_amend" => {

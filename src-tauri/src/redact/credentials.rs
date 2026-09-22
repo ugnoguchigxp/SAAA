@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 pub(super) fn redact(value: &str) -> String {
     let mut redacted = value.to_string();
-    // Authentication material can come from a provider response or Keychain rather
+    // Authentication material can come from a provider response or OS credential store rather
     // than the process environment. Strip explicit credential syntax before bounding.
     // Consume the whole JSON string, including whitespace and escaped quotes.
     static JSON_CREDENTIAL: OnceLock<Regex> = OnceLock::new();

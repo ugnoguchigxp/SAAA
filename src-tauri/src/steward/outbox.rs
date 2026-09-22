@@ -1,4 +1,5 @@
-//! Report claim and conversation message insertion share one transaction.
+//! Message insert, conversation touch, flush mark, and delivery cursor share one
+//! transaction. Production callers pass a `SqliteWriter::transact` connection.
 use super::repository as repo;
 use crate::{database_error, new_id, now_iso};
 use rusqlite::{params, Connection};

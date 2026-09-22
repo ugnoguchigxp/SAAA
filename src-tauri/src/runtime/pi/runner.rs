@@ -111,6 +111,25 @@ pub fn run(writer: Arc<SqliteWriter>, run: String) {
     }
 }
 
+/// Delegated runs wait for the remaining saved budget. Other coding runs keep
+/// the existing ceiling; that ceiling is not a delegated stop deadline.
+pub(crate) fn wait_budget(remaining_ms: Option<i64>) -> Duration {
+    match remaining_ms {
+        Some(ms) => Duration::from_millis(u64::try_from(ms.max(1)).unwrap_or(u64::MAX)),
+        None => Duration::from_secs(1800),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn sleep_until_budget(remaining_ms: i64) -> Duration {
+    let started = Instant::now();
+    let deadline = started + wait_budget(Some(remaining_ms));
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    started.elapsed()
+}
+
 fn workspace_for_run(connection: &rusqlite::Connection, run: &str) -> Option<String> {
     connection
         .query_row(
@@ -188,7 +207,13 @@ fn execute(writer: &SqliteWriter, run: &str) -> Result<Value, String> {
             })
         })?;
 
-        let deadline = Instant::now() + Duration::from_secs(1800);
+        let delegated = match crate::steward::budget::take_armed(run) {
+            Some(ms) => Some(ms),
+            None => {
+                writer.read_serialized(|c| crate::steward::budget::remaining_for_run(c, run))?
+            }
+        };
+        let deadline = Instant::now() + wait_budget(delegated);
         let acceptance = Instant::now() + Duration::from_secs(30);
         let mut accepted = false;
         let mut settled = false;

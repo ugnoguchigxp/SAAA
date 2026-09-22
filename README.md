@@ -209,7 +209,7 @@ Voice chat reuses the LAN host configured under Settings → Model Providers. SA
 
 ### OpenAI-compatible APIs
 
-You can add an endpoint and model in Settings. For API-key authentication, save the provider's key in Settings; SAAA stores it in macOS Keychain under service `com.saaa.provider-api-key`, keyed by provider ID. The key itself is not stored in Settings JSON or SQLite. This credential storage requires macOS.
+You can add an endpoint and model in Settings. For API-key authentication, save the provider's key in Settings; SAAA stores it in the operating system credential store under service `com.saaa.provider-api-key`, keyed by provider ID. This maps to Keychain Services on macOS, Credential Manager on Windows, and Secret Service on Linux. The key itself is not stored in Settings JSON or SQLite. `LARM_API_TOKEN` remains outside this storage path.
 
 The current OpenAI-compatible provider does not read `SAAA_PROVIDER_<PROVIDER_ID>_API_KEY` or `OPENAI_API_KEY` as a fallback. The LARM token below belongs to a separate runtime path.
 
@@ -271,7 +271,7 @@ One Rust `SqliteWriter` owns all database writes. An OS lock prevents a second p
 
 Local records include conversations and settings, Personal State and World assertions, task and tool ledgers, routing and learning records, generated-view state, and structured audit events. Local-first storage does not imply local-only inference: selected providers and tools receive the input needed for their configured work. Cloud fallback is disabled by default when a local conversation route is selected.
 
-Provider API keys registered in Settings use macOS Keychain rather than Settings JSON or SQLite. The main database and voice-profile data are not encrypted by SAAA. The optional voice filter stores WAV samples in the application-data directory and embeddings in SQLite; see the voice-profile section above for its scope and limitations.
+Provider API keys registered in Settings use the operating system credential store rather than Settings JSON or SQLite. OAuth refresh tokens use the separate service `com.saaa.oauth-refresh-token`; access tokens remain in memory. The main database and voice-profile data are not encrypted by SAAA. The optional voice filter stores WAV samples in the application-data directory and embeddings in SQLite; see the voice-profile section above for its scope and limitations.
 
 The structured audit trail records lifecycle metadata rather than raw prompt, transcript, or model-output text. Conversation text remains in its own records. Settings provides consistent SQLite backups and redacted diagnostics. Database backups include voice embeddings but not the WAV samples or every external capability/model file, so a database backup alone is not a complete runtime or voice-profile backup. Older schemas receive a pre-migration database backup.
 

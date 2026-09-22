@@ -78,7 +78,7 @@ export function StewardPanel({
       onError(stewardErrorMessage(error));
     }
   }
-  async function withdrawGoal(goalId?: string) {
+  async function withdrawGoal(goalId: string) {
     try {
       await stewardApi.withdraw(conversationId, goalId);
       await refresh();
@@ -180,7 +180,6 @@ export function StewardPanel({
       <button onClick={() => void registerGoal()} disabled={!workspaceId || !confirmed}>
         Goal を登録
       </button>
-      <button onClick={() => void withdrawGoal()}>最新の Goal を撤回</button>
       {tasks.map((task) => (
         <p key={task.taskId}>
           {task.summary || task.goalId} / 対象: {task.workspaceId} / 操作: {task.operations} / 予算:{" "}

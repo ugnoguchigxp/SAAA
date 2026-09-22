@@ -39,7 +39,7 @@ pub(crate) async fn probe_model_provider_with_api_key(
     };
     let key = api_key.or(stored_key.as_deref().map(String::as_str));
     if provider.authentication == "api-key" && key.is_none() {
-        return Err("API key is not configured in macOS Keychain".into());
+        return Err("API key is not configured in the operating system credential store".into());
     }
     let authorization = key.map(|key| format!("Bearer {key}"));
     let result = crate::providers::chat_completions::run_with_options(

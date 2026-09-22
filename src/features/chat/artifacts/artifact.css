@@ -161,6 +161,30 @@
 .artifact-diff-same {
   color: #9ba8b8;
 }
+.artifact-webview-host {
+  min-height: 240px;
+  height: calc(100% - 8px);
+  position: relative;
+}
+.artifact-preview-status {
+  display: grid;
+  gap: 10px;
+  color: #9ba8b8;
+}
+.artifact-preview-focus {
+  font-size: var(--ds-font-size-sm);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 @container (max-width: 600px) {
   .artifact-chat-region .message-area {

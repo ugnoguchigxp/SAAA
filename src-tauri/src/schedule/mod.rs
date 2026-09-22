@@ -23,7 +23,8 @@ pub(crate) fn hydrate(state: &crate::AppState) {
             .schedule
             .set_calendar_ready(s.calendar_enabled && s.calendar_id.is_some());
     }
-    if let Ok(Some(token)) = calendar::auth::load_refresh(&state.schedule) {
+    let allow_legacy = calendar::auth::legacy_entry_is_unambiguous(state);
+    if let Ok(Some(token)) = calendar::auth::load_refresh(&state.schedule, allow_legacy) {
         state.schedule.set_refresh(&token);
     }
 }

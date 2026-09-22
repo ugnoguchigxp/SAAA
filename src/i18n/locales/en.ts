@@ -321,7 +321,7 @@ export const en = {
     sectionsLabel: "Settings sections",
     unsaved: "Unsaved changes",
     savedWithCleanupFailure:
-      "Settings were saved, but {{count}} unused API keys could not be removed from Keychain.",
+      "Settings were saved, but {{count}} unused API keys could not be removed from the OS credential store.",
     savedAt: "Saved to SQLite · {{time}}",
     pendingRuntime: "Changes have not been applied to the Runtime yet.",
     showingSaved: "Showing the saved Runtime settings.",
@@ -377,7 +377,7 @@ export const en = {
       disconnected: "Calendar not connected",
       clientId: "Google OAuth client id",
       oauthHelp:
-        "Desktop OAuth with PKCE. The refresh token is stored in Keychain, not SQLite. Set SAAA_GOOGLE_CALENDAR_CLIENT_ID or paste the public client id here.",
+        "Desktop OAuth with PKCE. The refresh token is stored in the OS credential store, not SQLite. Set SAAA_GOOGLE_CALENDAR_CLIENT_ID or paste the public client id here.",
       connect: "Connect Google Calendar",
       connecting: "Waiting for Google sign-in…",
       disconnect: "Disconnect",
@@ -386,12 +386,13 @@ export const en = {
     security: {
       credentials: "Credentials",
       credentialsDescription:
-        "API keys are stored in macOS Keychain. Values are never shown again or included in SQLite, backups, or diagnostics.",
+        "Individual Provider API keys are stored in the OS credential store. LARM_API_TOKEN is outside this storage feature. Values are never shown again or included in SQLite, backups, or diagnostics.",
       runtimePolicy: "Runtime policy",
       noCloudFallback: "Do not implicitly select a cloud fallback from a local primary",
       diagnosticsRedaction: "Diagnostics redaction (always on)",
       dataOperations: "Data operations",
-      storagePolicy: "Storage: macOS Keychain · Service: com.saaa.provider-api-key",
+      storagePolicy:
+        "Storage: OS credential store · Provider: com.saaa.provider-api-key · OAuth: com.saaa.oauth-refresh-token",
       noApiKeysInExports: "API keys are never included in either output.",
       exportDiagnostics: "Export diagnostics",
       backupDatabase: "Backup database",
@@ -441,7 +442,7 @@ export const en = {
       eyebrow: "INDIVIDUAL SERVICES",
       title: "Individual Provider catalog",
       description:
-        "Register services that do not use the Harness. API keys are stored in macOS Keychain and excluded from settings, SQLite, and diagnostics.",
+        "Register services that do not use the Harness. API keys are stored in the OS credential store and excluded from settings, SQLite, and diagnostics.",
       stableId: "Provider IDs cannot be changed after creation.",
       defaultName: "Cloud {{capability}}",
       defaultLabels: { harnessLlm: "Provider Harness LLM", systemVoice: "System voice" },

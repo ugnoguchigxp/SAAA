@@ -56,9 +56,16 @@ fn stage_codex_runtime() {
 }
 
 fn stage_web_fetch_runtime() {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("target OS");
+    // WF-12: macOS uses the Rust search + WebView backend, so the Bun
+    // sidecar is never compiled or staged there. Other platforms keep the
+    // sidecar fallback until their real-WebView gates pass (WF-14).
+    if target_os == "macos" {
+        println!("cargo:warning=WebFetch sidecar staging skipped on macOS (Rust backend)");
+        return;
+    }
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let project = manifest.parent().expect("project directory");
-    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("target OS");
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").expect("target architecture");
     let (target, executable) = match (target_os.as_str(), target_arch.as_str()) {
         ("macos", "aarch64") => ("bun-darwin-arm64", "webfetch"),
