@@ -8,6 +8,29 @@
 
 今回確定するのは設計契約と初期設定値であり、DB migration、Provider変更、外部API呼出しは行わない。既存の原文正本、Scope、依存検証、忘却journalは継承する。
 
+## 実装計画で確定した事項（2026-09-22 追記）
+
+現行コードとの照合結果に基づき、以下を確定した。本節が後続の章と食い違う場合は本節を優先する。
+
+### 初回実装の範囲外（本書の記述は将来仕様として残す）
+
+- `recall_memory` / `query_world` の新規論理操作。既存の `recall_experience/rule/skill`、`search_knowledge/episodes`、World 注入で代替する。
+- D 章の LLM 抽出 job と課金上限。65,536 bytes 超も決定的 outline と範囲読取のみ。
+- `history_bound` 経路（AgentSession）の Segment 化。現行の履歴構築を維持し、adapter 契約で `history_binding = "session"` と宣言するだけにする。
+- zstd 圧縮（`codec` 列は `identity` 固定で用意）。embedding による record 検索。FTS の非同期索引化（同期索引、上限 1 MiB）。
+- 引き継ぎ（carry）の LLM 要約。B 章の再構成トリガー 3（タスク完了/切替の検出）。
+- Provider 側 cache 削除 API。容量上限の enforcement（通知のみ実装）。外部 ContextStill 結果の record 化。
+
+### 未決事項の決定
+
+1. **既存の履歴削減との関係**: Segment 有効時は `runtime/context/broker.rs::ProviderInputBudget::apply` を呼ばない。L の entry 選択で予算を満たし、満たせなければ同一 generation で 1 回だけ再構成し、それでも溢れれば `required_context_overflow` で失敗する。Segment 無効時は現行どおり。
+2. **L に追記する内容**: LLM 派生要約を L に入れない。entry は (a) `conversation_messages` の user/assistant 本文、(b) 完了した Tool 往復の決定的要約 `tool_round`（tool 名・引数 digest・結果 record ref・先頭 256 bytes・status）、(c) Segment 先頭の `carry` の 3 種のみ。
+3. **carry の内容と縮退**: v1 は `scope_refs, constraints, active_operations, adopted_evidence_refs, omitted_history_locator` の 5 項目のみ。`goal, target, completion_criteria, decisions, open_items, unresolved_conflicts` は `null` + `status: "not_extracted"`。超過時は `adopted_evidence_refs` を新しい順に切り、次に `active_operations` 以外を落とす。`active_operations` を落とせなければ RED。
+4. **record の認可式**: 読取可 ⇔ `principal_id` 一致 ∧ `forget_epoch IS NULL` ∧ （`record_scopes` 行が無く `conversation_id` 一致 ∨ `record_scopes.scope_key` のいずれかが呼出側の許可 Scope key 集合に含まれる）。`relation` は `"visible"` 固定。認可不可と不存在は同一の `unavailable`。
+5. **B の定義**: B は `ProviderInputBudget::usable_context_bytes()`（chat_completions 既定 53,760 bytes）。A 章の 64,000 は wire 上限 `MAX_PROVIDER_CONTEXT_WIRE_BYTES` であり別物。割合上限は B に対して計算する。
+6. **F の内容**: `inputOrigin` / `presentationMode` は F に含めず D に置く。agent 名・user 名・regional は F の入力であり、`policy_version` の hash に含める。
+7. **機能 flag**: 環境変数 `SAAA_CONTEXT_SEGMENTS`。受入前は既定 OFF、受入後に既定 ON。
+
 ## レビューの採否と補正
 
 三領域、Segment、共通記録ID、記憶参照の四つの論理操作、usage計測、忘却の波及を採用する。一般Toolの発見・詳細取得・実行は既存のSQLite Tool Selectionを使用する。メモリー/Worldの高頻度参照入口は常設してよいが、四つの論理操作すべてを新しい常設Toolとして追加する決定ではない。以下は補正事項。
