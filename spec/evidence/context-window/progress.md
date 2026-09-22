@@ -85,3 +85,10 @@ evidence を作成。
 - `assemble` は principal が取れるとき `ensure_registered` を呼ぶ。
 - diagnostics の `contextMetrics.records` に件数、bytes、10 GiB 比を出す。
 - CW-01 / CW-36 / CW-46 の対話表と CW-55 の `bun run check:local` は、実 Provider と既存の clippy / size 失敗があるため未了。数値は作っていない。
+
+## 設計書の確定事項 (2026-09-23)
+
+- Segment 有効時は `budget.apply` を通さない。L の選択で予算に合わせ、Must が溢れたら `required_context_overflow`。
+- F は `inputOrigin` / `presentationMode` を空にして描く。音声と文字の切替では F の bytes が変わらない。出どころは D に置く。
+- 現在の依頼は L に追記しない。
+- 設計書が将来仕様としている LLM 抽出、history-bound の Segment 化、既定 ON、実 Provider の数値表は今回の対象外。

@@ -176,7 +176,7 @@ impl StreamingSpeechRuntime {
         Ok(())
     }
 
-    pub(crate) fn project_delta(&self, run_id: &str, delta: &str) -> String {
+    pub(crate) fn project_delta(&self, run_id: &str, delta: &str) -> Result<String, String> {
         let mut directives = self
             .directives
             .lock()
@@ -186,9 +186,9 @@ impl StreamingSpeechRuntime {
         let decided = output.decided;
         drop(directives);
         if let Some(expression) = decided {
-            let _ = self.set_expression(run_id, expression);
+            self.set_expression(run_id, expression)?;
         }
-        output.visible
+        Ok(output.visible)
     }
 
     pub(crate) fn expression_for(
@@ -253,11 +253,11 @@ impl StreamingSpeechRuntime {
         if spoken.is_empty() {
             return Ok(());
         }
-        let sessions = self
+        let mut sessions = self
             .sessions
             .lock()
             .map_err(|_| "Streaming speech runtime lock unavailable".to_string())?;
-        let Some(session) = sessions.get(run_id) else {
+        let Some(session) = sessions.get_mut(run_id) else {
             return Ok(());
         };
         if session.closed || session.cancellation.is_cancelled() || !session.enabled {

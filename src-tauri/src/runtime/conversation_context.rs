@@ -50,6 +50,16 @@ pub(super) fn compose_provider_history(
     Ok(history)
 }
 
+pub(super) fn render_fixed_system_context(
+    agent_name: &str,
+    user_name: &str,
+    regional: &RegionalPreferences,
+    policy: &str,
+) -> Result<String, String> {
+    let head = render_conversation_system_context(agent_name, user_name, regional, "", "")?;
+    Ok(format!("{}\n\n{}", head.trim(), policy.trim()))
+}
+
 fn render_conversation_system_context(
     agent_name: &str,
     user_name: &str,

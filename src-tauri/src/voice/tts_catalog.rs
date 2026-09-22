@@ -250,14 +250,19 @@ async fn load_provider_catalog(
                 .ok_or("API key is not configured in the operating system credential store")?,
         )
     };
-    fetch_catalog(&provider.endpoint, token.as_deref(), false).await
+    fetch_catalog(
+        &provider.endpoint,
+        token.as_deref().map(String::as_str),
+        false,
+    )
+    .await
 }
 
 async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog, String> {
     let harness = state
         .sqlite_readers
         .read(|connection| Ok(crate::persistence::load_model_providers(connection)?.harness))?;
-    crate::persistence::settings::provider_validation::validate_model_providers(
+    crate::persistence::validate_model_providers(
         &crate::ModelProvidersSettings {
             harness: harness.clone(),
             providers: Vec::new(),
@@ -286,11 +291,10 @@ async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog
         fetch_catalog(&endpoint, Some(&token), true).await
     }
     .await;
-    if let Err(error) = session.close().await {
-        return Err(if result.is_ok() {
-            "larm-catalog-release-failed".into()
-        } else {
-            error.to_string()
+    if session.close().await.is_err() {
+        return Err(match result {
+            Ok(_) => "larm-catalog-release-failed".into(),
+            Err(error) => error,
         });
     }
     result
@@ -328,6 +332,12 @@ async fn fetch_catalog(
     })?;
     if !response.status().is_success() {
         return Err(format!("catalog-http-{}", response.status().as_u16()));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > 1024 * 1024)
+    {
+        return Err("catalog-protocol".into());
     }
     let bytes = response
         .bytes()

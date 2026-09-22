@@ -248,8 +248,14 @@ impl TurnEventHub {
         }
         let mut event = event;
         if let RuntimeEvent::Delta { run_id, text } = &event {
-            let visible = self.speech.project_delta(run_id, text);
             let run_id = run_id.clone();
+            let visible = match self.speech.project_delta(&run_id, text) {
+                Ok(visible) => visible,
+                Err(error) => {
+                    self.stop_speech_with_error(&run_id, error);
+                    return Ok(());
+                }
+            };
             if visible.is_empty() {
                 return Ok(());
             }

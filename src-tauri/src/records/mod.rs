@@ -15,7 +15,6 @@ pub(crate) use contract::{CaptureState, Origin, RecordKind};
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rusqlite::Connection;
 
     #[test]

@@ -40,6 +40,7 @@ pub(crate) struct BuildInput<'a> {
     pub(crate) policy_version: &'a str,
     pub(crate) user: &'a str,
     pub(crate) prior: &'a [(&'a str, &'a str, &'a str)],
+    pub(crate) dynamic: &'a str,
     pub(crate) budget: usize,
 }
 
@@ -47,12 +48,51 @@ pub(crate) fn build(
     connection: &Connection,
     input: &BuildInput<'_>,
 ) -> Result<Vec<(String, String, String)>, String> {
-    let manifest = ensure_initial(
+    let mut manifest = ensure_initial(
         connection,
         input.conversation_id,
         input.fixed,
         input.policy_version,
     )?;
+    if manifest.policy_version != input.policy_version {
+        manifest::close(connection, &manifest.id)?;
+        let digest = crate::generated_capabilities::contracts::sha256_hex(input.fixed.as_bytes());
+        let blob_id = if let Ok(existing) = connection.query_row(
+            "SELECT id FROM blobs WHERE dedup_domain='segment' AND sha256=?1",
+            [&digest],
+            |row| row.get::<_, String>(0),
+        ) {
+            connection
+                .execute(
+                    "UPDATE blobs SET ref_count = ref_count + 1 WHERE id=?1",
+                    [&existing],
+                )
+                .map_err(|error| error.to_string())?;
+            existing
+        } else {
+            let blob_id = crate::util::new_id("blob");
+            connection
+                .execute(
+                    "INSERT INTO blobs(id, dedup_domain, sha256, codec, raw_bytes, stored_bytes, data, ref_count)
+                     VALUES(?1,'segment',?2,'identity',?3,?3,?4,1)",
+                    rusqlite::params![blob_id, digest, input.fixed.len() as i64, input.fixed.as_bytes()],
+                )
+                .map_err(|error| error.to_string())?;
+            blob_id
+        };
+        manifest = manifest::create(
+            connection,
+            input.conversation_id,
+            "policy_version",
+            Some(&manifest.id),
+            input.policy_version,
+            &manifest.bootstrap_tool_schema_digest,
+            &blob_id,
+            &manifest.scope_snapshot_json,
+            manifest.input_budget,
+            manifest.forget_epoch,
+        )?;
+    }
     let mut known: Vec<String> = connection
         .prepare(
             "SELECT record_id FROM context_entries WHERE segment_id=?1 AND record_id IS NOT NULL",
@@ -73,7 +113,7 @@ pub(crate) fn build(
         known.push((*id).to_string());
     }
     let entries = load_texts(connection, &manifest.id)?;
-    let must = input.fixed.len() + input.user.len();
+    let must = input.fixed.len() + input.dynamic.len() + input.user.len();
     must_overflow(must, input.budget)?;
     let room = input.budget.saturating_sub(must);
     let mut kept = Vec::new();
@@ -96,6 +136,13 @@ pub(crate) fn build(
         input.fixed.to_string(),
     )];
     history.extend(kept);
+    if !input.dynamic.is_empty() {
+        history.push((
+            "segment-dynamic".into(),
+            "assistant".into(),
+            input.dynamic.to_string(),
+        ));
+    }
     history.push(("segment-user".into(), "user".into(), input.user.to_string()));
     Ok(history)
 }

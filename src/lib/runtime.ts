@@ -63,6 +63,25 @@ export async function cancelRun(runId: string): Promise<void> {
   return invoke<void>("cancel_run", { runId });
 }
 
+export type TtsVoiceCatalog = {
+  defaultVoice?: string;
+  voices: Array<{
+    id: string;
+    displayName: string;
+    voicePresentation?: string;
+    defaultStyle?: string;
+    styles: Array<{ id: string; displayName: string }>;
+    credit?: string;
+  }>;
+};
+
+export async function loadTtsVoiceCatalog(input: {
+  source: "provider" | "harness";
+  providerId?: string;
+}): Promise<TtsVoiceCatalog> {
+  return invoke<TtsVoiceCatalog>("load_tts_voice_catalog", { input });
+}
+
 export async function testModelProvider(
   provider: ModelProviderSettings,
 ): Promise<ProviderTestResult> {

@@ -35,7 +35,7 @@ pub(super) async fn render(
             let budget = remaining.min(*attempt_ms);
             let result = tokio::select! {biased;
                 _=context.cancellation.cancelled()=>return Ok(()),
-                result=tokio::time::timeout(Duration::from_millis(budget), play_one(route, &text, boundary_at, budget, context, output.clone(), first_phrase))=>result.unwrap_or_else(|_|Err("TTS request timed out".into())),
+                result=tokio::time::timeout(Duration::from_millis(budget), play_one(route, &text, expression, boundary_at, budget, context, output.clone(), first_phrase))=>result.unwrap_or_else(|_|Err("TTS request timed out".into())),
             };
             match result {
                 Ok(()) => {
@@ -67,6 +67,7 @@ pub(super) async fn render(
 async fn play_one(
     route: &TtsRoute,
     text: &str,
+    expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
     boundary_at: Instant,
     budget: u64,
     context: &RenderSessionContext,
@@ -124,6 +125,7 @@ async fn play_one(
                 TtsRoute::System(provider),
                 0,
                 text.to_string(),
+                expression,
                 boundary_at,
                 budget,
                 context.cancellation.clone(),

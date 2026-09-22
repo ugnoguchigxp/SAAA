@@ -38,6 +38,8 @@ mod tests {
                 idle_timer: None,
                 idle_reset,
                 writer: None,
+                expression: Default::default(),
+                expression_locked: false,
             },
         );
 
@@ -137,6 +139,8 @@ mod tests {
                 idle_timer: None,
                 idle_reset,
                 writer: None,
+                expression: Default::default(),
+                expression_locked: false,
             },
         );
         runtime
@@ -195,6 +199,8 @@ mod tests {
                 idle_timer: None,
                 idle_reset,
                 writer: Some(state.sqlite_writer.clone()),
+                expression: Default::default(),
+                expression_locked: false,
             },
         );
 

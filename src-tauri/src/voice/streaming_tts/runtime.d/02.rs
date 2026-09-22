@@ -9,7 +9,12 @@ async fn render_session_inner(
     if matches!(&context.route, TtsRoute::Cloud(_) | TtsRoute::Larm(..)) {
         return render_http_session(receiver, context).await;
     }
-    let mut queued = VecDeque::<(u64, String, Instant)>::new();
+    let mut queued = VecDeque::<(
+        u64,
+        String,
+        crate::voice::cloud_tts::speech_directive::SpeechExpression,
+        Instant,
+    )>::new();
     let mut rendering = FuturesUnordered::<RenderFuture>::new();
     let mut ready = BTreeMap::<u64, RenderedChunk>::new();
     let mut playback: Option<PlaybackTask> = None;

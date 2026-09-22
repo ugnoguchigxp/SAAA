@@ -85,7 +85,17 @@ pub(super) fn compose_after_connect(
         return Err(error);
     }
     let window = memory::context_window::compose(latest.loaded_context)?;
-    let base = budget.apply(window)?;
+    let use_segment = crate::runtime::context::segment::path_selected(
+        state.context_segments_enabled,
+        crate::providers::adapter_contract::CHAT_COMPLETIONS.history_binding
+            == crate::providers::adapter_contract::HistoryBinding::None,
+        budget.wrapper_reserve_bytes == 2_048,
+    );
+    let base = if use_segment {
+        window
+    } else {
+        budget.apply(window)?
+    };
     let role_candidates = if latest.role_dispatch.is_some() {
         crate::runtime::context::role_projection::project(
             crate::runtime::context::role_projection::RoleProjectionInput {
@@ -129,26 +139,45 @@ pub(super) fn compose_after_connect(
         &input.presentation_mode,
         composed.envelope.messages.clone(),
     )?;
-    if crate::runtime::context::segment::path_selected(
-        state.context_segments_enabled,
-        crate::providers::adapter_contract::CHAT_COMPLETIONS.history_binding
-            == crate::providers::adapter_contract::HistoryBinding::None,
-        budget.wrapper_reserve_bytes == 2_048,
-    ) {
-        let fixed = history
+    if use_segment {
+        let policy = composed
+            .envelope
+            .messages
             .iter()
             .find(|message| message.role == "system")
             .map(|message| message.content.clone())
             .unwrap_or_default();
+        let fixed = super::conversation_context::render_fixed_system_context(
+            &identity.agent_name,
+            &identity.user_name,
+            regional,
+            &policy,
+        )?;
+        let scope_key = latest
+            .scope
+            .scopes
+            .first()
+            .map(|scope| scope.key.clone())
+            .unwrap_or_default();
+        let dynamic = crate::runtime::context::segment::dynamic::render(
+            crate::schedule::tick::now_ms(),
+            &regional.time_zone,
+            &scope_key,
+            12,
+            &input.input_origin,
+            &input.presentation_mode,
+        );
         let user = history
             .iter()
             .rev()
             .find(|message| message.role == "user")
             .map(|message| message.content.clone())
             .unwrap_or_default();
+        let current_user = history.iter().rev().find(|message| message.role == "user");
         let prior: Vec<(String, String, String)> = history
             .iter()
             .filter(|message| message.role == "user" || message.role == "assistant")
+            .filter(|message| current_user.is_none_or(|user| user.id != message.id))
             .map(|message| {
                 (
                     message.id.clone(),
@@ -172,6 +201,7 @@ pub(super) fn compose_after_connect(
                     ),
                     user: &user,
                     prior: &prior_refs,
+                    dynamic: &dynamic,
                     budget: budget.usable_context_bytes(),
                 },
             )

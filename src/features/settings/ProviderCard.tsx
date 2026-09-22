@@ -9,6 +9,7 @@ import type {
   OpenAiCompatibleProviderSettings,
 } from "../../lib/contracts";
 import { testModelProvider } from "../../lib/runtime";
+import { TtsVoiceControls } from "./TtsVoiceControls";
 import { LlmRequestFields } from "./LlmRequestFields";
 import { Field } from "./SettingsFields";
 import {
@@ -379,13 +380,19 @@ function TtsFields({
   return (
     <div className="settings-form-grid">
       <CommonCloudFields provider={provider} onChange={onChange} />
-      <Field label={t("settings.providers.voice")}>
-        <input
-          value={provider.voice}
-          placeholder={t("settings.providers.voicePlaceholder")}
-          onChange={(event) => onChange({ ...provider, voice: event.target.value })}
-        />
-      </Field>
+      {provider.model === "voicevox-core" ? null : (
+        <Field label={t("settings.providers.voice")}>
+          <input
+            value={provider.voice}
+            placeholder={t("settings.providers.voicePlaceholder")}
+            onChange={(event) => onChange({ ...provider, voice: event.target.value })}
+          />
+        </Field>
+      )}
+      <TtsVoiceControls
+        provider={provider}
+        onChange={(next) => onChange(next)}
+      />
       <Field label={t("settings.providers.audioFormat")}>
         <select
           value={provider.responseFormat ?? "wav"}

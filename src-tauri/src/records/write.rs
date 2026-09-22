@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
 
-use super::contract::{CaptureState, Origin, Outline, RecordKind, RecordRef};
+use super::contract::{CaptureState, Origin, RecordKind, RecordRef};
 use super::fts;
 use super::outline;
 

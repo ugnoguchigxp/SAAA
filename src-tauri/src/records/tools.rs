@@ -101,7 +101,7 @@ fn read_record(connection: &Connection, auth: &Authorization, args: &Value) -> V
                 body["truncated"] = json!(true);
                 body["next"] = json!({"id": result.record_id, "start": result.actual_end});
             }
-            shrink(&mut body, result.record_id, result.actual_end);
+            shrink(&mut body, result.record_id.clone(), result.actual_start);
             body
         }
         Ok(None) => json!({"status": "unavailable", "instruction_authority": "none"}),
@@ -111,7 +111,7 @@ fn read_record(connection: &Connection, auth: &Authorization, args: &Value) -> V
     }
 }
 
-fn shrink(body: &mut Value, id: String, mut start: u64) {
+fn shrink(body: &mut Value, id: String, origin: u64) {
     let mut encoded = body.to_string();
     while encoded.len() > 8_192 {
         let text = body["items"][0]["text"].as_str().unwrap_or("").to_string();
@@ -122,10 +122,12 @@ fn shrink(body: &mut Value, id: String, mut start: u64) {
         while end > 0 && !text.is_char_boundary(end) {
             end -= 1;
         }
-        start += end as u64;
+        if end == 0 {
+            break;
+        }
         body["items"][0]["text"] = json!(&text[..end]);
         body["truncated"] = json!(true);
-        body["next"] = json!({"id": id, "start": start});
+        body["next"] = json!({"id": id, "start": origin + end as u64});
         encoded = body.to_string();
     }
 }
@@ -143,7 +145,13 @@ fn recall(connection: &Connection, auth: &Authorization, args: &Value) -> Value 
         connection,
         auth,
         ActivityQuery {
-            kinds: vec![RecordKind::WebSearchResult],
+            kinds: vec![
+                RecordKind::WebSearch,
+                RecordKind::WebSearchResult,
+                RecordKind::WebFetch,
+                RecordKind::McpResult,
+                RecordKind::ToolResult,
+            ],
             run_id: None,
             parent_id: parent,
             rank,
@@ -207,7 +215,6 @@ mod tests {
         )
     }
 
-    #[test]
     #[test]
     fn cw_34_records_tools_offered_regardless_of_discovery() {
         let names = definitions()
