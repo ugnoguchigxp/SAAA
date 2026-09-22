@@ -59,19 +59,22 @@ pub(crate) fn migrate_v33_to_v34_direct_qwen_reasoner(
         Ok(value) => value,
         Err(_) => return Ok(()),
     };
-    let direct_model = providers["providers"]
+    let direct_provider_exists = providers["providers"]
         .as_array()
         .and_then(|items| {
             items.iter().find(|provider| {
                 provider["id"] == crate::QWEN_DIRECT_PROVIDER_ID
                     && provider["kind"] == "openai-compatible"
                     && provider["enabled"] == true
+                    && provider["model"]
+                        .as_str()
+                        .is_some_and(|model| !model.is_empty())
             })
         })
-        .and_then(|provider| provider["model"].as_str());
-    let Some(direct_model) = direct_model else {
+        .is_some();
+    if !direct_provider_exists {
         return Ok(());
-    };
+    }
     let mut roles: Value = match serde_json::from_str(&roles_json) {
         Ok(value) => value,
         Err(_) => return Ok(()),
@@ -89,7 +92,9 @@ pub(crate) fn migrate_v33_to_v34_direct_qwen_reasoner(
         return Ok(());
     };
     reasoner["providerId"] = Value::String(crate::QWEN_DIRECT_PROVIDER_ID.into());
-    reasoner["model"] = Value::String(direct_model.into());
+    // Provider actors resolve their model from the selected provider document. A model value on
+    // the actor is reserved for codex_sdk actors and would invalidate the Role Routing policy.
+    reasoner["model"] = Value::Null;
     reasoner["label"] = Value::String("Qwen3.8 27B (direct)".into());
     connection.execute(
         "UPDATE settings_documents
@@ -151,15 +156,43 @@ mod tests {
             {"id":crate::QWEN_DIRECT_PROVIDER_ID,"kind":"openai-compatible","enabled":true,
              "model":"Qwen3.8-27B-ROCmFP4-FAST.gguf"}
         ]});
-        let roles = json!({
-            "roles":{"reasoner":"local-reasoner","frontend":"local-conversation-frontend"},
-            "actors":[
-                {"id":"local-reasoner","transport":"provider",
-                 "providerId":crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"label":"LAN reasoning provider"},
-                {"id":"local-conversation-frontend","transport":"provider",
-                 "providerId":crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"label":"LFM"}
-            ]
-        });
+        let mut policy = crate::role_routing::RoleRoutingSettings::default();
+        policy.enabled = true;
+        policy.roles.reasoner = Some("local-reasoner".into());
+        policy.roles.frontend = Some("local-conversation-frontend".into());
+        policy.actors = vec![
+            crate::role_routing::contracts::RoutingActor {
+                id: "local-reasoner".into(),
+                label: "LAN reasoning provider".into(),
+                aliases: vec![],
+                transport: "provider".into(),
+                provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),
+                model: None,
+                location: "local".into(),
+                resource_group: "local-inference".into(),
+                max_input_bytes: 65_536,
+                capabilities: vec!["reason".into(), "tools".into()],
+            },
+            crate::role_routing::contracts::RoutingActor {
+                id: "local-conversation-frontend".into(),
+                label: "LFM".into(),
+                aliases: vec![],
+                transport: "provider".into(),
+                provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),
+                model: None,
+                location: "local".into(),
+                resource_group: "harness-backchannel".into(),
+                max_input_bytes: 16_000,
+                capabilities: vec!["social_reply".into(), "classify".into()],
+            },
+        ];
+        policy.recipes = vec![crate::role_routing::contracts::RoutingRecipe {
+            id: "reasoner-response".into(),
+            action: crate::role_routing::contracts::RoutingAction::Respond,
+            roles: vec!["reasoner".into()],
+            enabled: true,
+        }];
+        let roles = serde_json::to_value(policy).expect("role policy json");
         c.execute(
             "INSERT INTO settings_documents VALUES('providers.model','default',15,?1,'before')",
             [providers.to_string()],
@@ -185,14 +218,14 @@ mod tests {
             stored["actors"][0]["providerId"],
             crate::QWEN_DIRECT_PROVIDER_ID
         );
-        assert_eq!(
-            stored["actors"][0]["model"],
-            "Qwen3.8-27B-ROCmFP4-FAST.gguf"
-        );
+        assert!(stored["actors"][0]["model"].is_null());
         assert_eq!(
             stored["actors"][1]["providerId"],
             crate::DYNAMIC_LAN_PROVIDER_ID
         );
+        let policy: crate::role_routing::RoleRoutingSettings =
+            serde_json::from_value(stored).expect("role policy");
+        crate::role_routing::contracts::validate_settings(&policy).expect("valid migrated policy");
     }
 
     #[test]
