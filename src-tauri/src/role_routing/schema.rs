@@ -203,8 +203,6 @@ pub(crate) fn migrate_v35_to_v36_larm_conversation_profile(
             roles["roles"]["frontend"] = Value::Null;
         }
     }
-    providers["harness"]["address"] =
-        Value::String(format!("http://{}:9810", crate::DEFAULT_DYNAMIC_LAN_HOST));
     providers["harness"]["larmProfile"] = Value::String(saaa_larm_session::DEFAULT_PROFILE.into());
     let now = crate::now_iso();
     connection.execute(
@@ -216,53 +214,6 @@ pub(crate) fn migrate_v35_to_v36_larm_conversation_profile(
         "UPDATE settings_documents SET value_json=?1, updated_at=?2
          WHERE namespace='routing.roles' AND key='default'",
         params![roles.to_string(), &now],
-    )?;
-    Ok(())
-}
-
-/// The LARM audience rejects loopback and the desktop contract names the LAN endpoint explicitly.
-/// Rewrite only the shipped dynamic provider when it is bound to the migrated reasoner.
-pub(crate) fn migrate_v36_to_v37_larm_lan_host(
-    connection: &Connection,
-    previous_version: i64,
-) -> rusqlite::Result<()> {
-    if previous_version >= 37 {
-        return Ok(());
-    }
-    connection.execute(
-        "UPDATE settings_documents
-         SET value_json=json_set(
-               value_json,
-               '$.harness.address', ?1,
-               '$.harness.larmProfile', ?2,
-               '$.providers[' || (
-                 SELECT key FROM json_each(settings_documents.value_json, '$.providers')
-                 WHERE json_extract(value, '$.id')=?3
-                   AND json_extract(value, '$.kind')='dynamic-lan'
-                 LIMIT 1
-               ) || '].host', ?4
-             ),
-             updated_at=?5
-         WHERE namespace='providers.model' AND key='default'
-           AND EXISTS (
-             SELECT 1 FROM settings_documents roles, json_each(roles.value_json, '$.actors') actor
-             WHERE roles.namespace='routing.roles' AND roles.key='default'
-               AND json_extract(actor.value, '$.id')='local-reasoner'
-               AND json_extract(actor.value, '$.providerId')=?3
-               AND json_extract(actor.value, '$.resourceGroup')='larm-conversation'
-           )
-           AND EXISTS (
-             SELECT 1 FROM json_each(settings_documents.value_json, '$.providers') provider
-             WHERE json_extract(provider.value, '$.id')=?3
-               AND json_extract(provider.value, '$.kind')='dynamic-lan'
-           )",
-        params![
-            format!("http://{}:9810", crate::DEFAULT_DYNAMIC_LAN_HOST),
-            saaa_larm_session::DEFAULT_PROFILE,
-            crate::DYNAMIC_LAN_PROVIDER_ID,
-            crate::DEFAULT_DYNAMIC_LAN_HOST,
-            crate::now_iso(),
-        ],
     )?;
     Ok(())
 }
@@ -543,7 +494,7 @@ mod tests {
             )
             .unwrap();
         let providers: Value = serde_json::from_str(&providers).unwrap();
-        assert_eq!(providers["harness"]["address"], "http://gnosis.local:9810");
+        assert_eq!(providers["harness"]["address"], "http://192.168.0.130:9810");
         assert_eq!(
             providers["harness"]["larmProfile"],
             saaa_larm_session::DEFAULT_PROFILE
@@ -602,42 +553,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), providers);
-    }
-
-    #[test]
-    fn schema_37_uses_the_larm_lan_name_for_the_shipped_reasoner() {
-        let c = Connection::open_in_memory().expect("connection");
-        c.execute_batch(
-            "CREATE TABLE settings_documents (
-               namespace TEXT NOT NULL, key TEXT NOT NULL, schema_version INTEGER NOT NULL,
-               value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
-               PRIMARY KEY(namespace,key)
-             );
-             INSERT INTO settings_documents VALUES(
-               'providers.model','default',15,
-               '{\"harness\":{\"address\":\"http://192.168.0.130:9810\"},\"providers\":[{\"id\":\"lan-llm-dynamic\",\"kind\":\"dynamic-lan\",\"enabled\":true,\"host\":\"192.168.0.130\"}]}','before');
-             INSERT INTO settings_documents VALUES(
-               'routing.roles','default',15,
-               '{\"roles\":{\"reasoner\":\"local-reasoner\"},\"actors\":[{\"id\":\"local-reasoner\",\"providerId\":\"lan-llm-dynamic\",\"resourceGroup\":\"larm-conversation\"}]}','before');",
-        )
-        .expect("settings");
-
-        migrate_v36_to_v37_larm_lan_host(&c, 36).expect("migration");
-
-        let stored: String = c
-            .query_row(
-                "SELECT value_json FROM settings_documents WHERE namespace='providers.model'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let stored: Value = serde_json::from_str(&stored).unwrap();
-        assert_eq!(stored["harness"]["address"], "http://gnosis.local:9810");
-        assert_eq!(
-            stored["harness"]["larmProfile"],
-            saaa_larm_session::DEFAULT_PROFILE
-        );
-        assert_eq!(stored["providers"][0]["host"], "gnosis.local");
     }
 
     #[test]
