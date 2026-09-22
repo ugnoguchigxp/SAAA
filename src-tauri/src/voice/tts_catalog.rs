@@ -22,7 +22,8 @@ pub(crate) struct TtsVoice {
     pub(crate) credit: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TtsStyle {
     pub(crate) id: String,
     pub(crate) display_name: String,
@@ -200,6 +201,142 @@ pub(crate) fn normalize_catalog(bytes: &[u8]) -> Result<TtsVoiceCatalog, Catalog
         default_voice: wire.default_voice,
         voices,
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadTtsVoiceCatalogInput {
+    pub(crate) source: String,
+    pub(crate) provider_id: Option<String>,
+}
+
+pub(crate) async fn load_tts_voice_catalog(
+    state: &crate::AppState,
+    input: LoadTtsVoiceCatalogInput,
+) -> Result<TtsVoiceCatalog, String> {
+    match input.source.as_str() {
+        "provider" => load_provider_catalog(state, input.provider_id.as_deref()).await,
+        "harness" => load_harness_catalog(state).await,
+        _ => Err("catalog-unsupported-model".into()),
+    }
+}
+
+async fn load_provider_catalog(
+    state: &crate::AppState,
+    provider_id: Option<&str>,
+) -> Result<TtsVoiceCatalog, String> {
+    let provider_id = provider_id.ok_or("catalog-unsupported-model")?;
+    let settings = state
+        .sqlite_readers
+        .read(|connection| Ok(crate::persistence::load_model_providers(connection)?))?;
+    let provider = settings
+        .providers
+        .into_iter()
+        .find_map(|provider| match provider {
+            crate::ModelProviderSettings::CloudTts(provider) if provider.id == provider_id => {
+                Some(provider)
+            }
+            _ => None,
+        })
+        .ok_or("catalog-unsupported-model")?;
+    if provider.model != "voicevox-core" {
+        return Err("catalog-unsupported-model".into());
+    }
+    let token = if provider.authentication == "none" {
+        None
+    } else {
+        Some(
+            crate::credentials::load_api_key(&provider.id)?
+                .ok_or("API key is not configured in the operating system credential store")?,
+        )
+    };
+    fetch_catalog(&provider.endpoint, token.as_deref(), false).await
+}
+
+async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog, String> {
+    let harness = state
+        .sqlite_readers
+        .read(|connection| Ok(crate::persistence::load_model_providers(connection)?.harness))?;
+    crate::persistence::settings::provider_validation::validate_model_providers(
+        &crate::ModelProvidersSettings {
+            harness: harness.clone(),
+            providers: Vec::new(),
+            reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+        },
+    )?;
+    let credential =
+        crate::providers::dynamic_lan::credential::load().map_err(|error| error.code())?;
+    let (_alive, cancellation) = tokio::sync::watch::channel(false);
+    let session = saaa_larm_session::Session::connect_with_profile_and_credential(
+        &harness.address,
+        harness.larm_profile.as_deref().unwrap_or(saaa_larm_session::DEFAULT_PROFILE),
+        credential.token().to_string(),
+        cancellation,
+    )
+    .await
+    .map_err(|_| "larm-catalog-connect-failed".to_string())?;
+    let result = async {
+        let lease = session.acquire("tts").await.map_err(str::to_string)?;
+        if lease.provider().model != "voicevox-core" {
+            return Err("catalog-unsupported-model".into());
+        }
+        let endpoint = lease.provider().base_url.to_string();
+        let token = lease.provider().token().to_string();
+        drop(lease);
+        fetch_catalog(&endpoint, Some(&token), true).await
+    }
+    .await;
+    if let Err(error) = session.close().await {
+        return Err(if result.is_ok() {
+            "larm-catalog-release-failed".into()
+        } else {
+            error.to_string()
+        });
+    }
+    result
+}
+
+async fn fetch_catalog(
+    endpoint: &str,
+    token: Option<&str>,
+    bypass_proxy: bool,
+) -> Result<TtsVoiceCatalog, String> {
+    let mut url = crate::providers::openai_compatible::provider_operation_url(endpoint, "audio/voices")
+        .map_err(|_| "catalog-protocol".to_string())?;
+    {
+        let mut parsed = url::Url::parse(&url).map_err(|_| "catalog-protocol".to_string())?;
+        parsed.query_pairs_mut().append_pair("model", "voicevox-core");
+        url = parsed.to_string();
+    }
+    let client = crate::voice::http_audio::client::build(
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none()),
+        bypass_proxy,
+    )?;
+    let mut request = client.get(url);
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            "catalog-timeout".to_string()
+        } else {
+            "catalog-protocol".to_string()
+        }
+    })?;
+    if !response.status().is_success() {
+        return Err(format!("catalog-http-{}", response.status().as_u16()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| "catalog-protocol".to_string())?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("catalog-protocol".into());
+    }
+    normalize_catalog(&bytes).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

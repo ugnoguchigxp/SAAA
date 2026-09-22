@@ -150,6 +150,13 @@ fn export_diagnostics(state: tauri::State<'_, AppState>) -> Result<LocalArtifact
     diagnostics::export_diagnostics(&state)
 }
 #[tauri::command]
+async fn load_tts_voice_catalog(
+    state: tauri::State<'_, AppState>,
+    input: crate::voice::cloud_tts::tts_catalog::LoadTtsVoiceCatalogInput,
+) -> Result<crate::voice::cloud_tts::tts_catalog::TtsVoiceCatalog, String> {
+    crate::voice::cloud_tts::tts_catalog::load_tts_voice_catalog(&state, input).await
+}
+#[tauri::command]
 async fn test_model_provider(
     state: tauri::State<'_, AppState>,
     input: TestProviderInput,

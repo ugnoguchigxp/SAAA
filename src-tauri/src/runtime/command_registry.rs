@@ -38,6 +38,7 @@ macro_rules! saaa_invoke_handler {
             record_frontend_audit_event,
             cancel_run,
             test_model_provider,
+            load_tts_voice_catalog,
             resolve_service_harness,
             set_provider_api_key,
             delete_provider_api_key,
