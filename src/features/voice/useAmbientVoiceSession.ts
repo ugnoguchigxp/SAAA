@@ -1,8 +1,5 @@
 import type { AmbientVoiceSessionOptions } from "./ambientVoiceTypes";
-import {
-  effectiveCaptureSettings,
-  voiceStartupMessage,
-} from "./voiceCaptureSettings";
+import { effectiveCaptureSettings, voiceStartupMessage } from "./voiceCaptureSettings";
 import { idleCaptureShouldStart } from "./idleVoiceCapture";
 export { effectiveCaptureSettings } from "./voiceCaptureSettings";
 import { VoiceCaptureResources } from "./VoiceCaptureResources";
@@ -258,10 +255,7 @@ export function useAmbientVoiceSession({
 
   async function toggleAmbientListening(requestedEnabled?: boolean) {
     const generation = ++voiceToggleGenerationRef.current;
-    const currentUiState = voiceCaptureState(
-      voiceSessionRef.current,
-      listeningEnabledRef.current,
-    );
+    const currentUiState = voiceCaptureState(voiceSessionRef.current, listeningEnabledRef.current);
     const shouldEnable = requestedEnabled ?? currentUiState === "stopped";
     if (!shouldEnable) {
       // Stopping is always accepted. Keep the UI in preparing until owned

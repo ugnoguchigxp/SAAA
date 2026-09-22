@@ -59,8 +59,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
   );
   const close = useCallback((tabId: string) => dispatch({ type: "close", tabId }), []);
   const active = tabs.find((tab) => artifactTabId(tab) === activeTabId) ?? null;
-  const width =
-    active?.kind === "semantic-ui" ? artifactWidthFor(active.instance.node) : 50;
+  const width = active?.kind === "semantic-ui" ? artifactWidthFor(active.instance.node) : 50;
   useEffect(() => {
     const isOpen = Boolean(active);
     if (isOpen && !wasOpenRef.current) panelRef.current?.focus();
@@ -171,7 +170,10 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                   </Suspense>
                 </UiBoundary>
               ) : (
-                <UiBoundary key={artifactTabId(active)} fallback={<p>{t("genui.previewUnavailable")}</p>}>
+                <UiBoundary
+                  key={artifactTabId(active)}
+                  fallback={<p>{t("genui.previewUnavailable")}</p>}
+                >
                   <Suspense fallback={<p>{t("genui.previewLoading")}</p>}>
                     <InteractivePreview
                       artifactId={active.artifactId}

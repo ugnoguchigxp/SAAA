@@ -52,7 +52,8 @@ export const uiEnglish = {
   previewLoading: "Preparing the interactive preview…",
   previewUnavailable: "This preview is not available.",
   previewFailed: "The preview could not be shown.",
-  previewFocusHint: "Press Escape to close the artifact panel. The preview is isolated from the app.",
+  previewFocusHint:
+    "Press Escape to close the artifact panel. The preview is isolated from the app.",
   previewReady: "Interactive preview of {{title}} is visible.",
   previewSafeError: "The preview could not be opened. Retry without exposing file contents.",
   openInteractivePreview: "Open interactive HTML preview",

@@ -343,7 +343,12 @@ describe("ambient voice session", () => {
             ignoredAsSelfSpeech: true,
           };
         }
-        return { reasoningRequestId: null, requestContent: null, speechEpoch: 1, ignoredAsSelfSpeech: false };
+        return {
+          reasoningRequestId: null,
+          requestContent: null,
+          speechEpoch: 1,
+          ignoredAsSelfSpeech: false,
+        };
       }
       return command;
     };
