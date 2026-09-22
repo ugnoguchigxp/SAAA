@@ -13,11 +13,7 @@ pub(crate) async fn classify_shadow(
     let started = std::time::Instant::now();
     let work = async {
         let ready = super::current(conversation).await?;
-        let lease = ready
-            .session
-            .acquire("llm")
-            .await
-            .map_err(str::to_string)?;
+        let lease = ready.session.acquire("llm").await.map_err(str::to_string)?;
         let provider = lease.provider();
         if provider
             .context_window

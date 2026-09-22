@@ -22,7 +22,7 @@ use ipc_contract::RuntimeEvent;
 const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 const DYNAMIC_LAN_PROVIDER_ID: &str = "lan-llm-dynamic";
 const QWEN_DIRECT_PROVIDER_ID: &str = "lan-qwen-direct";
-const DEFAULT_DYNAMIC_LAN_HOST: &str = "localhost";
+const DEFAULT_DYNAMIC_LAN_HOST: &str = "gnosis.local";
 const DEFAULT_AGENT_NAME: &str = "SAAA";
 const DEFAULT_USER_NAME: &str = "";
 const PRIMARY_CONVERSATION_ID: &str = "conversation_primary";

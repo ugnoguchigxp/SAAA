@@ -63,12 +63,13 @@
         "updatedAt": "0",
         "valueJson": {
           "harness": {
-            "address": "http://localhost:9810"
+            "address": "http://gnosis.local:9810",
+            "larmProfile": "saaa-conversation-gemma4"
           },
           "providers": [
             {
               "enabled": true,
-              "host": "localhost",
+              "host": "gnosis.local",
               "id": "lan-llm-dynamic",
               "kind": "dynamic-lan",
               "label": "Provider Harness LLM",
@@ -120,7 +121,7 @@
             "maxReviewRounds": 1,
             "maxToolCalls": 32,
             "rootTimeoutMs": 180000,
-            "stepTimeoutMs": 60000
+            "stepTimeoutMs": 120000
           },
           "premiumApproval": "per_request",
           "recipes": [],

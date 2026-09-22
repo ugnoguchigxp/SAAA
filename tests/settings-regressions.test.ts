@@ -10,6 +10,17 @@ import { validateSettingsDocuments } from "../src/lib/schemas";
 import providerCases from "./fixtures/provider-validation.json";
 
 describe("settings regressions", () => {
+  test("defaults LARM to the LAN Gemma conversation profile", () => {
+    expect(defaultSettingsDraft.providers.harness).toEqual({
+      address: "http://gnosis.local:9810",
+      larmProfile: "saaa-conversation-gemma4",
+    });
+    const dynamicLan = defaultSettingsDraft.providers.providers.find(
+      (provider) => provider.kind === "dynamic-lan",
+    );
+    expect(dynamicLan?.host).toBe("gnosis.local");
+  });
+
   test("matches the shared provider endpoint contract", () => {
     for (const fixture of providerCases) {
       const settings = structuredClone(defaultSettingsDraft.providers);

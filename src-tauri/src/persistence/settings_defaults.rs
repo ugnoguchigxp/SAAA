@@ -13,7 +13,8 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             SETTINGS_SCHEMA_VERSION,
             json!({
                 "harness": {
-                    "address": format!("http://{}:9810", DEFAULT_DYNAMIC_LAN_HOST)
+                    "address": format!("http://{}:9810", DEFAULT_DYNAMIC_LAN_HOST),
+                    "larmProfile": saaa_larm_session::DEFAULT_PROFILE
                 },
                 "providers": [{
                     "kind": "dynamic-lan",

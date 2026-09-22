@@ -214,6 +214,8 @@ export const enCore = {
       live: "Updates every 2 seconds",
       requestTime: "Input received:",
       savedResult: "Status of the last recorded request. Refreshing does not retry it.",
+      larmSessionPrepareFailed:
+        "LARM could not prepare the conversation provider set. Check the startup state of every claimed LLM, ASR, TTS, and embedding provider rather than ASR alone.",
       harness: {
         preparing: "Preparing the Harness LLM connection. Inference has not been requested yet.",
         ready: "The LLM connection is ready.",

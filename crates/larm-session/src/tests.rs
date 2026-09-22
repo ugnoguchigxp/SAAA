@@ -6,6 +6,7 @@ use axum::{
 };
 use serde_json::Value;
 use std::sync::{atomic::AtomicUsize, Mutex};
+const GEMMA4_KV_TOKENS: u64 = 225 * 1024;
 struct Fake {
     base: String,
     generation: AtomicUsize,
@@ -34,7 +35,7 @@ impl Fake {
             "credential":{"token":format!("token-{name}-{generation}")},
             "health":{"url":format!("{}/{name}/health",self.base),"maxAgeMs":10000},
             "contextWindow": if *name == "llm" {
-                json!({"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976})
+                json!({"maxTokens":GEMMA4_KV_TOKENS,"outputReserveTokens":4096,"safetyMarginTokens":1976})
             } else { Value::Null },
             "embeddingSpace": if *name == "embedding" { json!({"dimension":384}) } else { Value::Null }
         })).collect::<Vec<_>>();
@@ -129,13 +130,18 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
     if fake.released.load(Ordering::SeqCst) {
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
-    assert_eq!(
-        request.headers()["authorization"],
-        format!(
-            "Bearer token-{name}-{}",
-            fake.generation.load(Ordering::SeqCst)
-        )
+    let expected_token = format!(
+        "Bearer token-{name}-{}",
+        fake.generation.load(Ordering::SeqCst)
     );
+    if request
+        .headers()
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        != Some(expected_token.as_str())
+    {
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+    }
     if path.ends_with("/embed") {
         let body = axum::body::to_bytes(request.into_body(), 100_000)
             .await
@@ -199,7 +205,7 @@ async fn maps_reordered_providers_and_caches_health_then_releases_once() {
         match name {
             "llm" => {
                 let window = lease.provider().context_window.unwrap();
-                assert_eq!(window.max_tokens, 230400);
+                assert_eq!(window.max_tokens, GEMMA4_KV_TOKENS);
                 assert_eq!(window.output_reserve_tokens, 4096);
                 assert_eq!(window.safety_margin_tokens, 1976);
                 assert_eq!(window.max_input_tokens(), 224328);
@@ -298,6 +304,14 @@ async fn renew_waits_for_inflight_use_and_atomically_changes_all_tokens() {
     let (fake, server) = fixture().await;
     let (_stop, receiver) = watch::channel(false);
     let session = Session::connect(&fake.base, receiver).await.unwrap();
+    let mut old_credentials = Vec::new();
+    for (name, _) in contract::PROVIDERS {
+        let lease = session.acquire(name).await.unwrap();
+        old_credentials.push((
+            lease.provider().health_url.clone(),
+            lease.provider().token().to_string(),
+        ));
+    }
     // Arrange expiry while the snapshot is exclusive, then pin a simulated in-flight request.
     session.snapshot.write().await.as_mut().unwrap().expires_at =
         chrono::Utc::now() + chrono::Duration::seconds(60);
@@ -314,6 +328,16 @@ async fn renew_waits_for_inflight_use_and_atomically_changes_all_tokens() {
         assert_eq!(lease.allocation_id(), "allocation-1");
     }
     assert_eq!(count(&fake, "/renew"), 1);
+    for (health_url, token) in old_credentials {
+        let status = reqwest::Client::new()
+            .get(health_url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    }
     session.close().await.unwrap();
     server.abort();
 }

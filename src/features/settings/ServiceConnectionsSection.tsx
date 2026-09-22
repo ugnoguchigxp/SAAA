@@ -12,6 +12,7 @@ import { legacyDynamicLanHost } from "../../lib/providerRuntime";
 import { localizeProviderLabel, localizeStatus, localizeUiMessage } from "../../i18n/presentation";
 import { ConversationTimeoutField } from "./ConversationTimeoutField";
 import { Field } from "./SettingsFields";
+import { DEFAULT_LARM_PROFILE } from "./settingsDefaults";
 
 type Capability = "llm" | "asr" | "tts";
 type ResolveNotice =
@@ -197,7 +198,7 @@ export function ServiceConnectionsSection({
           </Field>
           <Field label={t("settings.compatibility.voiceProfile")}>
             <input
-              value={providers.harness.larmProfile ?? "saaa-qwen38"}
+              value={providers.harness.larmProfile ?? DEFAULT_LARM_PROFILE}
               onChange={(e) =>
                 onProvidersChange({
                   ...providers,

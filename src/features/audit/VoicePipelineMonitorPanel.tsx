@@ -10,6 +10,7 @@ import "./VoicePipelineMonitorPanel.css";
 
 const failureHintKeys: Partial<Record<string, string>> = {
   ...harnessFailureHintKeys,
+  "larm-session-prepare-failed": "audit.monitor.larmSessionPrepareFailed",
   "context-scope-changed": "chat.contextRecovery.context-scope-changed",
   "required-context-overflow": "chat.contextRecovery.required-context-overflow",
   "required-context-unavailable": "chat.contextRecovery.required-context-unavailable",

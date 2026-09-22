@@ -19,6 +19,8 @@ describe("voice audit projections", () => {
     auditCaptureCancelled("s1", "c1");
     auditCaptureFailed("s1", "c1", new MicrophoneCaptureError("permission-denied", "denied"));
     auditCaptureFailed("s1", "c1", "asr-provider-unavailable");
+    auditCaptureFailed("s1", "c1", "larm-session-prepare-failed: larm_startup_terminal");
+    auditCaptureFailed("s1", "c1", "lfm-session-prepare-failed: larm_cancelled");
     auditCaptureFailed("s1", "c1", "other");
     auditCaptureSuspended("s1", "c1", "speech");
     auditVoiceDeliveryBlocked("s1", "u1", "c1", 2);
@@ -39,6 +41,9 @@ describe("voice audit projections", () => {
     expect(names.some((event) => event?.eventName === "capture-started")).toBe(true);
     expect(names.some((event) => event?.failureCode === "permission-denied")).toBe(true);
     expect(names.some((event) => event?.failureCode === "asr-provider-unavailable")).toBe(true);
+    expect(
+      names.filter((event) => event?.failureCode === "larm-session-prepare-failed"),
+    ).toHaveLength(2);
     expect(names.some((event) => event?.failureCode === "unknown")).toBe(true);
   });
 });

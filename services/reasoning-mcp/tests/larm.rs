@@ -29,11 +29,13 @@ async fn larm(State(fake): State<Arc<Fake>>, request: Request) -> Response {
         if path.ends_with("/claim") {
             value["providers"]=json!([
                 ("llm","openai.chat-completions.v1"),("tts","openai.audio-speech.v1"),
-                ("backchannel","openai.chat-completions.v1"),("asr","openai.audio-transcriptions.v1")
+                ("embedding","larm.embedding.v1"),("asr","openai.audio-transcriptions.v1")
             ].iter().map(|(name,protocol)|json!({"name":name,"protocol":protocol,
-                "configuration":{"fields":{"baseURL":format!("{}/{name}/v1",fake.base),"model":format!("{name}-from-claim")}},
+                "baseUrl":format!("{}/{name}/v1",fake.base),"model":format!("{name}-from-claim"),
+                "configuration":{"fields":{}},
                 "credential":{"token":format!("{name}-exclusive-token")},"health":{"url":format!("{}/{name}/health",fake.base),"maxAgeMs":10000},
-                "contextWindow":if *protocol=="openai.chat-completions.v1" {json!({"maxTokens":65536,"outputReserveTokens":4096,"safetyMarginTokens":1024})} else {Value::Null}})).collect::<Vec<_>>());
+                "contextWindow":if *name=="llm" {json!({"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976})} else {Value::Null},
+                "embeddingSpace":if *name=="embedding" {json!({"dimension":384})} else {Value::Null}})).collect::<Vec<_>>());
             return Json(value).into_response();
         }
         return (axum::http::StatusCode::CREATED, Json(value)).into_response();
@@ -47,6 +49,7 @@ async fn larm(State(fake): State<Arc<Fake>>, request: Request) -> Response {
         let protocol = match name {
             "asr" => "openai.audio-transcriptions.v1",
             "tts" => "openai.audio-speech.v1",
+            "embedding" => "larm.embedding.v1",
             _ => "openai.chat-completions.v1",
         };
         return Json(json!({"ready":true,"acceptingRequests":true,"capacity":{"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":1,"queueDepth":0,"queueTimeoutMs":1000,"retryAfterMs":0,"completionGuaranteed":false},"probe":{"validated":true,"protocol":protocol}})).into_response();

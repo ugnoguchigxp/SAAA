@@ -32,7 +32,7 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         id: "context-still-owner".into(),
         conversation: crate::PRIMARY_CONVERSATION_ID.into(),
         base: f.base.clone(),
-        profile: "saaa-qwen38".into(),
+        profile: saaa_larm_session::DEFAULT_PROFILE.into(),
         cancel,
         ready: OnceCell::new(),
         started: AtomicBool::new(false),
@@ -72,7 +72,7 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         },
         &crate::HarnessSettings {
             address: f.base.clone(),
-            larm_profile: Some("saaa-qwen38".into()),
+            larm_profile: Some(saaa_larm_session::DEFAULT_PROFILE.into()),
             tts_voice: None,
         },
         true,

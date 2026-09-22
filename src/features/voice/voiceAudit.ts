@@ -6,6 +6,11 @@ import type { FinalVoiceUtterance } from "./voiceFinalDeliveryQueue";
 function failureCode(cause: unknown): string {
   if (cause instanceof MicrophoneCaptureError) return cause.code;
   const code = toMessage(cause);
+  if (
+    code.startsWith("larm-session-prepare-failed:") ||
+    code.startsWith("lfm-session-prepare-failed:")
+  )
+    return "larm-session-prepare-failed";
   return [
     "asr-provider-unavailable",
     "asr-session-exists",

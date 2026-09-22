@@ -80,7 +80,7 @@ pub(crate) async fn begin_larm_voice_session(
     self::current(&conversation_id)
         .await
         .map(|_| ())
-        .map_err(|error| format!("lfm-session-prepare-failed: {error}"))
+        .map_err(|error| format!("larm-session-prepare-failed: {error}"))
 }
 async fn close_owner(owner: &Owner) -> Result<(), String> {
     if owner.started.load(Ordering::Acquire) {

@@ -213,6 +213,8 @@ export const jaCore = {
       live: "2秒ごとに更新",
       requestTime: "対象の入力：",
       savedResult: "最後に記録されたリクエストの状態です。更新間隔は再試行を意味しません。",
+      larmSessionPrepareFailed:
+        "LARMの会話用provider一括準備に失敗しました。ASR単体ではなく、claim対象のLLM・ASR・TTS・embeddingの起動状態を確認してください。",
       harness: {
         preparing: "HarnessでLLMの接続を準備しています。まだ推論要求は送信していません。",
         ready: "LLMの接続準備が完了しました。",
