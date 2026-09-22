@@ -14,6 +14,8 @@ pub(crate) enum ProviderFailureKind {
     Capacity,
     Unavailable,
     Upstream,
+    Connect,
+    ResponseInterrupted,
     Network,
     Timeout,
     AllocationLost,
@@ -37,6 +39,8 @@ impl ProviderFailureKind {
             Self::Capacity => "capacity",
             Self::Unavailable => "unavailable",
             Self::Upstream => "upstream",
+            Self::Connect => "connect",
+            Self::ResponseInterrupted => "response-interrupted",
             Self::Network => "network",
             Self::Timeout => "timeout",
             Self::AllocationLost => "allocation-lost",
@@ -68,6 +72,10 @@ impl ProviderFailureKind {
             Self::Capacity => "Provider capacity is currently exhausted.",
             Self::Unavailable => "Provider is currently unavailable.",
             Self::Upstream => "Provider could not complete the upstream request.",
+            Self::Connect => "SAAA could not connect to the provider.",
+            Self::ResponseInterrupted => {
+                "Provider connection ended after the response had started."
+            }
             Self::Network => "Provider connection ended before the response completed.",
             Self::Timeout => "Provider request reached its timeout.",
             Self::AllocationLost => "The selected local runtime allocation is no longer available.",
@@ -79,6 +87,13 @@ impl ProviderFailureKind {
             Self::Internal => "SAAA could not complete the provider attempt.",
         };
         BoundedProviderMessage(message)
+    }
+
+    pub(crate) fn persistence_str(self) -> &'static str {
+        match self {
+            Self::Connect | Self::ResponseInterrupted => "network",
+            _ => self.as_str(),
+        }
     }
 }
 
@@ -218,5 +233,50 @@ impl ProviderOutputPersistence<'_> {
             },
         )
         .map_err(|_| ProviderFailureKind::Internal)
+    }
+
+    pub(crate) fn record_transport_event(
+        self,
+        request_id: &str,
+        stage: &str,
+        transport: &str,
+        model: &str,
+        endpoint: &str,
+        detail: Option<&str>,
+    ) {
+        let _ = self.state.sqlite_writer.write(|connection| {
+            if stage == "prepared" {
+                connection
+                    .execute(
+                        "UPDATE provider_sessions SET request_id=?1,updated_at=?2 WHERE id=?3 AND status='running'",
+                        rusqlite::params![request_id, crate::now_iso(), self.session_id],
+                    )
+                    .map_err(crate::database_error)?;
+            }
+            connection
+                .execute(
+                    "INSERT INTO provider_transport_events(id,provider_session_id,request_id,stage,transport,model,endpoint,detail,recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    rusqlite::params![crate::new_id("transport-event"), self.session_id, request_id, stage, transport, model, endpoint, detail, crate::now_iso()],
+                )
+                .map_err(crate::database_error)?;
+            Ok(())
+        });
+    }
+
+    pub(crate) fn bind_transport(self, allocation_id: Option<&str>) {
+        let route_id = if allocation_id.is_some() {
+            "allocated-http"
+        } else {
+            "direct-http"
+        };
+        let _ = self.state.sqlite_writer.write(|connection| {
+            connection
+                .execute(
+                    "UPDATE provider_sessions SET route_id=?1,allocation_id=?2,updated_at=?3 WHERE id=?4 AND status='running'",
+                    rusqlite::params![route_id, allocation_id, crate::now_iso(), self.session_id],
+                )
+                .map_err(crate::database_error)?;
+            Ok(())
+        });
     }
 }

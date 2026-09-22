@@ -18,6 +18,7 @@ struct SpeechSession {
     enabled: bool,
     idle_timer: Option<tauri::async_runtime::JoinHandle<()>>,
     idle_reset: watch::Sender<Option<u64>>,
+    writer: Option<Arc<crate::persistence::SqliteWriter>>,
 }
 enum SpeechWork {
     Chunk { text: String, boundary_at: Instant },
@@ -41,6 +42,7 @@ struct RenderSessionContext {
     situation: Arc<crate::situation::SituationRuntime>,
     on_event: tauri::ipc::Channel<RuntimeEvent>,
     run_id: String,
+    writer: Option<Arc<crate::persistence::SqliteWriter>>,
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct AppendOutcome {
@@ -123,6 +125,7 @@ impl StreamingSpeechRuntime {
                 enabled,
                 idle_timer: Some(idle_timer),
                 idle_reset,
+                writer: Some(state.sqlite_writer.clone()),
             },
         );
         drop(sessions);
@@ -131,6 +134,7 @@ impl StreamingSpeechRuntime {
         let run_id = run_id.to_string();
         let cache_directory = state.data_directory.join("tts-cache");
         let situation = state.situation.clone();
+        let writer = state.sqlite_writer.clone();
         tauri::async_runtime::spawn(async move {
             render_session(
                 receiver,
@@ -143,6 +147,7 @@ impl StreamingSpeechRuntime {
                     situation: situation.clone(),
                     on_event: on_event.clone(),
                     run_id: run_id.clone(),
+                    writer: Some(writer),
                 },
             )
             .await;
@@ -238,6 +243,24 @@ impl StreamingSpeechRuntime {
     }
 
     pub(crate) fn finish(&self, run_id: &str, final_content: &str) -> Result<(), String> {
+        self.finish_inner(run_id, None, final_content)
+    }
+
+    pub(crate) fn finish_message(
+        &self,
+        run_id: &str,
+        message_id: &str,
+        final_content: &str,
+    ) -> Result<(), String> {
+        self.finish_inner(run_id, Some(message_id), final_content)
+    }
+
+    fn finish_inner(
+        &self,
+        run_id: &str,
+        message_id: Option<&str>,
+        final_content: &str,
+    ) -> Result<(), String> {
         let mut sessions = self
             .sessions
             .lock()
@@ -248,14 +271,44 @@ impl StreamingSpeechRuntime {
         if session.closed || !session.enabled {
             return Ok(());
         }
+        if let Some(message_id) = message_id {
+            let writer = session
+                .writer
+                .as_ref()
+                .ok_or_else(|| "Speech delivery persistence is unavailable".to_string())?;
+            let queued = writer.write(|connection| {
+                let now = crate::now_iso();
+                connection
+                    .execute(
+                        "INSERT OR IGNORE INTO speech_deliveries(id,runtime_run_id,message_id,status,created_at,updated_at) VALUES(?1,?2,?3,'queued',?4,?4)",
+                        rusqlite::params![crate::new_id("speech-delivery"), run_id, message_id, now],
+                    )
+                    .map_err(crate::database_error)
+            })?;
+            if queued == 0 {
+                return Ok(());
+            }
+        }
         if let Some(timer) = session.idle_timer.take() {
             let _ = session.idle_reset.send(None);
             timer.abort();
         }
-        session
-            .accumulator
-            .finish(final_content)
-            .map_err(|error| format!("Invalid final streamed speech input: {error:?}"))?;
+        if let Err(error) = session.accumulator.finish(final_content) {
+            if message_id.is_some() {
+                if let Some(writer) = &session.writer {
+                    let _ = writer.write(|connection| {
+                        connection
+                            .execute(
+                                "UPDATE speech_deliveries SET status='failed',updated_at=?1 WHERE runtime_run_id=?2 AND message_id=?3 AND status='queued'",
+                                rusqlite::params![crate::now_iso(), run_id, message_id],
+                            )
+                            .map_err(crate::database_error)?;
+                        Ok(())
+                    });
+                }
+            }
+            return Err(format!("Invalid final streamed speech input: {error:?}"));
+        }
         let mut final_chunks = Vec::new();
         while let Some(chunk) = session.accumulator.next_chunk(SelectReason::Completion) {
             final_chunks.push((chunk.spoken, Instant::now()));
@@ -357,8 +410,24 @@ async fn render_session(
     mut context: RenderSessionContext,
 ) {
     let result = render_session_inner(&mut receiver, &mut context).await;
+    let externally_cancelled = context.cancellation.is_cancelled();
+    let status = match (&result, externally_cancelled) {
+        (_, true) => "cancelled",
+        (Err(_), false) => "failed",
+        (Ok(_), false) => "completed",
+    };
+    if let Some(writer) = &context.writer {
+        let _ = writer.write(|connection| {
+            connection
+                .execute(
+                    "UPDATE speech_deliveries SET status=?1,updated_at=?2 WHERE runtime_run_id=?3 AND status='queued'",
+                    rusqlite::params![status, crate::now_iso(), context.run_id],
+                )
+                .map_err(crate::database_error)?;
+            Ok(())
+        });
+    }
     if let Err(error) = result {
-        let externally_cancelled = context.cancellation.is_cancelled();
         context.cancellation.cancel();
         if let Ok(mut child) = context.child.lock() {
             if let Some(mut child) = child.take() {

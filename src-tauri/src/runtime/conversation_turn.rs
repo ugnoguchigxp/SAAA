@@ -377,6 +377,8 @@ mod tests {
             ProviderFailureKind::Capacity,
             ProviderFailureKind::Unavailable,
             ProviderFailureKind::Upstream,
+            ProviderFailureKind::Connect,
+            ProviderFailureKind::ResponseInterrupted,
             ProviderFailureKind::Network,
             ProviderFailureKind::Timeout,
             ProviderFailureKind::AllocationLost,

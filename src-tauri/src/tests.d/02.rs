@@ -246,7 +246,9 @@ async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests() {
     assert!(matches!(
         outcome,
         ProviderAttemptOutcome::Failed {
-            kind: ProviderFailureKind::Protocol | ProviderFailureKind::Network,
+            kind: ProviderFailureKind::Protocol
+                | ProviderFailureKind::ResponseInterrupted
+                | ProviderFailureKind::Network,
             output_started: false,
             ..
         }

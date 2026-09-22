@@ -119,6 +119,9 @@ pub(crate) async fn stream_model_provider_inner(
         options.streaming = allocation_id.is_none();
         options
     });
+    if let Some(persistence) = context.output_persistence {
+        persistence.bind_transport(allocation_id);
+    }
     crate::providers::chat_completions::run_with_options(
         &provider.endpoint,
         authorization.as_deref().map(String::as_str),

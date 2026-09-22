@@ -161,7 +161,7 @@ pub(crate) fn finish_dynamic_lan_provider_session(
              WHERE id=?6 AND status='running'",
                 params![
                     status,
-                    failure_kind.map(ProviderFailureKind::as_str),
+                    failure_kind.map(ProviderFailureKind::persistence_str),
                     release_status,
                     release_failure_kind,
                     now_iso(),
@@ -201,7 +201,7 @@ pub(crate) fn finish_provider_session(
              WHERE id = ?4 AND status = 'running'",
                 params![
                     status,
-                    failure_kind.map(ProviderFailureKind::as_str),
+                    failure_kind.map(ProviderFailureKind::persistence_str),
                     now_iso(),
                     session_id
                 ],

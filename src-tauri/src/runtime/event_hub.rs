@@ -317,7 +317,9 @@ impl TurnEventHub {
                     }
                     let rendered = self.voice_response.take_completion(run_id);
                     let final_content = rendered.as_deref().unwrap_or(&message.content);
-                    let result = self.speech.finish(run_id, final_content);
+                    let result = self
+                        .speech
+                        .finish_message(run_id, &message.id, final_content);
                     if let Err(error) = result {
                         self.stop_speech_with_error(run_id, error);
                     }

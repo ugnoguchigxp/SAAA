@@ -514,3 +514,74 @@ fn normal_turns_reject_byte_oversized_context_before_writing_partial_state() {
     assert_eq!(message_count, 0);
     assert_eq!(run_count, 0);
 }
+
+#[test]
+fn provider_transport_ledger_records_phases_without_payloads() {
+    let connection = Connection::open_in_memory().expect("database opens");
+    initialize_database(&connection).expect("database initializes");
+    connection
+        .execute(
+            "INSERT INTO conversations(id, task_mode, created_at, updated_at)
+             VALUES('conversation-transport', 'conversation', '1', '1')",
+            [],
+        )
+        .expect("conversation inserts");
+    let state = app_state(connection);
+    begin_simple_runtime_run(
+        &state,
+        "run-transport",
+        "conversation-transport",
+        "conversation.respond",
+        "provider-transport",
+    )
+    .expect("runtime starts");
+    let session_id = begin_test_provider_session(
+        &state,
+        "run-transport",
+        "provider-transport",
+        "openai-compatible",
+    )
+    .expect("provider session starts");
+    let persistence = ProviderOutputPersistence {
+        state: &state,
+        session_id: &session_id,
+        world: None,
+    };
+    persistence.bind_transport(Some("allocation-transport"));
+    persistence.record_transport_event(
+        "provider-request-transport",
+        "prepared",
+        "sse",
+        "qwen-worker-fast",
+        "http://192.0.2.1:9810/v1/chat/completions",
+        None,
+    );
+    persistence.record_transport_event(
+        "provider-request-transport",
+        "headers-received",
+        "sse",
+        "qwen-worker-fast",
+        "http://192.0.2.1:9810/v1/chat/completions",
+        Some("200"),
+    );
+
+    let connection = state.sqlite_writer.lock().expect("database lock");
+    let (request_id, route_id, allocation_id): (String, String, String) = connection
+        .query_row(
+            "SELECT request_id,route_id,allocation_id FROM provider_sessions WHERE id=?1",
+            [&session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("provider binding reads");
+    assert_eq!(request_id, "provider-request-transport");
+    assert_eq!(route_id, "allocated-http");
+    assert_eq!(allocation_id, "allocation-transport");
+    let phases: Vec<String> = connection
+        .prepare("SELECT stage FROM provider_transport_events WHERE request_id=?1 ORDER BY rowid")
+        .expect("phase query prepares")
+        .query_map(["provider-request-transport"], |row| row.get(0))
+        .expect("phases query")
+        .collect::<Result<_, _>>()
+        .expect("phases read");
+    assert_eq!(phases, ["prepared", "headers-received"]);
+}

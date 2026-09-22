@@ -174,7 +174,9 @@ fn apply_release(
         Err(kind) => attempt.with_cleanup(CleanupOutcome::ReleaseFailed {
             kind: match kind {
                 ProviderFailureKind::Authentication => "authentication",
-                ProviderFailureKind::Network => "network",
+                ProviderFailureKind::Connect
+                | ProviderFailureKind::ResponseInterrupted
+                | ProviderFailureKind::Network => "network",
                 ProviderFailureKind::Timeout => "timeout",
                 ProviderFailureKind::Capacity
                 | ProviderFailureKind::Upstream
@@ -400,6 +402,8 @@ async fn release_session_with_retry(
                 Err(
                     ProviderFailureKind::Capacity
                     | ProviderFailureKind::Upstream
+                    | ProviderFailureKind::Connect
+                    | ProviderFailureKind::ResponseInterrupted
                     | ProviderFailureKind::Network
                     | ProviderFailureKind::Timeout,
                 ) if attempt < 2 => tokio::time::sleep(Duration::from_millis(100)).await,

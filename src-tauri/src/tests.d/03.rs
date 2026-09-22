@@ -505,7 +505,9 @@ async fn model_provider_redirects_are_not_followed() {
     assert!(matches!(
         outcome,
         ProviderAttemptOutcome::Failed {
-            kind: ProviderFailureKind::Contract | ProviderFailureKind::Network,
+            kind: ProviderFailureKind::Contract
+                | ProviderFailureKind::Connect
+                | ProviderFailureKind::Network,
             output_started: false,
             ..
         }

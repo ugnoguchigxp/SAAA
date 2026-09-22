@@ -37,6 +37,7 @@ mod tests {
                 enabled: true,
                 idle_timer: None,
                 idle_reset,
+                writer: None,
             },
         );
 
@@ -135,6 +136,7 @@ mod tests {
                 enabled: true,
                 idle_timer: None,
                 idle_reset,
+                writer: None,
             },
         );
         runtime
@@ -151,6 +153,78 @@ mod tests {
         };
         assert_eq!(text, "最終回答です。");
         assert!(matches!(receiver.recv().await, Some(SpeechWork::Finish)));
+    }
+
+    #[tokio::test]
+    async fn final_message_is_correlated_with_speech_only_once() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database opens");
+        crate::initialize_database(&connection).expect("database initializes");
+        let state = crate::test_support::app_state(connection);
+        crate::begin_simple_runtime_run(
+            &state,
+            "run-correlated-speech",
+            crate::PRIMARY_CONVERSATION_ID,
+            "voice.speak",
+            "tts-provider",
+        )
+        .expect("runtime starts");
+        state
+            .sqlite_writer
+            .write(|connection| {
+                connection
+                    .execute(
+                        "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('message-correlated-speech',?1,'assistant','Hello.','1')",
+                        [crate::PRIMARY_CONVERSATION_ID],
+                    )
+                    .map_err(crate::database_error)?;
+                Ok(())
+            })
+            .expect("message inserts");
+        let runtime = StreamingSpeechRuntime::default();
+        let (work, mut receiver) = mpsc::channel(4);
+        let (idle_reset, _idle_resets) = watch::channel(None);
+        runtime.sessions.lock().expect("sessions lock").insert(
+            "run-correlated-speech".to_string(),
+            SpeechSession {
+                accumulator: SentenceAccumulator::default(),
+                work,
+                cancellation: Arc::new(RunCancellation::default()),
+                child: Arc::new(Mutex::new(None)),
+                closed: false,
+                enabled: true,
+                idle_timer: None,
+                idle_reset,
+                writer: Some(state.sqlite_writer.clone()),
+            },
+        );
+
+        runtime
+            .finish_message(
+                "run-correlated-speech",
+                "message-correlated-speech",
+                "Hello.",
+            )
+            .expect("first delivery queues");
+        runtime
+            .finish_message(
+                "run-correlated-speech",
+                "message-correlated-speech",
+                "Hello.",
+            )
+            .expect("duplicate delivery is ignored");
+        while !matches!(receiver.recv().await, Some(SpeechWork::Finish) | None) {}
+
+        let count: i64 = state
+            .sqlite_writer
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT COUNT(*) FROM speech_deliveries WHERE runtime_run_id='run-correlated-speech' AND message_id='message-correlated-speech'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("delivery count reads");
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]
