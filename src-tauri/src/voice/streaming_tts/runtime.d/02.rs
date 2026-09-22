@@ -228,6 +228,7 @@ async fn render_http_session(
                     &ready.session,
                     settings.tts_voice.as_deref(),
                     Some(settings),
+                    expression,
                     Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     &text,
                     context.timeout_ms,

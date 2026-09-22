@@ -34,6 +34,7 @@ pub(crate) async fn play_larm_with_situation(
     session: &Arc<saaa_larm_session::Session>,
     voice: Option<&str>,
     harness: Option<&crate::HarnessSettings>,
+    expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
     output: Arc<std::sync::atomic::AtomicBool>,
     text: &str,
     timeout_ms: u64,
@@ -49,7 +50,10 @@ pub(crate) async fn play_larm_with_situation(
         _ = cancellation.cancelled() => return Err("Speech cancelled".into()),
         result = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), session.acquire("tts")) => result.map_err(|_| "TTS lease acquisition timed out")?.map_err(str::to_string)?,
     };
-    let provider = crate::larm_voice::audio::tts_settings(lease.provider(), voice, harness)?;
+    let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
+        &crate::larm_voice::audio::tts_settings(lease.provider(), voice, harness)?,
+        expression,
+    );
     let remaining = timeout_ms.saturating_sub(started.elapsed().as_millis() as u64);
     if remaining == 0 {
         return Err("TTS request timed out".into());

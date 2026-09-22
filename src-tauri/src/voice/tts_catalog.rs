@@ -1,16 +1,18 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const MAX_VOICES: usize = 512;
 const MAX_STYLES: usize = 64;
 const MAX_ID: usize = 160;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TtsVoiceCatalog {
     pub(crate) default_voice: Option<String>,
     pub(crate) voices: Vec<TtsVoice>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TtsVoice {
     pub(crate) id: String,
     pub(crate) display_name: String,

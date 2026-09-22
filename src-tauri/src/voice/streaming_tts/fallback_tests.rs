@@ -61,6 +61,7 @@ async fn tts_retries_transient_requests_but_stops_on_authentication() {
         let (send, mut receive) = mpsc::channel(2);
         send.send(SpeechWork::Chunk {
             text: "synthetic".into(),
+            expression: Default::default(),
             boundary_at: Instant::now(),
         })
         .await
