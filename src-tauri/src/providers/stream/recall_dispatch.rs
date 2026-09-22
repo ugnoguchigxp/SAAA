@@ -25,7 +25,7 @@ pub(crate) fn execute_recall_tool(
             let arguments =
                 match crate::runtime::agent_tools::parse_recall_arguments(&call.arguments) {
                     Ok(arguments) => arguments,
-                    Err(()) => {
+                    Err(_) => {
                         return Ok(
                             match crate::memory::recall::record_failed_attempt(connection, &context)
                             {

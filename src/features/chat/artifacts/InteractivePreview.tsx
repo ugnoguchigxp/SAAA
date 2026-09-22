@@ -37,9 +37,7 @@ export default function InteractivePreview({
       {status !== "ready" ? (
         <div className="artifact-preview-status">
           {status === "loading" ? <p>{t("genui.previewLoading")}</p> : null}
-          {status === "unavailable" ? (
-            <p role="alert">{t("genui.previewUnavailable")}</p>
-          ) : null}
+          {status === "unavailable" ? <p role="alert">{t("genui.previewUnavailable")}</p> : null}
           {status === "error" ? (
             <p role="alert">
               {t("genui.previewFailed")}
@@ -57,9 +55,7 @@ export default function InteractivePreview({
             </p>
           ) : null}
           <p className="artifact-preview-focus">{t("genui.previewFocusHint")}</p>
-          {message ? (
-            <p className="artifact-load-error">{previewReason(message)}</p>
-          ) : null}
+          {message ? <p className="artifact-load-error">{previewReason(message)}</p> : null}
         </div>
       ) : (
         <p className="visually-hidden">{t("genui.previewReady", { title })}</p>

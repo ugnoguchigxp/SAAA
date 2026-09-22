@@ -48,16 +48,20 @@ const instance: UiInstance = {
 
 function OpenPreview() {
   const workspace = useArtifactWorkspace();
-  return createElement("button", {
-    type: "button",
-    className: "open-preview",
-    onClick: () =>
-      workspace?.openInteractivePreview({
-        artifactId: INTERACTIVE_HTML_FIXTURE.artifactId,
-        revisionId: INTERACTIVE_HTML_FIXTURE.revisionId,
-        title: "Interactive HTML",
-      }),
-  }, "open preview");
+  return createElement(
+    "button",
+    {
+      type: "button",
+      className: "open-preview",
+      onClick: () =>
+        workspace?.openInteractivePreview({
+          artifactId: INTERACTIVE_HTML_FIXTURE.artifactId,
+          revisionId: INTERACTIVE_HTML_FIXTURE.revisionId,
+          title: "Interactive HTML",
+        }),
+    },
+    "open preview",
+  );
 }
 
 function OpenArtifact() {
@@ -121,7 +125,13 @@ describe("artifact workspace", () => {
           previewToken: "a".repeat(64),
           expiresAt: "2026-01-01T00:00:00.000Z",
           webviewLabel: "artifact-preview-test",
-          policy: { network: "none", navigation: "preview-only", popup: "deny", download: "deny", tauriIpc: "deny" },
+          policy: {
+            network: "none",
+            navigation: "preview-only",
+            popup: "deny",
+            download: "deny",
+            tauriIpc: "deny",
+          },
         };
       }
       return undefined;
@@ -250,15 +260,24 @@ describe("artifact workspace", () => {
     root = createRoot(document.getElementById("root")!);
     await act(async () =>
       root!.render(
-        createElement(ArtifactWorkspaceProvider, null, createElement("div", null, createElement(OpenArtifact), createElement(OpenPreview))),
+        createElement(
+          ArtifactWorkspaceProvider,
+          null,
+          createElement("div", null, createElement(OpenArtifact), createElement(OpenPreview)),
+        ),
       ),
     );
     const click = (selector: string) =>
-      document.querySelector<HTMLButtonElement>(selector)!.dispatchEvent(new Event("click", { bubbles: true }));
+      document
+        .querySelector<HTMLButtonElement>(selector)!
+        .dispatchEvent(new Event("click", { bubbles: true }));
     await act(async () => click("button"));
     expect(document.querySelector(".artifact-tabs")?.textContent).toContain("Article");
     await act(async () => click(".open-preview"));
-    for (let step = 0; step < 8; step += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    for (let step = 0; step < 8; step += 1)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
     const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
     expect(tabs).toHaveLength(2);
     expect(tabs[1].getAttribute("aria-selected")).toBe("true");

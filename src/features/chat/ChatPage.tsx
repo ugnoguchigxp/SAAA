@@ -1,5 +1,12 @@
 import { SetupChecklist } from "./SetupChecklist";
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
 import { localizeRuntimeActivity, localizeUiMessage } from "../../i18n/presentation";
@@ -65,6 +72,16 @@ export function ChatPage({
   const followLatestRef = useRef(true);
   const [showLatestButton, setShowLatestButton] = useState(false);
 
+  const rememberScroll = useCallback(
+    (messageArea: HTMLDivElement, followLatest: boolean) => {
+      const conversationId = selectedConversation?.id;
+      if (!conversationId) return;
+      scrollMemory.set(conversationId, { scrollTop: messageArea.scrollTop, followLatest });
+      if (scrollMemory.size > 8) scrollMemory.delete(scrollMemory.keys().next().value!);
+    },
+    [selectedConversation?.id],
+  );
+
   useEffect(() => {
     const conversationId = selectedConversation?.id;
     const memory = conversationId ? scrollMemory.get(conversationId) : undefined;
@@ -88,14 +105,7 @@ export function ChatPage({
       rememberScroll(messageArea, true);
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages, streamingText, runtimeActivity, activeRunId, hasNewerMessages]);
-
-  function rememberScroll(messageArea: HTMLDivElement, followLatest: boolean) {
-    const conversationId = selectedConversation?.id;
-    if (!conversationId) return;
-    scrollMemory.set(conversationId, { scrollTop: messageArea.scrollTop, followLatest });
-    if (scrollMemory.size > 8) scrollMemory.delete(scrollMemory.keys().next().value!);
-  }
+  }, [messages, streamingText, runtimeActivity, activeRunId, hasNewerMessages, rememberScroll]);
 
   async function handleMessageAreaScroll() {
     const messageArea = messageAreaRef.current;
@@ -254,13 +264,7 @@ export function ChatPage({
             }
             onClick={onToggleVoice}
           >
-            <AppIcon
-              name={
-                voiceState !== "stopped" || Boolean(activeTtsRunId)
-                  ? "stop"
-                  : "mic"
-              }
-            />
+            <AppIcon name={voiceState !== "stopped" || Boolean(activeTtsRunId) ? "stop" : "mic"} />
           </button>
           <div
             className={`voice-activity-indicator${listeningEnabled ? " listening" : " paused"}${voiceActivityDetected ? " detecting" : ""}`}

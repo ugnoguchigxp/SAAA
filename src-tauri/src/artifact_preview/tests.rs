@@ -1,4 +1,3 @@
-#![cfg(test)]
 use super::{catalog, contracts::*, host, policy, protocol, service, tokens::PreviewRuntime};
 use serde_json::json;
 use std::sync::{
