@@ -64,7 +64,8 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         |row| row.get(0),
     )?;
     if !exists {
-        connection.execute_batch("ALTER TABLE tool_selection_mcp_results ADD COLUMN record_id TEXT")?;
+        connection
+            .execute_batch("ALTER TABLE tool_selection_mcp_results ADD COLUMN record_id TEXT")?;
     }
     Ok(())
 }

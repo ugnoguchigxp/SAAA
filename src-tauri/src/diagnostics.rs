@@ -34,7 +34,20 @@ pub(crate) fn export_diagnostics(state: &AppState) -> Result<LocalArtifactResult
                     "cacheReadRatio": row.cache_read_ratio,
                     "usageMissing": row.usage_missing,
                 }))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            "records": state.sqlite_readers.read(|connection| {
+                let total: i64 = connection
+                    .query_row("SELECT count(*) FROM records", [], |row| row.get(0))
+                    .map_err(|error| error.to_string())?;
+                let bytes: i64 = connection
+                    .query_row("SELECT COALESCE(SUM(raw_bytes), 0) FROM blobs", [], |row| row.get(0))
+                    .map_err(|error| error.to_string())?;
+                Ok(serde_json::json!({
+                    "total": total,
+                    "bytes": bytes,
+                    "dbRatioOfLimit": bytes as f64 / (10.0 * 1024.0 * 1024.0 * 1024.0),
+                }))
+            })?,
         }
     });
     let directory = state.data_directory.join("diagnostics");

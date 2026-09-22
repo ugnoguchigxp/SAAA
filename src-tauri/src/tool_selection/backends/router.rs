@@ -24,7 +24,11 @@ impl BackendRouter {
         mcp: Arc<dyn ToolBackend>,
         records: Arc<dyn ToolBackend>,
     ) -> Self {
-        Self { llang, mcp, records }
+        Self {
+            llang,
+            mcp,
+            records,
+        }
     }
 
     pub fn kind(binding: &Value) -> &'static str {

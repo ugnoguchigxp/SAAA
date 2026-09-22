@@ -1,9 +1,9 @@
 pub(crate) mod auth;
+pub(crate) mod backend;
 pub(crate) mod capture;
 pub(crate) mod catalog;
-pub(crate) mod backend;
-pub(crate) mod forget;
 pub(crate) mod contract;
+pub(crate) mod forget;
 pub(crate) mod fts;
 pub(crate) mod outline;
 pub(crate) mod read;

@@ -14,7 +14,10 @@ pub(crate) struct SegmentManifest {
     pub(crate) last_entry_sequence: i64,
 }
 
-pub(crate) fn load_active(connection: &Connection, conversation_id: &str) -> Result<Option<SegmentManifest>, String> {
+pub(crate) fn load_active(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Option<SegmentManifest>, String> {
     match connection.query_row(
         "SELECT id, conversation_id, previous_segment_id, start_reason, policy_version, bootstrap_tool_schema_digest, fixed_render_blob_id, scope_snapshot_json, forget_epoch, input_budget, last_entry_sequence
          FROM context_segments WHERE conversation_id=?1 AND status='active' ORDER BY created_at DESC LIMIT 1",
@@ -70,12 +73,19 @@ pub(crate) fn create(
 
 pub(crate) fn close(connection: &Connection, id: &str) -> Result<(), String> {
     connection
-        .execute("UPDATE context_segments SET status='closed' WHERE id=?1 AND status='active'", [id])
+        .execute(
+            "UPDATE context_segments SET status='closed' WHERE id=?1 AND status='active'",
+            [id],
+        )
         .map_err(|error| error.to_string())?;
     Ok(())
 }
 
-pub(crate) fn invalidate_for_conversation(connection: &Connection, conversation_id: &str, epoch: i64) -> Result<(), String> {
+pub(crate) fn invalidate_for_conversation(
+    connection: &Connection,
+    conversation_id: &str,
+    epoch: i64,
+) -> Result<(), String> {
     connection
         .execute(
             "UPDATE context_segments SET status='invalidated', forget_epoch=?2 WHERE conversation_id=?1 AND status='active'",
@@ -104,7 +114,19 @@ mod tests {
     #[test]
     fn cw_41_create_and_load_active() {
         let connection = db();
-        create(&connection, "c", "initial", None, "policy", "tools", "blob1", "{}", 100, 0).unwrap();
+        create(
+            &connection,
+            "c",
+            "initial",
+            None,
+            "policy",
+            "tools",
+            "blob1",
+            "{}",
+            100,
+            0,
+        )
+        .unwrap();
         let loaded = load_active(&connection, "c").unwrap().unwrap();
         assert_eq!(loaded.start_reason, "initial");
     }
@@ -112,9 +134,36 @@ mod tests {
     #[test]
     fn cw_41_close_then_create_links_previous() {
         let connection = db();
-        let first = create(&connection, "c", "initial", None, "policy", "tools", "blob1", "{}", 100, 0).unwrap();
+        let first = create(
+            &connection,
+            "c",
+            "initial",
+            None,
+            "policy",
+            "tools",
+            "blob1",
+            "{}",
+            100,
+            0,
+        )
+        .unwrap();
         close(&connection, &first.id).unwrap();
-        let second = create(&connection, "c", "budget", Some(&first.id), "policy", "tools", "blob1", "{}", 100, 0).unwrap();
-        assert_eq!(second.previous_segment_id.as_deref(), Some(first.id.as_str()));
+        let second = create(
+            &connection,
+            "c",
+            "budget",
+            Some(&first.id),
+            "policy",
+            "tools",
+            "blob1",
+            "{}",
+            100,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            second.previous_segment_id.as_deref(),
+            Some(first.id.as_str())
+        );
     }
 }

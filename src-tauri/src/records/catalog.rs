@@ -4,9 +4,13 @@ use serde_json::json;
 use crate::tool_selection::catalog::{register_revision, CatalogEntry, UsagePage};
 
 pub(crate) fn ensure_registered(connection: &Connection, principal_id: &str) -> Result<(), String> {
-    for (tool_id, operation) in [("read_record", "read_record"), ("recall_activity", "recall_activity")] {
+    for (tool_id, operation) in [
+        ("read_record", "read_record"),
+        ("recall_activity", "recall_activity"),
+    ] {
         let schema = json!({"type": "object", "properties": {"id": {"type": "string"}, "operation": {"const": operation}}});
-        let revision_id = crate::generated_capabilities::contracts::sha256_hex(schema.to_string().as_bytes());
+        let revision_id =
+            crate::generated_capabilities::contracts::sha256_hex(schema.to_string().as_bytes());
         let entry = CatalogEntry {
             tool_id: tool_id.into(),
             backend_key: "records".into(),
@@ -20,7 +24,11 @@ pub(crate) fn ensure_registered(connection: &Connection, principal_id: &str) -> 
             input_schema: schema,
             output_schema: None,
             effect: "read",
-            usage_pages: vec![UsagePage { section: "usage", page: 1, text: tool_id.into() }],
+            usage_pages: vec![UsagePage {
+                section: "usage",
+                page: 1,
+                text: tool_id.into(),
+            }],
             backend_binding: json!({"kind": "records", "operation": operation}),
         };
         let source_id = format!("records-{tool_id}");
@@ -33,8 +41,14 @@ pub(crate) fn ensure_registered(connection: &Connection, principal_id: &str) -> 
             crate::schedule::tick::now_ms(),
         )
         .map_err(|error| error.to_string())?;
-        crate::tool_selection::repository::upsert_grant(connection, principal_id, tool_id, "user", principal_id)
-            .map_err(|error| error.to_string())?;
+        crate::tool_selection::repository::upsert_grant(
+            connection,
+            principal_id,
+            tool_id,
+            "user",
+            principal_id,
+        )
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -50,11 +64,9 @@ mod tests {
         ensure_registered(&connection, "principal").unwrap();
         ensure_registered(&connection, "principal").unwrap();
         let count: i64 = connection
-            .query_row(
-                "SELECT count(*) FROM tool_selection_revisions",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT count(*) FROM tool_selection_revisions", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 2);
     }

@@ -2,11 +2,25 @@ use rusqlite::{params, Connection};
 
 use super::fts;
 
-pub(crate) fn forget_record(connection: &Connection, record_id: &str, reason: &str) -> Result<(), String> {
-    forget_at(connection, record_id, reason, crate::schedule::tick::now_ms())
+pub(crate) fn forget_record(
+    connection: &Connection,
+    record_id: &str,
+    reason: &str,
+) -> Result<(), String> {
+    forget_at(
+        connection,
+        record_id,
+        reason,
+        crate::schedule::tick::now_ms(),
+    )
 }
 
-fn forget_at(connection: &Connection, record_id: &str, reason: &str, epoch: i64) -> Result<(), String> {
+fn forget_at(
+    connection: &Connection,
+    record_id: &str,
+    reason: &str,
+    epoch: i64,
+) -> Result<(), String> {
     connection
         .execute(
             "INSERT OR IGNORE INTO record_tombstones(record_id, forgotten_at, forget_epoch, reason_code) VALUES(?1,?2,?2,?3)",
@@ -25,14 +39,24 @@ fn forget_at(connection: &Connection, record_id: &str, reason: &str, epoch: i64)
     fts::delete_text(connection, record_id)?;
     let blob_ids = blob_ids(connection, record_id)?;
     connection
-        .execute("DELETE FROM record_representations WHERE record_id=?1", [record_id])
+        .execute(
+            "DELETE FROM record_representations WHERE record_id=?1",
+            [record_id],
+        )
         .map_err(|error| error.to_string())?;
     for blob_id in blob_ids {
         connection
-            .execute("UPDATE blobs SET ref_count = ref_count - 1 WHERE id=?1", [&blob_id])
+            .execute(
+                "UPDATE blobs SET ref_count = ref_count - 1 WHERE id=?1",
+                [&blob_id],
+            )
             .map_err(|error| error.to_string())?;
         let refs: i64 = connection
-            .query_row("SELECT ref_count FROM blobs WHERE id=?1", [&blob_id], |row| row.get(0))
+            .query_row(
+                "SELECT ref_count FROM blobs WHERE id=?1",
+                [&blob_id],
+                |row| row.get(0),
+            )
             .unwrap_or(1);
         if refs <= 0 {
             connection
@@ -54,13 +78,17 @@ pub(crate) fn forget_by_conversation_messages(
 ) -> Result<(), String> {
     for id in message_ids {
         let mut statement = connection
-            .prepare("SELECT id FROM records WHERE existing_source_locator=?1 AND forget_epoch IS NULL")
+            .prepare(
+                "SELECT id FROM records WHERE existing_source_locator=?1 AND forget_epoch IS NULL",
+            )
             .map_err(|error| error.to_string())?;
         let ids = {
             let mapped = statement
                 .query_map(params![id], |row| row.get::<_, String>(0))
                 .map_err(|error| error.to_string())?;
-            let ids = mapped.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+            let ids = mapped
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
             ids
         };
         drop(statement);
@@ -138,9 +166,15 @@ mod tests {
         let connection = db();
         let id = put(&connection, b"unique-body");
         forget_record(&connection, &id, "user").unwrap();
-        let blobs: i64 = connection.query_row("SELECT count(*) FROM blobs", [], |row| row.get(0)).unwrap();
+        let blobs: i64 = connection
+            .query_row("SELECT count(*) FROM blobs", [], |row| row.get(0))
+            .unwrap();
         let hits: i64 = connection
-            .query_row("SELECT count(*) FROM record_fts WHERE record_fts MATCH 'unique'", [], |row| row.get(0))
+            .query_row(
+                "SELECT count(*) FROM record_fts WHERE record_fts MATCH 'unique'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(blobs, 0);
         assert_eq!(hits, 0);
@@ -152,7 +186,9 @@ mod tests {
         let first = put(&connection, b"shared");
         let _second = put(&connection, b"shared");
         forget_record(&connection, &first, "user").unwrap();
-        let refs: i64 = connection.query_row("SELECT max(ref_count) FROM blobs", [], |row| row.get(0)).unwrap();
+        let refs: i64 = connection
+            .query_row("SELECT max(ref_count) FROM blobs", [], |row| row.get(0))
+            .unwrap();
         assert!(refs >= 1);
     }
 
@@ -183,7 +219,11 @@ mod tests {
             .unwrap();
         forget_record(&connection, &id, "user").unwrap();
         let status: String = connection
-            .query_row("SELECT status FROM context_segments WHERE id='seg'", [], |row| row.get(0))
+            .query_row(
+                "SELECT status FROM context_segments WHERE id='seg'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(status, "invalidated");
     }
@@ -202,7 +242,10 @@ mod tests {
             },
             &id,
             "readable_text",
-            crate::records::read::ReadRange { start: 0, max_bytes: 10 },
+            crate::records::read::ReadRange {
+                start: 0,
+                max_bytes: 10,
+            },
         )
         .unwrap();
         assert!(visible.is_none());

@@ -6,7 +6,11 @@ use crate::AppState;
 pub(crate) const RECORDS_DB_SOFT_LIMIT_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 pub(crate) fn capacity_item(db_bytes: u64, limit: u64) -> DiagnosisItem {
-    let ratio = if limit == 0 { 0.0 } else { db_bytes as f64 / limit as f64 };
+    let ratio = if limit == 0 {
+        0.0
+    } else {
+        db_bytes as f64 / limit as f64
+    };
     if ratio >= 0.8 {
         item(
             "records.capacity",

@@ -156,7 +156,9 @@ mod tests {
             "hits": [{"rank": 1, "title": "a", "url": "https://a.test"}, {"rank": 2, "title": "b", "url": "https://b.test"}]
         })
         .to_string();
-        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "web_search", &raw, None).unwrap()).unwrap();
+        let output: Value =
+            serde_json::from_str(&attach(&connection, &auth(), "web_search", &raw, None).unwrap())
+                .unwrap();
         assert!(output["searchRecordId"].is_string());
         assert!(output["hits"][1]["recordId"].is_string());
         let ranks: i64 = connection
@@ -183,7 +185,10 @@ mod tests {
         let connection = db();
         let text = "a".repeat(9_000);
         let raw = json!({"type":"fetch_content_result","document":{"text": text}}).to_string();
-        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "fetch_content", &raw, None).unwrap()).unwrap();
+        let output: Value = serde_json::from_str(
+            &attach(&connection, &auth(), "fetch_content", &raw, None).unwrap(),
+        )
+        .unwrap();
         assert_eq!(output["readHint"], "read_record");
         assert!(output.get("document").is_none());
     }
@@ -192,7 +197,10 @@ mod tests {
     fn cw_31_fetch_under_8kib_returns_body_with_record_id() {
         let connection = db();
         let raw = json!({"type":"fetch_content_result","document":{"text":"short"}}).to_string();
-        let output: Value = serde_json::from_str(&attach(&connection, &auth(), "fetch_content", &raw, None).unwrap()).unwrap();
+        let output: Value = serde_json::from_str(
+            &attach(&connection, &auth(), "fetch_content", &raw, None).unwrap(),
+        )
+        .unwrap();
         assert_eq!(output["document"]["text"], "short");
         assert!(output["recordId"].is_string());
     }

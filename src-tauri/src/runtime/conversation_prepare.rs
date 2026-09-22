@@ -129,6 +129,70 @@ pub(super) fn compose_after_connect(
         &input.presentation_mode,
         composed.envelope.messages.clone(),
     )?;
+    if crate::runtime::context::segment::path_selected(
+        state.context_segments_enabled,
+        crate::providers::adapter_contract::CHAT_COMPLETIONS.history_binding
+            == crate::providers::adapter_contract::HistoryBinding::None,
+        budget.wrapper_reserve_bytes == 2_048,
+    ) {
+        let fixed = history
+            .iter()
+            .find(|message| message.role == "system")
+            .map(|message| message.content.clone())
+            .unwrap_or_default();
+        let user = history
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .map(|message| message.content.clone())
+            .unwrap_or_default();
+        let prior: Vec<(String, String, String)> = history
+            .iter()
+            .filter(|message| message.role == "user" || message.role == "assistant")
+            .map(|message| {
+                (
+                    message.id.clone(),
+                    message.role.clone(),
+                    message.content.clone(),
+                )
+            })
+            .collect();
+        let prior_refs: Vec<(&str, &str, &str)> = prior
+            .iter()
+            .map(|(id, role, content)| (id.as_str(), role.as_str(), content.as_str()))
+            .collect();
+        let built = state.sqlite_writer.write(|connection| {
+            crate::runtime::context::segment::builder::build(
+                connection,
+                &crate::runtime::context::segment::builder::BuildInput {
+                    conversation_id: &input.conversation_id,
+                    fixed: &fixed,
+                    policy_version: &crate::generated_capabilities::contracts::sha256_hex(
+                        fixed.as_bytes(),
+                    ),
+                    user: &user,
+                    prior: &prior_refs,
+                    budget: budget.usable_context_bytes(),
+                },
+            )
+        })?;
+        let history = built
+            .into_iter()
+            .map(|(id, role, content)| ConversationMessage {
+                id,
+                conversation_id: input.conversation_id.clone(),
+                role,
+                content,
+                parts: None,
+                created_at: String::new(),
+            })
+            .collect();
+        return Ok(FreshProviderContext {
+            envelope: composed.envelope,
+            world: composed.world,
+            history,
+        });
+    }
     Ok(FreshProviderContext {
         envelope: composed.envelope,
         world: composed.world,

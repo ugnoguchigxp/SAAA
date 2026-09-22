@@ -1,4 +1,11 @@
-pub(crate) fn render(now_ms: i64, timezone: &str, scope_key: &str, tool_remaining: i64, input_origin: &str, presentation_mode: &str) -> String {
+pub(crate) fn render(
+    now_ms: i64,
+    timezone: &str,
+    scope_key: &str,
+    tool_remaining: i64,
+    input_origin: &str,
+    presentation_mode: &str,
+) -> String {
     format!(
         "utc={now_ms} timezone={timezone} scope={scope_key} tool_remaining={tool_remaining} input_origin={input_origin} presentation_mode={presentation_mode} instruction_authority=none"
     )
@@ -14,7 +21,14 @@ mod tests {
 
     #[test]
     fn cw_43_dynamic_contains_utc_and_tool_budget() {
-        let text = render(1_700_000_000_000, "Asia/Tokyo", "project:p", 9, "voice", "spoken");
+        let text = render(
+            1_700_000_000_000,
+            "Asia/Tokyo",
+            "project:p",
+            9,
+            "voice",
+            "spoken",
+        );
         assert!(text.contains("utc="));
         assert!(text.contains("tool_remaining=9"));
     }

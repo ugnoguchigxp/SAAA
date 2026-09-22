@@ -77,7 +77,10 @@ pub(crate) fn commit(
     )
 }
 
-pub(crate) fn begin(connection: &Connection, new: NewRecord<'_>) -> Result<StreamingRecord, String> {
+pub(crate) fn begin(
+    connection: &Connection,
+    new: NewRecord<'_>,
+) -> Result<StreamingRecord, String> {
     let owned = new.own();
     insert_record(connection, &owned, CaptureState::Streaming, None)?;
     Ok(StreamingRecord {
@@ -120,14 +123,7 @@ pub(crate) fn finish(
     connection
         .execute("DELETE FROM records WHERE id=?1", [&rec.new.id])
         .map_err(|error| error.to_string())?;
-    finish_owned(
-        connection,
-        rec.new,
-        &rec.body,
-        state,
-        reason,
-        readable_text,
-    )
+    finish_owned(connection, rec.new, &rec.body, state, reason, readable_text)
 }
 
 pub(crate) fn abort(connection: &Connection, rec: StreamingRecord) -> Result<(), String> {
@@ -225,7 +221,11 @@ fn insert_record(
     Ok(())
 }
 
-fn store_blob(connection: &Connection, domain: &str, bytes: &[u8]) -> Result<(String, String), String> {
+fn store_blob(
+    connection: &Connection,
+    domain: &str,
+    bytes: &[u8],
+) -> Result<(String, String), String> {
     let sha = crate::generated_capabilities::contracts::sha256_hex(bytes);
     if let Some(id) = connection
         .query_row(
@@ -301,11 +301,9 @@ fn bind_representation(
 
 pub(crate) fn load_blob(connection: &Connection, blob_id: &str) -> Result<Vec<u8>, String> {
     let inline: Option<Vec<u8>> = connection
-        .query_row(
-            "SELECT data FROM blobs WHERE id=?1",
-            [blob_id],
-            |row| row.get(0),
-        )
+        .query_row("SELECT data FROM blobs WHERE id=?1", [blob_id], |row| {
+            row.get(0)
+        })
         .map_err(|error| error.to_string())?;
     if let Some(data) = inline {
         return Ok(data);
@@ -391,11 +389,9 @@ mod tests {
         commit(&connection, new(&[]), b"same", None).unwrap();
         commit(&connection, new(&[]), b"same", None).unwrap();
         let (blobs, refs): (i64, i64) = connection
-            .query_row(
-                "SELECT count(*), max(ref_count) FROM blobs",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+            .query_row("SELECT count(*), max(ref_count) FROM blobs", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
             .unwrap();
         assert_eq!(blobs, 1);
         assert_eq!(refs, 2);

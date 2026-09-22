@@ -77,3 +77,11 @@ evidence を作成。
 - 会話メッセージの forget は呼び出し元の epoch を tombstone に書く。
 - web capture は run_id を残す。
 - CW-01 / CW-36 / CW-46 の実 Provider 対話は未実施。数値は空。
+
+## 残カードのコード (2026-09-23)
+
+- `SAAA_CONTEXT_SEGMENTS=1` かつ chat completions のとき、`compose_after_connect` は `segment::builder::build` の履歴を返す。既定は OFF。実測前なので既定 ON にはしない。
+- `store_result` は `mcp_result` を保存し `record_id` を埋める。
+- `assemble` は principal が取れるとき `ensure_registered` を呼ぶ。
+- diagnostics の `contextMetrics.records` に件数、bytes、10 GiB 比を出す。
+- CW-01 / CW-36 / CW-46 の対話表と CW-55 の `bun run check:local` は、実 Provider と既存の clippy / size 失敗があるため未了。数値は作っていない。

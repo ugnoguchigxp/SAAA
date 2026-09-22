@@ -171,7 +171,9 @@ pub(crate) async fn execute_agent_tool(
             );
         };
         let args = serde_json::from_str(&call.arguments).unwrap_or(serde_json::json!({}));
-        let principal = match crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer) {
+        let principal = match crate::tool_selection::service::ensure_principal(
+            &persistence.state.sqlite_writer,
+        ) {
             Ok(principal) => principal,
             Err(_) => {
                 return crate::runtime::agent_tools::tool_error_content(
@@ -189,10 +191,16 @@ pub(crate) async fn execute_agent_tool(
                     conversation_id: input.conversation_id.clone(),
                     allowed_scope_keys: Vec::new(),
                 };
-                Ok(crate::records::tools::execute(connection, &auth, &call.name, &args).to_string())
+                Ok(
+                    crate::records::tools::execute(connection, &auth, &call.name, &args)
+                        .to_string(),
+                )
             })
             .unwrap_or_else(|_| {
-                crate::runtime::agent_tools::tool_error_content("record_store_failed", "Record read failed.")
+                crate::runtime::agent_tools::tool_error_content(
+                    "record_store_failed",
+                    "Record read failed.",
+                )
             });
     }
     if crate::runtime::web_fetch::is_web_fetch_tool(&call.name) {
@@ -203,7 +211,9 @@ pub(crate) async fn execute_agent_tool(
         let Some(persistence) = output_persistence else {
             return raw;
         };
-        let Ok(principal) = crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer) else {
+        let Ok(principal) =
+            crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
+        else {
             return crate::runtime::agent_tools::tool_error_content(
                 "record_store_failed",
                 "The tool result was not stored.",
@@ -218,7 +228,13 @@ pub(crate) async fn execute_agent_tool(
                     conversation_id: input.conversation_id.clone(),
                     allowed_scope_keys: Vec::new(),
                 };
-                crate::records::capture::attach(connection, &auth, &call.name, &raw, Some(&input.run_id))
+                crate::records::capture::attach(
+                    connection,
+                    &auth,
+                    &call.name,
+                    &raw,
+                    Some(&input.run_id),
+                )
             })
             .unwrap_or_else(|_| {
                 crate::runtime::agent_tools::tool_error_content(

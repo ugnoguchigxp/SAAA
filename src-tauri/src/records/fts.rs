@@ -123,7 +123,11 @@ mod tests {
             .unwrap();
         let rows = statement
             .query_map([&stored.id], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })
             .unwrap();
         for row in rows {
@@ -153,7 +157,13 @@ mod tests {
     #[test]
     fn cw_24_delete_removes_fts_rows() {
         let connection = db();
-        let stored = commit(&connection, sample(&[]), b"alpha beta gamma", Some("alpha beta gamma")).unwrap();
+        let stored = commit(
+            &connection,
+            sample(&[]),
+            b"alpha beta gamma",
+            Some("alpha beta gamma"),
+        )
+        .unwrap();
         delete_text(&connection, &stored.id).unwrap();
         let chunks: i64 = connection
             .query_row(

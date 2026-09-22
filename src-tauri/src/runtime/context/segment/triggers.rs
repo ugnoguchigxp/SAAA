@@ -55,7 +55,10 @@ mod tests {
 
     #[test]
     fn cw_44_budget_rebuild_at_70_percent() {
-        assert_eq!(needs_rebuild(&input(71, 100, "initial")), Some(RebuildReason::Budget));
+        assert_eq!(
+            needs_rebuild(&input(71, 100, "initial")),
+            Some(RebuildReason::Budget)
+        );
         assert_eq!(needs_rebuild(&input(70, 100, "initial")), None);
     }
 

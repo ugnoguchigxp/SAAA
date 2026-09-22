@@ -6,12 +6,20 @@ pub(crate) mod manifest;
 pub(crate) mod schema;
 pub(crate) mod triggers;
 
-pub(crate) fn path_selected(segments_enabled: bool, history_binding_none: bool, chat_completions: bool) -> bool {
+pub(crate) fn path_selected(
+    segments_enabled: bool,
+    history_binding_none: bool,
+    chat_completions: bool,
+) -> bool {
     segments_enabled && history_binding_none && chat_completions
 }
 
 pub(crate) fn prefix_match_bytes(previous: &[u8], current: &[u8]) -> usize {
-    previous.iter().zip(current.iter()).take_while(|(left, right)| left == right).count()
+    previous
+        .iter()
+        .zip(current.iter())
+        .take_while(|(left, right)| left == right)
+        .count()
 }
 
 #[cfg(test)]

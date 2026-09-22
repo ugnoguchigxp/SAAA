@@ -480,9 +480,11 @@ fn remember_wire_prefix(
 ) -> Option<i64> {
     let persistence = persistence?;
     let mut prefixes = persistence.state.wire_prefixes.lock().ok()?;
-    let previous = prefixes.iter().rev().find(|(id, _)| id == conversation_id).map(|(_, bytes)| {
-        crate::runtime::context::segment::prefix_match_bytes(bytes, wire) as i64
-    });
+    let previous = prefixes
+        .iter()
+        .rev()
+        .find(|(id, _)| id == conversation_id)
+        .map(|(_, bytes)| crate::runtime::context::segment::prefix_match_bytes(bytes, wire) as i64);
     prefixes.retain(|(id, _)| id != conversation_id);
     prefixes.push_back((conversation_id.to_string(), wire.to_vec()));
     while prefixes.len() > 4 {

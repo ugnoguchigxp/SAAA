@@ -132,6 +132,32 @@ pub fn store_result(
         },
     )
     .map_err(|_| ToolSelectionError::storage())?;
+    let scopes = vec![scope_key.to_string()];
+    let stored = crate::records::write::commit(
+        connection,
+        crate::records::write::NewRecord {
+            kind: crate::records::contract::RecordKind::McpResult,
+            origin: crate::records::contract::Origin::ExternalObservation,
+            principal_id,
+            conversation_id,
+            run_id: None,
+            turn_id: None,
+            parent_execution_id: Some(invocation_id),
+            rank: None,
+            observed_at: now_ms(),
+            locator: serde_json::json!({"toolId": tool_id, "resultRef": &result_ref}),
+            scope_keys: &scopes,
+        },
+        payload_json.as_bytes(),
+        Some(payload_json),
+    )
+    .map_err(|_| ToolSelectionError::storage())?;
+    connection
+        .execute(
+            "UPDATE tool_selection_mcp_results SET record_id=?2 WHERE id=?1",
+            rusqlite::params![result_ref, stored.id],
+        )
+        .map_err(|_| ToolSelectionError::storage())?;
     Ok(StoreOutcome::Stored {
         result_ref,
         byte_count,

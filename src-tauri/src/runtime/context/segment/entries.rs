@@ -54,7 +54,10 @@ fn append(
         |row| row.get(0),
     ) {
         connection
-            .execute("UPDATE blobs SET ref_count = ref_count + 1 WHERE id=?1", [&existing])
+            .execute(
+                "UPDATE blobs SET ref_count = ref_count + 1 WHERE id=?1",
+                [&existing],
+            )
             .map_err(|error| error.to_string())?;
         existing
     } else {
@@ -84,10 +87,18 @@ fn append(
             params![segment_id, next],
         )
         .map_err(|error| error.to_string())?;
-    Ok(ContextEntry { sequence: next, role: role.to_string(), text: text.to_string() })
+    Ok(ContextEntry {
+        sequence: next,
+        role: role.to_string(),
+        text: text.to_string(),
+    })
 }
 
-pub(crate) fn rewrite_fails(connection: &Connection, segment_id: &str, sequence: i64) -> Result<(), String> {
+pub(crate) fn rewrite_fails(
+    connection: &Connection,
+    segment_id: &str,
+    sequence: i64,
+) -> Result<(), String> {
     let changed = connection
         .execute(
             "UPDATE context_entries SET role='user' WHERE segment_id=?1 AND sequence=?2",
@@ -113,9 +124,20 @@ mod tests {
                 [],
             )
             .unwrap();
-        let id = super::super::manifest::create(&connection, "c", "initial", None, "p", "t", "fixed", "{}", 100, 0)
-            .unwrap()
-            .id;
+        let id = super::super::manifest::create(
+            &connection,
+            "c",
+            "initial",
+            None,
+            "p",
+            "t",
+            "fixed",
+            "{}",
+            100,
+            0,
+        )
+        .unwrap()
+        .id;
         (connection, id)
     }
 

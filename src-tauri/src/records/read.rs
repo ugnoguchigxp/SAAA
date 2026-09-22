@@ -206,9 +206,7 @@ pub(crate) fn list_activity(
     let mut items = rows;
     let next_cursor = if items.len() as i64 > limit {
         items.pop();
-        items
-            .last()
-            .map(|(id, at)| encode_cursor(*at, id))
+        items.last().map(|(id, at)| encode_cursor(*at, id))
     } else {
         None
     };
@@ -224,11 +222,7 @@ fn visible(connection: &Connection, auth: &Authorization, record_id: &str) -> Re
     let sql = format!("SELECT 1 FROM records r WHERE r.id=? AND {filter} LIMIT 1");
     let mut values = vec![rusqlite::types::Value::Text(record_id.to_string())];
     values.append(&mut params_list);
-    match connection.query_row(
-        &sql,
-        params_from_iter(values.iter()),
-        |_| Ok(true),
-    ) {
+    match connection.query_row(&sql, params_from_iter(values.iter()), |_| Ok(true)) {
         Ok(found) => Ok(found),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
         Err(error) => Err(error.to_string()),
@@ -242,7 +236,9 @@ fn encode_cursor(recorded_at: i64, id: &str) -> String {
 
 fn decode_cursor(cursor: &str) -> Option<(i64, String)> {
     use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(cursor).ok()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(cursor)
+        .ok()?;
     let text = String::from_utf8(bytes).ok()?;
     let (at, id) = text.split_once(':')?;
     Some((at.parse().ok()?, id.to_string()))
@@ -260,7 +256,13 @@ mod tests {
         connection
     }
 
-    fn put(connection: &Connection, principal: &str, conversation: &str, scopes: &[String], body: &str) -> String {
+    fn put(
+        connection: &Connection,
+        principal: &str,
+        conversation: &str,
+        scopes: &[String],
+        body: &str,
+    ) -> String {
         commit(
             connection,
             NewRecord {
@@ -297,7 +299,10 @@ mod tests {
             &auth,
             &id,
             "readable_text",
-            ReadRange { start: 1, max_bytes: 3 },
+            ReadRange {
+                start: 1,
+                max_bytes: 3,
+            },
         )
         .unwrap()
         .unwrap();
@@ -319,8 +324,30 @@ mod tests {
             conversation_id: "c".into(),
             allowed_scope_keys: vec![],
         };
-        assert!(read_range(&connection, &other, &id, "readable_text", ReadRange { start: 0, max_bytes: 10 }).unwrap().is_none());
-        assert!(read_range(&connection, &owner, "missing", "readable_text", ReadRange { start: 0, max_bytes: 10 }).unwrap().is_none());
+        assert!(read_range(
+            &connection,
+            &other,
+            &id,
+            "readable_text",
+            ReadRange {
+                start: 0,
+                max_bytes: 10
+            }
+        )
+        .unwrap()
+        .is_none());
+        assert!(read_range(
+            &connection,
+            &owner,
+            "missing",
+            "readable_text",
+            ReadRange {
+                start: 0,
+                max_bytes: 10
+            }
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]

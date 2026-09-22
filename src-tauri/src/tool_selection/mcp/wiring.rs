@@ -26,7 +26,7 @@ pub fn assemble(
 ) -> (Arc<dyn ToolBackend>, Option<Arc<McpManager>>) {
     let llang: Arc<dyn ToolBackend> = Arc::new(LlangBackend::new(capabilities));
     let records = Arc::new(crate::records::backend::RecordsBackend::new(writer.clone()));
-    let manager = build_manager(writer, config, embedding);
+    let manager = build_manager(writer.clone(), config, embedding);
     let backend: Arc<dyn ToolBackend> = match &manager {
         Some(manager) => Arc::new(BackendRouter::new(
             llang,
@@ -39,6 +39,10 @@ pub fn assemble(
             records,
         )),
     };
+    if let Ok(principal) = crate::tool_selection::service::ensure_principal(&writer) {
+        let _ = writer
+            .write(|connection| crate::records::catalog::ensure_registered(connection, &principal));
+    }
     (backend, manager)
 }
 

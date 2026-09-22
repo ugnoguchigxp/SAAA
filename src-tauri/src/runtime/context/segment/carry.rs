@@ -5,7 +5,10 @@ pub(crate) struct Carry {
     pub(crate) bytes: usize,
 }
 
-pub(crate) fn build_carry(evidence_refs: &[String], active_operations: &[String]) -> Result<Carry, String> {
+pub(crate) fn build_carry(
+    evidence_refs: &[String],
+    active_operations: &[String],
+) -> Result<Carry, String> {
     let mut refs = evidence_refs.to_vec();
     let mut body = json!({
         "scope_refs": [],
@@ -43,15 +46,25 @@ mod tests {
 
     #[test]
     fn cw_43_carry_drops_evidence_refs_first() {
-        let refs = (0..200).map(|index| format!("evidence-{index}-{}", "x".repeat(40))).collect::<Vec<_>>();
+        let refs = (0..200)
+            .map(|index| format!("evidence-{index}-{}", "x".repeat(40)))
+            .collect::<Vec<_>>();
         let carry = build_carry(&refs, &["op".into()]).unwrap();
-        assert!(carry.body["adopted_evidence_refs"].as_array().unwrap().len() < refs.len());
+        assert!(
+            carry.body["adopted_evidence_refs"]
+                .as_array()
+                .unwrap()
+                .len()
+                < refs.len()
+        );
         assert_eq!(carry.body["active_operations"][0], "op");
     }
 
     #[test]
     fn cw_43_carry_fails_when_active_operations_exceed() {
-        let ops = (0..400).map(|index| format!("operation-{index}-{}", "y".repeat(40))).collect::<Vec<_>>();
+        let ops = (0..400)
+            .map(|index| format!("operation-{index}-{}", "y".repeat(40)))
+            .collect::<Vec<_>>();
         let error = match build_carry(&[], &ops) {
             Err(error) => error,
             Ok(_) => panic!("carry should fail"),

@@ -102,14 +102,20 @@ mod tests {
 
     #[test]
     fn cw_26_markdown_outline_uses_headings() {
-        let outline = build(OutlineKind::Markdown, "# Title\nIntro line\n\n## Next\nBody");
+        let outline = build(
+            OutlineKind::Markdown,
+            "# Title\nIntro line\n\n## Next\nBody",
+        );
         assert!(outline.items.iter().any(|item| item.text.contains("Title")));
         assert!(outline.items.iter().any(|item| item.text.contains("Intro")));
     }
 
     #[test]
     fn cw_26_plain_outline_paragraph_heads() {
-        let outline = build(OutlineKind::Plain, "First paragraph stays.\n\nSecond starts here.");
+        let outline = build(
+            OutlineKind::Plain,
+            "First paragraph stays.\n\nSecond starts here.",
+        );
         assert_eq!(outline.items.len(), 2);
         assert!(outline.items[0].text.starts_with("First"));
         assert!(outline.items[1].text.starts_with("Second"));

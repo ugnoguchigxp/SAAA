@@ -60,9 +60,16 @@ pub(crate) fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn add_column(connection: &Connection, table: &str, column: &str, declaration: &str) -> rusqlite::Result<()> {
+fn add_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    declaration: &str,
+) -> rusqlite::Result<()> {
     let exists: bool = connection.query_row(
-        &format!("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table}')"),
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table}')"
+        ),
         [],
         |row| row.get(0),
     )?;
@@ -75,7 +82,9 @@ fn add_column(connection: &Connection, table: &str, column: &str, declaration: &
         |row| row.get(0),
     )?;
     if !column_exists {
-        connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+        connection.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+        ))?;
     }
     Ok(())
 }

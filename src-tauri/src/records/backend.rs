@@ -23,14 +23,22 @@ pub struct UnavailableBackend;
 
 #[async_trait]
 impl ToolBackend for UnavailableBackend {
-    async fn invoke(&self, _request: BackendRequest, _cancellation: &RunCancellation) -> BackendOutcome {
+    async fn invoke(
+        &self,
+        _request: BackendRequest,
+        _cancellation: &RunCancellation,
+    ) -> BackendOutcome {
         BackendOutcome::failed("mcp-unconfigured")
     }
 }
 
 #[async_trait]
 impl ToolBackend for RecordsBackend {
-    async fn invoke(&self, request: BackendRequest, _cancellation: &RunCancellation) -> BackendOutcome {
+    async fn invoke(
+        &self,
+        request: BackendRequest,
+        _cancellation: &RunCancellation,
+    ) -> BackendOutcome {
         let operation = request
             .binding
             .get("operation")
@@ -49,7 +57,12 @@ impl ToolBackend for RecordsBackend {
         let value = self
             .writer
             .read_serialized(|connection| {
-                Ok(tools::execute(connection, &auth, operation, &request.arguments))
+                Ok(tools::execute(
+                    connection,
+                    &auth,
+                    operation,
+                    &request.arguments,
+                ))
             })
             .unwrap_or_else(|error| serde_json::json!({"status":"unavailable","reason":error}));
         BackendOutcome::succeeded(value)
@@ -95,7 +108,10 @@ mod tests {
                 &RunCancellation::default(),
             )
             .await;
-        assert_eq!(BackendRouter::kind(&serde_json::json!({"kind":"records"})), "records");
+        assert_eq!(
+            BackendRouter::kind(&serde_json::json!({"kind":"records"})),
+            "records"
+        );
         let _ = outcome;
     }
 }

@@ -49,7 +49,9 @@ pub(crate) fn execute(
     match name {
         "read_record" => read_record(connection, auth, args),
         "recall_activity" => recall(connection, auth, args),
-        _ => json!({"status": "unavailable", "reason": "unknown_tool", "instruction_authority": "none"}),
+        _ => {
+            json!({"status": "unavailable", "reason": "unknown_tool", "instruction_authority": "none"})
+        }
     }
 }
 
@@ -60,19 +62,41 @@ fn read_record(connection: &Connection, auth: &Authorization, args: &Value) -> V
     let Some(id) = args.get("id").and_then(Value::as_str) else {
         return json!({"status": "unavailable", "instruction_authority": "none"});
     };
-    let representation = args.get("representation").and_then(Value::as_str).unwrap_or("readable_text");
+    let representation = args
+        .get("representation")
+        .and_then(Value::as_str)
+        .unwrap_or("readable_text");
     if let Some(query) = args.get("query").and_then(Value::as_str) {
         return match read::search_in_record(connection, auth, id, query, 8) {
-            Ok(Some(hits)) => envelope(json!(hits.iter().map(|hit| json!({"start": hit.start_byte, "text": hit.snippet})).collect::<Vec<_>>())),
+            Ok(Some(hits)) => envelope(json!(hits
+                .iter()
+                .map(|hit| json!({"start": hit.start_byte, "text": hit.snippet}))
+                .collect::<Vec<_>>())),
             Ok(None) => json!({"status": "unavailable", "instruction_authority": "none"}),
-            Err(error) => json!({"status": "unavailable", "reason": error, "instruction_authority": "none"}),
+            Err(error) => {
+                json!({"status": "unavailable", "reason": error, "instruction_authority": "none"})
+            }
         };
     }
-    let start = args.pointer("/range/start").and_then(Value::as_u64).unwrap_or(0);
-    let max_bytes = args.pointer("/range/maxBytes").and_then(Value::as_u64).unwrap_or(8_192) as u32;
-    match read::read_range(connection, auth, id, representation, ReadRange { start, max_bytes }) {
+    let start = args
+        .pointer("/range/start")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let max_bytes = args
+        .pointer("/range/maxBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(8_192) as u32;
+    match read::read_range(
+        connection,
+        auth,
+        id,
+        representation,
+        ReadRange { start, max_bytes },
+    ) {
         Ok(Some(result)) => {
-            let mut body = envelope(json!([{"text": result.text, "start": result.actual_start, "end": result.actual_end}]));
+            let mut body = envelope(
+                json!([{"text": result.text, "start": result.actual_start, "end": result.actual_end}]),
+            );
             if result.truncated {
                 body["truncated"] = json!(true);
                 body["next"] = json!({"id": result.record_id, "start": result.actual_end});
@@ -81,7 +105,9 @@ fn read_record(connection: &Connection, auth: &Authorization, args: &Value) -> V
             body
         }
         Ok(None) => json!({"status": "unavailable", "instruction_authority": "none"}),
-        Err(error) => json!({"status": "unavailable", "reason": error, "instruction_authority": "none"}),
+        Err(error) => {
+            json!({"status": "unavailable", "reason": error, "instruction_authority": "none"})
+        }
     }
 }
 
@@ -105,8 +131,14 @@ fn shrink(body: &mut Value, id: String, mut start: u64) {
 }
 
 fn recall(connection: &Connection, auth: &Authorization, args: &Value) -> Value {
-    let rank = args.get("rank").and_then(Value::as_u64).map(|rank| rank as u32);
-    let parent = args.get("parentId").and_then(Value::as_str).map(str::to_string);
+    let rank = args
+        .get("rank")
+        .and_then(Value::as_u64)
+        .map(|rank| rank as u32);
+    let parent = args
+        .get("parentId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let page = match read::list_activity(
         connection,
         auth,
@@ -118,13 +150,21 @@ fn recall(connection: &Connection, auth: &Authorization, args: &Value) -> Value 
             before_record_id: None,
             since_ms: None,
             until_ms: None,
-            query: args.get("query").and_then(Value::as_str).map(str::to_string),
+            query: args
+                .get("query")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             limit: args.get("limit").and_then(Value::as_u64).unwrap_or(10) as u8,
-            cursor: args.get("cursor").and_then(Value::as_str).map(str::to_string),
+            cursor: args
+                .get("cursor")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         },
     ) {
         Ok(page) => page,
-        Err(error) => return json!({"status": "unavailable", "reason": error, "instruction_authority": "none"}),
+        Err(error) => {
+            return json!({"status": "unavailable", "reason": error, "instruction_authority": "none"})
+        }
     };
     let mut body = envelope(json!(page.items));
     body["coverage"] = json!({"searched_ranges": ["this_turn matches this_run in v1"]});
@@ -181,7 +221,12 @@ mod tests {
     #[test]
     fn cw_33_read_record_range_and_query_exclusive() {
         let (connection, auth) = db();
-        let body = execute(&connection, &auth, "read_record", &json!({"id": "x", "range": {"start": 0}, "query": "abc"}));
+        let body = execute(
+            &connection,
+            &auth,
+            "read_record",
+            &json!({"id": "x", "range": {"start": 0}, "query": "abc"}),
+        );
         assert_eq!(body["reason"], "range_and_query_exclusive");
     }
 
@@ -259,7 +304,12 @@ mod tests {
         )
         .unwrap()
         .id;
-        let body = execute(&connection, &auth, "recall_activity", &json!({"parentId": parent, "rank": 2}));
+        let body = execute(
+            &connection,
+            &auth,
+            "recall_activity",
+            &json!({"parentId": parent, "rank": 2}),
+        );
         assert_eq!(body["items"][0], second);
     }
 }
