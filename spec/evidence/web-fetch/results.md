@@ -1,52 +1,55 @@
-# WebFetch WebView移行 — results
+# WebFetch WebView移行 — 最終検証結果
 
-## 実装済み
+- 検証日: 2026-09-22
+- SAAA実装commit: `e0063bd`（後続の依存固定commitを本書末尾に記録）
+- llm-fetch固定revision: `64afbce5e99d24475fd25fceb9bd187a9777599b`
+- llm-fetch PR: https://github.com/ugnoguchigxp/LLM-fetch/pull/17
 
-- plugin debug表示設定（hidden既定・debugのみ可視・release拒否）+ SAAA env配線。
-- `ContentFetcher` trait境界 + `TauriWebViewContentFetcher`（one-shot、deadline/cancel/cleanup契約）。
-- `SearchProvider` Rust移植（DDG HTML/Lite bounded parser、Brave key時fallback）。
-- 検索URL filter・guard wrapper（`inspect_plain_text_bounded`）・blocked count。
-- dispatcher（`sidecar/webview/auto`、開始前選択、途中fallbackなし）。
-- compact投影（`fetch_content_result` / `web_search_result`、schema変更0）。
-- `tauri.conf.json` のllm-fetch製品上限。
+## 結論
 
-## offline合格
+macOS 14以降では、Rust検索とTauri WebView content fetchを既定経路として使用できる。workerは既定で非表示であり、debug buildだけ明示設定で表示できる。Windows/LinuxはWebViewを既定化せず、既存Bun sidecar fallbackとtarget別資材を維持する。
 
-- SAAA `cargo test --lib web_fetch`: **14 passed**（別作業のworktree破損前に記録）。
-- llm-fetch `cargo test -p tauri-plugin-llm-fetch --lib`: **43 passed**（最終状態で再確認済み）。
-- `cargo check --offline --all-targets`: 本計画ファイル起因のerror 0（最終確認時は
-  別作業ファイルのE0364/E0433でlib全体が失敗するため、本計画範囲は上記test記録で担保）。
+## 修正した問題
 
-## visible WebView合格
+- `deny` / `require_approval`を`allow_with_warning`へ弱めていたcontent投影を修正。
+- 検索hitをguardで除外した場合もwarning categoryを保持し、全件blockは`deny`、一部blockは`allow_with_warning`にした。
+- HTTP responseを一括読込せず、2 MiBを超える前にstreamを停止する実上限へ変更。
+- 固定検索endpointのredirectを禁止し、Brave credentialの別origin転送を防止。
+- DuckDuckGo HTML parse失敗時もLiteへfallbackし、Brave件数をmodel指定limitへ一致。
+- DDG redirect URLのUTF-8 percent decodeを修正。
+- `WebFetchCancel`のNotify lost-wakeup raceを解消。
+- WebView fetchをowned task化し、応答期限後もplugin cleanupが完了するようにした。
+- sidecar processにもcancelを伝播し、cancel/timeout時は`kill_on_drop`で終了するようにした。
+- DNS/Proxy failureを`UNSAFE_URL`へ誤分類せず、retryableな安全コードへ分離。
+- 製品のmacOS minimum system versionを14.0へ明示し、`auto`判定と配布条件を一致。
+- 検索provider初期化失敗を黙殺せず、Tauri setup errorとして扱うようにした。
 
-- example `--self-test-fast` + `LLMFETCH_DEBUG_VISIBLE=1`（debug）: PASS。
-  hidden実行と2 checkpoint（finalUrl/title/text/decision）完全一致。
+## 合格した検証
 
-## hidden/background合格
+- llm-fetch unit: 43 passed。
+- llm-fetch workspace clippy: all-targets/all-features、warning 0。
+- Rust 1.90.0 workspace/all-targets check: PASS。
+- rustdoc `-D warnings`: PASS。
+- Cargo package: 38 files、Node/TypeScript/別browser binary混入なし。
+- GitHub required CI: Node 22/24、Bun、Chromium sandbox、Windows packed consumer、Cargo、macOS hidden WebView smoke/boundaryが全てPASS。
+- visible/hidden debug comparison: 2 checkpointが同一結果。
+- one-shot lifecycle: 100/100、終了時registry/window残存なし。
+- reusable lifecycle: 100/100、終了時registry/window残存なし。
+- hidden background 10分: 0/2/6/10分すべて同一session・同一127文字・`decision=allow`。終了時one-shotとcleanupもPASS。
+- Rust live search canary: PASS。
+- SAAA WebFetch offline: 20 passed、1 ignored（live canary）。
+- SAAA dispatcher→Rust search→実WebView content fetch E2E: PASS。
 
-- example `--self-test-fast`（hidden）: PASS（macOS supported×4）。
-- `--self-test-leak` one-shot 100回: PASS（100/100、exit 0）。
-- SAAAスタックE2E `webfetch_e2e`（hidden worker）: PASS（exit 0、2044 chars）。
-- `--self-test-long` 10分: 未達。0/2/6分は2回とも成功（同一hidden WebView再利用・
-  同一抽出）だが、10分（1回目）・6分（2回目）で一過性DNS_FAILURE。
-  直後のcurl/dscacheutil正常のため環境要因と判断、コード回帰ではない。
+## DNS_FAILUREの扱い
 
-## live search合格
+過去2試行は3秒のDNS期限で一過性`DNS_FAILURE`となった。直後のOS resolver/curlは正常だった。製品設定とlong testのDNS期限を10秒へ揃え、30秒のrequest deadline内で0/2/6/10分を完走した。無制限retryは追加していない。
 
-- Rust移植のlive canary（ignored test）: PASS（Web経路、約8秒、5件以内・URL検証済み）。
-- SAAAスタックE2E内のlive検索: PASS（5 hits、blocked 0）。
-- Brave live: 未実施（keyなし。送信0はコード構造上担保）。
+## platform判定
 
-## platform未検証
+- macOS 14+: WebView既定、macOS bundleからWebFetch sidecarを除外。
+- Windows/Linux: sidecar既定を維持。GitHubのWindows consumerとSAAA platform compile/smokeで継続検証する。
+- Windows/Linuxの実WebViewは正式経路にしていないため、本移行のacceptance条件には含めない。
 
-- macOS: 上記の通り実WebViewゲート通過。
-- Windows/Linux: 実機なしのため未検証。`auto`は非macOSでsidecarへfallback。
-  sidecar（win/linux）のbuild staging・npm依存は維持。
+## rollback
 
-## sidecar fallback継続中（macOSは撤去済み）
-
-- macOS: `build.rs`はstaging skip、`resources/bin/webfetch`なし（gitignored生成物）。
-  ロールバック手順を実証済み（backup復元→両tool同一schema成功→再撤去、
-  `/tmp/webfetch.rollback-backup`に退避中）。
-  緊急時は `SAAA_WEBFETCH_BACKEND=sidecar` + binary配置で次tool callから切替。
-- 非macOS: sidecar継続。`scripts/webfetch-sidecar.ts`・npm `llm-fetch`依存は維持。
+`SAAA_WEBFETCH_BACKEND=sidecar`を設定し、対象platformの`webfetch` binaryを配置すれば次のtool callからsidecarへ戻せる。tool開始後の途中fallbackは行わない。

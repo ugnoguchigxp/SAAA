@@ -24,6 +24,9 @@ pub enum ProjectedCodexEvent {
     Ignore,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidCodexEvent;
+
 pub struct CodexEventProjector {
     thread_id: String,
     turn_id: String,
@@ -41,7 +44,7 @@ impl CodexEventProjector {
         }
     }
 
-    pub fn project(&mut self, message: &Value) -> Result<ProjectedCodexEvent, ()> {
+    pub fn project(&mut self, message: &Value) -> Result<ProjectedCodexEvent, InvalidCodexEvent> {
         if message.get("id").is_some() && message.get("method").is_some() {
             return Ok(ProjectedCodexEvent::PolicyViolation);
         }
@@ -87,9 +90,12 @@ impl CodexEventProjector {
         }
     }
 
-    fn project_item(&mut self, message: &Value) -> Result<ProjectedCodexEvent, ()> {
-        let item = message.pointer("/params/item").ok_or(())?;
-        let item_type = item.get("type").and_then(Value::as_str).ok_or(())?;
+    fn project_item(&mut self, message: &Value) -> Result<ProjectedCodexEvent, InvalidCodexEvent> {
+        let item = message.pointer("/params/item").ok_or(InvalidCodexEvent)?;
+        let item_type = item
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or(InvalidCodexEvent)?;
         if matches!(
             item_type,
             "fileChange" | "mcpToolCall" | "dynamicToolCall" | "webSearch"
@@ -161,7 +167,7 @@ impl CodexEventProjector {
                 "activity".to_string(),
                 crate::bounded_text(other, 80),
             ),
-            _ => return Err(()),
+            _ => return Err(InvalidCodexEvent),
         };
         Ok(ProjectedCodexEvent::Activity {
             kind,

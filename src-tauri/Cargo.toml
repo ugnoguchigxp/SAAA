@@ -42,10 +42,8 @@ saaa-reasoning-contract = { path = "../crates/reasoning-contract" }
 async-trait = "0.1"
 base64 = "0.22"
 tauri = { version = "2", features = ["unstable"] }
-# WF-01..WF-08 development: path dependency on the adjacent llm-fetch checkout.
-# At acceptance this returns to a reproducible git rev pin containing the
-# debug-window config and plain-text guard wrapper.
-tauri-plugin-llm-fetch = { path = "../../llm-fetch/crates/tauri-plugin-llm-fetch" }
+# Reproducible WebView worker and bounded plain-text guard implementation.
+tauri-plugin-llm-fetch = { git = "https://github.com/ugnoguchigxp/LLM-fetch.git", rev = "64afbce5e99d24475fd25fceb9bd187a9777599b" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ts-rs = "12.0.1"
