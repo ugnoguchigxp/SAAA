@@ -55,6 +55,15 @@ fn generated_steward_binding_is_current() {
 }
 
 #[test]
+fn generated_diagnosis_binding_is_current() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated/diagnosis.ts");
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        saaa_lib::ipc_contract::diagnosis_typescript_bindings()
+    );
+}
+
+#[test]
 fn generated_artifact_preview_binding_is_current() {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated/artifactPreview.ts");

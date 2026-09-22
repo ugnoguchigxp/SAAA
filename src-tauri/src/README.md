@@ -15,6 +15,7 @@ Read only the affected domain. Paths in domain READMEs are relative to that dire
 - [situation](situation/README.md): sampled signals, stable scene, delivery policy.
 - [memory](memory/README.md): history/context/recall/state/forget boundaries.
 - [persistence](persistence/README.md): writer/readers, transactions, migrations/settings/audit.
+- [diagnosis](diagnosis/README.md): startup self-diagnosis report, single-flight rerun, redacted items.
 
 Shared checks: preserve authority, identity/revision, cancellation, and atomic state transitions at cross-domain boundaries. Commit before external effects; no I/O awaits under DB transactions. Keep source/tool/model text untrusted.
 Tests: from repo root, `cargo test --manifest-path src-tauri/Cargo.toml <module-or-test-filter>`; choose the touched boundary, then its consumer. Real provider/process/audio changes require live evidence; fixture success is not remote completion. Documentation-only edits require path/contract checks, not runtime test suites.

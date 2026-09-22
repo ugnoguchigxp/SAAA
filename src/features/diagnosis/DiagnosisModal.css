@@ -1,0 +1,135 @@
+.diagnosis-modal-backdrop {
+  position: fixed;
+  z-index: 40;
+  pointer-events: auto;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(4 7 11 / 58%);
+}
+
+.diagnosis-modal {
+  width: min(640px, 100%);
+  max-height: min(720px, 100%);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border: 1px solid #34404d;
+  border-radius: 16px;
+  color: #e7edf4;
+  background: #171c24;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 35%);
+  outline: none;
+}
+
+.diagnosis-modal-header,
+.diagnosis-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.diagnosis-modal-header {
+  border-bottom: 1px solid #2b3440;
+}
+
+.diagnosis-modal-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.diagnosis-modal-header p,
+.diagnosis-modal-meta {
+  margin: 4px 0 0;
+  color: #9aabbd;
+  font-size: 0.85rem;
+}
+
+.diagnosis-modal-badge {
+  border: 1px solid #3d4c5e;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.diagnosis-modal-badge[data-status="ok"] {
+  color: #b7e3c6;
+  background: #1c3329;
+}
+
+.diagnosis-modal-badge[data-status="warn"],
+.diagnosis-modal-badge[data-status="running"] {
+  color: #f3d7a1;
+  background: #3a2e1b;
+}
+
+.diagnosis-modal-badge[data-status="fail"] {
+  color: #f0aaa9;
+  background: #382326;
+}
+
+.diagnosis-modal-body {
+  overflow: auto;
+  padding: 8px 20px 16px;
+}
+
+.diagnosis-modal-group {
+  margin-top: 12px;
+}
+
+.diagnosis-modal-group h3 {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9aabbd;
+}
+
+.diagnosis-modal-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  padding: 8px 0;
+  border-top: 1px solid #2b3440;
+}
+
+.diagnosis-modal-item:has(p) .diagnosis-modal-status {
+  grid-row: span 2;
+}
+
+.diagnosis-modal-status {
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: #6d7c8d;
+}
+
+.diagnosis-modal-status[data-status="ok"] {
+  background: #6dca8d;
+}
+
+.diagnosis-modal-status[data-status="warn"],
+.diagnosis-modal-status[data-status="running"] {
+  background: #e2b15a;
+}
+
+.diagnosis-modal-status[data-status="fail"] {
+  background: #e07a78;
+}
+
+.diagnosis-modal-item p {
+  margin: 0;
+  color: #c5d0dc;
+}
+
+.diagnosis-modal-footer {
+  border-top: 1px solid #2b3440;
+}
+
+.diagnosis-modal-error {
+  margin: 0 20px 12px;
+  color: #f0aaa9;
+}

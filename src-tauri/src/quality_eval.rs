@@ -233,6 +233,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
             crate::providers::reachability::ReachabilityState::default(),
         ),
         reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
+        diagnosis: std::sync::Arc::new(crate::diagnosis::store::DiagnosisStore::new()),
     })
 }
 

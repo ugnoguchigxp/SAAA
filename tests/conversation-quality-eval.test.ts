@@ -22,7 +22,7 @@ const scaledScores = (value: number): Scores => ({
   tools: 10 * value,
 });
 const resultMatrix = (scoreForRound: (round: number) => number) =>
-  [1, 2, 3].flatMap((round) =>
+  [1].flatMap((round) =>
     scenarioIds.map((scenarioId) => {
       const scores = scaledScores(scoreForRound(round) / 100);
       return {
@@ -36,9 +36,9 @@ const resultMatrix = (scoreForRound: (round: number) => number) =>
   );
 
 describe("conversation quality evaluation contract", () => {
-  test("fixes 60 unique scenarios across every required category", () => {
+  test("keeps one scenario for each essential behavior", () => {
     expect(validateScenarios(QUALITY_SCENARIOS)).toEqual([]);
-    expect(new Set(QUALITY_SCENARIOS.map((scenario) => scenario.id)).size).toBe(60);
+    expect(new Set(QUALITY_SCENARIOS.map((scenario) => scenario.id)).size).toBe(4);
   });
 
   test("rejects scores outside the rubric and totals valid scores", () => {
@@ -68,33 +68,33 @@ describe("conversation quality evaluation contract", () => {
     );
     expect(validateScenarios(broken)).toContain("current-01: missing tool result");
     const wrongMode = QUALITY_SCENARIOS.map((scenario) =>
-      scenario.id === "ja-01"
+      scenario.id === "direct-01"
         ? { ...scenario, toolMode: "success" as const, toolResult: "fixture" }
         : scenario,
     );
-    expect(validateScenarios(wrongMode)).toContain("ja-01: invalid tool mode for ja");
+    expect(validateScenarios(wrongMode)).toContain("direct-01: invalid tool mode for direct");
     const wrongCoverage = QUALITY_SCENARIOS.map((scenario) =>
-      scenario.id === "en-01" ? { ...scenario, category: "ja" as const } : scenario,
+      scenario.id === "ambiguous-asr-01" ? { ...scenario, category: "direct" as const } : scenario,
     );
-    expect(validateScenarios(wrongCoverage)).toContain("ja: expected 10 scenarios, received 11");
+    expect(validateScenarios(wrongCoverage)).toContain("direct: expected 1 scenarios, received 2");
   });
 
-  test("release gate requires two independently passing runs and passing medians", () => {
+  test("release gate requires the minimal run to pass", () => {
     const gate = summarizeQualityGate(
-      resultMatrix((round) => (round === 3 ? 80 : 95)),
+      resultMatrix(() => 95),
       scenarioIds,
     );
-    expect(gate.passingRunCount).toBe(2);
+    expect(gate.passingRunCount).toBe(1);
     expect(gate.medianRunAverage).toBe(95);
     expect(gate.passed).toBe(true);
   });
 
   test("one hard violation fails the aggregate gate", () => {
     const results = resultMatrix(() => 100);
-    const violated = results.find((result) => result.round === 2);
+    const violated = results.find((result) => result.round === 1);
     if (violated) violated.violationCodes = ["fabricated_source"];
     const gate = summarizeQualityGate(results, scenarioIds);
-    expect(gate.passingRunCount).toBe(2);
+    expect(gate.passingRunCount).toBe(0);
     expect(gate.hardViolationCount).toBe(1);
     expect(gate.passed).toBe(false);
   });

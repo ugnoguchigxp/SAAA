@@ -26,7 +26,7 @@ pub fn typescript_bindings() -> String {
          {}\n\n\
          {}\n\n\
          // Role-routing reconnect projections.\n\n\
-         {}\n{}\n{}\n",
+         {}\n{}\n{}\n{}\n",
         export_declaration::<ConversationMessage>(),
         export_declaration::<VoicePresentationDecision>(),
         export_declaration::<ConversationVoicePolicySnapshot>(),
@@ -34,9 +34,9 @@ pub fn typescript_bindings() -> String {
         crate::role_routing::ipc::typescript_bindings(),
         crate::adaptive_evaluation::typescript_bindings(),
         crate::runtime::context::world::capabilities::typescript_bindings(),
+        crate::diagnosis::contract::typescript_bindings(),
     )
 }
-
 pub fn ui_typescript_bindings() -> String {
     let types = [
         export_declaration::<crate::generative_ui::contracts::ContentPart>(),

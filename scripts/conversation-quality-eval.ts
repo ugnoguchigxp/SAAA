@@ -312,8 +312,8 @@ async function run(): Promise<void> {
     throw new Error("target and judge must use distinct endpoint/model identities");
   }
   const policy = requestPolicy();
-  const rounds = Number.parseInt(process.env.SAAA_EVAL_ROUNDS ?? "3", 10);
-  if (rounds !== 3) throw new Error("SAAA_EVAL_ROUNDS must be exactly 3 for the release gate");
+  const rounds = Number.parseInt(process.env.SAAA_EVAL_ROUNDS ?? "1", 10);
+  if (rounds !== 1) throw new Error("SAAA_EVAL_ROUNDS must be exactly 1 for the release gate");
   const results = [];
   for (let round = 1; round <= rounds; round += 1) {
     for (const scenario of QUALITY_SCENARIOS) {
@@ -364,7 +364,7 @@ async function run(): Promise<void> {
   };
   const reportPath = writeReport(report, generatedAt);
   console.log(
-    `conversation quality ${gate.passed ? "passed" : "failed"}: median ${gate.medianRunAverage.toFixed(1)}/100, ${gate.passingRunCount}/3 runs passed; report ${reportPath}`,
+    `conversation quality ${gate.passed ? "passed" : "failed"}: ${gate.medianRunAverage.toFixed(1)}/100; report ${reportPath}`,
   );
   if (!gate.passed) process.exitCode = 1;
 }

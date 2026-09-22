@@ -22,6 +22,7 @@ mod coding;
 mod command_registry;
 mod credentials;
 mod database_backup;
+mod diagnosis;
 mod diagnostics;
 pub mod generated_capabilities;
 mod generative_ui;

@@ -27,6 +27,7 @@ pub(super) struct AppState {
     pub(super) artifact_preview: crate::artifact_preview::PreviewRuntime,
     pub(super) reachability: std::sync::Arc<crate::providers::reachability::ReachabilityState>,
     pub(super) reachability_kick: std::sync::Arc<tokio::sync::Notify>,
+    pub(super) diagnosis: std::sync::Arc<crate::diagnosis::store::DiagnosisStore>,
 }
 
 #[derive(Clone)]

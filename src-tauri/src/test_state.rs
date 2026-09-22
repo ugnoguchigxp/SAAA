@@ -64,5 +64,6 @@ pub(crate) fn app_state_with_capabilities(
             crate::providers::reachability::ReachabilityState::default(),
         ),
         reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
+        diagnosis: std::sync::Arc::new(crate::diagnosis::store::DiagnosisStore::new()),
     }
 }

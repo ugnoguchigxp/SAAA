@@ -251,6 +251,7 @@ pub fn run() {
                 artifact_preview,
                 reachability: std::sync::Arc::new(providers::reachability::ReachabilityState::default()),
                 reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
+                diagnosis: std::sync::Arc::new(diagnosis::store::DiagnosisStore::new()),
             });
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -264,6 +265,7 @@ pub fn run() {
                 })
                 .map_err(|error| format!("role-routing startup recovery: {error}"))?;
             providers::reachability_watcher::spawn(&app.state::<AppState>());
+            diagnosis::runner::spawn_startup(app.handle().clone());
             adaptive_improvement::start_worker(
                 app.state::<AppState>().sqlite_writer.clone(),
                 app.state::<AppState>().data_directory.clone(),

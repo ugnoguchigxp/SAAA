@@ -45,7 +45,6 @@ pub(crate) async fn run_with_options(
     let mut started = false;
     let mut provider_progressed = false;
     let mut messages = world_body::build_messages(history, &context);
-    let simple_weather_lookup = is_simple_weather_lookup(&context.input.content);
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
         let url = super::openai_compatible::provider_operation_url(endpoint, "chat/completions")
             .map_err(|_| Failure::Contract)?;
@@ -59,7 +58,6 @@ pub(crate) async fn run_with_options(
         let mut context_still_calls = 0;
         let mut context_still_call_keys = std::collections::HashSet::new();
         let mut spoken_tool_progress = 0;
-        let mut weather_search_attempted = false;
         loop {
             crate::runtime::context::world::dispatch::refresh_json(
                 &mut messages,
@@ -67,7 +65,7 @@ pub(crate) async fn run_with_options(
             )
             .map_err(|_| Failure::ContextScopeChanged)?;
             let streaming = mode == RequestMode::Stream && options.streaming;
-            let mut offer = if mode != RequestMode::JsonProbe
+            let offer = if mode != RequestMode::JsonProbe
                 && options.tools
                 && !crate::runtime::context::state_answer::is_state_query(&context.input.content)
             {
@@ -81,9 +79,6 @@ pub(crate) async fn run_with_options(
             } else {
                 AgentToolOffer::empty()
             };
-            if simple_weather_lookup {
-                restrict_weather_tools(&mut offer.definitions, weather_search_attempted);
-            }
             let tools = &offer.definitions;
             let (body, generation) = {
                 let mut recompose_attempts = 0;
@@ -378,11 +373,6 @@ pub(crate) async fn run_with_options(
                     )
                     .await
                 };
-                if simple_weather_lookup
-                    && call.name == crate::runtime::web_fetch::WEB_SEARCH_TOOL_NAME
-                {
-                    weather_search_attempted = true;
-                }
                 if progress_spoken {
                     spoken_tool_progress += 1;
                 }
@@ -432,43 +422,6 @@ pub(crate) async fn run_with_options(
             Error::failed(kind, started)
         }
     })
-}
-
-fn is_simple_weather_lookup(input: &str) -> bool {
-    let input = input.to_ascii_lowercase();
-    ["天気", "気温", "降水", "weather", "forecast", "temperature"]
-        .iter()
-        .any(|term| input.contains(term))
-}
-
-fn restrict_weather_tools(definitions: &mut Vec<Value>, search_attempted: bool) {
-    definitions.retain(|definition| {
-        !search_attempted
-            && definition.pointer("/function/name").and_then(Value::as_str)
-                == Some(crate::runtime::web_fetch::WEB_SEARCH_TOOL_NAME)
-    });
-}
-
-#[cfg(test)]
-mod weather_lookup_tests {
-    use super::*;
-
-    #[test]
-    fn recognizes_weather_queries_and_successful_search_results() {
-        assert!(is_simple_weather_lookup("神奈川県の天気教えて。"));
-        assert!(is_simple_weather_lookup("Weather in Yokohama"));
-        assert!(!is_simple_weather_lookup("神奈川県について教えて"));
-        let mut tools = vec![
-            json!({"type":"function","function":{"name":"web_search"}}),
-            json!({"type":"function","function":{"name":"fetch_content"}}),
-            json!({"type":"function","function":{"name":"recall_conversation"}}),
-        ];
-        restrict_weather_tools(&mut tools, false);
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["function"]["name"], "web_search");
-        restrict_weather_tools(&mut tools, true);
-        assert!(tools.is_empty());
-    }
 }
 
 mod response_helpers;

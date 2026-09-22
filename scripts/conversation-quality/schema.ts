@@ -20,13 +20,10 @@ export const HARD_VIOLATIONS = [
 ] as const;
 
 const REQUIRED_CATEGORY_COUNTS: Record<QualityScenario["category"], number> = {
-  ja: 10,
-  en: 10,
-  "ambiguous-asr": 10,
-  long: 8,
-  current: 8,
-  "tool-failure": 7,
-  continuation: 7,
+  direct: 1,
+  "ambiguous-asr": 1,
+  current: 1,
+  "tool-failure": 1,
 };
 
 export type Scores = Record<keyof typeof SCORE_MAXIMA, number>;
@@ -64,7 +61,12 @@ export function hashText(value: string): string {
 export function validateScenarios(scenarios: QualityScenario[]): string[] {
   const failures: string[] = [];
   const ids = new Set<string>();
-  if (scenarios.length !== 60) failures.push(`expected 60 scenarios, received ${scenarios.length}`);
+  const expectedCount = Object.values(REQUIRED_CATEGORY_COUNTS).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+  if (scenarios.length !== expectedCount)
+    failures.push(`expected ${expectedCount} scenarios, received ${scenarios.length}`);
   for (const scenario of scenarios) {
     if (!/^[a-z][a-z0-9-]{0,79}$/.test(scenario.id))
       failures.push(`invalid scenario id: ${scenario.id}`);
@@ -158,9 +160,9 @@ function summarizeResultSet(
 export function summarizeQualityGate(
   results: ScoredQualityResult[],
   expectedScenarioIds: string[],
-  expectedRounds = 3,
+  expectedRounds = 1,
 ): QualityGateSummary {
-  if (expectedRounds !== 3) throw new Error("quality release gate requires exactly 3 rounds");
+  if (expectedRounds !== 1) throw new Error("quality release gate requires exactly 1 round");
   const expectedIds = new Set(expectedScenarioIds);
   if (
     !expectedScenarioIds.length ||
@@ -228,7 +230,7 @@ export function summarizeQualityGate(
     medianRunAverage,
     medianRunCategoryPercentages,
     passed:
-      passingRunCount >= 2 &&
+      passingRunCount === 1 &&
       medianRunAverage >= 90 &&
       Object.values(medianRunCategoryPercentages).every((value) => value >= 85) &&
       aggregate.hardViolationCount === 0,

@@ -21,6 +21,8 @@ macro_rules! saaa_invoke_handler {
             read_voice_enrollment_sample,
             frontend_ready,
             export_diagnostics,
+            diagnosis::commands::get_diagnosis_report,
+            diagnosis::commands::run_diagnosis,
             persistence::audit::list_audit_events,
             database_backup::backup_database,
             get_situation_snapshot,

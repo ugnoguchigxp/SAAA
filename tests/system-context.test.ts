@@ -31,56 +31,38 @@ test("renders voice transcription context for every conversation provider", () =
   expect(invocation.role).toBe("system");
   expect(invocation.content.text).toBe(projectFile(".s11tnext/conversation-respond.txt"));
   expect(invocation.content.text).toContain(
-    "SAAA transcribes voice input before invoking you and passes the finalized transcript as the user message text.",
+    "Answer the request directly with the minimum useful information.",
+  );
+  expect(invocation.content.text).toContain("call `web_search` in the same turn before answering");
+  expect(invocation.content.text).toContain(
+    "Use `search_knowledge` or `search_episodes` for internal context",
   );
   expect(invocation.content.text).toContain(
-    "do not claim that speech recognition is unavailable or required.",
+    "Split compound or insufficient searches into short independent queries",
   );
-  expect(invocation.content.text).toContain(
-    "Use `web_search` when the user's request depends on current or time-sensitive public information",
-  );
-  expect(invocation.content.text).toContain(
-    "Use `fetch_content` when a search result or public URL needs closer reading.",
-  );
-  expect(invocation.content.text).toContain("the location for a weather request");
-  expect(invocation.content.text).toContain(
-    "Before deciding how to approach a substantial task, proactively use the available ContextStill tools",
-  );
-  expect(invocation.content.text).toContain(
-    "Do not use these tools for greetings, simple questions, trivial edits",
-  );
-  expect(invocation.content.text).toContain("Use `search_knowledge`");
-  expect(invocation.content.text).toContain("`search_episodes` for similar past work");
-  expect(invocation.content.text).toContain("The configured agent name is {{agentNameJson}}.");
-  expect(invocation.content.text).toContain(
-    "use that exact name whenever you identify or refer to yourself.",
-  );
-  expect(invocation.content.text).toContain("The configured user name is {{userNameJson}}.");
-  expect(invocation.content.text).toContain(
-    "The configured regional preferences are {{regionalPreferencesJson}}.",
-  );
-  expect(invocation.content.text).toContain(
-    "Use the configured time zone when interpreting relative dates and times.",
-  );
-  expect(invocation.content.text).toContain(
-    "Use the configured units and currency when the user has not specified alternatives.",
-  );
-  expect(invocation.content.text).toContain("do not infer, invent, or recall a user name");
-  expect(invocation.content.text).toContain(
-    "Do not use Markdown headings or headline-style lines.",
-  );
+  for (const placeholder of [
+    "{{agentNameJson}}",
+    "{{userNameJson}}",
+    "{{regionalPreferencesJson}}",
+    "{{inputOriginJson}}",
+    "{{presentationModeJson}}",
+  ])
+    expect(invocation.content.text).toContain(placeholder);
 });
 
 test("keeps the system context outside Rust program code", () => {
   const rustSource = [
     projectFile("src-tauri/src/lib.rs"),
+    projectFile("src-tauri/src/lib.d/01.rs"),
     projectFile("src-tauri/src/runtime/codex_process.rs"),
+    projectFile("src-tauri/src/runtime/codex_process.d/01.rs"),
+    projectFile("src-tauri/src/runtime/codex_process.d/02.rs"),
     projectFile("src-tauri/src/runtime/conversation_context.rs"),
     projectFile("src-tauri/src/runtime/turns.rs"),
     projectFile("src-tauri/src/runtime/conversation_inputs.rs"),
   ].join("\n");
 
-  expect(rustSource).toContain('include_str!("../../.s11tnext/codex-read-only.txt")');
+  expect(rustSource).toContain('include_str!("../../../.s11tnext/codex-read-only.txt")');
   expect(rustSource).toContain('include_str!("../../../.s11tnext/conversation-respond.txt")');
   expect(rustSource).toContain('"developerInstructions": developer_instructions(host_context)');
   expect(rustSource).toContain("render_conversation_system_context(");

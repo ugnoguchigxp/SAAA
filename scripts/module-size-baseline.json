@@ -373,6 +373,50 @@
       "total": 22,
       "production": 22
     },
+    "src-tauri/src/diagnosis/checks/harness.rs": {
+      "total": 229,
+      "production": 143
+    },
+    "src-tauri/src/diagnosis/checks/memory.rs": {
+      "total": 140,
+      "production": 98
+    },
+    "src-tauri/src/diagnosis/checks/mod.rs": {
+      "total": 28,
+      "production": 28
+    },
+    "src-tauri/src/diagnosis/checks/providers.rs": {
+      "total": 176,
+      "production": 90
+    },
+    "src-tauri/src/diagnosis/checks/settings.rs": {
+      "total": 86,
+      "production": 40
+    },
+    "src-tauri/src/diagnosis/checks/sqlite.rs": {
+      "total": 81,
+      "production": 44
+    },
+    "src-tauri/src/diagnosis/commands.rs": {
+      "total": 44,
+      "production": 20
+    },
+    "src-tauri/src/diagnosis/contract.rs": {
+      "total": 93,
+      "production": 76
+    },
+    "src-tauri/src/diagnosis/mod.rs": {
+      "total": 6,
+      "production": 6
+    },
+    "src-tauri/src/diagnosis/runner.rs": {
+      "total": 291,
+      "production": 157
+    },
+    "src-tauri/src/diagnosis/store.rs": {
+      "total": 99,
+      "production": 73
+    },
     "src-tauri/src/diagnostics.rs": {
       "total": 187,
       "production": 152
@@ -3833,6 +3877,22 @@
       "total": 41,
       "production": 41
     },
+    "src/features/diagnosis/DiagnosisModal.css": {
+      "total": 136,
+      "production": 136
+    },
+    "src/features/diagnosis/DiagnosisModal.tsx": {
+      "total": 98,
+      "production": 98
+    },
+    "src/features/diagnosis/api.ts": {
+      "total": 40,
+      "production": 40
+    },
+    "src/features/diagnosis/useDiagnosisReport.ts": {
+      "total": 78,
+      "production": 78
+    },
     "src/features/memory/api.ts": {
       "total": 62,
       "production": 62
@@ -4037,6 +4097,10 @@
       "total": 295,
       "production": 295
     },
+    "src/i18n/locales/enDiagnosis.ts": {
+      "total": 46,
+      "production": 46
+    },
     "src/i18n/locales/enErrors.ts": {
       "total": 76,
       "production": 76
@@ -4056,6 +4120,10 @@
     "src/i18n/locales/jaCore.ts": {
       "total": 292,
       "production": 292
+    },
+    "src/i18n/locales/jaDiagnosis.ts": {
+      "total": 46,
+      "production": 46
     },
     "src/i18n/locales/jaErrors.ts": {
       "total": 79,
@@ -4128,6 +4196,10 @@
     "src/lib/generated/coding.ts": {
       "total": 3,
       "production": 3
+    },
+    "src/lib/generated/diagnosis.ts": {
+      "total": 6,
+      "production": 6
     },
     "src/lib/generated/generativeUi.ts": {
       "total": 11,
@@ -4269,6 +4341,10 @@
       "total": 10,
       "production": 10
     },
+    "src/shell/DiagnosisNavButton.tsx": {
+      "total": 18,
+      "production": 18
+    },
     "src/shell/appRoute.ts": {
       "total": 11,
       "production": 11
@@ -4373,6 +4449,10 @@
       "total": 23,
       "production": 23
     },
+    "tests/conversation-behavior-menu.test.tsx": {
+      "total": 56,
+      "production": 56
+    },
     "tests/conversation-quality-eval.test.ts": {
       "total": 154,
       "production": 154
@@ -4424,6 +4504,22 @@
     "tests/desktop-smoke.test.ts": {
       "total": 137,
       "production": 137
+    },
+    "tests/diagnosis-api.test.ts": {
+      "total": 36,
+      "production": 36
+    },
+    "tests/diagnosis-hook.test.tsx": {
+      "total": 158,
+      "production": 158
+    },
+    "tests/diagnosis-modal.test.tsx": {
+      "total": 89,
+      "production": 89
+    },
+    "tests/diagnosis-nav.test.tsx": {
+      "total": 43,
+      "production": 43
     },
     "tests/effective-route.test.ts": {
       "total": 130,

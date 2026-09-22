@@ -115,3 +115,7 @@ pub use crate::schedule::contracts::typescript_bindings as schedule_typescript_b
 pub fn steward_typescript_bindings() -> String {
     crate::steward::execution_contracts::typescript_bindings()
 }
+
+pub fn diagnosis_typescript_bindings() -> String {
+    crate::diagnosis::contract::typescript_file()
+}
