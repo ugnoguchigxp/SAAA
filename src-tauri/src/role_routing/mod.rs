@@ -2,6 +2,7 @@
 //! Durable policy and ledger foundations for role-based model routing.
 
 pub(crate) mod adapters;
+pub(crate) mod availability;
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod classifier;
 pub(crate) mod context;

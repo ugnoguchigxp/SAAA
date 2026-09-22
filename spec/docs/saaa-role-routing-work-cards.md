@@ -132,7 +132,7 @@
 ### RR-06 候補生成とルールranker
 
 - 契約: C3。N `rr/selection.rs`、`rr/ranker.rs`。
-- hard filter、初期選択表、tie break、switch marginを実装。rulesはnetwork/DBなしの純粋関数。
+- hard filter、初期選択表、tie break、switch marginを実装。rulesはnetwork/DBなしの純粋関数。到達性は選択前の入力(`SelectionInput.unreachable_actor_ids`)として渡し、`actor_unreachable` で在宅 recipe を除外する。Unknown は楽観的に到達扱い。観測とヒステリシスは `providers/reachability.rs` が持ち、selector は snapshot だけを見る。
 - cloud禁止、能力不足、price不明、既存actor維持を理由コード付きで返す。
 - 試験: `rr_06_cloud_filter`、`rr_06_unknown_cost`、`rr_06_sticky_actor`、`rr_06_invalid_ranker_fallback`。V1。
 - 合格: 候補集合と除外理由をdecisionに保存でき、未知candidateの実行0回。

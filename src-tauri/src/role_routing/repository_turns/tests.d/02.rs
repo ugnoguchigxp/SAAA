@@ -48,7 +48,17 @@ fn rr_04_queue_full_leaves_no_input_message() {
         .expect("run");
         assert_eq!(
             record_provider_turn_start_in_transaction(
-                &tx, "run", "c", "text", None, "visual", 2,
+                &tx,
+                "run",
+                "c",
+                "text",
+                None,
+                "visual",
+                2,
+                &crate::role_routing::selection::SelectionInput {
+                    cloud_allowed: true,
+                    ..Default::default()
+                },
             ),
             Err("Role-routing input queue is full".into())
         );

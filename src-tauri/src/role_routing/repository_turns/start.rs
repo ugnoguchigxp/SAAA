@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 struct DispatchSelection {
     candidate: crate::role_routing::selection::Candidate,
     eligible: Vec<crate::role_routing::selection::Candidate>,
+    observed: Vec<crate::role_routing::selection::Candidate>,
     eligible_ids: Vec<String>,
     selection_mode: &'static str,
     policy_revision: i64,
@@ -12,6 +13,8 @@ struct DispatchSelection {
 
 /// Creates the durable R1 ledger entries only after the legacy runtime run and its input message
 /// have committed. Disabled policies leave no role-routing rows, preserving the old path exactly.
+/// Production acceptance uses `record_provider_turn_start_in_transaction`.
+#[cfg(test)]
 pub(crate) fn record_provider_turn_start(
     connection: &Connection,
     run_id: &str,
@@ -38,11 +41,20 @@ pub(crate) fn record_provider_turn_start(
         "SELECT input_message_id FROM runtime_runs WHERE id=?1 AND conversation_id=?2 AND route_kind='conversation.respond'",
         params![run_id, conversation_id], |row| row.get(0),
     ).map_err(|error| error.to_string())?;
-    let selection = select_dispatch_candidate(connection, &policy, now_ms)?;
+    let selection = select_dispatch_candidate(
+        connection,
+        &policy,
+        &crate::role_routing::selection::SelectionInput {
+            cloud_allowed: true,
+            ..crate::role_routing::selection::SelectionInput::default()
+        },
+        now_ms,
+    )?;
     let candidate = &selection.candidate;
     let decision_id = format!("rr-decision-{run_id}");
     let planned_steps = compile_selected_plan(&policy, candidate)?;
-    let candidates = candidate_receipt(&selection.eligible);
+    let candidates = candidate_receipt(&selection.observed);
+    let reason_codes = decision_reason_codes(&selection.observed, &candidate.recipe_id);
     let transaction = connection
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
@@ -77,8 +89,8 @@ pub(crate) fn record_provider_turn_start(
     ).map_err(|error| error.to_string())?;
     transaction.execute(
         "INSERT OR IGNORE INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms)
-         VALUES(?1,?2,0,?3,'{}',?4,?5,'respond','[\"rules\"]','rules-v1',?6,?7)",
-        params![decision_id, run_id, format!("rr-input-{run_id}"), candidates.to_string(), candidate.recipe_id, policy_id, now_ms],
+         VALUES(?1,?2,0,?3,'{}',?4,?5,'respond',?6,'rules-v1',?7,?8)",
+        params![decision_id, run_id, format!("rr-input-{run_id}"), candidates.to_string(), candidate.recipe_id, reason_codes, policy_id, now_ms],
     ).map_err(|error| error.to_string())?;
     if let Some(rules) = selection.eligible.first() {
         crate::role_routing::ranker::record_shadow_observation(
@@ -120,6 +132,7 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     source_id: Option<&str>,
     presentation_mode: &str,
     now_ms: i64,
+    selection_input: &crate::role_routing::selection::SelectionInput,
 ) -> Result<bool, String> {
     let policy: Option<(String, String)> = transaction
         .query_row(
@@ -155,11 +168,12 @@ pub(crate) fn record_provider_turn_start_in_transaction(
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    let selection = select_dispatch_candidate(transaction, &policy, now_ms)?;
+    let selection = select_dispatch_candidate(transaction, &policy, selection_input, now_ms)?;
     let candidate = &selection.candidate;
     let decision_id = format!("rr-decision-{run_id}");
     let planned_steps = compile_selected_plan(&policy, candidate)?;
-    let candidates = candidate_receipt(&selection.eligible);
+    let candidates = candidate_receipt(&selection.observed);
+    let reason_codes = decision_reason_codes(&selection.observed, &candidate.recipe_id);
     transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,?5,?6,?7,NULL,'')",params![run_id,conversation_id,run_id,policy_id,origin,presentation_mode,now_ms]).map_err(|e|e.to_string())?;
     if let Some(reasoning_request_id) =
         source_id.filter(|id| crate::larm_voice::frontdesk_repository::is_reasoning_request_id(id))
@@ -184,7 +198,7 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     }
     let payload_digest = format!("{:x}", Sha256::digest(input_content.as_bytes()));
     transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,source_id,disposition,received_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,'accepted',?8)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,payload_digest,origin,source_id,now_ms]).map_err(|e|e.to_string())?;
-    transaction.execute("INSERT INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms) VALUES(?1,?2,0,?3,?4,?5,?6,'respond','[\"rules\"]','rules-v1',?7,?8)",params![decision_id,run_id,format!("rr-input-{run_id}"),feature_snapshot(&input_content,policy.limits.max_reasoning_steps).to_string(),candidates.to_string(),candidate.recipe_id,policy_id,now_ms]).map_err(|e|e.to_string())?;
+    transaction.execute("INSERT INTO rr_decisions(id,root_id,revision,input_id,features_json,candidates_json,selected_id,action,reason_codes_json,ranker_version,policy_id,created_at_ms) VALUES(?1,?2,0,?3,?4,?5,?6,'respond',?7,'rules-v1',?8,?9)",params![decision_id,run_id,format!("rr-input-{run_id}"),feature_snapshot(&input_content,policy.limits.max_reasoning_steps).to_string(),candidates.to_string(),candidate.recipe_id,reason_codes,policy_id,now_ms]).map_err(|e|e.to_string())?;
     if let Some(rules) = selection.eligible.first() {
         crate::role_routing::ranker::record_shadow_observation(
             transaction,
@@ -275,15 +289,19 @@ fn feature_snapshot(input: &str, remaining_steps: u8) -> serde_json::Value {
 fn select_dispatch_candidate(
     connection: &Connection,
     policy: &crate::role_routing::RoleRoutingSettings,
+    input: &crate::role_routing::selection::SelectionInput,
     now_ms: i64,
 ) -> Result<DispatchSelection, String> {
-    let mut eligible = crate::role_routing::selection::candidates_for_action(
+    let observed = crate::role_routing::selection::candidates_for_action_with_input(
         policy,
         crate::role_routing::contracts::RoutingAction::Respond,
-    )
-    .into_iter()
-    .filter(|candidate| candidate.exclusion_reason.is_none())
-    .collect::<Vec<_>>();
+        input,
+    );
+    let mut eligible = observed
+        .iter()
+        .filter(|candidate| candidate.exclusion_reason.is_none())
+        .cloned()
+        .collect::<Vec<_>>();
     eligible.sort_by(|left, right| left.recipe_id.cmp(&right.recipe_id));
     let rules = eligible
         .first()
@@ -293,6 +311,7 @@ fn select_dispatch_candidate(
         return Ok(DispatchSelection {
             candidate: rules,
             eligible: eligible.clone(),
+            observed,
             eligible_ids: candidate_ids(&eligible),
             selection_mode: "rules",
             policy_revision: 0,
@@ -318,10 +337,29 @@ fn select_dispatch_candidate(
             .cloned()
             .unwrap_or(rules),
         eligible: eligible.clone(),
+        observed,
         eligible_ids,
         selection_mode,
         policy_revision,
     })
+}
+
+fn decision_reason_codes(
+    candidates: &[crate::role_routing::selection::Candidate],
+    selected_id: &str,
+) -> String {
+    let location_fallback = candidates.iter().any(|candidate| {
+        candidate.recipe_id != selected_id
+            && candidate
+                .reason_codes
+                .iter()
+                .any(|code| code == "actor_unreachable")
+    });
+    if location_fallback {
+        "[\"rules\",\"location_fallback\"]".to_string()
+    } else {
+        "[\"rules\"]".to_string()
+    }
 }
 
 fn candidate_ids(candidates: &[crate::role_routing::selection::Candidate]) -> Vec<String> {

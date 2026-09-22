@@ -58,6 +58,8 @@ pub(crate) struct RoutingRootSnapshot {
     pub(crate) active_slot: Option<String>,
     pub(crate) cancel_requested: bool,
     pub(crate) last_event_seq: i64,
+    pub(crate) selected_recipe_id: Option<String>,
+    pub(crate) decision_reason_codes: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -396,23 +398,15 @@ pub(crate) fn snapshot(
     let mut statement = connection
         .prepare(
             "SELECT root_id,runtime_run_id,phase,revision,active_slot,cancel_requested,
-                    COALESCE((SELECT MAX(seq) FROM rr_events WHERE root_id=rr_roots.root_id),0)
+                    COALESCE((SELECT MAX(seq) FROM rr_events WHERE root_id=rr_roots.root_id),0),
+                    (SELECT selected_id FROM rr_decisions WHERE root_id=rr_roots.root_id ORDER BY created_at_ms DESC LIMIT 1),
+                    (SELECT reason_codes_json FROM rr_decisions WHERE root_id=rr_roots.root_id ORDER BY created_at_ms DESC LIMIT 1)
              FROM rr_roots WHERE conversation_id=?1 AND phase IN ('queued','responding','draining')
              ORDER BY CASE phase WHEN 'queued' THEN 1 ELSE 0 END, started_at_ms, root_id",
         )
         .map_err(|error| error.to_string())?;
     let roots = statement
-        .query_map([conversation_id], |row| {
-            Ok(RoutingRootSnapshot {
-                root_id: row.get(0)?,
-                runtime_run_id: row.get(1)?,
-                phase: row.get(2)?,
-                revision: row.get(3)?,
-                active_slot: row.get(4)?,
-                cancel_requested: row.get::<_, i64>(5)? != 0,
-                last_event_seq: row.get(6)?,
-            })
-        })
+        .query_map([conversation_id], root_snapshot_row)
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
@@ -452,6 +446,23 @@ pub(crate) fn snapshot(
         proposals,
     })
 }
+fn root_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutingRootSnapshot> {
+    let reason_codes_json: Option<String> = row.get(8)?;
+    Ok(RoutingRootSnapshot {
+        root_id: row.get(0)?,
+        runtime_run_id: row.get(1)?,
+        phase: row.get(2)?,
+        revision: row.get(3)?,
+        active_slot: row.get(4)?,
+        cancel_requested: row.get::<_, i64>(5)? != 0,
+        last_event_seq: row.get(6)?,
+        selected_recipe_id: row.get(7)?,
+        decision_reason_codes: reason_codes_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default(),
+    })
+}
 fn proposal_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutingProposalSnapshot> {
     Ok(RoutingProposalSnapshot {
         id: row.get(0)?,
@@ -481,20 +492,12 @@ fn root_snapshot(connection: &Connection, root_id: &str) -> Result<RoutingRootSn
     connection
         .query_row(
             "SELECT root_id,runtime_run_id,phase,revision,active_slot,cancel_requested,
-                    COALESCE((SELECT MAX(seq) FROM rr_events WHERE root_id=rr_roots.root_id),0)
+                    COALESCE((SELECT MAX(seq) FROM rr_events WHERE root_id=rr_roots.root_id),0),
+                    (SELECT selected_id FROM rr_decisions WHERE root_id=rr_roots.root_id ORDER BY created_at_ms DESC LIMIT 1),
+                    (SELECT reason_codes_json FROM rr_decisions WHERE root_id=rr_roots.root_id ORDER BY created_at_ms DESC LIMIT 1)
              FROM rr_roots WHERE root_id=?1",
             [root_id],
-            |row| {
-                Ok(RoutingRootSnapshot {
-                    root_id: row.get(0)?,
-                    runtime_run_id: row.get(1)?,
-                    phase: row.get(2)?,
-                    revision: row.get(3)?,
-                    active_slot: row.get(4)?,
-                    cancel_requested: row.get::<_, i64>(5)? != 0,
-                    last_event_seq: row.get(6)?,
-                })
-            },
+            root_snapshot_row,
         )
         .optional()
         .map_err(|error| error.to_string())?

@@ -19,6 +19,8 @@ pub(crate) struct SelectionInput {
     /// A missing entry is an unknown price, which is ineligible whenever policy sets a budget.
     pub(crate) estimated_cost_micros: HashMap<String, Option<u64>>,
     pub(crate) sticky_actor_id: Option<String>,
+    /// Actor ids observed unreachable. Unknown observations are omitted (optimistic).
+    pub(crate) unreachable_actor_ids: HashSet<String>,
 }
 
 pub(crate) fn candidates_for_action(
@@ -61,6 +63,12 @@ pub(crate) fn candidates_for_action_with_input(
             }
             if !input.cloud_allowed && actors.iter().any(|actor| actor.location == "cloud") {
                 reason_codes.push("cloud_forbidden".into());
+            }
+            if actors
+                .iter()
+                .any(|actor| input.unreachable_actor_ids.contains(&actor.id))
+            {
+                reason_codes.push("actor_unreachable".into());
             }
             if actors.iter().any(|actor| {
                 !input.required_capabilities.iter().all(|needed| {
@@ -256,6 +264,72 @@ mod tests {
             .expect("candidate")
             .recipe_id,
             "zeta"
+        );
+    }
+
+    fn location_policy() -> RoleRoutingSettings {
+        let mut settings = RoleRoutingSettings::default();
+        settings.roles.reasoner = Some("larm".into());
+        settings.roles.advanced = Some("cloud".into());
+        settings.actors = vec![
+            actor("larm", "local", &["reason"]),
+            actor("cloud", "cloud", &["reason"]),
+        ];
+        settings.recipes = vec![
+            RoutingRecipe {
+                id: "10-respond-home".into(),
+                action: RoutingAction::Respond,
+                roles: vec!["reasoner".into()],
+                enabled: true,
+            },
+            RoutingRecipe {
+                id: "20-respond-away".into(),
+                action: RoutingAction::Respond,
+                roles: vec!["advanced".into()],
+                enabled: true,
+            },
+        ];
+        settings
+    }
+
+    #[test]
+    fn rr_ls_10_unreachable_actor_excludes_home_recipe() {
+        let settings = location_policy();
+        let input = SelectionInput {
+            cloud_allowed: true,
+            unreachable_actor_ids: HashSet::from(["larm".into()]),
+            ..SelectionInput::default()
+        };
+        let candidates =
+            candidates_for_action_with_input(&settings, RoutingAction::Respond, &input);
+        let home = candidates
+            .iter()
+            .find(|candidate| candidate.recipe_id == "10-respond-home")
+            .expect("home recipe");
+        assert!(home
+            .reason_codes
+            .iter()
+            .any(|code| code == "actor_unreachable"));
+        assert_eq!(
+            select_rule_candidate_with_input(&settings, RoutingAction::Respond, &input)
+                .expect("away candidate")
+                .recipe_id,
+            "20-respond-away"
+        );
+    }
+
+    #[test]
+    fn rr_ls_11_unknown_keeps_home() {
+        let settings = location_policy();
+        let input = SelectionInput {
+            cloud_allowed: true,
+            ..SelectionInput::default()
+        };
+        assert_eq!(
+            select_rule_candidate_with_input(&settings, RoutingAction::Respond, &input)
+                .expect("home candidate")
+                .recipe_id,
+            "10-respond-home"
         );
     }
 }

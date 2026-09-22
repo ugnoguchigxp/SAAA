@@ -469,7 +469,19 @@ fn rr_04_receipt_rows_rollback_with_the_runtime_transaction() {
             [],
         )
         .expect("run");
-        record_provider_turn_start_in_transaction(&tx, "run", "c", "text", None, "visual", 1)
+        record_provider_turn_start_in_transaction(
+            &tx,
+            "run",
+            "c",
+            "text",
+            None,
+            "visual",
+            1,
+            &crate::role_routing::selection::SelectionInput {
+                cloud_allowed: true,
+                ..Default::default()
+            },
+        )
             .expect("receipt");
         let receipt: (String, String, Option<i64>, String) = tx
             .query_row(

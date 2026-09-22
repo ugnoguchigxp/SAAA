@@ -9,8 +9,6 @@ mod repository_turns;
 pub(crate) use repository_policy::capture_current_policy;
 #[allow(unused_imports)]
 pub(crate) use repository_policy::capture_policy_version;
-#[cfg(test)]
-pub(crate) use repository_turns::record_provider_turn_start;
 pub(crate) use repository_turns::{
     accept_provider_turn, accept_reviewed_draft, advance_provider_step,
     advance_provider_step_with_usage, advance_review_step, cancel_all_for_disable,

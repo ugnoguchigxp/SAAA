@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { RoutingEventRecord, RoutingSnapshot } from "../../lib/generated/runtimeEvent";
 
 type RoutingProposalProps = {
@@ -20,12 +21,17 @@ export function RoutingProposal({
   onCancel,
   onDecideProposal,
 }: RoutingProposalProps) {
+  const { t } = useTranslation();
   const { active, queued, proposals } = snapshot;
+  const cloudFallback = [active, ...queued].some((root) =>
+    root?.decisionReasonCodes.includes("location_fallback"),
+  );
   const recentEvents = events.slice(-12).reverse();
   if (!active && queued.length === 0 && proposals.length === 0 && recentEvents.length === 0)
     return null;
   return (
     <aside className="routing-proposal" aria-live="polite">
+      {cloudFallback && <strong>{t("chat.locationFallback")}</strong>}
       {active && (
         <div>
           <span>

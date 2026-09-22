@@ -118,6 +118,7 @@ export const enCore = {
     eyebrow: "CONTINUOUS CONVERSATION",
     title: "Conversation with SAAA",
     cloudProcessing: "Cloud processing",
+    locationFallback: "Responding in the cloud",
     localProcessing: "Local processing",
     processingNotSelected: "Processing target not selected",
     failedSuffix: " (failed)",

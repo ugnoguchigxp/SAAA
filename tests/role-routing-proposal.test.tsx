@@ -1,3 +1,4 @@
+import i18n from "../src/i18n";
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RoutingProposal, routingEventReason } from "../src/features/chat/RoutingProposal";
@@ -12,6 +13,8 @@ const snapshot: RoutingSnapshot = {
     activeSlot: "reasoning",
     cancelRequested: false,
     lastEventSeq: 4n,
+    selectedRecipeId: "direct",
+    decisionReasonCodes: ["rules"],
   },
   queued: [],
   recentRootIds: ["root-1"],
@@ -27,6 +30,33 @@ const snapshot: RoutingSnapshot = {
     },
   ],
 };
+
+test("rr_ls_30 chat badge names a cloud location fallback", async () => {
+  const previous = i18n.language;
+  await i18n.changeLanguage("ja");
+  try {
+    const html = renderToStaticMarkup(
+      <RoutingProposal
+        snapshot={{
+          ...snapshot,
+          active: {
+            ...snapshot.active!,
+            selectedRecipeId: "20-respond-away",
+            decisionReasonCodes: ["rules", "location_fallback"],
+          },
+        }}
+        cancellingRootId={null}
+        decidingProposalId={null}
+        proposalError={null}
+        onCancel={() => {}}
+        onDecideProposal={() => {}}
+      />,
+    );
+    expect(html).toContain("Cloud で応答中");
+  } finally {
+    await i18n.changeLanguage(previous);
+  }
+});
 
 test("rr_26 proposal UI requires an explicit named candidate decision", () => {
   const html = renderToStaticMarkup(

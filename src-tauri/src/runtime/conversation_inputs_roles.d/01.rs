@@ -20,6 +20,7 @@ pub(super) fn apply_enabled_role_route(
     connection: &Connection,
     root_id: Option<&str>,
     route: &mut ConversationRouteSettings,
+    reachability: &crate::providers::reachability::ReachabilitySnapshot,
 ) -> Result<Option<RoleDispatch>, String> {
     let role_policy = load_role_policy_for_root(connection, root_id)?;
     if !role_policy.enabled {
@@ -135,7 +136,7 @@ pub(super) fn apply_enabled_role_route(
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| "Role-routing response actor is unavailable".to_string())?;
-    validate_actor_host(connection, actor)?;
+    validate_actor_host(connection, actor, reachability)?;
     if actor.transport == "codex_sdk" {
         return Ok(Some(RoleDispatch::CodexSdk {
             model: actor
@@ -170,6 +171,7 @@ pub(super) fn apply_enabled_role_route(
 fn validate_actor_host(
     connection: &Connection,
     actor: &crate::role_routing::contracts::RoutingActor,
+    reachability: &crate::providers::reachability::ReachabilitySnapshot,
 ) -> Result<(), String> {
     match actor.transport.as_str() {
         "provider" => {
@@ -177,6 +179,12 @@ fn validate_actor_host(
                 .provider_id
                 .as_deref()
                 .ok_or_else(|| "Role-routing provider actor has no provider id".to_string())?;
+            if provider_id == crate::DYNAMIC_LAN_PROVIDER_ID
+                && reachability.harness
+                    == crate::providers::reachability::Reachability::Unreachable
+            {
+                return Err("Role-routing LAN provider is unreachable before dispatch".into());
+            }
             let providers = crate::persistence::load_model_providers(connection)?;
             let provider = providers
                 .providers

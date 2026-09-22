@@ -253,5 +253,16 @@
       "threshold": 0.550000011920929,
       "totalDurationMs": 0
     }
+  },
+  "routingRoot": {
+    "activeSlot": "reasoning",
+    "cancelRequested": false,
+    "decisionReasonCodes": ["rules", "location_fallback"],
+    "lastEventSeq": 4,
+    "phase": "responding",
+    "revision": 0,
+    "rootId": "root-fixture",
+    "runtimeRunId": "run-fixture",
+    "selectedRecipeId": "20-respond-away"
   }
 }

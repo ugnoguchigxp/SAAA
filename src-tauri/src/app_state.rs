@@ -25,6 +25,8 @@ pub(super) struct AppState {
     pub(super) schedule: std::sync::Arc<crate::schedule::Handle>,
     pub(super) steward_wake: crate::steward::pump::Wake,
     pub(super) artifact_preview: crate::artifact_preview::PreviewRuntime,
+    pub(super) reachability: std::sync::Arc<crate::providers::reachability::ReachabilityState>,
+    pub(super) reachability_kick: std::sync::Arc<tokio::sync::Notify>,
 }
 
 #[derive(Clone)]

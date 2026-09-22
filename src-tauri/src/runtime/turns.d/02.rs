@@ -34,6 +34,9 @@ pub(crate) fn prepare_runtime_run(
     if task_mode == "conversation" {
         memory::context_window::validate_current_instruction(input.content.trim())?;
     }
+    if task_mode == "conversation" {
+        state.reachability_kick.notify_one();
+    }
     let route_kind = if task_mode == "coding" {
         "coding.assist"
     } else {
@@ -41,8 +44,12 @@ pub(crate) fn prepare_runtime_run(
     };
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
-        let role_routing_enabled = task_mode == "conversation"
-            && crate::persistence::load_role_routing_settings(&transaction)?.enabled;
+        let role_policy = if task_mode == "conversation" {
+            Some(crate::persistence::load_role_routing_settings(&transaction)?)
+        } else {
+            None
+        };
+        let role_routing_enabled = role_policy.as_ref().is_some_and(|policy| policy.enabled);
         if task_mode == "conversation"
             && !role_routing_enabled
             && crate::role_routing::repository::disable_drain_in_progress(&transaction)?
@@ -187,6 +194,10 @@ pub(crate) fn prepare_runtime_run(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as i64)
                 .unwrap_or(0);
+            let selection_input = crate::role_routing::availability::selection_input_for(
+                role_policy.as_ref().expect("conversation role policy"),
+                &state.reachability.snapshot(),
+            );
             let routing_started = crate::role_routing::repository::record_provider_turn_start_in_transaction(
                 &transaction,
                 &input.run_id,
@@ -195,6 +206,7 @@ pub(crate) fn prepare_runtime_run(
                 input.source_id.as_deref(),
                 &input.presentation_mode,
                 now_ms,
+                &selection_input,
             )?;
             if routing_started {
                 let another_active: bool = transaction

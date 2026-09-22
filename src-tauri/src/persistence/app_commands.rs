@@ -77,6 +77,14 @@ pub(crate) fn save_settings_documents(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clear();
     crate::providers::service_harness::clear_cache();
+    if input
+        .documents
+        .iter()
+        .any(|document| document.namespace.starts_with("providers"))
+    {
+        state.reachability.invalidate();
+        state.reachability_kick.notify_one();
+    }
     if role_routing_disabled {
         let run_ids = state
             .sqlite_readers

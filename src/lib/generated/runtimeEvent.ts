@@ -30,7 +30,7 @@ export type AdaptiveArtifactSnapshot = { id: string, domain: string, scopeKey: s
 
 export type RoutingLearningSnapshot = { dirtyRoots: bigint, readyDatasets: bigint, activeArtifacts: bigint, invalidatedDatasets: bigint, pendingCleanups: bigint, adaptiveArtifacts: Array<AdaptiveArtifactSnapshot>, };
 
-export type RoutingRootSnapshot = { rootId: string, runtimeRunId: string | null, phase: string, revision: number, activeSlot: string | null, cancelRequested: boolean, lastEventSeq: bigint, };
+export type RoutingRootSnapshot = { rootId: string, runtimeRunId: string | null, phase: string, revision: number, activeSlot: string | null, cancelRequested: boolean, lastEventSeq: bigint, selectedRecipeId: string | null, decisionReasonCodes: Array<string>, };
 
 export type RoutingSnapshot = { active: RoutingRootSnapshot | null, queued: Array<RoutingRootSnapshot>, recentRootIds: Array<string>, proposals: Array<RoutingProposalSnapshot>, };
 

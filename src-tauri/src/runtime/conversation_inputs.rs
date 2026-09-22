@@ -64,6 +64,7 @@ pub(super) fn load(state: &AppState, input: &StartTurnInput) -> Result<Inputs, S
             connection,
             Some(&input.run_id),
             &mut route,
+            &state.reachability.snapshot(),
         )?;
         let configuration_fingerprint =
             crate::persistence::effective_route::conversation_configuration_fingerprint(

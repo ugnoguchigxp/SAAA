@@ -53,6 +53,7 @@ chrono-tz = "0.10"
 futures-util = "0.3"
 fs2 = "0.4"
 iana-time-zone = "0.1"
+if-addrs = "0.14"
 jsonschema = { version = "0.56", default-features = false }
 keyring = "4.2.0"
 libloading = "0.8"

@@ -229,6 +229,10 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         schedule: Arc::new(crate::schedule::Handle::default()),
         steward_wake: crate::steward::pump::Wake::default(),
         artifact_preview: crate::artifact_preview::PreviewRuntime::default(),
+        reachability: std::sync::Arc::new(
+            crate::providers::reachability::ReachabilityState::default(),
+        ),
+        reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
     })
 }
 

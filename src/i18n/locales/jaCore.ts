@@ -118,6 +118,7 @@ export const jaCore = {
     eyebrow: "継続的な会話",
     title: "SAAAとの会話",
     cloudProcessing: "クラウド処理",
+    locationFallback: "Cloud で応答中",
     localProcessing: "ローカル処理",
     processingNotSelected: "処理先未選択",
     failedSuffix: "（失敗）",
