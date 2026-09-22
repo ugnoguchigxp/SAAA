@@ -122,6 +122,31 @@ pub(crate) async fn run_with_options(
                     }
                 }
             };
+            let request_id = crate::new_id("provider-request");
+            let transport = if streaming { "sse" } else { "json" };
+            let audit_url = url::Url::parse(&url)
+                .ok()
+                .map(|mut parsed| {
+                    let _ = parsed.set_username("");
+                    let _ = parsed.set_password(None);
+                    parsed.set_query(None);
+                    parsed.set_fragment(None);
+                    parsed.to_string()
+                })
+                .unwrap_or_else(|| "invalid-endpoint".to_string());
+            let record_transport = |stage: &str, detail: Option<&str>| {
+                if let Some(persistence) = context.output_persistence {
+                    persistence.record_transport_event(
+                        &request_id,
+                        stage,
+                        transport,
+                        model,
+                        &audit_url,
+                        detail,
+                    );
+                }
+            };
+            record_transport("prepared", None);
             let mut request = client
                 .post(&url)
                 .header(
@@ -158,13 +183,17 @@ pub(crate) async fn run_with_options(
                 kind: "llm-request-sending".into(),
                 summary: "Sending the LLM request and waiting for its response.".into(),
             });
+            record_transport("sending", None);
             let response = match super::http::send(request, &context.cancellation, !started).await {
                 Ok(response) => response,
                 Err(error) => {
+                    record_transport("failed", Some(error.as_str()));
                     generation.finish_error(error);
                     return Err(error);
                 }
             };
+            let response_status = response.status().as_u16().to_string();
+            record_transport("headers-received", Some(&response_status));
             if response
                 .headers()
                 .get("content-type")
@@ -177,20 +206,39 @@ pub(crate) async fn run_with_options(
                     "application/json"
                 })
             {
+                record_transport("failed", Some("protocol"));
                 generation.fail("protocol");
                 return Err(Failure::Protocol);
             }
             let mut stream = response.bytes_stream();
+            let mut response_started = false;
             let mut prefetched = if !streaming {
                 let mut bytes = Vec::new();
                 while let Some(chunk) = stream.next().await {
-                    let chunk = chunk.map_err(|_| Failure::Network)?;
+                    let chunk = match chunk {
+                        Ok(chunk) => chunk,
+                        Err(_) => {
+                            record_transport("failed", Some("response-interrupted"));
+                            return Err(Failure::ResponseInterrupted);
+                        }
+                    };
+                    if !response_started {
+                        record_transport("response-started", None);
+                        response_started = true;
+                    }
                     if bytes.len() + chunk.len() > 1_048_576 {
+                        record_transport("failed", Some("request-too-large"));
                         return Err(Failure::RequestTooLarge);
                     }
                     bytes.extend_from_slice(&chunk);
                 }
-                Some(json_events(&bytes)?)
+                Some(match json_events(&bytes) {
+                    Ok(events) => events,
+                    Err(error) => {
+                        record_transport("failed", Some(error.as_str()));
+                        return Err(error);
+                    }
+                })
             } else {
                 None
             };
@@ -200,18 +248,37 @@ pub(crate) async fn run_with_options(
                 let events = if let Some(events) = prefetched.take() {
                     events
                 } else {
-                    let chunk = stream
-                        .next()
-                        .await
-                        .ok_or(Failure::Network)?
-                        .map_err(|_| Failure::Network)?;
-                    decoder.push(&chunk)?
+                    let chunk = match stream.next().await {
+                        Some(Ok(chunk)) => chunk,
+                        Some(Err(_)) | None => {
+                            record_transport("failed", Some("response-interrupted"));
+                            return Err(Failure::ResponseInterrupted);
+                        }
+                    };
+                    if !response_started {
+                        record_transport("response-started", None);
+                        response_started = true;
+                    }
+                    match decoder.push(&chunk) {
+                        Ok(events) => events,
+                        Err(error) => {
+                            record_transport("failed", Some(error.as_str()));
+                            return Err(error);
+                        }
+                    }
                 };
                 let received_at = Instant::now();
                 for data in events {
-                    let text = completion.absorb(&data, model)?;
+                    let text = match completion.absorb(&data, model) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            record_transport("failed", Some(error.as_str()));
+                            return Err(error);
+                        }
+                    };
                     provider_progressed |= completion.provider_progressed();
                     if context.cancellation.is_cancelled() {
+                        record_transport("failed", Some("cancelled"));
                         return Err(Failure::Cancelled);
                     }
                     if !text.is_empty() {
@@ -232,10 +299,14 @@ pub(crate) async fn run_with_options(
                                 },
                                 received_at,
                             )
-                            .map_err(|_| Failure::ClientDisconnected)?;
+                            .map_err(|_| {
+                                record_transport("failed", Some("client-disconnected"));
+                                Failure::ClientDisconnected
+                            })?;
                     }
                 }
             }
+            record_transport("completed", None);
             let tool_calls = completion.complete()?;
             output.push_str(&completion.content);
             if output.len() > 1_048_576 {

@@ -25,6 +25,8 @@ pub(crate) fn provider_fallback_allowed(kind: ProviderFailureKind, output_starte
             ProviderFailureKind::Capacity
                 | ProviderFailureKind::Unavailable
                 | ProviderFailureKind::Upstream
+                | ProviderFailureKind::Connect
+                | ProviderFailureKind::ResponseInterrupted
                 | ProviderFailureKind::Network
                 | ProviderFailureKind::Timeout
                 | ProviderFailureKind::AllocationLost

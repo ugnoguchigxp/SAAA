@@ -16,7 +16,8 @@ use rusqlite::{params, Connection};
 /// local learning ledger. 30 adds the schedule ledger (CREATE IF NOT EXISTS only).
 /// 31 adds steward execution progress, expanded task states, recipes, and source bindings.
 /// 34 moves the default local reasoner from the harness allocator to the configured direct Qwen.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 34;
+/// 35 adds provider transport phase events and exactly-once speech delivery correlation.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 35;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -99,6 +100,28 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
          );
          CREATE INDEX IF NOT EXISTS idx_runtime_runs_conversation_started
            ON runtime_runs(conversation_id, started_at);
+         CREATE TABLE IF NOT EXISTS provider_transport_events (
+           id TEXT PRIMARY KEY,
+           provider_session_id TEXT NOT NULL REFERENCES provider_sessions(id) ON DELETE CASCADE,
+           request_id TEXT NOT NULL CHECK(length(request_id) BETWEEN 1 AND 160 AND request_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+           stage TEXT NOT NULL CHECK(stage IN ('prepared','sending','headers-received','response-started','completed','failed')),
+           transport TEXT NOT NULL CHECK(transport IN ('json','sse')),
+           model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 256),
+           endpoint TEXT NOT NULL CHECK(length(endpoint) BETWEEN 1 AND 2048),
+           detail TEXT CHECK(detail IS NULL OR length(detail) BETWEEN 1 AND 160),
+           recorded_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_provider_transport_events_request
+           ON provider_transport_events(request_id);
+         CREATE TABLE IF NOT EXISTS speech_deliveries (
+           id TEXT PRIMARY KEY,
+           runtime_run_id TEXT NOT NULL REFERENCES runtime_runs(id) ON DELETE CASCADE,
+           message_id TEXT NOT NULL REFERENCES conversation_messages(id) ON DELETE CASCADE,
+           status TEXT NOT NULL CHECK(status IN ('queued','completed','failed','cancelled')),
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           UNIQUE(runtime_run_id, message_id)
+         );
          CREATE TABLE IF NOT EXISTS codex_threads (
            conversation_id TEXT PRIMARY KEY,
            thread_id TEXT NOT NULL UNIQUE,

@@ -25,7 +25,7 @@ pub(crate) async fn send_with(
         let response = tokio::select! {
             biased;
             _ = cancellation.cancelled() => return Err(Failure::Cancelled),
-            result = next.send() => result.map_err(|error| if error.is_timeout() { Failure::Timeout } else { Failure::Network })?,
+            result = next.send() => result.map_err(|error| if error.is_timeout() { Failure::Timeout } else { Failure::Connect })?,
         };
         if response.status().is_success() {
             return Ok(response);

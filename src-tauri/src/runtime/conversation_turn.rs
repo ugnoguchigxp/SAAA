@@ -36,6 +36,21 @@ mod role_codex;
 use role_codex::role_codex_prompt;
 use role_codex::{execute_role_codex_step, CodexStepRequest};
 
+fn validate_voice_route(
+    input_origin: &str,
+    larm_enabled: bool,
+    route_source: &str,
+    shared_larm_voice: bool,
+) -> Result<(), String> {
+    if input_origin == "voice" && larm_enabled && route_source != "harness" && !shared_larm_voice {
+        return Err(
+            "Voice reasoning in LARM mode requires the authenticated Harness route on port 9810. Direct provider routes are not allowed."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 pub(crate) async fn execute_conversation_turn(
     state: &AppState,
     input: &StartTurnInput,
@@ -342,6 +357,13 @@ async fn execute_conversation_turn_with_candidates(
         &input.input_origin,
         input.source_id.as_deref(),
     );
+    validate_voice_route(
+        &input.input_origin,
+        crate::larm_voice::enabled(),
+        &route.source,
+        shared_larm_voice,
+    )
+    .map_err(TurnExecutionFailure::configuration)?;
     let harness = providers.harness.clone();
     if let Some(client) =
         crate::providers::reasoning_mcp::for_turn(route.source == "harness", input, &cancellation)
@@ -1401,6 +1423,15 @@ mod tests {
     }
 
     #[test]
+    fn larm_voice_requires_the_authenticated_harness_route() {
+        assert!(validate_voice_route("voice", true, "provider", false).is_err());
+        assert!(validate_voice_route("voice", true, "provider", true).is_ok());
+        assert!(validate_voice_route("voice", true, "harness", false).is_ok());
+        assert!(validate_voice_route("text", true, "provider", false).is_ok());
+        assert!(validate_voice_route("voice", false, "provider", false).is_ok());
+    }
+
+    #[test]
     fn rr_19_codex_prompt_keeps_current_request_and_bounds_history() {
         let history = vec![ConversationMessage {
             parts: None,
@@ -1550,6 +1581,8 @@ mod tests {
             ProviderFailureKind::Capacity,
             ProviderFailureKind::Unavailable,
             ProviderFailureKind::Upstream,
+            ProviderFailureKind::Connect,
+            ProviderFailureKind::ResponseInterrupted,
             ProviderFailureKind::Network,
             ProviderFailureKind::Timeout,
             ProviderFailureKind::AllocationLost,

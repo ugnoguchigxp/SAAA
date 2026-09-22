@@ -52,6 +52,7 @@ async fn tts_retries_transient_requests_but_stops_on_authentication() {
             situation: state.situation.clone(),
             on_event: tauri::ipc::Channel::new(|_| Ok(())),
             run_id: "tts-fixture".into(),
+            writer: None,
         };
         let (send, mut receive) = mpsc::channel(2);
         send.send(SpeechWork::Chunk {
