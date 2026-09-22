@@ -12,7 +12,7 @@ pub async fn check_frontdesk(base: &str) -> Result<String, String> {
     eprintln!("stage=voice-session-prepare; status=started");
     let session = saaa_larm_session::Session::connect_with_profile_and_credential(
         base,
-        "saaa-qwen38",
+        saaa_larm_session::DEFAULT_PROFILE,
         credential.token().into(),
         receiver,
     )

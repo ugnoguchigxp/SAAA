@@ -162,7 +162,7 @@ async fn respond_with_lfm(
 ) -> Result<(FrontdeskClassification, bool), &'static str> {
     let lease = ready
         .session
-        .acquire("backchannel")
+        .acquire("llm")
         .await
         .map_err(|_| "lfm-provider-acquire-failed")?;
     let provider = lease.provider();

@@ -5,7 +5,7 @@ mod error;
 mod http;
 pub mod http_api;
 use contract::Snapshot;
-pub use contract::{local_url, Capacity, ContextWindow, Provider};
+pub use contract::{local_url, Capacity, ContextWindow, EmbeddingSpace, Provider, DEFAULT_PROFILE};
 pub use error::ConnectError;
 use serde_json::json;
 use std::{
@@ -73,7 +73,7 @@ impl Session {
         base: &str,
         cancellation: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
-        Self::connect_with_profile(base, "saaa-qwen38", cancellation).await
+        Self::connect_with_profile(base, DEFAULT_PROFILE, cancellation).await
     }
     pub async fn connect_with_profile(
         base: &str,
@@ -269,7 +269,66 @@ impl Session {
         )
         .await?;
         let snapshot = contract::parse(value, &self.id)?;
+        for (name, _) in contract::PROVIDERS {
+            self.health(&snapshot.providers[name]).await?;
+        }
         Ok(snapshot)
+    }
+
+    pub async fn embed_query(
+        self: &Arc<Self>,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, &'static str> {
+        if texts.is_empty()
+            || texts.len() > 64
+            || texts
+                .iter()
+                .any(|text| text.is_empty() || text.len() > 32_768)
+        {
+            return Err("larm_invalid_embedding_input");
+        }
+        let lease = self.acquire("embedding").await?;
+        let provider = lease.provider();
+        let dimension = provider
+            .embedding_space
+            .ok_or("larm_missing_embedding_space")?
+            .dimension;
+        let timeout = lease.request_budget(Duration::from_secs(30))?;
+        let value = http::json(
+            self.client
+                .post(provider.endpoint("embed")?)
+                .bearer_auth(provider.token())
+                .timeout(timeout)
+                .json(&json!({
+                    "texts": texts,
+                    "type": "query",
+                    "normalize": true,
+                    "priority": "normal"
+                })),
+            &[200],
+        )
+        .await?;
+        let raw = value["embeddings"]
+            .as_array()
+            .filter(|vectors| vectors.len() == texts.len())
+            .ok_or("larm_invalid_embedding_response")?;
+        raw.iter()
+            .map(|vector| {
+                vector
+                    .as_array()
+                    .filter(|values| values.len() == dimension)
+                    .ok_or("larm_invalid_embedding_response")?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_f64()
+                            .filter(|value| value.is_finite())
+                            .map(|value| value as f32)
+                            .ok_or("larm_invalid_embedding_response")
+                    })
+                    .collect()
+            })
+            .collect()
     }
     async fn health(
         &self,

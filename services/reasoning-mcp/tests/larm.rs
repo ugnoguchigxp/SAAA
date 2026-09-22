@@ -79,7 +79,7 @@ async fn mcp_uses_the_session_claim_and_does_not_invent_context_headers() {
     let (_stop, receiver) = tokio::sync::watch::channel(false);
     let session = saaa_larm_session::Session::connect_with_profile_and_credential(
         &fake.base,
-        "saaa-qwen38",
+        saaa_larm_session::DEFAULT_PROFILE,
         "test-control-token".into(),
         receiver,
     )

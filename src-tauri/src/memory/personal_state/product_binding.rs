@@ -22,7 +22,7 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
                 *cached = Some(
                     Session::connect_with_profile_and_credential(
                         &base,
-                        "saaa-qwen38",
+                        saaa_larm_session::DEFAULT_PROFILE,
                         credential.token().to_string(),
                         rx,
                     )

@@ -17,7 +17,7 @@ async fn live_four_provider_session() {
         .build()
         .unwrap();
     let result=async {
-        for name in ["backchannel","llm"] {
+        for name in ["llm"] {
             let lease=session.acquire(name).await?; let p=lease.provider();
             let value:serde_json::Value=client.post(p.endpoint("chat/completions")?).bearer_auth(p.token())
                 .json(&json!({"model":p.model,"messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false,"max_tokens":64}))
@@ -42,6 +42,9 @@ async fn live_four_provider_session() {
             .json().await.map_err(|_|"asr JSON")?;
         if value["text"].as_str().is_none_or(|s|s.trim().is_empty()) { return Err("empty transcription"); }
         eprintln!("asr: transcription received");
+        let vectors=session.embed_query(&["接続確認".into()]).await?;
+        if vectors.len()!=1 || vectors[0].is_empty() { return Err("empty embedding"); }
+        eprintln!("embedding: vector received");
         Ok::<_, &'static str>(())
     }.await;
     let invalidated = match session.acquire("llm").await {

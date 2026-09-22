@@ -15,7 +15,7 @@ pub(crate) async fn classify_shadow(
         let ready = super::current(conversation).await?;
         let lease = ready
             .session
-            .acquire("backchannel")
+            .acquire("llm")
             .await
             .map_err(str::to_string)?;
         let provider = lease.provider();

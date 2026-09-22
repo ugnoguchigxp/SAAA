@@ -1,7 +1,7 @@
+//! Ownership, invariants, and code lookup: README.md in this directory.
 //! Tool-selection ledger: a SQLite-backed catalog of L-Lang capabilities and external MCP tools,
 //! hybrid retrieval with a local ML worker, conditional user-correction memory, and the three
-//! conversation entry points. D4 adds external MCP Streamable HTTP sources; D5 (publishing SAAA
-//! itself as an MCP server) and D6 (ranking learning) remain out of scope.
+//! conversation entry points. External MCP clients and the SAAA MCP server share the gateway.
 
 pub mod backends;
 pub mod catalog;

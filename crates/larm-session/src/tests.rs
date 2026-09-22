@@ -18,6 +18,7 @@ struct Fake {
     slow_create: AtomicBool,
     fail_release: AtomicBool,
     wrong_renew_id: AtomicBool,
+    released: AtomicBool,
 }
 impl Fake {
     fn state(&self, status: &str) -> Value {
@@ -27,14 +28,15 @@ impl Fake {
         let generation = self.generation.load(Ordering::SeqCst);
         let mut providers = contract::PROVIDERS.iter().rev().map(|(name, protocol)| json!({
             "name":name,"protocol":protocol,
-            "configuration":{"fields":{"baseURL":format!("{}/{name}/v1",self.base),"model":format!("claimed-{name}-{generation}")}},
+            "baseUrl":format!("{}/{name}/v1",self.base),
+            "model":format!("claimed-{name}-{generation}"),
+            "configuration":{"fields":{"baseURL":"http://localhost/ignored","model":"ignored"}},
             "credential":{"token":format!("token-{name}-{generation}")},
             "health":{"url":format!("{}/{name}/health",self.base),"maxAgeMs":10000},
-            "contextWindow": if *protocol == "openai.chat-completions.v1" {
-                json!({"maxTokens": if *name == "llm" {230400} else {65536},
-                    "outputReserveTokens": if *name == "llm" {4096} else {512},
-                    "safetyMarginTokens": if *name == "llm" {1976} else {1024}})
-            } else { Value::Null }
+            "contextWindow": if *name == "llm" {
+                json!({"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976})
+            } else { Value::Null },
+            "embeddingSpace": if *name == "embedding" { json!({"dimension":384}) } else { Value::Null }
         })).collect::<Vec<_>>();
         if self.bad_claim.load(Ordering::SeqCst) {
             providers[0]["protocol"] = json!("invalid-protocol");
@@ -58,6 +60,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             if fake.fail_release.load(Ordering::SeqCst) {
                 return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
+            fake.released.store(true, Ordering::SeqCst);
             return (axum::http::StatusCode::NO_CONTENT, "").into_response();
         }
         if path.ends_with("/claim") {
@@ -98,7 +101,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             }
             assert_eq!(
                 value,
-                json!({"agentProfile":"saaa-qwen38","explicitAgentProfile":true,
+                json!({"agentProfile":"saaa-conversation-gemma4","explicitAgentProfile":true,
                 "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
                 "allowFallback":false,"deploymentPolicy":"existing-only"})
             );
@@ -123,6 +126,9 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
         .into_response();
     }
     let name = path.split('/').nth(1).unwrap();
+    if fake.released.load(Ordering::SeqCst) {
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+    }
     assert_eq!(
         request.headers()["authorization"],
         format!(
@@ -130,6 +136,16 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             fake.generation.load(Ordering::SeqCst)
         )
     );
+    if path.ends_with("/embed") {
+        let body = axum::body::to_bytes(request.into_body(), 100_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({"texts":["埋め込みテスト"],"type":"query","normalize":true,"priority":"normal"})
+        );
+        return Json(json!({"embeddings":[vec![0.0_f32;384]]})).into_response();
+    }
     let protocol = contract::PROVIDERS
         .iter()
         .find(|(n, _)| *n == name)
@@ -154,6 +170,7 @@ async fn fixture() -> (Arc<Fake>, tokio::task::JoinHandle<()>) {
         slow_create: AtomicBool::new(false),
         fail_release: AtomicBool::new(false),
         wrong_renew_id: AtomicBool::new(false),
+        released: AtomicBool::new(false),
     });
     let app = Router::new().fallback(handle).with_state(fake.clone());
     let server = tokio::spawn(async move {
@@ -187,13 +204,14 @@ async fn maps_reordered_providers_and_caches_health_then_releases_once() {
                 assert_eq!(window.safety_margin_tokens, 1976);
                 assert_eq!(window.max_input_tokens(), 224328);
             }
-            "backchannel" => {
-                let window = lease.provider().context_window.unwrap();
-                assert_eq!(window.max_tokens, 65536);
-                assert_eq!(window.output_reserve_tokens, 512);
-                assert_eq!(window.safety_margin_tokens, 1024);
+            "embedding" => {
+                assert!(lease.provider().context_window.is_none());
+                assert_eq!(lease.provider().embedding_space.unwrap().dimension, 384);
             }
-            "asr" | "tts" => assert!(lease.provider().context_window.is_none()),
+            "asr" | "tts" => {
+                assert!(lease.provider().context_window.is_none());
+                assert!(lease.provider().embedding_space.is_none());
+            }
             _ => unreachable!(),
         }
         assert_eq!(count(&fake, &format!("/{name}/health")), 1);
@@ -210,6 +228,41 @@ async fn maps_reordered_providers_and_caches_health_then_releases_once() {
             .count(),
         1
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn embedding_uses_claimed_endpoint_model_space_and_bearer() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let session = Session::connect(&fake.base, receiver).await.unwrap();
+    let vectors = session.embed_query(&["埋め込みテスト".into()]).await.unwrap();
+    assert_eq!(vectors.len(), 1);
+    assert_eq!(vectors[0].len(), 384);
+    assert_eq!(count(&fake, "/embedding/v1/embed"), 1);
+    session.close().await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn released_provider_tokens_are_rejected() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let session = Session::connect(&fake.base, receiver).await.unwrap();
+    let lease = session.acquire("embedding").await.unwrap();
+    let endpoint = lease.provider().endpoint("embed").unwrap();
+    let token = lease.provider().token().to_string();
+    drop(lease);
+    session.close().await.unwrap();
+    let status = reqwest::Client::new()
+        .post(endpoint)
+        .bearer_auth(token)
+        .json(&json!({"texts":["after release"],"type":"query","normalize":true,"priority":"normal"}))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
     server.abort();
 }
 
@@ -483,6 +536,37 @@ async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_requi
     assert_eq!(
         contract::parse(invalid, "session-1").err(),
         Some("larm_invalid_context_window")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn embedding_space_is_mandatory_and_validated() {
+    let (fake, server) = fixture().await;
+    let mut missing = fake.claim();
+    let embedding = missing["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|provider| provider["name"] == "embedding")
+        .unwrap();
+    embedding.as_object_mut().unwrap().remove("embeddingSpace");
+    assert_eq!(
+        contract::parse(missing, "session-1").err(),
+        Some("larm_missing_embedding_space")
+    );
+
+    let mut invalid = fake.claim();
+    let embedding = invalid["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|provider| provider["name"] == "embedding")
+        .unwrap();
+    embedding["embeddingSpace"]["dimension"] = json!(0);
+    assert_eq!(
+        contract::parse(invalid, "session-1").err(),
+        Some("larm_invalid_embedding_space")
     );
     server.abort();
 }

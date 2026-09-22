@@ -1,3 +1,4 @@
+//! Ownership, invariants, and code lookup: README.md in this directory.
 pub(crate) mod admission;
 #[allow(dead_code)] // Offline authority contracts are retained for acceptance gates.
 pub(crate) mod authority;

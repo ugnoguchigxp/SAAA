@@ -6,9 +6,10 @@ use zeroize::Zeroizing;
 pub const PROVIDERS: [(&str, &str); 4] = [
     ("tts", "openai.audio-speech.v1"),
     ("asr", "openai.audio-transcriptions.v1"),
-    ("backchannel", "openai.chat-completions.v1"),
     ("llm", "openai.chat-completions.v1"),
+    ("embedding", "larm.embedding.v1"),
 ];
+pub const DEFAULT_PROFILE: &str = "saaa-conversation-gemma4";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextWindow {
     pub max_tokens: u64,
@@ -25,6 +26,10 @@ pub struct Capacity {
     pub retry_after_ms: u64,
     pub completion_guaranteed: bool,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EmbeddingSpace {
+    pub dimension: usize,
+}
 impl ContextWindow {
     pub fn max_input_tokens(self) -> u64 {
         self.max_tokens - self.output_reserve_tokens - self.safety_margin_tokens
@@ -37,6 +42,7 @@ pub struct Provider {
     pub protocol: String,
     pub voice: Option<String>,
     pub context_window: Option<ContextWindow>,
+    pub embedding_space: Option<EmbeddingSpace>,
     token: Zeroizing<String>,
     pub(crate) health_url: url::Url,
     pub(crate) max_age: Duration,
@@ -122,6 +128,17 @@ fn context_window(raw: &Value) -> Result<ContextWindow, &'static str> {
     }
     Ok(window)
 }
+fn embedding_space(raw: &Value) -> Result<EmbeddingSpace, &'static str> {
+    let value = raw
+        .get("embeddingSpace")
+        .ok_or("larm_missing_embedding_space")?;
+    let dimension = value["dimension"]
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=65_536).contains(value))
+        .ok_or("larm_invalid_embedding_space")?;
+    Ok(EmbeddingSpace { dimension })
+}
 pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
     if value["id"] != id || value["status"] != "ready" {
         return Err("larm_invalid_claim");
@@ -137,7 +154,6 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
         if providers.contains_key(name) || raw["protocol"] != *protocol {
             return Err("larm_invalid_provider");
         }
-        let fields = &raw["configuration"]["fields"];
         let token = string(&raw["credential"], "token")?;
         if reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).is_err() {
             return Err("larm_invalid_credential");
@@ -146,22 +162,29 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
             .as_u64()
             .filter(|v| *v > 0 && *v <= 600_000)
             .ok_or("larm_invalid_health")?;
-        let context_window = if *protocol == "openai.chat-completions.v1" {
+        let context_window = if name == "llm" {
             Some(context_window(raw)?)
         } else {
             None
         };
+        let embedding_space = if name == "embedding" {
+            Some(embedding_space(raw)?)
+        } else {
+            None
+        };
+        let fields = &raw["configuration"]["fields"];
         providers.insert(
             name.to_string(),
             Provider {
-                base_url: endpoint(string(fields, "baseURL")?)?,
-                model: string(fields, "model")?.to_string(),
+                base_url: endpoint(string(raw, "baseUrl")?)?,
+                model: string(raw, "model")?.to_string(),
                 protocol: protocol.to_string(),
                 voice: fields
                     .get("voice")
                     .map(|_| string(fields, "voice").map(str::to_string))
                     .transpose()?,
                 context_window,
+                embedding_space,
                 token: Zeroizing::new(token.to_string()),
                 health_url: endpoint(string(&raw["health"], "url")?)?,
                 max_age: Duration::from_millis(max_age),

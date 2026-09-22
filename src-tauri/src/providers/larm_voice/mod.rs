@@ -43,7 +43,9 @@ pub(crate) async fn begin_larm_voice_session(
         .sqlite_readers
         .read(|c| Ok(crate::persistence::load_model_providers(c)?.harness))?;
     let base = harness.address;
-    let profile = harness.larm_profile.unwrap_or_else(|| "saaa-qwen38".into());
+    let profile = harness
+        .larm_profile
+        .unwrap_or_else(|| saaa_larm_session::DEFAULT_PROFILE.into());
     crate::validate_identifier(&owner_id, "voice owner")?;
     crate::validate_identifier(&conversation_id, "conversation id")?;
     let mut current = OWNER.lock().await;
@@ -74,7 +76,7 @@ pub(crate) async fn begin_larm_voice_session(
         })
     });
     drop(current);
-    // Microphone readiness includes LFM readiness; don't discover a missing LFM after ASR.
+    // Microphone readiness includes the complete claimed provider set.
     self::current(&conversation_id)
         .await
         .map(|_| ())
@@ -174,7 +176,10 @@ pub(crate) async fn current_at(
     conversation: &str,
     settings: &crate::HarnessSettings,
 ) -> Result<Arc<Ready>, String> {
-    let profile = settings.larm_profile.as_deref().unwrap_or("saaa-qwen38");
+    let profile = settings
+        .larm_profile
+        .as_deref()
+        .unwrap_or(saaa_larm_session::DEFAULT_PROFILE);
     {
         let mut slot = OWNER.lock().await;
         let owner = slot.as_ref().ok_or("LARM voice session is not started")?;

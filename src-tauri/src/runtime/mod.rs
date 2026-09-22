@@ -1,3 +1,4 @@
+//! Ownership, invariants, and code lookup: README.md in this directory.
 pub mod agent_tools;
 pub mod capability_commands;
 pub mod codex_app_server;

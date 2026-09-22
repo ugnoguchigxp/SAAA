@@ -1,3 +1,4 @@
+//! Ownership, invariants, and code lookup: README.md in this directory.
 pub mod context_still_recall;
 pub mod context_still_search;
 pub mod context_window;

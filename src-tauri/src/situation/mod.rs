@@ -1,3 +1,4 @@
+//! Ownership, invariants, and code lookup: README.md in this directory.
 pub mod calibration;
 mod monitor;
 mod world_snapshot;

@@ -1,3 +1,4 @@
+//! Ownership, invariants, and code lookup: README.md in this directory.
 pub(crate) mod app_commands;
 pub(crate) mod audit;
 mod conversation_page;

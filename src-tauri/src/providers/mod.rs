@@ -1,3 +1,4 @@
+//! Ownership, invariants, and code lookup: README.md in this directory.
 pub(crate) mod agent_session;
 pub(crate) mod chat_completions;
 pub(crate) mod completion;
