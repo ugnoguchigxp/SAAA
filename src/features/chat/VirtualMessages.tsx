@@ -7,10 +7,8 @@ import { CompletedMessage } from "./ChatMessages";
 export function VirtualMessages({
   messages,
   scrollRef,
-  messageScopes,
 }: {
   messages: ConversationMessage[];
-  messageScopes?: Record<string, string[]>;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const [ready, setReady] = useState(false);
@@ -82,10 +80,7 @@ export function VirtualMessages({
             if (!event.currentTarget.contains(event.relatedTarget as Node)) setFocused(null);
           }}
         >
-          <CompletedMessage
-            message={messages[item.index]}
-            scopeKeys={messageScopes?.[messages[item.index].id]}
-          />
+          <CompletedMessage message={messages[item.index]} />
         </div>
       ))}
     </div>

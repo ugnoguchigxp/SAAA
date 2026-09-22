@@ -85,4 +85,37 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
     assert_eq!(tool["tool_call_id"], "inspect-call");
     let result: Value = serde_json::from_str(tool["content"].as_str().unwrap()).unwrap();
     assert!(result.get("error").is_some());
+    let tool_audit = state
+        .sqlite_readers
+        .read(|connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT event_name,json_extract(attributes_json,'$.toolName'),
+                            json_extract(attributes_json,'$.durationMs')
+                     FROM audit_events
+                     WHERE runtime_run_id='http_fixture'
+                       AND event_name IN ('tool-execution-started','tool-execution-finished')
+                     ORDER BY sequence",
+                )
+                .map_err(crate::database_error)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<u64>>(2)?,
+                    ))
+                })
+                .map_err(crate::database_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(crate::database_error)?;
+            Ok(rows)
+        })
+        .unwrap();
+    assert_eq!(tool_audit.len(), 2);
+    assert_eq!(tool_audit[0].0, "tool-execution-started");
+    assert_eq!(tool_audit[0].1, "coding_inspect");
+    assert_eq!(tool_audit[1].0, "tool-execution-finished");
+    assert_eq!(tool_audit[1].1, "coding_inspect");
+    assert!(tool_audit[1].2.is_some());
 }

@@ -40,7 +40,6 @@ test("wr_t20_select_B_keeps_A_answer_attached_to_A_and_deleted_selection_visible
           createdAt: "1",
           parts: null,
         }}
-        scopeKeys={value.messageScopes.answerA}
       />
     </>
   );
@@ -53,7 +52,8 @@ test("wr_t20_select_B_keeps_A_answer_attached_to_A_and_deleted_selection_visible
     });
     expect(selected).toBe("project:b");
     await act(async () => root.render(render({ ...status, latestScopeKeys: ["project:b"] })));
-    expect(document.querySelector(".message-scope")?.textContent).toContain("project:a");
+    expect(document.body.textContent).not.toContain("project:a");
+    expect(document.body.textContent).toContain("Aの状態");
     await act(async () => root.render(render({ ...status, choices: [] })));
     expect(document.querySelector("select")?.textContent).toContain("対象の再確認が必要");
   } finally {

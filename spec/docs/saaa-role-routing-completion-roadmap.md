@@ -36,11 +36,11 @@ offline 単位は offline で完了可能。live を含む親 RR カードは、
 
 | 根拠ファイル | 確認事項 | 対応 |
 | --- | --- | --- |
-| `runtime/conversation_inputs_roles.rs`、`role_routing/repository_turns.rs` | Respond と actor数1に限定。受付と dispatch がそれぞれ候補選択する | E07〜E10 |
-| `role_routing/repository_turns.rs` | 採用 API は結果側 step/revision を受け取らず現在 revision を読む。draining も採用対象。採用・usage は ordinal 0 固定 | E02〜E04 |
+| `runtime/conversation_inputs_roles.rs`、`role_routing/repository_turns/` | Respond と actor数1に限定。受付と dispatch がそれぞれ候補選択する | E07〜E10 |
+| `role_routing/repository_turns/` | 採用 API は結果側 step/revision を受け取らず現在 revision を読む。draining も採用対象。採用・usage は ordinal 0 固定 | E02〜E04 |
 | `role_routing/coordinator.rs` | Start が同 revision の planned step を一括 running にする | E03/E08 |
 | `role_routing/schema.rs`、`recovery.rs` | active root 制約・検索が responding/draining に限定 | E03/E25 |
-| `role_routing/repository_turns.rs`、`runtime/turns.rs` | 受付時に deadline を作り queued 中にも適用。claim 時開始という C5 と不一致 | E06 |
+| `role_routing/repository_turns/`、`runtime/turns.rs` | 受付時に deadline を作り queued 中にも適用。claim 時開始という C5 と不一致 | E06 |
 | `tool_selection/gateway.rs` | root から最新 step を推定。step 不在でも予約処理は許可。role 専用 caller の不明状態を拒否しきれていない | E12/E13 |
 | 同上 | operation key は名前+引数 hash、link ID は root を含まない。settle は owner の意味を十分に判定せず DB エラーも呼出元へ返さない | E14 |
 | `role_routing/tools.rs` | read-only が名前 prefix 判定 | E13 |
@@ -142,7 +142,7 @@ P1 の barrier は P6 まで先送りしない。P2 は fake adapter と既存�
 #### E02 現行採用 API の stale 拒否 — RR-12/16/17
 
 - 状態: 部分。依存: E01。
-- 対象: `role_routing/repository_turns.rs`、`runtime/conversation_turn.rs`、`runtime/conversation_role_codex.rs`。
+- 対象: `role_routing/repository_turns/`、`runtime/conversation_turn.rs`、`runtime/conversation_role_codex.rs`。
 - 実装: 結果側 step/revision/attempt の期待値を採用 API に渡す。draining、pending barrier、cancel、terminal を transaction で拒否。現段階では既存 ordinal 0 経路を保ったまま安全化。
 - 失敗時: assistant message を同 transaction で rollback、TTS intent 0。古い成功結果を新 revision として記録しない。
 - 最小試験: `rr_12_old_revision_result_rejected`、`rr_16_pending_input_blocks_real_acceptance`、`rr_12_db_failure_no_speech`。

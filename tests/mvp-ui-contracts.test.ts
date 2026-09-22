@@ -68,7 +68,9 @@ describe("MVP UI reachability contracts", () => {
   });
   test("uses one bounded final-segment path for voice transcription", () => {
     const contracts = source("src/lib/contracts.ts");
-    const voice = source("src/features/voice/useAmbientVoiceSession.ts");
+    const voice =
+      source("src/features/voice/useAmbientVoiceSession.ts") +
+      source("src/features/voice/ambientVoiceCaptureActions.ts");
     const transcriber = source("src/features/voice/voiceAsrPacketSender.ts");
     expect(contracts).not.toContain('type: "transcriptDelta"');
     expect(voice).toContain("packetVoiceFrame");

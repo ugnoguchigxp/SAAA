@@ -157,7 +157,10 @@ impl Default for RoutingLimits {
             max_reasoning_steps: 4,
             max_tool_calls: 32,
             root_timeout_ms: 180_000,
-            step_timeout_ms: 60_000,
+            // A tool-capable provider step can require two model generations with a tool call
+            // between them. Keep this below the root budget, but do not force both generations
+            // into the old single-generation 60 second window.
+            step_timeout_ms: 120_000,
             frontend_timeout_ms: 1_200,
             classification_timeout_ms: 1_500,
             max_queued_inputs: 4,

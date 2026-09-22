@@ -5,7 +5,9 @@ const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.
 
 describe("interrupted streaming UI", () => {
   test("keeps interrupted output as explicitly incomplete plain text", () => {
-    const turn = source("src/features/chat/useConversationTurn.ts");
+    const turn =
+      source("src/features/chat/useConversationTurn.ts") +
+      source("src/features/chat/conversationTurnControls.ts");
     const chat = source("src/features/chat/ChatPage.tsx");
     expect(turn).toContain("incompleteRunIdsRef.current.add(event.runId)");
     expect(turn).toContain("const preserveIncomplete = hasStreamingText()");

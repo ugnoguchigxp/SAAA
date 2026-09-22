@@ -1,10 +1,86 @@
 use rusqlite::params;
+use std::time::Instant;
 
 use crate::ipc_contract::ConversationMessage;
 use crate::redact::bounded_text;
 use crate::{
     database_error, new_id, now_iso, AppState, CleanupOutcome, ProviderFailureKind, StartTurnInput,
 };
+
+pub(crate) struct ToolExecutionAudit<'a> {
+    state: Option<&'a AppState>,
+    input: &'a StartTurnInput,
+    session_id: Option<String>,
+    tool_call_id: String,
+    tool_name: String,
+    started: Instant,
+    terminal_recorded: bool,
+}
+
+impl<'a> ToolExecutionAudit<'a> {
+    pub(crate) fn start(
+        context: &crate::ModelStreamContext<'a>,
+        call: &crate::runtime::agent_tools::AgentToolCall,
+    ) -> Self {
+        let persistence = context.output_persistence;
+        if let Some(persistence) = persistence {
+            let _ = crate::persistence::audit::record_tool_execution(
+                persistence.state,
+                context.input,
+                persistence.session_id,
+                &call.id,
+                &call.name,
+                None,
+            );
+        }
+        Self {
+            state: persistence.map(|value| value.state),
+            input: context.input,
+            session_id: persistence.map(|value| value.session_id.to_string()),
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            started: Instant::now(),
+            terminal_recorded: false,
+        }
+    }
+
+    pub(crate) async fn run(mut self, future: impl std::future::Future<Output = String>) -> String {
+        let result = future.await;
+        self.record_terminal("success");
+        result
+    }
+
+    pub(crate) async fn run_with_outcome(
+        mut self,
+        future: impl std::future::Future<Output = (String, &'static str)>,
+    ) -> String {
+        let (result, outcome) = future.await;
+        self.record_terminal(outcome);
+        result
+    }
+
+    fn record_terminal(&mut self, outcome: &str) {
+        self.terminal_recorded = true;
+        if let (Some(state), Some(session_id)) = (self.state, self.session_id.as_deref()) {
+            let _ = crate::persistence::audit::record_tool_execution(
+                state,
+                self.input,
+                session_id,
+                &self.tool_call_id,
+                &self.tool_name,
+                Some((outcome, self.started.elapsed())),
+            );
+        }
+    }
+}
+
+impl Drop for ToolExecutionAudit<'_> {
+    fn drop(&mut self) {
+        if !self.terminal_recorded {
+            self.record_terminal("interrupted");
+        }
+    }
+}
 
 pub(crate) fn begin_provider_session(
     state: &AppState,
@@ -27,10 +103,11 @@ pub(crate) fn begin_provider_session(
             .execute(
                 "INSERT INTO provider_sessions(
                id, runtime_run_id, provider_id, provider_kind, configuration_fingerprint,
-               fallback_used, output_started,
+               fallback_used, output_started, request_id,
                release_status, status, started_at, updated_at
              ) VALUES (
                ?1, ?2, ?3, ?4, ?5, 0, 0,
+               ?2,
                CASE WHEN ?4='larm' THEN 'not-started' ELSE 'not-applicable' END,
                'running', ?6, ?6
              )",
@@ -134,6 +211,23 @@ pub(crate) fn finish_provider_session(
             return Err("Provider session was already finalized".to_string());
         }
         Ok(())
+    })
+}
+
+pub(crate) fn fail_running_provider_sessions_for_run(
+    state: &AppState,
+    runtime_run_id: &str,
+    failure_kind: ProviderFailureKind,
+) -> Result<usize, String> {
+    state.sqlite_writer.write(|connection| {
+        connection
+            .execute(
+                "UPDATE provider_sessions
+                 SET status='failed', failure_reason=?1, failure_kind=?1, updated_at=?2
+                 WHERE runtime_run_id=?3 AND status='running'",
+                params![failure_kind.as_str(), now_iso(), runtime_run_id],
+            )
+            .map_err(database_error)
     })
 }
 

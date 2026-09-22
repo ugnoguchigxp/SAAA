@@ -14,7 +14,6 @@ import type {
 } from "./requiredContextRecovery";
 
 export type ChatPageProps = {
-  worldScope?: ReturnType<typeof import("./useWorldScope").useWorldScope>;
   setupSnapshot?: import("../../lib/contracts").AppSnapshot;
   messages: ConversationMessage[];
   hasMoreMessages: boolean;

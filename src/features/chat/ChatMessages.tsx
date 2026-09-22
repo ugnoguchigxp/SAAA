@@ -49,10 +49,8 @@ const MarkdownMessage = memo(function MarkdownMessage({
 
 export const CompletedMessage = memo(function CompletedMessage({
   message,
-  scopeKeys,
 }: {
   message: ConversationMessage;
-  scopeKeys?: string[];
 }) {
   const { t } = useTranslation();
   return (
@@ -68,7 +66,6 @@ export const CompletedMessage = memo(function CompletedMessage({
               ? "LFM · 会話応対"
               : t("chat.assistant")}
       </span>
-      {scopeKeys?.length ? <p className="message-scope">対象: {scopeKeys.join("、")}</p> : null}
       {message.parts?.length ? (
         message.parts.map((part, index) =>
           part.type === "ui" ? (

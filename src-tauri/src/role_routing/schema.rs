@@ -105,6 +105,28 @@ pub(crate) fn migrate_v33_to_v34_direct_qwen_reasoner(
     Ok(())
 }
 
+/// The shipped 60 second step timeout was sized for one provider generation. Tool-capable
+/// responses perform a generation, a tool call, and a follow-up generation inside the same step,
+/// so installations that still carry that shipped value are upgraded without touching custom
+/// timeout choices.
+pub(crate) fn migrate_v34_to_v35_tool_step_timeout(
+    connection: &Connection,
+    previous_version: i64,
+) -> rusqlite::Result<()> {
+    if previous_version >= 35 {
+        return Ok(());
+    }
+    connection.execute(
+        "UPDATE settings_documents
+         SET value_json=json_set(value_json, '$.limits.stepTimeoutMs', 120000), updated_at=?1
+         WHERE namespace='routing.roles' AND key='default'
+           AND json_valid(value_json)
+           AND json_extract(value_json, '$.limits.stepTimeoutMs')=60000",
+        [crate::now_iso()],
+    )?;
+    Ok(())
+}
+
 /// Adds the approval-consumption column to databases created before it existed. Consumption is
 /// tracked with a timestamp rather than a new status so the shipped status CHECK is not rewritten.
 fn ensure_rr_proposal_consumed(connection: &Connection) -> rusqlite::Result<()> {
@@ -268,6 +290,51 @@ mod tests {
             )
             .expect("stored roles");
         assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), roles);
+    }
+
+    #[test]
+    fn schema_35_extends_only_the_shipped_tool_step_timeout() {
+        let c = Connection::open_in_memory().expect("connection");
+        c.execute_batch(
+            "CREATE TABLE settings_documents (
+               namespace TEXT NOT NULL, key TEXT NOT NULL, schema_version INTEGER NOT NULL,
+               value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+               PRIMARY KEY(namespace,key)
+             );
+             INSERT INTO settings_documents VALUES(
+               'routing.roles','default',15,
+               '{\"limits\":{\"rootTimeoutMs\":180000,\"stepTimeoutMs\":60000}}','before');",
+        )
+        .expect("settings");
+
+        migrate_v34_to_v35_tool_step_timeout(&c, 34).expect("migration");
+
+        let step_timeout: i64 = c
+            .query_row(
+                "SELECT json_extract(value_json, '$.limits.stepTimeoutMs')
+                 FROM settings_documents WHERE namespace='routing.roles' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("step timeout");
+        assert_eq!(step_timeout, 120_000);
+
+        c.execute(
+            "UPDATE settings_documents
+             SET value_json=json_set(value_json, '$.limits.stepTimeoutMs', 90000)",
+            [],
+        )
+        .expect("custom timeout");
+        migrate_v34_to_v35_tool_step_timeout(&c, 34).expect("repeat migration");
+        let custom_timeout: i64 = c
+            .query_row(
+                "SELECT json_extract(value_json, '$.limits.stepTimeoutMs')
+                 FROM settings_documents WHERE namespace='routing.roles' AND key='default'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("custom step timeout");
+        assert_eq!(custom_timeout, 90_000);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 #[path = "repository_policy.rs"]
 mod repository_policy;
-#[path = "repository_turns.rs"]
+#[path = "repository_turns/mod.rs"]
 #[cfg_attr(not(test), allow(dead_code))]
 mod repository_turns;
 

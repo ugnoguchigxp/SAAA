@@ -1,9 +1,8 @@
 //! Spoken progress is derived from host-known phases, never tool arguments or results.
 use super::super::stream::{execute_agent_tool, ModelStreamContext};
 use crate::generated_capabilities::publication::GeneratedToolSnapshot;
+use futures_util::FutureExt;
 use std::time::Duration;
-
-pub(super) const MAX_SPOKEN_PER_ATTEMPT: usize = 4;
 
 pub(super) fn supports(name: &str) -> bool {
     progress_text(name, "auto").is_some()
@@ -16,14 +15,15 @@ pub(super) async fn execute(
     timeout: Duration,
     generated: &GeneratedToolSnapshot,
 ) -> (String, bool) {
-    let tool = execute_agent_tool(
+    let audit = crate::providers::session_store::ToolExecutionAudit::start(context, call);
+    let tool = audit.run_with_outcome(catch_tool_execution(execute_agent_tool(
         context.output_persistence,
         context.input,
         call,
         timeout,
         generated,
         &context.cancellation,
-    );
+    )));
     let language = language(context);
     let Some(canonical) = report_progress
         .then(|| progress_text(&call.name, &language))
@@ -56,6 +56,21 @@ pub(super) async fn execute(
             }
             (tool.await, spoken)
         }
+    }
+}
+
+async fn catch_tool_execution(
+    future: impl std::future::Future<Output = String>,
+) -> (String, &'static str) {
+    match std::panic::AssertUnwindSafe(future).catch_unwind().await {
+        Ok(result) => (result, "success"),
+        Err(_) => (
+            crate::runtime::agent_tools::tool_error_content(
+                "tool-internal-error",
+                "The tool stopped unexpectedly. Continue without assuming it succeeded.",
+            ),
+            "failure",
+        ),
     }
 }
 fn language(context: &ModelStreamContext<'_>) -> String {
@@ -130,5 +145,12 @@ mod tests {
             progress_text(crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME, "ja").is_none()
         );
         assert!(progress_text("provider_invented_tool", "ja").is_none());
+    }
+
+    #[tokio::test]
+    async fn tool_panic_is_caught_at_the_provider_boundary() {
+        let (result, outcome) = catch_tool_execution(async { panic!("fixture panic") }).await;
+        assert_eq!(outcome, "failure");
+        assert!(result.contains("tool-internal-error"));
     }
 }

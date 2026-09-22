@@ -1,4 +1,5 @@
 //! Durable policy and ledger foundations for role-based model routing.
+//! 実行契約と変更目的別の参照先: このディレクトリの README.md。
 
 pub(crate) mod adapters;
 #[cfg_attr(not(test), allow(dead_code))]

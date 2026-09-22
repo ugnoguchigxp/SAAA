@@ -45,6 +45,7 @@ pub(crate) async fn run_with_options(
     let mut started = false;
     let mut provider_progressed = false;
     let mut messages = world_body::build_messages(history, &context);
+    let simple_weather_lookup = is_simple_weather_lookup(&context.input.content);
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
         let url = super::openai_compatible::provider_operation_url(endpoint, "chat/completions")
             .map_err(|_| Failure::Contract)?;
@@ -54,11 +55,11 @@ pub(crate) async fn run_with_options(
             .build()
             .map_err(|_| Failure::Internal)?;
         let mut output = String::new();
-        let mut calls = 0;
-        let mut voice_calls = 0;
+        let (mut calls, mut voice_calls) = (0, 0);
         let mut context_still_calls = 0;
         let mut context_still_call_keys = std::collections::HashSet::new();
         let mut spoken_tool_progress = 0;
+        let mut weather_search_completed = false;
         loop {
             crate::runtime::context::world::dispatch::refresh_json(
                 &mut messages,
@@ -66,7 +67,7 @@ pub(crate) async fn run_with_options(
             )
             .map_err(|_| Failure::ContextScopeChanged)?;
             let streaming = mode == RequestMode::Stream && options.streaming;
-            let offer = if mode != RequestMode::JsonProbe
+            let mut offer = if mode != RequestMode::JsonProbe
                 && options.tools
                 && !crate::runtime::context::state_answer::is_state_query(&context.input.content)
             {
@@ -80,6 +81,14 @@ pub(crate) async fn run_with_options(
             } else {
                 AgentToolOffer::empty()
             };
+            if simple_weather_lookup && weather_search_completed {
+                offer.definitions.retain(|definition| {
+                    !definition
+                        .pointer("/function/name")
+                        .and_then(Value::as_str)
+                        .is_some_and(crate::runtime::web_fetch::is_web_fetch_tool)
+                });
+            }
             let tools = &offer.definitions;
             let (body, generation) = {
                 let mut recompose_attempts = 0;
@@ -124,6 +133,7 @@ pub(crate) async fn run_with_options(
             };
             let mut request = client
                 .post(&url)
+                .header("X-Request-ID", &context.input.run_id)
                 .header(
                     "Accept",
                     if streaming {
@@ -281,7 +291,7 @@ pub(crate) async fn run_with_options(
                     context_still_calls += 1;
                 }
                 let report_progress = context.on_event.voice_response_enabled()
-                    && spoken_tool_progress < voice_progress::MAX_SPOKEN_PER_ATTEMPT
+                    && spoken_tool_progress < 4
                     && voice_progress::supports(&call.name);
                 // The tool budget is the turn's actual remaining time, never a fixed constant.
                 let (result, progress_spoken) = if duplicate_context_still_call {
@@ -302,6 +312,12 @@ pub(crate) async fn run_with_options(
                     )
                     .await
                 };
+                if simple_weather_lookup
+                    && call.name == crate::runtime::web_fetch::WEB_SEARCH_TOOL_NAME
+                    && is_successful_web_search(&result)
+                {
+                    weather_search_completed = true;
+                }
                 if progress_spoken {
                     spoken_tool_progress += 1;
                 }
@@ -351,6 +367,35 @@ pub(crate) async fn run_with_options(
             Error::failed(kind, started)
         }
     })
+}
+
+fn is_simple_weather_lookup(input: &str) -> bool {
+    let input = input.to_ascii_lowercase();
+    ["天気", "気温", "降水", "weather", "forecast", "temperature"]
+        .iter()
+        .any(|term| input.contains(term))
+}
+
+fn is_successful_web_search(result: &str) -> bool {
+    serde_json::from_str::<Value>(result)
+        .ok()
+        .is_some_and(|value| value["type"] == "web_search_result")
+}
+
+#[cfg(test)]
+mod weather_lookup_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_weather_queries_and_successful_search_results() {
+        assert!(is_simple_weather_lookup("神奈川県の天気教えて。"));
+        assert!(is_simple_weather_lookup("Weather in Yokohama"));
+        assert!(!is_simple_weather_lookup("神奈川県について教えて"));
+        assert!(is_successful_web_search(
+            r#"{"type":"web_search_result","hits":[]}"#
+        ));
+        assert!(!is_successful_web_search(r#"{"type":"tool_error"}"#));
+    }
 }
 
 mod response_helpers;

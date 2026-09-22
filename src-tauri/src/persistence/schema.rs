@@ -16,7 +16,8 @@ use rusqlite::{params, Connection};
 /// local learning ledger. 30 adds the schedule ledger (CREATE IF NOT EXISTS only).
 /// 31 adds steward execution progress, expanded task states, recipes, and source bindings.
 /// 34 moves the default local reasoner from the harness allocator to the configured direct Qwen.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 34;
+/// 35 gives tool-capable reasoning steps enough time for pre- and post-tool model generations.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 35;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -189,6 +190,10 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::tool_selection::schema::migrate(&transaction)?;
     crate::role_routing::schema::migrate(&transaction)?;
     crate::role_routing::schema::migrate_v33_to_v34_direct_qwen_reasoner(
+        &transaction,
+        previous_version,
+    )?;
+    crate::role_routing::schema::migrate_v34_to_v35_tool_step_timeout(
         &transaction,
         previous_version,
     )?;

@@ -186,9 +186,15 @@ describe("MVP 2 / 2.5 readiness CLI", () => {
     expect(runtime).toContain("must not use normal application data");
     expect(runtime).toContain('state.data_directory.join("diagnostics")');
     expect(runtime).toContain('state.data_directory.join("backups")');
-    const runner = await Bun.file(
-      join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness.ts"),
-    ).text();
+    const runner = [
+      await Bun.file(join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness.ts")).text(),
+      await Bun.file(
+        join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness", "support.ts"),
+      ).text(),
+      await Bun.file(
+        join(import.meta.dir, "..", "scripts", "mvp-2-2.5-readiness", "commands.ts"),
+      ).text(),
+    ].join("\n");
     expect(runner).toContain("promptAndValidateAppPid");
     expect(runner).toContain("DEFAULT_DEVELOPMENT_EXECUTABLE");
   });

@@ -66,6 +66,7 @@ describe("target-speaker voice profile", () => {
   test("keeps listening active while serializing ASR and LLM work", async () => {
     const modules = [
       "useAmbientVoiceSession.ts",
+      "ambientVoiceCaptureActions.ts",
       "ambientVoiceCapture.ts",
       "voiceAsrPacketSender.ts",
     ];

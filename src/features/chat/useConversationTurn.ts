@@ -1,18 +1,12 @@
+import { createConversationTurnControls } from "./conversationTurnControls";
 import { useWorldScope } from "./useWorldScope";
 import { usePersonalStateForget } from "./usePersonalStateForget";
-import {
-  requiredContextFailureCode,
-  type RequiredContextFailureCode,
-  type RequiredContextRecoveryAction,
-} from "./requiredContextRecovery";
+import { type RequiredContextFailureCode } from "./requiredContextRecovery";
 import { useCommittedCallback } from "../../useCommittedCallback";
 import { cancelReasoningRun } from "../../lib/reasoningRunControl";
 import {
-  markReasoningRun,
   endReasoningRun,
   queueReasoningReplacement,
-  markReasoningCancellation,
-  clearReasoningCancellation,
   reasoningCancellationRequested,
 } from "../../lib/reasoningRun";
 import { useMessageHistory } from "./useMessageHistory";
@@ -28,17 +22,9 @@ import {
 } from "react";
 import { toMessage } from "../../lib/appHelpers";
 import { uiMessage } from "../../i18n/presentation";
-import { updateConversationTimestamp, updateEffectiveRoute } from "../../lib/conversationRouting";
-import {
-  appendConversationActivity,
-  type ConversationRuntimeActivity,
-} from "../../lib/conversationActivity";
-import type {
-  AppSnapshot,
-  ConversationMessage,
-  RuntimeEvent,
-  VoiceSettings,
-} from "../../lib/contracts";
+import { updateConversationTimestamp } from "../../lib/conversationRouting";
+import { type ConversationRuntimeActivity } from "../../lib/conversationActivity";
+import type { AppSnapshot, ConversationMessage, VoiceSettings } from "../../lib/contracts";
 import { cancelRun, startTurn, stopTts } from "../../lib/runtime";
 import { codingApi } from "../coding/api";
 import {
@@ -49,16 +35,9 @@ import {
   type SubmitPromptOptions,
 } from "../../lib/conversationSession";
 import { ConversationIssueCoordinator } from "./conversationIssueCoordinator";
-import { recordRuntimeLifecycleAudit } from "./conversationAudit";
 import { useConversationVoicePolicy } from "./useConversationVoicePolicy";
 import { useStreamingTextProjection } from "./useStreamingTextProjection";
-import {
-  beginRunPerformance,
-  recordFirstDelta,
-  recordResponseCompleted,
-  recordRunWithoutMarkdown,
-  recordSocketReceive,
-} from "./streamingPerformance";
+import { beginRunPerformance } from "./streamingPerformance";
 type RetryAction = {
   kind: "response";
   prompt: string;
@@ -423,190 +402,42 @@ export function useConversationTurn({
       }
     }
   }
-  function handleRuntimeEvent(event: RuntimeEvent, conversationId: string, issueScope: number) {
-    if (forgottenRuns.current.has(event.runId)) return;
-    const isSpeechLifecycle =
-      event.type === "speechStarted" ||
-      event.type === "speechEnded" ||
-      event.type === "speechFailed";
-    const ownsEvent =
-      conversationSessionRef.current.runId === event.runId ||
-      (isSpeechLifecycle && conversationSessionRef.current.speechRunId === event.runId);
-    if (disposedRef.current || selectedConversationIdRef.current !== conversationId || !ownsEvent)
-      return;
-    if (event.type !== "delta") recordRuntimeLifecycleAudit(event, conversationId);
-    if (!isSpeechLifecycle) recordSocketReceive(event.runId);
-    switch (event.type) {
-      case "started":
-        if (event.route === "conversation.reasoning") markReasoningRun(event.runId, conversationId);
-        setSnapshot((current) =>
-          updateEffectiveRoute(current, event.providerId, "active", {
-            reasonCode: "turn-active",
-          }),
-        );
-        setRuntimeActivity((current) =>
-          appendConversationActivity(current, {
-            type: "providerStarted",
-            providerId: event.providerId,
-          }),
-        );
-        break;
-      case "delta":
-        recordFirstDelta(event.runId);
-        appendStreamingText(event.runId, event.text);
-        break;
-      case "activity":
-        if (event.kind === "ui-presented") {
-          void loadMessages(conversationId, issueScope);
-          break;
-        }
-        setRuntimeActivity((current) =>
-          appendConversationActivity(current, { type: "providerWorking" }),
-        );
-        break;
-      case "providerFailed":
-        setSnapshot((current) =>
-          updateEffectiveRoute(current, event.providerId, "failed", {
-            reasonCode: "provider-failed",
-          }),
-        );
-        setRuntimeActivity((current) =>
-          appendConversationActivity(current, { type: "providerFailed" }),
-        );
-        break;
-      case "messageCompleted":
-        incompleteRunIdsRef.current.delete(event.runId);
-        recordResponseCompleted(event.runId, event.message.id);
-        setRetryAction(null);
-        setMessages((current) =>
-          history.isBrowsingOlder()
-            ? current
-            : [
-                ...current.filter(
-                  (message) =>
-                    !message.id.startsWith("streaming_") && message.id !== event.message.id,
-                ),
-                event.message,
-              ],
-        );
-        setSnapshot((current) =>
-          current.effectiveRoute.providerId
-            ? updateEffectiveRoute(current, current.effectiveRoute.providerId, "ready", {
-                fallbackUsed: current.effectiveRoute.fallbackUsed,
-                reasonCode: "last-turn-completed",
-              })
-            : current,
-        );
-        resetStreamingText();
-        if (selectedConversationIdRef.current)
-          void loadMessagesCommitted(selectedConversationIdRef.current, issueScope);
-        if (event.voicePolicy) voice.setVoicePolicy(event.voicePolicy);
-        else voice.clearVoicePolicy();
-        break;
-      case "speechStarted":
-        conversationSessionRef.current = transitionConversationSession(
-          conversationSessionRef.current,
-          { type: "speechStarted", runId: event.runId },
-        );
-        setActiveTtsRunId(event.runId);
-        void suspendVoiceForSpeech(event.runId).catch(() => {
-          publishIssue(issueScope, uiMessage("chatSpeechPlaybackFailed"));
-        });
-        break;
-      case "speechEnded":
-        if (conversationSessionRef.current.speechRunId === event.runId) {
-          conversationSessionRef.current = transitionConversationSession(
-            conversationSessionRef.current,
-            { type: "speechFinished", runId: event.runId },
-          );
-          setActiveTtsRunId(null);
-          void resumeVoiceAfterSpeech(event.runId).catch(() => {
-            publishIssue(issueScope, uiMessage("chatMicrophoneResumeFailed"));
-          });
-        }
-        break;
-      case "speechFailed":
-        if (!speechStopRequestsRef.current.has(event.runId)) {
-          publishIssue(issueScope, uiMessage("chatSpeechPlaybackFailed"));
-        }
-        break;
-      case "cancelled":
-        markReasoningCancellation(event.runId);
-        recordRunWithoutMarkdown(event.runId, "cancelled");
-        failedRunIdsRef.current.delete(event.runId);
-        incompleteRunIdsRef.current.add(event.runId);
-        setRuntimeActivity((current) =>
-          appendConversationActivity(current, { type: "generationCancelled" }),
-        );
-        break;
-      case "failed":
-        if (reasoningCancellationRequested(event.runId)) break;
-        recordRunWithoutMarkdown(event.runId, "failed");
-        failedRunIdsRef.current.add(event.runId);
-        incompleteRunIdsRef.current.add(event.runId);
-        const contextFailure = requiredContextFailureCode(event.code);
-        if (contextFailure) {
-          nonRetryableRunIdsRef.current.add(event.runId);
-          setRequiredContextFailure(contextFailure);
-        }
-        publishIssue(issueScope, `${event.message} ${event.recovery}`);
-        break;
-    }
-  }
-  async function stopActiveRun() {
-    const runId = conversationSessionRef.current.runId;
-    if (!runId) return;
-    const issueScope = issueCoordinatorRef.current.begin();
-    markReasoningCancellation(runId);
-    try {
-      await cancelRun(runId);
-    } catch (cause) {
-      clearReasoningCancellation(runId);
-      publishIssue(issueScope, toMessage(cause));
-    }
-  }
-  async function stopSpeech(existingIssueScope?: number) {
-    const runId = conversationSessionRef.current.speechRunId;
-    if (!runId) return;
-    const issueScope = existingIssueScope ?? issueCoordinatorRef.current.begin();
-    speechStopRequestsRef.current.add(runId);
-    let stopped = false;
-    try {
-      await stopTts(runId);
-      stopped = true;
-    } catch (cause) {
-      speechStopRequestsRef.current.delete(runId);
-      publishIssue(issueScope, toMessage(cause));
-    } finally {
-      if (stopped && conversationSessionRef.current.speechRunId === runId) {
-        conversationSessionRef.current = transitionConversationSession(
-          conversationSessionRef.current,
-          { type: "speechFinished", runId },
-        );
-        if (!disposedRef.current) setActiveTtsRunId(null);
-        try {
-          await resumeVoiceAfterSpeech(runId);
-        } catch (cause) {
-          publishIssue(issueScope, uiMessage("chatMicrophoneResumeFailed"));
-        }
-      }
-    }
-  }
-  async function retryFailedAction() {
-    const action = retryAction;
-    if (!action) return;
-    setRetryAction(null);
-    await submitPrompt(action.prompt, {
-      retryInputMessageId: action.inputMessageId,
-      inputOrigin: action.inputOrigin,
-    });
-  }
-  function prepareRequiredContextRecovery(action: RequiredContextRecoveryAction) {
-    setRequiredContextFailure(null);
-    setRetryAction(null);
-    if (action === "narrow") setComposer(lastPrompt ?? "");
-    else setComposer("");
-  }
+  const {
+    handleRuntimeEvent,
+    stopActiveRun,
+    stopSpeech,
+    retryFailedAction,
+    prepareRequiredContextRecovery,
+  } = createConversationTurnControls({
+    forgottenRuns,
+    conversationSessionRef,
+    disposedRef,
+    selectedConversationIdRef,
+    setSnapshot,
+    setRuntimeActivity,
+    appendStreamingText,
+    resetStreamingText,
+    history,
+    setRetryAction,
+    setMessages,
+    loadMessages,
+    loadMessagesCommitted,
+    voice,
+    incompleteRunIdsRef,
+    setActiveTtsRunId,
+    suspendVoiceForSpeech,
+    publishIssue,
+    resumeVoiceAfterSpeech,
+    speechStopRequestsRef,
+    failedRunIdsRef,
+    nonRetryableRunIdsRef,
+    setRequiredContextFailure,
+    issueCoordinatorRef,
+    retryAction,
+    submitPrompt,
+    setComposer,
+    lastPrompt,
+  });
   return {
     worldScope,
     messages,

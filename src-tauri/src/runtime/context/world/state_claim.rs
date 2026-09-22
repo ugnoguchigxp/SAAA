@@ -102,8 +102,7 @@ pub(crate) fn render(raw: &str, frame: &WorldFrame) -> Result<String, String> {
             WorldSourcePayload::Situation {scene,hold,..} => format!("観測から推定した現在の状況は {}、発話保留は {} です。",scene.as_deref().unwrap_or("不明"),hold.as_deref().unwrap_or("不明")),
         };
         lines.push(format!(
-            "{text}\n対象: {}\n確認時刻: {}\n根拠: {}@{}",
-            source.owner_scope_key,
+            "{text}\n確認時刻: {}\n根拠: {}@{}",
             display_time(source.as_of_ms),
             source.source_id,
             source.version.as_deref().unwrap_or(&source.digest)
@@ -166,6 +165,8 @@ mod tests {
         let rendered = render(&answer.to_string(), &frame).unwrap();
         assert!(rendered.contains("settled"));
         assert!(!rendered.contains("成功"));
+        assert!(!rendered.contains("対象:"));
+        assert!(!rendered.contains("task:job"));
         for key in ["source_ref", "source_version_or_digest"] {
             let mut fake = answer.clone();
             fake["claims"][0][key] = json!("fake");

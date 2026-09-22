@@ -1,12 +1,6 @@
 import { SetupChecklist } from "./SetupChecklist";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
-} from "react";
+import { useEffect, useRef, type CSSProperties, type FormEvent } from "react";
+import { useLatestMessageScroll } from "./useLatestMessageScroll";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
 import { localizeRuntimeActivity, localizeUiMessage } from "../../i18n/presentation";
@@ -17,13 +11,10 @@ import { StreamingPlainText } from "./ChatMessages";
 import { RoutingProposal } from "./RoutingProposal";
 import type { ChatPageProps } from "./chatPageTypes";
 
-const LATEST_THRESHOLD_PX = 24;
 const VOICE_BAR_WEIGHTS = [0.18, 0.32, 0.54, 0.78, 1, 0.7, 0.48, 0.72, 0.46, 0.28, 0.16];
-const scrollMemory = new Map<string, { scrollTop: number; followLatest: boolean }>();
 
 export function ChatPage({
   setupSnapshot,
-  worldScope,
   messages,
   hasMoreMessages,
   loadingOlderMessages,
@@ -68,54 +59,28 @@ export function ChatPage({
   onDecideRoutingProposal,
 }: ChatPageProps) {
   const { t } = useTranslation();
-  const messageAreaRef = useRef<HTMLDivElement>(null);
-  const followLatestRef = useRef(true);
-  const [showLatestButton, setShowLatestButton] = useState(false);
-
-  const rememberScroll = useCallback(
-    (messageArea: HTMLDivElement, followLatest: boolean) => {
-      const conversationId = selectedConversation?.id;
-      if (!conversationId) return;
-      scrollMemory.set(conversationId, { scrollTop: messageArea.scrollTop, followLatest });
-      if (scrollMemory.size > 8) scrollMemory.delete(scrollMemory.keys().next().value!);
-    },
-    [selectedConversation?.id],
-  );
-
+  const {
+    messageAreaRef,
+    messageContentRef,
+    followLatestRef,
+    showLatestButton,
+    setShowLatestButton,
+    scrollToLatest,
+    updateFollowLatest,
+  } = useLatestMessageScroll(selectedConversation?.id, hasNewerMessages);
+  const returnToLatestRef = useRef(onReturnToLatest);
+  returnToLatestRef.current = onReturnToLatest;
   useEffect(() => {
-    const conversationId = selectedConversation?.id;
-    const memory = conversationId ? scrollMemory.get(conversationId) : undefined;
-    const shouldFollow = memory?.followLatest ?? true;
-    followLatestRef.current = shouldFollow;
-    setShowLatestButton(!shouldFollow);
-    const frame = requestAnimationFrame(() => {
-      const messageArea = messageAreaRef.current;
-      if (!messageArea) return;
-      messageArea.scrollTop = shouldFollow ? messageArea.scrollHeight : (memory?.scrollTop ?? 0);
-    });
-    return () => cancelAnimationFrame(frame);
+    // A remounted conversation may still hold a paginated, older history window.
+    void returnToLatestRef.current();
   }, [selectedConversation?.id]);
-
-  useEffect(() => {
-    const messageArea = messageAreaRef.current;
-    if (!messageArea || !followLatestRef.current || hasNewerMessages) return;
-    const frame = requestAnimationFrame(() => {
-      messageArea.scrollTop = messageArea.scrollHeight;
-      setShowLatestButton(false);
-      rememberScroll(messageArea, true);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [messages, streamingText, runtimeActivity, activeRunId, hasNewerMessages, rememberScroll]);
 
   async function handleMessageAreaScroll() {
     const messageArea = messageAreaRef.current;
     if (!messageArea) return;
     const distanceFromBottom =
       messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight;
-    const atLatest = distanceFromBottom < LATEST_THRESHOLD_PX && !hasNewerMessages;
-    followLatestRef.current = atLatest;
-    setShowLatestButton(!atLatest);
-    rememberScroll(messageArea, atLatest);
+    updateFollowLatest();
     if (distanceFromBottom < 100 && hasNewerMessages && !loadingNewerMessages) {
       await onLoadNewerMessages?.();
       return;
@@ -128,7 +93,6 @@ export function ChatPage({
         const current = messageAreaRef.current;
         if (!current || followLatestRef.current) return;
         current.scrollTop = previousTop + current.scrollHeight - previousHeight;
-        rememberScroll(current, false);
       });
     }
   }
@@ -137,12 +101,7 @@ export function ChatPage({
     followLatestRef.current = true;
     setShowLatestButton(false);
     await onReturnToLatest();
-    requestAnimationFrame(() => {
-      const messageArea = messageAreaRef.current;
-      if (!messageArea) return;
-      messageArea.scrollTop = messageArea.scrollHeight;
-      rememberScroll(messageArea, true);
-    });
+    requestAnimationFrame(scrollToLatest);
   }
 
   function submitFromLatest(event: FormEvent<HTMLFormElement>) {
@@ -166,65 +125,63 @@ export function ChatPage({
         ref={messageAreaRef}
         onScroll={() => void handleMessageAreaScroll()}
       >
-        {loadingOlderMessages && <p className="history-loading">{t("chat.loadingHistory")}</p>}
-        {messages.length === 0 && streamingText.length === 0 ? (
-          <div className="empty-state">
-            <h2>{t("chat.emptyTitle")}</h2>
-            {setupSnapshot && (
-              <SetupChecklist snapshot={setupSnapshot} onOpenSettings={onOpenSettings} />
-            )}
-            <p>{t("chat.emptyDescription")}</p>
-            <div className="suggestion-list">
-              <button
-                type="button"
-                onClick={() => onComposerChange(t("chat.suggestionOrganizePrompt"))}
-              >
-                {t("chat.suggestionOrganize")}
-              </button>
-              <button
-                type="button"
-                onClick={() => onComposerChange(t("chat.suggestionUnfinishedPrompt"))}
-              >
-                {t("chat.suggestionUnfinished")}
-              </button>
-              <button
-                type="button"
-                onClick={() => onComposerChange(t("chat.suggestionDelegatePrompt"))}
-              >
-                {t("chat.suggestionDelegate")}
-              </button>
+        <div className="message-content" ref={messageContentRef}>
+          {loadingOlderMessages && <p className="history-loading">{t("chat.loadingHistory")}</p>}
+          {messages.length === 0 && streamingText.length === 0 ? (
+            <div className="empty-state">
+              <h2>{t("chat.emptyTitle")}</h2>
+              {setupSnapshot && (
+                <SetupChecklist snapshot={setupSnapshot} onOpenSettings={onOpenSettings} />
+              )}
+              <p>{t("chat.emptyDescription")}</p>
+              <div className="suggestion-list">
+                <button
+                  type="button"
+                  onClick={() => onComposerChange(t("chat.suggestionOrganizePrompt"))}
+                >
+                  {t("chat.suggestionOrganize")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onComposerChange(t("chat.suggestionUnfinishedPrompt"))}
+                >
+                  {t("chat.suggestionUnfinished")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onComposerChange(t("chat.suggestionDelegatePrompt"))}
+                >
+                  {t("chat.suggestionDelegate")}
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <VirtualMessages
-            messages={messages}
-            scrollRef={messageAreaRef}
-            messageScopes={worldScope?.status?.messageScopes}
-          />
-        )}
-        {streamingText.length > 0 && (
-          <article className={`message assistant ${!activeRunId ? "incomplete" : "streaming"}`}>
-            <span className="message-role">
-              {t("chat.assistant")} · {t(!activeRunId ? "chat.incomplete" : "chat.streaming")}
-            </span>
-            <StreamingPlainText projection={streamingText} />
-          </article>
-        )}
-        {activeRunId ? (
-          <div className="llm-thinking-indicator" role="status" aria-label={t("chat.thinking")}>
-            <span />
-            <span />
-            <span />
-          </div>
-        ) : null}
-        {runtimeActivity.length > 0 && (
-          <details className="activity-panel">
-            <summary>{t("chat.runtimeActivity")}</summary>
-            {runtimeActivity.map((activity, index) => (
-              <p key={`${index}-${activity.type}`}>{localizeRuntimeActivity(t, activity)}</p>
-            ))}
-          </details>
-        )}
+          ) : (
+            <VirtualMessages messages={messages} scrollRef={messageAreaRef} />
+          )}
+          {streamingText.length > 0 && (
+            <article className={`message assistant ${!activeRunId ? "incomplete" : "streaming"}`}>
+              <span className="message-role">
+                {t("chat.assistant")} · {t(!activeRunId ? "chat.incomplete" : "chat.streaming")}
+              </span>
+              <StreamingPlainText projection={streamingText} />
+            </article>
+          )}
+          {activeRunId ? (
+            <div className="llm-thinking-indicator" role="status" aria-label={t("chat.thinking")}>
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : null}
+          {runtimeActivity.length > 0 && (
+            <details className="activity-panel">
+              <summary>{t("chat.runtimeActivity")}</summary>
+              {runtimeActivity.map((activity, index) => (
+                <p key={`${index}-${activity.type}`}>{localizeRuntimeActivity(t, activity)}</p>
+              ))}
+            </details>
+          )}
+        </div>
       </div>
       {(showLatestButton || hasNewerMessages) && messages.length > 0 ? (
         <button

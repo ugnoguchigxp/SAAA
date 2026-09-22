@@ -1,10 +1,65 @@
 use std::sync::Arc;
 
 use crate::ipc_contract::RuntimeEvent;
+use crate::runtime::event_hub::RuntimeEventSender;
 use crate::{
     execute_turn, persistence, redact_runtime_text, register_active_run, validate_identifier,
     validate_start_turn, voice_behavior, AppState, RunCancellation, StartTurnInput,
 };
+use futures_util::FutureExt;
+
+struct TurnDropGuard<'a> {
+    state: &'a AppState,
+    run_id: &'a str,
+    events: &'a dyn RuntimeEventSender,
+    armed: bool,
+}
+
+impl TurnDropGuard<'_> {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TurnDropGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            finalize_unexpected_stop(self.state, self.run_id);
+            let _ = self.events.send(RuntimeEvent::Failed {
+                run_id: self.run_id.to_string(),
+                code: crate::ipc_contract::RuntimeFailureCode::InternalError,
+                message: "Conversation runtime stopped unexpectedly".into(),
+                recovery: "Retry the request. If it repeats, review the tool audit event.".into(),
+            });
+        }
+    }
+}
+
+fn finalize_unexpected_stop(state: &AppState, run_id: &str) {
+    let _ = crate::providers::session_store::fail_running_provider_sessions_for_run(
+        state,
+        run_id,
+        crate::ProviderFailureKind::Internal,
+    );
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(i64::MAX);
+    let _ = state.sqlite_writer.write(|connection| {
+        crate::role_routing::repository::record_provider_turn_finish(
+            connection, run_id, "failed", None, now_ms,
+        )
+    });
+    let _ = crate::runtime::turns::finish_supervised_runtime_run(
+        state,
+        run_id,
+        "failed",
+        Some(crate::runtime::contracts::RunFailureCode::InternalError),
+        None,
+        None,
+        Some("Conversation runtime stopped unexpectedly"),
+    );
+}
 
 #[tauri::command]
 pub(crate) async fn start_turn(
@@ -64,7 +119,41 @@ pub(crate) async fn start_turn(
     )
     .with_routing_speech(state.sqlite_writer.clone())
     .with_voice_response(input.input_origin == "voice");
-    let result = execute_turn(&state, &input, &event_hub, cancellation.clone(), None).await;
+    // Tauri may drop an in-flight command future if its WebView invocation disappears. Keep the
+    // durable ledgers terminal even when normal async finalization never gets another poll.
+    let mut drop_guard = TurnDropGuard {
+        state: &state,
+        run_id: &input.run_id,
+        events: &event_hub,
+        armed: true,
+    };
+    let execution = std::panic::AssertUnwindSafe(execute_turn(
+        &state,
+        &input,
+        &event_hub,
+        cancellation.clone(),
+        None,
+    ))
+    .catch_unwind()
+    .await;
+    let result = match execution {
+        Ok(result) => result,
+        Err(_) => {
+            let message = "Conversation runtime stopped unexpectedly";
+            finalize_unexpected_stop(&state, &input.run_id);
+            let _ = event_hub.send(RuntimeEvent::Failed {
+                run_id: input.run_id.clone(),
+                code: crate::ipc_contract::RuntimeFailureCode::InternalError,
+                message: message.into(),
+                recovery: "Retry the request. If it repeats, review the tool audit event.".into(),
+            });
+            Err(crate::TurnExecutionFailure::unsupervised(
+                crate::runtime::contracts::RunFailureCode::InternalError,
+                message.into(),
+            ))
+        }
+    };
+    drop_guard.disarm();
     if result.is_err() && streaming_speech {
         state.streaming_tts.cancel(&input.run_id);
     }

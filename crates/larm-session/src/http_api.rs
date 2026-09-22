@@ -50,6 +50,7 @@ impl LlmOptions {
             "max_tokens"
         }] = json!(limit);
         body.as_object_mut().unwrap().remove("reasoning_effort");
+        body.as_object_mut().unwrap().remove("chat_template_kwargs");
         if let Some(temperature) = self.temperature {
             body["temperature"] = json!(temperature);
         }
@@ -64,6 +65,15 @@ impl LlmOptions {
                     && !model.contains("o1-mini")))
         {
             body["reasoning_effort"] = json!(effort);
+        } else if effort != "provider-default"
+            && !matches!(self.reasoning, Reasoning::Unsupported)
+            && qwen_model(model)
+            && matches!(effort, "low" | "medium" | "xhigh")
+        {
+            // llama.cpp passes custom template variables through chat_template_kwargs. Qwen's
+            // template defaults to xhigh when this value is absent, which makes every tool
+            // follow-up perform a full deep-reasoning pass even when SAAA is configured for low.
+            body["chat_template_kwargs"] = json!({"reasoning_effort": effort});
         }
     }
 }
@@ -88,6 +98,14 @@ fn reasoning_model(model: &str) -> bool {
     ["o1", "o3", "o4", "gpt-5"]
         .iter()
         .any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
+}
+
+fn qwen_model(model: &str) -> bool {
+    model
+        .strip_prefix("openai/")
+        .unwrap_or(model)
+        .to_ascii_lowercase()
+        .contains("qwen")
 }
 pub fn operation_url(base: &str, operation: &str) -> Result<String, String> {
     let mut url = url::Url::parse(base).map_err(|_| "Provider endpoint is invalid")?;
@@ -154,6 +172,14 @@ mod tests {
         );
         options.apply(&mut body, "unknown-local-model", 456, "medium");
         assert_eq!(body, json!({"max_tokens":456}));
+        options.apply(&mut body, "Qwen3.8-27B-ROCmFP4-FAST.gguf", 456, "low");
+        assert_eq!(
+            body,
+            json!({
+                "max_tokens":456,
+                "chat_template_kwargs":{"reasoning_effort":"low"}
+            })
+        );
         let options = LlmOptions {
             token_limit: TokenLimit::Completion,
             reasoning: Reasoning::Unsupported,
