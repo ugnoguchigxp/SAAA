@@ -33,11 +33,11 @@
       }
     },
     "initial-response": {
-      "acceptedAt": "2026-09-23T03:15:10.439Z",
-      "reason": "Show web tool progress for visual and spoken responses after retrieval, verified by quality runtime tests",
+      "acceptedAt": "2026-09-23T04:07:55.118Z",
+      "reason": "Credential storage schema changed; credentials tests and conversation quality runtime checks passed",
       "files": {
         "src-tauri/src/persistence/app_commands.rs": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
-        "src-tauri/src/persistence/schema.rs": "fa4a1c9c39122e3fdfb55a2f5316f7019f5ae4523dbe5e3fab667d82bdaa9112",
+        "src-tauri/src/persistence/schema.rs": "9f5ac28257ef0b5fa08c39b819c6809228461c38bf24b3d6f44080bca8d99ebb",
         "src-tauri/src/persistence/settings.d/02.rs": "d74611a07cd42077a3aeecab215959b84a58bf1a0be410ff579ab14129a6d4f1",
         "src-tauri/src/providers/agent_session/creation.rs": "dde7b29fc4b5284f1bff49b7820cea77392d5074c9b374963e6e7e3b7de03d82",
         "src-tauri/src/providers/agent_session/sse.d/01.rs": "bdcbcbf1e4a422426f6c988596a3f71b17e33516725e44cb9fed576897f302a4",

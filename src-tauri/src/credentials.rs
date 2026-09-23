@@ -1,10 +1,11 @@
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
-use zeroize::{Zeroize, Zeroizing};
+use std::sync::{Arc, OnceLock};
+use zeroize::Zeroizing;
 
 pub(crate) const PROVIDER_CREDENTIAL_SERVICE: &str = "com.saaa.provider-api-key";
 const MAX_CREDENTIAL_BYTES: usize = 2_560;
-static CREDENTIAL_STORE: Mutex<()> = Mutex::new(());
+static CREDENTIAL_DATABASE: OnceLock<Arc<crate::persistence::SqliteWriter>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -111,13 +112,26 @@ pub(crate) fn credential_state(provider_id: String) -> Result<ProviderCredential
     Ok(ProviderCredentialState { provider_id, state })
 }
 
+pub(crate) fn install_database(writer: Arc<crate::persistence::SqliteWriter>) {
+    let _ = CREDENTIAL_DATABASE.set(writer);
+}
+
 #[allow(dead_code)] // Platform credential write API is not exercised on every test target.
 pub(crate) fn store_named_secret(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     validate_named_secret(service, account, value)?;
-    with_entry(service, account, |entry| {
-        entry.set_secret(value).map_err(|_| {
-            "Could not store the credential in the operating system credential store".into()
-        })
+    let secret = std::str::from_utf8(value).map_err(|_| credential_error())?;
+    database()?.write(|connection| {
+        connection
+            .execute(
+                "INSERT INTO credential_secrets(service, account, secret, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(service, account) DO UPDATE SET
+                   secret = excluded.secret,
+                   updated_at = excluded.updated_at",
+                params![service, account, secret, crate::now_iso()],
+            )
+            .map_err(|_| credential_error())?;
+        Ok(())
     })
 }
 
@@ -139,46 +153,40 @@ pub(crate) fn load_named_secret(
     service: &str,
     account: &str,
 ) -> Result<Option<Zeroizing<String>>, String> {
-    with_entry(service, account, |entry| match entry.get_secret() {
-        Ok(value) => match String::from_utf8(value) {
-            Ok(value) => Ok(Some(Zeroizing::new(value))),
-            Err(error) => {
-                let mut value = error.into_bytes();
-                value.zeroize();
-                Err(
-                    "The credential stored in the operating system credential store is invalid"
-                        .into(),
-                )
-            }
-        },
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => {
-            Err("Could not read the credential from the operating system credential store".into())
+    database()?.read_serialized(|connection| {
+        match connection.query_row(
+            "SELECT secret FROM credential_secrets WHERE service = ?1 AND account = ?2",
+            params![service, account],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(secret) => Ok(Some(Zeroizing::new(secret))),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(_) => Err(credential_error()),
         }
     })
 }
 
 pub(crate) fn delete_named_secret(service: &str, account: &str) -> Result<(), String> {
-    with_entry(service, account, |entry| match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => {
-            Err("Could not delete the credential from the operating system credential store".into())
-        }
+    database()?.write(|connection| {
+        connection
+            .execute(
+                "DELETE FROM credential_secrets WHERE service = ?1 AND account = ?2",
+                params![service, account],
+            )
+            .map_err(|_| credential_error())?;
+        Ok(())
     })
 }
 
-fn with_entry<T>(
-    service: &str,
-    account: &str,
-    operation: impl FnOnce(&keyring::Entry) -> Result<T, String>,
-) -> Result<T, String> {
-    let _guard = CREDENTIAL_STORE
-        .lock()
-        .map_err(|_| "Operating system credential store lock unavailable".to_string())?;
-    let entry = keyring::Entry::new(service, account)
-        .map_err(|_| "Operating system credential store unavailable".to_string())?;
-    operation(&entry)
+fn database() -> Result<Arc<crate::persistence::SqliteWriter>, String> {
+    CREDENTIAL_DATABASE
+        .get()
+        .cloned()
+        .ok_or_else(credential_error)
+}
+
+fn credential_error() -> String {
+    "Could not use the credential stored in the application database".into()
 }
 
 #[cfg(test)]

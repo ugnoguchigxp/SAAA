@@ -104,6 +104,7 @@ pub fn run() {
                 });
             }
             let sqlite_writer = Arc::new(SqliteWriter::open(&database_path)?);
+            credentials::install_database(sqlite_writer.clone());
             let sqlite_readers =
                 SqliteReaders::open(&database_path).map_err(std::io::Error::other)?;
             sqlite_writer

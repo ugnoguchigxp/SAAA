@@ -39,6 +39,13 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
            updated_at TEXT NOT NULL,
            PRIMARY KEY(namespace, key)
          );
+         CREATE TABLE IF NOT EXISTS credential_secrets (
+           service TEXT NOT NULL,
+           account TEXT NOT NULL,
+           secret TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           PRIMARY KEY(service, account)
+         );
          CREATE TABLE IF NOT EXISTS larm_voice_lease_slot (
            id INTEGER PRIMARY KEY CHECK(id = 1),
            idempotency_key TEXT NOT NULL
